@@ -105,7 +105,7 @@ test("the level follows the three lines", () => {
 test("the specs come from the pane's environment as lists, and a seat resolves them against its model", () => {
   const none = specsFromEnv({});
   assert.equal(none.fromDefaults, true);
-  assert.deepEqual(specsForModel(none.specs, "openai/gpt-5.4-mini"), { specs: DEFAULT_SPECS, fromDefaults: true, matched: {} });
+  assert.deepEqual(specsForModel(none.specs, "openai/gpt-5.4-mini"), { specs: DEFAULT_SPECS, fromDefaults: true, explicit: { noticeAt: false, warnAt: false, compactAt: false }, matched: {} });
   const some = specsFromEnv({ SWARM_COMPACT_AT: "150k" });
   assert.equal(some.fromDefaults, false);
   assert.deepEqual(specsForModel(some.specs, "openai/gpt-5.4-mini").specs, { noticeAt: "40%", warnAt: "50%", compactAt: "150k" });
@@ -134,6 +134,33 @@ test("the specs come from the pane's environment as lists, and a seat resolves t
   for (const good of ["60%", "150k", "60%,openai/gpt-5.4-mini=55%", "openai/gpt-5.4-mini=55%,grok-4.6=70%", "60% , x/y=1"]) assert.ok(SPEC_LIST_RE.test(good), good);
   for (const bad of ["", "lots", "60%,", "=60%", "a b=60%", "60%,x/y=lots"]) assert.ok(!SPEC_LIST_RE.test(bad), bad);
   assert.deepEqual(specForModel({ value: "", byModel: [] }, "60%", undefined), { value: "60%", explicit: false });
+});
+
+test("one explicit compact line below the default warning clamps the unset lines instead of turning compaction off", () => {
+  // As the extension resolves a seat: the pane's lists, the seat's model, its window.
+  const seatResolve = (env: Record<string, string>, model: string, window: number) => {
+    const seat = specsForModel(specsFromEnv(env).specs, model);
+    return resolveThresholds(seat.specs, model, window, { fromDefaults: seat.fromDefaults, explicit: seat.explicit });
+  };
+  const pct = seatResolve({ SWARM_COMPACT_AT: "45%" }, "openai/gpt-5.4", 272_000);
+  assert.ok(pct.ok, pct.ok ? "" : pct.error);
+  assert.equal(pct.thresholds.compactTokens, 122_400, "the operator's line is kept");
+  assert.equal(pct.thresholds.warnTokens, 122_400, "the default warning is clamped down to it");
+  assert.equal(pct.thresholds.noticeTokens, 108_800, "the default notice still fits");
+  assert.ok(pct.thresholds.clamped && pct.thresholds.notes.some((n) => /default warning/.test(n)), JSON.stringify(pct.thresholds.notes));
+  const tokens = seatResolve({ SWARM_COMPACT_AT: "100k" }, "openai/gpt-5.4", 272_000);
+  assert.ok(tokens.ok, tokens.ok ? "" : tokens.error);
+  assert.equal(tokens.thresholds.compactTokens, 100_000);
+  assert.equal(tokens.thresholds.warnTokens, 100_000);
+  assert.equal(tokens.thresholds.noticeTokens, 100_000, "the default notice follows the clamped warning");
+  // Two lines the operator wrote that conflict are still refused, whatever the defaults do.
+  const both = seatResolve({ SWARM_COMPACT_AT: "45%", SWARM_COMPACT_WARN_AT: "50%" }, "openai/gpt-5.4", 272_000);
+  assert.ok(!both.ok && /warning threshold .* must not exceed|warning threshold .* is above/.test(both.error), both.ok ? "" : both.error);
+  const noticeOver = seatResolve({ SWARM_COMPACT_AT: "45%", SWARM_COMPACT_NOTICE_AT: "48%" }, "openai/gpt-5.4", 272_000);
+  assert.ok(!noticeOver.ok && /notice threshold/.test(noticeOver.error), noticeOver.ok ? "" : noticeOver.error);
+  // An explicit compact line the window cannot hold is still refused, not clamped.
+  const tooHigh = seatResolve({ SWARM_COMPACT_AT: "95%" }, "openai/gpt-5.4", 272_000);
+  assert.ok(!tooHigh.ok && /window can hold/.test(tooHigh.error));
 });
 
 test("templates render the live numbers and leave unknown keys alone", () => {

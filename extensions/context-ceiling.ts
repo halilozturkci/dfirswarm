@@ -158,16 +158,34 @@ export function pctOf(tokens: number, ceiling: number): number {
  * clamped and noted; explicit values that do not fit are refused, so an
  * operator who asked for something impossible hears about it rather than
  * getting something else.
+ *
+ * Explicitness is per line: `explicit` names the lines the operator set,
+ * and a line it leaves out is a default that may be clamped to fit the
+ * others. Without it, every line is explicit unless `fromDefaults` is set.
  */
 export function resolveThresholds(
   specs: ThresholdSpecs,
   model: string | undefined,
   declaredWindow: number | undefined,
-  options: { fromDefaults?: boolean; reserveTokens?: number } = {},
+  options: { fromDefaults?: boolean; explicit?: Partial<Record<keyof ThresholdSpecs, boolean>>; reserveTokens?: number } = {},
 ): ResolveResult {
+  const isSet = (key: keyof ThresholdSpecs) => !options.fromDefaults && (options.explicit ? options.explicit[key] === true : true);
+  const set = { notice: isSet("noticeAt"), warn: isSet("warnAt"), compact: isSet("compactAt") };
   let parsed: ReturnType<typeof validateSpecs>;
   try {
-    parsed = validateSpecs(specs);
+    // The order check at load time is for lines the operator wrote; a
+    // default out of order with them is clamped below, once in tokens.
+    parsed = {
+      notice: parseTokenSpec(specs.noticeAt, "compact notice threshold"),
+      warn: parseTokenSpec(specs.warnAt, "compact warning threshold"),
+      compact: parseTokenSpec(specs.compactAt, "compact threshold"),
+    };
+    if (set.notice && set.warn && parsed.notice.kind === parsed.warn.kind && parsed.notice.value > parsed.warn.value) {
+      throw new Error(`the notice threshold (${parsed.notice.raw}) must not exceed the warning threshold (${parsed.warn.raw}).`);
+    }
+    if (set.warn && set.compact && parsed.warn.kind === parsed.compact.kind && parsed.warn.value > parsed.compact.value) {
+      throw new Error(`the warning threshold (${parsed.warn.raw}) must not exceed the compact threshold (${parsed.compact.raw}).`);
+    }
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
@@ -182,7 +200,7 @@ export function resolveThresholds(
   const fmt = (n: number) => n.toLocaleString("en-US");
 
   if (compactTokens > capTokens) {
-    if (options.fromDefaults) {
+    if (!set.compact) {
       notes.push(`the default compact threshold (${parsed.compact.raw} = ${fmt(compactTokens)}) is above what this ${fmt(declared)}-token window can hold; clamped to ${fmt(capTokens)}`);
       compactTokens = capTokens;
       clamped = true;
@@ -194,7 +212,7 @@ export function resolveThresholds(
     return { ok: false, error: `the compact threshold ${parsed.compact.raw} (${fmt(compactTokens)} tokens) is not above Pi's retained history of ${fmt(KEEP_RECENT_TOKENS)} tokens: a compaction there would have nothing to cut.` };
   }
   if (warnTokens > compactTokens) {
-    if (options.fromDefaults) {
+    if (!set.warn) {
       notes.push(`the default warning threshold exceeds the compact threshold; clamped to ${fmt(compactTokens)}`);
       warnTokens = compactTokens;
       clamped = true;
@@ -203,7 +221,7 @@ export function resolveThresholds(
     }
   }
   if (noticeTokens > warnTokens) {
-    if (options.fromDefaults) {
+    if (!set.notice) {
       notes.push(`the default notice threshold exceeds the warning threshold; clamped to ${fmt(warnTokens)}`);
       noticeTokens = warnTokens;
       clamped = true;
@@ -307,7 +325,13 @@ export function specsFromEnv(env: Record<string, string | undefined> = process.e
 }
 
 /** The three lines one seat runs under, with which entries applied and whether any of them was set by the operator. */
-export function specsForModel(lists: SpecLists, model: string | undefined): { specs: ThresholdSpecs; fromDefaults: boolean; matched: Partial<Record<keyof ThresholdSpecs, string>> } {
+export function specsForModel(lists: SpecLists, model: string | undefined): {
+  specs: ThresholdSpecs;
+  fromDefaults: boolean;
+  /** Which lines the operator set for this seat; the others are defaults that may be clamped to fit them. */
+  explicit: Record<keyof ThresholdSpecs, boolean>;
+  matched: Partial<Record<keyof ThresholdSpecs, string>>;
+} {
   const notice = specForModel(lists.noticeAt, DEFAULT_SPECS.noticeAt, model);
   const warn = specForModel(lists.warnAt, DEFAULT_SPECS.warnAt, model);
   const compact = specForModel(lists.compactAt, DEFAULT_SPECS.compactAt, model);
@@ -318,6 +342,7 @@ export function specsForModel(lists: SpecLists, model: string | undefined): { sp
   return {
     specs: { noticeAt: notice.value, warnAt: warn.value, compactAt: compact.value },
     fromDefaults: !notice.explicit && !warn.explicit && !compact.explicit,
+    explicit: { noticeAt: notice.explicit, warnAt: warn.explicit, compactAt: compact.explicit },
     matched,
   };
 }

@@ -456,7 +456,7 @@ export function registerSelfCompact(pi: ExtensionAPI, deps: SelfCompactDeps): Se
     // operator wrote any, else the seat value, else the default.
     const seat = specsForModel(deps.specs, model);
     const fromDefaults = deps.fromDefaults || seat.fromDefaults;
-    const result = resolveThresholds(seat.specs, model, ctx.model?.contextWindow, { fromDefaults });
+    const result = resolveThresholds(seat.specs, model, ctx.model?.contextWindow, { fromDefaults, explicit: seat.explicit });
     if (result.ok) {
       R.thresholds = result.thresholds;
       R.configError = undefined;
