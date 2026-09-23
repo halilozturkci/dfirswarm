@@ -30,6 +30,11 @@ timeline for the disk, and `windows.info`, the process lists, the command
 lines and the network scan for the memory image. Read `catalog/` before
 running the same commands again.
 
+Volatility's symbol tables for this case come from
+`isf-server.techanarchy.net`: the kickoff has to allow that host
+(`--allow-host isf-server.techanarchy.net`, as the published memory runs
+did) unless the operator put the tables under `inputs/`.
+
 ### Questions the report has to answer
 
 1. System profile, and proof that the two images are one host: computer
@@ -38,7 +43,10 @@ running the same commands again.
    memory (`windows.registry.hivelist`, `printkey`), the boot time and
    uptime in memory against the last boot the System log records, the
    capture time of each image and the gap between them, the time zone the
-   host kept, and whether either image is incomplete.
+   host kept, whether either image is incomplete, and the acquisition tool's
+   own traces (its process, its driver in `modules`/`driverscan`, its handle
+   to `\Device\PhysicalMemory`, and on disk its file, service and Prefetch),
+   named and set aside.
 2. What memory shows that disk does not: every process with parent,
    command line, path, user and start time (`pslist`, `psscan`, `pstree`,
    `cmdline`), the regions `malfind` flags and the modules `ldrmodules`
@@ -104,6 +112,12 @@ running the same commands again.
   (`--allow-host`). If it cannot, say so on the board and work from what
   `strings`, `yara` over the raw layer and a forged pool-tag scanner give
   you; every `windows.*` plugin, `psscan` included, needs the ISF.
+- A `hiberfil.sys` is not a live capture. Volatility reads it only where
+  its build has a hibernation layer; otherwise convert it once into
+  `work/extracted/<your id>/` with a hibernation decompressor if one is
+  here, or a forged one, hash the result and read that; if neither works,
+  say so. Its state is the moment of hibernation: report that time as
+  such, never as a capture time.
 - If `SWARM.md` has an "Evidence catalog" section, the first pass is already
   done: read `catalog/` instead of rebuilding it.
 - If `skill` is in your tool list, this run carries packs: call it once with

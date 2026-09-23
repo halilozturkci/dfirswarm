@@ -96,9 +96,20 @@ Read `catalog/` before running the same commands again.
   `tsk_recover`; E01 files are read natively), libewf (`ewfinfo` for the
   acquisition record and hashes), Volatility 3 (`vol`) if a memory image is
   present, `regipy` and `python-evtx` (Python 3.12), `strings`, `sqlite3`,
-  `openssl`, `yara` where rules are at hand. There is no root:
-  no mounting, no `sudo`. Volatility fetches a symbol table only when the
-  kickoff allowed that host; if it cannot, say so and work from `strings`.
+  `esedbexport` (libesedb) for SRUDB.dat, `openssl`, `yara` where rules are
+  at hand. There is no root: no mounting, no `sudo`. Volatility needs a
+  symbol table for this kernel; it fetches one from the ISF server when the
+  kickoff allowed that host (`--allow-host isf-server.techanarchy.net`). If
+  it cannot, say so on the board and work from `strings`, `yara` over the
+  raw layer and a forged pool-tag scanner: every `windows.*` plugin needs
+  the ISF. Say what a symbol table would have added.
+- Read shadow copies in place with `vshadowinfo` and `pyvshadow`
+  (libvshadow) where this host has them; the toolbox does not ship them, and
+  `dfvfs` from `--toolbox crypto` reads a shadow store only with `pyvshadow`
+  beside it. If neither is here, say so and report only the evidence of VSS
+  state (the catalog file `{3808876b-c176-4e48-b7ae-04046e6cc752}` under
+  `System Volume Information`, its size, the VSS events), never "no shadow
+  copies".
 - If `SWARM.md` has an "Evidence catalog" section, the first pass is already
   done: read `catalog/` instead of rebuilding it.
 - If `skill` is in your tool list, this run carries packs: call it once with
@@ -141,8 +152,8 @@ Read `catalog/` before running the same commands again.
   what you established up to that point; forge a tool with `make_tool` where
   a small script closes the gap (a rename-pattern counter over the USN
   journal, a header sampler), and share it; a peer may find `usn_journal`,
-  `evtx_query`, `regkv`, `sig_carve`, `yara_scan` or `volrun` already
-  seeded.
+  `evtx_query`, `regkv`, `sig_carve`, `yara_scan`, `esedb_query` or `volrun`
+  already seeded.
 - Recovery is reported, not performed on the evidence: what you carve or
   copy goes under `work/extracted/<your id>/`, hashed, with the path and
   the method. Where memory or disk holds key material, the report says so

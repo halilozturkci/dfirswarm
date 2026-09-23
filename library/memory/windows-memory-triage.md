@@ -24,13 +24,21 @@ ask. If `SWARM.md` has an "Evidence catalog" section, the kickoff already
 ran `windows.info`, the process lists, the command lines, the network
 scan, `malfind` and `dlllist` into `catalog/`; read those before running them again.
 
+Volatility's symbol tables for this case come from
+`isf-server.techanarchy.net`: the kickoff has to allow that host
+(`--allow-host isf-server.techanarchy.net`, as the published memory runs
+did) unless the operator put the tables under `inputs/`.
+
 ### Questions the report has to answer
 
 1. System profile: the image's format and size, the Windows build and
    kernel, the capture time and the uptime, the logged-on users and their
    sessions (`windows.info`, `windows.sessions`, `windows.getsids`,
    `windows.registry.hivelist`), and whether the image is consistent (a
-   truncated or smeared capture is a finding, not a failure).
+   truncated or smeared capture is a finding, not a failure), and the
+   acquisition tool's own traces (its process, its driver in
+   `modules`/`driverscan`, its handle to `\Device\PhysicalMemory`), named
+   and set aside.
 2. What was running: every process with parent, command line, path, user,
    start time and session (`pslist`, `psscan`, `pstree`, `cmdline`,
    `getsids`), the ones that should not be there, the ones hidden from one
@@ -74,6 +82,12 @@ scan, `malfind` and `dlllist` into `catalog/`; read those before running them ag
   cannot, say so on the board and work from what `strings`, `yara` over the raw layer and a forged
   pool-tag (`Proc`) scanner give you: every `windows.*` plugin, `psscan`
   included, needs the ISF. Say what a symbol table would have added.
+- A `hiberfil.sys` is not a live capture. Volatility reads it only where
+  its build has a hibernation layer; otherwise convert it once into
+  `work/extracted/<your id>/` with a hibernation decompressor if one is
+  here, or a forged one, hash the result and read that; if neither works,
+  say so. Its state is the moment of hibernation: report that time as
+  such, never as a capture time.
 - If `SWARM.md` has an "Evidence catalog" section, the first pass is already
   done: read `catalog/` instead of rebuilding it.
 - If `skill` is in your tool list, this run carries packs: call it once with

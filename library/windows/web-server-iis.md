@@ -98,7 +98,13 @@ Read `catalog/` before running the same commands again.
   `tsk_recover`; E01 files are read natively), libewf (`ewfinfo` for the
   acquisition record and hashes), Volatility 3 (`vol`) if a memory image is
   present, `regipy` and `python-evtx` (Python 3.12), `strings`, `sqlite3`,
-  `openssl`. There is no root: no mounting, no `sudo`.
+  `esedbexport` (libesedb) for SRUDB.dat, `openssl`. There is no root: no
+  mounting, no `sudo`. Volatility needs a symbol table for this kernel; it
+  fetches one from the ISF server when the kickoff allowed that host
+  (`--allow-host isf-server.techanarchy.net`). If it cannot, say so on the
+  board and work from `strings`, `yara` over the raw layer and a forged
+  pool-tag scanner: every `windows.*` plugin needs the ISF. Say what a
+  symbol table would have added.
 - If `SWARM.md` has an "Evidence catalog" section, the first pass is already
   done: read `catalog/` instead of rebuilding it.
 - If `skill` is in your tool list, this run carries packs: call it once with
@@ -142,7 +148,8 @@ Read `catalog/` before running the same commands again.
   what you established up to that point; forge a tool with `make_tool` where
   a small script closes the gap (a W3C log parser into SQLite, a web-root
   diff against the journal), and share it; a peer may find `evtx_query`,
-  `regkv`, `usn_journal`, `sqlite_query` or `volrun` already seeded.
+  `regkv`, `usn_journal`, `sqlite_query`, `esedb_query` or `volrun` already
+  seeded.
 - A configuration file in the web root may hold the database's connection
   string. That it was readable by the web process, and whether the attacker
   read it, is the finding; the string itself is not copied into the report,

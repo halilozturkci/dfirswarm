@@ -89,7 +89,10 @@ ran the first pass; read `catalog/` before running the same commands again.
   `make_tool` so every peer reads the same tables; the three providers
   name the same facts differently and the parser is where the names are
   reconciled. There is no root, and no tenant to query: the exports are
-  the whole of the evidence.
+  the whole of the evidence. If `signin_analyse` is already in your tool
+  list, that is the parser: load its output into the sqlite tables and forge
+  only what it lacks. Its default `limit` is 500 records, so set it
+  explicitly or take counts from sqlite, never from a capped tool result.
 - If `SWARM.md` has an "Evidence catalog" section, the first pass is already
   done: read `catalog/` instead of rebuilding it.
 - If `skill` is in your tool list, this run carries packs: call it once with

@@ -80,7 +80,8 @@ sources, already extracted.
   (`mmls`, `fsstat`, `fls -m` for a body file, `icat` for `$MFT`,
   `$LogFile` and `$UsnJrnl:$J`, `mactime` to render a body file; E01 files
   are read natively), Volatility 3 (`vol`, when the kickoff allowed the
-  symbol server) on memory, `plaso` (`log2timeline.py`, `psort.py`) where
+  symbol server `isf-server.techanarchy.net`) on memory, `plaso`
+  (`log2timeline.py`, `psort.py`) where
   it is installed, `regipy` and `python-evtx` (Python 3.12), `grep`,
   `zcat`, `awk`, `sort`, `sqlite3` and `python3` on logs; a peer may find
   `usn_journal`, `evtx_query`, `regkv`, `prefetch_mam`, `amcache_apps`,

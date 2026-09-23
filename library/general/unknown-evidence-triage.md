@@ -85,7 +85,8 @@ not recognise, because that is where this run begins.
   present for archives; look one level in with The Sleuth Kit (`mmls`,
   `fsstat`, `fls`, `icat` for a hive or a configuration file; E01 files are
   read natively), Volatility 3 (`vol`, `windows.info` or `banners.Banners`
-  only, when the kickoff allowed the symbol server), `regipy`, `head`,
+  only, when the kickoff allowed the symbol server
+  `isf-server.techanarchy.net`), `regipy`, `head`,
   `zcat`, `strings`, `sqlite3` and `python3`. There is no root: no mounting,
   no `sudo`.
 - If `SWARM.md` has an "Evidence catalog" section, the first pass is already

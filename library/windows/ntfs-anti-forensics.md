@@ -81,6 +81,13 @@ same commands again.
   acquisition record and hashes), `regipy` and `python-evtx` (Python 3.12)
   for the hives and event logs that date the tampering, `strings`,
   `sqlite3`, `exiftool`. There is no root: no mounting, no `sudo`.
+- Read shadow copies in place with `vshadowinfo` and `pyvshadow`
+  (libvshadow) where this host has them; the toolbox does not ship them, and
+  `dfvfs` from `--toolbox crypto` reads a shadow store only with `pyvshadow`
+  beside it. If neither is here, say so and report only the evidence of VSS
+  state (the catalog file `{3808876b-c176-4e48-b7ae-04046e6cc752}` under
+  `System Volume Information`, its size, the VSS events), never "no shadow
+  copies".
 - If `SWARM.md` has an "Evidence catalog" section, the first pass is already
   done: read `catalog/` instead of rebuilding it.
 - If `skill` is in your tool list, this run carries packs: call it once with

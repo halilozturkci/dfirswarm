@@ -29,6 +29,13 @@ what it did not ask. If `SWARM. For a
 Linux capture it holds only the note that `windows.info` failed: run
 `banners.Banners` yourselves, once, and post the result.
 
+Volatility's symbol tables for this case come from
+`isf-server.techanarchy.net`: the kickoff has to allow that host
+(`--allow-host isf-server.techanarchy.net`, as the published memory runs
+did) unless the operator put the tables under `inputs/`; that server covers
+common distribution kernels only, so a table the operator supplies is the
+reliable route.
+
 ### Questions the report has to answer
 
 1. The capture and the symbols: the format (a LiME file opens every range

@@ -28,6 +28,11 @@ already ran `windows.info`, the process lists, the command lines and the
 network scan for every image into `catalog/`; read those before running
 them again.
 
+Volatility's symbol tables for this case come from
+`isf-server.techanarchy.net`: the kickoff has to allow that host
+(`--allow-host isf-server.techanarchy.net`, as the published memory runs
+did) unless the operator put the tables under `inputs/`.
+
 ### Questions the report has to answer
 
 1. System profile per dump: the image's format and size, the Windows build
@@ -36,7 +41,10 @@ them again.
    `windows.registry.hivelist`), whether the image is whole (a smeared or
    truncated capture is a finding, not a failure), and whether two dumps
    are one host at two moments or two hosts (computer name, SIDs, boot
-   time, MAC address, the same PIDs with the same start times).
+   time, MAC address, the same PIDs with the same start times), and the
+   acquisition tool's own traces (its process, its driver in
+   `modules`/`driverscan`, its handle to `\Device\PhysicalMemory`), named
+   and set aside.
 2. The ransomware processes: every process that is the ransomware or its
    launcher, with parent chain, command line, path, user, start time and
    session (`pslist`, `psscan`, `pstree`, `cmdline`, `getsids`); how each
@@ -104,6 +112,12 @@ them again.
   work from what `strings`, `yara` over the raw layer and a forged
   pool-tag (`Proc`) scanner give you: every `windows.*` plugin, `psscan`
   included, needs the ISF. Say what a symbol table would add.
+- A `hiberfil.sys` is not a live capture. Volatility reads it only where
+  its build has a hibernation layer; otherwise convert it once into
+  `work/extracted/<your id>/` with a hibernation decompressor if one is
+  here, or a forged one, hash the result and read that; if neither works,
+  say so. Its state is the moment of hibernation: report that time as
+  such, never as a capture time.
 - If `SWARM.md` has an "Evidence catalog" section, the first pass is already
   done: read `catalog/` instead of rebuilding it.
 - If `skill` is in your tool list, this run carries packs: call it once with

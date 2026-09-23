@@ -80,7 +80,8 @@ before touching the images.
   or `read` an image whole. Sweep images in place with The Sleuth Kit
   (`fls -m` for a body file, `icat` for a file to hash, `blkls` for
   unallocated; E01 files are read natively), memory with Volatility 3
-  (`vol`) when the kickoff allowed the symbol server and with `strings`
+  (`vol`) when the kickoff allowed the symbol server
+  `isf-server.techanarchy.net` and with `strings`
   either way, logs with `grep`, `zcat`, `awk` and `python3`, captures with
   `tshark` or `tcpdump -r` where present, rules with `yara`; a peer may find
   `ioc_scan`, `chunk_needles`, `yara_scan`, `catalog_search`,

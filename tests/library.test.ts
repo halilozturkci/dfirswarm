@@ -212,6 +212,11 @@ test("every entry that ships keeps the library's contract", async () => {
     for (const must of ["read-only", "work/extracted/<your id>/", "`record`", "kind=ioc", "labelled as one", "Never make a network request", "make_tool", "English", "`skill` is in your tool list"]) {
       if (!rules.includes(must)) bad(id, `ground rules do not say: ${must}`);
     }
+    // Volatility's windows.* plugins need an ISF; under the default netguard
+    // they fail unless the kickoff allowed the symbol server by name.
+    if (/Volatility/.test(body) && !body.includes("isf-server.techanarchy.net")) {
+      bad(id, "lists Volatility but does not name the symbol server (--allow-host isf-server.techanarchy.net)");
+    }
     const divide = flat(section(body, /^##\s+How to divide the work\s*$/));
     for (const must of ["name(name, doing)", "sign-off", "ledger/ledger.md", "cannot be the one who certifies"]) {
       if (!divide.includes(must)) bad(id, `division of work does not say: ${must}`);

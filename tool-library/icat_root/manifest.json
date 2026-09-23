@@ -1,6 +1,6 @@
 {
   "name": "icat_root",
-  "description": "Extract an inode from an EXT4 volume with icat. The Webserver case's image and its 503808-byte offset are the defaults; image and offset name any other.",
+  "description": "Extract an inode from an EXT4 volume with icat. The Webserver case's image and its 503808-sector offset are the defaults; image and offset name any other.",
   "params": {
     "inode": {
       "type": "integer",
@@ -16,7 +16,7 @@
     },
     "offset": {
       "type": "integer",
-      "description": "Volume offset in bytes (default 503808)"
+      "description": "Volume offset in sectors for icat -o (default 503808)"
     }
   },
   "runtime": "python3",

@@ -70,7 +70,8 @@ there, because the budget does not allow a second pass.
   (the hives, the event logs, `$MFT`, Prefetch, Amcache, the browser
   profiles are already files), on an image in place with The Sleuth Kit
   (`mmls`, `fls`, `icat`; E01 files are read natively), on memory with
-  Volatility 3 (`vol`, when the kickoff allowed the symbol server), with
+  Volatility 3 (`vol`, when the kickoff allowed the symbol server
+  `isf-server.techanarchy.net`), with
   `regipy` and `python-evtx` (Python 3.12), `grep`, `zcat`, `strings`,
   `sqlite3` and `python3`; a peer may find `evtx_query`, `regkv`,
   `prefetch_mam`, `amcache_apps`, `usn_journal`, `csearch` and

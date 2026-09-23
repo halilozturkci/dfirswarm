@@ -253,10 +253,16 @@ table for a question set, an extracted-artefact directory for a memory dump.
 - **Write a check the runner cannot parse.** One line, one code span, no
   backticks inside it; `bash -n` must accept it; it runs from the sandbox
   root with stdin closed and a wall-clock limit.
-- **Assume the network.** The default kickoff guards it. A memory case says
-  which symbol server it needs (`--allow-host`); a CTF forbids looking the
-  answers up; a case that needs installs says so and leaves the decision to
-  the kickoff.
+- **Assume the network.** The default kickoff guards it. An entry that
+  lists Volatility names the symbol server it needs
+  (`--allow-host isf-server.techanarchy.net`, the host every published
+  memory run allowed) and says what the agents do when it is unreachable; a
+  CTF forbids looking the answers up; a case that needs installs says so
+  and leaves the decision to the kickoff.
+- **Leave a reader unnamed.** A question that needs a parser the default
+  toolbox may lack (ESE for SRUM and WebCache, shadow copies, XFS, a
+  multi-segment LVM volume) names the tool that reads it, the set that
+  ships it, and what the report says when none is present.
 - **Exceed the console's limit.** 32,000 characters. An entry is 6,000 to
   14,000: enough to be specific, short enough to be read.
 

@@ -95,8 +95,9 @@ before running the same commands again.
   (`mmls`, `fsstat`, `fls`, `istat`, `icat`, `ifind`, `blkls`, `jls`,
   `tsk_recover`; E01 files are read natively), libewf (`ewfinfo` for the
   acquisition record and hashes), `regipy` and `python-evtx` (Python 3.12),
-  `strings`, `sqlite3`, `exiftool`, `openssl`. There is no root: no
-  mounting, no `sudo`.
+  `strings`, `sqlite3`, `esedbexport` (libesedb) for SRUDB.dat and
+  Windows.edb, `exiftool`, `openssl`. There is no root: no mounting, no
+  `sudo`.
 - If `SWARM.md` has an "Evidence catalog" section, the first pass is already
   done: read `catalog/` instead of rebuilding it.
 - If `skill` is in your tool list, this run carries packs: call it once with
@@ -137,8 +138,8 @@ before running the same commands again.
   what you established up to that point; forge a tool with `make_tool` where
   a small script closes the gap (a shellbag walker, a jump-list parser, a
   USB device summariser), and share it; a peer may find `lnk_parse`,
-  `regkv`, `usn_journal`, `browser_history`, `recyclebin_i` or
-  `evtx_query` already seeded.
+  `regkv`, `usn_journal`, `browser_history`, `recyclebin_i`, `evtx_query` or
+  `esedb_query` already seeded.
 - An artefact says what an account did, not who sat at the keyboard. Say
   which of the two every conclusion rests on, and what ties the account to
   the person in the window (the session, the badge time the brief gives).

@@ -98,7 +98,10 @@ ran the first pass; read `catalog/` before running the same commands again.
   file the record came from), the findings, the flows and the credential
   report beside it, and forge that loader with `make_tool` so every peer
   reads the same tables. There is no root, and no account to query: the
-  exports are the whole of the evidence.
+  exports are the whole of the evidence. If `cloudtrail_parse` is already in
+  your tool list, that is the parser: load its output into the sqlite tables
+  and forge only what it lacks. Its default `limit` is 500 records, so set
+  it explicitly or take counts from sqlite, never from a capped tool result.
 - If `SWARM.md` has an "Evidence catalog" section, the first pass is already
   done: read `catalog/` instead of rebuilding it.
 - If `skill` is in your tool list, this run carries packs: call it once with

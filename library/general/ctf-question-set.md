@@ -75,7 +75,8 @@ into `catalog/`; read those before running the same commands again.
   `tsk_recover`; E01 files are read natively), libewf (`ewfinfo` for the
   acquisition record and hashes), `tar` and `unzip` for a phone
   acquisition, Volatility 3 (`vol`, when the kickoff allowed the symbol
-  server), `regipy` and `python-evtx` (Python 3.12), `sqlite3`, `plutil` where the host is a
+  server `isf-server.techanarchy.net`), `regipy` and `python-evtx` (Python
+  3.12), `sqlite3`, `plutil` where the host is a
   Mac (else Python's `plistlib`),
   `strings`, `exiftool`, `yara`, a carver where one is present (else `sig_carve` or
   `file_carver` from the tool library), `openssl` and `gpg`; a peer may

@@ -88,9 +88,11 @@ commands again.
 - `inputs/` is read-only and stays byte-for-byte what it was. Never `cat` or
   `read` an image whole. Work on images in place with The Sleuth Kit
   (`mmls`, `fsstat`, `fls`, `istat`, `icat`, `ifind`, `blkls`, `jls`,
-  `tsk_recover`; E01 is read natively, as is EXT4; XFS is not, so a RHEL-family root
-  needs a forged superblock and inode B+tree reader, or a logical export
-  from the operator — say which on the board), libewf
+  `tsk_recover`; E01 is read natively, as is EXT4; XFS may not be: run
+  `fls -f list` first, and if xfs is listed this build reads it; otherwise
+  read it with `dfvfs` if `--toolbox crypto` put it here, or ask the
+  operator for a logical export, before forging a superblock and inode
+  B+tree reader — say which on the board), libewf
   (`ewfinfo` for the acquisition record and hashes), `strings`, `sqlite3`,
   `python3` (3.12), `openssl`, `gpg`. Read the journal with
   `journalctl --file` if this host has it, else forge a parser; read the
@@ -105,6 +107,14 @@ commands again.
   for a single-LV volume group that is usually the PV start plus 2048
   sectors. Prove the offset with `fsstat`. EXT4 journal and deleted inodes
   are reachable with `jls`, `istat`, `icat` and `blkls`.
+- The LVM metadata area keeps several copies: the one with the highest
+  `seqno` is current, and an older copy that shows a logical volume deleted
+  or resized is evidence to record. Every offset is in 512-byte sectors: PV
+  start + `pe_start` + (the segment's first physical extent x
+  `extent_size`). A logical volume with more than one segment is contiguous
+  only to the end of its first, so one `-o` reads only that far: map the
+  rest with `dfvfs` (libvslvm) if `--toolbox crypto` put it here, or forge a
+  segment mapper.
 - If `SWARM.md` has an "Evidence catalog" section, the first pass is already
   done: read `catalog/` instead of rebuilding it.
 - If `skill` is in your tool list, this run carries packs: call it once with
@@ -143,7 +153,8 @@ commands again.
 - Before you forge, call `tools`: the Linux toolset is what `--toolbox linux`
   checks at kickoff, and a peer may find `fls_root`, `icat_root`,
   `icat_extract` already seeded from
-  earlier Linux runs — name the `image` and `offset` for this disk, never
+  earlier Linux runs — name the `image` and the `offset` for this disk (in
+  512-byte sectors, the value `fls -o` takes and `fsstat -o` proved), never
   their case defaults.
 
 ## How to divide the work
