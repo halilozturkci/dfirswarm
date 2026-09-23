@@ -77,17 +77,28 @@ export function parseTokenSpec(raw: string | undefined, label: string): TokenSpe
   return { kind: "tokens", value: n, raw: text };
 }
 
-/** Load-time validation, before the model window is known. Throws on the first bad value. */
-export function validateSpecs(specs: ThresholdSpecs): { notice: TokenSpec; warn: TokenSpec; compact: TokenSpec } {
+/**
+ * Load-time validation, before the model window is known. Throws on the
+ * first bad value. The order is checked only between lines the operator
+ * set (`explicit`, every line when it is left out) and written in the same
+ * unit; a default out of order is fitted to them later, in tokens.
+ */
+export function validateSpecs(
+  specs: ThresholdSpecs,
+  explicit: Partial<Record<keyof ThresholdSpecs, boolean>> = { noticeAt: true, warnAt: true, compactAt: true },
+): { notice: TokenSpec; warn: TokenSpec; compact: TokenSpec } {
   const notice = parseTokenSpec(specs.noticeAt, "compact notice threshold");
   const warn = parseTokenSpec(specs.warnAt, "compact warning threshold");
   const compact = parseTokenSpec(specs.compactAt, "compact threshold");
-  const sameUnit = (a: TokenSpec, b: TokenSpec) => a.kind === b.kind;
-  if (sameUnit(notice, warn) && notice.value > warn.value) {
+  const outOfOrder = (a: TokenSpec, b: TokenSpec) => a.kind === b.kind && a.value > b.value;
+  if (explicit.noticeAt && explicit.warnAt && outOfOrder(notice, warn)) {
     throw new Error(`the notice threshold (${notice.raw}) must not exceed the warning threshold (${warn.raw}).`);
   }
-  if (sameUnit(warn, compact) && warn.value > compact.value) {
+  if (explicit.warnAt && explicit.compactAt && outOfOrder(warn, compact)) {
     throw new Error(`the warning threshold (${warn.raw}) must not exceed the compact threshold (${compact.raw}).`);
+  }
+  if (explicit.noticeAt && explicit.compactAt && outOfOrder(notice, compact)) {
+    throw new Error(`the notice threshold (${notice.raw}) must not exceed the compact threshold (${compact.raw}).`);
   }
   return { notice, warn, compact };
 }
@@ -160,8 +171,12 @@ export function pctOf(tokens: number, ceiling: number): number {
  * getting something else.
  *
  * Explicitness is per line: `explicit` names the lines the operator set,
- * and a line it leaves out is a default that may be clamped to fit the
- * others. Without it, every line is explicit unless `fromDefaults` is set.
+ * and a line it leaves out is a default that is fitted between them. A
+ * default above an operator line below it rises to that line (the compact
+ * line no higher than the window holds); a default above the line over it
+ * drops below it in the defaults' own proportion (40 : 50 : 60), so the
+ * three levels stay apart. Without `explicit`, every line is explicit
+ * unless `fromDefaults` is set. Errors name only lines the operator set.
  */
 export function resolveThresholds(
   specs: ThresholdSpecs,
@@ -173,19 +188,7 @@ export function resolveThresholds(
   const set = { notice: isSet("noticeAt"), warn: isSet("warnAt"), compact: isSet("compactAt") };
   let parsed: ReturnType<typeof validateSpecs>;
   try {
-    // The order check at load time is for lines the operator wrote; a
-    // default out of order with them is clamped below, once in tokens.
-    parsed = {
-      notice: parseTokenSpec(specs.noticeAt, "compact notice threshold"),
-      warn: parseTokenSpec(specs.warnAt, "compact warning threshold"),
-      compact: parseTokenSpec(specs.compactAt, "compact threshold"),
-    };
-    if (set.notice && set.warn && parsed.notice.kind === parsed.warn.kind && parsed.notice.value > parsed.warn.value) {
-      throw new Error(`the notice threshold (${parsed.notice.raw}) must not exceed the warning threshold (${parsed.warn.raw}).`);
-    }
-    if (set.warn && set.compact && parsed.warn.kind === parsed.compact.kind && parsed.warn.value > parsed.compact.value) {
-      throw new Error(`the warning threshold (${parsed.warn.raw}) must not exceed the compact threshold (${parsed.compact.raw}).`);
-    }
+    parsed = validateSpecs(specs, { noticeAt: set.notice, warnAt: set.warn, compactAt: set.compact });
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
@@ -198,6 +201,21 @@ export function resolveThresholds(
   let warnTokens = toTokens(parsed.warn, ceiling);
   let noticeTokens = toTokens(parsed.notice, ceiling);
   const fmt = (n: number) => n.toLocaleString("en-US");
+  const line = (name: string, spec: TokenSpec, tokens: number) => `the ${name} threshold ${spec.raw} (${fmt(tokens)} tokens)`;
+  const holds = `the ${fmt(capTokens)} this ${fmt(declared)}-token window can hold once ${fmt(reserve)} reserve and ${fmt(HEADROOM_TOKENS)} headroom are kept`;
+  // Where a default drops to when it sits above the line over it.
+  const share = (below: keyof ThresholdSpecs, above: keyof ThresholdSpecs) => parseTokenSpec(DEFAULT_SPECS[below], below).value / parseTokenSpec(DEFAULT_SPECS[above], above).value;
+
+  // Two operator lines in different units are only comparable in tokens.
+  if (set.notice && set.warn && noticeTokens > warnTokens) {
+    return { ok: false, error: `${line("notice", parsed.notice, noticeTokens)} is above ${line("warning", parsed.warn, warnTokens)}.` };
+  }
+  if (set.warn && set.compact && warnTokens > compactTokens) {
+    return { ok: false, error: `${line("warning", parsed.warn, warnTokens)} is above ${line("compact", parsed.compact, compactTokens)}.` };
+  }
+  if (set.notice && set.compact && noticeTokens > compactTokens) {
+    return { ok: false, error: `${line("notice", parsed.notice, noticeTokens)} is above ${line("compact", parsed.compact, compactTokens)}.` };
+  }
 
   if (compactTokens > capTokens) {
     if (!set.compact) {
@@ -205,29 +223,41 @@ export function resolveThresholds(
       compactTokens = capTokens;
       clamped = true;
     } else {
-      return { ok: false, error: `the compact threshold ${parsed.compact.raw} (${fmt(compactTokens)} tokens) is above the ${fmt(capTokens)} this ${fmt(declared)}-token window can hold once ${fmt(reserve)} reserve and ${fmt(HEADROOM_TOKENS)} headroom are kept.` };
+      return { ok: false, error: `${line("compact", parsed.compact, compactTokens)} is above ${holds}.` };
+    }
+  }
+  if (!set.compact) {
+    const below = set.warn && (!set.notice || warnTokens >= noticeTokens)
+      ? { name: "warning", spec: parsed.warn, tokens: warnTokens }
+      : set.notice ? { name: "notice", spec: parsed.notice, tokens: noticeTokens } : undefined;
+    if (below && below.tokens > compactTokens) {
+      if (below.tokens > capTokens) return { ok: false, error: `${line(below.name, below.spec, below.tokens)} is above ${holds}.` };
+      notes.push(`the default compact threshold (${parsed.compact.raw} = ${fmt(compactTokens)}) is below the ${below.name} threshold ${below.spec.raw}; raised to ${fmt(below.tokens)}`);
+      compactTokens = below.tokens;
+      clamped = true;
     }
   }
   if (compactTokens <= KEEP_RECENT_TOKENS) {
-    return { ok: false, error: `the compact threshold ${parsed.compact.raw} (${fmt(compactTokens)} tokens) is not above Pi's retained history of ${fmt(KEEP_RECENT_TOKENS)} tokens: a compaction there would have nothing to cut.` };
+    return { ok: false, error: `${set.compact ? line("compact", parsed.compact, compactTokens) : `the default compact threshold ${parsed.compact.raw} (${fmt(compactTokens)} tokens)`} is not above Pi's retained history of ${fmt(KEEP_RECENT_TOKENS)} tokens: a compaction there would have nothing to cut.` };
   }
-  if (warnTokens > compactTokens) {
-    if (!set.warn) {
-      notes.push(`the default warning threshold exceeds the compact threshold; clamped to ${fmt(compactTokens)}`);
-      warnTokens = compactTokens;
+  if (!set.warn) {
+    if (warnTokens > compactTokens) {
+      const to = Math.floor(compactTokens * share("warnAt", "compactAt"));
+      notes.push(`the default warning threshold (${parsed.warn.raw} = ${fmt(warnTokens)}) is above the compact threshold; lowered to ${fmt(to)}, in the defaults' proportion`);
+      warnTokens = to;
       clamped = true;
-    } else {
-      return { ok: false, error: `the warning threshold ${parsed.warn.raw} (${fmt(warnTokens)} tokens) is above the compact threshold ${parsed.compact.raw} (${fmt(compactTokens)} tokens).` };
+    }
+    if (set.notice && noticeTokens > warnTokens) {
+      notes.push(`the default warning threshold (${parsed.warn.raw} = ${fmt(warnTokens)}) is below the notice threshold ${parsed.notice.raw}; raised to ${fmt(noticeTokens)}`);
+      warnTokens = noticeTokens;
+      clamped = true;
     }
   }
-  if (noticeTokens > warnTokens) {
-    if (!set.notice) {
-      notes.push(`the default notice threshold exceeds the warning threshold; clamped to ${fmt(warnTokens)}`);
-      noticeTokens = warnTokens;
-      clamped = true;
-    } else {
-      return { ok: false, error: `the notice threshold ${parsed.notice.raw} (${fmt(noticeTokens)} tokens) is above the warning threshold ${parsed.warn.raw} (${fmt(warnTokens)} tokens).` };
-    }
+  if (!set.notice && noticeTokens > warnTokens) {
+    const to = Math.floor(warnTokens * share("noticeAt", "warnAt"));
+    notes.push(`the default notice threshold (${parsed.notice.raw} = ${fmt(noticeTokens)}) is above the warning threshold; lowered to ${fmt(to)}, in the defaults' proportion`);
+    noticeTokens = to;
+    clamped = true;
   }
   return {
     ok: true,

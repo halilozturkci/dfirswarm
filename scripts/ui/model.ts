@@ -44,7 +44,7 @@ export type RegistryRun = {
   hard_kill?: boolean;
   tool_forging?: boolean;
   /** The kickoff's self-compaction options; absent on runs older than the feature. */
-  self_compact?: { enabled: boolean; notice_at: string; warn_at: string; compact_at: string; prompt: string | null; model?: string | null };
+  self_compact?: { enabled: boolean; notice_at: string; warn_at: string; compact_at: string; prompt: string | null; model?: string | null; set?: { notice_at: boolean; warn_at: boolean; compact_at: boolean } };
   /** How much post text one inbox/wait delivery carries; absent on runs older than the bound. */
   inbox_page_chars?: number;
   inputs?: { source: string; files: number; bytes: number; enforce: string; guard: string } | null;

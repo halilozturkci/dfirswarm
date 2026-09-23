@@ -199,6 +199,8 @@ export type SelfCompactOptions = {
   prompt: string | null;
   /** The model every summary call goes to; null means each agent's own. Absent on runs older than the option. */
   model?: string | null;
+  /** Which lines the operator set; an unset one is a default fitted to them per seat. Absent on older runs. */
+  set?: { notice_at: boolean; warn_at: boolean; compact_at: boolean };
 };
 
 export type BudgetRecord = {

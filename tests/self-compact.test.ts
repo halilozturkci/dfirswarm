@@ -40,6 +40,8 @@ test("specs parse as tokens, k/m suffixes, or percentages, and refuse the rest",
   for (const bad of ["", "abc", "150.5", "120%", "-1"]) assert.throws(() => parseTokenSpec(bad, "x"), `${JSON.stringify(bad)} is refused`);
   assert.throws(() => validateSpecs({ noticeAt: "70%", warnAt: "50%", compactAt: "60%" }), /notice threshold .* must not exceed/);
   assert.throws(() => validateSpecs({ noticeAt: "40%", warnAt: "70%", compactAt: "60%" }), /warning threshold .* must not exceed/);
+  assert.throws(() => validateSpecs({ noticeAt: "70%", warnAt: "50%", compactAt: "60%" }, { noticeAt: true, compactAt: true }), /notice threshold \(70%\) must not exceed the compact threshold/);
+  assert.doesNotThrow(() => validateSpecs({ noticeAt: "55%", warnAt: "50%", compactAt: "60%" }, { noticeAt: true }), "only lines the operator set are held to each other");
 });
 
 test("the ceiling table: what the run data taught, model by model", () => {
@@ -136,30 +138,39 @@ test("the specs come from the pane's environment as lists, and a seat resolves t
   assert.deepEqual(specForModel({ value: "", byModel: [] }, "60%", undefined), { value: "60%", explicit: false });
 });
 
-test("one explicit compact line below the default warning clamps the unset lines instead of turning compaction off", () => {
+test("one explicit line out of order with a default fits the default to it instead of turning compaction off", () => {
   // As the extension resolves a seat: the pane's lists, the seat's model, its window.
-  const seatResolve = (env: Record<string, string>, model: string, window: number) => {
+  const seatResolve = (env: Record<string, string>, model = "openai/gpt-5.4", window = 272_000) => {
     const seat = specsForModel(specsFromEnv(env).specs, model);
     return resolveThresholds(seat.specs, model, window, { fromDefaults: seat.fromDefaults, explicit: seat.explicit });
   };
-  const pct = seatResolve({ SWARM_COMPACT_AT: "45%" }, "openai/gpt-5.4", 272_000);
-  assert.ok(pct.ok, pct.ok ? "" : pct.error);
-  assert.equal(pct.thresholds.compactTokens, 122_400, "the operator's line is kept");
-  assert.equal(pct.thresholds.warnTokens, 122_400, "the default warning is clamped down to it");
-  assert.equal(pct.thresholds.noticeTokens, 108_800, "the default notice still fits");
-  assert.ok(pct.thresholds.clamped && pct.thresholds.notes.some((n) => /default warning/.test(n)), JSON.stringify(pct.thresholds.notes));
-  const tokens = seatResolve({ SWARM_COMPACT_AT: "100k" }, "openai/gpt-5.4", 272_000);
-  assert.ok(tokens.ok, tokens.ok ? "" : tokens.error);
-  assert.equal(tokens.thresholds.compactTokens, 100_000);
-  assert.equal(tokens.thresholds.warnTokens, 100_000);
-  assert.equal(tokens.thresholds.noticeTokens, 100_000, "the default notice follows the clamped warning");
-  // Two lines the operator wrote that conflict are still refused, whatever the defaults do.
-  const both = seatResolve({ SWARM_COMPACT_AT: "45%", SWARM_COMPACT_WARN_AT: "50%" }, "openai/gpt-5.4", 272_000);
-  assert.ok(!both.ok && /warning threshold .* must not exceed|warning threshold .* is above/.test(both.error), both.ok ? "" : both.error);
-  const noticeOver = seatResolve({ SWARM_COMPACT_AT: "45%", SWARM_COMPACT_NOTICE_AT: "48%" }, "openai/gpt-5.4", 272_000);
-  assert.ok(!noticeOver.ok && /notice threshold/.test(noticeOver.error), noticeOver.ok ? "" : noticeOver.error);
+  const lines = (r: ReturnType<typeof seatResolve>) => (r.ok ? [r.thresholds.noticeTokens, r.thresholds.warnTokens, r.thresholds.compactTokens] : r.error);
+  // A compact line below the default warning: the defaults scale down with it, 40 : 50 : 60, so the three levels stay apart.
+  const pct = seatResolve({ SWARM_COMPACT_AT: "45%" });
+  assert.deepEqual(lines(pct), [81_600, 102_000, 122_400], "the operator's line is kept; the defaults keep their proportions below it");
+  assert.ok(pct.ok && pct.thresholds.clamped && pct.thresholds.notes.some((n) => /default warning threshold .* lowered/.test(n)), JSON.stringify(pct.ok && pct.thresholds.notes));
+  assert.deepEqual(lines(seatResolve({ SWARM_COMPACT_AT: "100k" })), [66_666, 83_333, 100_000]);
+  // A notice line above the default warning: the default warning rises to it and stays under the compact line.
+  const notice = seatResolve({ SWARM_COMPACT_NOTICE_AT: "55%" });
+  assert.deepEqual(lines(notice), [149_600, 149_600, 163_200]);
+  assert.ok(notice.ok && notice.thresholds.notes.some((n) => /default warning threshold .* below the notice threshold 55%; raised/.test(n)), JSON.stringify(notice.ok && notice.thresholds.notes));
+  assert.deepEqual(lines(seatResolve({ SWARM_COMPACT_NOTICE_AT: "55%", SWARM_COMPACT_AT: "70%" })), [149_600, 149_600, 190_400], "two operator lines in order are kept, whatever default sits between them");
+  // A warning line above the default compact line: the default compact line rises to it, within what the window holds.
+  const warn = seatResolve({ SWARM_COMPACT_WARN_AT: "65%" });
+  assert.deepEqual(lines(warn), [108_800, 176_800, 176_800]);
+  assert.ok(warn.ok && warn.thresholds.notes.some((n) => /default compact threshold .* below the warning threshold 65%; raised/.test(n)), JSON.stringify(warn.ok && warn.thresholds.notes));
+  const warnTooHigh = seatResolve({ SWARM_COMPACT_WARN_AT: "90%" });
+  assert.ok(!warnTooHigh.ok && /^the warning threshold 90% \(244,800 tokens\) is above the 223,616 this 272,000-token window can hold/.test(warnTooHigh.error), lines(warnTooHigh).toString());
+  // Two lines the operator wrote that conflict are still refused, and the message names only those two, with their own values.
+  const both = seatResolve({ SWARM_COMPACT_AT: "45%", SWARM_COMPACT_WARN_AT: "50%" });
+  assert.ok(!both.ok && /warning threshold \(50%\) must not exceed the compact threshold \(45%\)/.test(both.error), lines(both).toString());
+  const noticeOver = seatResolve({ SWARM_COMPACT_AT: "45%", SWARM_COMPACT_NOTICE_AT: "48%" });
+  assert.ok(!noticeOver.ok && /notice threshold \(48%\) must not exceed the compact threshold \(45%\)/.test(noticeOver.error), lines(noticeOver).toString());
+  const mixed = seatResolve({ SWARM_COMPACT_NOTICE_AT: "150k", SWARM_COMPACT_AT: "45%" });
+  assert.ok(!mixed.ok, lines(mixed).toString());
+  assert.equal(mixed.error, "the notice threshold 150k (150,000 tokens) is above the compact threshold 45% (122,400 tokens).");
   // An explicit compact line the window cannot hold is still refused, not clamped.
-  const tooHigh = seatResolve({ SWARM_COMPACT_AT: "95%" }, "openai/gpt-5.4", 272_000);
+  const tooHigh = seatResolve({ SWARM_COMPACT_AT: "95%" });
   assert.ok(!tooHigh.ok && /window can hold/.test(tooHigh.error));
 });
 

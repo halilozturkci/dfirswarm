@@ -2496,6 +2496,7 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
     --arg compact_notice_at "${compact_notice_at:-40%}" \
     --arg compact_warn_at "${compact_warn_at:-50%}" \
     --arg compact_at "${compact_at:-60%}" \
+    --arg compact_set "${compact_notice_at:+n}${compact_warn_at:+w}${compact_at:+c}" \
     --arg compact_prompt "$compact_prompt" \
     --arg compact_model "$compact_model" \
     --arg inbox_page_chars "${inbox_page_chars:-40000}" \
@@ -2546,6 +2547,7 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
         notice_at: $compact_notice_at,
         warn_at: $compact_warn_at,
         compact_at: $compact_at,
+        set: {notice_at: ($compact_set | contains("n")), warn_at: ($compact_set | contains("w")), compact_at: ($compact_set | contains("c"))},
         prompt: (if $compact_prompt == "" then null else $compact_prompt end),
         model: (if $compact_model == "" then null else $compact_model end)
       },
@@ -2566,7 +2568,11 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
   echo "Isolated cwd: $sandbox"
   echo "N:            $n (${agent_ids[*]})"
   if [[ "$self_compact" -eq 1 ]]; then
-    echo "Compaction:   self (notice ${compact_notice_at:-40%} · warning ${compact_warn_at:-50%} · compact ${compact_at:-60%} of each model's ceiling${compact_model:+ · summaries by $compact_model})"
+    # A line left unset next to one that is set is a default the extension
+    # fits to it per seat, so its number here is not the line it runs at.
+    local compact_fit=""
+    if [[ -n "$compact_notice_at$compact_warn_at$compact_at" ]]; then compact_fit=" (default, fitted)"; fi
+    echo "Compaction:   self (notice ${compact_notice_at:-40%$compact_fit} · warning ${compact_warn_at:-50%$compact_fit} · compact ${compact_at:-60%$compact_fit} of each model's ceiling${compact_model:+ · summaries by $compact_model})"
   else
     echo "Compaction:   Pi's own only (self-compaction off)"
   fi

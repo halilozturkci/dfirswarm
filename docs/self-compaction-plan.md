@@ -279,7 +279,10 @@ its hard line at 90% of the window; here the compact line never sits above
 fits, and never inside Pi's retained `keepRecentTokens`, where a compaction
 would have nothing to cut. An explicit value that does not fit is refused at
 kickoff; a default that does not fit a small window is clamped and noted on
-the trace (`compact_config`).
+the trace (`compact_config`). A line the operator leaves unset is a default
+fitted to the lines they set: it rises to a higher operator line below it,
+drops below a lower one above it in the 40 : 50 : 60 proportion, and is
+noted the same way; only two operator lines out of order are refused.
 
 | Model | notice | warning | compact | room to the real wall |
 | --- | --- | --- | --- | --- |

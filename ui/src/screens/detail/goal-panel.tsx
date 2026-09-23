@@ -56,12 +56,18 @@ function frameFacts(view: SwarmView): Fact[] {
   // Absent on runs older than the feature; those say nothing rather than "off".
   const selfCompact = view.registry?.self_compact;
   if (selfCompact && typeof selfCompact === "object") {
+    // A line the operator left unset next to one they set is a default
+    // fitted to it per seat; its number is not the line the agents ran at.
+    const set = selfCompact.set;
+    const fitted = set && (set.notice_at || set.warn_at || set.compact_at);
+    const shown = (spec: string | undefined, fallback: string, isSet: boolean | undefined) => `${spec || fallback}${fitted && !isSet ? " (default, fitted)" : ""}`;
     out.push({
       label: "Self compaction",
       value: selfCompact.enabled
-        ? `on · notice ${selfCompact.notice_at || "40%"} · warning ${selfCompact.warn_at || "50%"} · compact ${selfCompact.compact_at || "60%"}${selfCompact.model ? ` · summaries by ${selfCompact.model}` : ""}`
+        ? `on · notice ${shown(selfCompact.notice_at, "40%", set?.notice_at)} · warning ${shown(selfCompact.warn_at, "50%", set?.warn_at)} · compact ${shown(selfCompact.compact_at, "60%", set?.compact_at)}${selfCompact.model ? ` · summaries by ${selfCompact.model}` : ""}`
         : "off",
-      title: "Whether agents compacted their own context, the three lines against each model's ceiling (per-model entries after a comma), and the model the summaries went to",
+      title:
+        "Whether agents compacted their own context, the three lines against each model's ceiling (per-model entries after a comma), and the model the summaries went to. A default marked fitted was moved to fit the lines the operator set; each agent's compact_config trace row has the numbers it ran at",
     });
   }
   // Absent on runs older than the bound; those say nothing rather than a number they never had.
