@@ -106,29 +106,33 @@ if [[ $# -eq 0 && "$DRY_RUN" -eq 0 ]]; then
 fi
 
 # Absolute, resolved paths: the kernel matches on what a path really is.
-ABS=()
-for dir in ${RO[@]+"${RO[@]}"}; do
-  if [[ ! -d "$dir" ]]; then
-    echo "fsguard: --ro $dir is not a directory" >&2
+#
+# canon_dir <flag> <dir> sets CANON_DIR to the resolved directory, or exits 2
+# when it is not one. It sets a global rather than printing so that it is not
+# called in $( ), where the exit would only leave the subshell. Call it as a
+# bare statement, never in `&&` or `if`, so set -e still covers the cd.
+CANON_DIR=""
+canon_dir() {
+  if [[ ! -d "$2" ]]; then
+    echo "fsguard: $1 $2 is not a directory" >&2
     exit 2
   fi
-  ABS+=("$(cd "$dir" && pwd -P)")
+  CANON_DIR="$(cd "$2" && pwd -P)"
+}
+ABS=()
+for dir in ${RO[@]+"${RO[@]}"}; do
+  canon_dir --ro "$dir"
+  ABS+=("$CANON_DIR")
 done
 RW_ABS=()
 for dir in ${RW[@]+"${RW[@]}"}; do
-  if [[ ! -d "$dir" ]]; then
-    echo "fsguard: --rw $dir is not a directory" >&2
-    exit 2
-  fi
-  RW_ABS+=("$(cd "$dir" && pwd -P)")
+  canon_dir --rw "$dir"
+  RW_ABS+=("$CANON_DIR")
 done
 NOEXEC_ABS=()
 for dir in ${NOEXEC[@]+"${NOEXEC[@]}"}; do
-  if [[ ! -d "$dir" ]]; then
-    echo "fsguard: --noexec $dir is not a directory" >&2
-    exit 2
-  fi
-  NOEXEC_ABS+=("$(cd "$dir" && pwd -P)")
+  canon_dir --noexec "$dir"
+  NOEXEC_ABS+=("$CANON_DIR")
 done
 
 # The canonical form of a path that may not exist yet.

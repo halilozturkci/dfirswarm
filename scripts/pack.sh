@@ -266,10 +266,6 @@ sys.exit(1 if errors else 0)
 PYEOF
 }
 
-read_json() { "$PY" -c 'import json,sys;d=json.load(sys.stdin);k=sys.argv[1].split(".");v=d
-for x in k: v=v[x] if isinstance(v,dict) else v
-print(v if not isinstance(v,(list,dict)) else json.dumps(v))' "$1"; }
-
 validate() { # <dir> <mode> -> prints the json summary, non-zero on error
   local dir="$1" mode="${2:-check}" out rc=0
   out="$("$PY" -c "$(validate_py)" "$dir" "$mode" 2>&1)" || rc=$?

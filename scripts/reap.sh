@@ -24,6 +24,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=lib/trace.sh
+. "$ROOT/scripts/lib/trace.sh"
 SANDBOX="${SWARM_SANDBOX:-$ROOT/sandbox}"
 TIMEOUT="${REAP_TIMEOUT:-960}"
 STOP=0
@@ -184,26 +186,7 @@ EOF
       args: {timeout_seconds: $timeout, reason: "stall"},
       result: {reaped: true, idle_seconds: $idle, last_activity: $last, locks_released: $released}}')"
   # Through the collector when there is one, so the chain stays unbroken.
-  if ! printf '%s' "$reap_line" | node "$ROOT/scripts/trace-emit.mjs" "$SANDBOX" 2>/dev/null; then
-    # Where the line goes depends on whether there is a chain to protect,
-    # which is a property of the file and not of the collector's liveness: a
-    # socket can exist and still be unreachable.
-    #
-    # An unchained record — no collector ran, and the kickoff and the report
-    # both say so — takes the append, consistent with every other line in it.
-    #
-    # A chained one must not. Appending there puts an unchained line into a
-    # chained record, and the verifier reports the file as "added by
-    # something other than the harness": a corruption alarm the harness
-    # raises against itself. The line is kept in the spill file instead,
-    # which the report reads, so nothing is lost and nothing is falsified.
-    if tail -n 1 "$SANDBOX/traces/events.jsonl" 2>/dev/null | grep -q '"prev":'; then
-      mkdir -p "$SANDBOX/work"
-      printf '%s\n' "$reap_line" >> "$SANDBOX/work/.trace-spill.jsonl"
-    else
-      printf '%s\n' "$reap_line" >> "$SANDBOX/traces/events.jsonl"
-    fi
-  fi
+  trace_emit "$ROOT" "$SANDBOX" "$reap_line"
   table_unlock
 
   if [[ "$STOP" -eq 1 ]]; then

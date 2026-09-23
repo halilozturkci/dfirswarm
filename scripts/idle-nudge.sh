@@ -32,6 +32,8 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=lib/trace.sh
+. "$ROOT/scripts/lib/trace.sh"
 SANDBOX=""
 IDLE_SEC="${SWARM_IDLE_SEC:-180}"
 NEWS_SEC="${SWARM_NEWS_SEC:-45}"
@@ -155,26 +157,7 @@ log_event() { # log_event <agent> <idle> <ok> <count>
   # here directly used to break the chain for the *next* line the collector
   # wrote, which with this watchdog on by default meant a run reporting its
   # own record as edited every three minutes.
-  if ! printf '%s' "$line" | node "$ROOT/scripts/trace-emit.mjs" "$SANDBOX" 2>/dev/null; then
-    # Where the line goes depends on whether there is a chain to protect,
-    # which is a property of the file and not of the collector's liveness: a
-    # socket can exist and still be unreachable.
-    #
-    # An unchained record — no collector ran, and the kickoff and the report
-    # both say so — takes the append, consistent with every other line in it.
-    #
-    # A chained one must not. Appending there puts an unchained line into a
-    # chained record, and the verifier reports the file as "added by
-    # something other than the harness": a corruption alarm the harness
-    # raises against itself. The line is kept in the spill file instead,
-    # which the report reads, so nothing is lost and nothing is falsified.
-    if tail -n 1 "$SANDBOX/traces/events.jsonl" 2>/dev/null | grep -q '"prev":'; then
-      mkdir -p "$SANDBOX/work"
-      printf '%s\n' "$line" >> "$SANDBOX/work/.trace-spill.jsonl"
-    else
-      printf '%s\n' "$line" >> "$SANDBOX/traces/events.jsonl"
-    fi
-  fi
+  trace_emit "$ROOT" "$SANDBOX" "$line"
 }
 
 # "id n idle_at_last_nudge" lines. The count is per silence: if the agent has
