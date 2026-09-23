@@ -38,20 +38,13 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   EVENTS_REL,
-  SENTINEL_REL,
-  normalizeBudget,
-  readEventLog,
-  readInputsManifest,
-  readLedger,
   readNames,
   verifyEventChain,
   type AgentBudget,
-  type BudgetRecord,
   type LedgerEntry,
-  type TeamRecord,
 } from "../extensions/protocol.ts";
 import { hashArtifacts, type ArtifactIndex } from "./artifacts.ts";
-import { findRunBySandbox } from "./run-record.ts";
+import { loadRunContext, readJsonFile } from "./run-record.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -78,6 +71,18 @@ import { escapeHtml, inline, markdownToHtml } from "../ui/src/lib/markdown.ts";
 /** One numbered section of a swarm's report that cites nothing checkable. */
 export type LintFinding = { section: string; reason: string };
 
+/**
+ * Does each numbered section cite something a reader can check?
+ *
+ * `docs/improvement-plan.md` B10 wrote this rule as "every `## N.` section
+ * cites at least one path under inputs/, catalog/ or work/". Applied to the
+ * fifteen delivered reports it rejects 57 of their 103 sections, because a
+ * forensic citation is usually not a path: it is an inode, a record id, an
+ * event id or a registry key. The rule below accepts any of those — a code
+ * span, a ledger seq, or an identifier that looks like one — and all fifteen
+ * pass. It warns and never fails: a report linter that blocks delivery is a
+ * linter operators turn off.
+ */
 export function lintReport(markdown: string): LintFinding[] {
   const findings: LintFinding[] = [];
   const lines = markdown.replace(/\r\n?/g, "\n").split("\n");
@@ -120,14 +125,6 @@ function parseFrontMatter(text: string): Record<string, string> {
     if (m) out[m[1]] = m[2].trim();
   }
   return out;
-}
-
-async function readJson<T>(file: string): Promise<T | null> {
-  try {
-    return JSON.parse(await readFile(file, "utf8")) as T;
-  } catch {
-    return null;
-  }
 }
 
 function usd(n: number): string {
@@ -656,22 +653,10 @@ export function egressLine(mode: string | undefined): string {
 }
 
 export async function renderReport(sandboxArg: string, options: ReportOptions = {}): Promise<string> {
-  const sandbox = resolve(sandboxArg);
-  const runsDir = options.runsDir ?? process.env.SWARM_RUNS_DIR ?? dirname(sandbox);
-  const run = await findRunBySandbox(sandbox, runsDir);
-  const teamRaw = await readJson<Partial<TeamRecord>>(join(sandbox, "team.json"));
-  const team: TeamRecord = {
-    swarm_id: teamRaw?.swarm_id ?? run?.id ?? "",
-    n: Number(teamRaw?.n) || (Array.isArray(teamRaw?.agents) ? teamRaw.agents.length : 0),
-    agents: Array.isArray(teamRaw?.agents) ? teamRaw.agents.filter((a) => a && typeof a.id === "string") : [],
-  };
-  const budgetRaw = await readJson<Partial<BudgetRecord>>(join(sandbox, "budget.json"));
-  const budget: BudgetRecord | null = budgetRaw ? normalizeBudget(budgetRaw) : null;
-  const events = [...(await readEventLog(sandbox))];
-  const sentinelText = await readFile(join(sandbox, SENTINEL_REL), "utf8").catch(() => null);
-  const sentinel = sentinelText === null ? null : parseFrontMatter(sentinelText);
-  const ledger = await readLedger(sandbox);
-  const inputs = await readInputsManifest(sandbox);
+  const { sandbox, run, team, budget, events, sentinel, ledger, inputs } = await loadRunContext(sandboxArg, {
+    runsDir: options.runsDir,
+    parseSentinel: parseFrontMatter,
+  });
   // The manifest says what was copied; the trace says what each pane measured
   // and what the final check found. The console joins them the same way in
   // `inputsView`, and the report must not state a guard the panes did not
@@ -707,7 +692,7 @@ export async function renderReport(sandboxArg: string, options: ReportOptions = 
         at: lastCheck.ts,
       }
     : null;
-  const toolbox = await readJson<{ preset?: string; present?: Array<{ name: string; version?: string }>; missing?: Array<{ name: string }> }>(join(sandbox, "toolbox.json"));
+  const toolbox = await readJsonFile<{ preset?: string; present?: Array<{ name: string; version?: string }>; missing?: Array<{ name: string }> }>(join(sandbox, "toolbox.json"));
   // What the run installed for itself, from the packages' own dist-info. A
   // report that cites a finding produced by a library has to be able to name
   // the library's version; before this it could not.
@@ -716,7 +701,7 @@ export async function renderReport(sandboxArg: string, options: ReportOptions = 
   // The anchor lives beside the registry, outside the sandbox: a trace
   // rewritten from its first line carries a chain that verifies against
   // itself, and only the anchor remembers how long the record was.
-  const anchor = await readJson<{ lines?: number; head?: string; prev_head?: string; pending?: boolean }>(
+  const anchor = await readJsonFile<{ lines?: number; head?: string; prev_head?: string; pending?: boolean }>(
     join(dirname(sandbox), `${basename(sandbox)}.trace-anchor.json`),
   );
   const anchorPoint =
@@ -724,9 +709,9 @@ export async function renderReport(sandboxArg: string, options: ReportOptions = 
       ? { lines: anchor.lines, head: anchor.head, prev_head: anchor.prev_head, pending: anchor.pending }
       : null;
   const chain = verifyEventChain(await readFile(join(sandbox, EVENTS_REL), "utf8").catch(() => ""), anchorPoint);
-  const toolchain = await readJson<{ packages?: Array<{ name: string; version: string; record_sha256?: string }> }>(join(sandbox, "toolchain.json"));
+  const toolchain = await readJsonFile<{ packages?: Array<{ name: string; version: string; record_sha256?: string }> }>(join(sandbox, "toolchain.json"));
   const artifacts = options.artifacts ?? (await hashArtifacts(sandbox));
-  const version = (await readJson<{ version?: string }>(join(ROOT, "package.json")))?.version ?? "0.0.0";
+  const version = (await readJsonFile<{ version?: string }>(join(ROOT, "package.json")))?.version ?? "0.0.0";
   const mark = await readFile(join(ROOT, "brand", "mark-mono.svg"), "utf8").catch(() => "");
   // What this run could reach, for the custody record. `netguard.allow` is the
   // kickoff's own statement of it; teardown used to delete that file with the
@@ -734,25 +719,22 @@ export async function renderReport(sandboxArg: string, options: ReportOptions = 
   // recorded" about a run whose allowlist had been enforced throughout. The
   // file is kept now, and where an older run has lost it the proxy's log still
   // names every host it let through — a weaker source, and said to be one.
-  const allowFile = (await readFile(join(sandbox, "netguard.allow"), "utf8").catch(() => "")).trim();
-  const allowFromLog = allowFile
+  const allowHosts = (await readFile(join(sandbox, "netguard.allow"), "utf8").catch(() => "")).trim();
+  const netguardLog = await readFile(join(sandbox, "traces", "netguard.log"), "utf8").catch(() => "");
+  const allowFromLog = allowHosts
     ? []
     : [
         ...new Set(
-          ((await readFile(join(sandbox, "traces", "netguard.log"), "utf8").catch(() => "")).match(/ALLOW connect ([^\s]+)/g) ?? []).map((m) =>
+          (netguardLog.match(/ALLOW connect ([^\s]+)/g) ?? []).map((m) =>
             m.replace("ALLOW connect ", ""),
           ),
         ),
       ].sort();
-  const allowHosts = allowFile;
   // What the run tried to reach and could not. On BelkaCTF #6 that list held
   // `bit.ly` — an agent resolving a shortened link it had read inside the
   // seized phone. A custody section that prints only what was allowed cannot
   // show the reader that it happened.
-  const deniedHosts = countHosts(
-    await readFile(join(sandbox, "traces", "netguard.log"), "utf8").catch(() => ""),
-    "DENY",
-  );
+  const deniedHosts = countHosts(netguardLog, "DENY");
   const names = await readNames(sandbox).catch(() => []);
   const chosen = new Map(names.map((n) => [n.id, n.doing ? `${n.name} — ${n.doing}` : n.name]));
 

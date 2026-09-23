@@ -14,23 +14,21 @@
  * registry entry still gets a summary from its files.
  */
 import { readdir, readFile, stat } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   SENTINEL_REL,
+  agentDeadPath,
+  agentDonePath,
   isSharedScratch,
-  normalizeBudget,
-  readEventLog,
-  readInputsManifest,
-  readLedger,
+  leadingCommand,
   readNames,
   type AgentBudget,
-  type BudgetRecord,
   type LedgerEntry,
   type SwarmEvent,
   type TeamRecord,
 } from "../extensions/protocol.ts";
-import { findRunBySandbox } from "./run-record.ts";
+import { loadRunContext, readJsonFile } from "./run-record.ts";
 
 type Marker = { id: string; marker: "done" | "dead" | "none"; reason: string; at: string };
 
@@ -40,15 +38,7 @@ type Toolbox = {
   missing?: Array<{ name: string; install?: string }>;
 };
 
-/** The first command word of a shell line, past env assignments and `cd x &&`. */
-export function leadingCommand(command: string): string {
-  let text = command.trim();
-  text = text.replace(/^cd\s+[^&;|\n]+(&&|;|\n)\s*/, "");
-  text = text.replace(/^(?:[A-Za-z_][A-Za-z0-9_]*=[^\s]*\s+)+/, "");
-  const word = text.split(/\s+/)[0] ?? "";
-  const base = word.split("/").pop() ?? word;
-  return /^[A-Za-z0-9_.+-]{1,40}$/.test(base) ? base : "";
-}
+export { leadingCommand };
 
 function parseFrontMatter(text: string): Record<string, string> {
   const attrs: Record<string, string> = {};
@@ -97,19 +87,11 @@ function pct(part: number, whole: number): string {
   return `${Math.round((part / whole) * 100)}%`;
 }
 
-async function readJson<T>(file: string): Promise<T | null> {
-  try {
-    return JSON.parse(await readFile(file, "utf8")) as T;
-  } catch {
-    return null;
-  }
-}
-
 async function readMarkers(sandbox: string, team: TeamRecord): Promise<Marker[]> {
   const out: Marker[] = [];
   for (const agent of team.agents) {
-    const done = await readFile(join(sandbox, "done", "agents", `${agent.id}.done`), "utf8").catch(() => null);
-    const dead = done === null ? await readFile(join(sandbox, "done", "agents", `${agent.id}.dead`), "utf8").catch(() => null) : null;
+    const done = await readFile(agentDonePath(sandbox, agent.id), "utf8").catch(() => null);
+    const dead = done === null ? await readFile(agentDeadPath(sandbox, agent.id), "utf8").catch(() => null) : null;
     const text = done ?? dead;
     if (text === null) {
       out.push({ id: agent.id, marker: "none", reason: "", at: "" });
@@ -158,28 +140,16 @@ function resultOf(event: SwarmEvent): Record<string, unknown> {
 }
 
 export async function summarize(sandboxArg: string, options: { runsDir?: string } = {}): Promise<string> {
-  const sandbox = resolve(sandboxArg);
-  const runsDir = options.runsDir ?? process.env.SWARM_RUNS_DIR ?? dirname(sandbox);
-  const run = await findRunBySandbox(sandbox, runsDir);
-  const teamRaw = await readJson<Partial<TeamRecord>>(join(sandbox, "team.json"));
-  const team: TeamRecord = {
-    swarm_id: teamRaw?.swarm_id ?? run?.id ?? "",
-    n: Number(teamRaw?.n) || (Array.isArray(teamRaw?.agents) ? teamRaw.agents.length : 0),
-    agents: Array.isArray(teamRaw?.agents) ? teamRaw.agents.filter((a) => a && typeof a.id === "string") : [],
-  };
-  const budgetRaw = await readJson<Partial<BudgetRecord>>(join(sandbox, "budget.json"));
-  const budget: BudgetRecord | null = budgetRaw ? normalizeBudget(budgetRaw) : null;
+  const { sandbox, run, team, budgetRaw, budget, events, sentinel, ledger, inputs } = await loadRunContext(sandboxArg, {
+    runsDir: options.runsDir,
+    parseSentinel: parseFrontMatter,
+  });
   const capPerAgent = Number(budgetRaw?.cap_per_agent_usd ?? run?.cap_per_agent_usd) || 0;
   const capPerModel = Object.entries(budget?.cap_per_model_usd ?? run?.cap_per_model_usd ?? {})
     .filter(([, cap]) => Number(cap) > 0)
     .sort((x, y) => x[0].localeCompare(y[0]));
-  const events = [...(await readEventLog(sandbox))];
-  const sentinelText = await readFile(join(sandbox, SENTINEL_REL), "utf8").catch(() => null);
-  const sentinel = sentinelText === null ? null : parseFrontMatter(sentinelText);
   const markers = await readMarkers(sandbox, team);
-  const ledger = await readLedger(sandbox);
-  const inputs = await readInputsManifest(sandbox);
-  const toolbox = await readJson<Toolbox>(join(sandbox, "toolbox.json"));
+  const toolbox = await readJsonFile<Toolbox>(join(sandbox, "toolbox.json"));
   const catalogReadme = await readFile(join(sandbox, "catalog", "README.md"), "utf8").catch(() => "");
   const catalogSummary = /^Summary:\s*(.+)$/m.exec(catalogReadme)?.[1]?.trim() ?? "";
 
@@ -320,18 +290,26 @@ export async function summarize(sandboxArg: string, options: { runsDir?: string 
     }
     lines.push("");
     const isTool = (name: string) => (e: SwarmEvent) => e.tool === name;
+    // One pass: every tool's event count, plus the implicit claims.
+    const toolCounts = new Map<unknown, number>();
+    let implicitClaims = 0;
+    for (const e of events) {
+      toolCounts.set(e.tool, (toolCounts.get(e.tool) ?? 0) + 1);
+      if (e.tool === "claim_file" && (e.args?.implicit === true || resultOf(e).implicit === true)) implicitClaims++;
+    }
+    const toolCount = (name: string) => toolCounts.get(name) ?? 0;
     const counters: Array<[string, number]> = [
-      ["claim violations", events.filter(isTool("claim_violation")).length],
-      ["implicit claims (shell writes turned into claims)", events.filter((e) => e.tool === "claim_file" && (e.args?.implicit === true || resultOf(e).implicit === true)).length],
-      ["inputs violations", events.filter(isTool("inputs_violation")).length],
-      ["inputs checks", events.filter(isTool("inputs_check")).length],
-      ["forge hints", events.filter(isTool("forge_hint")).length],
-      ["sentinel nudges", events.filter(isTool("sentinel_nudge")).length],
-      ["idle nudges", events.filter(isTool("idle_nudge")).length],
-      ["per-agent cap steers", events.filter(isTool("agent_cap_steer")).length],
-      ["per-agent cap stops", events.filter(isTool("agent_cap_stop")).length],
-      ["posts", events.filter(isTool("post")).length],
-      ["bash calls", events.filter(isTool("bash")).length],
+      ["claim violations", toolCount("claim_violation")],
+      ["implicit claims (shell writes turned into claims)", implicitClaims],
+      ["inputs violations", toolCount("inputs_violation")],
+      ["inputs checks", toolCount("inputs_check")],
+      ["forge hints", toolCount("forge_hint")],
+      ["sentinel nudges", toolCount("sentinel_nudge")],
+      ["idle nudges", toolCount("idle_nudge")],
+      ["per-agent cap steers", toolCount("agent_cap_steer")],
+      ["per-agent cap stops", toolCount("agent_cap_stop")],
+      ["posts", toolCount("post")],
+      ["bash calls", toolCount("bash")],
     ];
     lines.push("| Signal | Count |", "| --- | --- |");
     for (const [name, n] of counters) lines.push(`| ${name} | ${n} |`);
@@ -341,7 +319,7 @@ export async function summarize(sandboxArg: string, options: { runsDir?: string 
       lines.push("Forged tools:", "");
       for (const e of forged) {
         const name = String(e.args?.name ?? "?");
-        const calls = events.filter((x) => x.tool === name).length;
+        const calls = toolCount(name);
         lines.push(`- \`${name}\` by ${e.agent} at ${e.ts} (${String(e.args?.runtime ?? "?")}; called ${calls} time${calls === 1 ? "" : "s"})`);
       }
       lines.push("");

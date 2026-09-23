@@ -28,6 +28,7 @@ import { fileURLToPath } from "node:url";
 import { Type, type TSchema } from "typebox";
 import { specsFromEnv } from "./context-ceiling.ts";
 import { registerSelfCompact, type HandoffFacts, type SelfCompactHandle } from "./self-compact.ts";
+import { leadingCommand } from "./protocol.ts";
 import {
   type FinishLineRun,
   isSharedScratch,
@@ -228,17 +229,7 @@ export function isPeersScratch(pathKey: string, agentId: string, peers?: Readonl
   return peers ? peers.has(owner) : true;
 }
 
-/** The first command word of a shell line, past env assignments and `cd x &&`. */
-export function leadingCommand(command: string): string {
-  let text = command.trim();
-  // drop a leading `cd … &&` or `cd … ;`
-  text = text.replace(/^cd\s+[^&;|\n]+(&&|;|\n)\s*/, "");
-  // drop VAR=value prefixes
-  text = text.replace(/^(?:[A-Za-z_][A-Za-z0-9_]*=[^\s]*\s+)+/, "");
-  const word = text.split(/\s+/)[0] ?? "";
-  const base = word.split("/").pop() ?? word;
-  return /^[A-Za-z0-9_.+-]{1,40}$/.test(base) ? base : "";
-}
+export { leadingCommand };
 
 function ctxFrom(cwd: string, agentId?: string): SwarmContext {
   return createContext(cwd, agentId ?? resolveAgentId());

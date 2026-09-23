@@ -6,7 +6,19 @@
  * symlinked sandbox matched one document and missed the other.
  */
 import { readFile, realpath } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import {
+  SENTINEL_REL,
+  normalizeBudget,
+  readEventLog,
+  readInputsManifest,
+  readLedger,
+  type BudgetRecord,
+  type InputsManifest,
+  type LedgerEntry,
+  type SwarmEvent,
+  type TeamRecord,
+} from "../extensions/protocol.ts";
 
 export type RegistryRun = {
   id?: string;
@@ -71,4 +83,45 @@ export async function findRunBySandbox(sandbox: string, runsDir: string): Promis
     if (run?.sandbox && (await samePath(run.sandbox, sandbox))) return run;
   }
   return null;
+}
+
+export type RunContext = {
+  sandbox: string;
+  runsDir: string;
+  run: RegistryRun | null;
+  team: TeamRecord;
+  budgetRaw: Partial<BudgetRecord> | null;
+  budget: BudgetRecord | null;
+  events: SwarmEvent[];
+  sentinel: Record<string, string> | null;
+  ledger: LedgerEntry[];
+  inputs: InputsManifest | null;
+};
+
+/**
+ * The files the summary and the report both start from. The sentinel's front
+ * matter is parsed by the caller's own parser: the two documents read it
+ * differently and each must keep reading it the way it always has.
+ */
+export async function loadRunContext(
+  sandboxArg: string,
+  opts: { runsDir?: string; parseSentinel: (text: string) => Record<string, string> },
+): Promise<RunContext> {
+  const sandbox = resolve(sandboxArg);
+  const runsDir = opts.runsDir ?? process.env.SWARM_RUNS_DIR ?? dirname(sandbox);
+  const run = await findRunBySandbox(sandbox, runsDir);
+  const teamRaw = await readJsonFile<Partial<TeamRecord>>(join(sandbox, "team.json"));
+  const team: TeamRecord = {
+    swarm_id: teamRaw?.swarm_id ?? run?.id ?? "",
+    n: Number(teamRaw?.n) || (Array.isArray(teamRaw?.agents) ? teamRaw.agents.length : 0),
+    agents: Array.isArray(teamRaw?.agents) ? teamRaw.agents.filter((a) => a && typeof a.id === "string") : [],
+  };
+  const budgetRaw = await readJsonFile<Partial<BudgetRecord>>(join(sandbox, "budget.json"));
+  const budget: BudgetRecord | null = budgetRaw ? normalizeBudget(budgetRaw) : null;
+  const events = [...(await readEventLog(sandbox))];
+  const sentinelText = await readFile(join(sandbox, SENTINEL_REL), "utf8").catch(() => null);
+  const sentinel = sentinelText === null ? null : opts.parseSentinel(sentinelText);
+  const ledger = await readLedger(sandbox);
+  const inputs = await readInputsManifest(sandbox);
+  return { sandbox, runsDir, run, team, budgetRaw, budget, events, sentinel, ledger, inputs };
 }
