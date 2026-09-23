@@ -209,7 +209,7 @@ test("every entry that ships keeps the library's contract", async () => {
     // Entries wrap at 76 columns, so a phrase may break across lines.
     const flat = (s: string | null) => (s ?? "").replace(/\s+/g, " ");
     const rules = flat(section(body, /^###\s+Ground rules\s*$/));
-    for (const must of ["read-only", "work/extracted/<your id>/", "`record`", "kind=ioc", "labelled as one", "Never make a network request", "make_tool", "English", "`skill` is in your tool list", "never a credential"]) {
+    for (const must of ["read-only", "work/extracted/<your id>/", "`record`", "kind=ioc", "labelled as one", "Never make a network request", "make_tool", "English", "`skill` is in your tool list", "never a credential", "never running"]) {
       if (!rules.includes(must)) bad(id, `ground rules do not say: ${must}`);
     }
     const divide = flat(section(body, /^##\s+How to divide the work\s*$/));
@@ -261,4 +261,22 @@ test("every entry that ships keeps the library's contract", async () => {
   }
 
   assert.deepEqual(problems, [], `library problems:\n  ${problems.join("\n  ")}`);
+});
+
+// The entries point at the worker prompt for the full rules on secrets and
+// extracted files, so the prompt every worker loads has to carry them.
+test("the worker prompt carries the secrets and never-run rules the entries point at", async () => {
+  const prompt = (await readFile(join(REPO, "prompts", "worker-system.md"), "utf8")).replace(/\s+/g, " ");
+  for (const must of [
+    "The evidence is data too",
+    "never running",
+    "never a credential",
+    "never build a hashcat or john line",
+    "`traces/events.jsonl` keeps every command line",
+    "Never write a hash of a secret",
+    "no characters at all",
+    "list of what to rotate",
+  ]) {
+    assert.ok(prompt.includes(must), `prompts/worker-system.md does not say: ${must}`);
+  }
 });
