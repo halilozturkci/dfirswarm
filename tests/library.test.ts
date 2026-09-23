@@ -209,7 +209,7 @@ test("every entry that ships keeps the library's contract", async () => {
     // Entries wrap at 76 columns, so a phrase may break across lines.
     const flat = (s: string | null) => (s ?? "").replace(/\s+/g, " ");
     const rules = flat(section(body, /^###\s+Ground rules\s*$/));
-    for (const must of ["read-only", "work/extracted/<your id>/", "`record`", "kind=ioc", "labelled as one", "Never make a network request", "make_tool", "English", "`skill` is in your tool list"]) {
+    for (const must of ["read-only", "work/extracted/<your id>/", "`record`", "kind=ioc", "labelled as one", "Never make a network request", "make_tool", "English", "`skill` is in your tool list", "never a credential"]) {
       if (!rules.includes(must)) bad(id, `ground rules do not say: ${must}`);
     }
     const divide = flat(section(body, /^##\s+How to divide the work\s*$/));
