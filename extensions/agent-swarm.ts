@@ -28,9 +28,9 @@ import { fileURLToPath } from "node:url";
 import { Type, type TSchema } from "typebox";
 import { specsFromEnv } from "./context-ceiling.ts";
 import { registerSelfCompact, type HandoffFacts, type SelfCompactHandle } from "./self-compact.ts";
-import { leadingCommand } from "./protocol.ts";
 import {
   type FinishLineRun,
+  leadingCommand,
   isSharedScratch,
   finishLineVerdict,
   classifyTurnError,
@@ -229,7 +229,7 @@ export function isPeersScratch(pathKey: string, agentId: string, peers?: Readonl
   return peers ? peers.has(owner) : true;
 }
 
-export { leadingCommand };
+export { leadingCommand } from "./protocol.ts";
 
 function ctxFrom(cwd: string, agentId?: string): SwarmContext {
   return createContext(cwd, agentId ?? resolveAgentId());
