@@ -114,8 +114,6 @@ function readGoal(text: string) {
 
 /** What swarm.sh accepts for a compact line: 150000, 150k, 0.5m, or 60%, optionally followed by per-model overrides (60%,openai/gpt-5.4-mini=55%). */
 const COMPACT_SPEC = /^(?:[A-Za-z0-9][A-Za-z0-9._:-]*(?:\/[A-Za-z0-9][A-Za-z0-9._:-]*)?=)?\d+(?:\.\d+)?[kKmM%]?(?:\s*,\s*(?:[A-Za-z0-9][A-Za-z0-9._:-]*(?:\/[A-Za-z0-9][A-Za-z0-9._:-]*)?=)?\d+(?:\.\d+)?[kKmM%]?)*$/;
-/** A model ref as swarm.sh checks it: provider/id. */
-const COMPACT_MODEL_REF = /^[a-z0-9_.-]+\/[A-Za-z0-9_.:/-]+$/;
 
 type FormState = {
   mode: "single" | "team";
@@ -466,7 +464,7 @@ export function KickoffScreen() {
     if (form.wall_clock && (!Number.isInteger(Number(form.wall_clock)) || Number(form.wall_clock) < 1 || Number(form.wall_clock) > WALL_CLOCK_MAX)) out.push(`Wall clock must be whole minutes, 1–${WALL_CLOCK_MAX}.`);
     if (form.goal.trim() && !read.hasDod) out.push('The goal needs a "## Definition of done" heading — the swarm has to know when to stop.');
     if (form.self_compact && compactSpecs.some((spec) => spec && !COMPACT_SPEC.test(spec))) out.push("Compact thresholds are a token count (150k) or a percentage (60%), optionally with per-model overrides (60%,openai/gpt-5.4-mini=55%).");
-    if (form.self_compact && form.compact_model.trim() && !COMPACT_MODEL_REF.test(form.compact_model.trim())) out.push("The summary model is provider/id.");
+    if (form.self_compact && form.compact_model.trim() && !MODEL_REF.test(form.compact_model.trim())) out.push("The summary model is provider/id.");
     if (form.inbox_page_chars.trim() && !/^\d{1,9}$/.test(form.inbox_page_chars.trim())) out.push("The inbox page is a whole number of characters (0 for no bound).");
     return out;
   }, [form, effectiveModel, capNum, capTokensNum, allLocal, notLocal, chosenModels.length, hostList.length, teamMode, effectiveN, read.hasDod, compactSpecs]);

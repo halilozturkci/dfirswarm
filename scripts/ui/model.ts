@@ -27,7 +27,8 @@ import {
   type SwarmDetail,
   type SwarmSummary,
 } from "../../extensions/observe.ts";
-import { readEventLog, type PostRecord, type SwarmEvent } from "../../extensions/protocol.ts";
+import { agentDeadPath, agentDonePath, readEventLog, type PostRecord, type SwarmEvent } from "../../extensions/protocol.ts";
+import { isFailureEvent } from "../../ui/src/lib/event-taxonomy.ts";
 import { countChecks } from "./goals.ts";
 
 export type RegistryRun = {
@@ -197,14 +198,6 @@ export type AgentRow = AgentView & {
   marker_info: MarkerInfo | null;
 };
 
-/** A tool call the agent would count as having gone wrong. */
-export function isFailureEvent(e: SwarmEvent): boolean {
-  if (e.tool === "claim_violation") return true;
-  const r = e.result;
-  if (!isRecord(r)) return false;
-  return r.ok === false || typeof r.error === "string" || r.timed_out === true || r.blocked === true;
-}
-
 export type WorkFile = {
   path: string;
   name: string;
@@ -350,8 +343,8 @@ async function countMarkers(sandbox: string, ids: string[]): Promise<{ done: num
   let done = 0;
   let dead = 0;
   for (const id of ids) {
-    if (await exists(join(sandbox, "done", "agents", `${id}.done`))) done += 1;
-    else if (await exists(join(sandbox, "done", "agents", `${id}.dead`))) dead += 1;
+    if (await exists(agentDonePath(sandbox, id))) done += 1;
+    else if (await exists(agentDeadPath(sandbox, id))) dead += 1;
   }
   return { done, dead };
 }
@@ -500,15 +493,6 @@ export async function listWorkFiles(sandbox: string, maxDepth = 3): Promise<Work
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** Resolve a `work/...` request path inside the sandbox; null when it escapes. */
-export function resolveWorkPath(sandbox: string, rel: string): string | null {
-  const root = resolve(sandbox, "work");
-  const abs = resolve(root, rel);
-  const back = relative(root, abs);
-  if (back === "" || back.startsWith("..") || back.split(sep).includes("..")) return null;
-  return abs;
-}
-
 export type WorkFileError = { error: 400 | 404 | 409; message: string };
 
 /**
@@ -570,9 +554,9 @@ export function deriveCallsign(posts: PostRecord[], agentId: string): string | n
 async function readMarkerInfo(sandbox: string, agent: AgentView): Promise<MarkerInfo | null> {
   const file =
     agent.marker === "done"
-      ? join(sandbox, "done", "agents", `${agent.id}.done`)
+      ? agentDonePath(sandbox, agent.id)
       : agent.marker === "dead"
-        ? join(sandbox, "done", "agents", `${agent.id}.dead`)
+        ? agentDeadPath(sandbox, agent.id)
         : null;
   if (!file) return null;
   const text = await readFile(file, "utf8").catch(() => "");
@@ -819,8 +803,16 @@ export async function inputsView(sandbox: string, events: readonly SwarmEvent[])
 /** Manifests from tools/ joined with the calls the trace recorded under each name. */
 export async function forgedToolRows(sandbox: string, events: readonly SwarmEvent[]): Promise<ForgedToolRow[]> {
   const manifests = await listForgedTools(sandbox).catch(() => [] as ForgedToolManifest[]);
+  // One pass over the trace, grouped by tool, instead of one filter per manifest.
+  const callsByTool = new Map<string, SwarmEvent[]>();
+  for (const e of events) {
+    if (!isRecord(e.result) || e.result.forged !== true) continue;
+    const list = callsByTool.get(e.tool);
+    if (list) list.push(e);
+    else callsByTool.set(e.tool, [e]);
+  }
   return manifests.map((m) => {
-    const calls = events.filter((e) => e.tool === m.name && isRecord(e.result) && e.result.forged === true);
+    const calls = callsByTool.get(m.name) ?? [];
     return {
       ...m,
       calls: calls.length,

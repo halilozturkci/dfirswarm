@@ -678,7 +678,6 @@ export class ActionRunner {
   }
 }
 
-const MODEL_ID = /^[a-z0-9_.-]+\/[A-Za-z0-9_.:/-]+$/;
 const PROVIDER = /^[a-z0-9_.-]+$/;
 const MODEL_SLUG = /^[A-Za-z0-9_.:/-]+$/;
 
@@ -687,7 +686,7 @@ export function parseModelList(text: string): string[] {
   for (const line of text.split("\n")) {
     const parts = line.trim().split(/\s+/);
     const first = parts[0] ?? "";
-    if (MODEL_ID.test(first)) {
+    if (MODEL_REF.test(first)) {
       out.add(first);
       continue;
     }
@@ -696,7 +695,7 @@ export function parseModelList(text: string): string[] {
     if (first === "provider" || second === "model") continue;
     if (parts.length >= 3 && PROVIDER.test(first) && MODEL_SLUG.test(second)) {
       const id = `${first}/${second}`;
-      if (MODEL_ID.test(id)) out.add(id);
+      if (MODEL_REF.test(id)) out.add(id);
     }
   }
   return [...out];

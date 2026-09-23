@@ -147,22 +147,3 @@ export function markdownToHtml(markdown: string, headingOffset = 0): string {
   closeAll();
   return out.join("\n");
 }
-
-// ---------------------------------------------------------------------------
-// The lint
-// ---------------------------------------------------------------------------
-
-export type LintFinding = { section: string; reason: string };
-
-/**
- * Does each numbered section cite something a reader can check?
- *
- * `docs/improvement-plan.md` B10 wrote this rule as "every `## N.` section
- * cites at least one path under inputs/, catalog/ or work/". Applied to the
- * fifteen delivered reports it rejects 57 of their 103 sections, because a
- * forensic citation is usually not a path: it is an inode, a record id, an
- * event id or a registry key. The rule below accepts any of those — a code
- * span, a ledger seq, or an identifier that looks like one — and all fifteen
- * pass. It warns and never fails: a report linter that blocks delivery is a
- * linter operators turn off.
- */

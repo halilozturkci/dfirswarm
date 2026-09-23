@@ -13,6 +13,7 @@ import {
   readAgentMarker,
   readEventLog,
   readPost,
+  swarmDoneExists,
   type AgentMarker,
   type BudgetRecord,
   type ClaimView,
@@ -95,13 +96,16 @@ async function readJson<T>(path: string, fallback: T): Promise<T> {
   }
 }
 
-async function exists(path: string): Promise<boolean> {
-  try {
-    await stat(path);
-    return true;
-  } catch {
-    return false;
+/** Snapshot history of each top-level entry under work/, keyed by its path; entries with none are left out. */
+export async function readHistory(sandbox: string): Promise<Record<string, FileVersion[]>> {
+  const history: Record<string, FileVersion[]> = {};
+  const workFiles = await readdir(join(sandbox, "work")).catch(() => []);
+  for (const name of workFiles) {
+    const rel = `work/${name}`;
+    const versions = await listFileHistory(sandbox, rel);
+    if (versions.length) history[rel] = versions;
   }
+  return history;
 }
 
 export async function loadRegistry(runsDir: string): Promise<Record<string, unknown>[]> {
@@ -128,7 +132,7 @@ async function summaryOf(runsDir: string, run: Record<string, unknown>): Promise
     tokens: budget.tokens,
     calls: budget.calls,
     sandbox,
-    done: await exists(join(sandbox, "done", "SWARM_DONE")),
+    done: await swarmDoneExists(sandbox),
   };
 }
 
@@ -256,13 +260,7 @@ export async function readSwarmDetail(
 
   const traces: SwarmEvent[] = (await readEventLog(sandbox)).slice(-traceLimit);
 
-  const history: Record<string, FileVersion[]> = {};
-  const workFiles = await readdir(join(sandbox, "work")).catch(() => []);
-  for (const name of workFiles) {
-    const rel = `work/${name}`;
-    const versions = await listFileHistory(sandbox, rel);
-    if (versions.length) history[rel] = versions;
-  }
+  const history = await readHistory(sandbox);
 
   return {
     summary,
@@ -273,7 +271,7 @@ export async function readSwarmDetail(
     agents,
     locks,
     claims: await listClaims(sandbox),
-    sentinel: await exists(join(sandbox, "done", "SWARM_DONE")),
+    sentinel: await swarmDoneExists(sandbox),
     traces,
     history,
   };

@@ -18,6 +18,7 @@ import { useAgentColours } from "@/lib/agent-colour";
 import { api } from "@/lib/api";
 import { clock, compact, money, relTime } from "@/lib/format";
 import { compactionHistory, contextSeries, defaultThresholds, isContextEvent, type CompactionMoment, type ContextPoint, type ContextSeries, type ContextThresholds } from "@/lib/context-series";
+import { isFailureEvent } from "@/lib/event-taxonomy";
 import { isNoise, toolLabel, toolTone, useAgentNames } from "@/lib/hooks";
 import { useResource } from "@/lib/live";
 import { thinkingText } from "@/lib/thinking";
@@ -30,13 +31,6 @@ type Order = "active" | "messages" | "threads" | "calls" | "cost" | "name";
 type Lens = "all" | "messages" | "tools" | "thinking" | "context" | "failures" | "ends";
 
 const LIFECYCLE = new Set(["agent_start", "agent_stop", "harness_stop", "cap_steer", "wall_steer", "claim_violation", "reap", "reaped"]);
-
-function isFailure(e: SwarmEvent): boolean {
-  if (e.tool === "claim_violation") return true;
-  const r = e.result as Record<string, unknown> | null;
-  if (!r || typeof r !== "object") return false;
-  return r.ok === false || typeof r.error === "string" || r.timed_out === true || r.blocked === true;
-}
 
 /** ◇ worker · △ critic · ○ anything else — a glyph per role. */
 function roleGlyph(role: string): string {
@@ -323,7 +317,7 @@ function lensKeeps(lens: Lens, e: SwarmEvent): boolean {
     case "context":
       return isContextEvent(e);
     case "failures":
-      return isFailure(e);
+      return isFailureEvent(e);
     case "ends":
       return e.tool === "agent_stop" || e.tool === "done" || e.tool === "harness_stop" || e.tool === "reap";
   }

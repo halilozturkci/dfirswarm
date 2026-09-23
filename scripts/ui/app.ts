@@ -5,7 +5,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { createReadStream, existsSync } from "node:fs";
 import { execFile } from "node:child_process";
-import { readdir, readFile, realpath, stat } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { basename, extname, join, normalize, resolve, sep } from "node:path";
 import {
@@ -18,11 +18,12 @@ import {
   releaseFile,
   restoreFileVersion,
 } from "../../extensions/protocol.ts";
+import { readHistory } from "../../extensions/observe.ts";
 import { ActionRunner, checkReadiness, listModels, validateStart, type Job, type ModelList, type ReadinessReport } from "./actions.ts";
 import { deleteGoal, GoalError, listGoals, readGoal, saveGoal } from "./goals.ts";
 import { listLibrary, readLibraryEntry } from "./library.ts";
 import { describeRoots, InputsError, listInputSets, parseInputsRoots, resolveInputImage, resolveInputSet, RootStore } from "./inputs.ts";
-import { findRun, listSwarmRows, queryTraces, readAllPosts, readSwarmView, readTimedPosts, resolveToolOutputFile, resolveWorkFile } from "./model.ts";
+import { countForgedTools, findRun, listSwarmRows, listWorkFiles, queryTraces, readAllPosts, readSwarmView, readTimedPosts, resolveToolOutputFile, resolveWorkFile } from "./model.ts";
 import { hashArtifacts } from "../artifacts.ts";
 import { buildDossier } from "../dossier.ts";
 import { renderReport } from "../report.ts";
@@ -530,9 +531,7 @@ export function createUiApp(options: UiAppOptions): UiApp {
         if (check.params.tools_from) {
           const from = await findRun(runsDir, check.params.tools_from);
           const dir = from?.sandbox ? join(String(from.sandbox), "tools") : "";
-          const manifests = dir ? (await readdir(dir, { withFileTypes: true }).catch(() => [])).filter((e) => e.isDirectory()) : [];
-          let forged = 0;
-          for (const e of manifests) if (existsSync(join(dir, e.name, "manifest.json"))) forged += 1;
+          const forged = from?.sandbox ? await countForgedTools(String(from.sandbox)) : 0;
           if (!from) throw new HttpError(404, `no run ${check.params.tools_from} to take tools from`);
           if (forged === 0) throw new HttpError(400, `run ${check.params.tools_from} forged no tools`);
           check.params.tools_from_dir = dir;
@@ -728,8 +727,7 @@ export function createUiApp(options: UiAppOptions): UiApp {
       }
       case "work": {
         if (!rest.length) {
-          const view = await readSwarmView(runsDir, id, 0);
-          json(res, 200, view?.work ?? []);
+          json(res, 200, await listWorkFiles(sandbox));
           return;
         }
         const rel = decodeURIComponent(rest.join("/"));
@@ -780,8 +778,7 @@ export function createUiApp(options: UiAppOptions): UiApp {
       }
       case "history": {
         if (method === "GET" && !rest.length) {
-          const view = await readSwarmView(runsDir, id, 0);
-          json(res, 200, view?.history ?? {});
+          json(res, 200, await readHistory(sandbox));
           return;
         }
         if (method === "GET" && rest[0] === "rev") {

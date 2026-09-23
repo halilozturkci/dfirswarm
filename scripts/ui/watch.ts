@@ -162,10 +162,6 @@ export class ChangeBus {
     };
   }
 
-  get size(): number {
-    return this.listeners.size;
-  }
-
   publish(msg: BusMessage): void {
     for (const fn of this.listeners) {
       try {
