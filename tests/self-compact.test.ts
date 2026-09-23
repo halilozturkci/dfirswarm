@@ -150,6 +150,9 @@ test("one explicit line out of order with a default fits the default to it inste
   assert.deepEqual(lines(pct), [81_600, 102_000, 122_400], "the operator's line is kept; the defaults keep their proportions below it");
   assert.ok(pct.ok && pct.thresholds.clamped && pct.thresholds.notes.some((n) => /default warning threshold .* lowered/.test(n)), JSON.stringify(pct.ok && pct.thresholds.notes));
   assert.deepEqual(lines(seatResolve({ SWARM_COMPACT_AT: "100k" })), [66_666, 83_333, 100_000]);
+  const between = seatResolve({ SWARM_COMPACT_NOTICE_AT: "40%", SWARM_COMPACT_AT: "45%" });
+  assert.deepEqual(lines(between), [108_800, 108_800, 122_400], "a default warning never drops below an operator's notice line");
+  assert.ok(between.ok && between.thresholds.notes.length === 1, JSON.stringify(between.ok && between.thresholds.notes));
   // A notice line above the default warning: the default warning rises to it and stays under the compact line.
   const notice = seatResolve({ SWARM_COMPACT_NOTICE_AT: "55%" });
   assert.deepEqual(lines(notice), [149_600, 149_600, 163_200]);

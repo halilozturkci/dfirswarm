@@ -56,18 +56,18 @@ function frameFacts(view: SwarmView): Fact[] {
   // Absent on runs older than the feature; those say nothing rather than "off".
   const selfCompact = view.registry?.self_compact;
   if (selfCompact && typeof selfCompact === "object") {
-    // A line the operator left unset next to one they set is a default
-    // fitted to it per seat; its number is not the line the agents ran at.
+    // A line the operator left unset next to one they set is a default the
+    // extension may have fitted to it per seat; say so rather than show it as set.
     const set = selfCompact.set;
     const fitted = set && (set.notice_at || set.warn_at || set.compact_at);
-    const shown = (spec: string | undefined, fallback: string, isSet: boolean | undefined) => `${spec || fallback}${fitted && !isSet ? " (default, fitted)" : ""}`;
+    const shown = (spec: string | undefined, fallback: string, isSet: boolean | undefined) => `${spec || fallback}${fitted && !isSet ? " (default)" : ""}`;
     out.push({
       label: "Self compaction",
       value: selfCompact.enabled
         ? `on · notice ${shown(selfCompact.notice_at, "40%", set?.notice_at)} · warning ${shown(selfCompact.warn_at, "50%", set?.warn_at)} · compact ${shown(selfCompact.compact_at, "60%", set?.compact_at)}${selfCompact.model ? ` · summaries by ${selfCompact.model}` : ""}`
         : "off",
       title:
-        "Whether agents compacted their own context, the three lines against each model's ceiling (per-model entries after a comma), and the model the summaries went to. A default marked fitted was moved to fit the lines the operator set; each agent's compact_config trace row has the numbers it ran at",
+        "Whether agents compacted their own context, the three lines against each model's ceiling (per-model entries after a comma), and the model the summaries went to. A line marked default is fitted per seat to the lines the operator set where it would be out of order; each agent's compact_config trace row has the numbers it ran at",
     });
   }
   // Absent on runs older than the bound; those say nothing rather than a number they never had.

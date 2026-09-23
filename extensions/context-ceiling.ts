@@ -241,15 +241,17 @@ export function resolveThresholds(
     return { ok: false, error: `${set.compact ? line("compact", parsed.compact, compactTokens) : `the default compact threshold ${parsed.compact.raw} (${fmt(compactTokens)} tokens)`} is not above Pi's retained history of ${fmt(KEEP_RECENT_TOKENS)} tokens: a compaction there would have nothing to cut.` };
   }
   if (!set.warn) {
-    if (warnTokens > compactTokens) {
-      const to = Math.floor(compactTokens * share("warnAt", "compactAt"));
-      notes.push(`the default warning threshold (${parsed.warn.raw} = ${fmt(warnTokens)}) is above the compact threshold; lowered to ${fmt(to)}, in the defaults' proportion`);
-      warnTokens = to;
-      clamped = true;
-    }
-    if (set.notice && noticeTokens > warnTokens) {
-      notes.push(`the default warning threshold (${parsed.warn.raw} = ${fmt(warnTokens)}) is below the notice threshold ${parsed.notice.raw}; raised to ${fmt(noticeTokens)}`);
+    const was = `the default warning threshold (${parsed.warn.raw} = ${fmt(warnTokens)})`;
+    const lowered = warnTokens > compactTokens ? Math.floor(compactTokens * share("warnAt", "compactAt")) : warnTokens;
+    if (set.notice && noticeTokens > lowered) {
+      notes.push(lowered < warnTokens
+        ? `${was} is above the compact threshold; lowered to the notice threshold ${parsed.notice.raw} (${fmt(noticeTokens)})`
+        : `${was} is below the notice threshold ${parsed.notice.raw}; raised to ${fmt(noticeTokens)}`);
       warnTokens = noticeTokens;
+      clamped = true;
+    } else if (lowered < warnTokens) {
+      notes.push(`${was} is above the compact threshold; lowered to ${fmt(lowered)}, in the defaults' proportion`);
+      warnTokens = lowered;
       clamped = true;
     }
   }

@@ -2569,9 +2569,9 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
   echo "N:            $n (${agent_ids[*]})"
   if [[ "$self_compact" -eq 1 ]]; then
     # A line left unset next to one that is set is a default the extension
-    # fits to it per seat, so its number here is not the line it runs at.
+    # may fit to it per seat (compact_config on the trace has the numbers).
     local compact_fit=""
-    if [[ -n "$compact_notice_at$compact_warn_at$compact_at" ]]; then compact_fit=" (default, fitted)"; fi
+    if [[ -n "$compact_notice_at$compact_warn_at$compact_at" ]]; then compact_fit=" (default)"; fi
     echo "Compaction:   self (notice ${compact_notice_at:-40%$compact_fit} · warning ${compact_warn_at:-50%$compact_fit} · compact ${compact_at:-60%$compact_fit} of each model's ceiling${compact_model:+ · summaries by $compact_model})"
   else
     echo "Compaction:   Pi's own only (self-compaction off)"

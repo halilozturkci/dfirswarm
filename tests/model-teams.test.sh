@@ -217,8 +217,8 @@ got="$(jq -r '.. | objects | select(.["label"]? == "tuned") | .self_compact | "\
 [[ "$got" == "40% 45% 150k" ]] || fail "registry should record the tuned lines with the default filled in, got $got"
 got="$(jq -r '.. | objects | select(.["label"]? == "tuned") | .self_compact.set | "\(.notice_at) \(.warn_at) \(.compact_at)"' "$TMP/runs/registry.json")"
 [[ "$got" == "false true true" ]] || fail "registry should record which lines the operator set, got $got"
-printf '%s\n' "$out" | grep -q "notice 40% (default, fitted) · warning 45% · compact 150k" \
-  || fail "kickoff should mark a default next to a set line as fitted, not show it as the line: $out"
+printf '%s\n' "$out" | grep -q "notice 40% (default) · warning 45% · compact 150k" \
+  || fail "kickoff should mark a default next to a set line as a default, not as a line the operator set: $out"
 got="$(jq -r '.. | objects | select(.["label"]? == "uniform") | .self_compact.set | "\(.notice_at) \(.warn_at) \(.compact_at)"' "$TMP/runs/registry.json")"
 [[ "$got" == "false false false" ]] || fail "registry should record that no line was set on a default run, got $got"
 refuses "a compact line that is neither tokens nor a percentage is refused" "a compact threshold is a token count" \

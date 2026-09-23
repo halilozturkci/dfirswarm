@@ -46,7 +46,7 @@ export type RegistryRun = {
   started_at?: string;
   inputs?: { source?: string; files?: number; bytes?: number; enforce?: string; guard?: string; held?: string };
   /** The kickoff's self-compaction options; absent on runs older than the feature. */
-  self_compact?: { enabled?: boolean; notice_at?: string; warn_at?: string; compact_at?: string; prompt?: string | null } | null;
+  self_compact?: { enabled?: boolean; notice_at?: string; warn_at?: string; compact_at?: string; prompt?: string | null; set?: { notice_at?: boolean; warn_at?: boolean; compact_at?: boolean } } | null;
 };
 
 export async function readJsonFile<T>(file: string): Promise<T | null> {
