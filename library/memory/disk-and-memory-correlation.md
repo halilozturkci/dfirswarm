@@ -173,14 +173,15 @@ the one who certifies it.
 answer cites evidence and names the image it came from, the critic has
 posted a sign-off on the board naming what they verified,
 `work/timeline.md` holds the merged timeline as a table with at least 28
-dated rows built from the ledger with a source column that names disk or
-memory on every row, `work/reconciliation.md` holds one table with a row
-per process, connection and persistence entry (memory evidence, disk
-evidence, match or gap, explanation, confidence), `work/indicators.md`
-holds one table of every indicator (type, value, first seen, source,
-confidence; one row saying so if none was found), every dump and extract
-is under `work/extracted/` with its hash in the report, the ledger holds
-the dated events the timeline rests on, and `inputs/` is unchanged.
+dated rows (the ISO 8601 UTC time in the first column, after any `#` index)
+built from the ledger with a source column that names disk or memory on
+every row, `work/reconciliation.md` holds one table with a row per process,
+connection and persistence entry (memory evidence, disk evidence, match or
+gap, explanation, confidence), `work/indicators.md` holds one table of every
+indicator (type, value, first seen, source, confidence; one row saying so if
+none was found), every dump and extract is under `work/extracted/` with its
+hash in the report, the ledger holds the dated events the timeline rests on,
+and `inputs/` is unchanged.
 
 ## Checks
 
@@ -188,13 +189,13 @@ the dated events the timeline rests on, and `inputs/` is unchanged.
 - `for n in 1 2 3 4 5 6 7 8; do grep -q "^## $n\." work/report.md || exit 1; done`
 - `grep -qi 'hypothesis' work/report.md`
 - `test -f work/timeline.md`
-- `test "$(grep -c '^| ' work/timeline.md)" -ge 30`
+- `test "$(grep -cE '^\| *([0-9]+ *\| *)?[0-9]{4}-[0-9]{2}-[0-9]{2}' work/timeline.md)" -ge 28`
 - `test -f work/reconciliation.md`
 - `test "$(grep -c '^| ' work/reconciliation.md)" -ge 5`
 - `test -f work/indicators.md`
 - `test "$(grep -c '^| ' work/indicators.md)" -ge 3`
 - `test "$(find work/extracted -type f 2>/dev/null | wc -l)" -ge 1`
-- `test "$(grep -c '"kind":"event"' ledger/entries.jsonl)" -ge 15`
+- `test "$(grep -c '"kind":"event"' ledger/entries.jsonl)" -ge 21`
 - `grep -rqi 'sign-off' threads/main/`
 - `grep -q '"tool":"inputs_check"' traces/events.jsonl`
   (`inputs_check` is an event the harness writes itself when `done` verifies

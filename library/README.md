@@ -207,13 +207,26 @@ Verbatim across the cases, with the tool list adapted to the evidence:
 > `work/report.md` exists, answers every question under headings `## 1.` …
 > `## N.`, every answer cites evidence, the critic has posted a sign-off on
 > the board naming what they verified, `work/timeline.md` holds the merged
-> timeline as a table with at least X dated rows built from the ledger, the
-> ledger holds the dated events the timeline rests on, and `inputs/` is
-> unchanged.
+> timeline as a table with at least X dated rows (the ISO 8601 UTC time in
+> the first column, after any `#` index) built from the ledger, the ledger
+> holds the dated events the timeline rests on, and `inputs/` is unchanged.
 
 X is what the evidence can honestly yield: 40 for a full host intrusion, 10
-for a single-artefact puzzle. `grep -c '^| '` counts the table's header and
-separator too, so the threshold is two more than the rows you mean.
+for a single-artefact puzzle. The timeline check counts only rows whose first
+cell, or second after a `#` index, starts with a date, so X is the threshold
+as written: headers, separators, side tables and undated rows do not count.
+The ledger floor is three quarters of X, rounded up (19 for 25): ledger
+entries and timeline rows are not one to one, but a timeline built from the
+ledger cannot rest on a handful of events (an entry whose ledger backs the
+narrative rather than the timeline, like timeline reconstruction, keeps its
+own floor). Side tables such as
+`work/indicators.md` are still counted with `grep -c '^| '`, which takes in
+the header and a separator written `| --- |`, so their threshold is two more
+than the rows you mean.
+
+A check on a timeline column finds the table's header row, not the file's
+first lines (a title and a paragraph come first in a real run):
+`grep -m1 -iE '^\| *(# *\| *)?(time|utc|date)' work/timeline.md | grep -qi 'host'`.
 
 ### The standard checks
 
@@ -221,8 +234,8 @@ separator too, so the threshold is two more than the rows you mean.
 - `test -f work/report.md`
 - `for n in 1 2 3 4 5 6; do grep -q "^## $n\." work/report.md || exit 1; done`
 - `test -f work/timeline.md`
-- `test "$(grep -c '^| ' work/timeline.md)" -ge 25`
-- `test "$(grep -c '"kind":"event"' ledger/entries.jsonl)" -ge 10`
+- `test "$(grep -cE '^\| *([0-9]+ *\| *)?[0-9]{4}-[0-9]{2}-[0-9]{2}' work/timeline.md)" -ge 25`
+- `test "$(grep -c '"kind":"event"' ledger/entries.jsonl)" -ge 19`
 - `grep -rqi 'sign-off' threads/main/`
 - `grep -q '"tool":"inputs_check"' traces/events.jsonl`
   (`inputs_check` is an event the harness writes itself when `done` verifies

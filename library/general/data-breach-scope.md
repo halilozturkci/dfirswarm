@@ -177,8 +177,9 @@ verified, `work/data-affected.md` holds one table with a row per item or
 record set (item, type, action, actor, time, channel, certainty, evidence;
 one row saying so if nothing was established, and why), the counts in the
 report say what they rest on, `work/timeline.md` holds the merged timeline
-as a table with at least 25 dated rows built from the ledger, the ledger
-holds the dated events the timeline rests on, and `inputs/` is unchanged.
+as a table with at least 25 dated rows (the ISO 8601 UTC time in the first
+column, after any `#` index) built from the ledger, the ledger holds the
+dated events the timeline rests on, and `inputs/` is unchanged.
 
 ## Checks
 
@@ -189,8 +190,8 @@ holds the dated events the timeline rests on, and `inputs/` is unchanged.
 - `test "$(grep -c '^| ' work/data-affected.md)" -ge 3`
 - `grep -qi 'certainty' work/data-affected.md`
 - `test -f work/timeline.md`
-- `test "$(grep -c '^| ' work/timeline.md)" -ge 27`
-- `test "$(grep -c '"kind":"event"' ledger/entries.jsonl)" -ge 10`
+- `test "$(grep -cE '^\| *([0-9]+ *\| *)?[0-9]{4}-[0-9]{2}-[0-9]{2}' work/timeline.md)" -ge 25`
+- `test "$(grep -c '"kind":"event"' ledger/entries.jsonl)" -ge 19`
 - `grep -rqi 'sign-off' threads/main/`
 - `grep -q '"tool":"inputs_check"' traces/events.jsonl`
   (`inputs_check` is an event the harness writes itself when `done` verifies

@@ -149,11 +149,12 @@ the report cannot be the one who certifies it.
 evidence (file, record id, field), every alert in the export has a verdict
 in the report, the critic has posted a sign-off on the board naming what
 they verified against the ledger, `work/timeline.md` holds the merged
-timeline as a table with at least 30 dated rows built from the ledger,
-each row naming the host, `work/indicators.md` holds one table of every
-indicator (type, value, first seen, hosts, source record, confidence; one
-row saying so if none was found), the ledger holds the dated events the
-timeline rests on, and `inputs/` is unchanged.
+timeline as a table with at least 30 dated rows (the ISO 8601 UTC time in
+the first column, after any `#` index) built from the ledger, each row
+naming the host, `work/indicators.md` holds one table of every indicator
+(type, value, first seen, hosts, source record, confidence; one row saying
+so if none was found), the ledger holds the dated events the timeline rests
+on, and `inputs/` is unchanged.
 
 ## Checks
 
@@ -162,11 +163,11 @@ timeline rests on, and `inputs/` is unchanged.
 - `grep -qi 'hypothesis' work/report.md`
 - `grep -qi 'verdict' work/report.md`
 - `test -f work/timeline.md`
-- `test "$(grep -c '^| ' work/timeline.md)" -ge 32`
-- `head -3 work/timeline.md | grep -qi 'host'`
+- `test "$(grep -cE '^\| *([0-9]+ *\| *)?[0-9]{4}-[0-9]{2}-[0-9]{2}' work/timeline.md)" -ge 30`
+- `grep -m1 -iE '^\| *(# *\| *)?(time|utc|date)' work/timeline.md | grep -qi 'host'`
 - `test -f work/indicators.md`
 - `test "$(grep -c '^| ' work/indicators.md)" -ge 3`
-- `test "$(grep -c '"kind":"event"' ledger/entries.jsonl)" -ge 12`
+- `test "$(grep -c '"kind":"event"' ledger/entries.jsonl)" -ge 23`
 - `grep -rqi 'sign-off' threads/main/`
 - `grep -q '"tool":"inputs_check"' traces/events.jsonl`
   (`inputs_check` is an event the harness writes itself when `done` verifies

@@ -167,11 +167,12 @@ the report cannot be the one who certifies it.
 evidence, the critic has posted a sign-off on the board naming what they
 verified (the rows sampled per source and the offsets re-checked),
 `work/timeline.md` is the product: the merged timeline as one table with
-at least 100 dated rows in UTC, every row with source, artefact and
-confidence, built from the per-source extractions and anchored in the
-ledger, `work/sources.md` holds one table with a row per source (source,
-rows, offset, coverage), the ledger holds the dated events the narrative
-rests on, and `inputs/` is unchanged.
+at least 100 dated rows (the ISO 8601 UTC time in the first column, after
+any `#` index), every row with source, artefact and confidence, built from
+the per-source extractions and anchored in the ledger, `work/sources.md`
+holds one table with a row per source (source, rows, offset, coverage), the
+ledger holds the dated events the narrative rests on, and `inputs/` is
+unchanged.
 
 ## Checks
 
@@ -179,7 +180,7 @@ rests on, and `inputs/` is unchanged.
 - `for n in 1 2 3 4 5 6 7; do grep -q "^## $n\." work/report.md || exit 1; done`
 - `grep -qi 'hypothesis' work/report.md`
 - `test -f work/timeline.md`
-- `test "$(grep -c '^| ' work/timeline.md)" -ge 102`
+- `test "$(grep -cE '^\| *([0-9]+ *\| *)?[0-9]{4}-[0-9]{2}-[0-9]{2}' work/timeline.md)" -ge 100`
 - `test -f work/sources.md`
 - `test "$(grep -c '^| ' work/sources.md)" -ge 3`
 - `test "$(grep -c '"kind":"event"' ledger/entries.jsonl)" -ge 15`

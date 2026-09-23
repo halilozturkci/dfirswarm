@@ -168,13 +168,14 @@ one who certifies it.
 `## 2.`, `## 3.`, `## 4.`, `## 5.`, `## 6.`, `## 7.`, `## 8.`, every
 answer cites evidence and names its dump, the critic has posted a sign-off
 on the board naming what they verified, `work/timeline.md` holds the merged
-timeline as a table with at least 18 dated rows built from the ledger,
+timeline as a table with at least 18 dated rows (the ISO 8601 UTC time in
+the first column, after any `#` index) built from the ledger,
 `work/indicators.md` holds one table of every indicator (type, value, dump,
-where seen, confidence; one row saying so if none was found), every
-process, module or region dumped is under `work/extracted/` with its hash
-in the report, `work/rules/` holds at least one YARA rule written from the
-dumped code, the ledger holds the dated events the timeline rests on, and
-`inputs/` is unchanged.
+where seen, confidence; one row saying so if none was found), every process,
+module or region dumped is under `work/extracted/` with its hash in the
+report, `work/rules/` holds at least one YARA rule written from the dumped
+code, the ledger holds the dated events the timeline rests on, and `inputs/`
+is unchanged.
 
 ## Checks
 
@@ -182,12 +183,12 @@ dumped code, the ledger holds the dated events the timeline rests on, and
 - `for n in 1 2 3 4 5 6 7 8; do grep -q "^## $n\." work/report.md || exit 1; done`
 - `grep -qi 'hypothesis' work/report.md`
 - `test -f work/timeline.md`
-- `test "$(grep -c '^| ' work/timeline.md)" -ge 20`
+- `test "$(grep -cE '^\| *([0-9]+ *\| *)?[0-9]{4}-[0-9]{2}-[0-9]{2}' work/timeline.md)" -ge 18`
 - `test -f work/indicators.md`
 - `test "$(grep -c '^| ' work/indicators.md)" -ge 3`
 - `test "$(find work/extracted -type f 2>/dev/null | wc -l)" -ge 1`
 - `test "$(find work/rules -name '*.yar*' 2>/dev/null | wc -l)" -ge 1`
-- `test "$(grep -c '"kind":"event"' ledger/entries.jsonl)" -ge 10`
+- `test "$(grep -c '"kind":"event"' ledger/entries.jsonl)" -ge 14`
 - `grep -rqi 'sign-off' threads/main/`
 - `grep -q '"tool":"inputs_check"' traces/events.jsonl`
   (`inputs_check` is an event the harness writes itself when `done` verifies

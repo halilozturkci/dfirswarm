@@ -230,6 +230,21 @@ test("every entry that ships keeps the library's contract", async () => {
       if (!text.includes(must)) bad(id, `standard check missing: ${must}`);
     }
     if (/find +inputs\b/.test(text) && !/find -[HL] inputs/.test(text)) bad(id, "a check walks inputs/ with a bare find");
+
+    // The timeline counts dated rows, with no header arithmetic, and the
+    // ledger it is built from holds at least three quarters of them.
+    const rows = /at least (\d+) dated rows \(the ISO 8601 UTC time in the first column, after any `#` index\)/.exec(dod);
+    if (!rows) bad(id, "the definition of done does not fix the timeline's dated rows and their time column");
+    else {
+      const x = Number(rows[1]);
+      const dated = `test "$(grep -cE '^\\| *([0-9]+ *\\| *)?[0-9]{4}-[0-9]{2}-[0-9]{2}' work/timeline.md)" -ge ${x}`;
+      if (!text.includes(dated)) bad(id, `the timeline check does not count ${x} dated rows`);
+      const ledger = /grep -c '"kind":"event"' ledger\/entries\.jsonl\)" -ge (\d+)/.exec(text);
+      const floor = /ledger holds the dated events the narrative/.test(dod) ? 1 : Math.ceil(0.75 * x);
+      if (!ledger || Number(ledger[1]) < floor) bad(id, `the ledger event floor is below ${floor} for ${x} timeline rows`);
+    }
+    if (/grep -c '\^\| ' work\/timeline\.md/.test(text)) bad(id, "counts every table line in work/timeline.md, not dated rows");
+    if (/head -\d+ work\/timeline\.md/.test(text)) bad(id, "looks for the timeline's header in the file's first lines, not its header row");
     for (const c of checks) {
       if (c.includes("`")) bad(id, `a check holds a backtick: ${c}`);
       try {
