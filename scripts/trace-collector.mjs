@@ -272,8 +272,12 @@ function start() {
     // collector from 51 MB to 821 MB — measured — and a pane may connect
     // freely. Neither limit is near anything a real sender does.
     socket.setTimeout(COLLECTOR_IDLE_MS, () => socket.destroy());
+    // Decode the stream, not each read: a read boundary can fall inside a
+    // UTF-8 sequence, and decoding the halves apart writes U+FFFD into a line
+    // that still parses and is then hashed into the chain as if it were true.
+    socket.setEncoding("utf8");
     socket.on("data", (chunk) => {
-      buffer += chunk.toString("utf8");
+      buffer += chunk;
       let cut;
       while ((cut = buffer.indexOf("\n")) >= 0) {
         const line = buffer.slice(0, cut);

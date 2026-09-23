@@ -476,3 +476,30 @@ test("a message that is not an event is refused, whatever shape it has", async (
   assert.equal(written.length, 1, "only the event lands");
   assert.equal((JSON.parse(written[0]) as { tool: string }).tool, "post");
 });
+
+test("a multibyte character split across two socket reads is written whole", async () => {
+  // A large event arrives in several reads, and a read boundary can fall
+  // inside a UTF-8 sequence. Decoding each read on its own turned both halves
+  // into U+FFFD; the line still parsed, so the altered text was hashed into
+  // the chain and the trace verified as intact while saying something else.
+  const root = await mkdtemp(join(tmpdir(), "swarm-utf8-"));
+  const socket = await collectorOn(root);
+  const text = "İstanbul 東京 🔍 Москва";
+  const bytes = Buffer.from(`${JSON.stringify({ ts: "t1", agent: "a0", tool: "bash", args: {}, result: { output: text } })}\n`, "utf8");
+  // Cut inside the four-byte emoji.
+  const cut = bytes.indexOf(Buffer.from("🔍", "utf8")) + 2;
+  await new Promise<void>((resolve, reject) => {
+    const s = connect(socket);
+    s.on("error", reject);
+    s.on("connect", () => {
+      s.write(bytes.subarray(0, cut), () => {
+        // Long enough that the collector reads the first half on its own.
+        setTimeout(() => s.end(bytes.subarray(cut), () => resolve()), 150);
+      });
+    });
+  });
+  await new Promise((r) => setTimeout(r, 250));
+  const written = await lines(root);
+  assert.equal(written.length, 1);
+  assert.equal((JSON.parse(written[0]!) as { result: { output: string } }).result.output, text);
+});
