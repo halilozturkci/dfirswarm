@@ -152,6 +152,27 @@ test("implicit claims: a shell writer's lease is marked as taken by the harness"
   }
 });
 
+test("own scratch: a peer cannot lease a path in it and lock its owner out", async () => {
+  const root = await sandbox();
+  try {
+    const owner = createContext(root, "a00");
+    const peer = createContext(root, "a01");
+    for (const path of ["work/a00/notes.md", "work/extracted/a00/SAM", "work/quarantine/a00/dropper.exe"]) {
+      const taken = await claimFile(peer, path, { reason: "mine now", seconds: 600 });
+      assert.equal(taken.ok, false, `a peer leased ${path}`);
+      assert.equal("conflict" in taken && taken.owner, "a00", "the refusal names the directory's owner");
+      const own = await guardWrite(owner, path);
+      assert.equal(own.ok, true, `the owner is refused in its own scratch: ${JSON.stringify(own)}`);
+    }
+    // a directory under work/ named for nobody on the team is shared, as before
+    assert.equal((await claimFile(peer, "work/timeline/day1.md", { reason: "timeline" })).ok, true);
+    // the operator restoring a revision is not a peer
+    assert.equal((await claimFile(createContext(root, "operator"), "work/a00/other.md", { reason: "restore" })).ok, true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("per-agent cap: pressure is per seat and only when a cap is set", () => {
   const base: BudgetRecord = {
     cap_usd: 40,

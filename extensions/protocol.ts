@@ -1468,6 +1468,20 @@ export async function claimFile(
     throw new Error("claim_file requires a reason: say what you are about to do with the path.");
   }
   const seconds = clampClaimSeconds(options.seconds);
+  // A peer's scratch is the peer's: a lease taken there would make the
+  // owner's own write — which needs no claim — a conflict in its own directory.
+  const scratchOwner = await peerScratchOwner(ctx, pathKey);
+  if (scratchOwner) {
+    return {
+      ok: false,
+      conflict: true,
+      path: pathKey,
+      owner: scratchOwner,
+      reason: "own scratch",
+      expires_at: "",
+      note: `${pathKey} is in ${scratchOwner}'s own scratch directory and only ${scratchOwner} writes there. Ask on the board, or work on a copy under your own work/${ctx.agentId}/.`,
+    };
+  }
   return withTableLock(ctx.sandboxRoot, async () => {
     const file = lockPath(ctx.sandboxRoot, pathKey);
     const existing = await readLock(file);
@@ -1716,6 +1730,20 @@ export function isOwnScratch(pathKey: string, agentId: string): boolean {
     pathKey.startsWith(`work/extracted/${agentId}/`) ||
     pathKey.startsWith(`work/quarantine/${agentId}/`)
   );
+}
+
+/**
+ * The team agent whose own scratch `pathKey` is in, when the caller is a
+ * different team agent. Someone outside the team — the operator restoring a
+ * revision, the harness — is not a peer, and a team that cannot be read
+ * refuses nothing.
+ */
+async function peerScratchOwner(ctx: SwarmContext, pathKey: string): Promise<string | null> {
+  if (!/^work\/(?:(?:extracted|quarantine)\/)?[^/]+\//.test(pathKey)) return null;
+  const team = await readTeam(ctx.sandboxRoot).catch(() => null);
+  const ids = (team?.agents ?? []).map((agent) => agent.id);
+  if (!ids.includes(ctx.agentId)) return null;
+  return ids.find((id) => id !== ctx.agentId && isOwnScratch(pathKey, id)) ?? null;
 }
 
 export async function guardWrite(ctx: SwarmContext, rawPath: string): Promise<GuardResult> {
