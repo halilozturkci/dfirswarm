@@ -232,8 +232,10 @@ test("custody's look at the store: the chain and its anchor, every committed fil
     { seq: 2, kind: "finding", source: "my notes", evidence: "I looked" },
     { seq: 3, kind: "event", source: "nothing" },
     { seq: 4, kind: "finding", source: "inputs", evidence: "sha256:" + "a".repeat(64) },
+    { seq: 5, kind: "finding", source: "inputs/AF-Case2.E01 inode 126755", evidence: "icat" },
+    { seq: 6, kind: "finding", source: "the image", evidence: "read store/jobs/j000012/out/sms.db" },
   ].map((e) => JSON.stringify(e)).join("\n") + "\n");
-  assert.deepEqual((await checkStore(S))!.findings, { total: 3, without_refs: [2] }, "a finding that cites no object is named");
+  assert.deepEqual((await checkStore(S))!.findings, { total: 5, without_refs: [2] }, "a finding that cites no object is named; a path of the run's objects is a citation");
 });
 
 function createHashHex(text: string): string {

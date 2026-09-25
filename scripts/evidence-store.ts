@@ -687,7 +687,7 @@ export type StoreCheck = {
   staging_left: string[];
   generations: number;
   revisions: number;
-  /** Findings in the ledger that cite no object of the run (job:, input:, import:, member:, sha256:): an audit gap, named by seq. */
+  /** Findings in the ledger that cite no object of the run (a job:/input:/import:/member:/sha256: reference, or a path under inputs/, store/jobs/ or catalog/gen/): an audit gap, named by seq. */
   findings: { total: number; without_refs: number[] };
 };
 
@@ -729,7 +729,11 @@ export async function checkStore(sandbox: string, before = Infinity): Promise<St
       const e = JSON.parse(line) as { seq?: number; kind?: string; source?: string; evidence?: string };
       if (e.kind !== "finding") continue;
       out.findings.total += 1;
-      if (!/\b(job|input|import|member|sha256):[^\s,;)]+/.test(`${e.source ?? ""} ${e.evidence ?? ""}`)) out.findings.without_refs.push(Number(e.seq));
+      // A reference (job:, input:, …) or a path of the run's own objects
+      // (inputs/…, store/jobs/<id>/…, catalog/gen/<g>/…): either names what
+      // the finding rests on; prose alone does not.
+      const cited = `${e.source ?? ""} ${e.evidence ?? ""}`;
+      if (!/\b(job|input|import|member|sha256):[^\s,;)]+/.test(cited) && !/(^|[\s`'"(])(inputs\/\S+|store\/jobs\/j\d{6}\S*|catalog\/gen\/g\d{4}\S*)/.test(cited)) out.findings.without_refs.push(Number(e.seq));
     }
   } catch {
     // no ledger
