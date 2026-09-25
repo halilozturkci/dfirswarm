@@ -226,6 +226,14 @@ test("custody's look at the store: the chain and its anchor, every committed fil
   await rm(P.anchor, { force: true });
   await writeFile(P.anchor, JSON.stringify({ head: "0".repeat(64), seq: 0, at: "x" }));
   assert.equal((await checkStore(S))!.journal.anchor, "off the chain");
+  await mkdir(join(S, "ledger"), { recursive: true });
+  await writeFile(join(S, "ledger", "entries.jsonl"), [
+    { seq: 1, kind: "finding", source: "job:j000001/a.txt", evidence: "x" },
+    { seq: 2, kind: "finding", source: "my notes", evidence: "I looked" },
+    { seq: 3, kind: "event", source: "nothing" },
+    { seq: 4, kind: "finding", source: "inputs", evidence: "sha256:" + "a".repeat(64) },
+  ].map((e) => JSON.stringify(e)).join("\n") + "\n");
+  assert.deepEqual((await checkStore(S))!.findings, { total: 3, without_refs: [2] }, "a finding that cites no object is named");
 });
 
 function createHashHex(text: string): string {

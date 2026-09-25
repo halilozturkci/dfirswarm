@@ -1664,6 +1664,7 @@ function summaryOf(c: Omit<Custody, "summary">, t: { traceProblem: string | null
     if (j.repaired || j.anchor_mismatch) bits.push(`the journal recorded ${j.repaired} repair(s) and ${j.anchor_mismatch} anchor mismatch(es)`);
     if (st.staging_left.length) bits.push(`${st.staging_left.length} job staging director${st.staging_left.length === 1 ? "y" : "ies"} left unsealed (${st.staging_left.slice(0, 5).join(", ")})`);
     bits.push(`${plural(st.generations, "catalogue generation")}, ${plural(st.revisions, "revision")}`);
+    if (st.findings.total) bits.push(st.findings.without_refs.length ? `${st.findings.without_refs.length} of ${plural(st.findings.total, "finding")} cite no object of the run (ledger seq ${st.findings.without_refs.slice(0, 20).join(", ")}${st.findings.without_refs.length > 20 ? ", …" : ""}): an audit gap` : `every one of ${plural(st.findings.total, "finding")} cites an object of the run`);
     parts.push(bits.join(", "));
   }
   if (c.not_reached.length) parts.push(`NOT CHECKED BEFORE CUSTODY ENDED: ${c.not_reached.join(", ")}`);

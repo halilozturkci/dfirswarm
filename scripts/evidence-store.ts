@@ -687,6 +687,8 @@ export type StoreCheck = {
   staging_left: string[];
   generations: number;
   revisions: number;
+  /** Findings in the ledger that cite no object of the run (job:, input:, import:, member:, sha256:): an audit gap, named by seq. */
+  findings: { total: number; without_refs: number[] };
 };
 
 /**
@@ -719,7 +721,19 @@ export async function checkStore(sandbox: string, before = Infinity): Promise<St
     staging_left: [],
     generations: count("generation_committed"),
     revisions: count("revision_published"),
+    findings: { total: 0, without_refs: [] },
   };
+  try {
+    for (const line of (await readFile(join(S, "ledger", "entries.jsonl"), "utf8")).split("\n")) {
+      if (!line.trim()) continue;
+      const e = JSON.parse(line) as { seq?: number; kind?: string; source?: string; evidence?: string };
+      if (e.kind !== "finding") continue;
+      out.findings.total += 1;
+      if (!/\b(job|input|import|member|sha256):[^\s,;)]+/.test(`${e.source ?? ""} ${e.evidence ?? ""}`)) out.findings.without_refs.push(Number(e.seq));
+    }
+  } catch {
+    // no ledger
+  }
   for (const c of committed) {
     const rel = String((c.outputs as { path?: string } | undefined)?.path ?? "");
     if (!rel) continue;
