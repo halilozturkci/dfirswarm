@@ -730,7 +730,9 @@ not surprised:
   probed) and why; the summary line counts them, and the index names what was
   not catalogued or catalogued in part, twenty of each and the count of the
   rest. A memory probe that finds no Windows image keeps what `vol` said under
-  `catalog/probes/`.
+  `catalog/probes/`. Inputs are enumerated NUL-separated, so a name with a
+  newline in it is one input, and a tab, newline or backslash in a name is
+  written escaped in the coverage file, the index and its notes.
 - **A catalog step's stderr is kept whole.** A failed step kept 200
   characters of stderr in the index and deleted the rest; every step's stderr
   now stays beside its output as `<file>.stderr`, listed in the index, and a

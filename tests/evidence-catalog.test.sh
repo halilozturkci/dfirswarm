@@ -251,3 +251,17 @@ grep -q 'fls body file at sector 2048: failed (exit 1: fls: Error reading MFT en
 grep -q '^| `catalog/disk.E01/p2048/bodyfile.txt.stderr` | what the step writing catalog/disk.E01/p2048/bodyfile.txt said on stderr | 40 |' "$readme" \
   || fail "the index should list the stderr file: $(cat "$readme")"
 pass "a failed step's stderr is kept whole beside its output and named in the index"
+
+# A newline in an input's name: one input, one coverage row, one index line.
+NL="$(mktemp -d)"
+trap 'rm -rf "$NL"' EXIT
+mkdir -p "$NL/sb/inputs"
+head -c 70000 /dev/zero > "$NL/sb/inputs/two"$'\n'"lines.bin"
+PATH="/usr/bin:/bin" bash "$ROOT/scripts/evidence-catalog.sh" "$NL/sb" >/dev/null
+[[ "$(($(wc -l < "$NL/sb/catalog/coverage.tsv") - 1))" -eq 1 ]] \
+  || fail "a name with a newline is one input, one row: $(cat "$NL/sb/catalog/coverage.tsv")"
+[[ "$(cov_row "$NL/sb/catalog/coverage.tsv" 'inputs/two\\nlines.bin')" == "70000|not catalogued|"* ]] \
+  || fail "the newline is written escaped: $(cat "$NL/sb/catalog/coverage.tsv")"
+grep -q '^- `inputs/two\\nlines.bin` (68.4 KB): ' "$NL/sb/catalog/README.md" \
+  || fail "the index shows the name escaped, on one line: $(cat "$NL/sb/catalog/README.md")"
+pass "an input whose name holds a newline is one input, named escaped"

@@ -27,11 +27,13 @@ sandbox="${1:-}"
 # directory, and find without it stops at the link and catalogs nothing (run
 # s3091: 0 images over a 25 GB disk and a 1 GB dump). The copy dereferences
 # symlinks too (cp -RL), so following them here reads the same tree either way.
-catalog_candidates() { find -L "$1/inputs" -type f | sort; }
-# `--candidates <sandbox>` prints that list and stops: what a test can hold still.
+# NUL-separated, so a name with a newline in it is one input, not two.
+catalog_candidates() { find -L "$1/inputs" -type f -print0 | sort -z; }
+# `--candidates <sandbox>` prints that list, one per line, and stops: what a
+# test can hold still.
 if [[ "${1:-}" == "--candidates" ]]; then
   [[ -n "${2:-}" && -d "$2/inputs" ]] || { echo "evidence-catalog: --candidates needs a sandbox with inputs/" >&2; exit 2; }
-  catalog_candidates "$2"
+  catalog_candidates "$2" | tr '\0' '\n'
   exit 0
 fi
 [[ -n "$sandbox" && -d "$sandbox/inputs" ]] || { echo "evidence-catalog: usage: evidence-catalog.sh <sandbox> (needs inputs/)" >&2; exit 2; }
@@ -199,12 +201,16 @@ disk_images=0
 memory_images=0
 segments_skipped=0
 segment_sets=""
-while IFS= read -r img; do
+while IFS= read -r -d '' img; do
   rel_under="${img#"$sandbox/inputs/"}"
-  rel="inputs/$rel_under"
+  # The name as coverage.tsv keeps it (cover escapes it), and as the index
+  # and the notes show it: a tab, newline or backslash written escaped, so a
+  # name cannot break a row of the index or start a line of its own.
+  rel_raw="inputs/$rel_under"
+  rel="$(tsv_field "$rel_raw")"
   size="$(stat -c %s "$img" 2>/dev/null || stat -f %z "$img")"
   if [[ "$size" -lt 65536 ]]; then   # nothing under 64 KB is an image (a logical E01 can be small)
-    cover "$rel" "$size" "not probed" "under 64 KB: not tried as a disk or memory image"
+    cover "$rel_raw" "$size" "not probed" "under 64 KB: not tried as a disk or memory image"
     continue
   fi
   if first_segment="$(is_continuation_segment "$img")"; then
@@ -213,7 +219,7 @@ while IFS= read -r img; do
       *"|$first_segment|"*) ;;
       *) segment_sets="$segment_sets|$first_segment|" ;;
     esac
-    cover "$rel" "$size" "segment" "a further segment of $first_segment: the set is read, and catalogued, from that one"
+    cover "$rel_raw" "$size" "segment" "a further segment of $first_segment: the set is read, and catalogued, from that one"
     continue
   fi
   slug="$(catalog_slug "$rel_under")"
@@ -234,11 +240,11 @@ while IFS= read -r img; do
       catalog_volume "$img" "$rel" "$slug" "$start" "$desc"
     done < <(grep -E '^[0-9]+:' "$out/$slug/partitions.txt")
     if [[ "$volumes" -eq 0 ]]; then
-      cover "$rel" "$size" "partial" "a partition table only (catalog/$slug/partitions.txt): no partition held a filesystem this pass lists"
+      cover "$rel_raw" "$size" "partial" "a partition table only (catalog/$slug/partitions.txt): no partition held a filesystem this pass lists"
     elif [[ ${#notes[@]} -gt "$notes_before" ]]; then
-      cover "$rel" "$size" "partial" "disk image, $volumes filesystem(s) under catalog/$slug/, with steps that did not finish (Not built, in the index)"
+      cover "$rel_raw" "$size" "partial" "disk image, $volumes filesystem(s) under catalog/$slug/, with steps that did not finish (Not built, in the index)"
     else
-      cover "$rel" "$size" "catalogued" "disk image: partition table and $volumes filesystem(s) under catalog/$slug/"
+      cover "$rel_raw" "$size" "catalogued" "disk image: partition table and $volumes filesystem(s) under catalog/$slug/"
     fi
     continue
   fi
@@ -256,9 +262,9 @@ while IFS= read -r img; do
     add_index "$slug/partitions.txt" "no partition table: $rel is a single $fstype volume"
     catalog_volume "$img" "$rel" "$slug" 0 "$fstype (logical volume, no partition table)"
     if [[ ${#notes[@]} -gt "$notes_before" ]]; then
-      cover "$rel" "$size" "partial" "single $fstype volume under catalog/$slug/p0/, with steps that did not finish (Not built, in the index)"
+      cover "$rel_raw" "$size" "partial" "single $fstype volume under catalog/$slug/p0/, with steps that did not finish (Not built, in the index)"
     else
-      cover "$rel" "$size" "catalogued" "single $fstype volume: catalog/$slug/p0/"
+      cover "$rel_raw" "$size" "catalogued" "single $fstype volume: catalog/$slug/p0/"
     fi
     continue
   fi
@@ -267,9 +273,9 @@ while IFS= read -r img; do
   # --- a memory image? ---------------------------------------------------------
   if ! is_memory_image "$img"; then
     if have mmls || have fsstat; then
-      cover "$rel" "$size" "not catalogued" "no recipe in this pass read it: not a disk image to mmls or fsstat, and not memory by its name or file(1)"
+      cover "$rel_raw" "$size" "not catalogued" "no recipe in this pass read it: not a disk image to mmls or fsstat, and not memory by its name or file(1)"
     else
-      cover "$rel" "$size" "not catalogued" "mmls and fsstat are not in this image, so it was not tried as a disk; not memory by its name or file(1)"
+      cover "$rel_raw" "$size" "not catalogued" "mmls and fsstat are not in this image, so it was not tried as a disk; not memory by its name or file(1)"
     fi
     continue
   fi
@@ -292,9 +298,9 @@ while IFS= read -r img; do
         add_index "$slug/$plugin.txt" "vol windows.$plugin over $rel"
       done
       if [[ ${#notes[@]} -gt "$notes_before" ]]; then
-        cover "$rel" "$size" "partial" "memory image under catalog/$slug/, with plugins that did not finish (Not built, in the index)"
+        cover "$rel_raw" "$size" "partial" "memory image under catalog/$slug/, with plugins that did not finish (Not built, in the index)"
       else
-        cover "$rel" "$size" "catalogued" "memory image: catalog/$slug/"
+        cover "$rel_raw" "$size" "catalogued" "memory image: catalog/$slug/"
       fi
     else
       why="offered to Volatility as memory; windows.info named no Windows memory image"
@@ -304,11 +310,11 @@ while IFS= read -r img; do
       else
         why="$why; what it wrote: catalog/probes/$slug/"
       fi
-      cover "$rel" "$size" "not catalogued" "$why"
+      cover "$rel_raw" "$size" "not catalogued" "$why"
     fi
   else
     notes+=("vol missing: no memory catalog for $rel")
-    cover "$rel" "$size" "not catalogued" "looks like memory, but vol is not in this image"
+    cover "$rel_raw" "$size" "not catalogued" "looks like memory, but vol is not in this image"
   fi
 done < <(catalog_candidates "$sandbox")
 
