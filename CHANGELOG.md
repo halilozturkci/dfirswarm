@@ -10,20 +10,44 @@ All notable changes to this project. The format follows
 
 - **The job service** (`scripts/job-service.ts`, in the hub). A tool job — a
   pack or forged tool with its arguments, a shell command, a recipe over one
-  object — runs in a throwaway worker VM of the run's image: the evidence,
-  `store/`, `catalog/`, `tools/` and the packs read-only, no network unless
-  the job asks for the run's allowlist, no credential, nothing of the board
-  or the run's own records, and only its own directory (`$OUT`) writable.
+  object — runs in a throwaway worker VM of the run's image. It sees what an
+  agent sees, read-only (the evidence no-exec, `store/`, `catalog/`,
+  `tools/`, `tool-output/`, the packs, all of `work/`), and writes only its
+  own directory (`$OUT`); no network unless the job asks for the run's
+  allowlist (plus PyPI with `--allow-install`, pip's list kept before and
+  after), no credential, nothing of the board or the run's own records.
   Every step is a line of `store/journal.jsonl`, hash-chained, fsynced and
   anchored beside the run (`<sandbox>.journal-anchor.json`): accepted (who
   asked, with the name and doing it had given itself), started (the scope it
-  declared, the mounts it was given, the network, the image; what it read is
-  said to be unknown), finished, fenced (only once msb says the worker is
-  gone), committed. Nothing of a staging directory is read before its worker
-  is gone. A failed or timed-out job keeps what it wrote; recovery after a
-  crash finishes each job from the step it stopped at, and runs a job the
-  hub's death interrupted once more only when it had no network.
-  `--workers N` (default 2), `--worker-cpus`, `--worker-memory`, `--no-jobs`.
+  declared, the mounts it was given, the network, the image, the worker's
+  size; what it read is said to be unknown), finished, fenced, committed.
+  Nothing of a staging directory is read before its worker is gone. A failed
+  or timed-out job keeps what it wrote, and its stderr is shown whatever its
+  exit; recovery after a crash finishes each job from the step it stopped
+  at, and runs a job the hub's death interrupted once more only when it had
+  no network. `--workers N` (default 2), `--worker-cpus`, `--worker-memory`
+  (4 GiB on a host with 64 GiB or more, else 2), `--no-jobs`.
+- **Agents' tools**: `job_run` (a command, or a tool with its arguments; a
+  short job answers in the call, a longer one is posted when done, never
+  both), `job_status` (a job's record and its stdout paged whole; cancel
+  one's own), `catalog_request` (a recipe, or a detect pass that finds the
+  recipes that apply, over one object of the run). A job's file is cited as
+  `job:<id>/<path>`.
+- **Workers are made by a child process, and a fence is a fence.** On Ali
+  Hadi #10 every worker after the 64th failed to boot inside the hub's
+  long-lived msb SDK ("insert run: FOREIGN KEY constraint failed"), while a
+  fresh process made one fine, and each was recorded as fenced although msb
+  listed it afterwards. The hub now makes and runs each worker through a
+  short-lived `vm.ts worker-once`, one made at a time; the fence needs that
+  process gone, inspect not knowing the worker and msb's list, read whole
+  and understood, not showing it. A worker msb refused to start before
+  anything ran is removed and made once more, the first error kept. After
+  three jobs in a row that ran in no worker, every agent is told once to do
+  that work in its own VM, and again when a job runs.
+- **An examiner's note on the record**: `evidence-store.ts note <sandbox>
+  --by NAME --text TEXT [--job ID]...` chains an attributed correction onto a
+  finished run's journal, never an edit; refused while the hub runs. Custody
+  counts the notes.
 - **The store** (`scripts/evidence-store.ts`): a job's output sealed into
   `store/jobs/<id>/out/` — links, FIFOs, sockets and devices recorded and
   left out, names kept as bytes, files read-only and hard-linked to
@@ -31,7 +55,8 @@ All notable changes to this project. The format follows
   of every file. Custody checks the journal against its anchor (telling an
   anchor one step behind, a crash between two writes, from one off the
   chain), hashes every committed file again against its manifest and names
-  staging left unsealed; `package` exports the journal, its anchor, each
+  staging left unsealed, and names the findings that cite no object of the
+  run (a job, an input, a path of its objects) as an audit gap; `package` exports the journal, its anchor, each
   job's record, manifest and logs, the census, the plan, every generation
   and revision, and the recipes that made them.
 - **Catalogue recipes are the packs'** (`recipes/<name>/` with a

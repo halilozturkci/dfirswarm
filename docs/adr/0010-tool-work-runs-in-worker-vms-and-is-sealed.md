@@ -36,10 +36,25 @@ what was deferred until the first CTF round is listed at the end.
    objects).
 2. **Durable steps.** A job is `accepted` on disk before any work, then
    `started`, `finished`, `fenced`, `committed`. `fenced` is written only
-   when msb says the worker is gone. Until then no byte of its staging
-   directory is read, so nothing the worker could still write is sealed.
-   After a crash each job resumes from the step it last recorded. A job
-   interrupted by the hub's death runs once more only when it had no network.
+   when the worker is gone: the process that made it has exited, msb's
+   inspect does not know it, and msb's list, read whole and understood, does
+   not show it. Until then no byte of its staging directory is read, so
+   nothing the worker could still write is sealed. After a crash each job
+   resumes from the step it last recorded. A job interrupted by the hub's
+   death runs once more only when it had no network.
+
+   The hub makes and runs each worker through a short-lived child process,
+   never its own msb SDK. On the third CTF run (Ali Hadi #10) every worker
+   after the 64th failed to boot inside the hub's long-lived SDK process
+   (msb 0.7.2: "insert run: FOREIGN KEY constraint failed"), while a fresh
+   process made one fine. Each failure was recorded as fenced on inspect's
+   "not found" alone, and msb listed those workers afterwards. The cause
+   inside msb is not known: 90 workers made the same way from one process on
+   an idle host did not fail. The child process, the stricter fence, one
+   retry of a boot refused before anything ran, and a notice to every agent
+   after three jobs in a row that ran in no worker are containment. The
+   run's journal carries an examiner's note that corrects those eight
+   fences, appended, not edited.
 3. **A worker sees what its brain sees, read-only, and writes only its own
    directory.** It mounts the evidence (no-exec), `store/`, `catalog/`,
    `tools/`, the packs, all of `work/` (every agent's live scratch and the
@@ -104,9 +119,9 @@ what was deferred until the first CTF round is listed at the end.
   arguments, in which image, from which scope, producing which bytes.
 - Sharing is by path under `store/`, so a result outlives the VM and the
   agent that produced it.
-- Worker VMs cost a boot per job: about a second on the Mac with the full
-  image. They count against the host's capacity with the seats (`--workers`,
-  default 2).
+- Worker VMs cost a boot per job: about half a second on the Mac with the
+  full image, plus 0.2 s for the process that makes it. They count against
+  the host's capacity with the seats (`--workers`, default 2).
 - A host run and `--no-jobs` keep the previous behaviour: the kickoff builds
   the catalogue before the agents start, with the same recipes.
 - APFS refuses a name that is not UTF-8: on a Mac, a worker cannot write
