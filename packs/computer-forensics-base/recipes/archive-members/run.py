@@ -212,9 +212,37 @@ def zip_ext_time(extra):
     return None
 
 
+def zip_declared_entries(path):
+    """The member count the end-of-central-directory record declares (zip64
+    too), read before zipfile loads the whole directory into memory."""
+    size = os.path.getsize(path)
+    with open(path, "rb") as fh:
+        fh.seek(max(0, size - 65557))
+        tail = fh.read()
+    at = tail.rfind(b"PK\x05\x06")
+    if at < 0 or at + 22 > len(tail):
+        return None
+    total = struct.unpack_from("<H", tail, at + 10)[0]
+    if total == 0xFFFF:
+        loc = tail.rfind(b"PK\x06\x07", 0, at)
+        if loc >= 0:
+            with open(path, "rb") as fh:
+                fh.seek(struct.unpack_from("<Q", tail, loc + 8)[0])
+                rec = fh.read(56)
+            if rec[:4] == b"PK\x06\x06":
+                total = struct.unpack_from("<Q", rec, 32)[0]
+    return total
+
+
 def list_zip(path, w, deadline, max_members, cov):
     cov["format"] = "zip"
     n = 0
+    declared = zip_declared_entries(path)
+    if declared is not None and declared > max_members:
+        # zipfile reads every entry of the directory into memory before the
+        # first one can be listed: past the limit nothing is listed, and says so.
+        cov["limits_hit"].append("members: the central directory declares %d, more than the limit of %d; not listed (raise RECIPE_MEMBERS for this archive)" % (declared, max_members))
+        return 0
     with zipfile.ZipFile(path) as zf:
         for info in zf.infolist():
             utf8 = bool(info.flag_bits & 0x800)

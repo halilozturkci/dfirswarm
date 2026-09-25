@@ -20,5 +20,5 @@
     "coverage.json"
   ],
   "covers": "The archive's own list of members. It opens no member, searches no contents and lists no archive inside the archive: a member is extracted with archive_extract and catalogued on its own.",
-  "sha256": "e3d364ff6ee9461b40902de6616b114e3027458cd33f5e6db5b8dfca70f532ab"
+  "sha256": "5288986be768de353a23c5dd044cd5515256c8b9c701ee5ed28bd504bc69ff4e"
 }
