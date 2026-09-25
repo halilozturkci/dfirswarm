@@ -771,7 +771,9 @@ not surprised:
   run coming up, two seats of eight had their first connection close with no
   answer, twice, and the kickoff stopped with "no answer" and nothing else.
   The probe tries five times, three seconds apart, and records what the hub
-  said, or that it said nothing, and how many tries it took.
+  said, or that it said nothing, and how many tries it took. A close with
+  nothing said reads the same whether the platform reports it as a clean
+  close, a reset or a broken pipe, with the error kept beside it.
 - **`regkv`, `regkeys` and `shellbags` answer a key that is not there** with
   the deepest key that is and the names under it (windows-forensics 1.2.9,
   the tool library's regkv 3 and regkeys 4). regkv printed regipy's

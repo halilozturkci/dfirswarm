@@ -685,6 +685,10 @@ for attempt in range(5):
             out.pop("hub_error", None)
             break
         out["hub_error"] = "the hub answered " + reply.strip() if reply.strip() else "the connection closed with no answer"
+    except (BrokenPipeError, ConnectionResetError) as e:
+        # A hub that closes without answering reads as a clean close, a
+        # reset or a broken pipe, by platform and by timing: one meaning.
+        out["hub_error"] = "the connection closed with no answer (" + str(e) + ")"
     except Exception as e:
         out["hub_error"] = str(e)
 out["hub_attempts"] = attempt + 1
