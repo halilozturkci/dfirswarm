@@ -230,7 +230,9 @@ awk -F'\t' 'NF != 4 { bad = 1 } END { exit bad }' "$tsv" || fail "every coverage
   || fail "a tar is inventoried by the archive recipe: $(cov_row "$tsv" inputs/phone.tar)"
 grep -q $'^0\tfile\tprivate/var/mobile/Library/SMS/sms.db\t' "$COV/sb/catalog/phone.tar/members.tsv" || fail "the tar's member list names sms.db"
 grep -q $'^1\tfile\ta\\\\nb\t' "$COV/sb/catalog/phone.tar/members.tsv" || fail "a member name with a newline is one escaped row: $(cat "$COV/sb/catalog/phone.tar/members.tsv")"
-[[ "$(cov_row "$tsv" inputs/blob.bin)" == "100000|not catalogued|no recipe of this run applies: "*"archive-members: no tar, zip or 7z structure"* ]] \
+# (zero-filled, it is "no tar member" where Python's tarfile.is_tarfile says
+# yes to zero blocks, and "no tar, zip or 7z structure" where it says no)
+[[ "$(cov_row "$tsv" inputs/blob.bin)" == "100000|not catalogued|no recipe of this run applies: "*"archive-members: no tar"* ]] \
   || fail "an input no recipe reads is named as not catalogued, with each recipe's why: $(cov_row "$tsv" inputs/blob.bin)"
 [[ "$(cov_row "$tsv" inputs/CASE.md)" == "10|not probed|smaller than any recipe of this run asks about"* ]] || fail "a small input is named as not probed"
 # (awk -v reads escapes, so the literal backslash-t is written \\t here.)

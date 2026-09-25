@@ -436,7 +436,9 @@ Isolation
                       16): each job (job_run, catalog_request, the kickoff's
                       recipes) runs in a VM of its own, made for it and removed
                       after, and its outputs are sealed into store/. Counted with
-                      the seats against this host's capacity.
+                      the seats against this host's capacity: unset, as many as
+                      fit up to 2 (none fitting: no job service, said); given,
+                      kept or refused.
   --worker-cpus N     vCPUs per worker VM (default 2).
   --worker-memory MIB Memory per worker VM in MiB (default 4096 on a host with 64 GiB
                       or more, 2048 otherwise).
@@ -3167,7 +3169,7 @@ cmd_start() {
   # Where the agents live: one microVM each (the default), or host
   # processes (--isolation host, unisolated). isolation_given says the
   # operator named it, so a refusal can say how to choose the other.
-  local isolation="${SWARM_ISOLATION:-microvm}" isolation_given=$([[ -n "${SWARM_ISOLATION:-}" ]] && echo 1 || echo 0) vm_image="${SWARM_VM_IMAGE:-}" vm_image_named=$([[ -n "${SWARM_VM_IMAGE:-}" ]] && echo 1 || echo 0) vm_image_digest="" vm_cpus=2 vm_memory="" vm_disk=8192 vm_snapshot=1 vm_snapshot_dir="" allow_oauth_in_vm=0 inputs_copy=0 jobs=1 workers=2 worker_cpus=2 worker_memory=""
+  local isolation="${SWARM_ISOLATION:-microvm}" isolation_given=$([[ -n "${SWARM_ISOLATION:-}" ]] && echo 1 || echo 0) vm_image="${SWARM_VM_IMAGE:-}" vm_image_named=$([[ -n "${SWARM_VM_IMAGE:-}" ]] && echo 1 || echo 0) vm_image_digest="" vm_cpus=2 vm_memory="" vm_disk=8192 vm_snapshot=1 vm_snapshot_dir="" allow_oauth_in_vm=0 inputs_copy=0 jobs=1 workers=2 workers_given=0 worker_cpus=2 worker_memory=""
   local seal_herdr=1
   # Directories the panes may not read. Reads are open by design, so this is
   # narrow on purpose: material about the case the agents must derive rather
@@ -3295,7 +3297,7 @@ cmd_start() {
         vm_image="$2"; vm_image_named=1; shift 2 ;;
       --vm-cpus) vm_cpus="$2"; shift 2 ;;
       --vm-memory) vm_memory="$2"; shift 2 ;;
-      --workers) workers="$2"; shift 2 ;;
+      --workers) workers="$2"; workers_given=1; shift 2 ;;
       --worker-cpus) worker_cpus="$2"; shift 2 ;;
       --worker-memory) worker_memory="$2"; shift 2 ;;
       --no-jobs) jobs=0; shift ;;
@@ -3886,19 +3888,39 @@ sys.exit(0 if t(sys.argv[1]) < t(sys.argv[2]) else 1)' "$_have" "$_ship" 2>/dev/
   # that quietly has none.
   if [[ "$isolation" == "microvm" ]]; then
     # Whether n VMs of this size fit this host, before anything is written.
-    local vm_capacity
     # The job service's workers run beside the seats: counted as seats of
     # the larger of the two sizes, which is what the host may be asked for.
-    local cap_n="$n" cap_cpus="$vm_cpus" cap_mem="$vm_memory"
-    if [[ "$jobs" -eq 1 ]]; then
-      cap_n=$((n + workers))
-      [[ "$worker_cpus" -gt "$cap_cpus" ]] && cap_cpus="$worker_cpus"
-      [[ "$worker_memory" -gt "$cap_mem" ]] && cap_mem="$worker_memory"
-    fi
-    if ! vm_capacity="$(vm_cli capacity --n "$cap_n" --cpus "$cap_cpus" --memory "$cap_mem")"; then
+    # An unset --workers takes as many as fit beside the seats, up to its
+    # default, and says so; none fitting leaves the run without jobs, said.
+    # An operator's own --workers N is kept or refused, never lowered.
+    local vm_capacity cap_n cap_cpus cap_mem try_workers fitted=""
+    for try_workers in $(seq "$([[ "$jobs" -eq 1 ]] && echo "$workers" || echo 0)" -1 0); do
+      cap_n="$n" cap_cpus="$vm_cpus" cap_mem="$vm_memory"
+      if [[ "$try_workers" -gt 0 ]]; then
+        cap_n=$((n + try_workers))
+        [[ "$worker_cpus" -gt "$cap_cpus" ]] && cap_cpus="$worker_cpus"
+        [[ "$worker_memory" -gt "$cap_mem" ]] && cap_mem="$worker_memory"
+      fi
+      if vm_capacity="$(vm_cli capacity --n "$cap_n" --cpus "$cap_cpus" --memory "$cap_mem")"; then
+        fitted="$try_workers"
+        break
+      fi
+      [[ "$workers_given" -eq 1 && "$jobs" -eq 1 ]] && break
+    done
+    if [[ -z "$fitted" ]]; then
       echo "BLOCKER: $(jq -r '.blockers | join("; ")' <<<"$vm_capacity" 2>/dev/null || printf '%s' "$vm_capacity")" >&2
+      [[ "$workers_given" -eq 1 && "$jobs" -eq 1 ]] && echo "  The $workers tool-job worker VM(s) of --workers count with the seats: lower --workers or --worker-memory, or run without jobs (--no-jobs)." >&2
       echo "  $VM_HOST_WAY_ON" >&2
       exit 2
+    fi
+    if [[ "$jobs" -eq 1 && "$fitted" -lt "$workers" ]]; then
+      if [[ "$fitted" -eq 0 ]]; then
+        jobs=0
+        echo "WARN: no tool-job worker VM (${worker_memory} MiB) fits beside the $n seat(s) on this host: the run has no job service, and the agents run their tools in their own VMs. --workers N asks for workers (refused if they do not fit); --no-jobs says this is meant." >&2
+      else
+        echo "WARN: $fitted tool-job worker VM(s), not $workers, fit beside the $n seat(s) on this host: the run has $fitted. --workers N asks for more (refused if they do not fit)." >&2
+        workers="$fitted"
+      fi
     fi
     jq -r '.warnings[]? | "WARN: " + .' <<<"$vm_capacity" >&2 || true
     [[ -n "$vm_image" ]] || vm_image="$(vm_default_image "$pack_dirs" "$playwright")" || exit 2

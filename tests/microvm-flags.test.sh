@@ -66,6 +66,19 @@ leftover="$(find "$TMP/runs" -mindepth 1 -maxdepth 1 -type d 2>/dev/null)"
 [[ -z "$leftover" ]] || fail "a refused kickoff left a sandbox directory: $leftover"
 pass "an isolation that does not exist, a probe with no guard to probe, a host guard's flag, and a VM with no CPU, too little memory or more than the host has are refused before anything is written"
 
+# --- tool-job workers count with the seats --------------------------------------
+# An operator's own --workers that cannot fit is refused, and says which flag.
+out="$(start --isolation microvm --workers 1 --worker-memory 10000000 --label bad-workers)"; rc=$?
+[[ $rc -eq 2 ]] && grep -q -- 'lower --workers or --worker-memory, or run without jobs (--no-jobs)' <<<"$out" || fail "a --workers that cannot fit was not refused with its way out: $out"
+# An unset --workers takes what fits: here none, so the run has no job
+# service, and the kickoff says so rather than refusing a run whose seats fit.
+out="$(start --isolation microvm --worker-memory 10000000 --label vm-noworkers)"; rc=$?
+[[ $rc -eq 0 ]] || fail "a run whose seats fit was refused over the default workers: $out"
+grep -q 'WARN: no tool-job worker VM (10000000 MiB) fits beside the 2 seat(s)' <<<"$out" || fail "no word that the run has no job service: $out"
+[[ "$(reg vm-noworkers '.isolation.jobs')" == "null" ]] || fail "the record says jobs: $(reg vm-noworkers '.isolation.jobs')"
+grep -q '^Jobs:' <<<"$out" && fail "a run without a job service printed a Jobs line: $out"
+pass "workers count with the seats: an unset --workers takes what fits (none here: no job service, said); a given one is kept or refused"
+
 # --- the default is a VM: what cannot be one is refused, and says both ways on --------
 # A host guard's flag with no --isolation: the run would be a VM run, so the
 # flag means nothing; the refusal says how to ask for a host run.
