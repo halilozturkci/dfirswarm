@@ -59,8 +59,8 @@ if command -v caffeinate >/dev/null 2>&1 || command -v systemd-inhibit >/dev/nul
   if [[ -z "$pid" ]]; then
     # The system refused the inhibitor (systemd-inhibit with no login
     # session): said as such, never claimed.
-    printf '%s\n' "$out" | grep -q "could not be kept from sleeping" || fail "an inhibitor that died was not said: $out"
-    printf '%s\n' "$out" | grep -q "kept from sleeping for the run" && fail "a refused inhibitor was claimed: $out"
+    grep -q "could not be kept from sleeping" <<<"$out" || fail "an inhibitor that died was not said: $out"
+    grep -q "kept from sleeping for the run" <<<"$out" && fail "a refused inhibitor was claimed: $out"
   else
     kill -0 "$pid" 2>/dev/null || fail "nothing keeps the host awake: $out"
     PIDS+=("$pid")

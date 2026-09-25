@@ -50,8 +50,8 @@ out="$(SWARM_MSB_BIN="$TMP/msb" SWARM_RUNS_DIR="$RUNS" bash "$ROOT/scripts/swarm
 rc=$?
 set -e
 [[ $rc -eq 3 ]] || fail "stop with a VM still up exited $rc, wanted 3: $out"
-printf '%s\n' "$out" | grep -q "NOT STOPPED" || fail "stop did not say the run is not stopped: $out"
-printf '%s\n' "$out" | grep -q "Stopped sstp1" && fail "stop said Stopped with a VM up: $out"
+grep -q "NOT STOPPED" <<<"$out" || fail "stop did not say the run is not stopped: $out"
+grep -q "Stopped sstp1" <<<"$out" && fail "stop said Stopped with a VM up: $out"
 [[ "$(jq -r '.runs[0].state' "$RUNS/registry.json")" == "stop_incomplete" ]] || fail "the record does not say stop_incomplete: $(jq -c '.runs[0]' "$RUNS/registry.json")"
 pass "a stop that leaves a VM up exits 3 and records stop_incomplete"
 
@@ -68,7 +68,7 @@ record finished
 touch "$SB/done/SWARM_DONE"
 out="$(SWARM_MSB_BIN="$TMP/msb" SWARM_RUNS_DIR="$RUNS" bash "$ROOT/scripts/swarm.sh" stop sstp1 --after-hub 2>&1)" || fail "the after-hub stop failed: $out"
 [[ "$(jq -r '.runs[0].state' "$RUNS/registry.json")" == "finished" ]] || fail "the after-hub stop changed the hub's state: $(jq -c '.runs[0]' "$RUNS/registry.json")"
-printf '%s\n' "$out" | grep -q "Custody:.*skipped\|Cleared sstp1 after the hub finished it" || fail "the after-hub stop did not say what it did: $out"
+grep -q "Custody:.*skipped\|Cleared sstp1 after the hub finished it" <<<"$out" || fail "the after-hub stop did not say what it did: $out"
 pass "a stop the hub runs after finishing the run clears up and keeps the state finished"
 
 echo "# a reaped microVM seat has its VM put away, its disk kept"
@@ -100,7 +100,7 @@ out="$(TMPDIR="$TMP" SWARM_MSB_BIN="$TMP/msb" HERDR_BIN=/usr/bin/false PATH="/us
 [[ -f "$RS/done/agents/srp100.dead" ]] || fail "the silent seat was not reaped: $out"
 grep -q "^stop dfs-srp1-srp100" "$TMP/msb-calls.log" 2>/dev/null || fail "the reaped seat's VM was not stopped: $(cat "$TMP/msb-calls.log" 2>/dev/null); $out"
 grep -q "^snapshot create" "$TMP/msb-calls.log" || fail "the reaped seat's disk was not kept"
-printf '%s\n' "$out" | grep -q "VM of srp100 put away" || fail "the reaper did not say the VM was put away: $out"
+grep -q "VM of srp100 put away" <<<"$out" || fail "the reaper did not say the VM was put away: $out"
 pass "a reaped microVM seat has its VM stopped and its disk kept, as stop would"
 
 echo "# a stop from a shell with another TMPDIR still ends the hub, its keeper and its directory"
@@ -190,10 +190,10 @@ jq -n --arg sb "$CS" '{runs: [{id: "scus1", label: "custody", state: "running", 
 chmod a-w "$CS/traces"
 out="$(SWARM_RUNS_DIR="$RUNS" bash "$ROOT/scripts/swarm.sh" stop scus1 --custody-timeout 30 2>&1)" || true
 chmod u+w "$CS/traces"
-printf '%s\n' "$out" | grep -q 'Custody: *OLD VERDICT' && fail "stop printed an earlier verdict as this stop's: $out"
-printf '%s\n' "$out" | grep -q "the custody check did not finish" || fail "stop did not say custody did not finish: $out"
-printf '%s\n' "$out" | grep -q "an earlier one (2020-01-01" || fail "stop did not say the verdict on disk is an earlier one: $out"
-printf '%s\n' "$out" | grep -q "nothing of run scus1 was alive" || fail "a run recorded as running with nothing alive was not said to have crashed or lost its host: $out"
+grep -q 'Custody: *OLD VERDICT' <<<"$out" && fail "stop printed an earlier verdict as this stop's: $out"
+grep -q "the custody check did not finish" <<<"$out" || fail "stop did not say custody did not finish: $out"
+grep -q "an earlier one (2020-01-01" <<<"$out" || fail "stop did not say the verdict on disk is an earlier one: $out"
+grep -q "nothing of run scus1 was alive" <<<"$out" || fail "a run recorded as running with nothing alive was not said to have crashed or lost its host: $out"
 pass "a custody that did not run is said, and the verdict left from an earlier stop is named as that; a run with nothing alive is said to have crashed or lost its host"
 
 echo "# a run on hold keeps its VMs from the reaper"

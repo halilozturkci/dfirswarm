@@ -43,20 +43,20 @@ out="$(swarm review srv1 --accept 1 --examiner "H. Examiner")" || fail "accept f
 set +e
 out="$(swarm review srv1 --reject 2 --examiner "H. Examiner")"; rc=$?
 set -e
-[[ $rc -ne 0 ]] && printf '%s\n' "$out" | grep -q 'needs a note' || fail "a reject with no note was taken (rc $rc): $out"
+[[ $rc -ne 0 ]] && grep -q 'needs a note' <<<"$out" || fail "a reject with no note was taken (rc $rc): $out"
 out="$(swarm review srv1 --reject 2 --note "the hosts file is the analyst's own" --examiner "H. Examiner")" || fail "reject failed: $out"
 out="$(swarm review srv1 --amend 3 --note "the task is named Updater2" --examiner "H. Examiner")" || fail "amend failed: $out"
 set +e
 out="$(swarm review srv1 --accept 9 --examiner "H. Examiner")"; rc=$?
 set -e
-[[ $rc -ne 0 ]] && printf '%s\n' "$out" | grep -q 'no ledger entry 9' || fail "an entry that does not exist was reviewed (rc $rc): $out"
+[[ $rc -ne 0 ]] && grep -q 'no ledger entry 9' <<<"$out" || fail "an entry that does not exist was reviewed (rc $rc): $out"
 set +e
 out="$(swarm review srv1 --sign --examiner "H. Examiner")"; rc=$?
 set -e
-[[ $rc -eq 2 ]] && printf '%s\n' "$out" | grep -q 'still running' || fail "a running run's ledger was signed off (rc $rc): $out"
+[[ $rc -eq 2 ]] && grep -q 'still running' <<<"$out" || fail "a running run's ledger was signed off (rc $rc): $out"
 jq '.runs[0].state = "done"' "$RUNS/registry.json" > "$TMP/r" && mv "$TMP/r" "$RUNS/registry.json"
 out="$(swarm review srv1 --sign)" || fail "the sign-off (examiner from the run's record) failed: $out"
-printf '%s\n' "$out" | grep -q 'by Run Examiner' || fail "the run's recorded examiner was not used: $out"
+grep -q 'by Run Examiner' <<<"$out" || fail "the run's recorded examiner was not used: $out"
 F="$RUNS/reviews/srv1.jsonl"
 [[ "$(wc -l < "$F" | tr -d ' ')" == 4 ]] || fail "the review holds $(wc -l < "$F") lines, wanted 4"
 mode="$(stat -c %a "$F" 2>/dev/null || stat -f %Lp "$F")"
@@ -65,7 +65,7 @@ jq -s -e '.[0].action == "accept" and .[0].entry_hash == "a1" and .[1].note == "
   and .[3].action == "sign" and .[3].ledger_head == "a3" and .[3].ledger_entries == 3 and .[0].prev == null and (.[1].prev | length == 64)' "$F" >/dev/null \
   || fail "the review lines are not what was done: $(cat "$F")"
 out="$(swarm review srv1 --show)" || fail "show failed: $out"
-printf '%s\n' "$out" | grep -q 'the chain verifies' && printf '%s\n' "$out" | grep -q 'over ledger head a3' || fail "show does not say what was reviewed: $out"
+grep -q 'the chain verifies' <<<"$out" && grep -q 'over ledger head a3' <<<"$out" || fail "show does not say what was reviewed: $out"
 grep -q '"command":"review"' "$RUNS/operator-audit.jsonl" || fail "the review is not on the operator's audit"
 pass "accept, reject and amend name the entry and its hash, a reject needs a note, and the sign-off is over the ledger's head once the run has ended"
 
@@ -75,11 +75,11 @@ sed -i.bak 's/"accept"/"reject"/' "$F" && rm -f "$F.bak"
 set +e
 out="$(swarm review srv1 --show)"; rc=$?
 set -e
-[[ $rc -ne 0 ]] && printf '%s\n' "$out" | grep -q 'BROKEN' || fail "a changed review line was not caught (rc $rc): $out"
+[[ $rc -ne 0 ]] && grep -q 'BROKEN' <<<"$out" || fail "a changed review line was not caught (rc $rc): $out"
 set +e
 out="$(swarm review srv1 --accept 2 --examiner x)"; rc=$?
 set -e
-[[ $rc -ne 0 ]] && printf '%s\n' "$out" | grep -q 'broken' || fail "an act was added to a broken review (rc $rc): $out"
+[[ $rc -ne 0 ]] && grep -q 'broken' <<<"$out" || fail "an act was added to a broken review (rc $rc): $out"
 cp "$TMP/review.bak" "$F"
 pass "the review is a chain: an edited line is BROKEN and nothing is added to it"
 
@@ -116,17 +116,17 @@ jq '.runs[0].state = "running"' "$RUNS/registry.json" > "$TMP/r" && mv "$TMP/r" 
 set +e
 out="$(kick --label r1 --ledger-from srv1)"; rc=$?
 set -e
-[[ $rc -eq 2 ]] && printf '%s\n' "$out" | grep -q 'still running' || fail "a running run's ledger was brought in (rc $rc): $out"
+[[ $rc -eq 2 ]] && grep -q 'still running' <<<"$out" || fail "a running run's ledger was brought in (rc $rc): $out"
 jq '(.runs[] | select(.id == "srv1")) |= (.state = "done" | .hold = {reason: "matter", at: "t", by: "x"})' "$RUNS/registry.json" > "$TMP/r" && mv "$TMP/r" "$RUNS/registry.json"
 set +e
 out="$(kick --label r2 --ledger-from srv1 --case-id CASE-2)"; rc=$?
 set -e
-[[ $rc -eq 2 ]] && printf '%s\n' "$out" | grep -q 'on hold for case CASE-1' || fail "a run held for another case lent its claims (rc $rc): $out"
+[[ $rc -eq 2 ]] && grep -q 'on hold for case CASE-1' <<<"$out" || fail "a run held for another case lent its claims (rc $rc): $out"
 out="$(kick --label r3 --ledger-from srv1 --case-id CASE-1)" || fail "the same case was refused: $out"
 set +e
 out="$(kick --label r4 --ledger-from snosuch)"; rc=$?
 set -e
-[[ $rc -eq 2 ]] && printf '%s\n' "$out" | grep -q 'no such run' || fail "a run that does not exist was not refused (rc $rc): $out"
+[[ $rc -eq 2 ]] && grep -q 'no such run' <<<"$out" || fail "a run that does not exist was not refused (rc $rc): $out"
 pass "--ledger-from refuses a running run, a run held for another case, and a run that does not exist"
 
 echo "# a FIFO or a link in the review's place is refused by name, never read or waited on"
@@ -139,18 +139,18 @@ set +e
 out="$(swarm review srv1 --show)"; rc=$?
 set -e
 (( SECONDS - started < 10 )) || fail "a FIFO in the review's place hung the read"
-[[ $rc -ne 0 ]] && printf '%s\n' "$out" | grep -q 'is not a regular file; it is not read' || fail "a FIFO was not refused by name (rc $rc): $out"
+[[ $rc -ne 0 ]] && grep -q 'is not a regular file; it is not read' <<<"$out" || fail "a FIFO was not refused by name (rc $rc): $out"
 set +e
 out="$(swarm review srv1 --accept 1 --examiner x)"; rc=$?
 set -e
-[[ $rc -ne 0 ]] && printf '%s\n' "$out" | grep -q 'not a regular file' || fail "an act was written through a FIFO (rc $rc): $out"
+[[ $rc -ne 0 ]] && grep -q 'not a regular file' <<<"$out" || fail "an act was written through a FIFO (rc $rc): $out"
 rm -f "$F"
 printf 'elsewhere\n' > "$TMP/elsewhere.jsonl"
 ln -s "$TMP/elsewhere.jsonl" "$F"
 set +e
 out="$(swarm review srv1 --accept 1 --examiner x)"; rc=$?
 set -e
-[[ $rc -ne 0 ]] && printf '%s\n' "$out" | grep -q 'a link' || fail "an act was written through a link (rc $rc): $out"
+[[ $rc -ne 0 ]] && grep -q 'a link' <<<"$out" || fail "an act was written through a link (rc $rc): $out"
 [[ "$(cat "$TMP/elsewhere.jsonl")" == elsewhere ]] || fail "the link's target was written"
 rm -f "$F"
 cp "$TMP/review.keep" "$F"

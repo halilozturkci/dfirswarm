@@ -35,22 +35,22 @@ pkg="$sb/package"
 grep -q '^examiner A. Examiner$' "$pkg/SIGNER.txt" || fail "SIGNER.txt does not name the examiner: $(cat "$pkg/SIGNER.txt")"
 principal="$(awk '$1 == "principal" {print $2}' "$pkg/SIGNER.txt")"
 printf '%s %s\n' "$principal" "$(awk '{print $1, $2}' "$TMP/key.pub")" > "$TMP/allowed"
-printf '%s\n' "$out" | grep -q "^Signed: " || fail "the signing is not said: $out"
+grep -q "^Signed: " <<<"$out" || fail "the signing is not said: $out"
 pass "package --sign writes MANIFEST.txt.sig, signer.pub and SIGNER.txt"
 
 echo "# verify: exit 0 signed by an allowed signer, 3 signer not checked, 4 unsigned, 1 anything off"
 verify "$pkg" --allowed-signers "$TMP/allowed"
 [[ $rc -eq 0 ]] || fail "a sound package from an allowed signer exited $rc: $out"
-printf '%s\n' "$out" | grep -q '^VERIFIED: ' || fail "the verdict is not said: $out"
+grep -q '^VERIFIED: ' <<<"$out" || fail "the verdict is not said: $out"
 verify "$pkg"
 [[ $rc -eq 3 ]] || fail "without --allowed-signers the verdict exited $rc, wanted 3: $out"
-printf '%s\n' "$out" | grep -q 'who signed was not checked' || fail "an unchecked signer is not said: $out"
+grep -q 'who signed was not checked' <<<"$out" || fail "an unchecked signer is not said: $out"
 # Another key the allowed list does not name.
 ssh-keygen -q -t ed25519 -N "" -f "$TMP/other" >/dev/null
 printf '%s %s\n' "$principal" "$(awk '{print $1, $2}' "$TMP/other.pub")" > "$TMP/allowed-other"
 verify "$pkg" --allowed-signers "$TMP/allowed-other"
 [[ $rc -eq 1 ]] || fail "a signer the list does not allow exited $rc: $out"
-printf '%s\n' "$out" | grep -q 'DOES NOT VERIFY' || fail "a disallowed signer is not said: $out"
+grep -q 'DOES NOT VERIFY' <<<"$out" || fail "a disallowed signer is not said: $out"
 # The zip a package is handed over as.
 (cd "$sb" && python3 -c 'import os, sys, zipfile
 with zipfile.ZipFile(sys.argv[1], "w") as z:
@@ -62,14 +62,14 @@ verify "$TMP/pkg.zip" --allowed-signers "$TMP/allowed"
 chmod -R u+w "$pkg"
 printf 'x' >> "$pkg/team.json"
 verify "$pkg" --allowed-signers "$TMP/allowed"
-[[ $rc -eq 1 ]] && printf '%s\n' "$out" | grep -q 'changed: team.json' || fail "a changed file was not caught (rc $rc): $out"
+[[ $rc -eq 1 ]] && grep -q 'changed: team.json' <<<"$out" || fail "a changed file was not caught (rc $rc): $out"
 out="$(swarm package "$id" --sign --key "$TMP/key")" || fail "repackaging failed"
 printf 'late\n' > "$pkg/added.txt"
 verify "$pkg" --allowed-signers "$TMP/allowed"
-[[ $rc -eq 1 ]] && printf '%s\n' "$out" | grep -q 'not in the manifest: added.txt' || fail "an added file was not caught (rc $rc): $out"
+[[ $rc -eq 1 ]] && grep -q 'not in the manifest: added.txt' <<<"$out" || fail "an added file was not caught (rc $rc): $out"
 rm -f "$pkg/added.txt" "$pkg/SWARM.md"
 verify "$pkg" --allowed-signers "$TMP/allowed"
-[[ $rc -eq 1 ]] && printf '%s\n' "$out" | grep -q 'missing: SWARM.md' || fail "a missing file was not caught (rc $rc): $out"
+[[ $rc -eq 1 ]] && grep -q 'missing: SWARM.md' <<<"$out" || fail "a missing file was not caught (rc $rc): $out"
 # Unsigned.
 out="$(swarm package "$id")" || fail "an unsigned package failed"
 [[ ! -e "$pkg/MANIFEST.txt.sig" ]] || fail "an unsigned package kept an old signature"
@@ -88,14 +88,14 @@ lines = [(new + line[64:]) if line.endswith("./team.json") else line for line in
 open(p, "w").write("\n".join(lines) + "\n")
 PY
 verify "$pkg" --allowed-signers "$TMP/allowed"
-[[ $rc -eq 1 ]] && printf '%s\n' "$out" | grep -q 'DOES NOT VERIFY' || fail "a manifest rewritten after signing passed (rc $rc): $out"
+[[ $rc -eq 1 ]] && grep -q 'DOES NOT VERIFY' <<<"$out" || fail "a manifest rewritten after signing passed (rc $rc): $out"
 pass "verify re-hashes every file, catches a change, an addition and a removal, and checks the signature (0/1/3/4)"
 
 echo "# without a key, --sign refuses rather than hand over an unsigned package as signed"
 set +e
 out="$(HOME="$TMP/nohome" swarm package "$id" --sign)"; rc=$?
 set -e
-[[ $rc -ne 0 ]] && printf '%s\n' "$out" | grep -q 'no key to sign the package with' || fail "--sign with no key did not refuse (rc $rc): $out"
+[[ $rc -ne 0 ]] && grep -q 'no key to sign the package with' <<<"$out" || fail "--sign with no key did not refuse (rc $rc): $out"
 pass "--sign with no key refuses"
 
 echo "package-sign.test.sh: all checks passed"
