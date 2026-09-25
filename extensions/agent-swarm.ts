@@ -2234,7 +2234,7 @@ export default function (pi: ExtensionAPI) {
       "Run work in a throwaway worker VM of this run's image: evidence parsing, anything slow or heavy, and anything whose output you will cite or share. Quick looks stay in your own shell. " +
       "The worker sees inputs/, store/ (earlier jobs' outputs), catalog/ and tools/ read-only, your own work/<you>/ read-only when the job names it, no network unless network=allowlist, and writes only to $OUT. " +
       "What it writes there is sealed into store/jobs/<id>/out/ (read-only, hashed) and outlives the VM: any job or agent reads it there, and you cite it as job:<id>/<path>. " +
-      "Give command (bash, run from the run's directory) or tool with args (a pack or forged tool; write {OUT}/<name> where it takes an output path). " +
+      "Give command (bash, run from the run's directory; $OUT is also the OUT environment variable, for a script in another language or a quoted heredoc) or tool with args (a pack or forged tool; write {OUT}/<name> where it takes an output path). " +
       "A short job answers here; a longer one returns its id, and a post tagged result wakes your wait when it is done: do not poll job_status. A failed or timed-out job keeps what it wrote. " +
       "stdout comes back a page at a time; all of it is store/jobs/<id>/stdout.log.",
     parameters: Type.Object({
@@ -2260,6 +2260,8 @@ export default function (pi: ExtensionAPI) {
         ...(params.timeout_seconds ? { timeout_seconds: params.timeout_seconds } : {}),
         ...(params.network ? { network: params.network } : {}),
       };
+      const wait = Math.min(Math.max(params.wait_seconds ?? 12, 0), 100);
+      if (wait > 0) spec.wait = wait + 5;
       const sub = await jobSubmit(toolCtx.cwd, spec);
       if (!sub.ok || !sub.job) {
         const refused = { ok: false as const, reason: sub.reason ?? "the job was not accepted" };
@@ -2267,7 +2269,6 @@ export default function (pi: ExtensionAPI) {
         return { content: [{ type: "text" as const, text: refused.reason }], details: refused, isError: true };
       }
       const id = String(sub.job.job);
-      const wait = Math.min(Math.max(params.wait_seconds ?? 12, 0), 100);
       const until = Date.now() + wait * 1000;
       let last: Awaited<ReturnType<typeof jobStatus>> = sub;
       while (!jobDone(last.job?.state) && Date.now() < until && !signal?.aborted) {

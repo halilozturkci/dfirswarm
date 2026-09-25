@@ -650,7 +650,7 @@ export function boardTable(hub: {
       };
       // A job that names the seat's own scratch gets it, read-only.
       if (JSON.stringify([raw.command ?? "", raw.args ?? {}]).includes(`work/${who}/`)) spec.scratch = true;
-      const r = await svc.submit(who, spec);
+      const r = await svc.submit(who, spec, { watch: typeof raw.wait === "number" ? raw.wait : 0 });
       return r.ok ? { ok: true, job: await jobView(S, r.job) } : r;
     },
     jobStatus: async (who, a) => {

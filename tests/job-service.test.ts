@@ -180,6 +180,20 @@ test("submissions in the same tick each get a job id of their own", async () => 
   await svc.stop("over");
 });
 
+test("a job its agent waits for from submission is answered in the call, not posted as well", async () => {
+  const S = sandbox();
+  const { svc, posts } = service(S);
+  await svc.start();
+  const r = await svc.submit("a1", { kind: "command", command: "echo quick", inputs: [] }, { watch: 10 });
+  assert.ok(r.ok);
+  await until(svc, r.job.id);
+  const st = await svc.status("a1", r.job.id, {});
+  assert.ok(st.ok && st.job.state === "committed");
+  await new Promise((res) => setTimeout(res, 300));
+  assert.equal(posts.length, 0, "no post for a job answered where the agent waited");
+  await svc.stop("over");
+});
+
 test("an agent may queue so many jobs and no more; the harness's own are not counted", async () => {
   const S = sandbox();
   const { svc } = service(S, { workers: 1, perRequesterQueued: 2, runWorker: async () => { await new Promise((r) => setTimeout(r, 300)); return { code: 0, fenced: true }; } });

@@ -397,7 +397,7 @@ export class JobService {
    * Accept a job, durably, or refuse it with the reason. The answer comes
    * once the acceptance is on disk; the work comes after.
    */
-  async submit(agent: string, raw: Partial<JobSpec>): Promise<{ ok: true; job: JobRecord } | { ok: false; reason: string }> {
+  async submit(agent: string, raw: Partial<JobSpec>, o: { watch?: number } = {}): Promise<{ ok: true; job: JobRecord } | { ok: false; reason: string }> {
     if (this.stopping) return { ok: false, reason: "the run is stopping; no new jobs" };
     const spec = await this.normalise(raw);
     if ("reason" in spec) return { ok: false, reason: spec.reason };
@@ -417,6 +417,9 @@ export class JobService {
     maybeCrash("job:accepted");
     const job: JobRecord = { id, attempt: 1, spec, requester, state: "accepted", accepted_at: new Date().toISOString(), ...(key ? { dedup_key: key } : {}) };
     this.jobs.set(id, job);
+    // The agent waits for it in job_run from this moment: a job that is done
+    // before its first status call is answered there, not posted as well.
+    if (o.watch && o.watch > 0) this.watchers.set(id, Date.now() + Math.min(o.watch, 120) * 1000);
     await this.project(job);
     this.queue.push(id);
     void this.pump();
