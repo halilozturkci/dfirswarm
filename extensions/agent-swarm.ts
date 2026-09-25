@@ -150,7 +150,7 @@ const TOOLCHAIN_INTERVAL_MS = 30_000;
 let lastToolchainAt = 0;
 
 /** Tools this extension owns. Everything else is a Pi built-in we only trace. */
-const SWARM_TOOLS = new Set([
+export const SWARM_TOOLS = new Set([
   "post",
   "inbox",
   "list_team",
@@ -181,6 +181,12 @@ const SWARM_TOOLS = new Set([
   "forge_hint",
   "agent_cap_steer",
   "agent_cap_stop",
+  // They write their own trace row too: without them here each call was
+  // on the trace twice, once as itself and once as a generic tool row.
+  "name",
+  "publish_file",
+  "skill",
+  "self_compact",
 ]);
 
 /** A bash command run this many times by one agent earns a hint to forge a tool. */
