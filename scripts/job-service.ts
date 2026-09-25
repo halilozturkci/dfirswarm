@@ -581,7 +581,9 @@ export class JobService {
         ": > /job/stdout.log; : > /job/stderr.log",
         "while IFS=$'\\t' read -r i rid rt entry; do",
         "  [ -n \"$i\" ] || continue",
-        "  v=$(timeout 300 \"$rt\" \"$entry\" detect --target \"/job/target-$i.json\" 2>>/job/stderr.log | tail -n 1); rc=$?",
+        // The detect step's own exit status: through a pipe it was tail's, and every recipe "applied".
+        "  v=$(timeout 300 \"$rt\" \"$entry\" detect --target \"/job/target-$i.json\" 2>>/job/stderr.log); rc=$?",
+        "  v=$(printf '%s' \"$v\" | tail -n 1)",
         "  printf '%s\\t%s\\t%s\\t%s\\n' \"$i\" \"$rid\" \"$rc\" \"$v\" >> \"$OUT/detect.tsv\"",
         "done < /job/detect.tsv",
         "echo 0 > /job/exit",
@@ -797,12 +799,26 @@ export class JobService {
       return;
     }
     const targets = job.spec.targets ?? [];
+    let applied = 0;
     for (const line of text.split("\n")) {
       const [i, rid, rc] = line.split("\t");
       if (rc !== "0" || !rid) continue;
       const t = targets[Number(i)];
       if (!t) continue;
+      applied += 1;
       await this.submit(job.requester.agent === "system" ? "system" : job.requester.agent, { kind: "recipe", recipe: rid, target: t, inputs: [t.ref ?? "all"], timeout_seconds: 900, network: "off", parent: job.spec.parent ?? job.id });
+    }
+    if (!applied && job.requester.agent !== "system") {
+      const whys = text.split("\n").filter(Boolean).map((l) => l.split("\t")).map(([, rid, , v]) => {
+        try {
+          return `${rid}: ${(JSON.parse(v) as { why?: string }).why ?? "does not apply"}`;
+        } catch {
+          return `${rid}: does not apply`;
+        }
+      });
+      this.delivered.add(job.id);
+      await this.journal.append({ type: "job_notified", job: job.id, to: job.requester.agent, how: "post" });
+      await this.o.notify(job.requester.agent, `No recipe of this run catalogues ${targets.map((t) => t.name ?? t.ref).join(", ")} (job ${job.id}): ${whys.join("; ") || "none was asked"}. Open it with a job_run command; a forged tool that declares "recipe": true can be named as recipe=tool:<name>.`).catch(() => undefined);
     }
   }
 
@@ -822,6 +838,19 @@ export class JobService {
       else this.log(`kickoff recipe ${p.recipe} over ${p.input} refused: ${r.reason}`);
     }
     await this.journal.append({ type: "kickoff_queued", jobs: ids });
+  }
+
+  /**
+   * An agent asks for an object to be catalogued: with a recipe named, that
+   * recipe runs over it; without, a detect pass asks every recipe of the
+   * run whether it applies, and each that does runs as the agent's own job.
+   */
+  async catalogRequest(agent: string, target: string, recipe?: string, reason?: string): Promise<{ ok: true; job: JobRecord } | { ok: false; reason: string }> {
+    const t = await resolveTarget(this.S, target, this.journal);
+    if ("reason" in t) return { ok: false, reason: t.reason };
+    const note = reason ? String(reason).slice(0, 2000) : undefined;
+    if (recipe) return this.submit(agent, { kind: "recipe", recipe, target: t, inputs: [t.ref ?? "all"], timeout_seconds: 900, network: "off", ...(note ? { note } : {}) });
+    return this.submit(agent, { kind: "detect", targets: [t], trigger: "request", inputs: [t.ref ?? "all"], timeout_seconds: 900, network: "off", ...(note ? { note } : {}) });
   }
 
   // --- what agents see ---------------------------------------------------------------------------
@@ -879,7 +908,8 @@ export class JobService {
    * ended without the answer.
    */
   private async tell(job: JobRecord): Promise<void> {
-    if (this.delivered.has(job.id) || job.requester.agent === "system") return;
+    // A detect pass is the service's step: its recipes' results are what the agent is told.
+    if (this.delivered.has(job.id) || job.requester.agent === "system" || (job.spec.kind === "detect" && job.status === "ok")) return;
     const until = this.watchers.get(job.id) ?? 0;
     if (Date.now() < until) {
       setTimeout(() => void this.tell(job), until - Date.now() + 3000).unref?.();
@@ -947,3 +977,88 @@ export function describe(job: JobRecord): string {
   return `Job ${job.id} (${what}) ${head}: ${files}; stdout and stderr whole in store/jobs/${job.id}/. job_status ${job.id} for the details; cite its files as job:${job.id}/<path>.${job.generation ? ` Catalogued as ${job.generation}.` : ""}`;
 }
 
+
+/**
+ * A job as an agent is shown it: its state, and when it is done the first
+ * files it wrote (every one is in its manifest, named), the tail of stderr
+ * when it failed (all of it is in stderr.log, named), and how to cite it.
+ */
+export async function jobView(S: string, job: JobRecord, o: { files?: number } = {}): Promise<Record<string, unknown>> {
+  const view: Record<string, unknown> = {
+    job: job.id,
+    state: job.state,
+    ...(job.status ? { status: job.status } : {}),
+    ...(job.reason ? { reason: job.reason } : {}),
+    kind: job.spec.kind,
+    ...(job.spec.tool ? { tool: job.spec.tool } : {}),
+    ...(job.spec.recipe ? { recipe: job.spec.recipe } : {}),
+    requester: job.requester.agent,
+    ...(job.exit !== undefined ? { exit: job.exit } : {}),
+    ...(job.generation ? { generation: job.generation, revision: job.revision } : {}),
+  };
+  if (job.state !== "committed" || !job.outputs) return view;
+  const dir = join(storePaths(S).jobs, job.id);
+  const m = await readManifest(join(dir, "manifest.json"));
+  const shown = o.files ?? 20;
+  view.outputs = {
+    path: job.outputs.path,
+    files: job.outputs.files,
+    bytes: job.outputs.bytes,
+    ...(m ? { list: m.manifest.files.slice(0, shown).map((f) => ({ path: f.path, bytes: f.bytes, sha256: f.sha256 })) } : {}),
+    ...(m && m.manifest.files.length > shown ? { more: `${m.manifest.files.length - shown} more, every one in store/jobs/${job.id}/manifest.json` } : {}),
+    ...(m && m.manifest.rejected.length ? { left_out: m.manifest.rejected.map((r) => `${r.path} (${r.kind})`) } : {}),
+    manifest: `store/jobs/${job.id}/manifest.json`,
+  };
+  if (job.status !== "ok") {
+    try {
+      const err = await readFile(join(dir, "stderr.log"));
+      const tail = err.subarray(Math.max(0, err.length - 2048));
+      view.stderr = { tail: tail.toString("utf8"), bytes: err.length, ...(err.length > tail.length ? { whole: `store/jobs/${job.id}/stderr.log` } : {}) };
+    } catch {
+      // no stderr
+    }
+  }
+  view.cite = `job:${job.id}/<path>`;
+  return view;
+}
+
+/**
+ * What an agent names as an object — a path under the run (inputs/…,
+ * store/jobs/<id>/out/…, catalog/…) or a reference (input:…, job:<id>/…) —
+ * as the target a recipe is given: its path, the rest of its segment set
+ * when the journal records one, its name and its reference. Anything
+ * outside the run is refused.
+ */
+export async function resolveTarget(S: string, text: string, journal?: Journal): Promise<Target | { reason: string }> {
+  const t = text.trim();
+  let rel = t;
+  let ref = "";
+  const m = /^(input|job|import):(.+)$/.exec(t);
+  if (m) {
+    if (m[1] === "input") rel = m[2].startsWith("inputs/") ? m[2] : `inputs/${m[2]}`;
+    else {
+      const slash = m[2].indexOf("/");
+      if (slash < 0) return { reason: `${t} names a job, not a file of it: ${m[1]}:<id>/<path>` };
+      rel = `store/${m[1] === "job" ? "jobs" : "imports"}/${m[2].slice(0, slash)}/out/${m[2].slice(slash + 1)}`;
+    }
+    ref = t;
+  }
+  const abs = resolve(S, rel);
+  const bases = [join(S, "inputs"), join(S, "store", "jobs"), join(S, "store", "imports"), join(S, "catalog")];
+  if (!bases.some((b) => abs.startsWith(`${b}/`)) || t.includes("\0")) return { reason: `${t} is not an object of this run: name a path under inputs/, store/ or catalog/, or an input:/job: reference` };
+  try {
+    const st = await stat(abs);
+    if (!st.isFile()) return { reason: `${t} is not a file` };
+  } catch {
+    return { reason: `${t} does not exist` };
+  }
+  const relToS = abs.slice(S.length + 1);
+  if (!ref) {
+    const jm = /^store\/jobs\/(j\d{6})\/out\/(.+)$/.exec(relToS);
+    ref = relToS.startsWith("inputs/") ? `input:${relToS.slice(7)}` : jm ? `job:${jm[1]}/${jm[2]}` : relToS;
+  }
+  const paths = [abs];
+  const collection = journal?.of("input_collection").find((l) => l.input === relToS);
+  if (collection && Array.isArray(collection.members)) for (const p of (collection.members as string[]).slice(1)) paths.push(join(S, p));
+  return { paths, name: relToS, ref };
+}

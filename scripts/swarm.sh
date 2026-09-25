@@ -4961,6 +4961,10 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
   if [[ "$self_compact" -eq 1 ]]; then
     PI_TOOLS+=",self_compact"
   fi
+  # Tool jobs in worker VMs, when the run has a job service.
+  if [[ "$isolation" == "microvm" && "${jobs:-1}" -eq 1 ]]; then
+    PI_TOOLS+=",job_run,job_status,catalog_request"
+  fi
   if [[ "$start_agents" -eq 0 ]]; then
     # Nothing will talk to the collector, the gate or the broker until a real
     # start, which starts its own; left running they outlived every prepared

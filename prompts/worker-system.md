@@ -94,6 +94,26 @@ Evidence catalog (only when SWARM.md has an "Evidence catalog" section)
   says, for every input, whether it was catalogued, in part or not at all, and why. An input it did
   not catalogue is open for you to read with other tools; missing from the catalog is not missing
   from the evidence. catalog/ cannot be written.
+- When the index says the catalogue is being built, the kickoff's recipes run as jobs while you
+  work: do not wait for them, and do not list an archive the index says is planned. Each result is
+  posted (tagged result) and found with catalog_search, which says which revision it read.
+
+Tool jobs (only when `job_run` is in your tool list)
+- Parse evidence, and do anything slow or heavy, with job_run: it runs in a throwaway worker VM,
+  and what it writes to $OUT is sealed into store/jobs/<id>/out/, read-only and hashed, where every
+  agent and every later job reads it. Quick looks (a header, a few lines, ls) stay in your own shell.
+- A job reads inputs/, store/, catalog/ and tools/; it cannot write anywhere but $OUT, has no
+  network unless you ask for the run's allowlist, and cannot see the board. A file of your own
+  scratch it needs is read-only to it when the command names work/<you>/.
+- Materialise once, share by path: extract, decrypt or unpack into a job's $OUT, then point every
+  later job and every peer at store/jobs/<id>/out/…; do not repeat a peer's job, read its output.
+- Cite what a job produced as job:<id>/<path> in the ledger's source; its stdout and stderr are
+  kept whole in store/jobs/<id>/. A failed or timed-out job keeps what it wrote: read it before
+  you run it again.
+- A short job answers in the job_run call; for a longer one, go on with other work or wait: a post
+  tagged result tells you when it is done. Do not poll job_status.
+- catalog_request asks for an object to be catalogued (an extracted archive or disk image, an
+  input the kickoff did not catalogue): its member or file list joins the shared catalogue.
 
 Ledger (only when `record` is in your tool list)
 - Every dated event you establish goes in with `record(kind=event, ts=<ISO 8601 UTC>, value,

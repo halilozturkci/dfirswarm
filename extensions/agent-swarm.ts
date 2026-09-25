@@ -133,6 +133,9 @@ import {
   boardSocket,
   openHubLink,
   type HubLink,
+  jobSubmit,
+  jobStatus,
+  catalogRequest,
 } from "./board.ts";
 import { registerPlaywrightTool, runBrowserCheck } from "./playwright-tool.ts";
 import { readToolchainAt, TOOLCHAIN_DIR } from "./toolchain.ts";
@@ -187,6 +190,9 @@ export const SWARM_TOOLS = new Set([
   "publish_file",
   "skill",
   "self_compact",
+  "job_run",
+  "job_status",
+  "catalog_request",
 ]);
 
 /** A bash command run this many times by one agent earns a hint to forge a tool. */
@@ -2216,6 +2222,103 @@ export default function (pi: ExtensionAPI) {
         return { content: [{ type: "text" as const, text: result.reason }], details: result, isError: true };
       }
       return okResult(result);
+    },
+  });
+
+  // Tool jobs: work in throwaway worker VMs, sealed into store/ (job-service.ts).
+  const jobDone = (state: unknown) => state === "committed" || state === "failed" || state === "cancelled";
+  pi.registerTool({
+    name: "job_run",
+    label: "Run a job",
+    description:
+      "Run work in a throwaway worker VM of this run's image: evidence parsing, anything slow or heavy, and anything whose output you will cite or share. Quick looks stay in your own shell. " +
+      "The worker sees inputs/, store/ (earlier jobs' outputs), catalog/ and tools/ read-only, your own work/<you>/ read-only when the job names it, no network unless network=allowlist, and writes only to $OUT. " +
+      "What it writes there is sealed into store/jobs/<id>/out/ (read-only, hashed) and outlives the VM: any job or agent reads it there, and you cite it as job:<id>/<path>. " +
+      "Give command (bash, run from the run's directory) or tool with args (a pack or forged tool; write {OUT}/<name> where it takes an output path). " +
+      "A short job answers here; a longer one returns its id, and a post tagged result wakes your wait when it is done: do not poll job_status. A failed or timed-out job keeps what it wrote. " +
+      "stdout comes back a page at a time; all of it is store/jobs/<id>/stdout.log.",
+    parameters: Type.Object({
+      command: Type.Optional(Type.String({ description: "Bash, run from the run's directory; $OUT is the job's own directory" })),
+      tool: Type.Optional(Type.String({ description: "A pack or forged tool's name, instead of a command" })),
+      args: Type.Optional(Type.Object({}, { additionalProperties: true, description: "The tool's arguments, as its manifest says" })),
+      inputs: Type.Optional(Type.Array(Type.String(), { description: "What it reads, for the record: input:<path>, job:<id>, or all (default)" })),
+      timeout_seconds: Type.Optional(Type.Integer({ description: "Stop it after this long (default 900, at most 14400)" })),
+      network: Type.Optional(Type.Union([Type.Literal("off"), Type.Literal("allowlist")], { description: "off (default) or the run's allowlist" })),
+      wait_seconds: Type.Optional(Type.Integer({ description: "How long to wait here for it (default 12, at most 100)" })),
+    }),
+    async execute(_id, params, signal, _onUpdate, toolCtx: ToolCtx) {
+      const started = Date.now();
+      if (Boolean(params.command) === Boolean(params.tool)) {
+        const refused = { ok: false as const, reason: "give command or tool (with its args), one of them" };
+        await logEvent(toolCtx.cwd, agentId, "job_run", params, refused, Date.now() - started);
+        return { content: [{ type: "text" as const, text: refused.reason }], details: refused, isError: true };
+      }
+      const spec: Record<string, unknown> = {
+        ...(params.command ? { command: params.command } : {}),
+        ...(params.tool ? { tool: params.tool, args: params.args ?? {} } : {}),
+        ...(params.inputs ? { inputs: params.inputs } : {}),
+        ...(params.timeout_seconds ? { timeout_seconds: params.timeout_seconds } : {}),
+        ...(params.network ? { network: params.network } : {}),
+      };
+      const sub = await jobSubmit(toolCtx.cwd, spec);
+      if (!sub.ok || !sub.job) {
+        const refused = { ok: false as const, reason: sub.reason ?? "the job was not accepted" };
+        await logEvent(toolCtx.cwd, agentId, "job_run", params, refused, Date.now() - started);
+        return { content: [{ type: "text" as const, text: refused.reason }], details: refused, isError: true };
+      }
+      const id = String(sub.job.job);
+      const wait = Math.min(Math.max(params.wait_seconds ?? 12, 0), 100);
+      const until = Date.now() + wait * 1000;
+      let last: Awaited<ReturnType<typeof jobStatus>> = sub;
+      while (!jobDone(last.job?.state) && Date.now() < until && !signal?.aborted) {
+        await new Promise((r) => setTimeout(r, 1000));
+        const st = await jobStatus(toolCtx.cwd, { job_id: id, limit: 8192, wait: Math.ceil((until - Date.now()) / 1000) + 5 }).catch(() => null);
+        if (st?.ok) last = st;
+      }
+      const result = jobDone(last.job?.state)
+        ? { ok: true, ...last.job, ...(last.stdout ? { stdout: last.stdout } : {}) }
+        : { ok: true, job: id, state: last.job?.state, note: `still ${last.job?.state === "accepted" ? "queued" : "running"}; a post tagged result will say when it is done (your wait wakes on it)` };
+      await logEvent(toolCtx.cwd, agentId, "job_run", params, { ok: true, job: id, state: (result as { state?: unknown }).state, status: (result as { status?: unknown }).status }, Date.now() - started);
+      return okResult(result);
+    },
+  });
+
+  pi.registerTool({
+    name: "job_status",
+    label: "Job status",
+    description:
+      "A job's state, the first files it wrote (every one is in its manifest), and a page of its stdout (offset for the next page). cancel=true stops a job of your own. Needed only for a job that outlived job_run's wait and whose post you have not seen, or to read more of its stdout.",
+    parameters: Type.Object({
+      job_id: Type.String({ description: "j000123" }),
+      offset: Type.Optional(Type.Integer({ description: "Where in stdout to start (bytes); the answer gives the next" })),
+      cancel: Type.Optional(Type.Boolean({ description: "Stop it (your own jobs only)" })),
+    }),
+    async execute(_id, params, _signal, _onUpdate, toolCtx: ToolCtx) {
+      const started = Date.now();
+      const st = await jobStatus(toolCtx.cwd, { job_id: params.job_id, ...(params.offset !== undefined ? { offset: params.offset } : {}), ...(params.cancel ? { cancel: true } : {}), limit: 16384 });
+      await logEvent(toolCtx.cwd, agentId, "job_status", params, { ok: st.ok, state: st.job?.state, ...(st.ok ? {} : { reason: st.reason }) }, Date.now() - started);
+      if (!st.ok) return { content: [{ type: "text" as const, text: st.reason ?? "no answer" }], details: st, isError: true };
+      return okResult({ ok: true, ...st.job, ...(st.stdout ? { stdout: st.stdout } : {}) });
+    },
+  });
+
+  pi.registerTool({
+    name: "catalog_request",
+    label: "Catalogue an object",
+    description:
+      "Ask the harness to catalogue an object: an archive, a disk or memory image a job extracted, or an input the kickoff did not catalogue. Its member list, file list or timeline joins the shared catalogue (catalog/gen/…, a new revision announced on the board, found with catalog_search). " +
+      "target: a path under inputs/ or store/jobs/<id>/out/, or an input:/job: reference. recipe (optional): one of the run's recipes (computer-forensics-base/archive-members, …/disk-volumes, …/memory-windows) or tool:<name> for a forged tool that declares the recipe protocol; without it every recipe is asked whether it applies. The same recipe over the same object is done once for everyone.",
+    parameters: Type.Object({
+      target: Type.String({ description: "inputs/…, store/jobs/<id>/out/…, input:… or job:<id>/…" }),
+      recipe: Type.Optional(Type.String({ description: "<pack>/<recipe> or tool:<name>; default: every recipe that applies" })),
+      reason: Type.Optional(Type.String({ description: "Why, for the record" })),
+    }),
+    async execute(_id, params, _signal, _onUpdate, toolCtx: ToolCtx) {
+      const started = Date.now();
+      const r = await catalogRequest(toolCtx.cwd, { target: params.target, ...(params.recipe ? { recipe: params.recipe } : {}), ...(params.reason ? { reason: params.reason } : {}) });
+      await logEvent(toolCtx.cwd, agentId, "catalog_request", params, { ok: r.ok, job: r.job?.job, ...(r.ok ? {} : { reason: r.reason }) }, Date.now() - started);
+      if (!r.ok) return { content: [{ type: "text" as const, text: r.reason ?? "refused" }], details: r, isError: true };
+      return okResult({ ok: true, ...r.job, note: "the result is posted to you when it is catalogued (your wait wakes on it)" });
     },
   });
 

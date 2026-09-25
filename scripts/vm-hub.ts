@@ -82,7 +82,10 @@ import * as P from "../extensions/protocol.ts";
 import * as T from "../extensions/toolchain.ts";
 import { claimHolds, messageFor, resolvePeer } from "./nudge-broker.mjs";
 import { GATEWAY_STATE_REL } from "./model-gateway.ts";
-import { JobService } from "./job-service.ts";
+import { JobService, jobView, type JobSpec } from "./job-service.ts";
+
+/** What a job tool is told in a run with no job service. */
+const NO_JOBS = "this run has no job service (a host run, or --no-jobs): run the work in your own shell";
 import { destroyWorker, runWorker } from "./vm.ts";
 
 /**
@@ -144,6 +147,10 @@ const RATE_LIMITS: Record<string, { bucket: string; capacity: number; perSecond:
   // Each done that would end the swarm runs the operator's finish line on
   // the host: a few in a row, then one a minute.
   markDone: { bucket: "done", capacity: 3, perSecond: 1 / 60 },
+  // A job is a VM: a burst, then one every few seconds; the queue's own
+  // per-agent limits hold what is accepted.
+  jobSubmit: { bucket: "job", capacity: 20, perSecond: 0.2 },
+  catalogRequest: { bucket: "job", capacity: 20, perSecond: 0.2 },
 };
 /** A refusal repeated within this window is counted, not written again. */
 const REFUSAL_WINDOW_MS = 60_000;
@@ -179,7 +186,7 @@ const QUEUE_MAX = 192;
 export const SETTLE_MS_DEFAULT = 6_000;
 
 /** Calls the hub records on the trace when they succeed; every refusal is recorded. */
-const AUDITED = new Set(["markDone", "forgeTool", "restoreFileVersion", "claimName", "threadOpen", "publishFile", "recordEntry"]);
+const AUDITED = new Set(["markDone", "forgeTool", "restoreFileVersion", "claimName", "threadOpen", "publishFile", "recordEntry", "jobSubmit", "catalogRequest"]);
 
 /**
  * The job service's settings, from the kickoff: the image workers boot, how
@@ -429,6 +436,8 @@ export function boardTable(hub: {
   };
   /** Whether the model gateway meters this seat's spend on the host (foldGatewaySpend). */
   gatewaySeat?: (who: string) => boolean;
+  /** The run's job service, when it has one. */
+  jobs?: () => JobService | undefined;
 }) {
   const S = hub.sandbox;
   const ids = hub.ids ?? [];
@@ -624,6 +633,46 @@ export function boardTable(hub: {
       return P.restoreFileVersion(as(who), key, Number(a[2]));
     },
     swarmDoneExists: () => P.swarmDoneExists(S),
+    // Tool jobs (job-service.ts): who asks is the socket's seat, never an argument.
+    jobSubmit: async (who, a) => {
+      const svc = hub.jobs?.();
+      if (!svc) return { ok: false, reason: NO_JOBS };
+      const raw = isObject(a[1]) ? (a[1] as Record<string, unknown>) : {};
+      const spec: Partial<JobSpec> = {
+        kind: typeof raw.tool === "string" && raw.tool ? "tool" : "command",
+        ...(typeof raw.tool === "string" ? { tool: raw.tool } : {}),
+        ...(isObject(raw.args) ? { args: raw.args as Record<string, unknown> } : {}),
+        ...(typeof raw.command === "string" ? { command: raw.command } : {}),
+        inputs: Array.isArray(raw.inputs) && raw.inputs.length ? raw.inputs.map(String) : ["all"],
+        timeout_seconds: typeof raw.timeout_seconds === "number" ? raw.timeout_seconds : 900,
+        network: raw.network === "allowlist" ? "allowlist" : "off",
+        ...(typeof raw.note === "string" ? { note: raw.note } : {}),
+      };
+      // A job that names the seat's own scratch gets it, read-only.
+      if (JSON.stringify([raw.command ?? "", raw.args ?? {}]).includes(`work/${who}/`)) spec.scratch = true;
+      const r = await svc.submit(who, spec);
+      return r.ok ? { ok: true, job: await jobView(S, r.job) } : r;
+    },
+    jobStatus: async (who, a) => {
+      const svc = hub.jobs?.();
+      if (!svc) return { ok: false, reason: NO_JOBS };
+      const raw = isObject(a[1]) ? (a[1] as Record<string, unknown>) : {};
+      const r = await svc.status(who, String(raw.job_id ?? ""), {
+        ...(typeof raw.offset === "number" ? { offset: raw.offset } : {}),
+        ...(typeof raw.limit === "number" ? { limit: raw.limit } : {}),
+        ...(raw.cancel === true ? { cancel: true } : {}),
+        ...(typeof raw.wait === "number" ? { wait: raw.wait } : {}),
+      });
+      if (!r.ok) return r;
+      return { ok: true, job: await jobView(S, r.job), ...(r.stdout ? { stdout: r.stdout } : {}) };
+    },
+    catalogRequest: async (who, a) => {
+      const svc = hub.jobs?.();
+      if (!svc) return { ok: false, reason: NO_JOBS };
+      const raw = isObject(a[1]) ? (a[1] as Record<string, unknown>) : {};
+      const r = await svc.catalogRequest(who, String(raw.target ?? ""), typeof raw.recipe === "string" && raw.recipe ? raw.recipe : undefined, typeof raw.reason === "string" ? raw.reason : undefined);
+      return r.ok ? { ok: true, job: await jobView(S, r.job) } : r;
+    },
     systemPost: (who, a) => {
       // The harness's voice, sent from inside a VM: said by the harness code
       // in that agent's VM, and the post says which one.
@@ -726,6 +775,7 @@ export class Hub {
         refused: (who) => this.historyRefused(who),
       },
       gatewaySeat: (who) => this.gatewaySeats.has(who),
+      jobs: () => this.jobService,
     });
     this.collector = new CollectorLink(this.cfg.collector);
   }

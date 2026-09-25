@@ -5161,6 +5161,8 @@ export const TOOL_RESERVED_NAMES = new Set([
   // before a model call, a ledger correction, the operator's --notify hook,
   // the hub's history quota and a connection refused its seat token.
   "repeat_hint", "budget_precall_stop", "ledger_superseded", "notify", "history_quota", "seat_auth",
+  // Tool jobs in worker VMs and the catalogue they grow (scripts/job-service.ts).
+  "job_run", "job_status", "catalog_request",
   // The host-side model gateway (scripts/model-gateway.ts).
   "model_gateway_started", "model_gateway_refused", "model_gateway_upstream_error", "model_gateway_restarted",
   // A budget fold refused over an unreadable budget.json, and what a
