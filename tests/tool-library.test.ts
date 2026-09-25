@@ -459,9 +459,80 @@ test("grep_filelist names a bad pattern instead of raising re.error", async () =
 
 test("grep_filelist fails closed when the catalog filelist is absent", async () => {
   await withCwd(async (cwd) => {
-    const out = await runPy(join(LIB, "grep_filelist", "run.py"), cwd, { pattern: "." });
+    let out = await runPy(join(LIB, "grep_filelist", "run.py"), cwd, { pattern: "." });
+    assert.notEqual(out.code, 0);
+    assert.match(JSON.parse(out.stdout).error, /no catalog file list under catalog\//);
+    out = await runPy(join(LIB, "grep_filelist", "run.py"), cwd, { pattern: ".", path: "catalog/gone/p0/filelist.txt" });
     assert.notEqual(out.code, 0);
     assert.match(JSON.parse(out.stdout).error, /cannot read the catalog filelist/);
+  });
+});
+
+// grep_filelist read catalog/AF-Case2.E01/p0/filelist.txt on every case, and
+// the library's catalog_search was a first version that read
+// catalog/SysInternalsCase.E01 and nothing else, while the docs hand the
+// library to any run with --tools-from tool-library.
+test("the library's catalog searches read the case in front of them, not the one they were written on", async () => {
+  await withCwd(async (cwd) => {
+    await mkdir(join(cwd, "catalog", "Case4.E01", "p2048"), { recursive: true });
+    await writeFile(join(cwd, "catalog", "Case4.E01", "p2048", "filelist.txt"), "r/r 1: Users/alice/NTUSER.DAT\nr/r 2: Windows/notepad.exe\n");
+    let r = await runPy(join(LIB, "grep_filelist", "run.py"), cwd, { pattern: "ntuser" });
+    assert.equal(r.code, 0, r.stderr + r.stdout);
+    assert.deepEqual(JSON.parse(r.stdout), ["r/r 1: Users/alice/NTUSER.DAT"]);
+    r = await runPy(join(LIB, "catalog_search", "run.py"), cwd, { pattern: "notepad" });
+    assert.equal(r.code, 0, r.stderr + r.stdout);
+    assert.equal(JSON.parse(r.stdout).hits[0].line, "r/r 2: Windows/notepad.exe");
+    await mkdir(join(cwd, "catalog", "Other.E01", "p0"), { recursive: true });
+    await writeFile(join(cwd, "catalog", "Other.E01", "p0", "filelist.txt"), "r/r 3: x\n");
+    r = await runPy(join(LIB, "grep_filelist", "run.py"), cwd, { pattern: "x" });
+    assert.notEqual(r.code, 0);
+    assert.deepEqual(JSON.parse(r.stdout).candidates, ["catalog/Case4.E01/p2048/filelist.txt", "catalog/Other.E01/p0/filelist.txt"]);
+    r = await runPy(join(LIB, "grep_filelist", "run.py"), cwd, { pattern: "x", path: "catalog/Other.E01/p0/filelist.txt" });
+    assert.deepEqual(JSON.parse(r.stdout), ["r/r 3: x"]);
+  });
+  const lib = join(LIB, "catalog_search");
+  const pack = join(LIB, "..", "packs", "computer-forensics-base", "tools", "catalog_search");
+  assert.equal(await readFile(join(lib, "run.py"), "utf8"), await readFile(join(pack, "run.py"), "utf8"), "the library's catalog_search is the pack's");
+  assert.deepEqual(JSON.parse(await readFile(join(lib, "manifest.json"), "utf8")), JSON.parse(await readFile(join(pack, "manifest.json"), "utf8")));
+});
+
+// A broad search returned up to 70K characters a call, and an agent that
+// wanted the rest searched again with a bigger limit: the lines past the
+// limit were counted and dropped. Every match is kept now, and paged.
+test("catalog_search keeps every match in a named file and pages through them", async () => {
+  const script = join(LIB, "..", "packs", "computer-forensics-base", "tools", "catalog_search", "run.py");
+  await withCwd(async (cwd) => {
+    await mkdir(join(cwd, "catalog", "Case4.E01", "p2048"), { recursive: true });
+    const lines = Array.from({ length: 120 }, (_, i) => `r/r ${i + 1}: Windows/Prefetch/APP${i + 1}.EXE.pf`);
+    await writeFile(join(cwd, "catalog", "Case4.E01", "p2048", "filelist.txt"), `r/r 999: Users/readme.txt\n${lines.join("\n")}\n`);
+    const env = { AGENT_ID: "sab12301" };
+    let r = await runPy(script, cwd, { pattern: "prefetch" }, undefined, env);
+    assert.equal(r.code, 0, r.stderr + r.stdout);
+    let got = JSON.parse(r.stdout);
+    assert.equal(got.matched, 120);
+    assert.equal(got.returned, 50, "fifty by default");
+    assert.equal(got.next_offset, 50);
+    assert.equal(got.hits[0].n, 2, "a hit keeps its line number in the catalogue file");
+    assert.match(got.all_matches, /^work\/sab12301\/catalog-search\/filelist-[0-9a-f]{16}\.txt$/);
+    const kept = (await readFile(join(cwd, got.all_matches), "utf8")).trimEnd().split("\n");
+    assert.equal(kept.length, 120, "every match is in the file");
+    assert.equal(kept[119], `121\t${lines[119]}`);
+    const first = got.all_matches;
+    r = await runPy(script, cwd, { pattern: "prefetch", offset: 100 }, undefined, env);
+    got = JSON.parse(r.stdout);
+    assert.equal(got.returned, 20);
+    assert.equal(got.hits[0].line, lines[100]);
+    assert.equal(got.next_offset, null, "the last page says there is no next one");
+    assert.equal(got.all_matches, first, "the same search names the same file");
+    // A search that fits in one page writes nothing.
+    r = await runPy(script, cwd, { pattern: "readme" }, undefined, env);
+    got = JSON.parse(r.stdout);
+    assert.equal(got.matched, 1);
+    assert.equal(got.next_offset, null);
+    assert.equal(got.all_matches, undefined);
+    r = await runPy(script, cwd, { pattern: "x", limit: "many" }, undefined, env);
+    assert.notEqual(r.code, 0);
+    assert.match(JSON.parse(r.stdout).error, /whole numbers/);
   });
 });
 

@@ -1,6 +1,6 @@
 {
   "name": "catalog_search",
-  "description": "Search catalog filelist/timeline/bodyfile with a regex; returns matching lines (capped).",
+  "description": "Search catalog filelist/timeline/bodyfile with a regex; returns the match count and one page of matching lines (limit, offset). When the page is not all of them, every match is kept in a file under your scratch and named (all_matches).",
   "params": {
     "pattern": {
       "type": "string",
@@ -19,7 +19,12 @@
     },
     "limit": {
       "type": "integer",
-      "description": "Max lines to return (default 200)",
+      "description": "Matching lines to return in this call (default 50); the count is always of all of them",
+      "required": false
+    },
+    "offset": {
+      "type": "integer",
+      "description": "Skip this many matches first, to page through a result (next_offset gives the next page)",
       "required": false
     },
     "exclude": {
@@ -41,9 +46,9 @@
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 30,
-  "example": "{\"pattern\": \"SysInternal\", \"which\": \"filelist\"}",
+  "example": "{\"pattern\": \"Prefetch/.*\\\\.pf$\", \"which\": \"filelist\"}",
   "by": "sd1d100",
   "at": "2026-09-18T14:14:47.839Z",
-  "version": 6,
-  "sha256": "dbabb78560221a43adc73d8ce7fb6da3e89cdddecdb71d03b822126467f93638"
+  "version": 7,
+  "sha256": "73e75be74f5f08e333fd5d3f3d4d45acc2c821ee1d0902138771b0e1ac68616e"
 }

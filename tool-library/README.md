@@ -51,7 +51,7 @@ runs one of them without saying so.
 | `amcache_apps` | python3 | `maintainer` | 1 | Program execution from Amcache.hve: path, SHA-1, publisher and link date, from whichever of the Windows 7/8 a… |
 | `browser_history` | python3 | `maintainer` | 2 | Query a browser history database, copying it and any -wal beside it first so the write-ahead log is replayed … |
 | `catalog_grep` | python3 | `s864a02` | 1 | Grep catalog/AF-Case2.E01/p0/filelist.txt for a pattern; return matching lines. |
-| `catalog_search` | python3 | `sd1d100` | 1 | Search catalog filelist/timeline/bodyfile with a regex; returns matching lines (capped). |
+| `catalog_search` | python3 | `sd1d100` | 7 | Search catalog filelist/timeline/bodyfile with a regex; returns the match count and one page of matching line… |
 | `check_inputs` | python3 | `sfcc304` | 2 | Diff inputs/ against inputs.json (size and sha256). Fails if the manifest is missing or any file differs. |
 | `chunk_needles` | python3 | `sd1d102` | 3 | Scan a local file (or icat an inode from the E01) for ASCII/UTF-16 needles; return hit counts and nearby snip… |
 | `csearch` | python3 | `sf6df06` | 2 | Search the kickoff catalog files (filelist/timeline/bodyfile/pslist/cmdline/netscan/malfind/dlllist/psscan) f… |
@@ -63,7 +63,7 @@ runs one of them without saying so.
 | `fls_root` | python3 | `s9d8306` | 2 | Run fls on an EXT4 volume (default offset 503808, image inputs/Webserver.E01). Reads inode/recursive/image/of… |
 | `ftk_csv` | python3 | `s9d8303` | 1 | Query the UTF-16 FTK Imager CSV for path/date/deleted filters; return matching rows as JSON. |
 | `fve_metadata` | python3 | `s864a05` | 2 | Parse a BitLocker -FVE-FS- volume (raw image or VHD partition) and return metadata: GUID, encryption method, … |
-| `grep_filelist` | python3 | `s864a08` | 3 | Search the catalog filelist for a pattern (case-insensitive). Returns matching lines as JSON array. |
+| `grep_filelist` | python3 | `s864a08` | 4 | Search the catalog filelist for a pattern (case-insensitive). Returns the first 100 matching lines as a JSON … |
 | `guest_syslog` | python3 | `s5d1001` | 1 | Extract unique syslog-like lines from a binary (Kali/rsyslog) matching a month-day prefix; drop kernel lines. |
 | `hdfs_node_icat` | python3 | `s9a5f03` | 2 | Extract an inode from a cluster node's image with icat and hash what it wrote. node picks one of the HDFS cas… |
 | `icat_extract` | python3 | `s864a08` | 3 | Extract a file from the E01 image by inode to a specified output path. Returns JSON with path, size, and sha2… |

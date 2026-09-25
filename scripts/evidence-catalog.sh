@@ -12,9 +12,13 @@
 # under p0. For every file that looks like a memory image
 # (Volatility's windows.info succeeds): info, pslist, psscan, cmdline, netscan,
 # malfind, dlllist. Each step is time-boxed; a tool that is missing or fails
-# leaves a note in the index instead of stopping the kickoff. The index,
-# catalog/README.md, lists every file with its row count and size, and swarm.sh
-# copies it into SWARM.md.
+# leaves a note in the index instead of stopping the kickoff, and what it wrote
+# to stderr stays whole beside its output as <file>.stderr. Every input gets a
+# row in catalog/coverage.tsv — catalogued, partial, a segment of a set, not
+# catalogued, or not probed — with the reason, so an input this pass could not
+# read is named rather than missing. The index, catalog/README.md, lists every
+# catalog file with its row count and size and what was not catalogued, and
+# swarm.sh copies it into SWARM.md.
 set -uo pipefail
 
 sandbox="${1:-}"
@@ -40,22 +44,40 @@ find "$out" -mindepth 1 -delete 2>/dev/null || true
 STEP_TIMEOUT="${SWARM_CATALOG_STEP_TIMEOUT:-900}"
 index=()
 notes=()
+coverage=()
 
-# Run a command with a deadline; stdout to a file. Prints "ok" or a reason.
+# Run a command with a deadline; stdout to a file, and stderr, when there is
+# any, whole beside it as <file>.stderr. Prints "ok" or a reason: a failure
+# quotes the start of stderr and names the file that holds all of it.
 run_step() { # run_step <outfile> <cmd...>
   local file="$1"; shift
   local limit="${RUN_STEP_TIMEOUT:-$STEP_TIMEOUT}"
-  if perl -e 'alarm shift; exec @ARGV' "$limit" "$@" > "$file" 2> "$file.err"; then
-    rm -f "$file.err"
+  local rc=0
+  perl -e 'alarm shift; exec @ARGV' "$limit" "$@" > "$file" 2> "$file.stderr" || rc=$?
+  [[ -s "$file.stderr" ]] || rm -f "$file.stderr"
+  if [[ "$rc" -eq 0 ]]; then
     echo ok
-  else
-    local rc=$?
-    local err
-    err="$(head -c 200 "$file.err" 2>/dev/null | tr '\n' ' ')"
-    rm -f "$file.err"
-    [[ -s "$file" ]] || rm -f "$file"
-    echo "failed (exit $rc${err:+: $err})"
+    return 0
   fi
+  [[ -s "$file" ]] || rm -f "$file"
+  local err=""
+  if [[ -f "$file.stderr" ]]; then
+    err="$(head -c 200 "$file.stderr" | tr '\n' ' ')"
+    err="$err; all of stderr: catalog/${file#"$out/"}.stderr"
+  fi
+  echo "failed (exit $rc${err:+: $err})"
+}
+
+# One field of coverage.tsv: a tab, newline or backslash in a file name is
+# written escaped (\t, \n, \\), so every input stays one row of four fields.
+tsv_field() {
+  local s="${1//\\/\\\\}"
+  s="${s//$'\t'/\\t}"
+  printf '%s' "${s//$'\n'/\\n}"
+}
+
+cover() { # cover <rel> <bytes> <status> <why>
+  coverage+=("$(tsv_field "$1")"$'\t'"$2"$'\t'"$3"$'\t'"$(tsv_field "$4")")
 }
 
 human() { # bytes -> human
@@ -153,6 +175,7 @@ catalog_volume() { # catalog_volume <img> <rel> <slug> <start sector> <descripti
   local img="$1" rel="$2" slug="$3" start="$4" desc="$5"
   local pdir="$out/$slug/p$start" r
   mkdir -p "$pdir"
+  volumes=$((volumes + 1))
   have fsstat && run_step "$pdir/fsstat.txt" fsstat -o "$start" "$img" >/dev/null
   add_index "$slug/p$start/fsstat.txt" "filesystem header at sector $start ($desc)"
   if have fls; then
@@ -180,16 +203,22 @@ while IFS= read -r img; do
   rel_under="${img#"$sandbox/inputs/"}"
   rel="inputs/$rel_under"
   size="$(stat -c %s "$img" 2>/dev/null || stat -f %z "$img")"
-  [[ "$size" -ge 65536 ]] || continue   # nothing under 64 KB is an image (a logical E01 can be small)
+  if [[ "$size" -lt 65536 ]]; then   # nothing under 64 KB is an image (a logical E01 can be small)
+    cover "$rel" "$size" "not probed" "under 64 KB: not tried as a disk or memory image"
+    continue
+  fi
   if first_segment="$(is_continuation_segment "$img")"; then
     segments_skipped=$((segments_skipped + 1))
     case "$segment_sets" in
       *"|$first_segment|"*) ;;
       *) segment_sets="$segment_sets|$first_segment|" ;;
     esac
+    cover "$rel" "$size" "segment" "a further segment of $first_segment: the set is read, and catalogued, from that one"
     continue
   fi
   slug="$(catalog_slug "$rel_under")"
+  volumes=0
+  notes_before=${#notes[@]}
 
   # --- a disk image? ---------------------------------------------------------
   if have mmls && mmls "$img" > "$out/.mmls.tmp" 2>/dev/null; then
@@ -204,6 +233,13 @@ while IFS= read -r img; do
       case "$desc" in *NTFS*|*FAT*|*exFAT*|*Ext*|*HFS*|*APFS*|*Linux*|*Basic*data*) ;; *) continue ;; esac
       catalog_volume "$img" "$rel" "$slug" "$start" "$desc"
     done < <(grep -E '^[0-9]+:' "$out/$slug/partitions.txt")
+    if [[ "$volumes" -eq 0 ]]; then
+      cover "$rel" "$size" "partial" "a partition table only (catalog/$slug/partitions.txt): no partition held a filesystem this pass lists"
+    elif [[ ${#notes[@]} -gt "$notes_before" ]]; then
+      cover "$rel" "$size" "partial" "disk image, $volumes filesystem(s) under catalog/$slug/, with steps that did not finish (Not built, in the index)"
+    else
+      cover "$rel" "$size" "catalogued" "disk image: partition table and $volumes filesystem(s) under catalog/$slug/"
+    fi
     continue
   fi
   rm -f "$out/.mmls.tmp"
@@ -219,40 +255,109 @@ while IFS= read -r img; do
     printf 'No partition table: %s is one %s volume starting at sector 0 (use the tools without -o).\n' "$rel" "$fstype" > "$out/$slug/partitions.txt"
     add_index "$slug/partitions.txt" "no partition table: $rel is a single $fstype volume"
     catalog_volume "$img" "$rel" "$slug" 0 "$fstype (logical volume, no partition table)"
+    if [[ ${#notes[@]} -gt "$notes_before" ]]; then
+      cover "$rel" "$size" "partial" "single $fstype volume under catalog/$slug/p0/, with steps that did not finish (Not built, in the index)"
+    else
+      cover "$rel" "$size" "catalogued" "single $fstype volume: catalog/$slug/p0/"
+    fi
     continue
   fi
   rm -f "$out/.fsstat.tmp"
 
   # --- a memory image? ---------------------------------------------------------
   if ! is_memory_image "$img"; then
+    if have mmls || have fsstat; then
+      cover "$rel" "$size" "not catalogued" "no recipe in this pass read it: not a disk image to mmls or fsstat, and not memory by its name or file(1)"
+    else
+      cover "$rel" "$size" "not catalogued" "mmls and fsstat are not in this image, so it was not tried as a disk; not memory by its name or file(1)"
+    fi
     continue
   fi
   if have vol; then
-    mkdir -p "$out/$slug"
-    r="$(RUN_STEP_TIMEOUT="${SWARM_CATALOG_MEMORY_PROBE_TIMEOUT:-30}" run_step "$out/$slug/windows.info.txt" vol -q -f "$img" windows.info)"
-    if [[ "$r" == ok ]] && grep -qi "NTBuildLab\|Kernel Base\|SystemTime" "$out/$slug/windows.info.txt"; then
+    # The probe writes under probes/ and moves into the catalogue only when
+    # Volatility names a Windows memory image: a file that is not one keeps
+    # no catalogue tree, and what vol said about it is still on disk.
+    probe="$out/probes/$slug"
+    mkdir -p "$probe"
+    r="$(RUN_STEP_TIMEOUT="${SWARM_CATALOG_MEMORY_PROBE_TIMEOUT:-30}" run_step "$probe/windows.info.txt" vol -q -f "$img" windows.info)"
+    if [[ "$r" == ok ]] && grep -qi "NTBuildLab\|Kernel Base\|SystemTime" "$probe/windows.info.txt"; then
       memory_images=$((memory_images + 1))
+      mkdir -p "$out/$slug"
+      find "$probe" -mindepth 1 -maxdepth 1 -exec mv {} "$out/$slug/" \;
+      rmdir "$probe" "$out/probes" 2>/dev/null || true
       add_index "$slug/windows.info.txt" "OS, build, capture time of $rel (vol windows.info)"
       for plugin in pslist psscan cmdline netscan malfind dlllist; do
         r="$(run_step "$out/$slug/$plugin.txt" vol -q -f "$img" "windows.$plugin")"
         [[ "$r" == ok ]] || notes+=("vol windows.$plugin on $rel: $r")
         add_index "$slug/$plugin.txt" "vol windows.$plugin over $rel"
       done
+      if [[ ${#notes[@]} -gt "$notes_before" ]]; then
+        cover "$rel" "$size" "partial" "memory image under catalog/$slug/, with plugins that did not finish (Not built, in the index)"
+      else
+        cover "$rel" "$size" "catalogued" "memory image: catalog/$slug/"
+      fi
     else
-      rm -rf "$out/$slug"
+      why="offered to Volatility as memory; windows.info named no Windows memory image"
+      [[ "$r" == ok ]] || why="$why ($r)"
+      if rmdir "$probe" 2>/dev/null; then
+        rmdir "$out/probes" 2>/dev/null || true
+      else
+        why="$why; what it wrote: catalog/probes/$slug/"
+      fi
+      cover "$rel" "$size" "not catalogued" "$why"
     fi
   else
     notes+=("vol missing: no memory catalog for $rel")
+    cover "$rel" "$size" "not catalogued" "looks like memory, but vol is not in this image"
   fi
 done < <(catalog_candidates "$sandbox")
 
+# The whole of what every step wrote to stderr, in the index beside its output.
+while IFS= read -r f; do
+  rel_err="${f#"$out/"}"
+  add_index "$rel_err" "what the step writing catalog/${rel_err%.stderr} said on stderr"
+done < <(find "$out" -type f -name '*.stderr' | sort)
+
 {
-  echo "Summary: $disk_images disk image(s), $memory_images memory image(s), $(( ${#index[@]} )) catalog file(s)"
+  printf 'input\tbytes\tstatus\twhy\n'
+  printf '%s\n' "${coverage[@]+"${coverage[@]}"}"
+} > "$out/coverage.tsv"
+add_index "coverage.tsv" "every input, one row each: path, bytes, status (catalogued, partial, segment, not catalogued, not probed) and why"
+
+# How many inputs have <status>.
+count_status() { printf '%s\n' "${coverage[@]+"${coverage[@]}"}" | awk -F'\t' -v s="$1" '$3 == s' | wc -l | tr -d ' '; }
+
+# The inputs with <status>, one line each, twenty at most: the rest are named
+# by count and are all in coverage.tsv.
+list_status() { # list_status <status> <heading>
+  local n
+  n="$(count_status "$1")"
+  [[ "$n" -gt 0 ]] || return 0
+  echo
+  echo "$2:"
+  printf '%s\n' "${coverage[@]}" | awk -F'\t' -v s="$1" '
+    function human(b) {
+      if (b >= 1073741824) return sprintf("%.1f GB", b / 1073741824)
+      if (b >= 1048576) return sprintf("%.1f MB", b / 1048576)
+      if (b >= 1024) return sprintf("%.1f KB", b / 1024)
+      return b " B"
+    }
+    $3 == s { if (++k <= 20) printf "- `%s` (%s): %s\n", $1, human($2), $4 }
+    END { if (k > 20) printf "- and %d more, every one in `catalog/coverage.tsv`\n", k - 20 }'
+}
+
+{
+  echo "Summary: $disk_images disk image(s), $memory_images memory image(s), $(( ${#index[@]} )) catalog file(s); ${#coverage[@]} input file(s): $(count_status catalogued) catalogued, $(count_status partial) partial, $(count_status segment) segment(s) of a set, $(count_status "not catalogued") not catalogued, $(count_status "not probed") not probed"
   if [[ "$segments_skipped" -gt 0 ]]; then
     echo
     printf 'Segmented images: %d further segment(s) belong to the set(s) catalogued above (%s) and were not catalogued separately — libewf and The Sleuth Kit read the whole set from the first segment, so pass that one to every tool.\n' \
       "$segments_skipped" "$(printf '%s' "$segment_sets" | tr '|' ' ' | tr -s ' ' | sed 's/^ //; s/ $//; s/ /, /g')"
   fi
+  echo
+  echo "Coverage: every input has a row in \`catalog/coverage.tsv\` with its status and why. An input that is not catalogued has no file list or timeline here: open it with other tools. Missing from the catalog is not missing from the evidence."
+  list_status "not catalogued" "Not catalogued"
+  list_status "partial" "Catalogued in part"
+  list_status "not probed" "Not probed (under 64 KB)"
   echo
   echo "| File | What | Rows | Size |"
   echo "| --- | --- | --- | --- |"

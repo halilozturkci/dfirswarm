@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import json, re, sys, os
+import hashlib, json, re, sys, os, tempfile
 
 def _catalogue_slug(path):
     """The directory name the kickoff's catalogue gives an input: its path under
@@ -64,7 +64,12 @@ args = json.load(sys.stdin)
 pattern = args.get("pattern") or ""
 which = args.get("which") or "filelist"
 flags = re.IGNORECASE if args.get("ignore_case", True) else 0
-limit = int(args.get("limit") or 200)
+try:
+    limit = max(1, int(args.get("limit") or 50))
+    offset = max(0, int(args.get("offset") or 0))
+except (TypeError, ValueError):
+    print(json.dumps({"ok": False, "error": "limit and offset must be whole numbers"}))
+    sys.exit(1)
 exclude = args.get("exclude") or ""
 try:
     rx = re.compile(pattern, flags)
@@ -111,14 +116,45 @@ if not os.path.isfile(path):
     have = sorted(os.listdir(os.path.dirname(path))) if os.path.isdir(os.path.dirname(path)) else []
     print(json.dumps({"ok": False, "error": "%s is not in the catalogue" % path, "there": have}))
     sys.exit(1)
+# Every match goes to a file as it is found; the call returns one page of
+# them. When that page is not all of them, the file is kept under the
+# caller's scratch and named, so the rest is read from it (or paged with
+# offset=) instead of searched for again with a bigger limit. The same
+# search over the same read-only catalogue writes the same file.
+key = hashlib.sha256(json.dumps([path, pattern, flags, exclude]).encode("utf-8")).hexdigest()[:16]
+keep_dir = os.path.join("work", os.environ.get("AGENT_ID") or "catalog-search", "catalog-search")
+keep = os.path.join(keep_dir, "%s-%s.txt" % (which, key))
 hits = []
 total = 0
+tmp = None
+try:
+    os.makedirs(keep_dir, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=keep_dir, prefix=".catalog-search-")
+    all_out = os.fdopen(fd, "w", encoding="utf-8", errors="surrogateescape")
+except OSError as e:
+    all_out, keep_error = None, "%s: %s" % (keep_dir, e.strerror or e)
 with open(path, "r", errors="replace") as f:
     for i, line in enumerate(f, 1):
         if rx.search(line):
             if ex and ex.search(line):
                 continue
             total += 1
-            if len(hits) < limit:
-                hits.append({"n": i, "line": line.rstrip("\n")})
-print(json.dumps({"which": which, "partition": part, "file": path, "pattern": pattern, "matched": total, "returned": len(hits), "hits": hits}))
+            text = line.rstrip("\n")
+            if all_out:
+                all_out.write("%d\t%s\n" % (i, text))
+            if total > offset and len(hits) < limit:
+                hits.append({"n": i, "line": text})
+result = {"which": which, "partition": part, "file": path, "pattern": pattern, "matched": total, "offset": offset, "returned": len(hits), "hits": hits}
+more = offset + len(hits) < total
+result["next_offset"] = offset + len(hits) if more else None
+if all_out:
+    all_out.close()
+    if more or offset:
+        os.replace(tmp, keep)
+        result["all_matches"] = keep
+        result["all_matches_format"] = "one match per line: the line number in the catalogue file, a tab, the line"
+    else:
+        os.unlink(tmp)
+elif more or offset:
+    result["all_matches_error"] = "the whole match set could not be written (%s); page through it with offset=" % keep_error
+print(json.dumps(result))

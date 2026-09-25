@@ -89,8 +89,11 @@ Read-only inputs (only when SWARM.md has an "Inputs (read-only)" section)
 
 Evidence catalog (only when SWARM.md has an "Evidence catalog" section)
 - The kickoff already ran the standard first pass over the inputs — partition tables, file lists,
-  body files, MAC timelines, memory process lists — into catalog/. Read those instead of running
-  the same commands again; catalog/ cannot be written.
+  body files, MAC timelines, memory process lists — into catalog/. Start from it rather than running
+  the same commands again, and check its coverage: catalog/coverage.tsv (summarised in the index)
+  says, for every input, whether it was catalogued, in part or not at all, and why. An input it did
+  not catalogue is open for you to read with other tools; missing from the catalog is not missing
+  from the evidence. catalog/ cannot be written.
 
 Ledger (only when `record` is in your tool list)
 - Every dated event you establish goes in with `record(kind=event, ts=<ISO 8601 UTC>, value,

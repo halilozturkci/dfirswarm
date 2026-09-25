@@ -721,6 +721,41 @@ not surprised:
 
 ### Fixed
 
+- **Every input has a row in the catalog's coverage.** `evidence-catalog.sh`
+  skipped an input under 64 KB, or one that was neither a disk nor a memory
+  image, without a word: BelkaCTF #6's 5.1 GB iPhone tar had no catalogue and
+  no mention in the index, and ten agents listed it with `tar -t` 59 times,
+  7.2% of the run's input tokens. `catalog/coverage.tsv` now has one row per
+  input with its status (catalogued, partial, segment, not catalogued, not
+  probed) and why; the summary line counts them, and the index names what was
+  not catalogued or catalogued in part, twenty of each and the count of the
+  rest. A memory probe that finds no Windows image keeps what `vol` said under
+  `catalog/probes/`.
+- **A catalog step's stderr is kept whole.** A failed step kept 200
+  characters of stderr in the index and deleted the rest; every step's stderr
+  now stays beside its output as `<file>.stderr`, listed in the index, and a
+  failure's note quotes its start and names that file.
+- **`catalog_search` keeps every match.** It returned the first `limit`
+  matches (200 by default) and dropped the rest, so an agent that wanted them
+  searched again with a bigger limit: single results reached 70K characters,
+  and search results were 2.7 to 12.5% of a run's input tokens. It returns 50
+  by default with the count of all of them, pages with `offset` and
+  `next_offset`, and when a page is not all of them writes every match, with
+  its line number in the catalogue file, to
+  `work/<agent>/catalog-search/<which>-<hash>.txt` and names it
+  (`all_matches`). Version 7, in computer-forensics-base 1.2.14.
+- **The library's catalog searches read the case in front of them.**
+  `tool-library/catalog_search` was a first version that read
+  `catalog/SysInternalsCase.E01` and nothing else, and `grep_filelist` read
+  the AF-Case2 list on every case, while the docs hand the library to any run
+  with `--tools-from tool-library`. The library's `catalog_search` is the
+  pack's; `grep_filelist` (version 4) takes `path` or the only file list the
+  catalogue has, and keeps every match past its hundred in a named file.
+- **The agents are told the catalog's coverage.** The contract and the worker
+  prompt said to read the catalog instead of running the same commands again,
+  which was wrong for an input it did not cover; they now say to start from
+  it, check `coverage.tsv`, and open what it did not catalogue with other
+  tools.
 - **A pack tool gets the timeout its manifest asks for**, up to an hour
   (`PACK_TOOL_TIMEOUT_MAX_SECONDS`). Every run clamped pack tools to the
   forged-tool ceiling of 120 s while telling the model the manifest's figure:
