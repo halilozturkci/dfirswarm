@@ -56,7 +56,7 @@ test("with no job service the routes say so", async () => {
 });
 
 test("a job is the calling seat's; a command naming its own scratch gets it read-only; status pages stdout and only the owner cancels", async () => {
-  const { svc, call, specs } = rig();
+  const { S, svc, call, specs } = rig();
   await svc.start();
   const r = await call("a1", "jobSubmit", { command: "cat work/a1/notes.txt; echo out > \"$OUT/o.txt\"", requester: "a2" });
   assert.equal(r.ok, true, JSON.stringify(r));
@@ -73,6 +73,12 @@ test("a job is the calling seat's; a command naming its own scratch gets it read
   assert.equal(other.ok, true);
   await done(call, "a2", other.job.job);
   assert.ok(!specs[1].mounts.some((m) => /\/work\/a\d$/.test(m.guest ?? "")), "a job that does not name a scratch gets none");
+  // What it extracted is its own too: named, it is mounted, read-only and no-exec.
+  mkdirSync(join(S, "work", "extracted", "a1", "fs"), { recursive: true });
+  const ex = await call("a1", "jobSubmit", { command: "ls work/extracted/a1 > \"$OUT/l.txt\"" });
+  await done(call, "a1", ex.job.job);
+  const extracted = specs[2].mounts.find((m) => m.guest?.endsWith("/work/extracted/a1"));
+  assert.ok(extracted?.readonly && extracted?.noexec, `the extracted corner, read-only and no-exec: ${JSON.stringify(specs[2].mounts)}`);
   const long = await call("a1", "jobSubmit", { command: "sleep 2" });
   const refused = await call("a2", "jobStatus", { job_id: long.job.job, cancel: true });
   assert.equal(refused.ok, false);

@@ -103,8 +103,11 @@ Tool jobs (only when `job_run` is in your tool list)
   and what it writes to $OUT is sealed into store/jobs/<id>/out/, read-only and hashed, where every
   agent and every later job reads it. Quick looks (a header, a few lines, ls) stay in your own shell.
 - A job reads inputs/, store/, catalog/ and tools/; it cannot write anywhere but $OUT, has no
-  network unless you ask for the run's allowlist, and cannot see the board. A file of your own
-  scratch it needs is read-only to it when the command names work/<you>/.
+  network unless you ask for the run's allowlist, and cannot see the board. Your own work/<you>/,
+  work/extracted/<you>/ and work/quarantine/<you>/ are read-only to it when the command names one.
+- Everything a job reads is read-only: open a SQLite database as
+  sqlite3.connect('file:<path>?mode=ro&immutable=1', uri=True) (or with the sqlite_query tool), or
+  copy it into $OUT first; a plain connect fails there ("unable to open database file").
 - Materialise once, share by path: extract, decrypt or unpack into a job's $OUT, then point every
   later job and every peer at store/jobs/<id>/out/…; do not repeat a peer's job, read its output.
 - Cite what a job produced as job:<id>/<path> in the ledger's source; its stdout and stderr are

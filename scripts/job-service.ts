@@ -531,7 +531,14 @@ export class JobService {
     if (existsSync(inputs)) mounts.push({ host: inputs, guest: inputs, readonly: true, noexec: true });
     for (const rel of ["store", "catalog", "tools"]) if (existsSync(join(S, rel))) mounts.push({ host: join(S, rel), guest: join(S, rel), readonly: true });
     for (const pack of this.o.packDirs) if (existsSync(pack)) mounts.push({ host: pack, guest: pack, readonly: true });
-    if (job.spec.scratch && job.requester.agent !== "system" && existsSync(join(S, "work", job.requester.agent))) mounts.push({ host: join(S, "work", job.requester.agent), guest: join(S, "work", job.requester.agent), readonly: true });
+    // The agent's own holes, read-only, when the job names one: its scratch,
+    // and what it extracted or quarantined (no-exec, as in its own VM).
+    if (job.spec.scratch && job.requester.agent !== "system") {
+      const who = job.requester.agent;
+      for (const [rel, noexec] of [[join("work", who), false], [join("work", "extracted", who), true], [join("work", "quarantine", who), true]] as const) {
+        if (existsSync(join(S, rel))) mounts.push({ host: join(S, rel), guest: join(S, rel), readonly: true, ...(noexec ? { noexec: true } : {}) });
+      }
+    }
     mounts.push({ host: st.out, guest: this.outPath(job), noexec: true });
     mounts.push({ host: st.ctl, guest: "/job", noexec: true });
     const accessible = mounts.map((m) => ({ path: m.guest ?? m.host, access: m.readonly ? "read-only" : "read-write" }));
