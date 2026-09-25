@@ -151,6 +151,9 @@ export class JobService {
   private readonly waitingForSpace = new Set<string>();
   private rotation = 0;
   private stopping = false;
+  /** Jobs in a row that ran in no worker, and whether the agents were told. */
+  private unrun = 0;
+  private degraded = false;
   private timer: ReturnType<typeof setInterval> | undefined;
   /**
    * Every change to the store and the catalogue, one at a time: a
@@ -686,6 +689,7 @@ export class JobService {
     const reason = cancelled ?? stopped ?? (exit === 124 || exit === 137 ? `stopped at its limit of ${job.spec.timeout_seconds}s` : exit === null ? result.error ?? "the worker did not report an exit status" : exit !== 0 ? `exit ${exit}` : undefined);
     await this.journal.append({ type: "job_finished", job: job.id, attempt: job.attempt, exit, status, ...(reason ? { reason } : {}), duration_ms: Date.now() - started, ...(result.digest ? { image_digest: result.digest } : {}), ...(result.boot_retry ? { boot_retry: result.boot_retry } : {}) });
     Object.assign(job, { state: "finished", exit, status, reason, finished_at: new Date().toISOString(), ...(result.digest ? { image_digest: result.digest } : {}) });
+    await this.workerHealth(job, exit === null && !cancelled && !stopped ? (result.error ?? "the worker did not report an exit status") : null);
     await this.journal.append({ type: "job_fenced", job: job.id, attempt: job.attempt, fenced: result.fenced, ...(result.fence_error ? { error: result.fence_error } : {}) });
     if (!result.fenced) {
       // Never sealed while a VM that could write to it may still be up; the
@@ -697,6 +701,29 @@ export class JobService {
     job.state = "fenced";
     maybeCrash("job:fenced");
     await this.commit(job, { status, exit, reason });
+  }
+
+  /**
+   * Workers that cannot run are the service's trouble, not the job's. On Ali
+   * Hadi #10 three agents found out one by one that none would start. After
+   * three jobs in a row with no worker every agent is told once, and again
+   * when one runs.
+   */
+  private async workerHealth(job: JobRecord, error: string | null): Promise<void> {
+    if (error === null) {
+      this.unrun = 0;
+      if (!this.degraded) return;
+      this.degraded = false;
+      await this.journal.append({ type: "jobs_recovered", job: job.id });
+      await this.o.notify("all", `Tool jobs run again: ${job.id} ran in a worker.`).catch(() => undefined);
+      return;
+    }
+    this.unrun += 1;
+    if (this.unrun < 3 || this.degraded) return;
+    this.degraded = true;
+    await this.journal.append({ type: "jobs_degraded", job: job.id, in_a_row: this.unrun, error });
+    this.log(`workers are not running: ${this.unrun} jobs in a row (${error})`);
+    await this.o.notify("all", `Tool jobs are not running: the last ${this.unrun} could not run in a worker (${error}). Until the job service says they run again, do that work in your own VM; jobs submitted meanwhile are still tried.`).catch(() => undefined);
   }
 
   private async watchDisk(job: JobRecord, worker: string): Promise<void> {

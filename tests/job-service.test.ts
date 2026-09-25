@@ -228,6 +228,37 @@ test("a worker not confirmed gone is not sealed; the backstop seals it once it i
   await svc.stop("test over");
 });
 
+test("three jobs in a row that ran in no worker are told to every agent once, and so is the next that runs", async () => {
+  const S = sandbox();
+  let broken = true;
+  const real = localWorker();
+  const { svc, posts } = service(S, {
+    workers: 1,
+    runWorker: async (spec) => (broken ? { code: null, error: "[BootStart] failed to start: insert run: FOREIGN KEY constraint failed", fenced: true } : real(spec)),
+  });
+  await svc.start();
+  const ids: string[] = [];
+  for (let i = 0; i < 4; i += 1) {
+    const r = await svc.submit("a1", { kind: "command", command: "true", inputs: [] });
+    assert.ok(r.ok);
+    ids.push(r.job.id);
+    await until(svc, r.job.id);
+  }
+  const told = () => posts.filter(([to, b]) => to === "all" && b.startsWith("Tool jobs are not running"));
+  assert.equal(told().length, 1, `once, not per job: ${JSON.stringify(posts)}`);
+  assert.match(told()[0][1], /the last 3 could not run in a worker \(\[BootStart\].*FOREIGN KEY/);
+  assert.match(told()[0][1], /do that work in your own VM/);
+  broken = false;
+  const ok = await svc.submit("a1", { kind: "command", command: "true", inputs: [] });
+  assert.ok(ok.ok);
+  assert.equal((await until(svc, ok.job.id)).status, "ok");
+  await eventually(() => posts.some(([to, b]) => to === "all" && b === `Tool jobs run again: ${ok.job.id} ran in a worker.`), "the recovery is told");
+  const types = verifyJournalText(readFileSync(storePaths(S).journal, "utf8")).lines.map((l) => l.type);
+  assert.equal(types.filter((t) => t === "jobs_degraded").length, 1);
+  assert.equal(types.filter((t) => t === "jobs_recovered").length, 1);
+  await svc.stop("test over");
+});
+
 test("a recipe job becomes a catalogue generation and revision; the same recipe over the same object is the same job", async () => {
   const S = sandbox();
   spawnSync("python3", ["-c", "import tarfile,io,sys\nwith tarfile.open(sys.argv[1],'w') as t:\n  i=tarfile.TarInfo('private/sms.db'); d=b'SQLite format 3\\0'+b'x'*1000; i.size=len(d); t.addfile(i,io.BytesIO(d))", join(S, "inputs", "phone.tar")]);
