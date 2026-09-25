@@ -40,15 +40,26 @@ what was deferred until the first CTF round is listed at the end.
    directory is read, so nothing the worker could still write is sealed.
    After a crash each job resumes from the step it last recorded. A job
    interrupted by the hub's death runs once more only when it had no network.
-3. **Workers reach only what they are given.** A worker mounts the evidence,
-   `store/`, `catalog/`, `tools/` and the packs read-only, and the agent's
-   own scratch read-only when the job names it. Its own output directory
-   (`$OUT`) is its only writable mount. It gets no network unless the job
-   asks for the operator's allowlist (never the model providers'), no
-   credential, and nothing of the board or the run's records. Those mounts
-   are the job's **accessible** scope, recorded beside the scope the agent
-   **declared**. What it actually read is not measured, and the record says
-   **unknown**. What the agent was shown is recorded as **returned** pages.
+3. **A worker sees what its brain sees, read-only, and writes only its own
+   directory.** It mounts the evidence (no-exec), `store/`, `catalog/`,
+   `tools/`, the packs, all of `work/` (every agent's live scratch and the
+   shared files; the extracted and quarantined corners no-exec) and
+   `tool-output/` read-only. Its own `$OUT` is its only writable place.
+   - It gets no network unless the job asks. Asked, it gets the operator's
+     allowlist, plus PyPI with `--allow-install`; never the model providers.
+   - It has no credential, and nothing of the board, the inbox, the ledger,
+     the sessions or the budget.
+   - A job with network keeps what pip held before and after it.
+   - Those mounts are the job's **accessible** scope, recorded beside the
+     scope the agent **declared**.
+   - What it actually read is not measured, and the record says **unknown**.
+     What the agent was shown is recorded as **returned** pages.
+
+   The first CTF run first gave a worker only its requester's own scratch. A
+   job that named a peer's scratch, as its agent could see it, then failed.
+   Parity with the brain was agreed with Codex after that run: read-only
+   material is still readable and interpretable, and the record says it is
+   live.
 4. **The store.**
    - A committed job's output is `store/jobs/<id>/out/`: links, FIFOs,
      sockets and devices recorded and left out, names kept as bytes, files

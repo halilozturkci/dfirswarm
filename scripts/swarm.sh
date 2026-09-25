@@ -438,7 +438,8 @@ Isolation
                       after, and its outputs are sealed into store/. Counted with
                       the seats against this host's capacity.
   --worker-cpus N     vCPUs per worker VM (default 2).
-  --worker-memory MIB Memory per worker VM in MiB (default 2048).
+  --worker-memory MIB Memory per worker VM in MiB (default 4096 on a host with 64 GiB
+                      or more, 2048 otherwise).
   --no-jobs           No job service: no tool jobs, and the kickoff's catalogue is
                       built before the agents start, as in a host run.
   --inputs-copy       Under --isolation microvm, copy --inputs into the run (read-only)
@@ -2262,6 +2263,7 @@ render_contract() {
   SWARM_CONTRACT_VM_HOSTS="${VM_HOSTS_FOR_CONTRACT:-}" \
   SWARM_CONTRACT_ALLOW_INSTALL="${ALLOW_INSTALL_FOR_CONTRACT:-0}" \
   SWARM_CONTRACT_INSTALL_HOSTS="${INSTALL_HOSTS_FOR_CONTRACT:-1}" \
+  SWARM_CONTRACT_JOBS="${JOBS_FOR_CONTRACT:-}" \
   python3 - "$TEMPLATE" "$tmp" "$goal_file" "$id_list" "$cap" "$wall" "$n" "$swarm_id" "$sandbox" <<'PY'
 import json, os, re, sys
 src, dst, goal_file, id_list, cap, wall, n, swarm_id, sandbox = sys.argv[1:]
@@ -2586,6 +2588,23 @@ if caps:
         f"- Write guard: {guard_words}.",
         f"- Who wrote a trace line is decided by {attribution_words}.",
     ] + [f"- {g}." for g in gaps]) + "\n\n"
+    # The job service's workers, when the run has them.
+    jobs_raw = os.environ.get("SWARM_CONTRACT_JOBS", "")
+    if jobs_raw:
+        try:
+            jb = json.loads(jobs_raw)
+            hosts = ", ".join(jb.get("allowHosts") or []) or "none"
+            host_section += (
+                "## Tool jobs\n\n"
+                f"`job_run` runs work in a worker VM of this run's image: up to {jb.get('workers')} at a time, "
+                f"{jb.get('cpus')} vCPU and {jb.get('memoryMib')} MiB each (stream a large file; do not read it whole). "
+                "A worker sees what you see, read-only — inputs/, store/, catalog/, tools/, all of work/ and tool-output/ — "
+                "and writes only its own $OUT, sealed into store/jobs/<id>/out/. It has the image's programs "
+                "(/etc/dfirswarm/tools.md) and nothing installed in an agent's own VM; with network=allowlist it reaches "
+                f"{hosts}. An exit status of 0 is not the work's success: read what the job wrote, and its stderr.\n\n"
+            )
+        except Exception:
+            pass
 text = text.replace("{{HOST}}\n\n", host_section)
 
 # The case line, when the kickoff named one.
@@ -3148,7 +3167,7 @@ cmd_start() {
   # Where the agents live: one microVM each (the default), or host
   # processes (--isolation host, unisolated). isolation_given says the
   # operator named it, so a refusal can say how to choose the other.
-  local isolation="${SWARM_ISOLATION:-microvm}" isolation_given=$([[ -n "${SWARM_ISOLATION:-}" ]] && echo 1 || echo 0) vm_image="${SWARM_VM_IMAGE:-}" vm_image_named=$([[ -n "${SWARM_VM_IMAGE:-}" ]] && echo 1 || echo 0) vm_image_digest="" vm_cpus=2 vm_memory="" vm_disk=8192 vm_snapshot=1 vm_snapshot_dir="" allow_oauth_in_vm=0 inputs_copy=0 jobs=1 workers=2 worker_cpus=2 worker_memory=2048
+  local isolation="${SWARM_ISOLATION:-microvm}" isolation_given=$([[ -n "${SWARM_ISOLATION:-}" ]] && echo 1 || echo 0) vm_image="${SWARM_VM_IMAGE:-}" vm_image_named=$([[ -n "${SWARM_VM_IMAGE:-}" ]] && echo 1 || echo 0) vm_image_digest="" vm_cpus=2 vm_memory="" vm_disk=8192 vm_snapshot=1 vm_snapshot_dir="" allow_oauth_in_vm=0 inputs_copy=0 jobs=1 workers=2 worker_cpus=2 worker_memory=""
   local seal_herdr=1
   # Directories the panes may not read. Reads are open by design, so this is
   # narrow on purpose: material about the case the agents must derive rather
@@ -3311,6 +3330,12 @@ cmd_start() {
     [[ "$vm_cpus" =~ ^[1-9][0-9]?$ ]] || { echo "BLOCKER: --vm-cpus must be 1..99 (got $vm_cpus)." >&2; exit 2; }
     [[ "$workers" =~ ^([1-9]|1[0-6])$ ]] || { echo "BLOCKER: --workers must be 1..16 (got $workers)." >&2; exit 2; }
     [[ "$worker_cpus" =~ ^([1-9]|1[0-6])$ ]] || { echo "BLOCKER: --worker-cpus must be 1..16 (got $worker_cpus)." >&2; exit 2; }
+    # Unset: 4096 MiB on a host with 64 GiB or more, 2048 otherwise.
+    if [[ -z "$worker_memory" ]]; then
+      local host_mib_w
+      host_mib_w="$(node -e 'console.log(Math.floor(require("os").totalmem() / 1048576))' 2>/dev/null || echo 16384)"
+      if [[ "$host_mib_w" -ge 65536 ]]; then worker_memory=4096; else worker_memory=2048; fi
+    fi
     [[ "$worker_memory" =~ ^[0-9]+$ && "$worker_memory" -ge 512 ]] || { echo "BLOCKER: --worker-memory must be at least 512 (MiB; got $worker_memory)." >&2; exit 2; }
     # Unset: 2048 MiB, or 1024 on a host with less than 8 GiB (a small
     # server that also serves something else, ADR 0009).
@@ -4611,6 +4636,7 @@ console.log(r.ok ? "" : r.reason);' "$_gp" "$_gk" 2>/dev/null || echo "could not
         | awk '!seen[$0]++' | sed 's/.*/`&`/' | paste -sd, - | sed 's/,/, /g')"
     fi
   fi
+  JOBS_FOR_CONTRACT="$([[ "$isolation" == "microvm" && "$jobs" -eq 1 ]] && jq -nc --argjson w "$workers" --argjson c "$worker_cpus" --argjson m "$worker_memory" --arg h "$allow_hosts$([[ "$allow_install" -eq 1 && "$install_hosts" -eq 1 && "$local_only" -eq 0 ]] && printf '%s' "${allow_hosts:+,}pypi.org,files.pythonhosted.org")" '{workers: $w, cpus: $c, memoryMib: $m, allowHosts: ($h | split(",") | map(select(length > 0)))}')" \
   CASE_ID_FOR_CONTRACT="$case_id" EXAMINER_FOR_CONTRACT="$examiner" ALLOW_INSTALL_FOR_CONTRACT="$allow_install" INSTALL_HOSTS_FOR_CONTRACT="$install_hosts" \
     HOST_CAPS_FOR_CONTRACT="$host_caps_json" WRITE_GUARD_FOR_CONTRACT="$write_guard_mode" \
     ATTRIBUTION_FOR_CONTRACT="$attribution" ISOLATION_FOR_CONTRACT="$isolation" VM_HOSTS_FOR_CONTRACT="$vm_hosts" \
@@ -6996,8 +7022,13 @@ launch_vm_agents() {
   # providers' hosts) for a job that asks for network, the packs.
   JOBS_JSON=""
   if [[ "${jobs:-1}" -eq 1 ]]; then
+    # A job that asks for network gets the operator's hosts and, with
+    # --allow-install (and not --no-pypi or --local-only), the package index
+    # the agents' VMs get: pip, never apt.
+    local job_hosts="$allow_hosts"
+    [[ "$allow_install" -eq 1 && "$install_hosts" -eq 1 && "${local_only:-0}" -eq 0 ]] && job_hosts="${job_hosts}${job_hosts:+,}pypi.org,files.pythonhosted.org"
     JOBS_JSON="$(jq -nc --arg image "$vm_image" --argjson workers "$workers" --argjson cpus "$worker_cpus" --argjson mem "$worker_memory" \
-      --arg hosts "$allow_hosts" --argjson open "$([[ "$use_netguard" -eq 0 ]] && echo true || echo false)" --arg packs "$pack_dirs" \
+      --arg hosts "$job_hosts" --argjson open "$([[ "$use_netguard" -eq 0 ]] && echo true || echo false)" --arg packs "$pack_dirs" \
       '{image: $image, workers: $workers, cpus: $cpus, memoryMib: $mem, allowHosts: ($hosts | split(",") | map(select(length > 0))), openNet: $open, packDirs: ($packs | split("\n") | map(select(length > 0)))}')"
     echo "Jobs:         up to $workers worker VM(s) at a time, ${worker_cpus} vCPU and ${worker_memory} MiB each, no network unless a job asks for the run's allowlist"
   fi

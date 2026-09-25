@@ -648,9 +648,6 @@ export function boardTable(hub: {
         network: raw.network === "allowlist" ? "allowlist" : "off",
         ...(typeof raw.note === "string" ? { note: raw.note } : {}),
       };
-      // A job that names one of the seat's own holes (work/<id>, and its
-      // extracted and quarantine corners) gets them, read-only.
-      if (new RegExp(`work/(?:extracted/|quarantine/)?${who}(?:/|\\b|$)`).test(JSON.stringify([raw.command ?? "", raw.args ?? {}]))) spec.scratch = true;
       const r = await svc.submit(who, spec, { watch: typeof raw.wait === "number" ? raw.wait : 0 });
       return r.ok ? { ok: true, job: await jobView(S, r.job) } : r;
     },

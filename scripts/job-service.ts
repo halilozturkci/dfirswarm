@@ -72,6 +72,7 @@ export type JobRecord = {
   finished_at?: string;
   exit?: number | null;
   worker?: string;
+  worker_size?: string;
   image?: string;
   image_digest?: string;
   tool_sha256?: string;
@@ -199,7 +200,7 @@ export class JobService {
           this.jobs.set(id, { id, attempt: 1, spec: l.spec as JobSpec, requester: l.requester as Requester, state: "accepted", accepted_at: l.at, ...(l.dedup_key ? { dedup_key: String(l.dedup_key) } : {}) });
           break;
         case "job_started":
-          if (j) Object.assign(j, { state: "running", attempt: Number(l.attempt), started_at: l.at, worker: l.worker, image: l.image, tool_sha256: l.tool_sha256, accessible: l.accessible, network: l.network });
+          if (j) Object.assign(j, { state: "running", attempt: Number(l.attempt), started_at: l.at, worker: l.worker, image: l.image, tool_sha256: l.tool_sha256, accessible: l.accessible, network: l.network, ...(l.cpus ? { worker_size: `${l.cpus} vCPU, ${l.memory_mib} MiB` } : {}) });
           break;
         case "job_finished":
           if (j) Object.assign(j, { state: "finished", exit: l.exit as number | null, finished_at: l.at, status: l.status, reason: l.reason });
@@ -523,37 +524,46 @@ export class JobService {
     return { base, out: join(base, "out"), ctl: join(base, "job") };
   }
 
-  /** The guest path a job writes to, and the worker's mounts: exactly what it can reach, which is recorded. */
+  /**
+   * The worker's mounts: what its brain sees, read-only — the evidence,
+   * store/, catalog/, tools/, the packs, all of work/ (every agent's live
+   * scratch and the shared files; the extracted and quarantined corners
+   * no-exec) and tool-output/ — and its own $OUT, the one writable place,
+   * outside work/. Never the board, the inbox, the ledger, the sessions or
+   * the budget. Exactly this list is recorded as the job's accessible scope.
+   */
   private mounts(job: JobRecord, st: { out: string; ctl: string }): { mounts: Mount[]; accessible: Array<{ path: string; access: string }> } {
     const S = this.S;
-    const mounts: Mount[] = [];
+    const mounts: Array<Mount & { note?: string }> = [];
     const inputs = join(S, "inputs");
     if (existsSync(inputs)) mounts.push({ host: inputs, guest: inputs, readonly: true, noexec: true });
-    for (const rel of ["store", "catalog", "tools"]) if (existsSync(join(S, rel))) mounts.push({ host: join(S, rel), guest: join(S, rel), readonly: true });
-    for (const pack of this.o.packDirs) if (existsSync(pack)) mounts.push({ host: pack, guest: pack, readonly: true });
-    // The agent's own holes, read-only, when the job names one: its scratch,
-    // and what it extracted or quarantined (no-exec, as in its own VM).
-    if (job.spec.scratch && job.requester.agent !== "system") {
-      const who = job.requester.agent;
-      for (const [rel, noexec] of [[join("work", who), false], [join("work", "extracted", who), true], [join("work", "quarantine", who), true]] as const) {
-        if (existsSync(join(S, rel))) mounts.push({ host: join(S, rel), guest: join(S, rel), readonly: true, ...(noexec ? { noexec: true } : {}) });
-      }
+    for (const rel of ["store", "catalog", "tools", "tool-output"]) if (existsSync(join(S, rel))) mounts.push({ host: join(S, rel), guest: join(S, rel), readonly: true });
+    if (existsSync(join(S, "work"))) {
+      mounts.push({ host: join(S, "work"), guest: join(S, "work"), readonly: true, note: "every agent's live scratch and the shared files: they may change while the job runs" });
+      for (const corner of ["extracted", "quarantine"]) if (existsSync(join(S, "work", corner))) mounts.push({ host: join(S, "work", corner), guest: join(S, "work", corner), readonly: true, noexec: true });
     }
+    for (const pack of this.o.packDirs) if (existsSync(pack)) mounts.push({ host: pack, guest: pack, readonly: true });
     mounts.push({ host: st.out, guest: this.outPath(job), noexec: true });
     mounts.push({ host: st.ctl, guest: "/job", noexec: true });
-    const accessible = mounts.map((m) => ({ path: m.guest ?? m.host, access: m.readonly ? "read-only" : "read-write" }));
-    return { mounts, accessible };
+    const accessible = mounts.map((m) => ({ path: m.guest ?? m.host, access: `${m.readonly ? "read-only" : "read-write"}${m.noexec ? ", no-exec" : ""}${m.note ? `; ${m.note}` : ""}` }));
+    return { mounts: mounts.map(({ note: _note, ...m }) => m), accessible };
   }
 
+  /** Where a job writes, in its VM: its own directory in the run, outside work/ (which it sees read-only). */
   outPath(job: JobRecord): string {
-    return join(this.S, "work", ".jobs", job.id);
+    return join(this.S, ".jobs", job.id);
   }
 
   private async script(job: JobRecord, ctl: string): Promise<{ lines: string[]; tool_sha256?: string }> {
     const q = shQuote;
     const out = this.outPath(job);
     const box = job.spec.timeout_seconds;
-    const run = (cmd: string) => [`timeout --kill-after=10 ${box} ${cmd} > /job/stdout.log 2> /job/stderr.log`, "echo $? > /job/exit"];
+    // A job with network may install what it needs for itself: what pip
+    // holds before and after is kept with its logs, so the record says what
+    // the job ran with beyond the image.
+    const pip = job.spec.network === "allowlist" ? ["python3 -m pip list --format=freeze > /job/pip-before.txt 2>/dev/null || true"] : [];
+    const pipAfter = job.spec.network === "allowlist" ? ["python3 -m pip list --format=freeze > /job/pip-after.txt 2>/dev/null || true"] : [];
+    const run = (cmd: string) => [...pip, `timeout --kill-after=10 ${box} ${cmd} > /job/stdout.log 2> /job/stderr.log`, "echo $? > /job/exit", ...pipAfter];
     const head = ["#!/bin/bash", "set -u", `cd ${q(this.S)} 2>/dev/null || cd /`, `export OUT=${q(out)}`];
     if (job.spec.kind === "tool") {
       const checked = await this.toolCheck(job.spec.tool ?? "", job.spec.args ?? {});
@@ -635,7 +645,7 @@ export class JobService {
     const worker = `dfs-${this.o.run}-job-${job.id}-${job.attempt}`;
     const netText = network.mode === "off" ? "none" : network.mode === "public" ? "every public host" : `the run's allowlist (${network.hosts.join(", ")})`;
     await this.journal.append({ type: "job_started", job: job.id, attempt: job.attempt, worker, image: this.o.image, ...(script.tool_sha256 ? { tool_sha256: script.tool_sha256 } : {}), declared: job.spec.inputs, accessible, observed: "unknown", network: netText, cpus: this.o.workerCpus, memory_mib: this.o.workerMemoryMib });
-    Object.assign(job, { state: "running", worker, started_at: new Date().toISOString(), image: this.o.image, accessible, network: netText, ...(script.tool_sha256 ? { tool_sha256: script.tool_sha256 } : {}) });
+    Object.assign(job, { state: "running", worker, worker_size: `${this.o.workerCpus} vCPU, ${this.o.workerMemoryMib} MiB`, started_at: new Date().toISOString(), image: this.o.image, accessible, network: netText, ...(script.tool_sha256 ? { tool_sha256: script.tool_sha256 } : {}) });
     await this.project(job);
     maybeCrash("job:started");
     const started = Date.now();
@@ -727,7 +737,7 @@ export class JobService {
     }
     // The job's own words, whole: stdout and stderr beside its outputs.
     const logs: Record<string, string> = {};
-    for (const name of ["stdout.log", "stderr.log"]) {
+    for (const name of ["stdout.log", "stderr.log", "pip-before.txt", "pip-after.txt"]) {
       const from = join(st.ctl, name);
       const to = join(jobDir, where === "out" ? name : `${where}.${name}`);
       if (existsSync(from) && !existsSync(to)) {
@@ -1004,6 +1014,7 @@ export async function jobView(S: string, job: JobRecord, o: { files?: number } =
     ...(job.spec.recipe ? { recipe: job.spec.recipe } : {}),
     requester: job.requester.agent,
     ...(job.exit !== undefined ? { exit: job.exit } : {}),
+    ...(job.worker_size ? { worker: job.worker_size } : {}),
     ...(job.generation ? { generation: job.generation, revision: job.revision } : {}),
   };
   if (job.state !== "committed" || !job.outputs) return view;
@@ -1019,14 +1030,17 @@ export async function jobView(S: string, job: JobRecord, o: { files?: number } =
     ...(m && m.manifest.rejected.length ? { left_out: m.manifest.rejected.map((r) => `${r.path} (${r.kind})`) } : {}),
     manifest: `store/jobs/${job.id}/manifest.json`,
   };
-  if (job.status !== "ok") {
-    try {
-      const err = await readFile(join(dir, "stderr.log"));
-      const tail = err.subarray(Math.max(0, err.length - 2048));
+  // stderr is shown whatever the exit status: a command that swallowed its
+  // failures still exits 0, and what it said on stderr is how that shows.
+  try {
+    const err = await readFile(join(dir, "stderr.log"));
+    if (err.length) {
+      const room = job.status === "ok" ? 1024 : 2048;
+      const tail = err.subarray(Math.max(0, err.length - room));
       view.stderr = { tail: tail.toString("utf8"), bytes: err.length, ...(err.length > tail.length ? { whole: `store/jobs/${job.id}/stderr.log` } : {}) };
-    } catch {
-      // no stderr
     }
+  } catch {
+    // no stderr
   }
   view.cite = `job:${job.id}/<path>`;
   return view;

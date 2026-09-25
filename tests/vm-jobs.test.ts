@@ -52,7 +52,9 @@ async function sandbox(): Promise<{ S: string; run: string }> {
   const run = `vj${Math.random().toString(36).slice(2, 8)}`;
   runs.push(run);
   const S = join(base, "runs", run);
-  for (const d of ["inputs", "tools", "catalog", "threads/main", "work/a1"]) await mkdir(join(S, d), { recursive: true });
+  for (const d of ["inputs", "tools", "catalog", "threads/main", "work/a1", "work/extracted"]) await mkdir(join(S, d), { recursive: true });
+  await writeFile(join(S, "work", "a1", "mine.txt"), "an agent's note");
+  await writeFile(join(S, "work", "extracted", "run.sh"), "#!/bin/sh\necho ran\n", { mode: 0o755 });
   await writeFile(join(S, "threads", "main", "000001-a1.md"), "a board post\n");
   execFileSync("python3", ["-c", "import zipfile,sys\nwith zipfile.ZipFile(sys.argv[1],'w') as z:\n  z.writestr('docs/secret.txt','the key is 1234')", join(S, "inputs", "case.zip")]);
   await writeFile(join(S, "inputs.json"), JSON.stringify({ files: [{ path: "inputs/case.zip" }] }));
@@ -99,7 +101,9 @@ test("a worker reaches only what it was given: no network, no credential, nothin
   const probe = [
     `(python3 -c "import urllib.request; urllib.request.urlopen('https://example.org', timeout=5)" >/dev/null 2>&1 && echo net-open || echo net-closed) > "$OUT/net.txt"`,
     `(env | grep -iE 'api_key|apikey|token|oauth|secret|password' || true) > "$OUT/env.txt"`,
-    `for p in "$SWARM_SANDBOX/inputs/x" "$SWARM_SANDBOX/store/x" "$SWARM_SANDBOX/catalog/x" "$SWARM_SANDBOX/tools/x"; do (touch "$p" 2>/dev/null && echo "WROTE $p" || echo "refused $p"); done > "$OUT/writes.txt"`,
+    `for p in "$SWARM_SANDBOX/inputs/x" "$SWARM_SANDBOX/store/x" "$SWARM_SANDBOX/catalog/x" "$SWARM_SANDBOX/tools/x" "$SWARM_SANDBOX/work/x" "$SWARM_SANDBOX/work/a1/x" "$SWARM_SANDBOX/work/extracted/x"; do (touch "$p" 2>/dev/null && echo "WROTE $p" || echo "refused $p"); done > "$OUT/writes.txt"`,
+    `cat "$SWARM_SANDBOX/work/a1/mine.txt" > "$OUT/peer.txt" 2>&1`,
+    `(printf '#!/bin/sh\necho ran\n' > /tmp/x.sh; cp /tmp/x.sh "$OUT/x.sh" 2>/dev/null; chmod +x "$OUT/x.sh" 2>/dev/null; "$SWARM_SANDBOX/work/extracted/run.sh" 2>/dev/null && echo EXEC || echo noexec) > "$OUT/exec.txt"`,
     `(ls "$SWARM_SANDBOX/threads" >/dev/null 2>&1 && echo board-visible || echo board-not-mounted) > "$OUT/board.txt"`,
     `cat "$SWARM_SANDBOX/inputs.json" >/dev/null 2>&1 && echo floor-visible > "$OUT/floor.txt" || echo floor-not-mounted > "$OUT/floor.txt"`,
     `echo ok > "$OUT/own.txt"`,
@@ -116,6 +120,8 @@ test("a worker reaches only what it was given: no network, no credential, nothin
   assert.equal(read("board.txt"), "board-not-mounted");
   assert.equal(read("floor.txt"), "floor-not-mounted", "the run's own records are not a worker's to read");
   assert.equal(read("own.txt"), "ok");
+  assert.equal(read("peer.txt"), "an agent's note", "all of work/ is readable, as it is to the agents");
+  assert.equal(read("exec.txt"), "noexec", "what was extracted cannot run");
   assert.deepEqual(workerNames(run), [], "the worker is gone");
   await svc.stop("over");
 });

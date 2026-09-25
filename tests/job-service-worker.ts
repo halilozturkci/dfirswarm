@@ -14,7 +14,7 @@ export function localWorker(record: WorkerSpec[] = [], behaviour: { fenced?: () 
   return async (spec: WorkerSpec) => {
     record.push(spec);
     const ctl = spec.mounts.find((m) => m.guest === "/job")!.host;
-    const out = spec.mounts.find((m) => (m.guest ?? "").includes("/work/.jobs/"))!;
+    const out = spec.mounts.find((m) => m.host.includes(".staging/") && m.host.endsWith("/out"))!;
     const local = (text: string) => text.split("/job/").join(`${ctl}/`).split(out.guest!).join(out.host);
     // What the hub wrote for the job names guest paths: here they are the host's.
     for (const f of readdirSync(ctl)) if (f !== "run.sh" && f.endsWith(".json")) writeFileSync(join(ctl, f), local(readFileSync(join(ctl, f), "utf8")));

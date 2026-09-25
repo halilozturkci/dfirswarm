@@ -66,19 +66,17 @@ test("a job is the calling seat's; a command naming its own scratch gets it read
   assert.equal(st.stdout.text, "mine\n");
   assert.equal(st.job.outputs.list[0].path, "o.txt");
   assert.equal(st.job.cite, `job:${r.job.job}/<path>`);
-  const scratch = specs[0].mounts.find((m) => m.guest?.endsWith("/work/a1"));
-  assert.ok(scratch?.readonly, "its own scratch, read-only, because the command names it");
-  const other = await call("a2", "jobSubmit", { command: "true" });
-  assert.equal(specs.length, 1);
-  assert.equal(other.ok, true);
-  await done(call, "a2", other.job.job);
-  assert.ok(!specs[1].mounts.some((m) => /\/work\/a\d$/.test(m.guest ?? "")), "a job that does not name a scratch gets none");
-  // What it extracted is its own too: named, it is mounted, read-only and no-exec.
-  mkdirSync(join(S, "work", "extracted", "a1", "fs"), { recursive: true });
-  const ex = await call("a1", "jobSubmit", { command: "ls work/extracted/a1 > \"$OUT/l.txt\"" });
-  await done(call, "a1", ex.job.job);
-  const extracted = specs[2].mounts.find((m) => m.guest?.endsWith("/work/extracted/a1"));
-  assert.ok(extracted?.readonly && extracted?.noexec, `the extracted corner, read-only and no-exec: ${JSON.stringify(specs[2].mounts)}`);
+  // A worker sees what its brain sees: all of work/ read-only, the extracted
+  // and quarantined corners no-exec, whoever asks.
+  const work = specs[0].mounts.find((m) => m.guest === join(S, "work"));
+  assert.ok(work?.readonly && !work?.noexec, `all of work/, read-only: ${JSON.stringify(specs[0].mounts)}`);
+  mkdirSync(join(S, "work", "extracted", "a2"), { recursive: true });
+  writeFileSync(join(S, "work", "a2", "peer.txt"), "a peer's note\n");
+  const peer = await call("a1", "jobSubmit", { command: "cat work/a2/peer.txt" });
+  const seen = await done(call, "a1", peer.job.job);
+  assert.equal(seen.stdout.text, "a peer's note\n", "a peer's scratch is readable to a job, as it is to the agent");
+  const extracted = specs[1].mounts.find((m) => m.guest === join(S, "work", "extracted"));
+  assert.ok(extracted?.readonly && extracted?.noexec, "the extracted corner, read-only and no-exec");
   const long = await call("a1", "jobSubmit", { command: "sleep 2" });
   const refused = await call("a2", "jobStatus", { job_id: long.job.job, cancel: true });
   assert.equal(refused.ok, false);
