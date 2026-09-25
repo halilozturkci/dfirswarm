@@ -1658,13 +1658,17 @@ function summaryOf(c: Omit<Custody, "summary">, t: { traceProblem: string | null
     const anchor = j.anchor === "matches" ? "its anchor matches" : j.anchor === "behind" ? "its anchor one step behind (a crash between two writes, recovered)" : j.anchor === "missing" ? "NO JOURNAL ANCHOR" : "JOURNAL ANCHOR OFF THE CHAIN";
     const bits = [`store: ${plural(st.jobs, "job")}, ${st.committed} committed, journal ${plural(j.lines, "line")} ${j.intact ? "chain intact" : `CHAIN BROKEN (${j.detail})`}, ${anchor}`];
     bits.push(`${st.outputs.verified} of ${plural(st.outputs.files, "output file")} verified against their manifests`);
-    if (st.outputs.mismatched.length) bits.push(`${st.outputs.mismatched.length} OUTPUT FILE(S) CHANGED SINCE SEALED (${st.outputs.mismatched.slice(0, 5).join(", ")}${st.outputs.mismatched.length > 5 ? ", …" : ""})`);
+    // A long list is named in part here and whole in custody.json.
+    const some = (xs: Array<string | number>, n: number, where: string) => `${xs.slice(0, n).join(", ")}${xs.length > n ? `, … all ${xs.length} in custody.json ${where}` : ""}`;
+    if (st.outputs.mismatched.length) bits.push(`${st.outputs.mismatched.length} OUTPUT FILE(S) CHANGED SINCE SEALED (${some(st.outputs.mismatched, 5, "store.outputs.mismatched")})`);
     if (st.outputs.missing.length) bits.push(`${st.outputs.missing.length} OUTPUT FILE(S) MISSING`);
     if (st.manifests_missing.length) bits.push(`${st.manifests_missing.length} MANIFEST(S) MISSING`);
     if (j.repaired || j.anchor_mismatch) bits.push(`the journal recorded ${j.repaired} repair(s) and ${j.anchor_mismatch} anchor mismatch(es)`);
-    if (st.staging_left.length) bits.push(`${st.staging_left.length} job staging director${st.staging_left.length === 1 ? "y" : "ies"} left unsealed (${st.staging_left.slice(0, 5).join(", ")})`);
+    if (st.staging_left.length) bits.push(`${st.staging_left.length} job staging director${st.staging_left.length === 1 ? "y" : "ies"} left unsealed (${some(st.staging_left, 5, "store.staging_left")})`);
     bits.push(`${plural(st.generations, "catalogue generation")}, ${plural(st.revisions, "revision")}`);
-    if (st.findings.total) bits.push(st.findings.without_refs.length ? `${st.findings.without_refs.length} of ${plural(st.findings.total, "finding")} cite no object of the run (ledger seq ${st.findings.without_refs.slice(0, 20).join(", ")}${st.findings.without_refs.length > 20 ? ", …" : ""}): an audit gap` : `every one of ${plural(st.findings.total, "finding")} cites an object of the run`);
+    if (st.findings.total) bits.push(st.findings.without_refs.length ? `${st.findings.without_refs.length} of ${plural(st.findings.total, "finding")} cite no object of the run (ledger seq ${some(st.findings.without_refs, 20, "store.findings.without_refs")}): an audit gap` : `every one of ${plural(st.findings.total, "finding")} cites an object of the run`);
+    if (st.degraded) bits.push(`the job service told the agents ${st.degraded} time(s) that workers were not running`);
+    if (st.notes) bits.push(`${plural(st.notes, "examiner note")} added to the record after the run`);
     parts.push(bits.join(", "));
   }
   if (c.not_reached.length) parts.push(`NOT CHECKED BEFORE CUSTODY ENDED: ${c.not_reached.join(", ")}`);

@@ -18,6 +18,8 @@
  *
  *   node scripts/evidence-store.ts init <sandbox>      revision 0 from the census
  *   node scripts/evidence-store.ts verify <sandbox>    the journal against its anchor
+ *   node scripts/evidence-store.ts note <sandbox> --by NAME --text TEXT [--job ID]...
+ *                                                      an examiner's note on the record, after the run
  */
 import { createHash } from "node:crypto";
 import { createReadStream, existsSync, readFileSync } from "node:fs";
@@ -689,6 +691,9 @@ export type StoreCheck = {
   revisions: number;
   /** Findings in the ledger that cite no object of the run (a job:/input:/import:/member:/sha256: reference, or a path under inputs/, store/jobs/ or catalog/gen/): an audit gap, named by seq. */
   findings: { total: number; without_refs: number[] };
+  /** Notes an examiner added to the record after the run (evidence-store.ts note), and the times the job service told the agents that workers were not running. */
+  notes: number;
+  degraded: number;
 };
 
 /**
@@ -722,6 +727,8 @@ export async function checkStore(sandbox: string, before = Infinity): Promise<St
     generations: count("generation_committed"),
     revisions: count("revision_published"),
     findings: { total: 0, without_refs: [] },
+    notes: count("note"),
+    degraded: count("jobs_degraded"),
   };
   try {
     for (const line of (await readFile(join(S, "ledger", "entries.jsonl"), "utf8")).split("\n")) {
@@ -769,11 +776,45 @@ export async function checkStore(sandbox: string, before = Infinity): Promise<St
   return out;
 }
 
+/**
+ * An examiner's note appended to a run's journal: a correction or an
+ * observation about the record, attributed and chained like every other
+ * line, never an edit of one. Only with no hub running, the store's writer
+ * during a run.
+ */
+export async function appendNote(sandbox: string, note: { by: string; text: string; jobs?: string[] }): Promise<number> {
+  if (!note.by.trim() || !note.text.trim()) throw new Error("a note needs --by and --text");
+  const pidFile = join(resolve(sandbox), "hub.pid");
+  if (existsSync(pidFile)) {
+    const pid = Number(readFileSync(pidFile, "utf8").trim());
+    let alive = false;
+    try {
+      alive = Number.isInteger(pid) && pid > 0 && process.kill(pid, 0);
+    } catch {
+      alive = false;
+    }
+    if (alive) throw new Error(`the run's hub (pid ${pid}) is the store's writer while it runs: add the note after the run`);
+  }
+  const j = await Journal.open(sandbox);
+  await j.append({ type: "note", by: note.by, text: note.text, ...(note.jobs?.length ? { jobs: note.jobs } : {}) });
+  return j.seq;
+}
+
 async function main(argv: string[]): Promise<number> {
   const [cmd, sandbox] = argv;
   if (!cmd || !sandbox) {
-    process.stderr.write("usage: evidence-store.ts init|verify <sandbox>\n");
+    process.stderr.write("usage: evidence-store.ts init|verify|note <sandbox>\n");
     return 2;
+  }
+  if (cmd === "note") {
+    const opt = (name: string) => {
+      const i = argv.indexOf(name);
+      return i >= 0 ? argv[i + 1] : undefined;
+    };
+    const jobs = argv.flatMap((a, i) => (a === "--job" && argv[i + 1] ? [argv[i + 1]] : []));
+    const seq = await appendNote(sandbox, { by: opt("--by") ?? "", text: opt("--text") ?? "", jobs });
+    process.stdout.write(`${JSON.stringify({ ok: true, seq })}\n`);
+    return 0;
   }
   if (cmd === "init") {
     const j = await initStore(sandbox);

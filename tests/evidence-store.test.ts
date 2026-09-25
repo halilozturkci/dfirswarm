@@ -12,7 +12,7 @@ import { existsSync, mkdtempSync, readFileSync, statSync } from "node:fs";
 import { appendFile, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Journal, checkStore, initStore, publishGeneration, resealMoved, resolveRef, sealTree, storePaths, verifyJournalText } from "../scripts/evidence-store.ts";
+import { Journal, appendNote, checkStore, initStore, publishGeneration, resealMoved, resolveRef, sealTree, storePaths, verifyJournalText } from "../scripts/evidence-store.ts";
 import { chmodSync, writeFileSync } from "node:fs";
 
 const STORE = join(import.meta.dirname, "..", "scripts", "evidence-store.ts");
@@ -241,3 +241,23 @@ test("custody's look at the store: the chain and its anchor, every committed fil
 function createHashHex(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
+
+test("an examiner's note is chained onto the journal after the run, attributed, and refused while the hub runs", async () => {
+  const S = sandbox();
+  const j = await Journal.open(S);
+  await j.append({ type: "job_fenced", job: "j000001", attempt: 1, fenced: true });
+  await writeFile(join(S, "hub.pid"), `${process.pid}\n`);
+  await assert.rejects(appendNote(S, { by: "examiner", text: "x" }), /hub \(pid \d+\) is the store's writer/);
+  await writeFile(join(S, "hub.pid"), "999999999\n");
+  const r = spawnSync(process.execPath, ["--experimental-strip-types", "--no-warnings", STORE, "note", S, "--by", "Claude (examiner)", "--text", "j000001's fence was false: msb listed the worker later.", "--job", "j000001"], { encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  const lines = verifyJournalText(readFileSync(storePaths(S).journal, "utf8"));
+  assert.equal(lines.error, undefined);
+  const note = lines.lines.at(-1)!;
+  assert.deepEqual([note.type, note.by, note.jobs], ["note", "Claude (examiner)", ["j000001"]]);
+  assert.equal(JSON.parse(spawnSync(process.execPath, ["--experimental-strip-types", "--no-warnings", STORE, "verify", S], { encoding: "utf8" }).stdout).ok, true, "the anchor moved with it");
+  await assert.rejects(appendNote(S, { by: "", text: "x" }), /needs --by and --text/);
+  const c = await checkStore(S);
+  assert.equal(c!.notes, 1, "custody counts the notes on the record");
+  assert.equal(c!.journal.intact, true);
+});
