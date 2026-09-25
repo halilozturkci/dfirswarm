@@ -1974,7 +1974,8 @@ export function listedNames(text: string): string[] | null {
  */
 export async function stopMaker(name: string): Promise<{ ok: boolean; error?: string }> {
   const find = async () => {
-    const ps = await run("ps", ["-axo", "pid=,command="], { timeoutMs: 15_000 });
+    // -ww: the whole command line, however long (the hub's is past 200 characters).
+    const ps = await run("ps", ["-e", "-ww", "-o", "pid=,args="], { timeoutMs: 15_000 });
     if (ps.code !== 0) return null;
     return ps.stdout
       .split("\n")
@@ -2005,12 +2006,13 @@ export async function stopMaker(name: string): Promise<{ ok: boolean; error?: st
  * and finishRun removes any it left.
  *
  * The VM is made and run by a short-lived child process, never by the hub's
- * own: on Ali Hadi #10, after msb's lifecycle maintenance ran inside the
- * hub's long-lived SDK, every VM it made after failed to boot ("insert run:
- * FOREIGN KEY constraint failed"), and its sandbox row showed up in msb only
- * after the fence had looked. A fresh process made one fine. The fence runs
- * after the child has exited, so what it held is settled before msb is asked.
- * A VM that failed to boot (nothing ran) is removed and made once more.
+ * own: on Ali Hadi #10 every VM the hub's long-lived SDK made after its 64th
+ * failed to boot ("insert run: FOREIGN KEY constraint failed": msb's runtime,
+ * another process, did not see the sandbox row the SDK had written), and the
+ * row showed up in msb only after the fence had looked. A fresh process made
+ * one fine. Whatever state a maker's msb connection gets into ends with it,
+ * and the fence runs after it has exited. A VM that failed to boot (nothing
+ * ran) is removed and made once more.
  */
 export async function runWorker(spec: WorkerSpec, hooks: { onCreated?: () => void } = {}): Promise<{ code: number | null; digest?: string; error?: string; fenced: boolean; fence_error?: string; boot_retry?: string }> {
   let ran = await runWorkerInChild(spec, hooks);

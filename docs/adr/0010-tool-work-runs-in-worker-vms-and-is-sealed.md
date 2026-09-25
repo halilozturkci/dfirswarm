@@ -49,8 +49,10 @@ what was deferred until the first CTF round is listed at the end.
    (msb 0.7.2: "insert run: FOREIGN KEY constraint failed"), while a fresh
    process made one fine. Each failure was recorded as fenced on inspect's
    "not found" alone, and msb listed those workers afterwards. The cause
-   inside msb is not known: 90 workers made the same way from one process on
-   an idle host did not fail. The child process, the stricter fence, one
+   inside msb is not known. msb 0.7.2's source has the runtime (another
+   process) insert its run by the id of a sandbox row the SDK wrote on its one
+   connection: a row the SDK saw and no other process did. 90 workers made
+   the same way from one process on an idle host did not fail. The child process, the stricter fence, one
    retry of a boot refused before anything ran, and a notice to every agent
    after three jobs in a row that ran in no worker are containment. The
    run's journal carries an examiner's note that corrects those eight
