@@ -169,6 +169,17 @@ test("a failed job keeps what it wrote, a timed-out one says so, and a peer cann
   await svc.stop("test over");
 });
 
+test("submissions in the same tick each get a job id of their own", async () => {
+  const S = sandbox();
+  const { svc } = service(S, { workers: 4 });
+  await svc.start();
+  const rs = await Promise.all(["a1", "a2", "a3", "a4", "a1", "a2"].map((a) => svc.submit(a, { kind: "command", command: "true", inputs: [] })));
+  const ids = rs.map((r) => (r.ok ? r.job.id : "refused"));
+  assert.equal(new Set(ids).size, ids.length, `distinct ids: ${ids.join(", ")}`);
+  for (const id of ids) await until(svc, id);
+  await svc.stop("over");
+});
+
 test("an agent may queue so many jobs and no more; the harness's own are not counted", async () => {
   const S = sandbox();
   const { svc } = service(S, { workers: 1, perRequesterQueued: 2, runWorker: async () => { await new Promise((r) => setTimeout(r, 300)); return { code: 0, fenced: true }; } });

@@ -7,11 +7,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, statSync } from "node:fs";
 import { appendFile, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Journal, initStore, publishGeneration, resealMoved, resolveRef, sealTree, storePaths, verifyJournalText } from "../scripts/evidence-store.ts";
+import { Journal, checkStore, initStore, publishGeneration, resealMoved, resolveRef, sealTree, storePaths, verifyJournalText } from "../scripts/evidence-store.ts";
+import { chmodSync, writeFileSync } from "node:fs";
 
 const STORE = join(import.meta.dirname, "..", "scripts", "evidence-store.ts");
 
@@ -187,3 +189,45 @@ test("a recipe job's output becomes a generation, linked at its compatibility pa
   assert.deepEqual((await readdir(join(S, "catalog", "revisions"))).sort(), ["0", "1"], "a revision is a new directory, never a renamed pointer");
   assert.match(readFileSync(join(S, "catalog", "revisions", "1", "index.md"), "utf8"), /g0001: computer-forensics-base\/disk-volumes over inputs\/d.E01 — complete/);
 });
+
+test("custody's look at the store: the chain and its anchor, every committed file against its manifest, staging left", async () => {
+  const S = sandbox();
+  await mkdir(S, { recursive: true });
+  const P = storePaths(S);
+  const j = await Journal.open(S);
+  const staging = join(P.staging, "j000001-1", "out");
+  await mkdir(staging, { recursive: true });
+  await writeFile(join(staging, "a.txt"), "alpha");
+  await writeFile(join(staging, "b.txt"), "beta");
+  const { manifestSha256 } = await sealTree(S, staging, join(P.jobs, "j000001", "out"), "j000001", 1);
+  await rm(join(P.staging, "j000001-1"), { recursive: true, force: true });
+  await j.append({ type: "job_accepted", job: "j000001" });
+  await j.append({ type: "job_committed", job: "j000001", outputs: { path: "store/jobs/j000001/out", manifest_sha256: manifestSha256 } });
+  let c = await checkStore(S);
+  assert.ok(c);
+  assert.equal(c!.journal.intact, true);
+  assert.equal(c!.journal.anchor, "matches");
+  assert.deepEqual([c!.jobs, c!.committed, c!.outputs.files, c!.outputs.verified], [1, 1, 2, 2]);
+  // A sealed file changed afterwards, and a job's staging left behind.
+  const b = join(P.jobs, "j000001", "out", "b.txt");
+  chmodSync(join(P.jobs, "j000001", "out"), 0o755);
+  chmodSync(b, 0o644);
+  writeFileSync(b, "BETA");
+  await mkdir(join(P.staging, "j000002-1"), { recursive: true });
+  c = await checkStore(S);
+  assert.deepEqual(c!.outputs.mismatched, ["store/jobs/j000001/out/b.txt"]);
+  assert.deepEqual(c!.staging_left, ["j000002-1"]);
+  // The anchor one line behind (a crash between the two writes) is told apart from one off the chain.
+  const lines = readFileSync(P.journal, "utf8").trimEnd().split("\n");
+  const behind = createHashHex(lines[lines.length - 2]);
+  await rm(P.anchor, { force: true });
+  await writeFile(P.anchor, JSON.stringify({ head: behind, seq: lines.length - 2, at: "x" }));
+  assert.equal((await checkStore(S))!.journal.anchor, "behind");
+  await rm(P.anchor, { force: true });
+  await writeFile(P.anchor, JSON.stringify({ head: "0".repeat(64), seq: 0, at: "x" }));
+  assert.equal((await checkStore(S))!.journal.anchor, "off the chain");
+});
+
+function createHashHex(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
+}

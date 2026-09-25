@@ -136,7 +136,7 @@ def list_recipes(packs):
             if rid in seen:
                 continue
             seen.add(rid)
-            rows.append({"id": rid, "name": name, "dir": d, "runtime": r.get("runtime", "bash"),
+            rows.append({"id": rid, "name": name, "dir": d, "runtime": r.get("runtime", "bash"), "min_bytes": int(r.get("min_bytes", SMALL)),
                          "entry": r.get("entry", ""), "seconds": int((r.get("limits") or {}).get("seconds", 900)),
                          "object": r.get("object", "object"), "sha256": r.get("sha256", "")})
     return rows
@@ -231,8 +231,12 @@ class Catalog:
             rel_raw = "inputs/" + rel_under
             rel = shown(rel_raw)
             size = os.path.getsize(img)
-            if size < SMALL:  # nothing under 64 KB is an image (a logical E01 can be small)
-                self.cover(rel_raw, size, "not probed", "under 64 KB: not offered to the recipes")
+            # Each recipe says the smallest object it is asked about (a disk
+            # or memory image: 64 KB; a zip: 22 bytes); below all of them a
+            # file is not offered to any.
+            if not any(size >= r["min_bytes"] for r in self.recipes):
+                floor = min((r["min_bytes"] for r in self.recipes), default=SMALL)
+                self.cover(rel_raw, size, "not probed", "smaller than any recipe of this run asks about (%s): not offered to the recipes" % human(floor))
                 continue
             first = continuation_of(img)
             if first:
@@ -247,9 +251,11 @@ class Catalog:
             self.one(rel_raw, rel, size, slug, target)
         self.write(segments_skipped, segment_sets)
 
-    def one(self, rel_raw, rel, size, slug, target):
+    def one(self, rel_raw, rel, size, slug, target):  # noqa: C901
         applied, whys = [], []
         for r in self.recipes:
+            if size < r["min_bytes"]:
+                continue
             probe = os.path.join(self.out, "probes", slug, r["name"])
             os.makedirs(probe, exist_ok=True)
             rc, verdict = run_limited(recipe_argv(r, "detect", target, ["--probe-out", probe]), 300, os.path.join(probe, "detect.stderr"))
@@ -359,7 +365,7 @@ class Catalog:
         lines += self.listing("planned", "Planned")
         lines += self.listing("not catalogued", "Not catalogued")
         lines += self.listing("partial", "Catalogued in part")
-        lines += self.listing("not probed", "Not probed (under 64 KB)")
+        lines += self.listing("not probed", "Not probed (smaller than any recipe asks about)")
         lines += ["", "| File | What | Rows | Size |", "| --- | --- | --- | --- |"] + self.index
         if self.notes:
             lines += ["", "Not built:"] + ["- %s" % n for n in self.notes]

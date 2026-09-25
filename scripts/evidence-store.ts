@@ -677,6 +677,80 @@ export async function initStore(sandbox: string): Promise<Journal> {
   return journal;
 }
 
+/** What custody checks of the store, and what it found. */
+export type StoreCheck = {
+  journal: { lines: number; intact: boolean; detail: string; head: string | null; anchor: "matches" | "behind" | "off the chain" | "missing"; repaired: number; anchor_behind: number; anchor_mismatch: number };
+  jobs: number;
+  committed: number;
+  outputs: { files: number; verified: number; mismatched: string[]; missing: string[] };
+  manifests_missing: string[];
+  staging_left: string[];
+  generations: number;
+  revisions: number;
+};
+
+/**
+ * Custody's look at the store: the journal's chain and its anchor, every
+ * committed job's files hashed again against its manifest, and any staging
+ * directory left (a job that never finished sealing). `before` stops the
+ * re-hashing at custody's deadline; what was not reached is not claimed.
+ */
+export async function checkStore(sandbox: string, before = Infinity): Promise<StoreCheck | null> {
+  const S = resolve(sandbox);
+  const P = storePaths(S);
+  if (!existsSync(P.journal)) return null;
+  const text = await readFile(P.journal, "utf8");
+  const checked = verifyJournalText(text);
+  let anchor: Anchor | null = null;
+  try {
+    anchor = JSON.parse(await readFile(P.anchor, "utf8")) as Anchor;
+  } catch {
+    anchor = null;
+  }
+  const where = !anchor ? "missing" : anchor.head === checked.head && anchor.seq === checked.lines.length - 1 ? "matches" : anchor.seq >= 0 && checked.hashes[anchor.seq] === anchor.head ? "behind" : "off the chain";
+  const count = (t: string) => checked.lines.filter((l) => l.type === t).length;
+  const committed = checked.lines.filter((l) => l.type === "job_committed");
+  const out: StoreCheck = {
+    journal: { lines: checked.lines.length, intact: !checked.error, detail: checked.error ?? "chain intact", head: checked.head, anchor: where, repaired: count("journal_repaired"), anchor_behind: count("anchor_behind"), anchor_mismatch: count("anchor_mismatch") },
+    jobs: count("job_accepted"),
+    committed: committed.length,
+    outputs: { files: 0, verified: 0, mismatched: [], missing: [] },
+    manifests_missing: [],
+    staging_left: [],
+    generations: count("generation_committed"),
+    revisions: count("revision_published"),
+  };
+  for (const c of committed) {
+    const rel = String((c.outputs as { path?: string } | undefined)?.path ?? "");
+    if (!rel) continue;
+    const dir = join(S, rel);
+    const manifestPath = rel.endsWith("/out") ? join(dirname(dir), "manifest.json") : join(dirname(dir), `${basename(dir)}.manifest.json`);
+    const m = await readManifest(manifestPath);
+    if (!m) {
+      out.manifests_missing.push(rel);
+      continue;
+    }
+    if (m.sha256 !== (c.outputs as { manifest_sha256?: string }).manifest_sha256) out.outputs.mismatched.push(`${relative(S, manifestPath)} (the manifest itself)`);
+    for (const f of m.manifest.files) {
+      out.outputs.files += 1;
+      if (Date.now() > before) continue;
+      const p = Buffer.concat([Buffer.from(dir), Buffer.from("/"), Buffer.from(f.path_b64, "base64")]);
+      try {
+        if ((await sha256File(p)) === f.sha256) out.outputs.verified += 1;
+        else out.outputs.mismatched.push(`${rel}/${f.path}`);
+      } catch {
+        out.outputs.missing.push(`${rel}/${f.path}`);
+      }
+    }
+  }
+  try {
+    out.staging_left = (await readdir(P.staging)).sort();
+  } catch {
+    out.staging_left = [];
+  }
+  return out;
+}
+
 async function main(argv: string[]): Promise<number> {
   const [cmd, sandbox] = argv;
   if (!cmd || !sandbox) {
@@ -714,4 +788,3 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     process.exit(1);
   });
 }
-

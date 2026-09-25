@@ -44,7 +44,7 @@
     "ui:fixture": "node --experimental-strip-types scripts/seed-fixture.ts",
     "summary": "node --experimental-strip-types scripts/summary.ts",
     "test:bash": "bash scripts/test-bash.sh",
-    "test:vm": "node --experimental-strip-types --test --test-concurrency=1 tests/vm-integration.test.ts"
+    "test:vm": "node --experimental-strip-types --test --test-concurrency=1 tests/vm-integration.test.ts tests/vm-jobs.test.ts"
   },
   "engines": {
     "node": ">=22.19"

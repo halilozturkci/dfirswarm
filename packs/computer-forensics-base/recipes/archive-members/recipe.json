@@ -4,6 +4,7 @@
   "description": "List the members of a tar (plain or compressed), zip or 7z archive without extracting any: path, type, size, time, mode, link target and where each member sits in the archive.",
   "object": "archive",
   "order": 30,
+  "min_bytes": 22,
   "runtime": "python3",
   "entry": "run.py",
   "auto": [

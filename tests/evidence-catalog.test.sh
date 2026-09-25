@@ -232,7 +232,7 @@ grep -q $'^0\tfile\tprivate/var/mobile/Library/SMS/sms.db\t' "$COV/sb/catalog/ph
 grep -q $'^1\tfile\ta\\\\nb\t' "$COV/sb/catalog/phone.tar/members.tsv" || fail "a member name with a newline is one escaped row: $(cat "$COV/sb/catalog/phone.tar/members.tsv")"
 [[ "$(cov_row "$tsv" inputs/blob.bin)" == "100000|not catalogued|no recipe of this run applies: "*"archive-members: no tar, zip or 7z structure"* ]] \
   || fail "an input no recipe reads is named as not catalogued, with each recipe's why: $(cov_row "$tsv" inputs/blob.bin)"
-[[ "$(cov_row "$tsv" inputs/CASE.md)" == "10|not probed|under 64 KB"* ]] || fail "a small input is named as not probed"
+[[ "$(cov_row "$tsv" inputs/CASE.md)" == "10|not probed|smaller than any recipe of this run asks about"* ]] || fail "a small input is named as not probed"
 # (awk -v reads escapes, so the literal backslash-t is written \\t here.)
 [[ "$(cov_row "$tsv" 'inputs/notes/odd\\tname.txt')" == "2|not probed|"* ]] || fail "a tab in a file name is written escaped, on one row: $(grep odd "$tsv")"
 grep -q '^Summary: 1 disk image(s), 0 memory image(s), 1 archive(s), [0-9]* catalog file(s); 26 input file(s): 1 catalogued, 1 partial, 0 planned, 1 segment(s) of a set, 1 not catalogued, 22 not probed$' "$readme" \

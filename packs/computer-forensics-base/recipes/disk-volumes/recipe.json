@@ -4,6 +4,7 @@
   "description": "A disk image's partition table and, for every filesystem on it, the filesystem header, a body file, a path list with inodes and a MAC timeline (The Sleuth Kit). A logical volume image with no partition table is read from sector 0.",
   "object": "disk image",
   "order": 10,
+  "min_bytes": 65536,
   "runtime": "bash",
   "entry": "run.sh",
   "auto": [

@@ -35,30 +35,67 @@ def _resolve_image(explicit=None):
 
 
 
-def _resolve_catalog(explicit=None):
+# Directories of catalog/ that are the catalogue's machinery, not a catalogue.
+RESERVED = {"gen", "revisions", "probes"}
+
+
+def _revision(wanted=None):
+    """The catalogue revision read: the one named, or the newest complete one
+    (its MANIFEST.json is written last). None when the run has none."""
+    import os
+    root = os.path.join("catalog", "revisions")
+    done = sorted(int(n) for n in os.listdir(root) if n.isdigit() and os.path.isfile(os.path.join(root, n, "MANIFEST.json"))) if os.path.isdir(root) else []
+    if wanted is not None and str(wanted).strip() != "":
+        try:
+            n = int(wanted)
+        except (TypeError, ValueError):
+            raise SystemExit(json.dumps({"ok": False, "error": "revision is a whole number", "revisions": done}))
+        if n not in done:
+            raise SystemExit(json.dumps({"ok": False, "error": "no complete revision %s here (yet)" % n, "revisions": done}))
+        return n
+    return done[-1] if done else None
+
+
+def _generations(rev):
+    """The generations a revision lists: id -> directory."""
+    import os
+    if rev is None:
+        return {}
+    try:
+        index = json.load(open(os.path.join("catalog", "revisions", str(rev), "index.json")))
+    except Exception:
+        return {}
+    return {g["id"]: os.path.join("catalog", "gen", g["id"]) for g in index.get("generations", []) if isinstance(g, dict) and g.get("id")}
+
+
+def _resolve_catalog(explicit=None, rev=None):
     """The catalogue directory for the one image the kickoff catalogued, or
     the one named: by its name under catalog/, as the index lists it
-    (catalog=Case4.E01 was a traceback), or by its path."""
+    (catalog=Case4.E01 was a traceback), by its path, or by a generation id
+    (catalog=g0003) the revision read lists."""
     import os
     root = "catalog"
-    subs = sorted(d for d in os.listdir(root) if os.path.isdir(os.path.join(root, d))) if os.path.isdir(root) else []
+    subs = sorted(d for d in os.listdir(root) if os.path.isdir(os.path.join(root, d)) and d not in RESERVED) if os.path.isdir(root) else []
+    gens = _generations(rev)
     if explicit:
+        if explicit in gens:
+            return gens[explicit]
         for cand in (explicit, os.path.join(root, explicit)):
-            if os.path.isdir(cand):
+            if os.path.isdir(cand) and os.path.basename(os.path.normpath(cand)) not in RESERVED:
                 return cand
-        raise SystemExit(json.dumps({"ok": False, "error": "no catalogue %s" % explicit, "candidates": subs}))
+        raise SystemExit(json.dumps({"ok": False, "error": "no catalogue %s" % explicit, "candidates": subs + sorted(gens)}))
     if not os.path.isdir(root):
         raise SystemExit('{"ok": false, "error": "no catalog/ in this run; pass catalog="}')
     if len(subs) == 1:
         return os.path.join(root, subs[0])
     if not subs:
-        raise SystemExit('{"ok": false, "error": "catalog/ is empty; pass catalog="}')
+        raise SystemExit(json.dumps({"ok": False, "error": "no catalogue here yet%s; pass catalog=" % (" (the kickoff's recipes may still be running: each revision is announced on the board)" if rev is not None else ""), "candidates": sorted(gens)}))
     # A disk and a memory image catalogue two directories, and only the
     # disk's has filesystems (partitions.txt): with one such, it is the one.
     disks = [d for d in subs if os.path.isfile(os.path.join(root, d, "partitions.txt"))]
     if len(disks) == 1:
         return os.path.join(root, disks[0])
-    raise SystemExit('{"ok": false, "error": "several catalogues; pass catalog=", "candidates": %s}' % json.dumps(subs))
+    raise SystemExit('{"ok": false, "error": "several catalogues; pass catalog=", "candidates": %s}' % json.dumps(subs + sorted(gens)))
 
 args = json.load(sys.stdin)
 pattern = args.get("pattern") or ""
@@ -77,7 +114,8 @@ except re.error as e:
     print(json.dumps({"error": str(e)}))
     sys.exit(1)
 ex = re.compile(exclude, flags) if exclude else None
-base = os.path.normpath(_resolve_catalog(args.get("catalog") if isinstance(args, dict) else None))
+revision = _revision(args.get("revision"))
+base = os.path.normpath(_resolve_catalog(args.get("catalog") if isinstance(args, dict) else None, revision))
 # catalog=Case4.E01/p2048 names the filesystem as well.
 named_part = ""
 if re.fullmatch(r"p\d+", os.path.basename(base)):
@@ -89,7 +127,7 @@ parts = sorted(n for n in os.listdir(base) if re.fullmatch(r"p\d+", n) and os.pa
 want = str(args.get("partition") or named_part).strip()
 if want and not want.startswith("p"):
     want = "p" + want
-if which == "partitions":
+if which in ("partitions", "members"):
     part = None
 elif want:
     if want not in parts:
@@ -107,10 +145,13 @@ else:
 files = {"filelist": "filelist.txt", "timeline": "timeline.csv", "bodyfile": "bodyfile.txt", "fsstat": "fsstat.txt"}
 if which == "partitions":
     path = os.path.join(base, "partitions.txt")
+elif which == "members":
+    # An archive's member list (archive-members recipe): n, type, path, …, locator.
+    path = os.path.join(base, "members.tsv")
 elif which in files:
     path = os.path.join(base, part, files[which])
 else:
-    print(json.dumps({"error": "which must be filelist|timeline|bodyfile|fsstat|partitions"}))
+    print(json.dumps({"error": "which must be filelist|timeline|bodyfile|fsstat|partitions|members"}))
     sys.exit(1)
 if not os.path.isfile(path):
     have = sorted(os.listdir(os.path.dirname(path))) if os.path.isdir(os.path.dirname(path)) else []
@@ -144,7 +185,7 @@ with open(path, "r", errors="replace") as f:
                 all_out.write("%d\t%s\n" % (i, text))
             if total > offset and len(hits) < limit:
                 hits.append({"n": i, "line": text})
-result = {"which": which, "partition": part, "file": path, "pattern": pattern, "matched": total, "offset": offset, "returned": len(hits), "hits": hits}
+result = {"which": which, "partition": part, "file": path, "revision": revision, "pattern": pattern, "matched": total, "offset": offset, "returned": len(hits), "hits": hits}
 more = offset + len(hits) < total
 result["next_offset"] = offset + len(hits) if more else None
 if all_out:

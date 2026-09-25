@@ -284,8 +284,15 @@ export class JobService {
 
   // --- submission -----------------------------------------------------------------------
 
+  /**
+   * A new job id, taken without waiting on anything: two submissions in the
+   * same tick each get their own (counted from the journal, they took the
+   * same one before either acceptance was written).
+   */
+  private lastId = 0;
   private nextId(): string {
-    return `j${String(this.journal.of("job_accepted").length + 1).padStart(6, "0")}`;
+    this.lastId = Math.max(this.lastId, this.journal.of("job_accepted").length) + 1;
+    return `j${String(this.lastId).padStart(6, "0")}`;
   }
 
   /** Where a recipe is: a pack's recipes/<name>, or a forged tool that declares the recipe protocol (experimental). */

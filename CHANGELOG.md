@@ -6,6 +6,51 @@ All notable changes to this project. The format follows
 
 ## [Unreleased]
 
+### Added: tool jobs in worker VMs, a sealed store, a catalogue that grows
+
+- **The job service** (`scripts/job-service.ts`, in the hub). A tool job — a
+  pack or forged tool with its arguments, a shell command, a recipe over one
+  object — runs in a throwaway worker VM of the run's image: the evidence,
+  `store/`, `catalog/`, `tools/` and the packs read-only, no network unless
+  the job asks for the run's allowlist, no credential, nothing of the board
+  or the run's own records, and only its own directory (`$OUT`) writable.
+  Every step is a line of `store/journal.jsonl`, hash-chained, fsynced and
+  anchored beside the run (`<sandbox>.journal-anchor.json`): accepted (who
+  asked, with the name and doing it had given itself), started (the scope it
+  declared, the mounts it was given, the network, the image; what it read is
+  said to be unknown), finished, fenced (only once msb says the worker is
+  gone), committed. Nothing of a staging directory is read before its worker
+  is gone. A failed or timed-out job keeps what it wrote; recovery after a
+  crash finishes each job from the step it stopped at, and runs a job the
+  hub's death interrupted once more only when it had no network.
+  `--workers N` (default 2), `--worker-cpus`, `--worker-memory`, `--no-jobs`.
+- **The store** (`scripts/evidence-store.ts`): a job's output sealed into
+  `store/jobs/<id>/out/` — links, FIFOs, sockets and devices recorded and
+  left out, names kept as bytes, files read-only and hard-linked to
+  `store/blobs/<sha256>` so the same bytes are kept once — with a manifest
+  of every file. Custody checks the journal against its anchor (telling an
+  anchor one step behind, a crash between two writes, from one off the
+  chain), hashes every committed file again against its manifest and names
+  staging left unsealed; `package` exports the journal, its anchor, each
+  job's record, manifest and logs, the census, the plan, every generation
+  and revision, and the recipes that made them.
+- **Catalogue recipes are the packs'** (`recipes/<name>/` with a
+  recipe.json and an entry answering `detect` and `run`): computer-forensics-
+  base 1.2.15 ships disk-volumes (The Sleuth Kit), memory-windows
+  (Volatility) and archive-members (a tar, zip or 7z member list without
+  extracting; names kept as bytes, duplicates as rows, zip DOS times marked
+  zone unknown, a truncated tar reported partial). The harness takes the
+  census (`scripts/evidence_catalog.py`): each recipe says the smallest
+  object it is asked about, so a small zip is offered to the archive recipe
+  and not to the disk one. In a microVM run the census plans the recipes and
+  the job service runs them while the agents work: each result is a
+  generation under `catalog/gen/`, each change a new revision under
+  `catalog/revisions/<n>/`, announced on the board; a disk's file list is
+  also linked at `catalog/<input>/` as before.
+- **catalog_search** v8 reads the newest complete revision (or the one
+  named), a generation by its id, and an archive's `members`, and says which
+  revision it read.
+
 ### Changed: agents run in microVMs by default (breaking)
 
 - **`--isolation microvm` is the default.** A run with no `--isolation` and

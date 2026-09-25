@@ -178,6 +178,8 @@ if os.path.isdir(rdir):
             errors.append("recipes/%s: limits.seconds is a whole number from 1 to 14400" % name)
         if not isinstance(rm.get("outputs"), list) or not rm.get("outputs"):
             errors.append("recipes/%s: outputs names what the recipe writes" % name)
+        if "min_bytes" in rm and (not isinstance(rm.get("min_bytes"), int) or rm.get("min_bytes") < 0):
+            errors.append("recipes/%s: min_bytes is a whole number of bytes (the smallest object it is asked about)" % name)
         if "order" in rm and not isinstance(rm.get("order"), int):
             errors.append("recipes/%s: order is a whole number (recipes run in order, then by name)" % name)
         if "object" in rm and not str(rm.get("object", "")).strip():
