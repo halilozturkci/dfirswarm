@@ -1,0 +1,23 @@
+{
+  "id": "archive-members",
+  "version": "1.0.0",
+  "description": "List the members of a tar (plain or compressed), zip or 7z archive without extracting any: path, type, size, time, mode, link target and where each member sits in the archive.",
+  "object": "archive",
+  "order": 30,
+  "runtime": "python3",
+  "entry": "run.py",
+  "auto": [
+    "kickoff",
+    "derived"
+  ],
+  "limits": {
+    "seconds": 1800,
+    "members": 2000000
+  },
+  "outputs": [
+    "members.tsv",
+    "coverage.json"
+  ],
+  "covers": "The archive's own list of members. It opens no member, searches no contents and lists no archive inside the archive: a member is extracted with archive_extract and catalogued on its own.",
+  "sha256": "e3d364ff6ee9461b40902de6616b114e3027458cd33f5e6db5b8dfca70f532ab"
+}
