@@ -48,6 +48,7 @@
  *   node --experimental-strip-types scripts/vm.ts toolbox --image REF --out FILE [--preset SETS] [--required] [--packs DIRS]
  *   node --experimental-strip-types scripts/vm.ts catalog --image REF --sandbox DIR [--evidence DIR]... [--allow-host H]... [--memory MIB] [--run ID] [--registry FILE]
  *   node --experimental-strip-types scripts/vm.ts msb-path
+ *   node --experimental-strip-types scripts/vm.ts worker-once --name NAME   (a WorkerSpec on stdin; the hub's worker maker)
  *
  * SWARM_MSB_BIN names another msb (tests stand one in).
  */
@@ -1922,14 +1923,79 @@ export function workerName(run: string, job: string, attempt: number): string {
  * safe to seal — a VM that may still write to it is not fenced.
  */
 export async function destroyWorker(name: string): Promise<{ ok: boolean; error?: string }> {
-  await run(msbBinary(), ["stop", name], { timeoutMs: 120_000 });
-  const rm1 = await run(msbBinary(), ["rm", name], { timeoutMs: 60_000 });
-  const inspect = await run(msbBinary(), ["inspect", name, "--format", "json"], { timeoutMs: 30_000 });
-  // Gone only when msb says it does not know the name; any other failure
-  // (msb busy, its database locked) is not a fence.
-  if (inspect.code !== 0 && /not found|no such|does not exist|unknown sandbox|no sandbox/i.test(`${inspect.stderr}${inspect.stdout}`)) return { ok: true };
-  if (inspect.code !== 0) return { ok: false, error: `msb could not say whether ${name} is gone: ${(inspect.stderr || inspect.stdout).trim() || `exit ${inspect.code}`}` };
-  return { ok: false, error: `msb still has ${name} after stop and rm${rm1.code !== 0 ? `: ${(rm1.stderr || rm1.stdout).trim()}` : ""}` };
+  // A maker still at work (or orphaned by a hub that died) could make the VM
+  // again after it is removed: it goes first.
+  const maker = await stopMaker(name);
+  if (!maker.ok) return maker;
+  let last = "";
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (attempt) await new Promise((r) => setTimeout(r, 1000 * attempt));
+    await run(msbBinary(), ["stop", name], { timeoutMs: 120_000 });
+    const rm1 = await run(msbBinary(), ["rm", name], { timeoutMs: 60_000 });
+    const inspect = await run(msbBinary(), ["inspect", name, "--format", "json"], { timeoutMs: 30_000 });
+    // Gone only when msb says it does not know the name, and its list, read
+    // whole and understood, agrees: on Ali Hadi #10 a worker whose boot had
+    // failed was "not found" to inspect and listed afterwards.
+    const notFound = inspect.code !== 0 && /not found|no such|does not exist|unknown sandbox|no sandbox/i.test(`${inspect.stderr}${inspect.stdout}`);
+    if (notFound) {
+      const list = await run(msbBinary(), ["list", "--format", "json"], { timeoutMs: 30_000 });
+      const names = list.code === 0 ? listedNames(list.stdout) : null;
+      if (names && !names.includes(name)) return { ok: true };
+      last = list.code !== 0 ? `msb could not list its VMs: ${(list.stderr || list.stdout).trim() || `exit ${list.code}`}` : !names ? `msb's list (${list.stdout.length} bytes) was not a list of VMs` : `msb lists ${name} although it says it does not know it`;
+      continue;
+    }
+    last = inspect.code !== 0 ? `msb could not say whether ${name} is gone: ${(inspect.stderr || inspect.stdout).trim() || `exit ${inspect.code}`}` : `msb still has ${name} after stop and rm${rm1.code !== 0 ? `: ${(rm1.stderr || rm1.stdout).trim()}` : ""}`;
+  }
+  return { ok: false, error: last };
+}
+
+/** The names in `msb list --format json`, or null when it is not a list of named VMs. */
+export function listedNames(text: string): string[] | null {
+  let rows: unknown;
+  try {
+    rows = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(rows) && rows && typeof rows === "object" && Array.isArray((rows as { sandboxes?: unknown }).sandboxes)) rows = (rows as { sandboxes: unknown[] }).sandboxes;
+  if (!Array.isArray(rows)) return null;
+  const names: string[] = [];
+  for (const r of rows) {
+    if (!r || typeof r !== "object" || typeof (r as { name?: unknown }).name !== "string") return null;
+    names.push((r as { name: string }).name);
+  }
+  return names;
+}
+
+/**
+ * Stop the process making or running worker `name` (runWorker's child,
+ * `vm.ts worker-once --name <name>`), found by its command line so an orphan
+ * of a hub that died is found too. ok when none is left.
+ */
+export async function stopMaker(name: string): Promise<{ ok: boolean; error?: string }> {
+  const find = async () => {
+    const ps = await run("ps", ["-axo", "pid=,command="], { timeoutMs: 15_000 });
+    if (ps.code !== 0) return null;
+    return ps.stdout
+      .split("\n")
+      .map((l) => l.trim().match(/^(\d+)\s+(.*)$/))
+      .filter((m): m is RegExpMatchArray => !!m && / worker-once --name (\S+)$/.exec(m[2])?.[1] === name && Number(m[1]) !== process.pid)
+      .map((m) => Number(m[1]));
+  };
+  for (let i = 0; i < 20; i += 1) {
+    const pids = await find();
+    if (pids === null) return { ok: false, error: `could not list processes to find the maker of ${name}` };
+    if (!pids.length) return { ok: true };
+    for (const pid of pids) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        // gone already
+      }
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return { ok: false, error: `the process making ${name} did not stop` };
 }
 
 /**
@@ -1937,17 +2003,105 @@ export async function destroyWorker(name: string): Promise<{ ok: boolean; error?
  * catalog's VM: made, one exec, removed. Unlike the catalog's, it installs
  * no signal handler: the hub that runs jobs puts its workers away itself,
  * and finishRun removes any it left.
+ *
+ * The VM is made and run by a short-lived child process, never by the hub's
+ * own: on Ali Hadi #10, after msb's lifecycle maintenance ran inside the
+ * hub's long-lived SDK, every VM it made after failed to boot ("insert run:
+ * FOREIGN KEY constraint failed"), and its sandbox row showed up in msb only
+ * after the fence had looked. A fresh process made one fine. The fence runs
+ * after the child has exited, so what it held is settled before msb is asked.
+ * A VM that failed to boot (nothing ran) is removed and made once more.
  */
-export async function runWorker(spec: WorkerSpec, hooks: { onCreated?: () => void } = {}): Promise<{ code: number | null; digest?: string; error?: string; fenced: boolean; fence_error?: string }> {
-  const ran = await runWorkerOnce(spec, hooks);
+export async function runWorker(spec: WorkerSpec, hooks: { onCreated?: () => void } = {}): Promise<{ code: number | null; digest?: string; error?: string; fenced: boolean; fence_error?: string; boot_retry?: string }> {
+  let ran = await runWorkerInChild(spec, hooks);
+  let bootRetry: string | undefined;
+  // Made once more only when msb refused to start it before anything ran,
+  // and the half-made VM is confirmed gone; both errors are kept.
+  if (ran.phase === "create" && /\[BootStart\]/.test(ran.error ?? "")) {
+    const first = ran.error ?? "";
+    const cleared = await destroyWorker(spec.name);
+    if (cleared.ok) {
+      bootRetry = first;
+      ran = await runWorkerInChild(spec, hooks);
+    } else {
+      ran = { ...ran, error: `${first}; not made again: ${cleared.error}` };
+    }
+  }
   // Removed whether it ran or not; fenced only when msb says it is gone.
   const gone = await destroyWorker(spec.name);
-  return { ...ran, fenced: gone.ok, ...(gone.ok ? {} : { fence_error: gone.error }) };
+  const { phase: _phase, ...result } = ran;
+  return { ...result, ...(bootRetry ? { boot_retry: bootRetry } : {}), fenced: gone.ok, ...(gone.ok ? {} : { fence_error: gone.error }) };
 }
 
-async function runWorkerOnce(spec: WorkerSpec, hooks: { onCreated?: () => void }): Promise<{ code: number | null; digest?: string; error?: string }> {
-  const M = await sdk();
+type WorkerRan = { code: number | null; digest?: string; error?: string; phase?: "create" | "exec" };
+
+/**
+ * One worker made at a time, from spawning its maker until the VM is up or
+ * the maker is gone: a containment measure while msb 0.7.2's failure is
+ * not understood (the failures on Ali Hadi #10 came one by one, not at once).
+ */
+let makeGate: Promise<void> = Promise.resolve();
+function takeMakeGate(): Promise<() => void> {
+  let release!: () => void;
+  const mine = new Promise<void>((r) => {
+    release = r;
+  });
+  const before = makeGate;
+  makeGate = before.then(() => mine);
+  return before.then(() => release);
+}
+
+async function runWorkerInChild(spec: WorkerSpec, hooks: { onCreated?: () => void }): Promise<WorkerRan> {
+  const release = await takeMakeGate();
+  return new Promise((done) => {
+    const child = spawn(process.execPath, ["--experimental-strip-types", "--no-warnings", fileURLToPath(import.meta.url), "worker-once", "--name", spec.name], { stdio: ["pipe", "pipe", "pipe"], env: process.env });
+    let out = "";
+    let err = "";
+    let created = false;
+    let result: WorkerRan | undefined;
+    // A maker that outlives the VM's own limit by five minutes is stuck.
+    const limit = setTimeout(() => child.kill("SIGKILL"), (spec.maxDurationSec + 300) * 1000);
+    limit.unref?.();
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+      out += chunk;
+      let nl: number;
+      while ((nl = out.indexOf("\n")) >= 0) {
+        const line = out.slice(0, nl);
+        out = out.slice(nl + 1);
+        try {
+          const msg = JSON.parse(line) as { created?: boolean; result?: WorkerRan };
+          if (msg.created) {
+            created = true;
+            release();
+            hooks.onCreated?.();
+          }
+          if (msg.result) result = msg.result;
+        } catch {
+          // not ours
+        }
+      }
+    });
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+      err += chunk;
+    });
+    let settled = false;
+    const settle = (why: string) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(limit);
+      release();
+      done(result ?? { code: null, error: `the worker's maker process ${why}${err.trim() ? `: ${err.trim()}` : ""}`, phase: created ? "exec" : "create" });
+    };
+    child.on("error", (e) => settle(`did not start (${e.message})`));
+    child.on("close", (code, signal) => settle(signal ? `was killed (${signal})` : `exited ${code} without a result`));
+    child.stdin.end(JSON.stringify(spec));
+  });
+}
+
+async function runWorkerOnce(spec: WorkerSpec, hooks: { onCreated?: () => void }): Promise<WorkerRan> {
+  let created = false;
   try {
+    const M = await sdk();
     let builder = M.Sandbox.builder(spec.name)
       .image(spec.image)
       .pullPolicy("if-missing")
@@ -1982,12 +2136,13 @@ async function runWorkerOnce(spec: WorkerSpec, hooks: { onCreated?: () => void }
       });
     }
     const vm = await withTimeout(builder.create(), CREATE_TIMEOUT_MS, `the worker VM was not up within ${CREATE_TIMEOUT_MS / 1000} s`);
+    created = true;
     hooks.onCreated?.();
     const out = await vm.exec(spec.command[0], spec.command.slice(1));
     const digest = await imageDigest(spec.name);
-    return { code: out.code, ...(digest ? { digest } : {}) };
+    return { code: out.code, ...(digest ? { digest } : {}), phase: "exec" };
   } catch (err) {
-    return { code: null, error: (err as Error).message };
+    return { code: null, error: (err as Error).message, phase: created ? "exec" : "create" };
   }
 }
 
@@ -2468,6 +2623,23 @@ async function main(): Promise<void> {
         console.log(JSON.stringify({ ok: false, error: (err as Error).message }));
         process.exit(1);
       }
+      return;
+    }
+    case "worker-once": {
+      // The hub's worker maker (runWorker): the spec on stdin, one JSON line
+      // when the VM is up and one with the result.
+      let text = "";
+      for await (const chunk of process.stdin) text += chunk;
+      const spec = JSON.parse(text) as WorkerSpec;
+      // Orphaned (the hub died): stop making or running anything; the hub's
+      // recovery removes the VM.
+      const parent = process.ppid;
+      setInterval(() => {
+        if (process.ppid !== parent) process.exit(3);
+      }, 1000).unref();
+      const result = await runWorkerOnce(spec, { onCreated: () => console.log(JSON.stringify({ created: true })) });
+      // Out before exit: a pipe on macOS is written asynchronously.
+      process.stdout.write(`${JSON.stringify({ result })}\n`, () => process.exit(0));
       return;
     }
     case "reap": {
