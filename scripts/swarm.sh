@@ -4735,7 +4735,7 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
     --arg isolation "$isolation" \
     --arg vm_image "$vm_image" --arg vm_image_digest "${vm_image_digest:-}" \
     --argjson vm_cpus "$vm_cpus" \
-    --argjson jobs "$jobs" --argjson workers "$workers" --argjson worker_cpus "$worker_cpus" --argjson worker_memory "$worker_memory" \
+    --argjson jobs "$jobs" --argjson workers "$workers" --argjson worker_cpus "$worker_cpus" --argjson worker_memory "${worker_memory:-0}" \
     --argjson vm_memory "${vm_memory:-2048}" --argjson vm_disk "$vm_disk" \
     --argjson vm_snapshot "$vm_snapshot" \
     --argjson allow_oauth_in_vm "$allow_oauth_in_vm" \
