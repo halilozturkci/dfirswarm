@@ -261,3 +261,13 @@ PATH="/usr/bin:/bin" bash "$ROOT/scripts/evidence-catalog.sh" "$NL/sb" >/dev/nul
 [[ "$(cov_row "$NL/sb/catalog/coverage.tsv" 'inputs/two\\nlines.bin')" == "70000|not catalogued|"* ]] || fail "the newline is written escaped: $(cat "$NL/sb/catalog/coverage.tsv")"
 grep -q '^- `inputs/two\\nlines.bin` (68.4 KB): ' "$NL/sb/catalog/README.md" || fail "the index shows the name escaped, on one line: $(cat "$NL/sb/catalog/README.md")"
 pass "an input whose name holds a newline is one input, named escaped"
+
+# A link back up the tree: its directory is walked once and the loop named.
+LOOP="$TMP/loop"
+mkdir -p "$LOOP/inputs/case"
+head -c 70000 /dev/zero > "$LOOP/inputs/case/a.bin"
+ln -s .. "$LOOP/inputs/case/up"
+PATH="/usr/bin:/bin" bash "$ROOT/scripts/evidence-catalog.sh" "$LOOP" >/dev/null
+[[ "$(($(wc -l < "$LOOP/catalog/coverage.tsv") - 1))" -eq 1 ]] || fail "a link loop should not list a file again at every depth: $(cat "$LOOP/catalog/coverage.tsv")"
+grep -q 'a link loop' "$LOOP/catalog/README.md" || fail "the loop should be named in the index: $(cat "$LOOP/catalog/README.md")"
+pass "a link loop under inputs/ is walked once and named"

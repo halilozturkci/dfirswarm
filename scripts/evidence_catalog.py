@@ -38,14 +38,29 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SMALL = 65536
 LIST_AT_MOST = 20
+# Directories under inputs/ reached a second time through a link: walked
+# once, and named in the index so the skip is on the record.
+LOOPS = []
 
 
 def candidates(sandbox):
     """Every regular file under inputs/, following links (an --inputs-bind
-    inputs/ is itself a link), in one order."""
+    inputs/ is itself a link), in one order. A directory reached twice (a
+    link back up the tree) is walked once, as find -L does: a loop would
+    otherwise list the same files again at every depth."""
     base = os.path.join(sandbox, "inputs")
-    found = []
+    found, seen = [], set()
     for dirpath, dirs, files in os.walk(base, followlinks=True):
+        try:
+            st = os.stat(dirpath)
+        except OSError:
+            dirs[:] = []
+            continue
+        if (st.st_dev, st.st_ino) in seen:
+            LOOPS.append(os.path.relpath(dirpath, base))
+            dirs[:] = []
+            continue
+        seen.add((st.st_dev, st.st_ino))
         dirs.sort()
         for f in files:
             p = os.path.join(dirpath, f)
@@ -187,6 +202,10 @@ class Catalog:
         # cannot be removed from inside.
         os.makedirs(self.out, exist_ok=True)
         for name in os.listdir(self.out):
+            # The store's generations and revisions are the job service's
+            # record, not this pass's: a second census leaves them alone.
+            if name in ("gen", "revisions"):
+                continue
             p = os.path.join(self.out, name)
             if os.path.isdir(p) and not os.path.islink(p):
                 shutil.rmtree(p, ignore_errors=True)
@@ -204,6 +223,8 @@ class Catalog:
             first = continuation_of(img)
             if first:
                 sets.setdefault(os.path.join(os.path.dirname(img), first), []).append(img)
+        for loop in LOOPS:
+            self.notes.append("inputs/%s is a directory already walked by another path (a link loop): its files are listed once, under their first path" % shown(loop))
         segments_skipped, segment_sets = 0, []
         for img in found:
             rel_under = os.path.relpath(img, os.path.join(self.sandbox, "inputs"))

@@ -101,11 +101,12 @@ export type JournalLine = JournalEvent & { v: 1; seq: number; at: string; prev: 
 export type Anchor = { head: string | null; seq: number; at: string };
 
 /** Read a journal's text: the lines that chain, and where the chain first fails. */
-export function verifyJournalText(text: string): { lines: JournalLine[]; goodBytes: number; head: string | null; error?: string } {
+export function verifyJournalText(text: string): { lines: JournalLine[]; goodBytes: number; head: string | null; hashes: string[]; error?: string } {
   const lines: JournalLine[] = [];
+  const hashes: string[] = [];
   let prev: string | null = null;
   let offset = 0;
-  const cut = (error: string) => ({ lines, goodBytes: Buffer.byteLength(text.slice(0, offset)), head: prev, error });
+  const cut = (error: string) => ({ lines, goodBytes: Buffer.byteLength(text.slice(0, offset)), head: prev, hashes, error });
   while (offset < text.length) {
     const nl = text.indexOf("\n", offset);
     if (nl < 0) return cut(`line ${lines.length + 1} has no end (a write cut short)`);
@@ -120,9 +121,10 @@ export function verifyJournalText(text: string): { lines: JournalLine[]; goodByt
     if (line.seq !== lines.length) return cut(`line ${lines.length + 1} has seq ${line.seq}`);
     lines.push(line);
     prev = sha256Hex(raw);
+    hashes.push(prev);
     offset = nl + 1;
   }
-  return { lines, goodBytes: Buffer.byteLength(text), head: prev };
+  return { lines, goodBytes: Buffer.byteLength(text), head: prev, hashes };
 }
 
 export class Journal {
@@ -171,7 +173,12 @@ export class Journal {
       }
       repair = { type: "journal_repaired", why: checked.error, kept_lines: checked.lines.length, dropped_bytes: dropped.length, dropped_sha256: sha256Hex(dropped), saved_as: relative(j.sandbox, saved) };
     }
-    if (mismatch && anchor) await j.append({ type: "anchor_mismatch", anchor_head: anchor.head, anchor_seq: anchor.seq, journal_head: checked.head, journal_seq: checked.lines.length - 1 });
+    if (mismatch && anchor) {
+      // A crash between a line's fsync and the anchor's move leaves the
+      // anchor on the chain, behind it: that is recovery, not tampering.
+      const onChain = anchor.seq >= 0 && anchor.seq < checked.hashes.length && checked.hashes[anchor.seq] === anchor.head;
+      await j.append({ type: onChain ? "anchor_behind" : "anchor_mismatch", anchor_head: anchor.head, anchor_seq: anchor.seq, journal_head: checked.head, journal_seq: checked.lines.length - 1 });
+    }
     if (repair) await j.append(repair);
     return j;
   }
@@ -256,11 +263,25 @@ async function walk(root: string): Promise<Walked[]> {
   const rootB = Buffer.from(root);
   const visit = async (rel: Buffer) => {
     const here = rel.length ? Buffer.concat([rootB, Buffer.from("/"), rel]) : rootB;
-    const names = (await readdir(here, { encoding: "buffer" })).sort(Buffer.compare);
+    // A tool running as root in its VM can leave a directory mode 000:
+    // the host owns it, so it is opened up rather than left unread.
+    await chmod(here, 0o755).catch(() => undefined);
+    let names: Buffer[];
+    try {
+      names = (await readdir(here, { encoding: "buffer" })).sort(Buffer.compare);
+    } catch (err) {
+      if (rel.length) out.push({ rel, kind: "reject", how: `unreadable directory (${(err as NodeJS.ErrnoException).code ?? "error"})` });
+      else throw err;
+      return;
+    }
     for (const name of names) {
       const r = joinB(rel, name);
       const full = Buffer.concat([rootB, Buffer.from("/"), r]);
-      const st = await lstat(full);
+      const st = await lstat(full).catch(() => null);
+      if (!st) {
+        out.push({ rel: r, kind: "reject", how: "vanished while read" });
+        continue;
+      }
       if (st.isDirectory()) {
         out.push({ rel: r, kind: "dir" });
         await visit(r);
@@ -298,7 +319,7 @@ async function copyTree(from: string, to: string, entries: Walked[]): Promise<vo
  * are kept once however many jobs produce them. The manifest names every
  * file by its exact bytes and a readable form.
  */
-export async function sealTree(sandbox: string, staging: string, dest: string, job: string, attempt: number): Promise<{ manifest: Manifest; manifestSha256: string }> {
+export async function sealTree(sandbox: string, staging: string, dest: string, job: string, attempt: number, manifestPath = join(dirname(dest), "manifest.json")): Promise<{ manifest: Manifest; manifestSha256: string }> {
   const P = storePaths(sandbox);
   const rootSt = await lstat(staging).catch(() => null);
   if (!rootSt || !rootSt.isDirectory()) throw new Error(`the staging directory ${staging} is not a directory`);
@@ -306,7 +327,9 @@ export async function sealTree(sandbox: string, staging: string, dest: string, j
   const rejected: ManifestRejected[] = [];
   for (const e of entries.filter((x) => x.kind === "reject")) {
     rejected.push({ path: shownName(e.rel), path_b64: e.rel.toString("base64"), kind: e.how ?? "other", ...(e.link ? { link_b64: e.link.toString("base64"), link: shownName(e.link) } : {}) });
-    await unlink(Buffer.concat([Buffer.from(staging), Buffer.from("/"), e.rel])).catch(() => undefined);
+    const p = Buffer.concat([Buffer.from(staging), Buffer.from("/"), e.rel]);
+    if (e.how?.startsWith("unreadable directory")) await rm(p, { recursive: true, force: true }).catch(() => undefined);
+    else await unlink(p).catch(() => undefined);
   }
   const kept = entries.filter((x) => x.kind !== "reject");
   await mkdir(dirname(dest), { recursive: true });
@@ -331,7 +354,14 @@ export async function sealTree(sandbox: string, staging: string, dest: string, j
       dirs.push({ path: shownName(e.rel), path_b64: e.rel.toString("base64") });
       continue;
     }
-    const sha = await sha256File(full);
+    await chmod(full, 0o644).catch(() => undefined);
+    let sha: string;
+    try {
+      sha = await sha256File(full);
+    } catch (err) {
+      rejected.push({ path: shownName(e.rel), path_b64: e.rel.toString("base64"), kind: `unreadable file (${(err as NodeJS.ErrnoException).code ?? "error"})` });
+      continue;
+    }
     const st = await stat(full);
     await chmod(full, 0o444);
     const blob = join(P.blobs, sha);
@@ -367,22 +397,23 @@ export async function sealTree(sandbox: string, staging: string, dest: string, j
     totals: { files: files.length, bytes: total },
     ...(copied ? { copied: true as const } : {}),
   };
-  const text = `${JSON.stringify(manifest, null, 2)}\n`;
-  const manifestPath = join(dirname(dest), "manifest.json");
+  // Compact: a materialised tree of a hundred thousand files is read back
+  // whenever one of them is cited.
+  const text = `${JSON.stringify(manifest)}\n`;
   await writeDurable(manifestPath, text, 0o444);
   if (copied) await rm(staging, { recursive: true, force: true }).catch(() => undefined);
   return { manifest, manifestSha256: sha256Hex(text) };
 }
 
 /** A tree already moved into the store (a crash after the move): hash it again and write its manifest. */
-export async function resealMoved(sandbox: string, dest: string, job: string, attempt: number): Promise<{ manifest: Manifest; manifestSha256: string }> {
+export async function resealMoved(sandbox: string, dest: string, job: string, attempt: number, manifestPath = join(dirname(dest), "manifest.json")): Promise<{ manifest: Manifest; manifestSha256: string }> {
   // Make it writable again so the same seal can run over it in place.
   const entries = await walk(dest);
   await chmod(dest, 0o755).catch(() => undefined);
   for (const e of entries) await chmod(Buffer.concat([Buffer.from(dest), Buffer.from("/"), e.rel]), e.kind === "dir" ? 0o755 : 0o644).catch(() => undefined);
   const tmp = `${dest}.reseal`;
   await rename(dest, tmp);
-  return sealTree(sandbox, tmp, dest, job, attempt);
+  return sealTree(sandbox, tmp, dest, job, attempt, manifestPath);
 }
 
 export async function readManifest(path: string): Promise<{ manifest: Manifest; sha256: string } | null> {
@@ -494,16 +525,17 @@ async function linkFarm(from: string, to: string): Promise<void> {
 }
 
 async function rowsOf(path: string): Promise<number | null> {
-  try {
-    const st = await stat(path);
-    if (st.size > 512 * 1024 * 1024) return null;
-    const data = await readFile(path);
+  // Counted as it streams by: a body file of a large disk is hundreds of MB.
+  return new Promise((ok) => {
     let n = 0;
-    for (const b of data) if (b === 10) n += 1;
-    return n;
-  } catch {
-    return null;
-  }
+    createReadStream(path)
+      .on("data", (chunk) => {
+        const b = chunk as Buffer;
+        for (let i = b.indexOf(10); i !== -1; i = b.indexOf(10, i + 1)) n += 1;
+      })
+      .on("end", () => ok(n))
+      .on("error", () => ok(null));
+  });
 }
 
 /**
