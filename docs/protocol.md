@@ -262,6 +262,8 @@ The eighth `bash` call by one agent starting with the same command word (`vol`, 
 
 A `bash` (or `powershell`) command that took a minute or more (`SWARM_REPEAT_HINT_MIN_MS`), ended without error and had its whole output kept under `tool-output/<id>/` is remembered by its text with the spacing collapsed. When the same agent runs the same command again, that result carries one extra paragraph pointing at the first run's kept output: grep or read that file instead. Once per command, a `repeat_hint` event; the harness names no tool and decides nothing about the command.
 
+In a run with tool jobs (the contract has its `## Tool jobs` section), a `bash` command that names `inputs/` and runs for as long is told once, with its result, that a job would have sealed what it made (`job_run`; cited as `job:<id>/<path>`, where a file in an agent's own `work/` is not an object of the run), and that quick looks are fine in the shell. Once per command's first word and three times per agent at most, a `job_hint` event; nothing is refused. A finding recorded without refs whose source or evidence names a `work/` file is told the same by that file's name.
+
 Before every model call the agent's harness takes the caps as it does at a turn's end (`context` hook). A seat the harness has stopped, or one whose swarm the sentinel ended, has its turn aborted and its session shut down before the call goes out, with the same outcome as the stop it replaces and one `budget_precall_stop` line. On the host that is a brake; in a VM it runs under the guest's root and is advisory, and the hub's cap stop and wall clock (or `--model-gateway`) are what hold.
 
 When an agent's `done` creates `done/SWARM_DONE`, or the harness writes the sentinel itself, that process prompts every teammate without a done or dead marker once through `herdr agent prompt` (`sentinel_nudge`, with who was reached and who was missed): an idle pane never makes another tool call, so it would never see the sentinel on its own. `await-done.sh --nudge` does the same from the spawner's side.
@@ -396,6 +398,7 @@ anywhere; the model's own trailer names the same file.
 | `artifact_scripts` | the console (`agent:"operator"`), when the operator opens an HTML artifact with its scripts | `{ok, opened_with_scripts:true}`; `args` = `{path, sha256, via:"web", os_user, remote}` |
 | `collector_restarted` | `scripts/hub-supervise.sh` (`agent:"system"`), a microVM run's collector brought back | `{ok}`; `args` = `{by, restart}` |
 | `repeat_hint` | the agent's harness, a long command run a second time | `{ok, earlier_ms, full_output}`; `args` = `{command}` (its first word) |
+| `job_hint` | the agent's harness, a long command over `inputs/` in a run with tool jobs | `{ok, ms}`; `args` = `{command}` (its first word) |
 | `budget_precall_stop` | the agent's harness, before a model call | `{ok, brake: "host" \| "advisory (in the VM; the hub holds the brake)"}`; `args` = `{reason}`. With `agent_stop` `via:"precall"` when the sentinel stood |
 | `ledger_superseded` | `record` with `supersedes` | `{ok, by_seq}`; `args` = `{seq}` |
 | `history_quota` | the hub, once per seat, when its stored file history reaches `SWARM_HISTORY_QUOTA_MB` | `{ok, used_bytes, quota_bytes}`; `args` = `{agent}`; also a board post to that seat |

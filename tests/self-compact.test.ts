@@ -372,3 +372,60 @@ test("Pi loader: a long command run again is pointed at its kept output once, an
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("Pi loader: a long command over the evidence, in a run with tool jobs, is told once a command, three times at most, that a job would seal its output", async (t) => {
+  const loaderPath = await findLoader();
+  if (!loaderPath) {
+    t.skip("Pi package not found");
+    return;
+  }
+  const { loadExtensions } = (await import(loaderPath)) as { loadExtensions: (paths: string[], cwd: string) => Promise<{ extensions: LoadedExtension[]; errors: unknown[] }> };
+  const previous = { agent: process.env.AGENT_ID, min: process.env.SWARM_REPEAT_HINT_MIN_MS, board: process.env.SWARM_BOARD_SOCKET, trace: process.env.SWARM_TRACE_SOCKET, compact: process.env.SWARM_SELF_COMPACT };
+  const run = async (withJobs: boolean) => {
+    const root = await mkdtemp(join(tmpdir(), "pi-load-jobhint-"));
+    await initSandbox(root, { reset: true, agentIds: ["agent00"] });
+    if (withJobs) await writeFile(join(root, "SWARM.md"), "# Contract\n\n## Tool jobs\n\n`job_run` runs work in a worker VM.\n");
+    else await writeFile(join(root, "SWARM.md"), "# Contract\n");
+    const loaded = await loadExtensions([join(REPO, "extensions", "agent-swarm.ts")], root);
+    assert.deepEqual(loaded.errors, []);
+    const hooks = (name: string) => (loaded.extensions[0].handlers.get(name) ?? []) as Hook[];
+    const fire = async (name: string, event: unknown) => {
+      let out: unknown;
+      for (const h of hooks(name)) out = (await h(event, { cwd: root, hasUI: false, ui: {} })) ?? out;
+      return out;
+    };
+    const told = async (id: string, command: string) => {
+      await fire("tool_call", { toolName: "bash", toolCallId: id, input: { command } });
+      const r = (await fire("tool_result", { toolName: "bash", toolCallId: id, input: { command }, content: [{ type: "text", text: "ok" }], details: {}, isError: false })) as { content?: Array<{ text?: string }> } | undefined;
+      return (r?.content ?? []).some((b) => /would have sealed|runs better as a job/.test(b.text ?? ""));
+    };
+    return { root, told };
+  };
+  try {
+    process.env.AGENT_ID = "agent00";
+    process.env.SWARM_REPEAT_HINT_MIN_MS = "0";
+    delete process.env.SWARM_BOARD_SOCKET;
+    delete process.env.SWARM_TRACE_SOCKET;
+    delete process.env.SWARM_SELF_COMPACT;
+    const a = await run(true);
+    assert.equal(await a.told("c1", "ls work"), false, "a command that reads no evidence is told nothing");
+    assert.equal(await a.told("c2", "python3 parse.py inputs/disk.E01"), true, "one that reads the evidence is told");
+    assert.equal(await a.told("c3", "python3 parse.py inputs/disk.E01 --again"), false, "once a command");
+    assert.equal(await a.told("c4", "strings -n 8 inputs/mem.raw"), true);
+    assert.equal(await a.told("c5", "fls -r inputs/disk.E01"), true);
+    assert.equal(await a.told("c6", "icat inputs/disk.E01 42"), false, "three times at most");
+    const events = (await readFile(join(a.root, EVENTS_REL), "utf8")).trim().split("\n").map((l) => JSON.parse(l));
+    assert.equal(events.filter((e) => e.tool === "job_hint").length, 3, "each on the trace");
+    const b = await run(false);
+    assert.equal(await b.told("c1", "python3 parse.py inputs/disk.E01"), false, "a run without tool jobs is told nothing");
+    for (const r of [a.root, b.root]) {
+      execFileSync("chmod", ["-R", "u+w", r]);
+      await rm(r, { recursive: true, force: true });
+    }
+  } finally {
+    for (const [k, v] of [["AGENT_ID", previous.agent], ["SWARM_REPEAT_HINT_MIN_MS", previous.min], ["SWARM_BOARD_SOCKET", previous.board], ["SWARM_TRACE_SOCKET", previous.trace], ["SWARM_SELF_COMPACT", previous.compact]] as const) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+});

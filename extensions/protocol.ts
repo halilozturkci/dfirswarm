@@ -5161,7 +5161,7 @@ export const TOOL_RESERVED_NAMES = new Set([
   // A long command run again pointed at its kept output, a seat stopped
   // before a model call, a ledger correction, the operator's --notify hook,
   // the hub's history quota and a connection refused its seat token.
-  "repeat_hint", "budget_precall_stop", "ledger_superseded", "notify", "history_quota", "seat_auth",
+  "repeat_hint", "job_hint", "budget_precall_stop", "ledger_superseded", "notify", "history_quota", "seat_auth",
   // Tool jobs in worker VMs and the catalogue they grow (scripts/job-service.ts).
   "job_run", "job_status", "catalog_request",
   // The host-side model gateway (scripts/model-gateway.ts).
@@ -5233,6 +5233,7 @@ const RESERVED_NAME_REASON: Record<string, string> = {
   claim_violation: "the harness writes it when a write lands on a file a peer holds",
   file_history: "the harness writes it when it snapshots a change",
   forge_hint: "the harness writes it when you repeat a command a tool could carry",
+  job_hint: "the harness writes it when a long shell command read the evidence where a job would have sealed its output",
   idle_nudge: "the harness writes it when it prompts an agent that stopped",
   sentinel_nudge: "the harness writes it when it tells the swarm the sentinel is up",
   agent_cap_steer: "the harness writes it when an agent passes its own spend cap, or its model's",
@@ -6786,7 +6787,15 @@ export async function recordEntry(ctx: SwarmContext, input: LedgerInput): Promis
   }
   // A finding with no ref is taken, and told what would let a reader check
   // it: the ask rides in the answer, never as an error.
-  const note = kind === "finding" && !refs.length ? "no object of the run cited: add refs (job:<id>/<path>, input:<path>, member:<gen>#<n>, sha256:<hex>, or unresolved:<why>) so a reader can check it; to add them to this entry, record it again with its refs" : undefined;
+  // A file in an agent's own work/ is what the #10 reports cited in prose:
+  // said by name, with the way to make it an object of the run.
+  const workFile = /(?:^|[\s`'"(])(?:\.\/)?(work\/[^\s`'",;)]+)/.exec(`${source} ${evidence}`)?.[1];
+  const note =
+    kind === "finding" && !refs.length
+      ? workFile
+        ? `no object of the run cited: ${workFile} is a file in an agent's own work/, which a reader cannot check against the run's record; run the work that made it as a job (job_run) and cite its output as job:<id>/<path> in refs, then record this again with its refs`
+        : "no object of the run cited: add refs (job:<id>/<path>, input:<path>, member:<gen>#<n>, sha256:<hex>, or unresolved:<why>) so a reader can check it; to add them to this entry, record it again with its refs"
+      : undefined;
   let supersedes: number | undefined;
   if (input.supersedes !== undefined && input.supersedes !== null && String(input.supersedes).trim() !== "") {
     const n = Number(String(input.supersedes).trim().replace(/^#/, ""));

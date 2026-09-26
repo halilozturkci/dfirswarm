@@ -284,6 +284,17 @@ export function normalizeShellCommand(command: string): string {
 /** A long shell call whose whole output was kept: how long it ran and where the output is. */
 export type KeptRun = { ms: number; path: string };
 
+/**
+ * A long shell command that read the evidence in the agent's own VM, in a
+ * run with tool jobs: told, once a command and three times at most, that a
+ * job would have sealed what it made. Purpose, not a rule: quick looks stay
+ * in the shell.
+ */
+export const JOB_HINT_MAX = 3;
+export function jobHintText(ms: number): string {
+  return `Note from the harness: this command read the evidence for ${Math.round(ms / 1000)} s in your own VM. Work that parses evidence, takes long, or makes something you will cite or share runs better as a job (job_run): its output is sealed into store/ and cited as job:<id>/<path>, where a file in your work/ is not an object of the run. Quick looks are fine here.`;
+}
+
 /** What the second run of a long command is told, once, with its own output. */
 export function repeatHintText(run: KeptRun): string {
   return `Note from the harness: this same command ran for ${Math.round(run.ms / 1000)} s earlier in this session, and its whole output is kept at ${run.path}. Next time, grep or read that file instead of running the command again.`;
@@ -416,6 +427,8 @@ export default function (pi: ExtensionAPI) {
   /** Long shell calls whose whole output is kept, by command (normalizeShellCommand), and the ones already pointed back. */
   const longRuns = new Map<string, KeptRun>();
   const repeatHinted = new Set<string>();
+  const jobHinted = new Set<string>();
+  let jobsOffered: boolean | undefined;
   /** When this agent was steered for its own cap, if it was. */
   let agentCapSteeredAt: number | null = null;
   /** The watch outgrowing work/ is said once per session, not per shell call. */
@@ -1729,6 +1742,15 @@ export default function (pi: ExtensionAPI) {
       }
       if (fullOutput && !fullOutput.write_error && !isError && durationMs !== undefined && durationMs >= repeatHintMinMs()) {
         longRuns.set(key, { ms: durationMs, path: fullOutput.path });
+      }
+      // Jobs are offered when the contract has its Tool jobs section.
+      if (jobsOffered === undefined) jobsOffered = /^## Tool jobs/m.test(await readFile(join(ctx.cwd, "SWARM.md"), "utf8").catch(() => ""));
+      const head = leadingCommand(input.command) ?? "";
+      if (jobsOffered && durationMs !== undefined && durationMs >= repeatHintMinMs() && /(^|[\s'"=/])inputs\//.test(input.command) && jobHinted.size < JOB_HINT_MAX && !jobHinted.has(head)) {
+        jobHinted.add(head);
+        content = [...(Array.isArray(content) ? content : []), { type: "text", text: jobHintText(durationMs) }];
+        contentChanged = true;
+        await logEvent(ctx.cwd, agentId, "job_hint", { command: head }, { ok: true, ms: durationMs }).catch(() => undefined);
       }
     }
     // Pi takes a tool's failure only from a throw: an `isError: true` in what

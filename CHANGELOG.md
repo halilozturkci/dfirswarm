@@ -30,6 +30,10 @@ All notable changes to this project. The format follows
   passes when each section cites a standing finding whose refs resolve, or a
   search that found nothing. It does not ask for confidence. Decided with
   Fable and Codex in place of a hub gate: the goal owns done (ADR 0002).
+- In a run with tool jobs, a shell command over `inputs/` that runs a minute
+  or more is told once (three times per agent at most) that a job would
+  have sealed its output (`job_hint`); a finding without refs that cites a
+  file in an agent's own `work/` is told so by the file's name.
 
 ### Added: tool jobs in worker VMs, a sealed store, a catalogue that grows
 
