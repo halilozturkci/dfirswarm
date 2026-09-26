@@ -22,7 +22,9 @@
  * prose: the goal section an entry answers (filterable here), its links to
  * other entries (a standing contradiction is said at the top), a sensitive
  * mark, the clock and precision of a time, observed or inferred, how far a
- * search got, an attribution, locators and a correction's reason.
+ * search got, an attribution, locators and a correction's reason. A sensitive
+ * entry's text is blurred on screen until clicked (Masked): in the page, not
+ * in a screenshot taken over someone's shoulder.
  */
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { BookOpenText } from "lucide-react";
@@ -32,6 +34,7 @@ import { EmptyState, InlineNote } from "@/components/states";
 import { Button } from "@/components/ui/button";
 import {
   FindingCard,
+  Masked,
   IndicatorTable,
   NotRecorded,
   ReportCounts,
@@ -462,13 +465,13 @@ export function LedgerPanel({ view }: { view: SwarmView }) {
                 <li key={e.seq} className="card space-y-1 p-2.5 text-[12.5px]">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-mono text-[11px] text-ink-3">#{e.seq}</span>
-                    <span className="text-ink">looked for: {e.value}</span>
+                    <span className="text-ink">looked for: <Masked on={e.sensitive}>{e.value}</Masked></span>
                   </div>
                   <p className="m-0 text-ink-2 [overflow-wrap:anywhere]">
-                    where: <span className="font-mono">{e.source || "not said"}</span>
+                    where: <span className="font-mono"><Masked on={e.sensitive}>{e.source || "not said"}</Masked></span>
                   </p>
                   <p className="m-0 text-ink-2 [overflow-wrap:anywhere]">
-                    query, tool and scope: <span className="font-mono">{e.evidence || "not said"}</span>
+                    query, tool and scope: <span className="font-mono"><Masked on={e.sensitive}>{e.evidence || "not said"}</Masked></span>
                   </p>
                   <div className="flex flex-wrap gap-1">{marks(e)}</div>
                 </li>
@@ -492,10 +495,10 @@ export function LedgerPanel({ view }: { view: SwarmView }) {
                 <li key={e.seq} className="card space-y-1 p-2.5 text-[12.5px]">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-mono text-[11px] text-ink-3">#{e.seq}</span>
-                    <span className="text-ink">{e.value}</span>
+                    <span className="text-ink"><Masked on={e.sensitive}>{e.value}</Masked></span>
                   </div>
                   <p className="m-0 text-ink-2 [overflow-wrap:anywhere]">
-                    source: <span className="font-mono">{e.source || "not said"}</span> · evidence: <span className="font-mono">{e.evidence || "not said"}</span>
+                    source: <span className="font-mono"><Masked on={e.sensitive}>{e.source || "not said"}</Masked></span> · evidence: <span className="font-mono"><Masked on={e.sensitive}>{e.evidence || "not said"}</Masked></span>
                   </p>
                   <div className="flex flex-wrap gap-1">{marks(e)}</div>
                 </li>
@@ -519,10 +522,10 @@ export function LedgerPanel({ view }: { view: SwarmView }) {
                 <li key={e.seq} className="card space-y-1 border-l-2 border-brick p-2.5 text-[12.5px]">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-mono text-[11px] text-ink-3">#{e.seq}</span>
-                    <span className="text-ink">{e.value}</span>
+                    <span className="text-ink"><Masked on={e.sensitive}>{e.value}</Masked></span>
                   </div>
                   <p className="m-0 text-ink-2 [overflow-wrap:anywhere]">
-                    scope: <span className="font-mono">{e.source || "not said"}</span> · what was tried: <span className="font-mono">{e.evidence || "not said"}</span>
+                    scope: <span className="font-mono"><Masked on={e.sensitive}>{e.source || "not said"}</Masked></span> · what was tried: <span className="font-mono"><Masked on={e.sensitive}>{e.evidence || "not said"}</Masked></span>
                   </p>
                   <div className="flex flex-wrap gap-1">{marks(e)}</div>
                 </li>
