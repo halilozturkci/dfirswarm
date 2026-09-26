@@ -70,7 +70,11 @@ All notable changes to this project. The format follows
   a bare gzip, bzip2, xz or zstd header, which 480 objects in the recorded
   runs matched and none was an archive (computer-forensics-base 1.2.20); and
   the readable-form link follows content, so the same bytes remade under
-  another job still lead back to the partial catalogue.
+  another job still lead back to the partial catalogue; and an object of the
+  store named in a request carries its manifest's sha256, so asking for one
+  the derived catalogue already has dedups with it and the agent is told
+  which generation to read (run s8c228e catalogued the decrypted vault twice,
+  13 s apart).
 - Four workers by default on a host with 64 GiB or more; `create_ms` in
   each job's record.
 - The console has a Jobs tab (with Files and the Ledger): the run's jobs

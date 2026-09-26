@@ -258,6 +258,25 @@ test("the readable link follows content: the same bytes remade under another job
   await svc.stop("over");
 });
 
+test("an agent asking for an object the derived catalogue already has is told where it is, and nothing runs again", async () => {
+  const S = sandbox();
+  const { svc, posts } = service(S);
+  await svc.start();
+  const r = await svc.submit("a1", { kind: "command", command: tarCommand("inner.tar"), inputs: [] });
+  await until(svc, r.ok ? r.job.id : "");
+  await eventually(() => of(S, "generation_committed").length === 1, "the derived catalogue");
+  const gen = of(S, "generation_committed")[0];
+  // Run s8c228e: the request came 9 s after the derived catalogue and made a second one.
+  const asked = await svc.catalogRequest("a2", `job:${r.ok ? r.job.id : ""}/inner.tar`, undefined, "index it for everyone");
+  assert.ok(asked.ok);
+  await eventually(() => posts.some(([to, body]) => to === "a2" && /already catalogued/.test(body)), "a2 is told");
+  const told = posts.find(([to, body]) => to === "a2" && /already catalogued/.test(body))![1];
+  assert.match(told, new RegExp(String(gen.generation)));
+  assert.equal(of(S, "job_deduplicated").length, 1);
+  assert.equal(of(S, "generation_committed").length, 1, "not catalogued twice");
+  await svc.stop("over");
+});
+
 test("the files of a failed job and of an import are offered too; with the derived catalogue off, nothing is", async () => {
   const S = sandbox();
   const { svc } = service(S);

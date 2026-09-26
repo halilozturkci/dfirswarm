@@ -1256,7 +1256,16 @@ export class JobService {
       applied += 1;
       // Its parent is the job that made the object (a derived target names it).
       const maker = derivedPass ? /^job:(j\d{6})\//.exec(t.ref ?? "")?.[1] : undefined;
-      await this.submit(derivedPass ? DERIVED : job.requester.agent === "system" ? "system" : job.requester.agent, { kind: "recipe", recipe: a.recipe, target: t, inputs: [t.ref ?? "all"], timeout_seconds: 900, network: "allowlist", parent: maker ?? job.spec.parent ?? job.id });
+      const r = await this.submit(derivedPass ? DERIVED : job.requester.agent === "system" ? "system" : job.requester.agent, { kind: "recipe", recipe: a.recipe, target: t, inputs: [t.ref ?? "all"], timeout_seconds: 900, network: "allowlist", parent: maker ?? job.spec.parent ?? job.id });
+      // Already catalogued over the same bytes: the agent who asked is told
+      // where, since no job of its own will report.
+      if (!derivedPass && r.ok && r.job.state === "committed" && job.requester.agent !== "system") {
+        const g = this.journal.of("generation_committed").find((l) => l.job === r.job.id);
+        await this.journal.append({ type: "job_notified", job: r.job.id, to: job.requester.agent, how: "post" });
+        await this.o
+          .notify(job.requester.agent, `${a.recipe} over ${t.name ?? t.ref} is already catalogued, by content: ${g ? `generation ${g.generation} (catalog/gen/${g.generation}/), ` : ""}job ${r.job.id}. catalog_search reads it; nothing was run again.`)
+          .catch(() => undefined);
+      }
     }
     if (derivedPass) {
       await this.derivedReturn(job, answered);
@@ -1636,5 +1645,11 @@ export async function resolveTarget(S: string, text: string, journal?: Journal):
   const paths = [abs];
   const collection = journal?.of("input_collection").find((l) => l.input === relToS);
   if (collection && Array.isArray(collection.members)) for (const p of (collection.members as string[]).slice(1)) paths.push(join(S, p));
-  return { paths, name: relToS, ref };
+  // An object of the store is named by its content too, as its manifest has
+  // it, so a recipe asked for it dedups with one already run over the same
+  // bytes (run s8c228e: an agent's request catalogued the decrypted vault a
+  // second time, 13 s after the derived catalogue had).
+  const om = /^store\/(jobs|imports)\/([^/]+)\/out\/(.+)$/.exec(relToS);
+  const sha256 = om ? (await readManifest(join(S, "store", om[1], om[2], "manifest.json")))?.manifest.files.find((f) => f.path === om[3])?.sha256 : undefined;
+  return { paths, name: relToS, ref, ...(sha256 ? { sha256 } : {}) };
 }
