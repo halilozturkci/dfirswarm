@@ -2260,7 +2260,8 @@ export default function (pi: ExtensionAPI) {
     name: "job_run",
     label: "Run a job",
     description:
-      "Run work in a throwaway worker VM of this run's image: evidence parsing, anything slow or heavy, and anything whose output you will cite or share. Quick looks stay in your own shell. " +
+      "Run work in a throwaway worker VM: evidence parsing, anything slow or heavy, and anything whose output you will cite or share. Quick looks stay in your own shell. " +
+      "Where the run declares job images (SWARM.md, Job images), your own VM is the base image and the forensic programs are in them: name the one the work needs with profile (disk, memory, mobile, …); a pack tool or a recipe picks its own, and a job with none runs in the image that holds every pack of the run. " +
       "The worker sees what you see, read-only: inputs/, store/ (earlier jobs' outputs), catalog/, tools/, tool-output/ and all of work/, yours and your peers' (SQLite: open with ?mode=ro&immutable=1 or copy into $OUT). It has the image's programs, nothing installed in an agent's VM, no network unless network=allowlist, and writes only to $OUT. " +
       "What it writes there is sealed into store/jobs/<id>/out/ (read-only, hashed) and outlives the VM: any job or agent reads it there, and you cite it as job:<id>/<path>. An archive or disk image it writes is offered to the catalogue's recipes and, when catalogued, announced. " +
       "Give command (bash, run from the run's directory; $OUT is also the OUT environment variable, for a script in another language or a quoted heredoc) or tool with args (a pack or forged tool; write {OUT}/<name> where it takes an output path), or import: a file or directory you made under work/ or tool-output/, sealed as it is now (copied live, hashed before and after; cite it as job:<id>/<name>). " +
@@ -2274,6 +2275,7 @@ export default function (pi: ExtensionAPI) {
       inputs: Type.Optional(Type.Array(Type.String(), { description: "What it reads, for the record: input:<path>, job:<id>, or all (default)" })),
       timeout_seconds: Type.Optional(Type.Integer({ description: "Stop it after this long (default 900, at most 14400)" })),
       network: Type.Optional(Type.Union([Type.Literal("off"), Type.Literal("allowlist")], { description: "off (default) or the run's allowlist" })),
+      profile: Type.Optional(Type.String({ description: "The job image to run in, by profile, as SWARM.md's Job images lists them (disk, memory, mobile, …); left out, the run's worker image" })),
       wait_seconds: Type.Optional(Type.Integer({ description: "How long to wait here for it (default 12, at most 100)" })),
     }),
     async execute(_id, params, signal, _onUpdate, toolCtx: ToolCtx) {
@@ -2290,6 +2292,7 @@ export default function (pi: ExtensionAPI) {
         ...(params.inputs ? { inputs: params.inputs } : {}),
         ...(params.timeout_seconds ? { timeout_seconds: params.timeout_seconds } : {}),
         ...(params.network ? { network: params.network } : {}),
+        ...(params.profile ? { profile: params.profile } : {}),
       };
       const wait = Math.min(Math.max(params.wait_seconds ?? 12, 0), 100);
       if (wait > 0) spec.wait = wait + 5;

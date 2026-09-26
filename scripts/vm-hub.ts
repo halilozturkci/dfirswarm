@@ -203,6 +203,9 @@ export type JobsConfig = {
   packDirs: string[];
   minFreeMb?: number;
   derived?: boolean;
+  /** The run's job images by profile, and each pack's profile (the kickoff's). */
+  images?: Record<string, string>;
+  packProfiles?: Record<string, string>;
 };
 
 export function parseJobsConfig(raw: unknown): JobsConfig | undefined {
@@ -220,6 +223,8 @@ export function parseJobsConfig(raw: unknown): JobsConfig | undefined {
     ...(typeof raw.minFreeMb === "number" ? { minFreeMb: num(raw.minFreeMb, 4096, 0, 1 << 30) } : {}),
     // On unless the kickoff said off (--no-derived-catalog).
     derived: raw.derived !== false,
+    ...(isObject(raw.images) ? { images: Object.fromEntries(Object.entries(raw.images).filter(([k, v]) => /^[a-z0-9-]{1,32}$/.test(k) && typeof v === "string" && v.length > 0 && v.length < 512)) as Record<string, string> } : {}),
+    ...(isObject(raw.packProfiles) ? { packProfiles: Object.fromEntries(Object.entries(raw.packProfiles).filter(([k, v]) => typeof k === "string" && typeof v === "string")) as Record<string, string> } : {}),
   };
 }
 
@@ -653,6 +658,7 @@ export function boardTable(hub: {
         timeout_seconds: typeof raw.timeout_seconds === "number" ? raw.timeout_seconds : 900,
         network: raw.network === "allowlist" ? "allowlist" : "off",
         ...(typeof raw.note === "string" ? { note: raw.note } : {}),
+        ...(typeof raw.profile === "string" && raw.profile ? { profile: raw.profile } : {}),
       };
       const r = await svc.submit(who, spec, { watch: typeof raw.wait === "number" ? raw.wait : 0 });
       return r.ok ? { ok: true, job: await jobView(S, r.job) } : r;
@@ -1006,6 +1012,8 @@ export class Hub {
       run,
       ...(this.cfg.registry ? { registry: this.cfg.registry } : {}),
       image: jobs.image,
+      ...(jobs.images ? { images: jobs.images } : {}),
+      ...(jobs.packProfiles ? { packProfiles: jobs.packProfiles } : {}),
       workers: jobs.workers,
       workerCpus: jobs.cpus,
       workerMemoryMib: jobs.memoryMib,

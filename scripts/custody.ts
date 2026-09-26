@@ -1895,6 +1895,11 @@ function summaryOf(c: Omit<Custody, "summary">, t: { traceProblem: string | null
     if (st.findings.sensitive?.length) bits.push(`${plural(st.findings.sensitive.length, "entry", "entries")} marked sensitive (package --redact replaces what they cite)`);
     if (st.logs) bits.push(st.logs.mismatched.length || st.logs.missing.length ? `JOB LOGS: ${st.logs.mismatched.length} CHANGED SINCE SEALED, ${st.logs.missing.length} MISSING` : `${st.logs.checked} job logs verified against their seal`);
     if (st.ledger_unreadable) bits.push(`FINDINGS NOT COUNTED: ${st.ledger_unreadable}`);
+    if (st.images) {
+      const many = Object.entries(st.images.digests).filter(([, d]) => d.length > 1);
+      bits.push(st.images.undeclared.length ? `${st.images.undeclared.length} JOB(S) RAN IN AN IMAGE THE RUN DID NOT DECLARE (${some(st.images.undeclared, 10, "store.images.undeclared")})` : `every job in one of the ${st.images.declared.length} job images the run declared`);
+      if (many.length) bits.push(`AN IMAGE NAME BOOTED MORE THAN ONE DIGEST: ${many.map(([k, d]) => `${k} (${d.join(", ")})`).join("; ")}`);
+    }
     if (st.access) bits.push(`what each job read is not observed by the harness (${st.access.observed_unknown} of ${st.access.jobs} jobs: declared inputs and accessible mounts are recorded)`);
     if (st.catalogue) {
       const c = st.catalogue;

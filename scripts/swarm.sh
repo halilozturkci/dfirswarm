@@ -456,6 +456,11 @@ Isolation
   --inputs-copy       Under --isolation microvm, copy --inputs into the run (read-only)
                       instead of mounting it in place: a second layer when the
                       examiner's account can write the evidence.
+  --brains-with-packs  Boot the agents' own VMs from the image that holds the run's packs.
+                      By default, in a microVM run with jobs, the agents boot the base
+                      image (a shell, Python, the tool library) and the forensic
+                      programs are in the job images: each pack's profile, which a
+                      job names with profile=, and a pack tool or recipe picks itself.
   --inputs-hashes FILE  The acquisition hashes an imager recorded (md5sum, sha1sum or
                       sha256sum lines, or BSD "SHA256 (name) = digest"): each is
                       held to the digest the kickoff computes (refused on a
@@ -2635,6 +2640,25 @@ if caps:
                 "A file you made in your own VM is not an object of the run until it is sealed: `job_run import=work/<you>/<file>` "
                 "copies it into the store as it is now, and a finding then cites it as job:<id>/<file> in its refs.\n\n"
             )
+            imgs = jb.get("images") or {}
+            if imgs:
+                by_profile = {}
+                for pack, prof in (jb.get("packProfiles") or {}).items():
+                    by_profile.setdefault(prof, []).append(pack)
+                rows = "\n".join(
+                    f"- `{prof}`: {ref}" + (f" — the packs {', '.join(sorted(by_profile[prof]))}" if by_profile.get(prof) else "")
+                    + f"; its programs are listed in images/{prof}/tools.md"
+                    for prof, ref in sorted(imgs.items())
+                )
+                host_section += (
+                    "## Job images\n\n"
+                    "Your own VM is the base image: a shell, Python and the tool library, and none of the packs' forensic programs. "
+                    "They are in the job images below, each one a worker VM of its own: run the work there with "
+                    "`job_run profile=<name> command=...`, and read which programs an image has in images/<name>/tools.md. "
+                    "A pack tool or a recipe runs in its own pack's image by itself; a job that names no profile runs in "
+                    f"{jb.get('image') or 'the image that holds every pack'}. What a job writes is sealed in the store "
+                    "whichever image it ran in: read it, and cite it, from your own VM.\n\n" + rows + "\n\n"
+                )
         except Exception:
             pass
 text = text.replace("{{HOST}}\n\n", host_section)
@@ -3199,7 +3223,7 @@ cmd_start() {
   # Where the agents live: one microVM each (the default), or host
   # processes (--isolation host, unisolated). isolation_given says the
   # operator named it, so a refusal can say how to choose the other.
-  local isolation="${SWARM_ISOLATION:-microvm}" isolation_given=$([[ -n "${SWARM_ISOLATION:-}" ]] && echo 1 || echo 0) vm_image="${SWARM_VM_IMAGE:-}" vm_image_named=$([[ -n "${SWARM_VM_IMAGE:-}" ]] && echo 1 || echo 0) vm_image_digest="" vm_cpus=2 vm_memory="" vm_disk=8192 vm_snapshot=1 vm_snapshot_dir="" allow_oauth_in_vm=0 inputs_copy=0 jobs=1 workers=2 workers_given=0 worker_cpus=2 worker_memory="" derived_catalog=1 inputs_hashes="" custody_sign_key="" custody_tsa="" time_reference=""
+  local isolation="${SWARM_ISOLATION:-microvm}" isolation_given=$([[ -n "${SWARM_ISOLATION:-}" ]] && echo 1 || echo 0) vm_image="${SWARM_VM_IMAGE:-}" vm_image_named=$([[ -n "${SWARM_VM_IMAGE:-}" ]] && echo 1 || echo 0) vm_image_digest="" vm_cpus=2 vm_memory="" vm_disk=8192 vm_snapshot=1 vm_snapshot_dir="" allow_oauth_in_vm=0 inputs_copy=0 jobs=1 workers=2 workers_given=0 worker_cpus=2 worker_memory="" derived_catalog=1 inputs_hashes="" custody_sign_key="" custody_tsa="" time_reference="" brain_base=1 job_image="" job_images_json='{}' pack_profiles_json='{}'
   local seal_herdr=1
   # Directories the panes may not read. Reads are open by design, so this is
   # narrow on purpose: material about the case the agents must derive rather
@@ -3338,6 +3362,7 @@ cmd_start() {
       --allow-oauth-in-vm) allow_oauth_in_vm=1; shift ;;
       --inputs-copy) inputs_copy=1; shift ;;
       --inputs-hashes) inputs_hashes="$2"; shift 2 ;;
+      --brains-with-packs) brain_base=0; shift ;;
       --custody-sign-key) custody_sign_key="$2"; shift 2 ;;
       --custody-timestamp-url) custody_tsa="$2"; shift 2 ;;
       --time-reference) time_reference="$2"; shift 2 ;;
@@ -3976,7 +4001,19 @@ sys.exit(0 if t(sys.argv[1]) < t(sys.argv[2]) else 1)' "$_have" "$_ship" 2>/dev/
       fi
     fi
     jq -r '.warnings[]? | "WARN: " + .' <<<"$vm_capacity" >&2 || true
-    [[ -n "$vm_image" ]] || vm_image="$(vm_default_image "$pack_dirs" "$playwright")" || exit 2
+    if [[ -z "$vm_image" ]]; then
+      vm_image="$(vm_default_image "$pack_dirs" "$playwright")" || exit 2
+      # The agents' own VMs boot the base, and the forensic programs are in
+      # the job images: each pack's profile, and the packs' together for a
+      # job that names none. --brains-with-packs gives the agents the packs'
+      # image as before; --playwright keeps its browser in the agents' VMs.
+      if [[ "$jobs" -eq 1 && "$brain_base" -eq 1 && "$playwright" -eq 0 && -n "$pack_dirs" ]]; then
+        job_image="$vm_image"
+        plan_job_images "$pack_dirs" "$job_image" || exit 2
+        vm_image="$(vm_ref_for_profile base)" || exit 2
+        echo "Brains:       the agents' VMs boot $vm_image; the packs' programs are in the job images ($(jq -r 'to_entries | map(.key) | join(", ")' <<<"$job_images_json"))"
+      fi
+    fi
     if [[ "$start_agents" -eq 1 ]]; then
       local vm_probe
       if ! vm_probe="$(vm_cli probe --image "$vm_image")"; then
@@ -4347,12 +4384,23 @@ console.log(r.ok ? "" : r.reason);' "$_gp" "$_gk" 2>/dev/null || echo "could not
   # panes' write allowlist, so a slip is refused rather than recorded.
   [[ -f "$sandbox/inputs.json" ]] && chmod a-w "$sandbox/inputs.json" 2>/dev/null
   chmod a-w "$(cd "$(dirname "$sandbox")" && pwd -P)/$(basename "$sandbox").custody-anchor.json" 2>/dev/null || true
+  # Each job image's own list of programs, for agents whose VM is the base:
+  # read from a throwaway VM of it, into images/<profile>/, read-only.
+  if [[ "$isolation" == "microvm" && "$start_agents" -eq 1 && "$(jq 'length' <<<"$job_images_json")" -gt 0 ]]; then
+    local jp jref
+    for jp in $(jq -r 'keys[]' <<<"$job_images_json"); do
+      jref="$(jq -r --arg p "$jp" '.[$p]' <<<"$job_images_json")"
+      vm_cli image-files --image "$jref" --out "$sandbox/images/$jp" --path /etc/dfirswarm/tools.md --path /etc/dfirswarm/image.json >/dev/null 2>&1 \
+        || echo "WARN: the program list of job image $jref could not be read; images/$jp/ is empty." >&2
+    done
+    chmod -R a-w "$sandbox/images" 2>/dev/null || true
+  fi
   if [[ "$toolbox" != "off" && "$isolation" == "microvm" && "$start_agents" -eq 1 ]]; then
     # The same check, run in a throwaway VM of the run's image: the agents'
     # tools are the image's, and this host's are none of theirs.
     local toolbox_args=()
     [[ "$toolbox_required" -eq 1 ]] && toolbox_args+=(--required)
-    vm_cli toolbox --image "$vm_image" --preset "$toolbox" --packs "$(paste -sd: - <<< "$pack_dirs")" --out "$sandbox/toolbox.json" ${toolbox_args[@]+"${toolbox_args[@]}"} || exit $?
+    vm_cli toolbox --image "${job_image:-$vm_image}" --preset "$toolbox" --packs "$(paste -sd: - <<< "$pack_dirs")" --out "$sandbox/toolbox.json" ${toolbox_args[@]+"${toolbox_args[@]}"} || exit $?
   elif [[ "$toolbox" != "off" && "$isolation" == "microvm" ]]; then
     # A prepared VM run: the check belongs to the image, not this host, and
     # runs when the VMs do. Never the host's tools in a VM run's record.
@@ -4375,7 +4423,7 @@ console.log(r.ok ? "" : r.reason);' "$_gp" "$_gk" 2>/dev/null || echo "could not
     # with no packs boots the base image, which has neither, and its catalog
     # came back empty; the image that serves the base pack does, when this
     # host has it. An image the operator named is theirs.
-    local catalog_image="$vm_image"
+    local catalog_image="${job_image:-$vm_image}"
     if [[ -z "$pack_dirs" && "$vm_image_named" -eq 0 ]]; then
       local tsk_image
       tsk_image="$(vm_default_image "$("$ROOT/scripts/pack.sh" resolve computer-forensics-base 2>/dev/null || echo computer-forensics-base)" 0)" || exit 2
@@ -4722,7 +4770,7 @@ console.log(r.ok ? "" : r.reason);' "$_gp" "$_gk" 2>/dev/null || echo "could not
         | awk '!seen[$0]++' | sed 's/.*/`&`/' | paste -sd, - | sed 's/,/, /g')"
     fi
   fi
-  JOBS_FOR_CONTRACT="$([[ "$isolation" == "microvm" && "$jobs" -eq 1 ]] && jq -nc --argjson d "$([[ "${derived_catalog:-1}" -eq 1 ]] && echo true || echo false)" --argjson w "$workers" --argjson c "$worker_cpus" --argjson m "$worker_memory" --arg h "$allow_hosts$([[ "$allow_install" -eq 1 && "$install_hosts" -eq 1 && "$local_only" -eq 0 ]] && printf '%s' "${allow_hosts:+,}pypi.org,files.pythonhosted.org")" '{workers: $w, cpus: $c, memoryMib: $m, derived: $d, allowHosts: ($h | split(",") | map(select(length > 0)))}')" \
+  JOBS_FOR_CONTRACT="$([[ "$isolation" == "microvm" && "$jobs" -eq 1 ]] && jq -nc --argjson images "$job_images_json" --argjson pp "$pack_profiles_json" --arg dflt "${job_image:-}" --argjson d "$([[ "${derived_catalog:-1}" -eq 1 ]] && echo true || echo false)" --argjson w "$workers" --argjson c "$worker_cpus" --argjson m "$worker_memory" --arg h "$allow_hosts$([[ "$allow_install" -eq 1 && "$install_hosts" -eq 1 && "$local_only" -eq 0 ]] && printf '%s' "${allow_hosts:+,}pypi.org,files.pythonhosted.org")" '{workers: $w, cpus: $c, memoryMib: $m, derived: $d, allowHosts: ($h | split(",") | map(select(length > 0)))} + (if ($images | length) > 0 then {images: $images, packProfiles: $pp, image: $dflt} else {} end)')" \
   CASE_ID_FOR_CONTRACT="$case_id" EXAMINER_FOR_CONTRACT="$examiner" ALLOW_INSTALL_FOR_CONTRACT="$allow_install" INSTALL_HOSTS_FOR_CONTRACT="$install_hosts" \
     HOST_CAPS_FOR_CONTRACT="$host_caps_json" WRITE_GUARD_FOR_CONTRACT="$write_guard_mode" \
     ATTRIBUTION_FOR_CONTRACT="$attribution" ISOLATION_FOR_CONTRACT="$isolation" VM_HOSTS_FOR_CONTRACT="$vm_hosts" \
@@ -4822,6 +4870,7 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
     --arg vm_image "$vm_image" --arg vm_image_digest "${vm_image_digest:-}" \
     --argjson vm_cpus "$vm_cpus" \
     --argjson jobs "$jobs" --argjson workers "$workers" --argjson worker_cpus "$worker_cpus" --argjson worker_memory "${worker_memory:-0}" --argjson derived_catalog "${derived_catalog:-1}" \
+    --argjson job_images "$job_images_json" --argjson pack_profiles "$pack_profiles_json" --arg job_image "${job_image:-}" \
     --argjson vm_memory "${vm_memory:-2048}" --argjson vm_disk "$vm_disk" \
     --argjson vm_snapshot "$vm_snapshot" \
     --argjson allow_oauth_in_vm "$allow_oauth_in_vm" \
@@ -4891,7 +4940,7 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
       agents: $agents,
       agent_models: $agent_models,
       isolation: (if $isolation == "microvm"
-        then {mode: "microvm", runtime: "microsandbox", image: $vm_image, image_digest: (if $vm_image_digest == "" then null else $vm_image_digest end), cpus: $vm_cpus, memory_mib: $vm_memory, disk_mib: $vm_disk, snapshot: ($vm_snapshot == 1), oauth_allowed: ($allow_oauth_in_vm == 1), jobs: (if $jobs == 1 then {workers: $workers, cpus: $worker_cpus, memory_mib: $worker_memory, derived_catalog: ($derived_catalog == 1)} else null end)}
+        then {mode: "microvm", runtime: "microsandbox", image: $vm_image, image_digest: (if $vm_image_digest == "" then null else $vm_image_digest end), cpus: $vm_cpus, memory_mib: $vm_memory, disk_mib: $vm_disk, snapshot: ($vm_snapshot == 1), oauth_allowed: ($allow_oauth_in_vm == 1), jobs: (if $jobs == 1 then {workers: $workers, cpus: $worker_cpus, memory_mib: $worker_memory, derived_catalog: ($derived_catalog == 1)} + (if ($job_images | length) > 0 then {images: $job_images, pack_profiles: $pack_profiles, image: $job_image} else {} end) else null end)}
           + (if $model_gateway == 1 then {model_gateway: {on: true}} else {} end)
         else {mode: "host"} end),
       provenance: $provenance,
@@ -6471,6 +6520,63 @@ vm_arch() {
   esac
 }
 
+# A profile's image reference: what the lock pins for this architecture, else
+# the local build (dfirswarm-<profile>:dev-<arch>).
+vm_ref_for_profile() { # <profile>
+  local profile="$1" ref="" lock="${SWARM_IMAGES_LOCK:-$ROOT/images/images.lock.json}"
+  if [[ -f "$lock" ]]; then
+    ref="$(jq -r --arg p "$profile" --arg a "$(vm_arch)" '.images[$p][$a] // empty' "$lock" 2>/dev/null || true)"
+  fi
+  printf '%s\n' "${ref:-dfirswarm-$profile:dev-$(vm_arch)}"
+}
+
+# The job images of a run: each pack's own profile (images/recipe.py
+# profile-for), and the one holding every pack as the default. An image this
+# host does not hold is pulled; one that cannot be had is left out, and its
+# packs' jobs run in the default, said. Sets job_images_json (profile -> ref)
+# and pack_profiles_json (pack id -> profile).
+plan_job_images() { # <pack dirs, one per line> <default job image>
+  local dirs="$1" default_ref="$2" d id profile ref digest default_profile
+  local images='{}' packs='{}'
+  default_profile="$(python3 "$ROOT/images/recipe.py" profile-for $(tr '\n' ' ' <<<"$dirs") 2>/dev/null || echo full)"
+  images="$(jq -c --arg p "$default_profile" --arg r "$default_ref" '. + {($p): $r}' <<<"$images")"
+  while read -r d; do
+    [[ -n "$d" && -f "$d/pack.json" ]] || continue
+    id="$(jq -r '.id // empty' "$d/pack.json")"
+    profile="$(python3 "$ROOT/images/recipe.py" profile-for "$d" 2>/dev/null || echo "$default_profile")"
+    ref="$(vm_ref_for_profile "$profile")"
+    images="$(jq -c --arg p "$profile" --arg r "$ref" '. + {($p): $r}' <<<"$images")"
+    packs="$(jq -c --arg k "$id" --arg p "$profile" '. + {($k): $p}' <<<"$packs")"
+  done <<<"$dirs"
+  # Each image on this host, or pulled now, before the clock starts; a
+  # kickoff that starts no agent (--no-start, a check) looks for none, as it
+  # does not for the agents' own image.
+  local have='{}' p
+  if [[ "${start_agents:-1}" -ne 1 || "${CHECK_ONLY:-0}" -eq 1 ]]; then
+    job_images_json="$images"
+    pack_profiles_json="$packs"
+    return 0
+  fi
+  for p in $(jq -r 'keys[]' <<<"$images"); do
+    ref="$(jq -r --arg p "$p" '.[$p]' <<<"$images")"
+    digest="$(vm_cli image-digest --image "$ref" 2>/dev/null | jq -r '.digest // empty')"
+    if [[ -z "$digest" && "${CHECK_ONLY:-0}" -ne 1 ]]; then
+      echo "Image:        job image $ref is not on this host; pulling it now..." >&2
+      digest="$(vm_cli pull --image "$ref" 2>/dev/null | jq -r '.digest // empty')"
+    fi
+    if [[ -n "$digest" || "${CHECK_ONLY:-0}" -eq 1 ]]; then
+      have="$(jq -c --arg p "$p" --arg r "$ref" '. + {($p): $r}' <<<"$have")"
+    elif [[ "$p" == "$default_profile" ]]; then
+      echo "BLOCKER: the job image $ref, which holds every pack of the run, is not on this host and could not be pulled; build it (images/README.md) or pass --image." >&2
+      return 1
+    else
+      echo "WARN: job image $ref ($p) is not on this host and could not be pulled: its packs' jobs run in $default_ref." >&2
+    fi
+  done
+  job_images_json="$have"
+  pack_profiles_json="$(jq -c --argjson have "$have" --arg dflt "$default_profile" 'with_entries(.value = (if $have[.value] then .value else $dflt end))' <<<"$packs")"
+}
+
 # The image a run's VMs boot: the smallest profile that holds the run's packs
 # (images/recipe.py profile-for), by the reference a lock file pins for this
 # architecture — a digest, so a run names exactly what it ran. The lock is
@@ -7118,11 +7224,15 @@ launch_vm_agents() {
     # the agents' VMs get: pip, never apt.
     local job_hosts="$allow_hosts"
     [[ "$allow_install" -eq 1 && "$install_hosts" -eq 1 && "${local_only:-0}" -eq 0 ]] && job_hosts="${job_hosts}${job_hosts:+,}pypi.org,files.pythonhosted.org"
-    JOBS_JSON="$(jq -nc --arg image "$vm_image" --argjson workers "$workers" --argjson cpus "$worker_cpus" --argjson mem "$worker_memory" \
+    JOBS_JSON="$(jq -nc --arg image "${job_image:-$vm_image}" --argjson workers "$workers" --argjson cpus "$worker_cpus" --argjson mem "$worker_memory" \
       --arg hosts "$job_hosts" --argjson open "$([[ "$use_netguard" -eq 0 ]] && echo true || echo false)" --arg packs "$pack_dirs" \
       --argjson derived "$([[ "$derived_catalog" -eq 1 ]] && echo true || echo false)" \
-      '{image: $image, workers: $workers, cpus: $cpus, memoryMib: $mem, allowHosts: ($hosts | split(",") | map(select(length > 0))), openNet: $open, packDirs: ($packs | split("\n") | map(select(length > 0)))} + {derived: $derived}')"
+      --argjson images "$job_images_json" --argjson pack_profiles "$pack_profiles_json" \
+      '{image: $image, workers: $workers, cpus: $cpus, memoryMib: $mem, allowHosts: ($hosts | split(",") | map(select(length > 0))), openNet: $open, packDirs: ($packs | split("\n") | map(select(length > 0)))} + {derived: $derived} + (if ($images | length) > 0 then {images: $images, packProfiles: $pack_profiles} else {} end)')"
     echo "Jobs:         up to $workers worker VM(s) at a time, ${worker_cpus} vCPU and ${worker_memory} MiB each, no network unless a job asks for the run's allowlist"
+    if [[ "$(jq 'length' <<<"$job_images_json")" -gt 0 ]]; then
+      echo "              job images: $(jq -r 'to_entries | map("\(.key) \(.value)") | join("; ")' <<<"$job_images_json"); a job names one with profile=, a pack tool or a recipe runs in its pack's, and one with none in ${job_image}"
+    fi
     if [[ "$derived_catalog" -eq 1 ]]; then
       echo "              derived catalogue on: what jobs make is offered to the recipes by content, in the lowest lane (one worker), within 300 worker-s each 10 min, at most 50 generations and 2 GiB a run (--no-derived-catalog: off)"
     else

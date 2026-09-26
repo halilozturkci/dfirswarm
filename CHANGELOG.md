@@ -6,6 +6,16 @@ All notable changes to this project. The format follows
 
 ## [Unreleased]
 
+### Changed: the agents boot the base, the programs are in the job images
+
+- In a microVM run with jobs and packs, each agent's VM boots the base image
+  and the packs' programs are in an image per profile: `job_run
+  profile=<name>` names one, a pack tool or a recipe runs in its pack's, and
+  a job with none in the image holding every pack. `images/<profile>/tools.md`
+  lists each image's programs, SWARM.md's "Job images" maps packs to images,
+  the journal declares the images (`job_images`) and custody holds each job
+  to them. `--brains-with-packs` keeps the agents on the packs' image.
+
 ### Changed: the ledger's version 3 and a custody that can be verified (Fable and Codex)
 
 - **Ledger.** Two kinds, `hypothesis` (with its status) and `limitation`

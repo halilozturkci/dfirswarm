@@ -104,6 +104,8 @@ export const PROTECTED_PREFIXES = [
   ".fsguard/",
   ".zsh/",
   ".bash/",
+  // Each job image's own list of programs, read from the image at kickoff.
+  "images/",
   // The findings ledger and the evidence catalog are written by the harness
   // (through `record`, and at kickoff) and read by everyone.
   "ledger/",

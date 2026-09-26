@@ -194,7 +194,7 @@ type CustodyLike = {
   model_gateway: { intact: boolean; detail: string; refused?: string } | null;
   vms: Array<{ snapshot: unknown; stopped: boolean; kept: string | null }> | null;
   artifacts: { files: number; skipped: number } | null;
-  store: { journal: { intact: boolean; detail: string; anchor: string }; outputs: { files: number; verified: number; mismatched: string[]; missing: string[] }; manifests_missing: string[]; logs?: { checked: number; mismatched: string[] }; catalogue?: { revisions_mismatched: string[]; generations_mismatched: string[] } | null; ledger_unreadable?: string | null } | null;
+  store: { journal: { intact: boolean; detail: string; anchor: string }; outputs: { files: number; verified: number; mismatched: string[]; missing: string[] }; manifests_missing: string[]; logs?: { checked: number; mismatched: string[] }; catalogue?: { revisions_mismatched: string[]; generations_mismatched: string[] } | null; ledger_unreadable?: string | null; images?: { undeclared: string[]; digests: Record<string, string[]> } } | null;
   operator?: OperatorAudit;
   acquisition?: Acquisition;
   not_reached: string[];
@@ -282,6 +282,8 @@ export function checksOf(c: CustodyLike, errors: Record<string, string> = {}): C
       ...(s.logs?.mismatched.length ? [`${s.logs.mismatched.length} job log(s) changed since sealed`] : []),
       ...(s.catalogue && (s.catalogue.revisions_mismatched.length || s.catalogue.generations_mismatched.length) ? ["catalogue records differ from the journal"] : []),
       ...(s.ledger_unreadable ? [`the ledger could not be read for the findings count: ${s.ledger_unreadable}`] : []),
+      ...(s.images?.undeclared.length ? [`${s.images.undeclared.length} job(s) in an image the run did not declare`] : []),
+      ...(s.images && Object.values(s.images.digests).some((d) => d.length > 1) ? ["an image name booted more than one digest"] : []),
     ];
     const short = s.outputs.verified + s.outputs.mismatched.length + s.outputs.missing.length < s.outputs.files;
     add("store", problems.length ? "failed" : short ? "incomplete" : "passed", problems.length ? problems.join("; ") : short ? "not every output was re-hashed before the deadline" : undefined, { expected: s.outputs.files, checked: s.outputs.verified });

@@ -803,6 +803,8 @@ export type StoreCheck = {
   ledger_unreadable?: string | null;
   /** What each job was given and could reach, and whether what it read is known: the store records declared and accessible; observed is unknown unless a tool reports it. */
   access?: { jobs: number; declared: number; observed_unknown: number };
+  /** The job images the run declared (job_images), each job held to them, and each image name to the digests it booted. */
+  images?: { declared: string[]; jobs: number; undeclared: string[]; digests: Record<string, string[]> };
   /** Notes an examiner added to the record after the run (evidence-store.ts note), and the times the job service told the agents that workers were not running. */
   notes: number;
   degraded: number;
@@ -937,6 +939,23 @@ export async function checkStore(sandbox: string, before = Infinity): Promise<St
   }
   // What each job declared and could reach; what it read is not observed by the harness.
   const started = checked.lines.filter((l) => l.type === "job_started");
+  // The images jobs ran in, held to the ones the run declared before any job ran.
+  const declaredLine = checked.lines.filter((l) => l.type === "job_images").at(-1);
+  if (declaredLine) {
+    const declared = [...new Set([String(declaredLine.default ?? ""), ...Object.values((declaredLine.images ?? {}) as Record<string, string>)].filter(Boolean))].sort();
+    const imageOf = new Map(started.map((l) => [String(l.job), String(l.image ?? "")]));
+    const digests: Record<string, Set<string>> = {};
+    for (const c of committed) {
+      const img = imageOf.get(String(c.job));
+      if (img && typeof c.image_digest === "string") (digests[img] ??= new Set()).add(c.image_digest);
+    }
+    out.images = {
+      declared,
+      jobs: started.length,
+      undeclared: started.filter((l) => !declared.includes(String(l.image ?? ""))).map((l) => String(l.job)),
+      digests: Object.fromEntries(Object.entries(digests).map(([k, v]) => [k, [...v].sort()])),
+    };
+  }
   out.access = { jobs: started.length, declared: started.filter((l) => Array.isArray(l.declared) && (l.declared as unknown[]).length > 0).length, observed_unknown: started.filter((l) => l.observed === "unknown" || l.observed === undefined).length };
   let ledgerText: string | null = null;
   try {

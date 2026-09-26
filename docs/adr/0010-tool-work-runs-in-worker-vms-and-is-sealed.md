@@ -173,6 +173,21 @@ After the review:
   with job_run text asking for a declared short timeout. Short jobs queued
   up to p95 189 s behind long ones on the confirmation run.
 
+## The agents boot the base; the programs are in the job images (2026-09-26)
+
+The owner's basic flow: each agent's own VM is the base image (a shell,
+Python, the tool library), and the forensic programs are in an image per
+profile (images/profiles.json). An agent names the image the work needs
+(`job_run profile=disk`); a pack tool runs in its pack's image and a recipe
+in its pack's (or the one its recipe.json names); a job that names none runs
+in the image that holds every pack. The job service writes the run's images
+on the journal (`job_images`) before any job runs, records each job's image
+and profile in `job_started`, and custody holds every job to the declared
+images and each image name to the digests it booted. The kickoff reads each
+image's `tools.md` into `images/<profile>/` so an agent in the base knows
+which programs an image holds. `--brains-with-packs` keeps the earlier
+layout (the agents boot the packs' image).
+
 ## The derived catalogue, on by default (2026-09-26)
 
 The BelkaCTF #6 trial showed the payoff and the flaw. The catalogue of the

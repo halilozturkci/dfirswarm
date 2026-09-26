@@ -259,15 +259,30 @@ export DFIRSWARM_HOME="$TMP/home"
 for p in computer-forensics-base memory-forensics; do
   bash "$ROOT/scripts/pack.sh" install "$ROOT/packs/$p" --yes >/dev/null 2>&1 || fail "could not install pack $p into the test's home"
 done
-out="$(start --isolation microvm --pack memory-forensics --label vm-mem)"; rc=$?
+# Small VMs, so a worker fits on any host: the job images need a job service.
+small=(--workers 1 --vm-memory 512 --worker-memory 512)
+out="$(start --isolation microvm "${small[@]}" --pack memory-forensics --label vm-mem)"; rc=$?
 [[ $rc -eq 0 ]] || fail "a microvm run with a pack exited $rc: $out"
-[[ "$(reg vm-mem '.isolation.image')" == "dfirswarm-memory:dev-$ARCH" ]] || fail "memory-forensics should boot the memory image, got $(reg vm-mem '.isolation.image')"
+# The agents boot the base; the packs' programs are in the job images.
+[[ "$(reg vm-mem '.isolation.image')" == "dfirswarm-base:dev-$ARCH" ]] || fail "the agents should boot the base image, got $(reg vm-mem '.isolation.image')"
+[[ "$(reg vm-mem '.isolation.jobs.image')" == "dfirswarm-memory:dev-$ARCH" ]] || fail "a job with no profile should run in the memory image, got $(reg vm-mem '.isolation.jobs.image')"
+[[ "$(reg vm-mem '.isolation.jobs.pack_profiles["memory-forensics"]')" == "memory" ]] || fail "memory-forensics is not mapped to its profile: $(reg vm-mem '.isolation.jobs.pack_profiles')"
+[[ "$(reg vm-mem '.isolation.jobs.images.memory')" == "dfirswarm-memory:dev-$ARCH" ]] || fail "the memory job image is not recorded: $(reg vm-mem '.isolation.jobs.images')"
+sbx_mem="$(reg vm-mem '.sandbox')"
+grep -q '^## Job images' "$sbx_mem/SWARM.md" || fail "SWARM.md has no Job images section"
+grep -q 'job_run profile=<name>' "$sbx_mem/SWARM.md" || fail "SWARM.md does not say how to run in a job image"
+grep -q '`memory`: dfirswarm-memory:dev-'"$ARCH"' — the packs .*memory-forensics' "$sbx_mem/SWARM.md" || fail "SWARM.md does not map the pack to its image: $(grep -A8 '^## Job images' "$sbx_mem/SWARM.md")"
+# --brains-with-packs: the agents boot the packs' image, as before.
+out="$(start --isolation microvm "${small[@]}" --brains-with-packs --pack memory-forensics --label vm-mem-brains)"; rc=$?
+[[ $rc -eq 0 ]] || fail "--brains-with-packs exited $rc: $out"
+[[ "$(reg vm-mem-brains '.isolation.image')" == "dfirswarm-memory:dev-$ARCH" ]] || fail "--brains-with-packs should boot the memory image, got $(reg vm-mem-brains '.isolation.image')"
 # --pack given twice adds up: the second used to replace the first, and a run
 # asked for windows-forensics and memory-forensics got only the latter.
 bash "$ROOT/scripts/pack.sh" install "$ROOT/packs/windows-forensics" --yes >/dev/null 2>&1 || fail "could not install pack windows-forensics into the test's home"
-out="$(start --isolation microvm --pack windows-forensics --pack memory-forensics --label vm-two-packs)"; rc=$?
+out="$(start --isolation microvm "${small[@]}" --pack windows-forensics --pack memory-forensics --label vm-two-packs)"; rc=$?
 [[ $rc -eq 0 ]] || fail "a run with two --pack flags exited $rc: $out"
-[[ "$(reg vm-two-packs '.isolation.image')" == "dfirswarm-full:dev-$ARCH" ]] || fail "the first of two --pack flags was dropped: image $(reg vm-two-packs '.isolation.image')"
+[[ "$(reg vm-two-packs '.isolation.jobs.image')" == "dfirswarm-full:dev-$ARCH" ]] || fail "the first of two --pack flags was dropped: job image $(reg vm-two-packs '.isolation.jobs.image')"
+[[ "$(reg vm-two-packs '.isolation.jobs.pack_profiles["windows-forensics"]')" == "disk" ]] || fail "windows-forensics is not mapped to the disk image: $(reg vm-two-packs '.isolation.jobs.pack_profiles')"
 out="$(start --isolation microvm --image registry.example/dfirswarm-custom@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --label vm-img)"
 [[ "$(reg vm-img '.isolation.image')" == "registry.example/dfirswarm-custom@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ]] || fail "--image was not honoured"
 out="$(start --label vm-default)"
@@ -278,7 +293,7 @@ out="$(SWARM_ISOLATION=host start --label host-env)"
 out="$(start --isolation host --label host-flag)"
 [[ "$(reg host-flag '.isolation.mode')" == "host" ]] || fail "--isolation host did not make a host run"
 grep -q "^Isolation:    host, unisolated" <<<"$out" || fail "a host run is not said to be unisolated: $out"
-pass "the packs choose the image, --image overrides it, a run is in microVMs unless --isolation host or SWARM_ISOLATION=host says otherwise, and a host run is said to be unisolated"
+pass "the agents boot the base and the packs choose the job images (--brains-with-packs as before), --image overrides it, a run is in microVMs unless --isolation host or SWARM_ISOLATION=host says otherwise, and a host run is said to be unisolated"
 
 # --- a run from before isolation was recorded was a host run, and stays one ---------
 mkdir -p "$TMP/old-runs"
