@@ -29,7 +29,9 @@ export DFIRSWARM_HOME="$TMP/home"
 [[ "$(python3 "$R" profile-for windows-forensics)" == disk ]] || fail "windows-forensics should be disk"
 [[ "$(python3 "$R" profile-for memory-forensics)" == memory ]] || fail "memory-forensics should be memory"
 got="$(python3 "$R" profile-for ransomware-response)"
-[[ "$got" == re ]] || fail "ransomware-response is in no profile but re covers every program it names and every library it imports; got $got"
+[[ "$got" == re ]] || fail "ransomware-response is held by re, which beats memory, a smaller image that covers it only by chance; got $got"
+[[ "$(python3 "$R" profile-for macos-forensics)" == mobile ]] || fail "macos-forensics is held by mobile, as mobile-forensics' dependency"
+[[ "$(python3 "$R" profile-for triage-collection)" == full ]] || fail "triage-collection is held by full alone and covered by nothing smaller"
 [[ "$(python3 "$R" profile-for no-such-pack)" == full ]] || fail "an unknown pack cannot be covered by anything smaller than full"
 pass "the smallest profile that holds or covers the packs is chosen, and full only when nothing smaller serves"
 
@@ -202,6 +204,10 @@ cat > "$fake/requires/host.json" <<JSON
   "not_in_image": "Only macOS has it."}
 ]}
 JSON
+# re also holds the ransomware pack: an empty one here.
+mkdir -p "$TMP/fakepacks/ransomware-response/requires"
+printf '{"id": "ransomware-response", "name": "f", "version": "1.0.0", "description": "f", "licence": "MIT", "depends": []}\n' > "$TMP/fakepacks/ransomware-response/pack.json"
+printf '{"binaries": []}\n' > "$TMP/fakepacks/ransomware-response/requires/host.json"
 python3 "$R" build re --packs "$TMP/fakepacks" --out "$TMP/ctx-kinds" --allow-nonredistributable >/dev/null || fail "a context of every pinned kind could not be written"
 spec="$TMP/ctx-kinds/spec.json"
 jq -e '.apt["bp-tool"] == false and .apt_release == {"bp-tool": "bookworm-backports"} and (.apt | has("bookworm-backports") | not)' "$spec" >/dev/null \

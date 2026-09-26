@@ -341,8 +341,11 @@ def profile_for(search, wanted: list, programs: set = frozenset(), images=PACKS)
     # smaller than full has them all; otherwise the packs decide, and the
     # probe says which program is missing.
     pool = [s for s in serving if s[3] and s[0] != "full"] or serving
-    # Fewest packs first; between two of a size, the one that holds them.
-    return min(pool, key=lambda s: (s[1], s[2]))[0]
+    # A profile made to hold the packs (other than full) first: a smaller one
+    # that happens to cover them is another pack's image (memory covered the
+    # ransomware pack once it gained yara). Then fewest packs; between two of
+    # a size, the one that holds them.
+    return min(pool, key=lambda s: (0 if s[2] == 0 and s[0] != "full" else 1, s[1], s[2]))[0]
 
 
 def installed_dirs() -> list:
