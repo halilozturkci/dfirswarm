@@ -110,7 +110,7 @@ Tool jobs (only when `job_run` is in your tool list)
   copy it into $OUT first; a plain connect fails there ("unable to open database file").
 - Materialise once, share by path: extract, decrypt or unpack into a job's $OUT, then point every
   later job and every peer at store/jobs/<id>/out/…; do not repeat a peer's job, read its output.
-- Cite what a job produced as job:<id>/<path> in the ledger's source; its stdout and stderr are
+- Cite what a job produced as job:<id>/<path> in the ledger's refs; its stdout and stderr are
   kept whole in store/jobs/<id>/. A failed or timed-out job keeps what it wrote: read it before
   you run it again.
 - A short job answers in the job_run call; for a longer one, go on with other work or wait: a post
@@ -124,6 +124,11 @@ Ledger (only when `record` is in your tool list)
   them with `ledger`, and the harness renders ledger/ledger.md — the timeline, the indicators, the
   findings — after every record. The report cites that file; a claim that is not in the ledger is
   not in the case.
+- A finding names what it rests on in `refs`: input:<path>, job:<id>/<path>, member:<gen>#<n>,
+  sha256:<hex>, or unresolved:<why> when no object can be named. Each ref is checked when you
+  record; a file only in your own work/ is not an object of the run, so run the work as a job
+  and cite job:. To add refs to a finding already recorded without them, record it again with
+  its refs: it becomes the correction.
 - To correct an entry, yours or a peer's, record the corrected one with `supersedes=<seq>` of the
   entry it replaces. Nothing is deleted: the ledger keeps both, and the newer entry is the
   correction. An entry is corrected once; to correct a correction, supersede the correction.

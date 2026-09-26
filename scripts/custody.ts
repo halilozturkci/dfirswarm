@@ -1666,7 +1666,13 @@ function summaryOf(c: Omit<Custody, "summary">, t: { traceProblem: string | null
     if (j.repaired || j.anchor_mismatch) bits.push(`the journal recorded ${j.repaired} repair(s) and ${j.anchor_mismatch} anchor mismatch(es)`);
     if (st.staging_left.length) bits.push(`${st.staging_left.length} job staging director${st.staging_left.length === 1 ? "y" : "ies"} left unsealed (${some(st.staging_left, 5, "store.staging_left")})`);
     bits.push(`${plural(st.generations, "catalogue generation")}, ${plural(st.revisions, "revision")}`);
-    if (st.findings.total) bits.push(st.findings.without_refs.length ? `${st.findings.without_refs.length} of ${plural(st.findings.total, "finding")} cite no object of the run (ledger seq ${some(st.findings.without_refs, 20, "store.findings.without_refs")}): an audit gap` : `every one of ${plural(st.findings.total, "finding")} cites an object of the run`);
+    if (st.findings.total) {
+      const f = st.findings;
+      const parts = [`${f.structured} with refs${f.refs_invalid.length ? ` (${f.refs_invalid.length} NO LONGER RESOLVE: ledger seq ${some(f.refs_invalid, 20, "store.findings.refs_invalid")})` : ""}${f.unresolved_only.length ? `, ${f.unresolved_only.length} of them saying only why no object can be named` : ""}`];
+      if (f.path_only.length) parts.push(`${f.path_only.length} naming a path in prose only`);
+      parts.push(f.without_refs.length ? `${f.without_refs.length} citing no object of the run (ledger seq ${some(f.without_refs, 20, "store.findings.without_refs")}): an audit gap` : "none citing nothing");
+      bits.push(`${plural(f.total, "standing finding")}: ${parts.join(", ")}`);
+    }
     if (st.degraded) bits.push(`the job service told the agents ${st.degraded} time(s) that workers were not running`);
     if (st.notes) bits.push(`${plural(st.notes, "examiner note")} added to the record after the run`);
     parts.push(bits.join(", "));

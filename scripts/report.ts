@@ -492,6 +492,9 @@ function exhibitCard(entry: LedgerEntry, modelOf: (agent: string) => string | un
   if (given) rows.push(`<dt>Time as given</dt><dd>${escapeHtml(given)}</dd>`);
   rows.push(`<dt>Source</dt><dd>${inline(entry.source ?? "—")}</dd>`);
   rows.push(`<dt>Evidence</dt><dd>${inline(entry.evidence ?? "—")}</dd>`);
+  // The run's objects it rests on, each checked when it was recorded.
+  if (entry.refs?.length) rows.push(`<dt>Rests on</dt><dd>${entry.refs.map((r) => `<code>${escapeHtml(r)}</code>`).join(", ")}</dd>`);
+  else if (entry.kind === "finding") rows.push(`<dt>Rests on</dt><dd>no object of the run named (no refs)</dd>`);
   rows.push(`<dt>Recorded by</dt><dd class="hash">${escapeHtml(entry.authors.join(", "))}</dd>`);
   const models = [...new Set(entry.authors.map((a) => modelOf(a)).filter((m): m is string => Boolean(m)))];
   if (models.length) rows.push(`<dt>Model</dt><dd>${escapeHtml(models.join(", "))}</dd>`);

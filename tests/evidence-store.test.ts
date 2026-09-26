@@ -234,8 +234,12 @@ test("custody's look at the store: the chain and its anchor, every committed fil
     { seq: 4, kind: "finding", source: "inputs", evidence: "sha256:" + "a".repeat(64) },
     { seq: 5, kind: "finding", source: "inputs/AF-Case2.E01 inode 126755", evidence: "icat" },
     { seq: 6, kind: "finding", source: "the image", evidence: "read store/jobs/j000012/out/sms.db" },
+    { seq: 7, kind: "finding", source: "x", evidence: "y", refs: ["job:j000404/gone.txt"] },
+    { seq: 8, kind: "finding", source: "x", evidence: "y", refs: ["unresolved:the page was only on screen"] },
+    { seq: 9, kind: "finding", source: "x", evidence: "y" },
+    { seq: 10, kind: "finding", source: "x", evidence: "y", refs: ["unresolved:checked later"], supersedes: 9 },
   ].map((e) => JSON.stringify(e)).join("\n") + "\n");
-  assert.deepEqual((await checkStore(S))!.findings, { total: 5, without_refs: [2] }, "a finding that cites no object is named; a path of the run's objects is a citation");
+  assert.deepEqual((await checkStore(S))!.findings, { total: 8, structured: 3, refs_invalid: [7], unresolved_only: [8, 10], path_only: [1, 4, 5, 6], without_refs: [2] }, "standing findings only (#9 is corrected by #10); refs resolved again; a path in prose counted apart; one that cites nothing named");
 });
 
 function createHashHex(text: string): string {

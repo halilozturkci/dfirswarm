@@ -688,8 +688,14 @@ export type StoreCheck = {
   staging_left: string[];
   generations: number;
   revisions: number;
-  /** Findings in the ledger that cite no object of the run (a job:/input:/import:/member:/sha256: reference, or a path under inputs/, store/jobs/ or catalog/gen/): an audit gap, named by seq. */
-  findings: { total: number; without_refs: number[] };
+  /**
+   * The standing findings (a corrected one counts as its correction) and
+   * what they rest on: structured refs, resolved again now (those that no
+   * longer resolve named; those that say only why none can be named, named),
+   * a path of the run's objects in the prose only, or nothing at all (an
+   * audit gap). Each list holds seqs.
+   */
+  findings: { total: number; structured: number; refs_invalid: number[]; unresolved_only: number[]; path_only: number[]; without_refs: number[] };
   /** Notes an examiner added to the record after the run (evidence-store.ts note), and the times the job service told the agents that workers were not running. */
   notes: number;
   degraded: number;
@@ -725,21 +731,34 @@ export async function checkStore(sandbox: string, before = Infinity): Promise<St
     staging_left: [],
     generations: count("generation_committed"),
     revisions: count("revision_published"),
-    findings: { total: 0, without_refs: [] },
+    findings: { total: 0, structured: 0, refs_invalid: [], unresolved_only: [], path_only: [], without_refs: [] },
     notes: count("note"),
     degraded: count("jobs_degraded"),
   };
   try {
-    for (const line of (await readFile(join(S, "ledger", "entries.jsonl"), "utf8")).split("\n")) {
-      if (!line.trim()) continue;
-      const e = JSON.parse(line) as { seq?: number; kind?: string; source?: string; evidence?: string };
-      if (e.kind !== "finding") continue;
+    const entries = (await readFile(join(S, "ledger", "entries.jsonl"), "utf8"))
+      .split("\n")
+      .filter((l) => l.trim())
+      .map((l) => JSON.parse(l) as { seq?: number; kind?: string; source?: string; evidence?: string; supersedes?: number; refs?: string[] });
+    const replaced = new Set(entries.map((e) => e.supersedes).filter((n): n is number => typeof n === "number"));
+    for (const e of entries) {
+      if (e.kind !== "finding" || replaced.has(Number(e.seq))) continue;
       out.findings.total += 1;
+      const seq = Number(e.seq);
+      if (e.refs?.length) {
+        out.findings.structured += 1;
+        let bad = false;
+        for (const r of e.refs) if (!(await resolveRef(S, r)).ok) bad = true;
+        if (bad) out.findings.refs_invalid.push(seq);
+        else if (e.refs.every((r) => r.startsWith("unresolved:"))) out.findings.unresolved_only.push(seq);
+        continue;
+      }
       // A reference (job:, input:, …) or a path of the run's own objects
-      // (inputs/…, store/jobs/<id>/…, catalog/gen/<g>/…): either names what
-      // the finding rests on; prose alone does not.
+      // (inputs/…, store/jobs/<id>/…, catalog/gen/<g>/…) in the prose: it
+      // names what the finding rests on, unchecked; prose alone does not.
       const cited = `${e.source ?? ""} ${e.evidence ?? ""}`;
-      if (!/\b(job|input|import|member|sha256):[^\s,;)]+/.test(cited) && !/(^|[\s`'"(])(inputs\/\S+|store\/jobs\/j\d{6}\S*|catalog\/gen\/g\d{4}\S*)/.test(cited)) out.findings.without_refs.push(Number(e.seq));
+      if (/\b(job|input|import|member|sha256):[^\s,;)]+/.test(cited) || /(^|[\s`'"(])(inputs\/\S+|store\/jobs\/j\d{6}\S*|catalog\/gen\/g\d{4}\S*)/.test(cited)) out.findings.path_only.push(seq);
+      else out.findings.without_refs.push(seq);
     }
   } catch {
     // no ledger

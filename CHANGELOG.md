@@ -6,6 +6,25 @@ All notable changes to this project. The format follows
 
 ## [Unreleased]
 
+### Added: findings name what they rest on (ledger refs)
+
+- `record` takes `refs`: the run's objects an entry rests on —
+  `input:<path>`, `job:<id>/<path>`, `import:<id>/<path>`,
+  `member:<generation>#<n>`, `sha256:<hex>`, or `unresolved:<why>` when none
+  can be named. Each is resolved when the entry is written; one that does
+  not resolve refuses it, with the nearest names. The refs are in the
+  entry's chained core when present (an entry without them keeps the core it
+  always had), so one added, removed or changed later breaks the chain.
+- A finding without refs is taken, with a note asking for them. Recorded
+  again with refs where the standing entry has none, it becomes that entry's
+  correction; with other refs than the standing entry's, it is merged and
+  told its refs were not added.
+- `ledger.md` and the report ("Rests on") show them. Custody resolves them
+  again and counts the standing findings by what they rest on: refs (those
+  that no longer resolve named), a path in the prose only, or nothing (an
+  audit gap). The pilot's four runs had 2/24, 11/21, 6/27 and 3/21 findings
+  citing nothing, by the prose count.
+
 ### Added: tool jobs in worker VMs, a sealed store, a catalogue that grows
 
 - **The job service** (`scripts/job-service.ts`, in the hub). A tool job — a
