@@ -694,11 +694,15 @@ export class JobService {
       lines: [
         ...head,
         ": > /job/stdout.log; : > /job/stderr.log",
+        "mkdir -p \"$OUT/probes\"",
         "while IFS=$'\\t' read -r i rid rt entry; do",
         "  [ -n \"$i\" ] || continue",
-        // The detect step's own exit status: through a pipe it was tail's, and every recipe "applied".
-        "  v=$(timeout 300 \"$rt\" \"$entry\" detect --target \"/job/target-$i.json\" 2>>/job/stderr.log); rc=$?",
-        "  v=$(printf '%s' \"$v\" | tail -n 1)",
+        // Each probe's whole output kept (the answer is its last line); the
+        // detect step's own exit status, not a pipe's.
+        "  p=\"$OUT/probes/$i-$(printf '%s' \"$rid\" | tr '/:' '__')\"",
+        "  timeout 300 \"$rt\" \"$entry\" detect --target \"/job/target-$i.json\" > \"$p.out\" 2> \"$p.err\"; rc=$?",
+        "  [ -s \"$p.err\" ] || rm -f \"$p.err\"",
+        "  v=$(tail -n 1 \"$p.out\")",
         "  printf '%s\\t%s\\t%s\\t%s\\n' \"$i\" \"$rid\" \"$rc\" \"$v\" >> \"$OUT/detect.tsv\"",
         "done < /job/detect.tsv",
         "echo 0 > /job/exit",

@@ -123,10 +123,18 @@ case "$cmd" in
     if have fsstat && fsstat "$img" 2>/dev/null | grep -q '^File System Type:'; then
       echo '{"applies": true, "why": "a filesystem at sector 0 (fsstat)"}'; exit 0
     fi
+    # A volume carved or copied out of a disk can keep the disk's offset
+    # with no table before it (Ali Hadi #10's recovered Kali prefix: ext4
+    # at sector 2048). The two usual starts are tried.
+    for o in 63 2048; do
+      if have fsstat && fsstat -o "$o" "$img" 2>/dev/null | grep -q '^File System Type:'; then
+        echo "{\"applies\": true, \"why\": \"a filesystem at sector $o with no partition table (fsstat -o $o)\"}"; exit 0
+      fi
+    done
     if ! have mmls && ! have fsstat; then
       echo '{"applies": false, "why": "mmls and fsstat are not in this image"}'; exit 1
     fi
-    echo '{"applies": false, "why": "no partition table and no filesystem at sector 0"}'; exit 1
+    echo '{"applies": false, "why": "no partition table and no filesystem at sector 0, 63 or 2048"}'; exit 1
     ;;
   run)
     [[ -n "$out" ]] || { echo '{"ok": false, "error": "run needs --out DIR"}'; exit 2; }
@@ -164,10 +172,28 @@ case "$cmd" in
         fi
       else
         rm -f "$out/.fsstat.tmp"
-        notes+=("no partition table (mmls) and no filesystem at sector 0 (fsstat)")
-        coverage unsupported "nothing"
-        echo '{"ok": false, "status": "unsupported"}'
-        exit 2
+        at=""
+        for o in 63 2048; do
+          if have fsstat && fsstat -o "$o" "$img" > "$out/.fsstat.tmp" 2>/dev/null && grep -q '^File System Type:' "$out/.fsstat.tmp"; then at="$o"; break; fi
+        done
+        if [[ -n "$at" ]]; then
+          fstype="$(sed -n 's/^File System Type: *//p' "$out/.fsstat.tmp" | head -1)"
+          rm -f "$out/.fsstat.tmp"
+          printf 'No partition table: %s holds one %s volume starting at sector %s (use the tools with -o %s).\n' "$shown" "$fstype" "$at" "$at" > "$out/partitions.txt"
+          index_row "partitions.txt" "no partition table: $shown holds one $fstype volume at sector $at"
+          volume "$img" "$shown" "$at" "$fstype (no partition table, at sector $at)"
+          if [[ ${#notes[@]} -gt 0 ]]; then
+            coverage partial "one $fstype volume at sector $at, with steps that did not finish"
+          else
+            coverage complete "one $fstype volume at sector $at"
+          fi
+        else
+          rm -f "$out/.fsstat.tmp"
+          notes+=("no partition table (mmls), and no filesystem at sector 0, 63 or 2048 (fsstat)")
+          coverage unsupported "nothing"
+          echo '{"ok": false, "status": "unsupported"}'
+          exit 2
+        fi
       fi
     fi
     # What every step wrote to stderr, listed beside its output.
