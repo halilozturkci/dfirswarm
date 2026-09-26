@@ -19,13 +19,13 @@ Depends on the Computer Forensics Base Pack.
 | Accounts | `accounts/users` |
 | File system | `filesystem/apfs` |
 
-**Four tools.** `plist_read` (binary, XML and JSON property lists, with Apple
+**Four tools.** `plist_read` (binary and XML property lists, with Apple
 dates converted — the single commonest wasted hour on this platform),
 `fsevents_parse` (the per-volume change log macOS writes whether anyone wants it
 or not, with its flags decoded and its lack of any timestamp stated rather than
 implied), `knowledgec_query` (foreground application, screen state and device
 lock, joined and converted from the Apple epoch), `unified_log` (Apple's own
-`log` command or UnifiedLogReader off a Mac, always at info and debug level).
+`log` command on macOS or Mandiant's pinned `unifiedlog_iterator` on Linux).
 
 **One goal template**: `mac-compromise.md`.
 

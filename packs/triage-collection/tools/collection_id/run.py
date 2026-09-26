@@ -3,9 +3,9 @@
 
 Every collector leaves a recognisable shape and its own record of what it did.
 That record is the fastest route to the two things that matter before any
-analysis: what was in scope, and what failed. The files that failed are usually
-the ones that were locked, which is to say in use, which is to say the
-interesting ones — and they are in a log almost nobody opens.
+analysis: what was in scope, and what failed. A failed target may be locked,
+denied, absent, or unsupported; the collector's recorded reason must be kept
+instead of inferred.
 
 The shapes:
 
@@ -61,7 +61,7 @@ def fail(message, **extra):
     raise SystemExit(1)
 
 
-def read_kape_logs(root, names_by_dir, limit):
+def read_kape_logs(root, names_by_dir):
     copied, skipped, meta = 0, [], {}
     for dirpath, names in names_by_dir:
         for name in names:
@@ -78,23 +78,22 @@ def read_kape_logs(root, names_by_dir, limit):
                         meta["copy_log"] = full
                 else:
                     meta["skip_log"] = full
-                    for row in rows[:limit]:
+                    for row in rows:
                         skipped.append({"file": row.get("SourceFile") or row.get("Source"),
                                         "why": row.get("Reason") or row.get("Message")})
     return copied, skipped, meta
 
 
-def read_uac_log(path, limit):
+def read_uac_log(path):
     failed, meta = [], {"log": path}
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
             for line in fh:
                 low = line.lower()
                 if "start date" in low or "end date" in low or "hostname" in low:
-                    meta.setdefault("header", []).append(line.strip()[:200])
+                    meta.setdefault("header", []).append(line.strip())
                 if "error" in low or "cannot" in low or "permission denied" in low:
-                    if len(failed) < limit:
-                        failed.append({"line": line.strip()[:300]})
+                    failed.append({"line": line.strip()})
     except OSError as exc:
         meta["error"] = str(exc)
     return failed, meta
@@ -110,11 +109,25 @@ def main():
         fail("root is required: the collection directory")
     if not os.path.isdir(root):
         fail("no such directory", root=root)
-    limit = args.get("limit", 200)
-    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
-        fail("limit must be a positive integer")
-
     top = set(os.listdir(root))
+    image_files = sorted(n for n in top if n.lower().endswith(
+        (".e01", ".ex01", ".dd", ".raw", ".img", ".vhd", ".vhdx", ".vmdk", ".qcow2")))
+    if image_files:
+        print(json.dumps({
+            "root": root,
+            "collector": "disk image",
+            "evidence_kind": "physical image",
+            "recognised_by": image_files,
+            "files": len(top),
+            "artefact_families_present": {},
+            "collector_detail": {"images": image_files},
+            "failed_targets": [],
+            "failed_target_count": 0,
+            "cannot_contain": [],
+            "note": "This is a disk image, not a logical triage collection. Use the disk-volumes "
+                    "recipe and the filesystem tools; logical-collection limitations do not apply.",
+        }, indent=2))
+        return
     names_by_dir, files, families = [], 0, {}
     for dirpath, dirs, names in os.walk(root):
         names_by_dir.append((dirpath, names))
@@ -127,7 +140,7 @@ def main():
 
     collector, evidence = "unknown", []
     for name, hints, test in MARKERS:
-        if test(top) or any(test(set(n)) for _d, n in names_by_dir[:200]):
+        if test(top) or any(test(set(n)) for _d, n in names_by_dir):
             collector, evidence = name, hints
             break
     if collector == "unknown" and any(n.lower() in ("c", "c$", "windows") for n in top):
@@ -135,12 +148,12 @@ def main():
 
     detail, failures = {}, []
     if collector == "KAPE":
-        copied, failures, detail = read_kape_logs(root, names_by_dir, limit)
+        copied, failures, detail = read_kape_logs(root, names_by_dir)
         detail["files_in_copy_log"] = copied
     elif collector == "UAC":
         for dirpath, names in names_by_dir:
             if "uac.log" in names:
-                failures, detail = read_uac_log(os.path.join(dirpath, "uac.log"), limit)
+                failures, detail = read_uac_log(os.path.join(dirpath, "uac.log"))
                 break
     elif collector == "Velociraptor":
         for dirpath, names in names_by_dir:
@@ -152,7 +165,7 @@ def main():
                         rows = [json.loads(l) for l in fh if l.strip()]
                     detail["uploads"] = len(rows)
                     detail["artefacts"] = sorted({r.get("_Source") for r in rows
-                                                  if isinstance(r, dict) and r.get("_Source")})[:40]
+                                                  if isinstance(r, dict) and r.get("_Source")})
                 except (OSError, ValueError) as exc:
                     detail["uploads_json_error"] = str(exc)
                 break
@@ -164,12 +177,12 @@ def main():
         "files": files,
         "artefact_families_present": dict(sorted(families.items(), key=lambda kv: -kv[1])),
         "collector_detail": detail,
-        "failed_targets": failures[:limit],
+        "failed_targets": failures,
         "failed_target_count": len(failures),
         "cannot_contain": MISSING,
-        "note": "The failed targets are usually the files that were locked, which is to say in "
-                "use, which is to say the interesting ones — put them in the report rather than "
-                "in an appendix nobody reads. Where the collector is unknown there is no manifest "
+        "note": "Failed targets and the collector's recorded reasons belong in the report; do not "
+                "infer that a failed target was locked or that failure makes it suspicious. Where "
+                "the collector is unknown there is no manifest "
                 "and no way to know what was left out, and that is itself a finding about the "
                 "evidence. Before citing anything by path, run collection_index: the paths in "
                 "this tree are not the paths that were on the machine.",

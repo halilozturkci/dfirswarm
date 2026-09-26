@@ -69,8 +69,28 @@ volume() { # volume <img> <shown name> <start> <description>
   local img="$1" shown="$2" start="$3" desc="$4" pdir r
   pdir="$out/p$start"
   mkdir -p "$pdir"
+  candidate_volumes=$((candidate_volumes + 1))
+  if ! have fsstat; then
+    notes+=("fsstat missing: cannot establish whether the candidate at sector $start is a readable filesystem")
+    return
+  fi
+  r="$(run_step "$pdir/fsstat.txt" fsstat -o "$start" "$img")"
+  if [[ "$r" != ok ]]; then
+    notes+=("candidate partition at sector $start is not a readable filesystem: $r")
+    index_row "p$start/fsstat.txt" "fsstat output for unreadable candidate at sector $start ($desc)"
+    # Keep the historical best-effort fls probes as diagnostics. They do not
+    # make the candidate a readable volume, even if they leave partial output.
+    if have fls; then
+      r="$(run_step "$pdir/bodyfile.txt" fls -m / -r -o "$start" "$img")"
+      [[ "$r" == ok ]] || notes+=("fls body file at sector $start: $r")
+      index_row "p$start/bodyfile.txt" "diagnostic body-file probe for unreadable candidate at sector $start"
+      r="$(run_step "$pdir/filelist.txt" fls -r -p -o "$start" "$img")"
+      [[ "$r" == ok ]] || notes+=("fls path list at sector $start: $r")
+      index_row "p$start/filelist.txt" "diagnostic path-list probe for unreadable candidate at sector $start"
+    fi
+    return
+  fi
   volumes=$((volumes + 1))
-  have fsstat && run_step "$pdir/fsstat.txt" fsstat -o "$start" "$img" >/dev/null
   index_row "p$start/fsstat.txt" "filesystem header at sector $start ($desc)"
   if have fls; then
     r="$(run_step "$pdir/bodyfile.txt" fls -m / -r -o "$start" "$img")"
@@ -141,21 +161,31 @@ case "$cmd" in
     mkdir -p "$out"
     : > "$out/index.tsv"
     volumes=0
+    candidate_volumes=0
     if have mmls && mmls "$img" > "$out/partitions.txt" 2> "$out/partitions.txt.stderr"; then
       [[ -s "$out/partitions.txt.stderr" ]] || rm -f "$out/partitions.txt.stderr"
       index_row "partitions.txt" "partition table of $shown (mmls)"
       while IFS= read -r line; do
         start="$(mmls_start_sector "$line")"
         desc="$(printf '%s' "$line" | awk '{ $1=$2=$3=$4=$5=""; print }' | sed 's/^ *//')"
-        case "$desc" in *NTFS*|*FAT*|*exFAT*|*Ext*|*HFS*|*APFS*|*Linux*|*Basic*data*) ;; *) continue ;; esac
+        # An extended partition is a container of other rows, and swap holds
+        # no filesystem: neither is a candidate (`*Ext*` used to take "DOS
+        # Extended" for ext). An LVM physical volume is a layer another reader
+        # opens (target-query, lvm2); it is named, not read as a filesystem.
+        case "$desc" in *Extended*|*Swap*|*swap*) continue ;; esac
+        case "$desc" in *Logical\ Volume\ Manager*|*LVM*)
+          notes+=("an LVM physical volume at sector $start ($desc): a layer TSK does not read; its logical volumes are not covered")
+          continue ;;
+        esac
+        case "$desc" in *NTFS*|*FAT*|*exFAT*|*Ext[234]*|*HFS*|*APFS*|*Linux*|*Basic*data*) ;; *) continue ;; esac
         volume "$img" "$shown" "$start" "$desc"
       done < <(grep -E '^[0-9]+:' "$out/partitions.txt")
       if [[ "$volumes" -eq 0 ]]; then
-        coverage partial "a partition table only: no partition held a filesystem this recipe lists"
+        coverage partial "a partition table and $candidate_volumes candidate partition(s), but no readable filesystem"
       elif [[ ${#notes[@]} -gt 0 ]]; then
-        coverage partial "partition table and $volumes filesystem(s), with steps that did not finish"
+        coverage partial "partition table and $volumes readable filesystem(s) from $candidate_volumes candidate partition(s), with steps that did not finish"
       else
-        coverage complete "partition table and $volumes filesystem(s)"
+        coverage complete "partition table and $volumes readable filesystem(s) from $candidate_volumes candidate partition(s)"
       fi
     else
       rm -f "$out/partitions.txt" "$out/partitions.txt.stderr"
@@ -201,7 +231,7 @@ case "$cmd" in
       rel="${f#"$out/"}"
       index_row "$rel" "what the step writing ${rel%.stderr} said on stderr"
     done < <(find "$out" -type f -name '*.stderr' | sort)
-    python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); print(json.dumps({"ok": True, "status": c["status"], "volumes": int(sys.argv[2])}))' "$out/coverage.json" "$volumes"
+    python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); print(json.dumps({"ok": True, "status": c["status"], "volumes": int(sys.argv[2]), "candidate_volumes": int(sys.argv[3])}))' "$out/coverage.json" "$volumes" "$candidate_volumes"
     ;;
   *)
     echo '{"ok": false, "error": "usage: run.sh detect --target T | run --target T --out DIR"}'

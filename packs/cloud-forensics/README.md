@@ -24,15 +24,19 @@ computed, so the claim is measurable rather than asserted.
 
 ## What this pack exists to stop
 
-**Reporting that access stopped when it did not.** A refresh token survives a
-password reset. An OAuth consent survives everything — the reset, the session
-revocation, and the device being wiped. A mailbox rule keeps working with no
-session at all. `identity/tokens` is the skill, and the goal template will not
-pass its own checks without an answer about revocation.
+**Reporting that access stopped without proving it.** Refresh-token behaviour
+depends on the identity provider, token type, and revocation action. OAuth
+consent is a separate grant and must be reviewed and revoked explicitly; a
+mailbox rule can keep acting with no interactive session. `identity/tokens` is
+the skill, and the goal template will not pass its checks without evidence of
+the relevant revocation action.
 
-**Reporting a retention gap as a finding.** The unified audit log is 90 days on
-common licences, Entra sign-ins 30, and the log arrives up to a day late. A
-quiet period at the edge of the window is the licence, not the attacker.
+**Reporting a retention gap as a finding.** Defaults vary by service, licence,
+event date, and tenant policy. For example, current Purview Audit (Standard)
+defaults to 180 days for records generated since 17 October 2023, Entra keeps
+sign-ins for 7 days on Free and 30 days on P1/P2, and CloudTrail Event History
+keeps 90 days of regional management events. Record the tenant's effective
+settings and export time before interpreting a quiet period.
 
 ## Install and use
 

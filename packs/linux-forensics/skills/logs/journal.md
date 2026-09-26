@@ -14,9 +14,10 @@ If `/var/log/journal` does not exist, the journal was never persistent on this
 machine and everything before the last boot is gone. That is a configuration
 fact worth one line in the report, not a gap in your work.
 
-`journal_export` shells out to `journalctl --file` and returns records as JSON.
-Read it on a copy: the format is binary, and `journalctl` will happily rotate or
-repair a journal it thinks is damaged.
+`journal_export` shells out to `journalctl --file`/`--directory` and returns
+every record as JSON. Keep the evidence mount read-only and retain all stderr;
+never let a repair or vacuum command near the evidence. Use `journalctl
+--verify` separately and preserve its complete result.
 
 What the journal has that `/var/log/auth.log` does not:
 

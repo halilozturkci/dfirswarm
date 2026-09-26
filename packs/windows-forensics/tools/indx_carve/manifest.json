@@ -20,7 +20,7 @@
     },
     "limit": {
       "type": "integer",
-      "description": "Maximum entries to return (default 500)"
+      "description": "Entries shown inline (default 500); every block is read, and when more entries match the whole list is written as JSON Lines and named in all_results"
     }
   },
   "runtime": "python3",
@@ -30,5 +30,5 @@
   "by": "maintainer",
   "at": "2026-09-22T14:00:00.000Z",
   "version": 1,
-  "sha256": "6e301dd8d6e23491608d72e288a7265c97340bc612ce9b251db4360a43bcba4a"
+  "sha256": "74467796e0f2a5e011374c3c705d14df55023c9caa29ccd0202c7de58c3ab5e7"
 }

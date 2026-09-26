@@ -46,6 +46,14 @@ def mtime_of(path):
         return None
 
 
+def inside(root, path):
+    """False when an absolute evidence symlink would resolve into this VM."""
+    try:
+        return os.path.commonpath((os.path.realpath(root), os.path.realpath(path))) == os.path.realpath(root)
+    except (OSError, ValueError):
+        return False
+
+
 def parse_table(path, has_user):
     out = []
     try:
@@ -54,11 +62,14 @@ def parse_table(path, has_user):
     except OSError as exc:
         return [{"file": path, "error": str(exc)}]
     stamp = mtime_of(path)
+    environment = {}
     for raw in lines:
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
-        if re.match(r"^[A-Z_]+\s*=", line):          # MAILTO=, PATH=, SHELL=
+        assignment = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$", line)
+        if assignment:          # MAILTO=, PATH=, SHELL= and implementation-specific variables
+            environment[assignment.group(1)] = assignment.group(2)
             continue
         parts = line.split()
         if parts[0] in SPECIALS:
@@ -72,7 +83,7 @@ def parse_table(path, has_user):
             user, rest = rest[0], rest[1:]
         out.append({"source": "cron", "file": path, "file_modified": stamp,
                     "schedule": schedule, "user": user, "command": " ".join(rest),
-                    "at_reboot": schedule == "@reboot"})
+                    "environment": dict(environment), "at_reboot": schedule == "@reboot"})
     return out
 
 
@@ -88,17 +99,21 @@ def parse_unit(path):
     # an empty `Key=`, and a key given empty took the next line as its value.
     # The first line that gives the key a value is the one read, as before.
     lines = text.split("\n")
-    def field(name):
+    def fields(name):
+        out = []
         for line in lines:
             key, sep, value = line.partition("=")
             if sep and key.strip() == name and value.strip():
-                return value.strip()
-        return None
+                out.append(value.strip())
+        return out
+    schedules = fields("OnCalendar") + fields("OnBootSec") + fields("OnUnitActiveSec")
+    unit = fields("Unit")
+    persistent = fields("Persistent")
     return {"source": "systemd", "file": path, "file_modified": mtime_of(path),
-            "schedule": field("OnCalendar") or field("OnBootSec") or field("OnUnitActiveSec"),
-            "unit": field("Unit") or os.path.basename(path).replace(".timer", ".service"),
-            "persistent": field("Persistent"), "command": None,
-            "at_reboot": bool(field("OnBootSec"))}
+            "schedule": schedules[0] if schedules else None, "schedules": schedules,
+            "unit": unit[0] if unit else os.path.basename(path).replace(".timer", ".service"),
+            "persistent": persistent[0] if persistent else None, "command": None,
+            "at_reboot": bool(fields("OnBootSec"))}
 
 
 def main():
@@ -109,11 +124,11 @@ def main():
     root = args.get("root")
     if not isinstance(root, str) or not root:
         fail("root is required: an extracted file system root")
+    if os.path.islink(root):
+        fail("refusing a symlink root: pass the extracted evidence directory", root=root,
+             target=os.readlink(root))
     if not os.path.isdir(root):
         fail("no such directory", root=root)
-    limit = args.get("limit", 500)
-    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
-        fail("limit must be a positive integer")
     pattern = None
     if args.get("contains"):
         try:
@@ -121,60 +136,72 @@ def main():
         except re.error as exc:
             fail("contains is not a valid regex", reason=str(exc))
 
-    entries, looked = [], []
+    entries, looked, skipped_symlinks = [], [], []
     def note(rel):
         looked.append(rel)
 
     for rel in SYSTEM_TABLES:
         full = os.path.join(root, rel); note(rel)
-        if os.path.isfile(full):
+        if os.path.islink(full) or not inside(root, full):
+            if os.path.lexists(full):
+                skipped_symlinks.append({"file": full, "target": os.readlink(full) if os.path.islink(full) else "outside root"})
+        elif os.path.isfile(full):
             entries += parse_table(full, has_user=True)
     for rel in SYSTEM_DIRS:
         full = os.path.join(root, rel); note(rel)
-        if os.path.isdir(full):
+        if inside(root, full) and os.path.isdir(full):
             for name in sorted(os.listdir(full)):
                 target = os.path.join(full, name)
-                if os.path.isfile(target):
+                if os.path.islink(target):
+                    skipped_symlinks.append({"file": target, "target": os.readlink(target)})
+                elif os.path.isfile(target):
                     entries += parse_table(target, has_user=True)
     for rel in RUN_PARTS:
         full = os.path.join(root, rel); note(rel)
-        if os.path.isdir(full):
+        if inside(root, full) and os.path.isdir(full):
             for name in sorted(os.listdir(full)):
                 target = os.path.join(full, name)
-                if os.path.isfile(target):
+                if os.path.islink(target):
+                    skipped_symlinks.append({"file": target, "target": os.readlink(target)})
+                elif os.path.isfile(target):
                     entries.append({"source": "run-parts", "file": target,
                                     "file_modified": mtime_of(target),
                                     "schedule": os.path.basename(rel).replace("cron.", "@"),
                                     "user": "root", "command": target, "at_reboot": False})
     for rel in SPOOLS:
         full = os.path.join(root, rel); note(rel)
-        if os.path.isdir(full):
+        if inside(root, full) and os.path.isdir(full):
             for name in sorted(os.listdir(full)):
                 target = os.path.join(full, name)
-                if os.path.isfile(target):
+                if os.path.islink(target):
+                    skipped_symlinks.append({"file": target, "target": os.readlink(target)})
+                elif os.path.isfile(target):
                     for entry in parse_table(target, has_user=False):
                         entry["user"] = entry.get("user") or name
                         entries.append(entry)
     for rel in UNIT_DIRS:
         full = os.path.join(root, rel); note(rel)
-        if os.path.isdir(full):
+        if inside(root, full) and os.path.isdir(full):
             for dirpath, _dirs, names in os.walk(full):
                 for name in sorted(names):
                     if name.endswith(".timer"):
-                        entries.append(parse_unit(os.path.join(dirpath, name)))
+                        target = os.path.join(dirpath, name)
+                        if os.path.islink(target):
+                            skipped_symlinks.append({"file": target, "target": os.readlink(target)})
+                        else:
+                            entries.append(parse_unit(target))
 
     if pattern:
         entries = [e for e in entries
                    if pattern.search((e.get("command") or "") + " " + (e.get("unit") or ""))]
-    truncated = len(entries) > limit
-    kept = entries[:limit]
     print(json.dumps({
         "root": root,
         "locations_checked": looked,
-        "entries": kept,
-        "entry_count": len(kept),
-        "at_reboot": sum(1 for e in kept if e.get("at_reboot")),
-        "truncated": truncated,
+        "entries": entries,
+        "entry_count": len(entries),
+        "at_reboot": sum(1 for e in entries if e.get("at_reboot")),
+        "complete": not skipped_symlinks and not any("error" in entry for entry in entries),
+        "skipped_symlinks": skipped_symlinks,
         "note": "file_modified is the thing to read first: a cron directory where every file "
                 "dates from the build and one dates from last month answers the question on its "
                 "own. An @reboot entry is persistence with no schedule. A systemd timer only says "

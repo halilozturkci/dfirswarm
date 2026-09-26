@@ -12,7 +12,7 @@ the evidence for each: which function, which instructions, which imports. It is
 the closest thing to an automated "what is this for", and its output maps to
 ATT&CK techniques.
 
-    capa -j sample.bin        the whole report, as JSON
+    capa -j sample.bin        the whole report, as JSON (the image build includes the rules)
     capa -v sample.bin        with the address behind each match
 
 **Quote the evidence, not the label.** `capa` saying "create a process" is a

@@ -7,8 +7,9 @@ tools: [plist_read, knowledgec_query]
 requires_host: []
 ---
 
-macOS has no `/etc/passwd` worth reading. Local accounts live in a directory
-service, one property list per user:
+On modern macOS, `/etc/passwd` is primarily a static compatibility file rather
+than the authoritative local-account database. Local accounts live in a
+directory service, one property list per user:
 
     /private/var/db/dslocal/nodes/Default/users/<name>.plist
         uid, gid, home, shell, generateduid, and the ShadowHashData blob
@@ -16,16 +17,19 @@ service, one property list per user:
         who is an administrator, by generateduid
     /Library/Preferences/com.apple.loginwindow.plist
         autoLoginUser, and the last user to log in
-    /var/log/asl/  and the unified log
-        the authentications themselves
+    /var/log/asl/ on older releases, and the unified log on current releases
+        authentication evidence, subject to retention
 
-UID 0 is root, 1 to 500 are system accounts, and people start at 501. A second
-account at UID 0, or a "system" account with a real home directory, is the same
-finding as on any Unix.
+By longstanding convention, UID 0 is root, low UIDs are generally service
+accounts, and local interactive users often begin at 501. Managed, migrated and
+network accounts can break that pattern, so treat UID range as triage rather
+than attribution. A second account at UID 0, or a low-UID account with an
+interactive shell and user home directory, still warrants investigation.
 
-`ShadowHashData` holds the password verifier. Its presence is normal; what
-matters forensically is the plist's own modification time, which moves when the
-password changes.
+`ShadowHashData` holds password-verifier data. Its presence is normal. A user
+plist modification time may move with an account or password change, but it is
+not a password-change audit record; corroborate it with directory-service and
+authentication evidence.
 
 **Administrator is membership of the `admin` group**, recorded by the account's
 `generateduid` rather than by name. Resolve it, or you will miss an account that

@@ -1383,3 +1383,35 @@ test("catalog_search lists the generations, tells why a partial one is partial, 
     assert.match(JSON.parse(r.stdout || r.stderr).error, /g0004 is not in catalogue revision 1/, "a generation the revision does not list is not read by its path either");
   });
 });
+
+test("a paging library tool runs from a copy of its own directory, as a run seeds it, and keeps every row", async () => {
+  // A run copies each tool's directory into tools/ and nothing beside it, and
+  // the manifest's sha256 covers the one script: a helper module next to the
+  // tools would be missing in the run and outside the seal.
+  const lessons = await readdir(LIB, { withFileTypes: true });
+  assert.deepEqual(lessons.filter((d) => d.isFile() && d.name.endsWith(".py")).map((d) => d.name), [], "no shared module beside the tools");
+  const pagers: string[] = [];
+  for (const d of lessons.filter((x) => x.isDirectory())) {
+    const src = await readFile(join(LIB, d.name, "run.py"), "utf8").catch(() => "");
+    assert.doesNotMatch(src, /from _output import|sys\.path\.insert/, `${d.name} imports from outside its directory`);
+    if (src.includes("class LosslessPage")) pagers.push(src.slice(src.indexOf("class LosslessPage"), src.indexOf("return result", src.indexOf("class LosslessPage"))));
+  }
+  assert.ok(pagers.length >= 10, "the paging tools carry their pager");
+  assert.equal(new Set(pagers).size, 1, "every tool carries the same pager");
+  await withCwd(async (cwd) => {
+    await mkdir(join(cwd, "tools"), { recursive: true });
+    const copy = join(cwd, "tools", "catalog_grep");
+    await mkdir(copy);
+    for (const f of ["run.py", "manifest.json"]) await writeFile(join(copy, f), await readFile(join(LIB, "catalog_grep", f)));
+    const lines = Array.from({ length: 30 }, (_, i) => `r/r ${i + 1}: Windows/Prefetch/APP${i + 1}.EXE.pf`);
+    await writeFile(join(cwd, "filelist.txt"), `${lines.join("\n")}\n`);
+    const r = await runPy(join(copy, "run.py"), cwd, { pattern: "prefetch", path: "filelist.txt", limit: 5 }, undefined, { AGENT_ID: "sab12301" });
+    assert.equal(r.code, 0, r.stderr + r.stdout);
+    const got = JSON.parse(r.stdout);
+    assert.equal(got.matched, 30);
+    assert.equal(got.returned, 5);
+    assert.match(got.all_results, /^work\/sab12301\/tool-output\/catalog_grep-[0-9a-f]{16}\.jsonl$/);
+    const kept = (await readFile(join(cwd, got.all_results), "utf8")).trimEnd().split("\n").map((l) => JSON.parse(l));
+    assert.equal(kept.length, 30, "every match is in the file");
+  });
+});

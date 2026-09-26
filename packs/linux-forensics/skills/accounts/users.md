@@ -14,10 +14,12 @@ requires_host: []
     ~/.ssh/authorized_keys           who may log in without one
     /var/log/wtmp, btmp, lastlog     successful logins, failed logins, last seen
 
-UID ranges tell a story before you read anything else. 0 is root, 1 to 999 are
-system accounts, and 1000 upward are people. **A second account with UID 0 is
-not a normal configuration**; nor is a system account with a login shell, nor a
-"system" account with a home directory under `/home`.
+UID ranges tell a story before you read anything else. UID 0 is root. The
+system/human boundary is distribution and policy specific: read `SYS_UID_MIN`,
+`SYS_UID_MAX`, `UID_MIN` and `UID_MAX` in `/etc/login.defs` instead of assuming
+999/1000. **A second account with UID 0 is not a normal configuration**; nor is
+a service account with an interactive shell or an unexplained home under
+`/home`.
 
 The `shadow` third field is the date of the last password change, in **days**
 since 1970. A system account whose password was changed last Tuesday is the
@@ -34,8 +36,10 @@ Three additions that need no account at all:
   the host file system inside a container.
 
 `utmp_parse` reads the binary login databases: `wtmp` for successful sessions
-with the source address, `btmp` for failures, `lastlog` for the last time each
-UID was seen. They are the counterweight to text logs, and an attacker who
+with the source address, `btmp` for failures, and the distinct 32/64-bit
+`lastlog` layouts for the last record stored per UID. Pass the evidence's
+`/etc/passwd` when reading lastlog so UID slots are named. They are the
+counterweight to text logs, and an attacker who
 cleans `auth.log` frequently forgets them. When `wtmp` and `auth.log` disagree,
 say so; that disagreement is evidence in itself.
 

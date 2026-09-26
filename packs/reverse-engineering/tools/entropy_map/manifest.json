@@ -16,7 +16,7 @@
     },
     "max_windows": {
       "type": "integer",
-      "description": "Maximum windows to return in the profile (default 256)"
+      "description": "Inline preview rows when OUT can hold the complete entropy-windows.tsv (default 256); ignored when no lossless output directory exists"
     }
   },
   "runtime": "python3",
@@ -26,5 +26,5 @@
   "by": "maintainer",
   "at": "2026-09-22T18:00:00.000Z",
   "version": 1,
-  "sha256": "1f39cad7200e59eff1a2e7764b30addb455b92ea254c955dcb014a310293ba53"
+  "sha256": "85cc33f276517752e0c6dd48eb8c9e0fdbb96018350b1a2ce7bba8c466487b56"
 }

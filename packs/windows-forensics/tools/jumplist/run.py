@@ -23,6 +23,12 @@ already handles them properly.
 The file name's leading hex is the application id. It identifies the
 application, and published lists map the common ones; quote the id and the
 source you resolved it with rather than asserting the application from memory.
+
+Every link structure is read and, with out_dir, written out. The page of links
+returned inline for each file is `limit` long, and when there are more the whole
+list is written to a file the output names. A link file already in out_dir is
+never overwritten with different bytes: two jump lists with the same name in
+different folders both keep their links.
 """
 import binascii
 import datetime
@@ -31,6 +37,82 @@ import os
 import re
 import struct
 import sys
+from pathlib import Path
+
+# Lossless paging (the same in every library tool that pages): the page an
+# agent reads stays small, and when there are more rows the whole result is
+# written as JSON Lines under work/<agent>/tool-output and named.
+import hashlib
+import json
+import os
+import re
+import tempfile
+from pathlib import Path
+
+
+class LosslessPage:
+    def __init__(self, tool: str, key: object, limit: int):
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise ValueError("limit must be a positive integer")
+        self.tool = re.sub(r"[^A-Za-z0-9_.-]", "_", tool)
+        self.limit = limit
+        self.page: list[object] = []
+        self.total = 0
+        self._out = None
+        self._tmp: Path | None = None
+        digest = hashlib.sha256(
+            json.dumps(key, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()[:16]
+        name = f"{self.tool}-{digest}.jsonl"
+        job, out = os.environ.get("JOB_ID"), os.environ.get("OUT")
+        if job and out:
+            # In a job only $OUT is written, and it is sealed as the job's
+            # output: the whole result is cited from there.
+            self.path = Path(out) / "tool-output" / name
+            self.shown = "store/jobs/%s/out/tool-output/%s" % (re.sub(r"[^A-Za-z0-9_.-]", "_", job), name)
+        else:
+            agent = re.sub(
+                r"[^A-Za-z0-9_.-]", "_", os.environ.get("AGENT_ID") or "tool"
+            )
+            self.path = Path("work") / agent / "tool-output" / name
+            self.shown = str(self.path)
+
+    def _write(self, row: object) -> None:
+        assert self._out is not None
+        self._out.write(json.dumps(row, ensure_ascii=False, default=str))
+        self._out.write("\n")
+
+    def add(self, row: object) -> None:
+        self.total += 1
+        if len(self.page) < self.limit:
+            self.page.append(row)
+            return
+        if self._out is None:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            fd, name = tempfile.mkstemp(
+                dir=self.path.parent, prefix=f".{self.path.name}-"
+            )
+            self._tmp = Path(name)
+            self._out = os.fdopen(fd, "w", encoding="utf-8")
+            for kept in self.page:
+                self._write(kept)
+        self._write(row)
+
+    def finish(self) -> dict:
+        result = {
+            "matched": self.total,
+            "returned": len(self.page),
+            "truncated": self.total > len(self.page),
+        }
+        if self._out is not None:
+            self._out.flush()
+            os.fsync(self._out.fileno())
+            self._out.close()
+            assert self._tmp is not None
+            os.replace(self._tmp, self.path)
+            result["all_results"] = self.shown
+            result["all_results_format"] = "JSON Lines, one complete result per line"
+        return result
 
 FILETIME_EPOCH = datetime.datetime(1601, 1, 1, tzinfo=datetime.timezone.utc)
 LNK_MAGIC = bytes([0x4C, 0x00, 0x00, 0x00]) + binascii.unhexlify("0114020000000000c000000000000046")
@@ -112,13 +194,60 @@ def split_lnks(data):
     return out
 
 
+def resolve_output(out):
+    """Where `out` really lands, refusing anything outside the run directory.
+
+    A string check is not enough: `work/../inputs/x` and an absolute path
+    both name a file the tool must not write, and neither starts with
+    "inputs/". Resolving first and comparing directories is what actually
+    holds, and the read-only inputs are the one place extracted bytes must
+    never appear -- a later integrity check would report the evidence as
+    modified.
+    """
+    root = Path.cwd().resolve()
+    dest = (root / out).resolve() if not Path(out).is_absolute() else Path(out).resolve()
+    if dest == root or root not in dest.parents:
+        fail("out_dir must be a directory inside the run directory", out_dir=str(out))
+    inputs = root / "inputs"
+    if dest == inputs or inputs in dest.parents:
+        fail("out_dir cannot be under inputs/", out_dir=str(out))
+    return dest
+
+
 def write_stream(out_dir, name, payload):
+    """Write one link structure, and never over another one.
+
+    The name is the source file's name and the stream's, whole. When that file
+    already holds different bytes (a jump list of the same name from another
+    folder, or two names that differ only in characters a file name cannot
+    carry) the next free numbered name is used instead.
+    """
     os.makedirs(out_dir, exist_ok=True)
-    safe = re.sub(r"[^A-Za-z0-9._-]", "_", name)[:80] or "stream"
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", name) or "stream"
+    if len(safe) > 200:
+        # A file system refuses a name much longer than this. The digest keeps
+        # the shortened name unique; the whole name stays in the output.
+        safe = safe[:160] + "-" + hashlib.sha256(name.encode("utf-8")).hexdigest()[:16]
     target = os.path.join(out_dir, safe + ".lnk")
+    n = 2
+    while os.path.exists(target):
+        with open(target, "rb") as fh:
+            if fh.read() == payload:
+                return target
+        target = os.path.join(out_dir, "%s-%d.lnk" % (safe, n))
+        n += 1
     with open(target, "wb") as fh:
         fh.write(payload)
     return target
+
+
+def page_links(result, links):
+    page = links.finish()
+    result["links"] = links.page
+    result["link_count"] = page["matched"]
+    result.update(page)
+    if page["truncated"]:
+        result["links_truncated"] = True
 
 
 def read_automatic(path, out_dir, limit):
@@ -139,6 +268,7 @@ def read_automatic(path, out_dir, limit):
         else:
             result["problems"] = ["there is no DestList stream in this file"]
         by_stream = {e["stream"]: e for e in result.get("entries", [])}
+        links = LosslessPage("jumplist", [path, "links", out_dir], limit)
         for name in names:
             if name == "DestList":
                 continue
@@ -150,10 +280,8 @@ def read_automatic(path, out_dir, limit):
                 entry["last_access"] = known["last_access"]
             if out_dir and entry["is_link"]:
                 entry["written_to"] = write_stream(out_dir, os.path.basename(path) + "-" + name, payload)
-            result["links"].append(entry)
-            if len(result["links"]) >= limit:
-                result["links_truncated"] = True
-                break
+            links.add(entry)
+        page_links(result, links)
     finally:
         ole.close()
     return result
@@ -163,14 +291,13 @@ def read_custom(path, out_dir, limit):
     with open(path, "rb") as fh:
         data = fh.read()
     result = {"file": path, "format": "customDestinations-ms", "links": []}
+    links = LosslessPage("jumplist", [path, "links", out_dir], limit)
     for i, (offset, payload) in enumerate(split_lnks(data)):
         entry = {"offset": offset, "bytes": len(payload), "is_link": True}
         if out_dir:
             entry["written_to"] = write_stream(out_dir, "%s-%04d" % (os.path.basename(path), i), payload)
-        result["links"].append(entry)
-        if len(result["links"]) >= limit:
-            result["links_truncated"] = True
-            break
+        links.add(entry)
+    page_links(result, links)
     if not result["links"]:
         result["problems"] = ["no link structure header found in this file"]
     return result
@@ -193,10 +320,13 @@ def main():
     out_dir = args.get("out_dir")
     if out_dir is not None and (not isinstance(out_dir, str) or not out_dir):
         fail("out_dir must be a directory path under work/")
+    if out_dir is not None:
+        out_dir = str(resolve_output(out_dir).relative_to(Path.cwd().resolve()))
 
     targets = []
     if os.path.isdir(path):
-        for root, _dirs, names in os.walk(path):
+        for root, dirs, names in os.walk(path):
+            dirs.sort()                                   # the same order on every run
             for name in sorted(names):
                 if name.lower().endswith(("destinations-ms",)):
                     targets.append(os.path.join(root, name))

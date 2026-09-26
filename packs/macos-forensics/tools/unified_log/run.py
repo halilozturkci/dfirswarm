@@ -1,22 +1,6 @@
 #!/usr/bin/env python3
-"""Read the unified log, on a Mac or off one.
-
-macOS stopped writing text logs years ago; /var/log/system.log is nearly empty
-and the real record is a compressed binary format under /var/db/diagnostics,
-whose entries hold references into /var/db/uuidtext rather than message text.
-Both directories are needed. A collection that took one and left the other
-produces entries whose message is a placeholder, and that is a limit on the
-evidence rather than on the analysis — so it is reported as one.
-
-Two readers exist and this uses whichever is present:
-
-    log        Apple's own, macOS only, and the only one that resolves the
-               format strings exactly as the system would have
-    UnifiedLogReader.py   for an examination host that is not a Mac
-
-`--info --debug` are always passed. Without them the default level hides most of
-what an investigation wants and says nothing about having done so.
-"""
+"""Read Apple unified logs without hiding parser failures or dropping output."""
+import hashlib
 import json
 import os
 import shutil
@@ -34,6 +18,26 @@ def fail(message, **extra):
     raise SystemExit(1)
 
 
+def digest(path):
+    value = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for block in iter(lambda: fh.read(1 << 20), b""):
+            value.update(block)
+    return value.hexdigest()
+
+
+def merge_logarchive(path, scratch):
+    """Return a Mandiant logarchive path, copying only a /var/db layout."""
+    diagnostics = os.path.join(path, "diagnostics")
+    uuidtext = os.path.join(path, "uuidtext")
+    if not (os.path.isdir(diagnostics) and os.path.isdir(uuidtext)):
+        return path, False
+    os.makedirs(scratch, exist_ok=False)
+    shutil.copytree(uuidtext, scratch, dirs_exist_ok=True, symlinks=True)
+    shutil.copytree(diagnostics, scratch, dirs_exist_ok=True, symlinks=True)
+    return scratch, True
+
+
 def main():
     try:
         args = json.load(sys.stdin)
@@ -46,7 +50,7 @@ def main():
         fail("no such file or directory", path=path)
     out_dir = args.get("out_dir")
     if not isinstance(out_dir, str) or not out_dir:
-        fail("out_dir is required: a directory under work/ for the reader's own output")
+        fail("out_dir is required: a directory under work/ for the reader's complete output")
     limit = args.get("limit", 500)
     if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
         fail("limit must be a positive integer")
@@ -54,88 +58,104 @@ def main():
     if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout < 10:
         fail("timeout_seconds must be an integer of at least 10")
 
-    apple = shutil.which("log")
-    reader = shutil.which("UnifiedLogReader.py") or shutil.which("UnifiedLogReader")
-    if not apple and not reader:
-        fail("no unified log reader on PATH",
-             looked_for=["log", "UnifiedLogReader.py"],
-             install={"log": "part of macOS",
-                      "UnifiedLogReader": "git clone https://github.com/ydkhatri/UnifiedLogReader, then "
-                                          "python3 -m pip install biplist lz4 and run scripts/UnifiedLogReader.py "
-                                          "from the clone (PyPI has no UnifiedLogReader project)"},
-             note="Off a Mac, Apple's log command does not exist and UnifiedLogReader is the route.")
+    apple = shutil.which("log") if sys.platform == "darwin" else None
+    iterator = shutil.which("unifiedlog_iterator")
+    if not apple and not iterator:
+        fail("no unified log reader on PATH", looked_for=["log (macOS)", "unifiedlog_iterator"],
+             note="Linux images should install Mandiant macos-UnifiedLogs v0.7.0 or later.")
 
     os.makedirs(out_dir, exist_ok=True)
-    missing_uuidtext = None
-    if os.path.isdir(path):
-        has = {n.lower() for n in os.listdir(path)}
-        if "diagnostics" in has and "uuidtext" not in has:
-            missing_uuidtext = ("diagnostics is present and uuidtext is not: entries will carry "
-                                "placeholders instead of messages")
+    entries, unparsed = [], 0
+    stderr_path = os.path.join(out_dir, "unifiedlog.stderr")
+    status = "complete"
+    scratch = os.path.join(out_dir, ".logarchive-input")
+    if os.path.lexists(scratch):
+        fail("out_dir already contains .logarchive-input", path=scratch)
 
     if apple:
         engine = "log"
+        output_path = os.path.join(out_dir, "unifiedlogs.ndjson")
         argv = [apple, "show", "--archive", path, "--style", "ndjson", "--info", "--debug"]
         for flag, key in (("--predicate", "predicate"), ("--start", "start"), ("--end", "end")):
             if args.get(key):
                 argv += [flag, str(args[key])]
+        try:
+            with open(output_path, "w", encoding="utf-8", newline="\n") as out, \
+                    open(stderr_path, "w", encoding="utf-8", newline="\n") as err:
+                proc = subprocess.run(argv, stdout=out, stderr=err, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            fail("log did not finish in time", after_seconds=timeout,
+                 output=output_path, stderr=stderr_path, command=" ".join(argv))
+        entry_count = 0
+        with open(output_path, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("["):
+                    continue
+                entry_count += 1
+                if len(entries) >= limit:
+                    continue
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    unparsed += 1
+                    continue
+                entries.append({k: row.get(k) for k in KEEP if row.get(k) is not None})
     else:
-        engine = "UnifiedLogReader"
-        # Its four places: uuidtext, timesync, the tracev3 files, and where to
-        # write. A .logarchive holds all three itself (its README: point
-        # uuidtext_path at the archive, timesync is inside it); a copy of
-        # /private/var/db holds uuidtext beside diagnostics.
-        if os.path.isdir(os.path.join(path, "diagnostics")):
-            places = [os.path.join(path, "uuidtext"), os.path.join(path, "diagnostics", "timesync"),
-                      os.path.join(path, "diagnostics")]
-        else:
-            places = [path, os.path.join(path, "timesync"), path]
-        argv = [reader, *places, out_dir, "-f", "SQLITE"]
+        engine = "unifiedlog_iterator"
+        if any(args.get(k) for k in ("predicate", "start", "end")):
+            fail("predicate/start/end require Apple's log command; unifiedlog_iterator keeps the full JSONL for downstream queries")
+        output_path = os.path.join(out_dir, "unifiedlogs.jsonl")
+        made_scratch = False
+        try:
+            input_path, made_scratch = merge_logarchive(path, scratch)
+            argv = [iterator, "--mode", "log-archive", "--input", input_path,
+                    "--output", output_path, "--format", "jsonl"]
+            with open(stderr_path, "w", encoding="utf-8", newline="\n") as err:
+                proc = subprocess.run(argv, stdout=subprocess.DEVNULL, stderr=err,
+                                      text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            fail("unifiedlog_iterator did not finish in time", after_seconds=timeout,
+                 output=output_path, stderr=stderr_path, command=" ".join(argv))
+        finally:
+            if made_scratch:
+                shutil.rmtree(scratch, ignore_errors=True)
+        entry_count = 0
+        if os.path.isfile(output_path):
+            with open(output_path, encoding="utf-8", errors="replace") as fh:
+                entry_count = sum(1 for line in fh if line.strip())
+        if proc.returncode != 0:
+            status = "partial" if entry_count else "failed"
 
-    try:
-        proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        fail("%s did not finish in time" % engine, after_seconds=timeout, command=" ".join(argv))
-
-    entries, unparsed = [], 0
-    if engine == "log":
-        for line in (proc.stdout or "").splitlines():
-            line = line.strip()
-            if not line or line.startswith("["):
-                continue
-            try:
-                row = json.loads(line)
-            except ValueError:
-                unparsed += 1
-                continue
-            entries.append({k: row.get(k) for k in KEEP if row.get(k) is not None})
-            if len(entries) >= limit:
-                break
-        if not entries and proc.returncode != 0:
-            fail("log refused this archive", exit_code=proc.returncode,
-                 stderr=(proc.stderr or "").strip()[-600:], command=" ".join(argv))
-    else:
-        found = [os.path.join(out_dir, n) for n in sorted(os.listdir(out_dir))]
-        if not found:
-            fail("UnifiedLogReader wrote nothing", exit_code=proc.returncode,
-                 stderr=(proc.stderr or "").strip()[-600:], command=" ".join(argv))
-
-    print(json.dumps({
+    if proc.returncode != 0:
+        status = "partial" if entry_count else "failed"
+    stderr_bytes = os.path.getsize(stderr_path) if os.path.isfile(stderr_path) else 0
+    if not stderr_bytes:
+        try:
+            os.unlink(stderr_path)
+        except OSError:
+            pass
+        stderr_path = None
+    result = {
         "path": path,
         "engine": engine,
+        "status": status,
+        "exit_code": proc.returncode,
         "command": " ".join(argv),
-        "out_dir": out_dir,
+        "output": output_path,
+        "output_sha256": digest(output_path) if os.path.isfile(output_path) else None,
+        "entry_count": entry_count,
         "entries": entries,
-        "entry_count": len(entries),
+        "entries_inline": len(entries),
         "unparsed_lines": unparsed,
-        "warning": missing_uuidtext,
-        "reader_said": (proc.stderr or "").strip()[-400:] or None,
-        "note": "Retention is days on a busy machine, not months, and it is not usefully "
-                "configurable: an event three weeks before acquisition is usually gone, and its "
-                "absence means nothing. Quote the predicate with any line you cite so a reviewer "
-                "can re-run it. Where the engine is UnifiedLogReader the entries are in out_dir, "
-                "not inline.",
-    }, indent=2, default=str))
+        "stderr": stderr_path,
+        "stderr_bytes": stderr_bytes,
+        "note": "The complete parser output is named in output; inline entries are only a preview. "
+                "Retention varies with log volume and policy, so absence must be scoped to the archive actually acquired.",
+    }
+    print(json.dumps(result, indent=2, default=str))
+    if proc.returncode != 0:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

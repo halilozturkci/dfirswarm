@@ -4,7 +4,7 @@
       "name": "uac",
       "package": "UAC",
       "optional": true,
-      "why": "Collect from a live Unix-like host — Linux, macOS, ESXi, BSD, Solaris — driven by YAML artefact definitions, with no agent and no dependencies.",
+      "why": "Collect from a live Unix-like host — Linux, macOS, ESXi, BSD, Solaris — with a portable shell collector driven by YAML artefact definitions.",
       "install": {
         "brew": "https://github.com/tclahr/uac",
         "apt": "pinned download 3.4.0 (install.download)",

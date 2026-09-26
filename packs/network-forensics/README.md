@@ -7,10 +7,11 @@ Depends on the Computer Forensics Base Pack.
 
 ## What it carries
 
-**Six skills**: `capture/what-you-have`, `sessions/reconstruct`,
-`metadata/dns-tls`, `beacons/periodicity`, `exfil/volume`, `correlate/host`.
+**Eight skills**: `capture/what-you-have`, `capture/carve-from-images`,
+`sessions/reconstruct`, `metadata/dns-tls`, `beacons/periodicity`,
+`exfil/volume`, `logs/web-proxy-firewall`, `correlate/host`.
 
-**Three tools.** `pcap_summary` reads classic pcap and pcapng with **no external
+**Six tools.** `pcap_summary` reads classic pcap and pcapng with **no external
 dependency at all** — the parser is written here, because a forensic host
 frequently has no Wireshark and the first four questions about a capture must
 not depend on one. It returns the link type, the snap length, the time range,
@@ -18,7 +19,15 @@ conversations with bytes each way grouped per session or per endpoint, and the
 connection start times a beacon check needs. `beacon_score` takes those times
 and measures how tightly the intervals cluster around their own median, which is
 what catches a jittered implant that a "are the intervals identical" test
-misses. `zeek_run` drives Zeek where the host has it.
+misses. `zeek_run` drives Zeek where the host has it. `suricata_run` applies a
+named local rules file and keeps the complete EVE log. `pcap_extract` performs
+Wireshark object export and writes a provenance-and-hash index without placing
+binary content in model output. `network_log_summary` parses Apache/Nginx access
+logs, Squid access logs and common firewall key/value records into a complete
+normalised TSV plus an aggregate summary.
+
+**One catalogue recipe.** `network-capture` detects pcap and pcapng by magic,
+then writes lossless packet, DNS, HTTP and TLS listings plus capture metadata.
 
 **One goal template**: `what-left-the-network.md`.
 

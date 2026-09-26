@@ -62,7 +62,15 @@ def main():
 
     notes, digests = [], {}
     onions, emails, urls, wallets, identifiers, toxes = set(), set(), set(), set(), set(), set()
-    scanned = 0
+    scanned = note_count = 0
+    earliest = None
+    out_dir = os.environ.get("OUT")
+    complete_path = None
+    complete = None
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+        complete_path = os.path.join(out_dir, "ransom-notes.jsonl")
+        complete = open(complete_path, "w", encoding="utf-8")
     for dirpath, dirs, names in os.walk(root):
         dirs[:] = [d for d in dirs if d not in ("proc", "sys", "dev")]
         for name in sorted(names):
@@ -86,13 +94,13 @@ def main():
                 text = blob.decode("utf-16-le", "replace")
             found = {
                 "onion": sorted({m.group(0) for m in ONION.finditer(text)}),
-                "email": sorted(set(EMAIL.findall(text)))[:10],
-                "url": sorted({u for u in URL.findall(text)})[:10],
-                "bitcoin": sorted(set(BITCOIN.findall(text)))[:5],
-                "monero": sorted(set(MONERO.findall(text)))[:5],
-                "ethereum": sorted(set(ETHEREUM.findall(text)))[:5],
-                "tox": sorted(set(TOX.findall(text)))[:3],
-                "identifier": sorted({m.group(1) for m in IDENTIFIER.finditer(text)})[:5],
+                "email": sorted(set(EMAIL.findall(text))),
+                "url": sorted({u for u in URL.findall(text)}),
+                "bitcoin": sorted(set(BITCOIN.findall(text))),
+                "monero": sorted(set(MONERO.findall(text))),
+                "ethereum": sorted(set(ETHEREUM.findall(text))),
+                "tox": sorted(set(TOX.findall(text))),
+                "identifier": sorted({m.group(1) for m in IDENTIFIER.finditer(text)}),
             }
             onions.update(found["onion"]); emails.update(found["email"])
             urls.update(found["url"]); identifiers.update(found["identifier"])
@@ -105,28 +113,40 @@ def main():
                     os.path.getmtime(full), datetime.timezone.utc).isoformat().replace("+00:00", "Z")
             except OSError:
                 modified = None
-            if len(notes) < limit:
-                notes.append({"file": full, "bytes": size, "modified": modified,
-                              "sha256": digest,
-                              "identifiers": {k: v for k, v in found.items() if v},
-                              "first_lines": [l.strip() for l in text.splitlines() if l.strip()][:4]})
+            note = {"file": full, "bytes": size, "modified": modified,
+                    "sha256": digest,
+                    "identifiers": {k: v for k, v in found.items() if v},
+                    "first_lines": [l.strip() for l in text.splitlines() if l.strip()][:4]}
+            note_count += 1
+            if modified and (earliest is None or modified < earliest):
+                earliest = modified
+            if complete:
+                complete.write(json.dumps(note, sort_keys=True) + "\n")
+                if len(notes) < limit:
+                    notes.append(note)
+            else:
+                notes.append(note)
+
+    if complete:
+        complete.close()
 
     variants = [{"sha256": h, "copies": c} for h, c in
                 sorted(digests.items(), key=lambda kv: -kv[1])]
-    earliest = min((n["modified"] for n in notes if n["modified"]), default=None)
     print(json.dumps({
         "root": root,
         "notes": notes,
-        "note_count": len(notes),
+        "note_count": note_count,
+        "notes_complete": complete_path is None or len(notes) == note_count,
+        "notes_file": os.path.basename(complete_path) if complete_path else None,
         "files_examined": scanned,
-        "distinct_notes": variants[:10],
+        "distinct_notes": variants,
         "earliest_note_modified": earliest,
         "onion_addresses": sorted(onions),
-        "contact_emails": sorted(emails)[:20],
-        "urls": sorted(urls)[:20],
-        "wallets": sorted(wallets)[:20],
-        "tox_ids": sorted(toxes)[:5],
-        "victim_identifiers": sorted(identifiers)[:10],
+        "contact_emails": sorted(emails),
+        "urls": sorted(urls),
+        "wallets": sorted(wallets),
+        "tox_ids": sorted(toxes),
+        "victim_identifiers": sorted(identifiers),
         "note": "The victim identifier is what a negotiator cannot proceed without, and the onion "
                 "address is what identifies the group. Quote the identifiers and keep the "
                 "rhetoric in an appendix. Do NOT open any link found here from the examination "

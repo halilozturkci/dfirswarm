@@ -56,9 +56,6 @@ def main():
     minimum = args.get("min_length", 6)
     if not isinstance(minimum, int) or isinstance(minimum, bool) or minimum < 3:
         fail("min_length must be an integer of at least 3")
-    limit = args.get("limit", 500)
-    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
-        fail("limit must be a positive integer")
     pattern = None
     if args.get("contains"):
         try:
@@ -79,7 +76,7 @@ def main():
         pages = size // page_size if page_size else 0
 
         # Walk the freelist: each trunk page names the leaves that follow it.
-        free = set()
+        free = {}
         trunk, guard = freelist_head, 0
         while trunk and guard < 100000:
             guard += 1
@@ -88,14 +85,15 @@ def main():
             if len(page) < 8:
                 break
             nxt, count = struct.unpack_from(">II", page, 0)
-            free.add(trunk)
+            data_start = 8 + min(count, (page_size - 8) // 4) * 4
+            free[trunk] = (data_start, "freelist trunk page")
             for i in range(min(count, (page_size - 8) // 4)):
                 leaf, = struct.unpack_from(">I", page, 8 + i * 4)
                 if leaf:
-                    free.add(leaf)
+                    free[leaf] = (0, "freelist leaf page")
             trunk = nxt
 
-        fragments, truncated = [], False
+        fragments = []
         for number in range(1, pages + 1):
             fh.seek((number - 1) * page_size)
             page = fh.read(page_size)
@@ -104,7 +102,8 @@ def main():
             offset = 100 if number == 1 else 0
             regions = []
             if number in free:
-                regions.append((8, page[8:], "freelist page"))
+                data_start, description = free[number]
+                regions.append((data_start, page[data_start:], description))
             else:
                 kind = page[offset]
                 if kind not in (2, 5, 10, 13):
@@ -133,16 +132,9 @@ def main():
                 for encoding, at, text in readable(region, minimum):
                     if pattern and not pattern.search(text):
                         continue
-                    if len(fragments) >= limit:
-                        truncated = True
-                        break
                     fragments.append({"page": number, "where": where, "encoding": encoding,
                                       "offset": (number - 1) * page_size + at_base + at,
-                                      "text": text[:1000]})
-                if truncated:
-                    break
-            if truncated:
-                break
+                                      "text": text})
 
     beside = {}
     for suffix in ("-wal", "-shm", "-journal"):
@@ -160,7 +152,6 @@ def main():
         "companions": beside,
         "fragments": fragments,
         "fragment_count": len(fragments),
-        "truncated": truncated,
         "note": "A fragment is text recovered from space the database no longer uses. It has no "
                 "guaranteed column, no guaranteed table and no reliable time: the page may have "
                 "belonged to something else entirely. Report it as recovered text with its page "

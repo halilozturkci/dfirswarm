@@ -1,7 +1,7 @@
 {
   "id": "network-forensics",
   "name": "Network Forensics Pack",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "description": "Method and tooling for captures and flow logs: what the capture can and cannot contain, session reconstruction, DNS and TLS metadata when the payload is encrypted, beacon detection by timing, exfiltration by volume, and tying all of it back to the host timeline.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -18,29 +18,46 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "f3b6d7f3ac8eb27ad1b2da997ab74ae7e9de90e46bad6424a25f6b75cce21f4b",
+      "README.md": "fee0cf37acd751b991c2cd4b852aeffeeb8bfe48229fe8930accbec4b019947d",
+      "tools/suricata_run/manifest.json": "40af242683e7eaf7f94e9986d455f4e43831d82724e78bb6d535ba7561b2c00c",
+      "tools/suricata_run/run.py": "65cad3f7bdb7faee0a14bdd59e533d5a96f38514c67f1c4d5b1d7b6e33f573aa",
+      "tools/network_log_summary/manifest.json": "8b9a60594669b7dd65965c141d810211cfd44a47622a8e55b91a67392dcb0a4d",
+      "tools/network_log_summary/run.py": "6e024af2fffe6510f36b3feb3cac796b321ec6b6b5a09cd7457b3e15738f2d45",
+      "tools/pcap_extract/manifest.json": "a4ec028775d30a3c564efcfbb4e2fd544af07af23c1fe4f75242c4089e905aa4",
+      "tools/pcap_extract/run.py": "50b932c063ebb722152b1e17bc044c8c87472baa2172753d3c4903c7ba213efc",
       "tools/beacon_score/manifest.json": "d08332c090abbc6be4dda02b6e57867b9ea61e46eb245b534c2f0d3a775442d3",
       "tools/beacon_score/run.py": "aface6b389b2414a49d2a3fdd51052669e94c3119fd40e009d8b44dcb47eb523",
-      "tools/zeek_run/manifest.json": "583f575df01a06a81e55092bc92866cfec771b945a470427fc9e1af7983d7bd1",
-      "tools/zeek_run/run.py": "590c5a66457dab361cc76f7ccb010bf05c90ede64bb3038176fb35c7088b8d48",
-      "tools/pcap_summary/manifest.json": "c275ec18dbae1086106ea17c2caf0f7ada191d64153e0c3756ee6b6b766e9b80",
-      "tools/pcap_summary/run.py": "6a3df3a03177a816e89b7ff6e9fe3ff84b073a35954199f67a4af7e1cb49bbeb",
+      "tools/zeek_run/manifest.json": "ca61d23758fb85b789ba006e902ea432b98a2a15b0a45ab357640b41a18b6b83",
+      "tools/zeek_run/run.py": "82e7d20790ea209be3edd0554545ac7b040b09893bbdf730bdaada840bdfc577",
+      "tools/pcap_summary/manifest.json": "ea02cbcb8e9ed2156ca246b8c7f5c55b17bac002aba3966be976986130abbb47",
+      "tools/pcap_summary/run.py": "6c91c7a4b91095ed4049aaf551a0b771a6a0b4906b198c6264d49295c6d43e4d",
       "goals/what-left-the-network.md": "65b30cc40308fa72dcb2a6753cc4d5fdcb8aabd9a90f195f20ba99ec61060104",
-      "skills/capture/what-you-have.md": "755754f6c9861d7cacd861e027cc4cb08bf0ee11285a26de48f4359d3f7cf1e1",
+      "tests/pack.test.sh": "b76cd60237861735a8047ffe0225166e244fb0c2cbece1bf01abf0d79bec27f8",
+      "recipes/network-capture/recipe.json": "ee7eb16c0cdd66f7bffba61fc1567444930fa451222c541e9b3a5e49be731b22",
+      "recipes/network-capture/run.py": "32547b436c83c8ef7bd6fc5398e99ab01109c159f182de58eeef976ff33b9b3e",
+      "skills/capture/carve-from-images.md": "76d015e7168a23807f2ddeff4176dfeb7b816cb6f623c677cbcc3715d05f7afc",
+      "skills/capture/what-you-have.md": "1b1ea28b7ed2c163e32f609d5ae0c7ef68bf8f7f11408ffd57612b7a695f105a",
       "skills/exfil/volume.md": "e3f63f9d226e537719222d35a16d1a8d31b25b9e6c8776952ceb54ea67252722",
-      "skills/sessions/reconstruct.md": "e81004686d3f1877d26bbef565fc0228c4141ae10e2b1046af289dd647d01c97",
+      "skills/sessions/reconstruct.md": "8a64e80c4c368b3e430bf7db1c91eb65e2d40309e90398dec86975878e816415",
+      "skills/logs/web-proxy-firewall.md": "394427444a8280dff677062b3bee837163f0c226ff604e64400cbc8474884829",
       "skills/correlate/host.md": "dd9f12201855272d2262aece9ddccad7427666cec8e3bf801e16362d07326d4d",
-      "skills/metadata/dns-tls.md": "ae25ea8c2c9c1292c3c801a2099cb61cba2d06a0188766ab76e677aa85bf38f0",
+      "skills/metadata/dns-tls.md": "fb518d9035477b5261a5ca7fb5f48da9072e19f79fd3e9c66f29c7fe35dfb263",
       "skills/beacons/periodicity.md": "ff555a901d3a03c0efe70ba8ec38bccb71974eab1e06cc72fc68ccd0c9159265",
-      "requires/host.json": "8ea083793abfb90256e54737f91696c5a844cfa1103f3d3971a17b56ae6f2140",
+      "requires/host.json": "7ee9d8a33f60ada6667af79b7be869f70416b75c424f0e4f32324cb67000780d",
       "requires/python.txt": "d5768d4bec0bea8ec8e736e2710a757309af18fa3f862dae2db201e154d45a4a",
-      "skills/INDEX.md": "d2d1ace13a2b25afaa97e26f3147d9561a769f1fa8434b72a5e8a23a213f2163"
+      "skills/INDEX.md": "6b917e254b4ddc3e43b302290c444aeb13404a57cd5adcdecbf88bb559bd4162"
     }
   },
   "tools": [
     "beacon_score",
+    "network_log_summary",
+    "pcap_extract",
     "pcap_summary",
+    "suricata_run",
     "zeek_run"
   ],
-  "skills": 6
+  "recipes": [
+    "network-forensics/network-capture"
+  ],
+  "skills": 8
 }

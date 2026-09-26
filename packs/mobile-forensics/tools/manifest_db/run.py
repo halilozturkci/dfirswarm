@@ -23,6 +23,7 @@ import plistlib
 import re
 import sqlite3
 import sys
+import urllib.parse
 
 APPLE_EPOCH = 978307200
 
@@ -124,9 +125,6 @@ def main():
         }, indent=2, default=str))
         return
 
-    limit = args.get("limit", 500)
-    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
-        fail("limit must be a positive integer")
     pattern = None
     if args.get("contains"):
         try:
@@ -135,13 +133,14 @@ def main():
             fail("contains is not a valid regex", reason=str(exc))
 
     try:
-        connection = sqlite3.connect("file:%s?mode=ro" % os.path.abspath(db), uri=True)
+        uri = "file:%s?mode=ro" % urllib.parse.quote(os.path.abspath(db))
+        connection = sqlite3.connect(uri, uri=True)
         connection.row_factory = sqlite3.Row
         rows = list(connection.execute("SELECT fileID, domain, relativePath, flags, file FROM Files"))
     except sqlite3.Error as exc:
         fail("Manifest.db would not open", db=db, reason=str(exc))
 
-    entries, domains, truncated = [], {}, False
+    entries, domains = [], {}
     for row in rows:
         domain = row["domain"] or ""
         domains[domain] = domains.get(domain, 0) + 1
@@ -150,9 +149,6 @@ def main():
             continue
         if pattern and not pattern.search(relative):
             continue
-        if len(entries) >= limit:
-            truncated = True
-            break
         file_id = row["fileID"] or ""
         on_disk = os.path.join(root, file_id[:2], file_id) if file_id else None
         entry = {"file_id": file_id, "domain": domain, "relative_path": relative,
@@ -164,16 +160,16 @@ def main():
     connection.close()
 
     print(json.dumps({
-        "path": path, "manifest_db": db, "encrypted": False, "device": info,
+        "path": path, "manifest_db": db, "encrypted": encrypted, "device": info,
         "entries": entries, "entry_count": len(entries),
         "files_in_manifest": len(rows),
-        "domains": dict(sorted(domains.items(), key=lambda kv: -kv[1])[:25]),
-        "truncated": truncated,
+        "domains": dict(sorted(domains.items(), key=lambda kv: (-kv[1], kv[0]))),
         "note": "on_disk is where the file actually sits in the backup: the first two characters "
                 "of its id are the directory. Cite both the relative path and the file id, "
                 "because the path is what the phone called it and the id is what you opened. "
                 "A logical backup has no unallocated space, so a question about deletion can only "
-                "be answered from inside a database's own free pages.",
+                "be answered from inside a database's own free pages. encrypted is null when "
+                "Manifest.plist was absent or unreadable; do not treat that as unencrypted.",
     }, indent=2, default=str))
 
 

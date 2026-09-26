@@ -17,10 +17,6 @@
     "max_depth": {
       "type": "integer",
       "description": "How deep to unwrap nested messages (default 6)"
-    },
-    "max_fields": {
-      "type": "integer",
-      "description": "Maximum fields to return (default 500)"
     }
   },
   "runtime": "python3",
@@ -30,5 +26,5 @@
   "by": "maintainer",
   "at": "2026-09-22T20:00:00.000Z",
   "version": 1,
-  "sha256": "98e99381f32f3226e24c484202286fb0331cf22e013554e760b647e6095b5c84"
+  "sha256": "ba7b8b401c22e223c8bdac0262b5b5cdecc4c40eb04a27417fc15156f42fef62"
 }

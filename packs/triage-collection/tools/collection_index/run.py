@@ -71,10 +71,21 @@ def main():
         fail("root is required: the collection directory")
     if not os.path.isdir(root):
         fail("no such directory", root=root)
+    disk_images = sorted(n for n in os.listdir(root) if n.lower().endswith(
+        (".e01", ".ex01", ".dd", ".raw", ".img", ".vhd", ".vhdx", ".vmdk", ".qcow2")))
+    if disk_images:
+        fail("this is a disk-image directory, not a logical collection",
+             images=disk_images,
+             next="run the disk-volumes recipe; do not invent original paths for an image container")
     limit = args.get("limit", 2000)
     if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
         fail("limit must be a positive integer")
     want_hash = args.get("hash", True)
+    if not isinstance(want_hash, bool):
+        fail("hash must be boolean")
+    out_file = args.get("out_file")
+    if out_file is not None and (not isinstance(out_file, str) or not out_file):
+        fail("out_file must be a non-empty string")
     pattern = None
     if args.get("contains"):
         try:
@@ -82,8 +93,9 @@ def main():
         except re.error as exc:
             fail("contains is not a valid regex", reason=str(exc))
 
-    entries, stream_candidates, truncated = [], [], False
-    total, total_bytes = 0, 0
+    entries, stream_candidates = [], []
+    complete = open(out_file, "w", encoding="utf-8", newline="\n") if out_file else None
+    total, indexed, total_bytes = 0, 0, 0
     mtimes = collections.Counter()
     for dirpath, dirs, names in os.walk(root):
         for name in sorted(names):
@@ -115,15 +127,13 @@ def main():
                         "known_stream": suffix.lower() in KNOWN_STREAMS})
             if pattern and not (pattern.search(relative) or pattern.search(rebuilt)):
                 continue
-            if len(entries) >= limit:
-                truncated = True
-                continue
+            indexed += 1
             entry = {"in_collection": relative, "original_path": rebuilt,
                      "bytes": stat.st_size,
                      "modified": when.isoformat().replace("+00:00", "Z")}
             if notes:
                 entry["rewrites_undone"] = notes
-            if want_hash and stat.st_size <= (512 << 20):
+            if want_hash:
                 digest = hashlib.sha256()
                 try:
                     with open(full, "rb") as fh:
@@ -132,7 +142,15 @@ def main():
                     entry["sha256"] = digest.hexdigest()
                 except OSError as exc:
                     entry["hash_error"] = str(exc)
-            entries.append(entry)
+            if complete:
+                complete.write(json.dumps(entry, sort_keys=True) + "\n")
+                if len(entries) < limit:
+                    entries.append(entry)
+            else:
+                entries.append(entry)
+
+    if complete:
+        complete.close()
 
     dominant = mtimes.most_common(1)
     flat_times = None
@@ -147,9 +165,11 @@ def main():
         "files": total,
         "bytes": total_bytes,
         "entries": entries,
-        "entry_count": len(entries),
-        "truncated": truncated,
-        "possible_renamed_streams": stream_candidates[:60],
+        "entry_count": indexed,
+        "entries_inline": len(entries),
+        "complete_index": out_file,
+        "inline_limited": bool(out_file and indexed > len(entries)),
+        "possible_renamed_streams": stream_candidates,
         "modification_dates": dict(mtimes.most_common(10)),
         "flat_timestamps": flat_times,
         "note": "Cite both paths. 'C:\\\\Users\\\\alice\\\\NTUSER.DAT (in the collection at "

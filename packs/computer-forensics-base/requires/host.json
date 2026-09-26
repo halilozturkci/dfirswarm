@@ -260,7 +260,7 @@
       "name": "fsapfsinfo",
       "package": "libfsapfs",
       "optional": true,
-      "why": "Read an APFS container and its volumes, which the Sleuth Kit does not.",
+      "why": "Read an APFS container and its volumes, which the Sleuth Kit does not. Experimental libfsapfs: upstream does not support snapshots, Fusion drives or T2 encryption.",
       "install": {
         "brew": "python3 -m pip install libfsapfs-python",
         "apt": "apt-get install -y libfsapfs-utils"

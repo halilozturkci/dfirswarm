@@ -3,8 +3,8 @@
   "description": "Extract a file from a disk image by inode to a path under the run. Refuses an inode the catalogue lists only as a directory (icat would give its index). Returns JSON with path, size, sha256, image, offset and the file's catalogued path.",
   "params": {
     "inode": {
-      "type": "integer",
-      "description": "Inode number to extract from the E01 image",
+      "type": "string",
+      "description": "Sleuth Kit inode/address to extract, for example 168 or 168-128-4 for an NTFS stream",
       "required": true
     },
     "output": {

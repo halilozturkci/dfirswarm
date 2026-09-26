@@ -23,8 +23,9 @@ rather than text.
    knowledgeC, and what places them at the keyboard rather than a job running.
 6. File system changes: what was created, renamed or removed, from FSEvents,
    with the anchor you used to place the event ids in time.
-7. Snapshots: whether the container holds any, and what a previous state of the
-   volume shows that the live one does not.
+7. Snapshots: using a snapshot-capable parser, whether the container holds any,
+   and what a previous state shows that the live one does not — or state that
+   the available parser cannot answer the question.
 8. The timeline in UTC, and what you could not establish.
 
 ## Definition of done

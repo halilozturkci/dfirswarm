@@ -1,7 +1,7 @@
 {
   "id": "memory-windows",
   "version": "1.0.0",
-  "description": "A Windows memory image's OS and capture time, process lists (pslist, psscan), command lines, network connections, injected code (malfind) and loaded DLLs (Volatility 3).",
+  "description": "A Windows memory image's OS and capture time, live/scanned process views and tree, command lines, handles, services, network connections, suspicious executable regions, VADs, kernel modules and loaded DLLs (Volatility 3, the image's symbols first).",
   "object": "memory image",
   "order": 20,
   "min_bytes": 67108864,
@@ -54,19 +54,24 @@
     "derived"
   ],
   "limits": {
-    "seconds": 7200
+    "seconds": 14400
   },
   "outputs": [
     "windows.info.txt",
     "pslist.txt",
     "psscan.txt",
+    "pstree.txt",
     "cmdline.txt",
     "netscan.txt",
     "malfind.txt",
+    "vadinfo.txt",
+    "handles.txt",
+    "modules.txt",
+    "svcscan.txt",
     "dlllist.txt",
     "index.tsv",
     "coverage.json"
   ],
-  "covers": "What those seven Volatility plugins report. Linux and macOS images, hibernation files Volatility cannot read, and every other plugin are not covered; Volatility may need a symbol server the run allows.",
-  "sha256": "ce8ca3e4416de5127beb3c1178a9ee5055fec65221cb23eeed9c063df0b710c9"
+  "covers": "What windows.info and the eleven listed Volatility plugins report with symbols already in the image. Linux and macOS images, unsupported hibernation/crash-dump variants, YARA rules and every other plugin are not covered; symbols come from the image first, and from the symbol server only when the image has none for the kernel and the job's network allows it, which coverage says.",
+  "sha256": "5fd633d7b030b82add00d89eac7d7a4aff74db31eb3cd72395558203f41217dc"
 }

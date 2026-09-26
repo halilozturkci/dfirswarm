@@ -98,7 +98,7 @@ test("Pi loader: agent-swarm.ts loads and `playwright` is the real browser tool"
       const shot = await playwright.execute("t2", { target: "work/page.html", text_selector: "#a", screenshot: true }, undefined, undefined, ctx);
       assert.equal(shot.details.title, "T");
       assert.equal(shot.details.text, "hello");
-      assert.match(String(shot.details.screenshot), /^work\/\.browser\/.*-agent00\.png$/);
+      assert.match(String(shot.details.screenshot), /^work\/agent00\/\.browser\/.*-agent00\.png$/);
     } catch (err) {
       if (!/not installed|Executable doesn't exist|browserType.launch/i.test((err as Error).message)) throw err;
       t.diagnostic(`browser step skipped: ${(err as Error).message.split("\n")[0]}`);

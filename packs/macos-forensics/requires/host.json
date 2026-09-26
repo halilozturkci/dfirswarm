@@ -4,7 +4,7 @@
       "name": "fsapfsinfo",
       "package": "libfsapfs",
       "optional": true,
-      "why": "Read an APFS container and its volumes, snapshots included, which the Sleuth Kit does not.",
+      "why": "Inspect an APFS container and its volumes. This experimental libfsapfs build does not support snapshots, Fusion drives, or T2 encryption.",
       "install": {
         "brew": "python3 -m pip install libfsapfs-python",
         "apt": "apt-get install -y libfsapfs-utils"
@@ -19,11 +19,11 @@
       "why": "Apple's own reader for the unified log. Only present on macOS, and the only tool that resolves the format strings properly.",
       "install": {
         "brew": "part of macOS",
-        "apt": "not available on Linux; use UnifiedLogReader"
+        "apt": "not available on Linux; use the pinned unifiedlog_iterator"
       },
       "licence": "Apple system software",
       "redistributable": false,
-      "not_in_image": "Apple's own reader exists only on macOS, so no Linux image can hold it; UnifiedLogReader.py reads the same archives there."
+      "not_in_image": "Apple's own reader exists only on macOS. The image uses Mandiant's pinned unifiedlog_iterator on Linux."
     },
     {
       "name": "mac_apt.py",
@@ -55,26 +55,28 @@
       "redistributable": false
     },
     {
-      "name": "UnifiedLogReader.py",
-      "package": "UnifiedLogReader",
+      "name": "unifiedlog_iterator",
+      "package": "Mandiant macos-UnifiedLogs",
       "optional": true,
-      "why": "Read a unified log archive on a host that is not a Mac, where Apple's own log command does not exist.",
+      "why": "Read modern macOS and iOS unified log archives off a Mac and keep every decoded entry as JSONL.",
       "install": {
-        "brew": "https://github.com/ydkhatri/UnifiedLogReader (run scripts/UnifiedLogReader.py from a clone, with biplist and lz4 installed: PyPI has no UnifiedLogReader project, and its UnifiedLog 0.3 does not build with pip 20 or later)",
-        "apt": "pinned source 20200124 (install.source): PyPI has no UnifiedLogReader project, and its UnifiedLog 0.3 does not build with pip 20 or later, so the script runs from the checkout",
-        "source": {
-          "version": "20200124",
-          "url": "https://github.com/ydkhatri/UnifiedLogReader/archive/refs/tags/20200124.tar.gz",
-          "sha256": "107d37d06380b01000b2fa6f4613a91e13dda95dd2f69f2b2cfa459ac7371c57",
-          "entry": "scripts/UnifiedLogReader.py",
-          "run": "python",
-          "pip": [
-            "-r",
-            "requirements.txt"
-          ]
+        "brew": "https://github.com/mandiant/macos-UnifiedLogs/releases/tag/v0.7.0",
+        "apt": "pinned download 0.7.0 (install.download)",
+        "download": {
+          "version": "0.7.0",
+          "amd64": {
+            "url": "https://github.com/mandiant/macos-UnifiedLogs/releases/download/v0.7.0/unifiedlog_iterator-v0.7.0-x86_64-unknown-linux-gnu.tar.gz",
+            "sha256": "7192a187f93c6fb8eafdad9885522e73dc2ae7a9a5000f5957edd4fcd0ca1c82",
+            "bin": "unifiedlog_iterator-v0.7.0-x86_64-unknown-linux-gnu/unifiedlog_iterator"
+          },
+          "arm64": {
+            "url": "https://github.com/mandiant/macos-UnifiedLogs/releases/download/v0.7.0/unifiedlog_iterator-v0.7.0-aarch64-unknown-linux-gnu.tar.gz",
+            "sha256": "ab40daf464376a2e52c4b51fd82b003b7f360a4e2726501ba853889fa3a959f4",
+            "bin": "unifiedlog_iterator-v0.7.0-aarch64-unknown-linux-gnu/unifiedlog_iterator"
+          }
         }
       },
-      "licence": "MIT",
+      "licence": "Apache-2.0",
       "redistributable": false
     }
   ]

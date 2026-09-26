@@ -34,6 +34,7 @@ the platform.** The screen was on, this application was in front, for this
 many seconds. Three of those in a row is a person at the keyboard in a way that
 a file timestamp never is.
 
-Two cautions. The database is pruned — typically a month — so absence near the
-edges means nothing. And it records the machine's activity, not a named human:
-tie it to a session from the unified log or a login before you put a name on it.
+Two cautions. Retention varies by OS version and device state, so measure the
+earliest and latest rows actually present before treating absence as meaningful.
+And it records the machine's activity, not a named human: tie it to a session
+from the unified log or a login before you put a name on it.

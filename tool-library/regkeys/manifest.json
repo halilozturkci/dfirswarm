@@ -18,7 +18,7 @@
     },
     "limit": {
       "type": "integer",
-      "description": "Optional max number of subkeys returned"
+      "description": "Deprecated and refused because it would cut the registry tree; narrow key or recurse instead"
     }
   },
   "runtime": "python3",
@@ -28,5 +28,5 @@
   "by": "sf4b205",
   "at": "2026-09-18T12:09:13.969Z",
   "version": 4,
-  "sha256": "b816ee72708e31a57e0d483044bcc91a6e7202dc6148eda4dfbc11870a7df336"
+  "sha256": "41184f339618e2ac242f4bee050fbd115acd880660fd70c806420bd0ce2c3749"
 }

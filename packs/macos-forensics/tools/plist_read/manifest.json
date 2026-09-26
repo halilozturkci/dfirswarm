@@ -1,6 +1,6 @@
 {
   "name": "plist_read",
-  "description": "Read a property list — binary, XML or JSON — and return it as JSON, with Apple date values converted to ISO 8601 UTC and binary blobs summarised rather than dumped. Reads one file or every plist under a directory.",
+  "description": "Read an XML or binary property list and return it as JSON, with Apple date values converted to ISO 8601 UTC and binary blobs represented with size, hash and a bounded preview. Reads one file or every plist under a directory.",
   "params": {
     "path": {
       "type": "string",
@@ -16,15 +16,19 @@
     },
     "limit": {
       "type": "integer",
-      "description": "Maximum files when walking a directory (default 200)"
+      "description": "Maximum files returned inline when out_file is set (default 200); every parsed file is written to out_file"
+    },
+    "out_file": {
+      "type": "string",
+      "description": "Optional JSONL path for every parsed plist; when absent every parsed file is returned inline"
     }
   },
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 120,
-  "example": "{\"path\": \"work/extracted/Library/LaunchDaemons\"}",
+  "example": "{\"path\": \"work/extracted/Library/LaunchDaemons\", \"out_file\": \"work/plists.jsonl\"}",
   "by": "maintainer",
   "at": "2026-09-22T16:00:00.000Z",
   "version": 1,
-  "sha256": "959d83395cadacdaa4f43392b41916b1c765b9b978c2ffaf3d3d4af6dca2f58b"
+  "sha256": "29ba21bfe9952f74b1d3f51e55f964974b84055f798fac116f9ad6a8b321100e"
 }

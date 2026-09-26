@@ -24,11 +24,11 @@
     },
     "chunk_limit": {
       "type": "integer",
-      "description": "Maximum chunks to parse (default 200)"
+      "description": "Chunks to parse in one call (default 200). When more remain the sweep stops before the next chunk and resume_start names the offset to pass as start; nothing before it is skipped"
     },
     "limit": {
       "type": "integer",
-      "description": "Maximum records to return (default 300)"
+      "description": "Records shown inline (default 300); every matching record is kept, and when there are more the whole list is written as JSON Lines and named in all_results"
     },
     "with_xml": {
       "type": "boolean",
@@ -42,5 +42,5 @@
   "by": "maintainer",
   "at": "2026-09-22T09:00:00.000Z",
   "version": 1,
-  "sha256": "a64709827e40ac2ced81da0a44c3f4715956433adb6c65f2e06ec36697dfcfe6"
+  "sha256": "7697273164fc49a9545c106e0c268cb62d3299ba5c39d0540404c2763e3d9391"
 }

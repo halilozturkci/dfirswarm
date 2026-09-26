@@ -32,7 +32,7 @@
     },
     "skip_zeros": {
       "type": "boolean",
-      "description": "Skip nearly-zero chunks"
+      "description": "Deprecated and refused: skipping nearly-zero chunks can hide hits"
     },
     "unique_only": {
       "type": "boolean",
@@ -46,5 +46,5 @@
   "by": "s183900",
   "at": "2026-09-18T22:16:43.028Z",
   "version": 3,
-  "sha256": "e5211ce68a3c1704e805c9da7f91b8425d6aff706e524599ae322adc7b6e2db1"
+  "sha256": "9f4f78324179f6ce6a2057cac5b65e5afe849c575b7b140e8028cc515907e4ab"
 }

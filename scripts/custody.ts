@@ -60,9 +60,23 @@ import { StringDecoder } from "node:string_decoder";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { execFile } from "node:child_process";
-import { eventChainVerifier, specialKind, verifyLedgerChain } from "../extensions/protocol.ts";
+import { eventChainVerifier, specialKind, verifyAttestationChain, verifyLedgerChain } from "../extensions/protocol.ts";
 import { hashArtifacts } from "./artifacts.ts";
 import { checkStore, type StoreCheck } from "./evidence-store.ts";
+import {
+  afterSeal,
+  checksLine,
+  checksOf,
+  compareAcquisition,
+  referenceOffset,
+  signFile,
+  timestampFile,
+  verifyOperatorAudit,
+  type Acquisition,
+  type Check,
+  type OperatorAudit,
+  type TraceAction,
+} from "./custody-checks.ts";
 import {
   hashRegularFile,
   openRegular as openRegularFile,
@@ -486,7 +500,7 @@ export type Custody = {
     operator_actions: number;
     disputed: number;
     /** `unauthenticated`: a host run's shared spill, which any pane can write and whose lines carry no token (only the collector ever sees one). */
-    spilled: Array<{ path: string; lines: number; agent: string | null; bad: number; duplicates: number; refused?: string; unauthenticated?: true }>;
+    spilled: Array<{ path: string; lines: number; agent: string | null; bad: number; duplicates: number; refused?: string; unauthenticated?: true; after_close?: number }>;
     /** Per sending process, how many of its numbered lines are in neither the chain nor a spill. */
     gaps: Array<{ sid: string; agent: string; missing: number }>;
     /** Per agent, lines whose own clock (`ts`) was more than CLOCK_FLAG_SEC off the collector's (`recv_ts`). */
@@ -565,6 +579,33 @@ export type Custody = {
    * Null when the run had no job service.
    */
   store: StoreCheck | null;
+  /**
+   * What the verdict sealed: each chain's length and head as custody read it,
+   * so a later check knows what was sealed and names what was added after
+   * (the hub's own custody and clear-up lines, the operator's stop) instead
+   * of reading it as a changed record.
+   */
+  seal: {
+    trace: { lines: number; bytes: number; last_line_sha256: string | null };
+    ledger: { entries: number; head: string | null };
+    attestations: { lines: number; head: string | null };
+    journal: { lines: number; head: string | null } | null;
+    model_gateway: { lines: number; sha256: string | null } | null;
+  };
+  /** The ledger's attestations (a second author of an entry, appended beside it): their own chain. */
+  attestations: { lines: number; intact: boolean; detail: string } | null;
+  /** The operator's audit beside the registry, and each operator line on the trace matched to it. */
+  operator: OperatorAudit;
+  /** The acquisition hashes given at kickoff (--inputs-hashes), against the evidence as re-hashed now. */
+  acquisition: Acquisition;
+  /** Each check's status: passed, failed, incomplete, not applicable, unavailable. */
+  checks: Check[];
+  /** How long each part took, and the evidence read. */
+  timing: { phases: Record<string, number>; evidence_bytes: number; evidence_mb_per_s: number | null; total_ms: number };
+  /** The models the run's agents were given (team.json), and the model ids the gateway saw answer, when it had one. */
+  models: { team: Array<{ agent: string; model: string | null }>; gateway_answered: string[] | null };
+  /** A reference clock's offset from the host's, when the operator named one. */
+  time_reference: { url: string; at: string; offset_ms: number | null; precision_ms: number; error?: string } | null;
   /** Parts custody never reached, for a verdict written when it was ended. */
   not_reached: string[];
   incomplete: string | null;
@@ -602,6 +643,15 @@ export type CustodyState = {
   store?: Custody["store"];
   storeDone?: boolean;
   incomplete?: string | null;
+  seal?: Custody["seal"];
+  attestations?: Custody["attestations"];
+  operator?: Custody["operator"];
+  acquisition?: Custody["acquisition"];
+  models?: Custody["models"];
+  time_reference?: Custody["time_reference"];
+  /** Why a part could not be checked at all (an exception): said as unavailable, never as nothing wrong. */
+  errors?: Record<string, string>;
+  timing?: Custody["timing"];
 };
 
 /** The model gateway's call log and totals, beside the trace (scripts/model-gateway.ts). */
@@ -845,14 +895,39 @@ async function setAsidePrevious(sandbox: string): Promise<string | null> {
   return name;
 }
 
-export async function takeCustody(
-  sandboxInput: string,
-  options: { timeoutSec?: number; run?: string; progress?: (line: string) => void; state?: CustodyState } = {},
-): Promise<Custody> {
+export type CustodyOptions = {
+  timeoutSec?: number;
+  run?: string;
+  progress?: (line: string) => void;
+  state?: CustodyState;
+  /** Check and return the verdict without writing anything: no verdict, no anchor, no artifacts.json, nothing set aside. */
+  readOnly?: boolean;
+  /** Sign custody.json with this SSH key (ssh-keygen -Y, namespace dfirswarm-custody). */
+  signKey?: string;
+  /** Ask this RFC 3161 authority to timestamp custody.json's sha256. */
+  timestampUrl?: string;
+  /** Record this https server's clock offset from the host's (its Date header). */
+  timeReference?: string;
+  /** Where the operator's audit is: the runs directory beside the run, by default. */
+  runsDir?: string;
+};
+
+export async function takeCustody(sandboxInput: string, options: CustodyOptions = {}): Promise<Custody> {
   const sandbox = resolve(sandboxInput);
   const state: CustodyState = options.state ?? { phase: "starting" };
   const deadline = new Deadline(options.timeoutSec ?? 4 * 3600);
   state.incomplete = null;
+  state.errors = {};
+  // How long each part took: custody's cost, said.
+  const began = Date.now();
+  let phaseAt = began;
+  state.timing = { phases: {}, evidence_bytes: 0, evidence_mb_per_s: null, total_ms: 0 };
+  const enter = (phase: string) => {
+    const now = Date.now();
+    if (state.phase && state.phase !== "starting" && state.timing) state.timing.phases[state.phase] = (state.timing.phases[state.phase] ?? 0) + (now - phaseAt);
+    phaseAt = now;
+    state.phase = phase;
+  };
   const tooLate = (what: string) => {
     if (deadline.over && !state.incomplete) state.incomplete = `the deadline passed during ${what}`;
     return deadline.over;
@@ -872,11 +947,12 @@ export async function takeCustody(
   // presence of vm/ to say it.
   const vmRun = isolation ? isolation === "microvm" : existsSync(join(sandbox, "vm"));
   Object.assign(state, { sandbox, anchorFile, run, isolation });
-  state.phase = "setting the previous verdict aside";
-  state.previous = await setAsidePrevious(sandbox);
+  enter("setting the previous verdict aside");
+  // A read-only check moves nothing: the verdict on disk stays where it is.
+  state.previous = options.readOnly ? null : await setAsidePrevious(sandbox);
 
   // --- the evidence ---------------------------------------------------------
-  state.phase = "the evidence re-hash";
+  enter("the evidence re-hash");
   const manifestPath = join(sandbox, "inputs.json");
   const hasEvidence = existsSync(join(sandbox, "inputs")) || existsSync(join(sandbox, "inputs.device"));
   const manifestLst = await lstat(manifestPath).catch(() => null);
@@ -892,6 +968,8 @@ export async function takeCustody(
     const checked = { files: 0, links: 0, special: 0 };
     const digests = { sha256: 0, md5: 0, sha1: 0 };
     const listed = new Set<string>();
+    // What each file hashed to now: the acquisition hashes are held to it.
+    const actual = new Map<string, { sha256?: string; md5?: string; sha1?: string }>();
     let total = 0;
     let totalBytes = 0;
     const evidenceRoot = Buffer.from(await realpath(join(sandbox, "inputs")).catch(() => join(sandbox, "inputs")));
@@ -969,6 +1047,8 @@ export async function takeCustody(
       }
       checked.files += 1;
       digests.sha256 += 1;
+      if (state.timing) state.timing.evidence_bytes += lst.size;
+      actual.set(file.path, { sha256: hashed.sha256, ...(hashed.md5 ? { md5: hashed.md5 } : {}), ...(hashed.sha1 ? { sha1: hashed.sha1 } : {}) });
       let same = hashed.sha256 === file.sha256;
       if (file.md5) {
         digests.md5 += 1;
@@ -1012,12 +1092,18 @@ export async function takeCustody(
         manifest_sha256: streamed.sha256,
         manifest_anchored: anchored,
       };
+      // The imager's numbers, when the operator gave them at kickoff (inputs.json, anchored with it).
+      state.acquisition = compareAcquisition(streamed.meta.acquisition as Parameters<typeof compareAcquisition>[0], actual);
     }
   }
   state.inputsDone = true;
+  if (state.timing) {
+    const ms = state.timing.phases["the evidence re-hash"] ?? Date.now() - phaseAt;
+    state.timing.evidence_mb_per_s = ms > 0 && state.timing.evidence_bytes ? Math.round((state.timing.evidence_bytes / 2 ** 20 / (ms / 1000)) * 10) / 10 : null;
+  }
 
   // --- the sessions ----------------------------------------------------------
-  state.phase = "the session seal";
+  enter("the session seal");
   const sessionFiles: Custody["sessions"]["files"] = [];
   const sessionWalk = await walkAll(join(sandbox, ".pi-sessions"));
   for (const abs of sessionWalk.files) {
@@ -1033,7 +1119,7 @@ export async function takeCustody(
   state.sessions = { files: sessionFiles, digest: sessionsDigest, not_files: sessionWalk.other };
 
   // --- the trace and the kept outputs -----------------------------------------
-  state.phase = "the trace";
+  enter("the trace");
   const refs = new Map<string, string>();
   const rereferenced = new Set<string>();
   const foreign = new Set<string>();
@@ -1116,17 +1202,30 @@ export async function takeCustody(
     traceAnchor = null;
   }
   const chainCheck = eventChainVerifier(traceAnchor);
+  // What the verdict seals: how many lines, how many bytes, and the last line's own hash.
+  let traceBytes = 0;
+  let lastLine: string | null = null;
+  let lastTime = Number.NaN;
+  const operatorLines: TraceAction[] = [];
   const traceRead = await eachLine(join(sandbox, "traces", "events.jsonl"), (line) => {
     chainCheck.push(line);
+    traceBytes += Buffer.byteLength(line) + 1;
     if (!line.trim()) return;
     lines += 1;
+    lastLine = line;
     try {
       const parsed = JSON.parse(line) as Record<string, unknown>;
+      const t = Date.parse(String(parsed.recv_ts ?? parsed.ts ?? ""));
+      if (Number.isFinite(t)) lastTime = t;
       note(parsed);
       clockOf(parsed);
       noteRefs(parsed);
       noteRecord(parsed);
       noteLost(parsed);
+      if (parsed.tool === "operator_action") {
+        const a = (parsed.args ?? {}) as { command?: unknown; argv?: unknown };
+        operatorLines.push({ at: String(parsed.recv_ts ?? parsed.ts ?? ""), command: String(a.command ?? ""), argv: Array.isArray(a.argv) ? a.argv.map(String) : [] });
+      }
       if (parsed.agent_unverified === true) {
         if (parsed.tool === "operator_action") operatorActions += 1;
         else unverified += 1;
@@ -1156,11 +1255,15 @@ export async function takeCustody(
     let count = 0;
     let bad = 0;
     let duplicates = 0;
+    let afterClose = 0;
     const read = await eachLine(join(sandbox, rel), (l) => {
       if (!l.trim()) return;
       count += 1;
       try {
         const parsed = JSON.parse(l) as Record<string, unknown>;
+        // A line dated after the last one the chain took: written once the collector was down (a watchdog's last word after the stop).
+        const t = Date.parse(String(parsed.recv_ts ?? parsed.ts ?? ""));
+        if (Number.isFinite(t) && Number.isFinite(lastTime) && t > lastTime) afterClose += 1;
         // A spilled line says whose it is; the directory it sits in says
         // whose it can be. One that names somebody else is not counted for
         // them: it cannot fill their gaps, add to their losses, or put a
@@ -1182,7 +1285,7 @@ export async function takeCustody(
       continue;
     }
     if (!count) continue;
-    spills.push({ path: rel, lines: count, agent: owner, bad, duplicates, ...(owner === null && !vmRun ? { unauthenticated: true as const } : {}) });
+    spills.push({ path: rel, lines: count, agent: owner, bad, duplicates, ...(afterClose ? { after_close: afterClose } : {}), ...(owner === null && !vmRun ? { unauthenticated: true as const } : {}) });
   }
   // A process's numbered lines run 1..n; a number missing below its highest
   // is a line that reached neither the chain nor a spill.
@@ -1221,8 +1324,15 @@ export async function takeCustody(
     clock,
     sender_lost: [...senderLost].map(([agent, n]) => ({ agent, lines: n })),
   };
+  state.seal = {
+    trace: { lines, bytes: traceBytes, last_line_sha256: lastLine === null ? null : createHash("sha256").update(lastLine).digest("hex") },
+    ledger: { entries: 0, head: null },
+    attestations: { lines: 0, head: null },
+    journal: null,
+    model_gateway: null,
+  };
 
-  state.phase = "the kept-output check";
+  enter("the kept-output check");
   const missingOut: string[] = [];
   const mismatched: string[] = [];
   const refused: string[] = [];
@@ -1249,7 +1359,7 @@ export async function takeCustody(
   state.tool_outputs.verified = verified;
 
   // --- the ledger --------------------------------------------------------------
-  state.phase = "the ledger";
+  enter("the ledger");
   const ledgerRead = await readRegularText(join(sandbox, "ledger", "entries.jsonl"));
   const ledgerText = "text" in ledgerRead ? ledgerRead.text : "";
   // What the ledger is held to. A microVM run's is the hub's lines; one
@@ -1293,6 +1403,7 @@ export async function takeCustody(
         }
       }
     }
+    if (state.seal) state.seal.ledger = { entries: v.total, head: v.hashes.at(-1) ?? null };
     const claimedBySeat = heldTo === "the hub's lines" ? [...seatRecordHashes].filter((h) => !hubRecordHashes.has(h)).sort() : [];
     state.ledger = {
       entries: v.total,
@@ -1305,13 +1416,22 @@ export async function takeCustody(
       claimed_by_seat: claimedBySeat,
     };
   } else state.ledger = null;
+  // A second author of an entry is an attestation beside it: its own chain.
+  const attRead = await readRegularText(join(sandbox, "ledger", "attestations.jsonl"));
+  if ("text" in attRead && attRead.text.trim()) {
+    const a = verifyAttestationChain(attRead.text);
+    state.attestations = { lines: a.total, intact: a.ok, detail: a.ok ? `${a.total} lines, chain intact` : `broken at line ${a.broken_at} (${a.reason})` };
+    if (state.seal) state.seal.attestations = { lines: a.total, head: a.head };
+  } else if ("why" in attRead && attRead.why !== "missing") {
+    state.attestations = { lines: 0, intact: false, detail: `the attestations are ${attRead.why}` };
+  } else state.attestations = null;
   state.ledgerDone = true;
 
   // --- the model gateway's log -----------------------------------------------
   // When the run's model calls went through the host's gateway, its log is
   // the record of what each seat spent: the host's own, in traces/, which no
   // VM writes. Its chain is checked and its hash anchored with the verdict.
-  state.phase = "the model gateway log";
+  enter("the model gateway log");
   state.model_gateway = null;
   const gatewayPath = join(sandbox, GATEWAY_LOG);
   const gatewayThere = await lstat(gatewayPath).then(() => true, () => false);
@@ -1340,9 +1460,40 @@ export async function takeCustody(
     }
   }
   state.gatewayDone = true;
+  if (state.seal && state.model_gateway) state.seal.model_gateway = { lines: state.model_gateway.lines, sha256: state.model_gateway.sha256 };
+  // Which models the agents were given, and which the gateway saw answer.
+  const teamModels: Array<{ agent: string; model: string | null }> = [];
+  const teamText = await readRegularText(join(sandbox, "team.json"));
+  if ("text" in teamText) {
+    try {
+      for (const a of (JSON.parse(teamText.text) as { agents?: Array<{ id?: unknown; model?: unknown }> }).agents ?? []) teamModels.push({ agent: String(a.id ?? ""), model: typeof a.model === "string" ? a.model : null });
+    } catch {
+      // an unreadable team is the VM check's to name
+    }
+  }
+  let answered: string[] | null = null;
+  if (state.model_gateway && !state.model_gateway.refused) {
+    const seen = new Set<string>();
+    await eachLine(gatewayPath, (line) => {
+      try {
+        const m = (JSON.parse(line) as { model?: unknown; response_model?: unknown }).response_model ?? (JSON.parse(line) as { model?: unknown }).model;
+        if (typeof m === "string" && m) seen.add(m);
+      } catch {
+        // the chain check names it
+      }
+    });
+    answered = [...seen].sort();
+  }
+  state.models = { team: teamModels, gateway_answered: answered };
+
+  // --- the operator's audit -------------------------------------------------------
+  // Beside the registry, where no pane writes: its chain, and each operator
+  // line on the trace matched to a line of it.
+  const runsDir = options.runsDir ?? dirname(await realpath(sandbox).catch(() => sandbox));
+  state.operator = verifyOperatorAudit(join(runsDir, "operator-audit.jsonl"), operatorLines);
 
   // --- the VMs -----------------------------------------------------------------
-  state.phase = "the VM check";
+  enter("the VM check");
   const vmDir = join(sandbox, "vm");
   state.vms = null;
   state.vm_records = null;
@@ -1462,39 +1613,79 @@ export async function takeCustody(
   state.vmsDone = true;
 
   // --- what the run produced -------------------------------------------------------
-  state.phase = "the artifact index";
+  enter("the artifact index");
   state.artifacts = null;
   if (!tooLate("the artifact index")) {
     try {
       const index = await hashArtifacts(sandbox, { expiry: deadline });
       if (index.skipped.some((s) => s.reason === "not hashed: the deadline passed")) tooLate("the artifact index");
       const text = `${JSON.stringify(index, null, 2)}\n`;
-      writeFileNoFollowSync(sandbox, "artifacts.json", text);
+      if (!options.readOnly) writeFileNoFollowSync(sandbox, "artifacts.json", text);
       state.artifacts = { files: index.files.length, bytes: index.bytes, skipped: index.skipped.length, index_sha256: createHash("sha256").update(text).digest("hex") };
-    } catch {
+    } catch (err) {
+      // Said as unavailable, with why: never an absent part that reads as nothing wrong.
       state.artifacts = null;
+      state.errors.artifacts = (err as Error).message;
     }
   }
   state.artifactsDone = true;
 
   // --- the evidence-work store ---------------------------------------------------------
-  state.phase = "the store";
+  enter("the store");
   state.store = null;
   if (!tooLate("the store")) {
     try {
       state.store = await checkStore(sandbox, Date.now() + deadline.remainingMs);
       if (state.store && state.store.outputs.verified + state.store.outputs.mismatched.length + state.store.outputs.missing.length < state.store.outputs.files) tooLate("the store");
-    } catch {
+    } catch (err) {
       state.store = null;
+      state.errors.store = (err as Error).message;
     }
   }
   state.storeDone = true;
+  if (state.seal && state.store) state.seal.journal = { lines: state.store.journal.lines, head: state.store.journal.head };
+  // A reference clock, when the operator named one.
+  const refUrl = options.timeReference ?? process.env.SWARM_TIME_REFERENCE;
+  state.time_reference = refUrl ? await referenceOffset(refUrl) : null;
 
-  state.phase = "writing the verdict";
+  enter("writing the verdict");
+  if (state.timing) state.timing.total_ms = Date.now() - began;
   const custody = verdictOf(state, state.incomplete ?? null);
+  if (options.readOnly) return custody;
   const written = writeVerdict(sandbox, anchorFile, custody);
   if (!written.anchored) say(`custody: WARN: the verdict could not be added to the anchor outside the run (${written.why}); custody.json cannot be checked against it`);
+  // Signed and timestamped, when the operator set it up: the signature and
+  // the authority's token beside custody.json, their hashes in the anchor.
+  await sealVerdict(sandbox, anchorFile, { signKey: options.signKey ?? process.env.SWARM_CUSTODY_SIGN_KEY, timestampUrl: options.timestampUrl ?? process.env.SWARM_CUSTODY_TSA_URL }, say);
   return custody;
+}
+
+/** Sign custody.json and have it timestamped, as set up; each result added to the last verdict in the anchor. */
+export async function sealVerdict(sandbox: string, anchorFile: string, how: { signKey?: string; timestampUrl?: string }, say: (line: string) => void = () => undefined): Promise<{ signature?: Record<string, unknown>; timestamp?: Record<string, unknown> }> {
+  const file = join(sandbox, CUSTODY_REL);
+  const out: { signature?: Record<string, unknown>; timestamp?: Record<string, unknown> } = {};
+  if (how.signKey) {
+    const r = await signFile(file, how.signKey);
+    out.signature = r.ok ? { file: `${CUSTODY_REL}.sig`, sha256: r.sha256, key: r.fingerprint, namespace: "dfirswarm-custody" } : { error: r.why };
+    if (!r.ok) say(`custody: WARN: custody.json was not signed: ${r.why}`);
+  }
+  if (how.timestampUrl) {
+    const r = await timestampFile(file, how.timestampUrl);
+    out.timestamp = r.ok ? { file: `${CUSTODY_REL}.tsr`, sha256: r.sha256, authority: how.timestampUrl, gen_time: r.gen_time } : { authority: how.timestampUrl, error: r.why };
+    if (!r.ok) say(`custody: WARN: custody.json was not timestamped: ${r.why}`);
+  }
+  if (out.signature || out.timestamp) {
+    try {
+      const anchor = JSON.parse(readFileSync(anchorFile, "utf8")) as Record<string, unknown>;
+      const verdicts = Array.isArray(anchor.custody) ? (anchor.custody as Array<Record<string, unknown>>) : [];
+      const last = verdicts.at(-1);
+      if (last) Object.assign(last, out);
+      writeFileNoFollowSync(dirname(anchorFile), basename(anchorFile), `${JSON.stringify({ ...anchor, custody: verdicts }, null, 2)}\n`, 0o444);
+    } catch (err) {
+      say(`custody: WARN: the signature and timestamp could not be added to the anchor: ${(err as Error).message}`);
+    }
+  }
+  return out;
 }
 
 /** A file beside the run (an anchor), read as a regular file: an anchor that is a link is no anchor. */
@@ -1539,9 +1730,18 @@ export function verdictOf(state: CustodyState, incomplete: string | null): Custo
     artifacts: state.artifacts ?? null,
     model_gateway: state.model_gateway ?? null,
     store: state.store ?? null,
+    seal: state.seal ?? { trace: { lines: 0, bytes: 0, last_line_sha256: null }, ledger: { entries: 0, head: null }, attestations: { lines: 0, head: null }, journal: null, model_gateway: null },
+    attestations: state.attestations ?? null,
+    operator: state.operator ?? null,
+    acquisition: state.acquisition ?? null,
+    checks: [],
+    timing: state.timing ?? { phases: {}, evidence_bytes: 0, evidence_mb_per_s: null, total_ms: 0 },
+    models: state.models ?? { team: [], gateway_answered: null },
+    time_reference: state.time_reference ?? null,
     not_reached: notReached,
     incomplete,
   };
+  c.checks = checksOf(c as never, state.errors ?? {});
   return { ...c, summary: summaryOf(c, { traceProblem: state.traceProblem ?? null, traceAnchored: state.traceAnchored ?? false }) };
 }
 
@@ -1567,8 +1767,15 @@ function summaryOf(c: Omit<Custody, "summary">, t: { traceProblem: string | null
         ? [`md5 on ${inputs.digests_compared.md5} and sha1 on ${inputs.digests_compared.sha1} compared too`]
         : []),
     ];
+    // Unchanged since the kickoff hashed it: that is all a re-hash can say. Against the imager's own numbers only when the operator gave them.
+    const acq = c.acquisition;
+    const acqText = !acq
+      ? "; acquisition hashes not given (--inputs-hashes)"
+      : acq.mismatched.length
+        ? `; DOES NOT MATCH THE ACQUISITION HASHES GIVEN: ${acq.mismatched.join(", ")}`
+        : `; matches the acquisition hashes given (${acq.matched} of ${acq.given}${acq.not_compared.length ? `, ${acq.not_compared.length} NOT COMPARED` : ""})`;
     parts.push(inputs.unchanged
-      ? `evidence unchanged (${how.join(", ")}${inputs.manifest_anchored === true ? ", manifest anchored" : inputs.manifest_anchored === null ? ", manifest not anchored" : ""})`
+      ? `evidence unchanged since the run began (${how.join(", ")}${inputs.manifest_anchored === true ? ", manifest anchored" : inputs.manifest_anchored === null ? ", manifest not anchored" : ""})${acqText}`
       : changedAny
         ? `EVIDENCE CHANGED: ${inputs.changed.length} changed, ${inputs.missing.length} missing, ${inputs.added.length} added${inputs.manifest_anchored === false ? ", MANIFEST REWRITTEN" : ""}${inputs.skipped.length ? `; ${inputs.skipped.length} NOT RE-READ` : ""}${unreadable.length ? `; ${unreadable.length} UNREADABLE BY THE HOST (${unreadable.join(", ")})` : ""}`
         : `EVIDENCE NOT FULLY RE-HASHED: ${inputs.files - inputs.skipped.length - unreadable.length} of ${inputs.files} checked unchanged${inputs.skipped.length ? `, ${inputs.skipped.length} not re-read before the deadline` : ""}${unreadable.length ? `, ${unreadable.length} unreadable by the host (${unreadable.join(", ")})` : ""}${inputs.manifest_anchored === null ? ", manifest not anchored" : ""}`);
@@ -1588,13 +1795,20 @@ function summaryOf(c: Omit<Custody, "summary">, t: { traceProblem: string | null
     const tr = c.trace;
     if (t.traceProblem) parts.push(`TRACE UNREADABLE: ${t.traceProblem}`);
     else if (!tr.lines) parts.push(tr.detail.startsWith("chain broken") ? `NO TRACE, AND THE ANCHOR NAMES ONE: ${tr.detail}` : "NO TRACE");
-    else if (tr.intact) parts.push(`trace ${tr.lines} lines, chain intact${t.traceAnchored ? "" : " (no anchor)"}${tr.unverified ? `, ${tr.unverified} unverified` : ""}${tr.operator_actions ? `, ${plural(tr.operator_actions, "operator action")} from a shell outside the run` : ""}${tr.disputed ? `, ${tr.disputed} disputed` : ""}`);
+    else if (tr.intact) {
+      const op = c.operator;
+      const opText = tr.operator_actions
+        ? `, ${plural(tr.operator_actions, "operator action")} from a shell outside the run${op ? (op.unmatched.length ? ` (${op.unmatched.length} NOT ON THE OPERATOR AUDIT)` : `, each on the operator audit`) : ""}`
+        : "";
+      parts.push(`trace ${tr.lines} lines, chain intact${t.traceAnchored ? "" : " (no anchor)"}, sealed at line ${c.seal.trace.lines}${tr.unverified ? `, ${tr.unverified} unverified` : ""}${opText}${tr.disputed ? `, ${tr.disputed} disputed` : ""}`);
+    }
     else if (!tr.detail.startsWith("chain broken")) parts.push(`TRACE UNCHAINED (${tr.lines} lines)`);
     else parts.push("TRACE CHAIN BROKEN");
     const spilled = tr.spilled.reduce((n, s) => n + s.lines, 0);
     const badSpill = tr.spilled.reduce((n, s) => n + s.bad, 0);
     const dupSpill = tr.spilled.reduce((n, s) => n + s.duplicates, 0);
-    if (spilled) parts.push(`${plural(spilled, "trace line")} outside the chain (spilled: ${tr.spilled.filter((s) => s.lines).map((s) => (s.unauthenticated ? `${s.path}, which any pane can write` : s.path)).join("; ")})${dupSpill ? `, ${dupSpill} also in the chain` : ""}${badSpill ? `, ${badSpill} NOT ATTRIBUTABLE` : ""}`);
+    const afterClose = tr.spilled.reduce((n, s) => n + (s.after_close ?? 0), 0);
+    if (spilled) parts.push(`${plural(spilled, "trace line")} outside the chain (spilled: ${tr.spilled.filter((s) => s.lines).map((s) => (s.unauthenticated ? `${s.path}, which any pane can write` : s.path)).join("; ")})${afterClose ? `, ${afterClose === spilled ? "all" : afterClose} dated after the last line the chain took (written once the collector was down)` : ""}${dupSpill ? `, ${dupSpill} also in the chain` : ""}${badSpill ? `, ${badSpill} NOT ATTRIBUTABLE` : ""}`);
     const refusedSpills = tr.spilled.filter((s) => s.refused);
     if (refusedSpills.length) parts.push(`SPILL NOT READ: ${refusedSpills.map((s) => `${s.path} is ${s.refused}`).join("; ")}`);
     if (tr.clock.length) parts.push(`sent with a clock more than ${CLOCK_FLAG_SEC} s off the host's: ${tr.clock.map((x) => `${x.agent} ${plural(x.lines, "line")} (up to ${x.max_skew_s} s)`).join(", ")}; the record orders by the host's recv_ts`);
@@ -1611,6 +1825,8 @@ function summaryOf(c: Omit<Custody, "summary">, t: { traceProblem: string | null
     } else parts.push(`LEDGER CHAIN BROKEN (${l.detail})`);
     if (l.claimed_by_seat.length) parts.push(`${plural(l.claimed_by_seat.length, "ledger hash", "ledger hashes")} a seat's own record line carried and the hub never logged (a guest's word, not counted against the ledger)`);
   }
+  if (c.attestations) parts.push(c.attestations.intact ? `${plural(c.attestations.lines, "ledger attestation")}, chain intact` : `LEDGER ATTESTATIONS CHAIN BROKEN (${c.attestations.detail})`);
+  if (c.operator && !c.operator.intact) parts.push(`OPERATOR AUDIT CHAIN BROKEN (${c.operator.detail})`);
   if (c.model_gateway) {
     const g = c.model_gateway;
     parts.push(g.refused ? `MODEL GATEWAY LOG NOT READ: ${g.detail.replace(/^not read: /, "")}` : g.intact ? `model gateway log ${plural(g.lines, "line")}, chain intact` : `MODEL GATEWAY LOG CHAIN BROKEN (${g.detail})`);
@@ -1655,7 +1871,7 @@ function summaryOf(c: Omit<Custody, "summary">, t: { traceProblem: string | null
   if (c.store) {
     const st = c.store;
     const j = st.journal;
-    const anchor = j.anchor === "matches" ? "its anchor matches" : j.anchor === "behind" ? "its anchor one step behind (a crash between two writes, recovered)" : j.anchor === "missing" ? "NO JOURNAL ANCHOR" : "JOURNAL ANCHOR OFF THE CHAIN";
+    const anchor = j.anchor === "matches" ? "its anchor matches" : j.anchor === "behind" ? "its anchor behind the journal's head, on the chain (a crash between two writes, recovered)" : j.anchor === "missing" ? "NO JOURNAL ANCHOR" : "JOURNAL ANCHOR OFF THE CHAIN";
     const bits = [`store: ${plural(st.jobs, "job")}, ${st.committed} committed, journal ${plural(j.lines, "line")} ${j.intact ? "chain intact" : `CHAIN BROKEN (${j.detail})`}, ${anchor}`];
     bits.push(`${st.outputs.verified} of ${plural(st.outputs.files, "output file")} verified against their manifests`);
     // A long list is named in part here and whole in custody.json.
@@ -1671,8 +1887,20 @@ function summaryOf(c: Omit<Custody, "summary">, t: { traceProblem: string | null
       const parts = [`${f.structured} with refs${f.refs_invalid.length ? ` (${f.refs_invalid.length} NO LONGER RESOLVE: ledger seq ${some(f.refs_invalid, 20, "store.findings.refs_invalid")})` : ""}${f.unresolved_only.length ? `, ${f.unresolved_only.length} of them saying only why no object can be named` : ""}`];
       if (f.path_only.length) parts.push(`${f.path_only.length} naming a path in prose only`);
       parts.push(f.without_refs.length ? `${f.without_refs.length} citing no object of the run (ledger seq ${some(f.without_refs, 20, "store.findings.without_refs")}): an audit gap` : "none citing nothing");
+      if (f.on_failed_jobs?.length) parts.push(`${f.on_failed_jobs.length} resting on the kept output of a job that did not succeed (ledger seq ${some(f.on_failed_jobs, 20, "store.findings.on_failed_jobs")})`);
       bits.push(`${plural(f.total, "standing finding")}: ${parts.join(", ")}`);
     }
+    if (st.findings.contradictions?.length) bits.push(`${plural(st.findings.contradictions.length, "standing contradiction")} (${st.findings.contradictions.map((x) => `#${x.from} contradicts #${x.to}`).join(", ")})`);
+    if (st.findings.limitations) bits.push(`${plural(st.findings.limitations, "limitation")} recorded`);
+    if (st.findings.sensitive?.length) bits.push(`${plural(st.findings.sensitive.length, "entry", "entries")} marked sensitive (package --redact replaces what they cite)`);
+    if (st.logs) bits.push(st.logs.mismatched.length || st.logs.missing.length ? `JOB LOGS: ${st.logs.mismatched.length} CHANGED SINCE SEALED, ${st.logs.missing.length} MISSING` : `${st.logs.checked} job logs verified against their seal`);
+    if (st.ledger_unreadable) bits.push(`FINDINGS NOT COUNTED: ${st.ledger_unreadable}`);
+    if (st.images) {
+      const many = Object.entries(st.images.digests).filter(([, d]) => d.length > 1);
+      bits.push(st.images.undeclared.length ? `${st.images.undeclared.length} JOB(S) RAN IN AN IMAGE THE RUN DID NOT DECLARE (${some(st.images.undeclared, 10, "store.images.undeclared")})` : `every job in one of the ${st.images.declared.length} job images the run declared`);
+      if (many.length) bits.push(`AN IMAGE NAME BOOTED MORE THAN ONE DIGEST: ${many.map(([k, d]) => `${k} (${d.join(", ")})`).join("; ")}`);
+    }
+    if (st.access) bits.push(`what each job read is not observed by the harness (${st.access.observed_unknown} of ${st.access.jobs} jobs: declared inputs and accessible mounts are recorded)`);
     if (st.catalogue) {
       const c = st.catalogue;
       const bad = [...c.revisions_mismatched, ...c.generations_mismatched];
@@ -1688,6 +1916,10 @@ function summaryOf(c: Omit<Custody, "summary">, t: { traceProblem: string | null
   }
   if (c.not_reached.length) parts.push(`NOT CHECKED BEFORE CUSTODY ENDED: ${c.not_reached.join(", ")}`);
   if (c.incomplete) parts.push(`CUSTODY INCOMPLETE: ${c.incomplete}`);
+  if (c.time_reference) parts.push(c.time_reference.offset_ms === null ? `REFERENCE CLOCK NOT READ (${c.time_reference.url}: ${c.time_reference.error ?? "no answer"})` : `the host's clock ${c.time_reference.offset_ms >= 0 ? "behind" : "ahead of"} ${c.time_reference.url} by ${Math.abs(c.time_reference.offset_ms)} ms (± ${c.time_reference.precision_ms} ms)`);
+  parts.push(checksLine(c.checks));
+  // What the anchors are: files of the operator's own account beside the run. They hold the agents to account, not the operator.
+  parts.push("anchors are the operator's own files beside the run: they hold the agents to account; a signature and an external timestamp hold the verdict itself");
   return parts.join(" · ");
 }
 
@@ -1711,6 +1943,8 @@ function writeVerdict(sandbox: string, anchorFile: string, custody: Custody): { 
       sessions_digest: custody.sessions.digest,
       artifacts_sha256: custody.artifacts?.index_sha256 ?? null,
       ...(custody.model_gateway ? { model_gateway: { sha256: custody.model_gateway.sha256, lines: custody.model_gateway.lines, intact: custody.model_gateway.intact } } : {}),
+      seal: custody.seal,
+      checks: custody.checks.map((x) => `${x.name}: ${x.status}`),
     });
     return { anchored: true };
   } catch (err) {
@@ -1781,62 +2015,173 @@ export function verdictAnchorLine(v: VerdictAnchor): string {
   }
 }
 
+/** A verdict's checks that did not pass. */
+export function adverse(c: Pick<Custody, "checks">): Check[] {
+  return c.checks.filter((x) => x.status === "failed" || x.status === "incomplete" || x.status === "unavailable");
+}
+
+export type VerifyReport = {
+  sandbox: string;
+  verdict: { at: string | null; anchor: string };
+  prefix: { sealed_lines: number; intact: boolean; detail: string };
+  after_seal: { lines: number; tools: string[]; closure_only: boolean };
+  changed: Array<{ check: string; sealed: string | null; now: string }>;
+  now: Check[];
+  signature: { present: boolean; ok: boolean | null; how: string; detail: string };
+  timestamp: { present: boolean; imprint: boolean | null; gen_time: string | null; note: string };
+  ok: boolean;
+};
+
+/**
+ * What a third party runs: the checks again, writing nothing, against the
+ * verdict that was sealed. The sealed prefix of the trace must be the same
+ * bytes; lines after it are named (the run's own closing lines are
+ * expected); each check's status then and now; the signature and the
+ * timestamp token, when there are any.
+ */
+export async function verifyCustody(sandboxInput: string, opts: { timeoutSec?: number; allowedSigners?: string; identity?: string; runsDir?: string } = {}): Promise<VerifyReport> {
+  const sandbox = resolve(sandboxInput);
+  const { verifySignature } = await import("./custody-checks.ts");
+  const { readTimestampResponse } = await import("./custody-checks.ts");
+  const sealedText = await readRegularText(join(sandbox, CUSTODY_REL));
+  const sealed = "text" in sealedText ? (JSON.parse(sealedText.text) as Custody) : null;
+  const anchor = await verdictAnchorState(sandbox);
+  const now = await takeCustody(sandbox, { readOnly: true, timeoutSec: opts.timeoutSec, runsDir: opts.runsDir });
+  const traceText = await readRegularText(join(sandbox, "traces", "events.jsonl"), 1 << 30);
+  const text = "text" in traceText ? traceText.text : "";
+  const sealedLines = sealed?.seal?.trace?.lines ?? 0;
+  const lines = text.split("\n").filter((l) => l.trim());
+  const lastSealed = sealedLines > 0 ? lines[sealedLines - 1] : undefined;
+  const prefixOk = !sealed?.seal ? false : sealedLines === 0 ? true : lastSealed !== undefined && createHash("sha256").update(lastSealed).digest("hex") === sealed.seal.trace.last_line_sha256;
+  const tail = afterSeal(text, sealedLines);
+  const before = new Map((sealed?.checks ?? []).map((x) => [x.name, x.status]));
+  const changed = now.checks.filter((x) => (before.get(x.name) ?? null) !== x.status).map((x) => ({ check: x.name, sealed: before.get(x.name) ?? null, now: x.status }));
+  const sigPath = join(sandbox, `${CUSTODY_REL}.sig`);
+  const sig = existsSync(sigPath) ? await verifySignature(join(sandbox, CUSTODY_REL), sigPath, opts.allowedSigners, opts.identity) : null;
+  const tsrPath = join(sandbox, `${CUSTODY_REL}.tsr`);
+  let ts: VerifyReport["timestamp"] = { present: false, imprint: null, gen_time: null, note: "no timestamp token" };
+  if (existsSync(tsrPath) && "text" in sealedText) {
+    const read = readTimestampResponse(readFileSync(tsrPath), createHash("sha256").update(sealedText.text).digest("hex"));
+    ts = { present: true, imprint: read.imprint, gen_time: read.gen_time, note: `the token names this verdict's sha256: ${read.imprint ? "yes" : "NO"}; its signature: openssl ts -verify -in ${CUSTODY_REL}.tsr -data ${CUSTODY_REL} -CAfile <the authority's CA>` };
+  }
+  const report: VerifyReport = {
+    sandbox,
+    verdict: { at: sealed?.at ?? null, anchor: verdictAnchorLine(anchor) || anchor.state },
+    prefix: { sealed_lines: sealedLines, intact: prefixOk, detail: !sealed ? "no verdict to hold the run to" : !sealed.seal ? "the verdict predates the seal (no sealed prefix to compare)" : prefixOk ? `the first ${sealedLines} lines are the ones sealed` : `THE SEALED PREFIX CHANGED: line ${sealedLines} is not the line the verdict sealed` },
+    after_seal: tail,
+    changed,
+    now: now.checks,
+    signature: sig ? { present: true, ok: sig.ok, how: sig.how, detail: sig.detail } : { present: false, ok: null, how: "none", detail: "custody.json is not signed" },
+    timestamp: ts,
+    ok: false,
+  };
+  report.ok = Boolean(sealed) && anchor.state === "matches" && prefixOk && tail.closure_only && !adverse(now).length && (sig ? sig.ok : true) && (ts.present ? ts.imprint === true : true);
+  return report;
+}
+
+/** The run's custody set-up from the registry beside it: sign key, timestamp authority, reference clock. */
+async function registrySeal(sandbox: string, run: string | undefined): Promise<{ signKey?: string; timestampUrl?: string; timeReference?: string }> {
+  try {
+    const runsDir = dirname(await realpath(sandbox).catch(() => sandbox));
+    const reg = JSON.parse(readFileSync(join(runsDir, "registry.json"), "utf8")) as { runs?: Array<Record<string, unknown>> };
+    const rec = (reg.runs ?? []).find((r) => (run && r.id === run) || r.sandbox === sandbox) ?? null;
+    const seal = (rec?.custody_seal ?? {}) as { sign_key?: string; timestamp_url?: string; time_reference?: string };
+    return { ...(seal.sign_key ? { signKey: seal.sign_key } : {}), ...(seal.timestamp_url ? { timestampUrl: seal.timestamp_url } : {}), ...(seal.time_reference ? { timeReference: seal.time_reference } : {}) };
+  } catch {
+    return {};
+  }
+}
+
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
   const args = process.argv.slice(2);
-  const sandbox = args.find((a) => !a.startsWith("--"));
+  const sandbox = args.find((a, i) => !a.startsWith("--") && !["--timeout", "--run", "--sign-key", "--timestamp-url", "--time-reference", "--runs-dir", "--allowed-signers", "--identity"].includes(args[i - 1] ?? ""));
   const opt = (name: string) => {
     const i = args.indexOf(name);
     return i >= 0 ? args[i + 1] : undefined;
   };
   if (!sandbox || !existsSync(sandbox)) {
-    console.error("usage: custody.ts <sandbox> [--timeout SEC] [--run ID] [--quiet]");
+    console.error("usage: custody.ts <sandbox> [--timeout SEC] [--run ID] [--quiet] [--sign-key FILE] [--timestamp-url URL] [--time-reference URL] [--runs-dir DIR]\n       custody.ts <sandbox> --verify [--allowed-signers FILE --identity NAME] [--json]");
     process.exit(2);
   }
   const timeoutSec = opt("--timeout") ? Number(opt("--timeout")) : 4 * 3600;
-  const state: CustodyState = { phase: "starting" };
-  // What was found before custody ended, written as its verdict: the part
-  // done is not lost with the part that could not be.
-  const writePartial = (why: string): string | null => {
-    try {
-      if (!state.sandbox || !state.anchorFile) return null;
-      const c = verdictOf(state, why);
-      writeVerdict(state.sandbox, state.anchorFile, c);
-      return c.summary;
-    } catch (err) {
-      console.error(`custody: the partial verdict could not be written: ${(err as Error).message}`);
-      return null;
+  if (args.includes("--verify")) {
+    // Exit 0: the run is as the verdict sealed it; 4: something differs or a check does not pass; 1: the verify could not run.
+    verifyCustody(sandbox, { timeoutSec, allowedSigners: opt("--allowed-signers"), identity: opt("--identity"), runsDir: opt("--runs-dir") })
+      .then((r) => {
+        if (args.includes("--json")) console.log(JSON.stringify(r, null, 2));
+        else {
+          console.log(`Verdict:      ${r.verdict.at ?? "none"} (${r.verdict.anchor})`);
+          console.log(`Sealed:       ${r.prefix.detail}`);
+          console.log(`After seal:   ${r.after_seal.lines} line(s)${r.after_seal.lines ? `: ${r.after_seal.tools.join(", ")}${r.after_seal.closure_only ? " (the run's own closing lines)" : " (NOT ONLY THE RUN'S CLOSING LINES)"}` : ""}`);
+          console.log(`Checks now:   ${checksLine(r.now)}`);
+          if (r.changed.length) console.log(`Changed:      ${r.changed.map((x) => `${x.check} ${x.sealed ?? "absent"} → ${x.now}`).join("; ")}`);
+          console.log(`Signature:    ${r.signature.present ? `${r.signature.ok ? "valid" : "NOT VALID"} (${r.signature.how})` : r.signature.detail}`);
+          console.log(`Timestamp:    ${r.timestamp.present ? `${r.timestamp.gen_time ?? "time unread"}; ${r.timestamp.note}` : r.timestamp.note}`);
+          console.log(r.ok ? "VERIFIED: the run is as the verdict sealed it." : "NOT VERIFIED: see above.");
+        }
+        process.exit(r.ok ? 0 : 4);
+      })
+      .catch((err) => {
+        console.error(`custody --verify: ${err instanceof Error ? err.message : String(err)}`);
+        process.exit(1);
+      });
+  } else {
+    const state: CustodyState = { phase: "starting" };
+    // What was found before custody ended, written as its verdict: the part
+    // done is not lost with the part that could not be.
+    const writePartial = (why: string): string | null => {
+      try {
+        if (!state.sandbox || !state.anchorFile) return null;
+        const c = verdictOf(state, why);
+        writeVerdict(state.sandbox, state.anchorFile, c);
+        return c.summary;
+      } catch (err) {
+        console.error(`custody: the partial verdict could not be written: ${(err as Error).message}`);
+        return null;
+      }
+    };
+    // The hard deadline: the soft one is checked between and inside reads, and
+    // anything that still holds the process past it plus a grace period ends
+    // it, so a stop is never held by custody.
+    const hard = setTimeout(() => {
+      const why = `still running ${HARD_GRACE_SEC} s past its ${timeoutSec} s deadline, during ${state.phase}; ended`;
+      console.error(`custody: CUSTODY INCOMPLETE: ${why}`);
+      const summary = writePartial(why);
+      if (summary) console.log(summary);
+      process.exit(3);
+    }, (timeoutSec + HARD_GRACE_SEC) * 1000);
+    hard.unref();
+    // A stop's timeout wrapper, or ^C, ends custody with a signal: what was
+    // found by then is written first, not lost with the process.
+    for (const [sig, code] of [["SIGTERM", 143], ["SIGINT", 130]] as const) {
+      process.once(sig, () => {
+        const summary = writePartial(`ended by ${sig} during ${state.phase}`);
+        if (summary) console.log(summary);
+        process.exit(code);
+      });
     }
-  };
-  // The hard deadline: the soft one is checked between and inside reads, and
-  // anything that still holds the process past it plus a grace period ends
-  // it, so a stop is never held by custody.
-  const hard = setTimeout(() => {
-    const why = `still running ${HARD_GRACE_SEC} s past its ${timeoutSec} s deadline, during ${state.phase}; ended`;
-    console.error(`custody: CUSTODY INCOMPLETE: ${why}`);
-    const summary = writePartial(why);
-    if (summary) console.log(summary);
-    process.exit(3);
-  }, (timeoutSec + HARD_GRACE_SEC) * 1000);
-  hard.unref();
-  // A stop's timeout wrapper, or ^C, ends custody with a signal: what was
-  // found by then is written first, not lost with the process.
-  for (const [sig, code] of [["SIGTERM", 143], ["SIGINT", 130]] as const) {
-    process.once(sig, () => {
-      const summary = writePartial(`ended by ${sig} during ${state.phase}`);
-      if (summary) console.log(summary);
-      process.exit(code);
-    });
-  }
-  takeCustody(sandbox, { timeoutSec, run: opt("--run"), state, progress: args.includes("--quiet") ? undefined : (line) => console.error(line) })
-    .then((c) => {
-      console.log(c.summary);
-      process.exit(c.incomplete ? 3 : 0);
+    const fromRegistry = await registrySeal(resolve(sandbox), opt("--run"));
+    takeCustody(sandbox, {
+      timeoutSec,
+      run: opt("--run"),
+      state,
+      progress: args.includes("--quiet") ? undefined : (line) => console.error(line),
+      signKey: opt("--sign-key") ?? fromRegistry.signKey,
+      timestampUrl: opt("--timestamp-url") ?? fromRegistry.timestampUrl,
+      timeReference: opt("--time-reference") ?? fromRegistry.timeReference,
+      runsDir: opt("--runs-dir"),
     })
-    .catch((err) => {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(`custody: ${message}`);
-      const summary = writePartial(`custody failed during ${state.phase}: ${message}`);
-      if (summary) console.log(summary);
-      process.exit(1);
-    });
+      .then((c) => {
+        console.log(c.summary);
+        // 3: incomplete; 4: complete, and a check did not pass (evidence changed, a chain broken, ...); 0: every check passed or did not apply.
+        process.exit(c.incomplete ? 3 : adverse(c).length ? 4 : 0);
+      })
+      .catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`custody: ${message}`);
+        const summary = writePartial(`custody failed during ${state.phase}: ${message}`);
+        if (summary) console.log(summary);
+        process.exit(1);
+      });
+  }
 }

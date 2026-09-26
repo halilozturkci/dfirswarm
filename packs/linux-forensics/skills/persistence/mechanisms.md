@@ -3,7 +3,7 @@ id: persistence/mechanisms
 title: Where something arranges to run again
 when: You have a payload and need to know how it survives a reboot, or you are sweeping for one.
 needs: [triage/system-profile]
-tools: [cron_dump, shell_history]
+tools: [cron_dump, shell_history, linux_triage]
 requires_host: []
 ---
 
@@ -21,7 +21,8 @@ unit file's own mtime and compare it against its neighbours: a directory where
 every file is from the install date and one is from last month answers the
 question on its own.
 
-**cron.** `cron_dump` collects all of it into one list, because it is scattered:
+**cron.** `cron_dump` collects all of it into one list, including the environment
+in force at each entry, because it is scattered:
 
     /etc/crontab, /etc/cron.d/*, /etc/cron.{hourly,daily,weekly,monthly}/
     /var/spool/cron/crontabs/<user>   the per-user tables, which crontab -l shows

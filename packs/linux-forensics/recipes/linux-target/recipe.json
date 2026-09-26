@@ -1,0 +1,31 @@
+{
+  "id": "linux-target",
+  "version": "1.0.0",
+  "description": "Catalogue Linux identity, accounts, sessions, authentication, histories, persistence, packages, SSH, journals/syslog, web and container logs through dissect.target. This reads Linux roots inside LVM and common VM disk containers without mounting them.",
+  "object": "Linux disk image or extracted root",
+  "order": 15,
+  "min_bytes": 65536,
+  "suffixes": [".e01", ".ex01", ".dd", ".img", ".raw", ".vhd", ".vhdx", ".vmdk", ".qcow2"],
+  "magic": [
+    {"offset": 0, "hex": "455646090d0aff00"},
+    {"offset": 0, "hex": "455646320d0a8100"},
+    {"offset": 510, "hex": "55aa"},
+    {"offset": 0, "hex": "7668647866696c65"},
+    {"offset": 0, "hex": "4b444d56"},
+    {"offset": 0, "hex": "514649fb"}
+  ],
+  "runtime": "python3",
+  "entry": "run.py",
+  "auto": ["kickoff"],
+  "limits": {"seconds": 14400},
+  "outputs": [
+    "summary.json",
+    "artefacts/*.jsonl",
+    "artefacts/*.txt",
+    "artefacts/*.stderr",
+    "index.tsv",
+    "coverage.json"
+  ],
+  "covers": "Records exposed by the selected dissect.target Linux plugins. It does not carve deleted/unallocated data, parse arbitrary application data, acquire memory, unlock encrypted volumes without a key, or prove that an empty parser result means the artefact never existed.",
+  "sha256": "ab4e47d306ed032339a373c097f58d9d8133e05ba06b706fefcf1a9b04b1cd24"
+}

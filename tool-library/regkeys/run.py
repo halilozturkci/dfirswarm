@@ -92,6 +92,13 @@ def main():
     key_path = data.get("key") or ""
     recurse = int(data.get("recurse", 0))
     limit = data.get("limit")
+    if limit is not None:
+        print(json.dumps({
+            "ok": False,
+            "error": "limit would cut the registry tree and is not supported",
+            "hint": "omit limit; narrow key or recurse instead",
+        }))
+        return 1
     h = RegistryHive(hive_path)
     if key_path:
         try:
@@ -104,11 +111,7 @@ def main():
     result = node(k)
     def walk(k, depth, parent):
         subs = list(k.iter_subkeys())
-        if limit is not None and len(parent["subkeys"]) >= limit:
-            return
         for sk in subs:
-            if limit is not None and len(parent["subkeys"]) >= limit:
-                break
             child = node(sk)
             parent["subkeys"].append(child)
             if depth < recurse:

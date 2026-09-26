@@ -294,6 +294,13 @@ back to a host run on its own.
   `<sandbox>.vm-snapshots/<id>.msb` and `<id>.logs`. The harness deletes none
   of it. [data-protection.md](data-protection.md) says what of it can be
   personal data, what leaves the machine, and what the operator decides.
+  - **Minimisation on the way out.** An entry an agent marks `sensitive` (a
+    credential, a key, personal data) and what it cites stay out of a package
+    made with `package --redact` and an export made with `export --redact`:
+    the chained records keep their chains by each redacted line's own hash,
+    and `REDACTIONS.txt` lists every change with the hashes before and after,
+    so the owner of the original can match it. What GDPR or similar laws ask
+    of a hand-over beyond that is the operator's to decide.
   - **Retention and legal hold.** Keep or destroy a run with its case, under
     the case's retention rules and any legal hold, and not before custody and
     the package are taken. `swarm.sh hold <id> [--reason TEXT]` keeps a run
@@ -339,7 +346,7 @@ back to a host run on its own.
     `--custody-timeout SEC` bounds it (14400 by default) and names what it did
     not re-read; `--no-custody` skips it, and `scripts/custody.ts <sandbox>`
     takes it later.
-- **Playwright is off by default** and refuses remote http(s) targets unless `SWARM_BROWSER_REMOTE=1`; under netguard the browser has no egress anyway.
+- **Playwright is off by default** and refuses remote http(s) targets unless `SWARM_BROWSER_REMOTE=1`; that opt-in only lifts the tool's own refusal, and netguard's host allowlist still decides where the browser can connect (under netguard it has no egress unless a host is allowed). Within a page, service workers are blocked and downloads refused, and every refused request or download is named in the result.
 - **The web app gates what costs money, and keeps case data on this machine.**
   It binds `127.0.0.1`; reads need no token and show case data, so opening it
   to the LAN (`--host 0.0.0.0`) is the operator's explicit choice. Start, stop,

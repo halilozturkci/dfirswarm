@@ -1,7 +1,7 @@
 {
   "id": "ransomware-response",
   "name": "Ransomware Response Pack",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "The order a ransomware case has to be worked in: scope before anything else, the exfiltration that came before the encryption, what the encryptor itself left, the destroyed shadow copies, identifying the family from the note and the file marker, what recovery is actually possible, and the report a regulator and a negotiator will both ask for.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -18,11 +18,11 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "c4c4006d50c7a9eb33c2a3d64b62b0d43fd0303c5c822839d61d68d5436e530d",
-      "tools/ransom_note_scan/manifest.json": "0a4912e247ec4fbd20882404826ea4df5d0f9e4db9d3c565f98176c8f6c1cf4f",
-      "tools/ransom_note_scan/run.py": "f0c7af4b40b348f0d0b3be3c03d08115e011a1b4cd9233de151ab7f7610e2f24",
-      "tools/encrypted_survey/manifest.json": "b342550684be9cd6d767d00e6d2e939116652b06db08415c552f0b5b4d582cd6",
-      "tools/encrypted_survey/run.py": "809f930421f062e39340b6d8e4b2f7c729f51e518aa56adceac024e46f3ca838",
+      "README.md": "e50d856172181353278440618e05a2feaae86c1b3c057995ab4c41a328f5c496",
+      "tools/ransom_note_scan/manifest.json": "4b10c92b6caf562de3b3c8b19c71f9cbe753ebeb3ad96554e1ed175fadc891d1",
+      "tools/ransom_note_scan/run.py": "be2f968a03da0f32bf611dd0b13292e7b93a461ea13170167de907f99b32c660",
+      "tools/encrypted_survey/manifest.json": "131a4cfec7e2b12e8077fcfa8998cf752800a822e81b09b5daa51664b446e9a3",
+      "tools/encrypted_survey/run.py": "6b927ef96707f6c6f21535fee50fb125e8ac47d8574ffa134477447069de5fe3",
       "goals/ransomware-case.md": "cf91c8ea49f35a2665f9add6f33d2681037918003f3ddfbad5925b7eeaf54310",
       "skills/identify/family.md": "9b524e3cd1e8667760cb3a1a5220942f1876e8efe18c5f1ec5b8b1905fb91d90",
       "skills/reporting/for-regulators.md": "3cfa5dcfe23fe91c7b4b022af4e2a2db3c4569608f92b9c752523e2134400644",

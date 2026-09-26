@@ -7,14 +7,16 @@ tools: [prefetch_mam, mam_scan]
 requires_host: [icat]
 ---
 
-`C:\Windows\Prefetch\<NAME>.EXE-<HASH>.pf`. The hash is of the full path and the
-command line, so the same binary in two directories makes two files, and a
-renamed binary makes a new one.
+`C:\Windows\Prefetch\<NAME>.EXE-<HASH>.pf`. The hash is derived from the
+executable path (with format- and hosted-application-specific inputs), so the
+same binary in two directories normally makes two files, and a renamed binary
+makes a new one. Do not describe it as a hash of the file bytes.
 
 From Windows 8 onwards the file is compressed, with a `MAM\x04` header and an
 LZXPRESS Huffman body. `prefetch_mam` decompresses it and returns the executable
-name, the version, the run count, the last run times (eight of them on modern
-builds) and the volume information. Do not try to read it with a plain parser:
+name, format version, prefetch hash, run count, last-run times (up to eight on
+modern builds), and all recoverable UTF-16 strings and paths. Confirm volume
+information with a second parser such as `sccainfo`. Do not try to read it with a plain parser:
 it will return nothing and you will conclude the file is empty.
 
 What it gives you, in order of usefulness: the last run time to the second, the

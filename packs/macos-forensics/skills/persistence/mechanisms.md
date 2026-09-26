@@ -24,8 +24,11 @@ identifier — `com.apple.something` outside `/System` — pointing at a binary 
 modification time against its neighbours.
 
 **Login items.** `~/Library/Application Support/com.apple.backgroundtaskmanagementagent/backgrounditems.btm`
-on older systems, and the per-app registrations that replaced it. The System
-Settings list a user sees is not the whole set.
+and newer background-task registrations are typically keyed archives rather
+than ordinary semantic plists. `plist_read` can expose the archive structure
+but does not resolve every object reference into a trustworthy login-item list;
+use a version-aware parser before attributing an item. The System Settings list
+a user sees is not necessarily the whole set.
 
 Then the quieter ones: a `cron` table, which still works; `/etc/periodic/`;
 a `~/.zshrc` or `~/.bash_profile` line; `emond` rules on older systems; a

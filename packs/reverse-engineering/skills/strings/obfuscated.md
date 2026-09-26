@@ -3,8 +3,8 @@ id: strings/obfuscated
 title: Strings, including the ones the sample hides
 when: You need addresses, paths, commands or keys out of a binary.
 needs: [pe/structure]
-tools: [pe_info, ioc_scan]
-requires_host: [floss, strings]
+tools: [pe_info, ioc_scan, fuzzy_hash]
+requires_host: [floss, strings, ssdeep, tlsh]
 ---
 
 `strings` is the first tool everybody reaches for and the one that produces the
@@ -37,3 +37,9 @@ What to do with what comes out:
 Encoded blobs are worth carving out and decoding in their own right: base64 that
 decodes to a PE header, a PowerShell command in UTF-16LE base64, a certificate.
 See `filesystem/carving` in the base pack for cutting them out.
+
+For family clustering, run `fuzzy_hash` over the original bytes before making
+any unpacked or patched copy. SHA-256 proves identity; ssdeep and TLSH are only
+similarity leads. Record the digest and the tool version, and do not turn an
+arbitrary similarity score into a family attribution without shared code or
+structure to explain it.

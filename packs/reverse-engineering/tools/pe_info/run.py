@@ -21,6 +21,7 @@ libraries it links. All of it is parsing; nothing is executed, and under
 import datetime
 import json
 import math
+import mmap
 import os
 import struct
 import sys
@@ -55,10 +56,12 @@ def entropy(block):
     return round(out, 3)
 
 
-def cstring(blob, at, limit=512):
-    end = blob.find(b"\x00", at)
-    if end < 0 or end - at > limit:
-        end = min(len(blob), at + limit)
+def cstring(blob, at, end=None):
+    """Read a complete C string, bounded by its file-backed container."""
+    end = len(blob) if end is None else min(len(blob), end)
+    nul = blob.find(b"\x00", at, end)
+    if nul >= 0:
+        end = nul
     return blob[at:end].decode("utf-8", "replace")
 
 
@@ -72,7 +75,7 @@ def when(stamp):
         return None
 
 
-def read_pe(blob, with_imports, max_imports):
+def read_pe(blob, with_imports):
     out = {"format": "PE"}
     if len(blob) < 0x40:
         return {"format": "PE", "error": "shorter than a DOS header"}
@@ -119,65 +122,83 @@ def read_pe(blob, with_imports, max_imports):
 
     table_at = opt_at + opt_size
     parsed, rva_map = [], []
-    for i in range(min(sections, 96)):
+    for i in range(sections):
         at = table_at + i * 40
         if at + 40 > len(blob):
             break
         name = blob[at:at + 8].rstrip(b"\x00").decode("utf-8", "replace")
         vsize, vaddr, rawsize, rawptr = struct.unpack_from("<IIII", blob, at + 8)
         flags, = struct.unpack_from("<I", blob, at + 36)
-        body = blob[rawptr:rawptr + rawsize] if rawptr and rawsize else b""
+        body = blob[rawptr:min(len(blob), rawptr + rawsize)] if rawptr and rawsize else b""
         entry = {"name": name, "virtual_size": vsize, "virtual_address": hex(vaddr),
                  "raw_size": rawsize, "raw_pointer": rawptr,
-                 "entropy": entropy(body[:1 << 20]),
+                 "entropy": entropy(body),
                  "permissions": [n for bit, n in SECTION_FLAGS if flags & bit]}
         if rawsize and vsize > rawsize * 4 and entry["entropy"] > 7.0:
             entry["packed_shape"] = True
         if "write" in entry["permissions"] and "execute" in entry["permissions"]:
             entry["writable_and_executable"] = True
         parsed.append(entry)
-        rva_map.append((vaddr, vsize or rawsize, rawptr))
+        rva_map.append((vaddr, vsize or rawsize, rawptr, rawsize))
     out["sections"] = parsed
 
-    def to_offset(rva):
-        for vaddr, vsize, rawptr in rva_map:
-            if vaddr <= rva < vaddr + max(vsize, 1):
-                return rawptr + (rva - vaddr)
+    def to_file_range(rva):
+        """Map an RVA only into bytes actually present in its section."""
+        for vaddr, vsize, rawptr, rawsize in rva_map:
+            delta = rva - vaddr
+            if 0 <= delta < min(max(vsize, 1), rawsize):
+                start = rawptr + delta
+                return start, min(len(blob), rawptr + rawsize)
         return None
+
+    def to_offset(rva):
+        mapped = to_file_range(rva)
+        return mapped[0] if mapped else None
 
     imports = []
     if with_imports and len(directories) > 1 and directories[1]["size"]:
         at = to_offset(directories[1]["rva"])
-        index = 0
-        while at is not None and at + 20 <= len(blob) and index < 64:
+        max_descriptors = directories[1]["size"] // 20
+        terminated = False
+        for index in range(max_descriptors):
+            if at is None or at + index * 20 + 20 > len(blob):
+                out["import_table_problem"] = "the import directory points outside file-backed bytes"
+                break
             fields = struct.unpack_from("<IIIII", blob, at + index * 20)
             if not any(fields):
+                terminated = True
                 break
             original_thunk, _t, _f, name_rva, first_thunk = fields
-            name_at = to_offset(name_rva)
-            library = cstring(blob, name_at) if name_at else "?"
+            name_range = to_file_range(name_rva)
+            library = cstring(blob, name_range[0], name_range[1]) if name_range else "?"
             names = []
-            thunk_at = to_offset(original_thunk or first_thunk)
+            thunk_range = to_file_range(original_thunk or first_thunk)
+            thunk_at = thunk_range[0] if thunk_range else None
+            thunk_end = thunk_range[1] if thunk_range else None
             wide = out.get("bits") == 64
             step = 8 if wide else 4
-            counter = 0
-            while thunk_at is not None and counter < max_imports:
-                if thunk_at + step > len(blob):
-                    break
+            thunk_terminated = False
+            while thunk_at is not None and thunk_at + step <= thunk_end:
                 value = struct.unpack_from("<Q" if wide else "<I", blob, thunk_at)[0]
                 if not value:
+                    thunk_terminated = True
                     break
                 ordinal_bit = 1 << (63 if wide else 31)
                 if value & ordinal_bit:
                     names.append("#%d" % (value & 0xFFFF))
                 else:
-                    hint_at = to_offset(value)
-                    if hint_at is not None:
-                        names.append(cstring(blob, hint_at + 2, 128))
+                    hint_range = to_file_range(value)
+                    if hint_range is not None:
+                        names.append(cstring(blob, hint_range[0] + 2, hint_range[1]))
                 thunk_at += step
-                counter += 1
-            imports.append({"library": library, "functions": names, "function_count": counter})
-            index += 1
+            entry = {"library": library, "functions": names, "function_count": len(names)}
+            if thunk_range is None:
+                entry["thunk_table_problem"] = "the thunk RVA is not backed by file bytes"
+            elif not thunk_terminated:
+                entry["thunk_table_problem"] = "the thunk table has no terminator in its section"
+            imports.append(entry)
+        if max_descriptors and not terminated and len(imports) == max_descriptors:
+            out["import_table_problem"] = "the import directory has no terminating descriptor"
         out["imports"] = imports
         out["import_library_count"] = len(imports)
         if len(imports) <= 2 and sum(i["function_count"] for i in imports) <= 6:
@@ -187,9 +208,9 @@ def read_pe(blob, with_imports, max_imports):
         at = to_offset(directories[0]["rva"])
         if at is not None and at + 40 <= len(blob):
             name_rva, = struct.unpack_from("<I", blob, at + 12)
-            name_at = to_offset(name_rva)
-            if name_at is not None:
-                out["export_name"] = cstring(blob, name_at, 128)
+            name_range = to_file_range(name_rva)
+            if name_range is not None:
+                out["export_name"] = cstring(blob, name_range[0], name_range[1])
     return out
 
 
@@ -216,6 +237,38 @@ def read_elf(blob):
     out["section_headers"] = shnum
     out["stripped"] = shnum == 0
 
+    segments = []
+    for i in range(phnum):
+        at = phoff + i * phentsize
+        if at + phentsize > len(blob):
+            break
+        try:
+            if wide:
+                p_type, flags, offset, vaddr, _paddr, file_size, mem_size, align = struct.unpack_from(
+                    end + "IIQQQQQQ", blob, at)
+            else:
+                p_type, offset, vaddr, _paddr, file_size, mem_size, flags, align = struct.unpack_from(
+                    end + "IIIIIIII", blob, at)
+        except struct.error:
+            break
+        body = blob[offset:min(len(blob), offset + file_size)] if file_size else b""
+        segments.append({
+            "index": i,
+            "type": p_type,
+            "offset": offset,
+            "virtual_address": hex(vaddr),
+            "file_size": file_size,
+            "memory_size": mem_size,
+            "permissions": {
+                "read": bool(flags & 0x4),
+                "write": bool(flags & 0x2),
+                "execute": bool(flags & 0x1),
+            },
+            "alignment": align,
+            "entropy": entropy(body),
+        })
+    out["segments"] = segments
+
     sections, names_blob = [], b""
     if shnum and shoff and shstrndx < shnum:
         at = shoff + shstrndx * shentsize
@@ -225,7 +278,7 @@ def read_elf(blob):
             else:
                 str_off, str_size = struct.unpack_from(end + "II", blob, at + 16)
             names_blob = blob[str_off:str_off + str_size]
-    for i in range(min(shnum, 128)):
+    for i in range(shnum):
         at = shoff + i * shentsize
         if at + shentsize > len(blob):
             break
@@ -234,8 +287,8 @@ def read_elf(blob):
             flags, addr, offset, size = struct.unpack_from(end + "QQQQ", blob, at + 8)
         else:
             flags, addr, offset, size = struct.unpack_from(end + "IIII", blob, at + 8)
-        name = cstring(names_blob, name_off, 64) if names_blob else str(i)
-        body = blob[offset:offset + min(size, 1 << 20)] if sh_type != 8 else b""
+        name = cstring(names_blob, name_off) if names_blob else str(i)
+        body = blob[offset:min(len(blob), offset + size)] if sh_type != 8 else b""
         sections.append({"name": name, "type": sh_type, "address": hex(addr),
                          "offset": offset, "size": size, "entropy": entropy(body),
                          "executable": bool(flags & 0x4), "writable": bool(flags & 0x1)})
@@ -248,7 +301,7 @@ def read_elf(blob):
         strings = blob[dynstr["offset"]:dynstr["offset"] + dynstr["size"]]
         step = 16 if wide else 8
         at = dynamic["offset"]
-        for _ in range(min(dynamic["size"] // step, 256)):
+        for _ in range(dynamic["size"] // step):
             if at + step > len(blob):
                 break
             if wide:
@@ -258,9 +311,9 @@ def read_elf(blob):
             if tag == 0:
                 break
             if tag == 1:
-                needed.append(cstring(strings, value, 128))
+                needed.append(cstring(strings, value))
             elif tag in (15, 29):
-                out["rpath" if tag == 15 else "runpath"] = cstring(strings, value, 256)
+                out["rpath" if tag == 15 else "runpath"] = cstring(strings, value)
             at += step
     out["needed_libraries"] = needed
     return out
@@ -275,7 +328,7 @@ def read_macho(blob):
         try:
             count, = struct.unpack_from(">I", blob, 4)
             slices = []
-            for i in range(min(count, 16)):
+            for i in range(count):
                 cpu, sub, offset, size, align = struct.unpack_from(">IIIII", blob, 8 + i * 20)
                 slices.append({"cpu_type": hex(cpu), "offset": offset, "bytes": size})
             if slices:
@@ -299,7 +352,7 @@ def read_macho(blob):
     out["load_commands"] = ncmds
     at = 32 if wide else 28
     libraries, segments = [], []
-    for _ in range(min(ncmds, 512)):
+    for _ in range(ncmds):
         if at + 8 > len(blob):
             break
         cmd, size = struct.unpack_from("<II", blob, at)
@@ -307,7 +360,7 @@ def read_macho(blob):
             break
         if cmd in (0x0c, 0x0d, 0x18, 0x1f):          # LOAD_DYLIB and friends
             offset, = struct.unpack_from("<I", blob, at + 8)
-            libraries.append(cstring(blob, at + offset, 256))
+            libraries.append(cstring(blob, at + offset, at + size))
         elif cmd in (0x01, 0x19):                    # SEGMENT, SEGMENT_64
             segments.append(blob[at + 8:at + 24].rstrip(b"\x00").decode("utf-8", "replace"))
         at += size
@@ -326,23 +379,26 @@ def main():
         fail("path is required: a PE, ELF or Mach-O file")
     if not os.path.isfile(path):
         fail("no such file", path=path)
-    max_imports = args.get("max_imports", 40)
-    if not isinstance(max_imports, int) or isinstance(max_imports, bool) or max_imports < 1:
-        fail("max_imports must be a positive integer")
     with_imports = args.get("with_imports", True)
 
     with open(path, "rb") as fh:
-        blob = fh.read(64 << 20)
-    head = blob[:4]
-    if head[:2] == b"MZ":
-        body = read_pe(blob, with_imports, max_imports)
-    elif head == b"\x7fELF":
-        body = read_elf(blob)
-    elif head in (b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca"):
-        body = read_macho(blob)
-    else:
-        fail("this is not a PE, ELF or Mach-O file", path=path, head_hex=head.hex(),
-             note="file_type will say what it is instead")
+        try:
+            blob = mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ)
+        except ValueError:
+            fail("the file is empty", path=path)
+        try:
+            head = blob[:4]
+            if head[:2] == b"MZ":
+                body = read_pe(blob, with_imports)
+            elif head == b"\x7fELF":
+                body = read_elf(blob)
+            elif head in (b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca"):
+                body = read_macho(blob)
+            else:
+                fail("this is not a PE, ELF or Mach-O file", path=path, head_hex=head.hex(),
+                     note="file_type will say what it is instead")
+        finally:
+            blob.close()
 
     print(json.dumps({
         "path": path, "bytes": os.path.getsize(path), **body,

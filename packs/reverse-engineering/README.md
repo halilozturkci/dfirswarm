@@ -19,14 +19,20 @@ Depends on the Computer Forensics Base Pack.
 | Documents | `documents/macros` |
 | Rules | `rules/yara` |
 
-**Four tools.** `file_type` reads what a file is from its bytes and says when
+**Five tools.** `file_type` reads what a file is from its bytes and says when
 the extension disagrees. `entropy_map` shows where a file is packed before
 anything is disassembled. `pe_info` reads PE, ELF and Mach-O structure —
 sections with their entropy and permissions, imports with their function names,
 the compile timestamp, and for a fat Mach-O the architectures it holds.
+`fuzzy_hash` computes SHA-256, ssdeep and TLSH together, and can give the TLSH
+distance between two samples without executing either one.
 `doc_probe` opens a document as a container: the macro project, the external
 references that fetch on open with no macro at all, PDF actions that run by
 themselves, and RTF objects that a plain `strings` cannot see.
+
+**One catalogue recipe.** `static-binary` recognises PE, ELF and Mach-O files
+by magic and writes the parser's uncapped structure plus a complete entropy report for kickoff
+or the derived catalogue.
 
 **One goal template**: `sample-triage.md`.
 

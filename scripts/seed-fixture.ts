@@ -549,9 +549,9 @@ async function seedRansomware(root: string, spec: RunSpec): Promise<void> {
   await writeFile(join(root, "work", "report.html"), TRIAGE_REPORT_HTML, "utf8");
   await recordFileVersion(root, "work/report.html", agents[0].agentId);
   await event(root, agents[0].agentId, "write", { path: "work/report.html" }, { ok: true, rev: 1 }, m - 2, 20);
-  await event(root, agents[0].agentId, "playwright", { url: "work/report.html", screenshot: "work/.browser/report.png" }, { ok: true, title: "Ransomware triage" }, m - 1.5);
-  await mkdir(join(root, "work", ".browser"), { recursive: true });
-  await writeFile(join(root, "work", ".browser", "report.png"), PNG_1X1);
+  await event(root, agents[0].agentId, "playwright", { url: "work/report.html", screenshot: `work/${agents[0].agentId}/.browser/report.png` }, { ok: true, title: "Ransomware triage" }, m - 1.5);
+  await mkdir(join(root, "work", agents[0].agentId, ".browser"), { recursive: true });
+  await writeFile(join(root, "work", agents[0].agentId, ".browser", "report.png"), PNG_1X1);
   await claimFile(agents[3], "work/summary.md", { reason: "fixture: one line per agent" });
   await event(root, agents[3].agentId, "claim_file", { path: "work/summary.md" }, { ok: true }, 0.4);
   await writeFile(join(root, "work", "summary.md"), agents.slice(0, 4).map((a, i) => `${a.agentId} slice ${i + 1} done`).join("\n") + "\n", "utf8");

@@ -45,16 +45,26 @@ function csvRows(header: string[], rows: unknown[][]): string {
 }
 
 /** The fields every entry is shown with first, in this order; any other field an entry carries follows, by name. */
-const LEDGER_FIELDS = ["seq", "kind", "ts", "ts_raw", "value", "source", "evidence", "confidence", "by", "authors", "at", "v", "supersedes", "prev", "hash"];
+const LEDGER_FIELDS = ["seq", "kind", "ts", "ts_raw", "precision", "clock", "value", "source", "evidence", "confidence", "status", "reason", "completion", "basis", "answers", "rel", "attribution", "locators", "sensitive", "by", "authors", "at", "v", "supersedes", "because", "prev", "hash"];
 
 export type ExportContext = {
   /** seq → the examiner's standing on it (accepted, rejected, amended, not reviewed). */
   review?: Map<number, string>;
   /** seq → whether the trace grounds its source. */
   grounding?: Record<string, Grounding>;
+  /** Replace what a sensitive entry says (value, source, evidence, locators) with a note: the export is for handing over. */
+  redact?: boolean;
 };
 
-export function ledgerCsv(ledger: readonly LedgerEntry[], ctx: ExportContext = {}): string {
+/** An entry as an export may carry it: a sensitive one's words replaced, its hash and refs kept, so it can still be matched to the ledger. */
+export function redactEntry(e: LedgerEntry): LedgerEntry {
+  if (!e.sensitive) return e;
+  const note = "[redacted: marked sensitive]";
+  return { ...e, value: note, source: note, evidence: note, ...(e.locators ? { locators: e.locators.map((l) => ({ ref: l.ref, at: note })) } : {}), ...(e.attribution ? { attribution: { ...e.attribution, subject: note } } : {}) };
+}
+
+export function ledgerCsv(given: readonly LedgerEntry[], ctx: ExportContext = {}): string {
+  const ledger = ctx.redact ? given.map(redactEntry) : given;
   const extra = [...new Set(ledger.flatMap((e) => Object.keys(e)))].filter((k) => !LEDGER_FIELDS.includes(k)).sort();
   const header = [...LEDGER_FIELDS, ...extra, "superseded_by", "review", "grounding"];
   const by = supersededBy([...ledger]);
@@ -74,10 +84,13 @@ export function ledgerCsv(ledger: readonly LedgerEntry[], ctx: ExportContext = {
 /** What an entry's datetime is, in Timesketch's words. */
 function timestampDesc(e: LedgerEntry): string {
   if (!e.ts) return "Recorded in the ledger";
-  return e.kind === "event" ? "Event time, as recorded in the ledger" : `Time given with the ${e.kind}, as recorded in the ledger`;
+  // The clock the time came from is exactly what this column is for.
+  if (e.clock) return `${e.clock}${e.precision === "date" ? " (date only)" : ""}`;
+  return e.kind === "event" ? `Event time, as recorded in the ledger${e.precision === "date" ? " (date only)" : ""}` : `Time given with the ${e.kind}, as recorded in the ledger`;
 }
 
-export function ledgerTimesketch(ledger: readonly LedgerEntry[], ctx: ExportContext = {}): string {
+export function ledgerTimesketch(given: readonly LedgerEntry[], ctx: ExportContext = {}): string {
+  const ledger = ctx.redact ? given.map(redactEntry) : given;
   const header = ["message", "datetime", "timestamp_desc", "kind", "source", "evidence", "confidence", "by", "seq", "hash", "superseded_by", "review"];
   const by = supersededBy([...ledger]);
   const rows = ledger.map((e) => {
@@ -122,6 +135,7 @@ export async function exportLedger(sandboxArg: string, format: ExportFormat, ctx
   return format === "timesketch" ? ledgerTimesketch(ledger, { ...ctx, grounding, review }) : ledgerCsv(ledger, { ...ctx, grounding, review });
 }
 
+
 if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
   const args = process.argv.slice(2);
   const opt = (name: string) => {
@@ -131,10 +145,10 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
   const sandbox = args.find((a, i) => !a.startsWith("--") && !["--format", "--out", "--runs-dir"].includes(args[i - 1] ?? ""));
   const format = opt("--format");
   if (!sandbox || (format !== "csv" && format !== "timesketch")) {
-    console.error("Usage: export.ts <sandbox> --format csv|timesketch [--out FILE] [--runs-dir DIR]");
+    console.error("Usage: export.ts <sandbox> --format csv|timesketch [--out FILE] [--runs-dir DIR] [--redact]");
     process.exit(2);
   }
-  const text = await exportLedger(sandbox, format, { runsDir: opt("--runs-dir") });
+  const text = await exportLedger(sandbox, format, { runsDir: opt("--runs-dir"), redact: args.includes("--redact") });
   const out = opt("--out");
   if (out) {
     await writeFile(out, text);

@@ -1,7 +1,7 @@
 {
   "id": "reverse-engineering",
   "name": "Reverse Engineering Pack",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "description": "Static triage of a binary or a document under quarantine: what the file actually is, PE and ELF structure, entropy and packing, obfuscated strings, capability mapping, macros and embedded objects, and rules. Nothing from the evidence is ever executed.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -18,30 +18,38 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "0503b05c65d6aa4d3e3166b63f4330dd80a6e093b61ad871bb46141aaf7ca536",
-      "tools/pe_info/manifest.json": "ff95c0628829a1cf5b00f352ca60ab110b1a89468d3813ce92407af183e9c299",
-      "tools/pe_info/run.py": "faa473c6414453460e8bcf099ccbaa70c821ae62fd59a0b3527d39ceab002267",
-      "tools/doc_probe/manifest.json": "9cb43778f95a1e405a57fd41502624835ab5274a858b3bc5ffecb7bc152cd44f",
-      "tools/doc_probe/run.py": "bee0b2cb30e28d133efde84f3f96736a37912a58acfb47921f2081de8f844d06",
-      "tools/entropy_map/manifest.json": "e46100a76ac16cb091427cb94a89230c9e8714a6dee849a5bf93aed6d6e0c2b8",
-      "tools/entropy_map/run.py": "1f39cad7200e59eff1a2e7764b30addb455b92ea254c955dcb014a310293ba53",
+      "README.md": "581b14349a4d059d005e58478e492ff6fde1a81beeaf9c0866bf900634bd081e",
+      "tools/fuzzy_hash/manifest.json": "3e8af5f8e41bcd93d49a04dd0cf28ca27b3bf3fd9eead2ecd3945d7a2a9a185e",
+      "tools/fuzzy_hash/run.py": "914ec5e2b00c1b635ab9d82bd496eef94f47de3574a8ae539848bc543a547e26",
+      "tools/pe_info/manifest.json": "b475d13e1cb43293efc3d3c0152c499d3efc90c57572abcd2142dc5af74a1478",
+      "tools/pe_info/run.py": "41fa74e8ce7f1d6ab4ab23dee044ecd736f400eaeb3c6148d5dc8bc6ba278ee8",
+      "tools/doc_probe/manifest.json": "4212f262ac2b10a8431bdcba8e394e5dfb924deafea36d90e16d55e63b2cc093",
+      "tools/doc_probe/run.py": "b7405dba140674f28375bf8d2f7dd303322c17b2585897f8e14da258749a4c33",
+      "tools/entropy_map/manifest.json": "5304f3e58511f67b3fd61b8830ba717d067afdb400874fbd06f4a1b0e120724d",
+      "tools/entropy_map/run.py": "85cc33f276517752e0c6dd48eb8c9e0fdbb96018350b1a2ce7bba8c466487b56",
       "goals/sample-triage.md": "be4cf69e6c1c15d61e076c9d419d39f6f34437252aff22fefc4c11bce2fc4a4f",
-      "skills/pe/structure.md": "b09e67e9a22f1dba812fdb6bb1cda7e816de714000d9bb905f540f6bbef6f9c4",
-      "skills/strings/obfuscated.md": "3aebf6b125b391b00e27f7ebd8472c57d3115741a14a8c48e4a2e936185f72dd",
-      "skills/capabilities/mapping.md": "87110e1ea4fa447b07e40500d18048cfaa7e0e07e0a69d6ce05535573b0f71f8",
+      "recipes/static-binary/recipe.json": "394adcf6f7be358686eb79a0cd28a11e7b32ba1b981c9dc889bc0c26c25a8b7c",
+      "recipes/static-binary/run.py": "96ca2ee08e3107b783f7beba0a1576ea071184d170fb7c0b78f35a3de8409098",
+      "skills/pe/structure.md": "4130d07bfe0de3cdecf3486b0a3b16c7575228bde42f0b4f49b711a1351a7e86",
+      "skills/strings/obfuscated.md": "ff2c48385f3b9e8d7cfc6c36773e72a6f9b99168e18a649b1c1e02066a1ee1b2",
+      "skills/capabilities/mapping.md": "e80fe67b39b63f5fbd600bf2052f46c66002d42629c335308afcfad41ac8d94c",
       "skills/triage/quarantine.md": "66b1e73f39dd72bed176977dbe040549fe132d64461a7680dc39e32aa5650f77",
       "skills/rules/yara.md": "45e7b3d41f6f2b148c5b68aac7917629837fadc66386ef786dcf175ba17cf3ac",
       "skills/documents/macros.md": "14252a3e3b0ccce7dd7873dc68add06d5389e029cc8567ec3ae8318f37281143",
-      "skills/elf/structure.md": "ff41990bbe48847e671ffe6533d96a924693fccecdd632bdd8a1fba679cf4e0a",
-      "requires/host.json": "1ef586ac54b313c3bfaa790ad425d31c99be3948c847381ef3ee870321a96885",
-      "requires/python.txt": "d6905dcb213b7793ee62ff8a232a8128dd71eb167b6ee190f1fea3684c19a03c",
+      "skills/elf/structure.md": "36b5a7fea46ab47b1b5d790db8fccce68cc17a640f846c9cbe63313af9a32737",
+      "requires/host.json": "66456f83af49b7e38d77565f4d54d31758dbd8006ce998ea6b38b25e8b6b4e82",
+      "requires/python.txt": "f0f18bd3e9e860703a9a7599d84f281b999764d16f1619aeef6b89a670c5566b",
       "skills/INDEX.md": "56d626f885f751c962b1eadfbed545f648b7ac60b3b82f23a41b08e3bb9333bb"
     }
   },
   "tools": [
     "doc_probe",
     "entropy_map",
+    "fuzzy_hash",
     "pe_info"
+  ],
+  "recipes": [
+    "reverse-engineering/static-binary"
   ],
   "skills": 7
 }

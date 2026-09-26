@@ -59,7 +59,7 @@ import { isIPv4, isIPv6 } from "node:net";
 import { availableParallelism, totalmem } from "node:os";
 import { chmod, mkdir, readFile, rename, rm, stat, utimes, writeFile, readdir } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { guestProviders, planGateway, type GatewayConfig } from "./model-gateway.ts";
 
@@ -769,9 +769,13 @@ export function packNeeds(packDirs: string[]): PackNeed[] {
  * are told). An image built from another version of a pack, or one that
  * records no pack versions at all, is said and recorded.
  */
-export function imageFit(probe: Record<string, unknown>, needs: PackNeed[], allowInstall: boolean): { blockers: string[]; warnings: string[] } {
+export function imageFit(probe: Record<string, unknown>, needs: PackNeed[], allowInstall: boolean, programsInJobs = false): { blockers: string[]; warnings: string[] } {
   const blockers: string[] = [];
   const warnings: string[] = [];
+  // Agents on the base image with the packs' programs in the job images: the
+  // VM is not meant to hold them, and saying it lacks them (and that the
+  // agents may install them) pointed the agents at the wrong place.
+  if (programsInJobs) return { blockers, warnings };
   const missing = new Set(Array.isArray(probe.missing_binaries) ? (probe.missing_binaries as string[]) : []);
   const image = (probe.image ?? {}) as { pack_versions?: Record<string, { version?: string; seal?: string }> };
   if (needs.length && !image.pack_versions) warnings.push("the image records no pack versions (built before images recorded them): which version of each pack it was built for is unknown");
@@ -1265,7 +1269,7 @@ export async function createVms(spec: VmSpec): Promise<{ records: VmRecord[]; fa
       continue;
     }
     records.push(r.value);
-    const fit = imageFit(r.value.probe, needs, allowInstall);
+    const fit = imageFit(r.value.probe, needs, allowInstall, Boolean(spec.env.SWARM_PACK_PROGRAMS_IN_JOBS));
     const wrong = [...probeVerdict(r.value.probe, expectInputs, expectedInputFiles), ...fit.blockers];
     // One image for the whole run, by digest: a tag moved between two VMs'
     // boots would give two agents two different toolsets under one name.
@@ -1801,6 +1805,47 @@ export async function imageToolbox(image: string, preset: string, required: bool
       }
     }
     return { code: out.code, json, output: `${out.stdout()}${out.stderr()}`, ...(digest ? { digest } : {}) };
+  } finally {
+    release();
+    await run(msbBinary(), ["stop", name], { timeoutMs: 60_000 });
+    await run(msbBinary(), ["rm", name], { timeoutMs: 60_000 });
+    await rm(tmp, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Files an image describes itself with (/etc/dfirswarm/tools.md,
+ * image.json), read from a throwaway VM of it with no network and nothing
+ * mounted but an empty directory to write to: a run whose agents boot the
+ * base gives them each job image's own list of programs. Each file whole, or
+ * null when the image has none.
+ */
+export async function imageFiles(image: string, paths: string[]): Promise<{ digest: string | null; files: Record<string, string | null> }> {
+  const M = await sdk();
+  const { mkdtemp } = await import("node:fs/promises");
+  const tmp = await mkdtemp("/tmp/dfs-if-");
+  const name = `dfs-imagefiles-${randomBytes(6).toString("hex")}`;
+  const release = putAwayOnSignal(name);
+  const files: Record<string, string | null> = {};
+  try {
+    const sandbox = await M.Sandbox.builder(name)
+      .image(image)
+      .pullPolicy("if-missing")
+      .cpus(1)
+      .memory(512)
+      .maxDuration(600)
+      .labels({ [LABEL_RUN]: "image-files", [LABEL_AGENT]: "image-files" })
+      .disableNetwork()
+      .detached(true)
+      .volume("/if", (v) => v.bind(realpathSync(tmp)))
+      .create();
+    for (const [i, p] of paths.entries()) {
+      // Copied out whole through the mount: nothing is cut on its way.
+      const out = await sandbox.exec("sh", ["-c", `[ -f "$1" ] && cp "$1" /if/${i} || true`, "sh", p]);
+      void out;
+      files[p] = await readFile(join(tmp, String(i)), "utf8").catch(() => null);
+    }
+    return { digest: await imageDigest(name), files };
   } finally {
     release();
     await run(msbBinary(), ["stop", name], { timeoutMs: 60_000 });
@@ -2581,6 +2626,25 @@ async function main(): Promise<void> {
       const ok = out.every((o) => !o.error);
       console.log(JSON.stringify({ ok, vms: out }));
       process.exit(ok ? 0 : 1);
+    }
+    case "image-digest": {
+      // An image by its digest, when this host holds it; null when it does not.
+      const image = opt("--image");
+      if (!image) throw new Error("image-digest needs --image REF");
+      console.log(JSON.stringify({ image, digest: await imageRefDigest(image) }));
+      process.exit(0);
+    }
+    case "image-files": {
+      // Files an image describes itself with, into DIR, each under its base name.
+      const image = opt("--image");
+      const out = opt("--out");
+      const paths = rest.flatMap((a, i) => (a === "--path" && rest[i + 1] ? [rest[i + 1]] : []));
+      if (!image || !out || !paths.length) throw new Error("image-files needs --image REF --out DIR --path P [--path P]...");
+      const r = await imageFiles(image, paths);
+      await mkdir(out, { recursive: true });
+      for (const [p, text] of Object.entries(r.files)) if (text !== null) await writeFile(join(out, basename(p)), text);
+      console.log(JSON.stringify({ image, digest: r.digest, files: Object.fromEntries(Object.entries(r.files).map(([p, t]) => [p, t === null ? null : Buffer.byteLength(t)])) }));
+      process.exit(0);
     }
     case "toolbox": {
       const image = opt("--image");

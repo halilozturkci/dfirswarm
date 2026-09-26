@@ -1,7 +1,7 @@
 {
   "id": "triage-collection",
   "name": "Triage and Collection Pack",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "description": "What to do when the evidence is a collector's output rather than an image: recognising which tool made it, reading its own manifest and log, normalising the paths it rewrote, saying what a logical acquisition cannot contain, and handing the result to the platform packs.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -18,18 +18,18 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "d9bffcc8fd1b8507d72fbd818ec704cd6f01c04c2af9883c62f3b4ddacc5479c",
-      "tools/collection_index/manifest.json": "155f4568f33a7e96b0c9c3a1852de98527233c4dbe29cc1c00a84611e5efcce3",
-      "tools/collection_index/run.py": "6d6e215f1520d4bfe7729201663367674937b4297d7959c7fbb969973c0d621a",
-      "tools/collection_id/manifest.json": "1029a7c50b3c36d38d4c0ad47045ec21102241014adf605d7a8e4d734a196e77",
-      "tools/collection_id/run.py": "40f121d56eb0b021fd516249674cd53a4b7ac7076214ff4efff6c2f223f7c7a1",
+      "README.md": "b521bae05db4fbb064565eb045867d740a4c0f9362b3791d3d461177180a40a6",
+      "tools/collection_index/manifest.json": "3c4a29eb88e8b5205de260b0ed87677333cd6d5d85b996cdfe2a5bd8ba3fff2d",
+      "tools/collection_index/run.py": "6fe89e377aa3149734da6abf219ea13709224d9d0a414193c2e5b874ed20552f",
+      "tools/collection_id/manifest.json": "a75d0ab1745f77d9585281d0958c073ceb37c615546ae4bc77c3f38cd2956281",
+      "tools/collection_id/run.py": "9efd5ef70e5a07387258797864b2055c775b8c16744394526b3e7fb4eca33e73",
       "goals/collection-intake.md": "3b42b05159eb12d7efb10caeba5ab1bd48f15b40b0bca4e3a295837b979b8f2e",
-      "skills/identify/collector.md": "c72c2d42f4ce89ea68f1da89302e31a72ae4162701139781b16310cc4f5d7cbd",
-      "skills/verify/manifests.md": "2dec0a971b9c6279b8bc43083e21ae6fb888f037eaa43544b711a5a795accf27",
-      "skills/gaps/what-is-missing.md": "74bcda9d102a470d77526f66f398ca1474d4a804bc0b2cdc69108ec1c068430f",
-      "skills/plan/what-to-collect.md": "02a945a114227fdf32a23d2f679db94fed1e4955ab5629716bde0977cd0e1968",
-      "skills/normalise/layout.md": "0baa4346f7353ac5df1ea6712d89e6afc3145e3a692d6243ad3f225959023c8f",
-      "requires/host.json": "438452f61e68acf6c451c35d894e5d56f43f38ef78e41a6cb11d268ae4aab485",
+      "skills/identify/collector.md": "798084a4989709e972ad51a1260a5b99476d91858f20299bea67bcdb84fb529f",
+      "skills/verify/manifests.md": "3648fe82711b4b53698c77d71365dbdf0b8129a066cd6632211c411550d9fbfa",
+      "skills/gaps/what-is-missing.md": "f239a91b1c549482257e4d77c187881918cea44f179684bff32a8dfdc411cc2e",
+      "skills/plan/what-to-collect.md": "43cb8f317c1e00f43a8b2db82404beaed99c0d4bb30b55e6f870de620395bdfd",
+      "skills/normalise/layout.md": "c8591dba596ef6ae7df60f859cfbfd32fd04121a00078083fa3183c99409c7fa",
+      "requires/host.json": "68c35c386b891c3b53bdc79b93a1ba0a8b4886230b598942063ac8c203eadbe0",
       "requires/python.txt": "4f753bdd539922ce6d87e00b3c099f7c18af8cf5d04139588668f957d7d3eddd",
       "skills/INDEX.md": "4811a00a11c8d2865d93c5954b3d8f23ef595210709200ed401a32a4e067b42f"
     }

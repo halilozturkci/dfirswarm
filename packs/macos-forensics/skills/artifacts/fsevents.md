@@ -26,13 +26,17 @@ timeline, anchor it: find an event whose path you can date from another
 artefact, and every id before and after it is bracketed. That anchoring step is
 what separates a usable FSEvents finding from a suggestive one.
 
-**A rename appears as two flags on one record**, not as two records, so a file
-that "disappeared" may have moved. Check for the renamed flag before you report
-a deletion.
+**A rename flag does not identify both names.** FSEvents reports that an item at
+a path was involved in a rename, but coalescing and implementation behaviour
+mean you cannot assume a one-record old-path/new-path pairing. Correlate nearby
+event ids, file-system metadata and other artefacts before claiming where an
+item moved.
 
 The log is not complete. Records are coalesced — many changes to one path
 collapse into one record with the flags accumulated — and files roll off as the
 volume fills. A path that is absent was not necessarily never touched.
 
-An external volume carries its own `/.fseventsd/`, which is how you prove a USB
-disk was written to on this machine long after the disk has gone.
+An external volume carries its own `/.fseventsd/`. That can prove changes on the
+volume and their order, but the log travels with the volume: by itself it does
+not prove which Mac made the changes. Attribute a host only with a separate
+machine-specific artefact such as a mount, device or unified-log record.

@@ -4,7 +4,7 @@ title: What a memory image gives you with no framework at all
 when: The host has no Volatility and no MemProcFS, or you want an answer before you configure one.
 needs: [triage/what-you-have]
 tools: [mem_carve, ioc_scan, sig_carve, chunk_needles]
-requires_host: [strings]
+requires_host: [strings, yara]
 ---
 
 A framework needs a symbol profile that matches the build. Getting one can take
@@ -25,6 +25,9 @@ Start here, in this order:
    passes skip, and it is where the answers are.
 3. **`ioc_scan` and `chunk_needles`** for an address, a path, a domain or a name
    in ASCII and UTF-16LE, with offsets and context.
+4. **YARA only with a rule you can defend.** Fetch `patterns/yara` before a
+   whole-image scan. Keep every match with its rule, string identifier and
+   offset; a match with no process/region attribution is a lead, not behaviour.
 
 What this cannot give you: a process list, a parent-child tree, handle tables,
 or anything that needs the page tables walked. Do not approximate those by

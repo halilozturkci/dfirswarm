@@ -13,8 +13,8 @@ introduces the problem. This pack is the work.
 
 **Two tools.** `collection_id` recognises KAPE, UAC, Velociraptor and CyLR from
 the shape of the tree, reads that collector's own log, and lists **the targets
-that failed** — which are usually the files that were locked, which is to say in
-use, which is to say the interesting ones. `collection_index` builds the index
+that failed together with the recorded reasons**. A failure is a collection
+fact, not proof that the target was in use or suspicious. `collection_index` builds the index
 everything else needs: every file with its hash, the path it has now and the
 path it had on the machine, plus two losses that are otherwise silent — a named
 stream whose colon was rewritten, and a tree whose files all share one

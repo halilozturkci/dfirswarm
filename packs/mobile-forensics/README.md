@@ -9,8 +9,9 @@ what an iPhone stores.
 
 ## What it carries
 
-**Five skills**: `extractions/what-you-have`, `ios/artifacts`,
-`android/artifacts`, `apps/databases`, `location/sources`.
+**Seven skills**: `extractions/what-you-have`, `ios/artifacts`,
+`ios/biome-segb`, `ios/unified-logs`, `android/artifacts`, `apps/databases`,
+`location/sources`.
 
 **Three tools.** `manifest_db` turns an iOS backup's flat directory of
 hash-named files back into a file system, and reports the encryption flag first
@@ -19,7 +20,13 @@ an examiner who misses that reports an empty phone. `sqlite_freespace` recovers
 deleted rows from a database's freelist pages **and its per-page freeblock
 chain**, which is where a deleted row's bytes actually sit. `protobuf_peek`
 reads a protobuf blob without its schema, for the Android and iOS artefacts that
-stopped being SQLite.
+stopped being SQLite. All three return their complete matching result; the
+harness retains oversized stdout rather than letting the tools cut it.
+
+**Two recipes.** `ios-filesystem` turns a full-file-system tar into a structural
+mobile catalogue without extracting it. `android-backup` reads an adb-backup
+header and inventories every member of an unencrypted payload. Both say exactly
+what they did not cover in `coverage.json`.
 
 **One goal template**: `phone-examination.md`.
 

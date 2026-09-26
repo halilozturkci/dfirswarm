@@ -1,0 +1,20 @@
+{
+  "real_evidence": [
+    {
+      "name": "A public CTF's iPhone full file-system extraction",
+      "kind": "iOS full file-system tar",
+      "proofs": [
+        "iLEAPP full parse",
+        "ios-filesystem recipe",
+        "SQLite companion inventory",
+        "HEIC decoding and metadata"
+      ]
+    }
+  ],
+  "synthetic_only": [
+    {
+      "kind": "Android adb backup",
+      "why": "No Android evidence was supplied for this review."
+    }
+  ]
+}

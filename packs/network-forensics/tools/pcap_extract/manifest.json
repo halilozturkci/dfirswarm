@@ -1,0 +1,20 @@
+{
+  "name": "pcap_extract",
+  "description": "Export protocol objects from a capture with tshark, keep every object on disk, and write a complete path/size/SHA-256 provenance index. This is the command-line equivalent of NetworkMiner-style object extraction.",
+  "params": {
+    "path": {"type": "string", "description": "A pcap or pcapng file"},
+    "out_dir": {"type": "string", "description": "An empty directory under work/ for exported objects and index.tsv"},
+    "protocols": {"type": "array", "description": "Wireshark export protocols (default: http, smb, smb2, tftp, imf)"},
+    "display_filter": {"type": "string", "description": "Optional Wireshark display filter limiting what is exported"},
+    "timeout_seconds": {"type": "integer", "description": "Per-protocol timeout (default 900)"}
+  },
+  "requires": ["tshark"],
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 3600,
+  "example": "{\"path\": \"inputs/capture.pcap\", \"out_dir\": \"work/exported\", \"protocols\": [\"http\", \"smb\"]}",
+  "by": "maintainer",
+  "at": "2026-09-26T18:00:00.000Z",
+  "version": 1,
+  "sha256": "50b932c063ebb722152b1e17bc044c8c87472baa2172753d3c4903c7ba213efc"
+}

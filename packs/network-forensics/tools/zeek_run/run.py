@@ -32,7 +32,7 @@ def fail(message, **extra):
 
 def read_log(path, limit):
     """Zeek TSV: #separator, #fields and #types lines, then rows."""
-    fields, rows, empty = None, [], "-"
+    fields, rows, empty, total = None, [], "-", 0
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
             for line in fh:
@@ -47,18 +47,21 @@ def read_log(path, limit):
                     continue
                 if fields is None:
                     try:
-                        rows.append(json.loads(line))
+                        record = json.loads(line)
+                        total += 1
+                        if len(rows) < limit:
+                            rows.append(record)
                         continue
                     except ValueError:
                         continue
                 values = line.split("\t")
-                rows.append({k: (None if v == empty else v)
-                             for k, v in zip(fields, values)})
-                if len(rows) >= limit:
-                    break
+                total += 1
+                if len(rows) < limit:
+                    rows.append({k: (None if v == empty else v)
+                                 for k, v in zip(fields, values)})
     except OSError as exc:
-        return None, str(exc)
-    return rows, None
+        return None, None, str(exc)
+    return rows, total, None
 
 
 def main():
@@ -74,6 +77,8 @@ def main():
     out_dir = args.get("out_dir")
     if not isinstance(out_dir, str) or not out_dir:
         fail("out_dir is required: a directory under work/ for Zeek's logs")
+    if os.path.exists(out_dir) and os.listdir(out_dir):
+        fail("out_dir already holds files; stale Zeek logs would contaminate the result", out_dir=out_dir)
     limit = args.get("limit", 200)
     if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
         fail("limit must be a positive integer")
@@ -92,15 +97,19 @@ def main():
 
     os.makedirs(out_dir, exist_ok=True)
     argv = [binary, "-C", "-r", os.path.abspath(path)]
+    stdout_path = os.path.join(out_dir, "zeek.stdout")
+    stderr_path = os.path.join(out_dir, "zeek.stderr")
     try:
-        proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, cwd=out_dir)
+        with open(stdout_path, "wb") as stdout, open(stderr_path, "wb") as stderr:
+            proc = subprocess.run(argv, stdout=stdout, stderr=stderr, timeout=timeout, cwd=out_dir)
     except subprocess.TimeoutExpired:
-        fail("zeek did not finish in time", after_seconds=timeout, command=" ".join(argv))
+        fail("zeek did not finish in time", after_seconds=timeout, command=" ".join(argv),
+             partial_output=out_dir, stdout=stdout_path, stderr=stderr_path)
 
     written = sorted(n for n in os.listdir(out_dir) if n.endswith(".log"))
     if not written:
         fail("zeek wrote no logs", exit_code=proc.returncode, command=" ".join(argv),
-             stderr=(proc.stderr or "").strip()[-800:])
+             stdout=stdout_path, stderr=stderr_path)
 
     wanted = {str(n) for n in (args.get("logs") or [])}
     logs, problems = {}, []
@@ -108,11 +117,13 @@ def main():
         stem = name[:-4]
         if wanted and stem not in wanted:
             continue
-        rows, problem = read_log(os.path.join(out_dir, name), limit)
+        log_path = os.path.join(out_dir, name)
+        rows, total, problem = read_log(log_path, limit)
         if problem:
             problems.append({"log": stem, "why": problem})
             continue
-        logs[stem] = {"records": rows, "returned": len(rows)}
+        logs[stem] = {"file": log_path, "records": rows, "returned": len(rows),
+                      "total": total, "omitted": total - len(rows)}
 
     print(json.dumps({
         "path": path,
@@ -120,14 +131,19 @@ def main():
         "logs_written": [n[:-4] for n in written],
         "logs": logs,
         "exit_code": proc.returncode,
-        "warnings": (proc.stderr or "").strip()[-400:] or None,
+        "stdout": stdout_path,
+        "stderr": stderr_path,
+        "ok": proc.returncode == 0 and not problems,
         "problems": problems,
         "note": "conn.log's orig_bytes and resp_bytes are the asymmetry an exfiltration question "
                 "turns on. files.log carries a hash per reassembled object, and its conn_uids tie "
                 "each one back to the session it came out of — which is the provenance an "
-                "extracted file needs before it can go in a report.",
+                "extracted file needs before it can go in a report. Inline records may be bounded, "
+                "but each complete log is retained and named in its entry. Complete Zeek stdout "
+                "and stderr are retained beside the logs.",
     }, indent=2))
+    return 0 if proc.returncode == 0 and not problems else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

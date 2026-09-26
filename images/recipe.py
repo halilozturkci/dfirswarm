@@ -82,7 +82,7 @@ PACKS = HERE.parent / "packs"
 # The programs every image has, since images/base.Dockerfile installs them:
 # a tool that calls one of these needs no profile for it.
 BASE_PROGRAMS = {"python3", "node", "jq", "sqlite3", "file", "xxd", "socat", "strings", "hexdump", "unzip",
-                 "7z", "xz", "bzip2", "zstd", "curl", "exiftool"}
+                 "7z", "xz", "bzip2", "zstd", "curl", "exiftool", "rg"}
 APT = re.compile(r"^(?:sudo\s+)?apt(?:-get)?\s+install\s+(.+)$")
 # apt's own ways of naming the release a package comes from.
 RELEASE_FLAGS = {"-t", "--target-release", "--default-release"}
@@ -341,8 +341,35 @@ def profile_for(search, wanted: list, programs: set = frozenset(), images=PACKS)
     # smaller than full has them all; otherwise the packs decide, and the
     # probe says which program is missing.
     pool = [s for s in serving if s[3] and s[0] != "full"] or serving
-    # Fewest packs first; between two of a size, the one that holds them.
-    return min(pool, key=lambda s: (s[1], s[2]))[0]
+    # A profile made to hold the packs (other than full) first: a smaller one
+    # that happens to cover them is another pack's image (memory covered the
+    # ransomware pack once it gained yara). Then fewest packs; between two of
+    # a size, the one that holds them.
+    return min(pool, key=lambda s: (0 if s[2] == 0 and s[0] != "full" else 1, s[1], s[2]))[0]
+
+
+def job_profiles(search, wanted: list, images=PACKS) -> dict:
+    """The profile each of a run's packs runs its jobs in: its own
+    (profile_for), unless that profile would serve it alone and a profile
+    chosen for another of the run's packs, full aside, holds it too. A
+    dependency every profile holds (computer-forensics-base) is given the
+    smallest of them by profile_for, memory, which a run of disk and mobile
+    packs would then boot for nothing else; it goes with its dependents."""
+    own = {name: profile_for(search, [name], images=images) for name in wanted}
+    users = {}
+    for prof in own.values():
+        users[prof] = users.get(prof, 0) + 1
+    table = profiles()
+    members = {name: set(resolve(images, prof["packs"])) for name, prof in table.items() if not prof.get("apt")}
+    out = dict(own)
+    for name, prof in own.items():
+        if users[prof] > 1:
+            continue
+        hold = [q for q in set(own.values()) if q not in (prof, "full") and q in members and name in members[q]]
+        if hold:
+            # The profile most of the run's packs run in, then the smallest.
+            out[name] = min(hold, key=lambda q: (-users[q], len(members[q]), q))
+    return out
 
 
 def installed_dirs() -> list:
@@ -407,7 +434,7 @@ def build(a) -> int:
               f"({', '.join(held_back)}). Build with --allow-nonredistributable for an image that stays on this "
               f"machine or in a private registry; never publish it.", file=sys.stderr)
         return 3
-    spec = {"profile": a.profile, "packs": packs,
+    spec = {"profile": a.profile, "packs": packs, "profile_apt": list(extra_apt),
             "pack_versions": {p: pack_version(a.packs, p) for p in packs},
             "redistributable": not held_back, "nonredistributable": held_back, **spec}
 
@@ -469,6 +496,10 @@ def main() -> int:
                    help="where the run's packs are installed (default $DFIRSWARM_HOME/packs); repeatable")
     f.add_argument("--tools-from", type=Path, action="append", default=[],
                    help="a tool directory whose manifests' `requires` name the programs they call; repeatable")
+    j = sub.add_parser("job-profiles", help="{pack: profile} for a run's packs, each dependency with its dependents where one of their profiles holds it")
+    j.add_argument("packs", nargs="*", help="pack ids, or pack directories")
+    j.add_argument("--packs-dir", type=Path, default=PACKS)
+    j.add_argument("--installed", type=Path, action="append")
     sub.add_parser("list").add_argument("--packs-dir", type=Path, default=PACKS)
     c = sub.add_parser("check-lock")
     c.add_argument("lock", type=Path)
@@ -482,6 +513,12 @@ def main() -> int:
         search = [g.parent for g in given] + (a.installed or installed_dirs()) + [a.packs_dir]
         names = [Path(p).name if "/" in p else p for p in a.packs]
         print(profile_for(search, names, tool_programs(a.tools_from), a.packs_dir))
+        return 0
+    if a.cmd == "job-profiles":
+        given = [Path(p) for p in a.packs if "/" in p]
+        search = [g.parent for g in given] + (a.installed or installed_dirs()) + [a.packs_dir]
+        names = [Path(p).name if "/" in p else p for p in a.packs]
+        print(json.dumps(job_profiles(search, names, a.packs_dir)))
         return 0
     if a.cmd == "check-lock":
         errors, warnings, entries = check_lock(a.lock)

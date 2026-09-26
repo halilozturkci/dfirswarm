@@ -4,7 +4,7 @@ title: The unified log
 when: You need what happened on this machine, minute by minute, and syslog is empty.
 needs: [triage/system-profile]
 tools: [unified_log]
-requires_host: [log]
+requires_host: [unifiedlog_iterator]
 ---
 
 macOS stopped writing text logs years ago. `/var/log/system.log` is nearly
@@ -23,16 +23,18 @@ have only one, say so: it is a limit on the evidence, not on the analysis.
 Reading it:
 
     log show --archive <path> --style ndjson --info --debug
-    UnifiedLogReader.py, where the examination host is not a Mac
+    unifiedlog_iterator, where the examination host is not a Mac
 
-`unified_log` wraps whichever is present. Always pass `--info` and `--debug`:
-the default level hides most of what an investigation wants, and the omission is
-silent.
+`unified_log` wraps whichever is present. Apple's reader is invoked with
+`--info --debug`; Mandiant's reader keeps every decoded entry as JSONL and
+names that file in the result. Its warnings are kept whole beside the JSONL.
+Do not use the archived Python UnifiedLogReader for a modern image: its own
+upstream limits it to macOS 10.15/iOS 12-era data.
 
-**Retention is short and it is not configurable in any useful way.** A busy
-machine keeps days, not months. An event three weeks before acquisition is
-usually gone, and its absence means nothing at all — say that rather than
-implying the machine was quiet.
+**Retention is finite and workload-dependent.** Establish the earliest and
+latest decoded timestamps in this acquisition before treating an absence as
+meaningful; do not substitute a generic number of days for the archive's
+observed coverage.
 
 What it is very good for: process launches with their arguments, TCC prompts and
 decisions, network interface and VPN changes, USB attachment, screen lock and

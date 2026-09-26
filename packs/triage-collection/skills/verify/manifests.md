@@ -21,8 +21,10 @@ bodyfile with sizes and times. Where a hash differs, say so and say when the
 difference appeared: between collection and delivery is a custody question,
 and it is a serious one.
 
-**Read the skip log, and put it in the report.** Not as an appendix nobody
-reads — the files that failed are usually the ones that were in use.
+**Read the skip log, and put it in the report.** Preserve the collector's reason
+for each failure. Do not turn a lock, permission error, missing path, unsupported
+object, or collector defect into a claim about user activity without separate
+evidence.
 
 **Record who collected it.** The account the collector ran as, the machine, the
 start and end times, and the version of the tool. That is the equivalent of the

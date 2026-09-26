@@ -33,6 +33,11 @@ its own timestamps and its own hash — but it is also the easiest to fake, and 
 photo received in a message carries the sender's coordinates, not the holder's.
 Check where the file came from before you use it.
 
+Use `Photos.sqlite` with its WAL to map the library record to the exact media
+file, then run `exiftool -json -n -- FILE`. Compare EXIF GPS time, filesystem
+times and the Photos database record; preserve disagreements rather than
+choosing the convenient timestamp.
+
 **A wifi network name is location evidence too**, and often better than a fix:
 a phone that joined a named network was within its range, and the network's
 location can be established independently.

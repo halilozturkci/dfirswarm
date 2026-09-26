@@ -31,6 +31,10 @@ import re
 import sys
 
 RECOVERY = re.compile(rb"\b(\d{6})-(\d{6})-(\d{6})-(\d{6})-(\d{6})-(\d{6})-(\d{6})-(\d{6})\b")
+UTF16_GROUP = rb"((?:[0-9]\x00){6})"
+RECOVERY_UTF16LE = re.compile(
+    rb"(?<![0-9]\x00)" + (rb"-\x00".join([UTF16_GROUP] * 8)) + rb"(?![0-9]\x00)"
+)
 PEM = re.compile(rb"-----BEGIN ([A-Z ]*PRIVATE KEY)-----")
 NAME_HINTS = [
     (re.compile(r"\.bek$", re.I), "BitLocker startup key"),
@@ -79,6 +83,23 @@ def sweep(path, budget):
             "shape": "-".join("%s****" % g[:2] for g in groups),
             "sha256_of_value": hashlib.sha256(found.group(0)).hexdigest(),
         })
+    # Windows' own "save a BitLocker recovery key" dialog writes UTF-16LE
+    # text. Searching only ASCII misses the most canonical key file in a case.
+    # Hash the canonical displayed value (digits and hyphens), not its on-disk
+    # character encoding, so the same recovery password has one fingerprint.
+    for found in RECOVERY_UTF16LE.finditer(blob):
+        groups = [g.replace(b"\x00", b"").decode("ascii") for g in found.groups()]
+        good = sum(1 for g in groups if valid_group(g))
+        canonical = "-".join(groups).encode("ascii")
+        findings.append({
+            "file": path, "offset": found.start(),
+            "kind": "BitLocker recovery password",
+            "encoding": "UTF-16LE",
+            "groups_passing_check": good,
+            "complete": good == 8,
+            "shape": "-".join("%s****" % g[:2] for g in groups),
+            "sha256_of_value": hashlib.sha256(canonical).hexdigest(),
+        })
     for found in PEM.finditer(blob):
         findings.append({"file": path, "offset": found.start(), "kind": "private key",
                          "detail": found.group(1).decode("ascii", "replace")})
@@ -98,10 +119,6 @@ def main():
     budget = args.get("max_bytes_per_file", 8 << 20)
     if not isinstance(budget, int) or isinstance(budget, bool) or budget < 1024:
         fail("max_bytes_per_file must be an integer of at least 1024")
-    limit = args.get("limit", 200)
-    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
-        fail("limit must be a positive integer")
-
     targets = []
     if os.path.isdir(path):
         for dirpath, dirs, names in os.walk(path):
@@ -111,7 +128,7 @@ def main():
     else:
         targets = [path]
 
-    findings, by_name, scanned, truncated = [], [], 0, False
+    findings, by_name, scanned, partial_files = [], [], 0, []
     for target in targets:
         base = os.path.basename(target)
         for pattern, meaning in NAME_HINTS:
@@ -123,18 +140,13 @@ def main():
                 by_name.append({"file": target, "bytes": size, "why": meaning})
                 break
         try:
-            if os.path.getsize(target) > (256 << 20):
-                continue
+            size = os.path.getsize(target)
         except OSError:
             continue
+        if size > budget:
+            partial_files.append({"file": target, "bytes": size, "bytes_scanned": budget})
         scanned += 1
-        for finding in sweep(target, budget):
-            if len(findings) >= limit:
-                truncated = True
-                break
-            findings.append(finding)
-        if truncated:
-            break
+        findings.extend(sweep(target, budget))
 
     complete = sum(1 for f in findings if f.get("complete"))
     print(json.dumps({
@@ -143,8 +155,9 @@ def main():
         "findings": findings,
         "finding_count": len(findings),
         "complete_recovery_passwords": complete,
-        "files_worth_opening": by_name[:200],
-        "truncated": truncated,
+        "files_worth_opening": by_name,
+        "partial_files": partial_files,
+        "truncated": False,
         "note": "Values are not printed. Each recovery password is returned as a shape and a hash "
                 "of the value; take the file and the offset, read it yourself, and hand the value "
                 "to the operator through the channel they named. Record in the report WHERE the "

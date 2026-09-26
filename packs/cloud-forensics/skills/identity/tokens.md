@@ -11,19 +11,23 @@ This is the single most common failure in cloud incident response. The account
 is compromised, the password is reset, multi-factor is enforced — and the
 attacker is still in, because none of those revoke what they actually hold.
 
-**A refresh token survives a password reset.** It is a bearer credential with
-its own lifetime, and on Entra it is only invalidated by an explicit revocation
-(`Revoke-MgUserSignInSession`, or revoking refresh tokens in the portal). The
-same is true of a Google OAuth grant. Sign-ins using one appear in the
-**non-interactive** log, which is a separate export, so an examiner looking only
-at interactive sign-ins sees the access stop when it did not.
+**A password reset is not a complete token-revocation procedure.** Entra's
+published revocation table differs by how the token was obtained and where the
+password was reset: some password-based tokens are revoked, while some
+non-password-based cookies/tokens and confidential-client tokens can remain.
+Google automatically revokes OAuth tokens for some products on password change,
+with documented exceptions. Do not infer either survival or revocation from the
+reset alone: record the reset method, explicit session/token revocation, grant
+removal, and subsequent non-interactive use. Entra non-interactive sign-ins are
+a separate export, so an examiner looking only at interactive sign-ins can miss
+continued access.
 
-**An application consent survives everything.** "Consent to application" in the
-unified audit log, or a Token audit entry in Workspace, means the user granted a
-third-party application access to their mail or files. That application keeps
-working after the password change, after the session revocation, and after the
-device is wiped. Illicit consent grants are a whole attack pattern and the
-artefact is one row in an audit log.
+**An application consent is separate durable state.** "Consent to application"
+in the unified audit log, or a Token audit entry in Workspace, means a user or
+administrator granted an application scopes. Revoking a session does not remove
+the grant. Whether an existing token survives a password change is provider- and
+token-specific, but a remaining grant or domain-wide delegation can permit new
+tokens. Record both token revocation and grant removal.
 
 **A mailbox rule survives too**, and it is quieter than either. A rule that
 forwards to an external address, or moves anything matching "invoice" to a

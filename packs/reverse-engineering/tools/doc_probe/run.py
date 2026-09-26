@@ -21,6 +21,7 @@ Nothing here is executed, and nothing is opened with the application that made
 it. This reads bytes.
 """
 import json
+import mmap
 import os
 import re
 import sys
@@ -45,14 +46,14 @@ def fail(message, **extra):
     raise SystemExit(1)
 
 
-def probe_zip(path, extract_to, limit):
+def probe_zip(path, extract_to):
     out = {"container": "OOXML or ZIP", "parts": [], "macro_parts": [], "external_targets": []}
     try:
         archive = zipfile.ZipFile(path)
     except zipfile.BadZipFile as exc:
         return {"container": "ZIP", "error": "the archive will not open: %s" % exc}
     with archive:
-        for info in archive.infolist()[:limit]:
+        for index, info in enumerate(archive.infolist()):
             lowered = info.filename.lower()
             entry = {"name": info.filename, "bytes": info.file_size,
                      "compressed": info.compress_size,
@@ -62,7 +63,7 @@ def probe_zip(path, extract_to, limit):
                 out["macro_parts"].append(info.filename)
                 if extract_to:
                     os.makedirs(extract_to, exist_ok=True)
-                    safe = re.sub(r"[^A-Za-z0-9._-]", "_", info.filename)
+                    safe = "%06d-%s" % (index, re.sub(r"[^A-Za-z0-9._-]", "_", info.filename))
                     target = os.path.join(extract_to, safe)
                     with open(target, "wb") as fh:
                         fh.write(archive.read(info))
@@ -94,15 +95,28 @@ def probe_zip(path, extract_to, limit):
     return out
 
 
+def count_occurrences(blob, needle):
+    """Count non-overlapping byte strings without copying a mapped file."""
+    count = 0
+    offset = 0
+    while True:
+        offset = blob.find(needle, offset)
+        if offset < 0:
+            return count
+        count += 1
+        offset += len(needle)
+
+
 def probe_pdf(blob):
     out = {"container": "PDF", "actions": []}
     for needle, meaning in PDF_ACTIONS:
-        count = blob.count(needle)
+        count = count_occurrences(blob, needle)
         if count:
             out["actions"].append({"keyword": needle.decode(), "count": count, "meaning": meaning})
-    out["object_streams"] = blob.count(b"/ObjStm")
-    out["encrypted"] = b"/Encrypt" in blob
-    out["pages"] = blob.count(b"/Type /Page") + blob.count(b"/Type/Page")
+    out["object_streams"] = count_occurrences(blob, b"/ObjStm")
+    out["encrypted"] = blob.find(b"/Encrypt") >= 0
+    out["pages"] = (count_occurrences(blob, b"/Type /Page") +
+                    count_occurrences(blob, b"/Type/Page"))
     if out["object_streams"]:
         out["note"] = ("Object streams are compressed, so keywords inside them are invisible to "
                        "this scan and to a plain strings. A count of zero here is not an absence.")
@@ -110,7 +124,7 @@ def probe_pdf(blob):
 
 
 def probe_rtf(blob):
-    objects = [m.start() for m in re.finditer(rb"\\objdata", blob)][:64]
+    objects = [m.start() for m in re.finditer(rb"\\objdata", blob)]
     return {"container": "RTF",
             "embedded_objects": len(objects),
             "object_offsets": objects,
@@ -123,7 +137,7 @@ def probe_rtf(blob):
 
 def probe_ole(blob):
     return {"container": "OLE compound file",
-            "has_macro_marker": b"VBA" in blob or b"_VBA_PROJECT" in blob,
+            "has_macro_marker": blob.find(b"VBA") >= 0 or blob.find(b"_VBA_PROJECT") >= 0,
             "note": "The macro project lives in a stream inside this compound file. olevba reads "
                     "it and says which subroutines run automatically; this tool only says the "
                     "project is there."}
@@ -139,27 +153,33 @@ def main():
         fail("path is required: a document to look inside")
     if not os.path.isfile(path):
         fail("no such file", path=path)
-    limit = args.get("limit", 200)
-    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
-        fail("limit must be a positive integer")
     extract_to = args.get("extract_to")
+    if extract_to is not None and (not isinstance(extract_to, str) or not extract_to):
+        fail("extract_to must be a non-empty path when supplied")
 
     with open(path, "rb") as fh:
         head = fh.read(8)
-        fh.seek(0)
-        blob = fh.read(32 << 20)
 
     if head[:4] == b"PK\x03\x04":
-        body = probe_zip(path, extract_to, limit)
-    elif head[:5] == b"%PDF-":
-        body = probe_pdf(blob)
-    elif head[:5] == b"{\\rtf":
-        body = probe_rtf(blob)
-    elif head == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
-        body = probe_ole(blob)
+        body = probe_zip(path, extract_to)
     else:
-        fail("this is not a container this tool reads", path=path, head_hex=head.hex(),
-             reads=["OOXML or ZIP", "PDF", "RTF", "OLE compound file"])
+        with open(path, "rb") as fh:
+            try:
+                blob = mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ)
+            except ValueError:
+                fail("the file is empty", path=path)
+            try:
+                if head[:5] == b"%PDF-":
+                    body = probe_pdf(blob)
+                elif head[:5] == b"{\\rtf":
+                    body = probe_rtf(blob)
+                elif head == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
+                    body = probe_ole(blob)
+                else:
+                    fail("this is not a container this tool reads", path=path, head_hex=head.hex(),
+                         reads=["OOXML or ZIP", "PDF", "RTF", "OLE compound file"])
+            finally:
+                blob.close()
 
     extension = os.path.splitext(path)[1].lower().lstrip(".")
     renamed = None

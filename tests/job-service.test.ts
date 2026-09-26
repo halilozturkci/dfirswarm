@@ -110,7 +110,8 @@ test("a command job is accepted before it runs, its output sealed and every step
   assert.ok(acc.some((a) => a.path === join(S, "inputs") && a.access === "read-only, no-exec"), `the accessible scope names the evidence, read-only and no-exec: ${JSON.stringify(acc)}`);
   assert.ok(acc.some((a) => a.path === join(S, "work") && a.access.startsWith("read-only;") && a.access.includes("may change")), "all of work/, read-only, said to be live");
   assert.ok(acc.some((a) => a.path === join(S, ".jobs", job.id) && a.access === "read-write, no-exec"), "its own $OUT, the one writable place");
-  assert.ok(!acc.some((a) => /threads|inbox|ledger|\.pi-sessions/.test(a.path)), "never the board, the ledger or the sessions");
+  // By the run's own directories, not by a word in a path (the harness's checkout may be named anything).
+  assert.ok(!acc.some((a) => a.path.startsWith(`${S}/`) && /^(threads|inbox|ledger|\.pi-sessions)(\/|$)/.test(a.path.slice(S.length + 1))), "never the board, the ledger or the sessions");
   assert.equal(started.network, "none");
   assert.ok(destroyed.length === 0 || destroyed.every((n) => n.startsWith("dfs-")));
   await eventually(() => posts.length > 0, "the requester is told");

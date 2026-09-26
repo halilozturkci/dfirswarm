@@ -59,6 +59,42 @@
       },
       "licence": "GPL-2.0-only",
       "redistributable": false
+    },
+    {
+      "name": "xfs_db",
+      "package": "xfsprogs",
+      "optional": true,
+      "why": "Inspect XFS superblocks, allocation groups, inodes and free-space metadata in read-only mode; The Sleuth Kit does not provide complete XFS coverage.",
+      "install": {
+        "brew": "not available on macOS; analyse on a Linux host",
+        "apt": "apt-get install -y xfsprogs"
+      },
+      "licence": "GPL-2.0-only",
+      "redistributable": false
+    },
+    {
+      "name": "btrfs",
+      "package": "btrfs-progs",
+      "optional": true,
+      "why": "Read Btrfs superblocks, trees, subvolumes and device membership without mounting the evidence.",
+      "install": {
+        "brew": "not available on macOS; analyse on a Linux host",
+        "apt": "apt-get install -y btrfs-progs"
+      },
+      "licence": "GPL-2.0-only",
+      "redistributable": false
+    },
+    {
+      "name": "lvs",
+      "package": "lvm2",
+      "optional": true,
+      "why": "Enumerate Linux LVM physical volumes, volume groups and logical volumes when a disk's partition table only exposes an LVM container.",
+      "install": {
+        "brew": "not available on macOS; analyse on a Linux host",
+        "apt": "apt-get install -y lvm2"
+      },
+      "licence": "GPL-2.0-only and LGPL-2.1-only",
+      "redistributable": false
     }
   ]
 }

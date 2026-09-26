@@ -1,6 +1,6 @@
 {
   "name": "pe_info",
-  "description": "Read an executable's structure without running it: PE headers, sections with their entropy and permissions, imports and exports, the compile timestamp and the certificate directory; for ELF the header, sections, segments and DT_NEEDED libraries; for Mach-O the load commands and linked libraries.",
+  "description": "Read an executable's structure without running it: PE headers, sections with full-section entropy and permissions, imports, export-image name, compile timestamp and certificate-table presence; for ELF the header, sections, segments and DT_NEEDED libraries; for Mach-O the load commands and linked libraries. It does not verify Authenticode or enumerate PE export symbols and resources.",
   "params": {
     "path": {
       "type": "string",
@@ -9,10 +9,6 @@
     "with_imports": {
       "type": "boolean",
       "description": "Resolve imported function names as well as library names (default true)"
-    },
-    "max_imports": {
-      "type": "integer",
-      "description": "Maximum imported names per library (default 40)"
     }
   },
   "runtime": "python3",
@@ -22,5 +18,5 @@
   "by": "maintainer",
   "at": "2026-09-22T18:00:00.000Z",
   "version": 1,
-  "sha256": "faa473c6414453460e8bcf099ccbaa70c821ae62fd59a0b3527d39ceab002267"
+  "sha256": "41fa74e8ce7f1d6ab4ab23dee044ecd736f400eaeb3c6148d5dc8bc6ba278ee8"
 }

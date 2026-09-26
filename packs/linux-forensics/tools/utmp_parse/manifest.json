@@ -4,7 +4,7 @@
   "params": {
     "path": {
       "type": "string",
-      "description": "A wtmp, btmp or utmp file"
+      "description": "A wtmp, btmp, utmp or lastlog file"
     },
     "types": {
       "type": "array",
@@ -14,9 +14,13 @@
       "type": "string",
       "description": "Case-insensitive regex over the user name"
     },
-    "limit": {
-      "type": "integer",
-      "description": "Maximum records to return (default 1000)"
+    "format": {
+      "type": "string",
+      "description": "Force utmp or lastlog; otherwise lastlog is selected by basename"
+    },
+    "passwd": {
+      "type": "string",
+      "description": "Optional passwd file used to map lastlog UID slots to account names"
     }
   },
   "runtime": "python3",
@@ -25,6 +29,6 @@
   "example": "{\"path\": \"work/extracted/wtmp\", \"types\": [\"USER_PROCESS\", \"BOOT_TIME\"]}",
   "by": "maintainer",
   "at": "2026-09-22T15:00:00.000Z",
-  "version": 1,
-  "sha256": "edf1e6c1a8f614a97d95f6189e2a0a2c029dea73283f3b6caa44d2c429f45446"
+  "version": 3,
+  "sha256": "d2ce332ad9673fe800d160c002f21e8b3b533953046e685a9073866e4a0a542a"
 }

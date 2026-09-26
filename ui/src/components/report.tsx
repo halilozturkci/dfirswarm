@@ -26,14 +26,14 @@
  * as props rather than from `useAgentColours`, so these work outside this
  * application.
  */
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { bytes as formatBytes } from "@/lib/format";
 import { HashChip } from "@/components/evidence";
 
 /** What `record` puts in the ledger. Structurally the app's `LedgerEntry`. */
-/** absence: a search that found nothing, valid only for the scope it names. */
-export type ClaimKind = "event" | "ioc" | "finding" | "absence";
+/** absence: a search that found nothing, valid only for the scope it names; hypothesis: a proposition under test; limitation: what could not be established. */
+export type ClaimKind = "event" | "ioc" | "finding" | "absence" | "hypothesis" | "limitation";
 export type Confidence = "high" | "medium" | "low";
 
 export type ClaimRecord = {
@@ -54,6 +54,8 @@ export type ClaimRecord = {
   ts_raw?: string;
   /** The entry's own hash in the ledger's chain. */
   hash?: string;
+  /** It, or what it cites, holds a credential, a key or personal data. */
+  sensitive?: boolean;
 };
 
 /** One author of a record, with whatever it decided to call itself. */
@@ -70,6 +72,28 @@ export function utcStamp(ts: string | undefined | null): string {
 /** A record is citable when it says both where it was seen and how to check it. */
 export function isCited(claim: Pick<ClaimRecord, "source" | "evidence">): boolean {
   return Boolean(claim.source?.trim()) && Boolean(claim.evidence?.trim());
+}
+
+/**
+ * A sensitive entry's text — a credential, a key, personal data — blurred on
+ * screen until clicked, so a screenshot, a screen share or a shoulder does
+ * not take it by accident. It is in the page all the same: a package made
+ * with --redact is what takes it out of what leaves the run.
+ */
+export function Masked({ on, children }: { on?: boolean; children: ReactNode }) {
+  const [shown, setShown] = useState(false);
+  if (!on || shown) return <>{children}</>;
+  return (
+    <button
+      type="button"
+      onClick={() => setShown(true)}
+      title="Sensitive: click to show"
+      aria-label="Sensitive text, hidden: click to show"
+      className="inline cursor-pointer select-none border-0 bg-transparent p-0 text-left font-[inherit] text-[length:inherit] text-inherit [filter:blur(5px)] hover:[filter:blur(3px)]"
+    >
+      {children}
+    </button>
+  );
 }
 
 /* -------------------------------------------------------------------------
@@ -135,19 +159,21 @@ export function Provenance({
   source,
   evidence,
   className,
+  masked,
 }: {
   source?: string;
   evidence?: string;
   className?: string;
+  masked?: boolean;
 }) {
   const hasSource = Boolean(source?.trim());
   const hasEvidence = Boolean(evidence?.trim());
   if (hasSource && hasEvidence) {
     return (
       <span className={cn("text-[11.5px] leading-[1.5] text-ink-3", className)}>
-        source <span className="font-mono text-ink-2">{source}</span>
+        source <span className="font-mono text-ink-2"><Masked on={masked}>{source}</Masked></span>
         <span className="px-1">·</span>
-        evidence <span className="font-mono text-ink-2">{evidence}</span>
+        evidence <span className="font-mono text-ink-2"><Masked on={masked}>{evidence}</Masked></span>
       </span>
     );
   }
@@ -249,10 +275,10 @@ export function Claim({
         {tail ? <span className="ml-auto">{tail}</span> : null}
       </div>
       <p className={cn("m-0 mt-1.5 text-ink", emphasis === "lead" ? "text-[14px] leading-[1.5]" : "text-[13px] leading-[1.45]")}>
-        {claim.value}
+        <Masked on={claim.sensitive}>{claim.value}</Masked>
       </p>
       <div className="mt-1.5">
-        <Provenance source={claim.source} evidence={claim.evidence} />
+        <Provenance source={claim.source} evidence={claim.evidence} masked={claim.sensitive} />
       </div>
       {below ? <div className="mt-1.5 flex flex-wrap items-center gap-1.5">{below}</div> : null}
     </div>
@@ -286,13 +312,13 @@ function Th({ children, w }: { children: ReactNode; w?: string }) {
   );
 }
 
-function Cell({ text, mono }: { text?: string; mono?: boolean }) {
+function Cell({ text, mono, masked }: { text?: string; mono?: boolean; masked?: boolean }) {
   if (!text?.trim()) return <span className="text-brick-ink">missing</span>;
   // `break-words` only breaks a word that would overflow the *line*; a
   // 64-character hash or a Windows path with no spaces still paints past its
   // column and grows the table. `break-all` is the rule that always fits, and
   // these cells are machine strings, not prose.
-  return <span className={cn("break-all", mono && "font-mono text-[11.5px]")}>{text}</span>;
+  return <span className={cn("break-all", mono && "font-mono text-[11.5px]")}><Masked on={masked}>{text}</Masked></span>;
 }
 
 /**
@@ -346,14 +372,14 @@ export function TimelineTable({
                 {e.ts_raw && !/[Zz]$/.test(e.ts_raw) ? <span className="mt-0.5 block font-sans text-[10.5px] text-ink-3 [overflow-wrap:anywhere]">written as {e.ts_raw}</span> : null}
               </td>
               <td className="px-3 py-2 break-words text-ink">
-                {e.value}
+                <Masked on={e.sensitive}>{e.value}</Masked>
                 {marks ? <div className="mt-1 flex flex-wrap gap-1">{marks(e)}</div> : null}
               </td>
               <td className="px-3 py-2">
-                <Cell text={e.source} mono />
+                <Cell text={e.source} mono masked={e.sensitive} />
               </td>
               <td className="px-3 py-2">
-                <Cell text={e.evidence} mono />
+                <Cell text={e.evidence} mono masked={e.sensitive} />
               </td>
               {authorsFor ? (
                 <td className="px-3 py-2">
@@ -408,14 +434,14 @@ export function IndicatorTable({
                 <ExhibitNo seq={e.seq} />
               </td>
               <td className="px-3 py-2 font-mono text-[12px] break-all text-ink">
-                {e.value}
+                <Masked on={e.sensitive}>{e.value}</Masked>
                 {marks ? <div className="mt-1 flex flex-wrap gap-1 font-sans">{marks(e)}</div> : null}
               </td>
               <td className="px-3 py-2">
-                <Cell text={e.source} mono />
+                <Cell text={e.source} mono masked={e.sensitive} />
               </td>
               <td className="px-3 py-2">
-                <Cell text={e.evidence} mono />
+                <Cell text={e.evidence} mono masked={e.sensitive} />
               </td>
               <td className="px-3 py-2">
                 <ConfidenceMark level={e.confidence} />
@@ -460,9 +486,9 @@ export function Timeline({
             <ExhibitNo seq={e.seq} />
             {authorsFor ? <AuthorList authors={authorsFor(e)} /> : null}
           </div>
-          <p className="m-0 mt-0.5 text-[13px] leading-[1.45] text-ink">{e.value}</p>
+          <p className="m-0 mt-0.5 text-[13px] leading-[1.45] text-ink"><Masked on={e.sensitive}>{e.value}</Masked></p>
           <div className="mt-0.5">
-            <Provenance source={e.source} evidence={e.evidence} />
+            <Provenance source={e.source} evidence={e.evidence} masked={e.sensitive} />
           </div>
         </li>
       ))}

@@ -1,0 +1,23 @@
+{
+  "id": "network-capture",
+  "version": "1.0.0",
+  "description": "Inventory a pcap or pcapng completely: capture metadata and one lossless packet, DNS, HTTP and TLS field listing for examiner pivots.",
+  "object": "network capture",
+  "order": 40,
+  "min_bytes": 24,
+  "suffixes": [".pcap", ".pcapng", ".cap"],
+  "magic": [
+    {"offset": 0, "hex": "d4c3b2a1"},
+    {"offset": 0, "hex": "a1b2c3d4"},
+    {"offset": 0, "hex": "4d3cb2a1"},
+    {"offset": 0, "hex": "a1b23c4d"},
+    {"offset": 0, "hex": "0a0d0d0a"}
+  ],
+  "runtime": "python3",
+  "entry": "run.py",
+  "auto": ["kickoff", "derived"],
+  "limits": {"seconds": 3600},
+  "outputs": ["capture.txt", "packets.tsv", "dns.tsv", "http.tsv", "tls.tsv", "index.tsv", "coverage.json"],
+  "covers": "Every packet and the DNS, HTTP and TLS fields tshark can decode, plus capture metadata. It does not assert that a missing protocol is absent when packets were truncated, encrypted, malformed or unsupported.",
+  "sha256": "32547b436c83c8ef7bd6fc5398e99ab01109c159f182de58eeef976ff33b9b3e"
+}

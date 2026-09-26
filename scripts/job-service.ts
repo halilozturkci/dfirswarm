@@ -110,6 +110,8 @@ export type JobSpec = {
   parent?: string;
   alias?: string;
   experimental?: boolean;
+  /** The job image to run in, by profile (disk, memory, mobile, …), when the run declares job images; else the run's worker image. */
+  profile?: string;
 };
 
 export type Requester = { agent: string; name?: string; doing?: string };
@@ -178,7 +180,16 @@ export type JobServiceOptions = {
   sandbox: string;
   run: string;
   registry?: string;
+  /** The worker image a job runs in when nothing names another: the one that holds every pack of the run. */
   image: string;
+  /**
+   * The run's job images, by profile (images/profiles.json): a job names one
+   * with `profile`, a pack tool or a recipe runs in its pack's (packProfiles).
+   * The agents' own VMs boot the base: the programs are here.
+   */
+  images?: Record<string, string>;
+  /** Each pack's profile, from the kickoff (images/recipe.py profile-for). */
+  packProfiles?: Record<string, string>;
   workers: number;
   workerCpus: number;
   workerMemoryMib: number;
@@ -283,6 +294,13 @@ export class JobService {
   async start(): Promise<void> {
     this.journal = await Journal.open(this.S);
     this.replay(this.journal.lines);
+    // The images jobs may run in, on the record before any job does: custody
+    // holds each job's image to them.
+    if (this.o.images && Object.keys(this.o.images).length) {
+      const declared = { default: this.o.image, images: this.o.images, pack_profiles: this.o.packProfiles ?? {} };
+      const last = this.journal.of("job_images").at(-1);
+      if (!last || JSON.stringify({ default: last.default, images: last.images, pack_profiles: last.pack_profiles }) !== JSON.stringify(declared)) await this.journal.append({ type: "job_images", ...declared });
+    }
     await this.recover();
     await this.queueKickoffRecipes();
     let ticks = 0;
@@ -581,11 +599,35 @@ export class JobService {
     return { ok: true, job };
   }
 
+  /**
+   * The image a job runs in: the profile it names; a pack tool's or a
+   * recipe's own pack's profile (a recipe may name one in recipe.json); else
+   * the run's worker image. Nothing here knows what a profile holds.
+   */
+  async imageFor(spec: JobSpec): Promise<{ profile: string | null; ref: string }> {
+    const images = this.o.images ?? {};
+    const byProfile = (p: string | undefined | null) => (p && images[p] ? { profile: p, ref: images[p] } : null);
+    if (spec.profile) return byProfile(spec.profile) ?? { profile: null, ref: this.o.image };
+    if (spec.kind === "tool" && spec.tool) {
+      const man = await readFile(join(this.S, "tools", spec.tool, "manifest.json"), "utf8").then((t) => JSON.parse(t) as { pack?: string; profile?: string }).catch(() => null);
+      const hit = byProfile(man?.profile) ?? byProfile(man?.pack ? this.o.packProfiles?.[man.pack] : null);
+      if (hit) return hit;
+    }
+    if (spec.kind === "recipe" && spec.recipe && !spec.recipe.startsWith("tool:")) {
+      const r = await this.recipe(spec.recipe).catch(() => null);
+      const declared = r ? await readFile(join(r.dir, "recipe.json"), "utf8").then((t) => (JSON.parse(t) as { profile?: string }).profile).catch(() => undefined) : undefined;
+      const hit = byProfile(declared) ?? byProfile(this.o.packProfiles?.[spec.recipe.split("/")[0]]);
+      if (hit) return hit;
+    }
+    return { profile: null, ref: this.o.image };
+  }
+
   private async recipeKey(spec: JobSpec): Promise<string> {
     const r = spec.recipe ? await this.recipe(spec.recipe) : null;
     // An object of the store is itself by content, wherever it sits (the
     // same vault image extracted twice is one object); an input by its stat.
-    if (spec.target?.sha256) return sha256Hex(canonical({ recipe: spec.recipe, sha: r?.sha256, image: this.o.image, content: spec.target.sha256 }));
+    const image = (await this.imageFor(spec)).ref;
+    if (spec.target?.sha256) return sha256Hex(canonical({ recipe: spec.recipe, sha: r?.sha256, image, content: spec.target.sha256 }));
     const hashes: string[] = [];
     for (const p of spec.target?.paths ?? []) {
       try {
@@ -595,7 +637,7 @@ export class JobService {
         hashes.push(`${p}:missing`);
       }
     }
-    return sha256Hex(canonical({ recipe: spec.recipe, sha: r?.sha256, image: this.o.image, target: hashes }));
+    return sha256Hex(canonical({ recipe: spec.recipe, sha: r?.sha256, image, target: hashes }));
   }
 
   private async normalise(raw: Partial<JobSpec>): Promise<JobSpec | { reason: string }> {
@@ -604,7 +646,19 @@ export class JobService {
     const timeout = Math.min(Math.max(Number(raw.timeout_seconds ?? 900) || 900, 10), TIMEOUT_MAX_SECONDS);
     const network = raw.network === "allowlist" ? "allowlist" : "off";
     const inputs = Array.isArray(raw.inputs) ? raw.inputs.map(String).slice(0, 256) : ["all"];
-    const base = { kind, inputs, timeout_seconds: timeout, network, ...(raw.scratch ? { scratch: true } : {}), ...(raw.note ? { note: String(raw.note).slice(0, 2000) } : {}), ...(raw.parent ? { parent: String(raw.parent) } : {}) } as JobSpec;
+    // A job image by profile: one the run declared, a pack's id for its
+    // pack's image (agents named packs as profiles on the first basic-flow
+    // round), or refused with the images the run has and the packs in each.
+    let profile = typeof raw.profile === "string" && raw.profile.trim() ? raw.profile.trim() : undefined;
+    const images = this.o.images ?? {};
+    if (profile && !images[profile] && this.o.packProfiles?.[profile] && images[this.o.packProfiles[profile]]) profile = this.o.packProfiles[profile];
+    if (profile && !images[profile]) {
+      const have = Object.keys(images);
+      const packsOf = (p: string) => Object.entries(this.o.packProfiles ?? {}).filter(([, q]) => q === p).map(([pack]) => pack).sort();
+      const listing = have.map((p) => (packsOf(p).length ? `${p} (the packs ${packsOf(p).join(", ")})` : p)).join("; ");
+      return { reason: have.length ? `no job image "${profile}" in this run: ${listing}; a pack's name also picks its image (or leave profile out for the run's worker image)` : `this run declared no job images: leave profile out (every job runs in ${this.o.image})` };
+    }
+    const base = { kind, inputs, timeout_seconds: timeout, network, ...(raw.scratch ? { scratch: true } : {}), ...(raw.note ? { note: String(raw.note) } : {}), ...(raw.parent ? { parent: String(raw.parent) } : {}), ...(profile ? { profile } : {}) } as JobSpec;
     if (kind === "tool") {
       const args = raw.args && typeof raw.args === "object" && !Array.isArray(raw.args) ? raw.args : {};
       const checked = await this.toolCheck(String(raw.tool ?? ""), args);
@@ -827,11 +881,12 @@ export class JobService {
     }
     await writeFile(join(st.ctl, "run.sh"), `${script.lines.join("\n")}\n`);
     const { mounts, accessible } = this.mounts(job, st);
+    const chosen = await this.imageFor(job.spec);
     const network = this.network(job);
     const worker = `dfs-${this.o.run}-job-${job.id}-${job.attempt}`;
     const netText = network.mode === "off" ? "none" : network.mode === "public" ? "every public host" : `the run's allowlist (${network.hosts.join(", ")})`;
-    await this.journal.append({ type: "job_started", job: job.id, attempt: job.attempt, worker, image: this.o.image, ...(script.tool_sha256 ? { tool_sha256: script.tool_sha256 } : {}), declared: job.spec.inputs, accessible, observed: "unknown", network: netText, cpus: this.o.workerCpus, memory_mib: this.o.workerMemoryMib });
-    Object.assign(job, { state: "running", worker, worker_size: `${this.o.workerCpus} vCPU, ${this.o.workerMemoryMib} MiB`, started_at: new Date().toISOString(), image: this.o.image, accessible, network: netText, ...(script.tool_sha256 ? { tool_sha256: script.tool_sha256 } : {}) });
+    await this.journal.append({ type: "job_started", job: job.id, attempt: job.attempt, worker, image: chosen.ref, ...(chosen.profile ? { profile: chosen.profile } : {}), ...(script.tool_sha256 ? { tool_sha256: script.tool_sha256 } : {}), declared: job.spec.inputs, accessible, observed: "unknown", network: netText, cpus: this.o.workerCpus, memory_mib: this.o.workerMemoryMib });
+    Object.assign(job, { state: "running", worker, worker_size: `${this.o.workerCpus} vCPU, ${this.o.workerMemoryMib} MiB`, started_at: new Date().toISOString(), image: chosen.ref, accessible, network: netText, ...(script.tool_sha256 ? { tool_sha256: script.tool_sha256 } : {}) });
     await this.project(job);
     maybeCrash("job:started");
     const started = Date.now();
@@ -841,7 +896,7 @@ export class JobService {
     try {
       result = await this.o.runWorker({
         name: worker,
-        image: this.o.image,
+        image: chosen.ref,
         run: this.o.run,
         job: job.id,
         attempt: job.attempt,

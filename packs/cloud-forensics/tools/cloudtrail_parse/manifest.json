@@ -24,15 +24,19 @@
     },
     "limit": {
       "type": "integer",
-      "description": "Maximum records to return (default 500)"
+      "description": "Maximum records returned inline when out_file is set (default 500); the complete match set is written to out_file"
+    },
+    "out_file": {
+      "type": "string",
+      "description": "Optional JSONL path for every matching normalised record; when absent every match is returned inline"
     }
   },
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 600,
-  "example": "{\"path\": \"inputs/cloudtrail\", \"notable_only\": true}",
+  "example": "{\"path\": \"inputs/cloudtrail\", \"notable_only\": true, \"out_file\": \"work/cloudtrail.jsonl\"}",
   "by": "maintainer",
   "at": "2026-09-22T22:00:00.000Z",
   "version": 1,
-  "sha256": "f42e0f82d5ad42f3390830378657a06cb4b6c8da64b8d7f635fb9034f3ce7871"
+  "sha256": "de17d67320a239b852a1d3e04f458dbcabc2eef63cf0944e1b954405cae0118d"
 }

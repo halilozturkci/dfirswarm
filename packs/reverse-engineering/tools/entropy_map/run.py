@@ -64,8 +64,17 @@ def main():
         fail("the file is empty", path=path)
 
     readings, runs = [], []
+    windows_measured = high_windows = 0
     current = None
     counts = [0] * 256
+    out_dir = os.environ.get("OUT")
+    profile_file = None
+    listing = None
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+        profile_file = os.path.join(out_dir, "entropy-windows.tsv")
+        listing = open(profile_file, "w", encoding="utf-8")
+        listing.write("offset\tbytes\tentropy\n")
     with open(path, "rb") as fh:
         offset = 0
         while True:
@@ -75,8 +84,13 @@ def main():
             for byte in block:
                 counts[byte] += 1
             value = round(entropy(block), 3)
-            readings.append({"offset": offset, "bytes": len(block), "entropy": value})
+            windows_measured += 1
+            if not listing or len(readings) < max_windows:
+                readings.append({"offset": offset, "bytes": len(block), "entropy": value})
+            if listing:
+                listing.write(f"{offset}\t{len(block)}\t{value}\n")
             if value >= threshold:
+                high_windows += 1
                 if current is None:
                     current = {"start": offset, "end": offset + len(block), "peak": value}
                 else:
@@ -86,6 +100,8 @@ def main():
                 runs.append(current)
                 current = None
             offset += len(block)
+    if listing:
+        listing.close()
     if current is not None:
         runs.append(current)
 
@@ -96,8 +112,8 @@ def main():
             p = count / total
             overall -= p * math.log2(p)
 
-    step = max(1, len(readings) // max_windows)
-    profile = readings[::step][:max_windows]
+    step = 1
+    profile = readings
     for run in runs:
         run["bytes"] = run["end"] - run["start"]
     runs.sort(key=lambda r: -r["bytes"])
@@ -108,11 +124,14 @@ def main():
         "window": window,
         "threshold": threshold,
         "overall_entropy": round(overall, 3),
-        "windows_measured": len(readings),
-        "high_entropy_windows": sum(1 for r in readings if r["entropy"] >= threshold),
-        "high_entropy_runs": runs[:40],
+        "windows_measured": windows_measured,
+        "high_entropy_windows": high_windows,
+        "high_entropy_runs": runs,
         "profile": profile,
         "profile_step": step,
+        "profile_complete": bool(profile_file) or len(profile) == windows_measured,
+        "inline_profile_complete": len(profile) == windows_measured,
+        "profile_file": os.path.basename(profile_file) if profile_file else None,
         "note": "Around 4.5 bits per byte is text, around 6 is machine code, and close to 8 is "
                 "compressed or encrypted. A high figure is not evidence of anything on its own: "
                 "installers, signed binaries with compressed resources and archives all read this "

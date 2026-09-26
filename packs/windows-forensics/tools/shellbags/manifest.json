@@ -16,11 +16,11 @@
     },
     "max_depth": {
       "type": "integer",
-      "description": "How deep to walk (default 24)"
+      "description": "How deep to walk (default 24); a key below it that has subkeys is named in not_walked_below_max_depth"
     },
     "limit": {
       "type": "integer",
-      "description": "Maximum entries to return (default 500)"
+      "description": "Entries shown inline (default 500); the whole tree is walked, and when more entries match the whole list is written as JSON Lines and named in all_results"
     }
   },
   "runtime": "python3",
@@ -30,5 +30,5 @@
   "by": "maintainer",
   "at": "2026-09-22T09:00:00.000Z",
   "version": 2,
-  "sha256": "b6bb334ad3f47cfa2ed1d7811e043da53432427dae338cd2909ac556a85e5a1d"
+  "sha256": "5506509f4842905fe5bf0d7de2edd9f9cf631e40c3bd5ba273f24c05e8616aa6"
 }

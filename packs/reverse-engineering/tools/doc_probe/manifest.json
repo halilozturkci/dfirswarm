@@ -9,10 +9,6 @@
     "extract_to": {
       "type": "string",
       "description": "Write the parts that carry code or an object here, under work/"
-    },
-    "limit": {
-      "type": "integer",
-      "description": "Maximum parts to list (default 200)"
     }
   },
   "runtime": "python3",
@@ -22,5 +18,5 @@
   "by": "maintainer",
   "at": "2026-09-22T18:00:00.000Z",
   "version": 1,
-  "sha256": "bee0b2cb30e28d133efde84f3f96736a37912a58acfb47921f2081de8f844d06"
+  "sha256": "b7405dba140674f28375bf8d2f7dd303322c17b2585897f8e14da258749a4c33"
 }

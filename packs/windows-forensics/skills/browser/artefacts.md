@@ -30,9 +30,10 @@ the transition type, and the transition is how you tell a typed address from a
 redirect from a link click. A `typed_count` above zero means somebody entered it.
 
 Provenance of a download: the `downloads` table, the `Zone.Identifier` alternate
-stream on the file itself, and the cache entry. The stream carries the host URL
-that delivered it. A downloaded file with no `Zone.Identifier` did not come
-through a browser.
+stream on the file itself, and the cache entry. The stream can carry the host
+URL that delivered it. Its absence does not prove the file did not come through
+a browser: the destination may not support ADS, or the stream may have been
+removed. Treat presence as provenance evidence and absence as inconclusive.
 
 An installer in the virtualisation drag-and-drop staging directory did not come
 from a download at all. Check that before you build a story around a URL.

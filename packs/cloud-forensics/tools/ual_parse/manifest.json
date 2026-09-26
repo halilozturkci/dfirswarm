@@ -28,15 +28,19 @@
     },
     "limit": {
       "type": "integer",
-      "description": "Maximum records to return (default 500)"
+      "description": "Maximum records returned inline when out_file is set (default 500); the complete match set is written to out_file"
+    },
+    "out_file": {
+      "type": "string",
+      "description": "Optional JSONL path for every matching normalised record; when absent every match is returned inline"
     }
   },
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 300,
-  "example": "{\"path\": \"inputs/ual.csv\", \"notable_only\": true}",
+  "example": "{\"path\": \"inputs/ual.csv\", \"notable_only\": true, \"out_file\": \"work/ual.jsonl\"}",
   "by": "maintainer",
   "at": "2026-09-22T22:00:00.000Z",
   "version": 1,
-  "sha256": "d8a9061ec0f0ebe791b79bbcf67ba99e5a75c8d4cedc180d20fbf5e188d603bb"
+  "sha256": "8f90c1723fce49b14c7ade9b4793b7c44afd2169bbd1c6550573e00bb646b6d0"
 }

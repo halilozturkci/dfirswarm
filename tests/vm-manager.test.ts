@@ -354,6 +354,10 @@ test("an image that lacks a pack's required program stops the kickoff, unless th
   assert.deepEqual(old.blockers, []);
   assert.deepEqual(old.warnings, ["the image records no pack versions (built before images recorded them): which version of each pack it was built for is unknown"]);
   assert.deepEqual(imageFit({ image: {} }, [], false), { blockers: [], warnings: [] }, "a run with no packs asks nothing of the image");
+  // Agents on the base, the packs' programs in the job images: the base is
+  // not held to them, and nobody is told to install them there.
+  assert.deepEqual(imageFit({ missing_binaries: ["fls", "icat"], image: { profile: "base", pack_versions: {} } }, needs, true, true), { blockers: [], warnings: [] });
+  assert.deepEqual(imageFit({ missing_binaries: ["fls", "icat"], image: { profile: "base", pack_versions: {} } }, needs, false, true).blockers, [], "nor stopped for it");
 });
 
 test("a host msb does not run on is refused by name, before msb is asked", () => {

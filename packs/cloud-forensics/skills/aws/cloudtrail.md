@@ -34,7 +34,10 @@ and that is usually the first hour of an intrusion.
 **An assumed role hides the human.** `userIdentity.type` of `AssumedRole` names
 the session, not the person; the `sessionIssuer` and the earlier
 `AssumeRole` call are what connect it back to an account or a federated
-identity. Follow that chain before you attribute anything.
+identity. `cloudtrail_parse` emits `role_assumed_by` only when it finds a
+matching role ARN and session name in the supplied records; absence of that
+field means the acquisition did not establish the human. Follow that chain
+before you attribute anything.
 
 The calls worth alerting on: `ConsoleLogin` without multi-factor,
 `CreateAccessKey` and `CreateUser`, `AttachUserPolicy` with an administrator

@@ -6,6 +6,85 @@ All notable changes to this project. The format follows
 
 ## [Unreleased]
 
+### Changed: every image profile reviewed as a DFIR examiner would (Codex)
+
+- Each of the nine profiles (base, disk, memory, linux, mobile, network, re,
+  web, full) was reviewed by its own Codex reviewer, which rebuilt the image,
+  ran every program, tool and recipe on the sample and CTF evidence where it
+  could and on synthetic fixtures where no evidence fitted, and fixed what it
+  found in the packs it owned.
+- **Nothing cut.** Tools that stopped at a limit or sliced a value keep the
+  whole result: a page for the agent and the rest in a named JSON Lines file
+  (the library's pager, inlined in each tool so a copied tool runs), or an
+  `out_file`. Parsers that failed while reporting success now fail: YARA on a
+  rule error, the macOS unified-log reader (replaced by Mandiant's
+  `unifiedlog_iterator` 0.7.0), capture engines with a non-zero exit.
+- **Wrong answers fixed.** UTF-16LE BitLocker recovery keys were missed; a
+  64-bit crash dump's run map was read eight bytes early; an extended
+  partition was taken for ext; an unreadable encrypted partition was counted
+  as a filesystem; a disk image was called a logical collection; files over
+  512 MiB had no hash; CloudTrail attribution depended on input order; pcapng
+  timestamps ignored their resolution and offset.
+- **Added.** `linux_triage` and the `linux-target` recipe; `pcap_extract`,
+  `suricata_run` (JA3/JA4), `network_log_summary` and the `network-capture`
+  recipe; `fuzzy_hash` (ssdeep, TLSH), UPX and the `static-binary` recipe; two
+  iOS catalogue recipes and the SEGB and unified-log methods; YARA in the
+  memory image; LVM, XFS and Btrfs programs; CJK and Noto fonts for the
+  browser; the ransomware pack on `re`.
+- **The browser tool** writes screenshots in the agent's own directory, holds
+  navigation, redirects, subresources and WebSockets to one policy, blocks
+  service workers and refuses downloads, naming what it refused.
+- **memory-windows** runs Volatility on the image's symbols first and asks
+  the symbol server only when the image has none for the kernel, and says
+  which. The images empty apt's cache as they build and list the packages a
+  profile adds in `tools.md`.
+
+### Changed: the agents boot the base, the programs are in the job images
+
+- In a microVM run with jobs and packs, each agent's VM boots the base image
+  and the packs' programs are in an image per profile: `job_run
+  profile=<name>` names one, a pack tool or a recipe runs in its pack's, and
+  a job with none in the image holding every pack. `images/<profile>/tools.md`
+  lists each image's programs, SWARM.md's "Job images" maps packs to images,
+  the journal declares the images (`job_images`) and custody holds each job
+  to them. `--brains-with-packs` keeps the agents on the packs' image.
+
+### Changed: the ledger's version 3 and a custody that can be verified (Fable and Codex)
+
+- **Ledger.** Two kinds, `hypothesis` (with its status) and `limitation`
+  (with its reason), and typed fields for what the agents were writing in
+  prose: `answers`, `rel`, `sensitive`, `clock`, `precision`, `basis`,
+  `completion`, `attribution`, `locators`, `because`, all in the chained
+  core when present; older ledgers verify as before. A second author is an
+  attestation beside the entry (`ledger/attestations.jsonl`, chained) and
+  `entries.jsonl` is never rewritten; a correction is compared on
+  everything an entry says; a refused record keeps its whole arguments on
+  the trace; an entry resting on a failed job's output is told so.
+- **check-answers** takes the entries tagged for a section as well as those
+  it cites, counts a limitation as examination-limited and never a
+  hypothesis, refuses a finding resting on `unresolved:` refs only, checks
+  an absence's refs and completion, names a failed job, and answers nothing
+  from a broken ledger.
+- **Custody** says every check's status, seals each chain's length and
+  head, matches the operator's audit to the trace, compares acquisition
+  hashes (`start --inputs-hashes`), verifies job logs and catalogue
+  generations against their seals, records its cost and the models, can be
+  signed (`--custody-sign-key`), timestamped by an RFC 3161 authority
+  (`--custody-timestamp-url`) and hold a reference clock's offset
+  (`--time-reference`), and exits 4 on an adverse check. `custody-verify`
+  re-checks a run writing nothing and names the lines after the seal.
+- **Hand-over.** `package --redact` takes out what a sensitive entry says
+  and cites while every chain still walks (REDACTIONS.txt), `--with-outputs`
+  includes the jobs' outputs, and `verify` re-walks the package's chains
+  against the seal and refuses a path outside it. `export --redact` does the
+  same for a CSV. An examiner's sign-off is bound to the report's hash and
+  the rejections standing.
+- **Report and console.** The chain of custody is arranged for a court
+  (checks, seal, acquisition, audit, signature, timestamp, clock, models,
+  cost, the command to check it again, the operator's actions); the report
+  and the console show hypotheses, limitations, standing contradictions, the
+  questions answered and sensitive material.
+
 ### Changed: one agent's abandon is a vote while others work
 
 - `done` with `abandon: true` ends the run only when a second agent has

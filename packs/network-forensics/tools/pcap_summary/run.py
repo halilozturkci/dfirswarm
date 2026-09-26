@@ -66,55 +66,104 @@ def read_classic(fh):
     def packets():
         while True:
             header = fh.read(16)
-            if len(header) < 16:
+            if len(header) == 0:
                 return
+            if len(header) < 16:
+                raise ValueError("truncated classic pcap packet header")
             sec, frac, incl, orig = struct.unpack(end + "IIII", header)
             body = fh.read(incl)
             if len(body) < incl:
-                return
+                raise ValueError("truncated classic pcap packet body: wanted %d bytes, found %d" % (incl, len(body)))
             yield sec + frac / divisor, body, orig, network
     return meta, packets
 
 
 def read_pcapng(fh):
     fh.seek(0)
-    interfaces = []
     meta = {"format": "pcapng", "snap_length": None, "link_type": None}
-    blocks = []
-    while True:
-        header = fh.read(8)
-        if len(header) < 8:
-            break
-        block_type, total = struct.unpack("<II", header)
-        if block_type == 0x0A0D0D0A:
-            magic = fh.read(4)
-            end = "<" if magic == b"\x4d\x3c\x2b\x1a" else ">"
-            if end == ">":
-                total = struct.unpack(">I", header[4:8])[0]
-            fh.seek(-4, os.SEEK_CUR)
-        if total < 12 or total > (1 << 28):
-            break
-        body = fh.read(total - 12)
-        fh.read(4)
-        blocks.append((block_type, body))
+    if fh.read(4) != b"\x0a\x0d\x0d\x0a":
+        raise ValueError("not a pcapng section header")
+    fh.seek(0)
+
+    def options(body, at, end):
+        found = {}
+        while at + 4 <= len(body):
+            code, size = struct.unpack(end + "HH", body[at:at + 4])
+            at += 4
+            if code == 0:
+                break
+            if at + size > len(body):
+                break
+            found.setdefault(code, []).append(body[at:at + size])
+            at += (size + 3) & ~3
+        return found
+
     def packets():
-        for block_type, body in blocks:
+        interfaces = []
+        end = "<"
+        while True:
+            header = fh.read(8)
+            if len(header) == 0:
+                return
+            if len(header) < 8:
+                raise ValueError("truncated pcapng block header")
+            raw_type, raw_total = header[:4], header[4:]
+            if raw_type == b"\x0a\x0d\x0d\x0a":
+                magic = fh.read(4)
+                if magic == b"\x4d\x3c\x2b\x1a":
+                    end = "<"
+                elif magic == b"\x1a\x2b\x3c\x4d":
+                    end = ">"
+                else:
+                    raise ValueError("pcapng section has an invalid byte-order magic")
+                total = struct.unpack(end + "I", raw_total)[0]
+                if total < 28 or total > (1 << 28):
+                    raise ValueError("pcapng section has an invalid block length")
+                rest = fh.read(total - 16)
+                trailer = fh.read(4)
+                if len(rest) != total - 16 or len(trailer) != 4 or struct.unpack(end + "I", trailer)[0] != total:
+                    raise ValueError("truncated or inconsistent pcapng section")
+                interfaces = []
+                continue
+            block_type, total = struct.unpack(end + "II", header)
+            if total < 12 or total > (1 << 28):
+                raise ValueError("pcapng block has an invalid length")
+            body = fh.read(total - 12)
+            trailer = fh.read(4)
+            if len(body) != total - 12 or len(trailer) != 4 or struct.unpack(end + "I", trailer)[0] != total:
+                raise ValueError("truncated or inconsistent pcapng block")
             if block_type == 0x00000001 and len(body) >= 8:
-                link, _res, snap = struct.unpack("<HHI", body[:8])
-                interfaces.append({"link_type": link, "snap_length": snap, "resolution": 6})
+                link, _res, snap = struct.unpack(end + "HHI", body[:8])
+                opts = options(body, 8, end)
+                raw_resolution = opts.get(9, [b"\x06"])[0][0]
+                divisor = (2 ** (raw_resolution & 0x7f)) if raw_resolution & 0x80 else (10 ** raw_resolution)
+                offset = 0
+                if opts.get(14) and len(opts[14][0]) == 8:
+                    offset = struct.unpack(end + "q", opts[14][0])[0]
+                interfaces.append({"link_type": link, "snap_length": snap,
+                                   "divisor": divisor, "offset": offset})
                 if meta["link_type"] is None:
                     meta["link_type"] = LINKTYPES.get(link, str(link))
                     meta["link_type_id"] = link
                     meta["snap_length"] = snap
             elif block_type == 0x00000006 and len(body) >= 20:
-                iface, high, low, incl, orig = struct.unpack("<IIIII", body[:20])
-                info = interfaces[iface] if iface < len(interfaces) else {"link_type": 1, "resolution": 6}
+                iface, high, low, incl, orig = struct.unpack(end + "IIIII", body[:20])
+                if iface >= len(interfaces) or 20 + incl > len(body):
+                    raise ValueError("pcapng packet names an invalid interface or length")
+                info = interfaces[iface]
                 ticks = (high << 32) | low
-                when = ticks / (10 ** info.get("resolution", 6))
+                when = ticks / info["divisor"] + info["offset"]
                 yield when, body[20:20 + incl], orig, info.get("link_type", 1)
-            elif block_type == 0x00000003 and len(body) >= 8:
-                _res, orig = struct.unpack("<II", body[:8])
-                yield None, body[8:], orig, interfaces[0]["link_type"] if interfaces else 1
+            elif block_type == 0x00000003 and len(body) >= 4:
+                if not interfaces:
+                    raise ValueError("pcapng simple packet block appears before an interface")
+                orig = struct.unpack(end + "I", body[:4])[0]
+                snap = interfaces[0]["snap_length"]
+                captured = min(orig, snap) if snap else orig
+                padded = (captured + 3) & ~3
+                if len(body) - 4 != padded:
+                    raise ValueError("pcapng simple packet block has an inconsistent captured length")
+                yield None, body[4:4 + captured], orig, interfaces[0]["link_type"]
     return meta, packets
 
 
@@ -132,14 +181,20 @@ def dissect(body, link):
         kind, at = (0x0800 if link != 229 else 0x86dd), 0
         if link == 101 and body:
             kind = 0x0800 if (body[0] >> 4) == 4 else 0x86dd
-    elif link in (113, 276):
+    elif link == 113:
         if len(body) < 16:
             return None
         kind, at = struct.unpack(">H", body[14:16])[0], 16
+    elif link == 276:
+        if len(body) < 20:
+            return None
+        kind, at = struct.unpack(">H", body[0:2])[0], 20
     elif link == 0:
         if len(body) < 4:
             return None
-        kind, at = (0x0800 if body[0] == 2 else 0x86dd), 4
+        family_le, family_be = struct.unpack("<I", body[:4])[0], struct.unpack(">I", body[:4])[0]
+        family = family_le if family_le in (2, 10, 24, 28, 30) else family_be
+        kind, at = (0x0800 if family == 2 else 0x86dd), 4
     else:
         return None
 
@@ -147,9 +202,14 @@ def dissect(body, link):
         if len(body) < at + 20:
             return None
         ihl = (body[at] & 0x0F) * 4
+        if ihl < 20 or len(body) < at + ihl:
+            return None
         protocol = body[at + 9]
         src, dst = address(body[at + 12:at + 16]), address(body[at + 16:at + 20])
         transport = at + ihl
+        fragment = struct.unpack(">H", body[at + 6:at + 8])[0]
+        if fragment & 0x1fff:
+            transport = len(body)
         six = False
     elif kind == 0x86dd:
         if len(body) < at + 40:
@@ -157,6 +217,25 @@ def dissect(body, link):
         protocol = body[at + 6]
         src, dst = address(body[at + 8:at + 24], True), address(body[at + 24:at + 40], True)
         transport = at + 40
+        while protocol in (0, 43, 44, 51, 60) and transport + 2 <= len(body):
+            following = body[transport]
+            if protocol == 44:
+                if transport + 8 > len(body):
+                    return None
+                fragment = struct.unpack(">H", body[transport + 2:transport + 4])[0]
+                transport += 8
+                protocol = following
+                if fragment & 0xfff8:
+                    transport = len(body)
+                    break
+            elif protocol == 51:
+                size = (body[transport + 1] + 2) * 4
+                transport += size
+                protocol = following
+            else:
+                size = (body[transport + 1] + 1) * 8
+                transport += size
+                protocol = following
         six = True
     else:
         return None
@@ -182,6 +261,13 @@ def iso(stamp):
         return None
 
 
+def checked_packets(factory, path):
+    try:
+        yield from factory()
+    except (ValueError, struct.error) as exc:
+        fail("capture ended malformed or truncated", path=path, reason=str(exc))
+
+
 def main():
     try:
         args = json.load(sys.stdin)
@@ -192,10 +278,16 @@ def main():
         fail("path is required: a .pcap or .pcapng file")
     if not os.path.isfile(path):
         fail("no such file", path=path)
-    top = args.get("top", 40)
-    if not isinstance(top, int) or isinstance(top, bool) or top < 1:
+    top = args.get("top")
+    if top is not None and (not isinstance(top, int) or isinstance(top, bool) or top < 1):
         fail("top must be a positive integer")
-    max_packets = args.get("max_packets", 2_000_000)
+    if "max_packets" in args:
+        fail("max_packets is not supported: a forensic summary must read the whole capture")
+    out_dir = args.get("out_dir")
+    if out_dir is not None and (not isinstance(out_dir, str) or not out_dir):
+        fail("out_dir must be a non-empty string")
+    if out_dir and os.path.exists(out_dir) and os.listdir(out_dir):
+        fail("out_dir already holds files", out_dir=out_dir)
     only_host = args.get("host")
     only_port = args.get("port")
     group_by_endpoint = str(args.get("group") or "session").lower() == "endpoint"
@@ -217,10 +309,8 @@ def main():
         talkers = collections.Counter()
         first = last = None
         count = undissected = truncated_payload = 0
-        for when, body, orig, link in packets():
+        for when, body, orig, link in checked_packets(packets, path):
             count += 1
-            if count > max_packets:
-                break
             if when is not None:
                 first = when if first is None else min(first, when)
                 last = when if last is None else max(last, when)
@@ -254,17 +344,39 @@ def main():
                 "a_to_b_bytes": 0, "b_to_a_bytes": 0, "first": when, "last": when, "starts": []})
             entry["packets"] += 1
             entry["bytes"] += orig
-            if found["src"] == entry["a"]:
+            if group_by_endpoint:
+                source_endpoint = (found["src"], found["sport"] if found["sport"] is not None else -1)
+                destination_endpoint = (found["dst"], found["dport"] if found["dport"] is not None else -1)
+                source_is_a = source_endpoint <= destination_endpoint
+            else:
+                source_is_a = (found["src"], found["sport"]) == key[0]
+            if source_is_a:
                 entry["a_to_b_bytes"] += orig
             else:
                 entry["b_to_a_bytes"] += orig
             if when is not None:
                 entry["first"] = when if entry["first"] is None else min(entry["first"], when)
                 entry["last"] = when if entry["last"] is None else max(entry["last"], when)
-                if found["syn_only"] and len(entry["starts"]) < 5000:
+                if found["syn_only"]:
                     entry["starts"].append(round(when, 6))
 
-    ranked = sorted(conversations.values(), key=lambda c: -c["bytes"])[:top]
+    complete = sorted(conversations.values(), key=lambda c: -c["bytes"])
+    conversations_path = None
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+        conversations_path = os.path.join(out_dir, "conversations.tsv")
+        with open(conversations_path, "w", encoding="utf-8", newline="\n") as out:
+            out.write("a\ta_port\tb\tb_port\tprotocol\tservice_port\tpackets\tbytes\ta_to_b_bytes\tb_to_a_bytes\tfirst\tlast\tstarts_json\n")
+            for entry in complete:
+                values = [entry["a"], entry["a_port"], entry["b"], entry["b_port"], entry["protocol"],
+                          entry["service_port"], entry["packets"], entry["bytes"], entry["a_to_b_bytes"],
+                          entry["b_to_a_bytes"], iso(entry["first"]), iso(entry["last"]),
+                          json.dumps(entry["starts"], separators=(",", ":"))]
+                out.write("\t".join("" if value is None else str(value) for value in values) + "\n")
+    if top is not None and len(complete) > top and not conversations_path:
+        fail("top would omit conversations; provide out_dir to keep the complete conversations.tsv",
+             conversation_count=len(complete), requested=top)
+    ranked = complete[:top] if top is not None else complete
     for entry in ranked:
         entry["first"] = iso(entry["first"])
         entry["last"] = iso(entry["last"])
@@ -292,8 +404,11 @@ def main():
         "duration_seconds": round(last - first, 3) if first is not None and last is not None else None,
         "conversations": ranked,
         "conversation_count": len(conversations),
-        "top_talkers": [{"address": a, "bytes": b} for a, b in talkers.most_common(15)],
-        "top_ports": [{"port": p, "packets": c} for p, c in by_port.most_common(15)],
+        "conversations_returned": len(ranked),
+        "conversations_omitted": len(conversations) - len(ranked),
+        "conversations_tsv": conversations_path,
+        "top_talkers": [{"address": a, "bytes": b} for a, b in talkers.most_common()],
+        "top_ports": [{"port": p, "packets": c} for p, c in by_port.most_common()],
         "protocols": dict(by_protocol),
         "notes": notes,
         "note": "Packet times come from the capturing machine, not from either endpoint, and "

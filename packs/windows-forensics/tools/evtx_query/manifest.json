@@ -16,7 +16,12 @@
     },
     "limit": {
       "type": "integer",
-      "description": "Maximum number of events to return",
+      "description": "Maximum events in the JSON summary; every matching event and its full XML is kept in result_file",
+      "required": false
+    },
+    "out_file": {
+      "type": "string",
+      "description": "Optional JSONL result path under the run; defaults to a deterministic path under work/",
       "required": false
     },
     "start_record": {
@@ -37,5 +42,5 @@
   "by": "sbe1801",
   "at": "2026-09-18T12:56:43.858Z",
   "version": 1,
-  "sha256": "275a1c768e5e92907eca29d73ff94ad6f8fd4578d60605342f89d1816dd88416"
+  "sha256": "2fe13bdb99e7244fc233bdc1be45a22b92cf684f735d5a0656fc70efac7dbdc9"
 }

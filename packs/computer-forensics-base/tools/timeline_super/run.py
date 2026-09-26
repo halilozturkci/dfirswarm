@@ -118,7 +118,7 @@ def main():
              after_seconds=timeout, command=" ".join(collect), partial_storage=store)
     if first.returncode != 0 and not os.path.isfile(store):
         fail("log2timeline failed", exit_code=first.returncode,
-             stderr=(first.stderr or "").strip()[-800:], command=" ".join(collect))
+             stderr=(first.stderr or "").strip(), command=" ".join(collect))
 
     export = [psort, "--status_view", "none", "-o", "json_line", "-w", output]
     if args.get("psort_filter"):
@@ -130,7 +130,7 @@ def main():
         fail("psort did not finish in time", after_seconds=timeout, storage=store)
     if second.returncode != 0 and not os.path.isfile(output):
         fail("psort failed", exit_code=second.returncode,
-             stderr=(second.stderr or "").strip()[-800:], command=" ".join(export))
+             stderr=(second.stderr or "").strip(), command=" ".join(export))
 
     events, head = 0, []
     first_event = last_event = None
@@ -158,9 +158,7 @@ def main():
                              ("timestamp_desc", "parser", "data_type", "display_name")
                              if row.get(k) is not None}
                     entry["datetime"] = stamp
-                    # A Plaso message can run to kilobytes; the store holds the whole one.
-                    message = row.get("message") or ""
-                    entry["message"] = message[:400] + ("…" if len(message) > 400 else "")
+                    entry["message"] = row.get("message") or ""
                     head.append(entry)
     except OSError as exc:
         fail("psort wrote nothing this tool could read", output=output, reason=str(exc))

@@ -60,6 +60,8 @@ import {
   toolText,
   usageFromSessionEntries,
   runForgedTool,
+  lacksProgram,
+  ownPathsToOut,
   packSecretsFor,
   redactSecrets,
   healInputs,
@@ -71,6 +73,13 @@ import {
   modelPressure,
   LEDGER_KINDS,
   LEDGER_CONFIDENCE,
+  LEDGER_REL_KINDS,
+  LEDGER_HYPOTHESIS_STATUS,
+  LEDGER_LIMITATION_REASONS,
+  LEDGER_PRECISION,
+  LEDGER_BASIS,
+  LEDGER_COMPLETION,
+  LEDGER_SUBJECT_TYPES,
   LEDGER_MD,
   TOOLS_DIR,
   TOOL_TIMEOUT_DEFAULT_SECONDS,
@@ -2249,11 +2258,35 @@ export default function (pi: ExtensionAPI) {
 
   // Tool jobs: work in throwaway worker VMs, sealed into store/ (job-service.ts).
   const jobDone = (state: unknown) => state === "committed" || state === "failed" || state === "cancelled";
+  /**
+   * Submit a job and wait up to `wait` seconds for it. The result is the
+   * job's record and a page of its stdout when it finished, or its id and
+   * state when it is still queued or running (a post tagged result says when
+   * it is done). `job` is null when the job was not accepted.
+   */
+  async function submitAndWait(cwd: string, spec: Record<string, unknown>, wait: number, signal?: AbortSignal): Promise<{ ok: boolean; job: string | null; result: Record<string, unknown> & { state?: unknown; status?: unknown } }> {
+    const sub = await jobSubmit(cwd, { ...spec, ...(wait > 0 ? { wait: wait + 5 } : {}) });
+    if (!sub.ok || !sub.job) return { ok: false, job: null, result: { reason: sub.reason ?? "the job was not accepted" } };
+    const id = String(sub.job.job);
+    const until = Date.now() + wait * 1000;
+    let last: Awaited<ReturnType<typeof jobStatus>> = sub;
+    while (!jobDone(last.job?.state) && Date.now() < until && !signal?.aborted) {
+      await new Promise((r) => setTimeout(r, 1000));
+      const st = await jobStatus(cwd, { job_id: id, limit: 8192, wait: Math.ceil((until - Date.now()) / 1000) + 5 }).catch(() => null);
+      if (st?.ok) last = st;
+    }
+    if (jobDone(last.job?.state)) {
+      const job = (last.job ?? {}) as Record<string, unknown>;
+      return { ok: job.state === "committed" && (job.status === undefined || job.status === "ok"), job: id, result: { ...job, ...(last.stdout ? { stdout: last.stdout } : {}) } };
+    }
+    return { ok: true, job: id, result: { job: id, state: last.job?.state, note: `still ${last.job?.state === "accepted" ? "queued" : "running"}; a post tagged result will say when it is done (your wait wakes on it)` } };
+  }
   pi.registerTool({
     name: "job_run",
     label: "Run a job",
     description:
-      "Run work in a throwaway worker VM of this run's image: evidence parsing, anything slow or heavy, and anything whose output you will cite or share. Quick looks stay in your own shell. " +
+      "Run work in a throwaway worker VM: evidence parsing, anything slow or heavy, and anything whose output you will cite or share. Quick looks stay in your own shell. " +
+      "Where the run declares job images (SWARM.md, Job images), your own VM is the base image and the forensic programs are in them: name the one the work needs with profile (disk, memory, mobile, …); a pack tool or a recipe picks its own, and a job with none runs in the image that holds every pack of the run. " +
       "The worker sees what you see, read-only: inputs/, store/ (earlier jobs' outputs), catalog/, tools/, tool-output/ and all of work/, yours and your peers' (SQLite: open with ?mode=ro&immutable=1 or copy into $OUT). It has the image's programs, nothing installed in an agent's VM, no network unless network=allowlist, and writes only to $OUT. " +
       "What it writes there is sealed into store/jobs/<id>/out/ (read-only, hashed) and outlives the VM: any job or agent reads it there, and you cite it as job:<id>/<path>. An archive or disk image it writes is offered to the catalogue's recipes and, when catalogued, announced. " +
       "Give command (bash, run from the run's directory; $OUT is also the OUT environment variable, for a script in another language or a quoted heredoc) or tool with args (a pack or forged tool; write {OUT}/<name> where it takes an output path), or import: a file or directory you made under work/ or tool-output/, sealed as it is now (copied live, hashed before and after; cite it as job:<id>/<name>). " +
@@ -2267,6 +2300,7 @@ export default function (pi: ExtensionAPI) {
       inputs: Type.Optional(Type.Array(Type.String(), { description: "What it reads, for the record: input:<path>, job:<id>, or all (default)" })),
       timeout_seconds: Type.Optional(Type.Integer({ description: "Stop it after this long (default 900, at most 14400)" })),
       network: Type.Optional(Type.Union([Type.Literal("off"), Type.Literal("allowlist")], { description: "off (default) or the run's allowlist" })),
+      profile: Type.Optional(Type.String({ description: "The job image to run in, by profile, as SWARM.md's Job images lists them (disk, memory, mobile, …); left out, the run's worker image" })),
       wait_seconds: Type.Optional(Type.Integer({ description: "How long to wait here for it (default 12, at most 100)" })),
     }),
     async execute(_id, params, signal, _onUpdate, toolCtx: ToolCtx) {
@@ -2283,27 +2317,17 @@ export default function (pi: ExtensionAPI) {
         ...(params.inputs ? { inputs: params.inputs } : {}),
         ...(params.timeout_seconds ? { timeout_seconds: params.timeout_seconds } : {}),
         ...(params.network ? { network: params.network } : {}),
+        ...(params.profile ? { profile: params.profile } : {}),
       };
       const wait = Math.min(Math.max(params.wait_seconds ?? 12, 0), 100);
-      if (wait > 0) spec.wait = wait + 5;
-      const sub = await jobSubmit(toolCtx.cwd, spec);
-      if (!sub.ok || !sub.job) {
-        const refused = { ok: false as const, reason: sub.reason ?? "the job was not accepted" };
+      const res = await submitAndWait(toolCtx.cwd, spec, wait, signal as AbortSignal | undefined);
+      if (!res.job) {
+        const refused = { ok: false as const, reason: String(res.result.reason ?? "the job was not accepted") };
         await logEvent(toolCtx.cwd, agentId, "job_run", params, refused, Date.now() - started);
         return { content: [{ type: "text" as const, text: refused.reason }], details: refused, isError: true };
       }
-      const id = String(sub.job.job);
-      const until = Date.now() + wait * 1000;
-      let last: Awaited<ReturnType<typeof jobStatus>> = sub;
-      while (!jobDone(last.job?.state) && Date.now() < until && !signal?.aborted) {
-        await new Promise((r) => setTimeout(r, 1000));
-        const st = await jobStatus(toolCtx.cwd, { job_id: id, limit: 8192, wait: Math.ceil((until - Date.now()) / 1000) + 5 }).catch(() => null);
-        if (st?.ok) last = st;
-      }
-      const result = jobDone(last.job?.state)
-        ? { ok: true, ...last.job, ...(last.stdout ? { stdout: last.stdout } : {}) }
-        : { ok: true, job: id, state: last.job?.state, note: `still ${last.job?.state === "accepted" ? "queued" : "running"}; a post tagged result will say when it is done (your wait wakes on it)` };
-      await logEvent(toolCtx.cwd, agentId, "job_run", params, { ok: true, job: id, state: (result as { state?: unknown }).state, status: (result as { status?: unknown }).status }, Date.now() - started);
+      const result = { ok: true, ...res.result };
+      await logEvent(toolCtx.cwd, agentId, "job_run", params, { ok: true, job: res.job, state: res.result.state, status: res.result.status }, Date.now() - started);
       return okResult(result);
     },
   });
@@ -2502,7 +2526,7 @@ export default function (pi: ExtensionAPI) {
     pi.registerTool({
       name: manifest.name,
       label: manifest.name,
-      description: `${manifest.description} (forged by ${manifest.by}, v${manifest.version}, ${manifest.runtime}; runs in the sandbox with a ${toolTimeoutSeconds(manifest)}s timeout)${manifest.example ? ` Example: ${manifest.example}` : ""}`,
+      description: `${manifest.description} (forged by ${manifest.by}, v${manifest.version}, ${manifest.runtime}; runs in the sandbox with a ${toolTimeoutSeconds(manifest)}s timeout${manifest.pack && process.env.SWARM_PACK_PROGRAMS_IN_JOBS ? `; when your VM lacks a program or module it needs, it runs again as a job in the ${manifest.pack} pack's image, an output path under work/<your id>/ becoming that job's $OUT` : ""})${manifest.example ? ` Example: ${manifest.example}` : ""}`,
       promptSnippet: `${manifest.description} — forged by ${manifest.by}`,
       parameters: forgedSchema(manifest),
       async execute(_id, params, signal, _onUpdate, toolCtx: ToolCtx) {
@@ -2568,6 +2592,33 @@ export default function (pi: ExtensionAPI) {
         if (Object.keys(secrets).length) {
           run.stdout = redactSecrets(run.stdout, secrets);
           run.stderr = redactSecrets(run.stderr, secrets);
+        }
+        // Agents on the base image, the packs' programs in the job images: a
+        // pack tool whose program or module is not in this VM runs again as a
+        // job in its own pack's image, and its answer is that job's.
+        const missing = !run.ok && manifest.pack && process.env.SWARM_PACK_PROGRAMS_IN_JOBS ? lacksProgram(run) : null;
+        if (missing) {
+          const args = ownPathsToOut((params ?? {}) as Record<string, unknown>, agentId);
+          const started = Date.now();
+          const res = await submitAndWait(toolCtx.cwd, { tool: manifest.name, args }, 100, signal as AbortSignal | undefined);
+          // Where each output path the agent gave was written instead: the
+          // job's sealed output, which it reads and cites from there.
+          const moved: Record<string, string> = {};
+          const given = JSON.stringify(params ?? {});
+          const walk = (a: unknown, b: unknown) => {
+            if (typeof a === "string" && typeof b === "string" && a !== b && b.startsWith("{OUT}/") && res.job) moved[a] = `store/jobs/${res.job}/out/${b.slice("{OUT}/".length)}`;
+            else if (a && b && typeof a === "object" && typeof b === "object") for (const k of Object.keys(a as object)) walk((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]);
+          };
+          walk(JSON.parse(given), args);
+          const answer = {
+            ran_as_job: res.job,
+            why: `${missing}: this VM is the base image, so ${manifest.name} ran in its pack's job image`,
+            ...(Object.keys(moved).length ? { written_to: moved } : {}),
+            ...res.result,
+          };
+          await logEvent(toolCtx.cwd, agentId, manifest.name, redactSecrets((params ?? {}) as Record<string, unknown>, secrets), redactSecrets({ ok: res.ok, forged: true, ran_as_job: res.job, why: answer.why, state: res.result.state, status: res.result.status }, secrets), Date.now() - started);
+          const text = redactSecrets(JSON.stringify(answer, null, 1), secrets);
+          return res.ok ? okResult(answer) : { content: [{ type: "text" as const, text }], details: answer, isError: true };
         }
         if (run.ok) {
           return {
@@ -2803,7 +2854,7 @@ export default function (pi: ExtensionAPI) {
     name: "record",
     label: "Record",
     description:
-      "Put a fact in the swarm's ledger with its provenance: kind event (a dated event for the timeline; ts required, ISO 8601 with its zone: Z when the source's time is UTC, or the offset the source records), ioc (an indicator: address, hash, file, account), finding (a conclusion) or absence (a search that found nothing, when that matters: value is what was looked for, source what was searched, evidence the query, the tool and its version, and the scope). Both source and evidence are required: where it was seen (a path, a log, a registry key) and how to check it (the command, the inode, the record id, the hash). An entry nobody can check is not a record. refs names the run's objects it rests on, each checked when it is written: input:<path> (under inputs/), job:<id>/<path> (a job's sealed output), import:<id>/<path>, member:<generation>#<n> (an archive member in the catalogue), sha256:<hex> (a sealed blob), or unresolved:<why> when none can be named; a file only in your own work/ is not an object of the run: run the work as a job and cite job:. To correct an entry, yours or a peer's, record the corrected one with supersedes=<its seq>: nothing is deleted, and the newer entry is the correction. The harness renders ledger/ledger.md — timeline, indicators, findings, searches that found nothing — after every record; cite that file in the report.",
+      "Put a fact in the swarm's ledger with its provenance: kind event (a dated event for the timeline; ts required, ISO 8601 with its zone: Z when the source's time is UTC, or the offset the source records), ioc (an indicator: address, hash, file, account), finding (a conclusion), absence (a search that found nothing, when that matters: value is what was looked for, source what was searched, evidence the query, the tool and its version, and the scope), hypothesis (a proposition under test, with status open, supported or refuted) or limitation (what the examination could not establish, with reason not_examined, unavailable, failed, partial or excluded). Both source and evidence are required: where it was seen (a path, a log, a registry key) and how to check it (the command, the inode, the record id, the hash). An entry nobody can check is not a record. refs names the run's objects it rests on, each checked when it is written: input:<path> (under inputs/), job:<id>/<path> (a job's sealed output), import:<id>/<path>, member:<generation>#<n> (an archive member in the catalogue), sha256:<hex> (a sealed blob), or unresolved:<why> when none can be named; a file only in your own work/ is not an object of the run: run the work as a job and cite job:. To correct an entry, yours or a peer's, record the corrected one with supersedes=<its seq> (and because=<why>): nothing is deleted, and the newer entry is the correction; the same sentence with another confidence, refs or status is a correction too. The optional fields are for the reader: answers (the goal sections it answers), rel (supports, contradicts, duplicates or derived_from another entry), sensitive (it or what it cites holds a secret or personal data), clock and precision (on a dated entry: which clock the time came from, how precise it is), basis (observed or inferred), completion (on an absence: complete, partial or failed), attribution (who or what an action is attributed to, and on what), locators (where in a cited object). The harness renders ledger/ledger.md — timeline, indicators, findings, searches that found nothing — after every record; cite that file in the report.",
     promptSnippet: "Record a dated event, an indicator or a finding with its evidence",
     promptGuidelines: [
       "Record every dated event you establish as kind=event with ts in UTC; the timeline is built from them.",
@@ -2812,9 +2863,11 @@ export default function (pi: ExtensionAPI) {
       "A finding names the objects it rests on in refs (job:<id>/<path>, input:<path>, member:<gen>#<n>, sha256:<hex>, or unresolved:<why>).",
       "A wrong entry is corrected, never deleted: record the right one with supersedes=<seq of the wrong one>.",
       "kind=absence is optional: record a search that found nothing only when the absence matters to the case, with the scope it holds for.",
+      "Name the goal section an entry answers in answers; link an entry that supports or contradicts another with rel.",
+      "Record what you could not examine, or could only partly, as kind=limitation with its reason; a proposition you are still testing as kind=hypothesis.",
     ],
     parameters: Type.Object({
-      kind: Type.Union(LEDGER_KINDS.map((k) => Type.Literal(k)), { description: "event | ioc | finding | absence" }),
+      kind: Type.Union(LEDGER_KINDS.map((k) => Type.Literal(k)), { description: "event | ioc | finding | absence | hypothesis | limitation" }),
       value: Type.String({ description: "The event, indicator or finding, in one sentence; for absence, what was looked for" }),
       ts: Type.Optional(Type.String({ description: "The event's time, ISO 8601 with its zone: 2024-01-15T12:44:22Z, or 2024-01-15T15:44:22+03:00 as the source records it. A time without a zone is refused." })),
       source: Type.String({ description: "Where it was seen: a path, log, plugin, registry key. Required." }),
@@ -2822,6 +2875,18 @@ export default function (pi: ExtensionAPI) {
       confidence: Type.Optional(Type.Union(LEDGER_CONFIDENCE.map((c) => Type.Literal(c)))),
       supersedes: Type.Optional(Type.Number({ description: "The seq of an entry this one corrects. The older entry stays, marked superseded." })),
       refs: Type.Optional(Type.Array(Type.String(), { description: "The run's objects it rests on: input:<path>, job:<id>/<path>, import:<id>/<path>, member:<gen>#<n>, sha256:<hex>, or unresolved:<why>. Each is checked; one that does not resolve is refused with the nearest names." })),
+      answers: Type.Optional(Type.Array(Type.String(), { description: "The goal sections it answers: \"3\", \"Q3\"." })),
+      rel: Type.Optional(Type.Array(Type.Object({ to: Type.Number(), kind: Type.Union(LEDGER_REL_KINDS.map((k) => Type.Literal(k))) }), { description: "Links to other entries by seq: supports, contradicts, duplicates, derived_from." })),
+      sensitive: Type.Optional(Type.Boolean({ description: "It, or what it cites, holds a credential, a key or personal data: a package redacts it." })),
+      status: Type.Optional(Type.Union(LEDGER_HYPOTHESIS_STATUS.map((k) => Type.Literal(k)), { description: "A hypothesis's status." })),
+      reason: Type.Optional(Type.Union(LEDGER_LIMITATION_REASONS.map((k) => Type.Literal(k)), { description: "A limitation's reason." })),
+      clock: Type.Optional(Type.String({ description: "On a dated entry: the clock its time came from (\"NTFS $SI created\", \"device local, offset unknown\")." })),
+      precision: Type.Optional(Type.Union(LEDGER_PRECISION.map((k) => Type.Literal(k)), { description: "How precise ts is; a date alone is recorded as date." })),
+      basis: Type.Optional(Type.Union(LEDGER_BASIS.map((k) => Type.Literal(k)), { description: "observed in the evidence, or inferred from it." })),
+      completion: Type.Optional(Type.Union(LEDGER_COMPLETION.map((k) => Type.Literal(k)), { description: "On an absence: how far the search got." })),
+      attribution: Type.Optional(Type.Object({ subject: Type.String(), subject_type: Type.Optional(Type.Union(LEDGER_SUBJECT_TYPES.map((k) => Type.Literal(k)))), basis_refs: Type.Optional(Type.Array(Type.String())) }, { description: "Who or what an action is attributed to (account, device, person) and the objects that link them." })),
+      locators: Type.Optional(Type.Array(Type.Object({ ref: Type.String(), at: Type.String() }), { description: "Where in a cited ref: a row, an offset, a record id." })),
+      because: Type.Optional(Type.String({ description: "With supersedes: why the correction corrects." })),
     }),
     async execute(_id, params, _signal, _onUpdate, toolCtx: ToolCtx) {
       const started = Date.now();
@@ -2834,15 +2899,28 @@ export default function (pi: ExtensionAPI) {
         confidence: params.confidence,
         ...(params.supersedes !== undefined ? { supersedes: params.supersedes } : {}),
         ...(params.refs?.length ? { refs: params.refs } : {}),
+        ...(params.answers?.length ? { answers: params.answers } : {}),
+        ...(params.rel?.length ? { rel: params.rel } : {}),
+        ...(params.sensitive !== undefined ? { sensitive: params.sensitive } : {}),
+        ...(params.status ? { status: params.status } : {}),
+        ...(params.reason ? { reason: params.reason } : {}),
+        ...(params.clock ? { clock: params.clock } : {}),
+        ...(params.precision ? { precision: params.precision } : {}),
+        ...(params.basis ? { basis: params.basis } : {}),
+        ...(params.completion ? { completion: params.completion } : {}),
+        ...(params.attribution ? { attribution: params.attribution } : {}),
+        ...(params.locators?.length ? { locators: params.locators } : {}),
+        ...(params.because ? { because: params.because } : {}),
       });
       if (!result.ok) {
-        await logEvent(toolCtx.cwd, agentId, "record", { kind: params.kind }, { ok: false, reason: result.reason }, Date.now() - started);
+        // What the agent tried to say goes on the trace whole: the args are the record, refused or not.
+        await logEvent(toolCtx.cwd, agentId, "record", params as Record<string, unknown>, { ok: false, reason: result.reason }, Date.now() - started);
         return { content: [{ type: "text" as const, text: `record refused: ${result.reason}` }], details: { ok: false, reason: result.reason }, isError: true };
       }
       // The entry's hash goes on the trace, which is anchored outside the
       // run: custody holds the ledger to it, so an entry deleted from the
       // tail, or one written into the file without this tool, is named.
-      await logEvent(toolCtx.cwd, agentId, "record", { kind: params.kind, ts: params.ts, value: params.value, ...(result.entry.supersedes !== undefined ? { supersedes: result.entry.supersedes } : {}), ...(params.refs?.length ? { refs: params.refs } : {}) }, { ok: true, seq: result.entry.seq, merged: result.merged, total: result.total, ...(result.entry.hash ? { hash: result.entry.hash } : {}), ...(result.note ? { note: result.note } : {}) }, Date.now() - started);
+      await logEvent(toolCtx.cwd, agentId, "record", { ...(params as Record<string, unknown>), ...(result.entry.supersedes !== undefined ? { supersedes: result.entry.supersedes } : {}) }, { ok: true, seq: result.entry.seq, merged: result.merged, total: result.total, ...(result.entry.hash ? { hash: result.entry.hash } : {}), ...(result.note ? { note: result.note } : {}) }, Date.now() - started);
       // A correction is said on the trace as itself, so a reader of the
       // record sees which entry stopped standing, when, and by whom.
       if (result.entry.supersedes !== undefined && !result.merged) {
@@ -2858,7 +2936,7 @@ export default function (pi: ExtensionAPI) {
     description: "List the swarm's ledger: every event, indicator, finding and search that found nothing, recorded so far, with authors and evidence; a corrected entry carries superseded_by. Filter by kind; the rendered file is ledger/ledger.md.",
     promptSnippet: "See what the swarm has recorded so far",
     parameters: Type.Object({
-      kind: Type.Optional(Type.String({ description: "event | ioc | finding | absence" })),
+      kind: Type.Optional(Type.String({ description: "event | ioc | finding | absence | hypothesis | limitation" })),
       limit: Type.Optional(Type.Number({ description: "Newest N entries (default 200)" })),
     }),
     async execute(_id, params, _signal, _onUpdate, toolCtx: ToolCtx) {

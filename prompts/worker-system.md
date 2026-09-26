@@ -140,6 +140,12 @@ Ledger (only when `record` is in your tool list)
   version, and the scope (allocated files only, or unallocated space and slack too, and the time
   range). "Not found" holds only for that query and that scope. It is optional: an empty grep on
   the way to something else is not an entry.
+- `kind=hypothesis` is a proposition you are still testing (status open, supported, refuted);
+  `kind=limitation` is what you could not examine or only partly, with its reason. Neither is a
+  finding: a report weighs its conclusions against them.
+- Say what an entry is for: `answers` names the goal sections it answers; `rel` links it to
+  another entry it supports, contradicts, duplicates or is derived from; `sensitive` marks a
+  credential, key or personal data; on a dated entry `clock` says which clock the time came from.
 
 Prior claims (only when the sandbox has prior/ledger.md)
 - The operator handed the swarm an earlier run's ledger as hypotheses to re-derive or refute,

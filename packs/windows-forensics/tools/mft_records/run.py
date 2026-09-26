@@ -24,6 +24,11 @@ in the record are held in it, and a parser that skips the fixup reads two bytes
 of checksum in the middle of a timestamp. That is the classic silent corruption
 in hand-rolled MFT code, so it is applied here first and a record whose fixup
 does not match is reported as unreliable rather than parsed.
+
+Every record is read. The page returned inline is `limit` long, and when more
+records match the whole list is written to a file the output names. A record
+too damaged to parse is listed as a problem with its offset, and the sweep goes
+on to the next one.
 """
 import base64
 import datetime
@@ -32,6 +37,81 @@ import os
 import re
 import struct
 import sys
+
+# Lossless paging (the same in every library tool that pages): the page an
+# agent reads stays small, and when there are more rows the whole result is
+# written as JSON Lines under work/<agent>/tool-output and named.
+import hashlib
+import json
+import os
+import re
+import tempfile
+from pathlib import Path
+
+
+class LosslessPage:
+    def __init__(self, tool: str, key: object, limit: int):
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise ValueError("limit must be a positive integer")
+        self.tool = re.sub(r"[^A-Za-z0-9_.-]", "_", tool)
+        self.limit = limit
+        self.page: list[object] = []
+        self.total = 0
+        self._out = None
+        self._tmp: Path | None = None
+        digest = hashlib.sha256(
+            json.dumps(key, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()[:16]
+        name = f"{self.tool}-{digest}.jsonl"
+        job, out = os.environ.get("JOB_ID"), os.environ.get("OUT")
+        if job and out:
+            # In a job only $OUT is written, and it is sealed as the job's
+            # output: the whole result is cited from there.
+            self.path = Path(out) / "tool-output" / name
+            self.shown = "store/jobs/%s/out/tool-output/%s" % (re.sub(r"[^A-Za-z0-9_.-]", "_", job), name)
+        else:
+            agent = re.sub(
+                r"[^A-Za-z0-9_.-]", "_", os.environ.get("AGENT_ID") or "tool"
+            )
+            self.path = Path("work") / agent / "tool-output" / name
+            self.shown = str(self.path)
+
+    def _write(self, row: object) -> None:
+        assert self._out is not None
+        self._out.write(json.dumps(row, ensure_ascii=False, default=str))
+        self._out.write("\n")
+
+    def add(self, row: object) -> None:
+        self.total += 1
+        if len(self.page) < self.limit:
+            self.page.append(row)
+            return
+        if self._out is None:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            fd, name = tempfile.mkstemp(
+                dir=self.path.parent, prefix=f".{self.path.name}-"
+            )
+            self._tmp = Path(name)
+            self._out = os.fdopen(fd, "w", encoding="utf-8")
+            for kept in self.page:
+                self._write(kept)
+        self._write(row)
+
+    def finish(self) -> dict:
+        result = {
+            "matched": self.total,
+            "returned": len(self.page),
+            "truncated": self.total > len(self.page),
+        }
+        if self._out is not None:
+            self._out.flush()
+            os.fsync(self._out.fileno())
+            self._out.close()
+            assert self._tmp is not None
+            os.replace(self._tmp, self.path)
+            result["all_results"] = self.shown
+            result["all_results_format"] = "JSON Lines, one complete result per line"
+        return result
 
 FILETIME_EPOCH = datetime.datetime(1601, 1, 1, tzinfo=datetime.timezone.utc)
 STANDARD_INFORMATION = 0x10
@@ -224,16 +304,30 @@ def parse_record(record, number_hint, want_resident):
 
 
 def detect_record_size(fh, size):
-    """Records are 1024 on almost every volume; measure rather than assume."""
+    """Records are 1024 on almost every volume; measure rather than assume.
+
+    The first two FILE magics are looked for through the whole file, not a
+    first window: a slice of an $MFT can open with a run of zeroed records.
+    """
     fh.seek(0)
-    head = fh.read(min(size, 1 << 20))
-    first = head.find(b"FILE")
-    if first < 0:
+    hits, carry, base = [], b"", 0
+    while len(hits) < 2:
+        block = fh.read(1 << 20)
+        if not block:
+            break
+        buf = carry + block
+        at = buf.find(b"FILE")
+        while at >= 0 and len(hits) < 2:
+            if not hits or base + at >= hits[-1] + 4:
+                hits.append(base + at)
+            at = buf.find(b"FILE", at + 1)
+        carry = buf[-3:]
+        base += len(buf) - len(carry)
+    if not hits:
         return None
-    second = head.find(b"FILE", first + 4)
-    if second < 0:
+    if len(hits) < 2:
         return 1024
-    gap = second - first
+    gap = hits[1] - hits[0]
     return gap if gap in (256, 512, 1024, 2048, 4096) else 1024
 
 
@@ -269,17 +363,32 @@ def main():
         record_size = args.get("record_size") or detect_record_size(fh, size)
         if not record_size:
             fail("no FILE record found; this does not look like an $MFT", path=path, bytes=size)
+        if not isinstance(record_size, int) or isinstance(record_size, bool) or record_size < 256:
+            fail("record_size must be an integer of at least 256", record_size=record_size)
 
-        entries, scanned, parsed = [], 0, 0
-        truncated = False
+        key = [path, record_size, args.get("name"), want_entry, bool(args.get("deleted_only")),
+               bool(args.get("streams_only")), bool(args.get("timestomp_only")),
+               bool(args.get("with_resident"))]
+        entries = LosslessPage("mft_records", key, limit)
+        problems = LosslessPage("mft_records-problems", key, 40)
+        scanned, parsed = 0, 0
+        trailing = 0
         fh.seek(0)
         while True:
             chunk = fh.read(record_size)
+            if not chunk:
+                break
             if len(chunk) < 42:
+                trailing = len(chunk)
                 break
             index = scanned
             scanned += 1
-            entry = parse_record(chunk, index, bool(args.get("with_resident")))
+            try:
+                entry = parse_record(chunk, index, bool(args.get("with_resident")))
+            except (struct.error, IndexError, ValueError) as exc:
+                problems.add({"record": index, "offset": index * record_size,
+                              "why": "the record did not parse: %s" % exc})
+                continue
             if entry is None:
                 continue
             parsed += 1
@@ -295,23 +404,31 @@ def main():
                     continue
                 if pattern and not any(pattern.search(n["name"]) for n in entry["names"]):
                     continue
-            if len(entries) >= limit:
-                truncated = True
-                break
-            entries.append(entry)
+            entries.add(entry)
 
-    print(json.dumps({
+    page = entries.finish()
+    problem_page = problems.finish()
+    out = {
         "path": path,
         "record_size": record_size,
         "records_scanned": scanned,
         "records_parsed": parsed,
-        "entries": entries,
-        "entry_count": len(entries),
-        "truncated": truncated,
+        "entries": entries.page,
+        "entry_count": page["matched"],
+        **page,
+        "problems": problems.page,
+        "problem_count": problem_page["matched"],
         "note": "A flag beginning si_ is an indicator, not proof. $FN can be made to "
                 "follow $SI by creating, stomping and then renaming; the defensible "
                 "confirmation is $LogFile, which records when the driver wrote the value.",
-    }, indent=2))
+    }
+    if problem_page.get("all_results"):
+        out["all_problems"] = problem_page["all_results"]
+    if trailing:
+        out["trailing_bytes"] = trailing
+        out["trailing_note"] = ("the file ends %d bytes into a record, too few to hold a record "
+                                "header" % trailing)
+    print(json.dumps(out, indent=2))
 
 
 if __name__ == "__main__":

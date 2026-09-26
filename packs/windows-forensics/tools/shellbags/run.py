@@ -27,6 +27,11 @@ Two traps the output is shaped around:
   what you converted from.
 - A path here means the folder was browsed, not that the folder still exists and
   not that a file in it was opened.
+
+The whole tree is walked. The page returned inline is `limit` long, and when
+more entries match the whole list is written to a file the output names. A key
+below max_depth whose subkeys were not walked is named in the output, never
+passed over in silence.
 """
 import datetime
 import json
@@ -34,6 +39,81 @@ import os
 import re
 import struct
 import sys
+
+# Lossless paging (the same in every library tool that pages): the page an
+# agent reads stays small, and when there are more rows the whole result is
+# written as JSON Lines under work/<agent>/tool-output and named.
+import hashlib
+import json
+import os
+import re
+import tempfile
+from pathlib import Path
+
+
+class LosslessPage:
+    def __init__(self, tool: str, key: object, limit: int):
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise ValueError("limit must be a positive integer")
+        self.tool = re.sub(r"[^A-Za-z0-9_.-]", "_", tool)
+        self.limit = limit
+        self.page: list[object] = []
+        self.total = 0
+        self._out = None
+        self._tmp: Path | None = None
+        digest = hashlib.sha256(
+            json.dumps(key, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()[:16]
+        name = f"{self.tool}-{digest}.jsonl"
+        job, out = os.environ.get("JOB_ID"), os.environ.get("OUT")
+        if job and out:
+            # In a job only $OUT is written, and it is sealed as the job's
+            # output: the whole result is cited from there.
+            self.path = Path(out) / "tool-output" / name
+            self.shown = "store/jobs/%s/out/tool-output/%s" % (re.sub(r"[^A-Za-z0-9_.-]", "_", job), name)
+        else:
+            agent = re.sub(
+                r"[^A-Za-z0-9_.-]", "_", os.environ.get("AGENT_ID") or "tool"
+            )
+            self.path = Path("work") / agent / "tool-output" / name
+            self.shown = str(self.path)
+
+    def _write(self, row: object) -> None:
+        assert self._out is not None
+        self._out.write(json.dumps(row, ensure_ascii=False, default=str))
+        self._out.write("\n")
+
+    def add(self, row: object) -> None:
+        self.total += 1
+        if len(self.page) < self.limit:
+            self.page.append(row)
+            return
+        if self._out is None:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            fd, name = tempfile.mkstemp(
+                dir=self.path.parent, prefix=f".{self.path.name}-"
+            )
+            self._tmp = Path(name)
+            self._out = os.fdopen(fd, "w", encoding="utf-8")
+            for kept in self.page:
+                self._write(kept)
+        self._write(row)
+
+    def finish(self) -> dict:
+        result = {
+            "matched": self.total,
+            "returned": len(self.page),
+            "truncated": self.total > len(self.page),
+        }
+        if self._out is not None:
+            self._out.flush()
+            os.fsync(self._out.fileno())
+            self._out.close()
+            assert self._tmp is not None
+            os.replace(self._tmp, self.path)
+            result["all_results"] = self.shown
+            result["all_results_format"] = "JSON Lines, one complete result per line"
+        return result
 
 FILETIME_EPOCH = datetime.datetime(1601, 1, 1, tzinfo=datetime.timezone.utc)
 BEEF0004 = 0xBEEF0004
@@ -267,12 +347,22 @@ def main():
     if root_key is None:
         fail("no BagMRU root in this hive", hive=hive_path, tried=tried)
 
-    entries, problems = [], []
-    truncated = False
+    key = [hive_path, root_path, contains, max_depth]
+    entries = LosslessPage("shellbags", key, limit)
+    problems = LosslessPage("shellbags-problems", key, 40)
+    not_walked = []
+    counts = {"strings": 0}
 
     def walk(key, key_path, parent_path, depth):
-        nonlocal truncated
-        if depth > max_depth or truncated:
+        if depth > max_depth:
+            # Name the key where the walk stopped, and how much lies under it.
+            try:
+                below = sum(1 for _ in key.iter_subkeys())
+            except Exception as exc:
+                problems.add({"key": key_path, "why": "subkeys unreadable: %s" % exc})
+                return
+            if below:
+                not_walked.append({"key": key_path, "depth": depth, "subkeys": below})
             return
         values = {}
         try:
@@ -280,16 +370,14 @@ def main():
                 raw = binary(value.value)
                 values[value.name] = raw if raw is not None else value.value
         except Exception as exc:
-            problems.append({"key": key_path, "why": "values unreadable: %s" % exc})
+            problems.add({"key": key_path, "why": "values unreadable: %s" % exc})
         order = mru_order(values)
         try:
             subkeys = list(key.iter_subkeys())
         except Exception as exc:
-            problems.append({"key": key_path, "why": "subkeys unreadable: %s" % exc})
+            problems.add({"key": key_path, "why": "subkeys unreadable: %s" % exc})
             return
         for sub in subkeys:
-            if truncated:
-                return
             raw = values.get(sub.name)
             item = decode_item(bytes(raw)) if isinstance(raw, (bytes, bytearray)) else \
                 {"type": "no shell item on the parent", "name": sub.name, "decoded": "none"}
@@ -308,28 +396,33 @@ def main():
             if header is not None:
                 entry["key_last_written"] = filetime(header.last_modified)
             if not contains or contains in path.lower():
-                if len(entries) >= limit:
-                    truncated = True
-                    return
-                entries.append(entry)
+                entries.add(entry)
+                if item.get("decoded") == "strings":
+                    counts["strings"] += 1
             walk(sub, key_path + "\\" + sub.name, path, depth + 1)
 
     walk(root_key, root_path, "", 1)
 
-    decoded_by_strings = sum(1 for e in entries if e["item"].get("decoded") == "strings")
-    print(json.dumps({
+    page = entries.finish()
+    problem_page = problems.finish()
+    out = {
         "hive": hive_path,
         "root": root_path,
-        "entries": entries,
-        "entry_count": len(entries),
-        "recovered_by_strings": decoded_by_strings,
-        "truncated": truncated,
-        "problems": problems[:40],
+        "entries": entries.page,
+        "entry_count": page["matched"],
+        "recovered_by_strings": counts["strings"],
+        **page,
+        "not_walked_below_max_depth": not_walked,
+        "problems": problems.page,
+        "problem_count": problem_page["matched"],
         "note": "key_last_written is a kernel FILETIME in UTC. The item's own created, "
                 "modified and accessed values are DOS timestamps in the machine's local "
                 "time, to two seconds; convert them with the timezone from "
                 "SYSTEM\\\\ControlSet00n\\\\Control\\\\TimeZoneInformation and say so.",
-    }, indent=2, default=str))
+    }
+    if problem_page.get("all_results"):
+        out["all_problems"] = problem_page["all_results"]
+    print(json.dumps(out, indent=2, default=str))
 
 
 if __name__ == "__main__":

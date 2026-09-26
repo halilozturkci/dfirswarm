@@ -528,13 +528,40 @@ export type CustodyView = {
     runtime_changed: string | null;
   }> | null;
   incomplete: string | null;
+  /** Each check's status (custody from 2026-09-26): passed, failed, incomplete, not applicable, unavailable. Absent from an older verdict. */
+  checks?: CustodyCheck[];
+  /** What the verdict sealed: each chain's length and head. */
+  seal?: {
+    trace: { lines: number; bytes: number; last_line_sha256: string | null };
+    ledger: { entries: number; head: string | null };
+    attestations: { lines: number; head: string | null };
+    journal: { lines: number; head: string | null } | null;
+  } | null;
+  /** The ledger's attestations (a second author, appended beside the entry): their own chain. */
+  attestations?: { lines: number; intact: boolean; detail: string } | null;
+  /** The acquisition hashes given at kickoff, against the evidence as re-hashed. */
+  acquisition?: { source: string | null; source_sha256: string | null; given: number; matched: number; mismatched: string[]; not_compared: string[] } | null;
+  /** The operator's audit held to the trace's operator lines. */
+  operator_check?: { lines: number; intact: boolean; detail: string; trace_actions: number; matched: number; unmatched: Array<{ at: string; command: string; argv: string[] }> } | null;
+  /** The verdict's signature and trusted timestamp, from the anchor outside the run. */
+  signature?: { key?: string | null; sha256?: string; error?: string } | null;
+  timestamp?: { authority?: string; gen_time?: string | null; sha256?: string; error?: string } | null;
+  /** A reference clock's offset from the host's, at kickoff and at custody. */
+  time_reference?: { kickoff: ClockReference | null; custody: ClockReference | null };
+  /** The models the agents were given, and the ones the gateway saw answer. */
+  models?: { team: Array<{ agent: string; model: string | null }>; gateway_answered: string[] | null } | null;
+  /** What custody cost. */
+  timing?: { total_ms: number; evidence_bytes: number; evidence_mb_per_s: number | null } | null;
 };
+
+export type CustodyCheck = { name: string; status: "passed" | "failed" | "incomplete" | "not_applicable" | "unavailable"; reason?: string; expected?: number; checked?: number };
+export type ClockReference = { url: string; offset_ms: number | null; precision_ms: number; error?: string };
 
 /** One `record` call, as the harness stored it in ledger/entries.jsonl. */
 export type LedgerEntry = {
   seq: number;
-  /** absence: a search that found nothing, valid only for its stated scope. */
-  kind: "event" | "ioc" | "finding" | "absence";
+  /** absence: a search that found nothing, valid only for its stated scope; hypothesis: a proposition under test; limitation: what could not be established. */
+  kind: "event" | "ioc" | "finding" | "absence" | "hypothesis" | "limitation";
   /** ISO 8601 UTC for an event; absent for the other kinds. */
   ts?: string;
   /** What the agent wrote for `ts` when it was not already the UTC value. */
@@ -549,6 +576,21 @@ export type LedgerEntry = {
   /** How to check it: the command, the inode, the record id, the hash. */
   evidence?: string;
   confidence?: "high" | "medium" | "low";
+  /** The run's objects it rests on. */
+  refs?: string[];
+  /** Version 3 (2026-09-26): the goal sections it answers, links to other entries, a sensitive mark, the clock and precision of its time, observed or inferred, a hypothesis's status, a limitation's reason, how far a search got, an attribution, where in a cited object, a correction's reason. */
+  answers?: string[];
+  rel?: Array<{ to: number; kind: "supports" | "contradicts" | "duplicates" | "derived_from" }>;
+  sensitive?: boolean;
+  clock?: string;
+  precision?: "date" | "minute" | "second" | "subsecond" | "unknown";
+  basis?: "observed" | "inferred";
+  status?: "open" | "supported" | "refuted";
+  reason?: "not_examined" | "unavailable" | "failed" | "partial" | "excluded";
+  completion?: "complete" | "partial" | "failed";
+  attribution?: { subject: string; subject_type: string; basis_refs?: string[] };
+  locators?: Array<{ ref: string; at: string }>;
+  because?: string;
   by: string;
   authors: string[];
   at: string;

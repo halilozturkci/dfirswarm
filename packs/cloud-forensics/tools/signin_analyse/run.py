@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Read a sign-in log and surface the four things that decide a cloud case.
 
-**A success that satisfied one factor** on a tenant that requires two. Either a
-legacy protocol was used, a policy exempted the application, or the session came
-from a stolen token — and any of those is the finding.
+**A success that records a single-factor requirement** where multi-factor was
+expected. This is a lead: applied conditional-access policies, authentication
+details, client and token context distinguish an exemption or prior claim from
+legacy authentication or token theft.
 
 **Failures then a success.** A run of multi-factor prompts followed by an
-acceptance is what consent fatigue looks like from the log's side; a run of
+acceptance is consistent with an MFA-fatigue hypothesis; a run of
 wrong passwords followed by a success is a different story with the same shape.
 Both are worth surfacing and neither is a conclusion.
 
@@ -92,6 +93,8 @@ def rows_from(path):
                 return [json.loads(l) for l in fh if l.strip()]
         if isinstance(loaded, dict) and "value" in loaded:
             return loaded["value"]
+        if isinstance(loaded, dict) and "items" in loaded:
+            return loaded["items"]
         return loaded if isinstance(loaded, list) else [loaded]
     with open(path, "r", encoding="utf-8-sig", errors="replace", newline="") as fh:
         return list(csv.DictReader(fh))
@@ -99,6 +102,12 @@ def rows_from(path):
 
 def flatten(row):
     out = dict(row)
+    actor = row.get("actor")
+    if isinstance(actor, dict):
+        out["actor_email"] = actor.get("email")
+    identifier = row.get("id")
+    if isinstance(identifier, dict):
+        out["time"] = identifier.get("time")
     location = row.get("location")
     if isinstance(location, dict):
         out["city"] = location.get("city")
@@ -117,6 +126,44 @@ def flatten(row):
     return out
 
 
+def expanded(rows):
+    """Expand Google Reports API activities, whose events are nested."""
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        nested = row.get("events")
+        if not isinstance(nested, list):
+            yield row
+            continue
+        for event in nested:
+            if not isinstance(event, dict):
+                continue
+            merged = dict(row)
+            merged.pop("events", None)
+            merged["event_name"] = event.get("name")
+            parameters = {}
+            for item in event.get("parameters") or []:
+                if not isinstance(item, dict) or not item.get("name"):
+                    continue
+                parameters[item["name"]] = next((item.get(k) for k in
+                    ("value", "intValue", "boolValue", "multiValue") if item.get(k) is not None), None)
+            merged.update(parameters)
+            yield merged
+
+
+def outcome(flat):
+    raw = get(flat, "errorcode", "Status", "resultType")
+    if raw is not None:
+        code = str(raw)
+        return code, code in ("0", "Success", "success")
+    name = str(get(flat, "event_name", "Event Name") or "").lower()
+    if name in ("login_success", "login_successful"):
+        return name, True
+    if "failure" in name:
+        return name, False
+    return name or None, None
+
+
 def main():
     try:
         args = json.load(sys.stdin)
@@ -130,6 +177,9 @@ def main():
     limit = args.get("limit", 500)
     if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
         fail("limit must be a positive integer")
+    out_file = args.get("out_file")
+    if out_file is not None and (not isinstance(out_file, str) or not out_file):
+        fail("out_file must be a non-empty string")
     ceiling = args.get("max_speed_kmh", 900)
     if not isinstance(ceiling, (int, float)) or isinstance(ceiling, bool) or ceiling <= 0:
         fail("max_speed_kmh must be a positive number")
@@ -146,32 +196,30 @@ def main():
         fail("that export could not be read", path=path, reason=str(exc))
 
     events = []
-    for row in raw:
-        if not isinstance(row, dict):
-            continue
+    for row in expanded(raw):
         flat = flatten(row)
         account = get(flat, "userPrincipalName", "user", "User", "userDisplayName",
                       "Username", "email", "actor_email")
         if pattern and not pattern.search(str(account or "")):
             continue
         stamp = when(get(flat, "createdDateTime", "Date (UTC)", "time", "Timestamp", "date"))
-        code = str(get(flat, "errorcode", "Status", "resultType", "status") or "0")
+        code, success = outcome(flat)
         events.append({
             "time": stamp.isoformat().replace("+00:00", "Z") if stamp else None,
             "_when": stamp,
             "user": account,
-            "application": get(flat, "appDisplayName", "Application", "resourceDisplayName"),
-            "address": get(flat, "ipAddress", "IP address", "ip", "sourceIP"),
+            "application": get(flat, "appDisplayName", "Application", "resourceDisplayName", "application_name"),
+            "address": get(flat, "ipAddress", "IP address", "ip", "sourceIP", "ip_address"),
             "country": get(flat, "country", "Location", "location"),
             "city": get(flat, "city"),
             "latitude": get(flat, "latitude"), "longitude": get(flat, "longitude"),
-            "client": get(flat, "clientAppUsed", "Client app", "userAgent", "browser"),
+            "client": get(flat, "clientAppUsed", "Client app", "userAgent", "browser", "login_type"),
             "device": get(flat, "device", "deviceDetail"),
             "authentication": get(flat, "authenticationRequirement", "Authentication requirement"),
             "conditional_access": get(flat, "conditionalAccessStatus"),
             "result_code": code,
-            "result": CODES.get(code, "code %s" % code),
-            "success": code in ("0", "Success", "success"),
+            "result": CODES.get(code, "code %s" % code) if code is not None else "outcome not present",
+            "success": success,
         })
 
     by_user = {}
@@ -189,18 +237,20 @@ def main():
         # failures immediately before a success
         run = 0
         for event in series:
-            if not event["success"]:
+            if event["success"] is False:
                 run += 1
                 continue
-            if run >= 3:
+            if event["success"] is True and run >= 3:
                 bursts.append({"user": user, "failures_before": run,
                                "succeeded_at": event["time"], "address": event["address"],
                                "result": event["result"]})
             run = 0
         seen_addresses, seen_clients = {}, {}
         for event in series:
-            seen_addresses[event["address"]] = seen_addresses.get(event["address"], 0) + 1
-            seen_clients[event["client"]] = seen_clients.get(event["client"], 0) + 1
+            if event["address"]:
+                seen_addresses[event["address"]] = seen_addresses.get(event["address"], 0) + 1
+            if event["client"]:
+                seen_clients[event["client"]] = seen_clients.get(event["client"], 0) + 1
         for event in series:
             if event["success"] and seen_addresses.get(event["address"], 0) == 1 and len(seen_addresses) > 2:
                 unfamiliar.append({"user": user, "time": event["time"],
@@ -242,23 +292,35 @@ def main():
 
     for event in events:
         event.pop("_when", None)
+    if out_file:
+        with open(out_file, "w", encoding="utf-8", newline="\n") as fh:
+            for event in events:
+                fh.write(json.dumps(event, default=str, sort_keys=True) + "\n")
+        inline = events[:limit]
+    else:
+        inline = events
     print(json.dumps({
         "path": path,
-        "events": events[:limit],
+        "events": inline,
         "event_count": len(events),
+        "events_inline": len(inline),
+        "complete_events": out_file,
+        "inline_limited": bool(out_file and len(events) > len(inline)),
         "accounts": len(by_user),
-        "successes": sum(1 for e in events if e["success"]),
-        "failures": sum(1 for e in events if not e["success"]),
-        "single_factor_successes": single_factor[:50],
-        "failure_bursts_before_success": bursts[:50],
-        "addresses_seen_once": unfamiliar[:50],
-        "impossible_travel": travel[:50],
+        "successes": sum(1 for e in events if e["success"] is True),
+        "failures": sum(1 for e in events if e["success"] is False),
+        "unknown_outcome": sum(1 for e in events if e["success"] is None),
+        "single_factor_successes": single_factor,
+        "failure_bursts_before_success": bursts,
+        "addresses_seen_once": unfamiliar,
+        "impossible_travel": travel,
         "note": "Impossible travel is a hypothesis. A VPN, a mobile carrier's routing and a "
                 "cloud-hosted mail client all produce it, and the implied speed is given so the "
                 "claim is measurable rather than asserted. What turns it into a finding is the "
                 "rest: an unfamiliar device, a legacy client, a new application, a consent granted "
-                "in the same window. A success that satisfied only one factor on a tenant that "
-                "requires two is the stronger signal, and it is the first list above.",
+                "in the same window. A success recorded as single-factor where multi-factor was "
+                "expected is a lead in the first list above; verify applied policies, authentication "
+                "details and token context before calling it a bypass.",
     }, indent=2, default=str))
 
 

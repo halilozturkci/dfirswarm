@@ -45,6 +45,18 @@ image installs. Only `sqlite3` of those is in the base image, so
 that has the rest (disk, today); `tests/recipe.test.sh` fails when a script
 runs one of them without saying so.
 
+**A page is not a cut.** The paged query tools (`amcache_apps`,
+`browser_history`, `catalog_grep`, `csearch`, `esedb_query`,
+`chunk_needles`, `evtx_filter`, `evtx_query`, `ftk_csv`,
+`guest_syslog`, `ioc_scan`, `lnk_parse`, `mam_scan`, `prefetch_mam`,
+`recyclebin_i`, `sig_carve`, `sigscan_e01`, `usn_journal`, and
+`utf16_urls`) still scan the whole source. They return the requested first
+page and, when more matches exist, atomically keep the complete result as JSON
+Lines under `work/<agent>/tool-output/`; `all_results` (or the corresponding
+nested page record) names that file. A result's `matched` count is therefore
+the whole set, while `returned` is only the inline page. The shared
+implementation is `_output.py`.
+
 | Tool | Runtime | Written by | v | What it does |
 | --- | --- | --- | --- | --- |
 | `aescrypt_v2_decrypt` | python3 | `s864a02` | 3 | Decrypt AES Crypt 3.10 Windows GUI v2 files (KDF: SHA256(IV||zeros16||UTF16LE pw)×8192). Returns plaintext pa… |

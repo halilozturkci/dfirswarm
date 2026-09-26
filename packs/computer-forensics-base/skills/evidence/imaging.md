@@ -25,9 +25,14 @@ rediscover it.
     VHD, VHDX, VMDK, QCOW2   a virtual disk, with its own header and possibly snapshots
     a directory or a zip     a triage collection, not an image at all
 
-The Sleuth Kit reads raw and E01 directly. For a virtual disk, either convert it
-(`qemu-img convert -O raw`) or attach it. A **split E01** is one image: hand the
-tools the first segment and libewf finds the rest. A **split raw** is not: list
+The Sleuth Kit reads raw and E01 directly and may also open VHD/VHDX or other
+virtual-disk containers through the libraries in the installed build. Try
+`mmls` and `fsstat` first: when they succeed, their offsets are sectors in the
+virtual disk and can be passed back to Sleuth Kit commands against that same
+container. Use `qemu-img info` to inspect the container, and convert it
+(`qemu-img convert -O raw`) or attach it only when the next tool cannot open it.
+A **split E01** is one image: hand the tools the first segment and libewf finds
+the rest. A **split raw** is not: list
 every segment on the command line in order, or join them through `affuse` or
 `ewfmount` first, because passing only the first piece silently gives you an
 image that ends early. `ewfinfo` prints the E01's acquisition record: the

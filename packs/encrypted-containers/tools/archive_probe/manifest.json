@@ -8,7 +8,7 @@
     },
     "limit": {
       "type": "integer",
-      "description": "Maximum entries to list (default 200)"
+      "description": "Entries (or 7-Zip header strings) shown inline (default 200); all of them are counted, and when there are more the whole list is written as JSON Lines and named in all_results"
     }
   },
   "runtime": "python3",
@@ -18,5 +18,5 @@
   "by": "maintainer",
   "at": "2026-09-22T21:00:00.000Z",
   "version": 1,
-  "sha256": "0e50b5c4ba5e9f3b173ab09794e01e1672e3c9acec80861c0d665f0f43b7a8d8"
+  "sha256": "a09c56755070563bb6e52c59b0efcfdc5774922220ff587cdff9670480013239"
 }

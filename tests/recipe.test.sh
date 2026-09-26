@@ -29,8 +29,18 @@ export DFIRSWARM_HOME="$TMP/home"
 [[ "$(python3 "$R" profile-for windows-forensics)" == disk ]] || fail "windows-forensics should be disk"
 [[ "$(python3 "$R" profile-for memory-forensics)" == memory ]] || fail "memory-forensics should be memory"
 got="$(python3 "$R" profile-for ransomware-response)"
-[[ "$got" == re ]] || fail "ransomware-response is in no profile but re covers every program it names and every library it imports; got $got"
+[[ "$got" == re ]] || fail "ransomware-response is held by re, which beats memory, a smaller image that covers it only by chance; got $got"
+[[ "$(python3 "$R" profile-for macos-forensics)" == mobile ]] || fail "macos-forensics is held by mobile, as mobile-forensics' dependency"
+[[ "$(python3 "$R" profile-for triage-collection)" == full ]] || fail "triage-collection is held by full alone and covered by nothing smaller"
 [[ "$(python3 "$R" profile-for no-such-pack)" == full ]] || fail "an unknown pack cannot be covered by anything smaller than full"
+# A run's job images: each pack in its own profile, and a dependency every
+# profile holds with its dependents, not in the smallest image that holds it.
+jp="$(python3 "$R" job-profiles computer-forensics-base windows-forensics mobile-forensics encrypted-containers macos-forensics)"
+jq -e '. == {"computer-forensics-base": "disk", "windows-forensics": "disk", "mobile-forensics": "mobile", "encrypted-containers": "disk", "macos-forensics": "mobile"}' <<<"$jp" >/dev/null \
+  || fail "the base pack of a disk and mobile run should run in disk, not in memory: $jp"
+jp="$(python3 "$R" job-profiles computer-forensics-base windows-forensics encrypted-containers linux-forensics)"
+[[ "$(jq -r '."computer-forensics-base"' <<<"$jp")" == disk ]] || fail "the base pack goes where most of the run's packs are (disk, two), not linux (one): $jp"
+[[ "$(python3 "$R" job-profiles computer-forensics-base memory-forensics | jq -r '."computer-forensics-base"')" == memory ]] || fail "with memory-forensics alone, the base pack runs in memory"
 pass "the smallest profile that holds or covers the packs is chosen, and full only when nothing smaller serves"
 
 # An installed pack this repository does not carry (a pro or third-party one):
@@ -179,6 +189,43 @@ res="$(tail -1 <<<"$res")"
 [[ "$(jq -r '.no_arch[0]' <<<"$res")" == false ]] && jq -r '.no_arch[1]' <<<"$res" | grep -q 'build pinned' || fail "an architecture with no pin was not recorded as such: $res"
 pass "a pinned download is linked onto PATH when its sha256 matches, and refused when its bytes differ, its archive climbs out, or its architecture has no pin"
 
+# A download that arrives short is tried again; one whose whole length is
+# other bytes is not (the file at the URL changed, and would again).
+res="$(python3 - "$ROOT/images" "$TMP" <<'EOF'
+import hashlib, http.server, json, sys, threading
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import install
+body = b"runtime " * 4096
+sha = hashlib.sha256(body).hexdigest()
+hits = {"short": 0, "other": 0}
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_GET(self):
+        name = self.path.strip("/")
+        hits[name] += 1
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if name == "short" and hits[name] == 1:
+            self.wfile.write(body[: len(body) // 2])
+            self.close_connection = True
+            return
+        self.wfile.write(body if name == "short" else b"x" * len(body))
+srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+threading.Thread(target=srv.serve_forever, daemon=True).start()
+url = f"http://127.0.0.1:{srv.server_address[1]}"
+dest = Path(sys.argv[2]) / "dl.bin"
+short = install.get(f"{url}/short", dest, sha)
+other = install.get(f"{url}/other", dest, sha)
+print(json.dumps({"short": [short, hits["short"], dest.exists()], "other": [other, hits["other"]]}))
+EOF
+)" || fail "install.get could not be driven: $res"
+res="$(tail -1 <<<"$res")"
+jq -e '.short[0] == null and .short[1] == 2' <<<"$res" >/dev/null || fail "a download cut off halfway was not fetched again: $res"
+jq -e '(.other[0] | test("is not the pinned")) and .other[1] == 1' <<<"$res" >/dev/null || fail "a whole download of other bytes was fetched again, or installed: $res"
+pass "a download that arrives short is fetched again, and one of other bytes is refused at once"
+
 # --- the other pinned kinds -----------------------------------------------------
 # A pack names what no package manager has as data: an apt line from the
 # image's backports, a .deb per architecture, a tag's source with its entry and
@@ -202,6 +249,10 @@ cat > "$fake/requires/host.json" <<JSON
   "not_in_image": "Only macOS has it."}
 ]}
 JSON
+# re also holds the ransomware pack: an empty one here.
+mkdir -p "$TMP/fakepacks/ransomware-response/requires"
+printf '{"id": "ransomware-response", "name": "f", "version": "1.0.0", "description": "f", "licence": "MIT", "depends": []}\n' > "$TMP/fakepacks/ransomware-response/pack.json"
+printf '{"binaries": []}\n' > "$TMP/fakepacks/ransomware-response/requires/host.json"
 python3 "$R" build re --packs "$TMP/fakepacks" --out "$TMP/ctx-kinds" --allow-nonredistributable >/dev/null || fail "a context of every pinned kind could not be written"
 spec="$TMP/ctx-kinds/spec.json"
 jq -e '.apt["bp-tool"] == false and .apt_release == {"bp-tool": "bookworm-backports"} and (.apt | has("bookworm-backports") | not)' "$spec" >/dev/null \

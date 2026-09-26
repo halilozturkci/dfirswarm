@@ -530,9 +530,15 @@ test("the ledger exports to CSV and to Timesketch whole, quoted, with correction
     ];
     const csv = ledgerCsv(ledger as never, { review: new Map([[1, "accepted by H at t"]]), grounding: { "1": "grounded", "2": "not in the trace" } });
     const [header, ...rows] = csv.split("\r\n");
-    assert.equal(header, "seq,kind,ts,ts_raw,value,source,evidence,confidence,by,authors,at,v,supersedes,prev,hash,scope,superseded_by,review,grounding");
-    assert.match(rows.join("\r\n"), /^1,event,2026-01-01T00:00:00\.000Z,2026-01-01T03:00:00\+03:00,"Said ""hello"", then left\nsecond line",inputs\/notes\.txt,"'=HYPERLINK\(""http:\/\/x""\)",high,s100,s100;s101,2026-01-01T00:00:10Z,2,,,h1,,2,accepted by H at t,grounded$/m);
-    assert.match(csv, /\r\n2,finding,,,'-corrected,inputs\/notes\.txt,e,,s100,s100,2026-01-01T00:00:11Z,2,1,,h2,allocated only,,not reviewed,not in the trace\r\n$/);
+    assert.equal(header, "seq,kind,ts,ts_raw,precision,clock,value,source,evidence,confidence,status,reason,completion,basis,answers,rel,attribution,locators,sensitive,by,authors,at,v,supersedes,because,prev,hash,scope,superseded_by,review,grounding");
+    assert.match(rows.join("\r\n"), /^1,event,2026-01-01T00:00:00\.000Z,2026-01-01T03:00:00\+03:00,,,"Said ""hello"", then left\nsecond line",inputs\/notes\.txt,"'=HYPERLINK\(""http:\/\/x""\)",high,,,,,,,,,,s100,s100;s101,2026-01-01T00:00:10Z,2,,,,h1,,2,accepted by H at t,grounded$/m);
+    assert.match(csv, /\r\n2,finding,,,,,'-corrected,inputs\/notes\.txt,e,,,,,,,,,,,s100,s100,2026-01-01T00:00:11Z,2,1,,,h2,allocated only,,not reviewed,not in the trace\r\n$/);
+    // A sensitive entry is exported with its words replaced, its hash kept; the clock is the time's description.
+    const secret = [{ v: 3 as const, seq: 3, kind: "event" as const, ts: "2026-01-01T00:00:00.000Z", clock: "NTFS $SI created", value: "the key is 1234", source: "notes", evidence: "cat", sensitive: true, by: "s100", authors: ["s100"], at: "t", hash: "h3" }];
+    const red = ledgerCsv(secret as never, { redact: true });
+    assert.doesNotMatch(red, /1234/);
+    assert.match(red, /\[redacted: marked sensitive\].*h3/);
+    assert.match(ledgerTimesketch(secret as never), /,NTFS \$SI created,event,/);
     const ts = ledgerTimesketch(ledger as never);
     assert.match(ts, /^message,datetime,timestamp_desc,kind,source,evidence,confidence,by,seq,hash,superseded_by,review\r\n/);
     assert.match(ts, /,2026-01-01T00:00:00\.000Z,"Event time, as recorded in the ledger",event,/);

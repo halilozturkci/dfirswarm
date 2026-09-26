@@ -12,9 +12,9 @@ Almost everything on macOS is a property list, and the profile is six of them.
     /System/Library/CoreServices/SystemVersion.plist   ProductVersion, BuildVersion
     /Library/Preferences/SystemConfiguration/preferences.plist   hostname, network
     /Library/Preferences/com.apple.TimeMachine.plist   backup destinations
-    /var/db/.AppleSetupDone                            the file's own ctime is the setup date
+    /var/db/.AppleSetupDone                            an installation/setup lead; corroborate its times
     /private/var/db/dslocal/nodes/Default/users/*.plist  every local account
-    /Library/Preferences/.GlobalPreferences.plist      the machine's locale and timezone
+    /Library/Preferences/.GlobalPreferences.plist      locale and language preferences
 
 `plist_read` handles both encodings. Most system plists on a modern macOS are
 **binary**, not XML, and a grep over the raw file finds nothing while the value
@@ -25,10 +25,11 @@ The timezone is a symlink: `/etc/localtime` points into
 `/usr/share/zoneinfo/<Region>/<City>`. Read the link target, not the file.
 Convert from it and say so in the report.
 
-The hardware identity lives in `preferences.plist` and in the IORegistry, which
-a dead image does not have. The serial number is usually recoverable from
-`/var/db/lockdown` on a machine that has paired an iOS device, and from a
-Spotlight index otherwise.
+Hardware identifiers may appear in SystemConfiguration preferences, cached
+system reports, logs and Spotlight metadata. The live IORegistry is not present
+in a dead image, and `/var/db/lockdown` contains records for paired iOS devices,
+not authoritative identity for the Mac. Report a serial number only when its
+source identifies the Mac rather than a connected device.
 
 **The system volume is read-only and sealed on macOS 11 and later.** The disk
 is two volumes in one APFS container — a signed system volume and a writable

@@ -61,7 +61,7 @@ def summarise(path, top):
         "lines": lines,
         "distinct": len(counts),
         "first_offset": first_offset,
-        "top": [{"value": v[:200], "count": c} for v, c in counts.most_common(top)],
+        "top": [{"value": v, "count": c} for v, c in counts.most_common(top)],
     }
 
 
@@ -120,7 +120,7 @@ def main():
              scanners=SCANNERS, command=" ".join(argv))
     if not os.path.isdir(out_dir):
         fail("bulk_extractor wrote no output directory", exit_code=proc.returncode,
-             stderr=(proc.stderr or "").strip()[-800:], command=" ".join(argv))
+             stderr=(proc.stderr or "").strip(), command=" ".join(argv))
 
     features = []
     for name in sorted(os.listdir(out_dir)):
