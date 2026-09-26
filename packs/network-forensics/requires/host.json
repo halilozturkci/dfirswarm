@@ -38,6 +38,51 @@
       "redistributable": false
     },
     {
+      "name": "capinfos",
+      "package": "tshark",
+      "optional": true,
+      "why": "Report capture format, packet count, time range, snap length, encapsulation and integrity before analysis.",
+      "install": {"brew": "brew install wireshark", "apt": "apt-get install -y tshark"},
+      "licence": "GPL-2.0-or-later",
+      "redistributable": false
+    },
+    {
+      "name": "editcap",
+      "package": "tshark",
+      "optional": true,
+      "why": "Deduplicate, split and convert captures while preserving the original evidence.",
+      "install": {"brew": "brew install wireshark", "apt": "apt-get install -y tshark"},
+      "licence": "GPL-2.0-or-later",
+      "redistributable": false
+    },
+    {
+      "name": "mergecap",
+      "package": "tshark",
+      "optional": true,
+      "why": "Merge related capture segments into a time-ordered working copy.",
+      "install": {"brew": "brew install wireshark", "apt": "apt-get install -y tshark"},
+      "licence": "GPL-2.0-or-later",
+      "redistributable": false
+    },
+    {
+      "name": "text2pcap",
+      "package": "tshark",
+      "optional": true,
+      "why": "Turn a byte-oriented hex dump into a capture for protocol dissection without altering the source.",
+      "install": {"brew": "brew install wireshark", "apt": "apt-get install -y tshark"},
+      "licence": "GPL-2.0-or-later",
+      "redistributable": false
+    },
+    {
+      "name": "tcpdump",
+      "package": "tcpdump",
+      "optional": true,
+      "why": "Apply BPF filters, inspect capture headers and make lossless filtered working captures with the standard examiner CLI.",
+      "install": {"brew": "brew install tcpdump", "apt": "apt-get install -y tcpdump"},
+      "licence": "BSD-3-Clause",
+      "redistributable": false
+    },
+    {
       "name": "tcpflow",
       "package": "tcpflow",
       "optional": true,
@@ -47,6 +92,24 @@
         "apt": "apt-get install -y tcpflow"
       },
       "licence": "GPL-3.0-or-later",
+      "redistributable": false
+    },
+    {
+      "name": "tcpick",
+      "package": "tcpick",
+      "optional": true,
+      "why": "Reassemble and inspect selected TCP conversations from a capture as a second implementation for overlap and evasion checks.",
+      "install": {"brew": "brew install tcpick", "apt": "apt-get install -y tcpick"},
+      "licence": "GPL-2.0-or-later",
+      "redistributable": false
+    },
+    {
+      "name": "ngrep",
+      "package": "ngrep",
+      "optional": true,
+      "why": "Search packet payloads with a BPF scope and a byte-safe regular expression during rapid triage.",
+      "install": {"brew": "brew install ngrep", "apt": "apt-get install -y ngrep"},
+      "licence": "BSD-3-Clause",
       "redistributable": false
     },
     {

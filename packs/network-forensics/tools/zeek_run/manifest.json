@@ -23,6 +23,7 @@
       "description": "Give up after this long (default 900)"
     }
   },
+  "requires": ["zeek"],
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 1200,
@@ -30,5 +31,5 @@
   "by": "maintainer",
   "at": "2026-09-22T19:00:00.000Z",
   "version": 1,
-  "sha256": "590c5a66457dab361cc76f7ccb010bf05c90ede64bb3038176fb35c7088b8d48"
+  "sha256": "82e7d20790ea209be3edd0554545ac7b040b09893bbdf730bdaada840bdfc577"
 }

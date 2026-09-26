@@ -1,0 +1,18 @@
+{
+  "name": "network_log_summary",
+  "description": "Parse Apache/Nginx access, Squid access and common key/value firewall logs into a complete normalised TSV plus parse errors and aggregate counts. Every source line is preserved in one of the two output files.",
+  "params": {
+    "path": {"type": "string", "description": "A plain-text or gzip-compressed network log"},
+    "out_dir": {"type": "string", "description": "An empty directory under work/ for normalized.tsv and unparsed.tsv"},
+    "format": {"type": "string", "description": "auto (default), web, squid or firewall"},
+    "top": {"type": "integer", "description": "Aggregate rows returned per category (default 20); complete rows remain in normalized.tsv"}
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 600,
+  "example": "{\"path\": \"inputs/access.log\", \"out_dir\": \"work/access-summary\", \"format\": \"auto\"}",
+  "by": "maintainer",
+  "at": "2026-09-26T18:00:00.000Z",
+  "version": 1,
+  "sha256": "6e024af2fffe6510f36b3feb3cac796b321ec6b6b5a09cd7457b3e15738f2d45"
+}

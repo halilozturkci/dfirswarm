@@ -39,8 +39,14 @@
   },
   "tools": [
     "beacon_score",
+    "network_log_summary",
+    "pcap_extract",
     "pcap_summary",
+    "suricata_run",
     "zeek_run"
   ],
-  "skills": 6
+  "recipes": [
+    "network-forensics/network-capture"
+  ],
+  "skills": 8
 }

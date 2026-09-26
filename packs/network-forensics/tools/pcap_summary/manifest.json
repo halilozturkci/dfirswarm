@@ -8,7 +8,7 @@
     },
     "top": {
       "type": "integer",
-      "description": "How many conversations to return (default 40)"
+      "description": "How many conversations to return inline. When this omits rows, out_dir is required and keeps the complete conversations.tsv. By default every conversation is returned."
     },
     "host": {
       "type": "string",
@@ -18,9 +18,9 @@
       "type": "integer",
       "description": "Only conversations involving this port"
     },
-    "max_packets": {
-      "type": "integer",
-      "description": "Stop after this many packets (default 2000000)"
+    "out_dir": {
+      "type": "string",
+      "description": "Optional empty directory under work/ for a complete conversations.tsv"
     },
     "with_starts": {
       "type": "boolean",
@@ -34,9 +34,9 @@
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 600,
-  "example": "{\"path\": \"inputs/capture.pcap\", \"top\": 20, \"with_starts\": true}",
+  "example": "{\"path\": \"inputs/capture.pcap\", \"top\": 20, \"out_dir\": \"work/pcap-summary\", \"with_starts\": true}",
   "by": "maintainer",
   "at": "2026-09-22T19:00:00.000Z",
   "version": 1,
-  "sha256": "6a3df3a03177a816e89b7ff6e9fe3ff84b073a35954199f67a4af7e1cb49bbeb"
+  "sha256": "6c91c7a4b91095ed4049aaf551a0b771a6a0b4906b198c6264d49295c6d43e4d"
 }
