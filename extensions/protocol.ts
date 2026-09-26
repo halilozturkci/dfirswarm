@@ -43,7 +43,6 @@ import { constants as fsConstants } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
-import { readManifest, resolveRef, storePaths } from "../scripts/evidence-store.ts";
 
 /**
  * Claims are short leases, renewed by re-claiming: make the edit, release,
@@ -6650,6 +6649,9 @@ function nearestNames(want: string, names: string[], n = 5): string[] {
  * the chain would stand for good.
  */
 async function checkRefs(sandboxRoot: string, refs: string[]): Promise<{ ok: true } | { ok: false; reason: string }> {
+  // Loaded when a ref is checked, not with the extension: a VM that mounts
+  // only extensions/ still loads it, and in a VM the hub checks refs anyway.
+  const { readManifest, resolveRef, storePaths } = await import("../scripts/evidence-store.ts");
   for (const ref of refs) {
     const r = await resolveRef(sandboxRoot, ref);
     if (r.ok) continue;
