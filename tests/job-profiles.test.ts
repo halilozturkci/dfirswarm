@@ -97,7 +97,13 @@ test("a profile the run did not declare is refused with the ones it has; with no
   await svc.start();
   const r = await svc.submit("a1", { kind: "command", command: "true", inputs: [], profile: "network" });
   assert.equal(r.ok, false);
-  assert.match(!r.ok ? r.reason : "", /no job image "network" in this run: full, disk, memory, mobile/);
+  assert.match(!r.ok ? r.reason : "", /no job image "network" in this run: full; disk \(the packs computer-forensics-base\); memory \(the packs memory-forensics\); mobile \(the packs mobile-forensics\)/);
+  // A pack's id picks its pack's image: agents named packs as profiles.
+  const byPack = await svc.submit("a1", { kind: "command", command: "true", inputs: [], profile: "mobile-forensics" });
+  assert.ok(byPack.ok, !byPack.ok ? byPack.reason : "");
+  const done = await until(svc, byPack.ok ? byPack.job.id : "");
+  assert.equal(done.spec.profile, "mobile");
+  assert.equal(journal(S).find((l) => l.type === "job_started" && l.job === done.id)?.image, IMAGES.mobile);
   await svc.stop("over");
   const S2 = sandbox();
   const { svc: plain } = service(S2, { images: undefined, packProfiles: undefined });

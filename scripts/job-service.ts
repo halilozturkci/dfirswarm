@@ -646,13 +646,19 @@ export class JobService {
     const timeout = Math.min(Math.max(Number(raw.timeout_seconds ?? 900) || 900, 10), TIMEOUT_MAX_SECONDS);
     const network = raw.network === "allowlist" ? "allowlist" : "off";
     const inputs = Array.isArray(raw.inputs) ? raw.inputs.map(String).slice(0, 256) : ["all"];
-    // A job image by profile: one the run declared, or refused with the ones it has.
-    const profile = typeof raw.profile === "string" && raw.profile.trim() ? raw.profile.trim() : undefined;
-    if (profile && !(this.o.images && this.o.images[profile])) {
-      const have = Object.keys(this.o.images ?? {});
-      return { reason: have.length ? `no job image "${profile}" in this run: ${have.join(", ")} (or leave profile out for the run's worker image)` : `this run declared no job images: leave profile out (every job runs in ${this.o.image})` };
+    // A job image by profile: one the run declared, a pack's id for its
+    // pack's image (agents named packs as profiles on the first basic-flow
+    // round), or refused with the images the run has and the packs in each.
+    let profile = typeof raw.profile === "string" && raw.profile.trim() ? raw.profile.trim() : undefined;
+    const images = this.o.images ?? {};
+    if (profile && !images[profile] && this.o.packProfiles?.[profile] && images[this.o.packProfiles[profile]]) profile = this.o.packProfiles[profile];
+    if (profile && !images[profile]) {
+      const have = Object.keys(images);
+      const packsOf = (p: string) => Object.entries(this.o.packProfiles ?? {}).filter(([, q]) => q === p).map(([pack]) => pack).sort();
+      const listing = have.map((p) => (packsOf(p).length ? `${p} (the packs ${packsOf(p).join(", ")})` : p)).join("; ");
+      return { reason: have.length ? `no job image "${profile}" in this run: ${listing}; a pack's name also picks its image (or leave profile out for the run's worker image)` : `this run declared no job images: leave profile out (every job runs in ${this.o.image})` };
     }
-    const base = { kind, inputs, timeout_seconds: timeout, network, ...(raw.scratch ? { scratch: true } : {}), ...(raw.note ? { note: String(raw.note).slice(0, 2000) } : {}), ...(raw.parent ? { parent: String(raw.parent) } : {}), ...(profile ? { profile } : {}) } as JobSpec;
+    const base = { kind, inputs, timeout_seconds: timeout, network, ...(raw.scratch ? { scratch: true } : {}), ...(raw.note ? { note: String(raw.note) } : {}), ...(raw.parent ? { parent: String(raw.parent) } : {}), ...(profile ? { profile } : {}) } as JobSpec;
     if (kind === "tool") {
       const args = raw.args && typeof raw.args === "object" && !Array.isArray(raw.args) ? raw.args : {};
       const checked = await this.toolCheck(String(raw.tool ?? ""), args);
