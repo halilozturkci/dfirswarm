@@ -733,15 +733,21 @@ test("a seat's usage report carries only a budget row's fields, each of its kind
 });
 
 test("the hub's own calls are on the trace: a refused forge and a done that ended the swarm", async () => {
-  const { hub, lines } = await setup({ forging: false });
+  const { hub, lines, sandbox } = await setup({ forging: false });
   await assert.rejects(board.callBoard(hub.socketFor("a0"), "forgeTool", [null, { name: "x_tool", runtime: "bash", script: "echo" }]), /forging is off/);
+  // One seat's abandon while the other still works is a vote, not the end (run sfeeebb).
+  const vote = (await board.callBoard(hub.socketFor("a0"), "markDone", [null, { reason: "ABANDONED: my slice is stuck", outputFile: "work/none.md" }])) as { terminate: boolean; refused?: string };
+  assert.equal(vote.terminate, false);
+  assert.match(vote.refused ?? "", /a1/);
+  assert.equal(existsSync(join(sandbox, SENTINEL_REL)), false, "no sentinel on one agent's word");
   await board.callBoard(hub.socketFor("a1"), "markDone", [null, { reason: "ABANDONED: nothing to do", outputFile: "work/none.md" }]);
-  await until(() => lines.filter((l) => l.tool === "hub_call").length >= 2, "two hub_call lines");
+  await until(() => lines.filter((l) => l.tool === "hub_call").length >= 3, "three hub_call lines");
   const calls = lines.filter((l) => l.tool === "hub_call") as Array<{ agent: string; args: { agent: string; fn: string }; result: Record<string, unknown>; sid?: string; seq?: number }>;
   const forge = calls.find((c) => c.args.fn === "forgeTool");
   assert.equal(forge?.result.ok, false);
   assert.equal(forge?.args.agent, "a0");
-  const done = calls.find((c) => c.args.fn === "markDone");
+  const [asked, done] = calls.filter((c) => c.args.fn === "markDone");
+  assert.equal(asked?.result.refused, true, "the refused vote is on the trace");
   assert.equal(done?.result.ok, true);
   assert.equal(done?.result.created_sentinel, true);
   assert.ok(calls.every((c) => typeof c.sid === "string" && typeof c.seq === "number"), "the hub numbers its own lines");

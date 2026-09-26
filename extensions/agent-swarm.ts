@@ -2911,7 +2911,10 @@ export default function (pi: ExtensionAPI) {
         description: "The artifact this swarm was asked to produce",
       }),
       abandon: Type.Optional(
-        Type.Boolean({ description: "The finish line cannot be met: stop the swarm anyway. The sentinel and the board will say the run was abandoned." }),
+        Type.Boolean({
+          description:
+            "The finish line cannot be met: stop the swarm anyway. While other agents still work this is a vote, and the run ends when a second agent abandons too. The sentinel and the board will say the run was abandoned.",
+        }),
       ),
     }),
     async execute(_id, params, _signal, _onUpdate, toolCtx: ToolCtx) {
@@ -2984,6 +2987,24 @@ export default function (pi: ExtensionAPI) {
         reason: reasonPrefix + params.reason,
         outputFile: params.output_file,
       });
+      if (!result.terminate) {
+        // One agent's abandon while others work is a vote, not the end.
+        await logEvent(toolCtx.cwd, agentId, "done", params, { ok: false, reason: result.refused, abandon: result.abandon }).catch(() => undefined);
+        if (result.abandon.first_vote) {
+          await systemPost(toolCtx.cwd, {
+            tag: "ask",
+            via: agentId,
+            body:
+              `${agentId} asks to abandon the run: ${params.reason}. An abandon ends the run for everyone without its checks, so it takes a second agent. ` +
+              `Call done with abandon: true only if you too judge the goal cannot be met; otherwise carry on, and answer ${agentId} here if you can unblock it.`,
+          }).catch(() => undefined);
+        }
+        return {
+          content: [{ type: "text" as const, text: result.refused }],
+          details: { ok: false, reason: result.refused, abandon: result.abandon },
+          isError: true,
+        };
+      }
       await logEvent(toolCtx.cwd, agentId, "done", params, {
         reason: result.reason,
         output_file: result.output_file,

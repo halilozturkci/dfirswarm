@@ -6,6 +6,17 @@ All notable changes to this project. The format follows
 
 ## [Unreleased]
 
+### Changed: one agent's abandon is a vote while others work
+
+- `done` with `abandon: true` ends the run only when a second agent has
+  abandoned too, or when no other agent is still working (every peer has a
+  `.done` or `.dead` marker). Before that it is recorded under
+  `done/abandon/<id>.md`, the board is asked once, and the agent is told to
+  post what blocked its slice and carry on. The hub applies the same rule to
+  a seat's `markDone`, and a refused seat stays up. Run sfeeebb: one seat of
+  ten abandoned a BelkaCTF case after six minutes because its own slice had
+  not come together, and the sentinel stopped the nine others.
+
 ### Added: findings name what they rest on (ledger refs)
 
 - `record` takes `refs`: the run's objects an entry rests on —
