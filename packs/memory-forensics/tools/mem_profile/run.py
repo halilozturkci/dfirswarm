@@ -25,6 +25,7 @@ import os
 import re
 import struct
 import sys
+from datetime import datetime, timedelta, timezone
 
 HINTS = [
     (b"Windows", "Windows"), (b"Linux version ", "Linux"),
@@ -43,43 +44,94 @@ def fail(message, **extra):
     raise SystemExit(1)
 
 
+def filetime(value):
+    """Render a Windows FILETIME without letting an invalid header abort triage."""
+    try:
+        return (datetime(1601, 1, 1, tzinfo=timezone.utc) +
+                timedelta(microseconds=value // 10)).isoformat().replace("+00:00", "Z")
+    except (OverflowError, ValueError):
+        return None
+
+
 def crash_dump(fh, wide):
     """The run list is the whole reason to read this header."""
     out = {"format": "Windows crash dump", "bits": 64 if wide else 32}
     fh.seek(0)
-    head = fh.read(0x2000)
+    header_bytes = 0x2000 if wide else 0x1000
+    head = fh.read(header_bytes)
     try:
         if wide:
             out["major_version"], out["minor_version"] = struct.unpack_from("<II", head, 0x08)
             out["directory_table_base"] = struct.unpack_from("<Q", head, 0x10)[0]
             out["machine_image_type"] = hex(struct.unpack_from("<I", head, 0x30)[0])
             out["processors"] = struct.unpack_from("<I", head, 0x34)[0]
-            out["bugcheck_code"] = hex(struct.unpack_from("<I", head, 0x38)[0])
+            bugcheck = struct.unpack_from("<I", head, 0x38)[0]
+            out["bugcheck_code"] = hex(bugcheck)
+            marker = struct.pack("<I", bugcheck)
+            if all(0x20 <= b < 0x7f for b in marker):
+                out["bugcheck_code_note"] = (
+                    "the field contains printable bytes %r and may be acquisition-tool filler, "
+                    "not a Windows bugcheck" % marker.decode("ascii", "replace"))
             runs_at = 0x88
+            runs_start = runs_at + 0x10  # descriptor padding + 64-bit NumberOfPages
+            dump_type_at, system_time_at, uptime_at = 0xF98, 0xFA8, 0x1030
+            version_at = 0x60
         else:
             out["major_version"], out["minor_version"] = struct.unpack_from("<II", head, 0x08)
             out["directory_table_base"] = struct.unpack_from("<I", head, 0x10)[0]
             out["machine_image_type"] = hex(struct.unpack_from("<I", head, 0x20)[0])
             out["processors"] = struct.unpack_from("<I", head, 0x24)[0]
             runs_at = 0x64
-        count, pages = struct.unpack_from("<II", head, runs_at)
-        if 0 < count <= 4096:
-            runs, cursor = [], runs_at + 8
+            runs_start = runs_at + 8
+            dump_type_at, system_time_at, uptime_at = 0xF88, 0xFC0, 0xFB8
+            version_at = 0x3C
+
+        version_raw = head[version_at:version_at + 32].split(b"\0", 1)[0]
+        # Some acquisition tools fill unused header fields with a repeated
+        # four-byte marker (for example PAGE).  Do not present that as an OS
+        # version string.
+        chunks = [version_raw[i:i + 4] for i in range(0, len(version_raw), 4)]
+        if version_raw and not (len(version_raw) % 4 == 0 and len(set(chunks)) == 1):
+            out["version_user"] = version_raw.decode("ascii", "replace")
+        out["dump_type"] = struct.unpack_from("<I", head, dump_type_at)[0]
+        system_time = struct.unpack_from("<Q", head, system_time_at)[0]
+        out["system_time_utc"] = filetime(system_time)
+        out["system_uptime_100ns"] = struct.unpack_from("<Q", head, uptime_at)[0]
+
+        # Only a complete dump (type 1) describes memory as a run array here.
+        # Bitmap/active dumps use a summary bitmap after the header instead.
+        if out["dump_type"] == 1:
+            count = struct.unpack_from("<I", head, runs_at)[0]
+            pages = struct.unpack_from("<Q" if wide else "<I", head, runs_at + (8 if wide else 4))[0]
             width = 8 if wide else 4
-            for _ in range(count):
-                if cursor + width * 2 > len(head):
-                    break
-                if wide:
-                    base, length = struct.unpack_from("<QQ", head, cursor)
-                else:
-                    base, length = struct.unpack_from("<II", head, cursor)
-                cursor += width * 2
-                runs.append({"start_page": base, "pages": length,
-                             "start_byte": base * 4096, "bytes": length * 4096})
-            out["memory_runs"] = runs[:64]
-            out["run_count"] = count
-            out["pages_total"] = pages
-            out["contiguous"] = len(runs) <= 1
+            available = max(0, (len(head) - runs_start) // (width * 2))
+            if not 0 < count <= available:
+                out["header_problem"] = (
+                    "the physical-memory run count is %d, but the header holds at most %d" %
+                    (count, available))
+            else:
+                runs, cursor = [], runs_start
+                for _ in range(count):
+                    if wide:
+                        base, length = struct.unpack_from("<QQ", head, cursor)
+                    else:
+                        base, length = struct.unpack_from("<II", head, cursor)
+                    cursor += width * 2
+                    runs.append({"start_page": base, "pages": length,
+                                 "start_byte": base * 4096, "bytes": length * 4096})
+                out["memory_runs"] = runs
+                out["run_count"] = count
+                out["pages_total"] = pages
+                out["runs_pages_total"] = sum(run["pages"] for run in runs)
+                out["contiguous"] = len(runs) <= 1
+                if out["runs_pages_total"] != pages:
+                    out["header_problem"] = (
+                        "the run lengths total %d pages, not the descriptor's %d" %
+                        (out["runs_pages_total"], pages))
+        else:
+            out["memory_layout"] = (
+                "dump type %d uses a bitmap/summary layout; use a crash-dump-aware framework "
+                "to map its physical pages" % out["dump_type"])
     except struct.error:
         out["header_problem"] = "the header is shorter than the format requires"
     return out

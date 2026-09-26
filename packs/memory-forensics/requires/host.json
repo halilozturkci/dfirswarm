@@ -34,7 +34,7 @@
       "name": "vol",
       "package": "volatility3",
       "optional": true,
-      "why": "The plugin framework most reports cite. Not shipped here and not wrapped: the Volatility Software License and AGPL-3.0 do not combine in one work, so it is invoked as an executable or not at all.",
+      "why": "The plugin framework most reports cite. Kept at an executable boundary rather than imported or vendored, under its own Volatility Software License 1.0.",
       "install": {
         "brew": "python3 -m pip install volatility3",
         "apt": "python3 -m pip install volatility3"
@@ -75,6 +75,18 @@
         "apt": "apt-get install -y binutils"
       },
       "licence": "GPL-3.0-or-later",
+      "redistributable": false
+    },
+    {
+      "name": "yara",
+      "package": "yara",
+      "optional": true,
+      "why": "Scan a whole memory image or a dumped process region with examiner-supplied rules, preserving rule names, matching strings and byte offsets.",
+      "install": {
+        "brew": "brew install yara",
+        "apt": "apt-get install -y yara"
+      },
+      "licence": "BSD-3-Clause",
       "redistributable": false
     }
   ]

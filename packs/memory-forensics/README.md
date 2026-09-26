@@ -7,15 +7,17 @@ Depends on the Computer Forensics Base Pack.
 
 ## What it carries
 
-**Seven skills.**
+**Nine skills.**
 
 | Family | Skills |
 | --- | --- |
 | Triage | `triage/what-you-have`, `triage/no-framework` |
+| Frameworks | `triage/volatility` |
 | Processes | `processes/injection` |
 | Network | `network/state` |
 | Credentials | `credentials/material` |
 | Strings | `strings/discipline` |
+| Pattern matching | `patterns/yara` |
 | Acquisition | `acquire/images` |
 
 **Three tools.** `mem_profile` names the container before anything is run
@@ -29,11 +31,16 @@ other packs' parsers already read, and cuts them out with their offsets.
 
 ## On Volatility
 
-Volatility is declared as an optional host binary and is never wrapped. Its
-licence and this project's do not combine in one work, so a purpose-written
-driver for it would be a derived work of Volatility rather than of this
-repository. The skills tell an agent to invoke `vol` directly and to record the
-version and the plugin with every result.
+Volatility is declared as an optional host binary and is not imported or
+vendored by this pack. The project keeps it at an executable boundary under
+its own Volatility Software License 1.0; this is packaging policy, not a legal
+conclusion about derivative works. The skills tell an agent to invoke `vol`
+directly and to record the version and plugin with every result.
+
+A production-ready memory image needs an offline Windows ISF symbol pack. The
+current image source does not declare that payload, so the skill shows how to
+verify the cache and fail closed when the matching symbol is absent; silently
+fetching a PDB during case work is not an offline proof.
 
 MemProcFS is AGPL-3.0, the same licence as this harness, which is why the one
 wrapper here is for that and not for the other.

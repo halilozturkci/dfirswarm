@@ -28,13 +28,17 @@
     },
     "limit": {
       "type": "integer",
-      "description": "Maximum hits to return (default 2000)"
+      "description": "Maximum hits in the JSON preview; results_to is then required and keeps every hit. Omit for an unbounded complete response."
+    },
+    "results_to": {
+      "type": "string",
+      "description": "JSONL file under work/ that keeps every hit when limit bounds the returned preview"
     }
   },
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 900,
-  "example": "{\"path\": \"inputs/memory.raw\", \"kinds\": [\"registry hive\"], \"extract_to\": \"work/carved\"}",
+  "example": "{\"path\": \"inputs/memory.raw\", \"kinds\": [\"registry hive\"], \"extract_to\": \"work/<your id>/carved\", \"results_to\": \"work/<your id>/memory-hits.jsonl\"}",
   "by": "maintainer",
   "at": "2026-09-22T17:00:00.000Z",
   "version": 2,

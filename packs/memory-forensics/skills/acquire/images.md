@@ -37,3 +37,16 @@ Methods worth recognising:
 A hypervisor snapshot of a virtual machine is the best evidence you will get and
 it needs no agent on the guest. When the case involves a virtual machine, ask
 whether one exists before anyone runs a collector inside it.
+
+For AVML 0.20, make the source and the storage ceiling explicit, then hash the
+completed file and record the command, start/end time and collector hash:
+
+    avml acquire --source /proc/kcore --compress --max-disk-usage 16384 memory.lime.compressed
+    sha256sum memory.lime.compressed
+
+Use `/dev/crash` instead when the source host exposes it. Never use `--url` or
+`--sas-url` during an evidence acquisition unless the approved collection plan
+names that endpoint; an analysis VM should have no such route. `avml convert`
+can turn `raw`, `lime` and `lime_compressed` into one another, but a conversion
+is a derivative: keep the original capture, hash both, and record the format
+arguments.

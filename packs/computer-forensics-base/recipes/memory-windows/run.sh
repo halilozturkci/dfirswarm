@@ -7,7 +7,7 @@
 # TARGET is JSON, inline or a file: {"paths": [...], "name": "inputs/x.mem"}.
 # detect gates on the name (and file(1) when the name says nothing) before it
 # asks Volatility, so a PDF or a pcap never costs a windows.info run, and
-# gives windows.info RECIPE_PROBE_SECONDS (default 30). run writes
+# gives offline windows.info RECIPE_PROBE_SECONDS (default 30). run writes
 # windows.info.txt and one file per plugin, each step time-boxed
 # (RECIPE_STEP_SECONDS, default 900) with its stderr kept whole beside it,
 # plus index.tsv and coverage.json.
@@ -72,8 +72,9 @@ coverage() {
 import json, sys
 path, status, covered, *notes = sys.argv[1:]
 json.dump({"recipe": "memory-windows", "status": status, "covered": covered,
-           "not_covered": "every other Volatility plugin; non-Windows images",
-           "limits_hit": [], "errors": notes}, open(path, "w"), indent=2)
+           "not_covered": "every other Volatility plugin; YARA without supplied rules; non-Windows images; unsupported hibernation or crash-dump variants",
+           "limits_hit": [note for note in notes if "exit 142" in note],
+           "errors": notes}, open(path, "w"), indent=2)
 PY
 }
 
@@ -101,10 +102,18 @@ case "$cmd" in
     # caller gives a place for it (--probe-out), not thrown away.
     if [[ -n "$probe_out" ]]; then mkdir -p "$probe_out"; probe="$probe_out/windows.info.txt"; else probe="$(mktemp)"; fi
     rc=0
-    perl -e 'alarm shift; exec @ARGV' "$PROBE_TIMEOUT" vol -q -f "$img" windows.info > "$probe" 2> "$probe.stderr" || rc=$?
+    perl -e 'alarm shift; exec @ARGV' "$PROBE_TIMEOUT" vol --offline -vv -q -f "$img" windows.info > "$probe" 2> "$probe.stderr" || rc=$?
     [[ -s "$probe.stderr" ]] || rm -f "$probe.stderr"
     if [[ "$rc" -eq 0 ]] && grep -qi "NTBuildLab\|Kernel Base\|SystemTime" "$probe"; then
       rm -f "$probe" "$probe.stderr"; echo '{"applies": true, "why": "Volatility windows.info names a Windows image"}'; exit 0
+    fi
+    # Volatility can identify and stack a Windows layer before discovering
+    # that the exact offline symbol table is absent. That is applicable-but-
+    # blocked, not "not Windows"; keep both probe files for diagnosis.
+    if [[ -f "$probe.stderr" ]] && grep -qi "DTB was found" "$probe.stderr" && \
+       grep -qi "symbol_table_name" "$probe" "$probe.stderr" 2>/dev/null; then
+      [[ -n "$probe_out" ]] || rm -f "$probe" "$probe.stderr"
+      echo '{"applies": true, "why": "Volatility recognized Windows memory, but the matching offline symbol table is absent; run will fail until the image supplies it"}'; exit 0
     fi
     [[ -s "$probe" ]] || rm -f "$probe"
     [[ -n "$probe_out" ]] || rm -f "$probe" "$probe.stderr"
@@ -116,7 +125,7 @@ case "$cmd" in
   run)
     [[ -n "$out" ]] || { echo '{"ok": false, "error": "run needs --out DIR"}'; exit 2; }
     mkdir -p "$out"; : > "$out/index.tsv"
-    r="$(run_step "$STEP_TIMEOUT" "$out/windows.info.txt" vol -q -f "$img" windows.info)"
+    r="$(run_step "$STEP_TIMEOUT" "$out/windows.info.txt" vol --offline -q -f "$img" windows.info)"
     if [[ "$r" != ok ]] || ! grep -qi "NTBuildLab\|Kernel Base\|SystemTime" "$out/windows.info.txt" 2>/dev/null; then
       notes+=("vol windows.info on $shown: ${r/ok/ran but named no Windows image}")
       coverage failed "nothing"
@@ -124,15 +133,15 @@ case "$cmd" in
       exit 2
     fi
     index_row "windows.info.txt" "OS, build, capture time of $shown (vol windows.info)"
-    for plugin in pslist psscan cmdline netscan malfind dlllist; do
-      r="$(run_step "$STEP_TIMEOUT" "$out/$plugin.txt" vol -q -f "$img" "windows.$plugin")"
+    for plugin in pslist psscan pstree cmdline netscan malfind vadinfo handles modules svcscan dlllist; do
+      r="$(run_step "$STEP_TIMEOUT" "$out/$plugin.txt" vol --offline -q -f "$img" "windows.$plugin")"
       [[ "$r" == ok ]] || notes+=("vol windows.$plugin on $shown: $r")
       index_row "$plugin.txt" "vol windows.$plugin over $shown"
     done
     while IFS= read -r f; do
       rel="${f#"$out/"}"; index_row "$rel" "what the step writing ${rel%.stderr} said on stderr"
     done < <(find "$out" -type f -name '*.stderr' | sort)
-    if [[ ${#notes[@]} -gt 0 ]]; then coverage partial "windows.info and the plugins that finished"; else coverage complete "windows.info and six plugins"; fi
+    if [[ ${#notes[@]} -gt 0 ]]; then coverage partial "windows.info and the plugins that finished"; else coverage complete "windows.info and eleven plugins"; fi
     python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); print(json.dumps({"ok": True, "status": c["status"]}))' "$out/coverage.json"
     ;;
   *) echo '{"ok": false, "error": "usage: run.sh detect --target T | run --target T --out DIR"}'; exit 2 ;;

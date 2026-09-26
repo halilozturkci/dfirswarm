@@ -20,6 +20,7 @@ import hashlib
 import json
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 SIGNATURES = [
@@ -45,7 +46,7 @@ def fail(message, **extra):
 
 
 def resolve_output(out):
-    """Where `out` really lands, refusing anything outside the run directory.
+    """Resolve an output below this agent's work/<id>/ directory.
 
     A string check is not enough: `work/../inputs/x` and an absolute path
     both name a file the tool must not write, and neither starts with
@@ -58,9 +59,13 @@ def resolve_output(out):
     dest = (root / out).resolve() if not Path(out).is_absolute() else Path(out).resolve()
     if dest != root and root not in dest.parents:
         fail("output must stay inside the run directory", output=str(out))
-    inputs = root / "inputs"
-    if dest == inputs or inputs in dest.parents:
-        fail("output cannot be under inputs/", output=str(out))
+    work = (root / "work").resolve()
+    if dest == work or work not in dest.parents:
+        fail("output must be under your own work/<your id>/ directory", output=str(out))
+    relative = dest.relative_to(work)
+    if len(relative.parts) < 2 or relative.parts[0] in ("", ".", ".."):
+        fail("output must name a path inside work/<your id>/, not work/ itself",
+             output=str(out))
     return dest
 
 
@@ -74,9 +79,9 @@ def main():
         fail("path is required: a memory image, page file or blob")
     if not os.path.isfile(path):
         fail("no such file", path=path)
-    limit = args.get("limit", 2000)
-    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
-        fail("limit must be a positive integer")
+    limit = args.get("limit")
+    if limit is not None and (not isinstance(limit, int) or isinstance(limit, bool) or limit < 1):
+        fail("limit must be a positive integer or null")
     max_extract = args.get("max_extract", 25)
     if not isinstance(max_extract, int) or isinstance(max_extract, bool) or max_extract < 0:
         fail("max_extract must be a non-negative integer")
@@ -89,73 +94,119 @@ def main():
 
     size = os.path.getsize(path)
     start = args.get("start", 0) or 0
-    end = min(size, start + args["max_bytes"]) if args.get("max_bytes") else size
+    if not isinstance(start, int) or isinstance(start, bool) or start < 0 or start > size:
+        fail("start must be a byte offset inside the file")
+    max_bytes = args.get("max_bytes")
+    if max_bytes is not None and (not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or max_bytes < 1):
+        fail("max_bytes must be a positive integer")
+    end = min(size, start + max_bytes) if max_bytes is not None else size
     extract_to = args.get("extract_to")
     if extract_to:
-        resolve_output(extract_to)
-        os.makedirs(extract_to, exist_ok=True)
+        extract_to = resolve_output(extract_to)
+        extract_to.mkdir(parents=True, exist_ok=True)
+
+    results_to = args.get("results_to")
+    if results_to:
+        results_to = resolve_output(results_to)
+        source = Path(path).resolve()
+        if results_to == source or (results_to.exists() and os.path.samefile(results_to, source)):
+            fail("results_to cannot name the source being scanned", output=str(results_to),
+                 path=path)
+        results_to.parent.mkdir(parents=True, exist_ok=True)
+    elif limit is not None:
+        fail("results_to is required when limit bounds the JSON preview; the complete hit list must be kept")
 
     longest = max(len(s) for s, _n, _z in signatures)
-    hits, truncated, extracted = [], False, 0
-    with open(path, "rb") as fh:
-        position, tail, tail_at = start, b"", start
-        while position < end and not truncated:
-            fh.seek(position)
-            block = fh.read(min(WINDOW, end - position))
-            if not block:
-                break
-            buf = tail + block
-            base = tail_at
-            for signature, name, cut in signatures:
-                at = 0
-                while True:
-                    found = buf.find(signature, at)
-                    if found < 0:
-                        break
-                    at = found + 1
-                    absolute = base + found
-                    if len(hits) >= limit:
-                        truncated = True
-                        break
-                    entry = {"kind": name, "offset": absolute,
-                             "page_aligned": absolute % 4096 == 0}
-                    if extract_to and extracted < max_extract:
-                        fh.seek(absolute)
-                        piece = fh.read(min(cut, size - absolute))
-                        fh.seek(position + len(block))
-                        safe = "%012x-%s.bin" % (absolute, name.replace(" ", "_"))
-                        target = os.path.join(extract_to, safe)
-                        with open(target, "wb") as out:
-                            out.write(piece)
-                        entry["extracted_to"] = target
-                        entry["extracted_bytes"] = len(piece)
-                        entry["sha256"] = hashlib.sha256(piece).hexdigest()
-                        extracted += 1
-                    hits.append(entry)
-                if truncated:
+    hits, hit_count, extracted, counts = [], 0, 0, {}
+    results, temporary_results = None, None
+    if results_to:
+        fd, temporary_results = tempfile.mkstemp(
+            dir=results_to.parent, prefix=".%s." % results_to.name, suffix=".partial")
+        results = os.fdopen(fd, "w", encoding="utf-8")
+    try:
+        with open(path, "rb") as fh:
+            position, tail, tail_at = start, b"", start
+            while position < end:
+                fh.seek(position)
+                block = fh.read(min(WINDOW, end - position))
+                if not block:
                     break
-            tail = buf[-(longest - 1):] if len(buf) >= longest else buf
-            tail_at = base + len(buf) - len(tail)
-            position += len(block)
-
-    counts = {}
-    for hit in hits:
-        counts[hit["kind"]] = counts.get(hit["kind"], 0) + 1
+                buf = tail + block
+                base = tail_at
+                for signature, name, cut in signatures:
+                    at = 0
+                    while True:
+                        found = buf.find(signature, at)
+                        if found < 0:
+                            break
+                        at = found + 1
+                        absolute = base + found
+                        # The tail is searched again so a signature split across
+                        # two blocks is found.  Do not report one wholly contained
+                        # in that tail twice.
+                        if absolute + len(signature) <= position:
+                            continue
+                        entry = {"kind": name, "offset": absolute,
+                                 "page_aligned": absolute % 4096 == 0}
+                        if extract_to and extracted < max_extract:
+                            fh.seek(absolute)
+                            piece = fh.read(min(cut, size - absolute))
+                            fh.seek(position + len(block))
+                            safe = "%012x-%s.bin" % (absolute, name.replace(" ", "_"))
+                            target = extract_to / safe
+                            with open(target, "wb") as out:
+                                out.write(piece)
+                            entry["extracted_to"] = str(target)
+                            entry["extracted_bytes"] = len(piece)
+                            entry["sha256"] = hashlib.sha256(piece).hexdigest()
+                            extracted += 1
+                        hit_count += 1
+                        counts[name] = counts.get(name, 0) + 1
+                        if limit is None or len(hits) < limit:
+                            hits.append(entry)
+                        if results:
+                            results.write(json.dumps(entry, separators=(",", ":")) + "\n")
+                tail = buf[-(longest - 1):] if len(buf) >= longest else buf
+                tail_at = base + len(buf) - len(tail)
+                position += len(block)
+        if results:
+            results.flush()
+            os.fsync(results.fileno())
+            results.close()
+            results = None
+            os.replace(temporary_results, results_to)
+            temporary_results = None
+    finally:
+        if results:
+            results.close()
+        if temporary_results:
+            try:
+                os.unlink(temporary_results)
+            except FileNotFoundError:
+                pass
     hits.sort(key=lambda h: h["offset"])
-    print(json.dumps({
+    result = {
         "path": path,
         "bytes_swept": max(0, end - start),
-        "hits": hits[:limit],
-        "hit_count": len(hits),
+        "hits": hits,
+        "hit_count": hit_count,
         "by_kind": counts,
         "extracted": extracted,
-        "truncated": truncated,
+        "preview_limited": limit is not None and hit_count > limit,
         "note": "The offset is the whole provenance: a structure carved from memory has no path "
                 "and no file name, so the offset belongs in the report beside whatever the parser "
                 "says about it. Hand each extract to the tool that reads that format — a hive to "
                 "regkv, a chunk to evtx_carve, a prefetch record to mam_scan. A cut that ends "
                 "mid-record is truncated, not corrupt.",
-    }, indent=2))
+    }
+    if results_to:
+        digest = hashlib.sha256()
+        with open(results_to, "rb") as complete:
+            for block in iter(lambda: complete.read(1 << 20), b""):
+                digest.update(block)
+        result["complete_results"] = str(results_to)
+        result["complete_results_sha256"] = digest.hexdigest()
+    print(json.dumps(result, indent=2))
 
 
 if __name__ == "__main__":

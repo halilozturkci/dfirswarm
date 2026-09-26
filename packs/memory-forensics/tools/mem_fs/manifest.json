@@ -12,7 +12,7 @@
     },
     "list": {
       "type": "string",
-      "description": "A path inside the mount to list, e.g. 'sys/proc' (default: the process list)"
+      "description": "A file to read in full or directory to list in full inside the mount (default: sys/proc/proc.txt, the process list)"
     },
     "timeout_seconds": {
       "type": "integer",
@@ -21,6 +21,9 @@
   },
   "runtime": "python3",
   "entry": "run.py",
+  "requires": [
+    "memprocfs"
+  ],
   "timeout_seconds": 600,
   "example": "{\"path\": \"inputs/memory.raw\", \"mount\": \"work/<your id>/mem\"}",
   "by": "maintainer",
