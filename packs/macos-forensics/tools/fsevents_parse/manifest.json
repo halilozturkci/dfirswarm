@@ -16,15 +16,19 @@
     },
     "limit": {
       "type": "integer",
-      "description": "Maximum records to return (default 2000)"
+      "description": "Maximum records returned inline when out_file is set (default 2000); every matching record is written to out_file"
+    },
+    "out_file": {
+      "type": "string",
+      "description": "Optional JSONL path for every matching record; when absent every match is returned inline"
     }
   },
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 300,
-  "example": "{\"path\": \"work/extracted/.fseventsd\", \"flags\": [\"Removed\"]}",
+  "example": "{\"path\": \"work/extracted/.fseventsd\", \"flags\": [\"Removed\"], \"out_file\": \"work/fsevents.jsonl\"}",
   "by": "maintainer",
   "at": "2026-09-22T16:00:00.000Z",
   "version": 1,
-  "sha256": "00bef7be780b17f2e5c3f923bc7445cac7ba60efa4bafcc14f619a5ce09609f2"
+  "sha256": "27e86450d5b8e9526caa3caa1f3dfb9857ae079df11a59f32d834a526abcff71"
 }

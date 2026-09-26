@@ -3,12 +3,17 @@ id: google/workspace
 title: Google Workspace
 when: The tenant is Google.
 needs: [logs/what-exists]
-tools: [cloudtrail_parse]
+tools: [signin_analyse]
 requires_host: []
 ---
 
 Workspace keeps several separate audit logs and they are exported separately.
 Ask for each by name: admin, login, Drive, Gmail, Token, Groups, and Mobile.
+
+Use `signin_analyse` for the Login audit export. It understands both the
+Reports API activity shape (`actor`, `id.time`, nested `events`) and flat CSV;
+it does not pretend that a row with no outcome field was a successful login.
+The AWS-only `cloudtrail_parse` tool is not a Workspace parser.
 
     Login audit     every sign-in attempt, the type, the address, and whether
                     a challenge was issued
@@ -20,10 +25,11 @@ Ask for each by name: admin, login, Drive, Gmail, Token, Groups, and Mobile.
                     this is the one that matters most and is checked least
     Gmail logs      in BigQuery on the higher tiers, message-level, not content
 
-**The Token audit is where an account is actually kept.** A password change and
-a forced sign-out do not revoke an OAuth grant: an application the attacker
-authorised keeps its access afterwards. Every incident response here has to
-enumerate the grants and their scopes, and `https://mail.google.com/` is full
+**The Token audit is where durable delegated access is found.** A password
+change can revoke Google OAuth tokens for some products, but it does not by
+itself prove that every grant, Apps Script authorization, domain-wide delegation
+or documented exception is gone. Enumerate grants and scopes, record explicit
+revocation/removal, and look for later use. `https://mail.google.com/` is full
 mailbox access whatever the application is called.
 
 **Drive sharing is the exfiltration route.** Look for a change of visibility to

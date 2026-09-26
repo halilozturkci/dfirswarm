@@ -1,6 +1,6 @@
 {
   "name": "signin_analyse",
-  "description": "Read an Entra or Workspace sign-in export and surface what decides a cloud case: failures before a success, a success that satisfied only one factor on an account that has more, sign-ins from an address or a client seen nowhere else, and pairs whose implied travel speed is impossible.",
+  "description": "Read an Entra or Google Workspace login export and surface failures before success, single-factor Entra success, unfamiliar addresses, and impossible-travel hypotheses without treating records of unknown outcome as successes.",
   "params": {
     "path": {
       "type": "string",
@@ -16,15 +16,19 @@
     },
     "limit": {
       "type": "integer",
-      "description": "Maximum records to return (default 500)"
+      "description": "Maximum events returned inline when out_file is set (default 500); the complete event set is written to out_file"
+    },
+    "out_file": {
+      "type": "string",
+      "description": "Optional JSONL path for every normalised event; when absent every event is returned inline"
     }
   },
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 300,
-  "example": "{\"path\": \"inputs/signins.json\"}",
+  "example": "{\"path\": \"inputs/signins.json\", \"out_file\": \"work/signins.jsonl\"}",
   "by": "maintainer",
   "at": "2026-09-22T22:00:00.000Z",
   "version": 1,
-  "sha256": "c85ba811bdcccb63506e5104b1fe080ca7fc1bebf16a5541156c92e6363da8cf"
+  "sha256": "b2be46e113e16da91c56e69ac35e285897b82ef4c32ec8fcc3ea45befddbfb1f"
 }

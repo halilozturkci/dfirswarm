@@ -21,7 +21,7 @@ everything" gets refused and a specific list usually does not.
     Windows/AppCompat/Programs/Amcache.hve
     Users/*/AppData/**/PowerShell/PSReadLine/ConsoleHost_history.txt
     Users/*/AppData/**/Recent/, AutomaticDestinations/
-    Windows/System32/sru/SRUDB.dat     volume moved, per application
+    Windows/System32/sru/SRUDB.dat     network and resource usage per application
     Windows/Tasks/, System32/Tasks/    scheduled tasks
     the shadow copies, if the tool can
 

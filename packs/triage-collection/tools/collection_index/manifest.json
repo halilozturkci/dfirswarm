@@ -16,15 +16,19 @@
     },
     "limit": {
       "type": "integer",
-      "description": "Maximum entries to return (default 2000)"
+      "description": "Maximum entries to return inline when out_file is set (default 2000); the complete index is written to out_file"
+    },
+    "out_file": {
+      "type": "string",
+      "description": "Optional JSONL path for the complete index; when absent every entry is returned inline"
     }
   },
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 900,
-  "example": "{\"root\": \"inputs/collection\", \"contains\": \"NTUSER\"}",
+  "example": "{\"root\": \"inputs/collection\", \"contains\": \"NTUSER\", \"out_file\": \"work/collection-index.jsonl\"}",
   "by": "maintainer",
   "at": "2026-09-22T23:30:00.000Z",
   "version": 1,
-  "sha256": "6d6e215f1520d4bfe7729201663367674937b4297d7959c7fbb969973c0d621a"
+  "sha256": "6fe89e377aa3149734da6abf219ea13709224d9d0a414193c2e5b874ed20552f"
 }

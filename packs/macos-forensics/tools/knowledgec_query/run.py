@@ -67,6 +67,9 @@ def main():
     limit = args.get("limit", 500)
     if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
         fail("limit must be a positive integer")
+    out_file = args.get("out_file")
+    if out_file is not None and (not isinstance(out_file, str) or not out_file):
+        fail("out_file must be a non-empty string")
 
     try:
         connection = sqlite3.connect("file:%s?mode=ro" % os.path.abspath(db), uri=True)
@@ -112,17 +115,15 @@ def main():
         params.append(to_apple(args["until"]))
     if where:
         sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY %s LIMIT ?" % ("ZOBJECT.ZSTARTDATE" if "ZSTARTDATE" in columns else "ZOBJECT.Z_PK")
-    params.append(limit + 1)
+    sql += " ORDER BY %s" % ("ZOBJECT.ZSTARTDATE" if "ZSTARTDATE" in columns else "ZOBJECT.Z_PK")
 
     try:
         rows = list(connection.execute(sql, params))
     except sqlite3.Error as exc:
         fail("the query failed", reason=str(exc), sql=" ".join(sql.split()))
 
-    truncated = len(rows) > limit
     entries = []
-    for row in rows[:limit]:
+    for row in rows:
         start, end = when(row["start_raw"]), when(row["end_raw"])
         duration = None
         if row["start_raw"] is not None and row["end_raw"] is not None:
@@ -139,18 +140,28 @@ def main():
     for row in connection.execute("SELECT ZSTREAMNAME, COUNT(*) c FROM ZOBJECT GROUP BY 1 ORDER BY c DESC LIMIT 30"):
         streams[row[0]] = row[1]
     connection.close()
+    if out_file:
+        with open(out_file, "w", encoding="utf-8", newline="\n") as fh:
+            for entry in entries:
+                fh.write(json.dumps(entry, default=str, sort_keys=True) + "\n")
+        inline = entries[:limit]
+    else:
+        inline = entries
 
     print(json.dumps({
         "db": db,
-        "entries": entries,
+        "entries": inline,
         "entry_count": len(entries),
-        "truncated": truncated,
+        "entries_inline": len(inline),
+        "complete_entries": out_file,
+        "inline_limited": bool(out_file and len(entries) > len(inline)),
         "streams_in_database": streams,
         "note": "Times are converted from the Apple epoch (2001-01-01 UTC) and returned as UTC. "
                 "/app/inFocus together with /display/isBacklit is the strongest presence evidence "
                 "on this platform, but it records the machine's activity and not a named person: "
-                "tie it to an authentication before you attribute it. The database is pruned after "
-                "about a month, so absence near the edges means nothing.",
+                "tie it to an authentication before you attribute it. Retention varies by OS "
+                "version and device state; scope absence claims to the earliest and latest rows "
+                "actually present in the acquired database.",
     }, indent=2, default=str))
 
 

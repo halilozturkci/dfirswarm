@@ -101,9 +101,10 @@ def flatten(audit):
         if isinstance(items, list) and items:
             out[extra.lower()] = [
                 {"name": i.get("Name"), "new": i.get("NewValue"), "old": i.get("OldValue")}
-                for i in items if isinstance(i, dict)][:12]
+                for i in items if isinstance(i, dict)]
     folders = audit.get("Folders")
     if isinstance(folders, list):
+        out["folders"] = folders
         out["items_accessed"] = sum(len(f.get("FolderItems") or []) for f in folders
                                     if isinstance(f, dict))
     if audit.get("OperationCount"):
@@ -137,6 +138,9 @@ def main():
     limit = args.get("limit", 500)
     if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
         fail("limit must be a positive integer")
+    out_file = args.get("out_file")
+    if out_file is not None and (not isinstance(out_file, str) or not out_file):
+        fail("out_file must be a non-empty string")
     wanted = {str(o) for o in (args.get("operations") or [])}
     pattern = None
     if args.get("user"):
@@ -159,7 +163,8 @@ def main():
         fail("no CSV or JSON export there", path=path)
 
     records, by_operation, by_user, by_address = [], {}, {}, {}
-    read, unreadable_audit, truncated = 0, 0, False
+    read, unreadable_audit, matched = 0, 0, 0
+    complete = open(out_file, "w", encoding="utf-8", newline="\n") if out_file else None
     earliest = latest = None
     for target in targets:
         try:
@@ -209,30 +214,35 @@ def main():
                 continue
             if until and (not stamp or stamp > until):
                 continue
-            if len(records) >= limit:
-                truncated = True
-                break
-            records.append(entry)
-        if truncated:
-            break
+            matched += 1
+            if complete:
+                complete.write(json.dumps(entry, default=str, sort_keys=True) + "\n")
+                if len(records) < limit:
+                    records.append(entry)
+            else:
+                records.append(entry)
+
+    if complete:
+        complete.close()
 
     top = lambda d, n=20: [{"value": k, "count": v}
                            for k, v in sorted(d.items(), key=lambda kv: -kv[1])[:n]]
     print(json.dumps({
         "files": targets, "rows_read": read,
-        "records": records, "record_count": len(records),
+        "records": records, "record_count": matched, "records_inline": len(records),
+        "complete_records": out_file,
         "first_record": earliest.isoformat().replace("+00:00", "Z") if earliest else None,
         "last_record": latest.isoformat().replace("+00:00", "Z") if latest else None,
         "by_operation": top(by_operation, 30),
         "by_user": top(by_user), "by_address": top(by_address),
         "unreadable_audit_data": unreadable_audit,
-        "truncated": truncated,
+        "inline_limited": bool(out_file and matched > len(records)),
         "note": "The flagged operations are a starting point, not a detection: every one of them "
                 "is also something an administrator does on an ordinary Tuesday. Cite the record "
                 "Id, because it is what lets somebody find the row again in an export of half a "
-                "million. MailItemsAccessed throttles above about a thousand operations an hour "
-                "and writes an aggregate instead, so a quiet period in a busy mailbox may be "
-                "throttling rather than absence.",
+                "million. MailItemsAccessed bind operations are aggregated in two-minute windows "
+                "and duplicate bind/sync records can be filtered at one-hour intervals; check "
+                "MailAccessType, OperationCount and Folders before treating a quiet period as absence.",
     }, indent=2, default=str))
 
 

@@ -7,7 +7,10 @@ tools: [collection_id]
 requires_host: []
 ---
 
-State this once, plainly, early in the report. A reviewer must not have to work
+These limits apply to a **logical collection**, not to an E01/raw disk image.
+Run `collection_id` first; it identifies a disk image and directs it to the
+disk recipe instead of applying this checklist. For a logical collection,
+state this once, plainly, early in the report. A reviewer must not have to work
 it out, and an examiner must not let a limit of the evidence read as a finding
 about the case.
 

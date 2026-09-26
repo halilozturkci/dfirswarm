@@ -1,6 +1,6 @@
 {
   "name": "unified_log",
-  "description": "Read a unified log archive or a .logarchive with whichever reader the host has — Apple's own log command, or UnifiedLogReader off a Mac — and return entries as JSON. Always asks for info and debug level, which the default hides.",
+  "description": "Read a unified log archive with Apple's log command or Mandiant's unifiedlog_iterator. On Linux, keeps every decoded entry as JSONL and names the complete output and any parser warnings.",
   "params": {
     "path": {
       "type": "string",
@@ -8,15 +8,15 @@
     },
     "predicate": {
       "type": "string",
-      "description": "An NSPredicate, e.g. 'process == \"sudo\"'"
+      "description": "Apple log only: an NSPredicate, e.g. 'process == \"sudo\"'"
     },
     "start": {
       "type": "string",
-      "description": "Start time, e.g. '2026-02-14 00:00:00'"
+      "description": "Apple log only: start time, e.g. '2026-02-14 00:00:00'"
     },
     "end": {
       "type": "string",
-      "description": "End time"
+      "description": "Apple log only: end time"
     },
     "out_dir": {
       "type": "string",
@@ -24,7 +24,7 @@
     },
     "limit": {
       "type": "integer",
-      "description": "Maximum entries to return (default 500)"
+      "description": "Apple log only: maximum inline entries (default 500); complete stdout is also kept under out_dir"
     },
     "timeout_seconds": {
       "type": "integer",
@@ -38,5 +38,5 @@
   "by": "maintainer",
   "at": "2026-09-22T16:00:00.000Z",
   "version": 1,
-  "sha256": "c8fd569684a723c4f8a86bd232bf7b28a38520cb41c820793ec758907b13ff74"
+  "sha256": "d772e44174fa48bc8bd0c48f7a74b32f9d0f82fce9d4dd7bb102b812f9866902"
 }

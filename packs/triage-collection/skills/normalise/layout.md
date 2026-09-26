@@ -27,9 +27,10 @@ What gets rewritten, and why it matters:
   system, or the reverse, can collide two files into one.
 
 `collection_index` builds the index the rest of the work needs: every file with
-its size, its hash, the path it has now and the path it had on the machine,
-resolved through the collector's own manifest where there is one and by its
-convention where there is not.
+its size, its hash, the path it has now and a cautiously reconstructed source
+path. The reconstruction is a convention-based hypothesis; confirm it against
+the collector's manifest. The tool refuses a directory containing a disk image,
+because the E01 name is a container path, not a source-machine path.
 
 **Cite both.** "`C:\Users\alice\NTUSER.DAT` (in the collection at
 `C/Users/alice/NTUSER.DAT`, sha256 …)" is a citation somebody else can follow

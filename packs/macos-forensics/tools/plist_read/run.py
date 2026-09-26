@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read a property list, whichever of the three encodings it is in.
+"""Read an XML or binary property list and return JSON-safe values.
 
 Most system plists on a modern macOS are binary. A grep over one finds nothing
 while the value sits there in plain sight, and `strings` gives you keys without
@@ -14,6 +14,7 @@ value says it is UTC.
 """
 import base64
 import datetime
+import hashlib
 import json
 import os
 import plistlib
@@ -37,7 +38,9 @@ def plain(value, max_blob):
     if isinstance(value, (bytes, bytearray)):
         head = bytes(value[:max_blob])
         return {"_binary_bytes": len(value),
-                "_base64_head": base64.b64encode(head).decode("ascii")}
+                "_sha256": hashlib.sha256(bytes(value)).hexdigest(),
+                "_base64_head": base64.b64encode(head).decode("ascii"),
+                "_head_truncated": len(value) > len(head)}
     if isinstance(value, plistlib.UID):
         return {"_uid": value.data}
     return value
@@ -101,6 +104,9 @@ def main():
     limit = args.get("limit", 200)
     if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
         fail("limit must be a positive integer")
+    out_file = args.get("out_file")
+    if out_file is not None and (not isinstance(out_file, str) or not out_file):
+        fail("out_file must be a non-empty string")
 
     targets = []
     if os.path.isdir(path):
@@ -110,15 +116,23 @@ def main():
                     targets.append(os.path.join(dirpath, name))
     else:
         targets = [path]
-    truncated = len(targets) > limit
-    files = [read_one(t, args.get("key"), max_blob) for t in targets[:limit]]
+    parsed = [read_one(t, args.get("key"), max_blob) for t in targets]
+    if out_file:
+        with open(out_file, "w", encoding="utf-8", newline="\n") as fh:
+            for item in parsed:
+                fh.write(json.dumps(item, default=str, sort_keys=True) + "\n")
+        files = parsed[:limit]
+    else:
+        files = parsed
     print(json.dumps({
         "path": path,
         "files": files,
-        "file_count": len(files),
+        "file_count": len(parsed),
+        "files_inline": len(files),
         "found": len(targets),
-        "truncated": truncated,
-        "binary_files": sum(1 for f in files if f.get("encoding") == "binary"),
+        "complete_files": out_file,
+        "inline_limited": bool(out_file and len(parsed) > len(files)),
+        "binary_files": sum(1 for f in parsed if f.get("encoding") == "binary"),
         "note": "Dates are converted from the Apple epoch (2001-01-01 UTC) and returned as UTC. A "
                 "preference file says what a setting is now, not what it was or who changed it; "
                 "its own modified time is when it last changed.",

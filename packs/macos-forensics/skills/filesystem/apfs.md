@@ -16,13 +16,12 @@ volume, joined by firmlinks so a user sees one tree. `fsapfsinfo` lists the
 container's volumes; the Sleuth Kit will not. Examining only the system volume
 finds no user data at all and looks like an empty machine.
 
-**Snapshots are the highest-yield artefact on the platform** and they are the
-APFS answer to shadow copies. Time Machine takes local ones automatically, so a
-machine with no backup disk attached still usually has several. Each is the
-whole volume as it was at a moment, and a file deleted last Tuesday is
-ordinarily still inside one. List them with `fsapfsinfo`, mount one, and run the
-rest of the pack against it. Check for snapshots before you conclude anything is
-gone.
+**Snapshots can preserve an earlier volume state**, but this image's
+`libfsapfs` explicitly lists snapshots as unsupported. Do not use
+`fsapfsinfo` to claim that snapshots are absent or to examine their contents.
+Use an APFS-aware tool with documented snapshot support (or a macOS examination
+host), record its version, and check snapshots before concluding that a deleted
+file is gone.
 
 **Deletion is more final than on NTFS.** APFS is copy-on-write with no file
 table to leave a record behind: there is no `$MFT` entry to recover, and the
@@ -34,8 +33,7 @@ The four timestamps are stored in nanoseconds since the Unix epoch, not the
 Apple epoch, which catches people who have just come from a plist. Creation
 time is a first-class field here, unlike on ext.
 
-Two more things the container carries: it may be **encrypted per volume**, so
-one volume opens and another does not (`filesystem/encrypted` in the base pack),
-and it holds the **Fusion or sealed-volume hashes**, which is how a modified
-system file on macOS 11 and later is detected — the seal simply does not verify,
-and `fsapfsinfo` says so.
+The container may also be **encrypted per volume**, so one volume opens and
+another does not (`filesystem/encrypted` in the base pack). This experimental
+`libfsapfs` build does not support Fusion drives or T2 encryption; failure to
+open those is a tool limitation, not evidence of corruption or absence.

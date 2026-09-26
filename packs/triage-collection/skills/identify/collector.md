@@ -21,10 +21,11 @@ collected and — far more importantly — what failed.
                     the raw handle
     a hand-made copy   no manifest, no log, and no way to know what was left out
 
-**The collector's log is evidence.** Every one above records the files it could
-not read, and the ones that failed are usually locked — which is to say, in
-use — which is to say, the interesting ones. A target that failed is a fact
-about the case and belongs in the report.
+**The collector's log is evidence.** Preserve every failed target and the
+collector's recorded reason. A failure may mean a lock, a permission boundary,
+an absent path, an unsupported object, or a collector defect; failure alone
+does not make the target suspicious. The recorded failure is a fact about the
+collection and belongs in the report.
 
 **The artefact list is the scope of the collection**, and it is usually a
 profile somebody chose. KAPE targets, UAC profiles and Velociraptor artefact

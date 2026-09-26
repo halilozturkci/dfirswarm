@@ -7,14 +7,15 @@ tools: [plist_read, timestamp_decode]
 requires_host: []
 ---
 
-A property list is a dictionary in one of three encodings, and two of them are
-not text.
+A property list is a structured object commonly serialized in one of two
+formats, and the usual modern format is not text.
 
     XML        <?xml version …  readable, greppable, increasingly rare
     binary     bplist00 at offset 0, the normal case on a modern system
-    JSON       a few newer components
 
-`plist_read` reads all three and returns JSON. Reach for it before you reach for
+`plist_read` reads XML and binary plists and returns JSON. A component may store
+JSON configuration beside plists, but JSON is not a property-list serialization
+accepted by this tool. Reach for `plist_read` before you reach for
 `strings`: a binary plist searched with `strings` gives you keys without their
 values and values without their keys, and an answer assembled from that is a
 guess.

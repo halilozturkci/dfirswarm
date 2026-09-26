@@ -135,6 +135,9 @@ def main():
     limit = args.get("limit", 2000)
     if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
         fail("limit must be a positive integer")
+    out_file = args.get("out_file")
+    if out_file is not None and (not isinstance(out_file, str) or not out_file):
+        fail("out_file must be a non-empty string")
     pattern = None
     if args.get("contains"):
         try:
@@ -166,28 +169,34 @@ def main():
         problems += trouble
         records += found
 
-    kept, truncated = [], False
+    kept = []
     for record in records:
         if pattern and not pattern.search(record["path"]):
             continue
         if wanted and not (wanted & set(record["flags"])):
             continue
-        if len(kept) >= limit:
-            truncated = True
-            break
         kept.append(record)
     ids = [r["event_id"] for r in kept if r["event_id"]]
+    if out_file:
+        with open(out_file, "w", encoding="utf-8", newline="\n") as fh:
+            for record in kept:
+                fh.write(json.dumps(record, sort_keys=True) + "\n")
+        inline = kept[:limit]
+    else:
+        inline = kept
 
     print(json.dumps({
         "path": path,
         "files": len(targets),
         "gzip_files": compressed,
-        "records": kept,
+        "records": inline,
         "record_count": len(kept),
+        "records_inline": len(inline),
+        "complete_records": out_file,
         "records_before_filter": len(records),
         "event_id_range": [min(ids), max(ids)] if ids else None,
-        "truncated": truncated,
-        "problems": problems[:40],
+        "inline_limited": bool(out_file and len(kept) > len(inline)),
+        "problems": problems,
         "note": "There is no timestamp in this format. Event ids are a per-volume counter, so this "
                 "gives order and not time: date one path from another artefact and every id either "
                 "side of it is bracketed. A record carrying Renamed is a move, not a deletion, and "

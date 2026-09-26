@@ -15,14 +15,16 @@ outcome, and a result code.
 
 **The result code is the field people skip.** 0 is success. 50126 is a wrong
 password. 50076 and 50079 mean multi-factor was required and the user was
-prompted — and a long run of those followed by a success is exactly what
-consent-fatigue looks like from the log's side. 50158 is a conditional access
+prompted — and a long run of those followed by a success is consistent with an
+MFA-fatigue hypothesis, but also with legitimate retries. 50158 is a conditional access
 failure, and 53003 is access blocked by policy.
 
 **A success with `authenticationRequirement: singleFactorAuthentication` on an
-account that has multi-factor configured is the finding.** Either a legacy
-protocol was used, or a policy exempted the application, or the session came
-from a stolen token — see `identity/tokens`.
+account expected to require multi-factor is a high-priority lead, not proof of
+bypass.** Confirm which conditional-access policies applied, the authentication
+details, client and token context. A legitimate exemption, previously satisfied
+claim, legacy protocol or stolen token can produce superficially similar data —
+see `identity/tokens`.
 
 **Impossible travel is a hypothesis, not a conclusion.** Two sign-ins from
 distant countries minutes apart is what a VPN, a mobile carrier's routing and a

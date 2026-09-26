@@ -20,15 +20,19 @@
     },
     "limit": {
       "type": "integer",
-      "description": "Maximum rows to return (default 500)"
+      "description": "Maximum rows returned inline when out_file is set (default 500); every matching row is written to out_file"
+    },
+    "out_file": {
+      "type": "string",
+      "description": "Optional JSONL path for every matching row; when absent every row is returned inline"
     }
   },
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 120,
-  "example": "{\"db\": \"work/extracted/knowledgeC.db\", \"stream\": \"/app/inFocus\"}",
+  "example": "{\"db\": \"work/extracted/knowledgeC.db\", \"stream\": \"/app/inFocus\", \"out_file\": \"work/knowledgec.jsonl\"}",
   "by": "maintainer",
   "at": "2026-09-22T16:00:00.000Z",
   "version": 1,
-  "sha256": "a9f0a4001e31b94d4f6fa583a82367417387e22035bc59b507806ea3b093e90f"
+  "sha256": "5c215ce64bb7dcfd58ce714265eb863b2fb109e88e07b70287e73f8957051bf9"
 }

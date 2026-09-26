@@ -5,10 +5,6 @@
     "root": {
       "type": "string",
       "description": "The collection directory"
-    },
-    "limit": {
-      "type": "integer",
-      "description": "Maximum failed targets to list (default 200)"
     }
   },
   "runtime": "python3",
@@ -18,5 +14,5 @@
   "by": "maintainer",
   "at": "2026-09-22T23:30:00.000Z",
   "version": 1,
-  "sha256": "40f121d56eb0b021fd516249674cd53a4b7ac7076214ff4efff6c2f223f7c7a1"
+  "sha256": "9efd5ef70e5a07387258797864b2055c775b8c16744394526b3e7fb4eca33e73"
 }

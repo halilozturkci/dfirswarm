@@ -26,10 +26,11 @@ The operations worth knowing by name:
     Consent to application, Add service principal   an application was granted access
     Add member to role                     privilege
 
-**`MailItemsAccessed` is the closest thing to proof a mailbox was read**, and it
-throttles: above about a thousand operations an hour it stops recording
-individually and writes an aggregate instead. A quiet period in a busy mailbox
-may be throttling rather than absence, and the record says so if you look.
+**`MailItemsAccessed` is the closest thing to evidence a mailbox item was
+accessed**, but it does not prove a human read the content. Bind operations
+within a two-minute interval are aggregated; duplicate bind and sync records
+can be filtered at one-hour intervals. Check `MailAccessType`, `OperationCount`,
+`Folders` and licensing before interpreting a quiet period as absence.
 
 **`ClientIP` is the address the provider saw.** For a modern client that is
 often a proxy or a mobile carrier, and for Exchange operations it may be an
