@@ -6,6 +6,127 @@ All notable changes to this project. The format follows
 
 ## [Unreleased]
 
+### Added: findings name what they rest on (ledger refs)
+
+- `record` takes `refs`: the run's objects an entry rests on —
+  `input:<path>`, `job:<id>/<path>`, `import:<id>/<path>`,
+  `member:<generation>#<n>`, `sha256:<hex>`, or `unresolved:<why>` when none
+  can be named. Each is resolved when the entry is written; one that does
+  not resolve refuses it, with the nearest names. The refs are in the
+  entry's chained core when present (an entry without them keeps the core it
+  always had), so one added, removed or changed later breaks the chain.
+- A finding without refs is taken, with a note asking for them. Recorded
+  again with refs where the standing entry has none, it becomes that entry's
+  correction; with other refs than the standing entry's, it is merged and
+  told its refs were not added.
+- `ledger.md` and the report ("Rests on") show them. Custody resolves them
+  again and counts the standing findings by what they rest on: refs (those
+  that no longer resolve named), a path in the prose only, or nothing (an
+  audit gap). The pilot's four runs had 2/24, 11/21, 6/27 and 3/21 findings
+  citing nothing, by the prose count.
+- A goal can ask that its answers rest on the ledger:
+  `scripts/check-answers.ts --report work/report.md --sections 1,2,3`, called
+  from `## Checks` through `$SWARM_HARNESS` (which await-done.sh now sets),
+  passes when each section cites a standing finding whose refs resolve, or a
+  search that found nothing. It does not ask for confidence. Decided with
+  Fable and Codex in place of a hub gate: the goal owns done (ADR 0002).
+- In a run with tool jobs, a shell command over `inputs/` that runs a minute
+  or more is told once (three times per agent at most) that a job would
+  have sealed its output (`job_hint`); a finding without refs that cites a
+  file in an agent's own `work/` is told so by the file's name.
+- `job_run import=work/<id>/<file>` seals a file or directory an agent made
+  in its own VM: a job copies it into the store as it is now (each file
+  hashed before and after the copy up to 2 GiB; links left out, named) and
+  says it was copied live; one that changed while it was copied fails.
+- `--derived-catalog` (off by default) offers what jobs make to the derived
+  recipes, by each recipe's own `min_bytes` and, when it names them,
+  `suffixes` or `magic` (bytes at an offset) — the harness's 512-byte floor
+  is gone and it knows no format — at most 20 detect passes a run
+  (`derived_bounded`, and the agent is told). On the BelkaCTF #6 trial a
+  size floor alone spent the 20 passes in three minutes, 2 of them useful;
+  computer-forensics-base 1.2.17 names the suffixes and magic of its three
+  recipes.
+- Four workers by default on a host with 64 GiB or more; `create_ms` in
+  each job's record.
+- The console has a Jobs tab (with Files and the Ledger): the run's jobs
+  from the store's journal, paged, with totals, the job service's notices,
+  the examiner's notes and custody's store line; a job's record, its
+  journal lines, its manifest and its logs, paged or whole. "Committed"
+  (sealed) is shown apart from the job's outcome, never as a success.
+
+### Added: tool jobs in worker VMs, a sealed store, a catalogue that grows
+
+- **The job service** (`scripts/job-service.ts`, in the hub). A tool job — a
+  pack or forged tool with its arguments, a shell command, a recipe over one
+  object — runs in a throwaway worker VM of the run's image. It sees what an
+  agent sees, read-only (the evidence no-exec, `store/`, `catalog/`,
+  `tools/`, `tool-output/`, the packs, all of `work/`), and writes only its
+  own directory (`$OUT`); no network unless the job asks for the run's
+  allowlist (plus PyPI with `--allow-install`, pip's list kept before and
+  after), no credential, nothing of the board or the run's own records.
+  Every step is a line of `store/journal.jsonl`, hash-chained, fsynced and
+  anchored beside the run (`<sandbox>.journal-anchor.json`): accepted (who
+  asked, with the name and doing it had given itself), started (the scope it
+  declared, the mounts it was given, the network, the image, the worker's
+  size; what it read is said to be unknown), finished, fenced, committed.
+  Nothing of a staging directory is read before its worker is gone. A failed
+  or timed-out job keeps what it wrote, and its stderr is shown whatever its
+  exit; recovery after a crash finishes each job from the step it stopped
+  at, and runs a job the hub's death interrupted once more only when it had
+  no network. `--workers N` (default 2), `--worker-cpus`, `--worker-memory`
+  (4 GiB on a host with 64 GiB or more, else 2), `--no-jobs`.
+- **Agents' tools**: `job_run` (a command, or a tool with its arguments; a
+  short job answers in the call, a longer one is posted when done, never
+  both), `job_status` (a job's record and its stdout paged whole; cancel
+  one's own), `catalog_request` (a recipe, or a detect pass that finds the
+  recipes that apply, over one object of the run). A job's file is cited as
+  `job:<id>/<path>`.
+  The same recipe over the same object is one job: a second request is
+  journalled (`job_deduplicated`) and its agent told when the job is done.
+- **Workers are made by a child process, and a fence is a fence.** On Ali
+  Hadi #10 every worker after the 64th failed to boot inside the hub's
+  long-lived msb SDK ("insert run: FOREIGN KEY constraint failed"), while a
+  fresh process made one fine, and each was recorded as fenced although msb
+  listed it afterwards. The hub now makes and runs each worker through a
+  short-lived `vm.ts worker-once`, one made at a time; the fence needs that
+  process gone, inspect not knowing the worker and msb's list, read whole
+  and understood, not showing it. A worker msb refused to start before
+  anything ran is removed and made once more, the first error kept. After
+  three jobs in a row that ran in no worker, every agent is told once to do
+  that work in its own VM, and again when a job runs.
+- **An examiner's note on the record**: `evidence-store.ts note <sandbox>
+  --by NAME --text TEXT [--job ID]...` chains an attributed correction onto a
+  finished run's journal, never an edit; refused while the hub runs. Custody
+  counts the notes.
+- **The store** (`scripts/evidence-store.ts`): a job's output sealed into
+  `store/jobs/<id>/out/` — links, FIFOs, sockets and devices recorded and
+  left out, names kept as bytes, files read-only and hard-linked to
+  `store/blobs/<sha256>` so the same bytes are kept once — with a manifest
+  of every file. Custody checks the journal against its anchor (telling an
+  anchor one step behind, a crash between two writes, from one off the
+  chain), hashes every committed file again against its manifest and names
+  staging left unsealed, and names the findings that cite no object of the
+  run (a job, an input, a path of its objects) as an audit gap; `package` exports the journal, its anchor, each
+  job's record, manifest and logs, the census, the plan, every generation
+  and revision, and the recipes that made them.
+- **Catalogue recipes are the packs'** (`recipes/<name>/` with a
+  recipe.json and an entry answering `detect` and `run`): computer-forensics-
+  base 1.2.17 ships disk-volumes (The Sleuth Kit), memory-windows
+  (Volatility) and archive-members (a tar, zip or 7z member list without
+  extracting; names kept as bytes, duplicates as rows, zip DOS times marked
+  zone unknown, a truncated tar reported partial, a name that is not UTF-8
+  flagged as one macOS cannot store). The harness takes the
+  census (`scripts/evidence_catalog.py`): each recipe says the smallest
+  object it is asked about, so a small zip is offered to the archive recipe
+  and not to the disk one. In a microVM run the census plans the recipes and
+  the job service runs them while the agents work: each result is a
+  generation under `catalog/gen/`, each change a new revision under
+  `catalog/revisions/<n>/`, announced on the board; a disk's file list is
+  also linked at `catalog/<input>/` as before.
+- **catalog_search** v8 reads the newest complete revision (or the one
+  named), a generation by its id, and an archive's `members`, and says which
+  revision it read.
+
 ### Changed: agents run in microVMs by default (breaking)
 
 - **`--isolation microvm` is the default.** A run with no `--isolation` and

@@ -193,7 +193,9 @@ sys.exit(0 if found else 3)
 # would otherwise eat the remaining checks off this loop's stdin.
 run_one_check() {
   local sandbox="$1" line="$2" limit="$3"
-  ( cd "$sandbox" && eval "$line" ) >/dev/null 2>&1 </dev/null &
+  # SWARM_HARNESS: where a check finds the harness's own check scripts
+  # (scripts/check-answers.ts), whatever the sandbox.
+  ( cd "$sandbox" && export SWARM_HARNESS="$ROOT" && eval "$line" ) >/dev/null 2>&1 </dev/null &
   local pid=$!
   local waited=0
   while kill -0 "$pid" 2>/dev/null; do

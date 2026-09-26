@@ -62,6 +62,7 @@ import { pathToFileURL } from "node:url";
 import { execFile } from "node:child_process";
 import { eventChainVerifier, specialKind, verifyLedgerChain } from "../extensions/protocol.ts";
 import { hashArtifacts } from "./artifacts.ts";
+import { checkStore, type StoreCheck } from "./evidence-store.ts";
 import {
   hashRegularFile,
   openRegular as openRegularFile,
@@ -557,6 +558,13 @@ export type Custody = {
    * the verdict. Null when there is no log.
    */
   model_gateway: { lines: number; intact: boolean; detail: string; sha256: string | null; refused?: string } | null;
+  /**
+   * The evidence-work store (tool jobs, their sealed outputs, the catalogue
+   * they grew): the journal's chain and its anchor beside the run, every
+   * committed file hashed again against its manifest, staging left behind.
+   * Null when the run had no job service.
+   */
+  store: StoreCheck | null;
   /** Parts custody never reached, for a verdict written when it was ended. */
   not_reached: string[];
   incomplete: string | null;
@@ -591,6 +599,8 @@ export type CustodyState = {
   artifactsDone?: boolean;
   model_gateway?: Custody["model_gateway"];
   gatewayDone?: boolean;
+  store?: Custody["store"];
+  storeDone?: boolean;
   incomplete?: string | null;
 };
 
@@ -1467,6 +1477,19 @@ export async function takeCustody(
   }
   state.artifactsDone = true;
 
+  // --- the evidence-work store ---------------------------------------------------------
+  state.phase = "the store";
+  state.store = null;
+  if (!tooLate("the store")) {
+    try {
+      state.store = await checkStore(sandbox, Date.now() + deadline.remainingMs);
+      if (state.store && state.store.outputs.verified + state.store.outputs.mismatched.length + state.store.outputs.missing.length < state.store.outputs.files) tooLate("the store");
+    } catch {
+      state.store = null;
+    }
+  }
+  state.storeDone = true;
+
   state.phase = "writing the verdict";
   const custody = verdictOf(state, state.incomplete ?? null);
   const written = writeVerdict(sandbox, anchorFile, custody);
@@ -1496,6 +1519,7 @@ export function verdictOf(state: CustodyState, incomplete: string | null): Custo
   if (!state.vmsDone) notReached.push("the VMs");
   if (!state.artifactsDone) notReached.push("the artifact index");
   if (!state.gatewayDone && state.sandbox && existsSync(join(state.sandbox, GATEWAY_LOG))) notReached.push("the model gateway log");
+  if (!state.storeDone && state.sandbox && existsSync(join(state.sandbox, "store", "journal.jsonl"))) notReached.push("the store");
   const inputs = state.inputs ?? null;
   const sessions = state.sessions ?? { files: [], digest: "", not_files: [] };
   const toolOutputs = state.tool_outputs ?? { referenced: 0, verified: 0, missing: [], mismatched: [], refused: [], rereferenced: [], foreign: [] };
@@ -1514,6 +1538,7 @@ export function verdictOf(state: CustodyState, incomplete: string | null): Custo
     vm_records: state.vm_records ?? null,
     artifacts: state.artifacts ?? null,
     model_gateway: state.model_gateway ?? null,
+    store: state.store ?? null,
     not_reached: notReached,
     incomplete,
   };
@@ -1627,6 +1652,31 @@ function summaryOf(c: Omit<Custody, "summary">, t: { traceProblem: string | null
   if (c.vm_records?.unreadable.length) parts.push(`VM RECORD UNREADABLE: ${c.vm_records.unreadable.join(", ")}`);
   if (c.vm_records?.no_record.length) parts.push(`NO VM RECORD FOR: ${c.vm_records.no_record.join(", ")}`);
   if (c.artifacts) parts.push(`${plural(c.artifacts.files, "work file")} indexed (artifacts.json)${c.artifacts.skipped ? `, ${c.artifacts.skipped} not hashed (links, special files, or the deadline; named there)` : ""}`);
+  if (c.store) {
+    const st = c.store;
+    const j = st.journal;
+    const anchor = j.anchor === "matches" ? "its anchor matches" : j.anchor === "behind" ? "its anchor one step behind (a crash between two writes, recovered)" : j.anchor === "missing" ? "NO JOURNAL ANCHOR" : "JOURNAL ANCHOR OFF THE CHAIN";
+    const bits = [`store: ${plural(st.jobs, "job")}, ${st.committed} committed, journal ${plural(j.lines, "line")} ${j.intact ? "chain intact" : `CHAIN BROKEN (${j.detail})`}, ${anchor}`];
+    bits.push(`${st.outputs.verified} of ${plural(st.outputs.files, "output file")} verified against their manifests`);
+    // A long list is named in part here and whole in custody.json.
+    const some = (xs: Array<string | number>, n: number, where: string) => `${xs.slice(0, n).join(", ")}${xs.length > n ? `, … all ${xs.length} in custody.json ${where}` : ""}`;
+    if (st.outputs.mismatched.length) bits.push(`${st.outputs.mismatched.length} OUTPUT FILE(S) CHANGED SINCE SEALED (${some(st.outputs.mismatched, 5, "store.outputs.mismatched")})`);
+    if (st.outputs.missing.length) bits.push(`${st.outputs.missing.length} OUTPUT FILE(S) MISSING`);
+    if (st.manifests_missing.length) bits.push(`${st.manifests_missing.length} MANIFEST(S) MISSING`);
+    if (j.repaired || j.anchor_mismatch) bits.push(`the journal recorded ${j.repaired} repair(s) and ${j.anchor_mismatch} anchor mismatch(es)`);
+    if (st.staging_left.length) bits.push(`${st.staging_left.length} job staging director${st.staging_left.length === 1 ? "y" : "ies"} left unsealed (${some(st.staging_left, 5, "store.staging_left")})`);
+    bits.push(`${plural(st.generations, "catalogue generation")}, ${plural(st.revisions, "revision")}`);
+    if (st.findings.total) {
+      const f = st.findings;
+      const parts = [`${f.structured} with refs${f.refs_invalid.length ? ` (${f.refs_invalid.length} NO LONGER RESOLVE: ledger seq ${some(f.refs_invalid, 20, "store.findings.refs_invalid")})` : ""}${f.unresolved_only.length ? `, ${f.unresolved_only.length} of them saying only why no object can be named` : ""}`];
+      if (f.path_only.length) parts.push(`${f.path_only.length} naming a path in prose only`);
+      parts.push(f.without_refs.length ? `${f.without_refs.length} citing no object of the run (ledger seq ${some(f.without_refs, 20, "store.findings.without_refs")}): an audit gap` : "none citing nothing");
+      bits.push(`${plural(f.total, "standing finding")}: ${parts.join(", ")}`);
+    }
+    if (st.degraded) bits.push(`the job service told the agents ${st.degraded} time(s) that workers were not running`);
+    if (st.notes) bits.push(`${plural(st.notes, "examiner note")} added to the record after the run`);
+    parts.push(bits.join(", "));
+  }
   if (c.not_reached.length) parts.push(`NOT CHECKED BEFORE CUSTODY ENDED: ${c.not_reached.join(", ")}`);
   if (c.incomplete) parts.push(`CUSTODY INCOMPLETE: ${c.incomplete}`);
   return parts.join(" · ");

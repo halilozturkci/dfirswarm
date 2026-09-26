@@ -94,6 +94,32 @@ Evidence catalog (only when SWARM.md has an "Evidence catalog" section)
   says, for every input, whether it was catalogued, in part or not at all, and why. An input it did
   not catalogue is open for you to read with other tools; missing from the catalog is not missing
   from the evidence. catalog/ cannot be written.
+- When the index says the catalogue is being built, the kickoff's recipes run as jobs while you
+  work: do not wait for them, and do not list an archive the index says is planned. Each result is
+  posted (tagged result) and found with catalog_search, which says which revision it read.
+
+Tool jobs (only when `job_run` is in your tool list)
+- Parse evidence, and do anything slow or heavy, with job_run: it runs in a throwaway worker VM,
+  and what it writes to $OUT is sealed into store/jobs/<id>/out/, read-only and hashed, where every
+  agent and every later job reads it. Quick looks (a header, a few lines, ls) stay in your own shell.
+- A job reads inputs/, store/, catalog/ and tools/; it cannot write anywhere but $OUT, has no
+  network unless you ask for the run's allowlist, and cannot see the board. Your own work/<you>/,
+  work/extracted/<you>/ and work/quarantine/<you>/ are read-only to it when the command names one.
+- Everything a job reads is read-only: open a SQLite database as
+  sqlite3.connect('file:<path>?mode=ro&immutable=1', uri=True) (or with the sqlite_query tool), or
+  copy it into $OUT first; a plain connect fails there ("unable to open database file").
+- A file you made in your own VM (a decoded table, a script's output) is sealed with
+  job_run import=work/<you>/<file>: copied into the store as it is now, and cited as
+  job:<id>/<file>. Better still, make it in a job in the first place.
+- Materialise once, share by path: extract, decrypt or unpack into a job's $OUT, then point every
+  later job and every peer at store/jobs/<id>/out/…; do not repeat a peer's job, read its output.
+- Cite what a job produced as job:<id>/<path> in the ledger's refs; its stdout and stderr are
+  kept whole in store/jobs/<id>/. A failed or timed-out job keeps what it wrote: read it before
+  you run it again.
+- A short job answers in the job_run call; for a longer one, go on with other work or wait: a post
+  tagged result tells you when it is done. Do not poll job_status.
+- catalog_request asks for an object to be catalogued (an extracted archive or disk image, an
+  input the kickoff did not catalogue): its member or file list joins the shared catalogue.
 
 Ledger (only when `record` is in your tool list)
 - Every dated event you establish goes in with `record(kind=event, ts=<ISO 8601 UTC>, value,
@@ -101,6 +127,11 @@ Ledger (only when `record` is in your tool list)
   them with `ledger`, and the harness renders ledger/ledger.md — the timeline, the indicators, the
   findings — after every record. The report cites that file; a claim that is not in the ledger is
   not in the case.
+- A finding names what it rests on in `refs`: input:<path>, job:<id>/<path>, member:<gen>#<n>,
+  sha256:<hex>, or unresolved:<why> when no object can be named. Each ref is checked when you
+  record; a file only in your own work/ is not an object of the run, so run the work as a job
+  and cite job:. To add refs to a finding already recorded without them, record it again with
+  its refs: it becomes the correction.
 - To correct an entry, yours or a peer's, record the corrected one with `supersedes=<seq>` of the
   entry it replaces. Nothing is deleted: the ledger keeps both, and the newer entry is the
   correction. An entry is corrected once; to correct a correction, supersede the correction.

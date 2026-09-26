@@ -48,6 +48,7 @@
  *   node --experimental-strip-types scripts/vm.ts toolbox --image REF --out FILE [--preset SETS] [--required] [--packs DIRS]
  *   node --experimental-strip-types scripts/vm.ts catalog --image REF --sandbox DIR [--evidence DIR]... [--allow-host H]... [--memory MIB] [--run ID] [--registry FILE]
  *   node --experimental-strip-types scripts/vm.ts msb-path
+ *   node --experimental-strip-types scripts/vm.ts worker-once --name NAME   (a WorkerSpec on stdin; the hub's worker maker)
  *
  * SWARM_MSB_BIN names another msb (tests stand one in).
  */
@@ -76,6 +77,13 @@ export const LABEL_AGENT = "dev.dfirswarm.agent";
  * runs that registry knows about.
  */
 export const LABEL_REGISTRY = "dev.dfirswarm.registry";
+/**
+ * What a VM is for: unset for an agent's seat, "worker" for a tool job's
+ * throwaway VM. A worker carries its run's label (reap and finish find it)
+ * but is never a seat: it is removed, not snapshotted.
+ */
+export const LABEL_KIND = "dev.dfirswarm.kind";
+export const LABEL_JOB = "dev.dfirswarm.job";
 
 export function registryLabel(registryPath: string): string {
   return createHash("sha256").update(resolve(registryPath)).digest("hex").slice(0, 16);
@@ -1279,7 +1287,7 @@ export async function createVms(spec: VmSpec): Promise<{ records: VmRecord[]; fa
 }
 
 /** This run's VMs, from msb's own list by label. */
-export async function runVms(runId?: string): Promise<Array<{ name: string; status: string; run: string; agent: string; registry: string }>> {
+export async function runVms(runId?: string): Promise<Array<{ name: string; status: string; run: string; agent: string; registry: string; kind: string }>> {
   // A bare-key label filter matches nothing in msb 0.7.2; without a run,
   // every VM is listed and its labels decide.
   const args = ["list", "--format", "json"];
@@ -1295,7 +1303,7 @@ export async function runVms(runId?: string): Promise<Array<{ name: string; stat
     throw new Error("msb list answered something that is not JSON");
   }
   const list = Array.isArray(rows) ? rows : Array.isArray((rows as { sandboxes?: unknown[] })?.sandboxes) ? (rows as { sandboxes: unknown[] }).sandboxes : [];
-  const out: Array<{ name: string; status: string; run: string; agent: string; registry: string }> = [];
+  const out: Array<{ name: string; status: string; run: string; agent: string; registry: string; kind: string }> = [];
   for (const row of list) {
     const o = row as Record<string, unknown>;
     const name = String(o.name ?? "");
@@ -1311,7 +1319,7 @@ export async function runVms(runId?: string): Promise<Array<{ name: string; stat
         labels = {};
       }
     }
-    const vm = { name, status: String(o.status ?? "").toLowerCase(), run: labels[LABEL_RUN] ?? "", agent: labels[LABEL_AGENT] ?? "", registry: labels[LABEL_REGISTRY] ?? "" };
+    const vm = { name, status: String(o.status ?? "").toLowerCase(), run: labels[LABEL_RUN] ?? "", agent: labels[LABEL_AGENT] ?? "", registry: labels[LABEL_REGISTRY] ?? "", kind: labels[LABEL_KIND] ?? "" };
     if (vm.run && (!runId || vm.run === runId)) out.push(vm);
   }
   return out;
@@ -1459,6 +1467,13 @@ export async function finishRun(runId: string, sandbox: string, options: { snaps
     if (mine && vm.registry && vm.registry !== mine) continue;
     const agent = vm.agent || vm.name.replace(`dfs-${runId}-`, "");
     if (options.agent && agent !== options.agent) continue;
+    // A tool job's worker left up (its job service went before it) is not a
+    // seat: it is removed, and the job service's journal says what it was.
+    if (vm.kind === "worker") {
+      const gone = await destroyWorker(vm.name);
+      out.push({ agent, name: vm.name, ...(gone.ok ? {} : { error: gone.error }) });
+      continue;
+    }
     const entry: FinishEntry = { agent, name: vm.name };
     // What the VM holds now against what its image held: a package its root
     // installed outside the seat's recorded toolchain (apt, or pip into the
@@ -1808,7 +1823,21 @@ export async function imageCatalog(
   image: string,
   sandbox: string,
   evidence: string[],
-  options: { cpus?: number; memoryMib?: number; allowHosts?: string[]; openNet?: boolean; run?: string; maxDurationSec?: number; registry?: string; /** Tests only: a shell command run in the catalog's VM in place of the catalog, to show what that VM can reach. */ command?: string } = {},
+  options: {
+    cpus?: number;
+    memoryMib?: number;
+    allowHosts?: string[];
+    openNet?: boolean;
+    run?: string;
+    maxDurationSec?: number;
+    registry?: string;
+    /** The run's pack directories: their recipes say what an input is. Mounted read-only; none means the base pack in this checkout. */
+    packDirs?: string[];
+    /** The census and the plan only; the recipes run later as jobs. */
+    planOnly?: boolean;
+    /** Tests only: a shell command run in the catalog's VM in place of the catalog, to show what that VM can reach. */
+    command?: string;
+  } = {},
 ): Promise<{ code: number; output: string; digest?: string }> {
   const M = await sdk();
   const name = `dfs-catalog-${randomBytes(6).toString("hex")}`;
@@ -1846,15 +1875,280 @@ export async function imageCatalog(
       .volume(sandbox, (v) => v.bind(realpathSync(sandbox)).readonly())
       .volume(join(sandbox, "catalog"), (v) => v.bind(realpathSync(join(sandbox, "catalog"))))
       .volume(join(ROOT, "scripts"), (v) => v.bind(realpathSync(join(ROOT, "scripts"))).readonly());
+    // The recipes: the run's packs, or the base pack in this checkout, at the
+    // same paths as on the host so the census names them as the jobs will.
+    const packs = options.packDirs?.length ? options.packDirs : [join(ROOT, "packs", "computer-forensics-base")].filter((d) => existsSync(d));
+    for (const d of packs) builder = builder.volume(d, (v) => v.bind(realpathSync(d)).readonly());
+    if (packs.length) builder = builder.envs({ SWARM_PACK_DIRS: packs.join(":") });
     for (const e of evidence) builder = builder.volume(e, (v) => v.bind(realpathSync(e)).readonly().noexec());
     const vm = await withTimeout(builder.create(), CREATE_TIMEOUT_MS, `the catalog VM was not up within ${CREATE_TIMEOUT_MS / 1000} s`);
-    const out = options.command ? await vm.exec("sh", ["-c", options.command]) : await vm.exec("bash", [join(ROOT, "scripts", "evidence-catalog.sh"), sandbox]);
+    const out = options.command ? await vm.exec("sh", ["-c", options.command]) : await vm.exec("bash", [join(ROOT, "scripts", "evidence-catalog.sh"), sandbox, ...(options.planOnly ? ["--plan-only"] : [])]);
     const digest = await imageDigest(name);
     return { code: out.code, output: `${out.stdout()}${out.stderr()}`, ...(digest ? { digest } : {}) };
   } finally {
     release();
     await run(msbBinary(), ["stop", name], { timeoutMs: 120_000 });
     await run(msbBinary(), ["rm", name], { timeoutMs: 60_000 });
+  }
+}
+
+/** What a tool job's worker VM is given: its image, its mounts, its network and the command it runs. */
+export type WorkerSpec = {
+  /** dfs-<run>-job-<id>-<attempt>: one name per attempt, so a retry never meets its predecessor. */
+  name: string;
+  image: string;
+  run: string;
+  job: string;
+  attempt: number;
+  registry?: string;
+  cpus: number;
+  memoryMib: number;
+  maxDurationSec: number;
+  workdir: string;
+  mounts: Mount[];
+  env: Record<string, string>;
+  /** off: no network at all; hosts: the run's own allowlist; public: every public host (a run with --no-netguard). */
+  network: { mode: "off" } | { mode: "hosts"; hosts: string[] } | { mode: "public" };
+  /** The argv run in the guest; the job's own stdout and stderr go to files the command names, not through here. */
+  command: string[];
+};
+
+export function workerName(run: string, job: string, attempt: number): string {
+  return `dfs-${run}-job-${job}-${attempt}`;
+}
+
+/**
+ * Remove a worker and make sure it is gone: stop, rm, then msb's own word
+ * that no VM of that name is left. Only then is the job's staging directory
+ * safe to seal — a VM that may still write to it is not fenced.
+ */
+export async function destroyWorker(name: string): Promise<{ ok: boolean; error?: string }> {
+  // A maker still at work (or orphaned by a hub that died) could make the VM
+  // again after it is removed: it goes first.
+  const maker = await stopMaker(name);
+  if (!maker.ok) return maker;
+  let last = "";
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (attempt) await new Promise((r) => setTimeout(r, 1000 * attempt));
+    await run(msbBinary(), ["stop", name], { timeoutMs: 120_000 });
+    const rm1 = await run(msbBinary(), ["rm", name], { timeoutMs: 60_000 });
+    const inspect = await run(msbBinary(), ["inspect", name, "--format", "json"], { timeoutMs: 30_000 });
+    // Gone only when msb says it does not know the name, and its list, read
+    // whole and understood, agrees: on Ali Hadi #10 a worker whose boot had
+    // failed was "not found" to inspect and listed afterwards.
+    const notFound = inspect.code !== 0 && /not found|no such|does not exist|unknown sandbox|no sandbox/i.test(`${inspect.stderr}${inspect.stdout}`);
+    if (notFound) {
+      const list = await run(msbBinary(), ["list", "--format", "json"], { timeoutMs: 30_000 });
+      const names = list.code === 0 ? listedNames(list.stdout) : null;
+      if (names && !names.includes(name)) return { ok: true };
+      last = list.code !== 0 ? `msb could not list its VMs: ${(list.stderr || list.stdout).trim() || `exit ${list.code}`}` : !names ? `msb's list (${list.stdout.length} bytes) was not a list of VMs` : `msb lists ${name} although it says it does not know it`;
+      continue;
+    }
+    last = inspect.code !== 0 ? `msb could not say whether ${name} is gone: ${(inspect.stderr || inspect.stdout).trim() || `exit ${inspect.code}`}` : `msb still has ${name} after stop and rm${rm1.code !== 0 ? `: ${(rm1.stderr || rm1.stdout).trim()}` : ""}`;
+  }
+  return { ok: false, error: last };
+}
+
+/** The names in `msb list --format json`, or null when it is not a list of named VMs. */
+export function listedNames(text: string): string[] | null {
+  let rows: unknown;
+  try {
+    rows = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(rows) && rows && typeof rows === "object" && Array.isArray((rows as { sandboxes?: unknown }).sandboxes)) rows = (rows as { sandboxes: unknown[] }).sandboxes;
+  if (!Array.isArray(rows)) return null;
+  const names: string[] = [];
+  for (const r of rows) {
+    if (!r || typeof r !== "object" || typeof (r as { name?: unknown }).name !== "string") return null;
+    names.push((r as { name: string }).name);
+  }
+  return names;
+}
+
+/**
+ * Stop the process making or running worker `name` (runWorker's child,
+ * `vm.ts worker-once --name <name>`), found by its command line so an orphan
+ * of a hub that died is found too. ok when none is left.
+ */
+export async function stopMaker(name: string): Promise<{ ok: boolean; error?: string }> {
+  const find = async () => {
+    // -ww: the whole command line, however long (the hub's is past 200 characters).
+    const ps = await run("ps", ["-e", "-ww", "-o", "pid=,args="], { timeoutMs: 15_000 });
+    if (ps.code !== 0) return null;
+    return ps.stdout
+      .split("\n")
+      .map((l) => l.trim().match(/^(\d+)\s+(.*)$/))
+      .filter((m): m is RegExpMatchArray => !!m && / worker-once --name (\S+)$/.exec(m[2])?.[1] === name && Number(m[1]) !== process.pid)
+      .map((m) => Number(m[1]));
+  };
+  for (let i = 0; i < 20; i += 1) {
+    const pids = await find();
+    if (pids === null) return { ok: false, error: `could not list processes to find the maker of ${name}` };
+    if (!pids.length) return { ok: true };
+    for (const pid of pids) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        // gone already
+      }
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return { ok: false, error: `the process making ${name} did not stop` };
+}
+
+/**
+ * Run one tool job in a VM of its own, on the throwaway pattern of the
+ * catalog's VM: made, one exec, removed. Unlike the catalog's, it installs
+ * no signal handler: the hub that runs jobs puts its workers away itself,
+ * and finishRun removes any it left.
+ *
+ * The VM is made and run by a short-lived child process, never by the hub's
+ * own: on Ali Hadi #10 every VM the hub's long-lived SDK made after its 64th
+ * failed to boot ("insert run: FOREIGN KEY constraint failed": msb's runtime,
+ * another process, did not see the sandbox row the SDK had written), and the
+ * row showed up in msb only after the fence had looked. A fresh process made
+ * one fine. Whatever state a maker's msb connection gets into ends with it,
+ * and the fence runs after it has exited. A VM that failed to boot (nothing
+ * ran) is removed and made once more.
+ */
+export async function runWorker(spec: WorkerSpec, hooks: { onCreated?: () => void } = {}): Promise<{ code: number | null; digest?: string; error?: string; fenced: boolean; fence_error?: string; boot_retry?: string; create_ms?: number }> {
+  const asked = Date.now();
+  let createMs: number | undefined;
+  const timed = { onCreated: () => { createMs = Date.now() - asked; hooks.onCreated?.(); } };
+  let ran = await runWorkerInChild(spec, timed);
+  let bootRetry: string | undefined;
+  // Made once more only when msb refused to start it before anything ran,
+  // and the half-made VM is confirmed gone; both errors are kept.
+  if (ran.phase === "create" && /\[BootStart\]/.test(ran.error ?? "")) {
+    const first = ran.error ?? "";
+    const cleared = await destroyWorker(spec.name);
+    if (cleared.ok) {
+      bootRetry = first;
+      ran = await runWorkerInChild(spec, timed);
+    } else {
+      ran = { ...ran, error: `${first}; not made again: ${cleared.error}` };
+    }
+  }
+  // Removed whether it ran or not; fenced only when msb says it is gone.
+  const gone = await destroyWorker(spec.name);
+  const { phase: _phase, ...result } = ran;
+  // create_ms: from asking to the VM up, the wait at the make gate included.
+  return { ...result, ...(bootRetry ? { boot_retry: bootRetry } : {}), ...(createMs !== undefined ? { create_ms: createMs } : {}), fenced: gone.ok, ...(gone.ok ? {} : { fence_error: gone.error }) };
+}
+
+type WorkerRan = { code: number | null; digest?: string; error?: string; phase?: "create" | "exec" };
+
+/**
+ * One worker made at a time, from spawning its maker until the VM is up or
+ * the maker is gone: a containment measure while msb 0.7.2's failure is
+ * not understood (the failures on Ali Hadi #10 came one by one, not at once).
+ */
+let makeGate: Promise<void> = Promise.resolve();
+function takeMakeGate(): Promise<() => void> {
+  let release!: () => void;
+  const mine = new Promise<void>((r) => {
+    release = r;
+  });
+  const before = makeGate;
+  makeGate = before.then(() => mine);
+  return before.then(() => release);
+}
+
+async function runWorkerInChild(spec: WorkerSpec, hooks: { onCreated?: () => void }): Promise<WorkerRan> {
+  const release = await takeMakeGate();
+  return new Promise((done) => {
+    const child = spawn(process.execPath, ["--experimental-strip-types", "--no-warnings", fileURLToPath(import.meta.url), "worker-once", "--name", spec.name], { stdio: ["pipe", "pipe", "pipe"], env: process.env });
+    let out = "";
+    let err = "";
+    let created = false;
+    let result: WorkerRan | undefined;
+    // A maker that outlives the VM's own limit by five minutes is stuck.
+    const limit = setTimeout(() => child.kill("SIGKILL"), (spec.maxDurationSec + 300) * 1000);
+    limit.unref?.();
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+      out += chunk;
+      let nl: number;
+      while ((nl = out.indexOf("\n")) >= 0) {
+        const line = out.slice(0, nl);
+        out = out.slice(nl + 1);
+        try {
+          const msg = JSON.parse(line) as { created?: boolean; result?: WorkerRan };
+          if (msg.created) {
+            created = true;
+            release();
+            hooks.onCreated?.();
+          }
+          if (msg.result) result = msg.result;
+        } catch {
+          // not ours
+        }
+      }
+    });
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+      err += chunk;
+    });
+    let settled = false;
+    const settle = (why: string) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(limit);
+      release();
+      done(result ?? { code: null, error: `the worker's maker process ${why}${err.trim() ? `: ${err.trim()}` : ""}`, phase: created ? "exec" : "create" });
+    };
+    child.on("error", (e) => settle(`did not start (${e.message})`));
+    child.on("close", (code, signal) => settle(signal ? `was killed (${signal})` : `exited ${code} without a result`));
+    child.stdin.end(JSON.stringify(spec));
+  });
+}
+
+async function runWorkerOnce(spec: WorkerSpec, hooks: { onCreated?: () => void }): Promise<WorkerRan> {
+  let created = false;
+  try {
+    const M = await sdk();
+    let builder = M.Sandbox.builder(spec.name)
+      .image(spec.image)
+      .pullPolicy("if-missing")
+      .cpus(spec.cpus)
+      .memory(spec.memoryMib)
+      .maxDuration(spec.maxDurationSec)
+      .labels({
+        [LABEL_RUN]: spec.run,
+        [LABEL_AGENT]: `job-${spec.job}`,
+        [LABEL_KIND]: "worker",
+        [LABEL_JOB]: `${spec.job}.${spec.attempt}`,
+        ...(spec.registry ? { [LABEL_REGISTRY]: registryLabel(spec.registry) } : {}),
+      });
+    if (spec.network.mode === "public") {
+      const policy = new M.NetworkPolicyBuilder().defaultDeny();
+      policy.egress((r) => r.allowPublic());
+      builder = builder.network((n) => n.policyFromBuilder(policy));
+    } else if (spec.network.mode === "hosts" && spec.network.hosts.length) {
+      const policy = allowEgress(new M.NetworkPolicyBuilder().defaultDeny(), spec.network.hosts);
+      builder = builder.network((n) => n.policyFromBuilder(policy));
+    } else {
+      builder = builder.disableNetwork();
+    }
+    builder = builder.detached(true).workdir(spec.workdir).envs(spec.env);
+    for (const m of spec.mounts) {
+      const host = realpathSync(m.host);
+      builder = builder.volume(m.guest ?? m.host, (v) => {
+        let b = v.bind(host);
+        if (m.readonly) b = b.readonly();
+        if (m.noexec) b = b.noexec();
+        return b;
+      });
+    }
+    const vm = await withTimeout(builder.create(), CREATE_TIMEOUT_MS, `the worker VM was not up within ${CREATE_TIMEOUT_MS / 1000} s`);
+    created = true;
+    hooks.onCreated?.();
+    const out = await vm.exec(spec.command[0], spec.command.slice(1));
+    const digest = await imageDigest(spec.name);
+    return { code: out.code, ...(digest ? { digest } : {}), phase: "exec" };
+  } catch (err) {
+    return { code: null, error: (err as Error).message, phase: created ? "exec" : "create" };
   }
 }
 
@@ -2302,14 +2596,18 @@ async function main(): Promise<void> {
     case "catalog": {
       const image = opt("--image");
       const sandbox = opt("--sandbox");
-      if (!image || !sandbox) throw new Error("catalog needs --image REF --sandbox DIR [--evidence DIR]... [--allow-host H]... [--open-net] [--memory MIB] [--cpus N] [--run ID] [--registry FILE]");
+      if (!image || !sandbox) throw new Error("catalog needs --image REF --sandbox DIR [--evidence DIR]... [--pack-dir DIR]... [--plan-only] [--allow-host H]... [--open-net] [--memory MIB] [--cpus N] [--run ID] [--registry FILE]");
       const evidence: string[] = [];
       const allowHosts: string[] = [];
+      const packDirs: string[] = [];
       rest.forEach((a, i) => {
         if (a === "--evidence" && rest[i + 1]) evidence.push(rest[i + 1]);
         if (a === "--allow-host" && rest[i + 1]) allowHosts.push(...rest[i + 1].split(",").filter(Boolean));
+        if (a === "--pack-dir" && rest[i + 1]) packDirs.push(rest[i + 1]);
       });
       const r = await imageCatalog(image, resolve(sandbox), evidence, {
+        packDirs,
+        planOnly: rest.includes("--plan-only"),
         memoryMib: opt("--memory") ? Number(opt("--memory")) : undefined,
         cpus: opt("--cpus") ? Number(opt("--cpus")) : undefined,
         allowHosts,
@@ -2331,6 +2629,23 @@ async function main(): Promise<void> {
         console.log(JSON.stringify({ ok: false, error: (err as Error).message }));
         process.exit(1);
       }
+      return;
+    }
+    case "worker-once": {
+      // The hub's worker maker (runWorker): the spec on stdin, one JSON line
+      // when the VM is up and one with the result.
+      let text = "";
+      for await (const chunk of process.stdin) text += chunk;
+      const spec = JSON.parse(text) as WorkerSpec;
+      // Orphaned (the hub died): stop making or running anything; the hub's
+      // recovery removes the VM.
+      const parent = process.ppid;
+      setInterval(() => {
+        if (process.ppid !== parent) process.exit(3);
+      }, 1000).unref();
+      const result = await runWorkerOnce(spec, { onCreated: () => console.log(JSON.stringify({ created: true })) });
+      // Out before exit: a pipe on macOS is written asynchronously.
+      process.stdout.write(`${JSON.stringify({ result })}\n`, () => process.exit(0));
       return;
     }
     case "reap": {

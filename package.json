@@ -29,7 +29,7 @@
   ],
   "type": "module",
   "scripts": {
-    "test": "node --experimental-strip-types --test tests/dry-run.test.ts tests/plan.test.ts tests/summary.test.ts tests/ui-server.test.ts tests/extension-imports.test.ts tests/pi-load.test.ts tests/tool-library.test.ts tests/tool-library-parsers.test.ts tests/live-version.test.ts tests/overview-status.test.ts tests/artifacts.test.ts tests/report.test.ts tests/dossier.test.ts tests/thinking.test.ts tests/board.test.ts tests/trace-record.test.ts tests/pager.test.ts tests/sandbox-phase0.test.ts tests/sandbox-phase1.test.ts tests/nudge-broker.test.ts tests/model-caps.test.ts tests/turn-error.test.ts tests/finish-line.test.ts tests/append-only-watch.test.ts tests/library.test.ts tests/self-compact.test.ts tests/self-compact-e2e.test.ts tests/context-series.test.ts tests/context-audit.test.ts tests/vm-hub.test.ts tests/vm-manager.test.ts tests/custody.test.ts tests/reserved-names.test.ts tests/playwright-tool.test.ts tests/phase0.test.ts tests/model-gateway.test.ts tests/vm-egress.test.ts tests/tool-allowlist.test.ts tests/table-lock.test.ts",
+    "test": "node --experimental-strip-types --test tests/dry-run.test.ts tests/plan.test.ts tests/summary.test.ts tests/ui-server.test.ts tests/ui-jobs.test.ts tests/extension-imports.test.ts tests/pi-load.test.ts tests/tool-library.test.ts tests/tool-library-parsers.test.ts tests/live-version.test.ts tests/overview-status.test.ts tests/artifacts.test.ts tests/report.test.ts tests/dossier.test.ts tests/thinking.test.ts tests/board.test.ts tests/trace-record.test.ts tests/pager.test.ts tests/sandbox-phase0.test.ts tests/sandbox-phase1.test.ts tests/nudge-broker.test.ts tests/model-caps.test.ts tests/turn-error.test.ts tests/finish-line.test.ts tests/append-only-watch.test.ts tests/library.test.ts tests/self-compact.test.ts tests/self-compact-e2e.test.ts tests/context-series.test.ts tests/context-audit.test.ts tests/vm-hub.test.ts tests/vm-manager.test.ts tests/custody.test.ts tests/reserved-names.test.ts tests/playwright-tool.test.ts tests/phase0.test.ts tests/model-gateway.test.ts tests/vm-egress.test.ts tests/tool-allowlist.test.ts tests/table-lock.test.ts tests/trace-once.test.ts tests/evidence-store.test.ts tests/job-service.test.ts tests/hub-jobs.test.ts tests/worker-fence.test.ts tests/ledger-refs.test.ts tests/check-answers.test.ts",
     "test:server": "node --experimental-strip-types --test tests/ui-server.test.ts",
     "dry-run": "bash scripts/dry-run.sh",
     "typecheck": "tsc -p tsconfig.json && tsc -p ui/tsconfig.json",
@@ -44,7 +44,7 @@
     "ui:fixture": "node --experimental-strip-types scripts/seed-fixture.ts",
     "summary": "node --experimental-strip-types scripts/summary.ts",
     "test:bash": "bash scripts/test-bash.sh",
-    "test:vm": "node --experimental-strip-types --test --test-concurrency=1 tests/vm-integration.test.ts"
+    "test:vm": "node --experimental-strip-types --test --test-concurrency=1 tests/vm-integration.test.ts tests/vm-jobs.test.ts"
   },
   "engines": {
     "node": ">=22.19"

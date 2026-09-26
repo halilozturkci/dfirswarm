@@ -133,6 +133,9 @@ import {
   boardSocket,
   openHubLink,
   type HubLink,
+  jobSubmit,
+  jobStatus,
+  catalogRequest,
 } from "./board.ts";
 import { registerPlaywrightTool, runBrowserCheck } from "./playwright-tool.ts";
 import { readToolchainAt, TOOLCHAIN_DIR } from "./toolchain.ts";
@@ -150,7 +153,7 @@ const TOOLCHAIN_INTERVAL_MS = 30_000;
 let lastToolchainAt = 0;
 
 /** Tools this extension owns. Everything else is a Pi built-in we only trace. */
-const SWARM_TOOLS = new Set([
+export const SWARM_TOOLS = new Set([
   "post",
   "inbox",
   "list_team",
@@ -181,6 +184,15 @@ const SWARM_TOOLS = new Set([
   "forge_hint",
   "agent_cap_steer",
   "agent_cap_stop",
+  // They write their own trace row too: without them here each call was
+  // on the trace twice, once as itself and once as a generic tool row.
+  "name",
+  "publish_file",
+  "skill",
+  "self_compact",
+  "job_run",
+  "job_status",
+  "catalog_request",
 ]);
 
 /** A bash command run this many times by one agent earns a hint to forge a tool. */
@@ -271,6 +283,17 @@ export function normalizeShellCommand(command: string): string {
 
 /** A long shell call whose whole output was kept: how long it ran and where the output is. */
 export type KeptRun = { ms: number; path: string };
+
+/**
+ * A long shell command that read the evidence in the agent's own VM, in a
+ * run with tool jobs: told, once a command and three times at most, that a
+ * job would have sealed what it made. Purpose, not a rule: quick looks stay
+ * in the shell.
+ */
+export const JOB_HINT_MAX = 3;
+export function jobHintText(ms: number): string {
+  return `Note from the harness: this command read the evidence for ${Math.round(ms / 1000)} s in your own VM. Work that parses evidence, takes long, or makes something you will cite or share runs better as a job (job_run): its output is sealed into store/ and cited as job:<id>/<path>, where a file in your work/ is not an object of the run. Quick looks are fine here.`;
+}
 
 /** What the second run of a long command is told, once, with its own output. */
 export function repeatHintText(run: KeptRun): string {
@@ -404,6 +427,8 @@ export default function (pi: ExtensionAPI) {
   /** Long shell calls whose whole output is kept, by command (normalizeShellCommand), and the ones already pointed back. */
   const longRuns = new Map<string, KeptRun>();
   const repeatHinted = new Set<string>();
+  const jobHinted = new Set<string>();
+  let jobsOffered: boolean | undefined;
   /** When this agent was steered for its own cap, if it was. */
   let agentCapSteeredAt: number | null = null;
   /** The watch outgrowing work/ is said once per session, not per shell call. */
@@ -1718,6 +1743,15 @@ export default function (pi: ExtensionAPI) {
       if (fullOutput && !fullOutput.write_error && !isError && durationMs !== undefined && durationMs >= repeatHintMinMs()) {
         longRuns.set(key, { ms: durationMs, path: fullOutput.path });
       }
+      // Jobs are offered when the contract has its Tool jobs section.
+      if (jobsOffered === undefined) jobsOffered = /^## Tool jobs/m.test(await readFile(join(ctx.cwd, "SWARM.md"), "utf8").catch(() => ""));
+      const head = leadingCommand(input.command) ?? "";
+      if (jobsOffered && durationMs !== undefined && durationMs >= repeatHintMinMs() && /(^|[\s'"=/])inputs\//.test(input.command) && jobHinted.size < JOB_HINT_MAX && !jobHinted.has(head)) {
+        jobHinted.add(head);
+        content = [...(Array.isArray(content) ? content : []), { type: "text", text: jobHintText(durationMs) }];
+        contentChanged = true;
+        await logEvent(ctx.cwd, agentId, "job_hint", { command: head }, { ok: true, ms: durationMs }).catch(() => undefined);
+      }
     }
     // Pi takes a tool's failure only from a throw: an `isError: true` in what
     // execute returns is dropped, so every refusal and every failed pack or
@@ -2213,6 +2247,106 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+  // Tool jobs: work in throwaway worker VMs, sealed into store/ (job-service.ts).
+  const jobDone = (state: unknown) => state === "committed" || state === "failed" || state === "cancelled";
+  pi.registerTool({
+    name: "job_run",
+    label: "Run a job",
+    description:
+      "Run work in a throwaway worker VM of this run's image: evidence parsing, anything slow or heavy, and anything whose output you will cite or share. Quick looks stay in your own shell. " +
+      "The worker sees what you see, read-only: inputs/, store/ (earlier jobs' outputs), catalog/, tools/, tool-output/ and all of work/, yours and your peers' (SQLite: open with ?mode=ro&immutable=1 or copy into $OUT). It has the image's programs, nothing installed in an agent's VM, no network unless network=allowlist, and writes only to $OUT. " +
+      "What it writes there is sealed into store/jobs/<id>/out/ (read-only, hashed) and outlives the VM: any job or agent reads it there, and you cite it as job:<id>/<path>. " +
+      "Give command (bash, run from the run's directory; $OUT is also the OUT environment variable, for a script in another language or a quoted heredoc) or tool with args (a pack or forged tool; write {OUT}/<name> where it takes an output path), or import: a file or directory you made under work/ or tool-output/, sealed as it is now (copied live, hashed before and after; cite it as job:<id>/<name>). " +
+      "A short job answers here; a longer one returns its id, and a post tagged result wakes your wait when it is done: do not poll job_status. A failed or timed-out job keeps what it wrote. " +
+      "stdout comes back a page at a time; all of it is store/jobs/<id>/stdout.log.",
+    parameters: Type.Object({
+      command: Type.Optional(Type.String({ description: "Bash, run from the run's directory; $OUT is the job's own directory" })),
+      tool: Type.Optional(Type.String({ description: "A pack or forged tool's name, instead of a command" })),
+      import: Type.Optional(Type.String({ description: "A file or directory under work/ or tool-output/ to seal into the store as it is now, instead of a command" })),
+      args: Type.Optional(Type.Object({}, { additionalProperties: true, description: "The tool's arguments, as its manifest says" })),
+      inputs: Type.Optional(Type.Array(Type.String(), { description: "What it reads, for the record: input:<path>, job:<id>, or all (default)" })),
+      timeout_seconds: Type.Optional(Type.Integer({ description: "Stop it after this long (default 900, at most 14400)" })),
+      network: Type.Optional(Type.Union([Type.Literal("off"), Type.Literal("allowlist")], { description: "off (default) or the run's allowlist" })),
+      wait_seconds: Type.Optional(Type.Integer({ description: "How long to wait here for it (default 12, at most 100)" })),
+    }),
+    async execute(_id, params, signal, _onUpdate, toolCtx: ToolCtx) {
+      const started = Date.now();
+      if ([params.command, params.tool, params.import].filter(Boolean).length !== 1) {
+        const refused = { ok: false as const, reason: "give command, tool (with its args) or import, one of them" };
+        await logEvent(toolCtx.cwd, agentId, "job_run", params, refused, Date.now() - started);
+        return { content: [{ type: "text" as const, text: refused.reason }], details: refused, isError: true };
+      }
+      const spec: Record<string, unknown> = {
+        ...(params.command ? { command: params.command } : {}),
+        ...(params.tool ? { tool: params.tool, args: params.args ?? {} } : {}),
+        ...(params.import ? { import: params.import } : {}),
+        ...(params.inputs ? { inputs: params.inputs } : {}),
+        ...(params.timeout_seconds ? { timeout_seconds: params.timeout_seconds } : {}),
+        ...(params.network ? { network: params.network } : {}),
+      };
+      const wait = Math.min(Math.max(params.wait_seconds ?? 12, 0), 100);
+      if (wait > 0) spec.wait = wait + 5;
+      const sub = await jobSubmit(toolCtx.cwd, spec);
+      if (!sub.ok || !sub.job) {
+        const refused = { ok: false as const, reason: sub.reason ?? "the job was not accepted" };
+        await logEvent(toolCtx.cwd, agentId, "job_run", params, refused, Date.now() - started);
+        return { content: [{ type: "text" as const, text: refused.reason }], details: refused, isError: true };
+      }
+      const id = String(sub.job.job);
+      const until = Date.now() + wait * 1000;
+      let last: Awaited<ReturnType<typeof jobStatus>> = sub;
+      while (!jobDone(last.job?.state) && Date.now() < until && !signal?.aborted) {
+        await new Promise((r) => setTimeout(r, 1000));
+        const st = await jobStatus(toolCtx.cwd, { job_id: id, limit: 8192, wait: Math.ceil((until - Date.now()) / 1000) + 5 }).catch(() => null);
+        if (st?.ok) last = st;
+      }
+      const result = jobDone(last.job?.state)
+        ? { ok: true, ...last.job, ...(last.stdout ? { stdout: last.stdout } : {}) }
+        : { ok: true, job: id, state: last.job?.state, note: `still ${last.job?.state === "accepted" ? "queued" : "running"}; a post tagged result will say when it is done (your wait wakes on it)` };
+      await logEvent(toolCtx.cwd, agentId, "job_run", params, { ok: true, job: id, state: (result as { state?: unknown }).state, status: (result as { status?: unknown }).status }, Date.now() - started);
+      return okResult(result);
+    },
+  });
+
+  pi.registerTool({
+    name: "job_status",
+    label: "Job status",
+    description:
+      "A job's state, the first files it wrote (every one is in its manifest), and a page of its stdout (offset for the next page). cancel=true stops a job of your own. Needed only for a job that outlived job_run's wait and whose post you have not seen, or to read more of its stdout.",
+    parameters: Type.Object({
+      job_id: Type.String({ description: "j000123" }),
+      offset: Type.Optional(Type.Integer({ description: "Where in stdout to start (bytes); the answer gives the next" })),
+      cancel: Type.Optional(Type.Boolean({ description: "Stop it (your own jobs only)" })),
+    }),
+    async execute(_id, params, _signal, _onUpdate, toolCtx: ToolCtx) {
+      const started = Date.now();
+      const st = await jobStatus(toolCtx.cwd, { job_id: params.job_id, ...(params.offset !== undefined ? { offset: params.offset } : {}), ...(params.cancel ? { cancel: true } : {}), limit: 16384 });
+      await logEvent(toolCtx.cwd, agentId, "job_status", params, { ok: st.ok, state: st.job?.state, ...(st.ok ? {} : { reason: st.reason }) }, Date.now() - started);
+      if (!st.ok) return { content: [{ type: "text" as const, text: st.reason ?? "no answer" }], details: st, isError: true };
+      return okResult({ ok: true, ...st.job, ...(st.stdout ? { stdout: st.stdout } : {}) });
+    },
+  });
+
+  pi.registerTool({
+    name: "catalog_request",
+    label: "Catalogue an object",
+    description:
+      "Ask the harness to catalogue an object: an archive, a disk or memory image a job extracted, or an input the kickoff did not catalogue. Its member list, file list or timeline joins the shared catalogue (catalog/gen/…, a new revision announced on the board, found with catalog_search). " +
+      "target: a path under inputs/ or store/jobs/<id>/out/, or an input:/job: reference. recipe (optional): one of the run's recipes (computer-forensics-base/archive-members, …/disk-volumes, …/memory-windows) or tool:<name> for a forged tool that declares the recipe protocol; without it every recipe is asked whether it applies. The same recipe over the same object is done once for everyone.",
+    parameters: Type.Object({
+      target: Type.String({ description: "inputs/…, store/jobs/<id>/out/…, input:… or job:<id>/…" }),
+      recipe: Type.Optional(Type.String({ description: "<pack>/<recipe> or tool:<name>; default: every recipe that applies" })),
+      reason: Type.Optional(Type.String({ description: "Why, for the record" })),
+    }),
+    async execute(_id, params, _signal, _onUpdate, toolCtx: ToolCtx) {
+      const started = Date.now();
+      const r = await catalogRequest(toolCtx.cwd, { target: params.target, ...(params.recipe ? { recipe: params.recipe } : {}), ...(params.reason ? { reason: params.reason } : {}) });
+      await logEvent(toolCtx.cwd, agentId, "catalog_request", params, { ok: r.ok, job: r.job?.job, ...(r.ok ? {} : { reason: r.reason }) }, Date.now() - started);
+      if (!r.ok) return { content: [{ type: "text" as const, text: r.reason ?? "refused" }], details: r, isError: true };
+      return okResult({ ok: true, ...r.job, note: "the result is posted to you when it is catalogued (your wait wakes on it)" });
+    },
+  });
+
   // Real headless Chromium; still gated by --playwright at kickoff (--tools).
   registerPlaywrightTool(pi, { getAgentId: () => agentId, logEvent });
 
@@ -2669,12 +2803,13 @@ export default function (pi: ExtensionAPI) {
     name: "record",
     label: "Record",
     description:
-      "Put a fact in the swarm's ledger with its provenance: kind event (a dated event for the timeline; ts required, ISO 8601 with its zone: Z when the source's time is UTC, or the offset the source records), ioc (an indicator: address, hash, file, account), finding (a conclusion) or absence (a search that found nothing, when that matters: value is what was looked for, source what was searched, evidence the query, the tool and its version, and the scope). Both source and evidence are required: where it was seen (a path, a log, a registry key) and how to check it (the command, the inode, the record id, the hash). An entry nobody can check is not a record. To correct an entry, yours or a peer's, record the corrected one with supersedes=<its seq>: nothing is deleted, and the newer entry is the correction. The harness renders ledger/ledger.md — timeline, indicators, findings, searches that found nothing — after every record; cite that file in the report.",
+      "Put a fact in the swarm's ledger with its provenance: kind event (a dated event for the timeline; ts required, ISO 8601 with its zone: Z when the source's time is UTC, or the offset the source records), ioc (an indicator: address, hash, file, account), finding (a conclusion) or absence (a search that found nothing, when that matters: value is what was looked for, source what was searched, evidence the query, the tool and its version, and the scope). Both source and evidence are required: where it was seen (a path, a log, a registry key) and how to check it (the command, the inode, the record id, the hash). An entry nobody can check is not a record. refs names the run's objects it rests on, each checked when it is written: input:<path> (under inputs/), job:<id>/<path> (a job's sealed output), import:<id>/<path>, member:<generation>#<n> (an archive member in the catalogue), sha256:<hex> (a sealed blob), or unresolved:<why> when none can be named; a file only in your own work/ is not an object of the run: run the work as a job and cite job:. To correct an entry, yours or a peer's, record the corrected one with supersedes=<its seq>: nothing is deleted, and the newer entry is the correction. The harness renders ledger/ledger.md — timeline, indicators, findings, searches that found nothing — after every record; cite that file in the report.",
     promptSnippet: "Record a dated event, an indicator or a finding with its evidence",
     promptGuidelines: [
       "Record every dated event you establish as kind=event with ts in UTC; the timeline is built from them.",
       "Record indicators and findings as you confirm them, with the evidence that proves them.",
       "source and evidence are required on every record: where you saw it, and the command or id that lets somebody else see it too.",
+      "A finding names the objects it rests on in refs (job:<id>/<path>, input:<path>, member:<gen>#<n>, sha256:<hex>, or unresolved:<why>).",
       "A wrong entry is corrected, never deleted: record the right one with supersedes=<seq of the wrong one>.",
       "kind=absence is optional: record a search that found nothing only when the absence matters to the case, with the scope it holds for.",
     ],
@@ -2686,6 +2821,7 @@ export default function (pi: ExtensionAPI) {
       evidence: Type.String({ description: "How to check it: command, inode, record id, hash. Required." }),
       confidence: Type.Optional(Type.Union(LEDGER_CONFIDENCE.map((c) => Type.Literal(c)))),
       supersedes: Type.Optional(Type.Number({ description: "The seq of an entry this one corrects. The older entry stays, marked superseded." })),
+      refs: Type.Optional(Type.Array(Type.String(), { description: "The run's objects it rests on: input:<path>, job:<id>/<path>, import:<id>/<path>, member:<gen>#<n>, sha256:<hex>, or unresolved:<why>. Each is checked; one that does not resolve is refused with the nearest names." })),
     }),
     async execute(_id, params, _signal, _onUpdate, toolCtx: ToolCtx) {
       const started = Date.now();
@@ -2697,6 +2833,7 @@ export default function (pi: ExtensionAPI) {
         evidence: params.evidence,
         confidence: params.confidence,
         ...(params.supersedes !== undefined ? { supersedes: params.supersedes } : {}),
+        ...(params.refs?.length ? { refs: params.refs } : {}),
       });
       if (!result.ok) {
         await logEvent(toolCtx.cwd, agentId, "record", { kind: params.kind }, { ok: false, reason: result.reason }, Date.now() - started);
@@ -2705,13 +2842,13 @@ export default function (pi: ExtensionAPI) {
       // The entry's hash goes on the trace, which is anchored outside the
       // run: custody holds the ledger to it, so an entry deleted from the
       // tail, or one written into the file without this tool, is named.
-      await logEvent(toolCtx.cwd, agentId, "record", { kind: params.kind, ts: params.ts, value: params.value, ...(result.entry.supersedes !== undefined ? { supersedes: result.entry.supersedes } : {}) }, { ok: true, seq: result.entry.seq, merged: result.merged, total: result.total, ...(result.entry.hash ? { hash: result.entry.hash } : {}) }, Date.now() - started);
+      await logEvent(toolCtx.cwd, agentId, "record", { kind: params.kind, ts: params.ts, value: params.value, ...(result.entry.supersedes !== undefined ? { supersedes: result.entry.supersedes } : {}), ...(params.refs?.length ? { refs: params.refs } : {}) }, { ok: true, seq: result.entry.seq, merged: result.merged, total: result.total, ...(result.entry.hash ? { hash: result.entry.hash } : {}), ...(result.note ? { note: result.note } : {}) }, Date.now() - started);
       // A correction is said on the trace as itself, so a reader of the
       // record sees which entry stopped standing, when, and by whom.
       if (result.entry.supersedes !== undefined && !result.merged) {
         await logEvent(toolCtx.cwd, agentId, "ledger_superseded", { seq: result.entry.supersedes }, { ok: true, by_seq: result.entry.seq });
       }
-      return okResult({ ok: true, seq: result.entry.seq, merged: result.merged, total: result.total, ...(result.entry.supersedes !== undefined ? { supersedes: result.entry.supersedes } : {}), rendered: LEDGER_MD });
+      return okResult({ ok: true, seq: result.entry.seq, merged: result.merged, total: result.total, ...(result.entry.supersedes !== undefined ? { supersedes: result.entry.supersedes } : {}), ...(result.entry.refs?.length ? { refs: result.entry.refs } : {}), ...(result.note ? { note: result.note } : {}), rendered: LEDGER_MD });
     },
   });
 

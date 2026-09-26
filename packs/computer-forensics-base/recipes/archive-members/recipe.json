@@ -1,0 +1,70 @@
+{
+  "id": "archive-members",
+  "version": "1.0.0",
+  "description": "List the members of a tar (plain or compressed), zip or 7z archive without extracting any: path, type, size, time, mode, link target and where each member sits in the archive.",
+  "object": "archive",
+  "order": 30,
+  "min_bytes": 22,
+  "suffixes": [
+    ".tar",
+    ".tgz",
+    ".tar.gz",
+    ".tbz2",
+    ".tar.bz2",
+    ".txz",
+    ".tar.xz",
+    ".tar.zst",
+    ".zip",
+    ".7z"
+  ],
+  "magic": [
+    {
+      "offset": 257,
+      "hex": "7573746172"
+    },
+    {
+      "offset": 0,
+      "hex": "504b0304"
+    },
+    {
+      "offset": 0,
+      "hex": "504b0506"
+    },
+    {
+      "offset": 0,
+      "hex": "377abcaf271c"
+    },
+    {
+      "offset": 0,
+      "hex": "1f8b"
+    },
+    {
+      "offset": 0,
+      "hex": "425a68"
+    },
+    {
+      "offset": 0,
+      "hex": "fd377a585a00"
+    },
+    {
+      "offset": 0,
+      "hex": "28b52ffd"
+    }
+  ],
+  "runtime": "python3",
+  "entry": "run.py",
+  "auto": [
+    "kickoff",
+    "derived"
+  ],
+  "limits": {
+    "seconds": 1800,
+    "members": 2000000
+  },
+  "outputs": [
+    "members.tsv",
+    "coverage.json"
+  ],
+  "covers": "The archive's own list of members. It opens no member, searches no contents and lists no archive inside the archive: a member is extracted with archive_extract and catalogued on its own.",
+  "sha256": "b85714b902d01d22d3dcbd5825ef2f43772fc0ba80f1c5de982ef4357e40b7a4"
+}

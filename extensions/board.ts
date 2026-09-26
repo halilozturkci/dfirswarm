@@ -59,7 +59,7 @@ function refused(err: unknown): boolean {
 type Pending = { fn: string; socket: Socket; answered: () => void; resolve: (value: unknown) => void; reject: (err: Error) => void };
 
 /** Calls that change the board, sent once more with the same request id when a link drops. */
-const RETRIED = new Set(["postMessage", "systemPost", "recordEntry", "threadOpen", "claimName", "markDone", "publishFile", "forgeTool", "recordFileVersion"]);
+const RETRIED = new Set(["postMessage", "systemPost", "recordEntry", "threadOpen", "claimName", "markDone", "publishFile", "forgeTool", "recordFileVersion", "jobSubmit", "catalogRequest", "jobStatus"]);
 
 /** Timings a test shortens; the defaults are the run's. */
 export type HubClientTimings = { partTimeoutMs?: number; writeStallMs?: number };
@@ -339,6 +339,7 @@ function remote<F extends AnyFn>(name: string, local: F): F {
  */
 export const REMOTE_FUNCTIONS = [
   "applySessionUsage",
+  "catalogRequest",
   "claimFile",
   "claimName",
   "correctionsAfter",
@@ -347,6 +348,8 @@ export const REMOTE_FUNCTIONS = [
   "forgedToolSeal",
   "guardWrite",
   "heldBy",
+  "jobStatus",
+  "jobSubmit",
   "listClaims",
   "listFileHistory",
   "listForgedTools",
@@ -374,6 +377,16 @@ export const REMOTE_FUNCTIONS = [
 ] as const;
 
 export const applySessionUsage = remote("applySessionUsage", P.applySessionUsage);
+
+/**
+ * Tool jobs, run by the hub's job service in worker VMs. A host run has no
+ * hub and no job service: the local answer says so.
+ */
+type JobAnswer = { ok: boolean; reason?: string; job?: Record<string, unknown>; stdout?: { offset: number; bytes: number; total: number; text: string; next: number | null; path: string } };
+const noJobService = async (): Promise<JobAnswer> => ({ ok: false, reason: "this run has no job service (a host run): run the work in your own shell" });
+export const jobSubmit = remote("jobSubmit", noJobService as (sandboxRoot: string, spec: Record<string, unknown>) => Promise<JobAnswer>);
+export const jobStatus = remote("jobStatus", noJobService as (sandboxRoot: string, o: Record<string, unknown>) => Promise<JobAnswer>);
+export const catalogRequest = remote("catalogRequest", noJobService as (sandboxRoot: string, o: Record<string, unknown>) => Promise<JobAnswer>);
 export const claimFile = remote("claimFile", P.claimFile);
 export const claimName = remote("claimName", P.claimName);
 /**

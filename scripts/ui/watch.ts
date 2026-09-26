@@ -33,6 +33,8 @@ export type ChangeKind =
   | "inputs"
   /** SWARM.md, the rendered contract. */
   | "contract"
+  /** store/: the job service's journal and each job's sealed output. */
+  | "store"
   /** A live VM run's hub wrote its status (the seats' states): outside the runs directory, watched on its own. */
   | "hub"
   | "other"
@@ -98,6 +100,8 @@ function kindOf(second: string, third: string): ChangeKind {
       return "inputs";
     case "SWARM.md":
       return "contract";
+    case "store":
+      return "store";
     case ".pi-sessions":
     case ".pi":
       return "sessions";

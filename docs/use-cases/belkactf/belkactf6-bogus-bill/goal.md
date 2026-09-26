@@ -123,10 +123,15 @@ inferred. `work/timeline.md` holds the merged timeline as a table with at
 least 15 dated rows built from the ledger. The critic has posted a sign-off on
 the board naming what they verified. `inputs/` is unchanged.
 
+Each answer under `## 1.` to `## 18.` rests on the ledger: it cites (`#<seq>`) a finding
+recorded with its refs (the run's objects it rests on), or a search that found
+nothing (`kind=absence`) saying where it looked and how.
+
 ## Checks
 
 - `test -f work/report.md`
 - `for n in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18; do grep -q "^## $n\." work/report.md || exit 1; done`
+- `node --experimental-strip-types --no-warnings "$SWARM_HARNESS/scripts/check-answers.ts" --report work/report.md --sections 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18`
 - `test -f work/flags.md`
 - `test "$(grep -c '^| *[0-9]' work/flags.md)" -ge 18`
 - `test -f work/dependencies.md`

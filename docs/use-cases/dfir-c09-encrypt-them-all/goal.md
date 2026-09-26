@@ -73,10 +73,15 @@ naming what they verified, `work/timeline.md` holds the merged timeline as a
 table with at least 15 dated rows built from the ledger, the ledger holds
 the dated events the timeline rests on, and `inputs/` is unchanged.
 
+Each answer under `## 1.` to `## 3.` rests on the ledger: it cites (`#<seq>`) a finding
+recorded with its refs (the run's objects it rests on), or a search that found
+nothing (`kind=absence`) saying where it looked and how.
+
 ## Checks
 
 - `test -f work/report.md`
 - `for n in 1 2 3 4 5; do grep -q "^## $n\." work/report.md || exit 1; done`
+- `node --experimental-strip-types --no-warnings "$SWARM_HARNESS/scripts/check-answers.ts" --report work/report.md --sections 1,2,3`
 - `test -f work/timeline.md`
 - `test "$(grep -c '^| ' work/timeline.md)" -ge 15`
 - `test "$(grep -c '"kind":"event"' ledger/entries.jsonl)" -ge 5`

@@ -5160,7 +5160,9 @@ export const TOOL_RESERVED_NAMES = new Set([
   // A long command run again pointed at its kept output, a seat stopped
   // before a model call, a ledger correction, the operator's --notify hook,
   // the hub's history quota and a connection refused its seat token.
-  "repeat_hint", "budget_precall_stop", "ledger_superseded", "notify", "history_quota", "seat_auth",
+  "repeat_hint", "job_hint", "budget_precall_stop", "ledger_superseded", "notify", "history_quota", "seat_auth",
+  // Tool jobs in worker VMs and the catalogue they grow (scripts/job-service.ts).
+  "job_run", "job_status", "catalog_request",
   // The host-side model gateway (scripts/model-gateway.ts).
   "model_gateway_started", "model_gateway_refused", "model_gateway_upstream_error", "model_gateway_restarted",
   // A budget fold refused over an unreadable budget.json, and what a
@@ -5230,6 +5232,7 @@ const RESERVED_NAME_REASON: Record<string, string> = {
   claim_violation: "the harness writes it when a write lands on a file a peer holds",
   file_history: "the harness writes it when it snapshots a change",
   forge_hint: "the harness writes it when you repeat a command a tool could carry",
+  job_hint: "the harness writes it when a long shell command read the evidence where a job would have sealed its output",
   idle_nudge: "the harness writes it when it prompts an agent that stopped",
   sentinel_nudge: "the harness writes it when it tells the swarm the sentinel is up",
   agent_cap_steer: "the harness writes it when an agent passes its own spend cap, or its model's",
@@ -6483,6 +6486,9 @@ export const LEDGER_VALUE_MAX_CHARS = 2000;
 export const LEDGER_SOURCE_MAX_CHARS = 1000;
 export const LEDGER_EVIDENCE_MAX_CHARS = 4000;
 export const LEDGER_MAX_ENTRIES = 5000;
+/** A finding names the objects it rests on: at most this many, each this long. */
+export const LEDGER_MAX_REFS = 20;
+export const LEDGER_REF_MAX_CHARS = 300;
 
 export type LedgerKind = (typeof LEDGER_KINDS)[number];
 export type LedgerEntry = {
@@ -6506,6 +6512,12 @@ export type LedgerEntry = {
    * core when present, so a correction cannot be moved to another entry.
    */
   supersedes?: number;
+  /**
+   * The run's objects the entry rests on, each resolved when it was written:
+   * input:<path>, job:<id>/<path>, import:<id>/<path>, member:<gen>#<n>,
+   * sha256:<hex>, or unresolved:<why>. In the chained core when present.
+   */
+  refs?: string[];
   by: string;
   authors: string[];
   at: string;
@@ -6530,7 +6542,8 @@ export function ledgerCore(e: LedgerEntry): string {
   if (e.v === 2) {
     // `supersedes` only when there is one: every entry written before it
     // existed keeps the core, and the hash, it was chained with.
-    return JSON.stringify({ v: 2, seq: e.seq, kind: e.kind, ts: e.ts ?? "", value: e.value, source: e.source ?? "", evidence: e.evidence ?? "", confidence: e.confidence ?? "", ...(e.supersedes !== undefined ? { supersedes: e.supersedes } : {}), by: e.by, at: e.at });
+    // `refs` likewise: added, removed or changed after the fact, it breaks the chain.
+    return JSON.stringify({ v: 2, seq: e.seq, kind: e.kind, ts: e.ts ?? "", value: e.value, source: e.source ?? "", evidence: e.evidence ?? "", confidence: e.confidence ?? "", ...(e.supersedes !== undefined ? { supersedes: e.supersedes } : {}), ...(e.refs?.length ? { refs: e.refs } : {}), by: e.by, at: e.at });
   }
   return JSON.stringify({ seq: e.seq, kind: e.kind, ts: e.ts ?? "", value: e.value, by: e.by, at: e.at });
 }
@@ -6590,6 +6603,8 @@ export type LedgerInput = {
   confidence?: string;
   /** The seq of an entry this one corrects. */
   supersedes?: number | string;
+  /** The run's objects it rests on (LedgerEntry.refs); a list, or one string of them separated by commas or spaces. */
+  refs?: string[] | string;
 };
 
 /**
@@ -6604,8 +6619,63 @@ export function supersededBy(entries: LedgerEntry[]): Map<number, number> {
 }
 
 export type LedgerResult =
-  | { ok: true; entry: LedgerEntry; merged: boolean; total: number }
+  | { ok: true; entry: LedgerEntry; merged: boolean; total: number; note?: string }
   | { ok: false; reason: string };
+
+/** The names closest to `want`: the same base name first, then by edit distance. */
+function nearestNames(want: string, names: string[], n = 5): string[] {
+  const base = (x: string) => x.slice(x.lastIndexOf("/") + 1).toLowerCase();
+  const dist = (a: string, b: string) => {
+    a = a.slice(-200);
+    b = b.slice(-200);
+    let row = Array.from({ length: b.length + 1 }, (_, i) => i);
+    for (let i = 1; i <= a.length; i += 1) {
+      const next = [i];
+      for (let j = 1; j <= b.length; j += 1) next.push(Math.min(row[j] + 1, next[j - 1] + 1, row[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)));
+      row = next;
+    }
+    return row[b.length];
+  };
+  return names
+    .map((x) => ({ x, d: (base(x) === base(want) ? 0 : 1000) + dist(x.toLowerCase(), want.toLowerCase()) }))
+    .sort((a, b) => a.d - b.d)
+    .slice(0, n)
+    .map((r) => r.x);
+}
+
+/**
+ * Every ref resolved against the run as it is now, or the first that is not,
+ * with the names nearest to it: a typo costs one turn, where a wrong ref on
+ * the chain would stand for good.
+ */
+async function checkRefs(sandboxRoot: string, refs: string[]): Promise<{ ok: true } | { ok: false; reason: string }> {
+  // Loaded when a ref is checked, not with the extension: a VM that mounts
+  // only extensions/ still loads it, and in a VM the hub checks refs anyway.
+  const { readManifest, resolveRef, storePaths } = await import("../scripts/evidence-store.ts");
+  for (const ref of refs) {
+    const r = await resolveRef(sandboxRoot, ref);
+    if (r.ok) continue;
+    let near: string[] = [];
+    const m = /^(job|import|input):(.*)$/s.exec(ref);
+    try {
+      if (m && m[1] === "input") {
+        const inputs = JSON.parse(await readFile(join(sandboxRoot, "inputs.json"), "utf8")) as { files?: Array<{ path: string }> };
+        near = nearestNames(m[2].startsWith("inputs/") ? m[2] : `inputs/${m[2]}`, (inputs.files ?? []).map((f) => f.path)).map((p) => `input:${p.replace(/^inputs\//, "")}`);
+      } else if (m) {
+        const slash = m[2].indexOf("/");
+        const id = slash < 0 ? m[2] : m[2].slice(0, slash);
+        const P = storePaths(sandboxRoot);
+        const found = await readManifest(join(m[1] === "job" ? P.jobs : P.imports, id, "manifest.json"));
+        if (found && slash >= 0) near = nearestNames(m[2].slice(slash + 1), found.manifest.files.map((f) => f.path)).map((p) => `${m[1]}:${id}/${p}`);
+        else if (!found) near = nearestNames(id, await readdir(m[1] === "job" ? P.jobs : P.imports).catch(() => [])).map((x) => `${m[1]}:${x}`);
+      }
+    } catch {
+      near = [];
+    }
+    return { ok: false, reason: `ref ${JSON.stringify(ref)} does not resolve: ${r.reason}${near.length ? `; nearest: ${near.join(", ")}` : ""}. A ref names an object of this run (input:<path>, job:<id>/<path>, import:<id>/<path>, member:<gen>#<n>, sha256:<hex>), or says why none can be named (unresolved:<why>).` };
+  }
+  return { ok: true };
+}
 
 const TS_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const TS_DATE_TIME = /^(\d{4}-\d{2}-\d{2})[Tt ](\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?)(Z|z|[+-]\d{2}:?\d{2})?$/;
@@ -6709,6 +6779,25 @@ export async function recordEntry(ctx: SwarmContext, input: LedgerInput): Promis
   if (evidence.length > LEDGER_EVIDENCE_MAX_CHARS) {
     return { ok: false, reason: `evidence is over ${LEDGER_EVIDENCE_MAX_CHARS} characters: say how to check it, and put the material itself in a work/ file` };
   }
+  const refs = [...new Set((Array.isArray(input.refs) ? input.refs.map(String) : String(input.refs ?? "").split(/[\s,]+/)).map((r) => r.trim()).filter(Boolean))];
+  if (refs.length > LEDGER_MAX_REFS) return { ok: false, reason: `refs names ${refs.length} objects, more than ${LEDGER_MAX_REFS}: name the ones the entry rests on, and the rest in evidence` };
+  const long = refs.find((r) => r.length > LEDGER_REF_MAX_CHARS);
+  if (long) return { ok: false, reason: `a ref is over ${LEDGER_REF_MAX_CHARS} characters: ${JSON.stringify(long.slice(0, 80))}…` };
+  if (refs.length) {
+    const checked = await checkRefs(ctx.sandboxRoot, refs);
+    if (!checked.ok) return checked;
+  }
+  // A finding with no ref is taken, and told what would let a reader check
+  // it: the ask rides in the answer, never as an error.
+  // A file in an agent's own work/ is what the #10 reports cited in prose:
+  // said by name, with the way to make it an object of the run.
+  const workFile = /(?:^|[\s`'"(])(?:\.\/)?(work\/[^\s`'",;)]+)/.exec(`${source} ${evidence}`)?.[1];
+  const note =
+    kind === "finding" && !refs.length
+      ? workFile
+        ? `no object of the run cited: ${workFile} is a file in an agent's own work/, which a reader cannot check against the run's record; seal it with job_run import=${workFile} (or run the work that made it as a job) and cite it as job:<id>/<path> in refs, then record this again with its refs`
+        : "no object of the run cited: add refs (job:<id>/<path>, input:<path>, member:<gen>#<n>, sha256:<hex>, or unresolved:<why>) so a reader can check it; to add them to this entry, record it again with its refs"
+      : undefined;
   let supersedes: number | undefined;
   if (input.supersedes !== undefined && input.supersedes !== null && String(input.supersedes).trim() !== "") {
     const n = Number(String(input.supersedes).trim().replace(/^#/, ""));
@@ -6728,8 +6817,14 @@ export async function recordEntry(ctx: SwarmContext, input: LedgerInput): Promis
     }
     // A correction is always its own entry: merged into an equal one, the
     // link to what it corrects would be lost.
-    const same = supersedes === undefined ? entries.find((e) => e.kind === kind && e.value === value && (e.ts ?? "") === (ts.ts ?? "")) : undefined;
-    if (same) {
+    // The one that stands, when an equal entry was corrected before.
+    const replaced = supersededBy(entries);
+    const matches = supersedes === undefined ? entries.filter((e) => e.kind === kind && e.value === value && (e.ts ?? "") === (ts.ts ?? "")) : [];
+    const same = matches.find((e) => !replaced.has(e.seq)) ?? matches[0];
+    // The same entry again, now with refs where the standing one has none:
+    // its core cannot take them, so it is recorded anew and corrects it.
+    if (same && refs.length && !same.refs?.length && !replaced.has(same.seq)) supersedes = same.seq;
+    if (same && supersedes === undefined) {
       if (!same.authors.includes(ctx.agentId)) same.authors.push(ctx.agentId);
       // A merge adds an author, it does not rewrite the first citation.
       if (!same.source) same.source = source;
@@ -6739,7 +6834,8 @@ export async function recordEntry(ctx: SwarmContext, input: LedgerInput): Promis
       // record of the case cut short.
       await writeFileAtomic(join(ctx.sandboxRoot, LEDGER_ENTRIES), entries.map((e) => JSON.stringify(e)).join("\n") + "\n");
       await renderLedger(ctx.sandboxRoot, entries);
-      return { ok: true, entry: same, merged: true, total: entries.length };
+      const kept = refs.length && same.refs?.length && refs.join("\n") !== same.refs.join("\n") ? `merged into #${same.seq}, whose refs stand (${same.refs.join(", ")}); yours were not added: to cite others, record a correction with supersedes=${same.seq}` : undefined;
+      return { ok: true, entry: same, merged: true, total: entries.length, ...(kept ?? note ? { note: kept ?? note } : {}) };
     }
     if (entries.length >= LEDGER_MAX_ENTRIES) return { ok: false, reason: `the ledger holds ${LEDGER_MAX_ENTRIES} entries already` };
     const entry: LedgerEntry = {
@@ -6753,6 +6849,7 @@ export async function recordEntry(ctx: SwarmContext, input: LedgerInput): Promis
       evidence,
       ...(confidence ? { confidence: confidence as LedgerEntry["confidence"] } : {}),
       ...(supersedes !== undefined ? { supersedes } : {}),
+      ...(refs.length ? { refs } : {}),
       by: ctx.agentId,
       authors: [ctx.agentId],
       at: new Date().toISOString(),
@@ -6766,7 +6863,7 @@ export async function recordEntry(ctx: SwarmContext, input: LedgerInput): Promis
     await appendFile(join(ctx.sandboxRoot, LEDGER_ENTRIES), `${JSON.stringify(entry)}\n`, "utf8");
     entries.push(entry);
     await renderLedger(ctx.sandboxRoot, entries);
-    return { ok: true, entry, merged: false, total: entries.length };
+    return { ok: true, entry, merged: false, total: entries.length, ...(note ? { note } : {}) };
   });
 }
 
@@ -6794,17 +6891,19 @@ export async function renderLedger(sandboxRoot: string, entries?: LedgerEntry[])
   lines.push("## Timeline", "", "| # | Time (UTC) | Event | Source | Evidence | By |", "| --- | --- | --- | --- | --- | --- |");
   // A time the source gave with an offset (or as a date) is shown as written too.
   const asWritten = (e: LedgerEntry) => (e.ts_raw && !/[Zz]$/.test(e.ts_raw) ? ` (as written: ${mdCell(e.ts_raw)})` : "");
-  for (const e of events) lines.push(`| ${e.seq} | ${e.ts}${asWritten(e)} | ${mdCell(e.value)}${mark(e)} | ${mdCell(e.source)} | ${mdCell(e.evidence)} | ${e.authors.join(", ")} |`);
+  // The objects an entry rests on, with its evidence.
+  const ev = (e: LedgerEntry) => `${mdCell(e.evidence)}${e.refs?.length ? ` · refs: ${mdCell(e.refs.join(", "))}` : ""}`;
+  for (const e of events) lines.push(`| ${e.seq} | ${e.ts}${asWritten(e)} | ${mdCell(e.value)}${mark(e)} | ${mdCell(e.source)} | ${ev(e)} | ${e.authors.join(", ")} |`);
   lines.push("", "## Indicators", "", "| # | Indicator | Source | Evidence | Confidence | By |", "| --- | --- | --- | --- | --- | --- |");
-  for (const e of iocs) lines.push(`| ${e.seq} | ${mdCell(e.value)}${mark(e)} | ${mdCell(e.source)} | ${mdCell(e.evidence)} | ${e.confidence ?? ""} | ${e.authors.join(", ")} |`);
+  for (const e of iocs) lines.push(`| ${e.seq} | ${mdCell(e.value)}${mark(e)} | ${mdCell(e.source)} | ${ev(e)} | ${e.confidence ?? ""} | ${e.authors.join(", ")} |`);
   lines.push("", "## Findings", "");
   for (const e of findings) {
-    lines.push(`- **#${e.seq}** ${e.value}${mark(e)}${e.confidence ? ` _(${e.confidence})_` : ""}${e.source ? ` — source: ${e.source}` : ""}${e.evidence ? ` — evidence: ${e.evidence}` : ""} — by ${e.authors.join(", ")}`);
+    lines.push(`- **#${e.seq}** ${e.value}${mark(e)}${e.confidence ? ` _(${e.confidence})_` : ""}${e.source ? ` — source: ${e.source}` : ""}${e.evidence ? ` — evidence: ${e.evidence}` : ""}${e.refs?.length ? ` — refs: ${e.refs.map((r) => `\`${r}\``).join(", ")}` : ""} — by ${e.authors.join(", ")}`);
   }
   // Searched and not found: what, where, and how far. Each holds for that
   // query and that scope only.
   lines.push("", "## Searched, not found", "", "| # | Looked for | Searched | Query, tool, scope | By |", "| --- | --- | --- | --- | --- |");
-  for (const e of absences) lines.push(`| ${e.seq} | ${mdCell(e.value)}${mark(e)} | ${mdCell(e.source)} | ${mdCell(e.evidence)} | ${e.authors.join(", ")} |`);
+  for (const e of absences) lines.push(`| ${e.seq} | ${mdCell(e.value)}${mark(e)} | ${mdCell(e.source)} | ${ev(e)} | ${e.authors.join(", ")} |`);
   const text = lines.join("\n") + "\n";
   await mkdir(join(sandboxRoot, LEDGER_DIR), { recursive: true });
   await writeFile(join(sandboxRoot, LEDGER_MD), text, "utf8");

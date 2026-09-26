@@ -1,6 +1,6 @@
 {
   "name": "catalog_search",
-  "description": "Search catalog filelist/timeline/bodyfile with a regex; returns the match count and one page of matching lines (limit, offset). When the page is not all of them, every match is kept in a file under your scratch and named (all_matches).",
+  "description": "Search the evidence catalogue with a regex: a disk's filelist, timeline, bodyfile, fsstat or partitions, or an archive's members; returns the match count, one page of matching lines (limit, offset) and the catalogue revision it read. When the page is not all of them, every match is kept in a file under your scratch and named (all_matches).",
   "params": {
     "pattern": {
       "type": "string",
@@ -9,7 +9,7 @@
     },
     "which": {
       "type": "string",
-      "description": "filelist|timeline|bodyfile|fsstat|partitions",
+      "description": "filelist|timeline|bodyfile|fsstat|partitions (a disk), or members (an archive's member list)",
       "required": false
     },
     "ignore_case": {
@@ -34,12 +34,17 @@
     },
     "catalog": {
       "type": "string",
-      "description": "The catalogue directory under catalog/ when there is more than one (default: the only one)",
+      "description": "The catalogue: its directory under catalog/ as the index names it, or a generation id (g0003) from a revision; default: the only one there is",
       "required": false
     },
     "partition": {
       "type": "string",
       "description": "The filesystem's directory in the catalogue, p<first sector> (e.g. p2048), when there is more than one (default: the only one)",
+      "required": false
+    },
+    "revision": {
+      "type": "integer",
+      "description": "The catalogue revision to read (catalog/revisions/<n>/, as a post announces it); default: the newest complete one",
       "required": false
     }
   },
@@ -49,6 +54,6 @@
   "example": "{\"pattern\": \"Prefetch/.*\\\\.pf$\", \"which\": \"filelist\"}",
   "by": "sd1d100",
   "at": "2026-09-18T14:14:47.839Z",
-  "version": 7,
-  "sha256": "73e75be74f5f08e333fd5d3f3d4d45acc2c821ee1d0902138771b0e1ac68616e"
+  "version": 8,
+  "sha256": "49f40b6eea183e8837b382293c2440ecc240922d435582e880b0735c36f00ab5"
 }

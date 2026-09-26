@@ -30,6 +30,7 @@ import { listLibrary, readLibraryEntry } from "./library.ts";
 import { describeRoots, InputsError, listInputSets, parseInputsRoots, resolveInputImage, resolveInputSet, RootStore } from "./inputs.ts";
 import { countForgedTools, findRun, listSwarmRows, listWorkFiles, liveHubDirs, operatorAudit, queryTraces, readAllPosts, readRunEvents, readSwarmView, readTimedPosts, resolveToolOutputFile, resolveWorkFile } from "./model.ts";
 import { readReviews } from "./reviews.ts";
+import { readStoreJob, readStoreJobLog, readStoreJobs, storeJobLogFile } from "./store-jobs.ts";
 import { userInfo } from "node:os";
 import { hashArtifacts } from "../artifacts.ts";
 import { hashRegularFile, openRegular } from "../regular-file.ts";
@@ -1062,6 +1063,46 @@ export function createUiApp(options: UiAppOptions): UiApp {
           url.searchParams.get("download") === "1",
         );
         return;
+      }
+      /**
+       * The run's tool jobs, from the job service's journal: a page of jobs
+       * with the totals over all of them, the run's notes and notices, and
+       * custody's store line; one job with its record, its journal lines and
+       * a page of its manifest; a page of one of its logs, or the log whole
+       * (?raw=1). Read-only: the hub is the store's one writer. A run with
+       * no store/journal.jsonl answers that it had no job service.
+       */
+      case "jobs": {
+        if (method !== "GET") throw new HttpError(405, "the job record is read-only here");
+        const offset = Number(url.searchParams.get("offset")) || 0;
+        const limit = Number(url.searchParams.get("limit")) || undefined;
+        if (!rest.length) {
+          json(res, 200, await readStoreJobs(sandbox, { offset, limit }));
+          return;
+        }
+        const job = rest[0];
+        if (rest.length === 1) {
+          const detail = await readStoreJob(sandbox, job, { tree: url.searchParams.get("tree") ?? undefined, offset, limit });
+          if ("error" in detail) throw new HttpError(detail.error, detail.message);
+          json(res, 200, detail);
+          return;
+        }
+        if (rest.length === 3 && rest[1] === "log") {
+          const name = decodeURIComponent(rest[2]);
+          if (url.searchParams.get("raw") === "1") {
+            // Whole, as plain text whatever the job printed, with the same
+            // headers as a tool's kept output.
+            const abs = await storeJobLogFile(sandbox, job, name);
+            if (typeof abs !== "string") throw new HttpError(abs.error, abs.message);
+            await sendFile(res, abs, { "content-type": "text/plain; charset=utf-8", "content-security-policy": "sandbox; default-src 'none'", "x-content-type-options": "nosniff" }, url.searchParams.get("download") === "1");
+            return;
+          }
+          const page = await readStoreJobLog(sandbox, job, name, { offset, limit });
+          if ("error" in page) throw new HttpError(page.error, page.message);
+          json(res, 200, page);
+          return;
+        }
+        throw new HttpError(404, "not found");
       }
       case "history": {
         if (method === "GET" && !rest.length) {

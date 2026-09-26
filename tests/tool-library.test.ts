@@ -1308,3 +1308,42 @@ test("icat_extract refuses an inode the catalogue lists only as a directory, and
     assert.equal(r.code, 0, r.stderr + r.stdout);
   });
 });
+
+// The catalogue grows while a run goes on: generations under catalog/gen/,
+// each change a numbered revision. A search names the revision it read, a
+// generation is named by its id, an archive's member list is `members`, and
+// the catalogue's own directories are never taken for a catalogue.
+test("catalog_search reads a revision's generations, an archive's members, and names the revision it read", async () => {
+  const script = join(LIB, "..", "packs", "computer-forensics-base", "tools", "catalog_search", "run.py");
+  await withCwd(async (cwd) => {
+    const C = join(cwd, "catalog");
+    await mkdir(join(C, "disk.E01", "p0"), { recursive: true });
+    await writeFile(join(C, "disk.E01", "partitions.txt"), "No partition table\n");
+    await writeFile(join(C, "disk.E01", "p0", "filelist.txt"), "r/r 5: Users/a/NTUSER.DAT\n");
+    await mkdir(join(C, "gen", "g0001"), { recursive: true });
+    await writeFile(join(C, "gen", "g0001", "members.tsv"), "n\ttype\tpath\n0\tfile\tprivate/var/mobile/sms.db\n1\tfile\tother\n");
+    for (const n of ["0", "1"]) await mkdir(join(C, "revisions", n), { recursive: true });
+    await writeFile(join(C, "revisions", "0", "index.json"), JSON.stringify({ revision: 0, generations: [] }));
+    await writeFile(join(C, "revisions", "0", "MANIFEST.json"), "{}");
+    await writeFile(join(C, "revisions", "1", "index.json"), JSON.stringify({ revision: 1, generations: [{ id: "g0001" }] }));
+    await writeFile(join(C, "revisions", "1", "MANIFEST.json"), "{}");
+    // A revision still being written (no MANIFEST yet) is not read.
+    await mkdir(join(C, "revisions", "2"), { recursive: true });
+    await mkdir(join(C, "probes", "x"), { recursive: true });
+    let r = await runPy(script, cwd, { pattern: "ntuser" });
+    assert.equal(r.code, 0, r.stderr + r.stdout);
+    let got = JSON.parse(r.stdout);
+    assert.equal(got.hits[0].line, "r/r 5: Users/a/NTUSER.DAT", "gen/, revisions/ and probes/ are not catalogues");
+    assert.equal(got.revision, 1, "the newest complete revision");
+    r = await runPy(script, cwd, { pattern: "sms", which: "members", catalog: "g0001" });
+    assert.equal(r.code, 0, r.stderr + r.stdout);
+    got = JSON.parse(r.stdout);
+    assert.equal(got.matched, 1);
+    assert.equal(got.file, "catalog/gen/g0001/members.tsv");
+    r = await runPy(script, cwd, { pattern: "sms", which: "members", catalog: "g0001", revision: 0 });
+    assert.notEqual(r.code, 0, "a generation the pinned revision does not list is not read");
+    assert.deepEqual(JSON.parse(r.stdout + r.stderr).candidates, ["disk.E01"]);
+    r = await runPy(script, cwd, { pattern: "x", revision: 2 });
+    assert.match(JSON.parse(r.stdout + r.stderr).error, /no complete revision 2/);
+  });
+});

@@ -82,6 +82,11 @@ import * as P from "../extensions/protocol.ts";
 import * as T from "../extensions/toolchain.ts";
 import { claimHolds, messageFor, resolvePeer } from "./nudge-broker.mjs";
 import { GATEWAY_STATE_REL } from "./model-gateway.ts";
+import { JobService, jobView, type JobSpec } from "./job-service.ts";
+
+/** What a job tool is told in a run with no job service. */
+const NO_JOBS = "this run has no job service (a host run, or --no-jobs): run the work in your own shell";
+import { destroyWorker, runWorker } from "./vm.ts";
 
 /**
  * One line from a VM: a trace line keeps a tool's whole input and output
@@ -142,6 +147,10 @@ const RATE_LIMITS: Record<string, { bucket: string; capacity: number; perSecond:
   // Each done that would end the swarm runs the operator's finish line on
   // the host: a few in a row, then one a minute.
   markDone: { bucket: "done", capacity: 3, perSecond: 1 / 60 },
+  // A job is a VM: a burst, then one every few seconds; the queue's own
+  // per-agent limits hold what is accepted.
+  jobSubmit: { bucket: "job", capacity: 20, perSecond: 0.2 },
+  catalogRequest: { bucket: "job", capacity: 20, perSecond: 0.2 },
 };
 /** A refusal repeated within this window is counted, not written again. */
 const REFUSAL_WINDOW_MS = 60_000;
@@ -177,10 +186,46 @@ const QUEUE_MAX = 192;
 export const SETTLE_MS_DEFAULT = 6_000;
 
 /** Calls the hub records on the trace when they succeed; every refusal is recorded. */
-const AUDITED = new Set(["markDone", "forgeTool", "restoreFileVersion", "claimName", "threadOpen", "publishFile", "recordEntry"]);
+const AUDITED = new Set(["markDone", "forgeTool", "restoreFileVersion", "claimName", "threadOpen", "publishFile", "recordEntry", "jobSubmit", "catalogRequest"]);
+
+/**
+ * The job service's settings, from the kickoff: the image workers boot, how
+ * many may run at once and with what, the run's allowlist for a job that
+ * asks for network, and the pack directories whose tools and recipes jobs run.
+ */
+export type JobsConfig = {
+  image: string;
+  workers: number;
+  cpus: number;
+  memoryMib: number;
+  allowHosts: string[];
+  openNet: boolean;
+  packDirs: string[];
+  minFreeMb?: number;
+  derived?: boolean;
+};
+
+export function parseJobsConfig(raw: unknown): JobsConfig | undefined {
+  if (!isObject(raw) || typeof raw.image !== "string" || !raw.image) return undefined;
+  const num = (v: unknown, dflt: number, min: number, max: number) => (typeof v === "number" && Number.isFinite(v) ? Math.min(Math.max(Math.floor(v), min), max) : dflt);
+  const strings = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x.length > 0) : []);
+  return {
+    image: raw.image,
+    workers: num(raw.workers, 2, 1, 16),
+    cpus: num(raw.cpus, 2, 1, 16),
+    memoryMib: num(raw.memoryMib, 2048, 512, 65536),
+    allowHosts: strings(raw.allowHosts),
+    openNet: raw.openNet === true,
+    packDirs: strings(raw.packDirs),
+    ...(typeof raw.minFreeMb === "number" ? { minFreeMb: num(raw.minFreeMb, 4096, 0, 1 << 30) } : {}),
+    ...(raw.derived === true ? { derived: true } : {}),
+  };
+}
 
 export type HubConfig = {
   sandbox: string;
+  /** The job service's settings; absent, the run has no job service (host runs, --no-jobs). */
+  jobs?: JobsConfig;
   dir: string;
   agents: string[];
   tokens: Record<string, string>;
@@ -391,6 +436,8 @@ export function boardTable(hub: {
   };
   /** Whether the model gateway meters this seat's spend on the host (foldGatewaySpend). */
   gatewaySeat?: (who: string) => boolean;
+  /** The run's job service, when it has one. */
+  jobs?: () => JobService | undefined;
 }) {
   const S = hub.sandbox;
   const ids = hub.ids ?? [];
@@ -586,6 +633,45 @@ export function boardTable(hub: {
       return P.restoreFileVersion(as(who), key, Number(a[2]));
     },
     swarmDoneExists: () => P.swarmDoneExists(S),
+    // Tool jobs (job-service.ts): who asks is the socket's seat, never an argument.
+    jobSubmit: async (who, a) => {
+      const svc = hub.jobs?.();
+      if (!svc) return { ok: false, reason: NO_JOBS };
+      const raw = isObject(a[1]) ? (a[1] as Record<string, unknown>) : {};
+      const spec: Partial<JobSpec> = {
+        kind: typeof raw.import === "string" && raw.import ? "import" : typeof raw.tool === "string" && raw.tool ? "tool" : "command",
+        ...(typeof raw.import === "string" ? { source: raw.import } : {}),
+        ...(typeof raw.tool === "string" ? { tool: raw.tool } : {}),
+        ...(isObject(raw.args) ? { args: raw.args as Record<string, unknown> } : {}),
+        ...(typeof raw.command === "string" ? { command: raw.command } : {}),
+        inputs: Array.isArray(raw.inputs) && raw.inputs.length ? raw.inputs.map(String) : ["all"],
+        timeout_seconds: typeof raw.timeout_seconds === "number" ? raw.timeout_seconds : 900,
+        network: raw.network === "allowlist" ? "allowlist" : "off",
+        ...(typeof raw.note === "string" ? { note: raw.note } : {}),
+      };
+      const r = await svc.submit(who, spec, { watch: typeof raw.wait === "number" ? raw.wait : 0 });
+      return r.ok ? { ok: true, job: await jobView(S, r.job) } : r;
+    },
+    jobStatus: async (who, a) => {
+      const svc = hub.jobs?.();
+      if (!svc) return { ok: false, reason: NO_JOBS };
+      const raw = isObject(a[1]) ? (a[1] as Record<string, unknown>) : {};
+      const r = await svc.status(who, String(raw.job_id ?? ""), {
+        ...(typeof raw.offset === "number" ? { offset: raw.offset } : {}),
+        ...(typeof raw.limit === "number" ? { limit: raw.limit } : {}),
+        ...(raw.cancel === true ? { cancel: true } : {}),
+        ...(typeof raw.wait === "number" ? { wait: raw.wait } : {}),
+      });
+      if (!r.ok) return r;
+      return { ok: true, job: await jobView(S, r.job), ...(r.stdout ? { stdout: r.stdout } : {}) };
+    },
+    catalogRequest: async (who, a) => {
+      const svc = hub.jobs?.();
+      if (!svc) return { ok: false, reason: NO_JOBS };
+      const raw = isObject(a[1]) ? (a[1] as Record<string, unknown>) : {};
+      const r = await svc.catalogRequest(who, String(raw.target ?? ""), typeof raw.recipe === "string" && raw.recipe ? raw.recipe : undefined, typeof raw.reason === "string" ? raw.reason : undefined);
+      return r.ok ? { ok: true, job: await jobView(S, r.job) } : r;
+    },
     systemPost: (who, a) => {
       // The harness's voice, sent from inside a VM: said by the harness code
       // in that agent's VM, and the post says which one.
@@ -606,6 +692,8 @@ export function boardTable(hub: {
 export class Hub {
   readonly cfg: HubConfig;
   readonly roster: string[];
+  /** Tool jobs in worker VMs, and the catalogue they update (job-service.ts). */
+  jobService?: JobService;
   private servers: Server[] = [];
   /** Every open connection, so stopping does not wait on a held one. */
   private sockets = new Set<Socket>();
@@ -686,6 +774,7 @@ export class Hub {
         refused: (who) => this.historyRefused(who),
       },
       gatewaySeat: (who) => this.gatewaySeats.has(who),
+      jobs: () => this.jobService,
     });
     this.collector = new CollectorLink(this.cfg.collector);
   }
@@ -815,6 +904,7 @@ export class Hub {
       await this.listen(this.socketFor(agent), (socket) => this.serveAgent(agent, socket));
     }
     await this.listen(this.adminSocket(), (socket) => this.serveAdmin(socket));
+    if (this.cfg.jobs && this.cfg.run) await this.startJobs(this.cfg.jobs, this.cfg.run);
     this.writeStatus();
     if (this.cfg.backstop !== false) {
       this.backstopTimer = setInterval(() => void this.backstop().catch(() => undefined), BACKSTOP_INTERVAL_MS);
@@ -898,7 +988,51 @@ export class Hub {
     });
   }
 
+  /**
+   * The job service, started with the hub: it reads its journal, finishes
+   * what a crash left half done, queues the kickoff's recipes and runs jobs.
+   * Its posts are the harness's, tagged result, to the agent concerned or to
+   * everyone; who asked is read from names.json at the moment it asks.
+   */
+  private async startJobs(jobs: JobsConfig, run: string): Promise<void> {
+    const S = this.cfg.sandbox;
+    this.jobService = new JobService({
+      sandbox: S,
+      run,
+      ...(this.cfg.registry ? { registry: this.cfg.registry } : {}),
+      image: jobs.image,
+      workers: jobs.workers,
+      workerCpus: jobs.cpus,
+      workerMemoryMib: jobs.memoryMib,
+      allowHosts: jobs.allowHosts,
+      openNet: jobs.openNet,
+      packDirs: jobs.packDirs,
+      forging: this.cfg.forging === true,
+      ...(jobs.minFreeMb !== undefined ? { minFreeMb: jobs.minFreeMb } : {}),
+      ...(jobs.derived ? { derived: true } : {}),
+      runWorker,
+      destroyWorker,
+      notify: async (to, body) => {
+        await P.systemPost(S, { tag: "result", to, body });
+      },
+      identity: async (agent) => {
+        const r = (await P.readNames(S).catch(() => [])).find((n) => n.id === agent);
+        return { ...(r?.name ? { name: r.name } : {}), ...(r?.doing ? { doing: r.doing } : {}) };
+      },
+      log: (line) => this.log(line),
+    });
+    try {
+      await this.jobService.start();
+    } catch (err) {
+      // A job service that cannot start leaves the board working: agents are
+      // told by the job tools that there is none.
+      this.log(`jobs: not started: ${(err as Error).message}`);
+      this.jobService = undefined;
+    }
+  }
+
   async stop(): Promise<void> {
+    await this.jobService?.stop("the hub is stopping").catch((err: Error) => this.log(`jobs: stop: ${err.message}`));
     if (this.backstopTimer) clearInterval(this.backstopTimer);
     if (this.transferTimer) clearInterval(this.transferTimer);
     for (const key of [...this.transfers.keys()]) this.dropTransfer(key, false);
@@ -2075,6 +2209,9 @@ export class Hub {
    */
   private async finishVms(allOut: boolean): Promise<void> {
     if (!this.cfg.vmCli || !this.cfg.run) return;
+    // Jobs first: a queued one is cancelled and a running worker removed,
+    // each on the record, before the seats are put away.
+    await this.jobService?.stop("the run is finishing").catch((err: Error) => this.log(`jobs: stop: ${err.message}`));
     const r = await this.runVmCli(this.vmCliArgs([]), (this.roster.length + 1) * 20 * 60_000);
     this.log(`finish: ${r.ok ? "ok" : "failed"} ${r.out}`);
     await this.event("vm_finish", { via: "hub", all_out: allOut }, { ok: r.ok, ...(r.ok ? {} : { error: r.out }), ...(r.msbDb.length ? { msb_db: r.msbDb } : {}) });
@@ -2209,6 +2346,7 @@ async function readStdin(): Promise<string> {
 
 type HubInput = {
   sandbox: string;
+  jobs?: JobsConfig;
   dir: string;
   agents: string[];
   tokens: Record<string, string>;
@@ -2327,7 +2465,7 @@ async function main(): Promise<void> {
       console.error("vm-hub: usage: vm-hub.ts <sandbox> --dir DIR [--run ID] [--vm-cli PATH] [--registry FILE] [--stop-cmd SWARM_SH] [--settle-ms N] [--forging] [--no-snapshot] [--quiet]  (stdin: {agents, tokens, seat_tokens, collector}) | --resume DIR");
       process.exit(2);
     }
-    let parsed: { agents?: unknown; tokens?: unknown; seat_tokens?: unknown; collector?: unknown };
+    let parsed: { agents?: unknown; tokens?: unknown; seat_tokens?: unknown; collector?: unknown; jobs?: unknown };
     try {
       parsed = JSON.parse((await readStdin()).trim() || "{}");
     } catch (err) {
@@ -2342,6 +2480,7 @@ async function main(): Promise<void> {
       tokens: isObject(parsed.tokens) ? (Object.fromEntries(Object.entries(parsed.tokens).filter(([, v]) => typeof v === "string")) as Record<string, string>) : {},
       ...(parsed.seat_tokens !== undefined ? { seatTokens: parseSeatTokens(parsed.seat_tokens) ?? {} } : {}),
       collector: typeof parsed.collector === "string" ? parsed.collector : join(sandbox, "traces", ".collector.sock"),
+      ...(parseJobsConfig(parsed.jobs) ? { jobs: parseJobsConfig(parsed.jobs) } : {}),
       run: opt("--run"),
       vmCli: opt("--vm-cli") ?? join(dirname(fileURLToPath(import.meta.url)), "vm.ts"),
       registry: opt("--registry"),

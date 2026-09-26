@@ -55,7 +55,7 @@ if not re.fullmatch(r"\d+\.\d+\.\d+", man.get("version", "")):
     errors.append("version must be MAJOR.MINOR.PATCH")
 
 ALLOWED_TOP = {"pack.json", "README.md", "LICENCE", "LICENSE", "NOTICE",
-               "skills", "tools", "vendor", "requires", "goals", "tests"}
+               "skills", "tools", "vendor", "requires", "goals", "tests", "recipes"}
 for name in sorted(os.listdir(root)):
     if name.startswith("."):
         continue
@@ -132,6 +132,66 @@ if os.path.isdir(tdir):
         if not tm.get("description", "").strip():
             errors.append("tools/%s has an empty description" % name)
         tools[name] = tm
+
+# --- recipes ----------------------------------------------------------------
+# A recipe is a catalogue procedure the harness runs for the pack: it says
+# whether it applies to an object (`entry detect`) and catalogues it into a
+# directory (`entry run`), with its coverage. Its id in a run is <pack>/<name>,
+# so two packs cannot both answer to one recipe.
+RECIPE_AUTO = {"kickoff", "derived"}
+recipes = {}
+rdir = p("recipes")
+if os.path.isdir(rdir):
+    for name in sorted(os.listdir(rdir)):
+        d = os.path.join(rdir, name)
+        if not os.path.isdir(d):
+            continue
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,63}", name):
+            errors.append("recipes/%s: a recipe's name is lower case letters, digits and dashes" % name); continue
+        rf = os.path.join(d, "recipe.json")
+        if not os.path.isfile(rf):
+            errors.append("recipes/%s has no recipe.json" % name); continue
+        try:
+            rm = json.load(open(rf))
+        except Exception as e:
+            errors.append("recipes/%s/recipe.json is not valid JSON: %s" % (name, e)); continue
+        for key in ("id", "version", "description", "runtime", "entry", "auto", "limits", "outputs", "covers"):
+            if key not in rm:
+                errors.append("recipes/%s/recipe.json is missing %s" % (name, key))
+        if rm.get("id") != name:
+            errors.append("recipes/%s declares the id %r" % (name, rm.get("id")))
+        if not re.fullmatch(r"\d+\.\d+\.\d+", str(rm.get("version", ""))):
+            errors.append("recipes/%s: version must be MAJOR.MINOR.PATCH" % name)
+        if rm.get("runtime") not in ("python3", "bash"):
+            errors.append("recipes/%s: runtime must be python3 or bash" % name)
+        entry = str(rm.get("entry", ""))
+        real = os.path.realpath(os.path.join(d, entry)) if entry else ""
+        if not entry or os.path.isabs(entry) or not real.startswith(os.path.realpath(d) + os.sep):
+            errors.append("recipes/%s: entry %r must be a file inside the recipe's directory" % (name, entry))
+        elif not os.path.isfile(real) or os.path.islink(os.path.join(d, entry)):
+            errors.append("recipes/%s: entry %s is missing or a link" % (name, entry))
+        auto = rm.get("auto")
+        if not isinstance(auto, list) or any(a not in RECIPE_AUTO for a in auto):
+            errors.append("recipes/%s: auto is a list of %s (or empty)" % (name, ", ".join(sorted(RECIPE_AUTO))))
+        lim = rm.get("limits")
+        if not isinstance(lim, dict) or not isinstance(lim.get("seconds"), int) or not 1 <= lim.get("seconds") <= 14400:
+            errors.append("recipes/%s: limits.seconds is a whole number from 1 to 14400" % name)
+        if not isinstance(rm.get("outputs"), list) or not rm.get("outputs"):
+            errors.append("recipes/%s: outputs names what the recipe writes" % name)
+        if "min_bytes" in rm and (not isinstance(rm.get("min_bytes"), int) or rm.get("min_bytes") < 0):
+            errors.append("recipes/%s: min_bytes is a whole number of bytes (the smallest object it is asked about)" % name)
+        if "suffixes" in rm and (not isinstance(rm.get("suffixes"), list) or not all(isinstance(x, str) and x for x in rm.get("suffixes"))):
+            errors.append("recipes/%s: suffixes is a list of name endings (\".tar\", \".zip\") a derived file must have to be offered" % name)
+        mg = rm.get("magic")
+        if "magic" in rm and (not isinstance(mg, list) or not all(isinstance(x, dict) and isinstance(x.get("offset"), int) and 0 <= x.get("offset") <= 1048576 and isinstance(x.get("hex"), str) and re.fullmatch(r"(?:[0-9a-fA-F]{2}){1,64}", x.get("hex")) for x in mg)):
+            errors.append("recipes/%s: magic is a list of {offset, hex}: bytes (1 to 64, as hex) at an offset within the first MiB that a derived file must hold to be offered" % name)
+        if "order" in rm and not isinstance(rm.get("order"), int):
+            errors.append("recipes/%s: order is a whole number (recipes run in order, then by name)" % name)
+        if "object" in rm and not str(rm.get("object", "")).strip():
+            errors.append("recipes/%s: object names what the recipe catalogues (\"disk image\")" % name)
+        if not str(rm.get("description", "")).strip() or not str(rm.get("covers", "")).strip():
+            errors.append("recipes/%s: description and covers say what it does and what it does not cover" % name)
+        recipes[name] = rm
 
 # What the dependencies carry, from the packs beside this one: the installed
 # set when an installed pack is verified, the checkout's packs/ when one is
@@ -328,6 +388,21 @@ if mode == "seal":
                     mh.update(chunk)
             digests[rel] = mh.hexdigest()
 
+    # A recipe carries the sha256 of its entry the same way, so a run can say
+    # which version of which script catalogued an object.
+    for name, rm in sorted(recipes.items()):
+        body = os.path.join(p("recipes", name), str(rm.get("entry", "")))
+        if not os.path.isfile(body):
+            continue
+        digest = hashlib.sha256(open(body, "rb").read()).hexdigest()
+        if rm.get("sha256") != digest:
+            rm["sha256"] = digest
+            rel = os.path.join("recipes", name, "recipe.json")
+            with open(p(rel), "w", encoding="utf-8") as fh:
+                json.dump(rm, fh, ensure_ascii=False, indent=2)
+                fh.write("\n")
+            digests[rel] = hashlib.sha256(open(p(rel), "rb").read()).hexdigest()
+
     # The index is what every agent sees once; the bodies are fetched on demand.
     lines = ["# Skills in this pack", "",
              "Fetch a body with `skill(\"<id>\")`. A body may name others; fetch those the same way.", ""]
@@ -335,15 +410,21 @@ if mode == "seal":
         meta = skills[sid]
         lines.append("- `%s` %s: %s" % (sid, meta.get("title", ""), meta.get("when", "")))
     lines.append("")
-    open(p("skills", "INDEX.md"), "w", encoding="utf-8").write("\n".join(lines))
-    digests.pop("skills/INDEX.md", None)
-    h = hashlib.sha256(open(p("skills", "INDEX.md"), "rb").read()).hexdigest()
-    digests["skills/INDEX.md"] = h
+    # A pack of recipes or tools alone has no skills and no index.
+    if os.path.isdir(p("skills")):
+        open(p("skills", "INDEX.md"), "w", encoding="utf-8").write("\n".join(lines))
+        digests.pop("skills/INDEX.md", None)
+        h = hashlib.sha256(open(p("skills", "INDEX.md"), "rb").read()).hexdigest()
+        digests["skills/INDEX.md"] = h
     man["checksums"] = {"sha256": digests}
     # Assign, never setdefault: a tool added to an already-sealed pack has to
     # reach the manifest, or the manifest quietly describes the pack it used to be.
     man["tools"] = sorted(tools)
     man["skills"] = len(skills)
+    if recipes:
+        man["recipes"] = ["%s/%s" % (pid, n) for n in sorted(recipes)]
+    else:
+        man.pop("recipes", None)
     with open(p("pack.json"), "w", encoding="utf-8") as fh:
         json.dump(man, fh, ensure_ascii=False, indent=2)
         fh.write("\n")
@@ -363,7 +444,8 @@ else:
                 errors.append("%s is in the pack but not in the checksums" % rel)
 
 out = {"id": pid, "name": man.get("name"), "version": man.get("version"),
-       "skills": len(skills), "tools": sorted(tools), "depends": man.get("depends") or [],
+       "skills": len(skills), "tools": sorted(tools),
+       "recipes": ["%s/%s" % (pid, n) for n in sorted(recipes)], "depends": man.get("depends") or [],
        "secrets": man.get("secrets") or [], "vendor": man.get("vendor") or [],
        "host": sorted(host_names), "errors": errors, "warnings": warnings}
 print(json.dumps(out))
