@@ -54,10 +54,19 @@ class LosslessPage:
         digest = hashlib.sha256(
             json.dumps(key, sort_keys=True, default=str).encode("utf-8")
         ).hexdigest()[:16]
-        agent = re.sub(
-            r"[^A-Za-z0-9_.-]", "_", os.environ.get("AGENT_ID") or "tool"
-        )
-        self.path = Path("work") / agent / "tool-output" / f"{self.tool}-{digest}.jsonl"
+        name = f"{self.tool}-{digest}.jsonl"
+        job, out = os.environ.get("JOB_ID"), os.environ.get("OUT")
+        if job and out:
+            # In a job only $OUT is written, and it is sealed as the job's
+            # output: the whole result is cited from there.
+            self.path = Path(out) / "tool-output" / name
+            self.shown = "store/jobs/%s/out/tool-output/%s" % (re.sub(r"[^A-Za-z0-9_.-]", "_", job), name)
+        else:
+            agent = re.sub(
+                r"[^A-Za-z0-9_.-]", "_", os.environ.get("AGENT_ID") or "tool"
+            )
+            self.path = Path("work") / agent / "tool-output" / name
+            self.shown = str(self.path)
 
     def _write(self, row: object) -> None:
         assert self._out is not None
@@ -92,7 +101,7 @@ class LosslessPage:
             self._out.close()
             assert self._tmp is not None
             os.replace(self._tmp, self.path)
-            result["all_results"] = str(self.path)
+            result["all_results"] = self.shown
             result["all_results_format"] = "JSON Lines, one complete result per line"
         return result
 

@@ -2422,7 +2422,21 @@ toolbox_path = os.path.join(sandbox, "toolbox.json")
 if os.path.isfile(toolbox_path):
     with open(toolbox_path, encoding="utf-8") as f:
         tb = json.load(f)
-    if tb.get("context") == "image" and tb.get("tools_md"):
+    try:
+        job_imgs = (json.loads(os.environ.get("SWARM_CONTRACT_JOBS") or "{}").get("images") or {})
+    except ValueError:
+        job_imgs = {}
+    if tb.get("context") == "image" and tb.get("tools_md") and job_imgs:
+        # The agents boot the base; the toolbox was checked in the job image
+        # that holds every pack, which is not the agents' own VM.
+        toolbox_section = (
+            "## Programs\n\n"
+            "Your VM boots the base image: `/etc/dfirswarm/tools.md` inside it lists what it holds, a shell, Python and "
+            "the tool library's libraries. The forensic programs for this run's packs are in the job images (Job images "
+            "below), and `images/<name>/tools.md` lists each one's: `grep -i` those for what you need before you install "
+            "or write something.\n\n"
+        )
+    elif tb.get("context") == "image" and tb.get("tools_md"):
         # The image says what it holds, in the VM, where an agent reads it
         # when it needs a program. The contract names no program: a table of
         # sixty was a third of this file, read by every agent at every
@@ -2655,9 +2669,12 @@ if caps:
                     "Your own VM is the base image: a shell, Python and the tool library, and none of the packs' forensic programs. "
                     "They are in the job images below, each one a worker VM of its own: run the work there with "
                     "`job_run profile=<name> command=...`, and read which programs an image has in images/<name>/tools.md. "
-                    "A pack tool or a recipe runs in its own pack's image by itself; a job that names no profile runs in "
-                    f"{jb.get('image') or 'the image that holds every pack'}. What a job writes is sealed in the store "
-                    "whichever image it ran in: read it, and cite it, from your own VM.\n\n" + rows + "\n\n"
+                    "A recipe, or a pack tool given to `job_run tool=`, runs in its own pack's image by itself; a job that names "
+                    f"no profile runs in {jb.get('image') or 'the image that holds every pack'}. A pack tool you call directly "
+                    "runs in your own VM when it has what the tool needs, and otherwise again as a job in its pack's image, by "
+                    "itself: its answer then names the job (`ran_as_job`), and an output path you gave under work/<your id>/ "
+                    "is that job's $OUT, sealed into store/jobs/<id>/out/. What a job writes is sealed in the store whichever "
+                    "image it ran in: read it, and cite it, from your own VM.\n\n" + rows + "\n\n"
                 )
         except Exception:
             pass

@@ -60,6 +60,8 @@ import {
   toolText,
   usageFromSessionEntries,
   runForgedTool,
+  lacksProgram,
+  ownPathsToOut,
   packSecretsFor,
   redactSecrets,
   healInputs,
@@ -2256,6 +2258,29 @@ export default function (pi: ExtensionAPI) {
 
   // Tool jobs: work in throwaway worker VMs, sealed into store/ (job-service.ts).
   const jobDone = (state: unknown) => state === "committed" || state === "failed" || state === "cancelled";
+  /**
+   * Submit a job and wait up to `wait` seconds for it. The result is the
+   * job's record and a page of its stdout when it finished, or its id and
+   * state when it is still queued or running (a post tagged result says when
+   * it is done). `job` is null when the job was not accepted.
+   */
+  async function submitAndWait(cwd: string, spec: Record<string, unknown>, wait: number, signal?: AbortSignal): Promise<{ ok: boolean; job: string | null; result: Record<string, unknown> & { state?: unknown; status?: unknown } }> {
+    const sub = await jobSubmit(cwd, { ...spec, ...(wait > 0 ? { wait: wait + 5 } : {}) });
+    if (!sub.ok || !sub.job) return { ok: false, job: null, result: { reason: sub.reason ?? "the job was not accepted" } };
+    const id = String(sub.job.job);
+    const until = Date.now() + wait * 1000;
+    let last: Awaited<ReturnType<typeof jobStatus>> = sub;
+    while (!jobDone(last.job?.state) && Date.now() < until && !signal?.aborted) {
+      await new Promise((r) => setTimeout(r, 1000));
+      const st = await jobStatus(cwd, { job_id: id, limit: 8192, wait: Math.ceil((until - Date.now()) / 1000) + 5 }).catch(() => null);
+      if (st?.ok) last = st;
+    }
+    if (jobDone(last.job?.state)) {
+      const job = (last.job ?? {}) as Record<string, unknown>;
+      return { ok: job.state === "committed" && (job.status === undefined || job.status === "ok"), job: id, result: { ...job, ...(last.stdout ? { stdout: last.stdout } : {}) } };
+    }
+    return { ok: true, job: id, result: { job: id, state: last.job?.state, note: `still ${last.job?.state === "accepted" ? "queued" : "running"}; a post tagged result will say when it is done (your wait wakes on it)` } };
+  }
   pi.registerTool({
     name: "job_run",
     label: "Run a job",
@@ -2295,25 +2320,14 @@ export default function (pi: ExtensionAPI) {
         ...(params.profile ? { profile: params.profile } : {}),
       };
       const wait = Math.min(Math.max(params.wait_seconds ?? 12, 0), 100);
-      if (wait > 0) spec.wait = wait + 5;
-      const sub = await jobSubmit(toolCtx.cwd, spec);
-      if (!sub.ok || !sub.job) {
-        const refused = { ok: false as const, reason: sub.reason ?? "the job was not accepted" };
+      const res = await submitAndWait(toolCtx.cwd, spec, wait, signal as AbortSignal | undefined);
+      if (!res.job) {
+        const refused = { ok: false as const, reason: String(res.result.reason ?? "the job was not accepted") };
         await logEvent(toolCtx.cwd, agentId, "job_run", params, refused, Date.now() - started);
         return { content: [{ type: "text" as const, text: refused.reason }], details: refused, isError: true };
       }
-      const id = String(sub.job.job);
-      const until = Date.now() + wait * 1000;
-      let last: Awaited<ReturnType<typeof jobStatus>> = sub;
-      while (!jobDone(last.job?.state) && Date.now() < until && !signal?.aborted) {
-        await new Promise((r) => setTimeout(r, 1000));
-        const st = await jobStatus(toolCtx.cwd, { job_id: id, limit: 8192, wait: Math.ceil((until - Date.now()) / 1000) + 5 }).catch(() => null);
-        if (st?.ok) last = st;
-      }
-      const result = jobDone(last.job?.state)
-        ? { ok: true, ...last.job, ...(last.stdout ? { stdout: last.stdout } : {}) }
-        : { ok: true, job: id, state: last.job?.state, note: `still ${last.job?.state === "accepted" ? "queued" : "running"}; a post tagged result will say when it is done (your wait wakes on it)` };
-      await logEvent(toolCtx.cwd, agentId, "job_run", params, { ok: true, job: id, state: (result as { state?: unknown }).state, status: (result as { status?: unknown }).status }, Date.now() - started);
+      const result = { ok: true, ...res.result };
+      await logEvent(toolCtx.cwd, agentId, "job_run", params, { ok: true, job: res.job, state: res.result.state, status: res.result.status }, Date.now() - started);
       return okResult(result);
     },
   });
@@ -2512,7 +2526,7 @@ export default function (pi: ExtensionAPI) {
     pi.registerTool({
       name: manifest.name,
       label: manifest.name,
-      description: `${manifest.description} (forged by ${manifest.by}, v${manifest.version}, ${manifest.runtime}; runs in the sandbox with a ${toolTimeoutSeconds(manifest)}s timeout)${manifest.example ? ` Example: ${manifest.example}` : ""}`,
+      description: `${manifest.description} (forged by ${manifest.by}, v${manifest.version}, ${manifest.runtime}; runs in the sandbox with a ${toolTimeoutSeconds(manifest)}s timeout${manifest.pack && process.env.SWARM_PACK_PROGRAMS_IN_JOBS ? `; when your VM lacks a program or module it needs, it runs again as a job in the ${manifest.pack} pack's image, an output path under work/<your id>/ becoming that job's $OUT` : ""})${manifest.example ? ` Example: ${manifest.example}` : ""}`,
       promptSnippet: `${manifest.description} — forged by ${manifest.by}`,
       parameters: forgedSchema(manifest),
       async execute(_id, params, signal, _onUpdate, toolCtx: ToolCtx) {
@@ -2578,6 +2592,23 @@ export default function (pi: ExtensionAPI) {
         if (Object.keys(secrets).length) {
           run.stdout = redactSecrets(run.stdout, secrets);
           run.stderr = redactSecrets(run.stderr, secrets);
+        }
+        // Agents on the base image, the packs' programs in the job images: a
+        // pack tool whose program or module is not in this VM runs again as a
+        // job in its own pack's image, and its answer is that job's.
+        const missing = !run.ok && manifest.pack && process.env.SWARM_PACK_PROGRAMS_IN_JOBS ? lacksProgram(run) : null;
+        if (missing) {
+          const args = ownPathsToOut((params ?? {}) as Record<string, unknown>, agentId);
+          const started = Date.now();
+          const res = await submitAndWait(toolCtx.cwd, { tool: manifest.name, args }, 100, signal as AbortSignal | undefined);
+          const answer = {
+            ran_as_job: res.job,
+            why: `${missing}: this VM is the base image, so ${manifest.name} ran in its pack's job image`,
+            ...res.result,
+          };
+          await logEvent(toolCtx.cwd, agentId, manifest.name, redactSecrets((params ?? {}) as Record<string, unknown>, secrets), redactSecrets({ ok: res.ok, forged: true, ran_as_job: res.job, why: answer.why, state: res.result.state, status: res.result.status }, secrets), Date.now() - started);
+          const text = redactSecrets(JSON.stringify(answer, null, 1), secrets);
+          return res.ok ? okResult(answer) : { content: [{ type: "text" as const, text }], details: answer, isError: true };
         }
         if (run.ok) {
           return {

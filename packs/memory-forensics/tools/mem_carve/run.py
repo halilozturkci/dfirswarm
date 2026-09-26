@@ -57,6 +57,10 @@ def resolve_output(out):
     """
     root = Path.cwd().resolve()
     dest = (root / out).resolve() if not Path(out).is_absolute() else Path(out).resolve()
+    # In a job only $OUT is written, and it is sealed as the job's output.
+    job_out = Path(os.environ["OUT"]).resolve() if os.environ.get("JOB_ID") and os.environ.get("OUT") else None
+    if job_out is not None and job_out in dest.parents:
+        return dest
     if dest != root and root not in dest.parents:
         fail("output must stay inside the run directory", output=str(out))
     work = (root / "work").resolve()

@@ -5953,6 +5953,40 @@ async function expectedToolHash(sandboxRoot: string, manifest: ForgedToolManifes
  * that was announced), and the process gets the manifest's timeout, then
  * SIGKILL. Output is capped so a chatty script cannot flood the model.
  */
+/**
+ * Why a tool run failed for want of a program or a module, or null: the
+ * shell's 127 or "command not found", Python's ModuleNotFoundError, a
+ * program looked up by name and not found, a tool's own "not on PATH" or
+ * "is not installed". Generic: it reads what any runtime says, and names no
+ * tool or program.
+ */
+export function lacksProgram(run: { exit_code: number | null; stdout: string; stderr: string }): string | null {
+  const text = `${run.stderr}\n${run.stdout}`;
+  const m =
+    /No module named '([^']+)'/.exec(text) ??
+    /([A-Za-z0-9_.+-]+): command not found/.exec(text) ??
+    /No such file or directory: '([^'/\s]+)'/.exec(text) ??
+    /(?:^|\W)([A-Za-z0-9_.+-]+) (?:is )?not (?:on PATH|installed|found in PATH)/i.exec(text);
+  if (m) return `${m[1]} is not in this VM`;
+  if (run.exit_code === 127) return "a program it runs is not in this VM (exit 127)";
+  return null;
+}
+
+/**
+ * A tool's arguments for a run as a job: a path under the agent's own
+ * work/<id>/ becomes {OUT}/…, since a worker writes only its $OUT (sealed
+ * into store/jobs/<id>/out/) and sees work/ read-only.
+ */
+export function ownPathsToOut(args: Record<string, unknown>, agentId: string | undefined): Record<string, unknown> {
+  if (!agentId) return args;
+  const own = `work/${agentId}/`;
+  const map = (v: unknown): unknown =>
+    typeof v === "string"
+      ? v.startsWith(own) ? `{OUT}/${v.slice(own.length)}` : v.startsWith(`./${own}`) ? `{OUT}/${v.slice(own.length + 2)}` : v
+      : Array.isArray(v) ? v.map(map) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, map(x)])) : v;
+  return map(args) as Record<string, unknown>;
+}
+
 export async function runForgedTool(
   sandboxRoot: string,
   manifest: ForgedToolManifest,
