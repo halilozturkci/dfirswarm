@@ -32,8 +32,8 @@ import { bytes as formatBytes } from "@/lib/format";
 import { HashChip } from "@/components/evidence";
 
 /** What `record` puts in the ledger. Structurally the app's `LedgerEntry`. */
-/** absence: a search that found nothing, valid only for the scope it names. */
-export type ClaimKind = "event" | "ioc" | "finding" | "absence";
+/** absence: a search that found nothing, valid only for the scope it names; hypothesis: a proposition under test; limitation: what could not be established. */
+export type ClaimKind = "event" | "ioc" | "finding" | "absence" | "hypothesis" | "limitation";
 export type Confidence = "high" | "medium" | "low";
 
 export type ClaimRecord = {

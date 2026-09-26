@@ -125,3 +125,19 @@ test("an entry resting on the kept output of a job that failed is told so", asyn
   assert.match(r.note ?? "", /rests on the kept output of a job that did not succeed: job:j000002\/rows\.json \(job j000002: failed\)/);
   assert.doesNotMatch(r.note ?? "", /j000001/);
 });
+
+test("the report shows hypotheses, limitations, contradictions, the questions answered and what is sensitive", async () => {
+  const { renderReport } = await import("../scripts/report.ts");
+  const { root, a0, a1 } = await run();
+  const f = ok(await recordEntry(a0, { kind: "finding", value: "The suspect ran Powder.exe", source: "prefetch", evidence: "POWDER.EXE-1234.pf", refs: ["job:j000002/rows.json"], answers: ["Q4"], confidence: "high" }));
+  ok(await recordEntry(a1, { kind: "hypothesis", value: "Powder.exe was only copied", source: "amcache", evidence: "no execution flag", rel: [{ to: f.entry.seq, kind: "contradicts" }] }));
+  ok(await recordEntry(a0, { kind: "limitation", value: "The second volume was not opened", source: "vault p2", evidence: "no key", reason: "unavailable", answers: ["5"] }));
+  ok(await recordEntry(a0, { kind: "ioc", value: "recovery key 111111-222222", source: "notes", evidence: "row 11", sensitive: true }));
+  const html = await renderReport(root, { runsDir: join(root, "..") });
+  assert.match(html, /<h3>Hypotheses \(1\)<\/h3>/);
+  assert.match(html, /<h3>Limitations \(1\)<\/h3>/);
+  assert.match(html, /1 standing contradiction: <a href="#e-2">E-2<\/a> contradicts <a href="#e-1">E-1<\/a>/);
+  assert.match(html, /<h3>By question<\/h3>[\s\S]*<td>4<\/td><td><a href="#e-1">E-1<\/a> finding<\/td>[\s\S]*<td>5<\/td><td><a href="#e-3">E-3<\/a> limitation \(unavailable\)<\/td>/);
+  assert.match(html, /<h3>Sensitive material<\/h3><p>1 standing entry is marked sensitive: <a href="#e-4">E-4<\/a>/);
+  assert.match(html, /From a failed job<\/dt><dd>job:j000002\/rows\.json \(job failed\)/, "the exhibit says it rests on a failed job's kept output");
+});

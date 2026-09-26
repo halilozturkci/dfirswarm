@@ -12,7 +12,7 @@ import { Chip } from "@/components/console";
 import { api } from "@/lib/api";
 import { bytes, dateTime } from "@/lib/format";
 import { useResource } from "@/lib/live";
-import type { CustodyView, OperatorAudit, SwarmView } from "@/lib/types";
+import type { ClockReference, CustodyCheck, CustodyView, OperatorAudit, SwarmView } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 function Names({ label, names }: { label: string; names: string[] }) {
@@ -47,11 +47,116 @@ function evidenceLine(e: NonNullable<CustodyView["evidence"]>): { text: string; 
   const anchored = e.manifest_anchored === true ? "manifest anchored to the kickoff's record" : e.manifest_anchored === false ? "MANIFEST REWRITTEN: not the one the kickoff recorded" : "manifest not anchored (no kickoff record to compare)";
   // Skipped is what the deadline left unread: the verdict does not cover it.
   const skipped = e.skipped.length ? ` · ${e.skipped.length} NOT RE-READ before the deadline` : "";
-  if (e.unchanged && e.complete) return { text: `unchanged · ${e.files} file${e.files === 1 ? "" : "s"} re-hashed in full · ${anchored}`, bad: e.manifest_anchored === false };
+  if (e.unchanged && e.complete) return { text: `unchanged since the run began · ${e.files} file${e.files === 1 ? "" : "s"} re-hashed in full · ${anchored}`, bad: e.manifest_anchored === false };
   if (e.changed.length || e.missing.length || e.added.length || e.manifest_anchored === false) {
     return { text: `CHANGED · ${e.changed.length} changed, ${e.missing.length} missing, ${e.added.length} added of ${e.files}${skipped} · ${anchored}`, bad: true };
   }
   return { text: `NOT FULLY RE-HASHED · ${e.files - e.skipped.length} of ${e.files} checked unchanged${skipped} · ${anchored}`, bad: true };
+}
+
+const CHECK_TONE: Record<CustodyCheck["status"], "moss" | "brick" | "saffron" | "neutral"> = {
+  passed: "moss",
+  failed: "brick",
+  incomplete: "saffron",
+  unavailable: "brick",
+  not_applicable: "neutral",
+};
+
+/** Each check custody made, with its status: an omitted or failed check is never a quiet pass. */
+function Checks({ checks }: { checks: CustodyCheck[] }) {
+  if (!checks.length) return null;
+  return (
+    <div className="flex flex-col gap-1 border-t border-line py-2" aria-label="Custody checks">
+      <span className="label-caps">Checks</span>
+      <ul className="m-0 flex list-none flex-col gap-1 p-0">
+        {checks.map((c) => (
+          <li key={c.name} className="flex flex-wrap items-baseline gap-2 text-[12.5px]">
+            <Chip tone={CHECK_TONE[c.status]}>{c.status.replace("_", " ")}</Chip>
+            <span className="text-ink">{c.name}</span>
+            {c.expected !== undefined ? (
+              <span className="font-mono text-[11px] text-ink-3">
+                {c.checked ?? 0} of {c.expected}
+              </span>
+            ) : null}
+            {c.reason ? <span className={cn("[overflow-wrap:anywhere]", c.status === "not_applicable" || c.status === "passed" ? "text-ink-3" : "text-brick-ink")}>{c.reason}</span> : null}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function clockText(r: ClockReference | null, when: string): string | null {
+  if (!r) return null;
+  if (r.offset_ms === null) return `${when}: ${r.url} not read (${r.error ?? "no answer"})`;
+  return `${when}: the host ${r.offset_ms >= 0 ? "behind" : "ahead of"} ${r.url} by ${Math.abs(r.offset_ms)} ms (± ${r.precision_ms} ms)`;
+}
+
+/** What the verdict sealed, how it is held, and how to check it again. */
+function Sealed({ c, id }: { c: CustodyView; id: string }) {
+  const clocks = [clockText(c.time_reference?.kickoff ?? null, "at kickoff"), clockText(c.time_reference?.custody ?? null, "at custody")].filter((x): x is string => Boolean(x));
+  return (
+    <>
+      {c.acquisition !== undefined ? (
+        <Row label="Acquisition hashes" bad={!!c.acquisition?.mismatched.length}>
+          {!c.acquisition
+            ? "not given at kickoff (--inputs-hashes): unchanged means since the kickoff hashed the evidence, not against the imager's own numbers"
+            : c.acquisition.mismatched.length
+              ? `DO NOT MATCH: ${c.acquisition.mismatched.join(", ")}`
+              : `${c.acquisition.matched} of ${c.acquisition.given} digests from ${c.acquisition.source ?? "the file given"} match the evidence as re-hashed`}
+          {c.acquisition?.not_compared.length ? <Names label="not compared" names={c.acquisition.not_compared} /> : null}
+          {c.acquisition?.source_sha256 ? <span className="font-mono text-[11px] text-ink-3">the hash list's sha256 {c.acquisition.source_sha256}</span> : null}
+        </Row>
+      ) : null}
+      {c.seal ? (
+        <Row label="Sealed">
+          <span>
+            trace {c.seal.trace.lines} lines · ledger {c.seal.ledger.entries} entries{c.seal.attestations.lines ? ` · ${c.seal.attestations.lines} attestations` : ""}
+            {c.seal.journal ? ` · store journal ${c.seal.journal.lines} lines` : ""}
+          </span>
+          <span className="font-mono text-[11px] text-ink-3">trace's last line {c.seal.trace.last_line_sha256 ?? "none"}</span>
+          {c.seal.ledger.head ? <span className="font-mono text-[11px] text-ink-3">ledger head {c.seal.ledger.head}</span> : null}
+          {c.seal.journal?.head ? <span className="font-mono text-[11px] text-ink-3">journal head {c.seal.journal.head}</span> : null}
+        </Row>
+      ) : null}
+      {c.attestations ? (
+        <Row label="Attestations" bad={!c.attestations.intact}>
+          {c.attestations.intact ? `${c.attestations.lines} line${c.attestations.lines === 1 ? "" : "s"}, chain intact: a second author of an entry, appended beside it` : `CHAIN BROKEN: ${c.attestations.detail}`}
+        </Row>
+      ) : null}
+      {c.operator_check ? (
+        <Row label="Operator audit" bad={!c.operator_check.intact || c.operator_check.unmatched.length > 0}>
+          {c.operator_check.intact ? `${c.operator_check.detail} · ${c.operator_check.matched} of ${c.operator_check.trace_actions} operator line(s) on the trace are on it` : `CHAIN BROKEN: ${c.operator_check.detail}`}
+          {c.operator_check.unmatched.length ? <Names label="operator lines on the trace not on the audit" names={c.operator_check.unmatched.map((u) => `${u.at} ${u.command} ${u.argv.join(" ")}`)} /> : null}
+        </Row>
+      ) : null}
+      <Row label="Signature" bad={!!c.signature?.error}>
+        {c.signature ? (c.signature.error ? `NOT SIGNED: ${c.signature.error}` : `custody.json.sig · ssh key ${c.signature.key ?? "(fingerprint not recorded)"} · namespace dfirswarm-custody`) : "custody.json is not signed (--custody-sign-key)"}
+      </Row>
+      <Row label="Timestamp" bad={!!c.timestamp?.error}>
+        {c.timestamp ? (c.timestamp.error ? `NOT TIMESTAMPED: ${c.timestamp.error}` : `RFC 3161 from ${c.timestamp.authority ?? "?"} · ${c.timestamp.gen_time ?? "time not read"}`) : "no trusted timestamp (--custody-timestamp-url)"}
+      </Row>
+      <Row label="Reference clock">{clocks.length ? clocks.join(" · ") : "no reference clock named (--time-reference)"}</Row>
+      {c.models ? (
+        <Row label="Models">
+          <span>{[...new Set(c.models.team.map((m) => m.model ?? "not recorded"))].join(", ")} (as given to the agents)</span>
+          <span className="text-ink-3">{c.models.gateway_answered ? `the gateway saw ${c.models.gateway_answered.join(", ") || "none"} answer` : "no host-side record of which model ids answered (no model gateway)"}</span>
+        </Row>
+      ) : null}
+      {c.timing ? (
+        <Row label="Custody's cost">
+          {Math.round(c.timing.total_ms / 1000)} s · {bytes(c.timing.evidence_bytes)} of evidence re-read{c.timing.evidence_mb_per_s ? ` at ${c.timing.evidence_mb_per_s} MB/s` : ""}
+        </Row>
+      ) : null}
+      <Row label="Check it again">
+        <code className="font-mono text-[11.5px]">scripts/swarm.sh custody-verify {id}</code>
+        <span className="text-ink-3">writes nothing: every check again, the sealed prefix of the trace, the lines written after the seal, the signature and the timestamp token</span>
+      </Row>
+      <Row label="The anchors">
+        <span className="text-ink-3">files of the operator's own account beside the run: they hold the agents to account; a signature and a trusted timestamp hold the verdict itself</span>
+      </Row>
+    </>
+  );
 }
 
 export function CustodyPanel({ view }: { view: SwarmView }) {
@@ -103,6 +208,7 @@ export function CustodyPanel({ view }: { view: SwarmView }) {
           ))}
         </ul>
       ) : null}
+      <Checks checks={c.checks ?? []} />
       <div className="flex flex-col">
         <Row label="Evidence" bad={ev?.bad}>
           {ev ? ev.text : "no evidence was given to this run"}
@@ -250,6 +356,7 @@ export function CustodyPanel({ view }: { view: SwarmView }) {
             </Row>
           );
         })}
+        <Sealed c={c} id={id} />
       </div>
       <RunRecord view={view} operator={operator.data} />
     </section>

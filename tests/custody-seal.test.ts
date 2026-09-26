@@ -18,6 +18,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { custodyAnchorPath, takeCustody, verdictOf, verifyCustody, type Custody } from "../scripts/custody.ts";
 import { afterSeal, checksOf, parseAcquisitionHashes, readTimestampResponse, timestampRequest, verifySignature } from "../scripts/custody-checks.ts";
+import { readCustody } from "../scripts/ui/model.ts";
+import { renderReport } from "../scripts/report.ts";
 
 const dirs: string[] = [];
 after(async () => {
@@ -236,6 +238,16 @@ test("the verdict is signed with an SSH key and timestamped by an RFC 3161 autho
     assert.ok(last?.seal, "the seal is in the anchor too");
     const sig = await verifySignature(join(root, "custody.json"), join(root, "custody.json.sig"));
     assert.equal(sig.ok, true, sig.detail);
+    // The console and the report read all of it.
+    const view = await readCustody(root);
+    assert.ok(view?.checks?.some((x) => x.name === "evidence" && x.status === "passed"));
+    assert.equal(view?.seal?.trace.lines, 1);
+    assert.match(String(view?.signature?.key), /SHA256:/);
+    assert.equal(view?.timestamp?.gen_time, "2026-09-26T12:00:00Z");
+    assert.ok(view?.time_reference?.custody && view.time_reference.custody.offset_ms !== null);
+    const html = await renderReport(root, { runsDir: runs });
+    for (const row of ["Custody checks", "Sealed", "Acquisition hashes", "Verdict signature", "Trusted timestamp", "Reference clock", "Check it again", "What the anchors are"]) assert.match(html, new RegExp(`<td>${row}</td>`), row);
+    assert.match(html, /custody\.json\.tsr from http:\/\/127\.0\.0\.1:\d+\/tsa, 2026-09-26T12:00:00Z/);
     const v = await verifyCustody(root, { runsDir: runs });
     assert.equal(v.signature.ok, true);
     assert.equal(v.timestamp.imprint, true);

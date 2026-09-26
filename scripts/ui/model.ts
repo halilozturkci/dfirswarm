@@ -8,7 +8,7 @@ import { constants as fsConstants, existsSync } from "node:fs";
 import { lstat, open, readdir, readFile, realpath, stat } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import { artifactKind } from "../artifact-kind.ts";
-import { verdictAnchorLine, verdictAnchorState } from "../custody.ts";
+import { custodyAnchorPath, verdictAnchorLine, verdictAnchorState } from "../custody.ts";
 import { readRegularText } from "../regular-file.ts";
 // The kickoff's own rules: the console shows the checks probeVerdict refuses on.
 import { probeChecks } from "../vm.ts";
@@ -494,6 +494,17 @@ export type CustodyView = {
     runtime_changed: string | null;
   }> | null;
   incomplete: string | null;
+  /** The newer parts of a verdict (2026-09-26); an older verdict has none. Mirrors ui/src/lib/types.ts. */
+  checks?: Array<{ name: string; status: "passed" | "failed" | "incomplete" | "not_applicable" | "unavailable"; reason?: string; expected?: number; checked?: number }>;
+  seal?: { trace: { lines: number; bytes: number; last_line_sha256: string | null }; ledger: { entries: number; head: string | null }; attestations: { lines: number; head: string | null }; journal: { lines: number; head: string | null } | null } | null;
+  attestations?: { lines: number; intact: boolean; detail: string } | null;
+  acquisition?: { source: string | null; source_sha256: string | null; given: number; matched: number; mismatched: string[]; not_compared: string[] } | null;
+  operator_check?: { lines: number; intact: boolean; detail: string; trace_actions: number; matched: number; unmatched: Array<{ at: string; command: string; argv: string[] }> } | null;
+  signature?: { key?: string | null; sha256?: string; error?: string } | null;
+  timestamp?: { authority?: string; gen_time?: string | null; sha256?: string; error?: string } | null;
+  time_reference?: { kickoff: { url: string; offset_ms: number | null; precision_ms: number; error?: string } | null; custody: { url: string; offset_ms: number | null; precision_ms: number; error?: string } | null };
+  models?: { team: Array<{ agent: string; model: string | null }>; gateway_answered: string[] | null } | null;
+  timing?: { total_ms: number; evidence_bytes: number; evidence_mb_per_s: number | null } | null;
 };
 
 export type SwarmView = Omit<SwarmDetail, "summary" | "agents" | "threads"> & {
@@ -1602,6 +1613,56 @@ export async function readCustody(sandbox: string): Promise<CustodyView | null> 
   const artifacts: CustodyView["artifacts"] = isRecord(art)
     ? { files: num(art.files), bytes: num(art.bytes), skipped: num(art.skipped), index_sha256: typeof art.index_sha256 === "string" ? art.index_sha256 : "" }
     : null;
+  // The newer parts of a verdict (2026-09-26), each read defensively: an older verdict has none of them.
+  const STATUSES = new Set(["passed", "failed", "incomplete", "not_applicable", "unavailable"]);
+  const checks: NonNullable<CustodyView["checks"]> = Array.isArray(raw.checks)
+    ? raw.checks
+        .filter((x): x is Record<string, unknown> => isRecord(x) && typeof x.name === "string" && STATUSES.has(String(x.status)))
+        .map((x) => ({ name: String(x.name), status: x.status as NonNullable<CustodyView["checks"]>[number]["status"], ...(typeof x.reason === "string" ? { reason: x.reason } : {}), ...(typeof x.expected === "number" ? { expected: x.expected } : {}), ...(typeof x.checked === "number" ? { checked: x.checked } : {}) }))
+    : [];
+  // A check the specific lines above do not already say, when it did not pass.
+  const said = new Set(["evidence", "trace", "ledger", "kept outputs", "VMs", "sessions"]);
+  for (const c of checks) if (!said.has(c.name) && (c.status === "failed" || c.status === "unavailable")) problems.push(`${c.name} ${c.status === "failed" ? "failed" : "could not be checked"}${c.reason ? `: ${c.reason}` : ""}`);
+  const sealRaw = isRecord(raw.seal) ? raw.seal : null;
+  const seal: CustodyView["seal"] = sealRaw
+    ? {
+        trace: { lines: num((sealRaw.trace as Record<string, unknown> | undefined)?.lines), bytes: num((sealRaw.trace as Record<string, unknown> | undefined)?.bytes), last_line_sha256: typeof (sealRaw.trace as Record<string, unknown> | undefined)?.last_line_sha256 === "string" ? String((sealRaw.trace as Record<string, unknown>).last_line_sha256) : null },
+        ledger: { entries: num((sealRaw.ledger as Record<string, unknown> | undefined)?.entries), head: typeof (sealRaw.ledger as Record<string, unknown> | undefined)?.head === "string" ? String((sealRaw.ledger as Record<string, unknown>).head) : null },
+        attestations: { lines: num((sealRaw.attestations as Record<string, unknown> | undefined)?.lines), head: typeof (sealRaw.attestations as Record<string, unknown> | undefined)?.head === "string" ? String((sealRaw.attestations as Record<string, unknown>).head) : null },
+        journal: isRecord(sealRaw.journal) ? { lines: num(sealRaw.journal.lines), head: typeof sealRaw.journal.head === "string" ? sealRaw.journal.head : null } : null,
+      }
+    : null;
+  const att = isRecord(raw.attestations) ? { lines: num(raw.attestations.lines), intact: raw.attestations.intact === true, detail: String(raw.attestations.detail ?? "") } : null;
+  const acq = isRecord(raw.acquisition)
+    ? { source: typeof raw.acquisition.source === "string" ? raw.acquisition.source : null, source_sha256: typeof raw.acquisition.source_sha256 === "string" ? raw.acquisition.source_sha256 : null, given: num(raw.acquisition.given), matched: num(raw.acquisition.matched), mismatched: stringList(raw.acquisition.mismatched), not_compared: stringList(raw.acquisition.not_compared) }
+    : null;
+  const op = isRecord(raw.operator)
+    ? {
+        lines: num(raw.operator.lines),
+        intact: raw.operator.intact === true,
+        detail: String(raw.operator.detail ?? ""),
+        trace_actions: num(raw.operator.trace_actions),
+        matched: num(raw.operator.matched),
+        unmatched: Array.isArray(raw.operator.unmatched) ? raw.operator.unmatched.filter(isRecord).map((u) => ({ at: String(u.at ?? ""), command: String(u.command ?? ""), argv: stringList(u.argv) })) : [],
+      }
+    : null;
+  const clockOf = (x: unknown) => (isRecord(x) && typeof x.url === "string" ? { url: x.url, offset_ms: typeof x.offset_ms === "number" ? x.offset_ms : null, precision_ms: num(x.precision_ms), ...(typeof x.error === "string" ? { error: x.error } : {}) } : null);
+  // The anchor outside the run: the kickoff's reference clock, and the last verdict's signature and timestamp.
+  let anchorRaw: Record<string, unknown> | null = null;
+  try {
+    anchorRaw = JSON.parse(await readFile(custodyAnchorPath(sandbox), "utf8")) as Record<string, unknown>;
+  } catch {
+    anchorRaw = null;
+  }
+  const lastVerdict = Array.isArray(anchorRaw?.custody) ? ((anchorRaw?.custody as unknown[]).at(-1) as Record<string, unknown> | undefined) : undefined;
+  const signature = isRecord(lastVerdict?.signature) ? { key: typeof lastVerdict.signature.key === "string" ? lastVerdict.signature.key : null, ...(typeof lastVerdict.signature.sha256 === "string" ? { sha256: lastVerdict.signature.sha256 } : {}), ...(typeof lastVerdict.signature.error === "string" ? { error: lastVerdict.signature.error } : {}) } : null;
+  const timestamp = isRecord(lastVerdict?.timestamp) ? { ...(typeof lastVerdict.timestamp.authority === "string" ? { authority: lastVerdict.timestamp.authority } : {}), gen_time: typeof lastVerdict.timestamp.gen_time === "string" ? lastVerdict.timestamp.gen_time : null, ...(typeof lastVerdict.timestamp.sha256 === "string" ? { sha256: lastVerdict.timestamp.sha256 } : {}), ...(typeof lastVerdict.timestamp.error === "string" ? { error: lastVerdict.timestamp.error } : {}) } : null;
+  if (signature?.error) problems.push(`custody.json was not signed: ${signature.error}`);
+  if (timestamp?.error) problems.push(`custody.json was not timestamped: ${timestamp.error}`);
+  const models = isRecord(raw.models)
+    ? { team: Array.isArray(raw.models.team) ? raw.models.team.filter(isRecord).map((m) => ({ agent: String(m.agent ?? ""), model: typeof m.model === "string" ? m.model : null })) : [], gateway_answered: Array.isArray(raw.models.gateway_answered) ? stringList(raw.models.gateway_answered) : null }
+    : null;
+  const timing = isRecord(raw.timing) ? { total_ms: num(raw.timing.total_ms), evidence_bytes: num(raw.timing.evidence_bytes), evidence_mb_per_s: typeof raw.timing.evidence_mb_per_s === "number" ? raw.timing.evidence_mb_per_s : null } : null;
   return {
     at: typeof raw.at === "string" ? raw.at : null,
     summary: typeof raw.summary === "string" ? raw.summary : "",
@@ -1616,6 +1677,16 @@ export async function readCustody(sandbox: string): Promise<CustodyView | null> 
     tool_outputs: toolOutputs,
     vms,
     incomplete,
+    checks,
+    seal,
+    attestations: att,
+    acquisition: acq,
+    operator_check: op,
+    signature,
+    timestamp,
+    time_reference: { kickoff: clockOf(anchorRaw?.time_reference), custody: clockOf(raw.time_reference) },
+    models,
+    timing,
   };
 }
 

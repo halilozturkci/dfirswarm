@@ -16,6 +16,13 @@
  * - whether the trace grounds an entry: a call before it named its source;
  * - a correction (`supersedes`): the older entry stays, marked, and links to
  *   the one that corrects it. Nothing is ever hidden.
+ *
+ * Version 3 of the ledger adds two kinds — a hypothesis with its status, a
+ * limitation with its reason — and typed fields the agents used to write in
+ * prose: the goal section an entry answers (filterable here), its links to
+ * other entries (a standing contradiction is said at the top), a sensitive
+ * mark, the clock and precision of a time, observed or inferred, how far a
+ * search got, an attribution, locators and a correction's reason.
  */
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { BookOpenText } from "lucide-react";
@@ -47,7 +54,14 @@ const KINDS: Array<{ key: Kind; label: string }> = [
   { key: "ioc", label: "Indicators" },
   { key: "finding", label: "Findings" },
   { key: "absence", label: "Searched, not found" },
+  { key: "hypothesis", label: "Hypotheses" },
+  { key: "limitation", label: "Limitations" },
 ];
+
+const REL_WORD = { supports: "supports", contradicts: "contradicts", duplicates: "duplicates", derived_from: "derived from" } as const;
+const STATUS_TONE = { open: "neutral", supported: "moss", refuted: "brick" } as const;
+/** "Q3" and "3" are the same section. */
+const sectionId = (a: string) => a.trim().replace(/^q(?=\d)/i, "");
 
 const REVIEW_TONE = { accept: "moss", reject: "brick", amend: "saffron" } as const;
 const EXAMINER_KEY = "dfirswarm.examiner";
@@ -72,6 +86,7 @@ export function LedgerPanel({ view }: { view: SwarmView }) {
   }, [view.names]);
   const [kind, setKind] = useState<Kind>("all");
   const [query, setQuery] = useState("");
+  const [question, setQuestion] = useState("");
   const version = useSwarmVersion(id, ["ledger", "events"]);
   const [reviewNonce, setReviewNonce] = useState(0);
   const reviewLoader = useCallback(() => api.review(id), [id]);
@@ -132,10 +147,39 @@ export function LedgerPanel({ view }: { view: SwarmView }) {
   );
 
   const grounding = coverage.data?.grounding ?? {};
+  const bySeq = useMemo(() => new Map(entries.map((e) => [e.seq, e])), [entries]);
   const marks = useCallback(
     (c: ClaimRecord): ReactNode => {
       const out: ReactNode[] = [];
-      if (typeof c.supersedes === "number") out.push(<Chip key="corrects" tone="slate">corrects #{c.supersedes}</Chip>);
+      const e = bySeq.get(c.seq);
+      if (typeof c.supersedes === "number") out.push(<Chip key="corrects" tone="slate">corrects #{c.supersedes}{e?.because ? `: ${e.because}` : ""}</Chip>);
+      // The typed fields of version 3, each a chip a reader can scan.
+      if (e?.status) out.push(<Chip key="status" tone={STATUS_TONE[e.status]}>{e.status}</Chip>);
+      if (e?.reason) out.push(<Chip key="reason" tone="brick">{e.reason.replace("_", " ")}</Chip>);
+      if (e?.sensitive) out.push(<span key="sens" title="It, or what it cites, holds a credential, a key or personal data: a package made with --redact replaces it."><Chip tone="brick">sensitive</Chip></span>);
+      for (const a of e?.answers ?? [])
+        out.push(
+          <button key={`q${a}`} type="button" className="contents" onClick={() => setQuestion(sectionId(a))} title="Show the entries for this section">
+            <Chip tone="kelp">answers {a}</Chip>
+          </button>,
+        );
+      for (const r of e?.rel ?? [])
+        out.push(
+          <a key={`rel${r.kind}${r.to}`} href={`#ledger-${r.to}`} className="no-underline">
+            <Chip tone={r.kind === "contradicts" ? "saffron" : "slate"}>{REL_WORD[r.kind]} #{r.to}</Chip>
+          </a>,
+        );
+      if (e?.basis) out.push(<Chip key="basis" tone="neutral">{e.basis}</Chip>);
+      if (e?.completion && e.completion !== "complete") out.push(<Chip key="completion" tone="saffron">search {e.completion}</Chip>);
+      if (e?.clock) out.push(<span key="clock" className="text-[11.5px] text-ink-2 [overflow-wrap:anywhere]">clock: {e.clock}</span>);
+      if (e?.precision) out.push(<span key="precision" className="text-[11.5px] text-ink-3">precision: {e.precision === "date" ? "a date only" : e.precision}</span>);
+      if (e?.attribution)
+        out.push(
+          <span key="attr" className="text-[11.5px] text-ink-2 [overflow-wrap:anywhere]">
+            attributed to {e.attribution.subject} ({e.attribution.subject_type}){e.attribution.basis_refs?.length ? `, on ${e.attribution.basis_refs.join(", ")}` : ""}
+          </span>,
+        );
+      if (e?.locators?.length) out.push(<span key="loc" className="font-mono text-[11px] text-ink-3 [overflow-wrap:anywhere]">at {e.locators.map((l) => `${l.ref} ${l.at}`).join("; ")}</span>);
       const by = supersededBy.get(c.seq);
       if (by !== undefined)
         out.push(
@@ -190,17 +234,30 @@ export function LedgerPanel({ view }: { view: SwarmView }) {
       }
       return <span id={`ledger-${c.seq}`} className="contents">{out}</span>;
     },
-    [supersededBy, grounding, review.data, pending, noteFor, note, send],
+    [supersededBy, grounding, review.data, pending, noteFor, note, send, bySeq],
   );
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return entries.filter((e) => (kind === "all" || e.kind === kind) && (!q || [e.value, e.source, e.evidence, ...e.authors].some((t) => (t ?? "").toLowerCase().includes(q))));
-  }, [entries, kind, query]);
+    return entries.filter(
+      (e) =>
+        (kind === "all" || e.kind === kind) &&
+        (!question || (e.answers ?? []).some((a) => sectionId(a) === question)) &&
+        (!q || [e.value, e.source, e.evidence, e.clock, e.because, ...(e.answers ?? []), ...e.authors].some((t) => (t ?? "").toLowerCase().includes(q))),
+    );
+  }, [entries, kind, query, question]);
+  // The goal sections the entries name, and the contradictions that stand.
+  const questions = useMemo(() => [...new Set(entries.flatMap((e) => (e.answers ?? []).map(sectionId)))].sort((a, b) => Number(a) - Number(b) || a.localeCompare(b)), [entries]);
+  const contradictions = useMemo(
+    () => entries.flatMap((e) => (supersededBy.has(e.seq) ? [] : (e.rel ?? []).filter((r) => r.kind === "contradicts" && !supersededBy.has(r.to)).map((r) => ({ from: e.seq, to: r.to })))),
+    [entries, supersededBy],
+  );
   const events = filtered.filter((e) => e.kind === "event");
   const iocs = filtered.filter((e) => e.kind === "ioc");
   const findings = filtered.filter((e) => e.kind === "finding");
   const absences = filtered.filter((e) => e.kind === "absence");
+  const hypotheses = filtered.filter((e) => e.kind === "hypothesis");
+  const limitations = filtered.filter((e) => e.kind === "limitation");
   const timelinePage = usePager(events, `${kind}|${query}`, 50);
   const iocPage = usePager(iocs, `${kind}|${query}`, 50);
   const findingPage = usePager(findings, `${kind}|${query}`, 25);
@@ -209,6 +266,8 @@ export function LedgerPanel({ view }: { view: SwarmView }) {
     ioc: entries.filter((e) => e.kind === "ioc").length,
     finding: entries.filter((e) => e.kind === "finding").length,
     absence: entries.filter((e) => e.kind === "absence").length,
+    hypothesis: entries.filter((e) => e.kind === "hypothesis").length,
+    limitation: entries.filter((e) => e.kind === "limitation").length,
   };
   const uncited = entries.filter((e) => !isCited(e)).length;
   // What a signature is over: the last chained entry's hash (scripts/review.ts ledgerHead).
@@ -235,6 +294,18 @@ export function LedgerPanel({ view }: { view: SwarmView }) {
   return (
     <div className="space-y-4">
       <ReportCounts events={counts.event} indicators={counts.ioc} findings={counts.finding} uncited={uncited} />
+      {contradictions.length ? (
+        <InlineNote tone="warn">
+          {contradictions.length} standing contradiction{contradictions.length === 1 ? "" : "s"}:{" "}
+          {contradictions.map((c, i) => (
+            <span key={`${c.from}-${c.to}`}>
+              {i ? "; " : ""}
+              <a href={`#ledger-${c.from}`}>#{c.from}</a> contradicts <a href={`#ledger-${c.to}`}>#{c.to}</a>
+            </span>
+          ))}
+          . Both entries stand; neither was corrected.
+        </InlineNote>
+      ) : null}
 
       <section className="card space-y-2 p-3" aria-label="Examiner review">
         <div className="flex flex-wrap items-center gap-2">
@@ -295,6 +366,21 @@ export function LedgerPanel({ view }: { view: SwarmView }) {
             </button>
           ))}
         </div>
+        {questions.length ? (
+          <select
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            aria-label="Filter by the goal section an entry answers"
+            className="h-[26px] rounded-[6px] border border-line bg-paper px-2 text-[12.5px] text-ink"
+          >
+            <option value="">every section</option>
+            {questions.map((q) => (
+              <option key={q} value={q}>
+                answers {q}
+              </option>
+            ))}
+          </select>
+        ) : null}
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -394,10 +480,64 @@ export function LedgerPanel({ view }: { view: SwarmView }) {
         </section>
       ) : null}
 
+      {(kind === "all" && hypotheses.length) || kind === "hypothesis" ? (
+        <section className="space-y-1.5" aria-label="Hypotheses">
+          <div className="flex items-baseline justify-between">
+            <h3 className="label-caps">Hypotheses</h3>
+            <span className="text-[12px] text-ink-3">propositions under test, with the status last given; a supported one is an assessment, not a finding</span>
+          </div>
+          {hypotheses.length ? (
+            <ol className="m-0 list-none space-y-2 p-0">
+              {hypotheses.map((e) => (
+                <li key={e.seq} className="card space-y-1 p-2.5 text-[12.5px]">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-mono text-[11px] text-ink-3">#{e.seq}</span>
+                    <span className="text-ink">{e.value}</span>
+                  </div>
+                  <p className="m-0 text-ink-2 [overflow-wrap:anywhere]">
+                    source: <span className="font-mono">{e.source || "not said"}</span> · evidence: <span className="font-mono">{e.evidence || "not said"}</span>
+                  </p>
+                  <div className="flex flex-wrap gap-1">{marks(e)}</div>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <NotRecorded what="No hypothesis recorded" why="Agents record a proposition they are still testing with kind `hypothesis`." />
+          )}
+        </section>
+      ) : null}
+
+      {(kind === "all" && limitations.length) || kind === "limitation" ? (
+        <section className="space-y-1.5" aria-label="Limitations">
+          <div className="flex items-baseline justify-between">
+            <h3 className="label-caps">Limitations</h3>
+            <span className="text-[12px] text-ink-3">what the examination could not establish, and why: weigh every conclusion against these</span>
+          </div>
+          {limitations.length ? (
+            <ol className="m-0 list-none space-y-2 p-0">
+              {limitations.map((e) => (
+                <li key={e.seq} className="card space-y-1 border-l-2 border-brick p-2.5 text-[12.5px]">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-mono text-[11px] text-ink-3">#{e.seq}</span>
+                    <span className="text-ink">{e.value}</span>
+                  </div>
+                  <p className="m-0 text-ink-2 [overflow-wrap:anywhere]">
+                    scope: <span className="font-mono">{e.source || "not said"}</span> · what was tried: <span className="font-mono">{e.evidence || "not said"}</span>
+                  </p>
+                  <div className="flex flex-wrap gap-1">{marks(e)}</div>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <NotRecorded what="No limitation recorded" why="Agents record what they could not examine, or only partly, with kind `limitation` and its reason." />
+          )}
+        </section>
+      ) : null}
+
       <CoverageSection coverage={coverage.data} error={coverage.error} />
 
       <InlineNote>
-        Rows come from <code>ledger/entries.jsonl</code>, one line per <code>record</code> call; an entry equal in kind, value and time to an earlier one is merged and both authors are named. A correction is a new entry with <code>supersedes</code>: the older one stays and is marked. The same content is rendered into <code>ledger/ledger.md</code> for the report to cite.
+        Rows come from <code>ledger/entries.jsonl</code>, one line per <code>record</code> call, never rewritten. A second agent recording an entry word for word is an attestation, appended beside it in <code>ledger/attestations.jsonl</code>, and both authors are named; the same sentence with other provenance is its own entry. A correction is a new entry with <code>supersedes</code> (and its reason): the older one stays and is marked. The same content is rendered into <code>ledger/ledger.md</code> for the report to cite.
       </InlineNote>
     </div>
   );
