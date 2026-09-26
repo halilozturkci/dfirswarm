@@ -38,6 +38,12 @@ All notable changes to this project. The format follows
   in its own VM: a job copies it into the store as it is now (each file
   hashed before and after the copy up to 2 GiB; links left out, named) and
   says it was copied live; one that changed while it was copied fails.
+- `--derived-catalog` (off by default) offers what jobs make to the derived
+  recipes, by each recipe's own `min_bytes` and `suffixes` (the harness's
+  512-byte floor is gone), at most 20 detect passes a run
+  (`derived_bounded`, and the agent is told).
+- Four workers by default on a host with 64 GiB or more; `create_ms` in
+  each job's record.
 
 ### Added: tool jobs in worker VMs, a sealed store, a catalogue that grows
 

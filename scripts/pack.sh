@@ -180,6 +180,8 @@ if os.path.isdir(rdir):
             errors.append("recipes/%s: outputs names what the recipe writes" % name)
         if "min_bytes" in rm and (not isinstance(rm.get("min_bytes"), int) or rm.get("min_bytes") < 0):
             errors.append("recipes/%s: min_bytes is a whole number of bytes (the smallest object it is asked about)" % name)
+        if "suffixes" in rm and (not isinstance(rm.get("suffixes"), list) or not all(isinstance(x, str) and x for x in rm.get("suffixes"))):
+            errors.append("recipes/%s: suffixes is a list of name endings (\".tar\", \".zip\") a derived file must have to be offered" % name)
         if "order" in rm and not isinstance(rm.get("order"), int):
             errors.append("recipes/%s: order is a whole number (recipes run in order, then by name)" % name)
         if "object" in rm and not str(rm.get("object", "")).strip():

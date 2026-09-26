@@ -376,6 +376,28 @@ test("a tar a job produced is offered to the derived recipes and catalogued, and
   await svc.stop("test over");
 });
 
+test("derived cataloguing offers only what a recipe says is worth it, and stops at its cap, saying so", async () => {
+  const S = sandbox();
+  const { svc, posts } = service(S, { derived: true, derivedPasses: 1 });
+  await svc.start();
+  const tiny = await svc.submit("a1", { kind: "command", command: `printf 'hi' > "$OUT/tiny.bin"`, inputs: [] });
+  assert.ok(tiny.ok);
+  await until(svc, tiny.job.id);
+  await new Promise((res) => setTimeout(res, 300));
+  assert.equal(svc.jobs.size, 1, "a 2-byte file is below every recipe's min_bytes: no pass");
+  const tar = `python3 -c "import tarfile,io\nwith tarfile.open('$OUT/inner.tar','w') as t:\n  i=tarfile.TarInfo('a.txt'); d=b'x'*2000; i.size=len(d); t.addfile(i,io.BytesIO(d))"`;
+  const first = await svc.submit("a1", { kind: "command", command: tar, inputs: [] });
+  await until(svc, first.ok ? first.job.id : "");
+  await eventually(() => [...svc.jobs.values()].some((j) => j.spec.kind === "detect"), "the first tar gets its pass");
+  const second = await svc.submit("a1", { kind: "command", command: tar, inputs: [] });
+  await until(svc, second.ok ? second.job.id : "");
+  await eventually(() => posts.some(([to, b]) => to === "a1" && b.startsWith("Derived cataloguing has run its 1 detect passes")), `the agent is told at the cap: ${JSON.stringify(posts)}`);
+  assert.equal([...svc.jobs.values()].filter((j) => j.spec.kind === "detect").length, 1, "no second pass");
+  const lines = verifyJournalText(readFileSync(storePaths(S).journal, "utf8")).lines;
+  assert.equal(lines.filter((l) => l.type === "derived_bounded").length, 1);
+  await svc.stop("over");
+});
+
 test("with derived cataloguing off (the default) a committed file is not offered to the recipes", async () => {
   const S = sandbox();
   const { svc } = service(S);

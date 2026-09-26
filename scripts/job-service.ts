@@ -141,7 +141,11 @@ export type JobRecord = {
   cancel_requested?: string;
 };
 
-export type RecipeInfo = { id: string; dir: string; runtime: string; entry: string; sha256: string; seconds: number; auto: string[]; experimental?: boolean };
+/** minBytes and suffixes: what the recipe says it is worth being offered (recipe.json min_bytes, suffixes), so the harness picks no file by its own measure. */
+export type RecipeInfo = { id: string; dir: string; runtime: string; entry: string; sha256: string; seconds: number; auto: string[]; experimental?: boolean; minBytes?: number; suffixes?: string[] };
+
+/** Derived detect passes a run may start before derived cataloguing stops and says so (each is a worker boot). */
+export const DERIVED_PASSES_MAX = 20;
 
 export type JobServiceOptions = {
   sandbox: string;
@@ -158,8 +162,9 @@ export type JobServiceOptions = {
   perRequesterRunning?: number;
   perRequesterQueued?: number;
   minFreeMb?: number;
-  /** Offer every committed file to the recipes whose trigger is "derived" (off until the first CTF round says it earns its cost). */
+  /** Offer committed files to the recipes whose trigger is "derived" (opt-in: --derived-catalog), at most `derivedPasses` detect passes a run. */
   derived?: boolean;
+  derivedPasses?: number;
   runWorker: (spec: WorkerSpec) => Promise<{ code: number | null; digest?: string; error?: string; fenced: boolean; fence_error?: string; boot_retry?: string; create_ms?: number }>;
   destroyWorker: (name: string) => Promise<{ ok: boolean; error?: string }>;
   notify: (to: string, body: string) => Promise<void>;
@@ -210,6 +215,7 @@ export class JobService {
   /** Jobs in a row that ran in no worker, and whether the agents were told. */
   private unrun = 0;
   private degraded = false;
+  private derivedBounded = false;
   private timer: ReturnType<typeof setInterval> | undefined;
   /**
    * Every change to the store and the catalogue, one at a time: a
@@ -372,11 +378,11 @@ export class JobService {
         if (pid !== m[1]) continue;
         const dir = join(pack, "recipes", m[2]);
         try {
-          const r = JSON.parse(await readFile(join(dir, "recipe.json"), "utf8")) as { runtime?: string; entry?: string; sha256?: string; limits?: { seconds?: number }; auto?: string[] };
+          const r = JSON.parse(await readFile(join(dir, "recipe.json"), "utf8")) as { runtime?: string; entry?: string; sha256?: string; limits?: { seconds?: number }; auto?: string[]; min_bytes?: number; suffixes?: string[] };
           const entry = join(dir, String(r.entry ?? ""));
           const sha = sha256Hex(await readFile(entry));
           if (r.sha256 && r.sha256 !== sha) return null;
-          return { id, dir, runtime: r.runtime === "python3" ? "python3" : "bash", entry, sha256: sha, seconds: Number(r.limits?.seconds ?? 900), auto: r.auto ?? [] };
+          return { id, dir, runtime: r.runtime === "python3" ? "python3" : "bash", entry, sha256: sha, seconds: Number(r.limits?.seconds ?? 900), auto: r.auto ?? [], minBytes: Number(r.min_bytes ?? 0) || 0, ...(Array.isArray(r.suffixes) ? { suffixes: r.suffixes.map((x) => String(x).toLowerCase()) } : {}) };
         } catch {
           return null;
         }
@@ -918,7 +924,23 @@ export class JobService {
     if (!derived.length) return;
     const m = await readManifest(join(storePaths(this.S).jobs, job.id, "manifest.json"));
     if (!m || !m.manifest.files.length) return;
-    const files = m.manifest.files.filter((f) => f.bytes >= 512);
+    // Offered only what some recipe says it is worth being offered: its own
+    // smallest size, and its name endings when it names any.
+    const wanted = (path: string, bytes: number) => derived.some((r) => bytes >= (r.minBytes ?? 0) && (!r.suffixes?.length || r.suffixes.some((x) => path.toLowerCase().endsWith(x))));
+    const files = m.manifest.files.filter((f) => wanted(f.path, f.bytes));
+    if (!files.length) return;
+    // Each pass is a worker boot: a run gets so many, then is told.
+    const passes = [...this.jobs.values()].filter((j) => j.spec.kind === "detect" && j.spec.trigger === "derived").length;
+    const cap = this.o.derivedPasses ?? DERIVED_PASSES_MAX;
+    if (passes >= cap) {
+      if (!this.derivedBounded) {
+        this.derivedBounded = true;
+        await this.journal.append({ type: "derived_bounded", job: job.id, passes, cap });
+        const to = this.originOf(job.id);
+        if (to) await this.o.notify(to, `Derived cataloguing has run its ${cap} detect passes for this run: what job ${job.id} and later jobs make is no longer offered to the recipes on its own. catalog_request an object to have it catalogued.`).catch(() => undefined);
+      }
+      return;
+    }
     const targets = files.slice(0, DETECT_FILES_MAX).map((f) => ({
       paths: [join(this.S, "store", "jobs", job.id, "out", Buffer.from(f.path_b64, "base64").toString("utf8"))],
       name: `job:${job.id}/${f.path}`,
