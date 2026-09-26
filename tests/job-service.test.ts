@@ -380,15 +380,17 @@ test("derived cataloguing offers only what a recipe says is worth it, and stops 
   const S = sandbox();
   const { svc, posts } = service(S, { derived: true, derivedPasses: 1 });
   await svc.start();
-  const tiny = await svc.submit("a1", { kind: "command", command: `printf 'hi' > "$OUT/tiny.bin"`, inputs: [] });
+  const tiny = await svc.submit("a1", { kind: "command", command: `printf 'hi' > "$OUT/tiny.bin"; head -c 5000 /dev/zero | tr '\\0' 'a' > "$OUT/notes.txt"`, inputs: [] });
   assert.ok(tiny.ok);
   await until(svc, tiny.job.id);
   await new Promise((res) => setTimeout(res, 300));
-  assert.equal(svc.jobs.size, 1, "a 2-byte file is below every recipe's min_bytes: no pass");
+  assert.equal(svc.jobs.size, 1, "a 2-byte file is below every recipe's min_bytes, and 5 KB of text has no name ending or magic a recipe names: no pass");
   const tar = `python3 -c "import tarfile,io\nwith tarfile.open('$OUT/inner.tar','w') as t:\n  i=tarfile.TarInfo('a.txt'); d=b'x'*2000; i.size=len(d); t.addfile(i,io.BytesIO(d))"`;
-  const first = await svc.submit("a1", { kind: "command", command: tar, inputs: [] });
+  // A zip with no name ending: offered by the magic the archive recipe names.
+  const first = await svc.submit("a1", { kind: "command", command: `python3 -c "import zipfile\nwith zipfile.ZipFile('$OUT/blob','w') as z: z.writestr('k.txt','key')"`, inputs: [] });
   await until(svc, first.ok ? first.job.id : "");
-  await eventually(() => [...svc.jobs.values()].some((j) => j.spec.kind === "detect"), "the first tar gets its pass");
+  await eventually(() => [...svc.jobs.values()].some((j) => j.spec.kind === "detect"), "the zip gets its pass");
+  await eventually(() => [...svc.jobs.values()].some((j) => j.spec.kind === "recipe" && j.spec.target?.ref === `job:${first.ok ? first.job.id : ""}/blob`), "and the archive recipe catalogues it");
   const second = await svc.submit("a1", { kind: "command", command: tar, inputs: [] });
   await until(svc, second.ok ? second.job.id : "");
   await eventually(() => posts.some(([to, b]) => to === "a1" && b.startsWith("Derived cataloguing has run its 1 detect passes")), `the agent is told at the cap: ${JSON.stringify(posts)}`);

@@ -5,6 +5,93 @@
   "object": "disk image",
   "order": 10,
   "min_bytes": 65536,
+  "suffixes": [
+    ".e01",
+    ".ex01",
+    ".dd",
+    ".img",
+    ".raw",
+    ".vhd",
+    ".vhdx",
+    ".vmdk",
+    ".qcow2",
+    ".iso",
+    ".bin"
+  ],
+  "magic": [
+    {
+      "offset": 0,
+      "hex": "455646090d0aff00"
+    },
+    {
+      "offset": 0,
+      "hex": "455646320d0a8100"
+    },
+    {
+      "offset": 510,
+      "hex": "55aa"
+    },
+    {
+      "offset": 512,
+      "hex": "4546492050415254"
+    },
+    {
+      "offset": 3,
+      "hex": "4e54465320202020"
+    },
+    {
+      "offset": 3,
+      "hex": "4558464154202020"
+    },
+    {
+      "offset": 54,
+      "hex": "46415431"
+    },
+    {
+      "offset": 82,
+      "hex": "4641543332"
+    },
+    {
+      "offset": 1080,
+      "hex": "53ef"
+    },
+    {
+      "offset": 1024,
+      "hex": "482b"
+    },
+    {
+      "offset": 1024,
+      "hex": "4858"
+    },
+    {
+      "offset": 32,
+      "hex": "4e585342"
+    },
+    {
+      "offset": 0,
+      "hex": "7668647866696c65"
+    },
+    {
+      "offset": 0,
+      "hex": "636f6e6563746978"
+    },
+    {
+      "offset": 0,
+      "hex": "4b444d56"
+    },
+    {
+      "offset": 0,
+      "hex": "23204469736b2044657363726970746f7246696c65"
+    },
+    {
+      "offset": 0,
+      "hex": "514649fb"
+    },
+    {
+      "offset": 32769,
+      "hex": "4344303031"
+    }
+  ],
   "runtime": "bash",
   "entry": "run.sh",
   "auto": [

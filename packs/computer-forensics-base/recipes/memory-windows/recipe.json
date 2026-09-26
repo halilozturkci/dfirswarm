@@ -5,6 +5,48 @@
   "object": "memory image",
   "order": 20,
   "min_bytes": 65536,
+  "suffixes": [
+    ".mem",
+    ".dmp",
+    ".vmem",
+    ".raw",
+    ".lime",
+    ".crash",
+    ".dump",
+    ".core",
+    "hiberfil.sys",
+    "pagefile.sys"
+  ],
+  "magic": [
+    {
+      "offset": 0,
+      "hex": "5041474544553634"
+    },
+    {
+      "offset": 0,
+      "hex": "5041474544554d50"
+    },
+    {
+      "offset": 0,
+      "hex": "48494252"
+    },
+    {
+      "offset": 0,
+      "hex": "68696272"
+    },
+    {
+      "offset": 0,
+      "hex": "57414b45"
+    },
+    {
+      "offset": 0,
+      "hex": "77616b65"
+    },
+    {
+      "offset": 0,
+      "hex": "454d694c"
+    }
+  ],
   "runtime": "bash",
   "entry": "run.sh",
   "auto": [

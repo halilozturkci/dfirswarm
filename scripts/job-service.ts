@@ -141,8 +141,13 @@ export type JobRecord = {
   cancel_requested?: string;
 };
 
-/** minBytes and suffixes: what the recipe says it is worth being offered (recipe.json min_bytes, suffixes), so the harness picks no file by its own measure. */
-export type RecipeInfo = { id: string; dir: string; runtime: string; entry: string; sha256: string; seconds: number; auto: string[]; experimental?: boolean; minBytes?: number; suffixes?: string[] };
+/**
+ * minBytes, suffixes and magic: what the recipe says it is worth being
+ * offered (recipe.json min_bytes, suffixes, and magic, bytes at an offset),
+ * so the harness picks no file by its own measure and knows no format: it
+ * compares what the recipe wrote.
+ */
+export type RecipeInfo = { id: string; dir: string; runtime: string; entry: string; sha256: string; seconds: number; auto: string[]; experimental?: boolean; minBytes?: number; suffixes?: string[]; magic?: Array<{ offset: number; bytes: Buffer }> };
 
 /** Derived detect passes a run may start before derived cataloguing stops and says so (each is a worker boot). */
 export const DERIVED_PASSES_MAX = 20;
@@ -378,11 +383,11 @@ export class JobService {
         if (pid !== m[1]) continue;
         const dir = join(pack, "recipes", m[2]);
         try {
-          const r = JSON.parse(await readFile(join(dir, "recipe.json"), "utf8")) as { runtime?: string; entry?: string; sha256?: string; limits?: { seconds?: number }; auto?: string[]; min_bytes?: number; suffixes?: string[] };
+          const r = JSON.parse(await readFile(join(dir, "recipe.json"), "utf8")) as { runtime?: string; entry?: string; sha256?: string; limits?: { seconds?: number }; auto?: string[]; min_bytes?: number; suffixes?: string[]; magic?: Array<{ offset?: number; hex?: string }> };
           const entry = join(dir, String(r.entry ?? ""));
           const sha = sha256Hex(await readFile(entry));
           if (r.sha256 && r.sha256 !== sha) return null;
-          return { id, dir, runtime: r.runtime === "python3" ? "python3" : "bash", entry, sha256: sha, seconds: Number(r.limits?.seconds ?? 900), auto: r.auto ?? [], minBytes: Number(r.min_bytes ?? 0) || 0, ...(Array.isArray(r.suffixes) ? { suffixes: r.suffixes.map((x) => String(x).toLowerCase()) } : {}) };
+          return { id, dir, runtime: r.runtime === "python3" ? "python3" : "bash", entry, sha256: sha, seconds: Number(r.limits?.seconds ?? 900), auto: r.auto ?? [], minBytes: Number(r.min_bytes ?? 0) || 0, ...(Array.isArray(r.suffixes) ? { suffixes: r.suffixes.map((x) => String(x).toLowerCase()) } : {}), ...(Array.isArray(r.magic) ? { magic: r.magic.filter((m) => Number.isInteger(m.offset) && /^([0-9a-f]{2})+$/i.test(m.hex ?? "")).map((m) => ({ offset: Number(m.offset), bytes: Buffer.from(String(m.hex), "hex") })) } : {}) };
         } catch {
           return null;
         }
@@ -925,9 +930,47 @@ export class JobService {
     const m = await readManifest(join(storePaths(this.S).jobs, job.id, "manifest.json"));
     if (!m || !m.manifest.files.length) return;
     // Offered only what some recipe says it is worth being offered: its own
-    // smallest size, and its name endings when it names any.
-    const wanted = (path: string, bytes: number) => derived.some((r) => bytes >= (r.minBytes ?? 0) && (!r.suffixes?.length || r.suffixes.some((x) => path.toLowerCase().endsWith(x))));
-    const files = m.manifest.files.filter((f) => wanted(f.path, f.bytes));
+    // smallest size and, when it names any, a name ending or bytes at an
+    // offset it names. On the BelkaCTF #6 trial a size floor alone (22
+    // bytes) spent the run's 20 passes in three minutes, 18 of them on
+    // files no recipe took.
+    const reach = Math.min(Math.max(0, ...derived.flatMap((r) => (r.magic ?? []).map((g) => g.offset + g.bytes.length))), 1 << 20);
+    const out = join(storePaths(this.S).jobs, job.id, "out");
+    const head = async (rel: string): Promise<Buffer> => {
+      if (!reach) return Buffer.alloc(0);
+      const fh = await open(join(out, rel), "r").catch(() => null);
+      if (!fh) return Buffer.alloc(0);
+      try {
+        const buf = Buffer.alloc(reach);
+        const { bytesRead } = await fh.read(buf, 0, reach, 0);
+        return buf.subarray(0, bytesRead);
+      } finally {
+        await fh.close();
+      }
+    };
+    const files: typeof m.manifest.files = [];
+    for (const f of m.manifest.files) {
+      const name = Buffer.from(f.path_b64, "base64").toString("utf8");
+      let first: Buffer | null = null;
+      for (const r of derived) {
+        if (f.bytes < (r.minBytes ?? 0)) continue;
+        if (!r.suffixes?.length && !r.magic?.length) {
+          files.push(f);
+          break;
+        }
+        if (r.suffixes?.some((x) => f.path.toLowerCase().endsWith(x))) {
+          files.push(f);
+          break;
+        }
+        if (r.magic?.length) {
+          first ??= await head(name);
+          if (r.magic.some((g) => first!.length >= g.offset + g.bytes.length && first!.subarray(g.offset, g.offset + g.bytes.length).equals(g.bytes))) {
+            files.push(f);
+            break;
+          }
+        }
+      }
+    }
     if (!files.length) return;
     // Each pass is a worker boot: a run gets so many, then is told.
     const passes = [...this.jobs.values()].filter((j) => j.spec.kind === "detect" && j.spec.trigger === "derived").length;

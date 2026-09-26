@@ -5,6 +5,52 @@
   "object": "archive",
   "order": 30,
   "min_bytes": 22,
+  "suffixes": [
+    ".tar",
+    ".tgz",
+    ".tar.gz",
+    ".tbz2",
+    ".tar.bz2",
+    ".txz",
+    ".tar.xz",
+    ".tar.zst",
+    ".zip",
+    ".7z"
+  ],
+  "magic": [
+    {
+      "offset": 257,
+      "hex": "7573746172"
+    },
+    {
+      "offset": 0,
+      "hex": "504b0304"
+    },
+    {
+      "offset": 0,
+      "hex": "504b0506"
+    },
+    {
+      "offset": 0,
+      "hex": "377abcaf271c"
+    },
+    {
+      "offset": 0,
+      "hex": "1f8b"
+    },
+    {
+      "offset": 0,
+      "hex": "425a68"
+    },
+    {
+      "offset": 0,
+      "hex": "fd377a585a00"
+    },
+    {
+      "offset": 0,
+      "hex": "28b52ffd"
+    }
+  ],
   "runtime": "python3",
   "entry": "run.py",
   "auto": [

@@ -39,9 +39,13 @@ All notable changes to this project. The format follows
   hashed before and after the copy up to 2 GiB; links left out, named) and
   says it was copied live; one that changed while it was copied fails.
 - `--derived-catalog` (off by default) offers what jobs make to the derived
-  recipes, by each recipe's own `min_bytes` and `suffixes` (the harness's
-  512-byte floor is gone), at most 20 detect passes a run
-  (`derived_bounded`, and the agent is told).
+  recipes, by each recipe's own `min_bytes` and, when it names them,
+  `suffixes` or `magic` (bytes at an offset) — the harness's 512-byte floor
+  is gone and it knows no format — at most 20 detect passes a run
+  (`derived_bounded`, and the agent is told). On the BelkaCTF #6 trial a
+  size floor alone spent the 20 passes in three minutes, 2 of them useful;
+  computer-forensics-base 1.2.17 names the suffixes and magic of its three
+  recipes.
 - Four workers by default on a host with 64 GiB or more; `create_ms` in
   each job's record.
 - The console has a Jobs tab (with Files and the Ledger): the run's jobs
@@ -107,7 +111,7 @@ All notable changes to this project. The format follows
   and revision, and the recipes that made them.
 - **Catalogue recipes are the packs'** (`recipes/<name>/` with a
   recipe.json and an entry answering `detect` and `run`): computer-forensics-
-  base 1.2.16 ships disk-volumes (The Sleuth Kit), memory-windows
+  base 1.2.17 ships disk-volumes (The Sleuth Kit), memory-windows
   (Volatility) and archive-members (a tar, zip or 7z member list without
   extracting; names kept as bytes, duplicates as rows, zip DOS times marked
   zone unknown, a truncated tar reported partial, a name that is not UTF-8

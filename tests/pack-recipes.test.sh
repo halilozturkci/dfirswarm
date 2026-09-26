@@ -78,6 +78,8 @@ refuse "a missing covers" 'del r["covers"]' "missing covers"
 refuse "a runtime the harness does not run" 'r["runtime"] = "perl"' "runtime must be python3 or bash"
 refuse "no time limit" 'r["limits"] = {}' "limits.seconds is a whole number"
 refuse "a recipe whose id is not its directory" 'r["id"] = "other"' "declares the id"
+refuse "a magic that is not hex bytes" 'r["magic"] = [{"offset": 0, "hex": "zz"}]' "magic is a list of {offset, hex}"
+refuse "suffixes that are not a list of names" 'r["suffixes"] = ".tar"' "suffixes is a list of name endings"
 pass "a malformed recipe keeps the pack from sealing, with the reason"
 
 # The shipped recipes answer the protocol: detect exits 0 or 1 with a why,

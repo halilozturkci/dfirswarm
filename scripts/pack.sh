@@ -182,6 +182,9 @@ if os.path.isdir(rdir):
             errors.append("recipes/%s: min_bytes is a whole number of bytes (the smallest object it is asked about)" % name)
         if "suffixes" in rm and (not isinstance(rm.get("suffixes"), list) or not all(isinstance(x, str) and x for x in rm.get("suffixes"))):
             errors.append("recipes/%s: suffixes is a list of name endings (\".tar\", \".zip\") a derived file must have to be offered" % name)
+        mg = rm.get("magic")
+        if "magic" in rm and (not isinstance(mg, list) or not all(isinstance(x, dict) and isinstance(x.get("offset"), int) and 0 <= x.get("offset") <= 1048576 and isinstance(x.get("hex"), str) and re.fullmatch(r"(?:[0-9a-fA-F]{2}){1,64}", x.get("hex")) for x in mg)):
+            errors.append("recipes/%s: magic is a list of {offset, hex}: bytes (1 to 64, as hex) at an offset within the first MiB that a derived file must hold to be offered" % name)
         if "order" in rm and not isinstance(rm.get("order"), int):
             errors.append("recipes/%s: order is a whole number (recipes run in order, then by name)" % name)
         if "object" in rm and not str(rm.get("object", "")).strip():
