@@ -5973,16 +5973,29 @@ export function lacksProgram(run: { exit_code: number | null; stdout: string; st
 }
 
 /**
- * A tool's arguments for a run as a job: a path under the agent's own
- * work/<id>/ becomes {OUT}/…, since a worker writes only its $OUT (sealed
- * into store/jobs/<id>/out/) and sees work/ read-only.
+ * A tool's arguments for a run as a job: a path under one of the agent's own
+ * writable directories becomes a place under {OUT}, since a worker writes
+ * only its $OUT (sealed into store/jobs/<id>/out/) and sees the rest of the
+ * run read-only. work/<id>/x is {OUT}/x; work/extracted/<id>/x is
+ * {OUT}/extracted/x, work/quarantine/<id>/x {OUT}/quarantine/x and
+ * tool-output/<id>/x {OUT}/tool-output/x (the first reruns wrote an
+ * extraction to work/extracted/<id>/ and every one failed read-only).
  */
 export function ownPathsToOut(args: Record<string, unknown>, agentId: string | undefined): Record<string, unknown> {
   if (!agentId) return args;
-  const own = `work/${agentId}/`;
+  const homes: Array<[string, string]> = [
+    [`work/extracted/${agentId}/`, "{OUT}/extracted/"],
+    [`work/quarantine/${agentId}/`, "{OUT}/quarantine/"],
+    [`tool-output/${agentId}/`, "{OUT}/tool-output/"],
+    [`work/${agentId}/`, "{OUT}/"],
+  ];
+  const one = (v: string): string => {
+    const path = v.startsWith("./") ? v.slice(2) : v;
+    for (const [from, to] of homes) if (path.startsWith(from)) return to + path.slice(from.length);
+    return v;
+  };
   const map = (v: unknown): unknown =>
-    typeof v === "string"
-      ? v.startsWith(own) ? `{OUT}/${v.slice(own.length)}` : v.startsWith(`./${own}`) ? `{OUT}/${v.slice(own.length + 2)}` : v
+    typeof v === "string" ? one(v)
       : Array.isArray(v) ? v.map(map) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, map(x)])) : v;
   return map(args) as Record<string, unknown>;
 }

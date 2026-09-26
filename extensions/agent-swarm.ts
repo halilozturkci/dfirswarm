@@ -2601,9 +2601,19 @@ export default function (pi: ExtensionAPI) {
           const args = ownPathsToOut((params ?? {}) as Record<string, unknown>, agentId);
           const started = Date.now();
           const res = await submitAndWait(toolCtx.cwd, { tool: manifest.name, args }, 100, signal as AbortSignal | undefined);
+          // Where each output path the agent gave was written instead: the
+          // job's sealed output, which it reads and cites from there.
+          const moved: Record<string, string> = {};
+          const given = JSON.stringify(params ?? {});
+          const walk = (a: unknown, b: unknown) => {
+            if (typeof a === "string" && typeof b === "string" && a !== b && b.startsWith("{OUT}/") && res.job) moved[a] = `store/jobs/${res.job}/out/${b.slice("{OUT}/".length)}`;
+            else if (a && b && typeof a === "object" && typeof b === "object") for (const k of Object.keys(a as object)) walk((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]);
+          };
+          walk(JSON.parse(given), args);
           const answer = {
             ran_as_job: res.job,
             why: `${missing}: this VM is the base image, so ${manifest.name} ran in its pack's job image`,
+            ...(Object.keys(moved).length ? { written_to: moved } : {}),
             ...res.result,
           };
           await logEvent(toolCtx.cwd, agentId, manifest.name, redactSecrets((params ?? {}) as Record<string, unknown>, secrets), redactSecrets({ ok: res.ok, forged: true, ran_as_job: res.job, why: answer.why, state: res.result.state, status: res.result.status }, secrets), Date.now() - started);

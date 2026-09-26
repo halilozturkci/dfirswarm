@@ -28,6 +28,12 @@ test("a path under the agent's own work/ becomes the job's $OUT, and nothing els
   const args = { output: "work/s01/carved/a.bin", image: "inputs/disk.E01", nested: { out_dir: "./work/s01/jl" }, list: ["work/s01/x", "work/s02/y"], n: 3 };
   assert.deepEqual(ownPathsToOut(args, "s01"), { output: "{OUT}/carved/a.bin", image: "inputs/disk.E01", nested: { out_dir: "{OUT}/jl" }, list: ["{OUT}/x", "work/s02/y"], n: 3 });
   assert.deepEqual(ownPathsToOut(args, undefined), args, "no agent, no mapping");
+  // Every place the agent's VM may write, not work/<id>/ alone: an extraction
+  // under work/extracted/<id>/ failed read-only in the job on the first round.
+  assert.deepEqual(
+    ownPathsToOut({ output: "work/extracted/s01/vault.vhdx", q: "work/quarantine/s01/x.exe", t: "tool-output/s01/big.json", peer: "work/extracted/s02/y" }, "s01"),
+    { output: "{OUT}/extracted/vault.vhdx", q: "{OUT}/quarantine/x.exe", t: "{OUT}/tool-output/big.json", peer: "work/extracted/s02/y" },
+  );
 });
 
 test("inside a job a paging tool writes its whole result under $OUT and names it by where the store will hold it", async () => {
