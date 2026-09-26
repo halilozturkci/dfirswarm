@@ -432,13 +432,14 @@ Isolation
                       host's memory are refused, more than 60% warned about.
   --vm-disk MIB       Root disk per agent VM in MiB (default 8192): where a VM's own
                       installs and /tmp live.
-  --workers N         Tool-job worker VMs that may run at once (default 2, at most
+  --workers N         Tool-job worker VMs that may run at once (default 2, 4 on a host
+                      with 64 GiB or more; at most
                       16): each job (job_run, catalog_request, the kickoff's
                       recipes) runs in a VM of its own, made for it and removed
                       after, and its outputs are sealed into store/. Counted with
                       the seats against this host's capacity: unset, as many as
-                      fit up to 2 (none fitting: no job service, said); given,
-                      kept or refused.
+                      fit up to that default (none fitting: no job service,
+                      said); given, kept or refused.
   --worker-cpus N     vCPUs per worker VM (default 2).
   --worker-memory MIB Memory per worker VM in MiB (default 4096 on a host with 64 GiB
                       or more, 2048 otherwise).
@@ -3334,12 +3335,15 @@ cmd_start() {
     [[ "$vm_cpus" =~ ^[1-9][0-9]?$ ]] || { echo "BLOCKER: --vm-cpus must be 1..99 (got $vm_cpus)." >&2; exit 2; }
     [[ "$workers" =~ ^([1-9]|1[0-6])$ ]] || { echo "BLOCKER: --workers must be 1..16 (got $workers)." >&2; exit 2; }
     [[ "$worker_cpus" =~ ^([1-9]|1[0-6])$ ]] || { echo "BLOCKER: --worker-cpus must be 1..16 (got $worker_cpus)." >&2; exit 2; }
-    # Unset: 4096 MiB on a host with 64 GiB or more, 2048 otherwise.
+    # Unset: 4096 MiB on a host with 64 GiB or more, 2048 otherwise; and
+    # there, 4 workers rather than 2 (long jobs held 3 on Ali Hadi #10, and
+    # short ones queued behind them). The capacity check lowers either.
+    local host_mib_w
+    host_mib_w="$(node -e 'console.log(Math.floor(require("os").totalmem() / 1048576))' 2>/dev/null || echo 16384)"
     if [[ -z "$worker_memory" ]]; then
-      local host_mib_w
-      host_mib_w="$(node -e 'console.log(Math.floor(require("os").totalmem() / 1048576))' 2>/dev/null || echo 16384)"
       if [[ "$host_mib_w" -ge 65536 ]]; then worker_memory=4096; else worker_memory=2048; fi
     fi
+    [[ "$workers_given" -eq 0 && "$host_mib_w" -ge 65536 ]] && workers=4
     [[ "$worker_memory" =~ ^[0-9]+$ && "$worker_memory" -ge 512 ]] || { echo "BLOCKER: --worker-memory must be at least 512 (MiB; got $worker_memory)." >&2; exit 2; }
     # Unset: 2048 MiB, or 1024 on a host with less than 8 GiB (a small
     # server that also serves something else, ADR 0009).

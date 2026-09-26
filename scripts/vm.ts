@@ -2014,8 +2014,11 @@ export async function stopMaker(name: string): Promise<{ ok: boolean; error?: st
  * and the fence runs after it has exited. A VM that failed to boot (nothing
  * ran) is removed and made once more.
  */
-export async function runWorker(spec: WorkerSpec, hooks: { onCreated?: () => void } = {}): Promise<{ code: number | null; digest?: string; error?: string; fenced: boolean; fence_error?: string; boot_retry?: string }> {
-  let ran = await runWorkerInChild(spec, hooks);
+export async function runWorker(spec: WorkerSpec, hooks: { onCreated?: () => void } = {}): Promise<{ code: number | null; digest?: string; error?: string; fenced: boolean; fence_error?: string; boot_retry?: string; create_ms?: number }> {
+  const asked = Date.now();
+  let createMs: number | undefined;
+  const timed = { onCreated: () => { createMs = Date.now() - asked; hooks.onCreated?.(); } };
+  let ran = await runWorkerInChild(spec, timed);
   let bootRetry: string | undefined;
   // Made once more only when msb refused to start it before anything ran,
   // and the half-made VM is confirmed gone; both errors are kept.
@@ -2024,7 +2027,7 @@ export async function runWorker(spec: WorkerSpec, hooks: { onCreated?: () => voi
     const cleared = await destroyWorker(spec.name);
     if (cleared.ok) {
       bootRetry = first;
-      ran = await runWorkerInChild(spec, hooks);
+      ran = await runWorkerInChild(spec, timed);
     } else {
       ran = { ...ran, error: `${first}; not made again: ${cleared.error}` };
     }
@@ -2032,7 +2035,8 @@ export async function runWorker(spec: WorkerSpec, hooks: { onCreated?: () => voi
   // Removed whether it ran or not; fenced only when msb says it is gone.
   const gone = await destroyWorker(spec.name);
   const { phase: _phase, ...result } = ran;
-  return { ...result, ...(bootRetry ? { boot_retry: bootRetry } : {}), fenced: gone.ok, ...(gone.ok ? {} : { fence_error: gone.error }) };
+  // create_ms: from asking to the VM up, the wait at the make gate included.
+  return { ...result, ...(bootRetry ? { boot_retry: bootRetry } : {}), ...(createMs !== undefined ? { create_ms: createMs } : {}), fenced: gone.ok, ...(gone.ok ? {} : { fence_error: gone.error }) };
 }
 
 type WorkerRan = { code: number | null; digest?: string; error?: string; phase?: "create" | "exec" };
