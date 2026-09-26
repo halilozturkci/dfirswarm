@@ -224,7 +224,16 @@ reach. (If the sandbox has no registry entry — a hand-made directory, or a
 custom `--sandbox` without the matching `SWARM_RUNS_DIR` — it falls back to
 `SWARM.md` and says so on stderr.) Each check runs in the sandbox with stdin
 closed and a time limit, so one that reads a FIFO an agent left behind cannot
-hang the wait.
+hang the wait. `SWARM_HARNESS` names the harness in a check, for the checks it
+ships:
+
+- `node --experimental-strip-types --no-warnings "$SWARM_HARNESS/scripts/check-answers.ts" --report work/report.md --sections 1,2,3`
+  passes when each named section (`## 1.` …) cites (`#12`, `E-12`, `#10–#12`)
+  at least one standing finding whose refs all resolve, or one search that
+  found nothing (`kind=absence`), and names each section that does not, with
+  why. It asks for an answer resting on the run's objects, or a search that
+  says where it looked; it does not ask how sure the swarm was, which would
+  teach a swarm to say it is sure.
 
 A failing check is not fatal: the swarm may still be working, so it keeps
 polling until `--timeout`. Exit 1 on that timeout, or immediately when the

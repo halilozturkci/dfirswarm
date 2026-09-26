@@ -24,6 +24,12 @@ All notable changes to this project. The format follows
   that no longer resolve named), a path in the prose only, or nothing (an
   audit gap). The pilot's four runs had 2/24, 11/21, 6/27 and 3/21 findings
   citing nothing, by the prose count.
+- A goal can ask that its answers rest on the ledger:
+  `scripts/check-answers.ts --report work/report.md --sections 1,2,3`, called
+  from `## Checks` through `$SWARM_HARNESS` (which await-done.sh now sets),
+  passes when each section cites a standing finding whose refs resolve, or a
+  search that found nothing. It does not ask for confidence. Decided with
+  Fable and Codex in place of a hub gate: the goal owns done (ADR 0002).
 
 ### Added: tool jobs in worker VMs, a sealed store, a catalogue that grows
 
