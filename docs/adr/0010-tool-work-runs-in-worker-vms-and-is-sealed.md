@@ -129,13 +129,48 @@ what was deferred until the first CTF round is listed at the end.
 - APFS refuses a name that is not UTF-8: on a Mac, a worker cannot write
   one, so such a member name must be renamed on extraction (its bytes kept).
 
-## Deferred until after the first CTF round (plan v3)
+## What the pilot changed
 
-- Imports of a brain's local file (a race-safe design is needed first).
-- Derived cataloguing of every committed file (the code exists, off by
-  default).
-- Structured references in the ledger. Findings without them are accepted;
-  custody and the report are to count them.
-- The tool-mode A/B (pack tools only through jobs).
-- Exclusive sessions (a worker kept for iterative stateful work).
-- A dedicated catalog agent: gated on measured demand.
+Four runs on the Mac (BelkaCTF #6, Ali Hadi #9, #10 twice), reviewed after
+with Fable and Codex, changed these parts of the decision above:
+
+- Workers see what a brain sees (point 3), not the requester's own scratch
+  alone.
+- Workers are made by a child process and a fence needs msb's list to agree
+  (point 2).
+- A job with network reaches PyPI when the run allows installs, with pip's
+  list kept.
+- Workers get 4 GiB on a large host, and 4 of them by default there.
+- Stderr is shown whatever the exit.
+- A second request for the same recipe is journalled and its agent told.
+- Two whole-file reads left the hub's heap.
+
+After the review:
+
+- Findings name what they rest on (`refs` in the ledger's chained core,
+  resolved when written and again by custody).
+- A goal may check that its answers rest on the ledger
+  (`scripts/check-answers.ts`; the goal owns done, ADR 0002, so there is no
+  hub gate).
+- Imports became a job kind.
+- Derived cataloguing became opt-in, by each recipe's own measure, capped.
+- Sparse hints point long evidence work and work/ citations at jobs.
+
+## Still deferred, and the gates
+
+- **The tool-mode A/B** (pack tools only through jobs): after the queue
+  changes are measured. The deciding numbers are named before it runs:
+  findings with refs, tokens, and answers.
+- **Result caching**: not built. Identical requests are measured first
+  (`job_deduplicated` lines, and identical commands in the journal).
+- **Exclusive sessions** (a worker kept for iterative work): not built.
+  Chaining through store paths worked in every run, and a worker boots in
+  about half a second. Revisit when a case needs a stateful tool.
+- **A dedicated catalog agent**: not built. `catalog_request` was used 1,
+  1, 0 and 0 times, and no experimental recipe was written. A
+  harness-appointed agent would also be a role the harness assigns.
+- **A short-job lane**: after the four-worker default is measured, and only
+  with job_run text asking for a declared short timeout. Short jobs queued
+  up to p95 189 s behind long ones on the confirmation run.
+- **Derived cataloguing on by default**: after one CTF trial measures its
+  boots, its queue cost and whether agents use what it catalogues.
