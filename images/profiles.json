@@ -10,6 +10,7 @@
       "memory-forensics"
     ],
     "re": [
+      "ransomware-response",
       "reverse-engineering"
     ],
     "network": [
@@ -38,7 +39,9 @@
       "packs": [],
       "apt": [
         "chromium",
-        "fonts-liberation"
+        "fonts-liberation",
+        "fonts-noto-cjk",
+        "fonts-noto-core"
       ]
     }
   }

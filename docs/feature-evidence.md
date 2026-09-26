@@ -6,6 +6,10 @@ referred to (`media/*.png`) were working files and are not in the repository;
 the console screenshots that are kept live under `docs/screenshots/` and are
 described in [ui-coverage.md](ui-coverage.md).
 
+The lines quoted below are historical: they show the paths and fields of the
+run they came from (a screenshot under `work/.browser/`, for instance, is now
+under `work/<agent>/.browser/`).
+
 | # | What | Command | Evidence | Status |
 | --- | --- | --- | --- | --- |
 | 1 | Event log | `SWARM_SANDBOX=sandbox-runs/s9091 scripts/watch.sh --once`; probe: `start … --probe-violation` | `s9091/traces/events.jsonl`, 38 lines: `post` `inbox` `claim_file` `release_file` `done` `playwright`. `sfd9e` `2026-09-16T08:26:43.891Z` `sfd9epv` `claim_violation` `blocked=true` `work/hello.txt (no lock)`. | **proven** |

@@ -36,7 +36,7 @@ runs/<id>/
   threads/main/000001-<id>.md  posts, append-only, one file each
   threads/<name>/meta.json     {name, purpose, created_by, created_at, members}
   inbox/<id>/cursors.json      per-agent, per-thread: highest post id read
-  work/                        the artifact(s); work/.browser/*.png from playwright
+  work/                        the artifact(s); work/<agent>/.browser/*.png from playwright
   locks/<sha256(path)>.json    live claims
   locks/.table.lock/           mkdir mutex for lock-table changes (pid, ns, owner token inside)
   history/<sha256(path)>/      000001.bin … + index.json (rev, ts, agent, bytes, sha256)
@@ -379,7 +379,7 @@ anywhere; the model's own trailer names the same file.
 | `cap_steer`, `wall_steer` | budget fold | `{reason:"cannot_complete", delivered}`, `args.hard_kill` |
 | `budget_unreadable` | budget fold, once per process | `{error}`: `budget.json` could not be parsed twice in a row, so the fold was refused and the file left alone; a `veto` post says the same on the board |
 | `harness_stop` | budget fold, past the grace period | `{created_sentinel:true}`, `args.reason` = `cap` / `wall_clock` |
-| `playwright`, `browser_check` | Playwright tool | `{ok, title, errors, screenshot, text_chars, full_text?}` or `{ok:false, error}`; `full_text` names the whole page text under `tool-output/` when the model received the first 8,000 characters |
+| `playwright`, `browser_check` | Playwright tool | `{ok, title, errors, screenshot, text_chars, full_text?, blocked_requests, blocked_downloads}` or `{ok:false, error}`; `full_text` names the whole page text under `tool-output/` when the model received the first 8,000 characters; the two blocked counts are how many requests (navigation, redirect, subresource, fetch or WebSocket) the policy refused and how many downloads were cancelled, whose whole lists the tool returns to the agent. The screenshot is under `work/<agent>/.browser/`. |
 | `reap` | `scripts/reap.sh` | `{reaped:true, idle_seconds, last_activity, locks_released}` |
 | `reaped` | `protocol.ts reapStalledAgents` (fixture/in-process path) | `{ok, released[], dead_file}` |
 | `make_tool` | `make_tool` tool (forging on) | `{ok, forged:true, created, version, sha256}` or `{ok:false, error}` |

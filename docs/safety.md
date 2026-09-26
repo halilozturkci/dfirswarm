@@ -346,7 +346,7 @@ back to a host run on its own.
     `--custody-timeout SEC` bounds it (14400 by default) and names what it did
     not re-read; `--no-custody` skips it, and `scripts/custody.ts <sandbox>`
     takes it later.
-- **Playwright is off by default** and refuses remote http(s) targets unless `SWARM_BROWSER_REMOTE=1`; under netguard the browser has no egress anyway.
+- **Playwright is off by default** and refuses remote http(s) targets unless `SWARM_BROWSER_REMOTE=1`; that opt-in only lifts the tool's own refusal, and netguard's host allowlist still decides where the browser can connect (under netguard it has no egress unless a host is allowed). Within a page, service workers are blocked and downloads refused, and every refused request or download is named in the result.
 - **The web app gates what costs money, and keeps case data on this machine.**
   It binds `127.0.0.1`; reads need no token and show case data, so opening it
   to the LAN (`--host 0.0.0.0`) is the operator's explicit choice. Start, stop,

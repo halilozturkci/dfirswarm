@@ -125,7 +125,22 @@ case "$cmd" in
   run)
     [[ -n "$out" ]] || { echo '{"ok": false, "error": "run needs --out DIR"}'; exit 2; }
     mkdir -p "$out"; : > "$out/index.tsv"
+    # Symbols the image holds first. When it holds none for this kernel,
+    # Volatility asks the symbol server once, which only a job whose network
+    # allows it reaches; coverage then says the symbols were fetched, and the
+    # offline attempt's output is kept beside the online one.
+    symbols="held in the image"
+    VOLNET=(--offline)
     r="$(run_step "$STEP_TIMEOUT" "$out/windows.info.txt" vol --offline -q -f "$img" windows.info)"
+    if { [[ "$r" != ok ]] || ! grep -qi "NTBuildLab\|Kernel Base\|SystemTime" "$out/windows.info.txt" 2>/dev/null; } \
+       && grep -qi "symbol" "$out/windows.info.txt" "$out/windows.info.txt.stderr" 2>/dev/null; then
+      for f in windows.info.txt windows.info.txt.stderr; do [[ -f "$out/$f" ]] && mv "$out/$f" "$out/offline.$f"; done
+      index_row "offline.windows.info.txt" "vol --offline windows.info: no symbol table for this kernel in the image"
+      index_row "offline.windows.info.txt.stderr" "what vol --offline windows.info said on stderr"
+      r="$(run_step "$STEP_TIMEOUT" "$out/windows.info.txt" vol -q -f "$img" windows.info)"
+      VOLNET=()
+      symbols="fetched from the symbol server during the job (none for this kernel in the image)"
+    fi
     if [[ "$r" != ok ]] || ! grep -qi "NTBuildLab\|Kernel Base\|SystemTime" "$out/windows.info.txt" 2>/dev/null; then
       notes+=("vol windows.info on $shown: ${r/ok/ran but named no Windows image}")
       coverage failed "nothing"
@@ -134,14 +149,14 @@ case "$cmd" in
     fi
     index_row "windows.info.txt" "OS, build, capture time of $shown (vol windows.info)"
     for plugin in pslist psscan pstree cmdline netscan malfind vadinfo handles modules svcscan dlllist; do
-      r="$(run_step "$STEP_TIMEOUT" "$out/$plugin.txt" vol --offline -q -f "$img" "windows.$plugin")"
+      r="$(run_step "$STEP_TIMEOUT" "$out/$plugin.txt" vol ${VOLNET[@]+"${VOLNET[@]}"} -q -f "$img" "windows.$plugin")"
       [[ "$r" == ok ]] || notes+=("vol windows.$plugin on $shown: $r")
       index_row "$plugin.txt" "vol windows.$plugin over $shown"
     done
     while IFS= read -r f; do
       rel="${f#"$out/"}"; index_row "$rel" "what the step writing ${rel%.stderr} said on stderr"
     done < <(find "$out" -type f -name '*.stderr' | sort)
-    if [[ ${#notes[@]} -gt 0 ]]; then coverage partial "windows.info and the plugins that finished"; else coverage complete "windows.info and eleven plugins"; fi
+    if [[ ${#notes[@]} -gt 0 ]]; then coverage partial "windows.info and the plugins that finished; symbols $symbols"; else coverage complete "windows.info and eleven plugins; symbols $symbols"; fi
     python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); print(json.dumps({"ok": True, "status": c["status"]}))' "$out/coverage.json"
     ;;
   *) echo '{"ok": false, "error": "usage: run.sh detect --target T | run --target T --out DIR"}'; exit 2 ;;

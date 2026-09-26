@@ -183,6 +183,69 @@ PY
   pass "a volume at sector 2048 with no partition table is detected and catalogued there"
 fi
 
+# disk-volumes reads the rows of a partition table as mmls prints them: an
+# extended partition is a container and swap holds no filesystem, so neither
+# is a candidate ("DOS Extended" used to match `*Ext*`), an LVM physical volume
+# is named as a layer, and only a row fsstat reads is a volume. Stub TSK
+# programs, so this runs on any host.
+mkdir -p "$H/tsk-shim"
+cat > "$H/tsk-shim/mmls" <<'SH'
+#!/bin/sh
+cat <<'T'
+DOS Partition Table
+Offset Sector: 0
+Units are in 512-byte sectors
+
+      Slot      Start        End          Length       Description
+000:  Meta      0000000000   0000000000   0000000001   Primary Table (#0)
+001:  -------   0000000000   0000002047   0000002048   Unallocated
+002:  000:000   0000002048   0001050623   0001048576   Linux (0x83)
+003:  000:001   0001050624   0020969471   0019918848   DOS Extended (0x05)
+004:  Meta      0001050624   0001050624   0000000001   Extended Table (#1)
+005:  001:000   0001052672   0001060000   0000007329   Linux Swap / Solaris x86 (0x82)
+006:  002:000   0001062912   0020969471   0019906560   Linux Logical Volume Manager (0x8e)
+T
+SH
+cat > "$H/tsk-shim/fsstat" <<'SH'
+#!/bin/sh
+[ "$2" = 2048 ] || { echo "Cannot determine file system type" >&2; exit 1; }
+echo "File System Type: Ext4"
+SH
+cat > "$H/tsk-shim/fls" <<'SH'
+#!/bin/sh
+case "$1" in -m) echo "0|/etc/hostname|12|r/rrw-r--r--|0|0|9|0|0|0|0" ;; *) echo "r/r 12:	etc/hostname" ;; esac
+SH
+chmod +x "$H/tsk-shim/"*
+: > "$H/lvm.img"
+PATH="$H/tsk-shim:$PATH" bash "$ROOT/packs/computer-forensics-base/recipes/disk-volumes/run.sh" run --target "{\"paths\": [\"$H/lvm.img\"], \"name\": \"lvm.img\"}" --out "$H/out-lvm" > "$H/out-lvm.json" || true
+jq -e '.volumes == 1 and .candidate_volumes == 1' "$H/out-lvm.json" >/dev/null || fail "one Linux row is the one candidate and the one volume; the extended container, swap and LVM are not: $(cat "$H/out-lvm.json")"
+[[ ! -d "$H/out-lvm/p1050624" && ! -d "$H/out-lvm/p1052672" ]] || fail "the extended container and swap were read as filesystems"
+jq -e '.status == "partial" and ([.errors[] | select(test("LVM physical volume at sector 1062912"))] | length == 1) and ([.errors[] | select(test("1050624|1052672"))] | length == 0)' "$H/out-lvm/coverage.json" >/dev/null || fail "the LVM layer is named and nothing else: $(cat "$H/out-lvm/coverage.json")"
+pass "disk-volumes takes no extended container or swap for a filesystem, names an LVM volume as a layer, and counts the row fsstat reads"
+
+# memory-windows reads with the image's symbols first, and asks the symbol
+# server only when the image has none for the kernel: coverage says which, and
+# the offline attempt is kept. A stub vol, so this runs on any host.
+mkdir -p "$H/vol-shim"
+cat > "$H/vol-shim/vol" <<'SH'
+#!/bin/sh
+offline=0; for a in "$@"; do [ "$a" = --offline ] && offline=1; last="$a"; done
+if [ "$offline" = 1 ] && [ -n "$VOL_STUB_NO_SYMBOLS" ]; then
+  echo "Unsatisfied requirement plugins.Info.kernel.symbol_table_name" >&2; exit 1
+fi
+case "$last" in windows.info) printf 'Variable\tValue\nKernel Base\t0xf80000000000\n' ;; *) printf 'PID\tImageFileName\n4\tSystem\n' ;; esac
+SH
+chmod +x "$H/vol-shim/vol"
+: > "$H/win.mem"
+MW="$ROOT/packs/computer-forensics-base/recipes/memory-windows/run.sh"
+PATH="$H/vol-shim:$PATH" bash "$MW" run --target "{\"paths\": [\"$H/win.mem\"], \"name\": \"win.mem\"}" --out "$H/out-mw" >/dev/null || fail "memory-windows with the image's symbols should run"
+jq -e '.status == "complete" and (.covered | test("symbols held in the image"))' "$H/out-mw/coverage.json" >/dev/null || fail "with the image's symbols, coverage says so: $(cat "$H/out-mw/coverage.json")"
+VOL_STUB_NO_SYMBOLS=1 PATH="$H/vol-shim:$PATH" bash "$MW" run --target "{\"paths\": [\"$H/win.mem\"], \"name\": \"win.mem\"}" --out "$H/out-mw2" >/dev/null || fail "memory-windows without the image's symbols should fall back to the symbol server"
+jq -e '.status == "complete" and (.covered | test("fetched from the symbol server"))' "$H/out-mw2/coverage.json" >/dev/null || fail "a fetched symbol table is said: $(cat "$H/out-mw2/coverage.json")"
+grep -q symbol_table_name "$H/out-mw2/offline.windows.info.txt.stderr" && grep -q '^offline.windows.info.txt.stderr' "$H/out-mw2/index.tsv" || fail "the offline attempt is kept and indexed"
+grep -q 'System' "$H/out-mw2/pslist.txt" || fail "the plugins ran with the fetched symbols"
+pass "memory-windows uses the image's symbols first, falls back to the symbol server when it has none, and says which"
+
 # 7z, read as its listing streams, with the member limit applied as it goes.
 SEVEN="$(command -v 7z || command -v 7zz || true)"
 if [[ -n "$SEVEN" ]]; then

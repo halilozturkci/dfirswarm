@@ -49,7 +49,10 @@ jobs:
       - name: Chromium for the Playwright tool test
         run: npx playwright install --with-deps --only-shell chromium
       - run: npm run typecheck
+      # The browser is installed here, so its tests may not skip.
       - run: npm test
+        env:
+          SWARM_REQUIRE_BROWSER: "1"
       - run: npm run test:bash
       - run: npm run ui:build
       - name: Nothing from a run is tracked

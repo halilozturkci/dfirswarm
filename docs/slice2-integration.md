@@ -4,11 +4,11 @@ Three additions on top of slice 1 (event log, live budget, `swarm.sh`, file
 history, LAN UI). Everything is new files except: one import + a two-line
 call in `extensions/agent-swarm.ts` (the `playwright` tool body), the
 `playwright` devDependency in `package.json`, and one `.gitignore` line
-(`sandbox/work/.browser/`). Speculative choices are marked SPECULATIVE in the
+(`sandbox/work/<agent>/.browser/`). Speculative choices are marked SPECULATIVE in the
 source; unverified claims are listed at the end.
 
 Verified against the installed Pi package `@earendil-works/pi-coding-agent`
-**0.74.2** (`docs/extensions.md`, `docs/usage.md`,
+**0.74.2** at the time (the package is 0.87.0 now) (`docs/extensions.md`, `docs/usage.md`,
 `dist/core/extensions/types.d.ts`) and the Herdr CLI reference
 (`herdr.dev/docs/cli-reference`):
 
@@ -130,15 +130,22 @@ event logging are unchanged.
 
 ```
 playwright(target, actions?, screenshot?, text_selector?, note?)
-  -> { ok, url, final_url, title, text, text_truncated, console_errors, page_errors, screenshot, actions_run }
+  -> { ok, url, final_url, title, text, text_truncated, console_errors, page_errors, screenshot, actions_run,
+       blocked_requests, blocked_downloads }
 ```
 
 - `target`: sandbox-relative HTML file (`work/index.html` → `file://`) or a
   loopback URL. Remote http(s) is **refused** unless the spawner exports
   `SWARM_BROWSER_REMOTE=1` (under netguard the browser has no egress anyway).
 - `actions`: ordered `click`, `fill`, `press`, `wait`, `goto`.
-- `screenshot: true` → full-page PNG at `work/.browser/<ts>-<agent>.png`
-  (hidden dir, unique names, no claim needed — SPECULATIVE).
+- `screenshot: true` → full-page PNG at `work/<agent>/.browser/<ts>-<agent>.png`,
+  inside the agent's own writable directory, each directory opened without
+  following a link.
+- One request policy for navigation, redirects, subresources, fetch and
+  WebSockets: what it refuses is listed whole in `blocked_requests`. Service
+  workers are blocked, so none can route around it; downloads are cancelled
+  and their suggested names listed in `blocked_downloads`. A sandbox file
+  target is held inside the sandbox after `realpath`.
 - Event line: `tool: "playwright"`, `args: {target, actions, screenshot, text_selector, note}`, `result: {ok, title, errors, screenshot, text_chars}` or `{ok:false, error}`.
 
 **Install.** `npm install` + `npx playwright install chromium`. Hosts without

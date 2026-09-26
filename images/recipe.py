@@ -407,7 +407,7 @@ def build(a) -> int:
               f"({', '.join(held_back)}). Build with --allow-nonredistributable for an image that stays on this "
               f"machine or in a private registry; never publish it.", file=sys.stderr)
         return 3
-    spec = {"profile": a.profile, "packs": packs,
+    spec = {"profile": a.profile, "packs": packs, "profile_apt": list(extra_apt),
             "pack_versions": {p: pack_version(a.packs, p) for p in packs},
             "redistributable": not held_back, "nonredistributable": held_back, **spec}
 

@@ -680,6 +680,15 @@ def tools_md(record: dict, spec: dict | None) -> str:
             v = pip.get(norm(name))
             lines.append(f"- `{name}` {v or '(not installed)'} — {note or 'no description'} ({pack})")
         lines.append("")
+    # The profile's own Debian packages (a browser, its fonts) are in no pack,
+    # so no program line names them; without these lines the file would say
+    # they are not in the image.
+    extra = [p for p in (spec or {}).get("profile_apt") or []]
+    if extra:
+        lines += ["## Packages the profile adds", ""]
+        for p in extra:
+            lines.append(f"- `{p}` {apt.get(p) or '(not installed)'} — installed for the {record.get('profile', '?')} profile itself, in no pack")
+        lines.append("")
     na = (spec or {}).get("not_applicable") or record.get("not_applicable") or []
     if gone or na:
         lines += ["## Named by a pack, not in this image", ""]
@@ -791,9 +800,14 @@ def install_apt(spec: dict, apt: list, failed: dict) -> bool:
         if required and not run(cmd + required):
             print(f"required apt packages failed: {required}", file=sys.stderr)
             return False
+        # The package cache is emptied after each install: a profile of many
+        # packs filled a 59 GB builder disk, which apt then reported as bad
+        # signatures on the next update.
+        run(["apt-get", "clean"])
         for p in optional:
             if not run(cmd + [p]):
                 failed["apt"].append(p)
+            run(["apt-get", "clean"])
     return True
 
 
@@ -814,8 +828,11 @@ def main(spec_path: str) -> int:
     build_deps = ["build-essential", "python3-dev"]
     for d in sources:
         build_deps += [x for x in d.get("build_deps") or [] if x not in build_deps]
-    if compiles:
-        run(apt + build_deps)
+    # The compiler failing to install is the build's failure, said here, not
+    # later as every pip and source build that needed it.
+    if compiles and not run(apt + build_deps):
+        print(f"required build dependencies failed: {build_deps}", file=sys.stderr)
+        return 1
     if spec["pip"] or spec["requirements"]:
         if not run([sys.executable, "-m", "venv", str(VENV)]):
             return 1

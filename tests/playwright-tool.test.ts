@@ -120,6 +120,9 @@ test("resolveTarget: sandbox files become file://, remote http is refused by def
 test("playwright tool: renders a work/ page, runs actions, captures errors and a screenshot", async (t) => {
   const unavailable = await browserAvailable();
   if (unavailable) {
+    // A job that installed the browser (CI's Linux job) says so, and there a
+    // missing browser is a failure, not a quiet skip.
+    if (process.env.SWARM_REQUIRE_BROWSER === "1") assert.fail(`SWARM_REQUIRE_BROWSER=1 but playwright/chromium is unavailable: ${unavailable}`);
     t.skip(`playwright/chromium unavailable: ${unavailable}`);
     return;
   }
@@ -208,6 +211,7 @@ test("registerPlaywrightTool: registers `playwright`, logs ok/error events in th
       assert.equal(result.details.title, "Slice 2 fixture");
       assert.match(result.details.screenshot, /^work\/agent01\/\.browser\/.*-agent01\.png$/);
     } else {
+      if (process.env.SWARM_REQUIRE_BROWSER === "1") assert.fail(`SWARM_REQUIRE_BROWSER=1 but playwright/chromium is unavailable: ${unavailable}`);
       t.diagnostic(`browser step skipped: ${unavailable}`);
     }
 

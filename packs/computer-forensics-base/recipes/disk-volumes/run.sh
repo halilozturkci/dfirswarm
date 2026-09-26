@@ -168,7 +168,16 @@ case "$cmd" in
       while IFS= read -r line; do
         start="$(mmls_start_sector "$line")"
         desc="$(printf '%s' "$line" | awk '{ $1=$2=$3=$4=$5=""; print }' | sed 's/^ *//')"
-        case "$desc" in *NTFS*|*FAT*|*exFAT*|*Ext*|*HFS*|*APFS*|*Linux*|*Basic*data*) ;; *) continue ;; esac
+        # An extended partition is a container of other rows, and swap holds
+        # no filesystem: neither is a candidate (`*Ext*` used to take "DOS
+        # Extended" for ext). An LVM physical volume is a layer another reader
+        # opens (target-query, lvm2); it is named, not read as a filesystem.
+        case "$desc" in *Extended*|*Swap*|*swap*) continue ;; esac
+        case "$desc" in *Logical\ Volume\ Manager*|*LVM*)
+          notes+=("an LVM physical volume at sector $start ($desc): a layer TSK does not read; its logical volumes are not covered")
+          continue ;;
+        esac
+        case "$desc" in *NTFS*|*FAT*|*exFAT*|*Ext[234]*|*HFS*|*APFS*|*Linux*|*Basic*data*) ;; *) continue ;; esac
         volume "$img" "$shown" "$start" "$desc"
       done < <(grep -E '^[0-9]+:' "$out/partitions.txt")
       if [[ "$volumes" -eq 0 ]]; then

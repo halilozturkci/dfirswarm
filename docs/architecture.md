@@ -47,7 +47,7 @@ flowchart TB
 
   UI["scripts/ui-server.ts<br/>node:http · JSON API · SSE /api/events · static ui/dist"]
   REAP["scripts/reap.sh<br/>silence > timeout → .dead + drop locks"]
-  CHROME["headless Chromium<br/>work/.browser/*.png"]
+  CHROME["headless Chromium<br/>work/&lt;agent&gt;/.browser/*.png"]
 
   CLI -->|herdr workspace create / pane split / agent start / agent prompt| HERDR
   CLI -->|renders SWARM.md from the goal document + team.json, budget.json, .pi/SYSTEM.md| FS
