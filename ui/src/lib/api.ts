@@ -1,4 +1,4 @@
-import type { ArtifactIndex, Coverage, Dossier, ImagePreview, Job, OperatorAudit, PackageInfo, StartCheck, PackRow, ReviewAction, ReviewState, VmReadiness, ModelList, SwarmRow, SwarmView, TimedPost, TracePage, WorkFile, FileVersion, Health, GoalSummary,
+import type { ArtifactIndex, Coverage, Dossier, ImagePreview, Job, OperatorAudit, PackageInfo, StartCheck, PackRow, ReviewAction, ReviewState, VmReadiness, ModelList, SwarmRow, SwarmView, TimedPost, TracePage, WorkFile, FileVersion, Health, GoalSummary, StoreJobDetail, StoreJobsView, StoreLogPage,
   LibraryDocument,
   LibraryEntry, GoalDocument, SwarmContract, ChecksReport, ReadinessReport, ForgedToolSource, InputsLibrary } from "./types";
 
@@ -185,6 +185,17 @@ export const api = {
   /** The start flags this harness documents (swarm.sh help start). */
   kickoffFlags: () => request<{ flags: string[] }>("/api/kickoff/flags"),
   operator: (id: string) => request<OperatorAudit>(`/api/swarms/${encodeURIComponent(id)}/operator`),
+  /** The run's tool jobs from the job service's journal: a page, with the totals over all of them. */
+  storeJobs: (id: string, q: { offset: number; limit: number }) =>
+    request<StoreJobsView>(`/api/swarms/${encodeURIComponent(id)}/jobs?offset=${q.offset}&limit=${q.limit}`),
+  /** One tool job: its record, its journal lines, a page of one sealed tree's manifest, its logs. */
+  storeJob: (id: string, job: string, q: { tree?: string; offset: number; limit: number }) =>
+    request<StoreJobDetail>(`/api/swarms/${encodeURIComponent(id)}/jobs/${encodeURIComponent(job)}?${new URLSearchParams({ ...(q.tree ? { tree: q.tree } : {}), offset: String(q.offset), limit: String(q.limit) })}`),
+  storeJobLog: (id: string, job: string, name: string, q: { offset: number; limit: number }) =>
+    request<StoreLogPage>(`/api/swarms/${encodeURIComponent(id)}/jobs/${encodeURIComponent(job)}/log/${encodeURIComponent(name)}?offset=${q.offset}&limit=${q.limit}`),
+  /** A job's log whole, as plain text; `download` saves it. */
+  storeJobLogUrl: (id: string, job: string, name: string, download = false) =>
+    `/api/swarms/${encodeURIComponent(id)}/jobs/${encodeURIComponent(job)}/log/${encodeURIComponent(name)}?raw=1${download ? "&download=1" : ""}`,
   coverage: (id: string) => request<Coverage>(`/api/swarms/${encodeURIComponent(id)}/coverage`),
   review: (id: string) => request<ReviewState>(`/api/swarms/${encodeURIComponent(id)}/review`),
   /** One examiner decision, or the signature over the ledger head; written by swarm.sh review. Needs the token. */

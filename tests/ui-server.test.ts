@@ -1187,6 +1187,9 @@ test("helpers: path classification and callsign heuristic", () => {
   assert.equal(classifyPath("/runs", "s7a1c/names.json").kind, "names");
   assert.equal(classifyPath("/runs", "s7a1c/SWARM.md").kind, "contract");
   assert.equal(classifyPath("/runs", "s7a1c/ledger/entries.jsonl").kind, "ledger");
+  // The job service's journal and sealed outputs: the Jobs tab refetches on these alone.
+  assert.equal(classifyPath("/runs", "s7a1c/store/journal.jsonl").kind, "store");
+  assert.equal(classifyPath("/runs", "s7a1c/store/jobs/j000001/stdout.log").kind, "store");
   assert.equal(classifyPath("/runs", "s7a1c/layout.json").kind, "other");
   for (const kind of ["sessions", "logs", "internal"] as const) assert.ok(SUPPRESSED_KINDS.has(kind));
   const posts = [
@@ -3150,6 +3153,9 @@ test("no key screen of the console scrolls sideways at 390 px (a real browser; s
       "/swarms/svm1d/budget",
       "/swarms/svm1d/report",
       "/swarms/svm1d/artifacts",
+      "/swarms/svm1d/jobs",
+      "/swarms/svm1d/jobs/j000002",
+      "/swarms/s7a1c/jobs",
       "/swarms/s7a1c/story",
       "/swarms/s7a1c/agents",
     ];

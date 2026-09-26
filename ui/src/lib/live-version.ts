@@ -33,6 +33,7 @@ export const ALL_CHANGE_KINDS: readonly ChangeKind[] = [
   "names",
   "inputs",
   "contract",
+  "store",
   "hub",
   "other",
 ];

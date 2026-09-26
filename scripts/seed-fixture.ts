@@ -8,7 +8,7 @@
  *   node --experimental-strip-types scripts/seed-fixture.ts [runs-dir]
  */
 import { createHash } from "node:crypto";
-import { chmod, mkdir, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -29,6 +29,7 @@ import {
   recordEntry,
   systemContext,
 } from "../extensions/protocol.ts";
+import { checkStore, Journal, sealTree, sha256File, storePaths, type StoreCheck } from "./evidence-store.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -694,9 +695,11 @@ async function seedMicroVm(root: string, spec: RunSpec, runsDir: string): Promis
     };
     await writeFile(join(root, "vm", `${agent}.json`), `${JSON.stringify(rec, null, 2)}\n`, "utf8");
   }
+  const jobs = await seedJobStore(root, [a0.agentId, a1.agentId, a2.agentId], m);
   // The host's custody verdict, as custody.ts writes it.
   const custody = {
-    at: iso(9), summary: "evidence unchanged (2 files re-hashed); trace chain intact; ledger chain intact; 3 VMs put away",
+    at: iso(9), summary: `evidence unchanged (2 files re-hashed); trace chain intact; ledger chain intact; 3 VMs put away · ${jobs.line}`,
+    store: jobs.check,
     inputs: { files: 2, bytes: 90, unchanged: true, complete: true, changed: [], missing: [], added: [], skipped: [], unreadable: [], checked: { files: 2, links: 0, special: 0 }, digests_compared: { sha256: 2, md5: 2, sha1: 2 }, manifest_sha256: "a".repeat(64), manifest_anchored: true },
     sessions: { files: [], digest: "b".repeat(64), not_files: [] },
     trace: { lines: 40, intact: true, detail: "", unverified: 0, disputed: 0, spilled: [], gaps: [] },
@@ -706,6 +709,9 @@ async function seedMicroVm(root: string, spec: RunSpec, runsDir: string): Promis
     vms: vms.map((agent, i) => ({ agent, record_sha256: createHash("sha256").update(`rec-${agent}`).digest("hex"), stopped: true, snapshot: { verified: true, msb_verified: true }, image: "sha256:6b1f0c2e9a", expected_image: "sha256:6b1f0c2e9a", msb_db: i === 2 ? "busy" : "scrubbed", secret_violations: [], installed_outside: {} })),
   };
   await writeFile(join(root, "custody.json"), `${JSON.stringify(custody, null, 2)}\n`, "utf8");
+  // An examiner's note, after the run and after custody read the journal
+  // (evidence-store.ts note): the journal is one line longer than custody saw.
+  await jobs.journal.append({ type: "note", at: iso(4), by: "H. Examiner", text: "j000002 failed on the log's quoting, not on the evidence: j000001 read the same lines. Its partial timeline is not relied on.", jobs: ["j000002"] });
   // The operator's record for this run, chained as swarm.sh writes it.
   const auditFile = join(runsDir, "operator-audit.jsonl");
   const prevText = await readFile(auditFile, "utf8").then((t) => t.trimEnd().split("\n").filter(Boolean).at(-1) ?? null).catch(() => null);
@@ -724,6 +730,100 @@ async function seedMicroVm(root: string, spec: RunSpec, runsDir: string): Promis
   await mkdir(join(runsDir, "reviews"), { recursive: true });
   const review = JSON.stringify({ v: 1, seq: 1, at: iso(3), examiner: "H. Examiner", os_user: "examiner", host: "fixture-host", action: "accept", entry_seq: (e1 as { entry: { seq: number } }).entry.seq, entry_hash: null, note: null, prev: null });
   await writeFile(join(runsDir, "reviews", `${spec.id}.jsonl`), `${review}\n`, "utf8");
+}
+
+/**
+ * A microVM run's job service, as it leaves the store: the journal, chained
+ * and anchored, with a command job that ran and was sealed (one link left
+ * out), a tool job that failed and was sealed all the same, and one
+ * cancelled before it started; each job's job.json, manifest and logs.
+ * Written with the store's own Journal and sealTree, so every shape is the
+ * service's. Returns custody's check of it and the line custody writes.
+ */
+async function seedJobStore(root: string, agents: string[], m: number): Promise<{ journal: Journal; check: StoreCheck | null; line: string }> {
+  const P = storePaths(root);
+  await mkdir(P.jobs, { recursive: true });
+  const journal = await Journal.open(root);
+  const [a0, a1, a2] = agents;
+  const requester = (agent: string, name: string, doing: string) => ({ agent, name, doing });
+  const accessible = [
+    { path: join(root, "inputs"), access: "read-only, no-exec" },
+    { path: join(root, "work"), access: "read-only; every agent's live scratch and the shared files: they may change while the job runs" },
+  ];
+  await journal.append({ type: "store_opened", at: iso(m), inputs_sha256: null, census_sha256: null, plan_sha256: null });
+  await journal.append({ type: "revision_published", at: iso(m), revision: 0, generations: 0, manifest_sha256: "0".repeat(64) });
+
+  // Each job's staging directory, sealed into the store as the service seals a fenced worker's.
+  const seal = async (job: string, sealedAt: string, files: Record<string, string>, logs: Record<string, string>, links: Record<string, string> = {}) => {
+    const staging = join(root, ".seed-staging", `${job}-1`);
+    await mkdir(staging, { recursive: true });
+    for (const [rel, text] of Object.entries(files)) {
+      await mkdir(dirname(join(staging, rel)), { recursive: true });
+      await writeFile(join(staging, rel), text, "utf8");
+    }
+    for (const [rel, to] of Object.entries(links)) await symlink(to, join(staging, rel));
+    const sealed = await sealTree(root, staging, join(P.jobs, job, "out"), job, 1);
+    await rm(join(root, ".seed-staging"), { recursive: true, force: true });
+    // Sealed when the fixture's clock says, not when the seeding ran.
+    const manifestPath = join(P.jobs, job, "manifest.json");
+    const text = `${JSON.stringify({ ...sealed.manifest, sealed_at: sealedAt })}\n`;
+    await chmod(manifestPath, 0o644);
+    await writeFile(manifestPath, text, "utf8");
+    await chmod(manifestPath, 0o444);
+    sealed.manifestSha256 = createHash("sha256").update(text).digest("hex");
+    const shas: Record<string, string> = {};
+    for (const [name, text] of Object.entries(logs)) {
+      await writeFile(join(P.jobs, job, name), text, { encoding: "utf8", mode: 0o444 });
+      shas[name] = await sha256File(join(P.jobs, job, name));
+    }
+    return { outputs: { manifest_sha256: sealed.manifestSha256, files: sealed.manifest.totals.files, bytes: sealed.manifest.totals.bytes, rejected: sealed.manifest.rejected.length, path: `store/jobs/${job}/out` }, logs: shas };
+  };
+  const project = async (record: Record<string, unknown>) => {
+    await mkdir(join(P.jobs, String(record.id)), { recursive: true });
+    await writeFile(join(P.jobs, String(record.id), "job.json"), `${JSON.stringify(record, null, 2)}\n`, { encoding: "utf8", mode: 0o444 });
+  };
+
+  // j000001: a command over the access log, run and sealed.
+  const command = "grep -n 'shell.php' inputs/web/access.log > \"$OUT/hits.tsv\"\nawk '{print $1}' inputs/web/access.log | sort | uniq -c > \"$OUT/clients.txt\"\nln -s /etc/passwd \"$OUT/passwd\"\ncat \"$OUT/hits.tsv\"";
+  const spec1 = { kind: "command", command, inputs: ["input:web/access.log"], timeout_seconds: 900, network: "off" };
+  const who1 = requester(a0, "Scout", "the access log");
+  await journal.append({ type: "job_accepted", at: iso(m - 20), job: "j000001", spec: spec1, requester: who1 });
+  await journal.append({ type: "job_started", at: iso(m - 20, 2), job: "j000001", attempt: 1, worker: `dfs-svm1d-job-j000001-1`, image: "dfirswarm-base:dev-arm64", declared: spec1.inputs, accessible, observed: "unknown", network: "none", cpus: 1, memory_mib: 1024 });
+  const hits = "1:10.0.0.5 - - [03/Feb/2026:09:12:41 +0000] \"GET /shell.php HTTP/1.1\" 200\n";
+  const one = await seal("j000001", iso(m - 21, 1), { "hits.tsv": hits, "clients.txt": "      1 10.0.0.5\n" }, { "stdout.log": hits, "stderr.log": "" }, { passwd: "/etc/passwd" });
+  await journal.append({ type: "job_finished", at: iso(m - 21), job: "j000001", attempt: 1, exit: 0, status: "ok", duration_ms: 58_200, create_ms: 3_400 });
+  await journal.append({ type: "job_fenced", at: iso(m - 21, 1), job: "j000001", attempt: 1, fenced: true });
+  await journal.append({ type: "job_committed", at: iso(m - 21, 2), job: "j000001", attempt: 1, status: "ok", exit: 0, outputs: one.outputs, logs: one.logs });
+  await journal.append({ type: "job_notified", at: iso(m - 21, 3), job: "j000001", to: a0, how: "status" });
+  await project({ id: "j000001", attempt: 1, spec: spec1, requester: who1, state: "committed", status: "ok", accepted_at: iso(m - 20), started_at: iso(m - 20, 2), finished_at: iso(m - 21), exit: 0, worker: "dfs-svm1d-job-j000001-1", worker_size: "1 vCPU, 1024 MiB", image: "dfirswarm-base:dev-arm64", accessible, network: "none", outputs: one.outputs });
+
+  // j000002: a tool that failed. Its output is sealed all the same: committed is where the output stands, not what the job did.
+  const spec2 = { kind: "tool", tool: "log_timeline", args: { path: "inputs/web/access.log", out: "{OUT}/timeline.csv" }, inputs: ["input:web/access.log"], timeout_seconds: 900, network: "off" };
+  const who2 = requester(a1, "Stitch", "the timeline");
+  await journal.append({ type: "job_accepted", at: iso(m - 24), job: "j000002", spec: spec2, requester: who2 });
+  await journal.append({ type: "job_started", at: iso(m - 24, 2), job: "j000002", attempt: 1, worker: `dfs-svm1d-job-j000002-1`, image: "dfirswarm-base:dev-arm64", tool_sha256: "5".repeat(64), declared: spec2.inputs, accessible, observed: "unknown", network: "none", cpus: 1, memory_mib: 1024 });
+  const stderr2 = "Traceback (most recent call last):\n  File \"tools/log_timeline/run.py\", line 41, in <module>\n    ts = parse(line)\nValueError: unexpected quoting at line 1: '\"GET /shell.php HTTP/1.1\"'\n";
+  const two = await seal("j000002", iso(m - 24, 41), { "timeline.csv": "ts,event\n" }, { "stdout.log": "reading inputs/web/access.log\n", "stderr.log": stderr2 });
+  await journal.append({ type: "job_finished", at: iso(m - 24, 40), job: "j000002", attempt: 1, exit: 2, status: "failed", reason: "exit 2", duration_ms: 38_600, create_ms: 2_900 });
+  await journal.append({ type: "job_fenced", at: iso(m - 24, 41), job: "j000002", attempt: 1, fenced: true });
+  await journal.append({ type: "job_committed", at: iso(m - 24, 42), job: "j000002", attempt: 1, status: "failed", exit: 2, reason: "exit 2", outputs: two.outputs, logs: two.logs });
+  await journal.append({ type: "job_notified", at: iso(m - 24, 43), job: "j000002", to: a1, how: "post" });
+  await project({ id: "j000002", attempt: 1, spec: spec2, requester: who2, state: "committed", status: "failed", reason: "exit 2", accepted_at: iso(m - 24), started_at: iso(m - 24, 2), finished_at: iso(m - 24, 40), exit: 2, worker: "dfs-svm1d-job-j000002-1", worker_size: "1 vCPU, 1024 MiB", image: "dfirswarm-base:dev-arm64", tool_sha256: "5".repeat(64), accessible, network: "none", outputs: two.outputs });
+
+  // j000003: cancelled by its requester before a worker was free. It never ran.
+  const spec3 = { kind: "command", command: "strings -n 8 inputs/web/shell.php", inputs: ["input:web/shell.php"], timeout_seconds: 900, network: "off" };
+  const who3 = requester(a2, "Doubter", "checking the web root");
+  await journal.append({ type: "job_accepted", at: iso(m - 30), job: "j000003", spec: spec3, requester: who3 });
+  await journal.append({ type: "job_cancel_requested", at: iso(m - 30, 20), job: "j000003", by: a2 });
+  await journal.append({ type: "job_cancelled", at: iso(m - 30, 20), job: "j000003", reason: `cancelled by ${a2} before it started` });
+  await project({ id: "j000003", attempt: 1, spec: spec3, requester: who3, state: "cancelled", status: "cancelled", reason: `cancelled by ${a2} before it started`, accepted_at: iso(m - 30), cancel_requested: a2 });
+
+  const check = await checkStore(root);
+  const j = check?.journal;
+  const line = check && j
+    ? `store: ${check.jobs} jobs, ${check.committed} committed, journal ${j.lines} lines chain intact, its anchor matches, ${check.outputs.verified} of ${check.outputs.files} output files verified against their manifests, ${check.generations} catalogue generations, ${check.revisions} revision`
+    : "store: not checked";
+  return { journal, check, line };
 }
 
 /** Put write bits back on a tree seedInputs made read-only, so rm can clear it. */

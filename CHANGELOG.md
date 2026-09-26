@@ -44,6 +44,11 @@ All notable changes to this project. The format follows
   (`derived_bounded`, and the agent is told).
 - Four workers by default on a host with 64 GiB or more; `create_ms` in
   each job's record.
+- The console has a Jobs tab (with Files and the Ledger): the run's jobs
+  from the store's journal, paged, with totals, the job service's notices,
+  the examiner's notes and custody's store line; a job's record, its
+  journal lines, its manifest and its logs, paged or whole. "Committed"
+  (sealed) is shown apart from the job's outcome, never as a success.
 
 ### Added: tool jobs in worker VMs, a sealed store, a catalogue that grows
 

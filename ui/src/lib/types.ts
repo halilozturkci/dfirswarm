@@ -733,6 +733,8 @@ export type ChangeKind =
   | "names"
   | "inputs"
   | "contract"
+  /** store/: the job service's journal and each job's sealed output. */
+  | "store"
   /** A live VM run's hub wrote its status: the seats' states moved. */
   | "hub"
   | "other";
@@ -876,6 +878,119 @@ export type ReviewState = {
   by_entry: Record<string, { action: Exclude<ReviewAction, "sign">; examiner: string; at: string; note: string | null; entry_hash: string | null }>;
   signed: { examiner: string; at: string; ledger_head: string | null } | null;
 };
+
+/** What a job's sealed tree holds, as its job_committed line recorded it. */
+export type StoreJobOutputs = { files: number; bytes: number; rejected: number; path: string; manifest_sha256: string };
+
+/**
+ * One tool job, folded from the job service's journal. `status` (and
+ * `outcome`) is what the job did; `state` is where its record stands:
+ * `committed` means its output was sealed into the store, whatever it did.
+ */
+export type StoreJobRow = {
+  id: string;
+  kind: string;
+  /** The command's first line, the tool, the recipe, the import's source, or "detect pass"; the whole is in the record. */
+  what: string;
+  more_lines: number;
+  target: string | null;
+  requester: { agent: string; name: string | null; doing: string | null };
+  state: "accepted" | "running" | "finished" | "fenced" | "committed" | "failed" | "cancelled" | string;
+  status: "ok" | "failed" | "timed_out" | "cancelled" | "stopped" | "interrupted" | string | null;
+  /** The status, or queued / running / not_run before or without one. */
+  outcome: string;
+  exit: number | null;
+  reason: string | null;
+  ran: boolean;
+  attempts: number;
+  accepted_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  committed_at: string | null;
+  duration_ms: number | null;
+  create_ms: number | null;
+  boot_retry: string | null;
+  worker: string | null;
+  worker_size: string | null;
+  image: string | null;
+  network: string | null;
+  fenced: boolean | null;
+  fence_error: string | null;
+  outputs: StoreJobOutputs | null;
+  kept_attempts: Array<StoreJobOutputs & { attempt: number; status: string | null; at: string }>;
+  generation: string | null;
+  generation_status: string | null;
+  notified: Array<{ to: string; how: string; at: string }>;
+  deduplicated: number;
+  cancel_requested: string | null;
+  parent: string | null;
+  note: string | null;
+};
+
+/** GET /api/swarms/:id/jobs: a page of the run's tool jobs, totals over all of them, the run's own journal lines and custody's store line. */
+export type StoreJobsView = {
+  service: boolean;
+  note: string | null;
+  journal: {
+    path: string;
+    lines: number;
+    bytes: number;
+    intact: boolean;
+    detail: string;
+    head: string | null;
+    anchor: "matches" | "behind" | "off the chain" | "missing";
+    unparsed: number[];
+    partial_tail_bytes: number;
+  } | null;
+  totals: {
+    jobs: number;
+    committed: number;
+    by_state: Record<string, number>;
+    by_outcome: Record<string, number>;
+    files: number;
+    bytes: number;
+    rejected: number;
+    generations: number;
+    revisions: number;
+    notes: number;
+    degraded: number;
+    recovered: number;
+    deduplicated: number;
+  };
+  jobs: StoreJobRow[];
+  page: { offset: number; limit: number; total: number; next: number | null; whole: string };
+  /** Journal lines, whole: note, jobs_degraded, jobs_recovered, job_deduplicated, journal_repaired, anchor_*, detect_bounded. */
+  events: Array<{ seq?: number; at?: string; type: string; job?: string; by?: unknown; text?: string; jobs?: string[]; error?: string; in_a_row?: number; notify?: boolean } & Record<string, unknown>>;
+  custody: { at: string | null; line: string | null; journal_lines: number | null; journal_head: string | null } | null;
+};
+
+/** GET /api/swarms/:id/jobs/:job: one job's row, record, journal lines, a page of one sealed tree's manifest, and its logs. */
+export type StoreJobDetail = {
+  id: string;
+  row: StoreJobRow;
+  record: unknown;
+  record_error: string | null;
+  lines: Array<Record<string, unknown>>;
+  trees: string[];
+  manifest: {
+    tree: string;
+    path: string;
+    present: boolean;
+    error: string | null;
+    sha256: string | null;
+    matches_journal: boolean | null;
+    sealed_at: string | null;
+    totals: { files: number; bytes: number } | null;
+    dirs: number;
+    rejected: Array<{ path: string; kind: string; link?: string }>;
+    files: Array<{ path: string; bytes: number; sha256: string; mode: string }>;
+    page: { offset: number; limit: number; total: number; next: number | null };
+  } | null;
+  logs: Array<{ name: string; path: string; bytes: number | null; sha256: string | null; present: boolean; why: string | null }>;
+};
+
+/** GET /api/swarms/:id/jobs/:job/log/:name: a page of a job's log, by bytes, ending on a character boundary. */
+export type StoreLogPage = { name: string; path: string; offset: number; bytes: number; total: number; text: string; next: number | null };
 
 /** An installed pack as the kickoff form lists it. */
 export type PackRow = { id: string; name: string; version: string; description: string; depends: string[]; secrets?: Array<{ name: string; title: string; required: boolean }> };

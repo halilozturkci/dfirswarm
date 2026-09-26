@@ -38,6 +38,7 @@ import { GoalPanel } from "./detail/goal-panel";
 import { PacksPanel } from "./detail/packs-panel";
 import { ToolsPanel } from "./detail/tools-panel";
 import { LedgerPanel } from "./detail/ledger-panel";
+import { JobsPanel } from "./detail/jobs-panel";
 import { RecordActions } from "./detail/record-actions";
 import { isolationChip } from "@/components/swarm-bits";
 
@@ -49,7 +50,7 @@ import { isolationChip } from "@/components/swarm-bits";
  */
 const TAB_GROUPS = [
   { label: "The run", tabs: ["story", "threads", "traces", "agents"] },
-  { label: "Evidence", tabs: ["files", "artifacts", "ledger"] },
+  { label: "Evidence", tabs: ["files", "artifacts", "jobs", "ledger"] },
   { label: "The frame", tabs: ["goal", "packs", "tools", "claims", "budget"] },
   { label: "Output", tabs: ["report", "custody"] },
 ] as const;
@@ -66,6 +67,7 @@ const TAB_LABEL: Record<Tab, string> = {
   budget: "Budget",
   files: "Files",
   artifacts: "Artifacts",
+  jobs: "Jobs",
   goal: "Goal",
   packs: "Packs",
   report: "Report",
@@ -311,6 +313,7 @@ export function SwarmDetailScreen() {
   const historyVersion = useSwarmVersion(id, ["history"]);
   const toolsVersion = useSwarmVersion(id, ["tools"]);
   const contractVersion = useSwarmVersion(id, ["contract"]);
+  const storeVersion = useSwarmVersion(id, ["store"]);
   const checksVersion = useSwarmVersion(id, CHECKS_CHANGE_KINDS);
   const loader = useCallback(() => api.swarm(id), [id]);
   const view = useResource(loader, version, [id]);
@@ -624,6 +627,7 @@ export function SwarmDetailScreen() {
           {tab === "goal" ? <GoalPanel view={d} version={contractVersion} /> : null}
           {tab === "tools" ? <ToolsPanel view={d} selected={sub ? decodeURIComponent(sub) : null} onSelect={(t) => setSub("tools", t)} version={toolsVersion} /> : null}
           {tab === "packs" ? <PacksPanel view={d} /> : null}
+          {tab === "jobs" ? <JobsPanel view={d} selected={sub ? decodeURIComponent(sub) : null} onSelect={(j) => setSub("jobs", j)} version={storeVersion} /> : null}
           {tab === "ledger" ? <LedgerPanel view={d} /> : null}
           {tab === "report" ? <ReportPanel view={d} /> : null}
         </section>
