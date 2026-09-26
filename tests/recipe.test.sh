@@ -181,6 +181,43 @@ res="$(tail -1 <<<"$res")"
 [[ "$(jq -r '.no_arch[0]' <<<"$res")" == false ]] && jq -r '.no_arch[1]' <<<"$res" | grep -q 'build pinned' || fail "an architecture with no pin was not recorded as such: $res"
 pass "a pinned download is linked onto PATH when its sha256 matches, and refused when its bytes differ, its archive climbs out, or its architecture has no pin"
 
+# A download that arrives short is tried again; one whose whole length is
+# other bytes is not (the file at the URL changed, and would again).
+res="$(python3 - "$ROOT/images" "$TMP" <<'EOF'
+import hashlib, http.server, json, sys, threading
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import install
+body = b"runtime " * 4096
+sha = hashlib.sha256(body).hexdigest()
+hits = {"short": 0, "other": 0}
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_GET(self):
+        name = self.path.strip("/")
+        hits[name] += 1
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if name == "short" and hits[name] == 1:
+            self.wfile.write(body[: len(body) // 2])
+            self.close_connection = True
+            return
+        self.wfile.write(body if name == "short" else b"x" * len(body))
+srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+threading.Thread(target=srv.serve_forever, daemon=True).start()
+url = f"http://127.0.0.1:{srv.server_address[1]}"
+dest = Path(sys.argv[2]) / "dl.bin"
+short = install.get(f"{url}/short", dest, sha)
+other = install.get(f"{url}/other", dest, sha)
+print(json.dumps({"short": [short, hits["short"], dest.exists()], "other": [other, hits["other"]]}))
+EOF
+)" || fail "install.get could not be driven: $res"
+res="$(tail -1 <<<"$res")"
+jq -e '.short[0] == null and .short[1] == 2' <<<"$res" >/dev/null || fail "a download cut off halfway was not fetched again: $res"
+jq -e '(.other[0] | test("is not the pinned")) and .other[1] == 1' <<<"$res" >/dev/null || fail "a whole download of other bytes was fetched again, or installed: $res"
+pass "a download that arrives short is fetched again, and one of other bytes is refused at once"
+
 # --- the other pinned kinds -----------------------------------------------------
 # A pack names what no package manager has as data: an apt line from the
 # image's backports, a .deb per architecture, a tag's source with its entry and

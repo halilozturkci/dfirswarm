@@ -139,27 +139,45 @@ def safe_members(t: tarfile.TarFile, dest: Path, strip: bool = False, skip: list
     return keep
 
 
+DOWNLOAD_ATTEMPTS = 3
+
+
 def get(url: str, dest: Path, sha256: str) -> str | None:
     """Fetch url to dest and check it against the pinned sha256. Returns why
-    it failed, or None; bytes that are not the pinned ones are deleted."""
-    print(f"+ fetch {url}", flush=True)
-    digest = hashlib.sha256()
-    # Named: a host behind a bot filter (Eric Zimmerman's) refuses Python's
-    # own User-Agent with a 403, and says so in no other way.
-    req = urllib.request.Request(url, headers={"User-Agent": "dfirswarm-image-build (+https://github.com/halilozturkci/dfirswarm)"})
-    try:
-        with urllib.request.urlopen(req, timeout=300) as r, open(dest, "wb") as out:
-            while chunk := r.read(1 << 20):
-                digest.update(chunk)
-                out.write(chunk)
-    except OSError as e:
-        dest.unlink(missing_ok=True)
-        return f"download failed: {e}"
+    it failed, or None; bytes that are not the pinned ones are deleted. A
+    download that fails or ends short is tried again: a runtime that arrived
+    cut off after twelve slow minutes, with the right bytes at that URL a
+    minute later, took three programs that need it out of an image."""
     want = sha256.removeprefix("sha256:").lower()
-    if digest.hexdigest() != want:
+    why = None
+    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+        print(f"+ fetch {url}" + (f" (attempt {attempt} of {DOWNLOAD_ATTEMPTS})" if attempt > 1 else ""), flush=True)
+        digest = hashlib.sha256()
+        got = 0
+        # Named: a host behind a bot filter (Eric Zimmerman's) refuses Python's
+        # own User-Agent with a 403, and says so in no other way.
+        req = urllib.request.Request(url, headers={"User-Agent": "dfirswarm-image-build (+https://github.com/halilozturkci/dfirswarm)"})
+        try:
+            with urllib.request.urlopen(req, timeout=300) as r, open(dest, "wb") as out:
+                length = r.headers.get("Content-Length")
+                while chunk := r.read(1 << 20):
+                    digest.update(chunk)
+                    out.write(chunk)
+                    got += len(chunk)
+        except OSError as e:
+            dest.unlink(missing_ok=True)
+            why = f"download failed: {e}"
+            continue
+        if digest.hexdigest() == want:
+            return None
         dest.unlink(missing_ok=True)
-        return f"sha256 {digest.hexdigest()} is not the pinned {want}"
-    return None
+        short = f" after {got} of {length} bytes" if length and length.isdigit() and int(length) != got else ""
+        why = f"sha256 {digest.hexdigest()}{short} is not the pinned {want}"
+        # The whole length and other bytes: the file at the URL changed, and
+        # another attempt fetches the same wrong bytes.
+        if not short and length:
+            break
+    return why
 
 
 def wrapper(name: str, program: Path, run_with: str | None = None, run_from_dir: bool = False,
