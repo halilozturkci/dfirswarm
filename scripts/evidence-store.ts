@@ -430,8 +430,35 @@ export async function readManifest(path: string): Promise<{ manifest: Manifest; 
 // --- object references -------------------------------------------------------------
 
 export type Resolved =
-  | { ok: true; ref: string; kind: "input" | "job" | "import" | "member" | "sha256" | "unresolved"; sha256?: string; bytes?: number; path?: string; why?: string }
+  | { ok: true; ref: string; kind: "input" | "job" | "import" | "member" | "sha256" | "unresolved"; sha256?: string; bytes?: number; path?: string; why?: string; status?: string }
   | { ok: false; ref: string; reason: string };
+
+/** What resolveRef may check besides existence: the bytes, against what was sealed. */
+export type ResolveOptions = { verify?: boolean; committedLogs?: Map<string, Record<string, string>> };
+
+/** Each committed job's log hashes, from its job_committed line. */
+export async function committedLogHashes(sandbox: string): Promise<Map<string, Record<string, string>>> {
+  const out = new Map<string, Record<string, string>>();
+  const text = await readFile(storePaths(resolve(sandbox)).journal, "utf8").catch(() => "");
+  for (const line of text.split("\n")) {
+    if (!line.includes('"job_committed"')) continue;
+    try {
+      const l = JSON.parse(line) as { type?: string; job?: string; logs?: Record<string, string> };
+      if (l.type === "job_committed" && l.job && l.logs) out.set(l.job, l.logs);
+    } catch {
+      // a torn line is the journal check's to name
+    }
+  }
+  return out;
+}
+
+async function jobStatus(dir: string): Promise<string | undefined> {
+  try {
+    return (JSON.parse(await readFile(join(dir, "job.json"), "utf8")) as { status?: string }).status;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * What an object reference names, checked against the run's records:
@@ -440,7 +467,7 @@ export type Resolved =
  * (a generation's member list), `sha256:<hex>` (the store or the inputs),
  * `unresolved:<why>` (said, not resolved).
  */
-export async function resolveRef(sandbox: string, ref: string): Promise<Resolved> {
+export async function resolveRef(sandbox: string, ref: string, opts: ResolveOptions = {}): Promise<Resolved> {
   const S = resolve(sandbox);
   const P = storePaths(S);
   const m = /^([a-z0-9]+):(.*)$/s.exec(ref.trim());
@@ -467,18 +494,27 @@ export async function resolveRef(sandbox: string, ref: string): Promise<Resolved
     const found = await readManifest(join(kind === "job" ? P.jobs : P.imports, id, "manifest.json"));
     if (!found) return { ok: false, ref, reason: `${kind} ${id} has no sealed manifest` };
     const base = `${kind === "job" ? "store/jobs" : "store/imports"}/${id}`;
-    if (!rel) return { ok: true, ref, kind, path: `${base}/out`, bytes: found.manifest.totals.bytes };
+    // A job's own outcome travels with what it left: a failed job's kept output is citable, and said to be.
+    const status = kind === "job" ? await jobStatus(join(P.jobs, id)) : undefined;
+    const st0 = status ? { status } : {};
+    if (!rel) return { ok: true, ref, kind, path: `${base}/out`, bytes: found.manifest.totals.bytes, ...st0 };
     // A job's logs are sealed beside its output (their sha256 in its
     // job_committed line): stdout.log, stderr.log and pip's lists.
     if (kind === "job" && /^(stdout\.log|stderr\.log|pip-before\.txt|pip-after\.txt)$/.test(rel)) {
       const abs = join(P.jobs, id, rel);
       const st = await lstat(abs).catch(() => null);
-      return st?.isFile() ? { ok: true, ref, kind, sha256: await sha256File(abs), bytes: st.size, path: `${base}/${rel}` } : { ok: false, ref, reason: `job ${id} has no ${rel}` };
+      if (!st?.isFile()) return { ok: false, ref, reason: `job ${id} has no ${rel}` };
+      const sha = await sha256File(abs);
+      if (opts.verify) {
+        const sealed = (opts.committedLogs ?? (await committedLogHashes(S))).get(id)?.[rel];
+        if (sealed && sealed !== sha) return { ok: false, ref, reason: `job ${id}'s ${rel} changed since it was sealed (${sha.slice(0, 12)}…, sealed ${sealed.slice(0, 12)}…)` };
+      }
+      return { ok: true, ref, kind, sha256: sha, bytes: st.size, path: `${base}/${rel}`, ...st0 };
     }
     // The path as the store shows it (out/…) is the same file.
     const want = rel.startsWith("out/") ? [rel, rel.slice(4)] : [rel];
     const f = found.manifest.files.find((x) => want.some((w) => x.path === w || Buffer.from(x.path_b64, "base64").toString("utf8") === w));
-    return f ? { ok: true, ref, kind, sha256: f.sha256, bytes: f.bytes, path: `${base}/out/${f.path}` } : { ok: false, ref, reason: `${rel} is not in ${kind} ${id}'s manifest` };
+    return f ? { ok: true, ref, kind, sha256: f.sha256, bytes: f.bytes, path: `${base}/out/${f.path}`, ...st0 } : { ok: false, ref, reason: `${rel} is not in ${kind} ${id}'s manifest` };
   }
   if (kind === "member") {
     const mm = /^([a-z0-9-]+)#(\d+)$/.exec(value);
@@ -502,7 +538,14 @@ export async function resolveRef(sandbox: string, ref: string): Promise<Resolved
   }
   if (kind === "sha256") {
     if (!/^[0-9a-f]{64}$/.test(value)) return { ok: false, ref, reason: "sha256: takes 64 hex digits" };
-    if (existsSync(join(P.blobs, value))) return { ok: true, ref, kind: "sha256", sha256: value, path: `store/blobs/${value}` };
+    if (existsSync(join(P.blobs, value))) {
+      // Found by name; with verify, by content too: a blob is its hash.
+      if (opts.verify) {
+        const sha = await sha256File(join(P.blobs, value));
+        if (sha !== value) return { ok: false, ref, reason: `store/blobs/${value.slice(0, 12)}… does not hash to its name (${sha.slice(0, 12)}…)` };
+      }
+      return { ok: true, ref, kind: "sha256", sha256: value, path: `store/blobs/${value}` };
+    }
     try {
       const inputs = JSON.parse(await readFile(join(S, "inputs.json"), "utf8")) as { files?: Array<{ path: string; sha256?: string }> };
       const f = (inputs.files ?? []).find((x) => x.sha256 === value);

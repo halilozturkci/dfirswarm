@@ -72,11 +72,11 @@ test("ledger: a record is validated, deduped across authors and rendered", async
       evidence: "regipy: SAM\\Domains\\Account\\Users\\Names\\hacker",
     });
     assert.ok(first.ok && !first.merged && first.entry.seq === 1 && first.entry.by === "a00");
-    // the same event from a peer, with a different time spelling, merges into one row
-    const again = await recordEntry(b, { kind: "event", value: "Account hacker created", ts: "2015-09-02T09:05:00.000Z", source: "SAM", evidence: "same key, read independently" });
+    // the same event from a peer, word for word with a different time spelling, is an attestation of the one row
+    const again = await recordEntry(b, { kind: "event", value: "Account hacker created", ts: "2015-09-02T09:05:00.000Z", source: "SAM", evidence: "regipy: SAM\\Domains\\Account\\Users\\Names\\hacker" });
     assert.ok(again.ok && again.merged && again.total === 1);
     assert.deepEqual(again.entry.authors, ["a00", "a01"]);
-    assert.equal(again.entry.evidence, "regipy: SAM\\Domains\\Account\\Users\\Names\\hacker", "the first evidence is kept");
+    assert.equal((await readFile(join(root, LEDGER_ENTRIES), "utf8")).trim().split("\n").length, 1, "the entry is not rewritten: the second author is appended to ledger/attestations.jsonl");
 
     const ioc = await recordEntry(b, { kind: "ioc", value: "192.168.56.102", source: "netscan", evidence: "nmap -sn line 7", confidence: "high" });
     assert.ok(ioc.ok && ioc.entry.seq === 2);
@@ -103,6 +103,12 @@ test("ledger: a record is validated, deduped across authors and rendered", async
     const last = await listLedger(root, { limit: 1 });
     assert.deepEqual(last.map((e) => e.seq), [4]);
     assert.equal((await renderLedger(root)).length, md.length, "rendering again from disk gives the same document");
+
+    // The same sentence with other provenance is not merged into the first:
+    // it is its own entry, and told of the other (a second reading is not the first one's).
+    const other = await recordEntry(b, { kind: "event", value: "Account hacker created", ts: "2015-09-02T09:05:00Z", source: "SAM", evidence: "same key, read independently" });
+    assert.ok(other.ok && !other.merged && other.entry.seq === 5);
+    assert.match(other.ok ? other.note ?? "" : "", /#1 says the same sentence .*supersedes=1.*"duplicates"/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

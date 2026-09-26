@@ -71,6 +71,13 @@ import {
   modelPressure,
   LEDGER_KINDS,
   LEDGER_CONFIDENCE,
+  LEDGER_REL_KINDS,
+  LEDGER_HYPOTHESIS_STATUS,
+  LEDGER_LIMITATION_REASONS,
+  LEDGER_PRECISION,
+  LEDGER_BASIS,
+  LEDGER_COMPLETION,
+  LEDGER_SUBJECT_TYPES,
   LEDGER_MD,
   TOOLS_DIR,
   TOOL_TIMEOUT_DEFAULT_SECONDS,
@@ -2803,7 +2810,7 @@ export default function (pi: ExtensionAPI) {
     name: "record",
     label: "Record",
     description:
-      "Put a fact in the swarm's ledger with its provenance: kind event (a dated event for the timeline; ts required, ISO 8601 with its zone: Z when the source's time is UTC, or the offset the source records), ioc (an indicator: address, hash, file, account), finding (a conclusion) or absence (a search that found nothing, when that matters: value is what was looked for, source what was searched, evidence the query, the tool and its version, and the scope). Both source and evidence are required: where it was seen (a path, a log, a registry key) and how to check it (the command, the inode, the record id, the hash). An entry nobody can check is not a record. refs names the run's objects it rests on, each checked when it is written: input:<path> (under inputs/), job:<id>/<path> (a job's sealed output), import:<id>/<path>, member:<generation>#<n> (an archive member in the catalogue), sha256:<hex> (a sealed blob), or unresolved:<why> when none can be named; a file only in your own work/ is not an object of the run: run the work as a job and cite job:. To correct an entry, yours or a peer's, record the corrected one with supersedes=<its seq>: nothing is deleted, and the newer entry is the correction. The harness renders ledger/ledger.md — timeline, indicators, findings, searches that found nothing — after every record; cite that file in the report.",
+      "Put a fact in the swarm's ledger with its provenance: kind event (a dated event for the timeline; ts required, ISO 8601 with its zone: Z when the source's time is UTC, or the offset the source records), ioc (an indicator: address, hash, file, account), finding (a conclusion), absence (a search that found nothing, when that matters: value is what was looked for, source what was searched, evidence the query, the tool and its version, and the scope), hypothesis (a proposition under test, with status open, supported or refuted) or limitation (what the examination could not establish, with reason not_examined, unavailable, failed, partial or excluded). Both source and evidence are required: where it was seen (a path, a log, a registry key) and how to check it (the command, the inode, the record id, the hash). An entry nobody can check is not a record. refs names the run's objects it rests on, each checked when it is written: input:<path> (under inputs/), job:<id>/<path> (a job's sealed output), import:<id>/<path>, member:<generation>#<n> (an archive member in the catalogue), sha256:<hex> (a sealed blob), or unresolved:<why> when none can be named; a file only in your own work/ is not an object of the run: run the work as a job and cite job:. To correct an entry, yours or a peer's, record the corrected one with supersedes=<its seq> (and because=<why>): nothing is deleted, and the newer entry is the correction; the same sentence with another confidence, refs or status is a correction too. The optional fields are for the reader: answers (the goal sections it answers), rel (supports, contradicts, duplicates or derived_from another entry), sensitive (it or what it cites holds a secret or personal data), clock and precision (on a dated entry: which clock the time came from, how precise it is), basis (observed or inferred), completion (on an absence: complete, partial or failed), attribution (who or what an action is attributed to, and on what), locators (where in a cited object). The harness renders ledger/ledger.md — timeline, indicators, findings, searches that found nothing — after every record; cite that file in the report.",
     promptSnippet: "Record a dated event, an indicator or a finding with its evidence",
     promptGuidelines: [
       "Record every dated event you establish as kind=event with ts in UTC; the timeline is built from them.",
@@ -2812,9 +2819,11 @@ export default function (pi: ExtensionAPI) {
       "A finding names the objects it rests on in refs (job:<id>/<path>, input:<path>, member:<gen>#<n>, sha256:<hex>, or unresolved:<why>).",
       "A wrong entry is corrected, never deleted: record the right one with supersedes=<seq of the wrong one>.",
       "kind=absence is optional: record a search that found nothing only when the absence matters to the case, with the scope it holds for.",
+      "Name the goal section an entry answers in answers; link an entry that supports or contradicts another with rel.",
+      "Record what you could not examine, or could only partly, as kind=limitation with its reason; a proposition you are still testing as kind=hypothesis.",
     ],
     parameters: Type.Object({
-      kind: Type.Union(LEDGER_KINDS.map((k) => Type.Literal(k)), { description: "event | ioc | finding | absence" }),
+      kind: Type.Union(LEDGER_KINDS.map((k) => Type.Literal(k)), { description: "event | ioc | finding | absence | hypothesis | limitation" }),
       value: Type.String({ description: "The event, indicator or finding, in one sentence; for absence, what was looked for" }),
       ts: Type.Optional(Type.String({ description: "The event's time, ISO 8601 with its zone: 2024-01-15T12:44:22Z, or 2024-01-15T15:44:22+03:00 as the source records it. A time without a zone is refused." })),
       source: Type.String({ description: "Where it was seen: a path, log, plugin, registry key. Required." }),
@@ -2822,6 +2831,18 @@ export default function (pi: ExtensionAPI) {
       confidence: Type.Optional(Type.Union(LEDGER_CONFIDENCE.map((c) => Type.Literal(c)))),
       supersedes: Type.Optional(Type.Number({ description: "The seq of an entry this one corrects. The older entry stays, marked superseded." })),
       refs: Type.Optional(Type.Array(Type.String(), { description: "The run's objects it rests on: input:<path>, job:<id>/<path>, import:<id>/<path>, member:<gen>#<n>, sha256:<hex>, or unresolved:<why>. Each is checked; one that does not resolve is refused with the nearest names." })),
+      answers: Type.Optional(Type.Array(Type.String(), { description: "The goal sections it answers: \"3\", \"Q3\"." })),
+      rel: Type.Optional(Type.Array(Type.Object({ to: Type.Number(), kind: Type.Union(LEDGER_REL_KINDS.map((k) => Type.Literal(k))) }), { description: "Links to other entries by seq: supports, contradicts, duplicates, derived_from." })),
+      sensitive: Type.Optional(Type.Boolean({ description: "It, or what it cites, holds a credential, a key or personal data: a package redacts it." })),
+      status: Type.Optional(Type.Union(LEDGER_HYPOTHESIS_STATUS.map((k) => Type.Literal(k)), { description: "A hypothesis's status." })),
+      reason: Type.Optional(Type.Union(LEDGER_LIMITATION_REASONS.map((k) => Type.Literal(k)), { description: "A limitation's reason." })),
+      clock: Type.Optional(Type.String({ description: "On a dated entry: the clock its time came from (\"NTFS $SI created\", \"device local, offset unknown\")." })),
+      precision: Type.Optional(Type.Union(LEDGER_PRECISION.map((k) => Type.Literal(k)), { description: "How precise ts is; a date alone is recorded as date." })),
+      basis: Type.Optional(Type.Union(LEDGER_BASIS.map((k) => Type.Literal(k)), { description: "observed in the evidence, or inferred from it." })),
+      completion: Type.Optional(Type.Union(LEDGER_COMPLETION.map((k) => Type.Literal(k)), { description: "On an absence: how far the search got." })),
+      attribution: Type.Optional(Type.Object({ subject: Type.String(), subject_type: Type.Optional(Type.Union(LEDGER_SUBJECT_TYPES.map((k) => Type.Literal(k)))), basis_refs: Type.Optional(Type.Array(Type.String())) }, { description: "Who or what an action is attributed to (account, device, person) and the objects that link them." })),
+      locators: Type.Optional(Type.Array(Type.Object({ ref: Type.String(), at: Type.String() }), { description: "Where in a cited ref: a row, an offset, a record id." })),
+      because: Type.Optional(Type.String({ description: "With supersedes: why the correction corrects." })),
     }),
     async execute(_id, params, _signal, _onUpdate, toolCtx: ToolCtx) {
       const started = Date.now();
@@ -2834,15 +2855,28 @@ export default function (pi: ExtensionAPI) {
         confidence: params.confidence,
         ...(params.supersedes !== undefined ? { supersedes: params.supersedes } : {}),
         ...(params.refs?.length ? { refs: params.refs } : {}),
+        ...(params.answers?.length ? { answers: params.answers } : {}),
+        ...(params.rel?.length ? { rel: params.rel } : {}),
+        ...(params.sensitive !== undefined ? { sensitive: params.sensitive } : {}),
+        ...(params.status ? { status: params.status } : {}),
+        ...(params.reason ? { reason: params.reason } : {}),
+        ...(params.clock ? { clock: params.clock } : {}),
+        ...(params.precision ? { precision: params.precision } : {}),
+        ...(params.basis ? { basis: params.basis } : {}),
+        ...(params.completion ? { completion: params.completion } : {}),
+        ...(params.attribution ? { attribution: params.attribution } : {}),
+        ...(params.locators?.length ? { locators: params.locators } : {}),
+        ...(params.because ? { because: params.because } : {}),
       });
       if (!result.ok) {
-        await logEvent(toolCtx.cwd, agentId, "record", { kind: params.kind }, { ok: false, reason: result.reason }, Date.now() - started);
+        // What the agent tried to say goes on the trace whole: the args are the record, refused or not.
+        await logEvent(toolCtx.cwd, agentId, "record", params as Record<string, unknown>, { ok: false, reason: result.reason }, Date.now() - started);
         return { content: [{ type: "text" as const, text: `record refused: ${result.reason}` }], details: { ok: false, reason: result.reason }, isError: true };
       }
       // The entry's hash goes on the trace, which is anchored outside the
       // run: custody holds the ledger to it, so an entry deleted from the
       // tail, or one written into the file without this tool, is named.
-      await logEvent(toolCtx.cwd, agentId, "record", { kind: params.kind, ts: params.ts, value: params.value, ...(result.entry.supersedes !== undefined ? { supersedes: result.entry.supersedes } : {}), ...(params.refs?.length ? { refs: params.refs } : {}) }, { ok: true, seq: result.entry.seq, merged: result.merged, total: result.total, ...(result.entry.hash ? { hash: result.entry.hash } : {}), ...(result.note ? { note: result.note } : {}) }, Date.now() - started);
+      await logEvent(toolCtx.cwd, agentId, "record", { ...(params as Record<string, unknown>), ...(result.entry.supersedes !== undefined ? { supersedes: result.entry.supersedes } : {}) }, { ok: true, seq: result.entry.seq, merged: result.merged, total: result.total, ...(result.entry.hash ? { hash: result.entry.hash } : {}), ...(result.note ? { note: result.note } : {}) }, Date.now() - started);
       // A correction is said on the trace as itself, so a reader of the
       // record sees which entry stopped standing, when, and by whom.
       if (result.entry.supersedes !== undefined && !result.merged) {
@@ -2858,7 +2892,7 @@ export default function (pi: ExtensionAPI) {
     description: "List the swarm's ledger: every event, indicator, finding and search that found nothing, recorded so far, with authors and evidence; a corrected entry carries superseded_by. Filter by kind; the rendered file is ledger/ledger.md.",
     promptSnippet: "See what the swarm has recorded so far",
     parameters: Type.Object({
-      kind: Type.Optional(Type.String({ description: "event | ioc | finding | absence" })),
+      kind: Type.Optional(Type.String({ description: "event | ioc | finding | absence | hypothesis | limitation" })),
       limit: Type.Optional(Type.Number({ description: "Newest N entries (default 200)" })),
     }),
     async execute(_id, params, _signal, _onUpdate, toolCtx: ToolCtx) {

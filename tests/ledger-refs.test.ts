@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { initSandbox, ledgerCore, readLedger, recordEntry, verifyLedgerChain, type LedgerEntry } from "../extensions/protocol.ts";
+import { initSandbox, ledgerCore, listLedger, readLedger, recordEntry, verifyLedgerChain, type LedgerEntry } from "../extensions/protocol.ts";
 import { sealTree, storePaths } from "../scripts/evidence-store.ts";
 
 async function run() {
@@ -66,14 +66,15 @@ test("a finding without refs is taken with a note; recorded again with refs, it 
   const fix = (withRefs as { entry: LedgerEntry; merged: boolean }).entry;
   assert.equal((withRefs as { merged: boolean }).merged, false, "the refs cannot be merged into a core that has none");
   assert.equal(fix.supersedes, 1, "it corrects the entry without refs");
-  const again = await recordEntry(a0, { kind: "finding", value: "The key is 1234", source: "x", evidence: "y", refs: ["job:j000001/report/out.txt"] });
-  assert.equal((again as { merged: boolean }).merged, true, "the same refs again: merged into the one that stands");
+  const again = await recordEntry(a0, { kind: "finding", value: "The key is 1234", source: "the job's report", evidence: "cat", refs: ["job:j000001/report/out.txt"] });
+  assert.equal((again as { merged: boolean }).merged, true, "the same entry again, word for word: an attestation of the one that stands");
   assert.equal((again as { entry: LedgerEntry }).entry.seq, fix.seq);
   const other = await recordEntry(a0, { kind: "finding", value: "The key is 1234", source: "x", evidence: "y", refs: ["job:j000001/report/other.txt"] });
-  assert.match((other as { note?: string }).note ?? "", /whose refs stand .* record a correction with supersedes=3/, "other refs are not dropped in silence");
-  const entries = await readLedger(root);
-  assert.equal(entries.length, 3);
-  assert.deepEqual(entries[2].authors.sort(), ["a0", "a1"]);
+  assert.equal((other as { merged: boolean }).merged, false, "other refs are their own entry, never dropped");
+  assert.match((other as { note?: string }).note ?? "", /#3 says the same sentence .* supersedes=3/, "and told of the other");
+  const entries = await listLedger(root, {});
+  assert.equal(entries.length, 4);
+  assert.deepEqual([...entries[2].authors].sort(), ["a0", "a1"]);
   const text = await readFile(join(root, "ledger", "entries.jsonl"), "utf8");
   assert.equal(verifyLedgerChain(text).ok, true);
   assert.equal(verifyLedgerChain(text.replace('"refs":["job:j000001/report/out.txt"]', '"refs":["job:j000001/report/other.txt"]')).ok, false, "a changed ref breaks the chain");
