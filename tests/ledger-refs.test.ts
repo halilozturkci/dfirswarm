@@ -42,6 +42,12 @@ test("refs are checked when written, and a typo is refused with the nearest name
   assert.match((job as { reason: string }).reason, /has no sealed manifest; nearest: job:j000001/);
   assert.equal((await recordEntry(a0, { kind: "finding", value: "Another", source: "s", evidence: "e", refs: ["unresolved:"] })).ok, false, "unresolved: needs its why");
   assert.equal((await recordEntry(a0, { kind: "finding", value: "Another", source: "s", evidence: "e", refs: Array.from({ length: 21 }, (_, i) => `unresolved:${i}`) })).ok, false, "at most 20 refs");
+  // A job's sealed log, and the path as the store shows it (out/…), are refs too.
+  const logs = await recordEntry(a0, { kind: "finding", value: "The job printed the key", source: "stdout", evidence: "cat", refs: ["job:j000001/stdout.log", "job:j000001/out/report/out.txt"] });
+  assert.equal(logs.ok, false, "this job was sealed without logs: its stdout.log does not resolve");
+  await writeFile(join(storePaths(root).jobs, "j000001", "stdout.log"), "key 1234\n");
+  const logs2 = await recordEntry(a0, { kind: "finding", value: "The job printed the key", source: "stdout", evidence: "cat", refs: ["job:j000001/stdout.log", "job:j000001/out/report/out.txt"] });
+  assert.ok(logs2.ok, (logs2 as { reason?: string }).reason);
   const why = await recordEntry(a0, { kind: "finding", value: "The page was only on screen", source: "s", evidence: "e", refs: ["unresolved:seen in a screenshot the agent could not seal"] });
   assert.ok(why.ok, "a ref may say why no object can be named");
   const md = await readFile(join(root, "ledger", "ledger.md"), "utf8");

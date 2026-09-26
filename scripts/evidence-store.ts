@@ -465,9 +465,19 @@ export async function resolveRef(sandbox: string, ref: string): Promise<Resolved
     if (!/^[a-z0-9-]{1,64}$/.test(id)) return { ok: false, ref, reason: `${id} is not a ${kind} id` };
     const found = await readManifest(join(kind === "job" ? P.jobs : P.imports, id, "manifest.json"));
     if (!found) return { ok: false, ref, reason: `${kind} ${id} has no sealed manifest` };
-    if (!rel) return { ok: true, ref, kind, path: `${kind === "job" ? "store/jobs" : "store/imports"}/${id}/out`, bytes: found.manifest.totals.bytes };
-    const f = found.manifest.files.find((x) => x.path === rel || Buffer.from(x.path_b64, "base64").toString("utf8") === rel);
-    return f ? { ok: true, ref, kind, sha256: f.sha256, bytes: f.bytes, path: `${kind === "job" ? "store/jobs" : "store/imports"}/${id}/out/${f.path}` } : { ok: false, ref, reason: `${rel} is not in ${kind} ${id}'s manifest` };
+    const base = `${kind === "job" ? "store/jobs" : "store/imports"}/${id}`;
+    if (!rel) return { ok: true, ref, kind, path: `${base}/out`, bytes: found.manifest.totals.bytes };
+    // A job's logs are sealed beside its output (their sha256 in its
+    // job_committed line): stdout.log, stderr.log and pip's lists.
+    if (kind === "job" && /^(stdout\.log|stderr\.log|pip-before\.txt|pip-after\.txt)$/.test(rel)) {
+      const abs = join(P.jobs, id, rel);
+      const st = await lstat(abs).catch(() => null);
+      return st?.isFile() ? { ok: true, ref, kind, sha256: await sha256File(abs), bytes: st.size, path: `${base}/${rel}` } : { ok: false, ref, reason: `job ${id} has no ${rel}` };
+    }
+    // The path as the store shows it (out/…) is the same file.
+    const want = rel.startsWith("out/") ? [rel, rel.slice(4)] : [rel];
+    const f = found.manifest.files.find((x) => want.some((w) => x.path === w || Buffer.from(x.path_b64, "base64").toString("utf8") === w));
+    return f ? { ok: true, ref, kind, sha256: f.sha256, bytes: f.bytes, path: `${base}/out/${f.path}` } : { ok: false, ref, reason: `${rel} is not in ${kind} ${id}'s manifest` };
   }
   if (kind === "member") {
     const mm = /^([a-z0-9-]+)#(\d+)$/.exec(value);
