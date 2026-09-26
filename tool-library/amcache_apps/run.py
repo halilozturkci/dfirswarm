@@ -13,6 +13,10 @@ which one it found rather than silently returning nothing.
 import datetime
 import json
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[0]).resolve().parents[1]))
+from _output import LosslessPage
 
 try:
     from regipy.registry import RegistryHive
@@ -85,13 +89,13 @@ def main():
     except Exception as exc:
         fail("could not open the hive", hive=hive, reason=str(exc)[:500])
 
-    entries = []
+    entries = LosslessPage("amcache_apps", [hive], limit)
     layout = None
 
     def add(values, key_name, last_modified):
         row = {"key": key_name, "key_last_modified": filetime(last_modified)}
         row.update(values)
-        entries.append(row)
+        entries.add(row)
 
     # Windows 10 and later.
     try:
@@ -101,8 +105,6 @@ def main():
     if inventory is not None:
         layout = "InventoryApplicationFile"
         for sub in inventory.iter_subkeys():
-            if len(entries) >= limit:
-                break
             values = {}
             for v in sub.iter_values():
                 if v.name in WIN10_KEEP:
@@ -119,8 +121,6 @@ def main():
             layout = "File"
             for volume in files.iter_subkeys():
                 for sub in volume.iter_subkeys():
-                    if len(entries) >= limit:
-                        break
                     values = {"volume": volume.name}
                     for v in sub.iter_values():
                         name = WIN7_VALUES.get(str(v.name).lower(), str(v.name))
@@ -136,12 +136,13 @@ def main():
             looked_for=["\\Root\\InventoryApplicationFile", "\\Root\\File"],
         )
 
+    page = entries.finish()
     print(json.dumps({
         "hive": hive,
         "layout": layout,
-        "entries": entries,
-        "entry_count": len(entries),
-        "truncated": len(entries) >= limit,
+        "entries": entries.page,
+        "entry_count": page["matched"],
+        **page,
     }, indent=2))
 
 

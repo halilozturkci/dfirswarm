@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 import json, sys, struct, datetime, os
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[0]).resolve().parents[1]))
+from _output import LosslessPage
 
 def ft(raw):
     if not raw or raw in (0, 0xFFFFFFFFFFFFFFFF):
@@ -40,7 +44,7 @@ def parse_idlist(data, off, size):
         blob = data[p:p+sz]
         # try ascii and utf16
         s = ''.join(chr(b) if 32<=b<127 else '' for b in blob)
-        items.append({'size': sz, 'ascii': s[:200]})
+        items.append({'size': sz, 'ascii': s})
         p += sz
     return items
 
@@ -69,7 +73,7 @@ def parse_lnk(data, base_off=0):
         p += 2
         out['idlist_size'] = id_size
         blob = data[p:p+id_size]
-        out['idlist_ascii'] = ''.join(chr(b) if 32<=b<127 else '.' for b in blob)[:400]
+        out['idlist_ascii'] = ''.join(chr(b) if 32<=b<127 else '.' for b in blob)
         # extract path-like utf16/ascii from extra
         paths = []
         # SHELL_ITEM file entries often have utf16 name at end
@@ -93,7 +97,7 @@ def parse_lnk(data, base_off=0):
             except Exception:
                 pass
             q += isz
-        out['idlist_paths'] = paths[:20]
+        out['idlist_paths'] = paths
         p += id_size
     if flags & 0x2 and p+4 <= len(data):
         li_size = struct.unpack_from('<I', data, p)[0]
@@ -160,23 +164,23 @@ def parse_lnk(data, base_off=0):
         elif sig == 0xA0000007:  # unicode properties / darwin? actually SPECIAL_FOLDER
             rec['hex'] = blk[:32].hex()
         else:
-            rec['ascii'] = ''.join(chr(b) if 32<=b<127 else '.' for b in blk[:120])
+            rec['ascii'] = ''.join(chr(b) if 32<=b<127 else '.' for b in blk)
         extras.append(rec)
         p += bsz
         if bsz == 0:
             break
-    out['extra'] = extras[:12]
+    out['extra'] = extras
     # collect utf16 strings from whole remaining
     strs = []
     i = 0x4C
     while i+4 < min(len(data), 8192):
         s, ni = u16z(data, i, 512)
         if len(s) >= 6 and any(c.isalpha() for c in s):
-            strs.append(s[:300])
+            strs.append(s)
             i = ni+2
         else:
             i += 2
-    out['utf16_strings'] = strs[:40]
+    out['utf16_strings'] = strs
     return out
 
 def main():
@@ -194,7 +198,8 @@ def main():
         f.seek(offset)
         data = f.read(size)
     if args.get('scan'):
-        hits = []
+        limit = int(args.get('max') or 50)
+        hits = LosslessPage("lnk_parse", [src, offset, size, args.get('each')], limit)
         magic = bytes.fromhex('4c0000000114020000000000c000000000000046')
         i = 0
         while True:
@@ -203,11 +208,10 @@ def main():
                 break
             rec = parse_lnk(data[j:j+int(args.get('each') or 2048)], offset+j)
             rec['rel'] = j
-            hits.append(rec)
+            hits.add(rec)
             i = j+4
-            if len(hits) >= int(args.get('max') or 50):
-                break
-        print(json.dumps({'count': len(hits), 'hits': hits}, indent=2))
+        page = hits.finish()
+        print(json.dumps({'count': page['matched'], 'hits': hits.page, **page}, indent=2))
         return
     print(json.dumps(parse_lnk(data, offset), indent=2))
 

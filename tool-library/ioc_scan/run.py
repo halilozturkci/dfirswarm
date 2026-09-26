@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 import json, sys, os, re
 from collections import defaultdict
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[0]).resolve().parents[1]))
+from _output import LosslessPage
 
 args = json.load(sys.stdin)
 path = args.get("path") or "inputs/[UNALLOCATED]"
@@ -29,9 +33,15 @@ context = int(args.get("context") or 96)
 start = int(args.get("start") or 0)
 length = args.get("length")
 chunk = int(args.get("chunk") or 8 * 1024 * 1024)
-overlap = 256
-skip_zeros = bool(args.get("skip_zeros", True))
+overlap = max(256, max((len(nb) - 1 for _, _, nb in needles_b), default=0))
+skip_zeros = bool(args.get("skip_zeros", False))
 unique_only = bool(args.get("unique_only", True))
+if skip_zeros:
+    print(json.dumps({
+        "error": "skip_zeros would make the scan lossy and is not supported",
+        "hint": "omit skip_zeros or pass false",
+    }))
+    sys.exit(1)
 
 needles_b = []
 for n in needles:
@@ -48,7 +58,11 @@ if not os.path.isfile(path):
     sys.exit(1)
 size = os.path.getsize(path)
 end = size if length is None else min(size, start + int(length))
-hits = []
+hits = LosslessPage(
+    "ioc_scan",
+    [path, needles, start, end, context, skip_zeros, unique_only],
+    max_hits,
+)
 seen = set()
 counts = defaultdict(int)
 
@@ -66,13 +80,12 @@ def add_hit(kind, name, off, blob, local):
         return
     if unique_only:
         seen.add(key)
-    if len(hits) < max_hits:
-        hits.append({
-            "offset": off,
-            "needle": name,
-            "enc": kind,
-            "snippet": snip[:200],
-        })
+    hits.add({
+        "offset": off,
+        "needle": name,
+        "enc": kind,
+        "snippet": snip,
+    })
 
 with open(path, "rb") as f:
     f.seek(start)
@@ -83,10 +96,6 @@ with open(path, "rb") as f:
         data = f.read(want)
         if not data:
             break
-        if skip_zeros and data.count(0) > len(data) * 0.98:
-            pos += len(data)
-            prev = data[-overlap:] if len(data) >= overlap else data
-            continue
         blob = prev + data
         base = pos - len(prev)
         for kind, name, nb in needles_b:
@@ -96,20 +105,22 @@ with open(path, "rb") as f:
                 if i < 0:
                     break
                 abs_off = base + i
-                if abs_off >= pos or not prev:  # avoid double-count in overlap except first chunk
+                # Skip only a hit wholly inside the carry. A signature split
+                # across the chunk boundary must be counted here.
+                if not prev or abs_off + len(nb) > pos:
                     add_hit(kind, name, abs_off, blob, i)
                 start_i = i + max(1, len(nb))
-                if counts[name] > 50000:
-                    break
         prev = data[-overlap:] if len(data) >= overlap else data
         pos += len(data)
 
+page = hits.finish()
 print(json.dumps({
     "path": path,
     "scanned_start": start,
     "scanned_end": end,
     "size": size,
-    "hit_count_returned": len(hits),
-    "counts": dict(sorted(counts.items(), key=lambda kv: -kv[1])[:80]),
-    "hits": hits,
+    "hit_count_returned": page["returned"],
+    "counts": dict(sorted(counts.items(), key=lambda kv: -kv[1])),
+    "hits": hits.page,
+    **page,
 }, indent=2))

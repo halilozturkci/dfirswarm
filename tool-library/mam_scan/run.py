@@ -2,6 +2,9 @@
 import json, sys, struct, datetime
 from pathlib import Path
 
+sys.path.insert(0, str(Path(sys.argv[0]).resolve().parents[1]))
+from _output import LosslessPage
+
 def ft(v):
     if not v or v in (0, 0xFFFFFFFFFFFFFFFF):
         return None
@@ -11,11 +14,11 @@ def ft(v):
     except Exception:
         return None
 
-def utf16_strings(buf, minlen=6, limit=40):
+def utf16_strings(buf, minlen=6):
     out = []
     i = 0
     L = len(buf)
-    while i + 2 < L and len(out) < limit:
+    while i + 2 < L:
         if buf[i + 1] == 0 and 32 <= buf[i] < 127:
             chars = []
             j = i
@@ -62,7 +65,7 @@ def parse_scca(dec, off, blob_sha=None):
             if iso:
                 times.append(iso)
     runc = struct.unpack_from("<I", dec, 0xD0)[0] if len(dec) >= 0xD4 else None
-    strs = utf16_strings(dec, 8, 30)
+    strs = utf16_strings(dec, 8)
     paths = [s for s in strs if "\\" in s]
     return {
         "offset": off,
@@ -73,8 +76,8 @@ def parse_scca(dec, off, blob_sha=None):
         "run_count": runc,
         "last_runs": times,
         "dec_len": len(dec),
-        "paths": paths[:20],
-        "strings_sample": strs[:15],
+        "paths": paths,
+        "strings": strs,
     }
 
 def main():
@@ -89,7 +92,11 @@ def main():
     min_uncomp = int(args.get("min_uncomp") or 1024)
     max_uncomp = int(args.get("max_uncomp") or 2_000_000)
     needle = (args.get("name_filter") or "").upper()
-    hits = []
+    hits = LosslessPage(
+        "mam_scan",
+        [path, start, length, parse, min_uncomp, max_uncomp, needle],
+        max_hits,
+    )
     sig = b"MAM\x04"
     overlap = 8
     with open(path, "rb") as f:
@@ -136,17 +143,15 @@ def main():
                 if needle:
                     if needle not in (rec.get("name") or "").upper() and needle not in " ".join(rec.get("paths") or []).upper():
                         continue
-                hits.append(rec)
-                if len(hits) >= max_hits:
-                    json.dump({"count": len(hits), "hits": hits, "truncated": True, "scanned_to": pos + len(data)}, sys.stdout)
-                    return
+                hits.add(rec)
             pos += len(data)
             if remaining is not None:
                 remaining -= len(data)
             carry = buf[-(overlap - 1):] if len(buf) >= overlap else buf
             if not data or len(data) < toread:
                 break
-    json.dump({"count": len(hits), "hits": hits, "truncated": False, "scanned_to": pos}, sys.stdout)
+    page = hits.finish()
+    json.dump({"count": page["matched"], "hits": hits.page, "scanned_to": pos, **page}, sys.stdout)
 
 if __name__ == "__main__":
     main()

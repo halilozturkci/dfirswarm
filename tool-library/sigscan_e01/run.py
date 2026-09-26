@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 import json, sys, subprocess, os
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[0]).resolve().parents[1]))
+from _output import LosslessPage
 
 args = json.load(sys.stdin)
 image = args.get("image", "inputs/Case4.E01")
@@ -62,15 +66,32 @@ if length is not None:
         size_source = "length argument"
 else:
     end = media_size
+requested_start = start
 if start < sector_size:
-    start = sector_size  # img_cat requires positive start sector
+    # TSK img_cat refuses sector zero. Do not silently rewrite the requested
+    # range: name the first sector as unread and continue at sector one.
+    start = sector_size
 
-hits = []
-read_errors = []
+hits = LosslessPage(
+    "sigscan_e01",
+    [image, needle.hex(), requested_start, end, context],
+    max_hits,
+)
+read_errors = LosslessPage(
+    "sigscan_e01-unread",
+    [image, requested_start, end],
+    20,
+)
+if requested_start < sector_size:
+    read_errors.add({
+        "start": requested_start,
+        "end": min(sector_size, end),
+        "stderr": "img_cat cannot read sector zero; scan continued at byte 512",
+    })
 scanned = 0
 pos = start
 overlap_buf = b""
-while pos < end and len(hits) < max_hits:
+while pos < end:
     n = min(chunk, end - pos)
     s_sec = pos // sector_size
     e_sec = (pos + n - 1) // sector_size  # inclusive stop
@@ -85,7 +106,7 @@ while pos < end and len(hits) < max_hits:
         # A chunk that read back empty is a hole or a read error, and the two
         # are not the same thing to a reader deciding whether "no hits" means
         # the signature is absent. Count them and say so in the result.
-        read_errors.append({
+        read_errors.add({
             "start_sector": s_sec,
             "end_sector": e_sec,
             "stderr": proc.stderr.decode("utf-8", "replace").strip()[:200],
@@ -97,7 +118,7 @@ while pos < end and len(hits) < max_hits:
     data = overlap_buf + buf
     data_base = abs_base - len(overlap_buf)
     start_find = 0
-    while len(hits) < max_hits:
+    while True:
         i = data.find(needle, start_find)
         if i < 0:
             break
@@ -105,7 +126,7 @@ while pos < end and len(hits) < max_hits:
         if abs_off >= start:
             ctx_s = max(0, i - context)
             ctx = data[ctx_s:i + len(needle) + context]
-            hits.append({
+            hits.add({
                 "offset": abs_off,
                 "sector": abs_off // sector_size,
                 "hex": ctx[:160].hex(),
@@ -117,18 +138,22 @@ while pos < end and len(hits) < max_hits:
     scanned += len(buf)
     pos = (e_sec + 1) * sector_size
 
+hit_page = hits.finish()
+error_page = read_errors.finish()
 print(json.dumps({
     "backend": "img_cat",
     "needle_len": len(needle),
-    "hits": hits,
-    "hit_count": len(hits),
-    "truncated": len(hits) >= max_hits,
+    "hits": hits.page,
+    "hit_count": hit_page["matched"],
+    **hit_page,
     "scanned_bytes": scanned,
-    "start": start,
+    "start": requested_start,
+    "scan_start": start,
     "end": end,
     "reached_end": pos >= end,
     "media_size": media_size,
     "media_size_source": size_source,
-    "unread_ranges": read_errors[:20],
-    "unread_range_count": len(read_errors),
+    "unread_ranges": read_errors.page,
+    "unread_range_count": error_page["matched"],
+    **({"all_unread_ranges": error_page["all_results"]} if error_page.get("all_results") else {}),
 }, indent=2))

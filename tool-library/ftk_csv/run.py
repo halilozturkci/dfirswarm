@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 import json, sys, csv, io, re
 from datetime import datetime
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[0]).resolve().parents[1]))
+from _output import LosslessPage
 
 args = json.load(sys.stdin)
 path = args.get("path", "inputs/Webserver.E01.csv")
@@ -15,7 +19,11 @@ needles = [n for n in contains.split("|") if n] if contains else []
 cre = re.compile(regex, re.I) if regex else None
 needles_l = [n.lower() for n in needles]
 
-out = []
+out = LosslessPage(
+    "ftk_csv",
+    [path, contains, regex, date_contains, deleted, fields],
+    limit,
+)
 with open(path, "r", encoding="utf-16", newline="") as f:
     r = csv.DictReader(f, delimiter="\t")
     for row in r:
@@ -50,7 +58,6 @@ with open(path, "r", encoding="utf-16", newline="") as f:
         }
         if fields:
             rec = {k: rec[k] for k in fields if k in rec}
-        out.append(rec)
-        if len(out) >= limit:
-            break
-print(json.dumps({"count": len(out), "rows": out}, indent=None))
+        out.add(rec)
+page = out.finish()
+print(json.dumps({"count": page["matched"], "rows": out.page, **page}, indent=None))

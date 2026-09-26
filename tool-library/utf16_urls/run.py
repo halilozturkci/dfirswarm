@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 import json, sys, re
+from pathlib import Path
+sys.path.insert(0, str(Path(sys.argv[0]).resolve().parents[1]))
+from _output import LosslessPage
 d = json.load(sys.stdin)
 path = d["path"]
 contains = (d.get("contains") or "").lower()
 limit = int(d.get("limit", 200))
 data = open(path, "rb").read()
-out = []
+out = LosslessPage("utf16_urls", [path, contains], limit)
 seen = set()
 # ascii
 for m in re.finditer(rb'https?://[A-Za-z0-9._~:/?#\[\]@!$&\'()*+,;=%\-]{6,300}', data):
@@ -13,7 +16,7 @@ for m in re.finditer(rb'https?://[A-Za-z0-9._~:/?#\[\]@!$&\'()*+,;=%\-]{6,300}',
     if s not in seen:
         seen.add(s)
         if not contains or contains in s.lower():
-            out.append({"enc": "ascii", "off": m.start(), "text": s})
+            out.add({"enc": "ascii", "off": m.start(), "text": s})
 # utf16le printable runs
 i = 0
 n = len(data)
@@ -29,10 +32,9 @@ while i + 1 < n:
                 if s not in seen:
                     seen.add(s)
                     if not contains or contains in sl:
-                        out.append({"enc": "utf16le", "off": i, "text": s[:400]})
-                        if len(out) >= limit:
-                            break
+                        out.add({"enc": "utf16le", "off": i, "text": s})
         i = j + 2
     else:
         i += 1
-print(json.dumps({"path": path, "count": len(out), "urls": out[:limit]}, ensure_ascii=False))
+page = out.finish()
+print(json.dumps({"path": path, "count": page["matched"], "urls": out.page, **page}, ensure_ascii=False))

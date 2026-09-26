@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 import json, sys
+from pathlib import Path
 from xml.etree import ElementTree as ET
 from Evtx.Evtx import Evtx
+
+sys.path.insert(0, str(Path(sys.argv[0]).resolve().parents[1]))
+from _output import LosslessPage
 
 NS = "{http://schemas.microsoft.com/win/2004/08/events/event}"
 
@@ -35,7 +39,11 @@ def main():
     prefix = args.get("time_prefix") or ""
     contains = (args.get("contains") or "").lower()
     limit = int(args.get("limit") or 200)
-    out = []
+    out = LosslessPage(
+        "evtx_filter",
+        [path, sorted(idset) if idset else [], prefix, contains],
+        limit,
+    )
     n = 0
     with Evtx(path) as log:
         for rec in log.records():
@@ -52,10 +60,9 @@ def main():
                 continue
             if contains and contains not in json.dumps(d, default=str).lower() and contains not in xml.lower():
                 continue
-            out.append(d)
-            if len(out) >= limit:
-                break
-    json.dump({"scanned": n, "returned": len(out), "events": out}, sys.stdout)
+            out.add(d)
+    page = out.finish()
+    json.dump({"scanned": n, "events": out.page, **page}, sys.stdout)
 
 if __name__ == "__main__":
     main()

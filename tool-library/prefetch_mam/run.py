@@ -2,6 +2,9 @@ import json, sys, re, struct, datetime
 from pathlib import Path
 from dissect.util.compression import lzxpress_huffman
 
+sys.path.insert(0, str(Path(sys.argv[0]).resolve().parents[1]))
+from _output import LosslessPage
+
 
 def filetime_to_iso(ft):
     if not ft:
@@ -59,8 +62,16 @@ def main():
     max_strings = int(args.get('max_strings', 50))
     data = Path(path).read_bytes()
     res = parse_prefetch(data)
-    res['all_strings'] = res['all_strings'][:max_strings]
-    res['paths'] = res['paths'][:max_strings]
+    strings = LosslessPage("prefetch_mam-strings", [path], max_strings)
+    for value in res['all_strings']:
+        strings.add(value)
+    paths = LosslessPage("prefetch_mam-paths", [path], max_strings)
+    for value in res['paths']:
+        paths.add(value)
+    res['all_strings'] = strings.page
+    res['all_strings_page'] = strings.finish()
+    res['paths'] = paths.page
+    res['paths_page'] = paths.finish()
     print(json.dumps(res, indent=2))
 
 if __name__ == '__main__':

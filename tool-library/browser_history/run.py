@@ -21,6 +21,10 @@ import shutil
 import sqlite3
 import sys
 import tempfile
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[0]).resolve().parents[1]))
+from _output import LosslessPage
 
 QUERIES = {
     "chrome_history": (
@@ -123,15 +127,27 @@ def main():
         conn.row_factory = sqlite3.Row
         results = []
         try:
-            for s in stmts:
+            for statement_index, s in enumerate(stmts):
                 try:
                     cur = conn.execute(s)
-                    rows = [dict(r) for r in cur.fetchmany(limit)]
-                    truncated = cur.fetchone() is not None
+                    page = LosslessPage(
+                        "browser_history",
+                        [path, s, statement_index],
+                        limit,
+                    )
+                    for row in cur:
+                        page.add(dict(row))
+                    kept = page.finish()
                     columns = [d[0] for d in (cur.description or [])]
                 except sqlite3.Error as exc:
                     fail("sqlite refused the query", reason=str(exc), sql=s, done=len(results))
-                results.append({"sql": s, "columns": columns, "rows": rows, "row_count": len(rows), "truncated": truncated})
+                results.append({
+                    "sql": s,
+                    "columns": columns,
+                    "rows": page.page,
+                    "row_count": kept["matched"],
+                    **kept,
+                })
         finally:
             conn.close()
 

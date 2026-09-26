@@ -1,4 +1,8 @@
 import json, sys, os, re
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[0]).resolve().parents[1]))
+from _output import LosslessPage
 
 ROOT = os.getcwd()
 CAT = {
@@ -32,7 +36,11 @@ def main():
     else:
         matchers = [re.compile(re.escape(p), flags) for p in patterns]
 
-    out = []
+    out = LosslessPage(
+        "csearch",
+        [catalog_root, files, patterns, insensitive, regex],
+        max_lines,
+    )
     for key in files:
         if key not in CAT:
             print(f"error: unknown catalog key '{key}'", file=sys.stderr)
@@ -48,16 +56,19 @@ def main():
             for line in fh:
                 if any(m.search(line) for m in matchers):
                     text = line.rstrip("\n")
-                    out.append(f"[{key}] {text}")
-                    if len(out) >= max_lines:
-                        break
-        if len(out) >= max_lines:
-            break
+                    out.add(f"[{key}] {text}")
 
-    if not out:
+    page = out.finish()
+    if not out.page:
         print("(no matches)")
     else:
-        print("\n".join(out))
+        print("\n".join(out.page))
+    if page.get("all_results"):
+        print(
+            f"{page['matched']} lines matched; showing {page['returned']}; "
+            f"all results: {page['all_results']} ({page['all_results_format']})",
+            file=sys.stderr,
+        )
 
 if __name__ == "__main__":
     main()

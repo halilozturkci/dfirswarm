@@ -62,7 +62,7 @@ def main():
     stdout = proc.stdout.decode("utf-8", "replace")
     stderr = proc.stderr.decode("utf-8", "replace").strip()
     if proc.returncode not in (0, 1) and not stdout:
-        fail("yara failed", status=proc.returncode, stderr=stderr[:2000])
+        fail("yara failed", status=proc.returncode, stderr=stderr)
 
     matches = []
     current = None
@@ -77,7 +77,7 @@ def main():
                 current["strings"].append({
                     "offset": offset.strip(),
                     "identifier": ident.strip(),
-                    "value": value.strip()[:200],
+                    "value": value.strip(),
                 })
             continue
         rule, _, path = line.partition(" ")
@@ -90,7 +90,7 @@ def main():
         "matches": matches,
         "match_count": len(matches),
         "files_matched": sorted({m["file"] for m in matches}),
-        "warnings": stderr[:2000] or None,
+        "warnings": stderr or None,
     }, indent=2))
 
 

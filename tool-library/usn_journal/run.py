@@ -28,6 +28,10 @@ import datetime
 import json
 import struct
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[0]).resolve().parents[1]))
+from _output import LosslessPage
 
 FILETIME_EPOCH = datetime.datetime(1601, 1, 1, tzinfo=datetime.timezone.utc)
 
@@ -106,10 +110,10 @@ def main():
     else:
         fail("no USN_RECORD_V2 found", bytes=len(data), hint="is this the $J stream rather than $Max?")
 
-    records = []
+    records = LosslessPage("usn_journal", [path, name_filter], limit)
     offset = start
     skipped = 0
-    while offset + 0x3C <= len(data) and len(records) < limit:
+    while offset + 0x3C <= len(data):
         length, major, minor = struct.unpack_from("<IHH", data, offset)
         if length == 0:
             offset += 8
@@ -125,7 +129,7 @@ def main():
         if 0 < name_len and name_off + name_len <= length:
             name = data[offset + name_off:offset + name_off + name_len].decode("utf-16-le", "replace")
         if needle is None or needle in name.lower():
-            records.append({
+            records.add({
                 "usn": usn,
                 "timestamp": filetime(stamp),
                 "name": name,
@@ -139,14 +143,15 @@ def main():
             })
         offset += length
 
+    page = records.finish()
     print(json.dumps({
         "path": path,
         "bytes": len(data),
         "first_record_offset": start,
-        "records": records,
-        "record_count": len(records),
+        "records": records.page,
+        "record_count": page["matched"],
         "malformed_skipped": skipped,
-        "truncated": offset + 0x3C <= len(data),
+        **page,
     }, indent=2))
 
 

@@ -18,6 +18,10 @@ import json
 import os
 import struct
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[0]).resolve().parents[1]))
+from _output import LosslessPage
 
 FILETIME_EPOCH = datetime.datetime(1601, 1, 1, tzinfo=datetime.timezone.utc)
 
@@ -92,21 +96,22 @@ def main():
     if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
         fail("limit must be a positive integer", limit=args.get("limit"))
 
-    entries = []
-    for target in targets[:limit]:
+    entries = LosslessPage("recyclebin_i", [path], limit)
+    for target in targets:
         try:
             with open(target, "rb") as fh:
                 data = fh.read(4096)
         except OSError as exc:
-            entries.append({"file": target, "error": str(exc)})
+            entries.add({"file": target, "error": str(exc)})
             continue
-        entries.append(parse(data, target))
+        entries.add(parse(data, target))
 
+    page = entries.finish()
     print(json.dumps({
-        "entries": entries,
-        "entry_count": len(entries),
+        "entries": entries.page,
+        "entry_count": page["matched"],
         "found": len(targets),
-        "truncated": len(targets) > len(entries),
+        **page,
     }, indent=2))
 
 

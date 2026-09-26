@@ -87,19 +87,24 @@ def carve_pdf(data, off):
     end = eof + 5
     while end < len(data) and data[end:end+1] in (b'\r', b'\n'):
         end += 1
-    return end - off + 1  # include trailing newline
+    return end - off  # end already points past any trailing newline
 
 FOOTER_MARKERS = {
     'ZIP': b'PK\x05\x06',  # end of central directory
-    'GZ': None,  # no footer, stream format
-    'RAR': b'\x7b\x04',  # end block type
-    '7z': None,
     'PNG': b'IEND\xaeB`\x82',
     'JPEG': b'\xff\xd9',
-    'GIF': b'\x00\x3b',
-    'OLE2': None,  # size from header
-    'LNK': None,  # size in header at offset 0x48-0x4B
-    'EVTX': None,  # chunk-based
+    'GIF': b'\x3b',
+}
+
+MAGICS = {
+    'PE': b'MZ',
+    'ZIP': b'PK\x03\x04',
+    'PDF': b'%PDF-',
+    'SQLite': b'SQLite format 3\x00',
+    'regf': b'regf',
+    'PNG': b'\x89PNG\r\n\x1a\n',
+    'JPEG': b'\xff\xd8\xff',
+    'GIF': (b'GIF87a', b'GIF89a'),
 }
 
 def carve_footer(data, off, sig_type, max_size):
@@ -122,7 +127,7 @@ def carve_footer(data, off, sig_type, max_size):
     elif sig_type == 'JPEG':
         return idx + 2 - off
     elif sig_type == 'GIF':
-        return idx + 2 - off
+        return idx + 1 - off
     return idx - off + len(marker)
 
 def main():
@@ -132,19 +137,33 @@ def main():
     sig_type = args['sig_type']
     max_size = args.get('max_size', 100_000_000)
     output = args.get('output')
-    if output:
-        resolve_output(output)
+    if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
+        fail("offset must be a non-negative integer", offset=offset)
+    if not isinstance(max_size, int) or isinstance(max_size, bool) or max_size < 1:
+        fail("max_size must be a positive integer", max_size=max_size)
+    if sig_type not in MAGICS:
+        fail(
+            "this signature has no lossless size parser",
+            sig_type=sig_type,
+            supported=sorted(MAGICS),
+            hint="find its offset with sig_carve, then use a format-aware extractor",
+        )
+    dest = resolve_output(output) if output else None
 
     with open(path, 'rb') as f:
         f.seek(offset)
         header = f.read(16)
+        expected = MAGICS[sig_type]
+        valid = header.startswith(expected) if isinstance(expected, bytes) else any(header.startswith(m) for m in expected)
+        if not valid:
+            fail("the requested signature is not at offset", sig_type=sig_type, offset=offset)
         # Read enough to determine size
         if sig_type in ('PE', 'SQLite', 'regf'):
-            read_size = min(max_size, 20_000_000)
+            read_size = min(max(1_048_576, max_size), 20_000_000)
         elif sig_type == 'PDF':
             read_size = min(max_size, 50_000_000)
         else:
-            read_size = min(max_size, 10_000_000)
+            read_size = max_size
         
         f.seek(offset)
         data = f.read(read_size)
@@ -158,26 +177,31 @@ def main():
         size = carve_regf(data, 0)
     elif sig_type == 'PDF':
         size = carve_pdf(data, 0)
-    elif sig_type in FOOTER_MARKERS and FOOTER_MARKERS[sig_type]:
+    elif sig_type in FOOTER_MARKERS:
         size = carve_footer(data, 0, sig_type, max_size)
-    else:
-        # Default: extract max_size
-        size = min(read_size, max_size)
-        # Try to truncate at next common signature
-        for magic in [b'MAM', b'MZ', b'PK\x03\x04', b'regf', b'SQLite', b'%PDF', b'SCCA',
-                      b'\xd0\xcf\x11\xe0', b'Rar!', b"7z\xbc\xaf", b'\x89PNG', b'\xff\xd8\xff']:
-            idx = data.find(magic, len(magic))
-            if 0 < idx < size:
-                size = idx
 
     if not size or size < 4:
-        print(json.dumps({"ok": False, "error": f"Could not determine file size for {sig_type}"}))
-        return
+        fail(
+            "could not determine the complete file size within max_size",
+            sig_type=sig_type,
+            max_size=max_size,
+            hint="retry with a larger max_size; no partial output was written",
+        )
+    if size > max_size:
+        fail(
+            "complete file is larger than max_size",
+            sig_type=sig_type,
+            required_size=size,
+            max_size=max_size,
+            hint="retry with max_size at least required_size; no partial output was written",
+        )
 
     # Re-read exactly
     with open(path, 'rb') as f:
         f.seek(offset)
-        file_data = f.read(min(size, max_size))
+        file_data = f.read(size)
+    if len(file_data) != size:
+        fail("source ended before the complete file", wanted=size, got=len(file_data))
 
     sha256 = hashlib.sha256(file_data).hexdigest()
     
@@ -191,10 +215,9 @@ def main():
         "first_ascii": ''.join(chr(b) if 32 <= b < 127 else '.' for b in file_data[:128])
     }
 
-    if output:
-        os.makedirs(os.path.dirname(output) or '.', exist_ok=True)
-        with open(output, 'wb') as f:
-            f.write(file_data)
+    if dest is not None:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(file_data)
         result['output'] = output
 
     print(json.dumps(result))

@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 import json, sys, subprocess, os
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[0]).resolve().parents[1]))
+from _output import LosslessPage
 args = json.load(sys.stdin)
 needles = args.get("needles") or ""
 path = args.get("path") or ""
@@ -18,8 +22,12 @@ for n in need_list:
     variants.append((n, "utf16le", n.encode("utf-16le")))
 
 def scan_fh(fh):
-    hits = {n: {"ascii": 0, "utf16le": 0, "snippets": []} for n in need_list}
-    overlap = 1024
+    counts = {n: {"ascii": 0, "utf16le": 0} for n in need_list}
+    pages = {
+        n: LosslessPage("chunk_needles", [path, inode, n, context], max_hits)
+        for n in need_list
+    }
+    overlap = max(1024, max((len(pat) - 1 for _, _, pat in variants), default=0))
     prev = b""
     offset = 0
     while True:
@@ -34,18 +42,27 @@ def scan_fh(fh):
                 i = data.find(pat, start)
                 if i < 0:
                     break
-                hits[n][enc] += 1
-                if len(hits[n]["snippets"]) < max_hits:
-                    a = max(0, i - context)
-                    b = min(len(data), i + len(pat) + context)
-                    snip = data[a:b]
-                    txt = "".join(chr(c) if 32 <= c < 127 else "." for c in snip)
-                    hits[n]["snippets"].append({"off": base + i, "enc": enc, "text": txt})
+                absolute = base + i
+                # A hit wholly inside the carry was already counted. A hit
+                # that starts in carry but ends in the new chunk is new.
+                if prev and absolute + len(pat) <= offset:
+                    start = i + 1
+                    continue
+                counts[n][enc] += 1
+                a = max(0, i - context)
+                b = min(len(data), i + len(pat) + context)
+                snip = data[a:b]
+                txt = "".join(chr(c) if 32 <= c < 127 else "." for c in snip)
+                pages[n].add({"off": absolute, "enc": enc, "text": txt})
                 start = i + 1
         prev = data[-overlap:]
         offset += len(buf)
         if not buf:
             break
+    hits = {}
+    for n in need_list:
+        page = pages[n].finish()
+        hits[n] = {**counts[n], "snippets": pages[n].page, **page}
     return hits, offset
 
 if path:

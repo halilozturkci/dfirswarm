@@ -12,11 +12,11 @@
     },
     "sig_type": {
       "type": "string",
-      "description": "Signature type: PE, ZIP, PDF, SQLite, regf, OLE2, RAR, 7z, PNG, JPEG, GIF, GZ, LNK, EVTX"
+      "description": "Signature type with a lossless size parser: PE, ZIP, PDF, SQLite, regf, PNG, JPEG, GIF"
     },
     "max_size": {
       "type": "integer",
-      "description": "Maximum bytes to extract (default 100MB)"
+      "description": "Safety ceiling for a complete file (default 100MB); a larger file is refused, never cut"
     },
     "output": {
       "type": "string",
@@ -30,5 +30,5 @@
   "by": "s183904",
   "at": "2026-09-18T22:20:17.004Z",
   "version": 2,
-  "sha256": "7df02268895e94928b9f3d8f3dc54b37349c72466b0a85b0f12839cba6b7af38"
+  "sha256": "f7a0e0f35db1d34c489d143331e813100af364c747f1efe0b8cad0a21028c485"
 }

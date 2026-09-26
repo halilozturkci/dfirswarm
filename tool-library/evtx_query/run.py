@@ -1,5 +1,9 @@
 import json, sys, xml.etree.ElementTree as ET
+from pathlib import Path
 from Evtx.Evtx import Evtx
+
+sys.path.insert(0, str(Path(sys.argv[0]).resolve().parents[1]))
+from _output import LosslessPage
 
 args = json.load(sys.stdin)
 path = args['path']
@@ -12,9 +16,14 @@ end_record = args.get('end_record')
 
 NS = {'e': 'http://schemas.microsoft.com/win/2004/08/events/event'}
 
-out = []
+out = LosslessPage(
+    "evtx_query",
+    [path, sorted(event_ids), contains, start_record, end_record],
+    limit,
+)
 with Evtx(path) as evtx:
     for rec in evtx.records():
+        xml = None
         try:
             xml = rec.xml()
             root = ET.fromstring(xml)
@@ -68,7 +77,7 @@ with Evtx(path) as evtx:
                                 eventdata[name] = [eventdata[name], text]
                         else:
                             eventdata[name] = text
-            out.append({
+            out.add({
                 'timestamp': time_created,
                 'event_id': eid,
                 'channel': channel,
@@ -78,10 +87,10 @@ with Evtx(path) as evtx:
                 'data': eventdata,
                 'xml_excerpt': xml[:1200]
             })
-            if len(out) >= limit:
-                break
         except Exception as e:
-            out.append({'parse_error': str(e), 'xml_excerpt': rec.xml()[:1200]})
-            if len(out) >= limit:
-                break
-print(json.dumps({'path': path, 'count': len(out), 'events': out}, ensure_ascii=False))
+            out.add({
+                'parse_error': str(e),
+                'xml_excerpt': xml[:1200] if isinstance(xml, str) else None,
+            })
+page = out.finish()
+print(json.dumps({'path': path, 'count': page['matched'], 'events': out.page, **page}, ensure_ascii=False))

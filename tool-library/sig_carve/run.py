@@ -1,4 +1,8 @@
 import sys, json, hashlib, os, struct
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[0]).resolve().parents[1]))
+from _output import LosslessPage
 
 # Read input
 inp = json.load(sys.stdin)
@@ -42,7 +46,7 @@ def scan_file(filepath, sig_defs, context, max_hits):
     with open(filepath, 'rb') as f:
         for name, (header_hex, footer_hex, minsize, maxsize) in sig_defs.items():
             header = hex_to_bytes(header_hex)
-            hits = []
+            hits = LosslessPage("sig_carve-" + name, [filepath, name], max_hits)
             
             f.seek(0)
             offset = 0
@@ -70,22 +74,19 @@ def scan_file(filepath, sig_defs, context, max_hits):
                         ctx_start = min(16, abs_offset)
                         ctx_snippet = ctx[ctx_start:ctx_start + context]
                         
-                        hits.append({
+                        hits.add({
                             "offset": abs_offset,
                             "hex_preview": ctx_snippet[:32].hex(' '),
                             "ascii_preview": ''.join(chr(b) if 32<=b<127 else '.' for b in ctx_snippet[:64])
                         })
-                        if len(hits) >= max_hits:
-                            break
                     pos = idx + 1
                 
                 offset += CHUNK
-                if len(hits) >= max_hits:
-                    break
-            
+            page = hits.finish()
             results[name] = {
-                "count": len(hits),
-                "hits": hits[:max_hits]
+                "count": page["matched"],
+                "hits": hits.page,
+                **page,
             }
     
     return results

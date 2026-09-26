@@ -21,6 +21,10 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[0]).resolve().parents[1]))
+from _output import LosslessPage
 
 
 def fail(message, **extra):
@@ -106,23 +110,20 @@ def main():
         # Tab-separated, whatever the extension says.
         src = os.path.join(export, hits[0])
 
-        rows = []
-        truncated = False
+        rows = LosslessPage("esedb_query", [path, table, hits[0]], limit)
         with open(src, "r", encoding="utf-8", errors="replace", newline="") as fh:
             reader = csv.reader(fh, delimiter="\t")
             header = next(reader, [])
             for row in reader:
-                if len(rows) >= limit:
-                    truncated = True
-                    break
-                rows.append({header[i] if i < len(header) else f"col{i}": v for i, v in enumerate(row)})
+                rows.add({header[i] if i < len(header) else f"col{i}": v for i, v in enumerate(row)})
+        page = rows.finish()
         print(json.dumps({
             "path": path,
             "table": chosen,
             "columns": header,
-            "rows": rows,
-            "row_count": len(rows),
-            "truncated": truncated,
+            "rows": rows.page,
+            "row_count": page["matched"],
+            **page,
         }, indent=2))
     finally:
         shutil.rmtree(out, ignore_errors=True)
