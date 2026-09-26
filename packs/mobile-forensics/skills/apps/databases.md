@@ -17,11 +17,11 @@ old on a phone that is never closed cleanly. **The newest messages are in the
 WAL.** Copying only the `.db` is the single most common mistake in mobile work
 and it silently loses exactly the period a case is about.
 
-**Deletion inside SQLite is not erasure.** A deleted row's bytes stay in the
-page's free space until that page is reused, and `VACUUM` is the only thing that
-reliably clears them — which phones rarely run. `sqlite_freespace` walks the
-free pages and the unallocated tail of each page and returns the readable
-records.
+**Deletion inside SQLite is not necessarily erasure.** A deleted row's bytes
+can stay in page free space until reuse. `secure_delete`, `VACUUM`, page reuse
+and application-level encryption can instead leave nothing useful.
+`sqlite_freespace` walks freelist pages, the unallocated gap and the freeblock
+chain of each b-tree page and returns readable fragments.
 
 Three rules for a recovered row:
 
@@ -38,3 +38,8 @@ Read the schema before the data — `sqlite_query` with
 amount of staring at values will give you. And check for a `-journal` file as
 well as a WAL: a rollback journal holds the *previous* contents of changed
 pages, which is another route to a value that was overwritten.
+
+Call `sqlite_freespace` on a working copy that keeps the database, `-wal` and
+`-shm` under the same basename. Filter with `contains` only after an unfiltered
+run has been retained: a negative filtered result proves only that expression
+was absent from the regions this parser understands.

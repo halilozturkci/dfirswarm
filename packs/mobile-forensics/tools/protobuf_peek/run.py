@@ -62,11 +62,9 @@ def printable(blob):
     return None
 
 
-def decode(blob, depth, budget):
+def decode(blob, depth):
     fields, at = [], 0
     while at < len(blob):
-        if budget["left"] <= 0:
-            break
         start = at
         try:
             key, at = varint(blob, at)
@@ -79,7 +77,6 @@ def decode(blob, depth, budget):
                                                      "this is probably not protobuf"})
             break
         entry = {"field": number, "wire_type": WIRE.get(wire, str(wire)), "offset": start}
-        budget["left"] -= 1
         try:
             if wire == 0:
                 value, at = varint(blob, at)
@@ -110,7 +107,7 @@ def decode(blob, depth, budget):
                 nested = None
                 if depth > 0 and body:
                     try:
-                        nested = decode(body, depth - 1, budget)
+                        nested = decode(body, depth - 1)
                         if not nested or any("error" in f for f in nested):
                             nested = None
                     except ValueError:
@@ -121,10 +118,10 @@ def decode(blob, depth, budget):
                     entry["message"] = nested
                 elif text is not None:
                     entry["read_as"] = "text"
-                    entry["text"] = text[:2000]
+                    entry["text"] = text
                 else:
                     entry["read_as"] = "bytes"
-                    entry["hex"] = body[:256].hex()
+                    entry["hex"] = body.hex()
             elif wire in (3, 4):
                 entry["note"] = "groups are deprecated and are not followed"
             else:
@@ -154,7 +151,7 @@ def main():
             fail("path or hex is required: a file holding one protobuf message")
         try:
             with open(path, "rb") as fh:
-                blob = fh.read(16 << 20)
+                blob = fh.read()
         except OSError as exc:
             fail("cannot read that file", path=path, reason=str(exc))
         source = path
@@ -165,17 +162,13 @@ def main():
     depth = args.get("max_depth", 6)
     if not isinstance(depth, int) or isinstance(depth, bool) or depth < 0:
         fail("max_depth must be a non-negative integer")
-    budget = {"left": args.get("max_fields", 500)}
-    if not isinstance(budget["left"], int) or isinstance(budget["left"], bool) or budget["left"] < 1:
-        fail("max_fields must be a positive integer")
-
-    fields = decode(blob, depth, budget)
+    fields = decode(blob, depth)
     broken = [f for f in fields if "error" in f]
     strings = []
     def collect(items):
         for item in items:
             if item.get("read_as") == "text":
-                strings.append({"field": item["field"], "text": item["text"][:200]})
+                strings.append({"field": item["field"], "text": item["text"]})
             for nested in item.get("message", []) or []:
                 collect([nested])
     collect(fields)
@@ -187,7 +180,7 @@ def main():
         "fields": fields,
         "field_count": len(fields),
         "problems": broken,
-        "strings": strings[:100],
+        "strings": strings,
         "looks_like_protobuf": bool(fields) and not broken,
         "note": "There are no field names without the .proto file, and a length-delimited field "
                 "is ambiguous by design: each one was tried as a nested message, then as text, "

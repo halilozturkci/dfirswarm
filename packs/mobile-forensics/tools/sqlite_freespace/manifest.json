@@ -13,10 +13,6 @@
     "contains": {
       "type": "string",
       "description": "Case-insensitive regex over the recovered text"
-    },
-    "limit": {
-      "type": "integer",
-      "description": "Maximum fragments to return (default 500)"
     }
   },
   "runtime": "python3",
@@ -26,5 +22,5 @@
   "by": "maintainer",
   "at": "2026-09-22T20:00:00.000Z",
   "version": 1,
-  "sha256": "6e7128a091092f7f2aa617e415b4c42dbab5ce577551b2840dc6599f34371bda"
+  "sha256": "04674ee60eba23a63a91959c4c659775b5063ccef9a1151336349ebb0f204256"
 }

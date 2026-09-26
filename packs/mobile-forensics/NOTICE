@@ -1,0 +1,6 @@
+# Third-party software
+
+This pack vendors no third-party code. Programs and Python packages used by
+the profile are installed from the sources declared in `requires/host.json`
+and `requires/python.txt`; the image records their versions and licences in
+`/etc/dfirswarm/NOTICE` and its SBOM.

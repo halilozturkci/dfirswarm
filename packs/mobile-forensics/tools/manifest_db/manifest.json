@@ -13,10 +13,6 @@
     "domain": {
       "type": "string",
       "description": "Only this domain, e.g. HomeDomain or AppDomain-com.example"
-    },
-    "limit": {
-      "type": "integer",
-      "description": "Maximum entries to return (default 500)"
     }
   },
   "runtime": "python3",
@@ -26,5 +22,5 @@
   "by": "maintainer",
   "at": "2026-09-22T20:00:00.000Z",
   "version": 1,
-  "sha256": "50354e0a88791ab3a9297094c47b852c0ea89cdfd04be8bec7176446550dfde7"
+  "sha256": "f69bdba0f1c7bc62820787e1e9bf14669d230f58322a3972c3a85bacebadc0ce"
 }

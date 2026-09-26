@@ -3,7 +3,7 @@
     {
       "name": "ileapp",
       "package": "iLEAPP",
-      "optional": true,
+      "optional": false,
       "why": "Several hundred iOS artefact parsers over a file-system extraction or a backup, with a report per artefact.",
       "install": {
         "brew": "https://github.com/abrignoni/iLEAPP (not on PyPI; run ileapp.py from a checkout)",
@@ -29,7 +29,7 @@
     {
       "name": "aleapp",
       "package": "ALEAPP",
-      "optional": true,
+      "optional": false,
       "why": "The same for Android: app data, accounts, usage, and the protobuf-heavy newer artefacts.",
       "install": {
         "brew": "https://github.com/abrignoni/ALEAPP (not on PyPI; run aleapp.py from a checkout)",

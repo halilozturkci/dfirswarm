@@ -22,6 +22,15 @@ their install and update times, the installer that put each one there, and the
 granted permissions. A package sideloaded rather than installed from a store has
 a different installer field, and that single value is often the finding.
 
+Start the parser only after identifying the extraction root, and preserve its
+stdout beside the report tree:
+
+    mkdir -p work/<agent>/aleapp
+    aleapp -t fs -i /absolute/path/to/android-root -o work/<agent>/aleapp
+
+For a tar use `-t tar`. ALEAPP's HTML is a view of its generated data, not the
+custody record; keep the structured exports and the exact source paths too.
+
 **`usagestats` is the closest Android has to an execution record.** It is
 per-day, protobuf on modern versions, and it says which package was in the
 foreground and for how long. `protobuf_peek` reads the blobs without a schema.
@@ -36,6 +45,7 @@ with the database or you will read a state that is minutes to weeks old. The
 most recent messages are the ones in the WAL, which is exactly the set a case
 cares about.
 
-Deleted rows survive in free pages until a vacuum. `sqlite_freespace` recovers
-what it can, with the same caution as everywhere: no reliable time, no
-guaranteed row boundary, and say so.
+Deleted bytes may survive in free pages until reuse, unless secure deletion,
+vacuuming or application-level encryption removed their evidential value.
+`sqlite_freespace` recovers readable fragments, with the same caution as
+everywhere: no reliable time, no guaranteed row boundary, and say so.

@@ -1,0 +1,34 @@
+{
+  "id": "android-backup",
+  "version": "1.0.0",
+  "description": "Read an Android adb-backup (.ab) header and, when it is not encrypted, inventory every member of its embedded tar without extracting it.",
+  "object": "Android adb backup",
+  "order": 36,
+  "min_bytes": 24,
+  "suffixes": [
+    ".ab"
+  ],
+  "magic": [
+    {
+      "offset": 0,
+      "hex": "414e44524f4944204241434b55500a"
+    }
+  ],
+  "runtime": "python3",
+  "entry": "run.py",
+  "auto": [
+    "kickoff",
+    "derived"
+  ],
+  "limits": {
+    "seconds": 1800
+  },
+  "outputs": [
+    "backup.json",
+    "members.tsv",
+    "index.tsv",
+    "coverage.json"
+  ],
+  "covers": "The adb-backup header and every member name, type, size and tar timestamp when encryption is none. It extracts nothing, does not bypass app backup exclusions, and cannot list an encrypted payload without its password.",
+  "sha256": "4013c833ab8fe1eba16742b0fd015fb4515b1b85a02de8795ab203d0d7375bfe"
+}

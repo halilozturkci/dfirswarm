@@ -1,3 +1,3 @@
 # The mobile pack's tools use the standard library only: sqlite3 and plistlib are
 # in it, and the protobuf reader here is a wire-format decoder rather than a library.
-pillow-heif            # BSD-3-Clause, with libheif (LGPL-3.0) inside. An iPhone's HEIC photo opened from Pillow in a script.
+pillow-heif==1.8.0     # BSD-3-Clause, with libheif (LGPL-3.0) inside. An iPhone's HEIC photo opened from Pillow in a script.

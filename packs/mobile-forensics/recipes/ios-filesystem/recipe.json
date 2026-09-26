@@ -1,0 +1,38 @@
+{
+  "id": "ios-filesystem",
+  "version": "1.0.0",
+  "description": "Inventory the mobile-forensic structures inside an iOS full file-system tar without extracting it: core databases, their WAL/SHM companions, Biome/SEGB, unified logs, keychain, photos metadata and app-container mappings.",
+  "object": "iOS full file-system archive",
+  "order": 35,
+  "min_bytes": 1024,
+  "suffixes": [
+    ".tar",
+    ".tgz",
+    ".tar.gz",
+    ".tar.xz",
+    ".tar.bz2"
+  ],
+  "magic": [
+    {
+      "offset": 257,
+      "hex": "7573746172"
+    }
+  ],
+  "runtime": "python3",
+  "entry": "run.py",
+  "auto": [
+    "kickoff",
+    "derived"
+  ],
+  "limits": {
+    "seconds": 1800
+  },
+  "outputs": [
+    "artifacts.tsv",
+    "sqlite.tsv",
+    "index.tsv",
+    "coverage.json"
+  ],
+  "covers": "The paths, sizes and archive timestamps of mobile-forensic structures in one iOS full file-system tar, plus SQLite companion presence. It extracts nothing, parses no artifact content, decrypts no protected data and does not claim that a listed path contains responsive records.",
+  "sha256": "283b3d2cb06337ba1e25176143ac39af157db1a9689c4fec79336647aa6c64b3"
+}
