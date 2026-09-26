@@ -55,8 +55,8 @@ got="$(reg capped '.cap_per_model_usd | tojson')"
 [[ "$got" == '{"openai/gpt-5.4-mini":6,"openai/gpt-5.4-nano":4}' ]] || fail "registry cap_per_model_usd: $got"
 pass "the per-model caps reach the run record"
 
-printf '%s\n' "$out" | grep -q '^Per-model cap: \$6 on openai/gpt-5.4-mini' || fail "no Per-model cap line for mini in the kickoff output: $out"
-printf '%s\n' "$out" | grep -q '^Per-model cap: \$4 on openai/gpt-5.4-nano' || fail "no Per-model cap line for nano in the kickoff output: $out"
+grep -q '^Per-model cap: \$6 on openai/gpt-5.4-mini' <<<"$out" || fail "no Per-model cap line for mini in the kickoff output: $out"
+grep -q '^Per-model cap: \$4 on openai/gpt-5.4-nano' <<<"$out" || fail "no Per-model cap line for nano in the kickoff output: $out"
 pass "the kickoff summary prints one line per model cap"
 
 # --- the suffix is optional, per entry ---------------------------------------
@@ -74,7 +74,7 @@ sb="$(sandbox_of "$out")"
 [[ "$(jq -r 'has("cap_per_model_usd")' "$sb/budget.json")" == "false" ]] || fail "budget.json should carry no per-model caps unless asked"
 [[ "$(reg nocaps '.cap_per_model_usd')" == "null" ]] || fail "registry cap_per_model_usd should be null without any @cap"
 [[ "$(jq -r '[.agents[].model] | join(",")' "$sb/team.json")" == "alpha/one,alpha/one,beta/two" ]] || fail "the plain spec changed shape"
-printf '%s\n' "$out" | grep -q '^Per-model cap' && fail "no cap was asked for, so no Per-model cap line: $out"
+grep -q '^Per-model cap' <<<"$out" && fail "no cap was asked for, so no Per-model cap line: $out"
 pass "provider/id=count still works exactly as before, with no per-model cap anywhere"
 
 # A count of one may be implied, and a model id may carry ':' and '.': the

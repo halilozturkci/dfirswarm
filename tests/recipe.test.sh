@@ -111,7 +111,7 @@ pass "a lock entry must name its image by digest; a tag, a short or upper-case d
 # --- a build context ----------------------------------------------------------
 out="$(python3 "$R" build memory --out "$TMP/ctx" 2>&1)"; rc=$?
 [[ $rc -eq 3 ]] || fail "a build holding programs marked not redistributable should stop without --allow-nonredistributable (rc $rc): $out"
-printf '%s\n' "$out" | grep -q 'never publish it' || fail "the refusal should say what the flag is for: $out"
+grep -q 'never publish it' <<<"$out" || fail "the refusal should say what the flag is for: $out"
 [[ ! -e "$TMP/ctx/spec.json" ]] || fail "a refused build wrote its context"
 python3 "$R" build memory --out "$TMP/ctx" --allow-nonredistributable >/dev/null || fail "the build with the flag failed"
 for f in spec.json Dockerfile install.py NOTICE; do [[ -f "$TMP/ctx/$f" ]] || fail "the context lacks $f"; done

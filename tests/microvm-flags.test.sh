@@ -40,25 +40,25 @@ printf 'attachment' > "$TMP/ev/mail/a.bin"
 # --- refusals, before anything is written ---------------------------------------
 out="$(start --isolation vmware --label bad-iso)"; rc=$?
 [[ $rc -eq 2 ]] || fail "an unknown isolation exited $rc, wanted 2: $out"
-printf '%s\n' "$out" | grep -q 'BLOCKER: --isolation must be host or microvm' || fail "no BLOCKER for --isolation vmware: $out"
+grep -q 'BLOCKER: --isolation must be host or microvm' <<<"$out" || fail "no BLOCKER for --isolation vmware: $out"
 out="$(start --isolation microvm --probe-violation --label bad-probe)"; rc=$?
 [[ $rc -eq 2 ]] || fail "--probe-violation in a VM run exited $rc, wanted 2"
-printf '%s\n' "$out" | grep -q 'probe-violation' || fail "the refusal does not name --probe-violation: $out"
+grep -q 'probe-violation' <<<"$out" || fail "the refusal does not name --probe-violation: $out"
 out="$(start --isolation microvm --vm-cpus 0 --label bad-cpus)"; rc=$?
 [[ $rc -eq 2 ]] || fail "--vm-cpus 0 exited $rc, wanted 2"
 out="$(start --isolation microvm --vm-memory 100 --label bad-mem)"; rc=$?
 [[ $rc -eq 2 ]] || fail "--vm-memory 100 exited $rc, wanted 2"
 out="$(start --isolation microvm --vm-memory 10000000 --label bad-capacity)"; rc=$?
-[[ $rc -eq 2 ]] && printf '%s\n' "$out" | grep -q 'lower --vm-memory or --n' || fail "VMs larger than this host were not refused: $out"
+[[ $rc -eq 2 ]] && grep -q 'lower --vm-memory or --n' <<<"$out" || fail "VMs larger than this host were not refused: $out"
 for flag in --no-write-guard --no-seal-herdr --key-from-env "--inputs-enforce on"; do
   # shellcheck disable=SC2086
   out="$(start --isolation microvm $flag --label bad-hostflag)"; rc=$?
-  [[ $rc -eq 2 ]] && printf '%s\n' "$out" | grep -q 'none of them means anything' || fail "$flag was accepted under microvm: $out"
+  [[ $rc -eq 2 ]] && grep -q 'none of them means anything' <<<"$out" || fail "$flag was accepted under microvm: $out"
 done
 out="$(start --isolation microvm --image 'img; rm -rf /' --label bad-image)"; rc=$?
-[[ $rc -eq 2 ]] && printf '%s\n' "$out" | grep -q 'must be an OCI reference' || fail "an --image that is not an OCI reference was accepted: $out"
+[[ $rc -eq 2 ]] && grep -q 'must be an OCI reference' <<<"$out" || fail "an --image that is not an OCI reference was accepted: $out"
 out="$(start --isolation microvm --vm-disk 100 --label bad-disk)"; rc=$?
-[[ $rc -eq 2 ]] && printf '%s\n' "$out" | grep -q 'vm-disk is MiB' || fail "--vm-disk 100 was not refused: $out"
+[[ $rc -eq 2 ]] && grep -q 'vm-disk is MiB' <<<"$out" || fail "--vm-disk 100 was not refused: $out"
 [[ ! -f "$TMP/runs/registry.json" ]] || [[ -z "$(jq -r '.runs[] | select(.label | startswith("bad-")) | .id' "$TMP/runs/registry.json")" ]] \
   || fail "a refused kickoff left a run in the registry"
 # Nor a sandbox: "before anything is written" means the directory too.
@@ -71,7 +71,7 @@ pass "an isolation that does not exist, a probe with no guard to probe, a host g
 # flag means nothing; the refusal says how to ask for a host run.
 for flag in --no-write-guard --probe-violation; do
   out="$(start $flag --label bad-default-hostflag)"; rc=$?
-  [[ $rc -eq 2 ]] && printf '%s\n' "$out" | grep -q -- 'Add --isolation host' || fail "$flag without --isolation was not refused with the way to a host run: $out"
+  [[ $rc -eq 2 ]] && grep -q -- 'Add --isolation host' <<<"$out" || fail "$flag without --isolation was not refused with the way to a host run: $out"
 done
 # A host that cannot run the VMs: msb's doctor fails (no KVM, say). The
 # kickoff stops before anything is written, names how to fix it and the
@@ -87,19 +87,19 @@ MSB
 chmod +x "$TMP/msb-no-kvm"
 out="$(SWARM_MSB_BIN="$TMP/msb-no-kvm" swarm start --model solo/model --provider-host solo=api.solo.example --n 2 --cap-usd 1 --goal-file "$ROOT/prompts/goals/hello.md" --toolbox off --label bad-no-kvm)"; rc=$?
 [[ $rc -eq 3 ]] || fail "a host whose msb doctor fails exited $rc, wanted 3: $out"
-printf '%s\n' "$out" | grep -q "BLOCKER: this host cannot run the agents' VMs" || fail "no BLOCKER for a host that cannot run VMs: $out"
-printf '%s\n' "$out" | grep -q 'Apple silicon, or Linux with KVM' || fail "the refusal does not say what a VM needs: $out"
-printf '%s\n' "$out" | grep -q -- '--isolation host: each is then a process on this host' || fail "the refusal does not name the unisolated way on: $out"
+grep -q "BLOCKER: this host cannot run the agents' VMs" <<<"$out" || fail "no BLOCKER for a host that cannot run VMs: $out"
+grep -q 'Apple silicon, or Linux with KVM' <<<"$out" || fail "the refusal does not say what a VM needs: $out"
+grep -q -- '--isolation host: each is then a process on this host' <<<"$out" || fail "the refusal does not name the unisolated way on: $out"
 # msb itself missing or broken: the id cannot be checked against its VMs.
 out="$(SWARM_MSB_BIN="$TMP/msb-no-kvm" start --label bad-no-msb)"; rc=$?
-[[ $rc -eq 3 ]] && printf '%s\n' "$out" | grep -q 'msb could not list its VMs' && printf '%s\n' "$out" | grep -q -- '--isolation host' \
+[[ $rc -eq 3 ]] && grep -q 'msb could not list its VMs' <<<"$out" && grep -q -- '--isolation host' <<<"$out" \
   || fail "a broken msb at a --no-start kickoff was not refused with both ways on (exit $rc): $out"
 [[ -z "$(jq -r '.runs[]? | select(.label | startswith("bad-")) | .id' "$TMP/runs/registry.json" 2>/dev/null)" ]] || fail "a refused default kickoff left a run in the registry"
 pass "under the default, a host guard's flag is refused with the way to a host run, and a host that cannot run the VMs is refused with how to fix it and the unisolated way on, never run on the host instead"
 
 # --no-read: what every VM mounts cannot be hidden, and is not claimed hidden.
 out="$(start --isolation microvm --no-read "$ROOT/scripts" --label bad-noread)"; rc=$?
-[[ $rc -eq 2 ]] && printf '%s\n' "$out" | grep -q 'cannot hide what the VMs are given' || fail "--no-read of a mounted path was accepted under microvm: $out"
+[[ $rc -eq 2 ]] && grep -q 'cannot hide what the VMs are given' <<<"$out" || fail "--no-read of a mounted path was accepted under microvm: $out"
 mkdir -p "$TMP/private-notes"
 out="$(start --isolation microvm --no-read "$TMP/private-notes" --label vm-noread)"; rc=$?
 [[ $rc -eq 0 ]] || fail "--no-read of a path no VM mounts was refused: $out"
@@ -119,27 +119,27 @@ EOF
 chmod +x "$TMP/nocollector/node"
 out="$(PATH="$TMP/nocollector:$PATH" start --isolation microvm --label bad-collector)"; rc=$?
 [[ $rc -eq 1 ]] || fail "a microvm kickoff with no collector exited $rc, wanted 1: $out"
-printf '%s\n' "$out" | grep -q 'BLOCKER: the trace collector did not come up' || fail "no BLOCKER naming the collector: $out"
+grep -q 'BLOCKER: the trace collector did not come up' <<<"$out" || fail "no BLOCKER naming the collector: $out"
 [[ -z "$(jq -r '.runs[]? | select(.label == "bad-collector") | .id' "$TMP/runs/registry.json" 2>/dev/null)" ]] || fail "the refused kickoff left a run"
 out="$(PATH="$TMP/nocollector:$PATH" start --isolation host --label host-no-collector)"; rc=$?
 [[ $rc -eq 0 ]] || fail "a host kickoff with no collector should still start, with a warning: $out"
-printf '%s\n' "$out" | grep -q 'appended by the panes themselves' || fail "the host fallback is not said: $out"
+grep -q 'appended by the panes themselves' <<<"$out" || fail "the host fallback is not said: $out"
 pass "a microvm run whose trace collector does not come up is refused; a host run falls back and says so"
 
 # --- the network a VM is given -------------------------------------------------
 out="$(bare_start --model mystery/m1 --isolation microvm --label bad-provider)"; rc=$?
 [[ $rc -eq 2 ]] || fail "a provider with no known host exited $rc under microvm, wanted 2: $out"
-printf '%s\n' "$out" | grep -q -- '--provider-host mystery=<host>' || fail "the refusal does not say how to name the host: $out"
+grep -q -- '--provider-host mystery=<host>' <<<"$out" || fail "the refusal does not say how to name the host: $out"
 out="$(bare_start --model mystery/m1 --isolation microvm --no-netguard --label bad-provider-open)"; rc=$?
 [[ $rc -eq 2 ]] || fail "an open network does not make an unknown provider's key reachable, but it exited $rc: $out"
 out="$(bare_start --model amazon-bedrock/anthropic.claude-x --isolation microvm --label bad-bedrock)"; rc=$?
-[[ $rc -eq 2 ]] && printf '%s\n' "$out" | grep -q 'signs every request' || fail "bedrock under microvm was not refused with the reason: $out"
+[[ $rc -eq 2 ]] && grep -q 'signs every request' <<<"$out" || fail "bedrock under microvm was not refused with the reason: $out"
 out="$(bare_start --model solo/model --provider-host 'solo' --label bad-ph)"; rc=$?
-[[ $rc -eq 2 ]] && printf '%s\n' "$out" | grep -q 'provider=host' || fail "a --provider-host without =host was not refused: $out"
+[[ $rc -eq 2 ]] && grep -q 'provider=host' <<<"$out" || fail "a --provider-host without =host was not refused: $out"
 out="$(start --isolation microvm --allow-host 'https://mirror.example.org/x' --label bad-allow)"; rc=$?
-[[ $rc -eq 2 ]] && printf '%s\n' "$out" | grep -q 'not a URL' || fail "an --allow-host a VM would read as nothing was not refused: $out"
+[[ $rc -eq 2 ]] && grep -q 'not a URL' <<<"$out" || fail "an --allow-host a VM would read as nothing was not refused: $out"
 out="$(start --isolation microvm --allow-host '*.com' --label bad-tld)"; rc=$?
-[[ $rc -eq 2 ]] && printf '%s\n' "$out" | grep -q 'top-level domain' || fail "*.com was not refused: $out"
+[[ $rc -eq 2 ]] && grep -q 'top-level domain' <<<"$out" || fail "*.com was not refused: $out"
 [[ -z "$(jq -r '.runs[]? | select(.label | startswith("bad-")) | .id' "$TMP/runs/registry.json" 2>/dev/null)" ]] || fail "a refused network left a run"
 # Pi's own model list names the hosts of the providers it ships.
 out="$(bare_start --model groq/llama-3.3-70b-versatile --isolation microvm --allow-host '*.blob.core.windows.net' --allow-host '[::1]:11434' --label vm-groq)"; rc=$?
@@ -164,8 +164,8 @@ ln -s "$TMP/elsewhere/case.E01" "$TMP/ev-link/case.E01"
 ln -s notes.txt "$TMP/ev-link/inside-link.txt"
 out="$(start --isolation microvm --inputs "$TMP/ev-link" --label bad-link)"; rc=$?
 [[ $rc -eq 2 ]] || fail "evidence with a link out of it exited $rc under microvm, wanted 2: $out"
-printf '%s\n' "$out" | grep -q 'case.E01 -> ' || fail "the refusal does not name the link: $out"
-printf '%s\n' "$out" | grep -q 'inside-link' && fail "a link that stays inside the evidence was refused: $out"
+grep -q 'case.E01 -> ' <<<"$out" || fail "the refusal does not name the link: $out"
+grep -q 'inside-link' <<<"$out" && fail "a link that stays inside the evidence was refused: $out"
 [[ -z "$(jq -r '.runs[]? | select(.label == "bad-link") | .id' "$TMP/runs/registry.json" 2>/dev/null)" ]] || fail "the refused kickoff left a run"
 rm "$TMP/ev-link/case.E01"
 out="$(start --isolation microvm --inputs "$TMP/ev-link" --label vm-inside-link)"; rc=$?
@@ -186,7 +186,7 @@ sbx="$(sandbox_of "$out")"
 # No --quarantine was given, and each seat's holes are no-exec in its VM all
 # the same: the record a malware entry's check reads says so.
 (cd "$sbx" && grep -q '"quarantine": true' inputs.json) || fail "a VM run is quarantined, and inputs.json does not say so: $(jq -c '{quarantine}' "$sbx/inputs.json")"
-printf '%s\n' "$out" | grep -q 'kernel guard: microvm' || fail "the kickoff does not say who holds the evidence: $out"
+grep -q 'kernel guard: microvm' <<<"$out" || fail "the kickoff does not say who holds the evidence: $out"
 pass "the evidence is used in place, with no copy and no pristine clone, and the manifest says the VM holds it"
 
 for id in $(jq -r '.agents[].id' "$sbx/team.json"); do
@@ -247,12 +247,12 @@ out="$(start --isolation microvm --image registry.example/dfirswarm-custom@sha25
 [[ "$(reg vm-img '.isolation.image')" == "registry.example/dfirswarm-custom@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ]] || fail "--image was not honoured"
 out="$(start --label vm-default)"
 [[ "$(reg vm-default '.isolation.mode')" == "microvm" ]] || fail "a run without --isolation is not a microVM run: $out"
-printf '%s\n' "$out" | grep -q "^Isolation:    one microVM per agent (dfirswarm-" || fail "the kickoff does not say its agents are in VMs: $out"
+grep -q "^Isolation:    one microVM per agent (dfirswarm-" <<<"$out" || fail "the kickoff does not say its agents are in VMs: $out"
 out="$(SWARM_ISOLATION=host start --label host-env)"
 [[ "$(reg host-env '.isolation.mode')" == "host" ]] || fail "SWARM_ISOLATION=host did not make a host run"
 out="$(start --isolation host --label host-flag)"
 [[ "$(reg host-flag '.isolation.mode')" == "host" ]] || fail "--isolation host did not make a host run"
-printf '%s\n' "$out" | grep -q "^Isolation:    host, unisolated" || fail "a host run is not said to be unisolated: $out"
+grep -q "^Isolation:    host, unisolated" <<<"$out" || fail "a host run is not said to be unisolated: $out"
 pass "the packs choose the image, --image overrides it, a run is in microVMs unless --isolation host or SWARM_ISOLATION=host says otherwise, and a host run is said to be unisolated"
 
 # --- a run from before isolation was recorded was a host run, and stays one ---------
@@ -305,14 +305,14 @@ printf '{"name":"echo_tool","description":"Echo, another way.","params":{},"runt
 out="$(start --isolation host --pack keyed-pack --allow-tool-forging --tools-from "$TMP/lib-clash" --label tool-clash)"; rc=$?
 [[ $rc -eq 0 ]] || fail "a kickoff with a pack and a clashing library exited $rc: $out"
 clash_sb="$(sandbox_of "$out")"
-printf '%s\n' "$out" | grep -q 'differs from pack keyed-pack.s echo_tool; the pack.s version is kept' || fail "the clash was not said: $out"
+grep -q 'differs from pack keyed-pack.s echo_tool; the pack.s version is kept' <<<"$out" || fail "the clash was not said: $out"
 [[ "$(jq -r '.pack // empty' "$clash_sb/tools/echo_tool/manifest.json")" == keyed-pack ]] || fail "the library's copy replaced the pack's"
 pass "a library tool named like a pack tool leaves the pack's copy in place, and the difference is said"
 # Without the operator's yes the pack's secrets are withheld in a VM too: its
 # placeholder would be in the whole VM's environment, for any process there.
 out="$(start --isolation microvm --inputs "$TMP/ev" --pack keyed-pack --label vm-spec-no)"; rc=$?
 [[ $rc -eq 0 ]] || fail "a prepared microvm run with a keyed pack and no --allow-pack-secrets exited $rc: $out"
-printf '%s\n' "$out" | grep -q 'keyed-pack has secret(s).*withheld' || fail "withholding the pack's secrets was not said: $out"
+grep -q 'keyed-pack has secret(s).*withheld' <<<"$out" || fail "withholding the pack's secrets was not said: $out"
 [[ "$(jq -c '.pack_secrets' "$(sandbox_of "$out")/vm-spec.json")" == "[]" ]] || fail "a secret was bound without --allow-pack-secrets"
 [[ "$(reg vm-spec-no '.pack_secrets."keyed-pack".mode')" == "withheld" ]] || fail "the record does not say withheld"
 out="$(start --isolation microvm --inputs "$TMP/ev" --pack keyed-pack --allow-pack-secrets --compact-prompt-file "$TMP/home2/prompt.md" --label vm-spec)"; rc=$?
@@ -330,7 +330,7 @@ done < <(jq -r '.mounts[].host' "$sbx/vm-spec.json")
 [[ "$(jq -r '.env.SWARM_COMPACT_PROMPT' "$sbx/vm-spec.json")" == "$sbx/compact-prompt.md" ]] || fail "the VMs are not pointed at the run's copy of the prompt"
 jq -e --arg f "$DFIRSWARM_HOME/secrets/keyed-pack.env" '.pack_secrets == [{name: "TEST_API_KEY", value_file: $f, hosts: ["api.example.test"]}]' "$sbx/vm-spec.json" >/dev/null \
   || fail "the bound secret is not in the spec as expected: $(jq -c '.pack_secrets' "$sbx/vm-spec.json")"
-printf '%s\n' "$out" | grep -q 'LOOSE_KEY.*withheld' || fail "a secret with no hosts is not said to be withheld: $out"
+grep -q 'LOOSE_KEY.*withheld' <<<"$out" || fail "a secret with no hosts is not said to be withheld: $out"
 [[ "$(jq -r '.env.SWARM_PACK_SECRETS | fromjson | ."keyed-pack".names | join(",")' "$sbx/vm-spec.json")" == "TEST_API_KEY" ]] || fail "the VM is told the wrong secret names"
 grep -rq 'hunter2-value\|loose-value' "$sbx" && fail "a secret's value is in the run"
 [[ "$(reg vm-spec '.pack_secrets."keyed-pack".mode')" == "injected" ]] || fail "the record does not say injected"
@@ -344,7 +344,7 @@ kp_dir="$(bash "$ROOT/scripts/pack.sh" resolve keyed-pack)"
 printf 'TEST_API_KEY=planted-value\n' > "$kp_dir/secrets.env"
 out="$(start --isolation microvm --inputs "$TMP/ev" --pack keyed-pack --allow-pack-secrets --label vm-spec-planted)"; rc=$?
 rm -f "$kp_dir/secrets.env"
-[[ $rc -ne 0 ]] && printf '%s\n' "$out" | grep -q "pack keyed-pack does not verify\|has a secrets.env inside its directory, which every VM mounts" \
+[[ $rc -ne 0 ]] && grep -q "pack keyed-pack does not verify\|has a secrets.env inside its directory, which every VM mounts" <<<"$out" \
   || fail "a secrets.env inside a pack's directory was not refused (rc $rc): $out"
 grep -rq 'planted-value' "$TMP/runs" 2>/dev/null && fail "the planted secret's value reached a run"
 pass "a pack whose directory holds a secrets.env is refused before any VM could mount it"
@@ -353,24 +353,24 @@ pass "a pack whose directory holds a secrets.env is refused before any VM could 
 mkdir -p "$TMP/shipped/keyed-pack"
 jq '.version = "9.9.9"' "$(bash "$ROOT/scripts/pack.sh" resolve keyed-pack | tail -1)/pack.json" > "$TMP/shipped/keyed-pack/pack.json"
 out="$(SWARM_SHIPPED_PACKS="$TMP/shipped" start --check --isolation host --pack keyed-pack 2>&1)"
-printf '%s\n' "$out" | grep -q "WARN: pack keyed-pack is installed at .* and this checkout ships 9.9.9; the run uses" || fail "an installed pack older than the shipped one was not said: $out"
+grep -q "WARN: pack keyed-pack is installed at .* and this checkout ships 9.9.9; the run uses" <<<"$out" || fail "an installed pack older than the shipped one was not said: $out"
 out="$(SWARM_SHIPPED_PACKS="$TMP/no-such-dir" start --check --isolation host --pack keyed-pack 2>&1)"
-printf '%s\n' "$out" | grep -q "WARN: pack keyed-pack is installed" && fail "a pack the checkout does not ship was warned about: $out"
+grep -q "WARN: pack keyed-pack is installed" <<<"$out" && fail "a pack the checkout does not ship was warned about: $out"
 pass "an installed pack older than the one this checkout ships is said at kickoff"
 # --local-only: nothing of the pack's service is opened, and the secrets are withheld.
 out="$(start --isolation microvm --inputs "$TMP/ev" --pack keyed-pack --allow-pack-secrets --local-only --model ollama/qwen3:8b --label vm-local)"
-if [[ "$(jq -c '.pack_secrets // [] | length' "$(sandbox_of "$out")/vm-spec.json" 2>/dev/null)" == "0" ]] || printf '%s\n' "$out" | grep -q -- '--local-only withholds'; then :; else fail "--local-only bound a pack secret: $out"; fi
+if [[ "$(jq -c '.pack_secrets // [] | length' "$(sandbox_of "$out")/vm-spec.json" 2>/dev/null)" == "0" ]] || grep -q -- '--local-only withholds' <<<"$out"; then :; else fail "--local-only bound a pack secret: $out"; fi
 pass "a prepared VM run's spec mounts neither the prompt's directory nor a secret, points at the run's own copy of the prompt, and binds each secret to its hosts"
 
 # --- a credential cannot ride in on --env; a subscription needs an explicit yes ---------
 out="$(start --isolation microvm --env FOO_API_KEY=abc --label bad-env)"; rc=$?
 [[ $rc -eq 2 ]] || fail "--env FOO_API_KEY under microvm exited $rc, wanted 2: $out"
-printf '%s\n' "$out" | grep -q 'names a credential' || fail "the refusal does not say why: $out"
+grep -q 'names a credential' <<<"$out" || fail "the refusal does not say why: $out"
 mkdir -p "$TMP/pi"
 printf '{"openai-codex": {"type": "oauth", "access": "not-real", "refresh": "not-real", "expires": 1}}\n' > "$TMP/pi/auth.json"
 out="$(PI_CODING_AGENT_DIR="$TMP/pi" start --isolation microvm --model openai-codex/gpt-5.4 --label bad-oauth)"; rc=$?
 [[ $rc -eq 2 ]] || fail "a subscription provider under microvm exited $rc, wanted 2: $out"
-printf '%s\n' "$out" | grep -q 'subscription' || fail "the refusal does not name the subscription: $out"
+grep -q 'subscription' <<<"$out" || fail "the refusal does not name the subscription: $out"
 out="$(PI_CODING_AGENT_DIR="$TMP/pi" start --isolation microvm --model openai-codex/gpt-5.4 --allow-oauth-in-vm --cap-tokens 1000000 --label ok-oauth)"; rc=$?
 [[ $rc -eq 0 ]] || fail "--allow-oauth-in-vm did not let the run through: $out"
 [[ "$(reg ok-oauth '.isolation.oauth_allowed')" == "true" ]] || fail "the record does not say the subscription was let in on purpose"
@@ -395,7 +395,7 @@ sbx="$(sandbox_of "$out")"
 jq -e '[.files[] | select(.link)] | map({path, link}) == [{path: "inputs/a-link.txt", link: "a.txt"}, {path: "inputs/sub-link", link: "sub"}]' "$sbx/inputs.json" >/dev/null \
   || fail "the manifest does not record the links as links: $(jq -c '.files' "$sbx/inputs.json")"
 [[ "$(jq '[.files[] | select(.link | not)] | length' "$sbx/inputs.json")" == "2" ]] || fail "a directory link was walked into, or a file was lost"
-printf '%s\n' "$out" | grep -q 'is writable by this account' && fail "read-only evidence was said to be writable"
+grep -q 'is writable by this account' <<<"$out" && fail "read-only evidence was said to be writable"
 node --experimental-strip-types --no-warnings --input-type=module -e "
   const P = await import('$ROOT/extensions/protocol.ts');
   const c = await P.verifyInputs('$sbx');
@@ -406,7 +406,7 @@ pass "links inside the evidence are recorded as links, and the manifest, the age
 
 chmod u+w "$TMP/ev-mixed/a.txt"
 out="$(start --isolation microvm --inputs "$TMP/ev-mixed" --label vm-writable)"
-printf '%s\n' "$out" | grep -q 'is writable by this account' || fail "writable evidence used in place is not warned about: $out"
+grep -q 'is writable by this account' <<<"$out" || fail "writable evidence used in place is not warned about: $out"
 out="$(start --isolation microvm --inputs "$TMP/ev-link" --inputs-copy --label vm-copy)"; rc=$?
 [[ $rc -eq 0 ]] || fail "--inputs-copy exited $rc: $out"
 sbx="$(sandbox_of "$out")"
@@ -430,14 +430,14 @@ reuse_id="$(reg vm-reuse2 '.id')"
 jq --arg id "$reuse_id" '.runs = [.runs[] | if .id == $id then .state = "running" else . end]' "$TMP/runs/registry.json" > "$TMP/reg.tmp" && mv "$TMP/reg.tmp" "$TMP/runs/registry.json"
 touch "$reuse/work/keep-me"
 out="$(start --isolation microvm --sandbox "$reuse" --label vm-reuse3)"; rc=$?
-[[ $rc -eq 2 ]] && printf '%s\n' "$out" | grep -q "run $reuse_id is still running in" || fail "a sandbox a running run uses was taken: $out"
+[[ $rc -eq 2 ]] && grep -q "run $reuse_id is still running in" <<<"$out" || fail "a sandbox a running run uses was taken: $out"
 [[ -e "$reuse/work/keep-me" ]] || fail "the running run's work was cleared"
 jq --arg id "$reuse_id" '.runs = [.runs[] | if .id == $id then .state = "stopped" else . end]' "$TMP/runs/registry.json" > "$TMP/reg.tmp" && mv "$TMP/reg.tmp" "$TMP/runs/registry.json"
 pass "a reused sandbox loses the previous run's VM records, custody, tools, sessions and outputs, and one a running run uses is refused"
 out="$(start --isolation microvm --inputs "$TMP/ev" --catalog --label vm-prepared)"; rc=$?
 [[ $rc -eq 0 ]] || fail "a prepared VM run with --catalog exited $rc: $out"
 sbx="$(sandbox_of "$out")"
-printf '%s\n' "$out" | grep -q 'built in the run.s image when the VMs start' || fail "a prepared VM run does not say where its catalog will be built: $out"
+grep -q 'built in the run.s image when the VMs start' <<<"$out" || fail "a prepared VM run does not say where its catalog will be built: $out"
 [[ ! -f "$sbx/catalog/README.md" ]] || fail "a prepared VM run built its catalog with this host's tools"
 [[ ! -f "$sbx/toolbox.json" ]] || fail "a prepared VM run checked this host's toolbox"
 [[ -f "$TMP/runs/$(basename "$sbx").custody-anchor.json" || -f "$sbx.custody-anchor.json" ]] || fail "no custody anchor outside the run"
@@ -482,16 +482,16 @@ out="$(start --isolation microvm --allow-install --label vm-install)"; rc=$?
 sbx="$(sandbox_of "$out")"
 [[ "$(jq -r '.env.SWARM_TOOLCHAIN' "$sbx/vm-spec.json")" == "/opt/dfir/agent" ]] || fail "the VMs are not pointed at their own disk for installs"
 [[ ! -d "$sbx/work/.toolchain" ]] || fail "a VM run made the host's shared toolchain directory"
-printf '%s\n' "$out" | grep -q "each VM's own disk" || fail "the Install line does not say where a VM installs: $out"
+grep -q "each VM's own disk" <<<"$out" || fail "the Install line does not say where a VM installs: $out"
 # A credential name in --env is refused whatever its case, and so is a user:password in a URL.
 out="$(start --isolation microvm --env openai_api_key=abc --label bad-env-lower)"; rc=$?
-[[ $rc -eq 2 ]] && printf '%s\n' "$out" | grep -q 'names a credential' || fail "a lower-case credential name in --env went through: $out"
+[[ $rc -eq 2 ]] && grep -q 'names a credential' <<<"$out" || fail "a lower-case credential name in --env went through: $out"
 out="$(start --isolation microvm --env PROXY_URL=https://user:pw@proxy.example --label bad-env-url)"; rc=$?
-[[ $rc -eq 2 ]] && printf '%s\n' "$out" | grep -q 'user and password in a URL' || fail "a URL credential in --env went through: $out"
+[[ $rc -eq 2 ]] && grep -q 'user and password in a URL' <<<"$out" || fail "a URL credential in --env went through: $out"
 # A suffix in the allowlist is said to be a way out as well as in.
 out="$(start --isolation microvm --allow-host '*.blob.core.windows.net' --label vm-suffix)"; rc=$?
 [[ $rc -eq 0 ]] || fail "a suffix allow entry exited $rc: $out"
-printf '%s\n' "$out" | grep -q 'lets an agent reach, and send data to, any host under it' || fail "a suffix allow entry was not warned about: $out"
+grep -q 'lets an agent reach, and send data to, any host under it' <<<"$out" || fail "a suffix allow entry was not warned about: $out"
 # A pack that binds a secret to a suffix is refused: msb would put the value on any host under it.
 rm -rf "$TMP/psrc/suffix-pack"
 cp -R "$TMP/psrc/keyed-pack" "$TMP/psrc/suffix-pack"
@@ -500,11 +500,11 @@ jq '.id = "suffix-pack" | .name = "suffix-pack" | del(.checksums) | .secrets = [
 # The pack format refuses it at seal time (the kickoff and the VM manager
 # refuse it again, for a pack that got past that).
 out="$(bash "$ROOT/scripts/pack.sh" seal "$TMP/psrc/suffix-pack" 2>&1)" && fail "a pack binding a secret to a suffix was sealed: $out"
-printf '%s\n' "$out" | grep -q 'hosts must be a list of host names' || fail "the seal refusal does not say why: $out"
+grep -q 'hosts must be a list of host names' <<<"$out" || fail "the seal refusal does not say why: $out"
 # A lock that pins by tag, not digest, is refused.
 printf '{"images":{"base":{"%s":"ghcr.io/x/dfirswarm-base:latest"}}}\n' "$ARCH" > "$TMP/tag-lock.json"
 out="$(SWARM_IMAGES_LOCK="$TMP/tag-lock.json" start --isolation microvm --label vm-tag-lock)"; rc=$?
-[[ $rc -ne 0 ]] && printf '%s\n' "$out" | grep -q 'other than its digest' || fail "a lock pinned by tag went through: $out"
+[[ $rc -ne 0 ]] && grep -q 'other than its digest' <<<"$out" || fail "a lock pinned by tag went through: $out"
 pass "a prepared forging VM run writes its tools, installs go to the VM's disk, --env credentials are refused whatever their case or form, suffixes are warned about, a secret on a suffix and a tag lock are refused"
 
 # --- a synced folder is found before anything is written -------------------------
@@ -513,14 +513,14 @@ mkdir -p "$SYNCED"
 host_start() { SWARM_RUNS_DIR="$1" bash "$ROOT/scripts/swarm.sh" start --isolation host --model solo/model --n 1 --cap-usd 1 --no-start --goal-file "$ROOT/prompts/goals/hello.md" --toolbox off "${@:2}" 2>&1; }
 out="$(host_start "$SYNCED/runs" --inputs "$TMP/ev" --label synced-copy)"; rc=$?
 [[ $rc -eq 2 ]] || fail "a copy of the evidence into a synced folder exited $rc, wanted 2: $out"
-printf '%s\n' "$out" | grep -q 'the copy of the evidence (inputs/ and .inputs-pristine/)' || fail "the refusal does not name the evidence copy: $out"
+grep -q 'the copy of the evidence (inputs/ and .inputs-pristine/)' <<<"$out" || fail "the refusal does not name the evidence copy: $out"
 [[ -z "$(find "$SYNCED/runs" -name inputs -o -name .inputs-pristine 2>/dev/null)" ]] || fail "the evidence was copied into the synced folder before the refusal"
 out="$(host_start "$SYNCED/runs" --inputs "$TMP/ev" --label synced-allowed --allow-synced-folder)"; rc=$?
 [[ $rc -eq 0 ]] || fail "--allow-synced-folder did not let the run go: $out"
-printf '%s\n' "$out" | grep -q 'as --allow-synced-folder asks' || fail "an allowed synced copy was not said: $out"
+grep -q 'as --allow-synced-folder asks' <<<"$out" || fail "an allowed synced copy was not said: $out"
 out="$(start --isolation microvm --inputs "$TMP/ev" --vm-snapshot-dir "$SYNCED/disks" --label synced-disks)"; rc=$?
 [[ $rc -eq 2 ]] || fail "VM disks kept in a synced folder exited $rc, wanted 2: $out"
-printf '%s\n' "$out" | grep -q "each VM's kept disk ($SYNCED/disks" || fail "the refusal does not name the disks' folder: $out"
+grep -q "each VM's kept disk ($SYNCED/disks" <<<"$out" || fail "the refusal does not name the disks' folder: $out"
 pass "a copy of the evidence or the VMs' disks bound for a synced folder is refused before anything is written, unless --allow-synced-folder"
 
 # --- where the disks are kept, and what is read-only on disk ----------------------
@@ -534,7 +534,7 @@ rm -f "$sbx.vm-snapshots"
 mkdir -p "$sbx.vm-snapshots"
 printf 'disk' > "$sbx.vm-snapshots/old.msb"
 out="$(start --isolation microvm --inputs "$TMP/ev" --vm-snapshot-dir "$TMP/disks" --sandbox "$sbx" --label vm-disks-taken)"; rc=$?
-[[ $rc -eq 2 ]] && printf '%s\n' "$out" | grep -q "already holds an earlier run's disks" || fail "a disks' place holding an earlier run's disks was not refused ($rc): $out"
+[[ $rc -eq 2 ]] && grep -q "already holds an earlier run's disks" <<<"$out" || fail "a disks' place holding an earlier run's disks was not refused ($rc): $out"
 [[ -f "$sbx.vm-snapshots/old.msb" ]] || fail "the earlier run's disk was touched"
 rm -rf "$sbx.vm-snapshots"
 # The manifest and the custody anchor are read-only on disk.
@@ -614,12 +614,12 @@ printf '#!/usr/bin/env bash\nif [[ "${1:-}" == "-u" ]]; then echo 0; else exec /
 chmod +x "$TMP/rootbin/id"
 out="$(PATH="$TMP/rootbin:$PATH" start --isolation microvm --inputs "$TMP/ev" --label vm-root)"; rc=$?
 [[ $rc -eq 0 ]] || fail "a VM run as root was refused (rc $rc): $out"
-printf '%s\n' "$out" | grep -q 'WARN: this run is started as root.*The VMs still hold the evidence read-only' || fail "a VM run as root is not warned about: $out"
+grep -q 'WARN: this run is started as root.*The VMs still hold the evidence read-only' <<<"$out" || fail "a VM run as root is not warned about: $out"
 pass "a VM run started as root is warned about, not refused"
 
 # --- the model gateway: VM runs only, recorded, planned from the spec -------------
 out="$(start --isolation host --model-gateway --label gw-host)"; rc=$?
-[[ $rc -eq 2 ]] && printf '%s\n' "$out" | grep -q 'BLOCKER: --model-gateway fronts VM runs' || fail "--model-gateway on a host run was not refused (rc $rc): $out"
+[[ $rc -eq 2 ]] && grep -q 'BLOCKER: --model-gateway fronts VM runs' <<<"$out" || fail "--model-gateway on a host run was not refused (rc $rc): $out"
 out="$(start --isolation microvm --inputs "$TMP/ev" --model-gateway --label gw-vm)"; rc=$?
 [[ $rc -eq 0 ]] || fail "a prepared VM run with --model-gateway exited $rc: $out"
 [[ "$(reg gw-vm '.isolation.model_gateway.on')" == true ]] || fail "the registry does not record the gateway: $(reg gw-vm '.isolation')"
@@ -635,6 +635,6 @@ mode="$(stat -c %a "$TMP/gw-config.json" 2>/dev/null || stat -f %Lp "$TMP/gw-con
 [[ "$mode" == 600 ]] || fail "the gateway's config is mode $mode"
 tok="$(jq -r '.seats.sgw100.token' "$TMP/gw-config.json")"
 [[ ${#tok} -ge 32 ]] || fail "the seat has no gateway token"
-printf '%s\n' "$plan" | grep -q "$tok" && fail "a seat's token was printed"
+grep -q "$tok" <<<"$plan" && fail "a seat's token was printed"
 jq -e '.seats.sgw100.providers == ["openai"] and .seats.sgw101.providers == []' "$TMP/gw-config.json" >/dev/null || fail "the seats' providers are not what the gateway fronts"
 pass "--model-gateway is refused for a host run, recorded for a VM run, and planned from the spec: openai fronted, openrouter left to msb, tokens only in the 0600 config"

@@ -38,10 +38,10 @@ chmod +x "$TMP/rootbin/id"
 set +e
 out="$(PATH="$TMP/rootbin:$PATH" kick "$TMP/runs" --label as-root)"; rc=$?
 set -e
-[[ $rc -eq 2 ]] && printf '%s\n' "$out" | grep -q 'BLOCKER: a host run as root' || fail "a host run as root was not refused (rc $rc): $out"
-printf '%s\n' "$out" | grep -q -- '--allow-root' || fail "the refusal does not name --allow-root: $out"
+[[ $rc -eq 2 ]] && grep -q 'BLOCKER: a host run as root' <<<"$out" || fail "a host run as root was not refused (rc $rc): $out"
+grep -q -- '--allow-root' <<<"$out" || fail "the refusal does not name --allow-root: $out"
 out="$(PATH="$TMP/rootbin:$PATH" kick "$TMP/runs" --label as-root-allowed --allow-root)" || fail "--allow-root was refused: $out"
-printf '%s\n' "$out" | grep -q 'WARN: this run is started as root' || fail "an allowed root run is not warned about: $out"
+grep -q 'WARN: this run is started as root' <<<"$out" || fail "an allowed root run is not warned about: $out"
 [[ "$(jq -r '.runs[] | select(.label == "as-root-allowed") | .allow_root' "$TMP/runs/registry.json")" == true ]] || fail "--allow-root is not recorded"
 pass "a host run as root is refused unless --allow-root, which is recorded and warned about"
 
@@ -51,14 +51,14 @@ SYNC="$(cd "$TMP/Dropbox" && pwd -P)"
 set +e
 out="$(kick "$SYNC/cases/runs" --inputs "$TMP/ev" --label synced)"; rc=$?
 set -e
-[[ $rc -eq 2 ]] && printf '%s\n' "$out" | grep -q 'go into a folder a sync client uploads' || fail "a copy of the evidence into a synced folder was not refused (rc $rc): $out"
-printf '%s\n' "$out" | grep -q '.dfirswarm-allow-synced' || fail "the refusal does not name the marker: $out"
+[[ $rc -eq 2 ]] && grep -q 'go into a folder a sync client uploads' <<<"$out" || fail "a copy of the evidence into a synced folder was not refused (rc $rc): $out"
+grep -q '.dfirswarm-allow-synced' <<<"$out" || fail "the refusal does not name the marker: $out"
 out="$(kick "$SYNC/cases/runs" --inputs "$TMP/ev" --label by-flag --allow-synced-folder)" || fail "--allow-synced-folder was refused: $out"
 [[ "$(jq -r '.runs[] | select(.label == "by-flag") | .synced_folder_allowed_by' "$SYNC/cases/runs/registry.json")" == flag ]] || fail "the flag is not recorded"
 # The marker at the synced folder's top lets it through, said by name.
 printf 'case material may be uploaded here\n' > "$SYNC/.dfirswarm-allow-synced"
 out="$(kick "$SYNC/cases/runs" --inputs "$TMP/ev" --label by-marker)" || fail "the marker did not let the run through: $out"
-printf '%s\n' "$out" | grep -q "WARN: going into a synced folder as the marker $SYNC/.dfirswarm-allow-synced allows" || fail "the marker is not named in the WARN: $out"
+grep -q "WARN: going into a synced folder as the marker $SYNC/.dfirswarm-allow-synced allows" <<<"$out" || fail "the marker is not named in the WARN: $out"
 [[ "$(jq -r '.runs[] | select(.label == "by-marker") | .synced_folder_allowed_by' "$SYNC/cases/runs/registry.json")" == marker ]] || fail "the marker is not recorded"
 # A marker in a folder between the top and the run works too; a link does not.
 rm -f "$SYNC/.dfirswarm-allow-synced"

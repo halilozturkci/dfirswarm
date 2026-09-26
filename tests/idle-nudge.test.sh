@@ -254,10 +254,10 @@ started="$(date -u -d '@'$(( $(date +%s) - 3000 )) +%Y-%m-%dT%H:%M:%SZ 2>/dev/nu
 printf '{"cap_usd":5,"spent_usd":0,"wall_clock_minutes":60,"started_at":"%s","agents":{}}\n' "$started" > "$CV/budget.json"
 HERDR_BIN="$TMP/bin/herdr-broken" bash "$ROOT/scripts/idle-nudge.sh" --sandbox "$CV" --once >"$TMP/cov1.log" 2>&1
 post="$(cat "$CV"/threads/main/*.md 2>/dev/null || true)"
-printf '%s\n' "$post" | grep -q 'no command has named these inputs yet' || fail "the uncovered inputs were not posted: $(cat "$TMP/cov1.log")"
-printf '%s\n' "$post" | grep -q 'inputs/nobody.bin' || fail "the input nobody named is not listed: $post"
-printf '%s\n' "$post" | grep -q 'inputs/named.bin' && fail "an input a command named is listed as untouched"
-printf '%s\n' "$post" | grep -q 'At 75%' || fail "the post does not say where in the run it is: $post"
+grep -q 'no command has named these inputs yet' <<<"$post" || fail "the uncovered inputs were not posted: $(cat "$TMP/cov1.log")"
+grep -q 'inputs/nobody.bin' <<<"$post" || fail "the input nobody named is not listed: $post"
+grep -q 'inputs/named.bin' <<<"$post" && fail "an input a command named is listed as untouched"
+grep -q 'At 75%' <<<"$post" || fail "the post does not say where in the run it is: $post"
 [[ "$(tr '\n' ' ' < "$CV/traces/idle-nudge.coverage")" == "25 50 75 " ]] || fail "the marks passed are not spent: $(cat "$CV/traces/idle-nudge.coverage")"
 HERDR_BIN="$TMP/bin/herdr-broken" bash "$ROOT/scripts/idle-nudge.sh" --sandbox "$CV" --once >"$TMP/cov2.log" 2>&1
 [[ "$(ls "$CV"/threads/main/*.md | wc -l | tr -d ' ')" == 1 ]] || fail "the coverage was posted twice"
