@@ -108,7 +108,9 @@ building on it, on an M3 Max and on the DigitalOcean droplet with nested KVM:
   sentinel is refused unless the operator's finish line passes when the hub
   re-runs it on the host, with two exceptions: a reason that starts
   `ABANDONED: ` ends the run without the checks (the reason says so on the
-  sentinel), and a seat leaving on its own cap (`agent_cap`) writes no
+  sentinel) once a second agent has abandoned too or no other agent is
+  still working — one seat's abandon alone is a vote, and the seat stays —
+  and a seat leaving on its own cap (`agent_cap`) writes no
   sentinel and is not checked. A finish line the hub cannot run at all lets
   the `done` through unchecked, as it does on the host (`docs/protocol.md`).
   A seat's spend report may only grow; every path is resolved on the host

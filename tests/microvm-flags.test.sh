@@ -79,6 +79,18 @@ grep -q 'WARN: no tool-job worker VM (10000000 MiB) fits beside the 2 seat(s)' <
 grep -q '^Jobs:' <<<"$out" && fail "a run without a job service printed a Jobs line: $out"
 pass "workers count with the seats: an unset --workers takes what fits (none here: no job service, said); a given one is kept or refused"
 
+# The derived catalogue is on by default and recorded so (the Jobs line says
+# it when the hub starts); --no-derived-catalog turns it off. Small VMs, so a
+# worker fits on any host (a CI runner's 7 GiB fits none of the default size).
+small=(--workers 1 --vm-memory 512 --worker-memory 512)
+out="$(start --isolation microvm "${small[@]}" --label vm-derived-on)"; rc=$?
+[[ $rc -eq 0 ]] || fail "a default VM run did not prepare: $out"
+[[ "$(reg vm-derived-on '.isolation.jobs.derived_catalog')" == "true" ]] || fail "the record should say it is on: $(reg vm-derived-on '.isolation.jobs')"
+out="$(start --isolation microvm "${small[@]}" --no-derived-catalog --label vm-derived-off)"; rc=$?
+[[ $rc -eq 0 ]] || fail "--no-derived-catalog did not prepare: $out"
+[[ "$(reg vm-derived-off '.isolation.jobs.derived_catalog')" == "false" ]] || fail "the record should say it is off"
+pass "the derived catalogue is on by default and recorded so, and --no-derived-catalog turns it off"
+
 # --- the default is a VM: what cannot be one is refused, and says both ways on --------
 # A host guard's flag with no --isolation: the run would be a VM run, so the
 # flag means nothing; the refusal says how to ask for a host run.

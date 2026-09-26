@@ -1,6 +1,6 @@
 {
   "name": "catalog_search",
-  "description": "Search the evidence catalogue with a regex: a disk's filelist, timeline, bodyfile, fsstat or partitions, or an archive's members; returns the match count, one page of matching lines (limit, offset) and the catalogue revision it read. When the page is not all of them, every match is kept in a file under your scratch and named (all_matches).",
+  "description": "Search the evidence catalogue with a regex: a disk's filelist, timeline, bodyfile, fsstat or partitions, or an archive's members; or list the catalogue's generations (which=generations: what each is, over what object, complete or partial and why, its readable form). Returns the match count, one page (limit, offset) and the catalogue revision it read. When the page is not all of them, every match is kept in a file under your scratch and named (all_matches).",
   "params": {
     "pattern": {
       "type": "string",
@@ -9,7 +9,7 @@
     },
     "which": {
       "type": "string",
-      "description": "filelist|timeline|bodyfile|fsstat|partitions (a disk), or members (an archive's member list)",
+      "description": "filelist|timeline|bodyfile|fsstat|partitions (a disk), members (an archive's member list), or generations (the catalogue's generations; pattern filters them)",
       "required": false
     },
     "ignore_case": {
@@ -54,6 +54,6 @@
   "example": "{\"pattern\": \"Prefetch/.*\\\\.pf$\", \"which\": \"filelist\"}",
   "by": "sd1d100",
   "at": "2026-09-18T14:14:47.839Z",
-  "version": 8,
-  "sha256": "49f40b6eea183e8837b382293c2440ecc240922d435582e880b0735c36f00ab5"
+  "version": 9,
+  "sha256": "02e7f61aa1349a1d838b511835e3884a4cbdffff4e75429cb7fccf481fd1fff2"
 }

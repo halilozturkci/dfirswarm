@@ -3,7 +3,7 @@
  * job's own run.sh on this machine (its /job and $OUT mapped to the host
  * directories the VM would have mounted): acceptance before work, the
  * journal's order, sealing, failures kept, cancellation, fencing, the
- * catalogue's generations, derived recipes, and recovery after a crash at
+ * catalogue's generations, and recovery after a crash at
  * each durable step.
  */
 import test from "node:test";
@@ -353,54 +353,7 @@ test("two recipe jobs committing at once take distinct generations and revisions
   await svc.stop("over");
 });
 
-test("a tar a job produced is offered to the derived recipes and catalogued, and the agent that made it is told", async () => {
-  const S = sandbox();
-  const { svc, posts } = service(S, { derived: true });
-  await svc.start();
-  const r = await svc.submit("a1", {
-    kind: "command",
-    command: `python3 -c "import tarfile,io\nwith tarfile.open('$OUT/inner.tar','w') as t:\n  i=tarfile.TarInfo('a.txt'); d=b'x'*2000; i.size=len(d); t.addfile(i,io.BytesIO(d))"`,
-    inputs: [],
-  });
-  assert.ok(r.ok);
-  await until(svc, r.job.id);
-  const end = Date.now() + 30000;
-  while (!existsSync(join(S, "catalog", "gen", "g0001", "generation.json")) && Date.now() < end) await new Promise((res) => setTimeout(res, 100));
-  const gen = JSON.parse(readFileSync(join(S, "catalog", "gen", "g0001", "generation.json"), "utf8"));
-  assert.equal(gen.recipe, "computer-forensics-base/archive-members");
-  assert.equal(gen.target.ref, `job:${r.job.id}/inner.tar`);
-  const recipeJob = svc.jobs.get(gen.job)!;
-  assert.equal(recipeJob.requester.agent, "system", "the harness runs derived recipes");
-  await eventually(() => posts.some(([to, body]) => to === "a1" && body.includes("g0001")), "the agent that made the tar is told of its catalogue");
-  assert.ok(!posts.some(([to, body]) => to === "all" && body.includes("g0001")), "a derived catalogue is not posted to everyone");
-  await svc.stop("test over");
-});
-
-test("derived cataloguing offers only what a recipe says is worth it, and stops at its cap, saying so", async () => {
-  const S = sandbox();
-  const { svc, posts } = service(S, { derived: true, derivedPasses: 1 });
-  await svc.start();
-  const tiny = await svc.submit("a1", { kind: "command", command: `printf 'hi' > "$OUT/tiny.bin"; head -c 5000 /dev/zero | tr '\\0' 'a' > "$OUT/notes.txt"`, inputs: [] });
-  assert.ok(tiny.ok);
-  await until(svc, tiny.job.id);
-  await new Promise((res) => setTimeout(res, 300));
-  assert.equal(svc.jobs.size, 1, "a 2-byte file is below every recipe's min_bytes, and 5 KB of text has no name ending or magic a recipe names: no pass");
-  const tar = `python3 -c "import tarfile,io\nwith tarfile.open('$OUT/inner.tar','w') as t:\n  i=tarfile.TarInfo('a.txt'); d=b'x'*2000; i.size=len(d); t.addfile(i,io.BytesIO(d))"`;
-  // A zip with no name ending: offered by the magic the archive recipe names.
-  const first = await svc.submit("a1", { kind: "command", command: `python3 -c "import zipfile\nwith zipfile.ZipFile('$OUT/blob','w') as z: z.writestr('k.txt','key')"`, inputs: [] });
-  await until(svc, first.ok ? first.job.id : "");
-  await eventually(() => [...svc.jobs.values()].some((j) => j.spec.kind === "detect"), "the zip gets its pass");
-  await eventually(() => [...svc.jobs.values()].some((j) => j.spec.kind === "recipe" && j.spec.target?.ref === `job:${first.ok ? first.job.id : ""}/blob`), "and the archive recipe catalogues it");
-  const second = await svc.submit("a1", { kind: "command", command: tar, inputs: [] });
-  await until(svc, second.ok ? second.job.id : "");
-  await eventually(() => posts.some(([to, b]) => to === "a1" && b.startsWith("Derived cataloguing has run its 1 detect passes")), `the agent is told at the cap: ${JSON.stringify(posts)}`);
-  assert.equal([...svc.jobs.values()].filter((j) => j.spec.kind === "detect").length, 1, "no second pass");
-  const lines = verifyJournalText(readFileSync(storePaths(S).journal, "utf8")).lines;
-  assert.equal(lines.filter((l) => l.type === "derived_bounded").length, 1);
-  await svc.stop("over");
-});
-
-test("with derived cataloguing off (the default) a committed file is not offered to the recipes", async () => {
+test("a job service built without the derived catalogue offers no committed file to the recipes (tests/derived-catalog.test.ts has it on)", async () => {
   const S = sandbox();
   const { svc } = service(S);
   await svc.start();

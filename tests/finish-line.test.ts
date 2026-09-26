@@ -7,8 +7,12 @@
  * area, where two agents pip-installing at once read as 442 violations.
  */
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
-import { finishLineVerdict, isSharedScratch } from "../extensions/protocol.ts";
+import { abandonVotePath, agentDeadPath, agentDonePath, finishLineVerdict, initSandbox, isSharedScratch, markDone, SENTINEL_REL } from "../extensions/protocol.ts";
 
 const run = (passed: number, cmds: Array<[string, boolean]>) => ({
   total: cmds.length,
@@ -79,4 +83,67 @@ test("a finish line read from an agent-writable copy cannot certify a run", () =
   const emptied = finishLineVerdict({ total: 0, passed: 0, checks: [], source: "sandbox contract" }, false);
   assert.equal(emptied.proceed, false, "checks deleted from an editable copy do not pass vacuously");
   assert.equal(finishLineVerdict({ ...passing, source: "registry" }, false).proceed, true);
+});
+
+/**
+ * Run sfeeebb: one seat of ten, whose own slice had not come together,
+ * abandoned the case after six minutes and the sentinel stopped nine working
+ * peers. An abandon is now a vote while others work.
+ */
+async function team(ids: string[]): Promise<string> {
+  const sandbox = await mkdtemp(join(tmpdir(), "dfs-abandon-"));
+  await initSandbox(sandbox, { swarmId: "t1", agentIds: ids, capUsd: 5, wallClockMinutes: 30 });
+  return sandbox;
+}
+
+test("one agent's abandon while peers work is recorded and refused; a second agent's ends the run", async () => {
+  const sandbox = await team(["a0", "a1", "a2"]);
+  try {
+    const first = await markDone({ sandboxRoot: sandbox, agentId: "a0" }, { reason: "ABANDONED: my slice is stuck", outputFile: "work/report.md" });
+    assert.equal(first.terminate, false);
+    if (!first.terminate) {
+      assert.deepEqual(first.abandon.working, ["a1", "a2"]);
+      assert.deepEqual(first.abandon.votes, ["a0"]);
+      assert.equal(first.abandon.first_vote, true);
+      assert.match(first.refused, /2 other agents are still working \(a1, a2\)/);
+    }
+    assert.ok(existsSync(abandonVotePath(sandbox, "a0")), "the vote is on disk");
+    assert.equal(existsSync(agentDonePath(sandbox, "a0")), false, "the seat is not done");
+    assert.equal(existsSync(join(sandbox, SENTINEL_REL)), false, "no sentinel");
+    const again = await markDone({ sandboxRoot: sandbox, agentId: "a0" }, { reason: "ABANDONED: still stuck", outputFile: "work/report.md" });
+    assert.equal(again.terminate, false, "asking twice is still one agent");
+    if (!again.terminate) assert.equal(again.abandon.first_vote, false);
+    const second = await markDone({ sandboxRoot: sandbox, agentId: "a2" }, { reason: "ABANDONED: the image is not readable", outputFile: "work/report.md" });
+    assert.equal(second.terminate, true);
+    assert.equal(second.created_sentinel, true);
+  } finally {
+    await rm(sandbox, { recursive: true, force: true });
+  }
+});
+
+test("an abandon with no other agent working ends the run on one word; a done or dead peer is not working", async () => {
+  const sandbox = await team(["a0", "a1", "a2"]);
+  try {
+    await writeFile(agentDonePath(sandbox, "a1"), "---\nby: a1\n---\n");
+    await writeFile(agentDeadPath(sandbox, "a2"), "---\nby: reap\n---\n");
+    const only = await markDone({ sandboxRoot: sandbox, agentId: "a0" }, { reason: "ABANDONED: alone and stuck", outputFile: "work/report.md" });
+    assert.equal(only.terminate, true);
+    assert.equal(only.created_sentinel, true);
+  } finally {
+    await rm(sandbox, { recursive: true, force: true });
+  }
+});
+
+test("a done that is not an abandon, and a seat leaving on its cap, are not votes", async () => {
+  const sandbox = await team(["a0", "a1"]);
+  try {
+    const cap = await markDone({ sandboxRoot: sandbox, agentId: "a1" }, { reason: "agent_cap", outputFile: "(cap)", createSentinel: false });
+    assert.equal(cap.terminate, true);
+    assert.equal(existsSync(abandonVotePath(sandbox, "a1")), false);
+    const done = await markDone({ sandboxRoot: sandbox, agentId: "a0" }, { reason: "the checks pass", outputFile: "work/report.md" });
+    assert.equal(done.terminate, true);
+    assert.equal(done.created_sentinel, true);
+  } finally {
+    await rm(sandbox, { recursive: true, force: true });
+  }
 });

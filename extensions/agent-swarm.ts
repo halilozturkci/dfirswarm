@@ -2255,7 +2255,7 @@ export default function (pi: ExtensionAPI) {
     description:
       "Run work in a throwaway worker VM of this run's image: evidence parsing, anything slow or heavy, and anything whose output you will cite or share. Quick looks stay in your own shell. " +
       "The worker sees what you see, read-only: inputs/, store/ (earlier jobs' outputs), catalog/, tools/, tool-output/ and all of work/, yours and your peers' (SQLite: open with ?mode=ro&immutable=1 or copy into $OUT). It has the image's programs, nothing installed in an agent's VM, no network unless network=allowlist, and writes only to $OUT. " +
-      "What it writes there is sealed into store/jobs/<id>/out/ (read-only, hashed) and outlives the VM: any job or agent reads it there, and you cite it as job:<id>/<path>. " +
+      "What it writes there is sealed into store/jobs/<id>/out/ (read-only, hashed) and outlives the VM: any job or agent reads it there, and you cite it as job:<id>/<path>. An archive or disk image it writes is offered to the catalogue's recipes and, when catalogued, announced. " +
       "Give command (bash, run from the run's directory; $OUT is also the OUT environment variable, for a script in another language or a quoted heredoc) or tool with args (a pack or forged tool; write {OUT}/<name> where it takes an output path), or import: a file or directory you made under work/ or tool-output/, sealed as it is now (copied live, hashed before and after; cite it as job:<id>/<name>). " +
       "A short job answers here; a longer one returns its id, and a post tagged result wakes your wait when it is done: do not poll job_status. A failed or timed-out job keeps what it wrote. " +
       "stdout comes back a page at a time; all of it is store/jobs/<id>/stdout.log.",
@@ -2911,7 +2911,10 @@ export default function (pi: ExtensionAPI) {
         description: "The artifact this swarm was asked to produce",
       }),
       abandon: Type.Optional(
-        Type.Boolean({ description: "The finish line cannot be met: stop the swarm anyway. The sentinel and the board will say the run was abandoned." }),
+        Type.Boolean({
+          description:
+            "The finish line cannot be met: stop the swarm anyway. While other agents still work this is a vote, and the run ends when a second agent abandons too. The sentinel and the board will say the run was abandoned.",
+        }),
       ),
     }),
     async execute(_id, params, _signal, _onUpdate, toolCtx: ToolCtx) {
@@ -2984,6 +2987,24 @@ export default function (pi: ExtensionAPI) {
         reason: reasonPrefix + params.reason,
         outputFile: params.output_file,
       });
+      if (!result.terminate) {
+        // One agent's abandon while others work is a vote, not the end.
+        await logEvent(toolCtx.cwd, agentId, "done", params, { ok: false, reason: result.refused, abandon: result.abandon }).catch(() => undefined);
+        if (result.abandon.first_vote) {
+          await systemPost(toolCtx.cwd, {
+            tag: "ask",
+            via: agentId,
+            body:
+              `${agentId} asks to abandon the run: ${params.reason}. An abandon ends the run for everyone without its checks, so it takes a second agent. ` +
+              `Call done with abandon: true only if you too judge the goal cannot be met; otherwise carry on, and answer ${agentId} here if you can unblock it.`,
+          }).catch(() => undefined);
+        }
+        return {
+          content: [{ type: "text" as const, text: result.refused }],
+          details: { ok: false, reason: result.refused, abandon: result.abandon },
+          isError: true,
+        };
+      }
       await logEvent(toolCtx.cwd, agentId, "done", params, {
         reason: result.reason,
         output_file: result.output_file,

@@ -25,6 +25,7 @@ import { createHash } from "node:crypto";
 import { createReadStream, existsSync, readFileSync } from "node:fs";
 import { chmod, copyFile, link, lstat, mkdir, open, readdir, readFile, readlink, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
+import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 
 export const STORE_REL = "store";
@@ -483,13 +484,21 @@ export async function resolveRef(sandbox: string, ref: string): Promise<Resolved
     const mm = /^([a-z0-9-]+)#(\d+)$/.exec(value);
     if (!mm) return { ok: false, ref, reason: "member:<generation>#<n>" };
     const tsv = join(P.gen, mm[1], "members.tsv");
-    try {
-      const text = await readFile(tsv, "utf8");
-      const row = text.split("\n").find((l) => l.startsWith(`${mm[2]}\t`));
-      return row ? { ok: true, ref, kind: "member", path: `catalog/gen/${mm[1]}/members.tsv#${mm[2]}` } : { ok: false, ref, reason: `no member ${mm[2]} in generation ${mm[1]}` };
-    } catch {
-      return { ok: false, ref, reason: `generation ${mm[1]} has no member list` };
-    }
+    if (!existsSync(tsv)) return { ok: false, ref, reason: `generation ${mm[1]} has no member list` };
+    // Read as it streams, stopping at the row: a phone's list is millions of lines.
+    const found = await new Promise<boolean>((done) => {
+      const rl = createInterface({ input: createReadStream(tsv), crlfDelay: Infinity });
+      let hit = false;
+      rl.on("line", (l) => {
+        if (!hit && l.startsWith(`${mm[2]}\t`)) {
+          hit = true;
+          rl.close();
+        }
+      });
+      rl.on("close", () => done(hit));
+      rl.on("error", () => done(false));
+    });
+    return found ? { ok: true, ref, kind: "member", path: `catalog/gen/${mm[1]}/members.tsv#${mm[2]}` } : { ok: false, ref, reason: `no member ${mm[2]} in generation ${mm[1]}` };
   }
   if (kind === "sha256") {
     if (!/^[0-9a-f]{64}$/.test(value)) return { ok: false, ref, reason: "sha256: takes 64 hex digits" };
@@ -513,12 +522,18 @@ export type Generation = {
   job: string;
   recipe: string;
   recipe_sha256: string;
-  target: { name?: string; ref?: string; paths?: string[] };
+  /** sha256: the target's content, when it is one object of the store (a derived or requested one). */
+  target: { name?: string; ref?: string; paths?: string[]; sha256?: string };
   status: string;
   coverage: Record<string, unknown> | null;
   experimental: boolean;
   parent?: string;
   alias?: string;
+  /** What asked for it: the kickoff's plan, the derived catalogue, or an agent's catalog_request; and the status of the job that made its object. */
+  trigger?: "kickoff" | "derived" | "request";
+  parent_status?: string;
+  /** What the harness did not read of the recipe's own record, and where the whole is. */
+  notes?: string[];
   files: Array<{ path: string; what: string; rows: number | null; bytes: number }>;
   at: string;
 };
@@ -530,7 +545,7 @@ async function linkFarm(from: string, to: string): Promise<void> {
     const src = Buffer.concat([Buffer.from(from), Buffer.from("/"), e.rel]);
     const dst = Buffer.concat([Buffer.from(to), Buffer.from("/"), e.rel]);
     if (e.kind === "dir") await mkdir(dst, { recursive: true });
-    else if (e.kind === "file") await link(src, dst).catch(async () => writeFile(dst, await readFile(src)));
+    else if (e.kind === "file") await link(src, dst).catch(async () => copyFile(src, dst));
   }
   for (const e of [...entries].filter((x) => x.kind === "dir").reverse()) await chmod(Buffer.concat([Buffer.from(to), Buffer.from("/"), e.rel]), 0o555).catch(() => undefined);
 }
@@ -556,9 +571,12 @@ async function rowsOf(path: string): Promise<number | null> {
  * coverage; a kickoff generation is also linked at its compatibility path
  * (catalog/<slug>/) when nothing is there yet. Then a new revision.
  */
+/** The most of a recipe's coverage.json and index.tsv the harness reads; a larger one is named, kept whole. */
+export const RECIPE_RECORD_MAX_BYTES = 4 * 1024 * 1024;
+
 export async function publishGeneration(
   journal: Journal,
-  g: { job: string; recipe: string; recipe_sha256: string; target: Generation["target"]; experimental?: boolean; parent?: string; alias?: string },
+  g: { job: string; recipe: string; recipe_sha256: string; target: Generation["target"]; experimental?: boolean; parent?: string; alias?: string; trigger?: Generation["trigger"]; parent_status?: string },
 ): Promise<{ generation: Generation; revision: number }> {
   const S = journal.sandbox;
   const P = storePaths(S);
@@ -568,23 +586,44 @@ export async function publishGeneration(
   const dir = join(P.gen, id);
   await mkdir(P.gen, { recursive: true });
   await linkFarm(out, dir);
+  // What a worker wrote names files for the host to read: only those the
+  // job's sealed manifest lists, as regular files under its out/, are read
+  // (a path in index.tsv climbing out of the store, or naming a FIFO, was
+  // stat'ed and read by the hub before: Codex, 2026-09-26).
+  const sealed = await readManifest(join(P.jobs, g.job, "manifest.json"));
+  const listed = new Map((sealed?.manifest.files ?? []).map((f) => [f.path, f]));
+  const notes: string[] = [];
+  const readRecord = async (name: string): Promise<string | null> => {
+    const f = listed.get(name);
+    if (!f) return null;
+    if (f.bytes > RECIPE_RECORD_MAX_BYTES) {
+      notes.push(`${name} is ${f.bytes} bytes, more than the ${RECIPE_RECORD_MAX_BYTES} the harness reads; it is whole at catalog/gen/${id}/${name}`);
+      return null;
+    }
+    const st = await lstat(join(out, name)).catch(() => null);
+    return st?.isFile() ? readFile(join(out, name), "utf8").catch(() => null) : null;
+  };
   let coverage: Record<string, unknown> | null = null;
   try {
-    coverage = JSON.parse(await readFile(join(out, "coverage.json"), "utf8")) as Record<string, unknown>;
+    const text = await readRecord("coverage.json");
+    coverage = text === null ? null : (JSON.parse(text) as Record<string, unknown>);
   } catch {
     coverage = null;
   }
   const files: Generation["files"] = [];
-  try {
-    for (const line of (await readFile(join(out, "index.tsv"), "utf8")).split("\n")) {
-      const [f, ...what] = line.split("\t");
-      if (!f) continue;
-      const p = join(out, f);
-      if (!existsSync(p)) continue;
-      files.push({ path: `catalog/gen/${id}/${f}`, what: what.join("\t"), rows: await rowsOf(p), bytes: (await stat(p)).size });
+  const index = await readRecord("index.tsv");
+  for (const line of (index ?? "").split("\n")) {
+    const [f, ...what] = line.split("\t");
+    if (!f) continue;
+    const entry = listed.get(f);
+    if (!entry) {
+      notes.push(`index.tsv names ${JSON.stringify(f)}, which is not a file of job ${g.job}'s sealed output: not read`);
+      continue;
     }
-  } catch {
-    // a recipe that wrote no index: its files are in the job's manifest
+    const p = join(out, f);
+    const st = await lstat(p).catch(() => null);
+    if (!st?.isFile()) continue;
+    files.push({ path: `catalog/gen/${id}/${f}`, what: what.join("\t"), rows: await rowsOf(p), bytes: st.size });
   }
   let alias: string | undefined;
   if (g.alias && /^catalog\/[A-Za-z0-9._-]+$/.test(g.alias) && !existsSync(join(S, g.alias))) {
@@ -602,13 +641,16 @@ export async function publishGeneration(
     experimental: Boolean(g.experimental),
     ...(g.parent ? { parent: g.parent } : {}),
     ...(alias ? { alias } : {}),
+    ...(g.trigger ? { trigger: g.trigger } : {}),
+    ...(g.parent_status ? { parent_status: g.parent_status } : {}),
+    ...(notes.length ? { notes } : {}),
     files,
     at: new Date().toISOString(),
   };
   await chmod(dir, 0o755).catch(() => undefined);
   await writeDurable(join(dir, "generation.json"), `${JSON.stringify(generation, null, 2)}\n`, 0o444);
   await chmod(dir, 0o555).catch(() => undefined);
-  await journal.append({ type: "generation_committed", generation: id, job: g.job, recipe: g.recipe, recipe_sha256: g.recipe_sha256, target: g.target, status: generation.status, experimental: generation.experimental, ...(alias ? { alias } : {}) });
+  await journal.append({ type: "generation_committed", generation: id, job: g.job, recipe: g.recipe, recipe_sha256: g.recipe_sha256, target: g.target, status: generation.status, experimental: generation.experimental, ...(alias ? { alias } : {}), ...(g.trigger ? { trigger: g.trigger } : {}), ...(g.parent_status ? { parent_status: g.parent_status } : {}) });
   maybeCrash("generation:committed");
   const revision = await publishRevision(journal);
   return { generation, revision };
@@ -621,10 +663,15 @@ export async function publishRevision(journal: Journal): Promise<number> {
   const n = journal.of("revision_published").length;
   const dir = join(P.revisions, String(n));
   await mkdir(dir, { recursive: true });
-  const generations: Generation[] = [];
+  // A partial generation whose object has a readable form catalogued since
+  // (the decrypted volume of an encrypted one): said beside it.
+  const readable = new Map<string, string>();
+  for (const r of journal.of("generation_related")) readable.set(String(r.generation), String(r.readable));
+  const generations: Array<Generation & { readable_form?: string }> = [];
   for (const ev of journal.of("generation_committed")) {
     try {
-      generations.push(JSON.parse(await readFile(join(P.gen, String(ev.generation), "generation.json"), "utf8")) as Generation);
+      const g = JSON.parse(await readFile(join(P.gen, String(ev.generation), "generation.json"), "utf8")) as Generation;
+      generations.push({ ...g, ...(readable.has(g.id) ? { readable_form: readable.get(g.id) } : {}) });
     } catch {
       // a generation whose record is gone is named by the journal alone
     }
@@ -635,7 +682,8 @@ export async function publishRevision(journal: Journal): Promise<number> {
   if (!generations.length) md.push("No generation yet.");
   for (const g of generations) {
     md.push(`## ${g.id}: ${g.recipe} over ${g.target.name ?? g.target.ref ?? "?"} — ${g.status}${g.experimental ? " (experimental recipe)" : ""}`, "");
-    md.push(`Job ${g.job}${g.parent ? `, triggered by job ${g.parent}` : ""}; recipe sha256 ${g.recipe_sha256.slice(0, 16)}…${g.alias ? `; also at \`${g.alias}/\`` : ""}.`, "");
+    md.push(`Job ${g.job}${g.parent ? `, triggered by job ${g.parent}` : ""}${g.trigger ? ` (${g.trigger})` : ""}; recipe sha256 ${g.recipe_sha256.slice(0, 16)}…${g.alias ? `; also at \`${g.alias}/\`` : ""}.`, "");
+    if (g.readable_form) md.push(`A readable form of this object is catalogued as ${g.readable_form}.`, "");
     const cov = g.coverage as { covered?: string; not_covered?: string; errors?: unknown[]; limits_hit?: unknown[] } | null;
     if (cov?.covered) md.push(`Covered: ${cov.covered}. Not covered: ${cov.not_covered ?? "not said"}.`, "");
     for (const e of [...(cov?.errors ?? []), ...(cov?.limits_hit ?? [])]) md.push(`- ${String(e)}`);
@@ -709,6 +757,10 @@ export type StoreCheck = {
   /** Notes an examiner added to the record after the run (evidence-store.ts note), and the times the job service told the agents that workers were not running. */
   notes: number;
   degraded: number;
+  /** Each revision's MANIFEST.json and its index files, and each generation.json, held to the journal's lines. */
+  catalogue: { revisions_verified: number; revisions_mismatched: string[]; generations_verified: number; generations_mismatched: string[] };
+  /** The derived catalogue, from its journal lines: objects offered and skipped, answered, catalogued, left unanswered, and each limit it met. */
+  derived: { offered: number; skipped: number; detected: number; applied: number; catalogued: number; partial: number; unanswered: number; deferred: number; bounded: string[] };
 };
 
 /**
@@ -744,7 +796,48 @@ export async function checkStore(sandbox: string, before = Infinity): Promise<St
     findings: { total: 0, structured: 0, refs_invalid: [], unresolved_only: [], path_only: [], without_refs: [] },
     notes: count("note"),
     degraded: count("jobs_degraded"),
+    catalogue: { revisions_verified: 0, revisions_mismatched: [], generations_verified: 0, generations_mismatched: [] },
+    derived: { offered: 0, skipped: 0, detected: 0, applied: 0, catalogued: 0, partial: 0, unanswered: count("detect_unanswered"), deferred: count("derived_deferred"), bounded: [] },
   };
+  for (const l of checked.lines) {
+    if (l.type === "derived_offered") {
+      out.derived.offered += ((l.offered as unknown[]) ?? []).length;
+      out.derived.skipped += ((l.skipped as unknown[]) ?? []).length;
+    } else if (l.type === "detect_answered") {
+      const rows = (l.rows as Array<{ applies?: boolean }>) ?? [];
+      out.derived.detected += rows.length;
+      out.derived.applied += rows.filter((r) => r.applies).length;
+    } else if (l.type === "generation_committed" && l.trigger === "derived") {
+      if (l.status === "complete") out.derived.catalogued += 1;
+      else out.derived.partial += 1;
+    } else if (l.type === "derived_bounded") {
+      out.derived.bounded.push(String(l.bound));
+    }
+  }
+  // The catalogue as published, held to the journal: a revision's manifest
+  // and its two index files by hash, a generation's record by what it says.
+  for (const l of checked.lines) {
+    if (l.type === "revision_published") {
+      const dir = join(P.revisions, String(l.revision));
+      try {
+        const text = await readFile(join(dir, "MANIFEST.json"), "utf8");
+        const man = JSON.parse(text) as { files?: Record<string, string> };
+        const ok = sha256Hex(text) === l.manifest_sha256 && Object.entries(man.files ?? {}).every(([f, h]) => existsSync(join(dir, f)) && sha256Hex(readFileSync(join(dir, f))) === h);
+        if (ok) out.catalogue.revisions_verified += 1;
+        else out.catalogue.revisions_mismatched.push(`revision ${l.revision}`);
+      } catch {
+        out.catalogue.revisions_mismatched.push(`revision ${l.revision} (unreadable)`);
+      }
+    } else if (l.type === "generation_committed") {
+      try {
+        const g = JSON.parse(await readFile(join(P.gen, String(l.generation), "generation.json"), "utf8")) as { id?: string; recipe?: string; status?: string; job?: string };
+        if (g.id === l.generation && g.recipe === l.recipe && g.status === l.status && g.job === l.job) out.catalogue.generations_verified += 1;
+        else out.catalogue.generations_mismatched.push(String(l.generation));
+      } catch {
+        out.catalogue.generations_mismatched.push(`${l.generation} (unreadable)`);
+      }
+    }
+  }
   try {
     const entries = (await readFile(join(S, "ledger", "entries.jsonl"), "utf8"))
       .split("\n")

@@ -26,7 +26,7 @@
 import { existsSync, statfsSync } from "node:fs";
 import { chmod, copyFile, lstat, mkdir, open, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { Journal, maybeCrash, publishGeneration, readManifest, resealMoved, sealTree, sha256File, sha256Hex, storePaths, type JournalLine } from "./evidence-store.ts";
+import { Journal, maybeCrash, publishGeneration, publishRevision, readManifest, resealMoved, sealTree, sha256File, sha256Hex, storePaths, type JournalLine } from "./evidence-store.ts";
 import type { Mount, WorkerSpec } from "./vm.ts";
 
 export type JobKind = "tool" | "command" | "recipe" | "detect" | "import";
@@ -83,7 +83,8 @@ print(json.dumps({"import": rel, "copied_live": True, "producer_fenced": False, 
 sys.exit(3 if changed else 0)
 `;
 
-export type Target = { paths: string[]; name?: string; ref?: string };
+/** sha256: the object's content, when it is one file of the store (a derived or requested target). */
+export type Target = { paths: string[]; name?: string; ref?: string; sha256?: string };
 
 export type JobSpec = {
   kind: JobKind;
@@ -94,6 +95,8 @@ export type JobSpec = {
   target?: Target;
   /** detect: the objects to ask about, and which trigger's recipes to ask. */
   targets?: Target[];
+  /** detect: only these (target index, recipe) pairs, when a derived pass names them; else every recipe of the trigger on every target. */
+  pairs?: Array<{ t: number; recipe: string }>;
   trigger?: "kickoff" | "derived" | "request";
   /** What the agent said the job reads: refs (input:…, job:…) or "all". */
   inputs: string[];
@@ -149,8 +152,27 @@ export type JobRecord = {
  */
 export type RecipeInfo = { id: string; dir: string; runtime: string; entry: string; sha256: string; seconds: number; auto: string[]; experimental?: boolean; minBytes?: number; suffixes?: string[]; magic?: Array<{ offset: number; bytes: Buffer }> };
 
-/** Derived detect passes a run may start before derived cataloguing stops and says so (each is a worker boot). */
-export const DERIVED_PASSES_MAX = 20;
+/** The requester the derived catalogue's work runs as: the lowest lane. */
+export const DERIVED = "derived";
+
+/**
+ * The derived catalogue's limits (decided with Fable and Codex after the
+ * BelkaCTF #6 trial, where a cap of 20 passes went on noise in three
+ * minutes): pairs a pass, a rolling budget of worker-seconds, and two
+ * ceilings a run. At a limit nothing is dropped: the rest waits, named.
+ */
+export type DerivedLimits = { pairsPerPass: number; windowMs: number; windowSeconds: number; generationsMax: number; outputBytesMax: number; retries: number };
+/**
+ * The ceilings count what the catalogue costs, generations and their bytes,
+ * not objects asked about: replayed over the BelkaCTF #6 trial, 477 gzip
+ * media blobs a job extracted would have spent a 400-object ceiling before
+ * the decrypted vault came, 21 minutes in. Asking is bounded by the rolling
+ * worker-seconds budget alone.
+ */
+export const DERIVED_LIMITS: DerivedLimits = { pairsPerPass: 32, windowMs: 10 * 60 * 1000, windowSeconds: 300, generationsMax: 50, outputBytesMax: 2 * 1024 * 1024 * 1024, retries: 1 };
+
+/** An object offered to the derived recipes: one file of the store, by content, and the recipes whose prefilter it met. */
+type Candidate = { sha256: string; job: string; path: string; bytes: number; recipes: string[]; tries: number; parent_status: string };
 
 export type JobServiceOptions = {
   sandbox: string;
@@ -167,9 +189,9 @@ export type JobServiceOptions = {
   perRequesterRunning?: number;
   perRequesterQueued?: number;
   minFreeMb?: number;
-  /** Offer committed files to the recipes whose trigger is "derived" (opt-in: --derived-catalog), at most `derivedPasses` detect passes a run. */
+  /** Offer what jobs make to the recipes whose trigger is "derived" (on by default in a run: --no-derived-catalog turns it off). */
   derived?: boolean;
-  derivedPasses?: number;
+  derivedLimits?: Partial<DerivedLimits>;
   runWorker: (spec: WorkerSpec) => Promise<{ code: number | null; digest?: string; error?: string; fenced: boolean; fence_error?: string; boot_retry?: string; create_ms?: number }>;
   destroyWorker: (name: string) => Promise<{ ok: boolean; error?: string }>;
   notify: (to: string, body: string) => Promise<void>;
@@ -220,7 +242,19 @@ export class JobService {
   /** Jobs in a row that ran in no worker, and whether the agents were told. */
   private unrun = 0;
   private degraded = false;
-  private derivedBounded = false;
+  /** The derived catalogue: every object by content, what waits, what it has spent, what it has said. */
+  private readonly derivedKnown = new Map<string, "offered" | "answered" | "catalogued" | "unanswered">();
+  private derivedPending: Candidate[] = [];
+  private readonly derivedTries = new Map<string, number>();
+  /** Derived passes whose answers are read (a detect_answered line). */
+  private readonly derivedProcessed = new Set<string>();
+  private draining = false;
+  /** Jobs whose files were offered (a derived_offered line), so recovery offers each once. */
+  private readonly derivedOfferedJobs = new Set<string>();
+  private derivedSpent: Array<{ at: number; s: number }> = [];
+  private derivedObjects = 0;
+  private derivedOutputBytes = 0;
+  private readonly derivedSaid = new Set<string>();
   private timer: ReturnType<typeof setInterval> | undefined;
   /**
    * Every change to the store and the catalogue, one at a time: a
@@ -274,12 +308,14 @@ export class JobService {
           break;
         case "job_finished":
           if (j) Object.assign(j, { state: "finished", exit: l.exit as number | null, finished_at: l.at, status: l.status, reason: l.reason });
+          if (j?.requester.agent === DERIVED) this.derivedSpent.push({ at: Date.parse(String(l.at)), s: Number(l.duration_ms ?? 0) / 1000 });
           break;
         case "job_fenced":
           if (j && l.fenced) j.state = "fenced";
           break;
         case "job_committed":
           if (j) Object.assign(j, { state: "committed", status: l.status, outputs: l.outputs, image_digest: l.image_digest ?? j.image_digest });
+          if (j?.requester.agent === DERIVED && j.spec.kind === "recipe") this.derivedOutputBytes += Number((l.outputs as { bytes?: number } | undefined)?.bytes ?? 0);
           break;
         case "job_failed":
           if (j) Object.assign(j, { state: "failed", status: "failed", reason: l.reason });
@@ -293,8 +329,31 @@ export class JobService {
         case "job_retried":
           if (j) Object.assign(j, { state: "accepted", attempt: Number(l.attempt) });
           break;
-        case "generation_committed":
+        case "generation_committed": {
           if (j) j.generation = String(l.generation);
+          const sha = (l.target as Target | undefined)?.sha256;
+          if (sha) this.derivedKnown.set(sha, "catalogued");
+          break;
+        }
+        case "derived_offered":
+          this.derivedOfferedJobs.add(id);
+          for (const o of (l.offered as Array<{ sha256: string; path: string; bytes: number; recipes: string[] }> | undefined) ?? []) {
+            if (this.derivedKnown.has(o.sha256)) continue;
+            this.derivedKnown.set(o.sha256, "offered");
+            this.derivedPending.push({ sha256: o.sha256, job: id, path: o.path, bytes: o.bytes, recipes: o.recipes, tries: 0, parent_status: String(l.parent_status ?? "") });
+          }
+          break;
+        case "detect_answered":
+          this.derivedProcessed.add(id);
+          for (const r of (l.rows as Array<{ sha256: string }> | undefined) ?? []) if (this.derivedKnown.get(r.sha256) !== "catalogued") this.derivedKnown.set(r.sha256, "answered");
+          for (const u of (l.unanswered as Array<{ sha256: string }> | undefined) ?? []) this.derivedTries.set(u.sha256, (this.derivedTries.get(u.sha256) ?? 0) + 1);
+          break;
+        case "detect_unanswered":
+          this.derivedKnown.set(String(l.sha256), "unanswered");
+          break;
+        case "derived_bounded":
+        case "derived_deferred":
+          this.derivedSaid.add(`${l.type}:${l.bound}`);
           break;
         case "job_notified":
           this.delivered.add(j && l.to && l.to !== j.requester.agent ? `${id}@${l.to}` : id);
@@ -307,6 +366,17 @@ export class JobService {
       }
     }
     for (const j of this.jobs.values()) if (j.state === "accepted") this.queue.push(j.id);
+    // What waits: offered, not answered, and not in a derived pass that is
+    // still to finish (recovery finishes those, and reads their answers).
+    const inFlight = new Set<string>();
+    for (const j of this.jobs.values()) {
+      if (j.requester.agent !== DERIVED || j.spec.kind !== "detect") continue;
+      this.derivedObjects += j.spec.targets?.length ?? 0;
+      if (!this.derivedProcessed.has(j.id) && j.state !== "failed" && j.state !== "cancelled") for (const t of j.spec.targets ?? []) if (t.sha256) inFlight.add(t.sha256);
+    }
+    this.derivedPending = this.derivedPending
+      .filter((c) => this.derivedKnown.get(c.sha256) === "offered" && !inFlight.has(c.sha256))
+      .map((c) => ({ ...c, tries: this.derivedTries.get(c.sha256) ?? 0 }));
   }
 
   /**
@@ -348,6 +418,10 @@ export class JobService {
         await this.commit(j, { status: j.status ?? "ok", exit: j.exit ?? null, reason: j.reason });
         continue;
       }
+      // The derived catalogue: a pass committed and not read, a job's files never offered.
+      if (j.state === "committed" && j.spec.kind === "detect" && j.requester.agent === DERIVED && !this.derivedProcessed.has(j.id)) await this.fromDetect(j);
+      if ((j.state === "failed" || j.state === "cancelled") && j.spec.kind === "detect" && j.requester.agent === DERIVED && !this.derivedProcessed.has(j.id)) await this.derivedReturn(j, []);
+      if (this.o.derived && j.state === "committed" && (j.spec.kind === "tool" || j.spec.kind === "command" || j.spec.kind === "import") && !this.derivedOfferedJobs.has(j.id)) await this.offerFrom(j);
       if (j.state === "committed" && j.spec.kind === "recipe" && !j.generation && j.status !== "cancelled") {
         await this.afterCommit(j);
       } else if ((j.state === "committed" || j.state === "failed") && (!this.delivered.has(j.id) || this.alsoTell.has(j.id))) {
@@ -476,7 +550,7 @@ export class JobService {
     const spec = await this.normalise(raw);
     if ("reason" in spec) return { ok: false, reason: spec.reason };
     const queued = [...this.jobs.values()].filter((j) => j.requester.agent === agent && (j.state === "accepted" || j.state === "running"));
-    if (agent !== "system" && queued.length >= this.o.perRequesterQueued) return { ok: false, reason: `you have ${queued.length} jobs queued or running, the most one agent may have; wait for one (job_status) or cancel one` };
+    if (agent !== "system" && agent !== DERIVED && queued.length >= this.o.perRequesterQueued) return { ok: false, reason: `you have ${queued.length} jobs queued or running, the most one agent may have; wait for one (job_status) or cancel one` };
     // The same recipe over the same object is the same result: answered
     // with the earlier job. Never a command, a tool or anything with network.
     const key = spec.kind === "recipe" ? await this.recipeKey(spec) : undefined;
@@ -509,6 +583,9 @@ export class JobService {
 
   private async recipeKey(spec: JobSpec): Promise<string> {
     const r = spec.recipe ? await this.recipe(spec.recipe) : null;
+    // An object of the store is itself by content, wherever it sits (the
+    // same vault image extracted twice is one object); an input by its stat.
+    if (spec.target?.sha256) return sha256Hex(canonical({ recipe: spec.recipe, sha: r?.sha256, image: this.o.image, content: spec.target.sha256 }));
     const hashes: string[] = [];
     for (const p of spec.target?.paths ?? []) {
       try {
@@ -559,9 +636,11 @@ export class JobService {
       for (const p of target.paths) if (!this.insideRun(p)) return { reason: `${p} is not an object of this run` };
       return { ...base, recipe: r.id, target, timeout_seconds: Math.min(r.seconds, TIMEOUT_MAX_SECONDS), ...(raw.alias ? { alias: String(raw.alias) } : {}), ...(r.experimental ? { experimental: true } : {}) };
     }
-    const targets = Array.isArray(raw.targets) ? raw.targets.filter((t) => t && Array.isArray(t.paths) && t.paths.every((p) => this.insideRun(p))) : [];
+    const targets = Array.isArray(raw.targets) ? raw.targets.filter((t) => t && Array.isArray(t.paths) && t.paths.every((p) => this.insideRun(p))).map((t) => ({ paths: t.paths, ...(t.name ? { name: String(t.name) } : {}), ...(t.ref ? { ref: String(t.ref) } : {}), ...(t.sha256 && /^[0-9a-f]{64}$/.test(t.sha256) ? { sha256: t.sha256 } : {}) })) : [];
     if (!targets.length) return { reason: "a detect pass needs objects of this run" };
-    return { ...base, targets: targets.slice(0, DETECT_FILES_MAX), trigger: raw.trigger === "derived" ? "derived" : raw.trigger === "kickoff" ? "kickoff" : "request" };
+    const kept = targets.slice(0, DETECT_FILES_MAX);
+    const pairs = Array.isArray(raw.pairs) ? raw.pairs.filter((q) => q && Number.isInteger(q.t) && q.t >= 0 && q.t < kept.length && typeof q.recipe === "string").map((q) => ({ t: q.t, recipe: q.recipe })) : undefined;
+    return { ...base, targets: kept, ...(pairs?.length ? { pairs } : {}), trigger: raw.trigger === "derived" ? "derived" : raw.trigger === "kickoff" ? "kickoff" : "request" };
   }
 
   /** A path a job may be pointed at: under inputs/, store/ or the run's catalogue, never out of the run. */
@@ -579,12 +658,17 @@ export class JobService {
   /** Start what may start: the run's worker limit, each agent's own limit, taken in turn, and free disk. */
   async pump(): Promise<void> {
     if (this.stopping) return;
+    await this.maybeDrainDerived();
     while (this.running.size < this.o.workers && this.queue.length) {
       const requesters = [...new Set(this.queue.map((id) => this.jobs.get(id)?.requester.agent ?? ""))];
+      // The derived catalogue's work is the lowest lane: one at a time,
+      // started only when no other job waits, and only within its budget.
+      const othersWaiting = this.queue.some((id) => this.jobs.get(id)?.requester.agent !== DERIVED);
       let picked: string | undefined;
       for (let k = 0; k < requesters.length && !picked; k += 1) {
         const agent = requesters[(this.rotation + k) % requesters.length];
-        if (agent !== "system" && this.runningFor(agent) >= this.o.perRequesterRunning) continue;
+        if (agent === DERIVED && (othersWaiting || this.runningFor(DERIVED) >= 1 || !(await this.derivedMayRun()))) continue;
+        if (agent !== "system" && agent !== DERIVED && this.runningFor(agent) >= this.o.perRequesterRunning) continue;
         picked = this.queue.find((id) => this.jobs.get(id)?.requester.agent === agent);
       }
       if (!picked) return;
@@ -680,13 +764,16 @@ export class JobService {
       await writeFile(join(ctl, "target.json"), JSON.stringify(job.spec.target));
       return { lines: [...head, ...run(`${r.runtime} ${q(r.entry)} run --target /job/target.json --out "$OUT"`)], tool_sha256: r.sha256 };
     }
-    // detect: every recipe of the trigger asked about every target; one line each.
+    // detect: every recipe of the trigger asked about every target, or, for
+    // a derived pass, the pairs whose prefilter matched; one line each.
     const recipes = await this.allRecipes(job.spec.trigger ?? "request");
+    const byId = new Map(recipes.map((r) => [r.id, r]));
     const rows: string[] = [];
     let i = 0;
     for (const t of job.spec.targets ?? []) {
       await writeFile(join(ctl, `target-${i}.json`), JSON.stringify(t));
-      for (const r of recipes) rows.push([String(i), r.id, r.runtime, r.entry].join("\t"));
+      const asked = job.spec.pairs ? job.spec.pairs.filter((q) => q.t === i).map((q) => byId.get(q.recipe)).filter((r): r is RecipeInfo => Boolean(r)) : recipes;
+      for (const r of asked) rows.push([String(i), r.id, r.runtime, r.entry].join("\t"));
       i += 1;
     }
     await writeFile(join(ctl, "detect.tsv"), rows.length ? `${rows.join("\n")}\n` : "");
@@ -694,11 +781,15 @@ export class JobService {
       lines: [
         ...head,
         ": > /job/stdout.log; : > /job/stderr.log",
+        "mkdir -p \"$OUT/probes\"",
         "while IFS=$'\\t' read -r i rid rt entry; do",
         "  [ -n \"$i\" ] || continue",
-        // The detect step's own exit status: through a pipe it was tail's, and every recipe "applied".
-        "  v=$(timeout 300 \"$rt\" \"$entry\" detect --target \"/job/target-$i.json\" 2>>/job/stderr.log); rc=$?",
-        "  v=$(printf '%s' \"$v\" | tail -n 1)",
+        // Each probe's whole output kept (the answer is its last line); the
+        // detect step's own exit status, not a pipe's.
+        "  p=\"$OUT/probes/$i-$(printf '%s' \"$rid\" | tr '/:' '__')\"",
+        "  timeout 300 \"$rt\" \"$entry\" detect --target \"/job/target-$i.json\" > \"$p.out\" 2> \"$p.err\"; rc=$?",
+        "  [ -s \"$p.err\" ] || rm -f \"$p.err\"",
+        "  v=$(tail -n 1 \"$p.out\")",
         "  printf '%s\\t%s\\t%s\\t%s\\n' \"$i\" \"$rid\" \"$rc\" \"$v\" >> \"$OUT/detect.tsv\"",
         "done < /job/detect.tsv",
         "echo 0 > /job/exit",
@@ -790,6 +881,7 @@ export class JobService {
             : exit !== 0
               ? `exit ${exit}`
               : undefined);
+    if (job.requester.agent === DERIVED) this.derivedSpent.push({ at: Date.now(), s: (Date.now() - started) / 1000 });
     await this.journal.append({ type: "job_finished", job: job.id, attempt: job.attempt, exit, status, ...(reason ? { reason } : {}), duration_ms: Date.now() - started, ...(result.digest ? { image_digest: result.digest } : {}), ...(result.boot_retry ? { boot_retry: result.boot_retry } : {}), ...(result.create_ms !== undefined ? { create_ms: result.create_ms } : {}) });
     Object.assign(job, { state: "finished", exit, status, reason, finished_at: new Date().toISOString(), ...(result.digest ? { image_digest: result.digest } : {}) });
     await this.workerHealth(job, exit === null && !cancelled && !stopped ? (result.error ?? "the worker did not report an exit status") : null);
@@ -888,143 +980,393 @@ export class JobService {
     return true;
   }
 
-  /** A recipe's result becomes a generation; any job's files are offered to the derived recipes; then the requester is told. */
+  /**
+   * A recipe's result becomes a generation, told by what asked for it; a
+   * job that makes files offers them to the derived recipes, whatever its
+   * status; a detect pass's answers are read whatever its status; then the
+   * requester is told.
+   */
   private async afterCommit(job: JobRecord): Promise<void> {
     if (job.spec.kind === "recipe" && (job.status === "ok" || job.status === "failed" || job.status === "timed_out")) {
       const r = await this.recipe(job.spec.recipe ?? "");
+      const trigger = job.requester.agent === "system" ? "kickoff" : job.requester.agent === DERIVED ? "derived" : "request";
+      const parentStatus = job.spec.parent ? this.jobs.get(job.spec.parent)?.status : undefined;
       const { generation, revision } = await this.exclusive(() => publishGeneration(this.journal, {
         job: job.id,
         recipe: job.spec.recipe ?? "",
         recipe_sha256: r?.sha256 ?? job.tool_sha256 ?? "",
         target: job.spec.target ?? { paths: [] },
+        trigger,
+        ...(parentStatus ? { parent_status: parentStatus } : {}),
         ...(job.spec.experimental ? { experimental: true } : {}),
         ...(job.spec.parent ? { parent: job.spec.parent } : {}),
         ...(job.spec.alias ? { alias: job.spec.alias } : {}),
       }));
       Object.assign(job, { generation: generation.id, revision });
       await this.project(job);
-      // The kickoff's catalogue is everyone's news; a derived one is told to
-      // whoever made the object; a requested one to whoever asked (below).
-      const to = job.requester.agent !== "system" ? null : job.spec.parent ? this.originOf(job.spec.parent) : "all";
-      if (to) await this.o.notify(to, `Catalogue revision ${revision}: ${generation.id} ${generation.recipe} over ${generation.target.name ?? generation.target.ref ?? "an object"} — ${generation.status}${generation.experimental ? " (experimental recipe)" : ""}. Files: catalog/gen/${generation.id}/${generation.alias ? ` (also ${generation.alias}/)` : ""}; index: catalog/revisions/${revision}/index.md.`).catch(() => undefined);
+      if (job.spec.target?.sha256) this.derivedKnown.set(job.spec.target.sha256, "catalogued");
+      if (trigger === "derived") this.derivedOutputBytes += job.outputs?.bytes ?? 0;
+      const where = `Files: catalog/gen/${generation.id}/${generation.alias ? ` (also ${generation.alias}/)` : ""}; index: catalog/revisions/${revision}/index.md.`;
+      const what = `${generation.id} ${generation.recipe} over ${generation.target.name ?? generation.target.ref ?? "an object"}`;
+      if (trigger === "kickoff") {
+        await this.o.notify("all", `Catalogue revision ${revision}: ${what} — ${generation.status}${generation.experimental ? " (experimental recipe)" : ""}. ${where}`).catch(() => undefined);
+      } else if (trigger === "derived") {
+        // A complete catalogue of something a job made is everyone's news;
+        // a partial or failed one is its maker's, with the recipe's reasons.
+        const maker = job.spec.parent ? this.originOf(job.spec.parent) : null;
+        if (generation.status === "complete") {
+          await this.o.notify("all", `Catalogue revision ${revision}: ${what}, made by job ${job.spec.parent ?? "?"}${maker ? ` (${maker})` : ""} and catalogued on its own — complete. ${where}`).catch(() => undefined);
+        } else if (maker) {
+          const cov = generation.coverage as { errors?: unknown[]; limits_hit?: unknown[]; why?: string } | null;
+          const why = [...(cov?.errors ?? []), ...(cov?.limits_hit ?? []), ...(cov?.why ? [cov.why] : [])].map(String);
+          await this.o.notify(maker, `Catalogue revision ${revision}: ${what}, made by your job ${job.spec.parent}, is ${generation.status}${why.length ? `: ${why.join("; ")}` : ""}. ${where} When a readable form of it appears in a job's output, it is offered to the recipes again.`).catch(() => undefined);
+        }
+      }
+      if (generation.status === "complete") await this.relateReadable(generation);
     }
-    if (job.spec.kind === "detect" && job.status === "ok") await this.fromDetect(job);
-    if (this.o.derived && (job.spec.kind === "tool" || job.spec.kind === "command") && job.status === "ok") await this.deriveFrom(job);
+    if (job.spec.kind === "detect") await this.fromDetect(job);
+    if (this.o.derived && (job.spec.kind === "tool" || job.spec.kind === "command" || job.spec.kind === "import")) await this.offerFrom(job);
     await this.tell(job);
+    void this.pump();
   }
 
   /** The agent at the root of a chain of jobs (a derived detect and recipe run as the harness), or null. */
   private originOf(id: string): string | null {
     let j = this.jobs.get(id);
     for (let hops = 0; j && hops < 10; hops += 1) {
-      if (j.requester.agent !== "system") return j.requester.agent;
+      if (j.requester.agent !== "system" && j.requester.agent !== DERIVED) return j.requester.agent;
       j = j.spec.parent ? this.jobs.get(j.spec.parent) : undefined;
     }
     return null;
   }
 
-  /** The files a tool or command job produced, offered to the recipes whose trigger is "derived", one detect pass for all of them. */
-  private async deriveFrom(job: JobRecord): Promise<void> {
+  /** Each derived recipe's own measure: its smallest object, and when it names any, a name ending or bytes at an offset. */
+  private async derivedRecipesFor(path: string, bytes: number, head: () => Promise<Buffer>, derived: RecipeInfo[]): Promise<string[]> {
+    const out: string[] = [];
+    let first: Buffer | null = null;
+    for (const r of derived) {
+      if (bytes < (r.minBytes ?? 0)) continue;
+      if (!r.suffixes?.length && !r.magic?.length) {
+        out.push(r.id);
+        continue;
+      }
+      if (r.suffixes?.some((x) => path.toLowerCase().endsWith(x))) {
+        out.push(r.id);
+        continue;
+      }
+      if (r.magic?.length) {
+        first ??= await head();
+        const f = first;
+        if (r.magic.some((g) => f.length >= g.offset + g.bytes.length && f.subarray(g.offset, g.offset + g.bytes.length).equals(g.bytes))) out.push(r.id);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * What a job made, offered to the derived recipes by content: each file a
+   * derived recipe's own measure takes, once per sha256 in the run (an input,
+   * an earlier offer or a catalogued object is skipped, named), queued to
+   * wait for the lowest lane. A tool, command or import job, whatever its
+   * status: a failed job's files are kept, and may be what matters.
+   */
+  private async offerFrom(job: JobRecord): Promise<void> {
+    if (this.derivedOfferedJobs.has(job.id)) return;
     const derived = await this.allRecipes("derived");
     if (!derived.length) return;
     const m = await readManifest(join(storePaths(this.S).jobs, job.id, "manifest.json"));
     if (!m || !m.manifest.files.length) return;
-    // Offered only what some recipe says it is worth being offered: its own
-    // smallest size and, when it names any, a name ending or bytes at an
-    // offset it names. On the BelkaCTF #6 trial a size floor alone (22
-    // bytes) spent the run's 20 passes in three minutes, 18 of them on
-    // files no recipe took.
     const reach = Math.min(Math.max(0, ...derived.flatMap((r) => (r.magic ?? []).map((g) => g.offset + g.bytes.length))), 1 << 20);
     const out = join(storePaths(this.S).jobs, job.id, "out");
-    const head = async (rel: string): Promise<Buffer> => {
-      if (!reach) return Buffer.alloc(0);
-      const fh = await open(join(out, rel), "r").catch(() => null);
-      if (!fh) return Buffer.alloc(0);
-      try {
-        const buf = Buffer.alloc(reach);
-        const { bytesRead } = await fh.read(buf, 0, reach, 0);
-        return buf.subarray(0, bytesRead);
-      } finally {
-        await fh.close();
-      }
-    };
-    const files: typeof m.manifest.files = [];
+    const inputsSha = await this.inputShas();
+    const offered: Array<{ sha256: string; path: string; bytes: number; recipes: string[] }> = [];
+    const skipped: Array<{ sha256: string; path: string; same_as: string }> = [];
+    const seen = new Set<string>();
+    let filtered = 0;
     for (const f of m.manifest.files) {
       const name = Buffer.from(f.path_b64, "base64").toString("utf8");
-      let first: Buffer | null = null;
-      for (const r of derived) {
-        if (f.bytes < (r.minBytes ?? 0)) continue;
-        if (!r.suffixes?.length && !r.magic?.length) {
-          files.push(f);
-          break;
+      const head = async (): Promise<Buffer> => {
+        if (!reach) return Buffer.alloc(0);
+        const fh = await open(join(out, name), "r").catch(() => null);
+        if (!fh) return Buffer.alloc(0);
+        try {
+          const buf = Buffer.alloc(reach);
+          const { bytesRead } = await fh.read(buf, 0, reach, 0);
+          return buf.subarray(0, bytesRead);
+        } finally {
+          await fh.close();
         }
-        if (r.suffixes?.some((x) => f.path.toLowerCase().endsWith(x))) {
-          files.push(f);
-          break;
-        }
-        if (r.magic?.length) {
-          first ??= await head(name);
-          if (r.magic.some((g) => first!.length >= g.offset + g.bytes.length && first!.subarray(g.offset, g.offset + g.bytes.length).equals(g.bytes))) {
-            files.push(f);
-            break;
-          }
-        }
+      };
+      const recipes = await this.derivedRecipesFor(f.path, f.bytes, head, derived);
+      if (!recipes.length) {
+        filtered += 1;
+        continue;
       }
-    }
-    if (!files.length) return;
-    // Each pass is a worker boot: a run gets so many, then is told.
-    const passes = [...this.jobs.values()].filter((j) => j.spec.kind === "detect" && j.spec.trigger === "derived").length;
-    const cap = this.o.derivedPasses ?? DERIVED_PASSES_MAX;
-    if (passes >= cap) {
-      if (!this.derivedBounded) {
-        this.derivedBounded = true;
-        await this.journal.append({ type: "derived_bounded", job: job.id, passes, cap });
-        const to = this.originOf(job.id);
-        if (to) await this.o.notify(to, `Derived cataloguing has run its ${cap} detect passes for this run: what job ${job.id} and later jobs make is no longer offered to the recipes on its own. catalog_request an object to have it catalogued.`).catch(() => undefined);
+      if (seen.has(f.sha256)) continue;
+      seen.add(f.sha256);
+      const known = inputsSha.get(f.sha256) ?? (this.derivedKnown.has(f.sha256) ? `${this.derivedKnown.get(f.sha256)} earlier` : undefined);
+      if (known) {
+        skipped.push({ sha256: f.sha256, path: f.path, same_as: known });
+        continue;
       }
-      return;
+      offered.push({ sha256: f.sha256, path: f.path, bytes: f.bytes, recipes });
     }
-    const targets = files.slice(0, DETECT_FILES_MAX).map((f) => ({
-      paths: [join(this.S, "store", "jobs", job.id, "out", Buffer.from(f.path_b64, "base64").toString("utf8"))],
-      name: `job:${job.id}/${f.path}`,
-      ref: `job:${job.id}/${f.path}`,
-    }));
-    if (!targets.length) return;
-    const left = files.length - targets.length;
-    const sub = await this.submit("system", { kind: "detect", targets, trigger: "derived", inputs: [`job:${job.id}`], timeout_seconds: 1800, network: "off", parent: job.id, note: left > 0 ? `${left} more file(s) of job ${job.id} were not offered to the recipes (the first ${DETECT_FILES_MAX} were); catalog_request any of them` : undefined });
-    if (sub.ok && left > 0) await this.journal.append({ type: "detect_bounded", job: job.id, offered: targets.length, not_offered: left });
+    if (!offered.length && !skipped.length) return;
+    this.derivedOfferedJobs.add(job.id);
+    await this.journal.append({ type: "derived_offered", job: job.id, parent_status: job.status ?? job.state, offered, skipped, filtered });
+    for (const o of offered) {
+      this.derivedKnown.set(o.sha256, "offered");
+      this.derivedPending.push({ ...o, job: job.id, tries: 0, parent_status: job.status ?? job.state });
+    }
   }
 
-  /** A detect pass's answers: every recipe that applies runs as a recipe job, whose parent is the job that made the object. */
+  private inputShaCache: Map<string, string> | null = null;
+  /** The run's inputs by content: a job's copy of an input is not a new object. */
+  private async inputShas(): Promise<Map<string, string>> {
+    if (this.inputShaCache) return this.inputShaCache;
+    const m = new Map<string, string>();
+    try {
+      const inputs = JSON.parse(await readFile(join(this.S, "inputs.json"), "utf8")) as { files?: Array<{ path: string; sha256?: string }> };
+      for (const f of inputs.files ?? []) if (f.sha256) m.set(f.sha256, `input:${f.path.replace(/^inputs\//, "")}`);
+    } catch {
+      // no inputs.json: nothing to skip by
+    }
+    this.inputShaCache = m;
+    return m;
+  }
+
+  private limits(): DerivedLimits {
+    return { ...DERIVED_LIMITS, ...(this.o.derivedLimits ?? {}) };
+  }
+
+  /** Worker-seconds the derived lane spent in the rolling window. */
+  private derivedWindowSpent(now = Date.now()): number {
+    const L = this.limits();
+    this.derivedSpent = this.derivedSpent.filter((x) => now - x.at < L.windowMs);
+    return this.derivedSpent.reduce((a, x) => a + x.s, 0);
+  }
+
+  /**
+   * Whether the derived lane may start work now: within its rolling budget
+   * (else it waits, said once each time it starts to wait) and under the
+   * run's ceilings (else it stops, said once to everyone, nothing dropped:
+   * what waits stays named in the journal's derived_offered lines).
+   */
+  private async derivedMayRun(): Promise<boolean> {
+    const L = this.limits();
+    const made = this.journal.of("generation_committed").filter((l) => l.trigger === "derived").length;
+    const bound = made >= L.generationsMax ? { bound: "generations", spent: made, cap: L.generationsMax } : this.derivedOutputBytes >= L.outputBytesMax ? { bound: "output_bytes", spent: this.derivedOutputBytes, cap: L.outputBytesMax } : null;
+    if (bound) {
+      if (!this.derivedSaid.has(`derived_bounded:${bound.bound}`)) {
+        this.derivedSaid.add(`derived_bounded:${bound.bound}`);
+        const queued = this.queue.filter((id) => this.jobs.get(id)?.requester.agent === DERIVED).length;
+        await this.journal.append({ type: "derived_bounded", ...bound, pending: this.derivedPending.length, queued });
+        await this.o.notify("all", `The derived catalogue has reached its ${bound.bound === "generations" ? `${bound.cap} generations` : `${bound.cap} bytes of output`} for this run: ${this.derivedPending.length} object(s) that jobs made stay offered and not asked about, and ${queued} of its jobs stay queued (each named in the journal). catalog_request any object to have it catalogued.`).catch(() => undefined);
+      }
+      return false;
+    }
+    const spent = this.derivedWindowSpent();
+    if (spent >= L.windowSeconds) {
+      if (!this.derivedSaid.has("derived_deferred:worker_seconds")) {
+        this.derivedSaid.add("derived_deferred:worker_seconds");
+        await this.journal.append({ type: "derived_deferred", bound: "worker_seconds", spent: Math.round(spent), cap: L.windowSeconds, window_s: L.windowMs / 1000, pending: this.derivedPending.length });
+      }
+      return false;
+    }
+    this.derivedSaid.delete("derived_deferred:worker_seconds");
+    return true;
+  }
+
+  /**
+   * Start a derived pass when the lane is free: the largest waiting objects
+   * first (a cap lands on small noise, never on a disk), up to the pass's
+   * pairs, as the lowest lane's job.
+   */
+  private async maybeDrainDerived(): Promise<void> {
+    if (!this.o.derived || this.stopping || !this.derivedPending.length || this.draining) return;
+    const busy = [...this.jobs.values()].some((j) => j.requester.agent === DERIVED && (j.state === "accepted" || j.state === "running" || j.state === "finished" || j.state === "fenced"));
+    if (busy || !(await this.derivedMayRun())) return;
+    this.draining = true;
+    try {
+      const L = this.limits();
+      this.derivedPending.sort((a, b) => b.bytes - a.bytes);
+      const take: Candidate[] = [];
+      let pairs = 0;
+      while (this.derivedPending.length && (pairs === 0 || pairs + this.derivedPending[0].recipes.length <= L.pairsPerPass) && take.length < DETECT_FILES_MAX) {
+        const c = this.derivedPending.shift()!;
+        take.push(c);
+        pairs += c.recipes.length;
+      }
+      if (!take.length) return;
+      const S = this.S;
+      const targets: Target[] = take.map((c) => ({ paths: [join(S, "store", "jobs", c.job, "out", c.path)], name: `job:${c.job}/${c.path}`, ref: `job:${c.job}/${c.path}`, sha256: c.sha256 }));
+      const r = await this.submit(DERIVED, {
+        kind: "detect",
+        targets,
+        pairs: take.flatMap((c, t) => c.recipes.map((recipe) => ({ t, recipe }))),
+        trigger: "derived",
+        inputs: [...new Set(take.map((c) => `job:${c.job}`))],
+        timeout_seconds: 1800,
+        network: "off",
+      });
+      if (r.ok) this.derivedObjects += take.length;
+      else this.derivedPending.unshift(...take);
+    } finally {
+      this.draining = false;
+    }
+  }
+
+  /**
+   * A detect pass's answers, read whatever the pass's status (a pass that
+   * timed out keeps what it answered): every recipe that applies runs as a
+   * recipe job over the object, with the job that made it as its parent.
+   * For a derived pass, every answer is journalled; a pair it did not answer
+   * waits once more, then is named unanswered.
+   */
   private async fromDetect(job: JobRecord): Promise<void> {
+    if (job.state === "failed" || job.state === "cancelled" && !job.outputs) {
+      if (job.requester.agent === DERIVED && !this.derivedProcessed.has(job.id)) await this.derivedReturn(job, []);
+      return;
+    }
     let text = "";
     try {
       text = await readFile(join(storePaths(this.S).jobs, job.id, "out", "detect.tsv"), "utf8");
     } catch {
-      return;
+      text = "";
     }
     const targets = job.spec.targets ?? [];
-    let applied = 0;
+    const answered: Array<{ t: number; recipe: string; rc: string; why: string }> = [];
     for (const line of text.split("\n")) {
-      const [i, rid, rc] = line.split("\t");
-      if (rc !== "0" || !rid) continue;
-      const t = targets[Number(i)];
-      if (!t) continue;
+      const [i, rid, rc, v] = line.split("\t");
+      if (!rid || !targets[Number(i)]) continue;
+      let why = "";
+      try {
+        why = String((JSON.parse(v ?? "") as { why?: string }).why ?? "");
+      } catch {
+        why = "";
+      }
+      answered.push({ t: Number(i), recipe: rid, rc, why });
+    }
+    const derivedPass = job.requester.agent === DERIVED;
+    if (derivedPass && this.derivedProcessed.has(job.id)) return;
+    let applied = 0;
+    for (const a of answered) {
+      if (a.rc !== "0") continue;
+      const t = targets[a.t];
       applied += 1;
-      await this.submit(job.requester.agent === "system" ? "system" : job.requester.agent, { kind: "recipe", recipe: rid, target: t, inputs: [t.ref ?? "all"], timeout_seconds: 900, network: "off", parent: job.spec.parent ?? job.id });
+      // Its parent is the job that made the object (a derived target names it).
+      const maker = derivedPass ? /^job:(j\d{6})\//.exec(t.ref ?? "")?.[1] : undefined;
+      const r = await this.submit(derivedPass ? DERIVED : job.requester.agent === "system" ? "system" : job.requester.agent, { kind: "recipe", recipe: a.recipe, target: t, inputs: [t.ref ?? "all"], timeout_seconds: 900, network: "allowlist", parent: maker ?? job.spec.parent ?? job.id });
+      // Already catalogued over the same bytes: the agent who asked is told
+      // where, since no job of its own will report.
+      if (!derivedPass && r.ok && r.job.state === "committed" && job.requester.agent !== "system") {
+        const g = this.journal.of("generation_committed").find((l) => l.job === r.job.id);
+        await this.journal.append({ type: "job_notified", job: r.job.id, to: job.requester.agent, how: "post" });
+        await this.o
+          .notify(job.requester.agent, `${a.recipe} over ${t.name ?? t.ref} is already catalogued, by content: ${g ? `generation ${g.generation} (catalog/gen/${g.generation}/), ` : ""}job ${r.job.id}. catalog_search reads it; nothing was run again.`)
+          .catch(() => undefined);
+      }
+    }
+    if (derivedPass) {
+      await this.derivedReturn(job, answered);
+      return;
     }
     if (!applied && job.requester.agent !== "system") {
-      const whys = text.split("\n").filter(Boolean).map((l) => l.split("\t")).map(([, rid, , v]) => {
-        try {
-          return `${rid}: ${(JSON.parse(v) as { why?: string }).why ?? "does not apply"}`;
-        } catch {
-          return `${rid}: does not apply`;
-        }
-      });
+      const whys = answered.map((a) => `${a.recipe}: ${a.why || "does not apply"}`);
       this.delivered.add(job.id);
       await this.journal.append({ type: "job_notified", job: job.id, to: job.requester.agent, how: "post" });
       await this.o.notify(job.requester.agent, `No recipe of this run catalogues ${targets.map((t) => t.name ?? t.ref).join(", ")} (job ${job.id}): ${whys.join("; ") || "none was asked"}. Open it with a job_run command; a forged tool that declares "recipe": true can be named as recipe=tool:<name>.`).catch(() => undefined);
     }
+  }
+
+  /** A derived pass's answers on the record, and what it did not answer back in the queue (once), or named. */
+  private async derivedReturn(job: JobRecord, answered: Array<{ t: number; recipe: string; rc: string; why: string }>): Promise<void> {
+    const targets = job.spec.targets ?? [];
+    const got = new Set(answered.map((a) => `${a.t}\u0000${a.recipe}`));
+    const missing = new Map<number, string[]>();
+    for (const q of job.spec.pairs ?? []) if (!got.has(`${q.t}\u0000${q.recipe}`)) missing.set(q.t, [...(missing.get(q.t) ?? []), q.recipe]);
+    const rows = answered.map((a) => ({ sha256: targets[a.t]?.sha256 ?? "", ref: targets[a.t]?.ref ?? "", recipe: a.recipe, applies: a.rc === "0", rc: a.rc, why: a.why }));
+    const unanswered = [...missing].map(([t, recipes]) => ({ sha256: targets[t]?.sha256 ?? "", ref: targets[t]?.ref ?? "", recipes }));
+    this.derivedProcessed.add(job.id);
+    await this.journal.append({ type: "detect_answered", job: job.id, status: job.status ?? job.state, rows, unanswered });
+    for (const r of rows) if (r.sha256 && this.derivedKnown.get(r.sha256) !== "catalogued") this.derivedKnown.set(r.sha256, "answered");
+    const L = this.limits();
+    for (const u of unanswered) {
+      const tries = (this.derivedTries.get(u.sha256) ?? 0) + 1;
+      this.derivedTries.set(u.sha256, tries);
+      const m = /^job:(j\d{6})\/(.*)$/s.exec(u.ref);
+      if (tries <= L.retries && m) {
+        this.derivedPending.push({ sha256: u.sha256, job: m[1], path: m[2], bytes: this.bytesOf(m[1], m[2]), recipes: u.recipes, tries, parent_status: this.jobs.get(m[1])?.status ?? "" });
+      } else {
+        this.derivedKnown.set(u.sha256, "unanswered");
+        await this.journal.append({ type: "detect_unanswered", sha256: u.sha256, ref: u.ref, recipes: u.recipes, tries });
+      }
+    }
+  }
+
+  private bytesOf(job: string, path: string): number {
+    const j = this.jobs.get(job);
+    const f = (j?.outputs as { list?: Array<{ path: string; bytes: number }> } | undefined)?.list?.find((x) => x.path === path);
+    return f?.bytes ?? 0;
+  }
+
+  /**
+   * A complete generation over an object a job made from another object
+   * that has a partial generation (the decrypted volume of an encrypted
+   * container): the partial one is linked to its readable form, within
+   * three jobs of lineage (declared inputs and store/jobs/<id> paths named
+   * in a command). Nothing is called wrong: both stay.
+   */
+  private async relateReadable(g: { id: string; recipe: string; target: { ref?: string; paths?: string[] } }): Promise<void> {
+    const maker = /^job:(j\d{6})\//.exec(g.target.ref ?? "")?.[1] ?? /store\/jobs\/(j\d{6})\//.exec((g.target.paths ?? [])[0] ?? "")?.[1];
+    if (!maker) return;
+    // Up to three hops back, by the jobs each one names and by the files it
+    // names in them: the same bytes are often remade under another job (run
+    // s8c228e decrypted a vault.raw another job had also made, byte for byte,
+    // so the partial catalogue was over a job that was no ancestor).
+    const ancestors = new Set<string>();
+    const shas = new Set<string>();
+    let frontier = [maker];
+    for (let hop = 0; hop < 3 && frontier.length; hop += 1) {
+      const next: string[] = [];
+      for (const id of frontier) {
+        const j = this.jobs.get(id);
+        if (!j) continue;
+        const named: Array<[string, string | undefined]> = [
+          ...(j.spec.inputs ?? []).map((x) => /^job:(j\d{6})(?:\/(.+))?$/.exec(x)).map((m) => (m ? ([m[1], m[2]] as [string, string | undefined]) : null)),
+          ...[...String(j.spec.command ?? "").matchAll(/store\/jobs\/(j\d{6})\/(?:out\/([^\s'"`;|&)<>]+))?/g)].map((m) => [m[1], m[2]] as [string, string | undefined]),
+        ].filter((x): x is [string, string | undefined] => x !== null && x[0] !== id);
+        for (const [a, path] of named) {
+          for (const sha of await this.shasOf(a, path)) shas.add(sha);
+          if (!ancestors.has(a)) {
+            ancestors.add(a);
+            next.push(a);
+          }
+        }
+      }
+      frontier = next;
+    }
+    if (!ancestors.size) return;
+    const partials = this.journal.of("generation_committed").filter((l) => l.recipe === g.recipe && l.status !== "complete" && l.generation !== g.id).filter((l) => {
+      const t = l.target as Target | undefined;
+      const from = /^job:(j\d{6})\//.exec(t?.ref ?? "")?.[1] ?? /store\/jobs\/(j\d{6})\//.exec((t?.paths ?? [])[0] ?? "")?.[1];
+      return (from !== undefined && ancestors.has(from)) || (typeof t?.sha256 === "string" && shas.has(t.sha256));
+    });
+    const already = new Set(this.journal.of("generation_related").map((l) => `${l.generation}>${l.readable}`));
+    let wrote = false;
+    for (const p of partials) {
+      if (already.has(`${p.generation}>${g.id}`)) continue;
+      await this.journal.append({ type: "generation_related", generation: p.generation, readable: g.id, relation: "readable form", via: maker });
+      wrote = true;
+    }
+    if (wrote) await this.exclusive(() => publishRevision(this.journal));
+  }
+
+  /** The sha256 of a job's file as its manifest has it, or of every file when no path is named. */
+  private async shasOf(job: string, path?: string): Promise<string[]> {
+    const m = await readManifest(join(storePaths(this.S).jobs, job, "manifest.json")).catch(() => null);
+    if (!m) return [];
+    return m.manifest.files.filter((f) => path === undefined || f.path === path).map((f) => f.sha256);
   }
 
   /** The kickoff's plan: every recipe the census found applies, run once the hub is up. */
@@ -1114,7 +1456,7 @@ export class JobService {
   }
 
   private async requesterOf(agent: string): Promise<Requester> {
-    const who: { name?: string; doing?: string } = agent === "system" ? { name: "harness" } : await this.o.identity(agent).catch(() => ({}));
+    const who: { name?: string; doing?: string } = agent === "system" ? { name: "harness" } : agent === DERIVED ? { name: "derived catalogue" } : await this.o.identity(agent).catch(() => ({}));
     return { agent, ...(who.name ? { name: who.name } : {}), ...(who.doing ? { doing: who.doing } : {}) };
   }
 
@@ -1148,7 +1490,7 @@ export class JobService {
   private async tell(job: JobRecord): Promise<void> {
     await this.tellAlso(job);
     // A detect pass is the service's step: its recipes' results are what the agent is told.
-    if (this.delivered.has(job.id) || job.requester.agent === "system" || (job.spec.kind === "detect" && job.status === "ok")) return;
+    if (this.delivered.has(job.id) || job.requester.agent === "system" || job.requester.agent === DERIVED || (job.spec.kind === "detect" && job.status === "ok")) return;
     const until = this.watchers.get(job.id) ?? 0;
     if (Date.now() < until) {
       setTimeout(() => void this.tell(job), until - Date.now() + 3000).unref?.();
@@ -1303,5 +1645,11 @@ export async function resolveTarget(S: string, text: string, journal?: Journal):
   const paths = [abs];
   const collection = journal?.of("input_collection").find((l) => l.input === relToS);
   if (collection && Array.isArray(collection.members)) for (const p of (collection.members as string[]).slice(1)) paths.push(join(S, p));
-  return { paths, name: relToS, ref };
+  // An object of the store is named by its content too, as its manifest has
+  // it, so a recipe asked for it dedups with one already run over the same
+  // bytes (run s8c228e: an agent's request catalogued the decrypted vault a
+  // second time, 13 s after the derived catalogue had).
+  const om = /^store\/(jobs|imports)\/([^/]+)\/out\/(.+)$/.exec(relToS);
+  const sha256 = om ? (await readManifest(join(S, "store", om[1], om[2], "manifest.json")))?.manifest.files.find((f) => f.path === om[3])?.sha256 : undefined;
+  return { paths, name: relToS, ref, ...(sha256 ? { sha256 } : {}) };
 }

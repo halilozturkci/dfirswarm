@@ -459,6 +459,19 @@ export type DoneResult = {
   output_file: string;
 };
 
+/** Who has asked to abandon the run, and who is still working. */
+export type AbandonGate = { proceed: boolean; votes: string[]; working: string[]; first_vote: boolean };
+
+/** An abandon that one agent asked for while others still work: recorded, not done. */
+export type DoneRefused = {
+  terminate: false;
+  refused: string;
+  abandon: AbandonGate;
+  created_sentinel: false;
+  reason: string;
+  output_file: string;
+};
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 }
@@ -2668,13 +2681,34 @@ export function extractWritePath(input: Record<string, unknown> | undefined): st
 export async function markDone(
   ctx: SwarmContext,
   args: { reason: string; outputFile: string; createSentinel?: boolean },
-): Promise<DoneResult> {
+): Promise<DoneResult | DoneRefused> {
   const reason = yamlOneLine(args.reason);
   const outputFile = yamlOneLine(args.outputFile);
   if (!reason) throw new Error("done requires a reason");
   if (!outputFile) throw new Error("done requires output_file");
   // The report reads the output file back: it names a file in the run.
   claimKey(ctx.sandboxRoot, outputFile);
+
+  // A per-agent cap stop is one seat leaving. The swarm's clock is
+  // done/SWARM_DONE; writing it here would shut every other pane.
+  const seatOnly = args.createSentinel === false || reason === "agent_cap";
+  if (!seatOnly && reason.startsWith(ABANDON_PREFIX) && !(await swarmDoneExists(ctx.sandboxRoot))) {
+    const gate = await abandonGate(ctx.sandboxRoot, ctx.agentId, reason);
+    if (!gate.proceed) {
+      const others = gate.working.length;
+      return {
+        terminate: false,
+        refused:
+          `An abandon ends the run for everyone, so one agent's word is not enough while ${others} other agent${others === 1 ? " is" : "s are"} still working (${gate.working.join(", ")}). ` +
+          `Your abandon is recorded (done/abandon/${ctx.agentId}.md) and the board is asked: the run ends when a second agent also calls done with abandon: true, or when no other agent is still working. ` +
+          `If only your own slice failed, post what you tried and what blocked it to the board, then take another open question or wait.`,
+        abandon: gate,
+        created_sentinel: false,
+        reason,
+        output_file: outputFile,
+      };
+    }
+  }
 
   const by = ctx.agentId;
   const stamp = new Date().toISOString();
@@ -2693,9 +2727,6 @@ Worker ${by} is exiting.
 `;
   await writeFile(agentFile, agentBody, "utf8");
 
-  // A per-agent cap stop is one seat leaving. The swarm's clock is
-  // done/SWARM_DONE; writing it here would shut every other pane.
-  const seatOnly = args.createSentinel === false || reason === "agent_cap";
   const created = seatOnly
     ? false
     : await createSentinel(
@@ -2721,6 +2752,43 @@ Collective finished. Presence of this file is the clock. Call done and stop.
     reason,
     output_file: outputFile,
   };
+}
+
+/** The reason prefix of a done that gives the run up without its checks. */
+export const ABANDON_PREFIX = "ABANDONED: ";
+
+export function abandonVotePath(sandboxRoot: string, agentId: string): string {
+  return join(sandboxRoot, "done", "abandon", `${agentId}.md`);
+}
+
+/**
+ * An abandon ends the run for everyone and skips the finish line, so one
+ * agent's word is not enough while others are still working: run sfeeebb
+ * lost a ten-agent case after six minutes to one seat whose own slice had
+ * not come together. The caller's vote is recorded under done/abandon/; the
+ * run may end when a second agent has voted too, or when no other agent is
+ * still working (every peer has a .done or a .dead marker, as reap and
+ * await-done read them). No team file, no peers.
+ */
+export async function abandonGate(sandboxRoot: string, agentId: string, reason: string): Promise<AbandonGate> {
+  const mine = abandonVotePath(sandboxRoot, agentId);
+  await mkdir(dirname(mine), { recursive: true });
+  const first = !(await stat(mine).then(() => true).catch(() => false));
+  await writeFile(mine, `---\nby: ${agentId}\nreason: ${yamlOneLine(reason)}\nat: ${new Date().toISOString()}\n---\n`, "utf8");
+  const votes = (await readdir(dirname(mine)).catch(() => [] as string[]))
+    .filter((n) => n.endsWith(".md"))
+    .map((n) => n.slice(0, -3))
+    .sort();
+  const team = await readTeam(sandboxRoot).catch(() => null);
+  const working: string[] = [];
+  for (const member of team?.agents ?? []) {
+    if (member.id === agentId || votes.includes(member.id)) continue;
+    const marked = await Promise.all(
+      [agentDonePath(sandboxRoot, member.id), agentDeadPath(sandboxRoot, member.id)].map((p) => stat(p).then(() => true).catch(() => false)),
+    );
+    if (!marked.some(Boolean)) working.push(member.id);
+  }
+  return { proceed: votes.length >= 2 || working.length === 0, votes, working, first_vote: first };
 }
 
 export function toolText(payload: unknown): string {
@@ -7026,7 +7094,7 @@ export function finishLineVerdict(
   const untrusted = Boolean(run.source) && !FINISH_LINE_TRUSTED_SOURCES.has(run.source as string);
   if (untrusted && run.passed >= run.total) {
     // Abandoning claims nothing, so it is still the way out.
-    if (abandon) return { proceed: true, reasonPrefix: "ABANDONED: ", note: `checks read from the ${run.source} were not trusted; abandoned on purpose` };
+    if (abandon) return { proceed: true, reasonPrefix: ABANDON_PREFIX, note: `checks read from the ${run.source} were not trusted; abandoned on purpose` };
     return {
       proceed: false,
       failing: `(checks read from ${run.source})`,
@@ -7037,7 +7105,7 @@ export function finishLineVerdict(
   }
   if (run.total === 0) return { proceed: true, note: "the goal has no checks" };
   if (run.passed >= run.total) return { proceed: true };
-  if (abandon) return { proceed: true, reasonPrefix: "ABANDONED: ", note: `${run.passed} of ${run.total} checks pass; abandoned on purpose` };
+  if (abandon) return { proceed: true, reasonPrefix: ABANDON_PREFIX, note: `${run.passed} of ${run.total} checks pass; abandoned on purpose` };
   const first = run.checks.find((c) => !c.ok);
   const failing = first?.cmd ?? "(unknown check)";
   const why = first?.timed_out ? "timed out" : "fails";

@@ -159,4 +159,43 @@ run_am enc.zip
 [[ "$(flags_of enc.zip secret.txt)" == encrypted ]] || fail "an encrypted member is flagged: $(cat "$H/out-enc.zip/members.tsv")"
 RECIPE_MEMBERS=10 python3 "$AM" run --target "{\"paths\": [\"$H/many.zip\"]}" --out "$H/out-many" >/dev/null || true
 jq -e '.limits_hit[0] | test("declares 30, more than the limit of 10")' "$H/out-many/coverage.json" >/dev/null || fail "a directory past the limit is not loaded, and says so: $(cat "$H/out-many/coverage.json")"
-pass "hostile archives are listed as data: escapes, duplicates, links, bombs, encryption, truncation, a name that is not UTF-8 and a limit, each named"
+RECIPE_ZIP_DIRECTORY_BYTES=100 python3 "$AM" run --target "{\"paths\": [\"$H/many.zip\"]}" --out "$H/out-many-bytes" >/dev/null || true
+jq -e '.limits_hit[0] | test("the central directory is [0-9]+ bytes, more than the limit of 100")' "$H/out-many-bytes/coverage.json" >/dev/null || fail "a directory past the byte limit is not loaded, and says so: $(cat "$H/out-many-bytes/coverage.json")"
+pass "hostile archives are listed as data: escapes, duplicates, links, bombs, encryption, truncation, a name that is not UTF-8 and limits by count and by bytes, each named"
+
+# A volume with no partition table in front of it, at sector 2048 (as a
+# volume carved out of a disk keeps its offset): detected and catalogued there.
+if command -v fsstat >/dev/null && command -v fls >/dev/null; then
+  python3 - "$H/off2048.img" <<'PY'
+import struct, sys
+bs = bytearray(512)
+bs[0:3] = b"\xeb\x3c\x90"; bs[3:11] = b"MSDOS5.0"
+struct.pack_into("<HBHBHHBHHHII", bs, 11, 512, 1, 1, 2, 224, 2880, 0xF0, 9, 18, 2, 0, 0)
+bs[38] = 0x29; bs[43:54] = b"NO NAME    "; bs[54:62] = b"FAT12   "; bs[510:512] = b"\x55\xaa"
+img = bytearray(2880 * 512); img[0:512] = bs
+for f in (1, 10): img[f * 512:f * 512 + 3] = b"\xf0\xff\xff"
+open(sys.argv[1], "wb").write(b"\0" * (2048 * 512) + img)
+PY
+  DV="$ROOT/packs/computer-forensics-base/recipes/disk-volumes/run.sh"
+  bash "$DV" detect --target "{\"paths\": [\"$H/off2048.img\"], \"name\": \"off.img\"}" | jq -e '.applies and (.why | test("sector 2048"))' >/dev/null || fail "a volume at sector 2048 with no table should be detected"
+  bash "$DV" run --target "{\"paths\": [\"$H/off2048.img\"], \"name\": \"off.img\"}" --out "$H/out-off" >/dev/null || fail "and catalogued"
+  [[ "$(jq -r .status "$H/out-off/coverage.json")" == complete && -f "$H/out-off/p2048/filelist.txt" ]] || fail "the volume at 2048 is listed: $(cat "$H/out-off/coverage.json")"
+  pass "a volume at sector 2048 with no partition table is detected and catalogued there"
+fi
+
+# 7z, read as its listing streams, with the member limit applied as it goes.
+SEVEN="$(command -v 7z || command -v 7zz || true)"
+if [[ -n "$SEVEN" ]]; then
+  mkdir -p "$H/shim" "$H/s7"
+  ln -sf "$SEVEN" "$H/shim/7z"
+  for i in 1 2 3; do printf 'member %s\n' "$i" > "$H/s7/m$i.txt"; done
+  ( cd "$H/s7" && "$SEVEN" a -bd -y ../three.7z m1.txt m2.txt m3.txt >/dev/null )
+  PATH="$H/shim:$PATH" python3 "$AM" run --target "{\"paths\": [\"$H/three.7z\"]}" --out "$H/out-7z" >/dev/null || fail "a 7z should be listed"
+  [[ "$(jq -r '.status + " " + (.members|tostring)' "$H/out-7z/coverage.json")" == "complete 3" ]] || fail "a 7z's three members are listed: $(cat "$H/out-7z/coverage.json")"
+  [[ "$(awk -F'\t' 'NR > 1 { print $3 }' "$H/out-7z/members.tsv" | sort | tr '\n' ' ')" == "m1.txt m2.txt m3.txt " ]] || fail "the 7z's member names: $(cat "$H/out-7z/members.tsv")"
+  RECIPE_MEMBERS=2 PATH="$H/shim:$PATH" python3 "$AM" run --target "{\"paths\": [\"$H/three.7z\"]}" --out "$H/out-7z-2" >/dev/null || true
+  jq -e '.status == "partial" and .members == 2 and (.limits_hit[0] == "members: stopped at 2")' "$H/out-7z-2/coverage.json" >/dev/null || fail "a 7z past the member limit stops there and says so: $(cat "$H/out-7z-2/coverage.json")"
+  pass "a 7z is listed as its listing streams, and stops at the member limit, saying so"
+else
+  echo "skip - no 7z or 7zz on this host"
+fi

@@ -218,7 +218,8 @@ export function parseJobsConfig(raw: unknown): JobsConfig | undefined {
     openNet: raw.openNet === true,
     packDirs: strings(raw.packDirs),
     ...(typeof raw.minFreeMb === "number" ? { minFreeMb: num(raw.minFreeMb, 4096, 0, 1 << 30) } : {}),
-    ...(raw.derived === true ? { derived: true } : {}),
+    // On unless the kickoff said off (--no-derived-catalog).
+    derived: raw.derived !== false,
   };
 }
 
@@ -541,11 +542,13 @@ export function boardTable(hub: {
       // The sentinel ends every seat, so the finish line is run here, on the
       // host, by the harness, before it is written: what the agent's own
       // extension ran inside its VM is that VM's word. An abandoned run says
-      // so in its reason and is not held to the checks; a seat leaving on its
-      // own cap writes no sentinel and is not either.
+      // so in its reason and is not held to the checks, but one seat's
+      // abandon ends it only with a second's or with nobody else working
+      // (P.abandonGate); a seat leaving on its own cap writes no sentinel and
+      // is not held to them either.
       const args = (a[1] as { reason?: string; outputFile?: string; createSentinel?: boolean }) ?? {};
       const reason = String(args.reason ?? "");
-      const endsSwarm = args.createSentinel !== false && reason !== "agent_cap" && !reason.startsWith("ABANDONED: ");
+      const endsSwarm = args.createSentinel !== false && reason !== "agent_cap" && !reason.startsWith(P.ABANDON_PREFIX);
       if (endsSwarm && !(await P.swarmDoneExists(S))) {
         finishLine ??= P.runFinishLine(S)
           .catch(() => null)
@@ -556,8 +559,10 @@ export function boardTable(hub: {
         const verdict = P.finishLineVerdict(run, false);
         if (!verdict.proceed) throw new Error(`the harness re-ran the finish line on the host and it is not met: ${verdict.reason}`);
       }
+      // An abandon one seat asks for while others work is a vote: the seat
+      // stays, and markDone says so.
       const done = await P.markDone(as(who), args as never);
-      hub.seatDone?.(who);
+      if (done.terminate) hub.seatDone?.(who);
       return done;
     },
     nameOf: (_who, a) => P.nameOf(S, String(a[1] ?? "")),
@@ -2283,7 +2288,7 @@ function summarize(fn: string, result: unknown): Record<string, unknown> {
   if (!isObject(result)) return {};
   switch (fn) {
     case "markDone":
-      return { created_sentinel: result.created_sentinel === true, reason: result.reason };
+      return { created_sentinel: result.created_sentinel === true, reason: result.reason, ...(result.terminate === false ? { refused: true, abandon: result.abandon } : {}) };
     case "forgeTool":
       return { ok: result.ok, name: (result as { manifest?: { name?: string } }).manifest?.name ?? result.name };
     case "restoreFileVersion":

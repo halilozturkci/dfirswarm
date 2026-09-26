@@ -232,8 +232,8 @@ class Catalog:
             rel = shown(rel_raw)
             size = os.path.getsize(img)
             # Each recipe says the smallest object it is asked about (a disk
-            # or memory image: 64 KB; a zip: 22 bytes); below all of them a
-            # file is not offered to any.
+            # image: 64 KB; Windows memory: 64 MB; a zip: 22 bytes); below all
+            # of them a file is not offered to any.
             if not any(size >= r["min_bytes"] for r in self.recipes):
                 floor = min((r["min_bytes"] for r in self.recipes), default=SMALL)
                 self.cover(rel_raw, size, "not probed", "smaller than any recipe of this run asks about (%s): not offered to the recipes" % human(floor))

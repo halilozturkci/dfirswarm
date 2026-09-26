@@ -6,6 +6,17 @@ All notable changes to this project. The format follows
 
 ## [Unreleased]
 
+### Changed: one agent's abandon is a vote while others work
+
+- `done` with `abandon: true` ends the run only when a second agent has
+  abandoned too, or when no other agent is still working (every peer has a
+  `.done` or `.dead` marker). Before that it is recorded under
+  `done/abandon/<id>.md`, the board is asked once, and the agent is told to
+  post what blocked its slice and carry on. The hub applies the same rule to
+  a seat's `markDone`, and a refused seat stays up. Run sfeeebb: one seat of
+  ten abandoned a BelkaCTF case after six minutes because its own slice had
+  not come together, and the sentinel stopped the nine others.
+
 ### Added: findings name what they rest on (ledger refs)
 
 - `record` takes `refs`: the run's objects an entry rests on —
@@ -38,14 +49,35 @@ All notable changes to this project. The format follows
   in its own VM: a job copies it into the store as it is now (each file
   hashed before and after the copy up to 2 GiB; links left out, named) and
   says it was copied live; one that changed while it was copied fails.
-- `--derived-catalog` (off by default) offers what jobs make to the derived
-  recipes, by each recipe's own `min_bytes` and, when it names them,
-  `suffixes` or `magic` (bytes at an offset) — the harness's 512-byte floor
-  is gone and it knows no format — at most 20 detect passes a run
-  (`derived_bounded`, and the agent is told). On the BelkaCTF #6 trial a
-  size floor alone spent the 20 passes in three minutes, 2 of them useful;
-  computer-forensics-base 1.2.17 names the suffixes and magic of its three
-  recipes.
+- **The derived catalogue, on by default** (`--no-derived-catalog` turns it
+  off). What jobs make — tool, command and import jobs, whatever their
+  status — is offered by content to the derived recipes whose own
+  `min_bytes`, `suffixes` or `magic` take it. It runs in the lowest lane (one
+  job, only when no other waits, largest objects first, 32 pairs a pass),
+  within 300 worker-seconds each 10 minutes and at most 50 generations and 2 GiB
+  a run, nothing dropped (`derived_offered`, `detect_answered`,
+  `detect_unanswered`, `derived_deferred`, `derived_bounded`). Complete
+  derived catalogues are posted to all; a partial one goes to its maker with
+  why, and is linked to its readable form (`generation_related`).
+  `catalog_search` v9 lists generations (`which=generations`) and says why a
+  partial one is partial. Custody holds every revision and generation to the
+  journal. Before it: what a worker writes cannot steer a host read
+  (index.tsv confined to the sealed manifest), each probe's whole output is
+  kept, 7z listings stream, zip directories are bounded by bytes, and
+  disk-volumes finds a volume at sector 63 or 2048 with no table
+  (computer-forensics-base 1.2.19). After the measuring runs:
+  archive-members is offered a compressed tar by its name ending only, not by
+  a bare gzip, bzip2, xz or zstd header, which 480 objects in the recorded
+  runs matched and none was an archive (computer-forensics-base 1.2.20); and
+  the readable-form link follows content, so the same bytes remade under
+  another job still lead back to the partial catalogue; and an object of the
+  store named in a request carries its manifest's sha256, so asking for one
+  the derived catalogue already has dedups with it and the agent is told
+  which generation to read (run s8c228e catalogued the decrypted vault twice,
+  13 s apart). memory-windows asks about 64 MiB and up, not 64 KiB: no
+  Windows memory image is smaller, and of its 16 derived offers in the
+  recorded runs the 10 under 64 MiB were SQLite dumps and screenshots, none
+  memory (computer-forensics-base 1.2.21).
 - Four workers by default on a host with 64 GiB or more; `create_ms` in
   each job's record.
 - The console has a Jobs tab (with Files and the Ledger): the run's jobs

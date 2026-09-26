@@ -224,18 +224,25 @@ def zip_ext_time(extra):
     return None
 
 
-def zip_declared_entries(path):
-    """The member count the end-of-central-directory record declares (zip64
-    too), read before zipfile loads the whole directory into memory."""
+# zipfile reads the whole central directory into memory: past this many
+# bytes of it, the archive is not listed, and says so (RECIPE_ZIP_DIRECTORY_BYTES).
+ZIP_DIRECTORY_MAX = int(os.environ.get("RECIPE_ZIP_DIRECTORY_BYTES") or 256 * 1024 * 1024)
+
+
+def zip_declared(path):
+    """The member count and the central directory's size in bytes the
+    end-of-central-directory record declares (zip64 too), read before
+    zipfile loads the whole directory into memory."""
     size = os.path.getsize(path)
     with open(path, "rb") as fh:
         fh.seek(max(0, size - 65557))
         tail = fh.read()
     at = tail.rfind(b"PK\x05\x06")
     if at < 0 or at + 22 > len(tail):
-        return None
+        return None, None
     total = struct.unpack_from("<H", tail, at + 10)[0]
-    if total == 0xFFFF:
+    cd_bytes = struct.unpack_from("<I", tail, at + 12)[0]
+    if total == 0xFFFF or cd_bytes == 0xFFFFFFFF:
         loc = tail.rfind(b"PK\x06\x07", 0, at)
         if loc >= 0:
             with open(path, "rb") as fh:
@@ -243,17 +250,25 @@ def zip_declared_entries(path):
                 rec = fh.read(56)
             if rec[:4] == b"PK\x06\x06":
                 total = struct.unpack_from("<Q", rec, 32)[0]
-    return total
+                cd_bytes = struct.unpack_from("<Q", rec, 40)[0]
+    return total, cd_bytes
+
+
+def zip_declared_entries(path):
+    return zip_declared(path)[0]
 
 
 def list_zip(path, w, deadline, max_members, cov):
     cov["format"] = "zip"
     n = 0
-    declared = zip_declared_entries(path)
+    declared, cd_bytes = zip_declared(path)
     if declared is not None and declared > max_members:
         # zipfile reads every entry of the directory into memory before the
         # first one can be listed: past the limit nothing is listed, and says so.
         cov["limits_hit"].append("members: the central directory declares %d, more than the limit of %d; not listed (raise RECIPE_MEMBERS for this archive)" % (declared, max_members))
+        return 0
+    if cd_bytes is not None and cd_bytes > ZIP_DIRECTORY_MAX:
+        cov["limits_hit"].append("members: the central directory is %d bytes, more than the limit of %d; not listed (raise RECIPE_ZIP_DIRECTORY_BYTES for this archive)" % (cd_bytes, ZIP_DIRECTORY_MAX))
         return 0
     with zipfile.ZipFile(path) as zf:
         for info in zf.infolist():
@@ -290,31 +305,25 @@ def list_zip(path, w, deadline, max_members, cov):
     return n
 
 
-def list_7z(path, w, deadline, max_members, cov):
+def list_7z(path, w, deadline, max_members, cov, out_dir):
+    """7z's own listing, read as it streams (a listing of millions of members
+    is never held whole), its stderr kept whole beside the list."""
     cov["format"] = "7z"
     env = dict(os.environ, TZ="UTC", LANG="C.UTF-8", LC_ALL="C.UTF-8")
+    err_path = os.path.join(out_dir, "7z.stderr")
     try:
-        proc = subprocess.run(["7z", "l", "-slt", "-ba", "--", path], capture_output=True, env=env,
-                              timeout=max(5, deadline - time.monotonic()))
+        err = open(err_path, "wb")
+        proc = subprocess.Popen(["7z", "l", "-slt", "-ba", "--", path], stdout=subprocess.PIPE, stderr=err, env=env)
     except FileNotFoundError:
         cov["status_override"] = "unsupported"
         cov["errors"].append("7z is not in this image")
         return 0
-    except subprocess.TimeoutExpired:
-        cov["limits_hit"].append("seconds: 7z did not finish listing")
-        return 0
-    if proc.returncode != 0 and not proc.stdout:
-        cov["errors"].append("7z could not list it: %s" % proc.stderr.decode("utf-8", "replace").strip())
-        return 0
     n = 0
-    for block in proc.stdout.split(b"\n\n"):
-        fields = {}
-        for line in block.split(b"\n"):
-            if b" = " in line:
-                k, v = line.split(b" = ", 1)
-                fields[k.strip()] = v
-        if b"Path" not in fields:
-            continue
+    fields = {}
+    stopped = None
+
+    def emit():
+        nonlocal n
         raw = fields[b"Path"]
         attrs = fields.get(b"Attributes", b"").decode("ascii", "replace")
         kind = "dir" if attrs.startswith("D") or fields.get(b"Folder") == b"+" else "file"
@@ -324,11 +333,38 @@ def list_7z(path, w, deadline, max_members, cov):
               packed=fields.get(b"Packed Size", b"").decode(), mtime=mod.replace(" ", "T") + ("Z" if mod else ""),
               tz="utc" if mod else "", mode="", uid="", gid="", link="", locator="7z:index=%d" % n, flags=",".join(flags))
         n += 1
-        if n >= max_members:
-            cov["limits_hit"].append("members: stopped at %d" % max_members)
-            break
-    if proc.returncode != 0:
-        cov["errors"].append("7z exited %d: %s" % (proc.returncode, proc.stderr.decode("utf-8", "replace").strip()))
+
+    for line in proc.stdout:
+        line = line.rstrip(b"\r\n")
+        if not line:
+            if b"Path" in fields:
+                emit()
+            fields = {}
+            if n >= max_members:
+                stopped = "members: stopped at %d" % max_members
+                break
+            if time.monotonic() > deadline:
+                stopped = "seconds: stopped after %d members" % n
+                break
+            continue
+        if b" = " in line:
+            k, v = line.split(b" = ", 1)
+            fields[k.strip()] = v
+    else:
+        if b"Path" in fields and n < max_members:
+            emit()
+    if stopped:
+        proc.kill()
+        cov["limits_hit"].append(stopped)
+    proc.stdout.close()
+    rc = proc.wait()
+    err.close()
+    size = os.path.getsize(err_path)
+    if size == 0:
+        os.remove(err_path)
+    elif rc != 0 and not stopped:
+        text = open(err_path, "rb").read(65536).decode("utf-8", "replace").strip()
+        cov["errors"].append("7z exited %d: %s%s" % (rc, text, " (the whole of it, %d bytes, is 7z.stderr)" % size if size > 65536 else ""))
     return n
 
 
@@ -346,7 +382,10 @@ def run(path, out_dir):
         return 2
     w = Writer(out_dir)
     try:
-        n = {"tar": list_tar, "zip": list_zip, "7z": list_7z}[fmt](path, w, deadline, max_members, cov)
+        if fmt == "7z":
+            n = list_7z(path, w, deadline, max_members, cov, out_dir)
+        else:
+            n = {"tar": list_tar, "zip": list_zip}[fmt](path, w, deadline, max_members, cov)
     except Exception as e:
         n = w.rows
         cov["errors"].append("%s: %s" % (type(e).__name__, e))

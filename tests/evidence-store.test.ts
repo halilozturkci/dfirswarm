@@ -265,3 +265,23 @@ test("an examiner's note is chained onto the journal after the run, attributed, 
   assert.equal(c!.notes, 1, "custody counts the notes on the record");
   assert.equal(c!.journal.intact, true);
 });
+
+test("a generation reads only the files of its job's sealed output: an index.tsv row that climbs out is named, not read", async () => {
+  const S = sandbox();
+  const journal = await initStore(S);
+  const staging = join(S, "..", `stage-${Math.random()}`);
+  await mkdir(staging, { recursive: true });
+  await writeFile(join(staging, "coverage.json"), JSON.stringify({ status: "complete" }));
+  await writeFile(join(staging, "list.tsv"), "a\nb\n");
+  await writeFile(join(staging, "index.tsv"), "list.tsv\tthe list\n../../../../../../etc/passwd\tnot ours\nmissing.tsv\tnot there\n");
+  await sealTree(S, staging, join(storePaths(S).jobs, "j000001", "out"), "j000001", 1);
+  const { generation } = await publishGeneration(journal, { job: "j000001", recipe: "p/r", recipe_sha256: "x", target: { name: "obj", sha256: "a".repeat(64) }, trigger: "derived", parent_status: "failed" });
+  assert.equal(generation.status, "complete");
+  assert.deepEqual(generation.files.map((f) => [f.path, f.rows]), [[`catalog/gen/${generation.id}/list.tsv`, 2]]);
+  assert.ok(generation.notes?.some((n) => n.includes('"../../../../../../etc/passwd", which is not a file of job j000001\'s sealed output: not read')), JSON.stringify(generation.notes));
+  assert.equal(generation.trigger, "derived");
+  assert.equal(generation.parent_status, "failed");
+  const line = journal.of("generation_committed").at(-1)!;
+  assert.equal((line.target as { sha256?: string }).sha256, "a".repeat(64), "the target's content is on the record");
+  assert.equal(line.trigger, "derived");
+});
