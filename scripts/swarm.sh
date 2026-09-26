@@ -4390,8 +4390,13 @@ console.log(r.ok ? "" : r.reason);' "$_gp" "$_gk" 2>/dev/null || echo "could not
     local jp jref
     for jp in $(jq -r 'keys[]' <<<"$job_images_json"); do
       jref="$(jq -r --arg p "$jp" '.[$p]' <<<"$job_images_json")"
-      vm_cli image-files --image "$jref" --out "$sandbox/images/$jp" --path /etc/dfirswarm/tools.md --path /etc/dfirswarm/image.json >/dev/null 2>&1 \
-        || echo "WARN: the program list of job image $jref could not be read; images/$jp/ is empty." >&2
+      if ! vm_cli image-files --image "$jref" --out "$sandbox/images/$jp" --path /etc/dfirswarm/tools.md --path /etc/dfirswarm/image.json >/dev/null 2>&1; then
+        echo "WARN: the program list of job image $jref could not be read; images/$jp/ is empty." >&2
+      elif [[ ! -s "$sandbox/images/$jp/tools.md" ]]; then
+        # An image with a record and no list was built before install.py
+        # wrote tools.md: the agents would be pointed at a file that is not there.
+        echo "WARN: job image $jref has no /etc/dfirswarm/tools.md (built before the images listed their programs; rebuild it): images/$jp/ holds only its image.json." >&2
+      fi
     done
     chmod -R a-w "$sandbox/images" 2>/dev/null || true
   fi

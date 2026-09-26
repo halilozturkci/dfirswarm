@@ -229,7 +229,9 @@ noise = bytes(random.getrandbits(8) for _ in range(1000))
 # One chunk, no file header, not aligned, rubbish on both sides: unallocated space.
 open(sys.argv[2], "wb").write(noise + src[4096:4096 + 65536] + noise)
 EOF
-  echo "{\"path\":\"$WORK/unallocated.bin\",\"limit\":5}" | run_tool "$WIN/tools/evtx_carve" | "$PY" -c '
+  # In the scratch directory: past its page it writes every record under the
+  # work/ of the directory it runs in.
+  echo "{\"path\":\"$WORK/unallocated.bin\",\"limit\":5}" | (cd "$WORK" && run_tool "$WIN/tools/evtx_carve") | "$PY" -c '
 import json, sys
 d = json.load(sys.stdin)
 assert d["chunks_found"] == 1, d["chunks_found"]
@@ -374,10 +376,13 @@ fi
 # evidence and the integrity check then reported the evidence modified.
 OUT="$WORK/outpaths"; mkdir -p "$OUT/run/work" "$OUT/run/inputs" "$OUT/bin"
 { printf 'PK\003\004zip'; head -c 2048 /dev/zero; printf 'regf'; head -c 8192 /dev/zero; } > "$OUT/run/inputs/blob.bin"
+# file_carver takes only a signature whose size it can read whole: a PNG ends
+# at its IEND chunk.
+printf '\211PNG\r\n\032\n\000\000\000\000IEND\256B`\202' > "$OUT/run/inputs/pic.png"
 printf '#!/usr/bin/env bash\nwhile [[ $# -gt 0 ]]; do [[ "$1" == --storage_file ]] && echo s > "$2"; shift; done\n' > "$OUT/bin/log2timeline.py"
 printf '#!/usr/bin/env bash\nwhile [[ $# -gt 0 ]]; do [[ "$1" == -w ]] && echo "{}" > "$2"; shift; done\n' > "$OUT/bin/psort.py"
 chmod +x "$OUT/bin/"*
-carve() { (cd "$OUT/run" && printf '{"path":"inputs/blob.bin","offset":0,"sig_type":"UNKNOWN","max_size":64,"output":"%s"}' "$1" | "$PY" "$BASE/tools/file_carver/run.py"); }
+carve() { (cd "$OUT/run" && printf '{"path":"inputs/pic.png","offset":0,"sig_type":"PNG","max_size":64,"output":"%s"}' "$1" | "$PY" "$BASE/tools/file_carver/run.py"); }
 memc() { (cd "$OUT/run" && printf '{"path":"inputs/blob.bin","extract_to":"%s","max_extract":1}' "$1" | "$PY" "$ROOT/packs/memory-forensics/tools/mem_carve/run.py"); }
 plaso() { (cd "$OUT/run" && printf '{"source":"inputs/blob.bin","out_dir":"%s"}' "$1" | PATH="$OUT/bin:$PATH" "$PY" "$BASE/tools/timeline_super/run.py"); }
 for bad in ../escaped inputs/planted work/../inputs/planted "$OUT/abs"; do
@@ -388,9 +393,11 @@ done
 leaked="$(find "$OUT" -path "$OUT/run/work" -prune -o \( -name 'escaped*' -o -name 'planted*' -o -name 'abs*' \) -print)"
 [[ -z "$leaked" ]] || fail "a refused output was still written: $leaked"
 carve work/c.bin >/dev/null || fail "file_carver refused an output under work/"
-memc work/m >/dev/null || fail "mem_carve refused an extract_to under work/"
+# mem_carve writes only inside an agent's own directory, the one its VM may write.
+memc work/m >/dev/null 2>&1 && fail "mem_carve wrote into work/ itself rather than an agent's directory"
+memc work/a1/m >/dev/null || fail "mem_carve refused an extract_to under work/<agent>/"
 plaso work/p >/dev/null || fail "timeline_super refused an out_dir under work/"
-[[ -s "$OUT/run/work/c.bin" && -n "$(ls "$OUT/run/work/m")" && -f "$OUT/run/work/p/timeline.plaso" ]] || fail "outputs under work/ were not written"
+[[ -s "$OUT/run/work/c.bin" && -n "$(ls "$OUT/run/work/a1/m")" && -f "$OUT/run/work/p/timeline.plaso" ]] || fail "outputs under work/ were not written"
 cmp -s "$BASE/tools/file_carver/run.py" "$ROOT/tool-library/file_carver/run.py" || fail "the tool-library copy of file_carver has drifted from the pack's"
 pass "file_carver, mem_carve and timeline_super write under the run directory and never under inputs/"
 
@@ -427,37 +434,55 @@ assert det["rule"] == "Bitsadmin Download" and det["record_id"] == 7 and det["le
 ' "$out" || fail "sigma_hunt did not read what Zircolite matched: $out"
 pass "sigma_hunt runs Zircolite without --noexternal, which Zircolite 3 and later refuse, and reads its detections"
 
-# --- unified_log gives UnifiedLogReader its four places --------------------------
-# UnifiedLogReader.py takes uuidtext_path, timesync_path, tracev3_path and
-# output_path; unified_log passed three and an argparse error was all it got.
-UL="$WORK/ulog"; mkdir -p "$UL/bin" "$UL/run/x.logarchive/timesync" "$UL/run/db/diagnostics/timesync" "$UL/run/db/uuidtext"
-cat > "$UL/bin/UnifiedLogReader.py" <<'ULR'
+# --- unified_log hands the reader one archive and keeps its whole output --------
+# The 2020 UnifiedLogReader crashed on modern archives and the wrapper still
+# said it succeeded; Mandiant's unifiedlog_iterator reads one logarchive
+# layout. A .logarchive goes as it is; a /private/var/db copy is staged as one
+# (uuidtext and diagnostics merged) and the staging removed. A reader that
+# fails fails the tool, with its stderr kept whole.
+UL="$WORK/ulog"; mkdir -p "$UL/bin" "$UL/run/x.logarchive/timesync" "$UL/run/db/diagnostics/timesync" "$UL/run/db/uuidtext/0A"
+: > "$UL/run/db/diagnostics/timesync/0000.timesync"; : > "$UL/run/db/uuidtext/0A/B"
+cat > "$UL/bin/unifiedlog_iterator" <<'ULR'
 #!/usr/bin/env python3
-import argparse, json, os
-ap = argparse.ArgumentParser()
-for name in ("uuidtext_path", "timesync_path", "tracev3_path", "output_path"):
-    ap.add_argument(name)
-ap.add_argument("-f", "--output_format")
-a = ap.parse_args()
-json.dump(vars(a), open(os.path.join(a.output_path, "args.json"), "w"))
+import json, os, sys
+a = sys.argv[1:]
+arg = lambda f: a[a.index(f) + 1]
+inp, out = arg("--input"), arg("--output")
+layout = sorted(os.path.relpath(os.path.join(d, f), inp) for d, _, fs in os.walk(inp) for f in fs)
+with open(out, "w") as fh:
+    for i in range(3):
+        fh.write(json.dumps({"n": i, "input": inp, "layout": layout, "argv": a}) + "\n")
+if os.environ.get("ULI_FAIL"):
+    sys.stderr.write("thread panicked: " + "x" * 5000 + "\n")
+    sys.exit(101)
 ULR
-chmod +x "$UL/bin/UnifiedLogReader.py"
+chmod +x "$UL/bin/unifiedlog_iterator"
 # Only this bin on PATH: a Mac's own /usr/bin/log would be chosen first.
 ln -s "$(command -v "$PY")" "$UL/bin/python3"
 ulog() { (cd "$UL/run" && printf '{"path": "%s", "out_dir": "work/%s"}' "$1" "$2" | PATH="$UL/bin" "$UL/bin/python3" "$ROOT/packs/macos-forensics/tools/unified_log/run.py"); }
-ulog x.logarchive a >/dev/null || fail "unified_log could not run UnifiedLogReader on a .logarchive"
+ulog x.logarchive a > "$UL/a.json" || fail "unified_log could not run unifiedlog_iterator on a .logarchive: $(cat "$UL/a.json")"
 "$PY" -c '
 import json, sys
-a = json.load(open(sys.argv[1]))
-assert a == {"uuidtext_path": "x.logarchive", "timesync_path": "x.logarchive/timesync", "tracev3_path": "x.logarchive",
-             "output_path": "work/a", "output_format": "SQLITE"}, a
-' "$UL/run/work/a/args.json" || fail "unified_log did not give UnifiedLogReader a .logarchive's four places"
-ulog db b >/dev/null || fail "unified_log could not run UnifiedLogReader on a copy of /private/var/db"
+r = json.load(open(sys.argv[1]))
+assert r["engine"] == "unifiedlog_iterator" and r["status"] == "complete" and r["entry_count"] == 3, r
+first = json.loads(open(sys.argv[2] + "/" + r["output"]).readline())
+assert first["input"] == "x.logarchive" and first["argv"][first["argv"].index("--format") + 1] == "jsonl", first
+' "$UL/a.json" "$UL/run" || fail "unified_log did not give unifiedlog_iterator the .logarchive and keep its JSONL"
+ulog db b > "$UL/b.json" || fail "unified_log could not run unifiedlog_iterator on a copy of /private/var/db: $(cat "$UL/b.json")"
 "$PY" -c '
-import json, sys
-a = json.load(open(sys.argv[1]))
-assert (a["uuidtext_path"], a["timesync_path"], a["tracev3_path"]) == ("db/uuidtext", "db/diagnostics/timesync", "db/diagnostics"), a
-' "$UL/run/work/b/args.json" || fail "unified_log did not give UnifiedLogReader a /private/var/db copy's four places"
-pass "unified_log gives UnifiedLogReader uuidtext, timesync, the tracev3 files and its output, for a .logarchive and for a /private/var/db copy"
+import json, os, sys
+r = json.load(open(sys.argv[1]))
+first = json.loads(open(sys.argv[2] + "/" + r["output"]).readline())
+assert first["layout"] == ["0A/B", "timesync/0000.timesync"], first["layout"]
+assert not os.path.exists(sys.argv[2] + "/work/b/.logarchive-input"), "the staged archive was left behind"
+' "$UL/b.json" "$UL/run" || fail "unified_log did not stage a /private/var/db copy as one logarchive"
+ULI_FAIL=1 ulog x.logarchive c > "$UL/c.json" && fail "a reader that exits non-zero must fail the tool"
+"$PY" -c '
+import json, os, sys
+r = json.load(open(sys.argv[1]))
+assert r["status"] == "partial" and r["exit_code"] == 101 and r["entry_count"] == 3, r
+assert os.path.getsize(sys.argv[2] + "/" + r["stderr"]) == r["stderr_bytes"] > 5000, r
+' "$UL/c.json" "$UL/run" || fail "a failed reader is partial, with its whole stderr kept"
+pass "unified_log hands unifiedlog_iterator one archive (a /private/var/db copy staged as one), keeps the whole JSONL, and fails when the reader does"
 
 echo "pack-tools: all checks passed"

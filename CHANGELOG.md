@@ -6,6 +6,39 @@ All notable changes to this project. The format follows
 
 ## [Unreleased]
 
+### Changed: every image profile reviewed as a DFIR examiner would (Codex)
+
+- Each of the nine profiles (base, disk, memory, linux, mobile, network, re,
+  web, full) was reviewed by its own Codex reviewer, which rebuilt the image,
+  ran every program, tool and recipe on the sample and CTF evidence where it
+  could and on synthetic fixtures where no evidence fitted, and fixed what it
+  found in the packs it owned.
+- **Nothing cut.** Tools that stopped at a limit or sliced a value keep the
+  whole result: a page for the agent and the rest in a named JSON Lines file
+  (the library's pager, inlined in each tool so a copied tool runs), or an
+  `out_file`. Parsers that failed while reporting success now fail: YARA on a
+  rule error, the macOS unified-log reader (replaced by Mandiant's
+  `unifiedlog_iterator` 0.7.0), capture engines with a non-zero exit.
+- **Wrong answers fixed.** UTF-16LE BitLocker recovery keys were missed; a
+  64-bit crash dump's run map was read eight bytes early; an extended
+  partition was taken for ext; an unreadable encrypted partition was counted
+  as a filesystem; a disk image was called a logical collection; files over
+  512 MiB had no hash; CloudTrail attribution depended on input order; pcapng
+  timestamps ignored their resolution and offset.
+- **Added.** `linux_triage` and the `linux-target` recipe; `pcap_extract`,
+  `suricata_run` (JA3/JA4), `network_log_summary` and the `network-capture`
+  recipe; `fuzzy_hash` (ssdeep, TLSH), UPX and the `static-binary` recipe; two
+  iOS catalogue recipes and the SEGB and unified-log methods; YARA in the
+  memory image; LVM, XFS and Btrfs programs; CJK and Noto fonts for the
+  browser; the ransomware pack on `re`.
+- **The browser tool** writes screenshots in the agent's own directory, holds
+  navigation, redirects, subresources and WebSockets to one policy, blocks
+  service workers and refuses downloads, naming what it refused.
+- **memory-windows** runs Volatility on the image's symbols first and asks
+  the symbol server only when the image has none for the kernel, and says
+  which. The images empty apt's cache as they build and list the packages a
+  profile adds in `tools.md`.
+
 ### Changed: the agents boot the base, the programs are in the job images
 
 - In a microVM run with jobs and packs, each agent's VM boots the base image

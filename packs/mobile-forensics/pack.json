@@ -1,7 +1,7 @@
 {
   "id": "mobile-forensics",
   "name": "Mobile Forensics Pack",
-  "version": "1.0.4",
+  "version": "1.1.0",
   "description": "Method and tooling for a phone: what kind of extraction you were handed and what it cannot contain, iOS backups and their manifest, Android package and user data, the app databases that carry messages and location, protobuf blobs, and what deleted means inside SQLite.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -19,22 +19,31 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "531da54c3b5d2b305d6e04871332e1b76ea65a1bc4e7556a741997d0faf15f1c",
-      "tools/sqlite_freespace/manifest.json": "9092051e8c621d508d4c13735e590224a920478aaf2b62470285b9a928614640",
-      "tools/sqlite_freespace/run.py": "6e7128a091092f7f2aa617e415b4c42dbab5ce577551b2840dc6599f34371bda",
-      "tools/manifest_db/manifest.json": "cea3c1262977cfe6571c173cfeeda99c9f6f5c06dbdae5595b72a1d22333d940",
-      "tools/manifest_db/run.py": "50354e0a88791ab3a9297094c47b852c0ea89cdfd04be8bec7176446550dfde7",
-      "tools/protobuf_peek/manifest.json": "120a57e0c29bedca7559110bd2292870b4bb670f7c66bb873207ee9e740034fe",
-      "tools/protobuf_peek/run.py": "98e99381f32f3226e24c484202286fb0331cf22e013554e760b647e6095b5c84",
+      "NOTICE": "f7eaab3fffac84c598325af3dd05679ef50f5b6371b72ff8561cc8aea306bb3b",
+      "README.md": "2dad4a769b40478cffed3d90766c1b5aef748cd4583a9704273af0b23b291439",
+      "tools/sqlite_freespace/manifest.json": "8e07a6e5cfa45ded87b1fc8628e4d827262154ae66bda20029192dd1bee7c412",
+      "tools/sqlite_freespace/run.py": "04674ee60eba23a63a91959c4c659775b5063ccef9a1151336349ebb0f204256",
+      "tools/manifest_db/manifest.json": "910455a9175fbce9a168fd0e18250385f35634852eaf79dd155989822e765d10",
+      "tools/manifest_db/run.py": "f69bdba0f1c7bc62820787e1e9bf14669d230f58322a3972c3a85bacebadc0ce",
+      "tools/protobuf_peek/manifest.json": "58e57197a4d05778332a88174d93f809f833b7c672d626bd098dac0a90d3469d",
+      "tools/protobuf_peek/run.py": "ba7b8b401c22e223c8bdac0262b5b5cdecc4c40eb04a27417fc15156f42fef62",
       "goals/phone-examination.md": "cfe1dc9fc6541c623f552c0941e4ccf5b98e04adf46626b71d1cc956b28de4b5",
-      "skills/location/sources.md": "487e9e2e0156c9b0674a3b965b9ac442a2a3582aeb3d4867b85f11c231a6d3c2",
-      "skills/ios/artifacts.md": "c6b5c97158eb3eaff30cd6107e974f205a9bb6567ae94de1cfa4fe2093b4a502",
-      "skills/android/artifacts.md": "4f01be1e0816c52580e44cb10eea6508f5217e3ce56a48031d41883febaf73e5",
-      "skills/extractions/what-you-have.md": "59b02f0c6e4554e10e38508d8c3c6707f7ff3a978c83c9919e413c6b6b5f451a",
-      "skills/apps/databases.md": "9add48be5715438b8c229a0116957e1ff55f80d53289b4dfff457c3c7435393a",
-      "requires/host.json": "e7bd674f55affadc6f1e24079df46f06ef778d7f10299fbbd7636ec4c22b9c75",
-      "requires/python.txt": "911bdfb4851f2080ae0a5bd5d27daa01751582aad60a9a2b68a45c9555888be9",
-      "skills/INDEX.md": "a292ec68c732103ea7af9c421071644568ea8532f4fac2fffae28aea4c15c203"
+      "tests/cases.json": "073cde529d3deab7c45c6f60310ae362765ba36e127aadd5980a977d5bd0c038",
+      "tests/pack.test.sh": "76c8df8241d1b340e56c48cd4113e5cd66f7aaaf81e102a3f617f585cb407960",
+      "recipes/android-backup/recipe.json": "28e2ffc6a5992713ab18e1d8ecd060a8b6a9c0b8dc01ef2b1c0fe72772762f5a",
+      "recipes/android-backup/run.py": "4013c833ab8fe1eba16742b0fd015fb4515b1b85a02de8795ab203d0d7375bfe",
+      "recipes/ios-filesystem/recipe.json": "9ac520629077ce179c30dd9e53b4353ce3977f10e00fd627643415e52f7141ec",
+      "recipes/ios-filesystem/run.py": "283b3d2cb06337ba1e25176143ac39af157db1a9689c4fec79336647aa6c64b3",
+      "skills/location/sources.md": "8f9217212e0a96a8fc70c35808bfae761ab651a6a843f719a52c45223bd63802",
+      "skills/ios/artifacts.md": "687f4331a79d88a6b2a6d39547fa848bd3c38d6ca34c8af5b5c92f5f1deb40a3",
+      "skills/ios/biome-segb.md": "c0ff1f40ab1c7157b2dab30cd69fe47662eebcec0aa03e3aa172f055207cda3e",
+      "skills/ios/unified-logs.md": "d4c6fdceb92e1d88f5f8aca67efb452f71d16a627e05b25ce2b891361dc2839f",
+      "skills/android/artifacts.md": "6880ec1ca951efa3900a07782d5f8f123aabdc72dc6d138583a5901485f5ece7",
+      "skills/extractions/what-you-have.md": "681db8e6885239f7109d525886afb5b44a9e8212150a19a480211ef9750b5bd2",
+      "skills/apps/databases.md": "22b20e9c31a9a9ffd10b2136ecf57a3d31088f610fd39ccec028ac1515fed876",
+      "requires/host.json": "82ae8cdebe580202bfd9d31bed050224a254e706aa1b6e8ebb4056fc4eb04a6d",
+      "requires/python.txt": "3816ab554bef3ef99c10c0fa5b0e07c2f4425eb238a4c04d430f43b5162bdad7",
+      "skills/INDEX.md": "a9e926731b0a462b36abaa152556f6e68401fe67b4f3289dcd192e6bf8aa421e"
     }
   },
   "tools": [
@@ -42,5 +51,9 @@
     "protobuf_peek",
     "sqlite_freespace"
   ],
-  "skills": 5
+  "skills": 7,
+  "recipes": [
+    "mobile-forensics/android-backup",
+    "mobile-forensics/ios-filesystem"
+  ]
 }

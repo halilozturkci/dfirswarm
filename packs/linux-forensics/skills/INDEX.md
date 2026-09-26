@@ -10,5 +10,5 @@ Fetch a body with `skill("<id>")`. A body may name others; fetch those the same 
 - `logs/journal` The systemd journal: The host runs systemd and you need what the text logs do not carry.
 - `packages/integrity` Which binary on this machine is not the one the distribution shipped: You suspect a replaced system binary, or you need to clear thousands of files quickly.
 - `persistence/mechanisms` Where something arranges to run again: You have a payload and need to know how it survives a reboot, or you are sweeping for one.
-- `triage/system-profile` Build the system profile before anything else: The first ten minutes of any Linux case.
 - `timeline/linux` A Linux timeline is several clocks, not one sorted CSV: Building or checking the chronology of a Linux compromise.
+- `triage/system-profile` Build the system profile before anything else: The first ten minutes of any Linux case.
