@@ -52,9 +52,9 @@ out="$(install_inputs "$SB" "$TMP/src" auto none 2>&1)" || fail "the copy failed
 [[ -d "$SB/inputs/linked-dir" && ! -L "$SB/inputs/linked-dir" && -f "$SB/inputs/linked-dir/a.txt" ]] || fail "the operator's top-level link to a directory was not followed"
 [[ -L "$SB/inputs/linked-dir/escape" ]] || fail "a link inside a linked directory was followed"
 jq -e '[.files[] | select(.path == "inputs/etc/hosts")][0].link' "$SB/inputs.json" >/dev/null || fail "the manifest does not record etc/hosts as a link"
-printf '%s\n' "$out" | grep -q 'lead out of it' || fail "the links that lead out were not said: $out"
-printf '%s\n' "$out" | grep -q 'etc/hosts' || fail "the NOTE does not name etc/hosts: $out"
-printf '%s\n' "$out" | grep -q 'etc/inside' && fail "a link that stays inside was said to lead out: $out"
+grep -q 'lead out of it' <<<"$out" || fail "the links that lead out were not said: $out"
+grep -q 'etc/hosts' <<<"$out" || fail "the NOTE does not name etc/hosts: $out"
+grep -q 'etc/inside' <<<"$out" && fail "a link that stays inside was said to lead out: $out"
 [[ "$(jq -c '.source_checked | {by, files, mismatches}' "$SB/inputs.json")" == '{"by":"content","files":3,"mismatches":0}' ]] || fail "the copy was not checked against its source by content: $(jq -c .source_checked "$SB/inputs.json")"
 pass "links inside the evidence stay links (said when they lead out), the operator's top-level links are followed, and the copy is checked against the source"
 
@@ -79,8 +79,8 @@ out="$(write_inputs_manifest "$SB2" "$TMP/src2" auto none copy 2>&1)"
 rc=$?
 set -e
 [[ $rc -eq 4 ]] || fail "a copy missing a name exited $rc, wanted 4: $out"
-printf '%s\n' "$out" | grep -q 'not in the copy: B.txt' || fail "the missing name is not said: $out"
-printf '%s\n' "$out" | grep -q 'differs from its source.*c.txt' || fail "the short file is not said: $out"
+grep -q 'not in the copy: B.txt' <<<"$out" || fail "the missing name is not said: $out"
+grep -q 'differs from its source.*c.txt' <<<"$out" || fail "the short file is not said: $out"
 [[ "$(jq -r '.source_checked' "$SB2/inputs.json")" == "MISMATCH" ]] || fail "the manifest does not record the mismatch"
 pass "a copy with a name merged away or a short file is refused, naming each"
 
@@ -97,8 +97,8 @@ out="$(write_inputs_manifest "$SB4" "$TMP/src4" auto none copy 1 2>&1)"
 rc=$?
 set -e
 [[ $rc -eq 4 ]] || fail "a copy that differs from its source by content exited $rc, wanted 4: $out"
-printf '%s\n' "$out" | grep -q 'differs from its source by content: inputs/a.txt' || fail "the file that differs is not named: $out"
-printf '%s\n' "$out" | grep -q 'b.txt' && fail "an unchanged file was named: $out"
+grep -q 'differs from its source by content: inputs/a.txt' <<<"$out" || fail "the file that differs is not named: $out"
+grep -q 'b.txt' <<<"$out" && fail "an unchanged file was named: $out"
 [[ "$(jq -c '.source_checked | {by, files, mismatches}' "$SB4/inputs.json")" == '{"by":"content","files":2,"mismatches":1}' ]] || fail "the manifest does not record the content check: $(jq -c .source_checked "$SB4/inputs.json")"
 # --no-verify-copy: names, kinds and sizes, and the difference goes unseen.
 rm -f "$SB4/inputs.json"

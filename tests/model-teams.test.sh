@@ -202,7 +202,7 @@ out="$(start --model solo/model --n 2 --cap-usd 1 --no-start --allow-tool-forgin
   --goal-file "$ROOT/prompts/goals/hello.md" --label forge)"
 sb="$(sandbox_of "$out")"
 [[ -n "$sb" && -d "$sb/tools" ]] || fail "a forging swarm should have a tools/ directory: $out"
-printf '%s\n' "$out" | grep -q "Tools:        forging on" || fail "kickoff should say forging is on"
+grep -q "Tools:        forging on" <<<"$out" || fail "kickoff should say forging is on"
 got="$(jq -r '.. | objects | select(.["label"]? == "forge") | .tool_forging' "$TMP/runs/registry.json")"
 [[ "$got" == "true" ]] || fail "registry tool_forging should be true, got $got"
 got="$(jq -r '.. | objects | select(.["label"]? == "uniform") | .tool_forging' "$TMP/runs/registry.json")"
@@ -212,14 +212,14 @@ pass "--allow-tool-forging is recorded in the registry and prepares tools/"
 # --- self-compaction is on by default, recorded, and switchable ------------
 got="$(jq -r '.. | objects | select(.["label"]? == "uniform") | .self_compact | "\(.enabled) \(.notice_at) \(.warn_at) \(.compact_at)"' "$TMP/runs/registry.json")"
 [[ "$got" == "true 40% 50% 60%" ]] || fail "registry self_compact should default to on at 40/50/60, got $got"
-printf '%s\n' "$out" | grep -q "Compaction:   self" || fail "kickoff should say self-compaction is on"
+grep -q "Compaction:   self" <<<"$out" || fail "kickoff should say self-compaction is on"
 sb_uniform="$(jq -r '.. | objects | select(.["label"]? == "uniform") | .sandbox' "$TMP/runs/registry.json")"
 [[ -f "$sb_uniform/.pi/settings.json" ]] || fail "the sandbox should carry Pi's compaction settings"
 jq -e '.compaction.reserveTokens == 16384 and .compaction.keepRecentTokens == 20000' "$sb_uniform/.pi/settings.json" >/dev/null \
   || fail "the sandbox's .pi/settings.json should pin reserveTokens and keepRecentTokens"
 out="$(start --model solo/model --n 2 --cap-usd 1 --no-start --no-self-compact \
   --goal-file "$ROOT/prompts/goals/hello.md" --label nocompact)"
-printf '%s\n' "$out" | grep -q "Compaction:   Pi's own only" || fail "kickoff should say self-compaction is off: $out"
+grep -q "Compaction:   Pi's own only" <<<"$out" || fail "kickoff should say self-compaction is off: $out"
 got="$(jq -r '.. | objects | select(.["label"]? == "nocompact") | .self_compact.enabled' "$TMP/runs/registry.json")"
 [[ "$got" == "false" ]] || fail "registry self_compact.enabled should be false with --no-self-compact, got $got"
 out="$(start --model solo/model --n 2 --cap-usd 1 --no-start --compact-at 150k --compact-warn-at 45% \
@@ -228,7 +228,7 @@ got="$(jq -r '.. | objects | select(.["label"]? == "tuned") | .self_compact | "\
 [[ "$got" == "40% 45% 150k" ]] || fail "registry should record the tuned lines with the default filled in, got $got"
 got="$(jq -r '.. | objects | select(.["label"]? == "tuned") | .self_compact.set | "\(.notice_at) \(.warn_at) \(.compact_at)"' "$TMP/runs/registry.json")"
 [[ "$got" == "false true true" ]] || fail "registry should record which lines the operator set, got $got"
-printf '%s\n' "$out" | grep -q "notice 40% (default) · warning 45% · compact 150k" \
+grep -q "notice 40% (default) · warning 45% · compact 150k" <<<"$out" \
   || fail "kickoff should mark a default next to a set line as a default, not as a line the operator set: $out"
 got="$(jq -r '.. | objects | select(.["label"]? == "uniform") | .self_compact.set | "\(.notice_at) \(.warn_at) \(.compact_at)"' "$TMP/runs/registry.json")"
 [[ "$got" == "false false false" ]] || fail "registry should record that no line was set on a default run, got $got"
@@ -242,7 +242,7 @@ out="$(start --models "alpha/one=2,beta/two=1" --cap-usd 1 --no-start \
   --goal-file "$ROOT/prompts/goals/hello.md" --label permodel)"
 got="$(jq -r '.. | objects | select(.["label"]? == "permodel") | "\(.self_compact.compact_at)|\(.self_compact.model)|\(.inbox_page_chars)"' "$TMP/runs/registry.json")"
 [[ "$got" == "60%,alpha/one=55%,two=70%|beta/two|12000" ]] || fail "registry should record the per-model line, the summary model and the inbox page, got $got"
-printf '%s\n' "$out" | grep -q "summaries by beta/two" || fail "kickoff should say which model writes the summaries: $out"
+grep -q "summaries by beta/two" <<<"$out" || fail "kickoff should say which model writes the summaries: $out"
 got="$(jq -r '.. | objects | select(.["label"]? == "uniform") | .inbox_page_chars' "$TMP/runs/registry.json")"
 [[ "$got" == "40000" ]] || fail "registry should record the default inbox page, got $got"
 got="$(compact_model="deepseek/deepseek-v4-pro" hosts_for "openai/gpt-5.4=1")"
@@ -322,7 +322,7 @@ pass "local and metered are decided from the endpoint and the cost block"
 # USD cap mandatory and takes the token cap as a second brake.
 out="$(PI_CODING_AGENT_DIR="$TMP/pi-local" start --model ollama/qwen3:8b --n 2 --cap-usd 1 --no-start \
   --goal-file "$ROOT/prompts/goals/hello.md" --label freenocap)"
-printf '%s\n' "$out" | grep -q -- '--cap-tokens' || fail "a free team without --cap-tokens should be refused and told why: $out"
+grep -q -- '--cap-tokens' <<<"$out" || fail "a free team without --cap-tokens should be refused and told why: $out"
 [[ -z "$(sandbox_of "$out")" ]] || fail "a refused free team should prepare nothing: $out"
 out="$(PI_CODING_AGENT_DIR="$TMP/pi-local" start --model ollama/qwen3:8b --n 2 --cap-tokens 5000000 --no-start \
   --goal-file "$ROOT/prompts/goals/hello.md" --label free)"
@@ -331,8 +331,8 @@ sb="$(sandbox_of "$out")"
 [[ "$(jq -r '.metered' "$sb/budget.json")" == "false" ]] || fail "budget.json should say the team is not metered"
 [[ "$(jq -r '.cap_tokens' "$sb/budget.json")" == "5000000" ]] || fail "budget.json should carry the token cap"
 [[ "$(jq -r '.cap_usd == 0' "$sb/budget.json")" == "true" ]] || fail "no USD cap was asked for, so none is recorded: $(jq -c '.cap_usd' "$sb/budget.json")"
-printf '%s\n' "$out" | grep -q 'Cap:          5000000 tokens' || fail "the kickoff should say the brake is tokens: $out"
-printf '%s\n' "$out" | grep -q 'Local:        ollama/qwen3:8b' || fail "the kickoff should name the local model: $out"
+grep -q 'Cap:          5000000 tokens' <<<"$out" || fail "the kickoff should say the brake is tokens: $out"
+grep -q 'Local:        ollama/qwen3:8b' <<<"$out" || fail "the kickoff should name the local model: $out"
 reg="$(jq -c '.. | objects | select(.["label"]? == "free") | {metered, cap_tokens, local_models, net}' "$TMP/runs/registry.json")"
 [[ "$reg" == '{"metered":false,"cap_tokens":5000000,"local_models":["ollama/qwen3:8b"],"net":"guarded"}' ]] \
   || fail "the registry should record metered, the token cap and the local models: $reg"
@@ -340,13 +340,13 @@ pass "a team that bills nothing is braked by a mandatory token cap, recorded in 
 
 out="$(PI_CODING_AGENT_DIR="$TMP/pi-local" start --models "ollama/qwen3:8b=1,deepseek/deepseek-v4-pro=1" --cap-tokens 100 --no-start \
   --goal-file "$ROOT/prompts/goals/hello.md" --label mixednousd)"
-printf '%s\n' "$out" | grep -q 'start requires --cap-usd' || fail "one paid model keeps --cap-usd mandatory: $out"
+grep -q 'start requires --cap-usd' <<<"$out" || fail "one paid model keeps --cap-usd mandatory: $out"
 out="$(PI_CODING_AGENT_DIR="$TMP/pi-local" start --models "ollama/qwen3:8b=1,deepseek/deepseek-v4-pro=1" --cap-usd 2 --cap-tokens 100 --no-start \
   --goal-file "$ROOT/prompts/goals/hello.md" --label mixed)"
 sb="$(sandbox_of "$out")"
 [[ -n "$sb" ]] || fail "a mixed team with both caps should start: $out"
 [[ "$(jq -r '.metered == true and .cap_usd == 2 and .cap_tokens == 100' "$sb/budget.json")" == "true" ]] || fail "a mixed team is metered and keeps both caps: $(jq -c '{metered, cap_usd, cap_tokens}' "$sb/budget.json")"
-printf '%s\n' "$out" | grep -q 'Cap:          \$2 / .*m / 100 tokens' || fail "the kickoff should show both brakes: $out"
+grep -q 'Cap:          \$2 / .*m / 100 tokens' <<<"$out" || fail "the kickoff should show both brakes: $out"
 reg="$(jq -c '.. | objects | select(.["label"]? == "mixed") | {metered, local_models}' "$TMP/runs/registry.json")"
 [[ "$reg" == '{"metered":true,"local_models":["ollama/qwen3:8b"]}' ]] || fail "registry for a mixed team: $reg"
 pass "a team with one paid model is metered, and the token cap rides along as a second brake"
@@ -371,13 +371,13 @@ reg="$(jq -r '.. | objects | select(.["label"]? == "lonly") | .net' "$TMP/runs/r
 [[ "$reg" == "local" ]] || fail "the registry should record net=local, got $reg"
 out="$(PI_CODING_AGENT_DIR="$TMP/pi-local" start --models "ollama/qwen3:8b=1,deepseek/deepseek-v4-pro=1" --cap-usd 1 --local-only --no-start \
   --goal-file "$ROOT/prompts/goals/hello.md" --label lonlymixed)"
-printf '%s\n' "$out" | grep -q -- '--local-only, but deepseek/deepseek-v4-pro' || fail "--local-only with a cloud model should name it: $out"
+grep -q -- '--local-only, but deepseek/deepseek-v4-pro' <<<"$out" || fail "--local-only with a cloud model should name it: $out"
 out="$(PI_CODING_AGENT_DIR="$TMP/pi-local" start --model ollama/qwen3:8b --n 1 --cap-tokens 1000 --local-only --no-netguard --no-start \
   --goal-file "$ROOT/prompts/goals/hello.md" --label lonlyopen)"
-printf '%s\n' "$out" | grep -q 'drop --no-netguard' || fail "--local-only without netguard should be refused: $out"
+grep -q 'drop --no-netguard' <<<"$out" || fail "--local-only without netguard should be refused: $out"
 out="$(PI_CODING_AGENT_DIR="$TMP/pi-local" start --model ollama/qwen3:8b --n 1 --cap-tokens 1000 --local-only --compact-model deepseek/deepseek-v4-pro --no-start \
   --goal-file "$ROOT/prompts/goals/hello.md" --label local-cloud-summary)" && fail "--local-only with a cloud summary model should be refused: $out"
-printf '%s\n' "$out" | grep -q -- '--compact-model deepseek/deepseek-v4-pro is not served from this machine' || fail "the refusal should name the summary model: $out"
+grep -q -- '--compact-model deepseek/deepseek-v4-pro is not served from this machine' <<<"$out" || fail "the refusal should name the summary model: $out"
 pass "--local-only is recorded as a network mode, refused with a cloud model or a cloud summary model, and needs netguard"
 
 echo "all model-team cases passed"

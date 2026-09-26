@@ -46,7 +46,7 @@ printf 'sensor,reading\na,1\nb,2\n' > "$TMP/src/readings.csv"
 err="$(bash "$ROOT/scripts/swarm.sh" --help 2>&1 >/dev/null)"
 [[ -z "$err" ]] || fail "--help wrote to stderr: $err"
 help_out="$(bash "$ROOT/scripts/swarm.sh" --help 2>/dev/null)"
-printf '%s\n' "$help_out" | grep -q '^Commands:' || fail "the help lost its command list"
+grep -q '^Commands:' <<<"$help_out" || fail "the help lost its command list"
 for c in start list status stop ui reap summary package tools say netcheck; do
   printf '%s\n' "$help_out" | awk -v c="$c" '$1 == c { found = 1 } END { exit !found }' \
     || fail "the help does not list the $c command"
@@ -67,7 +67,7 @@ parsed_flags="$(awk '/^cmd_start\(\) \{/ { inside = 1 }
 [[ -n "$parsed_flags" ]] || fail "could not read start's options out of the script"
 while read -r flag; do
   [[ -n "$flag" ]] || continue
-  printf '%s\n' "$start_help" | grep -q -- "$flag" || fail "'help start' does not document $flag"
+  grep -q -- "$flag" <<<"$start_help" || fail "'help start' does not document $flag"
 done <<< "$parsed_flags"
 pass "'help start' documents every option start parses ($(printf '%s\n' "$parsed_flags" | wc -l | tr -d ' ') of them)"
 
@@ -76,8 +76,8 @@ wrong="$(bash "$ROOT/scripts/swarm.sh" frobnicate 2>&1)"; wrong_rc=$?
 bad_flag="$(bash "$ROOT/scripts/swarm.sh" start --nope 2>&1)"; bad_flag_rc=$?
 [[ $wrong_rc -eq 2 ]] || fail "an unknown command exited $wrong_rc, wanted 2"
 [[ $bad_flag_rc -eq 2 ]] || fail "an unknown start option exited $bad_flag_rc, wanted 2"
-printf '%s\n' "$wrong" | grep -q 'frobnicate' || fail "the error does not name the unknown command"
-printf '%s\n' "$bad_flag" | grep -q -- '--nope' || fail "the error does not name the unknown option"
+grep -q 'frobnicate' <<<"$wrong" || fail "the error does not name the unknown command"
+grep -q -- '--nope' <<<"$bad_flag" || fail "the error does not name the unknown option"
 [[ "$(printf '%s\n' "$wrong" | wc -l)" -le 3 ]] || fail "an unknown command printed the whole usage again"
 pass "a wrong command line prints the mistake and where to read, and exits 2"
 
@@ -95,7 +95,7 @@ sb="$(sandbox_of "$out")"
 [[ -n "$sb" ]] || fail "no sandbox for the say case: $out"
 id="$(basename "$sb")"
 out="$(swarm say "$id" "pyAesCrypt is installed on the host now; import it and carry on.")"
-printf '%s\n' "$out" | grep -q 'Posted to' || fail "say said nothing useful: $out"
+grep -q 'Posted to' <<<"$out" || fail "say said nothing useful: $out"
 post="$(ls "$sb/threads/main"/*-examiner.md 2>/dev/null | head -1)"
 [[ -n "$post" ]] || fail "the examiner's post did not land"
 grep -q '^from: examiner$' "$post" || fail "the post does not say who wrote it"
@@ -168,7 +168,7 @@ sb="$(sandbox_of "$out")"
 [[ "$(jq -r '.by' "$sb/tools/evtx_filter/manifest.json")" == "s2cb903" ]] || fail "the tool lost its author"
 [[ "$(jq -r '.sha256' "$sb/tools/evtx_filter/manifest.json")" == "$evtx_hash" ]] || fail "the tool lost its hash"
 [[ ! -e "$sb/tools/bash" ]] || fail "a reserved-name library tool was seeded as bash"
-printf '%s\n' "$out" | grep -q '^Tools: *2 from ' || fail "the kickoff does not say what it seeded: $out"
+grep -q '^Tools: *2 from ' <<<"$out" || fail "the kickoff does not say what it seeded: $out"
 hist_n="$(SWARM_SEAL_ROOT="$sb" node --experimental-strip-types -e '
 import("'"$ROOT"'/extensions/protocol.ts").then((m) =>
   m.listFileHistory(process.env.SWARM_SEAL_ROOT, "tools/evtx_filter/manifest.json").then((h) => console.log(String(h.length)))
@@ -185,7 +185,7 @@ import("'"$ROOT"'/extensions/protocol.ts").then(async (m) => {
   process.stdout.write(run.stdout);
 });
 ')"
-printf '%s' "$seeded_run" | grep -q 'filtered' || fail "the seeded tool must actually run, not only copy: $seeded_run"
+grep -q 'filtered' <<<"$seeded_run" || fail "the seeded tool must actually run, not only copy: $seeded_run"
 grep -q '^## Seeded tools (case-specific)' "$sb/SWARM.md" || fail "the contract has no Seeded tools section"
 grep -q '`evtx_filter`' "$sb/SWARM.md" || fail "the contract does not name evtx_filter"
 grep -q '`fls_like`' "$sb/SWARM.md" || fail "the contract does not name fls_like"
@@ -203,8 +203,8 @@ import("'"$ROOT"'/extensions/protocol.ts").then((m) => {
   for (const name of m.TOOL_RESERVED_NAMES) console.log(name);
 }).catch(() => process.exit(1));
 ')" || fail "the protocol exported no reserved tool names"
-printf '%s\n' "$reserved_list" | grep -qx bash || fail "reserved names must include bash"
-printf '%s\n' "$reserved_list" | grep -qx done || fail "reserved names must include done"
+grep -qx bash <<<"$reserved_list" || fail "reserved names must include bash"
+grep -qx done <<<"$reserved_list" || fail "reserved names must include done"
 [[ -n "$reserved_list" ]] || fail "reserved_tool_names printed nothing"
 grep -q 'BLOCKER: could not read reserved tool names from the protocol' "$ROOT/scripts/swarm.sh" \
   || fail "swarm.sh must BLOCKER when reserved names cannot be read"
@@ -229,7 +229,7 @@ pass "reserved_tool_names lists bash/done and fails closed when the set is empty
 
 out="$(start --model solo/model --n 2 --cap-usd 1 --no-start --goal-file "$HELLO" --label toolsmissing --tools-from "$TMP/nope" 2>&1)"; rc=$?
 [[ "$rc" -ne 0 ]] || fail "--tools-from with no directory should fail: $out"
-printf '%s\n' "$out" | grep -q 'BLOCKER: --tools-from .* is not a directory' || fail "expected a BLOCKER: $out"
+grep -q 'BLOCKER: --tools-from .* is not a directory' <<<"$out" || fail "expected a BLOCKER: $out"
 pass "--tools-from refuses a directory that is not there"
 
 # And the way back: a finished run's tools become a library.
@@ -239,9 +239,9 @@ sb2="$(sandbox_of "$out")"
 id2="$(basename "$sb2")"
 out="$(swarm tools "$id2" --save "$TMP/lib2")"
 [[ -f "$TMP/lib2/evtx_filter/manifest.json" ]] || fail "tools --save did not write the library: $out"
-printf '%s\n' "$out" | grep -q '^Saved 2 tool' || fail "tools --save says nothing useful: $out"
+grep -q '^Saved 2 tool' <<<"$out" || fail "tools --save says nothing useful: $out"
 out="$(swarm tools "$id2")"
-printf '%s\n' "$out" | grep -q 'evtx_filter v2 by s2cb903' || fail "tools with no --save should list them: $out"
+grep -q 'evtx_filter v2 by s2cb903' <<<"$out" || fail "tools with no --save should list them: $out"
 jq -e '.saved_from_run and .sha256 and (.forged_by == "s2cb903")' "$TMP/lib2/evtx_filter/provenance.json" >/dev/null \
   || fail "a saved tool carries no provenance: $(cat "$TMP/lib2/evtx_filter/provenance.json" 2>/dev/null)"
 jq -e 'has("pack") | not' "$TMP/lib2/evtx_filter/manifest.json" >/dev/null || fail "a saved tool kept a pack field, which hands it a pack's secrets"
@@ -249,7 +249,7 @@ jq -e 'has("pack") | not' "$TMP/lib2/evtx_filter/manifest.json" >/dev/null || fa
 printf 'print("changed")\n' >> "$sb2/tools/fls_like/run.py"
 ln -s /etc/hosts "$sb2/tools/evtx_filter/hosts-link"
 out="$(swarm tools "$id2" --save "$TMP/lib3" 2>&1)"
-printf '%s\n' "$out" | grep -q 'Left out fls_like: its script does not match' || fail "a tampered tool was saved: $out"
+grep -q 'Left out fls_like: its script does not match' <<<"$out" || fail "a tampered tool was saved: $out"
 [[ ! -e "$TMP/lib3/fls_like" ]] || fail "the tampered tool reached the library"
 [[ ! -e "$TMP/lib3/evtx_filter/hosts-link" ]] || fail "a link in a tool's directory reached the library"
 pass "tools lists a run's tools; --save copies sealed ones as regular files, with provenance and without a pack field"
@@ -265,7 +265,7 @@ grep -q '^## Seats' "$sb/SWARM.md" && fail "the contract still assigns seats"
 grep -q '{{' "$sb/SWARM.md" && fail "a placeholder leaked into the contract: $(grep -n '{{' "$sb/SWARM.md")"
 grep -q '^## Dividing the work' "$sb/SWARM.md" || fail "the contract does not say how the work divides"
 grep -q '^## Seeded tools' "$sb/SWARM.md" && fail "a run without --tools-from should not list seeded tools"
-printf '%s\n' "$out" | grep -q '^Seats:' && fail "the kickoff still reports seats"
+grep -q '^Seats:' <<<"$out" && fail "the kickoff still reports seats"
 pass "the kickoff assigns nothing: no seat in team.json, none in the contract, none in its output"
 
 # A goal that lists seats is the operator's own text and stays in the goal; it
@@ -280,7 +280,7 @@ pass "a ## Seats list in the goal is text for the swarm to read, not an assignme
 # The flag is gone, and saying so is better than silently ignoring it.
 out="$(start --model solo/model --n 2 --cap-usd 1 --no-start --goal-file "$HELLO" --seats dfir 2>&1)"; rc=$?
 [[ "$rc" -ne 0 ]] || fail "--seats should no longer be accepted: $out"
-printf '%s\n' "$out" | grep -q -- '--seats' || fail "the refusal does not name --seats: $out"
+grep -q -- '--seats' <<<"$out" || fail "the refusal does not name --seats: $out"
 pass "--seats is gone and the kickoff says so"
 
 # --- allow-host ----------------------------------------------------------------------
@@ -295,7 +295,7 @@ out="$(start --model solo/model --n 2 --cap-usd 1 --no-start --goal-file "$HELLO
 sb="$(sandbox_of "$out")"
 [[ -n "$sb" ]] || fail "no sandbox for the idle case: $out"
 [[ "$(reg idle '.idle_nudge_sec')" == "120" ]] || fail "registry should record idle_nudge_sec=120"
-printf '%s\n' "$out" | grep -q '^Idle nudge:' || fail "no Idle nudge line in the kickoff output: $out"
+grep -q '^Idle nudge:' <<<"$out" || fail "no Idle nudge line in the kickoff output: $out"
 [[ ! -e "$sb/idle-nudge.pid" ]] || fail "--no-start must not start the watchdog"
 # Nor leave any daemon of the run alive: the collector, the gate, the broker
 # and the proxy a --no-start kickoff may have started for its checks.
@@ -307,7 +307,7 @@ if pgrep -f -- "$sb" >/dev/null 2>&1; then
   fail "--no-start left a process naming the sandbox: $(pgrep -fl -- "$sb")"
 fi
 out="$(start --model solo/model --n 1 --cap-usd 1 --no-start --goal-file "$HELLO" --idle-nudge-sec soon)"; rc=$?
-[[ "$rc" -ne 0 ]] && printf '%s\n' "$out" | grep -q 'BLOCKER: --idle-nudge-sec' || fail "a non-numeric --idle-nudge-sec should be refused: $out"
+[[ "$rc" -ne 0 ]] && grep -q 'BLOCKER: --idle-nudge-sec' <<<"$out" || fail "a non-numeric --idle-nudge-sec should be refused: $out"
 pass "--idle-nudge-sec is validated, recorded and announced; --no-start starts no watchdog"
 
 mkdir -p "$TMP/herdr-bin"
@@ -337,12 +337,12 @@ jq -e '.present[] | select(.name == "python3")' "$sb/toolbox.json" >/dev/null ||
 grep -q '^## Toolbox' "$sb/SWARM.md" || fail "the contract has no Toolbox section"
 grep -q '| `python3` |' "$sb/SWARM.md" || fail "the Toolbox table does not list python3"
 [[ "$(reg toolbox '.toolbox')" == "dfir" ]] || fail "registry toolbox should be dfir"
-printf '%s\n' "$out" | grep -q '^Toolbox: *[0-9]* present, [0-9]* missing' || fail "no Toolbox line in the kickoff output: $out"
+grep -q '^Toolbox: *[0-9]* present, [0-9]* missing' <<<"$out" || fail "no Toolbox line in the kickoff output: $out"
 pass "--toolbox dfir writes toolbox.json, renders the Toolbox table and reports the counts"
 
 out="$(start --model solo/model --n 1 --cap-usd 1 --no-start --goal-file "$HELLO" --toolbox bogus)"; rc=$?
 [[ "$rc" -ne 0 ]] || fail "--toolbox bogus should fail: $out"
-printf '%s\n' "$out" | grep -q "BLOCKER: --toolbox must be auto, off, or sets from dfir,crypto,linux" || fail "expected a BLOCKER for an unknown toolbox: $out"
+grep -q "BLOCKER: --toolbox must be auto, off, or sets from dfir,crypto,linux" <<<"$out" || fail "expected a BLOCKER for an unknown toolbox: $out"
 pass "an unknown toolbox set is refused, and the message names the sets"
 
 # A case about encryption asks for the crypto set as well; a Windows disk case
@@ -388,7 +388,7 @@ mkdir -p "$TMP/src-vhdx"; cp "$TMP/src/readings.csv" "$TMP/src-vhdx/"; head -c 4
 [[ "$(autoset hintvhdx "$TMP/g-keyonly.md" "$TMP/src-vhdx")" == "dfir,crypto" ]] || fail "a VHDX under the inputs should add the crypto set: $(reg hintvhdx .toolbox)"
 mkgoal "$TMP/g-bad.md" "toolbox: dfir,everything" ""
 out="$(start --model solo/model --n 1 --cap-usd 1 --no-start --goal-file "$TMP/g-bad.md" --label hintbad --inputs "$TMP/src" --catalog --toolbox auto)" && fail "an unknown set in toolbox: was accepted: $out"
-printf '%s\n' "$out" | grep -q 'BLOCKER: .*toolbox: dfir,everything' || fail "expected a BLOCKER naming the bad toolbox key: $out"
+grep -q 'BLOCKER: .*toolbox: dfir,everything' <<<"$out" || fail "expected a BLOCKER naming the bad toolbox key: $out"
 pass "--toolbox auto reads a goal's toolbox: key, ignores its metadata words, and adds crypto for a VHDX input"
 
 # --toolbox-required on a PATH that hides the forensic tools: a BLOCKER, exit 3.
@@ -400,7 +400,7 @@ case "$(command -v mmls || true)" in
   *)
     out="$(PATH="$TMP/bin:/usr/bin:/bin:/usr/sbin:/sbin" bash "$ROOT/scripts/toolbox.sh" "$TMP/tb" dfir --required 2>&1)"; rc=$?
     [[ "$rc" -eq 3 ]] || fail "toolbox.sh --required with tools missing should exit 3, got $rc: $out"
-    printf '%s\n' "$out" | grep -q "BLOCKER: --toolbox-required and these tools are missing: .*mmls" || fail "expected a BLOCKER naming mmls: $out"
+    grep -q "BLOCKER: --toolbox-required and these tools are missing: .*mmls" <<<"$out" || fail "expected a BLOCKER naming mmls: $out"
     [[ -f "$TMP/tb/toolbox.json" ]] || fail "the refusal should still leave toolbox.json with the install commands"
     jq -e '.missing[] | select(.name == "mmls") | .install' "$TMP/tb/toolbox.json" >/dev/null || fail "toolbox.json should say how to install mmls"
     pass "--toolbox-required turns a missing tool into a BLOCKER (exit 3) and still writes the install commands"
@@ -421,7 +421,7 @@ sb="$(sandbox_of "$out")"
 [[ -d "$sb/work/.toolchain" ]] || fail "--allow-install should make the in-sandbox prefix"
 grep -q "pip install --user" "$sb/SWARM.md" || fail "the contract should say how to install: $(grep -c . "$sb/SWARM.md") lines"
 grep -q "no root here and no \`sudo\`" "$sb/SWARM.md" || fail "the contract should still say there is no root"
-printf '%s\n' "$out" | grep -q '^Install: ' || fail "the kickoff should announce the install setting: $out"
+grep -q '^Install: ' <<<"$out" || fail "the kickoff should announce the install setting: $out"
 pass "--allow-install opens the package index and a prefix inside the sandbox, and says so in the contract"
 
 out="$(start --model solo/model --n 1 --cap-usd 1 --no-start --goal-file "$HELLO" --label noinstall)"
@@ -434,7 +434,7 @@ pass "installing is off by default: no index, no prefix, nothing in the contract
 # --- catalog --------------------------------------------------------------------------
 out="$(start --model solo/model --n 1 --cap-usd 1 --no-start --goal-file "$HELLO" --catalog)"; rc=$?
 [[ "$rc" -ne 0 ]] || fail "--catalog without --inputs should fail: $out"
-printf '%s\n' "$out" | grep -q "BLOCKER: --catalog needs --inputs" || fail "expected a BLOCKER for --catalog without inputs: $out"
+grep -q "BLOCKER: --catalog needs --inputs" <<<"$out" || fail "expected a BLOCKER for --catalog without inputs: $out"
 pass "--catalog without --inputs is refused"
 
 out="$(start --model solo/model --n 1 --cap-usd 1 --no-start --goal-file "$HELLO" --label catalog --inputs "$TMP/src" --catalog)"
@@ -451,7 +451,7 @@ grep -q '^## Evidence catalog (read-only)' "$sb/SWARM.md" || fail "the contract 
 grep -q '^Summary: 0 disk image(s)' "$sb/SWARM.md" || fail "the contract does not carry the catalog index"
 grep -q '{{CATALOG}}' "$sb/SWARM.md" && fail "the catalog placeholder leaked"
 [[ -d "$sb/work/extracted" && -d "$sb/work/quarantine" ]] || fail "--catalog (quarantine implied) should create work/extracted and work/quarantine"
-printf '%s\n' "$out" | grep -q '^Catalog: *0 disk image(s)' || fail "no Catalog line in the kickoff output: $out"
+grep -q '^Catalog: *0 disk image(s)' <<<"$out" || fail "no Catalog line in the kickoff output: $out"
 pass "--catalog builds a read-only catalog/, switches the toolbox and quarantine on, and renders the index into the contract"
 
 if [[ -f "$sb/.fsguard/plan.txt" ]] && ! grep -q '^mode: none' "$sb/.fsguard/plan.txt"; then
@@ -468,7 +468,7 @@ sb="$(sandbox_of "$out")"
 [[ -n "$sb" && -d "$sb/work/extracted" && -d "$sb/work/quarantine" ]] || fail "--quarantine should create work/extracted and work/quarantine: $out"
 [[ "$(reg quarantine '.quarantine')" == "true" ]] || fail "registry quarantine should be true"
 [[ "$(reg quarantine '.catalog')" == "false" ]] || fail "--quarantine alone should not imply a catalog"
-printf '%s\n' "$out" | grep -q '^Quarantine: *work/extracted and work/quarantine are no-exec' || fail "no Quarantine line in the kickoff output: $out"
+grep -q '^Quarantine: *work/extracted and work/quarantine are no-exec' <<<"$out" || fail "no Quarantine line in the kickoff output: $out"
 pass "--quarantine creates the no-exec directories and says so"
 
 # A goal's checks run in the sandbox and cannot read the registry, so the
@@ -509,7 +509,7 @@ sb="$(sandbox_of "$out")"
 [[ -n "$sb" ]] || fail "no sandbox with --cap-per-agent: $out"
 [[ "$(jq -r '.cap_per_agent_usd' "$sb/budget.json")" == "1.5" ]] || fail "budget.json cap_per_agent_usd should be 1.5, got $(jq -r '.cap_per_agent_usd' "$sb/budget.json")"
 [[ "$(reg percap '.cap_per_agent_usd')" == "1.5" ]] || fail "registry cap_per_agent_usd should be 1.5"
-printf '%s\n' "$out" | grep -q '^Per-agent cap: \$1.5' || fail "no Per-agent cap line in the kickoff output: $out"
+grep -q '^Per-agent cap: \$1.5' <<<"$out" || fail "no Per-agent cap line in the kickoff output: $out"
 pass "--cap-per-agent reaches budget.json, the registry and the kickoff output"
 
 out="$(start --model solo/model --n 2 --cap-usd 1 --no-start --goal-file "$HELLO" --label nocap)"
@@ -520,7 +520,7 @@ pass "without --cap-per-agent there is no per-agent cap anywhere"
 
 out="$(start --model solo/model --n 2 --cap-usd 1 --no-start --goal-file "$HELLO" --cap-per-agent abc)"; rc=$?
 [[ "$rc" -ne 0 ]] || fail "--cap-per-agent abc should fail: $out"
-printf '%s\n' "$out" | grep -q "BLOCKER: --cap-per-agent must be a number of USD" || fail "expected a BLOCKER for a non-numeric cap: $out"
+grep -q "BLOCKER: --cap-per-agent must be a number of USD" <<<"$out" || fail "expected a BLOCKER for a non-numeric cap: $out"
 pass "a per-agent cap that is not a number is refused"
 
 # --- case id and examiner -----------------------------------------------------------------
@@ -530,7 +530,7 @@ sb="$(sandbox_of "$out")"
 [[ "$(reg custody '.case_id')" == "CASE-42" ]] || fail "registry case_id"
 [[ "$(reg custody '.examiner')" == "Jane Doe" ]] || fail "registry examiner"
 grep -q 'Case `CASE-42` · examiner Jane Doe' "$sb/SWARM.md" || fail "the contract does not name the case and the examiner: $(grep -n 'CASE-42\|Jane' "$sb/SWARM.md")"
-printf '%s\n' "$out" | grep -q '^Case: *CASE-42 · examiner Jane Doe' || fail "no Case line in the kickoff output: $out"
+grep -q '^Case: *CASE-42 · examiner Jane Doe' <<<"$out" || fail "no Case line in the kickoff output: $out"
 pass "--case-id and --examiner reach the registry, the contract and the kickoff output"
 
 grep -q 'CASE-42\|{{CASE}}' "$sb/../$(jq -r '.runs[] | select(.["label"] == "nocap") | .id' "$TMP/runs/registry.json")/SWARM.md" && fail "a run without a case carries a case line or the placeholder"
@@ -543,7 +543,7 @@ sb="$(sandbox_of "$out")"; id="$(id_of "$out")"
 printf -- '---\nby: %s00\nreason: done\n---\n' "$id" > "$sb/done/SWARM_DONE"
 out="$(swarm stop "$id")" || fail "stop failed: $out"
 [[ "$(reg stopdone '.state')" == "done" ]] || fail "stop with the sentinel present should record done, got $(reg stopdone '.state')"
-printf '%s\n' "$out" | grep -q "recorded as done" || fail "stop should say the sentinel was there: $out"
+grep -q "recorded as done" <<<"$out" || fail "stop should say the sentinel was there: $out"
 pass "stop after the sentinel records the run as done"
 
 out="$(start --model solo/model --n 1 --cap-usd 1 --no-start --goal-file "$HELLO" --label stopplain)"
@@ -578,7 +578,7 @@ if [[ -f "$ROOT/scripts/summary.ts" ]]; then
     [[ -f "$sb/package/$f" ]] || fail "package/ is missing $f: $(cd "$sb/package" && find . -type f | sort)"
   done
   [[ ! -e "$sb/package/work/extracted/sample.bin" ]] || fail "package must leave extracted evidence in the sandbox"
-  printf '%s\n' "$out" | grep -q "Left in the sandbox: 1 file" || fail "package should say what it left behind: $out"
+  grep -q "Left in the sandbox: 1 file" <<<"$out" || fail "package should say what it left behind: $out"
   grep -q 'work/timeline.csv' "$sb/package/MANIFEST.txt" || fail "MANIFEST.txt does not hash work/timeline.csv"
   grep -q 'tools/demo_tool/run.py' "$sb/package/MANIFEST.txt" || fail "MANIFEST.txt does not hash the run's tools"
   # The index hashes what the package carries AND what it deliberately leaves
@@ -594,7 +594,7 @@ if [[ -f "$ROOT/scripts/summary.ts" ]]; then
   [[ "$n_files" == "$n_lines" ]] || fail "MANIFEST.txt has $n_lines lines for $n_files files"
   grep -q 'summary.md' "$sb/package/MANIFEST.txt" || fail "MANIFEST.txt does not list summary.md"
   [[ -s "$sb/package/summary.md" ]] || fail "summary.md is empty"
-  printf '%s\n' "$out" | grep -q "^Packaged $id -> $sb/package" || fail "package should report where it wrote: $out"
+  grep -q "^Packaged $id -> $sb/package" <<<"$out" || fail "package should report where it wrote: $out"
   pass "package ships the summary, the contract, the trace, the board, every work file and the run's tools, with one hash per file"
 else
   echo "skip - package (scripts/summary.ts not present yet)"

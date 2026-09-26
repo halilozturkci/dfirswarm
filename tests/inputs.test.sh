@@ -63,7 +63,7 @@ if [[ -n "$guard_now" && "$guard_now" != "none" ]]; then
 fi
 out="$(start --model solo/model --n 1 --cap-usd 1 --no-start \
   --goal-file "$ROOT/prompts/goals/hello.md" --label boundnoguard --inputs "$TMP/src" --inputs-bind --inputs-enforce off)"
-printf '%s\n' "$out" | grep -q "BLOCKER: --inputs-bind needs a kernel guard" || fail "a bind with no kernel guard should be refused: $out"
+grep -q "BLOCKER: --inputs-bind needs a kernel guard" <<<"$out" || fail "a bind with no kernel guard should be refused: $out"
 pass "--inputs-bind without a kernel guard is refused (the source would be writable)"
 
 # --- the copy ------------------------------------------------------------------
@@ -113,7 +113,7 @@ case "$out" in
 esac
 
 if [[ "$guard" == "none" ]]; then
-  printf '%s\n' "$out" | grep -q "WARN: no kernel read-only mechanism" || fail "guard none should come with a WARN"
+  grep -q "WARN: no kernel read-only mechanism" <<<"$out" || fail "guard none should come with a WARN"
   [[ ! -e "$sb/.zsh/.zshenv" ]] || fail "no hook should be written without a guard"
   pass "without a kernel guard the kickoff says so and writes no hook"
 else
@@ -216,22 +216,22 @@ pass "a reused sandbox is cleared of the previous run's inputs, write bits and a
 
 # --- refusals ---------------------------------------------------------------------
 out="$(start --model solo/model --n 1 --cap-usd 1 --no-start --goal-file "$ROOT/prompts/goals/hello.md" --inputs "$TMP/nope")"
-printf '%s\n' "$out" | grep -q "BLOCKER: --inputs .* is not a directory" || fail "a missing inputs dir should be a BLOCKER: $out"
+grep -q "BLOCKER: --inputs .* is not a directory" <<<"$out" || fail "a missing inputs dir should be a BLOCKER: $out"
 pass "a missing directory is refused"
 
 out="$(start --model solo/model --n 1 --cap-usd 1 --no-start --goal-file "$ROOT/prompts/goals/hello.md" --inputs "$TMP/src" --inputs-enforce maybe)"
-printf '%s\n' "$out" | grep -q "BLOCKER: --inputs-enforce must be auto, on or off" || fail "a bad enforcement mode should be a BLOCKER: $out"
+grep -q "BLOCKER: --inputs-enforce must be auto, on or off" <<<"$out" || fail "a bad enforcement mode should be a BLOCKER: $out"
 pass "an unknown enforcement mode is refused"
 
 out="$(start --model solo/model --n 1 --cap-usd 1 --no-start --goal-file "$ROOT/prompts/goals/hello.md" --inputs "$TMP/src" --inputs-max-mb 0)"
-printf '%s\n' "$out" | grep -q "BLOCKER: --inputs .* MB; the limit is 0 MB" || fail "an oversized inputs dir should be a BLOCKER: $out"
+grep -q "BLOCKER: --inputs .* MB; the limit is 0 MB" <<<"$out" || fail "an oversized inputs dir should be a BLOCKER: $out"
 pass "a directory above --inputs-max-mb is refused before anything is copied"
 
 mkdir -p "$TMP/linked-only"
 python3 -c 'open("'"$TMP"'/elsewhere/blob.bin","wb").write(b"x"*(2*1024*1024))'
 ln -s "$TMP/elsewhere/blob.bin" "$TMP/linked-only/case.E01"
 out="$(start --model solo/model --n 1 --cap-usd 1 --no-start --goal-file "$ROOT/prompts/goals/hello.md" --inputs "$TMP/linked-only" --inputs-max-mb 1)"
-printf '%s\n' "$out" | grep -q "BLOCKER: --inputs .* MB; the limit is 1 MB" || fail "a symlink to a 2 MiB file should count toward the size cap: $out"
+grep -q "BLOCKER: --inputs .* MB; the limit is 1 MB" <<<"$out" || fail "a symlink to a 2 MiB file should count toward the size cap: $out"
 pass "size and file caps follow the same symlinks cp -RL copies"
 
 mkdir -p "$TMP/linked-files"
@@ -247,36 +247,36 @@ for i in range(5001):
 # No cap unless one is asked for: evidence is as large as the case is, and a
 # disk image with a hundred thousand files in it is ordinary.
 out="$(start --model solo/model --n 1 --cap-usd 1 --no-start --goal-file "$ROOT/prompts/goals/hello.md" --inputs "$TMP/linked-files")"
-printf '%s\n' "$out" | grep -q "BLOCKER" && fail "5001 files should be accepted with no cap set: $out"
+grep -q "BLOCKER" <<<"$out" && fail "5001 files should be accepted with no cap set: $out"
 pass "with no --inputs-max-files there is no ceiling on the file count"
 
 out="$(start --model solo/model --n 1 --cap-usd 1 --no-start --goal-file "$ROOT/prompts/goals/hello.md" --inputs "$TMP/linked-files" --inputs-max-files 5000)"
-printf '%s\n' "$out" | grep -q "BLOCKER: --inputs .* has 5001 files; the limit is 5000" || fail "--inputs-max-files should still refuse when asked: $out"
+grep -q "BLOCKER: --inputs .* has 5001 files; the limit is 5000" <<<"$out" || fail "--inputs-max-files should still refuse when asked: $out"
 pass "the file cap counts symlink targets when --inputs-max-files asks for one"
 
 mkdir -p "$TMP/runs/inside"
 out="$(start --model solo/model --n 1 --cap-usd 1 --no-start --goal-file "$ROOT/prompts/goals/hello.md" --sandbox "$TMP/runs/inside" --inputs "$TMP/runs/inside")"
-printf '%s\n' "$out" | grep -q "BLOCKER" || fail "an inputs dir that is the sandbox should be refused: $out"
+grep -q "BLOCKER" <<<"$out" || fail "an inputs dir that is the sandbox should be refused: $out"
 pass "an inputs directory inside the sandbox is refused"
 
 out="$(start --model solo/model --n 1 --cap-usd 1 --no-start --goal-file "$ROOT/prompts/goals/hello.md" --inputs "$TMP/src" --env SWARM_FSGUARD=none)"
-printf '%s\n' "$out" | grep -q "BLOCKER: --env SWARM_FSGUARD=none would switch the pane's kernel guard off" || fail "a pre-set SWARM_FSGUARD should be refused: $out"
+grep -q "BLOCKER: --env SWARM_FSGUARD=none would switch the pane's kernel guard off" <<<"$out" || fail "a pre-set SWARM_FSGUARD should be refused: $out"
 pass "an operator --env that would switch the guard off is refused"
 
 out="$(start --model solo/model --n 1 --cap-usd 1 --no-start --goal-file "$ROOT/prompts/goals/hello.md" --quarantine --env SWARM_FSGUARD=none)"
-printf '%s\n' "$out" | grep -q "BLOCKER: --env SWARM_FSGUARD=none would switch the pane's kernel guard off" \
+grep -q "BLOCKER: --env SWARM_FSGUARD=none would switch the pane's kernel guard off" <<<"$out" \
   || fail "--quarantine without --inputs still writes the hook; --env SWARM_FSGUARD must be refused: $out"
 pass "SWARM_FSGUARD cannot be switched off through --env when only --quarantine is set"
 
 out="$(start --model solo/model --n 1 --cap-usd 1 --no-start --goal-file "$ROOT/prompts/goals/hello.md" --env SWARM_FSGUARD=none)"
-printf '%s\n' "$out" | grep -q "BLOCKER: --env SWARM_FSGUARD=none would switch the pane's kernel guard off" \
+grep -q "BLOCKER: --env SWARM_FSGUARD=none would switch the pane's kernel guard off" <<<"$out" \
   || fail "--env SWARM_FSGUARD must be refused even with no inputs and no quarantine: $out"
 pass "an operator --env SWARM_FSGUARD is refused at kickoff, not only with --inputs"
 
 mkdir -p "$TMP/big"
 python3 -c 'import os, sys; d = sys.argv[1]; [open(os.path.join(d, f"f{i}.txt"), "w").close() for i in range(5001)]' "$TMP/big"
 out="$(start --model solo/model --n 1 --cap-usd 1 --no-start --goal-file "$ROOT/prompts/goals/hello.md" --inputs "$TMP/big" --inputs-max-files 5000)"
-printf '%s\n' "$out" | grep -q "BLOCKER: --inputs .* has 5001 files; the limit is 5000" || fail "a directory over an asked-for file cap should be refused: $out"
+grep -q "BLOCKER: --inputs .* has 5001 files; the limit is 5000" <<<"$out" || fail "a directory over an asked-for file cap should be refused: $out"
 pass "a directory with more files than an asked-for cap is refused"
 
 out="$(start --model solo/model --n 1 --cap-usd 1 --no-start --goal-file "$ROOT/prompts/goals/hello.md" --inputs "$TMP/src" --inputs-enforce off --label off)"
@@ -302,7 +302,7 @@ pass "fsguard refuses a directory that does not exist"
 if [[ "$mode" == "none" ]]; then
   # The refusal for --inputs-enforce on is only reachable on a host without a guard.
   out="$(start --model solo/model --n 1 --cap-usd 1 --no-start --goal-file "$ROOT/prompts/goals/hello.md" --inputs "$TMP/src" --inputs-enforce on)"
-  printf '%s\n' "$out" | grep -q "BLOCKER: --inputs-enforce on, but this host has no kernel read-only mechanism" || fail "enforce on without a guard should be a BLOCKER: $out"
+  grep -q "BLOCKER: --inputs-enforce on, but this host has no kernel read-only mechanism" <<<"$out" || fail "enforce on without a guard should be a BLOCKER: $out"
   pass "--inputs-enforce on is refused on a host with no kernel guard"
   echo "skip - kernel deny checks (mode=none on this host)"
 else
@@ -320,7 +320,7 @@ PROBE
   out="$(bash "$ROOT/scripts/fsguard.sh" --ro "$TMP/src" -- bash "$probe" 2>&1)"; rc=$?
   [[ "$rc" -eq 7 ]] || fail "fsguard should pass the command's exit code through, got $rc: $out"
   for want in "guard=$mode" write-denied create-denied rm-denied mv-denied elsewhere-writable; do
-    printf '%s\n' "$out" | grep -qx "$want" || fail "fsguard ($mode): expected '$want' in: $out"
+    grep -qx "$want" <<<"$out" || fail "fsguard ($mode): expected '$want' in: $out"
   done
   [[ "$(cat "$TMP/src/readings.csv")" == $'sensor,reading\na,1\nb,2' ]] || fail "the guarded file changed"
   pass "under fsguard ($mode) a write, a create, a delete and a rename of the directory are all denied, and a sibling stays writable"

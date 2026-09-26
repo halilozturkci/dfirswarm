@@ -63,13 +63,13 @@ set +e
 out="$(swarm purge srt1 --yes)"; rc=$?
 set -e
 [[ $rc -eq 2 ]] || fail "purge of a held run exited $rc: $out"
-printf '%s\n' "$out" | grep -q "on hold (legal hold, matter 12)" || fail "the refusal does not name the hold: $out"
+grep -q "on hold (legal hold, matter 12)" <<<"$out" || fail "the refusal does not name the hold: $out"
 [[ -d "$SB/inputs" ]] || fail "a held run's material was deleted"
 # A new run in a held run's sandbox would clear it.
 set +e
 out="$(swarm start --model solo/model --n 1 --cap-usd 1 --no-start --goal-file "$ROOT/prompts/goals/hello.md" --toolbox off --sandbox "$SB" --label reuse)"; rc=$?
 set -e
-[[ $rc -ne 0 ]] && printf '%s\n' "$out" | grep -q "run srt1 in .* is on hold" || fail "a new run in a held sandbox was not refused (rc $rc): $out"
+[[ $rc -ne 0 ]] && grep -q "run srt1 in .* is on hold" <<<"$out" || fail "a new run in a held sandbox was not refused (rc $rc): $out"
 [[ -f "$SB/custody.json" ]] || fail "the refused kickoff cleared the held run"
 grep -q '"command":"hold"' "$RUNS/operator-audit.jsonl" || fail "the hold is not on the operator's audit"
 out="$(swarm release srt1)" || fail "release failed: $out"
@@ -81,7 +81,7 @@ set +e
 out="$(swarm purge srt1)"; rc=$?
 set -e
 [[ $rc -eq 2 ]] || fail "purge without --yes exited $rc"
-printf '%s\n' "$out" | grep -q "$SB" || fail "purge without --yes does not list what it would delete: $out"
+grep -q "$SB" <<<"$out" || fail "purge without --yes does not list what it would delete: $out"
 [[ -d "$SB" ]] || fail "purge without --yes deleted something"
 out="$(swarm purge srt1 --yes)" || fail "purge failed: $out"
 [[ ! -e "$SB" ]] || fail "the sandbox is still there"
@@ -108,7 +108,7 @@ PY
 set +e
 out="$(swarm purge srt1 --yes)"; rc=$?
 set -e
-[[ $rc -eq 0 ]] && printf '%s\n' "$out" | grep -q "purged already" || fail "a second purge is not said: $out"
+[[ $rc -eq 0 ]] && grep -q "purged already" <<<"$out" || fail "a second purge is not said: $out"
 pass "purge deletes the sandbox, this run's disks (not another's) and its hub directory, keeps the run as purged, and records what it destroyed"
 
 echo "# a running run is not purged"
@@ -124,8 +124,8 @@ echo "# the kickoff records whether the runs volume is encrypted at rest"
 out="$(swarm start --model solo/model --n 1 --cap-usd 1 --no-start --goal-file "$ROOT/prompts/goals/hello.md" --toolbox off --label enc)" || fail "kickoff failed: $out"
 enc="$(jq -r '.runs[] | select(.label == "enc") | .disk_encryption' "$RUNS/registry.json")"
 case "$enc" in on|off|unknown) ;; *) fail "disk_encryption is '$enc'" ;; esac
-printf '%s\n' "$out" | grep -q '^Disk: ' || fail "the kickoff does not say what it found: $out"
-if [[ "$enc" == off ]]; then printf '%s\n' "$out" | grep -q 'not encrypted at rest' || fail "an unencrypted volume is not warned about"; fi
+grep -q '^Disk: ' <<<"$out" || fail "the kickoff does not say what it found: $out"
+if [[ "$enc" == off ]]; then grep -q 'not encrypted at rest' <<<"$out" || fail "an unencrypted volume is not warned about"; fi
 [[ "$(jq -r '.runs[] | select(.label == "enc") | .hold' "$RUNS/registry.json")" == null ]] || fail "a new run starts on hold"
 pass "the kickoff records disk_encryption ($enc) and warns when it is off"
 

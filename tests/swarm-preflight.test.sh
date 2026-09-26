@@ -325,22 +325,22 @@ cp "$ROOT/scripts/swarm.sh" "$runs_root/scripts/"
 printf '{"runs":[{"id":"sold1","state":"done","label":"before the rename","workspaces":[],"n":2,"model":"solo/model","sandbox":"%s/sandbox-runs/sold1"}]}\n' \
   "$runs_root" > "$runs_root/sandbox-runs/registry.json"
 out="$(bash "$runs_root/scripts/swarm.sh" list 2>&1)"
-printf '%s\n' "$out" | grep -q 'sold1' || fail "a checkout with only sandbox-runs/ lost its runs: $out"
+grep -q 'sold1' <<<"$out" || fail "a checkout with only sandbox-runs/ lost its runs: $out"
 pass "with only sandbox-runs/ present, the runs there are still listed"
 
 mkdir -p "$runs_root/runs"
 printf '{"runs":[{"id":"snew1","state":"running","label":"after the rename","workspaces":[],"n":1,"model":"solo/model","sandbox":"%s/runs/snew1"}]}\n' \
   "$runs_root" > "$runs_root/runs/registry.json"
 out="$(bash "$runs_root/scripts/swarm.sh" list 2>&1)"
-printf '%s\n' "$out" | grep -q 'snew1' || fail "runs/ is present but was not read: $out"
-printf '%s\n' "$out" | grep -q 'sold1' && fail "both directories were read at once: $out"
+grep -q 'snew1' <<<"$out" || fail "runs/ is present but was not read: $out"
+grep -q 'sold1' <<<"$out" && fail "both directories were read at once: $out"
 pass "once runs/ exists it is the one used"
 
 mkdir -p "$runs_root/elsewhere"
 printf '{"runs":[{"id":"selse","state":"done","label":"somewhere else","workspaces":[],"n":1,"model":"solo/model","sandbox":"%s/elsewhere/selse"}]}\n' \
   "$runs_root" > "$runs_root/elsewhere/registry.json"
 out="$(SWARM_RUNS_DIR="$runs_root/elsewhere" bash "$runs_root/scripts/swarm.sh" list 2>&1)"
-printf '%s\n' "$out" | grep -q 'selse' || fail "SWARM_RUNS_DIR was not honoured: $out"
+grep -q 'selse' <<<"$out" || fail "SWARM_RUNS_DIR was not honoured: $out"
 pass "SWARM_RUNS_DIR still overrides both"
 
 # --- a local model server is probed before Pi is asked -----------------------
@@ -430,30 +430,30 @@ probe() { # probe <model> -> prints stderr, exit code on the last line
 }
 
 out="$(probe dead/m)"
-printf '%s\n' "$out" | grep -q 'BLOCKER: the local model server for dead/m does not answer' || fail "a dead endpoint should be a BLOCKER: $out"
-printf '%s\n' "$out" | grep -q 'exit=1' || fail "a dead endpoint should exit 1: $out"
+grep -q 'BLOCKER: the local model server for dead/m does not answer' <<<"$out" || fail "a dead endpoint should be a BLOCKER: $out"
+grep -q 'exit=1' <<<"$out" || fail "a dead endpoint should exit 1: $out"
 pass "a local server that does not answer is a BLOCKER before any pane opens"
 
 out="$(probe localmock/nothere)"
-printf '%s\n' "$out" | grep -q "has no model 'nothere'" || fail "a missing model should be a BLOCKER: $out"
-printf '%s\n' "$out" | grep -q 'It serves: qwen3:8b, gpt-oss:20b' || fail "the BLOCKER should list what the server has: $out"
-printf '%s\n' "$out" | grep -q 'exit=1' || fail "a missing model should exit 1: $out"
+grep -q "has no model 'nothere'" <<<"$out" || fail "a missing model should be a BLOCKER: $out"
+grep -q 'It serves: qwen3:8b, gpt-oss:20b' <<<"$out" || fail "the BLOCKER should list what the server has: $out"
+grep -q 'exit=1' <<<"$out" || fail "a missing model should exit 1: $out"
 pass "a model the server does not have is a BLOCKER that names what it does have"
 
 out="$(probe localmock/qwen3:8b)"
-printf '%s\n' "$out" | grep -q 'exit=0' || fail "a present model should pass the probe: $out"
-printf '%s\n' "$out" | grep -q 'WARN: Ollama gives qwen3:8b a context of 8192 tokens; models.json declares 131072' \
+grep -q 'exit=0' <<<"$out" || fail "a present model should pass the probe: $out"
+grep -q 'WARN: Ollama gives qwen3:8b a context of 8192 tokens; models.json declares 131072' <<<"$out" \
   || fail "a smaller server-side context than declared should be a WARN: $out"
-printf '%s\n' "$out" | grep -q "WARN: models.json gives 'localmock' no compat block" || fail "a missing compat block should be a WARN: $out"
+grep -q "WARN: models.json gives 'localmock' no compat block" <<<"$out" || fail "a missing compat block should be a WARN: $out"
 pass "a present model passes, with warnings for the context Ollama really gives and the missing compat block"
 
 out="$(probe localmock/gpt-oss:20b)"
-printf '%s\n' "$out" | grep -q 'WARN: Ollama has no num_ctx for gpt-oss:20b' || fail "no num_ctx at all should warn about the 4096 default: $out"
+grep -q 'WARN: Ollama has no num_ctx for gpt-oss:20b' <<<"$out" || fail "no num_ctx at all should warn about the 4096 default: $out"
 pass "a model Ollama has no num_ctx for is warned about the default"
 
 out="$(probe tuned/qwen3:8b)"
-printf '%s\n' "$out" | grep -q 'exit=0' || fail "a tuned provider should pass: $out"
-printf '%s\n' "$out" | grep -qv 'WARN' || true
+grep -q 'exit=0' <<<"$out" || fail "a tuned provider should pass: $out"
+grep -qv 'WARN' <<<"$out" || true
 [[ "$(printf '%s\n' "$out" | grep -c 'WARN')" -eq 0 ]] || fail "a provider with compat and a matching context should get no warning: $out"
 pass "a provider with a compat block and a matching context window passes silently"
 
@@ -473,11 +473,11 @@ if command -v pi >/dev/null 2>&1; then
     out="$(PI_CODING_AGENT_DIR="$local_dir" SWARM_RUNS_DIR="$TMP/runs" SWARM_LOCAL_PROBE_TIMEOUT=2 \
       bash "$ROOT/scripts/swarm.sh" start --model localmock/qwen3:8b --n 1 --cap-tokens 1000 --no-write-guard \
       --goal-file "$ROOT/prompts/goals/hello.md" --label keyless --env "PI_CODING_AGENT_DIR=$local_dir" 2>&1)"
-    printf '%s\n' "$out" | grep -q 'BLOCKER: Pi will not use localmock/qwen3:8b without a credential, and a local server has none' \
+    grep -q 'BLOCKER: Pi will not use localmock/qwen3:8b without a credential, and a local server has none' <<<"$out" \
       || fail "a keyless local provider should get the local BLOCKER: $out"
-    printf '%s\n' "$out" | grep -q '"apiKey": "local"' || fail "the BLOCKER should show the placeholder to add: $out"
-    printf '%s\n' "$out" | grep -q 'pi auth check --model localmock/qwen3:8b --json' || fail "the BLOCKER should say how to confirm: $out"
-    printf '%s\n' "$out" | grep -q 'pi /login' && fail "a local server must not be sent to pi /login: $out"
+    grep -q '"apiKey": "local"' <<<"$out" || fail "the BLOCKER should show the placeholder to add: $out"
+    grep -q 'pi auth check --model localmock/qwen3:8b --json' <<<"$out" || fail "the BLOCKER should say how to confirm: $out"
+    grep -q 'pi /login' <<<"$out" && fail "a local server must not be sent to pi /login: $out"
     pass "the kickoff tells a keyless local provider to add a placeholder apiKey, not to log in"
   else
     echo "skip - the keyless kickoff BLOCKER (herdr or jq is not installed)"

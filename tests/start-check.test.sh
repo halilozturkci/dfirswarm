@@ -40,14 +40,14 @@ run "$TMP/runs-real" "${base[@]}" --env OPENAI_API_KEY=sk-not-a-key
 $check_out
 --- start
 $out"
-printf '%s\n' "$check_out" | grep -q 'BLOCKER: --env OPENAI_API_KEY names a credential' || fail "not the credential refusal: $check_out"
+grep -q 'BLOCKER: --env OPENAI_API_KEY names a credential' <<<"$check_out" || fail "not the credential refusal: $check_out"
 nothing_written "$TMP/runs-check" "a refused check"
 pass "a refused --env credential is refused by --check in the start's own words, exit 2, with nothing written"
 
 echo "# a clean option set: exit 0, nothing written"
 run "$TMP/runs-check" --check --isolation host "${base[@]}" --no-start
 [[ $rc -eq 0 ]] || fail "a clean check exited $rc: $out"
-printf '%s\n' "$out" | grep -q '^Check:        the start would go ahead (host, 2 agent(s)' || fail "the check does not say the start would go ahead: $out"
+grep -q '^Check:        the start would go ahead (host, 2 agent(s)' <<<"$out" || fail "the check does not say the start would go ahead: $out"
 nothing_written "$TMP/runs-check" "a clean check"
 # The same options really start.
 run "$TMP/runs-real2" --isolation host "${base[@]}" --no-start
@@ -68,7 +68,7 @@ else
   out="$(PATH="$bin:/usr/bin:/bin" SWARM_RUNS_DIR="$TMP/runs-check" bash "$ROOT/scripts/swarm.sh" start --check --isolation host "${base[@]}" --no-write-guard 2>&1)"
   rc=$?
   set -e
-  [[ $rc -eq 2 ]] && printf '%s\n' "$out" | grep -q 'BLOCKER: missing herdr' || fail "--check did not run the program check (rc $rc): $out"
+  [[ $rc -eq 2 ]] && grep -q 'BLOCKER: missing herdr' <<<"$out" || fail "--check did not run the program check (rc $rc): $out"
   nothing_written "$TMP/runs-check" "a check refused for a missing program"
   pass "--check runs the checks a start makes after its sandbox exists (a missing program: exit 2, nothing written)"
 fi
@@ -89,7 +89,7 @@ out="$(SWARM_MSB_BIN="$TMP/msb" SWARM_RUNS_DIR="$TMP/runs-check" bash "$ROOT/scr
 rc=$?
 set -e
 [[ $rc -eq 2 ]] || fail "a check on a host that cannot boot VMs exited $rc, wanted 2: $out"
-printf '%s\n' "$out" | grep -q "BLOCKER: this host cannot run the agents' VMs" && printf '%s\n' "$out" | grep -q 'no hypervisor here' || fail "the VM check's refusal is not said: $out"
+grep -q "BLOCKER: this host cannot run the agents' VMs" <<<"$out" && grep -q 'no hypervisor here' <<<"$out" || fail "the VM check's refusal is not said: $out"
 nothing_written "$TMP/runs-check" "a check refused for VMs"
 pass "--check runs the VM host check and turns its refusal into exit 2, with nothing written"
 
@@ -116,7 +116,7 @@ jq -e '(.packs == ["computer-forensics-base"]) and (.profile | length > 0) and (
 set +e
 out="$(SWARM_MSB_BIN="$TMP/msb" bash "$ROOT/scripts/swarm.sh" image-for --pack no-such-pack 2>&1)"; rc=$?
 set -e
-[[ $rc -eq 2 ]] && printf '%s\n' "$out" | grep -q 'no-such-pack is not installed' || fail "a pack that is not installed was not refused (rc $rc): $out"
+[[ $rc -eq 2 ]] && grep -q 'no-such-pack is not installed' <<<"$out" || fail "a pack that is not installed was not refused (rc $rc): $out"
 unset DFIRSWARM_HOME
 nothing_written "$TMP/runs-check" "image-for"
 pass "image-for says the image, its digest when a lock pins it or msb has it, the profile and why, and writes nothing"
@@ -124,10 +124,10 @@ pass "image-for says the image, its digest when a lock pins it or msb has it, th
 echo "# the check says what the start would set up"
 run "$TMP/runs-plan" --check "${base[@]}" --isolation host --no-start
 [[ $rc -eq 0 ]] || fail "a host check exited $rc: $out"
-printf '%s\n' "$out" | grep -q "^Isolation:    host, unisolated" || fail "the check does not say the run would be unisolated: $out"
+grep -q "^Isolation:    host, unisolated" <<<"$out" || fail "the check does not say the run would be unisolated: $out"
 run "$TMP/runs-plan" --check --isolation microvm --model openai/gpt-5.4-mini --n 1 --cap-usd 1 --goal-file "$GOAL" --toolbox off --no-start --model-gateway --image dfirswarm-base:dev-test
-printf '%s\n' "$out" | grep -q "^Isolation:    one microVM per agent (dfirswarm-base:dev-test" || fail "the check does not name the VMs' image: $out"
-printf '%s\n' "$out" | grep -q "^Gateway:      every call to openai would go through the model gateway" || fail "the check does not say the gateway fronts openai: $out"
+grep -q "^Isolation:    one microVM per agent (dfirswarm-base:dev-test" <<<"$out" || fail "the check does not name the VMs' image: $out"
+grep -q "^Gateway:      every call to openai would go through the model gateway" <<<"$out" || fail "the check does not say the gateway fronts openai: $out"
 nothing_written "$TMP/runs-plan" "the plan check"
 pass "the check names the isolation, the image and what the model gateway would front"
 

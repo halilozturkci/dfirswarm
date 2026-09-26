@@ -36,10 +36,10 @@ export SWARM_HUBS_DIR="$TMP/hubs"
 mkdir -p "$TMP/real"
 ln -s "$TMP/real" "$TMP/linked"
 out="$(SWARM_HUBS_DIR="$TMP/linked" hubs_parent --create 2>&1)" && fail "a hubs' directory that is a link was used: $out"
-printf '%s\n' "$out" | grep -q 'is a link' || fail "the refusal does not say it is a link: $out"
+grep -q 'is a link' <<<"$out" || fail "the refusal does not say it is a link: $out"
 if [[ "$(id -u)" -ne 0 && -d /private/var/root ]] && [[ ! -O /private/var/root ]]; then
   out="$(SWARM_HUBS_DIR=/private/var/root hubs_parent 2>&1)" && fail "another user's directory was taken for the hubs' directory"
-  printf '%s\n' "$out" | grep -q 'is not yours' || fail "the refusal does not say it is not the user's: $out"
+  grep -q 'is not yours' <<<"$out" || fail "the refusal does not say it is not the user's: $out"
 elif [[ "$(id -u)" -ne 0 && -d /root ]]; then
   out="$(SWARM_HUBS_DIR=/root hubs_parent 2>&1)" && fail "another user's directory was taken for the hubs' directory"
 fi
@@ -91,8 +91,8 @@ out="$(isolation=microvm alloc_prefix 2>&1)"
 rc=$?
 set -e
 [[ $rc -eq 3 ]] || fail "a failed msb list exited $rc, wanted 3: $out"
-printf '%s\n' "$out" | grep -q 'msb could not list its VMs.*the runtime is not running' || fail "the refusal does not say msb's list failed: $out"
-printf '%s\n' "$out" | grep -q 'Could not allocate' && fail "a failed list was reported as ids that could not be had: $out"
+grep -q 'msb could not list its VMs.*the runtime is not running' <<<"$out" || fail "the refusal does not say msb's list failed: $out"
+grep -q 'Could not allocate' <<<"$out" && fail "a failed list was reported as ids that could not be had: $out"
 vm_cli() { printf '{"ok":true,"vms":[]}\n'; }
 id="$(isolation=microvm alloc_prefix)" || fail "an id was not allocated with msb answering"
 [[ "$id" =~ ^s[0-9a-f]{6}$ ]] || fail "the id is not s and three bytes: $id"

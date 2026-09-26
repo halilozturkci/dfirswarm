@@ -52,7 +52,7 @@ out="$(bash "$ROOT/scripts/toolbox.sh" "$TMP/sb" crypto --required 2>&1)"
 rc=$?
 set -e
 [[ "$rc" -eq 3 ]] || fail "missing pyAesCrypt with --required should exit 3, got $rc: $out"
-printf '%s\n' "$out" | grep -q "aescrypt" || fail "the BLOCKER should name aescrypt: $out"
+grep -q "aescrypt" <<<"$out" || fail "the BLOCKER should name aescrypt: $out"
 jq -e '.missing[] | select(.name == "aescrypt")' "$TMP/sb/toolbox.json" >/dev/null \
   || fail "toolbox.json should list aescrypt as missing when the import fails"
 pass "toolbox crypto reports aescrypt missing when pyAesCrypt cannot be imported"
@@ -70,7 +70,7 @@ set +e
 out="$(bash "$ROOT/scripts/toolbox.sh" "$TMP/sb" crypto --required --image "$TMP/image.json" 2>&1)"; rc=$?
 set -e
 [[ "$rc" -eq 3 ]] || fail "a program a pack requires, missing from the image, with --required should exit 3, got $rc: $out"
-printf '%s\n' "$out" | grep -q 'BLOCKER: --toolbox-required and these tools are missing: dfs-needed-tool\.' \
+grep -q 'BLOCKER: --toolbox-required and these tools are missing: dfs-needed-tool\.' <<<"$out" \
   || fail "only the pack's required program should block, not the crypto presets the image lacks: $out"
 jq -e '.context == "image" and .image == "dfirswarm-disk:dev-arm64"' "$TMP/sb/toolbox.json" >/dev/null || fail "toolbox.json does not say it describes the image"
 jq -e '.missing[] | select(.name == "dfs-nice-tool") | .use == "a pack may use it (p1)"' "$TMP/sb/toolbox.json" >/dev/null || fail "an optional pack program is not listed with its pack"
