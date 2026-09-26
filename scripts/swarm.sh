@@ -180,7 +180,7 @@ swarm.sh start — prepare a sandbox, write the contract, launch the agents.
       [--no-netguard] [--local-only] [--playwright] [--probe-violation]
       [--key-from-env] [--env KEY=VALUE]...
       [--isolation host|microvm] [--image REF] [--vm-cpus N] [--vm-memory MIB] [--vm-disk MIB] [--no-vm-snapshot] [--vm-snapshot-dir DIR] [--allow-oauth-in-vm]
-      [--workers N] [--worker-cpus N] [--worker-memory MIB] [--no-jobs] [--derived-catalog]
+      [--workers N] [--worker-cpus N] [--worker-memory MIB] [--no-jobs] [--no-derived-catalog]
 
 The team
   --model P/ID        One model for every agent.
@@ -445,12 +445,14 @@ Isolation
                       or more, 2048 otherwise).
   --no-jobs           No job service: no tool jobs, and the kickoff's catalogue is
                       built before the agents start, as in a host run.
-  --derived-catalog   Offer what jobs make to the packs' recipes whose trigger is
-                      "derived" (an archive or disk image a job extracted is
-                      catalogued on its own), each file as its recipes say it is
-                      worth; at most 20 detect passes a run, then the agents are
-                      told to catalog_request. Off by default: each pass is a
-                      worker boot.
+  --no-derived-catalog
+                      Do not offer what jobs make to the packs' derived recipes.
+                      By default an archive or disk image a job makes is
+                      catalogued on its own: each file by content, as its
+                      recipes' own size, name endings and magic say; in the
+                      lowest lane (one worker, only when no agent job waits),
+                      within 300 worker-seconds each 10 minutes, at most 400
+                      objects and 2 GiB of catalogue a run, nothing dropped.
   --inputs-copy       Under --isolation microvm, copy --inputs into the run (read-only)
                       instead of mounting it in place: a second layer when the
                       examiner's account can write the evidence.
@@ -3178,7 +3180,7 @@ cmd_start() {
   # Where the agents live: one microVM each (the default), or host
   # processes (--isolation host, unisolated). isolation_given says the
   # operator named it, so a refusal can say how to choose the other.
-  local isolation="${SWARM_ISOLATION:-microvm}" isolation_given=$([[ -n "${SWARM_ISOLATION:-}" ]] && echo 1 || echo 0) vm_image="${SWARM_VM_IMAGE:-}" vm_image_named=$([[ -n "${SWARM_VM_IMAGE:-}" ]] && echo 1 || echo 0) vm_image_digest="" vm_cpus=2 vm_memory="" vm_disk=8192 vm_snapshot=1 vm_snapshot_dir="" allow_oauth_in_vm=0 inputs_copy=0 jobs=1 workers=2 workers_given=0 worker_cpus=2 worker_memory="" derived_catalog=0
+  local isolation="${SWARM_ISOLATION:-microvm}" isolation_given=$([[ -n "${SWARM_ISOLATION:-}" ]] && echo 1 || echo 0) vm_image="${SWARM_VM_IMAGE:-}" vm_image_named=$([[ -n "${SWARM_VM_IMAGE:-}" ]] && echo 1 || echo 0) vm_image_digest="" vm_cpus=2 vm_memory="" vm_disk=8192 vm_snapshot=1 vm_snapshot_dir="" allow_oauth_in_vm=0 inputs_copy=0 jobs=1 workers=2 workers_given=0 worker_cpus=2 worker_memory="" derived_catalog=1
   local seal_herdr=1
   # Directories the panes may not read. Reads are open by design, so this is
   # narrow on purpose: material about the case the agents must derive rather
@@ -3310,7 +3312,7 @@ cmd_start() {
       --worker-cpus) worker_cpus="$2"; shift 2 ;;
       --worker-memory) worker_memory="$2"; shift 2 ;;
       --no-jobs) jobs=0; shift ;;
-      --derived-catalog) derived_catalog=1; shift ;;
+      --no-derived-catalog) derived_catalog=0; shift ;;
       --vm-disk) vm_disk="$2"; shift 2 ;;
       --no-vm-snapshot) vm_snapshot=0; shift ;;
       --vm-snapshot-dir) vm_snapshot_dir="$2"; shift 2 ;;
@@ -7066,7 +7068,12 @@ launch_vm_agents() {
       --arg hosts "$job_hosts" --argjson open "$([[ "$use_netguard" -eq 0 ]] && echo true || echo false)" --arg packs "$pack_dirs" \
       --argjson derived "$([[ "$derived_catalog" -eq 1 ]] && echo true || echo false)" \
       '{image: $image, workers: $workers, cpus: $cpus, memoryMib: $mem, allowHosts: ($hosts | split(",") | map(select(length > 0))), openNet: $open, packDirs: ($packs | split("\n") | map(select(length > 0)))} + (if $derived then {derived: true} else {} end)')"
-    echo "Jobs:         up to $workers worker VM(s) at a time, ${worker_cpus} vCPU and ${worker_memory} MiB each, no network unless a job asks for the run's allowlist$([[ "$derived_catalog" -eq 1 ]] && printf '; what jobs make is offered to the derived recipes (at most 20 passes)')"
+    echo "Jobs:         up to $workers worker VM(s) at a time, ${worker_cpus} vCPU and ${worker_memory} MiB each, no network unless a job asks for the run's allowlist"
+    if [[ "$derived_catalog" -eq 1 ]]; then
+      echo "              derived catalogue on: what jobs make is offered to the recipes by content, in the lowest lane (one worker), within 300 worker-s each 10 min, at most 400 objects and 2 GiB a run (--no-derived-catalog: off)"
+    else
+      echo "              derived catalogue off (--no-derived-catalog): an object a job makes is catalogued only by catalog_request"
+    fi
   fi
   start_vm_hub "$sandbox" "$hub_dir" "$swarm_id" "$trace_socket" "${agent_ids[@]}" || { stop_vm_run "$sandbox" "$swarm_id" 0; exit 1; }
   local spec="$hub_dir/vm-spec.json"

@@ -218,7 +218,8 @@ export function parseJobsConfig(raw: unknown): JobsConfig | undefined {
     openNet: raw.openNet === true,
     packDirs: strings(raw.packDirs),
     ...(typeof raw.minFreeMb === "number" ? { minFreeMb: num(raw.minFreeMb, 4096, 0, 1 << 30) } : {}),
-    ...(raw.derived === true ? { derived: true } : {}),
+    // On unless the kickoff said off (--no-derived-catalog).
+    derived: raw.derived !== false,
   };
 }
 

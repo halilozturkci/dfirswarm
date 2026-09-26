@@ -663,10 +663,15 @@ export async function publishRevision(journal: Journal): Promise<number> {
   const n = journal.of("revision_published").length;
   const dir = join(P.revisions, String(n));
   await mkdir(dir, { recursive: true });
-  const generations: Generation[] = [];
+  // A partial generation whose object has a readable form catalogued since
+  // (the decrypted volume of an encrypted one): said beside it.
+  const readable = new Map<string, string>();
+  for (const r of journal.of("generation_related")) readable.set(String(r.generation), String(r.readable));
+  const generations: Array<Generation & { readable_form?: string }> = [];
   for (const ev of journal.of("generation_committed")) {
     try {
-      generations.push(JSON.parse(await readFile(join(P.gen, String(ev.generation), "generation.json"), "utf8")) as Generation);
+      const g = JSON.parse(await readFile(join(P.gen, String(ev.generation), "generation.json"), "utf8")) as Generation;
+      generations.push({ ...g, ...(readable.has(g.id) ? { readable_form: readable.get(g.id) } : {}) });
     } catch {
       // a generation whose record is gone is named by the journal alone
     }
@@ -677,7 +682,8 @@ export async function publishRevision(journal: Journal): Promise<number> {
   if (!generations.length) md.push("No generation yet.");
   for (const g of generations) {
     md.push(`## ${g.id}: ${g.recipe} over ${g.target.name ?? g.target.ref ?? "?"} — ${g.status}${g.experimental ? " (experimental recipe)" : ""}`, "");
-    md.push(`Job ${g.job}${g.parent ? `, triggered by job ${g.parent}` : ""}; recipe sha256 ${g.recipe_sha256.slice(0, 16)}…${g.alias ? `; also at \`${g.alias}/\`` : ""}.`, "");
+    md.push(`Job ${g.job}${g.parent ? `, triggered by job ${g.parent}` : ""}${g.trigger ? ` (${g.trigger})` : ""}; recipe sha256 ${g.recipe_sha256.slice(0, 16)}…${g.alias ? `; also at \`${g.alias}/\`` : ""}.`, "");
+    if (g.readable_form) md.push(`A readable form of this object is catalogued as ${g.readable_form}.`, "");
     const cov = g.coverage as { covered?: string; not_covered?: string; errors?: unknown[]; limits_hit?: unknown[] } | null;
     if (cov?.covered) md.push(`Covered: ${cov.covered}. Not covered: ${cov.not_covered ?? "not said"}.`, "");
     for (const e of [...(cov?.errors ?? []), ...(cov?.limits_hit ?? [])]) md.push(`- ${String(e)}`);
