@@ -33,6 +33,14 @@ got="$(python3 "$R" profile-for ransomware-response)"
 [[ "$(python3 "$R" profile-for macos-forensics)" == mobile ]] || fail "macos-forensics is held by mobile, as mobile-forensics' dependency"
 [[ "$(python3 "$R" profile-for triage-collection)" == full ]] || fail "triage-collection is held by full alone and covered by nothing smaller"
 [[ "$(python3 "$R" profile-for no-such-pack)" == full ]] || fail "an unknown pack cannot be covered by anything smaller than full"
+# A run's job images: each pack in its own profile, and a dependency every
+# profile holds with its dependents, not in the smallest image that holds it.
+jp="$(python3 "$R" job-profiles computer-forensics-base windows-forensics mobile-forensics encrypted-containers macos-forensics)"
+jq -e '. == {"computer-forensics-base": "disk", "windows-forensics": "disk", "mobile-forensics": "mobile", "encrypted-containers": "disk", "macos-forensics": "mobile"}' <<<"$jp" >/dev/null \
+  || fail "the base pack of a disk and mobile run should run in disk, not in memory: $jp"
+jp="$(python3 "$R" job-profiles computer-forensics-base windows-forensics encrypted-containers linux-forensics)"
+[[ "$(jq -r '."computer-forensics-base"' <<<"$jp")" == disk ]] || fail "the base pack goes where most of the run's packs are (disk, two), not linux (one): $jp"
+[[ "$(python3 "$R" job-profiles computer-forensics-base memory-forensics | jq -r '."computer-forensics-base"')" == memory ]] || fail "with memory-forensics alone, the base pack runs in memory"
 pass "the smallest profile that holds or covers the packs is chosen, and full only when nothing smaller serves"
 
 # An installed pack this repository does not carry (a pro or third-party one):

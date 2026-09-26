@@ -6545,10 +6545,16 @@ plan_job_images() { # <pack dirs, one per line> <default job image>
   local images='{}' packs='{}'
   default_profile="$(python3 "$ROOT/images/recipe.py" profile-for $(tr '\n' ' ' <<<"$dirs") 2>/dev/null || echo full)"
   images="$(jq -c --arg p "$default_profile" --arg r "$default_ref" '. + {($p): $r}' <<<"$images")"
+  # Each pack's own profile, a dependency going with its dependents where one
+  # of their profiles holds it (recipe.py job-profiles): a run of disk and
+  # mobile packs used to boot the memory image for computer-forensics-base.
+  local planned
+  planned="$(python3 "$ROOT/images/recipe.py" job-profiles $(tr '\n' ' ' <<<"$dirs") 2>/dev/null)" || planned='{}'
   while read -r d; do
     [[ -n "$d" && -f "$d/pack.json" ]] || continue
     id="$(jq -r '.id // empty' "$d/pack.json")"
-    profile="$(python3 "$ROOT/images/recipe.py" profile-for "$d" 2>/dev/null || echo "$default_profile")"
+    profile="$(jq -r --arg k "$(basename "$d")" '.[$k] // empty' <<<"$planned")"
+    [[ -n "$profile" ]] || profile="$default_profile"
     ref="$(vm_ref_for_profile "$profile")"
     images="$(jq -c --arg p "$profile" --arg r "$ref" '. + {($p): $r}' <<<"$images")"
     packs="$(jq -c --arg k "$id" --arg p "$profile" '. + {($k): $p}' <<<"$packs")"
@@ -7078,6 +7084,9 @@ vm_build_spec() { # <hub dir> <out file>
   if [[ -n "$pack_dirs" ]]; then
     add_env SWARM_PACK_DIRS "$(paste -sd: - <<< "$pack_dirs")"
     [[ "$PACK_SECRETS_ENV" != "{}" ]] && add_env SWARM_PACK_SECRETS "$PACK_SECRETS_ENV"
+    # The agents boot the base and the packs' programs are in the job images:
+    # the VMs' probe is not held to the packs' programs, which they do not carry.
+    [[ -n "$job_image" ]] && add_env SWARM_PACK_PROGRAMS_IN_JOBS "$(jq -r 'keys | join(",")' <<<"$job_images_json")"
   fi
   [[ "$forging" -eq 1 ]] && { add_env SWARM_TOOL_FORGING 1; add_env SWARM_TOOLS "$PI_TOOLS"; }
   if [[ "$self_compact" -eq 1 ]]; then

@@ -769,9 +769,13 @@ export function packNeeds(packDirs: string[]): PackNeed[] {
  * are told). An image built from another version of a pack, or one that
  * records no pack versions at all, is said and recorded.
  */
-export function imageFit(probe: Record<string, unknown>, needs: PackNeed[], allowInstall: boolean): { blockers: string[]; warnings: string[] } {
+export function imageFit(probe: Record<string, unknown>, needs: PackNeed[], allowInstall: boolean, programsInJobs = false): { blockers: string[]; warnings: string[] } {
   const blockers: string[] = [];
   const warnings: string[] = [];
+  // Agents on the base image with the packs' programs in the job images: the
+  // VM is not meant to hold them, and saying it lacks them (and that the
+  // agents may install them) pointed the agents at the wrong place.
+  if (programsInJobs) return { blockers, warnings };
   const missing = new Set(Array.isArray(probe.missing_binaries) ? (probe.missing_binaries as string[]) : []);
   const image = (probe.image ?? {}) as { pack_versions?: Record<string, { version?: string; seal?: string }> };
   if (needs.length && !image.pack_versions) warnings.push("the image records no pack versions (built before images recorded them): which version of each pack it was built for is unknown");
@@ -1265,7 +1269,7 @@ export async function createVms(spec: VmSpec): Promise<{ records: VmRecord[]; fa
       continue;
     }
     records.push(r.value);
-    const fit = imageFit(r.value.probe, needs, allowInstall);
+    const fit = imageFit(r.value.probe, needs, allowInstall, Boolean(spec.env.SWARM_PACK_PROGRAMS_IN_JOBS));
     const wrong = [...probeVerdict(r.value.probe, expectInputs, expectedInputFiles), ...fit.blockers];
     // One image for the whole run, by digest: a tag moved between two VMs'
     // boots would give two agents two different toolsets under one name.
