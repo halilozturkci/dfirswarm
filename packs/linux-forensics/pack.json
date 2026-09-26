@@ -48,8 +48,12 @@
     "auth_log",
     "cron_dump",
     "journal_export",
+    "linux_triage",
     "shell_history",
     "utmp_parse"
   ],
-  "skills": 8
+  "skills": 10,
+  "recipes": [
+    "linux-forensics/linux-target"
+  ]
 }

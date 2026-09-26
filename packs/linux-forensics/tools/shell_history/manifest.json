@@ -13,10 +13,6 @@
     "user": {
       "type": "string",
       "description": "Only histories under this user's home"
-    },
-    "limit": {
-      "type": "integer",
-      "description": "Maximum commands to return (default 2000)"
     }
   },
   "runtime": "python3",
@@ -25,6 +21,6 @@
   "example": "{\"root\": \"work/extracted/home\", \"contains\": \"curl|wget|base64\"}",
   "by": "maintainer",
   "at": "2026-09-22T15:00:00.000Z",
-  "version": 1,
-  "sha256": "10bf40f9b24250ada1ed2179222510f64993337d7a01e1940028f93fd5d34fe9"
+  "version": 3,
+  "sha256": "eee2d4a94f17ccd1a7f0eb0f617e332cde0d07654cb3a5bc25b7a62b39bf4a53"
 }

@@ -25,18 +25,15 @@
     "priority": {
       "type": "string",
       "description": "Maximum priority, e.g. 'warning'"
-    },
-    "limit": {
-      "type": "integer",
-      "description": "Maximum records to return (default 500)"
     }
   },
+  "requires": ["journalctl"],
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 300,
   "example": "{\"path\": \"work/extracted/var/log/journal\", \"grep\": \"sudo\"}",
   "by": "maintainer",
   "at": "2026-09-22T15:00:00.000Z",
-  "version": 1,
-  "sha256": "7377300fca0244ae5bdbc15eefeddec41356a3ac0ea5f919544baef47f6ce627"
+  "version": 3,
+  "sha256": "251be2035e381df4223d482932f2b64addde4655d727c924096c75057d59628f"
 }

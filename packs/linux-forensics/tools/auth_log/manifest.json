@@ -17,10 +17,6 @@
     "year": {
       "type": "integer",
       "description": "The year to apply to traditional syslog lines, which carry no year"
-    },
-    "limit": {
-      "type": "integer",
-      "description": "Maximum records to return (default 1000)"
     }
   },
   "runtime": "python3",
@@ -29,6 +25,6 @@
   "example": "{\"path\": \"work/extracted/var/log\", \"kinds\": [\"ssh_accepted\", \"sudo\"]}",
   "by": "maintainer",
   "at": "2026-09-22T15:00:00.000Z",
-  "version": 1,
-  "sha256": "e83364a5af9dcf48a141bd3b63c296495fd68f2f424dce203144fc03a218a1c0"
+  "version": 3,
+  "sha256": "278596ff869f86ea8b1364b563c0f5f0a74d6aa582f5de8c6b9fb73fe8157e50"
 }

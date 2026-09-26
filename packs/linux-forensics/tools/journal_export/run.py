@@ -47,40 +47,38 @@ def main():
              "which is never the evidence")
     if not os.path.exists(path):
         fail("no such file or directory", path=path)
+    if os.path.islink(path):
+        fail("refusing a symlink: pass the journal file or directory inside the evidence", path=path,
+             target=os.readlink(path))
     binary = shutil.which("journalctl")
     if not binary:
         fail("journalctl is not on PATH",
              install="apt-get install -y systemd; the journal is a binary format and no other "
                      "tool reads it reliably",
              note="On macOS there is no journalctl at all: copy the journal to a Linux host.")
-    limit = args.get("limit", 500)
-    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
-        fail("limit must be a positive integer")
-
     argv = [binary, "--directory" if os.path.isdir(path) else "--file", path,
             "-o", "json", "--no-pager"]
     for flag, key in (("--unit", "unit"), ("--since", "since"), ("--until", "until"),
                       ("--grep", "grep"), ("--priority", "priority")):
         if args.get(key):
             argv += [flag, str(args[key])]
-    argv += ["-n", str(limit)]
-
     try:
         proc = subprocess.run(argv, capture_output=True, text=True, timeout=240)
     except subprocess.TimeoutExpired:
         fail("journalctl did not finish in time", command=" ".join(argv))
     if proc.returncode != 0 and not proc.stdout.strip():
         fail("journalctl refused this journal", exit_code=proc.returncode,
-             stderr=(proc.stderr or "").strip()[-600:], command=" ".join(argv))
+             stderr=(proc.stderr or "").strip(), command=" ".join(argv))
 
-    records, boots = [], set()
+    records, boots, parse_errors = [], set(), []
     for line in proc.stdout.splitlines():
         line = line.strip()
         if not line:
             continue
         try:
             row = json.loads(line)
-        except ValueError:
+        except ValueError as exc:
+            parse_errors.append({"line": line, "error": str(exc)})
             continue
         entry = {k.lower().lstrip("_"): row.get(k) for k in KEEP if row.get(k) is not None}
         entry["time"] = readable(row.get("__REALTIME_TIMESTAMP"))
@@ -95,7 +93,10 @@ def main():
         "record_count": len(records),
         "boots_seen": len(boots),
         "command": " ".join(argv),
-        "warnings": (proc.stderr or "").strip()[-400:] or None,
+        "warnings": (proc.stderr or "").strip() or None,
+        "parse_errors": parse_errors,
+        "exit_code": proc.returncode,
+        "complete": proc.returncode == 0 and not parse_errors,
         "note": "Order by boot_id first and time second: within one boot the clock is consistent, "
                 "across boots it may not be. A journal with no /var/log/journal directory behind "
                 "it was volatile, and everything before the last boot is gone — a configuration "

@@ -79,12 +79,12 @@ def main():
     root = args.get("root")
     if not isinstance(root, str) or not root:
         fail("root is required: a home directory or an extracted file system root")
-    if not os.path.exists(root):
+    if os.path.islink(root):
+        fail("refusing a symlink root: pass the extracted evidence directory", root=root,
+             target=os.readlink(root))
+    if not os.path.isdir(root):
         fail("no such directory", root=root)
 
-    limit = args.get("limit", 2000)
-    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
-        fail("limit must be a positive integer")
     pattern = None
     if args.get("contains"):
         try:
@@ -93,14 +93,22 @@ def main():
             fail("contains is not a valid regex", reason=str(exc))
     only_user = args.get("user")
 
-    files, commands, truncated = [], [], False
+    files, commands, skipped_symlinks = [], [], []
     for dirpath, dirs, names in os.walk(root):
-        dirs[:] = [d for d in dirs if d not in ("proc", "sys", "dev")]
+        for name in dirs:
+            full = os.path.join(dirpath, name)
+            if os.path.islink(full):
+                skipped_symlinks.append({"file": full, "target": os.readlink(full)})
+        dirs[:] = [d for d in dirs
+                   if d not in ("proc", "sys", "dev") and not os.path.islink(os.path.join(dirpath, d))]
         for name in sorted(names):
             shell = NAMES.get(name)
             if not shell:
                 continue
             full = os.path.join(dirpath, name)
+            if os.path.islink(full):
+                skipped_symlinks.append({"file": full, "target": os.readlink(full)})
+                continue
             owner = os.path.basename(dirpath)
             if only_user and owner != only_user:
                 continue
@@ -119,14 +127,7 @@ def main():
             for entry in entries or []:
                 if pattern and not pattern.search(entry["command"]):
                     continue
-                if len(commands) >= limit:
-                    truncated = True
-                    break
                 commands.append({**entry, "user": owner, "shell": shell, "file": full})
-            if truncated:
-                break
-        if truncated:
-            break
 
     timed = sum(1 for c in commands if c.get("time"))
     print(json.dumps({
@@ -136,7 +137,8 @@ def main():
         "commands": commands,
         "command_count": len(commands),
         "with_timestamps": timed,
-        "truncated": truncated,
+        "complete": not skipped_symlinks and not any("error" in entry for entry in files),
+        "skipped_symlinks": skipped_symlinks,
         "note": "Commands are in the order the shell appended them. Where a command has no time, "
                 "the shell was not configured to record one, and order is all you have — say so "
                 "rather than implying a sequence in time. The file's last_written brackets the "

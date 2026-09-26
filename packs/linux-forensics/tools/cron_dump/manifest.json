@@ -9,10 +9,6 @@
     "contains": {
       "type": "string",
       "description": "Case-insensitive regex over the command or unit"
-    },
-    "limit": {
-      "type": "integer",
-      "description": "Maximum entries to return (default 500)"
     }
   },
   "runtime": "python3",
@@ -21,6 +17,6 @@
   "example": "{\"root\": \"work/extracted\"}",
   "by": "maintainer",
   "at": "2026-09-22T15:00:00.000Z",
-  "version": 2,
-  "sha256": "6aac7ee317ddb8b62644715fcb01af5895298086860f0f69cadc8b59d608fe57"
+  "version": 4,
+  "sha256": "617b3e2a20f7370bba216b12ecff07bb07ab35815047ce0203ed6cc68d060b73"
 }

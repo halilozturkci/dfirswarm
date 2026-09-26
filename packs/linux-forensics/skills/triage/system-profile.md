@@ -3,12 +3,17 @@ id: triage/system-profile
 title: Build the system profile before anything else
 when: The first ten minutes of any Linux case.
 needs: [evidence/imaging]
-tools: [timestamp_decode]
-requires_host: [fls, icat]
+tools: [timestamp_decode, image_layout, linux_triage]
+requires_host: [fls, icat, target-query]
 ---
 
 Everything later depends on these, and the timezone decides every timestamp you
 will write.
+
+For a disk image, start with `image_layout`, then `linux_triage`. The latter can
+read a Linux root inside LVM without activating or mounting the evidence and
+keeps its complete output per artefact family. Treat its empty files as parser
+results, not automatic proof of absence.
 
     /etc/os-release              distribution, version, and the build id
     /etc/hostname                the name the logs will use

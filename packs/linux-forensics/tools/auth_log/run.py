@@ -91,13 +91,18 @@ def main():
     path = args.get("path")
     if not isinstance(path, str) or not path:
         fail("path is required: an auth.log or secure file, or a directory holding them")
+    if os.path.islink(path):
+        fail("refusing a symlink: pass the log file or directory inside the evidence", path=path,
+             target=os.readlink(path))
 
     targets = []
     if os.path.isdir(path):
         for root, _dirs, names in os.walk(path):
             for name in names:
                 if re.match(r"^(auth\.log|secure)", name):
-                    targets.append(os.path.join(root, name))
+                    candidate = os.path.join(root, name)
+                    if not os.path.islink(candidate):
+                        targets.append(candidate)
     elif os.path.isfile(path):
         targets = [path]
     else:
@@ -106,13 +111,10 @@ def main():
         fail("no auth.log or secure file found there", path=path)
     targets.sort(key=rotation_key)
 
-    limit = args.get("limit", 1000)
-    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
-        fail("limit must be a positive integer")
     wanted = {str(k) for k in (args.get("kinds") or [])}
     needle = (args.get("contains") or "").lower()
 
-    records, lines_read, unparsed, truncated = [], 0, 0, False
+    records, lines_read, unparsed, errors = [], 0, 0, []
     years_used = {}
     for target in targets:
         try:
@@ -126,6 +128,7 @@ def main():
             handle = open_maybe_gzip(target)
         except OSError as exc:
             unparsed += 1
+            errors.append({"file": target, "error": str(exc)})
             continue
         with handle:
             for line in handle:
@@ -160,9 +163,6 @@ def main():
                     continue
                 if needle and needle not in line.lower():
                     continue
-                if len(records) >= limit:
-                    truncated = True
-                    break
                 records.append({
                     "time": stamp,
                     "year_guessed": guessed,
@@ -172,10 +172,8 @@ def main():
                     "kind": kind,
                     "file": target,
                     **fields,
-                    "raw": parts["msg"][:400],
+                    "raw": parts["msg"],
                 })
-        if truncated:
-            break
 
     counts = {}
     for r in records:
@@ -187,7 +185,8 @@ def main():
         "record_count": len(records),
         "by_kind": counts,
         "unparsed_lines": unparsed,
-        "truncated": truncated,
+        "complete": not errors,
+        "errors": errors,
         "years_applied": years_used,
         "note": "Traditional syslog carries no year; the year applied per file is above and each "
                 "record says whether it was guessed. An ssh_accepted with method 'publickey' names "
