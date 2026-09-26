@@ -106,11 +106,11 @@ try:
             media_size = int(line.split(":")[-1].strip())
             size_source = "img_stat"
 except subprocess.CalledProcessError as exc:
-    stat_error = (exc.stderr or "").strip()[:500] or f"img_stat exited {exc.returncode}"
+    stat_error = (exc.stderr or "").strip() or f"img_stat exited {exc.returncode}"
 except FileNotFoundError:
     stat_error = "img_stat is not on PATH"
 except Exception as exc:
-    stat_error = str(exc)[:500]
+    stat_error = str(exc)
 
 if media_size is None and length is None:
     print(json.dumps({
@@ -172,7 +172,7 @@ while pos < end:
         read_errors.add({
             "start_sector": s_sec,
             "end_sector": e_sec,
-            "stderr": proc.stderr.decode("utf-8", "replace").strip()[:200],
+            "stderr": proc.stderr.decode("utf-8", "replace").strip(),
         })
         pos += n
         continue

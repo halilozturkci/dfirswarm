@@ -59,7 +59,7 @@ if r.returncode != 0:
         image=IMAGE,
         offset=OFFSET,
         exit_code=r.returncode,
-        stderr=r.stderr.decode("utf-8", "replace").strip()[:500],
+        stderr=r.stderr.decode("utf-8", "replace").strip(),
     )
 if dest is not None:
     dest.parent.mkdir(parents=True, exist_ok=True)

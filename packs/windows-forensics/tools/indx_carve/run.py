@@ -26,13 +26,84 @@ the byte offset it came from.
 The update sequence fixup is applied first. Without it the last two bytes of
 every sector are a checksum, and a name that straddles a sector boundary comes
 back with two bytes of rubbish in the middle of it.
+
+Every block is read. The page returned inline is `limit` long, and when more
+entries match the whole list is written to a file the output names; the same
+holds for the problems.
 """
 import datetime
 import json
+import mmap
 import os
 import re
 import struct
 import sys
+
+# Lossless paging (the same in every library tool that pages): the page an
+# agent reads stays small, and when there are more rows the whole result is
+# written as JSON Lines under work/<agent>/tool-output and named.
+import hashlib
+import json
+import os
+import re
+import tempfile
+from pathlib import Path
+
+
+class LosslessPage:
+    def __init__(self, tool: str, key: object, limit: int):
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise ValueError("limit must be a positive integer")
+        self.tool = re.sub(r"[^A-Za-z0-9_.-]", "_", tool)
+        self.limit = limit
+        self.page: list[object] = []
+        self.total = 0
+        self._out = None
+        self._tmp: Path | None = None
+        digest = hashlib.sha256(
+            json.dumps(key, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()[:16]
+        agent = re.sub(
+            r"[^A-Za-z0-9_.-]", "_", os.environ.get("AGENT_ID") or "tool"
+        )
+        self.path = Path("work") / agent / "tool-output" / f"{self.tool}-{digest}.jsonl"
+
+    def _write(self, row: object) -> None:
+        assert self._out is not None
+        self._out.write(json.dumps(row, ensure_ascii=False, default=str))
+        self._out.write("\n")
+
+    def add(self, row: object) -> None:
+        self.total += 1
+        if len(self.page) < self.limit:
+            self.page.append(row)
+            return
+        if self._out is None:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            fd, name = tempfile.mkstemp(
+                dir=self.path.parent, prefix=f".{self.path.name}-"
+            )
+            self._tmp = Path(name)
+            self._out = os.fdopen(fd, "w", encoding="utf-8")
+            for kept in self.page:
+                self._write(kept)
+        self._write(row)
+
+    def finish(self) -> dict:
+        result = {
+            "matched": self.total,
+            "returned": len(self.page),
+            "truncated": self.total > len(self.page),
+        }
+        if self._out is not None:
+            self._out.flush()
+            os.fsync(self._out.fileno())
+            self._out.close()
+            assert self._tmp is not None
+            os.replace(self._tmp, self.path)
+            result["all_results"] = str(self.path)
+            result["all_results_format"] = "JSON Lines, one complete result per line"
+        return result
 
 FILETIME_EPOCH = datetime.datetime(1601, 1, 1, tzinfo=datetime.timezone.utc)
 MAGIC = b"INDX"
@@ -139,9 +210,16 @@ def live_entries(block, base_offset):
 
 
 def carve_slack(block, slack_start, slack_end, base_offset):
-    """Past the live entries, look for a $FILE_NAME that still parses."""
+    """Past the live entries, look for a $FILE_NAME that still parses.
+
+    Entries sit on 8-byte boundaries, so after a hit the walk goes on from the
+    next boundary. Stepping by the name's own length left the walk misaligned
+    for every name whose length is not a multiple of 8, and every entry after
+    it in the slack was then missed.
+    """
     out = []
     at = max(0x18, slack_start)
+    at += (-at) % 8
     limit = min(slack_end, len(block))
     while at + FN_FIXED <= limit:
         found = read_filename(block, at)
@@ -149,6 +227,7 @@ def carve_slack(block, slack_start, slack_end, base_offset):
             found.update({"source": "slack", "offset": base_offset + at})
             out.append(found)
             at += found["length"]
+            at += (-at) % 8
             continue
         at += 8                                    # entries are 8-byte aligned
     return out
@@ -179,57 +258,72 @@ def main():
         except re.error as exc:
             fail("name is not a valid regex", reason=str(exc))
 
-    data = open(path, "rb").read()
-    entries, blocks, problems = [], 0, []
-    truncated = False
+    key = [path, block_size, bool(args.get("slack_only")), args.get("name")]
+    entries = LosslessPage("indx_carve", key, limit)
+    problems = LosslessPage("indx_carve-problems", key, 40)
+    blocks, from_slack = 0, 0
 
-    at = 0
-    while True:
-        at = data.find(MAGIC, at)
-        if at < 0:
-            break
-        block = data[at:at + block_size]
-        start_of_block = at
-        at += 4
-        if len(block) < 0x28:
-            problems.append({"offset": start_of_block, "why": "the block runs past the end of the file"})
-            continue
-        fixed, problem = apply_fixup(block)
-        if problem:
-            problems.append({"offset": start_of_block, "why": problem})
-        blocks += 1
-        live, slack_start, slack_end = live_entries(fixed, start_of_block)
-        found = live + carve_slack(fixed, slack_start, slack_end, start_of_block)
-        for entry in found:
-            if args.get("slack_only") and entry["source"] != "slack":
-                continue
-            if pattern and not pattern.search(entry["name"]):
-                continue
-            if len(entries) >= limit:
-                truncated = True
-                break
-            entries.append(entry)
-        if truncated:
-            break
-        at = start_of_block + block_size           # the next block, not the next magic
+    with open(path, "rb") as fh:
+        size = os.fstat(fh.fileno()).st_size
+        # Mapped rather than read: a raw blob to sweep can be larger than memory.
+        data = mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) if size else b""
+        try:
+            at = 0
+            while True:
+                at = data.find(MAGIC, at)
+                if at < 0:
+                    break
+                block = data[at:at + block_size]
+                start_of_block = at
+                at += 4
+                if len(block) < 0x28:
+                    problems.add({"offset": start_of_block, "why": "the block runs past the end of the file"})
+                    continue
+                fixed, problem = apply_fixup(block)
+                if problem:
+                    problems.add({"offset": start_of_block, "why": problem})
+                blocks += 1
+                live, slack_start, slack_end = live_entries(fixed, start_of_block)
+                found = live + carve_slack(fixed, slack_start, slack_end, start_of_block)
+                for entry in found:
+                    if args.get("slack_only") and entry["source"] != "slack":
+                        continue
+                    if pattern and not pattern.search(entry["name"]):
+                        continue
+                    entries.add(entry)
+                    if entry["source"] == "slack":
+                        from_slack += 1
+                if not problem:
+                    # A block whose fixup holds is a block: the next one starts
+                    # after it, not at the next magic. One whose fixup fails may
+                    # be a false positive, so the search goes on inside it.
+                    at = start_of_block + block_size
+        finally:
+            if size:
+                data.close()
 
-    from_slack = sum(1 for e in entries if e["source"] == "slack")
-    print(json.dumps({
+    page = entries.finish()
+    problem_page = problems.finish()
+    out = {
         "path": path,
         "block_size": block_size,
         "blocks": blocks,
-        "entries": entries,
-        "entry_count": len(entries),
+        "entries": entries.page,
+        "entry_count": page["matched"],
         "from_slack": from_slack,
-        "from_live": len(entries) - from_slack,
-        "truncated": truncated,
-        "problems": problems[:40],
+        "from_live": page["matched"] - from_slack,
+        **page,
+        "problems": problems.page,
+        "problem_count": problem_page["matched"],
         "note": "A slack entry is a name the directory no longer lists. Its times are $FILE_NAME "
                 "times, written by the kernel on create, rename and move, so they are the set a "
                 "timestomper does not reach. It does not say the file was deleted: a rename or a "
                 "move out of the directory leaves the same trace, and the USN journal tells you "
                 "which. See filesystem/journals.",
-    }, indent=2))
+    }
+    if problem_page.get("all_results"):
+        out["all_problems"] = problem_page["all_results"]
+    print(json.dumps(out, indent=2))
 
 
 if __name__ == "__main__":

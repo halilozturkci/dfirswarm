@@ -85,7 +85,7 @@ def main():
         fail("this file is not a SQLite database", db=db, reason=str(exc))
     if "ZOBJECT" not in tables:
         fail("this is not a knowledgeC database: there is no ZOBJECT table",
-             db=db, tables=sorted(tables)[:20])
+             db=db, tables=sorted(tables))
 
     columns = {r["name"] for r in connection.execute("PRAGMA table_info(ZOBJECT)")}
     def maybe(name, default="NULL"):

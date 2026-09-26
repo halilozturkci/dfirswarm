@@ -150,7 +150,7 @@ def main():
     try:
         h = RegistryHive(hive)
     except Exception as exc:
-        fail("could not open the hive", hive=hive, reason=str(exc)[:500])
+        fail("could not open the hive", hive=hive, reason=str(exc))
 
     entries = LosslessPage("amcache_apps", [hive], limit)
     layout = None

@@ -76,8 +76,9 @@ def ft(raw):
     except Exception:
         return None
 
-def u16z(data, off, maxlen=1024):
-    end = min(len(data), off+maxlen)
+def u16z(data, off, maxlen=None):
+    """A NUL-terminated UTF-16 string, read to its NUL or to the end of data."""
+    end = len(data) if maxlen is None else min(len(data), off+maxlen)
     i = off
     out = []
     while i+1 < end:
@@ -178,7 +179,7 @@ def parse_lnk(data, base_off=0):
                 def u16(buf, o):
                     if o <= 0 or o >= len(buf):
                         return None
-                    s, _ = u16z(buf, o, 2048)
+                    s, _ = u16z(buf, o)
                     return s
                 out['local_base_path'] = zs(li, local_off)
                 out['common_path'] = zs(li, common_off)
@@ -208,10 +209,15 @@ def parse_lnk(data, base_off=0):
             s, p = read_str(p)
             out[nm] = s
             names.append((nm,s))
-    # extra blocks
+    # extra blocks, up to the terminal block. When the bytes read end first the
+    # structure runs past them, and structure_complete says so.
     extras = []
+    complete = False
     while p+4 <= len(data):
         bsz = struct.unpack_from('<I', data, p)[0]
+        if bsz < 4:
+            complete = True
+            break
         if bsz < 8 or p+bsz > len(data):
             break
         sig = struct.unpack_from('<I', data, p+4)[0]
@@ -224,8 +230,14 @@ def parse_lnk(data, base_off=0):
             rec['tracker'] = blk[8:64].decode('latin1','replace',).split('\x00')[0] if len(blk)>16 else None
             # machine name at +16 typically
             rec['machine'] = blk[16:16+16].split(b'\x00',1)[0].decode('latin1','replace') if len(blk)>32 else None
-        elif sig == 0xA0000007:  # unicode properties / darwin? actually SPECIAL_FOLDER
-            rec['hex'] = blk[:32].hex()
+            # the two 32-byte droid pairs (volume and object identifiers), whole
+            if len(blk) >= 96:
+                rec['droid_hex'] = blk[32:64].hex()
+                rec['droid_birth_hex'] = blk[64:96].hex()
+        elif sig == 0xA0000007:  # icon environment: the same two paths as the environment block
+            rec['hex'] = blk.hex()
+            rec['icon_env_ascii'] = blk[8:8+260].split(b'\x00',1)[0].decode('latin1','replace')
+            rec['icon_env_u16'] = blk[8+260:].decode('utf-16le','replace').split('\x00',1)[0] if len(blk)>268 else None
         else:
             rec['ascii'] = ''.join(chr(b) if 32<=b<127 else '.' for b in blk)
         extras.append(rec)
@@ -233,16 +245,19 @@ def parse_lnk(data, base_off=0):
         if bsz == 0:
             break
     out['extra'] = extras
-    # collect utf16 strings from whole remaining
+    out['structure_complete'] = complete
+    out['bytes_read'] = len(data)
+    # collect utf16 strings from everything read, each one whole. A string is
+    # read to its NUL; the next one starts right after it. A run that is too
+    # short or has no letter is passed over whole, since no tail of it can
+    # qualify either.
     strs = []
     i = 0x4C
-    while i+4 < min(len(data), 8192):
-        s, ni = u16z(data, i, 512)
+    while i+4 < len(data):
+        s, ni = u16z(data, i)
         if len(s) >= 6 and any(c.isalpha() for c in s):
             strs.append(s)
-            i = ni+2
-        else:
-            i += 2
+        i = max(ni, i + 2)
     out['utf16_strings'] = strs
     return out
 
@@ -262,19 +277,27 @@ def main():
         data = f.read(size)
     if args.get('scan'):
         limit = int(args.get('max') or 50)
-        hits = LosslessPage("lnk_parse", [src, offset, size, args.get('each')], limit)
+        each = args.get('each')
+        hits = LosslessPage("lnk_parse", [src, offset, size, each], limit)
         magic = bytes.fromhex('4c0000000114020000000000c000000000000046')
+        starts = []
         i = 0
         while True:
             j = data.find(magic, i)
             if j < 0:
                 break
-            rec = parse_lnk(data[j:j+int(args.get('each') or 2048)], offset+j)
+            starts.append(j)
+            i = j+4
+        for n, j in enumerate(starts):
+            # Without `each`, a link runs to the next header or to the end of
+            # what was read, never to a fixed cut.
+            stop = j + int(each) if each else (starts[n+1] if n+1 < len(starts) else len(data))
+            rec = parse_lnk(data[j:stop], offset+j)
             rec['rel'] = j
             hits.add(rec)
-            i = j+4
         page = hits.finish()
-        print(json.dumps({'count': page['matched'], 'hits': hits.page, **page}, indent=2))
+        print(json.dumps({'count': page['matched'], 'hits': hits.page, **page,
+                          'offset': offset, 'bytes_read': len(data)}, indent=2))
         return
     print(json.dumps(parse_lnk(data, offset), indent=2))
 

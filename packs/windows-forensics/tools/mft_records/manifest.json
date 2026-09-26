@@ -36,7 +36,7 @@
     },
     "limit": {
       "type": "integer",
-      "description": "Maximum records to return (default 200)"
+      "description": "Records shown inline (default 200); every record is read, and when more match the whole list is written as JSON Lines and named in all_results"
     }
   },
   "runtime": "python3",
@@ -46,5 +46,5 @@
   "by": "maintainer",
   "at": "2026-09-22T09:00:00.000Z",
   "version": 1,
-  "sha256": "a064b38788f294971e1ef8657507f5dd30abaa4150631eab940274c980ba0916"
+  "sha256": "8065d3a3cd0545d83034d9e70359eca1007cbda3f8ef75b493f99bd18c107794"
 }

@@ -24,10 +24,39 @@ if result_path == inputs or inputs in result_path.parents:
     raise SystemExit(json.dumps({'error': 'out_file cannot be under inputs/'}))
 result_path.parent.mkdir(parents=True, exist_ok=True)
 
+
+
+def records(evtx):
+    """Every record, chunk by chunk. A chunk whose record chain breaks (a length
+    that points past the chunk, a header past the end of the file) ends with a
+    parse_error row naming where it stopped, and the next chunk is still read:
+    one malformed record must not cost the records after it, or the whole run."""
+    for chunk in evtx.chunks():
+        chain = chunk.records()
+        while True:
+            try:
+                rec = next(chain)
+            except StopIteration:
+                break
+            except Exception as e:
+                yield None, {
+                    'parse_error': 'the record chain of this chunk broke: %s' % e,
+                    'chunk_offset': chunk.offset(),
+                }
+                break
+            yield rec, None
+
+
 out = []
 matched = 0
 with Evtx(path) as evtx, result_path.open('w', encoding='utf-8') as full:
-    for rec in evtx.records():
+    for rec, broken in records(evtx):
+        if broken is not None:
+            full.write(json.dumps(broken, ensure_ascii=False) + '\n')
+            matched += 1
+            if len(out) < limit:
+                out.append(broken)
+            continue
         xml = None
         try:
             xml = rec.xml()
@@ -103,11 +132,11 @@ with Evtx(path) as evtx, result_path.open('w', encoding='utf-8') as full:
                 except Exception as xml_error:
                     xml = None
                     e = RuntimeError('%s; XML unavailable: %s' % (e, xml_error))
-            entry = {'parse_error': str(e), 'xml': xml}
+            entry = {'parse_error': str(e), 'record_offset': rec.offset(), 'xml': xml}
             full.write(json.dumps(entry, ensure_ascii=False) + '\n')
             matched += 1
             if len(out) < limit:
-                out.append({'parse_error': str(e)})
+                out.append({'parse_error': str(e), 'record_offset': rec.offset()})
 print(json.dumps({'path': path, 'count': matched, 'returned': len(out), 'events': out,
                   'truncated': matched > len(out),
                   'result_file': os.path.relpath(result_path, root_dir)}, ensure_ascii=False))

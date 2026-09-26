@@ -137,7 +137,7 @@ def main():
             fail(
                 "esedbexport produced no tables",
                 status=proc.returncode,
-                stderr=proc.stderr.decode("utf-8", "replace").strip()[:2000],
+                stderr=proc.stderr.decode("utf-8", "replace").strip(),
             )
 
         # libesedb names each export file <table>.<its index> (Containers.4,

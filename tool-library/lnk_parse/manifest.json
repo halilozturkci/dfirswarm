@@ -16,7 +16,7 @@
     },
     "size": {
       "type": "integer",
-      "description": "Bytes to read (default 4096)"
+      "description": "Bytes to read (default 4096); structure_complete says whether the link ended inside them"
     },
     "scan": {
       "type": "boolean",
@@ -24,11 +24,11 @@
     },
     "each": {
       "type": "integer",
-      "description": "Bytes per LNK when scanning"
+      "description": "Bytes per LNK when scanning (default: up to the next LNK header, or the end of what was read)"
     },
     "max": {
       "type": "integer",
-      "description": "Max LNKs when scanning"
+      "description": "LNKs shown inline when scanning (default 50); every one found is kept, and when there are more the whole list is written as JSON Lines and named in all_results"
     }
   },
   "runtime": "python3",
@@ -38,5 +38,5 @@
   "by": "s183902",
   "at": "2026-09-18T22:18:47.468Z",
   "version": 2,
-  "sha256": "5c2561eee65fbe7af1762e9ba6f849366aad6badfb8e39b641d235e092a6a2cb"
+  "sha256": "5f851f43881bbc26954a49fe04b0f3c5089a0d6a91b14d921607b1248815811a"
 }

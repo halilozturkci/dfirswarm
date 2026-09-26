@@ -8,11 +8,11 @@
     },
     "out_dir": {
       "type": "string",
-      "description": "Write each embedded link structure here, under work/, for lnk_parse to read"
+      "description": "Write each embedded link structure here, under work/, for lnk_parse to read; a path outside the run directory or under inputs/ is refused"
     },
     "limit": {
       "type": "integer",
-      "description": "Maximum entries to return per file (default 500)"
+      "description": "Link structures shown inline per file (default 500); every one is read and written to out_dir, and when there are more the whole list is written as JSON Lines and named in all_results"
     }
   },
   "runtime": "python3",
@@ -22,5 +22,5 @@
   "by": "maintainer",
   "at": "2026-09-22T09:00:00.000Z",
   "version": 1,
-  "sha256": "6ef890d011950781e0be0e74d6932635ce6eedc07f5c09508d5133f763644e5b"
+  "sha256": "46200e56d442a751ea4dc89492efaed1c405455fba86da7a1e9bcb48509a9809"
 }

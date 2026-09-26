@@ -84,8 +84,34 @@ out = LosslessPage(
     [path, sorted(event_ids), contains, start_record, end_record],
     limit,
 )
+
+
+def records(evtx):
+    """Every record, chunk by chunk. A chunk whose record chain breaks (a length
+    that points past the chunk, a header past the end of the file) ends with a
+    parse_error row naming where it stopped, and the next chunk is still read:
+    one malformed record must not cost the records after it, or the whole run."""
+    for chunk in evtx.chunks():
+        chain = chunk.records()
+        while True:
+            try:
+                rec = next(chain)
+            except StopIteration:
+                break
+            except Exception as e:
+                yield None, {
+                    'parse_error': 'the record chain of this chunk broke: %s' % e,
+                    'chunk_offset': chunk.offset(),
+                }
+                break
+            yield rec, None
+
+
 with Evtx(path) as evtx:
-    for rec in evtx.records():
+    for rec, broken in records(evtx):
+        if broken is not None:
+            out.add(broken)
+            continue
         xml = None
         try:
             xml = rec.xml()
@@ -148,12 +174,13 @@ with Evtx(path) as evtx:
                 'provider': provider,
                 'record_id': recid,
                 'data': eventdata,
-                'xml_excerpt': xml[:1200]
+                'xml': xml,
             })
         except Exception as e:
             out.add({
                 'parse_error': str(e),
-                'xml_excerpt': xml[:1200] if isinstance(xml, str) else None,
+                'record_offset': rec.offset(),
+                'xml': xml if isinstance(xml, str) else None,
             })
 page = out.finish()
 print(json.dumps({'path': path, 'count': page['matched'], 'events': out.page, **page}, ensure_ascii=False))

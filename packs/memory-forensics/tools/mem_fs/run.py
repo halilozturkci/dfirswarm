@@ -149,7 +149,7 @@ def main():
 
     if problem:
         fail(problem, command=" ".join(argv), mount=str(mount),
-             stderr=(stderr or "").strip()[-600:],
+             stderr=(stderr or "").strip(),
              note="Mounting needs FUSE, which a sandbox may refuse. That is a limit on the host, "
                   "not a finding about the evidence, and the report should say so.")
 
