@@ -76,6 +76,73 @@ def _resolve_catalog(explicit=None):
         return os.path.join(root, disks[0])
     raise SystemExit('{"ok": false, "error": "several catalogues; pass catalog=", "candidates": %s}' % json.dumps(subs))
 
+from pathlib import Path
+
+# Lossless paging (the same in every library tool that pages): the page an
+# agent reads stays small, and when there are more rows the whole result is
+# written as JSON Lines under work/<agent>/tool-output and named.
+import hashlib
+import json
+import os
+import re
+import tempfile
+from pathlib import Path
+
+
+class LosslessPage:
+    def __init__(self, tool: str, key: object, limit: int):
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise ValueError("limit must be a positive integer")
+        self.tool = re.sub(r"[^A-Za-z0-9_.-]", "_", tool)
+        self.limit = limit
+        self.page: list[object] = []
+        self.total = 0
+        self._out = None
+        self._tmp: Path | None = None
+        digest = hashlib.sha256(
+            json.dumps(key, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()[:16]
+        agent = re.sub(
+            r"[^A-Za-z0-9_.-]", "_", os.environ.get("AGENT_ID") or "tool"
+        )
+        self.path = Path("work") / agent / "tool-output" / f"{self.tool}-{digest}.jsonl"
+
+    def _write(self, row: object) -> None:
+        assert self._out is not None
+        self._out.write(json.dumps(row, ensure_ascii=False, default=str))
+        self._out.write("\n")
+
+    def add(self, row: object) -> None:
+        self.total += 1
+        if len(self.page) < self.limit:
+            self.page.append(row)
+            return
+        if self._out is None:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            fd, name = tempfile.mkstemp(
+                dir=self.path.parent, prefix=f".{self.path.name}-"
+            )
+            self._tmp = Path(name)
+            self._out = os.fdopen(fd, "w", encoding="utf-8")
+            for kept in self.page:
+                self._write(kept)
+        self._write(row)
+
+    def finish(self) -> dict:
+        result = {
+            "matched": self.total,
+            "returned": len(self.page),
+            "truncated": self.total > len(self.page),
+        }
+        if self._out is not None:
+            self._out.flush()
+            os.fsync(self._out.fileno())
+            self._out.close()
+            assert self._tmp is not None
+            os.replace(self._tmp, self.path)
+            result["all_results"] = str(self.path)
+            result["all_results_format"] = "JSON Lines, one complete result per line"
+        return result
 args = json.load(sys.stdin)
 needles = args.get("needles") or ""
 path = args.get("path") or ""
@@ -94,8 +161,12 @@ for n in need_list:
     variants.append((n, "utf16le", n.encode("utf-16le")))
 
 def scan_fh(fh):
-    hits = {n: {"ascii": 0, "utf16le": 0, "snippets": []} for n in need_list}
-    overlap = 1024
+    counts = {n: {"ascii": 0, "utf16le": 0} for n in need_list}
+    pages = {
+        n: LosslessPage("chunk_needles", [path, inode, n, context], max_hits)
+        for n in need_list
+    }
+    overlap = max(1024, max((len(pat) - 1 for _, _, pat in variants), default=0))
     prev = b""
     offset = 0
     while True:
@@ -110,18 +181,27 @@ def scan_fh(fh):
                 i = data.find(pat, start)
                 if i < 0:
                     break
-                hits[n][enc] += 1
-                if len(hits[n]["snippets"]) < max_hits:
-                    a = max(0, i - context)
-                    b = min(len(data), i + len(pat) + context)
-                    snip = data[a:b]
-                    txt = "".join(chr(c) if 32 <= c < 127 else "." for c in snip)
-                    hits[n]["snippets"].append({"off": base + i, "enc": enc, "text": txt})
+                absolute = base + i
+                # A hit wholly inside the carry was already counted. A hit
+                # that starts in carry but ends in the new chunk is new.
+                if prev and absolute + len(pat) <= offset:
+                    start = i + 1
+                    continue
+                counts[n][enc] += 1
+                a = max(0, i - context)
+                b = min(len(data), i + len(pat) + context)
+                snip = data[a:b]
+                txt = "".join(chr(c) if 32 <= c < 127 else "." for c in snip)
+                pages[n].add({"off": absolute, "enc": enc, "text": txt})
                 start = i + 1
         prev = data[-overlap:]
         offset += len(buf)
         if not buf:
             break
+    hits = {}
+    for n in need_list:
+        page = pages[n].finish()
+        hits[n] = {**counts[n], "snippets": pages[n].page, **page}
     return hits, offset
 
 if path:

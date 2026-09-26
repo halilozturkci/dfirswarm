@@ -3,8 +3,71 @@ import json, sys, os, re
 from collections import defaultdict
 from pathlib import Path
 
-sys.path.insert(0, str(Path(sys.argv[0]).resolve().parents[1]))
-from _output import LosslessPage
+# Lossless paging (the same in every library tool that pages): the page an
+# agent reads stays small, and when there are more rows the whole result is
+# written as JSON Lines under work/<agent>/tool-output and named.
+import hashlib
+import json
+import os
+import re
+import tempfile
+from pathlib import Path
+
+
+class LosslessPage:
+    def __init__(self, tool: str, key: object, limit: int):
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise ValueError("limit must be a positive integer")
+        self.tool = re.sub(r"[^A-Za-z0-9_.-]", "_", tool)
+        self.limit = limit
+        self.page: list[object] = []
+        self.total = 0
+        self._out = None
+        self._tmp: Path | None = None
+        digest = hashlib.sha256(
+            json.dumps(key, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()[:16]
+        agent = re.sub(
+            r"[^A-Za-z0-9_.-]", "_", os.environ.get("AGENT_ID") or "tool"
+        )
+        self.path = Path("work") / agent / "tool-output" / f"{self.tool}-{digest}.jsonl"
+
+    def _write(self, row: object) -> None:
+        assert self._out is not None
+        self._out.write(json.dumps(row, ensure_ascii=False, default=str))
+        self._out.write("\n")
+
+    def add(self, row: object) -> None:
+        self.total += 1
+        if len(self.page) < self.limit:
+            self.page.append(row)
+            return
+        if self._out is None:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            fd, name = tempfile.mkstemp(
+                dir=self.path.parent, prefix=f".{self.path.name}-"
+            )
+            self._tmp = Path(name)
+            self._out = os.fdopen(fd, "w", encoding="utf-8")
+            for kept in self.page:
+                self._write(kept)
+        self._write(row)
+
+    def finish(self) -> dict:
+        result = {
+            "matched": self.total,
+            "returned": len(self.page),
+            "truncated": self.total > len(self.page),
+        }
+        if self._out is not None:
+            self._out.flush()
+            os.fsync(self._out.fileno())
+            self._out.close()
+            assert self._tmp is not None
+            os.replace(self._tmp, self.path)
+            result["all_results"] = str(self.path)
+            result["all_results_format"] = "JSON Lines, one complete result per line"
+        return result
 
 args = json.load(sys.stdin)
 path = args.get("path") or "inputs/[UNALLOCATED]"
@@ -33,7 +96,6 @@ context = int(args.get("context") or 96)
 start = int(args.get("start") or 0)
 length = args.get("length")
 chunk = int(args.get("chunk") or 8 * 1024 * 1024)
-overlap = max(256, max((len(nb) - 1 for _, _, nb in needles_b), default=0))
 skip_zeros = bool(args.get("skip_zeros", False))
 unique_only = bool(args.get("unique_only", True))
 if skip_zeros:
@@ -49,6 +111,9 @@ for n in needles:
     if b:
         needles_b.append(("ascii", n, b))
         needles_b.append(("utf16", n, n.encode("utf-16le")))
+# A read carries the longest needle's length less one, so a hit across a
+# boundary is seen once.
+overlap = max(256, max((len(nb) - 1 for _, _, nb in needles_b), default=0))
 
 if os.path.isdir(path):
     print(json.dumps({"error": "a directory, not a file: scan one file at a time", "path": path}))

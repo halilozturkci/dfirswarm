@@ -2,6 +2,72 @@
 import json, sys, struct, datetime
 from pathlib import Path
 
+# Lossless paging (the same in every library tool that pages): the page an
+# agent reads stays small, and when there are more rows the whole result is
+# written as JSON Lines under work/<agent>/tool-output and named.
+import hashlib
+import json
+import os
+import re
+import tempfile
+from pathlib import Path
+
+
+class LosslessPage:
+    def __init__(self, tool: str, key: object, limit: int):
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise ValueError("limit must be a positive integer")
+        self.tool = re.sub(r"[^A-Za-z0-9_.-]", "_", tool)
+        self.limit = limit
+        self.page: list[object] = []
+        self.total = 0
+        self._out = None
+        self._tmp: Path | None = None
+        digest = hashlib.sha256(
+            json.dumps(key, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()[:16]
+        agent = re.sub(
+            r"[^A-Za-z0-9_.-]", "_", os.environ.get("AGENT_ID") or "tool"
+        )
+        self.path = Path("work") / agent / "tool-output" / f"{self.tool}-{digest}.jsonl"
+
+    def _write(self, row: object) -> None:
+        assert self._out is not None
+        self._out.write(json.dumps(row, ensure_ascii=False, default=str))
+        self._out.write("\n")
+
+    def add(self, row: object) -> None:
+        self.total += 1
+        if len(self.page) < self.limit:
+            self.page.append(row)
+            return
+        if self._out is None:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            fd, name = tempfile.mkstemp(
+                dir=self.path.parent, prefix=f".{self.path.name}-"
+            )
+            self._tmp = Path(name)
+            self._out = os.fdopen(fd, "w", encoding="utf-8")
+            for kept in self.page:
+                self._write(kept)
+        self._write(row)
+
+    def finish(self) -> dict:
+        result = {
+            "matched": self.total,
+            "returned": len(self.page),
+            "truncated": self.total > len(self.page),
+        }
+        if self._out is not None:
+            self._out.flush()
+            os.fsync(self._out.fileno())
+            self._out.close()
+            assert self._tmp is not None
+            os.replace(self._tmp, self.path)
+            result["all_results"] = str(self.path)
+            result["all_results_format"] = "JSON Lines, one complete result per line"
+        return result
+
 def ft(v):
     if not v or v in (0, 0xFFFFFFFFFFFFFFFF):
         return None
@@ -11,11 +77,11 @@ def ft(v):
     except Exception:
         return None
 
-def utf16_strings(buf, minlen=6, limit=40):
+def utf16_strings(buf, minlen=6):
     out = []
     i = 0
     L = len(buf)
-    while i + 2 < L and len(out) < limit:
+    while i + 2 < L:
         if buf[i + 1] == 0 and 32 <= buf[i] < 127:
             chars = []
             j = i
@@ -62,7 +128,7 @@ def parse_scca(dec, off, blob_sha=None):
             if iso:
                 times.append(iso)
     runc = struct.unpack_from("<I", dec, 0xD0)[0] if len(dec) >= 0xD4 else None
-    strs = utf16_strings(dec, 8, 30)
+    strs = utf16_strings(dec, 8)
     paths = [s for s in strs if "\\" in s]
     return {
         "offset": off,
@@ -73,8 +139,8 @@ def parse_scca(dec, off, blob_sha=None):
         "run_count": runc,
         "last_runs": times,
         "dec_len": len(dec),
-        "paths": paths[:20],
-        "strings_sample": strs[:15],
+        "paths": paths,
+        "strings": strs,
     }
 
 def main():
@@ -92,7 +158,11 @@ def main():
     min_uncomp = int(args.get("min_uncomp") or 1024)
     max_uncomp = int(args.get("max_uncomp") or 2_000_000)
     needle = (args.get("name_filter") or "").upper()
-    hits = []
+    hits = LosslessPage(
+        "mam_scan",
+        [path, start, length, parse, min_uncomp, max_uncomp, needle],
+        max_hits,
+    )
     sig = b"MAM\x04"
     overlap = 8
     with open(path, "rb") as f:
@@ -139,17 +209,15 @@ def main():
                 if needle:
                     if needle not in (rec.get("name") or "").upper() and needle not in " ".join(rec.get("paths") or []).upper():
                         continue
-                hits.append(rec)
-                if len(hits) >= max_hits:
-                    json.dump({"count": len(hits), "hits": hits, "truncated": True, "scanned_to": pos + len(data)}, sys.stdout)
-                    return
+                hits.add(rec)
             pos += len(data)
             if remaining is not None:
                 remaining -= len(data)
             carry = buf[-(overlap - 1):] if len(buf) >= overlap else buf
             if not data or len(data) < toread:
                 break
-    json.dump({"count": len(hits), "hits": hits, "truncated": False, "scanned_to": pos}, sys.stdout)
+    page = hits.finish()
+    json.dump({"count": page["matched"], "hits": hits.page, "scanned_to": pos, **page}, sys.stdout)
 
 if __name__ == "__main__":
     main()
