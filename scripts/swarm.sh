@@ -2603,7 +2603,9 @@ if caps:
                 "A worker sees what you see, read-only — inputs/, store/, catalog/, tools/, all of work/ and tool-output/ — "
                 "and writes only its own $OUT, sealed into store/jobs/<id>/out/. It has the image's programs "
                 "(/etc/dfirswarm/tools.md) and nothing installed in an agent's own VM; with network=allowlist it reaches "
-                f"{hosts}. An exit status of 0 is not the work's success: read what the job wrote, and its stderr.\n\n"
+                f"{hosts}. An exit status of 0 is not the work's success: read what the job wrote, and its stderr. "
+                "A file you made in your own VM is not an object of the run until it is sealed: `job_run import=work/<you>/<file>` "
+                "copies it into the store as it is now, and a finding then cites it as job:<id>/<file> in its refs.\n\n"
             )
         except Exception:
             pass

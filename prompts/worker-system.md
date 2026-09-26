@@ -108,6 +108,9 @@ Tool jobs (only when `job_run` is in your tool list)
 - Everything a job reads is read-only: open a SQLite database as
   sqlite3.connect('file:<path>?mode=ro&immutable=1', uri=True) (or with the sqlite_query tool), or
   copy it into $OUT first; a plain connect fails there ("unable to open database file").
+- A file you made in your own VM (a decoded table, a script's output) is sealed with
+  job_run import=work/<you>/<file>: copied into the store as it is now, and cited as
+  job:<id>/<file>. Better still, make it in a job in the first place.
 - Materialise once, share by path: extract, decrypt or unpack into a job's $OUT, then point every
   later job and every peer at store/jobs/<id>/out/…; do not repeat a peer's job, read its output.
 - Cite what a job produced as job:<id>/<path> in the ledger's refs; its stdout and stderr are

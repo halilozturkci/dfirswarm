@@ -77,6 +77,13 @@ test("a job is the calling seat's; a command naming its own scratch gets it read
   assert.equal(seen.stdout.text, "a peer's note\n", "a peer's scratch is readable to a job, as it is to the agent");
   const extracted = specs[1].mounts.find((m) => m.guest === join(S, "work", "extracted"));
   assert.ok(extracted?.readonly && extracted?.noexec, "the extracted corner, read-only and no-exec");
+  // An import through the route: the agent's own file, sealed as it is now.
+  const imp = await call("a1", "jobSubmit", { import: "work/a1/notes.txt" });
+  assert.equal(imp.ok, true, JSON.stringify(imp));
+  assert.equal(imp.job.kind, "import");
+  const impDone = await done(call, "a1", imp.job.job);
+  assert.equal(impDone.job.status, "ok");
+  assert.equal(impDone.job.outputs.list[0].path, "notes.txt");
   const long = await call("a1", "jobSubmit", { command: "sleep 2" });
   const refused = await call("a2", "jobStatus", { job_id: long.job.job, cancel: true });
   assert.equal(refused.ok, false);

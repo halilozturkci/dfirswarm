@@ -54,7 +54,7 @@ test("a finding without refs is taken with a note; recorded again with refs, it 
   assert.ok(bare.ok);
   assert.match((bare as { note?: string }).note ?? "", /no object of the run cited: add refs/);
   const scratch = await recordEntry(a0, { kind: "finding", value: "The runlist has 65 extents", source: "work/a0/vdi_runlist.tsv (SHA-256 44a0…)", evidence: "decoded from the $LogFile" });
-  assert.match((scratch as { note?: string }).note ?? "", /work\/a0\/vdi_runlist\.tsv is a file in an agent's own work\/.*run the work that made it as a job \(job_run\)/, "a finding resting on a work/ file is told so, by name");
+  assert.match((scratch as { note?: string }).note ?? "", /work\/a0\/vdi_runlist\.tsv is a file in an agent's own work\/.*seal it with job_run import=work\/a0\/vdi_runlist\.tsv/, "a finding resting on a work/ file is told so, by name");
   const withRefs = await recordEntry(a1, { kind: "finding", value: "The key is 1234", source: "the job's report", evidence: "cat", refs: ["job:j000001/report/out.txt"] });
   assert.ok(withRefs.ok);
   const fix = (withRefs as { entry: LedgerEntry; merged: boolean }).entry;

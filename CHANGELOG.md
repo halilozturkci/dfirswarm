@@ -34,6 +34,10 @@ All notable changes to this project. The format follows
   or more is told once (three times per agent at most) that a job would
   have sealed its output (`job_hint`); a finding without refs that cites a
   file in an agent's own `work/` is told so by the file's name.
+- `job_run import=work/<id>/<file>` seals a file or directory an agent made
+  in its own VM: a job copies it into the store as it is now (each file
+  hashed before and after the copy up to 2 GiB; links left out, named) and
+  says it was copied live; one that changed while it was copied fails.
 
 ### Added: tool jobs in worker VMs, a sealed store, a catalogue that grows
 

@@ -2256,12 +2256,13 @@ export default function (pi: ExtensionAPI) {
       "Run work in a throwaway worker VM of this run's image: evidence parsing, anything slow or heavy, and anything whose output you will cite or share. Quick looks stay in your own shell. " +
       "The worker sees what you see, read-only: inputs/, store/ (earlier jobs' outputs), catalog/, tools/, tool-output/ and all of work/, yours and your peers' (SQLite: open with ?mode=ro&immutable=1 or copy into $OUT). It has the image's programs, nothing installed in an agent's VM, no network unless network=allowlist, and writes only to $OUT. " +
       "What it writes there is sealed into store/jobs/<id>/out/ (read-only, hashed) and outlives the VM: any job or agent reads it there, and you cite it as job:<id>/<path>. " +
-      "Give command (bash, run from the run's directory; $OUT is also the OUT environment variable, for a script in another language or a quoted heredoc) or tool with args (a pack or forged tool; write {OUT}/<name> where it takes an output path). " +
+      "Give command (bash, run from the run's directory; $OUT is also the OUT environment variable, for a script in another language or a quoted heredoc) or tool with args (a pack or forged tool; write {OUT}/<name> where it takes an output path), or import: a file or directory you made under work/ or tool-output/, sealed as it is now (copied live, hashed before and after; cite it as job:<id>/<name>). " +
       "A short job answers here; a longer one returns its id, and a post tagged result wakes your wait when it is done: do not poll job_status. A failed or timed-out job keeps what it wrote. " +
       "stdout comes back a page at a time; all of it is store/jobs/<id>/stdout.log.",
     parameters: Type.Object({
       command: Type.Optional(Type.String({ description: "Bash, run from the run's directory; $OUT is the job's own directory" })),
       tool: Type.Optional(Type.String({ description: "A pack or forged tool's name, instead of a command" })),
+      import: Type.Optional(Type.String({ description: "A file or directory under work/ or tool-output/ to seal into the store as it is now, instead of a command" })),
       args: Type.Optional(Type.Object({}, { additionalProperties: true, description: "The tool's arguments, as its manifest says" })),
       inputs: Type.Optional(Type.Array(Type.String(), { description: "What it reads, for the record: input:<path>, job:<id>, or all (default)" })),
       timeout_seconds: Type.Optional(Type.Integer({ description: "Stop it after this long (default 900, at most 14400)" })),
@@ -2270,14 +2271,15 @@ export default function (pi: ExtensionAPI) {
     }),
     async execute(_id, params, signal, _onUpdate, toolCtx: ToolCtx) {
       const started = Date.now();
-      if (Boolean(params.command) === Boolean(params.tool)) {
-        const refused = { ok: false as const, reason: "give command or tool (with its args), one of them" };
+      if ([params.command, params.tool, params.import].filter(Boolean).length !== 1) {
+        const refused = { ok: false as const, reason: "give command, tool (with its args) or import, one of them" };
         await logEvent(toolCtx.cwd, agentId, "job_run", params, refused, Date.now() - started);
         return { content: [{ type: "text" as const, text: refused.reason }], details: refused, isError: true };
       }
       const spec: Record<string, unknown> = {
         ...(params.command ? { command: params.command } : {}),
         ...(params.tool ? { tool: params.tool, args: params.args ?? {} } : {}),
+        ...(params.import ? { import: params.import } : {}),
         ...(params.inputs ? { inputs: params.inputs } : {}),
         ...(params.timeout_seconds ? { timeout_seconds: params.timeout_seconds } : {}),
         ...(params.network ? { network: params.network } : {}),

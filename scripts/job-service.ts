@@ -24,12 +24,64 @@
  * and is said to be unknown.
  */
 import { existsSync, statfsSync } from "node:fs";
-import { chmod, copyFile, mkdir, open, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, lstat, mkdir, open, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { Journal, maybeCrash, publishGeneration, readManifest, resealMoved, sealTree, sha256File, sha256Hex, storePaths, type JournalLine } from "./evidence-store.ts";
 import type { Mount, WorkerSpec } from "./vm.ts";
 
-export type JobKind = "tool" | "command" | "recipe" | "detect";
+export type JobKind = "tool" | "command" | "recipe" | "detect" | "import";
+
+/** An import hashes its source before and after the copy up to this size; above it, size and mtime only. */
+export const IMPORT_HASH_BOUND = 2 * 1024 * 1024 * 1024;
+
+/**
+ * What an import runs in its worker: each regular file under the source
+ * copied into $OUT (links and special files named and left out), hashed
+ * before and after the copy (up to the bound) and compared with the copy.
+ * The source was live, and its producer was not stopped: the record says
+ * so, and a file that changed while it was copied fails the import (exit 3).
+ */
+const IMPORT_SCRIPT = `import hashlib, json, os, shutil, stat, sys
+S, rel, bound = sys.argv[1], sys.argv[2], int(sys.argv[3])
+out = os.environ["OUT"]
+src = os.path.join(S, rel)
+def sha(p):
+    h = hashlib.sha256()
+    with open(p, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+rows, changed = [], []
+def one(path, name):
+    a = os.lstat(path)
+    if not stat.S_ISREG(a.st_mode):
+        rows.append({"path": name, "left_out": "not a regular file"})
+        return
+    before = sha(path) if a.st_size <= bound else None
+    dst = os.path.join(out, name)
+    os.makedirs(os.path.dirname(dst) or out, exist_ok=True)
+    shutil.copyfile(path, dst, follow_symlinks=False)
+    copied = sha(dst)
+    b = os.lstat(path)
+    after = sha(path) if b.st_size <= bound else None
+    still = (a.st_size, a.st_mtime_ns) == (b.st_size, b.st_mtime_ns) and (before is None or before == after == copied)
+    rows.append({"path": name, "bytes": os.path.getsize(dst), "sha256": copied, "hashed_before_and_after": before is not None, "unchanged_while_copied": still})
+    if not still:
+        changed.append(name)
+top = os.path.basename(rel.rstrip("/"))
+if os.path.isdir(src) and not os.path.islink(src):
+    for root, dirs, files in os.walk(src, followlinks=False):
+        for d in [d for d in dirs if os.path.islink(os.path.join(root, d))]:
+            rows.append({"path": os.path.join(top, os.path.relpath(os.path.join(root, d), src)), "left_out": "a link"})
+        dirs[:] = sorted(d for d in dirs if not os.path.islink(os.path.join(root, d)))
+        for f in sorted(files):
+            p = os.path.join(root, f)
+            one(p, os.path.join(top, os.path.relpath(p, src)))
+else:
+    one(src, top)
+print(json.dumps({"import": rel, "copied_live": True, "producer_fenced": False, "files": rows, "changed_while_copied": changed}, indent=1))
+sys.exit(3 if changed else 0)
+`;
 
 export type Target = { paths: string[]; name?: string; ref?: string };
 
@@ -47,6 +99,8 @@ export type JobSpec = {
   inputs: string[];
   /** The agent's own scratch, read-only, when the job needs a file from it. */
   scratch?: boolean;
+  /** import: the file or directory under work/ or tool-output/ to copy into the store as it is now. */
+  source?: string;
   timeout_seconds: number;
   network: "off" | "allowlist";
   note?: string;
@@ -458,7 +512,7 @@ export class JobService {
 
   private async normalise(raw: Partial<JobSpec>): Promise<JobSpec | { reason: string }> {
     const kind = raw.kind;
-    if (kind !== "tool" && kind !== "command" && kind !== "recipe" && kind !== "detect") return { reason: "a job is a tool, a command, a recipe or a detect pass" };
+    if (kind !== "tool" && kind !== "command" && kind !== "recipe" && kind !== "detect" && kind !== "import") return { reason: "a job is a tool, a command, a recipe, a detect pass or an import" };
     const timeout = Math.min(Math.max(Number(raw.timeout_seconds ?? 900) || 900, 10), TIMEOUT_MAX_SECONDS);
     const network = raw.network === "allowlist" ? "allowlist" : "off";
     const inputs = Array.isArray(raw.inputs) ? raw.inputs.map(String).slice(0, 256) : ["all"];
@@ -474,6 +528,17 @@ export class JobService {
       if (!command.trim()) return { reason: "a command job needs its command" };
       if (Buffer.byteLength(command) > 64 * 1024) return { reason: "a command is at most 64 KB; put a longer script in your scratch and run it from there" };
       return { ...base, command };
+    }
+    if (kind === "import") {
+      // A file an agent made in its VM, sealed as it is now: work/ or
+      // tool-output/ only, named from the run's directory, never out of it.
+      const source = String(raw.source ?? "").trim().replace(/^\.\//, "").replace(/\/+$/, "");
+      if (!/^(work|tool-output)\/./.test(source) || source.split("/").includes("..") || source.includes("\0")) return { reason: "an import names a file or directory under work/ or tool-output/, from the run's directory" };
+      const abs = join(this.S, source);
+      const st = await lstat(abs).catch(() => null);
+      if (!st) return { reason: `${source} does not exist` };
+      if (!st.isFile() && !st.isDirectory()) return { reason: `${source} is not a regular file or a directory (a link is not followed)` };
+      return { ...base, kind: "import", source, inputs: [source], network: "off" };
     }
     if (kind === "recipe") {
       const r = raw.recipe ? await this.recipe(String(raw.recipe)) : null;
@@ -594,6 +659,10 @@ export class JobService {
       await writeFile(join(ctl, "command.sh"), `${job.spec.command ?? ""}\n`);
       return { lines: [...head, ...run("bash /job/command.sh")] };
     }
+    if (job.spec.kind === "import") {
+      await writeFile(join(ctl, "import.py"), IMPORT_SCRIPT);
+      return { lines: [...head, ...run(`python3 /job/import.py ${q(this.S)} ${q(job.spec.source ?? "")} ${IMPORT_HASH_BOUND}`)] };
+    }
     if (job.spec.kind === "recipe") {
       const r = await this.recipe(job.spec.recipe ?? "");
       if (!r) throw new Error(`recipe ${job.spec.recipe} is no longer what it was when accepted`);
@@ -698,7 +767,18 @@ export class JobService {
     const cancelled = job.cancel_requested ? `cancelled by ${job.cancel_requested}` : undefined;
     const stopped = (job as JobRecord & { stopped?: string }).stopped;
     const status: NonNullable<JobRecord["status"]> = cancelled ? "cancelled" : stopped ? "stopped" : exit === 124 || exit === 137 ? "timed_out" : exit === 0 ? "ok" : "failed";
-    const reason = cancelled ?? stopped ?? (exit === 124 || exit === 137 ? `stopped at its limit of ${job.spec.timeout_seconds}s` : exit === null ? result.error ?? "the worker did not report an exit status" : exit !== 0 ? `exit ${exit}` : undefined);
+    const reason =
+      cancelled ??
+      stopped ??
+      (exit === 124 || exit === 137
+        ? `stopped at its limit of ${job.spec.timeout_seconds}s`
+        : exit === null
+          ? result.error ?? "the worker did not report an exit status"
+          : job.spec.kind === "import" && exit === 3
+            ? "the source changed while it was copied (stdout.log names each file): import it again once it is still"
+            : exit !== 0
+              ? `exit ${exit}`
+              : undefined);
     await this.journal.append({ type: "job_finished", job: job.id, attempt: job.attempt, exit, status, ...(reason ? { reason } : {}), duration_ms: Date.now() - started, ...(result.digest ? { image_digest: result.digest } : {}), ...(result.boot_retry ? { boot_retry: result.boot_retry } : {}) });
     Object.assign(job, { state: "finished", exit, status, reason, finished_at: new Date().toISOString(), ...(result.digest ? { image_digest: result.digest } : {}) });
     await this.workerHealth(job, exit === null && !cancelled && !stopped ? (result.error ?? "the worker did not report an exit status") : null);
@@ -1062,7 +1142,7 @@ export class JobService {
 
 /** One post, for the agent that asked. */
 export function describe(job: JobRecord): string {
-  const what = job.spec.kind === "tool" ? `tool ${job.spec.tool}` : job.spec.kind === "command" ? "command" : job.spec.kind === "recipe" ? `recipe ${job.spec.recipe}` : "detect pass";
+  const what = job.spec.kind === "tool" ? `tool ${job.spec.tool}` : job.spec.kind === "command" ? "command" : job.spec.kind === "recipe" ? `recipe ${job.spec.recipe}` : job.spec.kind === "import" ? `import of ${job.spec.source}, copied live from where it was` : "detect pass";
   if (job.state === "failed") return `Job ${job.id} (${what}) was not run: ${job.reason}.`;
   if (job.state === "cancelled") return `Job ${job.id} (${what}) was cancelled${job.reason ? `: ${job.reason}` : ""}.`;
   const o = job.outputs;

@@ -6793,7 +6793,7 @@ export async function recordEntry(ctx: SwarmContext, input: LedgerInput): Promis
   const note =
     kind === "finding" && !refs.length
       ? workFile
-        ? `no object of the run cited: ${workFile} is a file in an agent's own work/, which a reader cannot check against the run's record; run the work that made it as a job (job_run) and cite its output as job:<id>/<path> in refs, then record this again with its refs`
+        ? `no object of the run cited: ${workFile} is a file in an agent's own work/, which a reader cannot check against the run's record; seal it with job_run import=${workFile} (or run the work that made it as a job) and cite it as job:<id>/<path> in refs, then record this again with its refs`
         : "no object of the run cited: add refs (job:<id>/<path>, input:<path>, member:<gen>#<n>, sha256:<hex>, or unresolved:<why>) so a reader can check it; to add them to this entry, record it again with its refs"
       : undefined;
   let supersedes: number | undefined;

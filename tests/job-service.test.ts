@@ -259,6 +259,41 @@ test("three jobs in a row that ran in no worker are told to every agent once, an
   await svc.stop("test over");
 });
 
+test("an import seals an agent's own file or directory as it is now, links left out, and refuses what is not under work/ or tool-output/", async () => {
+  const S = sandbox();
+  const { svc } = service(S);
+  await svc.start();
+  mkdirSync(join(S, "work", "a1", "vdi", "deep"), { recursive: true });
+  writeFileSync(join(S, "work", "a1", "runlist.tsv"), "run\tlcn\n0\t9884700\n");
+  writeFileSync(join(S, "work", "a1", "vdi", "header.bin"), "VDI");
+  writeFileSync(join(S, "work", "a1", "vdi", "deep", "map.json"), "{}");
+  spawnSync("ln", ["-s", "/etc/passwd", join(S, "work", "a1", "vdi", "link")]);
+  const one = await svc.submit("a1", { kind: "import", source: "work/a1/runlist.tsv" });
+  assert.ok(one.ok, !one.ok ? one.reason : "");
+  const j1 = await until(svc, one.job.id);
+  assert.equal(j1.status, "ok", j1.reason);
+  assert.equal(readFileSync(join(storePaths(S).jobs, j1.id, "out", "runlist.tsv"), "utf8"), "run\tlcn\n0\t9884700\n");
+  const rec = JSON.parse(readFileSync(join(storePaths(S).jobs, j1.id, "stdout.log"), "utf8"));
+  assert.equal(rec.copied_live, true);
+  assert.equal(rec.producer_fenced, false, "the record says the source was live");
+  assert.equal(rec.files[0].unchanged_while_copied, true);
+  assert.equal(rec.files[0].hashed_before_and_after, true);
+  assert.equal(rec.files[0].sha256, createHash("sha256").update("run\tlcn\n0\t9884700\n").digest("hex"));
+  const dir = await svc.submit("a1", { kind: "import", source: "./work/a1/vdi/" });
+  assert.ok(dir.ok);
+  const j2 = await until(svc, dir.job.id);
+  assert.equal(j2.status, "ok", j2.reason);
+  const rec2 = JSON.parse(readFileSync(join(storePaths(S).jobs, j2.id, "stdout.log"), "utf8"));
+  assert.deepEqual(rec2.files.map((f: { path: string }) => f.path).sort(), ["vdi/deep/map.json", "vdi/header.bin", "vdi/link"]);
+  assert.equal(rec2.files.find((f: { path: string }) => f.path === "vdi/link").left_out, "not a regular file", "a link is named and left out, never followed");
+  assert.ok(existsSync(join(storePaths(S).jobs, j2.id, "out", "vdi", "deep", "map.json")));
+  for (const bad of ["inputs/case.zip", "work/../inputs.json", "/etc/passwd", "work/a1/nothing.txt", "store/jobs"]) {
+    const r = await svc.submit("a1", { kind: "import", source: bad });
+    assert.equal(r.ok, false, bad);
+  }
+  await svc.stop("test over");
+});
+
 test("a recipe job becomes a catalogue generation and revision; the same recipe over the same object is the same job, on the record, and both askers are told", async () => {
   const S = sandbox();
   spawnSync("python3", ["-c", "import tarfile,io,sys\nwith tarfile.open(sys.argv[1],'w') as t:\n  i=tarfile.TarInfo('private/sms.db'); d=b'SQLite format 3\\0'+b'x'*1000; i.size=len(d); t.addfile(i,io.BytesIO(d))", join(S, "inputs", "phone.tar")]);

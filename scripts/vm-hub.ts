@@ -639,7 +639,8 @@ export function boardTable(hub: {
       if (!svc) return { ok: false, reason: NO_JOBS };
       const raw = isObject(a[1]) ? (a[1] as Record<string, unknown>) : {};
       const spec: Partial<JobSpec> = {
-        kind: typeof raw.tool === "string" && raw.tool ? "tool" : "command",
+        kind: typeof raw.import === "string" && raw.import ? "import" : typeof raw.tool === "string" && raw.tool ? "tool" : "command",
+        ...(typeof raw.import === "string" ? { source: raw.import } : {}),
         ...(typeof raw.tool === "string" ? { tool: raw.tool } : {}),
         ...(isObject(raw.args) ? { args: raw.args as Record<string, unknown> } : {}),
         ...(typeof raw.command === "string" ? { command: raw.command } : {}),
