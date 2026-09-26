@@ -2230,13 +2230,15 @@ export class Hub {
       // takes it (SWARM_CUSTODY_TIMEOUT), with the same five minutes past it
       // before the process is ended.
       const timeoutSec = this.cfg.custodyTimeoutSec ?? custodyTimeoutSec();
-      const c = await new Promise<{ ok: boolean; out: string }>((done) => {
+      // Exit 4 is custody done, with a check that did not pass: a verdict, not a failure to take one.
+      const c = await new Promise<{ ok: boolean; adverse: boolean; out: string }>((done) => {
         execFile(process.execPath, ["--experimental-strip-types", "--no-warnings", custody, this.cfg.sandbox, "--run", this.cfg.run as string, "--timeout", String(timeoutSec)], { timeout: (timeoutSec + 300) * 1000, maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) => {
-          done({ ok: !err, out: `${String(stdout).trim()} ${String(stderr).trim()}`.trim() });
+          const code = (err as (Error & { code?: unknown }) | null)?.code;
+          done({ ok: !err || code === 4, adverse: code === 4, out: `${String(stdout).trim()} ${String(stderr).trim()}`.trim() });
         });
       });
-      this.log(`custody: ${c.ok ? "ok" : "failed"} ${c.out}`);
-      await this.event("custody", { via: "hub" }, { ok: c.ok, ...(c.ok ? {} : { error: c.out }) });
+      this.log(`custody: ${c.ok ? (c.adverse ? "done, with checks that did not pass" : "ok") : "failed"} ${c.out}`);
+      await this.event("custody", { via: "hub" }, { ok: c.ok, ...(c.adverse ? { adverse: true } : {}), ...(c.ok ? {} : { error: c.out }) });
       this.copySpill();
     }
     this.finishDone = true;

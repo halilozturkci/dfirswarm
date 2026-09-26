@@ -239,7 +239,7 @@ test("custody's look at the store: the chain and its anchor, every committed fil
     { seq: 9, kind: "finding", source: "x", evidence: "y" },
     { seq: 10, kind: "finding", source: "x", evidence: "y", refs: ["unresolved:checked later"], supersedes: 9 },
   ].map((e) => JSON.stringify(e)).join("\n") + "\n");
-  assert.deepEqual((await checkStore(S))!.findings, { total: 8, structured: 3, refs_invalid: [7], unresolved_only: [8, 10], path_only: [1, 4, 5, 6], without_refs: [2] }, "standing findings only (#9 is corrected by #10); refs resolved again; a path in prose counted apart; one that cites nothing named");
+  assert.deepEqual((await checkStore(S))!.findings, { total: 8, structured: 3, refs_invalid: [7], unresolved_only: [8, 10], path_only: [1, 4, 5, 6], without_refs: [2], on_failed_jobs: [], sensitive: [], hypotheses: 0, limitations: 0, contradictions: [] }, "standing findings only (#9 is corrected by #10); refs resolved again; a path in prose counted apart; one that cites nothing named; none on a failed job, none sensitive, no hypotheses, limitations or contradictions");
 });
 
 function createHashHex(text: string): string {

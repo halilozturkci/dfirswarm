@@ -796,7 +796,13 @@ export type StoreCheck = {
    * a path of the run's objects in the prose only, or nothing at all (an
    * audit gap). Each list holds seqs.
    */
-  findings: { total: number; structured: number; refs_invalid: number[]; unresolved_only: number[]; path_only: number[]; without_refs: number[] };
+  findings: { total: number; structured: number; refs_invalid: number[]; unresolved_only: number[]; path_only: number[]; without_refs: number[]; on_failed_jobs?: number[]; contradictions?: Array<{ from: number; to: number }>; sensitive?: number[]; hypotheses?: number; limitations?: number };
+  /** Each committed job's logs against the hashes its job_committed line sealed. */
+  logs?: { checked: number; mismatched: string[]; missing: string[] };
+  /** Why the ledger could not be read for the findings, when it could not (not the same as no ledger). */
+  ledger_unreadable?: string | null;
+  /** What each job was given and could reach, and whether what it read is known: the store records declared and accessible; observed is unknown unless a tool reports it. */
+  access?: { jobs: number; declared: number; observed_unknown: number };
   /** Notes an examiner added to the record after the run (evidence-store.ts note), and the times the job service told the agents that workers were not running. */
   notes: number;
   degraded: number;
@@ -805,6 +811,17 @@ export type StoreCheck = {
   /** The derived catalogue, from its journal lines: objects offered and skipped, answered, catalogued, left unanswered, and each limit it met. */
   derived: { offered: number; skipped: number; detected: number; applied: number; catalogued: number; partial: number; unanswered: number; deferred: number; bounded: string[] };
 };
+
+/** Every regular file under a directory, links and specials left out. */
+async function walkFiles(dir: string): Promise<string[]> {
+  const out: string[] = [];
+  for (const d of await readdir(dir, { withFileTypes: true }).catch(() => [])) {
+    const p = join(dir, d.name);
+    if (d.isDirectory()) out.push(...(await walkFiles(p)));
+    else if (d.isFile()) out.push(p);
+  }
+  return out;
+}
 
 /**
  * Custody's look at the store: the journal's chain and its anchor, every
@@ -873,20 +890,81 @@ export async function checkStore(sandbox: string, before = Infinity): Promise<St
       }
     } else if (l.type === "generation_committed") {
       try {
-        const g = JSON.parse(await readFile(join(P.gen, String(l.generation), "generation.json"), "utf8")) as { id?: string; recipe?: string; status?: string; job?: string };
-        if (g.id === l.generation && g.recipe === l.recipe && g.status === l.status && g.job === l.job) out.catalogue.generations_verified += 1;
-        else out.catalogue.generations_mismatched.push(String(l.generation));
+        const gdir = join(P.gen, String(l.generation));
+        const g = JSON.parse(await readFile(join(gdir, "generation.json"), "utf8")) as Record<string, unknown> & { id?: string; target?: Record<string, unknown> };
+        // Every field the journal line and the record both carry, not four of them.
+        const differs: string[] = [];
+        if (g.id !== l.generation) differs.push("id");
+        for (const k of ["job", "recipe", "recipe_sha256", "status", "experimental", "trigger", "parent_status"]) {
+          if (l[k] !== undefined && g[k] !== undefined && JSON.stringify(g[k]) !== JSON.stringify(l[k])) differs.push(k);
+        }
+        const lt = (l.target ?? {}) as Record<string, unknown>;
+        for (const k of ["ref", "name", "sha256", "paths"]) {
+          if (lt[k] !== undefined && g.target?.[k] !== undefined && JSON.stringify(g.target[k]) !== JSON.stringify(lt[k])) differs.push(`target.${k}`);
+        }
+        // Each file the generation publishes, against the sealed output of the job that made it.
+        if (Date.now() <= before && typeof l.job === "string") {
+          const sealed = await readManifest(join(P.jobs, l.job, "manifest.json"));
+          const byPath = new Map((sealed?.manifest.files ?? []).map((f) => [f.path, f.sha256]));
+          for (const f of await walkFiles(gdir)) {
+            const rel = relative(gdir, f);
+            if (rel === "generation.json") continue;
+            const want = byPath.get(rel);
+            if (want && (await sha256File(f)) !== want) differs.push(`${rel} differs from job ${l.job}'s sealed output`);
+          }
+        }
+        if (!differs.length) out.catalogue.generations_verified += 1;
+        else out.catalogue.generations_mismatched.push(`${l.generation} (${differs.join(", ")})`);
       } catch {
         out.catalogue.generations_mismatched.push(`${l.generation} (unreadable)`);
       }
     }
   }
+  // Each job's sealed logs, against the hashes its commit recorded.
+  out.logs = { checked: 0, mismatched: [], missing: [] };
+  for (const c of committed) {
+    if (Date.now() > before) break;
+    for (const [name, want] of Object.entries((c.logs ?? {}) as Record<string, string>)) {
+      const f = join(P.jobs, String(c.job), name);
+      try {
+        const got = await sha256File(f);
+        out.logs.checked += 1;
+        if (got !== want) out.logs.mismatched.push(`${c.job}/${name}`);
+      } catch {
+        out.logs.missing.push(`${c.job}/${name}`);
+      }
+    }
+  }
+  // What each job declared and could reach; what it read is not observed by the harness.
+  const started = checked.lines.filter((l) => l.type === "job_started");
+  out.access = { jobs: started.length, declared: started.filter((l) => Array.isArray(l.declared) && (l.declared as unknown[]).length > 0).length, observed_unknown: started.filter((l) => l.observed === "unknown" || l.observed === undefined).length };
+  let ledgerText: string | null = null;
   try {
-    const entries = (await readFile(join(S, "ledger", "entries.jsonl"), "utf8"))
-      .split("\n")
-      .filter((l) => l.trim())
-      .map((l) => JSON.parse(l) as { seq?: number; kind?: string; source?: string; evidence?: string; supersedes?: number; refs?: string[] });
+    ledgerText = await readFile(join(S, "ledger", "entries.jsonl"), "utf8");
+    out.ledger_unreadable = null;
+  } catch (err) {
+    // No ledger is not an unreadable one: said apart.
+    const code = (err as NodeJS.ErrnoException).code;
+    out.ledger_unreadable = code === "ENOENT" ? null : `the ledger is unreadable (${code ?? "error"})`;
+  }
+  if (ledgerText !== null) {
+    type E = { seq?: number; kind?: string; source?: string; evidence?: string; supersedes?: number; refs?: string[]; rel?: Array<{ to: number; kind: string }>; sensitive?: boolean };
+    const entries: E[] = [];
+    for (const line of ledgerText.split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        entries.push(JSON.parse(line) as E);
+      } catch {
+        out.ledger_unreadable = "a line of the ledger is not JSON (the ledger check names it)";
+      }
+    }
     const replaced = new Set(entries.map((e) => e.supersedes).filter((n): n is number => typeof n === "number"));
+    const logs = await committedLogHashes(S);
+    out.findings.on_failed_jobs = [];
+    out.findings.sensitive = entries.filter((e) => e.sensitive && !replaced.has(Number(e.seq))).map((e) => Number(e.seq));
+    out.findings.hypotheses = entries.filter((e) => e.kind === "hypothesis" && !replaced.has(Number(e.seq))).length;
+    out.findings.limitations = entries.filter((e) => e.kind === "limitation" && !replaced.has(Number(e.seq))).length;
+    out.findings.contradictions = entries.flatMap((e) => (replaced.has(Number(e.seq)) ? [] : (e.rel ?? []).filter((r) => r.kind === "contradicts" && !replaced.has(r.to)).map((r) => ({ from: Number(e.seq), to: r.to }))));
     for (const e of entries) {
       if (e.kind !== "finding" || replaced.has(Number(e.seq))) continue;
       out.findings.total += 1;
@@ -894,7 +972,14 @@ export async function checkStore(sandbox: string, before = Infinity): Promise<St
       if (e.refs?.length) {
         out.findings.structured += 1;
         let bad = false;
-        for (const r of e.refs) if (!(await resolveRef(S, r)).ok) bad = true;
+        let failed = false;
+        // Resolved against the store's bytes: a job log against its sealed hash, a blob against its name.
+        for (const r of e.refs) {
+          const got = await resolveRef(S, r, { verify: true, committedLogs: logs });
+          if (!got.ok) bad = true;
+          else if (got.status && got.status !== "ok") failed = true;
+        }
+        if (failed) out.findings.on_failed_jobs.push(seq);
         if (bad) out.findings.refs_invalid.push(seq);
         else if (e.refs.every((r) => r.startsWith("unresolved:"))) out.findings.unresolved_only.push(seq);
         continue;
@@ -906,8 +991,6 @@ export async function checkStore(sandbox: string, before = Infinity): Promise<St
       if (/\b(job|input|import|member|sha256):[^\s,;)]+/.test(cited) || /(^|[\s`'"(])(inputs\/\S+|store\/jobs\/j\d{6}\S*|catalog\/gen\/g\d{4}\S*)/.test(cited)) out.findings.path_only.push(seq);
       else out.findings.without_refs.push(seq);
     }
-  } catch {
-    // no ledger
   }
   for (const c of committed) {
     const rel = String((c.outputs as { path?: string } | undefined)?.path ?? "");
