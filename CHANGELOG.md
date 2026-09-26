@@ -6,6 +6,42 @@ All notable changes to this project. The format follows
 
 ## [Unreleased]
 
+### Changed: the ledger's version 3 and a custody that can be verified (Fable and Codex)
+
+- **Ledger.** Two kinds, `hypothesis` (with its status) and `limitation`
+  (with its reason), and typed fields for what the agents were writing in
+  prose: `answers`, `rel`, `sensitive`, `clock`, `precision`, `basis`,
+  `completion`, `attribution`, `locators`, `because`, all in the chained
+  core when present; older ledgers verify as before. A second author is an
+  attestation beside the entry (`ledger/attestations.jsonl`, chained) and
+  `entries.jsonl` is never rewritten; a correction is compared on
+  everything an entry says; a refused record keeps its whole arguments on
+  the trace; an entry resting on a failed job's output is told so.
+- **check-answers** takes the entries tagged for a section as well as those
+  it cites, counts a limitation as examination-limited and never a
+  hypothesis, refuses a finding resting on `unresolved:` refs only, checks
+  an absence's refs and completion, names a failed job, and answers nothing
+  from a broken ledger.
+- **Custody** says every check's status, seals each chain's length and
+  head, matches the operator's audit to the trace, compares acquisition
+  hashes (`start --inputs-hashes`), verifies job logs and catalogue
+  generations against their seals, records its cost and the models, can be
+  signed (`--custody-sign-key`), timestamped by an RFC 3161 authority
+  (`--custody-timestamp-url`) and hold a reference clock's offset
+  (`--time-reference`), and exits 4 on an adverse check. `custody-verify`
+  re-checks a run writing nothing and names the lines after the seal.
+- **Hand-over.** `package --redact` takes out what a sensitive entry says
+  and cites while every chain still walks (REDACTIONS.txt), `--with-outputs`
+  includes the jobs' outputs, and `verify` re-walks the package's chains
+  against the seal and refuses a path outside it. `export --redact` does the
+  same for a CSV. An examiner's sign-off is bound to the report's hash and
+  the rejections standing.
+- **Report and console.** The chain of custody is arranged for a court
+  (checks, seal, acquisition, audit, signature, timestamp, clock, models,
+  cost, the command to check it again, the operator's actions); the report
+  and the console show hypotheses, limitations, standing contradictions, the
+  questions answered and sensitive material.
+
 ### Changed: one agent's abandon is a vote while others work
 
 - `done` with `abandon: true` ends the run only when a second agent has

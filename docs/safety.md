@@ -294,6 +294,13 @@ back to a host run on its own.
   `<sandbox>.vm-snapshots/<id>.msb` and `<id>.logs`. The harness deletes none
   of it. [data-protection.md](data-protection.md) says what of it can be
   personal data, what leaves the machine, and what the operator decides.
+  - **Minimisation on the way out.** An entry an agent marks `sensitive` (a
+    credential, a key, personal data) and what it cites stay out of a package
+    made with `package --redact` and an export made with `export --redact`:
+    the chained records keep their chains by each redacted line's own hash,
+    and `REDACTIONS.txt` lists every change with the hashes before and after,
+    so the owner of the original can match it. What GDPR or similar laws ask
+    of a hand-over beyond that is the operator's to decide.
   - **Retention and legal hold.** Keep or destroy a run with its case, under
     the case's retention rules and any legal hold, and not before custody and
     the package are taken. `swarm.sh hold <id> [--reason TEXT]` keeps a run
