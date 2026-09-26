@@ -71,7 +71,8 @@ pass "the memory recipe is gated on the name, not every leftover of 64 KB or mor
 # did not recognise is kept, not dropped.
 mkdir -p "$TMP/mem/bin" "$TMP/mem/sandbox/inputs"
 dd if=/dev/zero of="$TMP/mem/sandbox/inputs/report.pdf" bs=1024 count=64 status=none
-dd if=/dev/zero of="$TMP/mem/sandbox/inputs/dump.mem" bs=1024 count=64 status=none
+# memory-windows asks about 64 MiB and up: a sparse file of that size.
+dd if=/dev/zero of="$TMP/mem/sandbox/inputs/dump.mem" bs=1024 count=0 seek=65536 status=none
 printf '%s\n' '#!/usr/bin/env bash' 'exit 1' > "$TMP/mem/bin/mmls"
 cp "$TMP/mem/bin/mmls" "$TMP/mem/bin/fsstat"
 cat > "$TMP/mem/bin/vol" <<'EOF'
@@ -111,7 +112,7 @@ pass "vol missing is noted only for files that look like memory"
 # The probe's own box (SWARM_CATALOG_MEMORY_PROBE_TIMEOUT, as before), not the
 # 900 s step, bounds windows.info.
 mkdir -p "$TMP/slow/bin" "$TMP/slow/sandbox/inputs"
-dd if=/dev/zero of="$TMP/slow/sandbox/inputs/dump.mem" bs=1024 count=64 status=none
+dd if=/dev/zero of="$TMP/slow/sandbox/inputs/dump.mem" bs=1024 count=0 seek=65536 status=none
 printf '%s\n' '#!/usr/bin/env bash' 'exit 1' > "$TMP/slow/bin/mmls"
 cp "$TMP/slow/bin/mmls" "$TMP/slow/bin/fsstat"
 printf '%s\n' '#!/usr/bin/env bash' 'sleep 30' 'echo NTBuildLab' > "$TMP/slow/bin/vol"

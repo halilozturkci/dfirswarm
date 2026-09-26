@@ -74,7 +74,10 @@ All notable changes to this project. The format follows
   store named in a request carries its manifest's sha256, so asking for one
   the derived catalogue already has dedups with it and the agent is told
   which generation to read (run s8c228e catalogued the decrypted vault twice,
-  13 s apart).
+  13 s apart). memory-windows asks about 64 MiB and up, not 64 KiB: no
+  Windows memory image is smaller, and of its 16 derived offers in the
+  recorded runs the 10 under 64 MiB were SQLite dumps and screenshots, none
+  memory (computer-forensics-base 1.2.21).
 - Four workers by default on a host with 64 GiB or more; `create_ms` in
   each job's record.
 - The console has a Jobs tab (with Files and the Ledger): the run's jobs

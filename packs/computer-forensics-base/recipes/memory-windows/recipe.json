@@ -4,7 +4,7 @@
   "description": "A Windows memory image's OS and capture time, process lists (pslist, psscan), command lines, network connections, injected code (malfind) and loaded DLLs (Volatility 3).",
   "object": "memory image",
   "order": 20,
-  "min_bytes": 65536,
+  "min_bytes": 67108864,
   "suffixes": [
     ".mem",
     ".dmp",
