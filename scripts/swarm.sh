@@ -456,6 +456,17 @@ Isolation
   --inputs-copy       Under --isolation microvm, copy --inputs into the run (read-only)
                       instead of mounting it in place: a second layer when the
                       examiner's account can write the evidence.
+  --inputs-hashes FILE  The acquisition hashes an imager recorded (md5sum, sha1sum or
+                      sha256sum lines, or BSD "SHA256 (name) = digest"): each is
+                      held to the digest the kickoff computes (refused on a
+                      mismatch), written into inputs.json, and compared again by
+                      custody. Without it, "unchanged" means since the kickoff.
+  --custody-sign-key FILE  Sign each custody verdict with this ssh key
+                      (ssh-keygen -Y, namespace dfirswarm-custody).
+  --custody-timestamp-url URL  Have each verdict's sha256 timestamped by this
+                      RFC 3161 authority (custody.json.tsr beside it).
+  --time-reference URL  Record this https server's clock offset from the host's
+                      at kickoff and at custody.
   --allow-oauth-in-vm Let a subscription (OAuth) provider into the VMs; refused
                       otherwise, since its token is the operator's whole account.
   --no-vm-snapshot    At stop, remove each VM without keeping its disk. By default
@@ -3188,7 +3199,7 @@ cmd_start() {
   # Where the agents live: one microVM each (the default), or host
   # processes (--isolation host, unisolated). isolation_given says the
   # operator named it, so a refusal can say how to choose the other.
-  local isolation="${SWARM_ISOLATION:-microvm}" isolation_given=$([[ -n "${SWARM_ISOLATION:-}" ]] && echo 1 || echo 0) vm_image="${SWARM_VM_IMAGE:-}" vm_image_named=$([[ -n "${SWARM_VM_IMAGE:-}" ]] && echo 1 || echo 0) vm_image_digest="" vm_cpus=2 vm_memory="" vm_disk=8192 vm_snapshot=1 vm_snapshot_dir="" allow_oauth_in_vm=0 inputs_copy=0 jobs=1 workers=2 workers_given=0 worker_cpus=2 worker_memory="" derived_catalog=1
+  local isolation="${SWARM_ISOLATION:-microvm}" isolation_given=$([[ -n "${SWARM_ISOLATION:-}" ]] && echo 1 || echo 0) vm_image="${SWARM_VM_IMAGE:-}" vm_image_named=$([[ -n "${SWARM_VM_IMAGE:-}" ]] && echo 1 || echo 0) vm_image_digest="" vm_cpus=2 vm_memory="" vm_disk=8192 vm_snapshot=1 vm_snapshot_dir="" allow_oauth_in_vm=0 inputs_copy=0 jobs=1 workers=2 workers_given=0 worker_cpus=2 worker_memory="" derived_catalog=1 inputs_hashes="" custody_sign_key="" custody_tsa="" time_reference=""
   local seal_herdr=1
   # Directories the panes may not read. Reads are open by design, so this is
   # narrow on purpose: material about the case the agents must derive rather
@@ -3326,9 +3337,28 @@ cmd_start() {
       --vm-snapshot-dir) vm_snapshot_dir="$2"; shift 2 ;;
       --allow-oauth-in-vm) allow_oauth_in_vm=1; shift ;;
       --inputs-copy) inputs_copy=1; shift ;;
+      --inputs-hashes) inputs_hashes="$2"; shift 2 ;;
+      --custody-sign-key) custody_sign_key="$2"; shift 2 ;;
+      --custody-timestamp-url) custody_tsa="$2"; shift 2 ;;
+      --time-reference) time_reference="$2"; shift 2 ;;
       -h|--help) usage_start; exit 0 ;;
       *) die_usage "start: unknown option $1" ;;
     esac
+  done
+  # Custody's set-up, refused before anything is written when it cannot be done.
+  if [[ -n "$inputs_hashes" ]]; then
+    [[ -f "$inputs_hashes" && -r "$inputs_hashes" ]] || { echo "BLOCKER: --inputs-hashes $inputs_hashes is not a readable file." >&2; exit 2; }
+    [[ -n "$inputs_dir" || -n "$inputs_image" ]] || { echo "BLOCKER: --inputs-hashes holds evidence to its acquisition hashes: give the evidence too (--inputs DIR or --inputs-image FILE)." >&2; exit 2; }
+    inputs_hashes="$(cd "$(dirname "$inputs_hashes")" && pwd -P)/$(basename "$inputs_hashes")"
+  fi
+  if [[ -n "$custody_sign_key" ]]; then
+    [[ -f "$custody_sign_key" && -r "$custody_sign_key" ]] || { echo "BLOCKER: --custody-sign-key $custody_sign_key is not a readable key file." >&2; exit 2; }
+    command -v ssh-keygen >/dev/null 2>&1 || { echo "BLOCKER: --custody-sign-key needs ssh-keygen on this host." >&2; exit 2; }
+    custody_sign_key="$(cd "$(dirname "$custody_sign_key")" && pwd -P)/$(basename "$custody_sign_key")"
+  fi
+  local seal_url
+  for seal_url in "$custody_tsa" "$time_reference"; do
+    [[ -z "$seal_url" || "$seal_url" =~ ^https?://[^[:space:]]+$ ]] || { echo "BLOCKER: $seal_url is not an http(s) URL (--custody-timestamp-url, --time-reference)." >&2; exit 2; }
   done
   require_absolute_agent_dir
   if [[ "$CHECK_ONLY" -eq 1 ]]; then
@@ -4285,7 +4315,18 @@ console.log(r.ok ? "" : r.reason);' "$_gp" "$_gk" 2>/dev/null || echo "could not
   # where no agent (and no catalog parser) reaches it: custody compares the
   # manifest against this, so a manifest rewritten inside the run is caught
   # rather than trusted.
-  write_custody_anchor "$sandbox" "$swarm_id" "$isolation"
+  # The imager's own numbers, when the operator gave them: held to what the
+  # kickoff computed before anything is anchored, and refused on a mismatch.
+  if [[ -n "$inputs_hashes" ]]; then
+    local acq_out
+    if ! acq_out="$(node --experimental-strip-types --no-warnings "$ROOT/scripts/custody-checks.ts" acquisition "$sandbox" "$inputs_hashes" 2>&1)"; then
+      echo "BLOCKER: the evidence does not match the acquisition hashes in $inputs_hashes:" >&2
+      printf '%s\n' "$acq_out" >&2
+      exit 2
+    fi
+    echo "Acquisition:  $(jq -r '.matched' <<<"$acq_out") file digest(s) from $inputs_hashes match what the kickoff computed; custody compares them again"
+  fi
+  write_custody_anchor "$sandbox" "$swarm_id" "$isolation" "$time_reference"
   # Where the VMs' disks are kept: beside the run by default, or where the
   # operator says (a link beside the run names it, so every reader — stop,
   # custody, the package, reap — finds them where it always looks).
@@ -4786,6 +4827,7 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
     --argjson allow_oauth_in_vm "$allow_oauth_in_vm" \
     --argjson provenance "$(provenance_json)" \
     --argjson custody_timeout "$custody_timeout" \
+    --arg custody_sign_key "$custody_sign_key" --arg custody_tsa "$custody_tsa" --arg time_reference "$time_reference" \
     --argjson host_clock "$host_clock" \
     --argjson notify "$([[ -n "$notify_cmd" ]] && echo true || echo false)" \
     --arg disk_encryption "$disk_encryption" \
@@ -4855,6 +4897,7 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
       provenance: $provenance,
       host_clock: $host_clock,
       custody_timeout_sec: $custody_timeout,
+      custody_seal: (if ($custody_sign_key + $custody_tsa + $time_reference) == "" then null else {sign_key: (if $custody_sign_key == "" then null else $custody_sign_key end), timestamp_url: (if $custody_tsa == "" then null else $custody_tsa end), time_reference: (if $time_reference == "" then null else $time_reference end)} end),
       notify: $notify,
       disk_encryption: $disk_encryption,
       synced_folder_allowed_by: (if $synced_allowed_by == "" then null else $synced_allowed_by end),
@@ -6529,16 +6572,19 @@ sha256_of() {
 
 # <sandbox>.custody-anchor.json: the run id, when it started, and the sha256
 # of inputs.json as the kickoff wrote it (scripts/custody.ts reads it).
-write_custody_anchor() { # <sandbox> <run id> [isolation]
-  local sandbox="$1" run="$2" isolation="${3:-host}" anchor manifest_sha=""
+write_custody_anchor() { # <sandbox> <run id> [isolation] [time reference url]
+  local sandbox="$1" run="$2" isolation="${3:-host}" tref="${4:-}" anchor manifest_sha="" tref_json=null
   anchor="$(cd "$(dirname "$sandbox")" && pwd -P)/$(basename "$sandbox").custody-anchor.json"
   [[ -f "$sandbox/inputs.json" ]] && manifest_sha="$(sha256_of "$sandbox/inputs.json")"
+  # A reference clock's offset from this host's, when the operator named one.
+  [[ -n "$tref" ]] && tref_json="$(node --experimental-strip-types --no-warnings "$ROOT/scripts/custody-checks.ts" reference "$tref" 2>/dev/null || echo null)"
+  jq -e . >/dev/null 2>&1 <<<"$tref_json" || tref_json=null
   # A reused sandbox's anchor is read-only: replaced, not written through.
   rm -f "$anchor"
   # How the agents were held is part of what custody must not take from
   # inside the run: which files an agent could write depends on it.
-  jq -n --arg run "$run" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg m "$manifest_sha" --arg iso "$isolation" \
-    '{run: $run, started_at: $at, isolation: $iso} + (if $m == "" then {} else {inputs_manifest_sha256: $m} end)' > "$anchor"
+  jq -n --arg run "$run" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg m "$manifest_sha" --arg iso "$isolation" --argjson tref "$tref_json" \
+    '{run: $run, started_at: $at, isolation: $iso} + (if $m == "" then {} else {inputs_manifest_sha256: $m} end) + (if $tref == null then {} else {time_reference: $tref} end)' > "$anchor"
 }
 
 # Where every run's hub lives: one parent, so a host-mode pane can be denied
@@ -7824,13 +7870,15 @@ pkg_copy() { # <src> <dst> [non-empty]
 }
 
 cmd_package() {
-  local id="${1:-}" sign=0 key=""
-  [[ -n "$id" && "$id" != -* ]] || { echo "package requires <id> [--sign [--key FILE]]" >&2; exit 2; }
+  local id="${1:-}" sign=0 key="" redact=0 with_outputs=0
+  [[ -n "$id" && "$id" != -* ]] || { echo "package requires <id> [--sign [--key FILE]] [--redact] [--with-outputs]" >&2; exit 2; }
   shift
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --sign) sign=1; shift ;;
       --key) key="$2"; sign=1; shift 2 ;;
+      --redact) redact=1; shift ;;
+      --with-outputs) with_outputs=1; shift ;;
       *) echo "package: unknown option $1" >&2; exit 2 ;;
     esac
   done
@@ -7917,9 +7965,14 @@ PY
   copy_tree "$sandbox/tools" "$out/tools"
   pkg_copy "$sandbox/ledger/ledger.md" "$out/ledger.md"
   pkg_copy "$sandbox/ledger/entries.jsonl" "$out/ledger.jsonl"
+  # A second author of an entry, appended beside it and chained.
+  pkg_copy "$sandbox/ledger/attestations.jsonl" "$out/ledger-attestations.jsonl" non-empty
   for f in inputs.json toolbox.json toolchain.json team.json budget.json layout.json netguard.allow SWARM.md custody.json; do
     pkg_copy "$sandbox/$f" "$out/$f"
   done
+  # The verdict's signature and the authority's timestamp token, when custody made them.
+  pkg_copy "$sandbox/custody.json.sig" "$out/custody.json.sig"
+  pkg_copy "$sandbox/custody.json.tsr" "$out/custody.json.tsr"
   # What each agent's VM was, as the VM manager recorded it (image digest,
   # mounts, network, the secrets' names and hosts, the kept disk's sha256),
   # and the VM's own logs kept beside its disk (the runtime's, where msb
@@ -7951,6 +8004,11 @@ PY
       [[ -d "$jd" && ! -L "${jd%/}" ]] || continue
       mkdir -p "$out/store/jobs/$(basename "$jd")"
       for jf in "$jd"*.json "$jd"*.log; do pkg_copy "$jf" "$out/store/jobs/$(basename "$jd")/$(basename "$jf")"; done
+      # A package with the outputs too: what the jobs made, as sealed. The
+      # record-only package names each by its sha256 in the manifest.
+      if [[ "$with_outputs" -eq 1 && -d "${jd}out" && ! -L "${jd}out" ]]; then
+        copy_tree "${jd}out" "$out/store/jobs/$(basename "$jd")/out"
+      fi
     done
     for jf in coverage.tsv plan.json; do pkg_copy "$sandbox/catalog/$jf" "$out/store/catalog-$jf"; done
     local gd
@@ -8019,6 +8077,16 @@ PY
     { for f in "$t"*.md; do [[ -f "$f" && ! -L "$f" ]] && { printf '\n\n---\n\n'; cat "$f"; }; done; } > "$out/board/$(basename "$t").md"
   done
   find "$out" -type d -empty -delete 2>/dev/null || true
+  # What a sensitive ledger entry says, and what it cites, out of the package
+  # before it is hashed: the chained files keep their chains (a redacted line
+  # carries its own hash), and REDACTIONS.txt says what changed.
+  if [[ "$redact" -eq 1 ]]; then
+    local redacted
+    redacted="$(node --experimental-strip-types --no-warnings "$ROOT/scripts/package-tools.ts" redact "$sandbox" "$out")" || { echo "BLOCKER: the package could not be redacted; nothing was handed over." >&2; rm -rf "$out"; exit 1; }
+    echo "Redacted:     $(jq -r '.entries' <<<"$redacted") sensitive entr$([[ "$(jq -r '.entries' <<<"$redacted")" == 1 ]] && echo y || echo ies), $(jq -r '.lines' <<<"$redacted") chained line(s) and $(jq -r '.files' <<<"$redacted") other file(s) (REDACTIONS.txt)"
+  fi
+  # What kind of package this is, said in it.
+  printf '%s\n' "$([[ "$with_outputs" -eq 1 ]] && echo "with outputs: the jobs' sealed outputs are included" || echo "record only: the jobs' outputs stay in the run, each named by its sha256")$([[ "$redact" -eq 1 ]] && echo "; redacted (REDACTIONS.txt)")" > "$out/PACKAGE-KIND.txt"
   ( cd "$out" && find . -type f ! -name MANIFEST.txt | sort | while read -r f; do
       if command -v sha256sum >/dev/null 2>&1; then sha256sum "$f"; else shasum -a 256 "$f"; fi
     done > MANIFEST.txt )
@@ -8074,6 +8142,33 @@ sign_package() { # <package dir> <key file or ""> <examiner or "">
 # hold and the signature is sound but who signed was not checked (no
 # --allowed-signers); 4 when the files hold and the package is unsigned; 1
 # when anything does not hold; 2 on a usage error.
+# A run's custody checked again by anyone, writing nothing: the evidence,
+# every chain, the sealed prefix, the lines after the seal, the signature and
+# the timestamp token (scripts/custody.ts --verify). Exit 0 when the run is
+# as its verdict sealed it, 4 when it is not, 1 when it could not be checked.
+cmd_custody_verify() {
+  local id="${1:-}" extra=()
+  [[ -n "$id" && "$id" != -* ]] || die_usage "custody-verify requires <id> [--allowed-signers FILE --identity NAME] [--json]"
+  shift
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --allowed-signers|--identity) extra+=("$1" "$2"); shift 2 ;;
+      --json) extra+=(--json); shift ;;
+      *) die_usage "custody-verify: unknown option $1" ;;
+    esac
+  done
+  ensure_registry
+  local rec sandbox
+  rec="$(json_get "$id")"
+  [[ -n "$rec" ]] || { echo "Unknown swarm id: $id" >&2; exit 1; }
+  sandbox="$(jq -r '.sandbox // empty' <<<"$rec")"
+  [[ -n "$sandbox" && -d "$sandbox" ]] || { echo "BLOCKER: run $id's sandbox is not there." >&2; exit 2; }
+  case "$(jq -r '.state // empty' <<<"$rec")" in
+    running|prepared|finishing) echo "BLOCKER: run $id is still running; its custody is taken when it stops." >&2; exit 2 ;;
+  esac
+  node --experimental-strip-types --no-warnings "$ROOT/scripts/custody.ts" "$sandbox" --verify --run "$id" --runs-dir "$RUNS_DIR" ${extra[@]+"${extra[@]}"}
+}
+
 cmd_verify() {
   local target="${1:-}" allowed="" tmp="" dir
   [[ -n "$target" && "$target" != -* ]] || die_usage "verify requires <package dir|zip> [--allowed-signers FILE]"
@@ -8112,6 +8207,10 @@ for n, line in enumerate(open(os.path.join(root, "MANIFEST.txt"), encoding="utf-
         continue
     rel = m.group(2)
     rel = rel[2:] if rel.startswith("./") else rel
+    # A listed path stays inside the package: no absolute path, no "..".
+    if rel.startswith("/") or any(part == ".." for part in rel.split("/")):
+        bad.append("outside the package: " + rel)
+        continue
     listed[rel] = m.group(1)
 meta = {"MANIFEST.txt", "MANIFEST.txt.sig", "SIGNER.txt", "signer.pub"}
 present = set()
@@ -8119,9 +8218,11 @@ for dirpath, dirs, files in os.walk(root):
     for name in files:
         present.add(os.path.relpath(os.path.join(dirpath, name), root).replace(os.sep, "/"))
 checked = 0
+real_root = os.path.realpath(root)
 for rel, want in sorted(listed.items()):
     p = os.path.join(root, rel)
-    if os.path.islink(p) or not os.path.isfile(p):
+    # No link anywhere on the way: a directory swapped for a link reads a file outside.
+    if os.path.islink(p) or not os.path.isfile(p) or not os.path.realpath(p).startswith(real_root + os.sep):
         bad.append("missing: " + rel)
         continue
     h = hashlib.sha256()
@@ -8155,6 +8256,9 @@ PY
       sig_state="bad"
     fi
   fi
+  # The chains the package carries, against the custody verdict's seal.
+  local chains_out chains_ok=1
+  chains_out="$(node --experimental-strip-types --no-warnings "$ROOT/scripts/package-tools.ts" verify "$dir" 2>&1)" || chains_ok=0
   [[ -n "$tmp" ]] && rm -rf "$tmp"
   echo "Files:        ${counts%% *} of ${counts##* } re-hashed against MANIFEST.txt$([[ "$files_ok" -eq 1 ]] && printf ', all match, none missing, none added' || printf ':')"
   [[ "$files_ok" -eq 1 ]] || tail -n +2 <<<"$files_out" | sed 's/^/  /'
@@ -8164,7 +8268,8 @@ PY
     unsigned) echo "Signature:    none (the package was not signed)" ;;
     bad) echo "Signature:    DOES NOT VERIFY: $sig_err" ;;
   esac
-  if [[ "$files_ok" -eq 0 || "$sig_state" == bad ]]; then
+  [[ -n "$chains_out" ]] && printf '%s\n' "$chains_out"
+  if [[ "$files_ok" -eq 0 || "$sig_state" == bad || "$chains_ok" -eq 0 ]]; then
     echo "VERIFY FAILED: $target"
     exit 1
   fi
@@ -8416,20 +8521,30 @@ cmd_help() {
   review <id> --accept N [--note TEXT] --examiner NAME     accept ledger entry N
   review <id> --reject N --note TEXT --examiner NAME       reject it, saying why
   review <id> --amend N --note TEXT --examiner NAME        accept it with a correction
-  review <id> --sign --examiner NAME                       sign off the ledger as it stands (once the run has ended)
+  review <id> --sign --examiner NAME [--report PATH]       sign off the ledger and the report as they stand (once the run has ended)
   review <id> --show                                       what has been reviewed, and whether the sign-off is current
 The review is kept beside the registry (runs/reviews/<id>.jsonl, 0600), chained, where no agent reaches.
 EOF
       ;;
+    custody-verify) cat <<'EOF'
+  custody-verify <id> [--allowed-signers FILE --identity NAME] [--json]
+Takes the run's custody again, writing nothing, and holds it to the verdict it sealed: every check's
+status now, the sealed prefix of the trace, the lines written after the seal (the run's own closing
+lines are expected), the verdict against its anchor, its signature and its timestamp token.
+Exit 0: the run is as the verdict sealed it; 4: it is not, or a check does not pass; 1: not checked.
+EOF
+      ;;
     verify) cat <<'EOF'
   verify <package dir|zip> [--allowed-signers FILE]
-Re-hashes every file against MANIFEST.txt (none missing, none added) and checks MANIFEST.txt.sig.
+Re-hashes every file against MANIFEST.txt (none missing, none added, none outside the package) and
+checks MANIFEST.txt.sig; then the chains the package carries (trace, ledger, attestations, journal)
+against the custody verdict's seal, and the verdict's own signature and timestamp token.
 Exit 0: all of it holds and the signer is one FILE allows; 3: the files hold, the signature is sound,
 the signer was not checked; 4: the files hold, the package is unsigned; 1: something does not hold.
 EOF
       ;;
     image-for) echo "  image-for [--pack ID]... [--tools-from DIR] [--playwright]   the image a kickoff would boot, as JSON: ref, digest (null when neither the lock nor msb has it), profile, pinned_by, reason; read only" ;;
-    export) echo "  export <id> --format csv|timesketch [--out FILE]   the ledger as CSV or a Timesketch CSV import (default: <sandbox>/exports/)" ;;
+    export) echo "  export <id> --format csv|timesketch [--out FILE] [--redact]   the ledger as CSV or a Timesketch CSV import (default: <sandbox>/exports/); --redact replaces what a sensitive entry says" ;;
     hold|release) echo "  hold <id> [--reason TEXT] / release <id>   a held run's material is kept from purge and from a new run in its sandbox" ;;
     cap) cat <<'EOF'
   cap <id> [--usd N] [--tokens N] [--per-agent-usd N] [--per-agent-tokens N] [--wall-clock MIN]
@@ -8480,6 +8595,7 @@ main() {
     release) cmd_release "$@" ;;
     purge) cmd_purge "$@" ;;
     verify) cmd_verify "$@" ;;
+    custody-verify) cmd_custody_verify "$@" ;;
     help) cmd_help "$@" ;;
     *) die_usage "unknown command: $cmd" ;;
   esac

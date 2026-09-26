@@ -456,3 +456,57 @@ export function afterSeal(traceText: string, sealed: number): { lines: number; t
   });
   return { lines: rest.length, tools, closure_only: tools.every((t) => CLOSURE_TOOLS.has(t.split(":")[0])) };
 }
+
+// --- the kickoff's side: the acquisition hashes into inputs.json, a reference clock ----
+
+/**
+ * The kickoff's step: read the operator's hash list, match it to the
+ * inputs, hold each digest to the one the kickoff computed, and write the
+ * list into inputs.json (anchored with it) as `acquisition`. Refused, with
+ * each name, when a digest does not match, when a name is none of the
+ * inputs, or when nothing matched at all.
+ */
+export async function applyAcquisitionHashes(sandbox: string, hashesFile: string): Promise<{ ok: true; given: number; matched: number } | { ok: false; why: string[] }> {
+  const { readFile, writeFile, chmod, lstat, unlink } = await import("node:fs/promises");
+  const { join, resolve } = await import("node:path");
+  const manifestPath = join(resolve(sandbox), "inputs.json");
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as { files?: Array<{ path: string; sha256?: string; md5?: string; sha1?: string }>; acquisition?: unknown };
+  const files = manifest.files ?? [];
+  const raw = await readFile(hashesFile);
+  const parsed = parseAcquisitionHashes(raw.toString("utf8"), files.map((f) => f.path));
+  const why: string[] = [];
+  for (const n of parsed.unmatched) why.push(`${n} is none of the inputs (or more than one has that name)`);
+  const byPath = new Map(files.map((f) => [f.path, f]));
+  for (const e of parsed.entries) {
+    const have = byPath.get(e.path)?.[e.algo];
+    if (!have) why.push(`${e.path}: the kickoff computed no ${e.algo}`);
+    else if (have.toLowerCase() !== e.digest) why.push(`${e.path}: ${e.algo} ${e.digest} given, ${have} computed`);
+  }
+  if (!parsed.entries.length) why.push("no line of the file names an input with a digest");
+  if (why.length) return { ok: false, why };
+  manifest.acquisition = { source: hashesFile, source_sha256: sha256(raw), entries: parsed.entries, ignored_lines: parsed.ignored };
+  // A manifest left read-only is replaced, not written through.
+  if (await lstat(manifestPath).then(() => true, () => false)) await unlink(manifestPath);
+  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  await chmod(manifestPath, 0o644);
+  return { ok: true, given: parsed.entries.length, matched: parsed.entries.length };
+}
+
+if (process.argv[1] && (await import("node:url")).pathToFileURL(process.argv[1]).href === import.meta.url) {
+  const [cmd, a, b] = process.argv.slice(2);
+  if (cmd === "acquisition" && a && b) {
+    const r = await applyAcquisitionHashes(a, b);
+    if (r.ok) {
+      console.log(JSON.stringify(r));
+      process.exit(0);
+    }
+    for (const w of r.why) console.error(`  ${w}`);
+    process.exit(4);
+  } else if (cmd === "reference" && a) {
+    console.log(JSON.stringify(await referenceOffset(a)));
+    process.exit(0);
+  } else {
+    console.error("usage: custody-checks.ts acquisition <sandbox> <hashes file> | reference <https url>");
+    process.exit(2);
+  }
+}
