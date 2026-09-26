@@ -65,7 +65,12 @@ All notable changes to this project. The format follows
   (index.tsv confined to the sealed manifest), each probe's whole output is
   kept, 7z listings stream, zip directories are bounded by bytes, and
   disk-volumes finds a volume at sector 63 or 2048 with no table
-  (computer-forensics-base 1.2.19).
+  (computer-forensics-base 1.2.19). After the measuring runs:
+  archive-members is offered a compressed tar by its name ending only, not by
+  a bare gzip, bzip2, xz or zstd header, which 480 objects in the recorded
+  runs matched and none was an archive (computer-forensics-base 1.2.20); and
+  the readable-form link follows content, so the same bytes remade under
+  another job still lead back to the partial catalogue.
 - Four workers by default on a host with 64 GiB or more; `create_ms` in
   each job's record.
 - The console has a Jobs tab (with Files and the Ledger): the run's jobs

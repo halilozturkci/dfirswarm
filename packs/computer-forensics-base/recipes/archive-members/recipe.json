@@ -33,22 +33,6 @@
     {
       "offset": 0,
       "hex": "377abcaf271c"
-    },
-    {
-      "offset": 0,
-      "hex": "1f8b"
-    },
-    {
-      "offset": 0,
-      "hex": "425a68"
-    },
-    {
-      "offset": 0,
-      "hex": "fd377a585a00"
-    },
-    {
-      "offset": 0,
-      "hex": "28b52ffd"
     }
   ],
   "runtime": "python3",

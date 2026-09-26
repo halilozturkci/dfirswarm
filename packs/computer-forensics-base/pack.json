@@ -1,7 +1,7 @@
 {
   "id": "computer-forensics-base",
   "name": "Computer Forensics Base Pack",
-  "version": "1.2.19",
+  "version": "1.2.20",
   "description": "Method and tooling every examination needs, whatever the platform: read the container and find the volume, verify the evidence, read the catalogue, extract and carve, tell an encrypted volume from an unreadable one, keep a timeline, cite what you claim.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -47,7 +47,7 @@
       "recipes/memory-windows/run.sh": "ce8ca3e4416de5127beb3c1178a9ee5055fec65221cb23eeed9c063df0b710c9",
       "recipes/disk-volumes/recipe.json": "acbf6012f39b1178e7185bd2a10f6df30f8b21c46b01ba994fa1ff810551d88d",
       "recipes/disk-volumes/run.sh": "939f1110b5de3b0280f6b34807c67bfdb2da841530c1301dacdb80f2af378f00",
-      "recipes/archive-members/recipe.json": "263f45b421d0bd487f9949a0552be95ab0e6809673d537e9d4046752be75504b",
+      "recipes/archive-members/recipe.json": "ae197f32f0a49e251a6458e3aadc240ef11910650e892a059a0285f9a6faccb7",
       "recipes/archive-members/run.py": "49ff4dbb9bbdbc64a87fa8a181c3a84f9621249cf62a397076e485ad472e0591",
       "skills/reporting/citations.md": "b8e4ce786be10c0cc734232314f1ef2bd1208ebabf7ed0f41cfb7d8ee48694d9",
       "skills/reporting/disagreement.md": "1e454010c3dbc6feadd4128ad23363fb2e1f0b0097f72906c3c4841c84507b77",

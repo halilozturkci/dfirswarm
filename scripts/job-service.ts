@@ -1311,17 +1311,28 @@ export class JobService {
   private async relateReadable(g: { id: string; recipe: string; target: { ref?: string; paths?: string[] } }): Promise<void> {
     const maker = /^job:(j\d{6})\//.exec(g.target.ref ?? "")?.[1] ?? /store\/jobs\/(j\d{6})\//.exec((g.target.paths ?? [])[0] ?? "")?.[1];
     if (!maker) return;
+    // Up to three hops back, by the jobs each one names and by the files it
+    // names in them: the same bytes are often remade under another job (run
+    // s8c228e decrypted a vault.raw another job had also made, byte for byte,
+    // so the partial catalogue was over a job that was no ancestor).
     const ancestors = new Set<string>();
+    const shas = new Set<string>();
     let frontier = [maker];
     for (let hop = 0; hop < 3 && frontier.length; hop += 1) {
       const next: string[] = [];
       for (const id of frontier) {
         const j = this.jobs.get(id);
         if (!j) continue;
-        const named = [...(j.spec.inputs ?? []).map((x) => /^job:(j\d{6})/.exec(x)?.[1]), ...[...String(j.spec.command ?? "").matchAll(/store\/jobs\/(j\d{6})\//g)].map((x) => x[1])].filter((x): x is string => Boolean(x) && x !== id);
-        for (const a of named) if (!ancestors.has(a)) {
-          ancestors.add(a);
-          next.push(a);
+        const named: Array<[string, string | undefined]> = [
+          ...(j.spec.inputs ?? []).map((x) => /^job:(j\d{6})(?:\/(.+))?$/.exec(x)).map((m) => (m ? ([m[1], m[2]] as [string, string | undefined]) : null)),
+          ...[...String(j.spec.command ?? "").matchAll(/store\/jobs\/(j\d{6})\/(?:out\/([^\s'"`;|&)<>]+))?/g)].map((m) => [m[1], m[2]] as [string, string | undefined]),
+        ].filter((x): x is [string, string | undefined] => x !== null && x[0] !== id);
+        for (const [a, path] of named) {
+          for (const sha of await this.shasOf(a, path)) shas.add(sha);
+          if (!ancestors.has(a)) {
+            ancestors.add(a);
+            next.push(a);
+          }
         }
       }
       frontier = next;
@@ -1330,7 +1341,7 @@ export class JobService {
     const partials = this.journal.of("generation_committed").filter((l) => l.recipe === g.recipe && l.status !== "complete" && l.generation !== g.id).filter((l) => {
       const t = l.target as Target | undefined;
       const from = /^job:(j\d{6})\//.exec(t?.ref ?? "")?.[1] ?? /store\/jobs\/(j\d{6})\//.exec((t?.paths ?? [])[0] ?? "")?.[1];
-      return from !== undefined && ancestors.has(from);
+      return (from !== undefined && ancestors.has(from)) || (typeof t?.sha256 === "string" && shas.has(t.sha256));
     });
     const already = new Set(this.journal.of("generation_related").map((l) => `${l.generation}>${l.readable}`));
     let wrote = false;
@@ -1340,6 +1351,13 @@ export class JobService {
       wrote = true;
     }
     if (wrote) await this.exclusive(() => publishRevision(this.journal));
+  }
+
+  /** The sha256 of a job's file as its manifest has it, or of every file when no path is named. */
+  private async shasOf(job: string, path?: string): Promise<string[]> {
+    const m = await readManifest(join(storePaths(this.S).jobs, job, "manifest.json")).catch(() => null);
+    if (!m) return [];
+    return m.manifest.files.filter((f) => path === undefined || f.path === path).map((f) => f.sha256);
   }
 
   /** The kickoff's plan: every recipe the census found applies, run once the hub is up. */

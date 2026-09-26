@@ -238,6 +238,26 @@ test("a complete catalogue of an object made from one with a partial catalogue i
   await svc.stop("over");
 });
 
+test("the readable link follows content: the same bytes remade under another job still lead back to the partial catalogue", async () => {
+  const S = sandbox();
+  const { svc } = service(S);
+  await svc.start();
+  const first = await svc.submit("a1", { kind: "command", command: tarCommand("cut.tar", true), inputs: [] });
+  await until(svc, first.ok ? first.job.id : "");
+  await eventually(() => of(S, "generation_committed").length === 1, "the partial one");
+  const partial = of(S, "generation_committed")[0];
+  // Another agent makes the same bytes without naming the first job (run s8c228e: two jobs made one vault.raw).
+  const again = await svc.submit("a1", { kind: "command", command: tarCommand("cut.tar", true), inputs: [] });
+  await until(svc, again.ok ? again.job.id : "");
+  await eventually(() => of(S, "derived_offered").length === 2, "the second offer");
+  assert.equal((of(S, "derived_offered")[1].skipped as unknown[]).length, 1, "known by content, not catalogued twice");
+  const whole = await svc.submit("a1", { kind: "command", command: `test -s store/jobs/${again.ok ? again.job.id : ""}/out/cut.tar && ${tarCommand("whole.tar")}`, inputs: [] });
+  await until(svc, whole.ok ? whole.job.id : "");
+  await eventually(() => of(S, "generation_related").length === 1, "the link, by content");
+  assert.equal(of(S, "generation_related")[0].generation, partial.generation);
+  await svc.stop("over");
+});
+
 test("the files of a failed job and of an import are offered too; with the derived catalogue off, nothing is", async () => {
   const S = sandbox();
   const { svc } = service(S);
