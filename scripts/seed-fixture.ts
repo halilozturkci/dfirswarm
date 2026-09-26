@@ -798,7 +798,10 @@ async function seedJobStore(root: string, agents: string[], m: number): Promise<
   await project({ id: "j000001", attempt: 1, spec: spec1, requester: who1, state: "committed", status: "ok", accepted_at: iso(m - 20), started_at: iso(m - 20, 2), finished_at: iso(m - 21), exit: 0, worker: "dfs-svm1d-job-j000001-1", worker_size: "1 vCPU, 1024 MiB", image: "dfirswarm-base:dev-arm64", accessible, network: "none", outputs: one.outputs });
 
   // j000002: a tool that failed. Its output is sealed all the same: committed is where the output stands, not what the job did.
-  const spec2 = { kind: "tool", tool: "log_timeline", args: { path: "inputs/web/access.log", out: "{OUT}/timeline.csv" }, inputs: ["input:web/access.log"], timeout_seconds: 900, network: "off" };
+  // A forged tool's name held apart: `tool: "<name>"` is how the shell
+  // watchdogs name their events, and reserved-names reads it so.
+  const forged = "log_timeline";
+  const spec2 = { kind: "tool", tool: forged, args: { path: "inputs/web/access.log", out: "{OUT}/timeline.csv" }, inputs: ["input:web/access.log"], timeout_seconds: 900, network: "off" };
   const who2 = requester(a1, "Stitch", "the timeline");
   await journal.append({ type: "job_accepted", at: iso(m - 24), job: "j000002", spec: spec2, requester: who2 });
   await journal.append({ type: "job_started", at: iso(m - 24, 2), job: "j000002", attempt: 1, worker: `dfs-svm1d-job-j000002-1`, image: "dfirswarm-base:dev-arm64", tool_sha256: "5".repeat(64), declared: spec2.inputs, accessible, observed: "unknown", network: "none", cpus: 1, memory_mib: 1024 });
