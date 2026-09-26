@@ -41,7 +41,11 @@
   "tools": [
     "doc_probe",
     "entropy_map",
+    "fuzzy_hash",
     "pe_info"
+  ],
+  "recipes": [
+    "reverse-engineering/static-binary"
   ],
   "skills": 7
 }

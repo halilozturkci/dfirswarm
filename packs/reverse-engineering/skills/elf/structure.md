@@ -4,7 +4,7 @@ title: An ELF file, and the Linux equivalents
 when: The sample is a Linux or BSD executable, shared object or core file.
 needs: [triage/quarantine]
 tools: [pe_info, entropy_map]
-requires_host: [r2]
+requires_host: [r2, upx]
 ---
 
 `pe_info` reads ELF as well as PE and reports the same shape of answer.
@@ -33,8 +33,9 @@ Three Linux-specific shapes:
   library-hijack waiting to happen, and `LD_PRELOAD` in a unit file, which is
   the same idea applied from outside.
 - **A packed ELF**, most often UPX. The section names survive even when the
-  header is mangled, and entropy makes it obvious. UPX's own unpacker is a host
-  tool, not part of this pack.
+  header is mangled, and entropy makes it obvious. Use `upx -t` first; if it
+  identifies the file, unpack only a copy under `work/`, preserve both hashes,
+  and analyse both forms. Never overwrite the only extracted copy.
 
 The build id in `.note.gnu.build-id` identifies a binary across rebuilds and
 strippings, and is the right thing to quote when the file name and the hash both

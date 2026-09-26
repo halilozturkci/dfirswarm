@@ -15,8 +15,8 @@ where in the sequence each belongs.
 
 **Two tools.** `encrypted_survey` walks a tree and measures what was *actually*
 encrypted — campaigns skip by extension, directory and size, and the skipped set
-is routinely larger than anyone assumes. It reads entropy at the head, the
-middle and the end, so a large database encrypted only at the front shows up as
+is routinely larger than anyone assumes. It reads every eligible file's head,
+then the middle, end and tail of encrypted-looking samples, so a large database encrypted only at the front shows up as
 recoverable rather than lost; it clusters modification times, which brackets
 when the run happened; and it finds the bytes every encrypted file ends with,
 which identifies the family better than the extension an affiliate can change.

@@ -1,0 +1,44 @@
+{
+  "id": "static-binary",
+  "version": "1.0.0",
+  "description": "Catalogue a PE, ELF or Mach-O executable without running it: the parser's uncapped structural metadata and a complete entropy profile.",
+  "object": "executable file",
+  "order": 40,
+  "min_bytes": 64,
+  "suffixes": [
+    ".exe",
+    ".dll",
+    ".sys",
+    ".scr",
+    ".cpl",
+    ".efi",
+    ".elf",
+    ".so",
+    ".dylib"
+  ],
+  "magic": [
+    {"offset": 0, "hex": "4d5a"},
+    {"offset": 0, "hex": "7f454c46"},
+    {"offset": 0, "hex": "cffaedfe"},
+    {"offset": 0, "hex": "cefaedfe"},
+    {"offset": 0, "hex": "cafebabe"},
+    {"offset": 0, "hex": "bebafeca"}
+  ],
+  "runtime": "python3",
+  "entry": "run.py",
+  "auto": [
+    "kickoff",
+    "derived"
+  ],
+  "limits": {
+    "seconds": 600
+  },
+  "outputs": [
+    "binary.json",
+    "entropy.json",
+    "index.tsv",
+    "coverage.json"
+  ],
+  "covers": "Static headers, sections, imports or linked libraries, and whole-file entropy. It does not execute, unpack, decompile or claim observed behaviour.",
+  "sha256": "96ca2ee08e3107b783f7beba0a1576ea071184d170fb7c0b78f35a3de8409098"
+}

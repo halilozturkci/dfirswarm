@@ -12,7 +12,7 @@
     },
     "limit": {
       "type": "integer",
-      "description": "Maximum notes to return (default 100)"
+      "description": "Preview notes returned inline when the job OUT directory can hold the complete ransom-notes.jsonl (default 100); ignored when no lossless output directory exists"
     }
   },
   "runtime": "python3",
@@ -22,5 +22,5 @@
   "by": "maintainer",
   "at": "2026-09-22T23:00:00.000Z",
   "version": 1,
-  "sha256": "f0c7af4b40b348f0d0b3be3c03d08115e011a1b4cd9233de151ab7f7610e2f24"
+  "sha256": "be2f968a03da0f32bf611dd0b13292e7b93a461ea13170167de907f99b32c660"
 }

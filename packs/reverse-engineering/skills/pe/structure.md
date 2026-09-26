@@ -32,13 +32,19 @@ to hide exactly this, and that emptiness is the signal.
 
 **The exports** name a DLL's entry points; a service DLL exports
 `ServiceMain`, and an unusual export on something claiming to be a system
-library is worth a sentence.
+library is worth a sentence. `pe_info` names the export directory but does not
+list its symbols; use `r2 -2 -q -c 'iE' sample.dll` for the complete table.
 
-**The certificate**, where there is one. Check whether the signature verifies
-and who signed it. A valid signature from a real company on a malicious binary
-means a stolen certificate, which is a much bigger finding than the sample.
+**The certificate**, where there is one. `pe_info.signed` means only that the PE
+has a non-empty certificate-table directory; it does **not** verify the
+signature or identify the signer. Do not report it as valid. Verification needs
+a trust-aware Authenticode verifier, which this image does not yet carry. A
+verified signature from a real company on a malicious binary means a stolen
+certificate, which is a much bigger finding than the sample.
 
 **Resources** hold the icon, the version information — company, product,
-original file name — and quite often a second executable. An original file name
+original file name — and quite often a second executable. `pe_info` does not
+parse resources; use `r2 -2 -q -c 'izz' sample.exe` to inventory their strings, and
+say explicitly when resource extraction was not done. An original file name
 that disagrees with the name on disk is how you match a renamed binary to its
 prefetch entry. See `execution/overview` in the Windows pack.

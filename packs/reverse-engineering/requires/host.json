@@ -7,7 +7,20 @@
       "why": "Map a binary's behaviour to named capabilities and ATT&CK techniques from its code, not from its strings.",
       "install": {
         "brew": "python3 -m pip install flare-capa",
-        "apt": "python3 -m pip install flare-capa"
+        "apt": "pinned download 9.4.0 (install.download): upstream standalone release, whose embedded rules make offline analysis work",
+        "download": {
+          "version": "9.4.0",
+          "amd64": {
+            "url": "https://github.com/mandiant/capa/releases/download/v9.4.0/capa-v9.4.0-linux.zip",
+            "sha256": "07800a1d20a21eb18fc98716e2ae81b668e0c9a04defd588c8aa17ea3d3281e4",
+            "bin": "capa"
+          },
+          "arm64": {
+            "url": "https://github.com/mandiant/capa/releases/download/v9.4.0/capa-v9.4.0-linux-arm64.zip",
+            "sha256": "165df126f05e86736afee0f4c28b19c6037315a99afc3a92a426432cdd30d2c5",
+            "bin": "capa"
+          }
+        }
       },
       "licence": "Apache-2.0",
       "redistributable": false
@@ -81,6 +94,53 @@
         "apt": "apt-get install -y binutils"
       },
       "licence": "GPL-3.0-or-later",
+      "redistributable": false
+    },
+    {
+      "name": "ssdeep",
+      "package": "ssdeep",
+      "why": "Compute context-triggered piecewise hashes so related binaries can be clustered even when their cryptographic hashes differ.",
+      "install": {
+        "brew": "brew install ssdeep",
+        "apt": "apt-get install -y ssdeep"
+      },
+      "licence": "GPL-2.0-or-later",
+      "redistributable": false
+    },
+    {
+      "name": "tlsh",
+      "package": "tlsh-tools",
+      "why": "Compute and compare Trend Micro Locality Sensitive Hashes for samples with sufficient size and byte diversity.",
+      "install": {
+        "brew": "brew install tlsh",
+        "apt": "apt-get install -y tlsh-tools"
+      },
+      "licence": "Apache-2.0 or BSD",
+      "redistributable": false
+    },
+    {
+      "name": "upx",
+      "package": "upx",
+      "optional": true,
+      "why": "Test and unpack UPX-compressed executables without executing them, preserving both the original and unpacked hashes.",
+      "install": {
+        "brew": "brew install upx",
+        "apt": "pinned download 5.2.1 (install.download): upstream static release per architecture",
+        "download": {
+          "version": "5.2.1",
+          "amd64": {
+            "url": "https://github.com/upx/upx/releases/download/v5.2.1/upx-5.2.1-amd64_linux.tar.xz",
+            "sha256": "402162aad30af47e60dbd767fb2e64ca394ace9727ba1f40283641f1d1b91657",
+            "bin": "upx-5.2.1-amd64_linux/upx"
+          },
+          "arm64": {
+            "url": "https://github.com/upx/upx/releases/download/v5.2.1/upx-5.2.1-arm64_linux.tar.xz",
+            "sha256": "a72d112c5970a904a31da0b9c84f919bc16b9a311787c12245508544a78c7d36",
+            "bin": "upx-5.2.1-arm64_linux/upx"
+          }
+        }
+      },
+      "licence": "GPL-2.0-or-later with the UPX exception",
       "redistributable": false
     }
   ]

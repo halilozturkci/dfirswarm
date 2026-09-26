@@ -75,6 +75,14 @@ def profile(path, size, tail_bytes):
     return out, tail.hex()
 
 
+def head_entropy(path, size):
+    try:
+        with open(path, "rb") as fh:
+            return entropy(fh.read(min(65536, size)))
+    except OSError:
+        return None
+
+
 def main():
     try:
         args = json.load(sys.stdin)
@@ -104,6 +112,13 @@ def main():
     encrypted_bytes = intact_bytes = 0
     sampled = 0
     head_only = []
+    out_dir = os.environ.get("OUT")
+    complete_path = None
+    complete = None
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+        complete_path = os.path.join(out_dir, "encrypted-files.jsonl")
+        complete = open(complete_path, "w", encoding="utf-8")
 
     for dirpath, dirs, names in os.walk(root):
         dirs[:] = [d for d in dirs if d not in ("proc", "sys", "dev")]
@@ -129,14 +144,14 @@ def main():
             when = datetime.datetime.fromtimestamp(stat.st_mtime, datetime.timezone.utc)
             by_hour[when.strftime("%Y-%m-%dT%H")] += 1
 
+            head = head_entropy(full, stat.st_size) if stat.st_size > 4096 else None
+            high = head is not None and head >= 7.5
             profiled, tail = None, None
-            if sampled < sample_size and stat.st_size > 4096:
+            if sampled < sample_size and stat.st_size > 4096 and (high or looks_encrypted):
                 profiled, tail = profile(full, stat.st_size, tail_bytes)
                 sampled += 1
                 if tail:
                     tails[tail] += 1
-            high = bool(profiled and isinstance(profiled, dict) and
-                        profiled.get("head", 0) >= 7.5)
             if high or looks_encrypted:
                 encrypted_like += 1
                 encrypted_bytes += stat.st_size
@@ -145,22 +160,31 @@ def main():
             else:
                 skipped += 1
                 intact_bytes += stat.st_size
-            if len(listed) < limit and (high or looks_encrypted):
+            if high or looks_encrypted:
                 entry = {"file": full, "bytes": stat.st_size,
                          "modified": when.isoformat().replace("+00:00", "Z"),
-                         "appended_extension": "." + last if looks_encrypted else None}
+                         "appended_extension": "." + last if looks_encrypted else None,
+                         "head_entropy": head}
                 if profiled:
                     entry["entropy"] = profiled
                 if tail:
                     entry["tail_hex"] = tail
-                listed.append(entry)
+                if complete:
+                    complete.write(json.dumps(entry, sort_keys=True) + "\n")
+                    if len(listed) < limit:
+                        listed.append(entry)
+                else:
+                    listed.append(entry)
 
-    busiest = by_hour.most_common(8)
-    common_tails = [{"tail_hex": t, "files": c} for t, c in tails.most_common(5) if c > 1]
+    if complete:
+        complete.close()
+
+    busiest = by_hour.most_common()
+    common_tails = [{"tail_hex": t, "files": c} for t, c in tails.most_common() if c > 1]
     # A family marker sits at a fixed position from the end, with whatever came before
     # it differing per file. The shared suffix across the sampled tails is that marker.
     shared = None
-    if len(tails) > 1:
+    if sum(tails.values()) > 1:
         raw = [bytes.fromhex(t) for t in tails]
         length = min(len(t) for t in raw)
         keep = 0
@@ -179,14 +203,16 @@ def main():
         "proportion_encrypted": round(encrypted_like / total, 4) if total else None,
         "bytes_encrypted_like": encrypted_bytes,
         "bytes_intact": intact_bytes,
-        "appended_extensions": [{"extension": e, "files": c} for e, c in double.most_common(10)],
+        "appended_extensions": [{"extension": e, "files": c} for e, c in double.most_common()],
         "modification_time_clusters": [{"hour_utc": h + ":00Z", "files": c} for h, c in busiest],
         "repeated_file_tails": common_tails,
         "shared_file_suffix": shared,
-        "partially_encrypted": head_only[:40],
-        "ransom_note_candidates": notes[:40],
+        "partially_encrypted": head_only,
+        "ransom_note_candidates": notes,
         "files_sampled": sampled,
         "examples": listed,
+        "examples_complete": complete_path is None or len(listed) == encrypted_like,
+        "examples_file": os.path.basename(complete_path) if complete_path else None,
         "note": "A file counts as encrypted-like when its head is high entropy or its name carries "
                 "an extension appended after a known one. Both are heuristics: a compressed "
                 "archive reads the same way. The partially_encrypted list is the one to act on — "

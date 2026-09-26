@@ -16,7 +16,7 @@
     },
     "limit": {
       "type": "integer",
-      "description": "Maximum files to list individually (default 200)"
+      "description": "Preview rows returned inline when the job OUT directory can hold the complete encrypted-files.jsonl (default 200); ignored when no lossless output directory exists"
     }
   },
   "runtime": "python3",
@@ -26,5 +26,5 @@
   "by": "maintainer",
   "at": "2026-09-22T23:00:00.000Z",
   "version": 1,
-  "sha256": "809f930421f062e39340b6d8e4b2f7c729f51e518aa56adceac024e46f3ca838"
+  "sha256": "6b927ef96707f6c6f21535fee50fb125e8ac47d8574ffa134477447069de5fe3"
 }

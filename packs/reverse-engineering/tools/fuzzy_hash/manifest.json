@@ -1,0 +1,26 @@
+{
+  "name": "fuzzy_hash",
+  "description": "Hash one file, or compare two, without executing them: SHA-256 for identity, ssdeep and TLSH for similarity, and TLSH distance when both files produce a valid digest.",
+  "params": {
+    "path": {
+      "type": "string",
+      "description": "The first file to hash"
+    },
+    "compare_to": {
+      "type": "string",
+      "description": "Optional second file to hash and compare with the first"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "requires": [
+    "ssdeep",
+    "tlsh"
+  ],
+  "timeout_seconds": 300,
+  "example": "{\"path\": \"work/extracted/sample.exe\", \"compare_to\": \"work/extracted/variant.exe\"}",
+  "by": "maintainer",
+  "at": "2026-09-26T00:00:00.000Z",
+  "version": 1,
+  "sha256": "914ec5e2b00c1b635ab9d82bd496eef94f47de3574a8ae539848bc543a547e26"
+}

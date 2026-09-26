@@ -1,2 +1,2 @@
-# The reverse engineering pack's tools use the standard library only. The host
-# binaries above are optional and each one widens what can be established.
+# This pack's Python tools use the standard library. TLSH comes from Debian's
+# tlsh-tools so arm64 and amd64 images do not compile an unpinned extension.
