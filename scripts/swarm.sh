@@ -8179,8 +8179,8 @@ PY
 # reject or amend an entry, or sign off the ledger as it stands. Outside
 # the run, beside the registry, chained.
 cmd_review() {
-  local id="${1:-}" action="" entry="" note="" examiner=""
-  [[ -n "$id" && "$id" != -* ]] || die_usage "review requires <id> (--accept N | --reject N --note TEXT | --amend N --note TEXT | --sign | --show) [--examiner NAME]"
+  local id="${1:-}" action="" entry="" note="" examiner="" report=""
+  [[ -n "$id" && "$id" != -* ]] || die_usage "review requires <id> (--accept N | --reject N --note TEXT | --amend N --note TEXT | --sign [--report PATH] | --show) [--examiner NAME]"
   shift
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -8189,6 +8189,7 @@ cmd_review() {
       --show) action=show; shift ;;
       --note) note="$2"; shift 2 ;;
       --examiner) examiner="$2"; shift 2 ;;
+      --report) report="$2"; shift 2 ;;
       *) die_usage "review: unknown option $1" ;;
     esac
   done
@@ -8214,11 +8215,12 @@ cmd_review() {
   local args=(add --runs "$RUNS_DIR" --run "$id" --sandbox "$sandbox" --action "$action" --examiner "$examiner")
   [[ -n "$entry" ]] && args+=(--entry "$entry")
   [[ -n "$note" ]] && args+=(--note "$note")
+  [[ -n "$report" ]] && args+=(--report "$report")
   local line
   line="$(node --experimental-strip-types --no-warnings "$ROOT/scripts/review.ts" "${args[@]}")" || exit 1
   [[ "$state" == running ]] && operator_trace "$sandbox" review "$id" "--$action" ${entry:+"$entry"}
   if [[ "$action" == sign ]]; then
-    echo "Signed off:   run $id's ledger ($(jq -r '.ledger_entries' <<<"$line") entries, head $(jq -r '.ledger_head' <<<"$line")) by $examiner; the review is $RUNS_DIR/reviews/$id.jsonl"
+    echo "Signed off:   run $id's ledger ($(jq -r '.ledger_entries' <<<"$line") entries, head $(jq -r '.ledger_head' <<<"$line")) and $(jq -r '.report_path' <<<"$line") ($(jq -r '.report_sha256 // "absent"' <<<"$line")) by $examiner$(jq -r 'if (.open_rejections // []) | length > 0 then ", with rejections standing: " + ((.open_rejections | map("#" + tostring)) | join(", ")) else "" end' <<<"$line"); the review is $RUNS_DIR/reviews/$id.jsonl"
   else
     echo "Reviewed:     run $id entry $entry $(case "$action" in accept) echo accepted ;; reject) echo rejected ;; amend) echo amended ;; esac) by $examiner$([[ -n "$note" ]] && printf ' (%s)' "$note")"
   fi
@@ -8371,13 +8373,14 @@ cmd_purge() {
 # The ledger for another tool: CSV, or a Timesketch CSV import
 # (scripts/export.ts).
 cmd_export() {
-  local id="${1:-}" format="" out=""
-  [[ -n "$id" && "$id" != -* ]] || die_usage "export requires <id> --format csv|timesketch [--out FILE]"
+  local id="${1:-}" format="" out="" redact=()
+  [[ -n "$id" && "$id" != -* ]] || die_usage "export requires <id> --format csv|timesketch [--out FILE] [--redact]"
   shift
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --format) format="$2"; shift 2 ;;
       --out) out="$2"; shift 2 ;;
+      --redact) redact=(--redact); shift ;;
       *) die_usage "export: unknown option $1" ;;
     esac
   done
@@ -8396,7 +8399,7 @@ cmd_export() {
     mkdir -p "$sandbox/exports"
     out="$sandbox/exports/ledger$([[ "$format" == timesketch ]] && printf '.timesketch').csv"
   fi
-  node --experimental-strip-types --no-warnings "$ROOT/scripts/export.ts" "$sandbox" --format "$format" --out "$out" || exit 1
+  node --experimental-strip-types --no-warnings "$ROOT/scripts/export.ts" "$sandbox" --format "$format" --out "$out" ${redact[@]+"${redact[@]}"} || exit 1
   [[ "$(jq -r '.state // empty' <<<"$rec")" == running ]] && operator_trace "$sandbox" export "$id" --format "$format"
   echo "Exported:     run $id's ledger as $format to $out"
 }

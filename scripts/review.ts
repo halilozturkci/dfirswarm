@@ -11,11 +11,15 @@
  * a lock, appended, never rewritten.
  *
  *   {v: 1, seq, at, examiner, os_user, host, action: accept|reject|amend|sign,
- *    entry_seq?, entry_hash?, note?, ledger_head?, ledger_entries?, prev}
+ *    entry_seq?, entry_hash?, note?, ledger_head?, ledger_entries?,
+ *    report_path?, report_sha256?, attestations_head?, open_rejections?, prev}
  *
  * `entry_hash` is the entry's own hash from the ledger's chain (its
- * immutable core); `sign` records the head of the chain it signs, so a
- * sign-off over a ledger that changed afterwards is seen to be over another.
+ * immutable core); `sign` records the head of the chain it signs, the
+ * report's own hash and the head of the attestations, and the entries the
+ * examiner had rejected and not since accepted, so a sign-off over a ledger
+ * or a report that changed afterwards is seen to be over another, and a
+ * sign-off with objections standing says so.
  *
  * Usage:
  *   node scripts/review.ts add --runs DIR --run ID --sandbox DIR --examiner NAME
@@ -48,6 +52,13 @@ export type ReviewLine = {
   note?: string;
   ledger_head?: string;
   ledger_entries?: number;
+  /** The report the sign-off is over, as a path under the sandbox and its sha256 (null: there was none). */
+  report_path?: string;
+  report_sha256?: string | null;
+  /** The last line of ledger/attestations.jsonl, or null when there are none. */
+  attestations_head?: string | null;
+  /** Entries whose latest review was a rejection when the examiner signed. */
+  open_rejections?: number[];
   prev: string | null;
 };
 
@@ -196,7 +207,26 @@ async function withLock<T>(file: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
-export type ReviewInput = { action: ReviewAction; examiner: string; entry_seq?: number; note?: string };
+export type ReviewInput = { action: ReviewAction; examiner: string; entry_seq?: number; note?: string; report?: string };
+
+/** The sha256 of a regular file under the sandbox, or null when there is none. */
+async function sandboxFileSha(sandbox: string, rel: string): Promise<string | null> {
+  const r = await readRegularText(join(sandbox, rel), READ_MAX_BYTES).catch(() => null);
+  return r && "text" in r ? sha256(r.text) : null;
+}
+
+/** The attestations' head: the last line's hash, or null. */
+async function attestationsHead(sandbox: string): Promise<string | null> {
+  const r = await readRegularText(join(sandbox, "ledger", "attestations.jsonl"), READ_MAX_BYTES).catch(() => null);
+  const text = r && "text" in r ? r.text : "";
+  const last = text.trim().split("\n").filter(Boolean).at(-1);
+  if (!last) return null;
+  try {
+    return (JSON.parse(last) as { hash?: string }).hash ?? null;
+  } catch {
+    return null;
+  }
+}
 
 /** Append one act to a run's review, checked against its ledger. Returns the line written. */
 export async function appendReview(runsDir: string, runId: string, sandbox: string, input: ReviewInput): Promise<ReviewLine> {
@@ -227,6 +257,11 @@ export async function appendReview(runsDir: string, runId: string, sandbox: stri
       if (!ledger.entries.length) throw new Error(`run ${runId} has no ledger entries to sign`);
       line.ledger_head = ledgerHead(ledger.entries, ledger.sha256);
       line.ledger_entries = ledger.entries.length;
+      // The report the examiner read, and what still stood against it.
+      line.report_path = input.report ?? "work/report.md";
+      line.report_sha256 = await sandboxFileSha(sandbox, line.report_path);
+      line.attestations_head = await attestationsHead(sandbox);
+      line.open_rejections = [...reviewState(before).entries.values()].filter((l) => l.action === "reject").map((l) => l.entry_seq as number).sort((a, b) => a - b);
     } else {
       if (!Number.isInteger(input.entry_seq)) throw new Error(`${input.action} needs the entry's seq (--entry N)`);
       const entry = ledger.entries.find((e) => e.seq === input.entry_seq);
@@ -331,6 +366,7 @@ async function main(argv: string[]): Promise<number> {
         examiner: opt(args, "--examiner") ?? "",
         entry_seq: entry === undefined ? undefined : Number(entry),
         note: opt(args, "--note"),
+        report: opt(args, "--report"),
       });
       console.log(JSON.stringify(line));
       return 0;
@@ -345,17 +381,31 @@ async function main(argv: string[]): Promise<number> {
       const v = verifyReviewChain(lines);
       const state = reviewState(lines);
       let head: string | null = null;
+      let reportNow: string | null | undefined;
       const sandbox = opt(args, "--sandbox");
       if (sandbox) {
         const ledger = await readLedger(sandbox).catch(() => null);
         if (ledger) head = ledgerHead(ledger.entries, ledger.sha256);
+        if (state.signed?.report_path) reportNow = await sandboxFileSha(sandbox, state.signed.report_path);
       }
+      const s0 = state.signed;
       const summary = {
         run,
         lines: lines.length,
         chain: v,
         entries: [...state.entries.values()].map((l) => ({ seq: l.entry_seq, action: l.action, examiner: l.examiner, at: l.at, note: l.note ?? null })),
-        signed: state.signed ? { examiner: state.signed.examiner, at: state.signed.at, ledger_head: state.signed.ledger_head, current: head === null ? null : head === state.signed.ledger_head } : null,
+        signed: s0
+          ? {
+              examiner: s0.examiner,
+              at: s0.at,
+              ledger_head: s0.ledger_head,
+              current: head === null ? null : head === s0.ledger_head,
+              report_path: s0.report_path ?? null,
+              report_sha256: s0.report_sha256 ?? null,
+              report_current: reportNow === undefined || s0.report_sha256 === undefined ? null : reportNow === s0.report_sha256,
+              open_rejections: s0.open_rejections ?? [],
+            }
+          : null,
       };
       if (args.includes("--json")) {
         console.log(JSON.stringify(summary));
@@ -364,6 +414,8 @@ async function main(argv: string[]): Promise<number> {
         for (const e of summary.entries) console.log(`  #${e.seq}: ${e.action} by ${e.examiner} at ${e.at}${e.note ? ` (${e.note})` : ""}`);
         if (summary.signed) {
           console.log(`  Signed by ${summary.signed.examiner} at ${summary.signed.at}, over ledger head ${summary.signed.ledger_head}${summary.signed.current === false ? " (the ledger has changed since: the sign-off is over an earlier one)" : ""}.`);
+          if (summary.signed.report_path) console.log(`  Over ${summary.signed.report_path} ${summary.signed.report_sha256 ?? "(absent when signed)"}${summary.signed.report_current === false ? " (the report has changed since)" : ""}.`);
+          if (summary.signed.open_rejections.length) console.log(`  Signed with rejections standing: ${summary.signed.open_rejections.map((n) => `#${n}`).join(", ")}.`);
         } else {
           console.log("  Not signed.");
         }

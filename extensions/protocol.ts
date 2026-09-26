@@ -6991,7 +6991,12 @@ export function normalizeTs(raw: string | undefined): { ok: true; ts?: string; r
   return { ok: true, ts, ...(ts !== text ? { raw: text } : {}) };
 }
 
-export async function readLedger(sandboxRoot: string): Promise<LedgerEntry[]> {
+/**
+ * The ledger's entries, each with its attestations' authors folded into
+ * `authors` (in memory: entries.jsonl is never rewritten). `raw` gives the
+ * lines as written.
+ */
+export async function readLedger(sandboxRoot: string, opts: { raw?: boolean } = {}): Promise<LedgerEntry[]> {
   const text = await readFile(join(sandboxRoot, LEDGER_ENTRIES), "utf8").catch(() => "");
   const out: LedgerEntry[] = [];
   for (const line of text.split("\n")) {
@@ -7002,7 +7007,7 @@ export async function readLedger(sandboxRoot: string): Promise<LedgerEntry[]> {
       // a torn line is skipped, not fatal
     }
   }
-  return out;
+  return opts.raw ? out : withAttestations(sandboxRoot, out);
 }
 
 /** Append one entry, merging with an equal one, and re-render ledger.md. */

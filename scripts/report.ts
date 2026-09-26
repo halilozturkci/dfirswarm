@@ -43,6 +43,8 @@ import {
   readNames,
   eventChainVerifier,
   readSandboxFile,
+  refsOnFailedJobs,
+  standingContradictions,
   supersededBy,
   type AgentBudget,
   type LedgerEntry,
@@ -325,6 +327,8 @@ section { padding-top: 2.5rem; }
 .exhibit-ioc { border-left-color: var(--saffron); }
 .exhibit-finding { border-left-color: var(--kelp); }
 .exhibit-absence { border-left-style: dashed; }
+.exhibit-hypothesis { border-left-style: dotted; }
+.exhibit-limitation { border-left-color: var(--brick); border-left-style: dashed; }
 
 /* --- spend ---------------------------------------------------------------- */
 .bars { margin: 1rem 0; display: flex; flex-direction: column; gap: .45rem; }
@@ -414,12 +418,18 @@ function givenTime(entry: LedgerEntry): string | null {
 /** One dated event on the timeline rail: stamp, claim, then its citation. */
 function timelineRow(entry: LedgerEntry, correctedBy?: number): string {
   const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})/.exec(entry.ts ?? "");
+  // A date alone is a day: no midnight is printed for it.
   const stamp = m
-    ? `<span class="date">${m[1]}</span><span>${m[2]}Z</span>`
+    ? entry.precision === "date"
+      ? `<span class="date">${m[1]}</span><span>(date only)</span>`
+      : `<span class="date">${m[1]}</span><span>${m[2]}Z</span>`
     : `<span class="date">${escapeHtml(entry.ts ?? "undated")}</span>`;
   const rows: string[] = [];
   const given = givenTime(entry);
   if (given) rows.push(`<dt>Time as given</dt><dd>${escapeHtml(given)}</dd>`);
+  if (entry.clock) rows.push(`<dt>Clock</dt><dd>${escapeHtml(entry.clock)}</dd>`);
+  if (entry.precision && entry.precision !== "date") rows.push(`<dt>Precision</dt><dd>${escapeHtml(entry.precision)}</dd>`);
+  if (entry.basis) rows.push(`<dt>Basis</dt><dd>${escapeHtml(entry.basis)}</dd>`);
   if (entry.source) rows.push(`<dt>Source</dt><dd>${inline(entry.source)}</dd>`);
   if (entry.evidence) rows.push(`<dt>Evidence</dt><dd>${inline(entry.evidence)}</dd>`);
   if (correctedBy) rows.push(`<dt>Superseded by</dt><dd>E-${correctedBy}</dd>`);
@@ -482,26 +492,42 @@ export type ExhibitNotes = {
   grounding?: Grounding;
   supersededBy?: number;
   review?: string;
+  /** The entry's refs to jobs that did not end ok, with their status. */
+  failedRefs?: string[];
 };
 
+const KIND_CHIP: Record<string, "brick" | "kelp" | "moss" | "none" | "saffron" | "slate"> = { ioc: "saffron", finding: "kelp", event: "slate", absence: "slate", hypothesis: "none", limitation: "brick" };
+
 function exhibitCard(entry: LedgerEntry, modelOf: (agent: string) => string | undefined = () => undefined, notes: ExhibitNotes = {}): string {
-  const tone = entry.kind === "ioc" ? "ioc" : entry.kind === "finding" ? "finding" : entry.kind === "event" ? "event" : "absence";
+  const tone = entry.kind === "ioc" ? "ioc" : entry.kind === "finding" ? "finding" : entry.kind === "event" ? "event" : entry.kind === "hypothesis" ? "hypothesis" : entry.kind === "limitation" ? "limitation" : "absence";
   const rows: string[] = [];
-  if (entry.ts) rows.push(`<dt>When</dt><dd>${whenCell(entry.ts)}</dd>`);
+  if (entry.status) rows.push(`<dt>Status</dt><dd>${escapeHtml(entry.status)}: a proposition under test, not a finding</dd>`);
+  if (entry.reason) rows.push(`<dt>Why not established</dt><dd>${escapeHtml(entry.reason.replace("_", " "))}</dd>`);
+  if (entry.answers?.length) rows.push(`<dt>Answers</dt><dd>${entry.answers.map((a) => escapeHtml(a)).join(", ")}</dd>`);
+  if (entry.ts) rows.push(`<dt>When</dt><dd>${entry.precision === "date" ? `${escapeHtml(entry.ts.slice(0, 10))} (date only)` : whenCell(entry.ts)}</dd>`);
   const given = givenTime(entry);
   if (given) rows.push(`<dt>Time as given</dt><dd>${escapeHtml(given)}</dd>`);
+  if (entry.clock) rows.push(`<dt>Clock</dt><dd>${escapeHtml(entry.clock)}</dd>`);
+  if (entry.precision && entry.precision !== "date") rows.push(`<dt>Precision</dt><dd>${escapeHtml(entry.precision)}</dd>`);
   rows.push(`<dt>Source</dt><dd>${inline(entry.source ?? "—")}</dd>`);
   rows.push(`<dt>Evidence</dt><dd>${inline(entry.evidence ?? "—")}</dd>`);
+  if (entry.basis) rows.push(`<dt>Basis</dt><dd>${escapeHtml(entry.basis)}</dd>`);
+  if (entry.completion && entry.completion !== "complete") rows.push(`<dt>Search</dt><dd>${escapeHtml(entry.completion)}: holds only for what was searched</dd>`);
   // The run's objects it rests on, each checked when it was recorded.
   if (entry.refs?.length) rows.push(`<dt>Rests on</dt><dd>${entry.refs.map((r) => `<code>${escapeHtml(r)}</code>`).join(", ")}</dd>`);
   else if (entry.kind === "finding") rows.push(`<dt>Rests on</dt><dd>no object of the run named (no refs)</dd>`);
+  if (notes.failedRefs?.length) rows.push(`<dt>From a failed job</dt><dd>${notes.failedRefs.map((r) => escapeHtml(r)).join(", ")}: the kept output of a job that did not succeed</dd>`);
+  if (entry.locators?.length) rows.push(`<dt>Located at</dt><dd>${entry.locators.map((l) => `<code>${escapeHtml(l.ref)}</code> ${escapeHtml(l.at)}`).join("; ")}</dd>`);
+  if (entry.rel?.length) rows.push(`<dt>Related</dt><dd>${entry.rel.map((r) => `${escapeHtml(r.kind.replace("_", " "))} <a href="#e-${r.to}">E-${r.to}</a>`).join(", ")}</dd>`);
+  if (entry.attribution) rows.push(`<dt>Attributed to</dt><dd>${escapeHtml(entry.attribution.subject)} (${escapeHtml(entry.attribution.subject_type)})${entry.attribution.basis_refs?.length ? `, on ${entry.attribution.basis_refs.map((r) => `<code>${escapeHtml(r)}</code>`).join(", ")}` : ""}</dd>`);
+  if (entry.sensitive) rows.push(`<dt>Sensitive</dt><dd>it, or what it cites, holds a credential, a key or personal data: redacted from a package made with --redact</dd>`);
   rows.push(`<dt>Recorded by</dt><dd class="hash">${escapeHtml(entry.authors.join(", "))}</dd>`);
   const models = [...new Set(entry.authors.map((a) => modelOf(a)).filter((m): m is string => Boolean(m)))];
   if (models.length) rows.push(`<dt>Model</dt><dd>${escapeHtml(models.join(", "))}</dd>`);
   if (entry.at) rows.push(`<dt>Recorded at</dt><dd class="tabular">${escapeHtml(entry.at)}</dd>`);
   if (entry.hash) rows.push(`<dt>Entry hash</dt><dd class="hash">${escapeHtml(entry.hash)}</dd>`);
   const corrects = Number((entry as { supersedes?: unknown }).supersedes);
-  if (Number.isInteger(corrects) && corrects > 0) rows.push(`<dt>Corrects</dt><dd><a href="#e-${corrects}">E-${corrects}</a>, which stays in the ledger as it was recorded</dd>`);
+  if (Number.isInteger(corrects) && corrects > 0) rows.push(`<dt>Corrects</dt><dd><a href="#e-${corrects}">E-${corrects}</a>, which stays in the ledger as it was recorded${entry.because ? `, because ${escapeHtml(entry.because)}` : ""}</dd>`);
   if (notes.supersededBy) rows.push(`<dt>Superseded by</dt><dd><a href="#e-${notes.supersededBy}">E-${notes.supersededBy}</a>: the swarm recorded a correction; this entry is shown as it was recorded</dd>`);
   if (notes.grounding === "not in the trace") rows.push(`<dt>Grounding</dt><dd>NOT GROUNDED IN THE TRACE: no call before this entry was recorded named its source</dd>`);
   else if (notes.grounding === "grounded") rows.push(`<dt>Grounding</dt><dd>a call before this entry named its source</dd>`);
@@ -527,7 +553,7 @@ function exhibitCard(entry: LedgerEntry, modelOf: (agent: string) => string | un
       }`
     : "";
   return `<div class="exhibit exhibit-${tone}" id="e-${entry.seq}">
-  <div class="head"><span class="no">E-${entry.seq}</span><span class="chips">${chip(entry.kind, entry.kind === "ioc" ? "saffron" : entry.kind === "finding" ? "kelp" : "slate")}${confidence}${superseded}${ungrounded}${reviewChip}</span></div>
+  <div class="head"><span class="no">E-${entry.seq}</span><span class="chips">${chip(entry.kind, KIND_CHIP[entry.kind] ?? "slate")}${entry.status ? ` ${chip(entry.status, entry.status === "supported" ? "moss" : entry.status === "refuted" ? "brick" : "none")}` : ""}${confidence}${entry.sensitive ? ` ${chip("sensitive", "brick")}` : ""}${notes.failedRefs?.length ? ` ${chip("from a failed job", "saffron")}` : ""}${superseded}${ungrounded}${reviewChip}</span></div>
   <p class="value">${inline(entry.value)}</p>
   <dl>${rows.join("")}</dl>
 </div>`;
@@ -1387,8 +1413,29 @@ export async function renderReport(sandboxArg: string, options: ReportOptions = 
   const findings = ledger.filter((e) => e.kind === "finding");
   // Searches that found nothing, as the agents recorded them.
   const absences = ledger.filter((e) => (e.kind as string) === "absence");
+  // Propositions still under test, and what the examination could not establish.
+  const hypotheses = ledger.filter((e) => e.kind === "hypothesis");
+  const limitations = ledger.filter((e) => e.kind === "limitation");
   // Corrections: the corrected entry stays as it was recorded, marked.
   const correctedBy = supersededBy(ledger);
+  const contradictions = standingContradictions(ledger);
+  const sensitive = ledger.filter((e) => e.sensitive && !correctedBy.has(e.seq));
+  // Which entries rest on the kept output of a job that did not succeed.
+  const failedBySeq = new Map<number, string[]>();
+  for (const e of ledger) {
+    if (!e.refs?.length) continue;
+    const failed = await refsOnFailedJobs(sandbox, e.refs);
+    if (failed.length) failedBySeq.set(e.seq, failed.map((f) => `${f.ref} (job ${f.status})`));
+  }
+  // The goal's sections the entries say they answer.
+  const byQuestion = new Map<string, LedgerEntry[]>();
+  for (const e of ledger) {
+    if (correctedBy.has(e.seq)) continue;
+    for (const a of e.answers ?? []) {
+      const key = a.replace(/^q(?=\d)/i, "");
+      byQuestion.set(key, [...(byQuestion.get(key) ?? []), e]);
+    }
+  }
   // What the trace shows the swarm naming, and whether it shows each
   // exhibit's source being read before the exhibit was recorded.
   const coverage: CoverageReport = await coverageOf(sandbox, { events, ledger, traceUnreadable: traceUnread });
@@ -1396,7 +1443,17 @@ export async function renderReport(sandboxArg: string, options: ReportOptions = 
     grounding: coverage.grounding[String(e.seq)],
     supersededBy: correctedBy.get(e.seq),
     review: reviewStatusOf(review, e),
+    ...(failedBySeq.has(e.seq) ? { failedRefs: failedBySeq.get(e.seq) } : {}),
   });
+  const questionIds = [...byQuestion.keys()].sort((a, b) => (Number(a) - Number(b)) || a.localeCompare(b));
+  const byQuestionHtml = questionIds.length
+    ? `<h3>By question</h3><p class="lede">The goal sections the agents said each standing entry answers.</p><table><thead><tr><th>Section</th><th>Entries</th></tr></thead><tbody>${questionIds
+        .map((q) => `<tr><td>${escapeHtml(q)}</td><td>${(byQuestion.get(q) ?? []).map((e) => `<a href="#e-${e.seq}">E-${e.seq}</a> ${escapeHtml(e.kind)}${e.kind === "hypothesis" ? ` (${escapeHtml(e.status ?? "open")})` : e.kind === "limitation" ? ` (${escapeHtml(e.reason ?? "")})` : ""}`).join(", ")}</td></tr>`)
+        .join("")}</tbody></table>`
+    : "";
+  const contradictionsHtml = contradictions.length
+    ? `<div class="note">${contradictions.length} standing contradiction${contradictions.length === 1 ? "" : "s"}: ${contradictions.map((c) => `<a href="#e-${c.from}">E-${c.from}</a> contradicts <a href="#e-${c.to}">E-${c.to}</a>`).join("; ")}. Both entries stand; neither was corrected.</div>`
+    : "";
   const ungrounded = ledger.filter((e) => coverage.grounding[String(e.seq)] === "not in the trace");
 
   const sections: Section[] = [];
@@ -1408,8 +1465,8 @@ export async function renderReport(sandboxArg: string, options: ReportOptions = 
     count: findings.length ? `${findings.length} recorded` : "none recorded",
     html: findings.length
       ? `<p class="lede">What the swarm concluded, strongest first. Each card carries the exhibit number its full entry has in §4, and the source it rests on. A claim with no evidence line is a claim this document does not stand behind.</p>
-${verdictGroups(findings, correctedBy)}`
-      : `<div class="note">The swarm recorded no findings. That is not the same as finding nothing: it means nothing was written to the ledger with <code>record</code>, so this report has no conclusions to carry. §7 says what was and was not covered.</div>`,
+${contradictionsHtml}${verdictGroups(findings, correctedBy)}${byQuestionHtml}${limitations.length ? `<p>${limitations.length} limitation${limitations.length === 1 ? "" : "s"} recorded: what the examination could not establish, in §4.</p>` : ""}`
+      : `${contradictionsHtml}<div class="note">The swarm recorded no findings. That is not the same as finding nothing: it means nothing was written to the ledger with <code>record</code>, so this report has no conclusions to carry. §7 says what was and was not covered.</div>`,
   });
 
   // --- 2. Scope and evidence ----------------------------------------------
@@ -1479,7 +1536,7 @@ ${coverageHtml}`
   sections.push({
     n: 4,
     title: "Indicators and findings",
-    count: `${iocs.length} indicator${iocs.length === 1 ? "" : "s"} · ${findings.length} finding${findings.length === 1 ? "" : "s"}${absences.length ? ` · ${absences.length} searched and not found` : ""}`,
+    count: `${iocs.length} indicator${iocs.length === 1 ? "" : "s"} · ${findings.length} finding${findings.length === 1 ? "" : "s"}${absences.length ? ` · ${absences.length} searched and not found` : ""}${hypotheses.length ? ` · ${hypotheses.length} hypothes${hypotheses.length === 1 ? "is" : "es"}` : ""}${limitations.length ? ` · ${limitations.length} limitation${limitations.length === 1 ? "" : "s"}` : ""}`,
     html:
       (ungrounded.length
         ? `<p class="lede">${ungrounded.length} entr${ungrounded.length === 1 ? "y is" : "ies are"} marked <strong>not grounded in the trace</strong>: no call before ${ungrounded.length === 1 ? "it" : "each"} was recorded named its source. The source may still be right (a path inside an image a tool reached by inode, say), but the trace does not show the swarm reading it.</p>`
@@ -1492,6 +1549,15 @@ ${coverageHtml}`
         : `<h3>Findings</h3><div class="note">None recorded.</div>`) +
       (absences.length
         ? `<h3>Searched and not found (${absences.length})</h3><p class="lede">Searches that found nothing, as recorded by the agents, valid only for the stated scope: what was looked for, where, and how (the query, the tool and its version, allocated space only or unallocated and slack too). Not found by that search is not absent from the evidence.</p>${absences.map((e) => exhibitCard(e, modelOf, notesFor(e))).join("")}`
+        : "") +
+      (hypotheses.length
+        ? `<h3>Hypotheses (${hypotheses.length})</h3><p class="lede">Propositions the swarm put under test, with the status it last gave each. A supported hypothesis is an assessment, not a finding.</p>${hypotheses.map((e) => exhibitCard(e, modelOf, notesFor(e))).join("")}`
+        : "") +
+      (limitations.length
+        ? `<h3>Limitations (${limitations.length})</h3><p class="lede">What the examination could not establish, and why: not examined, unavailable, failed, partial or excluded. A reader should weigh every conclusion above against these.</p>${limitations.map((e) => exhibitCard(e, modelOf, notesFor(e))).join("")}`
+        : "") +
+      (sensitive.length
+        ? `<h3>Sensitive material</h3><p>${sensitive.length} standing entr${sensitive.length === 1 ? "y is" : "ies are"} marked sensitive: ${sensitive.map((e) => `<a href="#e-${e.seq}">E-${e.seq}</a>`).join(", ")}. The objects they cite (${[...new Set(sensitive.flatMap((e) => e.refs ?? []))].map((r) => `<code>${escapeHtml(r)}</code>`).join(", ") || "none named"}) are replaced by their hashes in a package made with <code>--redact</code>.</p>`
         : ""),
   });
 
