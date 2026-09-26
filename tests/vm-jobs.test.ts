@@ -1,7 +1,8 @@
 /**
  * The job service with real worker VMs (msb): what a worker can and cannot
  * reach, a recipe's result as a catalogue generation, one job's output read
- * by two others at once, a hub that dies with a worker up, and a finish that
+ * by two others at once, a hub that dies with a worker up or while one is
+ * being made, a job cancelled while its worker is made, and a finish that
  * finds one. Needs a host that boots microVMs and an image with python3
  * (VM_TEST_IMAGE; default dfirswarm-base:dev-<arch>); skipped otherwise,
  * failed instead when DFIRSWARM_VM_TESTS=1.
@@ -190,6 +191,58 @@ await new Promise(() => {});
   assert.deepEqual(workerNames(run), []);
   assert.ok(!existsSync(join(`${S}.vm-snapshots`, "job-j999999.msb")), "a worker is never snapshotted as a seat");
   await svc.stop("over");
+});
+
+/** Processes still making or running a worker of this run (runWorker's children). */
+function makers(run: string): string[] {
+  return execFileSync("ps", ["-e", "-ww", "-o", "args="], { encoding: "utf8" }).split("\n").filter((l) => l.includes(`worker-once --name dfs-${run}-job-`));
+}
+
+test("a job cancelled while its worker is being made, and a hub that dies while one is: no VM and no maker left, each attempt on the record", async (t) => {
+  if (skip) return t.skip(skip);
+  const { S, run } = await sandbox();
+  const svc = service(S, run);
+  await svc.start();
+  // Cancelled the moment it is running: its maker has just been started.
+  const r = await svc.submit("a1", { kind: "command", command: "echo ran > \"$OUT/x\"", inputs: [] });
+  assert.ok(r.ok);
+  const end = Date.now() + 30_000;
+  while (svc.jobs.get(r.job.id)!.state === "accepted" && Date.now() < end) await new Promise((res) => setTimeout(res, 5));
+  await svc.status("a1", r.job.id, { cancel: true });
+  const cancelled = await until(svc, r.job.id);
+  assert.equal(cancelled.status, "cancelled");
+  const journal = () => readFileSync(storePaths(S).journal, "utf8").trim().split("\n").map((l) => JSON.parse(l) as Record<string, unknown>);
+  assert.ok(journal().some((l) => l.type === "job_fenced" && l.job === r.job.id && l.fenced === true), "fenced before it was sealed");
+  assert.deepEqual(workerNames(run), [], "no VM left");
+  assert.deepEqual(makers(run), [], "no maker left");
+  await svc.stop("over");
+
+  // A hub killed just after it recorded a job as started (its worker being made).
+  const code = `
+import { JobService } from ${JSON.stringify(join(ROOT, "scripts", "job-service.ts"))};
+import { runWorker, destroyWorker } from ${JSON.stringify(join(ROOT, "scripts", "vm.ts"))};
+const svc = new JobService({ sandbox: ${JSON.stringify(S)}, run: ${JSON.stringify(run)}, image: ${JSON.stringify(IMAGE)}, workers: 1, workerCpus: 1, workerMemoryMib: 1024, allowHosts: [], openNet: false, packDirs: [], forging: false, minFreeMb: 64, runWorker, destroyWorker, notify: async () => {}, identity: async () => ({}) });
+await svc.start();
+await svc.submit("a1", { kind: "command", command: "echo ok > \\"$OUT/ok.txt\\"", inputs: [] });
+await new Promise(() => {});
+`;
+  const child = spawn(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", code], { stdio: "ignore" });
+  const id = "j000002";
+  const end2 = Date.now() + 60_000;
+  while (!journal().some((l) => l.type === "job_started" && l.job === id) && Date.now() < end2) await new Promise((res) => setTimeout(res, 5));
+  child.kill("SIGKILL");
+  const svc2 = service(S, run);
+  await svc2.start();
+  const job = await until(svc2, id);
+  assert.equal(job.status, "ok", "a job with no network is run once more after its hub died");
+  assert.equal(job.attempt, 2);
+  assert.ok(journal().some((l) => l.type === "job_retried" && l.job === id));
+  assert.equal(readFileSync(join(storePaths(S).jobs, id, "out", "ok.txt"), "utf8"), "ok\n");
+  const settle = Date.now() + 10_000;
+  while (makers(run).length && Date.now() < settle) await new Promise((res) => setTimeout(res, 250));
+  assert.deepEqual(makers(run), [], "the dead hub's maker is gone");
+  assert.deepEqual(workerNames(run), [], "and so is any VM it made");
+  await svc2.stop("over");
 });
 
 test("the kickoff's flow without agents: the catalog VM plans from the packs' recipes, the job service runs them, the catalogue grows", async (t) => {

@@ -114,8 +114,9 @@ def add(tf, name, data=b"x", typ=tarfile.REGTYPE, link=""):
     ti = tarfile.TarInfo(name); ti.type = typ; ti.linkname = link; ti.mtime = 1700000000
     ti.size = len(data) if typ == tarfile.REGTYPE else 0
     tf.addfile(ti, io.BytesIO(data) if typ == tarfile.REGTYPE else None)
-with tarfile.open(os.path.join(d, "evil.tar"), "w") as tf:
+with tarfile.open(os.path.join(d, "evil.tar"), "w", encoding="utf-8", errors="surrogateescape") as tf:
     add(tf, "../../etc/cron.d/x"); add(tf, "/abs/path"); add(tf, "dup"); add(tf, "dup", b"yy")
+    add(tf, b"caf\xe9.txt".decode("utf-8", "surrogateescape"))
     add(tf, "ln", typ=tarfile.SYMTYPE, link="/etc/shadow")
 open(os.path.join(d, "cut.tar"), "wb").write(open(os.path.join(d, "evil.tar"), "rb").read()[:2000])
 with zipfile.ZipFile(os.path.join(d, "bomb.zip"), "w", compression=zipfile.ZIP_DEFLATED) as z:
@@ -144,6 +145,7 @@ flags_of() { awk -F'\t' -v p="$2" '$3 == p { print $14 }' "$H/out-$1/members.tsv
 [[ "$(flags_of evil.tar '/abs/path')" == escapes-root ]] || fail "an absolute name should be flagged"
 [[ "$(awk -F'\t' '$3 == "dup"' "$H/out-evil.tar/members.tsv" | wc -l | tr -d ' ')" -eq 2 ]] || fail "duplicate names are two rows"
 [[ "$(awk -F'\t' '$3 == "ln" { print $2 "|" $12 }' "$H/out-evil.tar/members.tsv")" == "symlink|/etc/shadow" ]] || fail "a link is listed as one, with its target, never followed"
+[[ "$(awk -F'\t' '$4 == "Y2Fm6S50eHQ=" { print $14 }' "$H/out-evil.tar/members.tsv")" == name-not-utf8 ]] || fail "a member name that is not UTF-8 is flagged: $(cat "$H/out-evil.tar/members.tsv")"
 run_am cut.tar || true
 [[ "$(jq -r .status "$H/out-cut.tar/coverage.json")" == partial ]] || fail "a truncated tar is partial: $(cat "$H/out-cut.tar/coverage.json")"
 run_am bomb.zip
@@ -155,4 +157,4 @@ run_am enc.zip
 [[ "$(flags_of enc.zip secret.txt)" == encrypted ]] || fail "an encrypted member is flagged: $(cat "$H/out-enc.zip/members.tsv")"
 RECIPE_MEMBERS=10 python3 "$AM" run --target "{\"paths\": [\"$H/many.zip\"]}" --out "$H/out-many" >/dev/null || true
 jq -e '.limits_hit[0] | test("declares 30, more than the limit of 10")' "$H/out-many/coverage.json" >/dev/null || fail "a directory past the limit is not loaded, and says so: $(cat "$H/out-many/coverage.json")"
-pass "hostile archives are listed as data: escapes, duplicates, links, bombs, encryption, truncation and a limit, each named"
+pass "hostile archives are listed as data: escapes, duplicates, links, bombs, encryption, truncation, a name that is not UTF-8 and a limit, each named"

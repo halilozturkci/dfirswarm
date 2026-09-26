@@ -26,7 +26,7 @@
 import { existsSync, statfsSync } from "node:fs";
 import { chmod, copyFile, mkdir, open, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { Journal, maybeCrash, publishGeneration, readManifest, resealMoved, sealTree, sha256Hex, storePaths, type JournalLine } from "./evidence-store.ts";
+import { Journal, maybeCrash, publishGeneration, readManifest, resealMoved, sealTree, sha256File, sha256Hex, storePaths, type JournalLine } from "./evidence-store.ts";
 import type { Mount, WorkerSpec } from "./vm.ts";
 
 export type JobKind = "tool" | "command" | "recipe" | "detect";
@@ -148,6 +148,8 @@ export class JobService {
   private readonly running = new Map<string, Promise<void>>();
   private readonly watchers = new Map<string, number>();
   private readonly delivered = new Set<string>();
+  /** Agents whose request was answered with another's job still under way: told too, once it is done (job → agent → end of its wait). */
+  private readonly alsoTell = new Map<string, Map<string, number>>();
   private readonly waitingForSpace = new Set<string>();
   private rotation = 0;
   private stopping = false;
@@ -230,7 +232,10 @@ export class JobService {
           if (j) j.generation = String(l.generation);
           break;
         case "job_notified":
-          this.delivered.add(id);
+          this.delivered.add(j && l.to && l.to !== j.requester.agent ? `${id}@${l.to}` : id);
+          break;
+        case "job_deduplicated":
+          if (j && l.notify) this.also(id, String((l.by as Requester | undefined)?.agent ?? ""), 0);
           break;
         default:
           break;
@@ -280,7 +285,7 @@ export class JobService {
       }
       if (j.state === "committed" && j.spec.kind === "recipe" && !j.generation && j.status !== "cancelled") {
         await this.afterCommit(j);
-      } else if ((j.state === "committed" || j.state === "failed") && !this.delivered.has(j.id)) {
+      } else if ((j.state === "committed" || j.state === "failed") && (!this.delivered.has(j.id) || this.alsoTell.has(j.id))) {
         await this.tell(j);
       }
     }
@@ -412,10 +417,17 @@ export class JobService {
     const key = spec.kind === "recipe" ? await this.recipeKey(spec) : undefined;
     if (key) {
       const same = [...this.jobs.values()].find((j) => j.spec.kind === "recipe" && j.dedup_key === key && (j.state === "accepted" || j.state === "running" || j.state === "finished" || j.state === "fenced" || (j.state === "committed" && j.status === "ok")));
-      if (same) return { ok: true, job: same };
+      if (same) {
+        // On the record: who else asked, and whether it is to be told when
+        // the job is done (it is still under way, and not its own).
+        const open = same.state !== "committed";
+        const notify = open && agent !== same.requester.agent && agent !== "system";
+        await this.journal.append({ type: "job_deduplicated", job: same.id, by: await this.requesterOf(agent), dedup_key: key, notify });
+        if (notify) this.also(same.id, agent, o.watch && o.watch > 0 ? Date.now() + Math.min(o.watch, 120) * 1000 : 0);
+        return { ok: true, job: same };
+      }
     }
-    const who: { name?: string; doing?: string } = agent === "system" ? { name: "harness" } : await this.o.identity(agent).catch(() => ({}));
-    const requester: Requester = { agent, ...(who.name ? { name: who.name } : {}), ...(who.doing ? { doing: who.doing } : {}) };
+    const requester = await this.requesterOf(agent);
     const id = this.nextId();
     await this.journal.append({ type: "job_accepted", job: id, spec, requester, ...(key ? { dedup_key: key } : {}) });
     maybeCrash("job:accepted");
@@ -771,7 +783,8 @@ export class JobService {
         await copyFile(from, to);
         await chmod(to, 0o444);
       }
-      if (existsSync(to)) logs[name] = sha256Hex(await readFile(to));
+      // Streamed: a job that prints gigabytes leaves a log of gigabytes.
+      if (existsSync(to)) logs[name] = await sha256File(to);
     }
     maybeCrash("job:sealed");
     const outputs = { manifest_sha256: sealed.manifestSha256, files: sealed.manifest.totals.files, bytes: sealed.manifest.totals.bytes, rejected: sealed.manifest.rejected.length, path: `store/jobs/${job.id}/${where}` };
@@ -945,8 +958,41 @@ export class JobService {
     if (terminal && agent === job.requester.agent && !this.delivered.has(id)) {
       this.delivered.add(id);
       await this.journal.append({ type: "job_notified", job: id, to: agent, how: "status" });
+    } else if (agent !== job.requester.agent && this.alsoTell.get(id)?.has(agent)) {
+      if (o.wait && o.wait > 0) this.also(id, agent, Date.now() + Math.min(o.wait, 120) * 1000);
+      if (terminal && !this.delivered.has(`${id}@${agent}`)) {
+        this.delivered.add(`${id}@${agent}`);
+        await this.journal.append({ type: "job_notified", job: id, to: agent, how: "status" });
+      }
     }
     return { ok: true, job, ...(stdout ? { stdout } : {}) };
+  }
+
+  private async requesterOf(agent: string): Promise<Requester> {
+    const who: { name?: string; doing?: string } = agent === "system" ? { name: "harness" } : await this.o.identity(agent).catch(() => ({}));
+    return { agent, ...(who.name ? { name: who.name } : {}), ...(who.doing ? { doing: who.doing } : {}) };
+  }
+
+  private also(job: string, agent: string, until: number): void {
+    if (!agent) return;
+    const m = this.alsoTell.get(job) ?? new Map<string, number>();
+    m.set(agent, Math.max(until, m.get(agent) ?? 0));
+    this.alsoTell.set(job, m);
+  }
+
+  /** The others who asked for the same job are told as its requester is: after their own wait. */
+  private async tellAlso(job: JobRecord): Promise<void> {
+    for (const [agent, until] of this.alsoTell.get(job.id) ?? []) {
+      const key = `${job.id}@${agent}`;
+      if (this.delivered.has(key)) continue;
+      if (Date.now() < until) {
+        setTimeout(() => void this.tellAlso(job), until - Date.now() + 3000).unref?.();
+        continue;
+      }
+      this.delivered.add(key);
+      await this.journal.append({ type: "job_notified", job: job.id, to: agent, how: "post" });
+      await this.o.notify(agent, describe(job)).catch(() => undefined);
+    }
   }
 
   /**
@@ -955,6 +1001,7 @@ export class JobService {
    * ended without the answer.
    */
   private async tell(job: JobRecord): Promise<void> {
+    await this.tellAlso(job);
     // A detect pass is the service's step: its recipes' results are what the agent is told.
     if (this.delivered.has(job.id) || job.requester.agent === "system" || (job.spec.kind === "detect" && job.status === "ok")) return;
     const until = this.watchers.get(job.id) ?? 0;

@@ -33,6 +33,8 @@ All notable changes to this project. The format follows
   one's own), `catalog_request` (a recipe, or a detect pass that finds the
   recipes that apply, over one object of the run). A job's file is cited as
   `job:<id>/<path>`.
+  The same recipe over the same object is one job: a second request is
+  journalled (`job_deduplicated`) and its agent told when the job is done.
 - **Workers are made by a child process, and a fence is a fence.** On Ali
   Hadi #10 every worker after the 64th failed to boot inside the hub's
   long-lived msb SDK ("insert run: FOREIGN KEY constraint failed"), while a
@@ -61,10 +63,11 @@ All notable changes to this project. The format follows
   and revision, and the recipes that made them.
 - **Catalogue recipes are the packs'** (`recipes/<name>/` with a
   recipe.json and an entry answering `detect` and `run`): computer-forensics-
-  base 1.2.15 ships disk-volumes (The Sleuth Kit), memory-windows
+  base 1.2.16 ships disk-volumes (The Sleuth Kit), memory-windows
   (Volatility) and archive-members (a tar, zip or 7z member list without
   extracting; names kept as bytes, duplicates as rows, zip DOS times marked
-  zone unknown, a truncated tar reported partial). The harness takes the
+  zone unknown, a truncated tar reported partial, a name that is not UTF-8
+  flagged as one macOS cannot store). The harness takes the
   census (`scripts/evidence_catalog.py`): each recipe says the smallest
   object it is asked about, so a small zip is offered to the archive recipe
   and not to the disk one. In a microVM run the census plans the recipes and

@@ -14,6 +14,9 @@ backslashes escaped; `path_b64` is the name's exact bytes. `n` counts from 0
 in archive order and is what archive_extract takes, so two members with the
 same name are still two rows. A tar's times are UTC; a zip's DOS times carry
 no zone (`tz` is `unknown`) unless the member has an extended timestamp.
+`flags` names what an examiner should know before extracting: escapes-root,
+encrypted, ratio>1000, and name-not-utf8 (macOS refuses such a name, so an
+extraction there must rename the member; its bytes are path_b64).
 """
 import base64
 import datetime
@@ -29,6 +32,15 @@ import zipfile
 import zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def name_flags(raw):
+    """A name that is not UTF-8: APFS will not store it as it is."""
+    try:
+        raw.decode("utf-8")
+        return []
+    except UnicodeDecodeError:
+        return ["name-not-utf8"]
 SEVEN_Z_MAGIC = b"7z\xbc\xaf\x27\x1c"
 COLUMNS = ["n", "type", "path", "path_b64", "size", "packed", "mtime", "tz", "mode", "uid", "gid", "link", "locator", "flags"]
 
@@ -159,7 +171,7 @@ def list_tar(path, w, deadline, max_members, cov):
             raw = m.name.encode("utf-8", "surrogateescape")
             link = m.linkname.encode("utf-8", "surrogateescape") if m.linkname else b""
             loc = "tar:index=%d" % n if compressed else "tar:index=%d;header=%d;data=%d" % (n, m.offset, m.offset_data)
-            flags = []
+            flags = name_flags(raw)
             if raw.startswith(b"/") or b"/../" in b"/" + raw + b"/":
                 flags.append("escapes-root")
             w.row(n=n, type=tar_type(m), path=esc(raw), path_b64=b64(raw), size=m.size, packed="",
@@ -258,7 +270,7 @@ def list_zip(path, w, deadline, max_members, cov):
                 tz = "unknown"
             mode = (info.external_attr >> 16) & 0xFFFF
             kind = "dir" if info.is_dir() else ("symlink" if (mode & 0o170000) == 0o120000 else "file")
-            flags = []
+            flags = name_flags(raw)
             if info.flag_bits & 0x1:
                 flags.append("encrypted")
             if info.compress_size and info.file_size / max(info.compress_size, 1) > 1000:
@@ -307,7 +319,7 @@ def list_7z(path, w, deadline, max_members, cov):
         attrs = fields.get(b"Attributes", b"").decode("ascii", "replace")
         kind = "dir" if attrs.startswith("D") or fields.get(b"Folder") == b"+" else "file"
         mod = fields.get(b"Modified", b"").decode("ascii", "replace").strip()
-        flags = ["encrypted"] if fields.get(b"Encrypted") == b"+" else []
+        flags = name_flags(raw) + (["encrypted"] if fields.get(b"Encrypted") == b"+" else [])
         w.row(n=n, type=kind, path=esc(raw), path_b64=b64(raw), size=fields.get(b"Size", b"").decode(),
               packed=fields.get(b"Packed Size", b"").decode(), mtime=mod.replace(" ", "T") + ("Z" if mod else ""),
               tz="utc" if mod else "", mode="", uid="", gid="", link="", locator="7z:index=%d" % n, flags=",".join(flags))

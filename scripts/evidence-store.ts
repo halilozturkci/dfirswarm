@@ -23,7 +23,7 @@
  */
 import { createHash } from "node:crypto";
 import { createReadStream, existsSync, readFileSync } from "node:fs";
-import { chmod, link, lstat, mkdir, open, readdir, readFile, readlink, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
+import { chmod, copyFile, link, lstat, mkdir, open, readdir, readFile, readlink, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -49,7 +49,8 @@ export function sha256Hex(data: Buffer | string): string {
   return createHash("sha256").update(data).digest("hex");
 }
 
-async function sha256File(path: string | Buffer): Promise<string> {
+/** A file's sha256, read as a stream: never the whole file in memory. */
+export async function sha256File(path: string | Buffer): Promise<string> {
   const h = createHash("sha256");
   await new Promise<void>((ok, fail) => {
     createReadStream(path).on("data", (c) => h.update(c)).on("end", () => ok()).on("error", fail);
@@ -305,10 +306,8 @@ async function copyTree(from: string, to: string, entries: Walked[]): Promise<vo
     const src = Buffer.concat([Buffer.from(from), Buffer.from("/"), e.rel]);
     const dst = Buffer.concat([Buffer.from(to), Buffer.from("/"), e.rel]);
     if (e.kind === "dir") await mkdir(dst, { recursive: true });
-    else if (e.kind === "file") {
-      const data = await readFile(src);
-      await writeFile(dst, data);
-    }
+    // copyFile, not a read into memory: a job's file may be larger than the hub's heap.
+    else if (e.kind === "file") await copyFile(src, dst);
   }
 }
 

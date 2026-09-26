@@ -259,10 +259,10 @@ test("three jobs in a row that ran in no worker are told to every agent once, an
   await svc.stop("test over");
 });
 
-test("a recipe job becomes a catalogue generation and revision; the same recipe over the same object is the same job", async () => {
+test("a recipe job becomes a catalogue generation and revision; the same recipe over the same object is the same job, on the record, and both askers are told", async () => {
   const S = sandbox();
   spawnSync("python3", ["-c", "import tarfile,io,sys\nwith tarfile.open(sys.argv[1],'w') as t:\n  i=tarfile.TarInfo('private/sms.db'); d=b'SQLite format 3\\0'+b'x'*1000; i.size=len(d); t.addfile(i,io.BytesIO(d))", join(S, "inputs", "phone.tar")]);
-  const { svc } = service(S);
+  const { svc, posts } = service(S);
   await svc.start();
   const target = { paths: [join(S, "inputs", "phone.tar")], name: "inputs/phone.tar", ref: "input:phone.tar" };
   const r = await svc.submit("a1", { kind: "recipe", recipe: "computer-forensics-base/archive-members", target, inputs: ["input:phone.tar"] });
@@ -271,6 +271,16 @@ test("a recipe job becomes a catalogue generation and revision; the same recipe 
   assert.ok(again.ok);
   assert.equal(again.job.id, r.job.id, "answered with the earlier job");
   const job = await until(svc, r.job.id);
+  const lines = () => verifyJournalText(readFileSync(storePaths(S).journal, "utf8")).lines;
+  const dedup = lines().filter((l) => l.type === "job_deduplicated");
+  assert.equal(dedup.length, 1, "the second request is on the record");
+  assert.equal(dedup[0].job, r.job.id);
+  assert.equal((dedup[0].by as { agent: string }).agent, "a2");
+  assert.equal(dedup[0].notify, true, "asked while the job was under way: to be told");
+  await eventually(() => ["a1", "a2"].every((a) => posts.some(([to, b]) => to === a && b.startsWith(`Job ${r.job.id} (recipe`))), `both askers are told: ${JSON.stringify(posts)}`);
+  const late = await svc.submit("a2", { kind: "recipe", recipe: "computer-forensics-base/archive-members", target, inputs: ["input:phone.tar"] });
+  assert.equal(late.ok && late.job.id, r.job.id);
+  assert.equal(lines().filter((l) => l.type === "job_deduplicated").at(-1)!.notify, false, "asked once it was done: answered in the call, not posted");
   await eventually(() => Boolean(job.generation), "the recipe's generation is published after its commit");
   assert.equal(job.generation, "g0001");
   const gen = JSON.parse(readFileSync(join(S, "catalog", "gen", "g0001", "generation.json"), "utf8"));

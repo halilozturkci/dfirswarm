@@ -2232,7 +2232,7 @@ export default function (pi: ExtensionAPI) {
     label: "Run a job",
     description:
       "Run work in a throwaway worker VM of this run's image: evidence parsing, anything slow or heavy, and anything whose output you will cite or share. Quick looks stay in your own shell. " +
-      "The worker sees inputs/, store/ (earlier jobs' outputs), catalog/ and tools/ read-only (SQLite: open with ?mode=ro&immutable=1 or copy into $OUT), your own work/<you>/, work/extracted/<you>/ and work/quarantine/<you>/ read-only when the job names one, no network unless network=allowlist, and writes only to $OUT. " +
+      "The worker sees what you see, read-only: inputs/, store/ (earlier jobs' outputs), catalog/, tools/, tool-output/ and all of work/, yours and your peers' (SQLite: open with ?mode=ro&immutable=1 or copy into $OUT). It has the image's programs, nothing installed in an agent's VM, no network unless network=allowlist, and writes only to $OUT. " +
       "What it writes there is sealed into store/jobs/<id>/out/ (read-only, hashed) and outlives the VM: any job or agent reads it there, and you cite it as job:<id>/<path>. " +
       "Give command (bash, run from the run's directory; $OUT is also the OUT environment variable, for a script in another language or a quoted heredoc) or tool with args (a pack or forged tool; write {OUT}/<name> where it takes an output path). " +
       "A short job answers here; a longer one returns its id, and a post tagged result wakes your wait when it is done: do not poll job_status. A failed or timed-out job keeps what it wrote. " +
