@@ -10,11 +10,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DERIVED, JobService, type DerivedLimits, type JobRecord, type JobServiceOptions } from "../scripts/job-service.ts";
-import { storePaths, verifyJournalText, type JournalLine } from "../scripts/evidence-store.ts";
+import { checkStore, storePaths, verifyJournalText, type JournalLine } from "../scripts/evidence-store.ts";
 import { localWorker } from "./job-service-worker.ts";
 import type { WorkerSpec } from "../scripts/vm.ts";
 
@@ -174,18 +174,24 @@ test("the derived lane waits while an agent's job waits, and runs one job at a t
   await svc.stop("over");
 });
 
-test("at the run's objects ceiling the lane stops, says so to all once, and keeps what waits named", async () => {
+test("at the run's generations ceiling the lane stops, says so to all once, and keeps what waits named", async () => {
   const S = sandbox();
-  const { svc, posts } = service(S, { objectsMax: 1 });
+  const { svc, posts } = service(S, { generationsMax: 1 });
   await svc.start();
   const r = await svc.submit("a1", { kind: "command", command: zipCommand([["a.zip", 900], ["b.zip", 500]]).replaceAll("'$OUT/", "os.environ['OUT']+'/"), inputs: [] });
   await until(svc, r.ok ? r.job.id : "");
+  await eventually(() => of(S, "generation_committed").length === 1, "one generation");
+  // The next object is asked about only once the lane may run again: it may not.
+  const later = await svc.submit("a1", { kind: "command", command: tarCommand("later.tar"), inputs: [] });
+  await until(svc, later.ok ? later.job.id : "");
   await eventually(() => of(S, "derived_bounded").length === 1, "the ceiling is journalled");
   const bounded = of(S, "derived_bounded")[0];
-  assert.deepEqual([bounded.bound, bounded.spent, bounded.cap, bounded.pending], ["objects", 1, 1, 1]);
-  await eventually(() => posts.filter(([to, b]) => to === "all" && b.startsWith("The derived catalogue has reached its 1 objects")).length === 1, "told to all");
+  assert.deepEqual([bounded.bound, bounded.spent, bounded.cap], ["generations", 1, 1]);
+  assert.ok(Number(bounded.pending) + Number(bounded.queued) >= 1, `what waits is counted: ${JSON.stringify(bounded)}`);
+  await eventually(() => posts.filter(([to, b]) => to === "all" && b.startsWith("The derived catalogue has reached its 1 generations")).length === 1, "told to all");
   await new Promise((res) => setTimeout(res, 300));
   assert.equal(of(S, "derived_bounded").length, 1, "once");
+  assert.equal(of(S, "generation_committed").length, 1, "and no more generations");
   await svc.stop("over");
 });
 
@@ -255,4 +261,26 @@ test("the files of a failed job and of an import are offered too; with the deriv
   await new Promise((res) => setTimeout(res, 300));
   assert.equal(existsSync(storePaths(S2).journal) ? of(S2, "derived_offered").length : 0, 0);
   await off.svc.stop("over");
+});
+
+test("custody sums the derived catalogue from its journal lines and holds every revision and generation to the journal", async () => {
+  const S = sandbox();
+  const { svc } = service(S);
+  await svc.start();
+  const r = await svc.submit("a1", { kind: "command", command: tarCommand("c.tar"), inputs: [] });
+  await until(svc, r.ok ? r.job.id : "");
+  await eventually(() => of(S, "generation_committed").length === 1 && of(S, "revision_published").length >= 1, "catalogued and published");
+  await svc.stop("over");
+  let c = (await checkStore(S))!;
+  assert.deepEqual([c.derived.offered, c.derived.skipped, c.derived.detected, c.derived.applied, c.derived.catalogued, c.derived.partial, c.derived.unanswered], [1, 0, 1, 1, 1, 0, 0]);
+  assert.equal(c.catalogue.revisions_mismatched.length, 0);
+  assert.equal(c.catalogue.generations_verified, 1);
+  // A revision's index changed after it was published is named.
+  const last = of(S, "revision_published").at(-1)!.revision;
+  const dir = join(S, "catalog", "revisions", String(last));
+  chmodSync(dir, 0o755);
+  chmodSync(join(dir, "index.md"), 0o644);
+  writeFileSync(join(dir, "index.md"), "rewritten\n");
+  c = (await checkStore(S))!;
+  assert.deepEqual(c.catalogue.revisions_mismatched, [`revision ${last}`]);
 });

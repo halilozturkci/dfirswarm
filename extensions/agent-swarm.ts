@@ -2255,7 +2255,7 @@ export default function (pi: ExtensionAPI) {
     description:
       "Run work in a throwaway worker VM of this run's image: evidence parsing, anything slow or heavy, and anything whose output you will cite or share. Quick looks stay in your own shell. " +
       "The worker sees what you see, read-only: inputs/, store/ (earlier jobs' outputs), catalog/, tools/, tool-output/ and all of work/, yours and your peers' (SQLite: open with ?mode=ro&immutable=1 or copy into $OUT). It has the image's programs, nothing installed in an agent's VM, no network unless network=allowlist, and writes only to $OUT. " +
-      "What it writes there is sealed into store/jobs/<id>/out/ (read-only, hashed) and outlives the VM: any job or agent reads it there, and you cite it as job:<id>/<path>. " +
+      "What it writes there is sealed into store/jobs/<id>/out/ (read-only, hashed) and outlives the VM: any job or agent reads it there, and you cite it as job:<id>/<path>. An archive or disk image it writes is offered to the catalogue's recipes and, when catalogued, announced. " +
       "Give command (bash, run from the run's directory; $OUT is also the OUT environment variable, for a script in another language or a quoted heredoc) or tool with args (a pack or forged tool; write {OUT}/<name> where it takes an output path), or import: a file or directory you made under work/ or tool-output/, sealed as it is now (copied live, hashed before and after; cite it as job:<id>/<name>). " +
       "A short job answers here; a longer one returns its id, and a post tagged result wakes your wait when it is done: do not poll job_status. A failed or timed-out job keeps what it wrote. " +
       "stdout comes back a page at a time; all of it is store/jobs/<id>/stdout.log.",

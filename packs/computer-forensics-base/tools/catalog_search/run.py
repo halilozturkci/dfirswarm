@@ -56,16 +56,37 @@ def _revision(wanted=None):
     return done[-1] if done else None
 
 
-def _generations(rev):
-    """The generations a revision lists: id -> directory."""
+def _index(rev):
+    """The generations a revision lists, as its index records them."""
     import os
     if rev is None:
-        return {}
+        return []
     try:
         index = json.load(open(os.path.join("catalog", "revisions", str(rev), "index.json")))
     except Exception:
-        return {}
-    return {g["id"]: os.path.join("catalog", "gen", g["id"]) for g in index.get("generations", []) if isinstance(g, dict) and g.get("id")}
+        return []
+    return [g for g in index.get("generations", []) if isinstance(g, dict) and g.get("id")]
+
+
+def _generations(rev):
+    """The generations a revision lists: id -> directory."""
+    import os
+    return {g["id"]: os.path.join("catalog", "gen", g["id"]) for g in _index(rev)}
+
+
+def _about(g):
+    """What a generation is, in one record: what made it and over what, how
+    far it got and why not further, and its readable form when there is one."""
+    cov = g.get("coverage") or {}
+    t = g.get("target") or {}
+    out = {"id": g["id"], "recipe": g.get("recipe"), "object": t.get("ref") or t.get("name"), "status": g.get("status"),
+           "trigger": g.get("trigger"), "made_by_job": g.get("parent")}
+    why = [str(x) for x in (cov.get("errors") or []) + (cov.get("limits_hit") or [])] + ([str(cov["why"])] if cov.get("why") else [])
+    if g.get("status") != "complete" and why:
+        out["why"] = why
+    if g.get("readable_form"):
+        out["readable_form"] = g["readable_form"]
+    return out
 
 
 def _resolve_catalog(explicit=None, rev=None):
@@ -82,6 +103,11 @@ def _resolve_catalog(explicit=None, rev=None):
             return gens[explicit]
         for cand in (explicit, os.path.join(root, explicit)):
             if os.path.isdir(cand) and os.path.basename(os.path.normpath(cand)) not in RESERVED:
+                # A generation named by its path is read only when the
+                # revision read lists it, as by its id.
+                m = re.match(r"^catalog/gen/(g\d{4})(/|$)", os.path.normpath(cand) + "/")
+                if m and m.group(1) not in gens:
+                    raise SystemExit(json.dumps({"ok": False, "error": "%s is not in catalogue revision %s" % (m.group(1), rev), "candidates": sorted(gens)}))
                 return cand
         raise SystemExit(json.dumps({"ok": False, "error": "no catalogue %s" % explicit, "candidates": subs + sorted(gens)}))
     if not os.path.isdir(root):
@@ -115,7 +141,26 @@ except re.error as e:
     sys.exit(1)
 ex = re.compile(exclude, flags) if exclude else None
 revision = _revision(args.get("revision"))
+if which == "generations":
+    # Every generation of the revision read, what it is and how far it got;
+    # pattern filters by recipe, object and status; paged like any search.
+    rows = [_about(g) for g in _index(revision)]
+    rows = [r for r in rows if rx.search(" ".join(str(r.get(k) or "") for k in ("id", "recipe", "object", "status", "trigger")))]
+    page = rows[offset:offset + limit]
+    result = {"which": "generations", "revision": revision, "pattern": pattern, "matched": len(rows), "offset": offset, "returned": len(page), "generations": page}
+    if offset + len(page) < len(rows):
+        result["next_offset"] = offset + len(page)
+    print(json.dumps(result))
+    sys.exit(0)
 base = os.path.normpath(_resolve_catalog(args.get("catalog") if isinstance(args, dict) else None, revision))
+
+
+def _this_generation():
+    """The generation base is, as the revision read records it, or None."""
+    m = re.match(r"^catalog/gen/(g\d{4})$", base)
+    if not m:
+        return None
+    return next((_about(g) for g in _index(revision) if g["id"] == m.group(1)), None)
 # catalog=Case4.E01/p2048 names the filesystem as well.
 named_part = ""
 if re.fullmatch(r"p\d+", os.path.basename(base)):
@@ -137,7 +182,8 @@ elif want:
 elif len(parts) == 1:
     part = parts[0]
 elif not parts:
-    print(json.dumps({"ok": False, "error": "the catalogue %s holds no filesystem listing (see its partitions.txt and README.md)" % base}))
+    about = _this_generation()
+    print(json.dumps({"ok": False, "error": "the catalogue %s holds no filesystem listing (see its partitions.txt and README.md)" % base, **({"generation": about} if about else {})}))
     sys.exit(1)
 else:
     print(json.dumps({"ok": False, "error": "several filesystems in %s; pass partition= one of these" % base, "partitions": parts}))
@@ -151,11 +197,13 @@ elif which == "members":
 elif which in files:
     path = os.path.join(base, part, files[which])
 else:
-    print(json.dumps({"error": "which must be filelist|timeline|bodyfile|fsstat|partitions|members"}))
+    print(json.dumps({"error": "which must be filelist|timeline|bodyfile|fsstat|partitions|members|generations"}))
     sys.exit(1)
 if not os.path.isfile(path):
     have = sorted(os.listdir(os.path.dirname(path))) if os.path.isdir(os.path.dirname(path)) else []
-    print(json.dumps({"ok": False, "error": "%s is not in the catalogue" % path, "there": have}))
+    # A partial generation says why, and where its readable form is.
+    about = _this_generation()
+    print(json.dumps({"ok": False, "error": "%s is not in the catalogue" % path, **({"generation": about} if about else {}), "there": have}))
     sys.exit(1)
 # Every match goes to a file as it is found; the call returns one page of
 # them. When that page is not all of them, the file is kept under the

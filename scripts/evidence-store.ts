@@ -757,6 +757,10 @@ export type StoreCheck = {
   /** Notes an examiner added to the record after the run (evidence-store.ts note), and the times the job service told the agents that workers were not running. */
   notes: number;
   degraded: number;
+  /** Each revision's MANIFEST.json and its index files, and each generation.json, held to the journal's lines. */
+  catalogue: { revisions_verified: number; revisions_mismatched: string[]; generations_verified: number; generations_mismatched: string[] };
+  /** The derived catalogue, from its journal lines: objects offered and skipped, answered, catalogued, left unanswered, and each limit it met. */
+  derived: { offered: number; skipped: number; detected: number; applied: number; catalogued: number; partial: number; unanswered: number; deferred: number; bounded: string[] };
 };
 
 /**
@@ -792,7 +796,48 @@ export async function checkStore(sandbox: string, before = Infinity): Promise<St
     findings: { total: 0, structured: 0, refs_invalid: [], unresolved_only: [], path_only: [], without_refs: [] },
     notes: count("note"),
     degraded: count("jobs_degraded"),
+    catalogue: { revisions_verified: 0, revisions_mismatched: [], generations_verified: 0, generations_mismatched: [] },
+    derived: { offered: 0, skipped: 0, detected: 0, applied: 0, catalogued: 0, partial: 0, unanswered: count("detect_unanswered"), deferred: count("derived_deferred"), bounded: [] },
   };
+  for (const l of checked.lines) {
+    if (l.type === "derived_offered") {
+      out.derived.offered += ((l.offered as unknown[]) ?? []).length;
+      out.derived.skipped += ((l.skipped as unknown[]) ?? []).length;
+    } else if (l.type === "detect_answered") {
+      const rows = (l.rows as Array<{ applies?: boolean }>) ?? [];
+      out.derived.detected += rows.length;
+      out.derived.applied += rows.filter((r) => r.applies).length;
+    } else if (l.type === "generation_committed" && l.trigger === "derived") {
+      if (l.status === "complete") out.derived.catalogued += 1;
+      else out.derived.partial += 1;
+    } else if (l.type === "derived_bounded") {
+      out.derived.bounded.push(String(l.bound));
+    }
+  }
+  // The catalogue as published, held to the journal: a revision's manifest
+  // and its two index files by hash, a generation's record by what it says.
+  for (const l of checked.lines) {
+    if (l.type === "revision_published") {
+      const dir = join(P.revisions, String(l.revision));
+      try {
+        const text = await readFile(join(dir, "MANIFEST.json"), "utf8");
+        const man = JSON.parse(text) as { files?: Record<string, string> };
+        const ok = sha256Hex(text) === l.manifest_sha256 && Object.entries(man.files ?? {}).every(([f, h]) => existsSync(join(dir, f)) && sha256Hex(readFileSync(join(dir, f))) === h);
+        if (ok) out.catalogue.revisions_verified += 1;
+        else out.catalogue.revisions_mismatched.push(`revision ${l.revision}`);
+      } catch {
+        out.catalogue.revisions_mismatched.push(`revision ${l.revision} (unreadable)`);
+      }
+    } else if (l.type === "generation_committed") {
+      try {
+        const g = JSON.parse(await readFile(join(P.gen, String(l.generation), "generation.json"), "utf8")) as { id?: string; recipe?: string; status?: string; job?: string };
+        if (g.id === l.generation && g.recipe === l.recipe && g.status === l.status && g.job === l.job) out.catalogue.generations_verified += 1;
+        else out.catalogue.generations_mismatched.push(String(l.generation));
+      } catch {
+        out.catalogue.generations_mismatched.push(`${l.generation} (unreadable)`);
+      }
+    }
+  }
   try {
     const entries = (await readFile(join(S, "ledger", "entries.jsonl"), "utf8"))
       .split("\n")

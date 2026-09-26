@@ -161,8 +161,15 @@ export const DERIVED = "derived";
  * minutes): pairs a pass, a rolling budget of worker-seconds, and two
  * ceilings a run. At a limit nothing is dropped: the rest waits, named.
  */
-export type DerivedLimits = { pairsPerPass: number; windowMs: number; windowSeconds: number; objectsMax: number; outputBytesMax: number; retries: number };
-export const DERIVED_LIMITS: DerivedLimits = { pairsPerPass: 32, windowMs: 10 * 60 * 1000, windowSeconds: 300, objectsMax: 400, outputBytesMax: 2 * 1024 * 1024 * 1024, retries: 1 };
+export type DerivedLimits = { pairsPerPass: number; windowMs: number; windowSeconds: number; generationsMax: number; outputBytesMax: number; retries: number };
+/**
+ * The ceilings count what the catalogue costs, generations and their bytes,
+ * not objects asked about: replayed over the BelkaCTF #6 trial, 477 gzip
+ * media blobs a job extracted would have spent a 400-object ceiling before
+ * the decrypted vault came, 21 minutes in. Asking is bounded by the rolling
+ * worker-seconds budget alone.
+ */
+export const DERIVED_LIMITS: DerivedLimits = { pairsPerPass: 32, windowMs: 10 * 60 * 1000, windowSeconds: 300, generationsMax: 50, outputBytesMax: 2 * 1024 * 1024 * 1024, retries: 1 };
 
 /** An object offered to the derived recipes: one file of the store, by content, and the recipes whose prefilter it met. */
 type Candidate = { sha256: string; job: string; path: string; bytes: number; recipes: string[]; tries: number; parent_status: string };
@@ -1147,12 +1154,14 @@ export class JobService {
    */
   private async derivedMayRun(): Promise<boolean> {
     const L = this.limits();
-    const bound = this.derivedObjects >= L.objectsMax ? { bound: "objects", spent: this.derivedObjects, cap: L.objectsMax } : this.derivedOutputBytes >= L.outputBytesMax ? { bound: "output_bytes", spent: this.derivedOutputBytes, cap: L.outputBytesMax } : null;
+    const made = this.journal.of("generation_committed").filter((l) => l.trigger === "derived").length;
+    const bound = made >= L.generationsMax ? { bound: "generations", spent: made, cap: L.generationsMax } : this.derivedOutputBytes >= L.outputBytesMax ? { bound: "output_bytes", spent: this.derivedOutputBytes, cap: L.outputBytesMax } : null;
     if (bound) {
       if (!this.derivedSaid.has(`derived_bounded:${bound.bound}`)) {
         this.derivedSaid.add(`derived_bounded:${bound.bound}`);
-        await this.journal.append({ type: "derived_bounded", ...bound, pending: this.derivedPending.length });
-        await this.o.notify("all", `The derived catalogue has reached its ${bound.bound === "objects" ? `${bound.cap} objects` : `${bound.cap} bytes of output`} for this run: ${this.derivedPending.length} object(s) that jobs made stay offered and uncatalogued (each named in the journal's derived_offered lines). catalog_request any of them.`).catch(() => undefined);
+        const queued = this.queue.filter((id) => this.jobs.get(id)?.requester.agent === DERIVED).length;
+        await this.journal.append({ type: "derived_bounded", ...bound, pending: this.derivedPending.length, queued });
+        await this.o.notify("all", `The derived catalogue has reached its ${bound.bound === "generations" ? `${bound.cap} generations` : `${bound.cap} bytes of output`} for this run: ${this.derivedPending.length} object(s) that jobs made stay offered and not asked about, and ${queued} of its jobs stay queued (each named in the journal). catalog_request any object to have it catalogued.`).catch(() => undefined);
       }
       return false;
     }
@@ -1181,10 +1190,9 @@ export class JobService {
     try {
       const L = this.limits();
       this.derivedPending.sort((a, b) => b.bytes - a.bytes);
-      const room = Math.max(0, L.objectsMax - this.derivedObjects);
       const take: Candidate[] = [];
       let pairs = 0;
-      while (this.derivedPending.length && take.length < room && (pairs === 0 || pairs + this.derivedPending[0].recipes.length <= L.pairsPerPass) && take.length < DETECT_FILES_MAX) {
+      while (this.derivedPending.length && (pairs === 0 || pairs + this.derivedPending[0].recipes.length <= L.pairsPerPass) && take.length < DETECT_FILES_MAX) {
         const c = this.derivedPending.shift()!;
         take.push(c);
         pairs += c.recipes.length;

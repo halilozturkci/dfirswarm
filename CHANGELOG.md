@@ -38,14 +38,23 @@ All notable changes to this project. The format follows
   in its own VM: a job copies it into the store as it is now (each file
   hashed before and after the copy up to 2 GiB; links left out, named) and
   says it was copied live; one that changed while it was copied fails.
-- `--derived-catalog` (off by default) offers what jobs make to the derived
-  recipes, by each recipe's own `min_bytes` and, when it names them,
-  `suffixes` or `magic` (bytes at an offset) — the harness's 512-byte floor
-  is gone and it knows no format — at most 20 detect passes a run
-  (`derived_bounded`, and the agent is told). On the BelkaCTF #6 trial a
-  size floor alone spent the 20 passes in three minutes, 2 of them useful;
-  computer-forensics-base 1.2.17 names the suffixes and magic of its three
-  recipes.
+- **The derived catalogue, on by default** (`--no-derived-catalog` turns it
+  off). What jobs make — tool, command and import jobs, whatever their
+  status — is offered by content to the derived recipes whose own
+  `min_bytes`, `suffixes` or `magic` take it. It runs in the lowest lane (one
+  job, only when no other waits, largest objects first, 32 pairs a pass),
+  within 300 worker-seconds each 10 minutes and at most 50 generations and 2 GiB
+  a run, nothing dropped (`derived_offered`, `detect_answered`,
+  `detect_unanswered`, `derived_deferred`, `derived_bounded`). Complete
+  derived catalogues are posted to all; a partial one goes to its maker with
+  why, and is linked to its readable form (`generation_related`).
+  `catalog_search` v9 lists generations (`which=generations`) and says why a
+  partial one is partial. Custody holds every revision and generation to the
+  journal. Before it: what a worker writes cannot steer a host read
+  (index.tsv confined to the sealed manifest), each probe's whole output is
+  kept, 7z listings stream, zip directories are bounded by bytes, and
+  disk-volumes finds a volume at sector 63 or 2048 with no table
+  (computer-forensics-base 1.2.19).
 - Four workers by default on a host with 64 GiB or more; `create_ms` in
   each job's record.
 - The console has a Jobs tab (with Files and the Ledger): the run's jobs

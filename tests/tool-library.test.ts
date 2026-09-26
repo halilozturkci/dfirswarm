@@ -1347,3 +1347,39 @@ test("catalog_search reads a revision's generations, an archive's members, and n
     assert.match(JSON.parse(r.stdout + r.stderr).error, /no complete revision 2/);
   });
 });
+
+// The derived catalogue makes generations while agents work: catalog_search
+// lists them, says why a partial one is partial and where its readable form
+// is, and reads a generation named by path only when its revision lists it.
+test("catalog_search lists the generations, tells why a partial one is partial, and keeps to the revision it read", async () => {
+  const script = join(LIB, "..", "packs", "computer-forensics-base", "tools", "catalog_search", "run.py");
+  await withCwd(async (cwd) => {
+    const gens = [
+      { id: "g0001", recipe: "cfb/archive-members", target: { ref: "input:phone.tar" }, status: "complete", trigger: "kickoff" },
+      { id: "g0002", recipe: "cfb/disk-volumes", target: { ref: "job:j000008/vault.vhdx" }, status: "partial", trigger: "derived", parent: "j000008", coverage: { errors: ["fls: Encryption detected (BitLocker)"] }, readable_form: "g0003" },
+      { id: "g0003", recipe: "cfb/disk-volumes", target: { ref: "job:j000161/vault.ntfs" }, status: "complete", trigger: "derived", parent: "j000161" },
+    ];
+    await mkdir(join(cwd, "catalog", "revisions", "1"), { recursive: true });
+    await writeFile(join(cwd, "catalog", "revisions", "1", "index.json"), JSON.stringify({ revision: 1, generations: gens }));
+    await writeFile(join(cwd, "catalog", "revisions", "1", "MANIFEST.json"), "{}");
+    for (const g of ["g0001", "g0002", "g0003", "g0004"]) await mkdir(join(cwd, "catalog", "gen", g), { recursive: true });
+    await mkdir(join(cwd, "catalog", "gen", "g0003", "p0"), { recursive: true });
+    await writeFile(join(cwd, "catalog", "gen", "g0003", "p0", "filelist.txt"), "r/r 5: secret.txt\n");
+    const env = { AGENT_ID: "sab12301" };
+    let r = await runPy(script, cwd, { pattern: "derived", which: "generations" }, undefined, env);
+    assert.equal(r.code, 0, r.stderr + r.stdout);
+    let out = JSON.parse(r.stdout);
+    assert.deepEqual(out.generations.map((g: { id: string }) => g.id), ["g0002", "g0003"]);
+    assert.deepEqual(out.generations[0].why, ["fls: Encryption detected (BitLocker)"], "a partial one says why");
+    assert.equal(out.generations[0].readable_form, "g0003");
+    r = await runPy(script, cwd, { pattern: "secret", catalog: "g0002" }, undefined, env);
+    out = JSON.parse(r.stdout);
+    assert.equal(out.ok, false);
+    assert.equal(out.generation.readable_form, "g0003", "a search in the partial one is pointed at its readable form");
+    assert.equal(out.generation.status, "partial");
+    r = await runPy(script, cwd, { pattern: "secret", catalog: "g0003" }, undefined, env);
+    assert.equal(JSON.parse(r.stdout).matched, 1);
+    r = await runPy(script, cwd, { pattern: "secret", catalog: "catalog/gen/g0004" }, undefined, env);
+    assert.match(JSON.parse(r.stdout || r.stderr).error, /g0004 is not in catalogue revision 1/, "a generation the revision does not list is not read by its path either");
+  });
+});

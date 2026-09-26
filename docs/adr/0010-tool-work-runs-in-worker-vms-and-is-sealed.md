@@ -153,7 +153,7 @@ After the review:
   (`scripts/check-answers.ts`; the goal owns done, ADR 0002, so there is no
   hub gate).
 - Imports became a job kind.
-- Derived cataloguing became opt-in, by each recipe's own measure, capped.
+- Derived cataloguing became opt-in, by each recipe's own measure, capped; then, after its trial and a second review by Fable and Codex of every run's record, **on by default** (see below).
 - Sparse hints point long evidence work and work/ citations at jobs.
 
 ## Still deferred, and the gates
@@ -172,5 +172,52 @@ After the review:
 - **A short-job lane**: after the four-worker default is measured, and only
   with job_run text asking for a declared short timeout. Short jobs queued
   up to p95 189 s behind long ones on the confirmation run.
-- **Derived cataloguing on by default**: after one CTF trial measures its
-  boots, its queue cost and whether agents use what it catalogues.
+
+## The derived catalogue, on by default (2026-09-26)
+
+The BelkaCTF #6 trial showed the payoff and the flaw. The catalogue of the
+vault an agent decrypted was used by 5 agents, 14 jobs and 8 of 24 findings,
+but derived cataloguing did not make it: its cap of 20 detect passes went on
+noise in the first three minutes, 18 of them on files no recipe took,
+because a size floor alone decided what was offered. The owner decided it
+runs by default. Fable and Codex reviewed every run's record and agreed on
+the design:
+
+- **The unit is an object, by content, not a job.** Every file of a tool,
+  command or import job (whatever its status) is offered to the derived
+  recipes whose `min_bytes`, `suffixes` or `magic` take it, and only to
+  those. A sha256 already known (an input, an earlier offer, a catalogued
+  object) is skipped, named. A recipe over a store object is deduplicated
+  by that content. Recipe and detect outputs are never offered: no
+  automatic recursion. Extraction stays the agents', in jobs, and what they
+  extract is offered in turn.
+- **The lowest lane, a budget that refills, ceilings that say so.**
+  - Derived work runs as its own requester, one job at a time, started only
+    when no other job waits, the largest objects first.
+  - Its budget is 300 worker-seconds each 10 minutes, so early noise cannot
+    spend it for good.
+  - A run makes at most 50 derived generations and 2 GiB of them: the
+    ceilings count what the catalogue costs, not the objects it asked about
+    (a replay of the trial showed 477 gzip media blobs spending a 400-object
+    ceiling before the decrypted vault came). What waits is named in the
+    journal, and a ceiling is told to all.
+- **Nothing is lost.** A pass's answers are read whatever its status; a pair
+  it did not answer is asked once more, then named. Replay rebuilds the
+  queue, and recovery reads a committed pass or offers a committed job that
+  never was.
+- **Partial and readable.** A recipe's partial answer over an encrypted
+  container goes to its maker with the recipe's reasons. When a readable
+  form (a decrypted volume, within three jobs of lineage) is catalogued
+  complete, the two are linked (`generation_related`), not called wrong:
+  ciphertext and plaintext are different objects.
+- **Discovery and audit.**
+  - A complete derived generation is posted to all.
+  - `catalog_search which=generations` lists them, with why a partial one is
+    partial.
+  - Custody holds every revision and generation to the journal and sums the
+    derived work.
+  - What a worker writes (index.tsv, coverage.json) is read only for files
+    its sealed manifest lists.
+
+Deliberately not built: an event bus (the commit is the event), recipe-declared
+costs, extraction recipes, and autonomous recursion.

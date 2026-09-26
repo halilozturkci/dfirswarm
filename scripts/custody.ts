@@ -1673,6 +1673,15 @@ function summaryOf(c: Omit<Custody, "summary">, t: { traceProblem: string | null
       parts.push(f.without_refs.length ? `${f.without_refs.length} citing no object of the run (ledger seq ${some(f.without_refs, 20, "store.findings.without_refs")}): an audit gap` : "none citing nothing");
       bits.push(`${plural(f.total, "standing finding")}: ${parts.join(", ")}`);
     }
+    if (st.catalogue) {
+      const c = st.catalogue;
+      const bad = [...c.revisions_mismatched, ...c.generations_mismatched];
+      bits.push(`catalogue: ${plural(c.revisions_verified, "revision")} and ${plural(c.generations_verified, "generation")} held to the journal${bad.length ? `, ${bad.length} NOT MATCHING (${some(bad, 10, "store.catalogue")})` : ""}`);
+    }
+    if (st.derived && (st.derived.offered || st.derived.skipped)) {
+      const d = st.derived;
+      bits.push(`derived catalogue: ${d.offered} object(s) offered (${d.skipped} skipped as known), ${d.detected} pair(s) answered (${d.applied} applied), ${d.catalogued} catalogued complete and ${d.partial} in part, ${d.unanswered} unanswered${d.deferred ? `, deferred by its budget ${d.deferred} time(s)` : ""}${d.bounded.length ? `, STOPPED at its ${d.bounded.join(" and ")} ceiling` : ""}`);
+    }
     if (st.degraded) bits.push(`the job service told the agents ${st.degraded} time(s) that workers were not running`);
     if (st.notes) bits.push(`${plural(st.notes, "examiner note")} added to the record after the run`);
     parts.push(bits.join(", "));
