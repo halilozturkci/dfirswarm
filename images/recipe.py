@@ -82,7 +82,7 @@ PACKS = HERE.parent / "packs"
 # The programs every image has, since images/base.Dockerfile installs them:
 # a tool that calls one of these needs no profile for it.
 BASE_PROGRAMS = {"python3", "node", "jq", "sqlite3", "file", "xxd", "socat", "strings", "hexdump", "unzip",
-                 "7z", "xz", "bzip2", "zstd", "curl", "exiftool"}
+                 "7z", "xz", "bzip2", "zstd", "curl", "exiftool", "rg"}
 APT = re.compile(r"^(?:sudo\s+)?apt(?:-get)?\s+install\s+(.+)$")
 # apt's own ways of naming the release a package comes from.
 RELEASE_FLAGS = {"-t", "--target-release", "--default-release"}

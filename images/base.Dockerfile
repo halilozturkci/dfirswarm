@@ -31,12 +31,13 @@ RUN npm install -g --no-audit --no-fund "@earendil-works/pi-coding-agent@${PI_VE
 
 # What every seat uses whatever the case: Python with venv for the pack
 # tools, the small utilities an examiner's shell has and the prompts assume
-# (strings, hexdump, the archive tools), and socat, which bridges the hub's
-# vsock port to the Unix socket the extension dials.
+# (strings, hexdump, the archive tools, ripgrep, which the agents reached for
+# in their own VMs on two rounds and did not find), and socat, which bridges
+# the hub's vsock port to the Unix socket the extension dials.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       ca-certificates python3 python3-venv python3-pip jq sqlite3 file xxd socat procps \
-      binutils bsdextrautils less unzip p7zip-full xz-utils bzip2 zstd curl libimage-exiftool-perl \
+      binutils bsdextrautils less unzip p7zip-full xz-utils bzip2 zstd curl libimage-exiftool-perl ripgrep \
  && rm -rf /var/lib/apt/lists/*
 
 # Not for redistribution until its licences have been reviewed, the rule the
