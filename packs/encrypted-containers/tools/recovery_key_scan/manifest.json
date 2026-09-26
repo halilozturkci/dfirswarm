@@ -9,10 +9,6 @@
     "max_bytes_per_file": {
       "type": "integer",
       "description": "How much of each file to read (default 8388608)"
-    },
-    "limit": {
-      "type": "integer",
-      "description": "Maximum findings to return (default 200)"
     }
   },
   "runtime": "python3",

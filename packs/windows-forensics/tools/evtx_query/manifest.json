@@ -16,7 +16,12 @@
     },
     "limit": {
       "type": "integer",
-      "description": "Maximum number of events to return",
+      "description": "Maximum events in the JSON summary; every matching event and its full XML is kept in result_file",
+      "required": false
+    },
+    "out_file": {
+      "type": "string",
+      "description": "Optional JSONL result path under the run; defaults to a deterministic path under work/",
       "required": false
     },
     "start_record": {

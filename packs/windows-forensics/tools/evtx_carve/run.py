@@ -66,7 +66,8 @@ def summarise(xml, offset, chunk_offset, verified):
         out["data"] = data
     user = root.find(".//e:UserData", NS)
     if user is not None and not data:
-        out["user_data"] = {ET.QName(c).localname if "}" in c.tag else c.tag: (c.text or "").strip()
+        out["user_data"] = {c.tag.rsplit("}", 1)[-1] if isinstance(c.tag, str) else str(c.tag):
+                            (c.text or "").strip()
                             for c in user.iter() if c is not user}
     return out
 
@@ -188,7 +189,7 @@ def main():
         "record_count": len(records),
         "channels": channels,
         "truncated": truncated,
-        "problems": problems[:40],
+        "problems": problems,
         "note": "Cite the Channel on the record, not the file this was carved from: a chunk "
                 "in a pagefile or in unallocated space no longer belongs to any file. A chunk "
                 "whose checksum does not verify may still hold sound records, but say so.",

@@ -17,13 +17,23 @@ def parse_prefetch(data):
         compressed = True
         declared_uncompressed_size = struct.unpack_from('<I', data, 4)[0]
         data = lzxpress_huffman.decompress(data[8:])
+        if len(data) < declared_uncompressed_size:
+            raise SystemExit('MAM stream ended before its declared uncompressed size')
+        data = data[:declared_uncompressed_size]
     if data[4:8] != b'SCCA':
         raise SystemExit('not a Windows Prefetch file after optional MAM decompression')
     version = struct.unpack_from('<I', data, 0)[0]
     file_size = struct.unpack_from('<I', data, 12)[0]
     exe_name = data[16:76].decode('utf-16le', 'ignore').rstrip('\x00')
+    prefetch_hash = struct.unpack_from('<I', data, 76)[0]
+    run_count_offsets = {17: 0x90, 23: 0x98, 26: 0xD0, 30: 0xD0, 31: 0xD0}
+    run_count_offset = run_count_offsets.get(version)
+    run_count = (struct.unpack_from('<I', data, run_count_offset)[0]
+                 if run_count_offset is not None and run_count_offset + 4 <= len(data) else None)
+    last_run_start = 0x78 if version == 17 else 0x80
+    last_run_slots = 1 if version in (17, 23) else 8
     last_runs = []
-    for off in range(0x80, 0xC0, 8):
+    for off in range(last_run_start, last_run_start + last_run_slots * 8, 8):
         if off + 8 <= len(data):
             ft = struct.unpack_from('<Q', data, off)[0]
             if ft:
@@ -47,6 +57,8 @@ def parse_prefetch(data):
         'version': version,
         'file_size_field': file_size,
         'exe_name': exe_name,
+        'prefetch_hash': '%08X' % prefetch_hash,
+        'run_count': run_count,
         'last_runs': last_runs,
         'all_strings': uniq,
         'paths': paths,
@@ -56,11 +68,8 @@ def parse_prefetch(data):
 def main():
     args = json.load(sys.stdin)
     path = args['path']
-    max_strings = int(args.get('max_strings', 50))
     data = Path(path).read_bytes()
     res = parse_prefetch(data)
-    res['all_strings'] = res['all_strings'][:max_strings]
-    res['paths'] = res['paths'][:max_strings]
     print(json.dumps(res, indent=2))
 
 if __name__ == '__main__':

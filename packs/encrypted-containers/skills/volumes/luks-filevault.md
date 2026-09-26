@@ -14,11 +14,12 @@ metadata answers several questions without any key.
         version, cipher, key size, the UUID
         one entry per key slot, ENABLED or DISABLED
 
-**The slot count is a finding.** Eight slots exist; each enabled one is a
-separate passphrase or key file that can open the volume. A machine that should
-have one password and has three has been given access by somebody, and the
-header's own modification time brackets when. LUKS2 keeps a JSON metadata area
-with tokens and keyslot descriptions, which is more informative still.
+**The slot count is a finding.** LUKS1 has eight slots; each enabled slot is a
+separate passphrase or key file that can open the volume. LUKS2 describes its
+keyslots and tokens in JSON metadata and is not limited to the LUKS1 layout.
+Extra slots establish extra unlock paths, but the header does not by itself
+establish who added them or when; correlate configuration, backups and logs
+before making that attribution.
 
 A LUKS header can be **detached** — kept on separate media, with the partition
 holding only ciphertext. A partition that is high-entropy from byte zero with no

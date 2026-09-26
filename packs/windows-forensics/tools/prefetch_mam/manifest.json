@@ -5,17 +5,12 @@
     "path": {
       "type": "string",
       "description": "Path to a Prefetch file, compressed (MAM) or plain SCCA"
-    },
-    "max_strings": {
-      "type": "integer",
-      "description": "Maximum UTF-16 strings to return",
-      "required": false
     }
   },
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 60,
-  "example": "{\"path\":\"work/extracted/sbe1803/WELCOME.TXT_PUTTY.EXE-A6BB0639.pf.ads\",\"max_strings\":20}",
+  "example": "{\"path\":\"work/extracted/prefetch/sample.pf\"}",
   "by": "sbe1803",
   "at": "2026-09-18T12:59:41.662Z",
   "version": 2,

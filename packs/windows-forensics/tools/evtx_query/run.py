@@ -1,4 +1,5 @@
-import json, sys, xml.etree.ElementTree as ET
+import hashlib, json, os, sys, xml.etree.ElementTree as ET
+from pathlib import Path
 from Evtx.Evtx import Evtx
 
 args = json.load(sys.stdin)
@@ -12,9 +13,22 @@ end_record = args.get('end_record')
 
 NS = {'e': 'http://schemas.microsoft.com/win/2004/08/events/event'}
 
+root_dir = Path.cwd().resolve()
+default_name = 'evtx-query-' + hashlib.sha256(json.dumps(args, sort_keys=True).encode()).hexdigest()[:16] + '.jsonl'
+result_path = Path(args.get('out_file') or ('work/' + default_name))
+result_path = (root_dir / result_path).resolve() if not result_path.is_absolute() else result_path.resolve()
+if result_path != root_dir and root_dir not in result_path.parents:
+    raise SystemExit(json.dumps({'error': 'out_file must stay inside the run directory'}))
+inputs = root_dir / 'inputs'
+if result_path == inputs or inputs in result_path.parents:
+    raise SystemExit(json.dumps({'error': 'out_file cannot be under inputs/'}))
+result_path.parent.mkdir(parents=True, exist_ok=True)
+
 out = []
-with Evtx(path) as evtx:
+matched = 0
+with Evtx(path) as evtx, result_path.open('w', encoding='utf-8') as full:
     for rec in evtx.records():
+        xml = None
         try:
             xml = rec.xml()
             root = ET.fromstring(xml)
@@ -68,7 +82,7 @@ with Evtx(path) as evtx:
                                 eventdata[name] = [eventdata[name], text]
                         else:
                             eventdata[name] = text
-            out.append({
+            entry = {
                 'timestamp': time_created,
                 'event_id': eid,
                 'channel': channel,
@@ -76,12 +90,24 @@ with Evtx(path) as evtx:
                 'provider': provider,
                 'record_id': recid,
                 'data': eventdata,
-                'xml_excerpt': xml[:1200]
-            })
-            if len(out) >= limit:
-                break
+                'xml': xml,
+            }
+            full.write(json.dumps(entry, ensure_ascii=False) + '\n')
+            matched += 1
+            if len(out) < limit:
+                out.append({k: v for k, v in entry.items() if k != 'xml'})
         except Exception as e:
-            out.append({'parse_error': str(e), 'xml_excerpt': rec.xml()[:1200]})
-            if len(out) >= limit:
-                break
-print(json.dumps({'path': path, 'count': len(out), 'events': out}, ensure_ascii=False))
+            if xml is None:
+                try:
+                    xml = rec.xml()
+                except Exception as xml_error:
+                    xml = None
+                    e = RuntimeError('%s; XML unavailable: %s' % (e, xml_error))
+            entry = {'parse_error': str(e), 'xml': xml}
+            full.write(json.dumps(entry, ensure_ascii=False) + '\n')
+            matched += 1
+            if len(out) < limit:
+                out.append({'parse_error': str(e)})
+print(json.dumps({'path': path, 'count': matched, 'returned': len(out), 'events': out,
+                  'truncated': matched > len(out),
+                  'result_file': os.path.relpath(result_path, root_dir)}, ensure_ascii=False))

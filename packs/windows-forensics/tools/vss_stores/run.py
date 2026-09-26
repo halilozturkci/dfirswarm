@@ -109,9 +109,10 @@ def main():
     if stderr:
         out["vshadowinfo_said"] = stderr.splitlines()[-1]
     if not stores:
-        out["note"] = ("No shadow copies on this volume. That is a finding in itself: "
-                       "'vssadmin delete shadows' is a standard step before encryption, and "
-                       "the absence belongs in the report with what else supports it.")
+        out["note"] = ("No shadow-copy stores were observed on this volume. Absence alone does "
+                       "not establish deletion or anti-forensics: correlate the host's age and "
+                       "configuration with event logs, command history and free-space evidence "
+                       "before attributing why no stores are present.")
     elif not mountable:
         out["note"] = ("vshadowmount is not installed, so the stores cannot be opened here. "
                        "The list above, with the creation times, still belongs in the timeline.")

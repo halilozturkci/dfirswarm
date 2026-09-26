@@ -168,15 +168,16 @@ def main():
                 "The digests under 'acquisition' are the imager's, over the source device. "
                 "They are not the digest of this container, and not of the volume inside it."
             )
-    elif out["container"] in ("vhd", "vhdx", "vmdk", "qcow", "aff"):
-        out["notes"].append(
-            "This is a %s container. The Sleuth Kit reads raw and E01 only: convert it "
-            "(qemu-img convert -O raw) or attach it before the offsets below mean anything."
-            % out["container"]
-        )
 
     ok, mmls_out, mmls_err = run(["mmls", image])
     if ok:
+        if out["container"] in ("vhd", "vhdx", "vmdk", "qcow", "aff"):
+            out["notes"].append(
+                "The Sleuth Kit opened this %s container directly. The offsets below are "
+                "sectors in the virtual disk and are valid for Sleuth Kit commands against "
+                "this container; convert it only for a tool that cannot open the container."
+                % out["container"]
+            )
         sector, slots = parse_mmls(mmls_out)
         if forced:
             sector = forced
@@ -208,6 +209,12 @@ def main():
                 "still be intact inside one." % len(big_gaps)
             )
     else:
+        if out["container"] in ("vhd", "vhdx", "vmdk", "qcow", "aff"):
+            out["notes"].append(
+                "The Sleuth Kit did not open this %s container. Inspect it with qemu-img; "
+                "conversion to raw or attachment may be required before deriving offsets."
+                % out["container"]
+            )
         out["partition_table"] = False
         out["sector_size"] = forced or 512
         out["mmls_said"] = (mmls_err.splitlines()[-1] if mmls_err else "mmls returned nothing")
