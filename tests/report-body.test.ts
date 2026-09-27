@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import { after, test } from "node:test";
 import { humanReviewFrom, parseGoal, renderReportBody, renderReportBodyMarkdown, reportBodyDocument, type HumanReview } from "../scripts/report-body.ts";
 import type { ReviewState } from "../scripts/report.ts";
+import { ledgerHash, type LedgerEntry } from "../extensions/protocol.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const FIXTURE = join(ROOT, "tests", "fixtures", "ledger-v4");
@@ -257,7 +258,7 @@ test("nothing a run wrote becomes markup", async () => {
   for (const [tag] of page.matchAll(/<[^>]+>/g)) {
     assert.match(
       tag,
-      /^<\/?(?:!doctype html|html|meta|title|style|body|main|nav|section|div|span|p|h[1-6]|ul|ol|li|dl|dt|dd|table|thead|tbody|tr|th|td|pre|code|strong|em|a|br|blockquote|hr)(?:\s+(?:class|id|href|aria-hidden|aria-label|lang|charset|name|content)="[^"<>]*")*>$/i,
+      /^<\/?(?:!doctype html|html|meta|title|style|body|main|nav|section|div|span|p|h[1-6]|ul|ol|li|dl|dt|dd|table|thead|tbody|tr|th|td|pre|code|strong|em|a|br|blockquote|hr|details|summary)(?:\s+(?:class|id|href|aria-hidden|aria-label|lang|charset|name|content)="[^"<>]*")*>$/i,
       `the page holds ${tag}`,
     );
     for (const href of tag.matchAll(/href="([^"]*)"/g)) assert.ok(href[1].startsWith("#"), `a link out of the page: ${href[1]}`);
@@ -418,8 +419,12 @@ test("the goal: its request, its numbered questions with their continuation line
     { id: "2", text: "Can this host be cleaned or recovered, and what would it take? Name what must be rotated." },
   ]);
   assert.deepEqual(g.caps, ["Spend: $30", "Wall clock: 90 minutes"]);
-  assert.deepEqual(g.recommendations, ["2"]);
+  // No Recommendations section: the wording of question 2 asks for them.
+  assert.deepEqual(g.recommendations, { marker: "wording", text: "", questions: ["2"], request: false });
   assert.equal(parseGoal("## Goal\n\nJust look.\n").recommendations, null);
+  // The marker: a section of the contract, or a sub-heading of the goal.
+  assert.deepEqual(parseGoal("## Goal\n\nLook.\n\n## Recommendations\n\nWhat to rotate, and in what order.\n\n## Team\n\nx\n").recommendations, { marker: "section", text: "What to rotate, and in what order.", questions: [], request: false });
+  assert.equal(parseGoal("## Goal\n\nLook.\n\n### Recommendations\n\nWhat to patch.\n").recommendations?.text, "What to patch.");
 });
 
 test("a goal's questions and a recommendation question reach §2, §5 and §9", async () => {
@@ -435,8 +440,8 @@ test("a goal's questions and a recommendation question reach §2, §5 and §9", 
   assert.match(slice(html, "q-4", "s6"), /No answer was recorded for this question\./);
   assert.match(slice(html, "s1", "s2"), /Question 4<\/a><\/td><td><span class="chip chip-brick">not answered</);
   assert.match(slice(html, "s8", "s9"), /Question 4<\/a>: <span class="chip chip-brick">not answered<\/span>/);
-  assert.match(slice(html, "s8", "s9"), /question:4 has no answer\. What would repair it/);
-  assert.match(slice(html, "s9", "s10"), /The goal asks for recommendations in Question 3\./);
+  assert.match(slice(html, "s8", "s9"), /question:4 has no answer\. <strong>What would resolve it: <\/strong>an answer to question 4 resting on the entries that bear on it/);
+  assert.match(slice(html, "s9", "s10"), /The goal's wording asks for recommendations in Question 3 \(it has no Recommendations section; this is read from its words\)\./);
   assert.match(slice(html, "s9", "s10"), /Data was staged in \/tmp\/www\.tgz/);
 });
 
@@ -474,4 +479,51 @@ test("the caller's trace grounding reaches the exhibit; the cover's facts are co
   assert.match(slice(body.html, "e-6", "e-7"), /Grounding<\/dt><dd>NOT GROUNDED IN THE TRACE/);
   assert.match(slice(body.html, "e-5", "e-6"), /Grounding<\/dt><dd>a call before this entry was recorded named its source/);
   assert.doesNotMatch(slice(body.html, "e-5", "e-6"), /not grounded in the trace/);
+});
+
+test("§8 says what would resolve a defect in a reader's words; the agents' instruction stays in the gate", async () => {
+  const s8 = slice((await renderReportBody(FIXTURE)).html, "s8", "s9");
+  assert.match(s8, /answer #17 \(summary\) no longer stands on its support.*What would resolve it: <\/strong>the answer recorded again on what stands now \(the correction of what it cited, or a stated reason why a disputed or failed-job entry still supports it\), or the answer withdrawn or declared inconclusive\. Until then it is not supported\. Named by <a href="#e-21">E-21<\/a>\./);
+  assert.doesNotMatch(s8, /supersedes=17|qualifies \[\{ref/);
+});
+
+test("a goal's Recommendations section is the marker: quoted in §9, answered as its own section", async () => {
+  const finding = { v: 4, seq: 1, kind: "finding", value: "the key was reused", refs: ["input:a.log"], answers: ["1", "recommendations"], basis: "observed", confidence: "high", indicates: "x", confidence_why: "y", by: "a0", authors: ["a0"], at: "2026-01-01T00:00:00Z" } as LedgerEntry;
+  const run = await handRun({
+    files: { "SWARM.md": "# Swarm contract\n\n## Goal\n\nA host was breached.\n\n### Questions the report has to answer\n\n1. How?\n\n## Recommendations\n\nWhat to rotate, and in what order.\n\n## Team\n\nx\n" },
+    entries: [
+      finding,
+      { v: 4, seq: 2, kind: "answer", section: "question:recommendations", value: "Rotate the deploy key first, then the database password.", reasoning: "E-1 shows the key was reused.", confidence: "medium", confidence_why: "one log", alternatives_open: "none", would_change: "x", support: [{ seq: 1, hash: ledgerHash(finding, "genesis") }], by: "a1", authors: ["a1"], at: "2026-01-01T00:00:01Z" },
+    ],
+  });
+  const html = (await renderReportBody(run)).html;
+  const s9 = slice(html, "s9", "s10");
+  assert.match(s9, /The goal asks for recommendations in a section of its own/);
+  assert.match(s9, /What to rotate, and in what order\./);
+  assert.match(s9, /class="vl">Recommendations<\/span>.*Rotate the deploy key first, then the database password\./s);
+  assert.match(slice(html, "q-recommendations", "s6"), /Recommendations: what the goal's Recommendations section asks/);
+  // Question 1 has no answer; the recommendations do, so only question 1 is open.
+  assert.match(slice(html, "s8", "s9"), /Question 1<\/a>: <span class="chip chip-brick">not answered/);
+  assert.doesNotMatch(slice(html, "s8", "s9"), /Recommendations<\/a>: <span class="chip/);
+});
+
+test("Appendix B keeps every job: the cited ones first, the rest whole in a collapsed group with its count", async () => {
+  const run = await handRun({
+    jobs: {
+      j000001: { spec: { kind: "command", inputs: ["input:a"], command: "cited" }, status: "ok" },
+      j000002: { spec: { kind: "command", inputs: ["input:a"], command: "never cited one" }, status: "failed" },
+      j000003: { spec: { kind: "command", inputs: ["input:a"], command: "never cited two" }, status: "ok" },
+    },
+    entries: [{ v: 4, seq: 1, kind: "finding", value: "v", refs: ["job:j000001/o"], basis: "observed", confidence: "low", indicates: "x", confidence_why: "y", by: "a0", authors: ["a0"], at: "2026-01-01T00:00:00Z" }],
+  });
+  const body = await renderReportBody(run);
+  const b = slice(body.html, "sB", "sC");
+  assert.equal(body.sections.find((s) => s.id === "sB")?.count, "3 jobs, 1 cited");
+  const details = b.indexOf('<details class="uncited"><summary>2 jobs no entry cites</summary>');
+  assert.ok(details > 0);
+  assert.ok(b.indexOf('id="job-j000001"') < details, "the cited job comes first");
+  assert.ok(b.indexOf('id="job-j000002"') > details && b.indexOf('id="job-j000003"') > details);
+  assert.match(b.slice(details), /<code>never cited one<\/code>.*<code>never cited two<\/code>/s);
+  const md = await renderReportBodyMarkdown(run);
+  assert.match(md, /### 2 jobs no entry cites\n\n#### Job j000002/);
 });

@@ -150,8 +150,14 @@ export type Goal = {
   questions: GoalQuestion[];
   /** The contract's caps, one line each. */
   caps: string[];
-  /** Where the goal asks for recommendations (question ids, or "request"); null when it does not. */
-  recommendations: string[] | null;
+  /**
+   * Whether the goal asks for recommendations, and how it says so: a
+   * `## Recommendations` section (or a `### Recommendations` sub-heading of
+   * its goal) is the marker, and its text what is asked; failing one,
+   * wording that asks for them in the request or a question. `questions`
+   * are the question ids whose wording asks for them. Null when it does not.
+   */
+  recommendations: { marker: "section" | "wording"; text: string; questions: string[]; request: boolean } | null;
 };
 
 const RECOMMEND = /\b(recommend\w*|remediat\w*|mitigat\w*|what would it take)\b/i;
@@ -190,6 +196,7 @@ export function parseGoal(swarmMd: string): Goal {
   const goal = sections.get("Goal") ?? [];
   const request: string[] = [];
   const questionLines: string[] = [];
+  const recommendLines: string[] = [];
   let sub: string | null = null;
   for (const line of goal) {
     const h = /^###\s+(.+?)\s*$/.exec(line);
@@ -198,6 +205,7 @@ export function parseGoal(swarmMd: string): Goal {
       continue;
     }
     if (sub === null) request.push(line);
+    else if (/^recommendations?$/i.test(sub)) recommendLines.push(line);
     else if (/question/i.test(sub)) questionLines.push(line);
   }
   // A numbered item, with its indented continuation lines; after a blank
@@ -231,8 +239,16 @@ export function parseGoal(swarmMd: string): Goal {
   flush();
   const caps = (sections.get("Caps") ?? []).map((l) => /^\s*-\s+(.*)$/.exec(l)?.[1]?.trim()).filter((l): l is string => Boolean(l));
   const requestText = request.join("\n").trim();
-  const asks = [...(RECOMMEND.test(requestText) ? ["request"] : []), ...questions.filter((q) => RECOMMEND.test(q.text)).map((q) => q.id)];
-  return { caseLine, request: requestText, questions, caps, recommendations: asks.length ? asks : null };
+  const section = [...sections.entries()].find(([h]) => /^recommendations?$/i.test(h.trim()))?.[1];
+  const marked = section ?? (recommendLines.length ? recommendLines : null);
+  const byWording = questions.filter((q) => RECOMMEND.test(q.text)).map((q) => q.id);
+  const inRequest = RECOMMEND.test(requestText);
+  const recommendations = marked
+    ? { marker: "section" as const, text: marked.join("\n").trim(), questions: byWording, request: inRequest }
+    : byWording.length || inRequest
+      ? { marker: "wording" as const, text: "", questions: byWording, request: inRequest }
+      : null;
+  return { caseLine, request: requestText, questions, caps, recommendations };
 }
 
 // ---------------------------------------------------------------------------
@@ -417,6 +433,8 @@ async function loadRun(sandboxArg: string, opts: ReportBodyOptions): Promise<Run
   // The questions: the goal's, then any section an answer or an entry names.
   const questions = new Map<string, Question>();
   for (const q of opts.questions ?? goal?.questions ?? []) questions.set(sectionKey(q.id), { id: sectionKey(q.id), text: q.text, fromGoal: true });
+  // A goal with a Recommendations section asks for them as it asks a question: answered as the section "recommendations".
+  if (goal?.recommendations?.marker === "section") questions.set("recommendations", { id: "recommendations", text: "what the goal's Recommendations section asks (quoted in §9)", fromGoal: true });
   for (const e of entries) {
     const ids = [...(e.kind === "answer" && e.section?.startsWith("question:") ? [sectionAnswersId(e.section)] : []), ...(e.answers ?? [])].map(sectionKey).filter(Boolean);
     for (const id of ids) if (!questions.has(id)) questions.set(id, { id, text: null, fromGoal: false });
@@ -664,6 +682,7 @@ type Block =
   | { k: "voice"; voice: Voice; label: string; s: Span[]; chips?: Chip[] }
   | { k: "cite"; seq: number; head: Span[]; chips: Chip[]; rows: Row[] }
   | { k: "timeline"; rows: Array<{ seq: number; when: string; what: Span[]; meta: string }> }
+  | { k: "details"; summary: string; body: Block[] }
   | { k: "md"; text: string }
   | { k: "verbatim"; text: string }
   | { k: "box"; cls: string; id?: string; level: 3 | 4; title: Span[]; chips: Chip[]; body: Block[] };
@@ -1037,7 +1056,7 @@ function summarySection(run: Run, memo: Map<number, EntryState>): BodySection {
 }
 
 function questionName(q: Question): string {
-  return /^\d/.test(q.id) ? `Question ${q.id}` : `Section ${q.id}`;
+  return /^\d/.test(q.id) ? `Question ${q.id}` : /^recommendations?$/i.test(q.id) ? "Recommendations" : `Section ${q.id}`;
 }
 
 function reviewSentence(run: Run): string {
@@ -1653,10 +1672,10 @@ function limitsSection(run: Run, memo: Map<number, EntryState>): BodySection {
     blocks.push({ k: "h", level: 3, text: "Defects left in the ledger" });
     const g = run.gate;
     if (g.defects.length) {
-      blocks.push({ k: "p", s: ["Mechanical defects the ledger gate found, each with what would repair it. A limitation that names a defect lets the run end; it does not repair the defect."] });
+      blocks.push({ k: "p", s: ["Mechanical defects the ledger gate found, each with what would resolve it. A limitation that names a defect lets the run end; it does not resolve the defect."] });
       blocks.push({
         k: "list",
-        items: g.defects.map((d): Span[] => [d.what, ". What would repair it: ", d.fix, ". ", d.named_by.length ? "Named by " : "No limitation names it.", ...d.named_by.flatMap((n, i): Span[] => [...(i ? [", "] : []), { e: n }]), d.named_by.length ? "." : ""]),
+        items: g.defects.map((d): Span[] => [d.what, ". ", { b: "What would resolve it: " }, resolveWords(d), " ", d.named_by.length ? "Named by " : "No limitation names it.", ...d.named_by.flatMap((n, i): Span[] => [...(i ? [", "] : []), { e: n }]), d.named_by.length ? "." : ""]),
       });
     } else blocks.push({ k: "p", s: ["None: every section has a standing answer resting on standing support, and every answer has a critic's act."] });
     const tokens = Object.entries(g.unsupported);
@@ -1679,21 +1698,55 @@ function limitsSection(run: Run, memo: Map<number, EntryState>): BodySection {
   return { id: "s8", n: "8", title: "Limitations, negative findings and open questions", desc: "what could not be established, what was searched and not found, what is still open", blocks };
 }
 
+/**
+ * What would resolve a defect the ledger gate found, for a reader of the
+ * report. The gate's own `fix` is written for the agents (which tool, which
+ * field) and stays in its refusal; this says the same to a person. An
+ * unsupported answer is resolved by repairing its support, withdrawing it or
+ * declaring it inconclusive, never by a limitation or an examiner's waiver.
+ */
+function resolveWords(d: LedgerGate["defects"][number]): string {
+  const where = d.section ? sectionName(d.section) : "the answer";
+  switch (d.code) {
+    case "no_answer":
+      return `an answer to ${where} resting on the entries that bear on it, or, if the evidence cannot answer it, a statement of why (a limitation), which leaves the question open.`;
+    case "answer_support":
+      return `the answer recorded again on what stands now (the correction of what it cited, or a stated reason why a disputed or failed-job entry still supports it), or the answer withdrawn or declared inconclusive. Until then it is not supported.`;
+    case "answer_disputed":
+      return `the dispute answered: the answer recorded again on what stands, or the dispute withdrawn by the agent that raised it, with its reason. Otherwise an examiner decides between them.`;
+    case "no_critic_act":
+      return `an agent other than its author re-deriving what the answer rests on from the sealed objects and recording that it holds, or why not. Even then no human has reviewed it.`;
+    case "open_contradiction":
+      return `the wrong one of the two entries corrected, or both weighed in an answer (one as contrary evidence), or a limitation naming both.`;
+    default:
+      return d.fix;
+  }
+}
+
 function recommendationsSection(run: Run, memo: Map<number, EntryState>): BodySection {
   const blocks: Block[] = [];
   const asks = run.goal?.recommendations ?? null;
   if (!asks) {
     blocks.push({ k: "p", s: ["The goal did not ask for recommendations, and none are made."] });
-  } else {
-    const qs = run.questions.filter((q) => asks.includes(q.id));
-    blocks.push({ k: "p", lede: true, s: [`The goal asks for recommendations${asks.includes("request") ? " in its request" : ""}${qs.length ? `${asks.includes("request") ? " and" : ""} in ${qs.map(questionName).join(", ")}` : ""}. They are opinions, resting on the findings the answers cite.`] });
-    for (const q of qs) {
-      const a = standingAnswer(run, `question:${q.id}`);
-      if (a) blocks.push({ k: "voice", voice: "opinion", label: questionName(q), s: [a.value, " (", { e: a.seq }, "; its basis in ", { a: `#${questionAnchor(q.id)}`, text: "§5" }, ")"], chips: chipsOf(a, stateOf(a, run, memo)).filter((c) => c.text !== "answer" && c.text !== "opinion") });
-      else blocks.push({ k: "note", s: [`${questionName(q)} has no standing answer: no recommendation is made for it.`] });
-    }
-    if (!qs.length) blocks.push({ k: "note", s: ["No question of the goal holds them, and the ledger has no answer for the request's recommendations: none are made here."] });
+    return { id: "s9", n: "9", title: "Recommendations", desc: "what the swarm recommends, when the goal asked", blocks };
   }
+  // Where the answers are: a section the swarm answered as "recommendations",
+  // and the questions whose wording asks for them.
+  const own = run.questions.find((q) => /^recommendations?$/i.test(q.id));
+  const qs = [...(own ? [own] : []), ...run.questions.filter((q) => asks.questions.includes(q.id))];
+  if (asks.marker === "section") {
+    blocks.push({ k: "p", lede: true, s: ["The goal asks for recommendations in a section of its own. What it asks, in its own words:"] });
+    blocks.push({ k: "md", text: asks.text || "(the section is empty)" });
+  } else {
+    blocks.push({ k: "p", lede: true, s: [`The goal's wording asks for recommendations${asks.request ? " in its request" : ""}${asks.questions.length ? `${asks.request ? " and" : ""} in ${run.questions.filter((q) => asks.questions.includes(q.id)).map(questionName).join(", ")}` : ""} (it has no Recommendations section; this is read from its words).`] });
+  }
+  if (qs.length) blocks.push({ k: "p", s: ["They are opinions, resting on the findings the answers cite."] });
+  for (const q of qs) {
+    const a = standingAnswer(run, `question:${q.id}`);
+    if (a) blocks.push({ k: "voice", voice: "opinion", label: questionName(q), s: [a.value, " (", { e: a.seq }, "; its basis in ", { a: `#${questionAnchor(q.id)}`, text: "§5" }, ")"], chips: chipsOf(a, stateOf(a, run, memo)).filter((c) => c.text !== "answer" && c.text !== "opinion") });
+    else blocks.push({ k: "note", s: [`${questionName(q)} has no standing answer: no recommendation is made for it.`] });
+  }
+  if (!qs.length) blocks.push({ k: "note", s: ["No answer in the ledger holds them (an answer recorded for the section \"recommendations\", or for a question that asks for them): none are made here."] });
   return { id: "s9", n: "9", title: "Recommendations", desc: "what the swarm recommends, when the goal asked", blocks };
 }
 
@@ -1820,15 +1873,18 @@ function exhibitBox(e: LedgerEntry, run: Run, memo: Map<number, EntryState>): Bl
 
 function jobsSection(run: Run): BodySection {
   const blocks: Block[] = [];
+  // Which entries rest on each job: a job: ref, or a method record (a
+  // member: ref reaches the job that listed the catalogue).
   const citedBy = new Map<string, number[]>();
   for (const e of run.entries) {
-    for (const ref of e.refs ?? []) {
-      const id = /^job:([^/]+)/.exec(ref)?.[1];
-      if (id) citedBy.set(id, [...new Set([...(citedBy.get(id) ?? []), e.seq])]);
-    }
+    const ids = [...(e.refs ?? []).map((ref) => /^job:([^/]+)/.exec(ref)?.[1]), ...methodsOf(e, run).records.map((m) => (typeof m.job === "string" ? m.job : undefined))];
+    for (const id of ids) if (id) citedBy.set(id, [...new Set([...(citedBy.get(id) ?? []), e.seq])]);
   }
+  const uncited: Block[] = [];
   blocks.push({ k: "p", lede: true, s: ["Every job the run's job service ran, from its record (store/jobs/<id>/job.json) and the manifest of its sealed output. A method record describes recorded execution, not proven reads."] });
   if (!run.jobs.size) blocks.push({ k: "note", s: ["No job ran."] });
+  const cited = [...run.jobs.keys()].filter((id) => citedBy.has(id)).length;
+  if (run.jobs.size) blocks.push({ k: "p", s: [`${plural(cited, "job")} ${cited === 1 ? "is" : "are"} cited by an entry and ${cited === 1 ? "comes" : "come"} first; the ${plural(run.jobs.size - cited, "job")} no entry cites follow, whole, in a group a browser shows collapsed (open it to read them; a printout shows the group's count only).`] });
   for (const j of run.jobs.values()) {
     const sp = j.spec;
     const rows: Row[] = [];
@@ -1851,9 +1907,11 @@ function jobsSection(run: Run): BodySection {
     else for (const [i, f] of j.outputs.entries()) rows.push({ label: i ? "" : "Output", s: [{ code: f.path }, ` ${bytesHuman(f.bytes)}, sha256 `, { code: f.sha256 }] });
     const by = citedBy.get(j.id) ?? [];
     rows.push({ label: "Cited by", s: by.length ? by.flatMap((n, i): Span[] => [...(i ? [", "] : []), { e: n }]) : ["no entry"] });
-    blocks.push({ k: "box", cls: "exhibit job", id: `job-${j.id}`, level: 4, title: [{ plain: `Job ${j.id}` }], chips: [{ text: j.status ?? "unknown", tone: j.status === "ok" ? "moss" : "brick" }], body: [{ k: "rows", rows }] });
+    const box: Block = { k: "box", cls: "exhibit job", id: `job-${j.id}`, level: 4, title: [{ plain: `Job ${j.id}` }], chips: [{ text: j.status ?? "unknown", tone: j.status === "ok" ? "moss" : "brick" }], body: [{ k: "rows", rows }] };
+    (by.length ? blocks : uncited).push(box);
   }
-  return { id: "sB", n: "B", title: "Jobs and their method records", desc: "every job: what ran, where, what it declared, what it sealed", count: plural(run.jobs.size, "job"), blocks };
+  if (uncited.length) blocks.push({ k: "details", summary: `${plural(uncited.length, "job")} no entry cites`, body: uncited });
+  return { id: "sB", n: "B", title: "Jobs and their method records", desc: "every job: what ran, where, what it declared, what it sealed", count: `${plural(run.jobs.size, "job")}, ${cited} cited`, blocks };
 }
 
 function workingSection(run: Run): BodySection {
@@ -1975,6 +2033,8 @@ function blockHtml(b: Block, ctx: Ctx): string {
       return `<div class="cite"><div class="ch">${spansHtml(b.head, ctx)}</div>${b.chips.length ? `<div class="chips">${b.chips.map(chipHtml).join(" ")}</div>` : ""}${b.rows.length ? rowsHtml(b.rows, ctx) : ""}</div>`;
     case "timeline":
       return `<ol class="tl">${b.rows.map((r) => `<li><div class="stamp"><span class="date">${escapeHtml(r.when)}</span><span class="no">${spansHtml([{ e: r.seq }], ctx)}</span></div><div class="what">${spansHtml(r.what, ctx)}</div><div class="meta">${escapeHtml(r.meta)}</div></li>`).join("")}</ol>`;
+    case "details":
+      return `<details class="uncited"><summary>${escapeHtml(b.summary)}</summary>${b.body.map((x) => blockHtml(x, ctx)).join("\n")}</details>`;
     case "md":
       return `<div class="embedded goal">${markdownToHtml(b.text, 2)}</div>`;
     case "verbatim":
@@ -2030,6 +2090,8 @@ dd.v-opinion { padding: .2rem .5rem; }
 .rb table.timeline th:nth-child(1) { width: 20%; }
 .rb table.timeline th:nth-child(4) { width: 10%; }
 .rb .embedded.working { border-style: dashed; }
+.rb details.uncited { margin: 1rem 0; border: 1px dashed var(--line-2); border-radius: 8px; padding: .5rem .9rem; }
+.rb details.uncited > summary { cursor: pointer; font-weight: 650; color: var(--ink-2); }
 .rb .tl { margin: 1.2rem 0 0; border-left: 1px solid var(--line-2); padding-left: 0; list-style: none; }
 .rb .tl li { position: relative; padding: 0 0 1.1rem 1.4rem; margin: 0; }
 .rb .tl li::before { content: ""; position: absolute; left: -4.5px; top: .55rem; width: 8px; height: 8px; border-radius: 50%; background: var(--slate); box-shadow: 0 0 0 3px var(--paper); }
@@ -2273,6 +2335,8 @@ function blockMd(b: Block): string {
       return [`- ${spansMd(b.head, "  ")}${b.chips.length ? `  \n  ${chipsMd(b.chips)}` : ""}`, ...b.rows.map((r) => (r.label ? `  - ${mdText(r.label, "")}${voiceTag(r.label, r.voice)}: ${spansMd(r.s, "    ")}` : `    - ${spansMd(r.s, "      ")}`))].join("\n");
     case "timeline":
       return b.rows.map((r) => `- ${mdText(r.when, "")} — ${spansMd(r.what, "  ")} — ${mdText(r.meta, "")} — E-${r.seq}`).join("\n");
+    case "details":
+      return [`### ${mdText(b.summary, "")}`, ...b.body.map(blockMd)].join("\n\n");
     case "md":
       return b.text
         .split("\n")
