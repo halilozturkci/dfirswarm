@@ -53,7 +53,7 @@
     "typebox": "^1.3.34"
   },
   "optionalDependencies": {
-    "microsandbox": "0.7.2"
+    "microsandbox": "0.7.4"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "0.87.0",
