@@ -1,0 +1,91 @@
+{
+  "id": "j000349",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "all"
+    ],
+    "scope": "all",
+    "timeout_seconds": 120,
+    "network": "off",
+    "command": "python3 - <<'PY'\nimport json,re\nfrom pathlib import Path\nbase=Path('store/jobs/j000347/stdout.log'); data=json.loads(base.read_text()); needle=b'userkey'; report=[]\nfor it in data['hits']:\n p=Path(it['path']); b=p.read_bytes(); lo=b.lower(); contexts=[]\n for enc,n in [('ascii',needle),('utf16le',b''.join(bytes([c,0]) for c in needle))]:\n  pos=0\n  while (i:=lo.find(n.lower(),pos))>=0:\n   s=max(0,i-96);e=min(len(b),i+len(n)+192); c=b[s:e]\n   # classify context from printable ASCII/UTF-16 renderings without emitting values\n   a=' '.join(re.findall(rb'[\\x20-\\x7e]{4,}',c).decode('latin1') if False else [])\n   txt=c.decode('latin1','replace').lower()\n   category='data-context/ambiguous'\n   path=str(p)\n   if '/job.json' in path or path.endswith('job.json'): category='job-manifest/query metadata'\n   elif 'report-snapshot' in path or 'checkpoint-redaction-snapshot' in path: category='report/ledger echo'\n   elif path.endswith('stdout.log') or 'tool-output' in path: category='tool/search/report output; inspect source context'\n   elif any(x in path for x in ['7zfm-ascii','7zg-ascii','proc-ascii','notepad-ascii','pid.']): category='process-memory strings/context; not itself a key value'\n   elif 'dropbox-contexts' in path or 'profile-key-contexts' in path: category='prior contextual-search output'\n   elif re.search(rb'userkey\\s*[:=]',c,re.I): category='candidate explicit field assignment; requires source-binding inspection'\n   elif b'\\x00' in c: category='binary/UTF16 context; literal search hit only'\n   else: category='derived search result/context; literal not authentication'\n   contexts.append(category);pos=i+len(n)\n counts={k:contexts.count(k) for k in sorted(set(contexts))}\n report.append({'path':path,'matches':len(contexts),'classes':counts})\nprint(json.dumps({'objects':len(report),'occurrences':sum(x['matches'] for x in report),'class_totals':{k:sum(v['classes'].get(k,0) for v in report) for k in sorted(set(k for x in report for k in x['classes']))},'per_object':report},indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120107",
+    "name": "Memory triage",
+    "doing": "Available for independent review; prior Q6 evidence handoff complete."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T16:27:21.799Z",
+  "worker": "dfs-s421201-job-j000349-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T16:27:21.824Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/catalog",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tool-output",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/work",
+      "access": "read-only; every agent's live scratch and the shared files: they may change while the job runs"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/work/extracted",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/work/quarantine",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000349",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "all"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T16:27:29.175Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "31086c6f4949a31b7e40e3ada10270e8a5d4324538803805627f9087e4653bbd",
+    "files": 0,
+    "bytes": 0,
+    "rejected": 0,
+    "path": "store/jobs/j000349/out"
+  }
+}

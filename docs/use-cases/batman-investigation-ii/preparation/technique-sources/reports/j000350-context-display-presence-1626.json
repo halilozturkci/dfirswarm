@@ -1,0 +1,15 @@
+{
+  "at": "2026-10-02T16:41:22.281865+00:00",
+  "kind": "operator read-only known-form presence check; no agent feedback",
+  "job": "j000350",
+  "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000350/stdout.log",
+  "source_bytes": 65831,
+  "source_sha256": "7b87e560c7c8d5dfa413e67d5bccf40103cc6c3e69ffdeb8aea1a7360732c83a",
+  "scope": "Two already-audited handout-field sources, offsets [243,260); 17-byte field, first15 and first15+two spaces; literal/raw, hex upper/lower and printable JSON forms. This is not a universal secret detector.",
+  "known_private_pair_fragment_present": false,
+  "complete_private_pair_encoded_value_present": false,
+  "known_incidental_case_token_present": false,
+  "known_handout_field_form_present": true,
+  "values_or_value_hashes_emitted": false,
+  "retention": "whole 65831-byte stdout privately preserved; Git identity/presence proof only; not root-redacted or truncated"
+}

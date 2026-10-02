@@ -1,0 +1,1030 @@
+{
+  "objects": 145,
+  "occurrences": 650,
+  "class_totals": {
+    "binary/UTF16 context; literal search hit only": 121,
+    "derived search result/context; literal not authentication": 73,
+    "job-manifest/query metadata": 91,
+    "prior contextual-search output": 4,
+    "process-memory strings/context; not itself a key value": 283,
+    "report/ledger echo": 66,
+    "tool/search/report output; inspect source context": 12
+  },
+  "per_object": [
+    {
+      "path": "store/jobs/j000209/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000004/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000207/job.json",
+      "matches": 2,
+      "classes": {
+        "job-manifest/query metadata": 2
+      }
+    },
+    {
+      "path": "store/jobs/j000092/out/pid.6628.dmp",
+      "matches": 21,
+      "classes": {
+        "process-memory strings/context; not itself a key value": 21
+      }
+    },
+    {
+      "path": "store/jobs/j000092/out/7zfm-ascii.txt",
+      "matches": 21,
+      "classes": {
+        "process-memory strings/context; not itself a key value": 21
+      }
+    },
+    {
+      "path": "store/jobs/j000254/stdout.log",
+      "matches": 1,
+      "classes": {
+        "tool/search/report output; inspect source context": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000254/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000254/out/independent-metrics-audit.json",
+      "matches": 1,
+      "classes": {
+        "derived search result/context; literal not authentication": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000265/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000291/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000201/job.json",
+      "matches": 2,
+      "classes": {
+        "job-manifest/query metadata": 2
+      }
+    },
+    {
+      "path": "store/jobs/j000201/out/dropbox-contexts.jsonl",
+      "matches": 4,
+      "classes": {
+        "prior contextual-search output": 4
+      }
+    },
+    {
+      "path": "store/jobs/j000239/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000034/stdout.log",
+      "matches": 1,
+      "classes": {
+        "tool/search/report output; inspect source context": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000034/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000034/out/tool-output/ioc_scan-62747ce3f7081774.jsonl",
+      "matches": 5,
+      "classes": {
+        "tool/search/report output; inspect source context": 5
+      }
+    },
+    {
+      "path": "store/jobs/j000002/job.json",
+      "matches": 2,
+      "classes": {
+        "job-manifest/query metadata": 2
+      }
+    },
+    {
+      "path": "store/jobs/j000237/job.json",
+      "matches": 2,
+      "classes": {
+        "job-manifest/query metadata": 2
+      }
+    },
+    {
+      "path": "store/jobs/j000263/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000252/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000067/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000058/job.json",
+      "matches": 2,
+      "classes": {
+        "job-manifest/query metadata": 2
+      }
+    },
+    {
+      "path": "store/jobs/j000318/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000115/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000316/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000177/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000148/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000342/out/v4-report-snapshot.md",
+      "matches": 33,
+      "classes": {
+        "report/ledger echo": 33
+      }
+    },
+    {
+      "path": "store/jobs/j000122/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000328/stdout.log",
+      "matches": 1,
+      "classes": {
+        "tool/search/report output; inspect source context": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000328/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000328/out/storage-q12-q14-summary.json",
+      "matches": 1,
+      "classes": {
+        "derived search result/context; literal not authentication": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000317/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000114/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000343/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000149/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000136/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000109/out/file.0xab0b0e210cf0.0xab0b0b383650.ImageSectionObject.KeePass.exe.img",
+      "matches": 20,
+      "classes": {
+        "binary/UTF16 context; literal search hit only": 20
+      }
+    },
+    {
+      "path": "store/jobs/j000131/job.json",
+      "matches": 2,
+      "classes": {
+        "job-manifest/query metadata": 2
+      }
+    },
+    {
+      "path": "store/jobs/j000335/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000334/job.json",
+      "matches": 2,
+      "classes": {
+        "job-manifest/query metadata": 2
+      }
+    },
+    {
+      "path": "store/jobs/j000139/out/20261002100314853-bash-ujat.out.log",
+      "matches": 21,
+      "classes": {
+        "binary/UTF16 context; literal search hit only": 21
+      }
+    },
+    {
+      "path": "store/jobs/j000130/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000248/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000270/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000241/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000241/out/create-table-contexts.json",
+      "matches": 6,
+      "classes": {
+        "derived search result/context; literal not authentication": 6
+      }
+    },
+    {
+      "path": "store/jobs/j000241/out/create-table-ranked.json",
+      "matches": 6,
+      "classes": {
+        "derived search result/context; literal not authentication": 6
+      }
+    },
+    {
+      "path": "store/jobs/j000018/out/pid.5372.dmp",
+      "matches": 19,
+      "classes": {
+        "process-memory strings/context; not itself a key value": 19
+      }
+    },
+    {
+      "path": "store/jobs/j000018/out/notepad-ascii.txt",
+      "matches": 19,
+      "classes": {
+        "process-memory strings/context; not itself a key value": 19
+      }
+    },
+    {
+      "path": "store/jobs/j000020/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000212/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000224/job.json",
+      "matches": 2,
+      "classes": {
+        "job-manifest/query metadata": 2
+      }
+    },
+    {
+      "path": "store/jobs/j000249/stdout.log",
+      "matches": 1,
+      "classes": {
+        "tool/search/report output; inspect source context": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000249/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000249/out/metrics-field-audit.json",
+      "matches": 1,
+      "classes": {
+        "derived search result/context; literal not authentication": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000268/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000053/out/file.0xab0b0dcf8580.0xab0b0b39d810.ImageSectionObject.devobj.dll.img",
+      "matches": 1,
+      "classes": {
+        "binary/UTF16 context; literal search hit only": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000053/out/file.0xab0b0e8a4c50.0xab0b0e8812b0.ImageSectionObject.dxgi.dll.img",
+      "matches": 1,
+      "classes": {
+        "binary/UTF16 context; literal search hit only": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000053/out/file.0xab0b0d8f3700.0xab0b074d0b40.ImageSectionObject.cfgmgr32.dll.img",
+      "matches": 1,
+      "classes": {
+        "binary/UTF16 context; literal search hit only": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000053/out/file.0xab0b0d03dd40.0xab0b0b3c1920.ImageSectionObject.combase.dll.img",
+      "matches": 1,
+      "classes": {
+        "binary/UTF16 context; literal search hit only": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000053/out/file.0xab0b078f34c0.0xab0b076f4ca0.ImageSectionObject.ntdll.dll.img",
+      "matches": 1,
+      "classes": {
+        "binary/UTF16 context; literal search hit only": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000053/out/file.0xab0b100da460.0xab0b152b95a0.ImageSectionObject.Exodus.exe.img",
+      "matches": 4,
+      "classes": {
+        "binary/UTF16 context; literal search hit only": 4
+      }
+    },
+    {
+      "path": "store/jobs/j000053/out/file.0xab0b0e89da40.0xab0b0dcdfcc0.ImageSectionObject.rsaenh.dll.img",
+      "matches": 1,
+      "classes": {
+        "binary/UTF16 context; literal search hit only": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000053/out/file.0xab0b0d8f4510.0xab0b074d08a0.ImageSectionObject.KernelBase.dll.img",
+      "matches": 5,
+      "classes": {
+        "binary/UTF16 context; literal search hit only": 5
+      }
+    },
+    {
+      "path": "store/jobs/j000053/out/file.0xab0b0d8f3bb0.0xab0b076fb2b0.ImageSectionObject.kernel32.dll.img",
+      "matches": 1,
+      "classes": {
+        "binary/UTF16 context; literal search hit only": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000053/out/file.0xab0b0d8f3890.0xab0b077b0b50.ImageSectionObject.crypt32.dll.img",
+      "matches": 1,
+      "classes": {
+        "binary/UTF16 context; literal search hit only": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000053/out/file.0xab0b0d049250.0xab0b0d0a3010.ImageSectionObject.advapi32.dll.img",
+      "matches": 3,
+      "classes": {
+        "binary/UTF16 context; literal search hit only": 3
+      }
+    },
+    {
+      "path": "store/jobs/j000053/out/file.0xab0b0d03d700.0xab0b0b3c1bf0.ImageSectionObject.msctf.dll.img",
+      "matches": 1,
+      "classes": {
+        "binary/UTF16 context; literal search hit only": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000053/out/file.0xab0b0e85d7e0.0xab0b0dceecc0.ImageSectionObject.cryptsp.dll.img",
+      "matches": 2,
+      "classes": {
+        "binary/UTF16 context; literal search hit only": 2
+      }
+    },
+    {
+      "path": "store/jobs/j000292/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000235/job.json",
+      "matches": 2,
+      "classes": {
+        "job-manifest/query metadata": 2
+      }
+    },
+    {
+      "path": "store/jobs/j000203/job.json",
+      "matches": 2,
+      "classes": {
+        "job-manifest/query metadata": 2
+      }
+    },
+    {
+      "path": "store/jobs/j000009/out/ascii_hits.txt",
+      "matches": 1,
+      "classes": {
+        "derived search result/context; literal not authentication": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000009/out/utf16_hits.txt",
+      "matches": 4,
+      "classes": {
+        "derived search result/context; literal not authentication": 4
+      }
+    },
+    {
+      "path": "store/jobs/j000204/stdout.log",
+      "matches": 1,
+      "classes": {
+        "tool/search/report output; inspect source context": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000204/job.json",
+      "matches": 2,
+      "classes": {
+        "job-manifest/query metadata": 2
+      }
+    },
+    {
+      "path": "store/jobs/j000293/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000052/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000260/job.json",
+      "matches": 2,
+      "classes": {
+        "job-manifest/query metadata": 2
+      }
+    },
+    {
+      "path": "store/jobs/j000063/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000037/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000030/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000233/job.json",
+      "matches": 2,
+      "classes": {
+        "job-manifest/query metadata": 2
+      }
+    },
+    {
+      "path": "store/jobs/j000341/out/checkpoint-redaction-snapshot.md",
+      "matches": 33,
+      "classes": {
+        "report/ledger echo": 33
+      }
+    },
+    {
+      "path": "store/jobs/j000145/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000144/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000188/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000347/job.json",
+      "matches": 2,
+      "classes": {
+        "job-manifest/query metadata": 2
+      }
+    },
+    {
+      "path": "store/jobs/j000172/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000119/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000126/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000313/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000322/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000132/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000150/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000157/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000195/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000159/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000330/stdout.log",
+      "matches": 1,
+      "classes": {
+        "tool/search/report output; inspect source context": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000330/job.json",
+      "matches": 2,
+      "classes": {
+        "job-manifest/query metadata": 2
+      }
+    },
+    {
+      "path": "store/jobs/j000330/out/schema-role-audit.json",
+      "matches": 1,
+      "classes": {
+        "derived search result/context; literal not authentication": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000158/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000194/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000169/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000024/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000024/out/dbx-ascii.txt",
+      "matches": 4,
+      "classes": {
+        "derived search result/context; literal not authentication": 4
+      }
+    },
+    {
+      "path": "store/jobs/j000024/out/dbx-utf16.txt",
+      "matches": 2,
+      "classes": {
+        "derived search result/context; literal not authentication": 2
+      }
+    },
+    {
+      "path": "store/jobs/j000229/out/pid2352-memfs-metadata.json",
+      "matches": 11,
+      "classes": {
+        "derived search result/context; literal not authentication": 11
+      }
+    },
+    {
+      "path": "store/jobs/j000041/out/file.0xab0b0e8a4c50.0xab0b0e8812b0.ImageSectionObject.dxgi.dll.img",
+      "matches": 1,
+      "classes": {
+        "binary/UTF16 context; literal search hit only": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000041/out/file.0xab0b0d8f3700.0xab0b074d0b40.ImageSectionObject.cfgmgr32.dll.img",
+      "matches": 1,
+      "classes": {
+        "binary/UTF16 context; literal search hit only": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000041/out/file.0xab0b0d03dd40.0xab0b0b3c1920.ImageSectionObject.combase.dll.img",
+      "matches": 1,
+      "classes": {
+        "binary/UTF16 context; literal search hit only": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000041/out/file.0xab0b078f34c0.0xab0b076f4ca0.ImageSectionObject.ntdll.dll.img",
+      "matches": 1,
+      "classes": {
+        "binary/UTF16 context; literal search hit only": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000041/out/file.0xab0b0d8f4510.0xab0b074d08a0.ImageSectionObject.KernelBase.dll.img",
+      "matches": 5,
+      "classes": {
+        "binary/UTF16 context; literal search hit only": 5
+      }
+    },
+    {
+      "path": "store/jobs/j000041/out/file.0xab0b0d8f3bb0.0xab0b076fb2b0.ImageSectionObject.kernel32.dll.img",
+      "matches": 1,
+      "classes": {
+        "binary/UTF16 context; literal search hit only": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000041/out/file.0xab0b0d049250.0xab0b0d0a3010.ImageSectionObject.advapi32.dll.img",
+      "matches": 3,
+      "classes": {
+        "binary/UTF16 context; literal search hit only": 3
+      }
+    },
+    {
+      "path": "store/jobs/j000041/out/file.0xab0b0d03d700.0xab0b0b3c1bf0.ImageSectionObject.msctf.dll.img",
+      "matches": 1,
+      "classes": {
+        "binary/UTF16 context; literal search hit only": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000079/out/7zg-ascii.txt",
+      "matches": 19,
+      "classes": {
+        "process-memory strings/context; not itself a key value": 19
+      }
+    },
+    {
+      "path": "store/jobs/j000079/out/pid.1576.dmp",
+      "matches": 19,
+      "classes": {
+        "process-memory strings/context; not itself a key value": 19
+      }
+    },
+    {
+      "path": "store/jobs/j000242/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000014/stdout.log",
+      "matches": 1,
+      "classes": {
+        "tool/search/report output; inspect source context": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000014/job.json",
+      "matches": 2,
+      "classes": {
+        "job-manifest/query metadata": 2
+      }
+    },
+    {
+      "path": "store/jobs/j000014/out/hits.json",
+      "matches": 11,
+      "classes": {
+        "derived search result/context; literal not authentication": 11
+      }
+    },
+    {
+      "path": "store/jobs/j000219/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000013/out/file.0xab0b0dcf8580.0xab0b0b39d810.ImageSectionObject.devobj.dll.img",
+      "matches": 1,
+      "classes": {
+        "binary/UTF16 context; literal search hit only": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000013/out/file.0xab0b0e8a4c50.0xab0b0e8812b0.ImageSectionObject.dxgi.dll.img",
+      "matches": 1,
+      "classes": {
+        "binary/UTF16 context; literal search hit only": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000013/out/file.0xab0b0d8f3700.0xab0b074d0b40.ImageSectionObject.cfgmgr32.dll.img",
+      "matches": 1,
+      "classes": {
+        "binary/UTF16 context; literal search hit only": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000013/out/file.0xab0b0d03dd40.0xab0b0b3c1920.ImageSectionObject.combase.dll.img",
+      "matches": 1,
+      "classes": {
+        "binary/UTF16 context; literal search hit only": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000013/out/file.0xab0b078f34c0.0xab0b076f4ca0.ImageSectionObject.ntdll.dll.img",
+      "matches": 1,
+      "classes": {
+        "binary/UTF16 context; literal search hit only": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000013/out/file.0xab0b0e69b9e0.0xab0b0e79a8a0.ImageSectionObject.dsreg.dll.img",
+      "matches": 3,
+      "classes": {
+        "binary/UTF16 context; literal search hit only": 3
+      }
+    },
+    {
+      "path": "store/jobs/j000013/out/file.0xab0b0d8f4510.0xab0b074d08a0.ImageSectionObject.KernelBase.dll.img",
+      "matches": 5,
+      "classes": {
+        "binary/UTF16 context; literal search hit only": 5
+      }
+    },
+    {
+      "path": "store/jobs/j000013/out/file.0xab0b0d8f3bb0.0xab0b076fb2b0.ImageSectionObject.kernel32.dll.img",
+      "matches": 1,
+      "classes": {
+        "binary/UTF16 context; literal search hit only": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000013/out/file.0xab0b0d8f3890.0xab0b077b0b50.ImageSectionObject.crypt32.dll.img",
+      "matches": 1,
+      "classes": {
+        "binary/UTF16 context; literal search hit only": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000013/out/file.0xab0b0d049250.0xab0b0d0a3010.ImageSectionObject.advapi32.dll.img",
+      "matches": 3,
+      "classes": {
+        "binary/UTF16 context; literal search hit only": 3
+      }
+    },
+    {
+      "path": "store/jobs/j000013/out/file.0xab0b0d03e9c0.0xab0b07bb2a20.ImageSectionObject.setupapi.dll.img",
+      "matches": 1,
+      "classes": {
+        "binary/UTF16 context; literal search hit only": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000013/out/file.0xab0b0d03d700.0xab0b0b3c1bf0.ImageSectionObject.msctf.dll.img",
+      "matches": 1,
+      "classes": {
+        "binary/UTF16 context; literal search hit only": 1
+      }
+    },
+    {
+      "path": "store/jobs/j000013/out/file.0xab0b0e85d7e0.0xab0b0dceecc0.ImageSectionObject.cryptsp.dll.img",
+      "matches": 2,
+      "classes": {
+        "binary/UTF16 context; literal search hit only": 2
+      }
+    },
+    {
+      "path": "store/jobs/j000210/job.json",
+      "matches": 2,
+      "classes": {
+        "job-manifest/query metadata": 2
+      }
+    },
+    {
+      "path": "store/jobs/j000049/out/proc-ascii-hits.txt",
+      "matches": 51,
+      "classes": {
+        "process-memory strings/context; not itself a key value": 51
+      }
+    },
+    {
+      "path": "store/jobs/j000049/out/proc-utf16-hits.txt",
+      "matches": 12,
+      "classes": {
+        "derived search result/context; literal not authentication": 12
+      }
+    },
+    {
+      "path": "store/jobs/j000049/out/proc-utf16.txt",
+      "matches": 12,
+      "classes": {
+        "derived search result/context; literal not authentication": 12
+      }
+    },
+    {
+      "path": "store/jobs/j000049/out/proc-ascii.txt",
+      "matches": 51,
+      "classes": {
+        "process-memory strings/context; not itself a key value": 51
+      }
+    },
+    {
+      "path": "store/jobs/j000049/out/proc/pid.3768.dmp",
+      "matches": 63,
+      "classes": {
+        "process-memory strings/context; not itself a key value": 63
+      }
+    },
+    {
+      "path": "store/jobs/j000244/job.json",
+      "matches": 1,
+      "classes": {
+        "job-manifest/query metadata": 1
+      }
+    },
+    {
+      "path": "store/imports/j000139/out/20261002100314853-bash-ujat.out.log",
+      "matches": 21,
+      "classes": {
+        "binary/UTF16 context; literal search hit only": 21
+      }
+    }
+  ]
+}

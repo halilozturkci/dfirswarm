@@ -1,0 +1,91 @@
+{
+  "id": "j000351",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "all"
+    ],
+    "scope": "all",
+    "timeout_seconds": 120,
+    "network": "off",
+    "command": "python3 - <<'PY'\nimport json,re\nfrom pathlib import Path\nD=json.loads(Path('store/jobs/j000347/stdout.log').read_text()); needle=b'userkey'; counts={}; candidates=[]; per=[]\nfor it in D['hits']:\n p=Path(it['path']); b=p.read_bytes(); lo=b.lower(); local={}; n=0\n for enc,q in [('ascii',needle),('utf16le',b''.join(bytes([x,0]) for x in needle))]:\n  pos=0\n  while (i:=lo.find(q,pos))>=0:\n   n+=1; c=b[max(0,i-100):min(len(b),i+len(q)+180)]\n   # Get plain ASCII window only for classification. Do not emit or store candidate key bytes.\n   t=c.decode('latin1','replace').lower().replace('\\x00','')\n   if re.search(r'userkey\\s*[:=]\\s*[^\\s,;\\]}]{1,}',t): cat='explicit assignment pattern (needs provenance/authentication)'\n   elif 'cryptgetuserkey' in t: cat='Windows CryptGetUserKey API/source vocabulary'\n   elif 'currentuserkeypath' in t or 'builduserpath' in t: cat='Windows registry/user-key API vocabulary'\n   elif str(p).endswith('/job.json'): cat='job command/input metadata echo'\n   elif any(x in str(p) for x in ('report-snapshot','checkpoint-redaction-snapshot')): cat='report/checkpoint echo'\n   elif str(p).endswith('stdout.log') or 'tool-output' in str(p): cat='tool/search output echo'\n   elif str(p).endswith('dropbox-contexts.jsonl'): cat='earlier contextual search result (binary API/runtime strings)'\n   elif '/out/' in str(p) and any(s in str(p).lower() for s in ('metrics','summary','audit','context','hit','ascii','utf16')): cat='derived search/strings result; no authentication from label'\n   else: cat='other literal-context hit; requires content/provenance, not proof of key value'\n   local[cat]=local.get(cat,0)+1\n   if cat=='explicit assignment pattern (needs provenance/authentication)': candidates.append(str(p))\n   pos=i+len(q)\n for k,v in local.items():counts[k]=counts.get(k,0)+v\n per.append({'path':str(p),'hits':n,'classes':local})\nprint(json.dumps({'needle':'userkey','files':len(per),'occurrences':sum(x['hits'] for x in per),'class_totals':counts,'explicit_assignment_occurrences':len(candidates),'explicit_assignment_objects':sorted(set(candidates)),'per_object':per},indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120107",
+    "name": "Memory triage",
+    "doing": "Available for independent review; prior Q6 evidence handoff complete."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T16:28:56.998Z",
+  "worker": "dfs-s421201-job-j000351-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T16:28:57.021Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/catalog",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tool-output",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/work",
+      "access": "read-only; every agent's live scratch and the shared files: they may change while the job runs"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/work/extracted",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/work/quarantine",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000351",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "all"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T16:29:04.284Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "2f40a4c5a9e0a63490cab2cecab9b5620f4a6120c4faaeb56b5698c045d4cc36",
+    "files": 0,
+    "bytes": 0,
+    "rejected": 0,
+    "path": "store/jobs/j000351/out"
+  }
+}

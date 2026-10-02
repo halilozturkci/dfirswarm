@@ -1,0 +1,93 @@
+{
+  "id": "j000348",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000322/gzip-utf-8-parsed.json",
+      "job:j000335/profile-review.json"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "independent": true,
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport json,base64,hashlib,os,sys,cryptography\nfrom pathlib import Path\nfrom cryptography.hazmat.primitives.asymmetric import ed25519,x25519\nfrom cryptography.hazmat.primitives import serialization\nP=2**255-19;D=(-121665*pow(121666,P-2,P))%P;Y=4*pow(5,P-2,P)%P\nX2=(Y*Y-1)*pow(D*Y*Y+1,P-2,P)%P;X=pow(X2,(P+3)//8,P)\nif X*X%P!=X2:X=X*pow(2,(P-1)//4,P)%P\nif X&1:X=P-X\nB=(X,Y)\ndef add(a,b):\n x,y=a;u,v=b;t=D*x*u*y*v%P\n return ((x*v+y*u)*pow(1+t,P-2,P)%P,(y*v+x*u)*pow(1-t,P-2,P)%P)\ndef ed_public(seed):\n assert len(seed)==32\n h=bytearray(hashlib.sha512(seed).digest()[:32]);h[0]&=248;h[31]&=63;h[31]|=64\n n=int.from_bytes(h,'little');q=(0,1);b=B\n while n:\n  if n&1:q=add(q,b)\n  b=add(b,b);n>>=1\n x,y=q;return (y|((x&1)<<255)).to_bytes(32,'little')\ndef x_public(secret):\n assert len(secret)==32\n k=bytearray(secret);k[0]&=248;k[31]&=127;k[31]|=64;n=int.from_bytes(k,'little');x1=9;x2=1;z2=0;x3=9;z3=1;swap=0\n for t in range(254,-1,-1):\n  bit=(n>>t)&1;swap^=bit\n  if swap:x2,x3=x3,x2;z2,z3=z3,z2\n  swap=bit;a=(x2+z2)%P;aa=a*a%P;b=(x2-z2)%P;bb=b*b%P;e=(aa-bb)%P;c=(x3+z3)%P;d=(x3-z3)%P;da=d*a%P;cb=c*b%P\n  x3=(da+cb)**2%P;z3=x1*(da-cb)**2%P;x2=aa*bb%P;z2=e*(aa+121665*e)%P\n if swap:x2,x3=x3,x2;z2,z3=z3,z2\n return (x2*pow(z2,P-2,P)%P).to_bytes(32,'little')\ndef lib_public(key):return key.public_key().public_bytes(serialization.Encoding.Raw,serialization.PublicFormat.Raw)\ncontrols=[]\nfor i,synthetic in enumerate((bytes(range(32)),bytes(32),bytes([255])*32)):\n controls.append({'synthetic_control':i,'ed25519_matches_trusted_library':ed_public(synthetic)==lib_public(ed25519.Ed25519PrivateKey.from_private_bytes(synthetic)),'x25519_matches_trusted_library':x_public(synthetic)==lib_public(x25519.X25519PrivateKey.from_private_bytes(synthetic))})\nassert all(r['ed25519_matches_trusted_library'] and r['x25519_matches_trusted_library'] for r in controls)\ndef obj(v):\n if isinstance(v,str):v=json.loads(v)\n assert isinstance(v,dict);return v\ndef decode(v,expect):\n assert isinstance(v,dict) and v.get('type')=='Buffer'\n data=v['data'];assert isinstance(data,str) and len(data)==expect['encoded_length'] and data[:6]=='base64'\n assert data[6] not in 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/='\n raw=base64.b64decode(data[7:],validate=True);assert len(raw)==expect['decoded_bytes'];return raw\nsource=json.loads(Path('store/jobs/j000322/out/gzip-utf-8-parsed.json').read_text());private=obj(obj(source['!fusion!cachedProfile'])['private']);metadata=json.loads(Path('store/jobs/j000335/out/profile-review.json').read_text());rows=[]\nassert len(metadata['pairs'])==4\nfor item in metadata['pairs']:\n name=item['field'];pair=obj(private[name]);secret=decode(pair['privateKey'],item['keys']['privateKey']);public=decode(pair['publicKey'],item['keys']['publicKey']);assert len(public)==32\n if pair.get('keyType')=='ed25519':\n  assert len(secret)==64\n  row={'field':name,'algorithm':'ed25519','private_bytes':64,'public_bytes':32,'derived_public_matches_record':ed_public(secret[:32])==public,'private_suffix_matches_record_public':secret[32:]==public}\n else:\n  assert pair.get('curve')=='x25519' and len(secret)==32\n  row={'field':name,'algorithm':'x25519','private_bytes':32,'public_bytes':32,'derived_public_matches_record':x_public(secret)==public}\n rows.append(row)\nresult={'python':sys.version.split()[0],'cryptography_control_version':cryptography.__version__,'implementation':'Examiner-written affine Ed25519 and RFC7748 Montgomery X25519 arithmetic; recovered code never executed','synthetic_controls':controls,'records':rows,'all_four_derived_public_keys_match':all(r['derived_public_matches_record'] for r in rows),'all_three_ed25519_suffixes_match':all(r.get('private_suffix_matches_record_public',True) for r in rows),'source_component_type':'Buffer dictionaries with base64-prefixed data strings','secret_values_or_hashes_emitted':False,'dbx_trials_performed':False,'bounds':'Source-key self-consistency only; does not establish DBX/userkey/client roles or rule out cross-role reuse and derivation.'}\nPath(os.environ['OUT'],'key-pair-consistency.json').write_text(json.dumps(result,indent=2));print(json.dumps(result))\nPY"
+  },
+  "requester": {
+    "agent": "s42120102",
+    "name": "Wallet trace",
+    "doing": "Examine wallet installation and wallet protection evidence for questions 5 and 9."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T16:26:02.786Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000335/out/profile-review.json",
+        "sha256": "1b330d1867c696b73f3f6c088dddf8a10df9056301ba3e380ae661d370ad9044"
+      },
+      {
+        "path": "store/jobs/j000322/out/gzip-utf-8-parsed.json",
+        "sha256": "7d2d26963af4eb2719198f4a316a5be56c4989f119d8e52113959b9e3eae919f"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000348-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T16:26:02.865Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000348",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 2,
+    "files": 2,
+    "bound": 0,
+    "manifest": "store/jobs/j000348/scope.1.json",
+    "manifest_sha256": "5f64082ddaa731c38f7904a30b1194c256b6f6760e063dcf8a12e4fa54e847d0"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T16:26:04.049Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "477ef1f6b92e7f7ebb66c37dc2139d087b4db7b40fa71576a503773944d941cd",
+    "files": 1,
+    "bytes": 1908,
+    "rejected": 0,
+    "path": "store/jobs/j000348/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

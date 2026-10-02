@@ -1,0 +1,3477 @@
+{
+  "needle": "userkey",
+  "files_with_hits": 145,
+  "occurrences": 650,
+  "hits": [
+    {
+      "path": "store/jobs/j000209/job.json",
+      "size": 5103,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 2504
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000004/job.json",
+      "size": 4171,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1918
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000207/job.json",
+      "size": 9406,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1516
+        },
+        {
+          "encoding": "ascii",
+          "offset": 6533
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000092/out/pid.6628.dmp",
+      "size": 722636800,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 8645860
+        },
+        {
+          "encoding": "ascii",
+          "offset": 9538280
+        },
+        {
+          "encoding": "ascii",
+          "offset": 10186944
+        },
+        {
+          "encoding": "ascii",
+          "offset": 11003746
+        },
+        {
+          "encoding": "ascii",
+          "offset": 13436440
+        },
+        {
+          "encoding": "ascii",
+          "offset": 14406179
+        },
+        {
+          "encoding": "ascii",
+          "offset": 15607854
+        },
+        {
+          "encoding": "ascii",
+          "offset": 15641560
+        },
+        {
+          "encoding": "ascii",
+          "offset": 17376691
+        },
+        {
+          "encoding": "ascii",
+          "offset": 298749886
+        },
+        {
+          "encoding": "ascii",
+          "offset": 319844272
+        },
+        {
+          "encoding": "ascii",
+          "offset": 674101176
+        },
+        {
+          "encoding": "ascii",
+          "offset": 675208259
+        },
+        {
+          "encoding": "ascii",
+          "offset": 675334472
+        },
+        {
+          "encoding": "ascii",
+          "offset": 675666054
+        },
+        {
+          "encoding": "ascii",
+          "offset": 691713458
+        },
+        {
+          "encoding": "ascii",
+          "offset": 691832878
+        },
+        {
+          "encoding": "ascii",
+          "offset": 692497290
+        },
+        {
+          "encoding": "ascii",
+          "offset": 712003118
+        },
+        {
+          "encoding": "ascii",
+          "offset": 716046912
+        },
+        {
+          "encoding": "ascii",
+          "offset": 716100460
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000092/out/7zfm-ascii.txt",
+      "size": 45749390,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1568234
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1796902
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2015547
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2338453
+        },
+        {
+          "encoding": "ascii",
+          "offset": 3044337
+        },
+        {
+          "encoding": "ascii",
+          "offset": 3236965
+        },
+        {
+          "encoding": "ascii",
+          "offset": 3602064
+        },
+        {
+          "encoding": "ascii",
+          "offset": 3639808
+        },
+        {
+          "encoding": "ascii",
+          "offset": 4091913
+        },
+        {
+          "encoding": "ascii",
+          "offset": 11249349
+        },
+        {
+          "encoding": "ascii",
+          "offset": 12687455
+        },
+        {
+          "encoding": "ascii",
+          "offset": 35398178
+        },
+        {
+          "encoding": "ascii",
+          "offset": 35490356
+        },
+        {
+          "encoding": "ascii",
+          "offset": 35541406
+        },
+        {
+          "encoding": "ascii",
+          "offset": 35624780
+        },
+        {
+          "encoding": "ascii",
+          "offset": 38835257
+        },
+        {
+          "encoding": "ascii",
+          "offset": 38880320
+        },
+        {
+          "encoding": "ascii",
+          "offset": 39048466
+        },
+        {
+          "encoding": "ascii",
+          "offset": 43397133
+        },
+        {
+          "encoding": "ascii",
+          "offset": 44311200
+        },
+        {
+          "encoding": "ascii",
+          "offset": 44324869
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000254/stdout.log",
+      "size": 651,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 385
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000254/job.json",
+      "size": 5220,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1904
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000254/out/independent-metrics-audit.json",
+      "size": 650,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 385
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000265/job.json",
+      "size": 3517,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1328
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000291/job.json",
+      "size": 5685,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 751
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000201/job.json",
+      "size": 3093,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 362
+        },
+        {
+          "encoding": "ascii",
+          "offset": 749
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000201/out/dropbox-contexts.jsonl",
+      "size": 1158535,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 338569
+        },
+        {
+          "encoding": "ascii",
+          "offset": 340022
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1126259
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1128767
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000239/job.json",
+      "size": 5032,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 2802
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000034/stdout.log",
+      "size": 44610,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 2716
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000034/job.json",
+      "size": 3015,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 684
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000034/out/tool-output/ioc_scan-62747ce3f7081774.jsonl",
+      "size": 170784,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 2223
+        },
+        {
+          "encoding": "ascii",
+          "offset": 74283
+        },
+        {
+          "encoding": "ascii",
+          "offset": 75695
+        },
+        {
+          "encoding": "ascii",
+          "offset": 139383
+        },
+        {
+          "encoding": "ascii",
+          "offset": 157103
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000002/job.json",
+      "size": 3569,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 348
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1300
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000237/job.json",
+      "size": 6581,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1592
+        },
+        {
+          "encoding": "ascii",
+          "offset": 3708
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000263/job.json",
+      "size": 8006,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 2864
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000252/job.json",
+      "size": 5272,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1875
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000067/job.json",
+      "size": 8277,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 2472
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000058/job.json",
+      "size": 2953,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 272
+        },
+        {
+          "encoding": "ascii",
+          "offset": 782
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000318/job.json",
+      "size": 3682,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1576
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000115/job.json",
+      "size": 4043,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1862
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000316/job.json",
+      "size": 3734,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1630
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000177/job.json",
+      "size": 3644,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1255
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000148/job.json",
+      "size": 5530,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 3044
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000342/out/v4-report-snapshot.md",
+      "size": 228871,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 24824
+        },
+        {
+          "encoding": "ascii",
+          "offset": 147999
+        },
+        {
+          "encoding": "ascii",
+          "offset": 150507
+        },
+        {
+          "encoding": "ascii",
+          "offset": 163716
+        },
+        {
+          "encoding": "ascii",
+          "offset": 164288
+        },
+        {
+          "encoding": "ascii",
+          "offset": 169819
+        },
+        {
+          "encoding": "ascii",
+          "offset": 177676
+        },
+        {
+          "encoding": "ascii",
+          "offset": 180184
+        },
+        {
+          "encoding": "ascii",
+          "offset": 193393
+        },
+        {
+          "encoding": "ascii",
+          "offset": 193965
+        },
+        {
+          "encoding": "ascii",
+          "offset": 199496
+        },
+        {
+          "encoding": "ascii",
+          "offset": 200977
+        },
+        {
+          "encoding": "ascii",
+          "offset": 201131
+        },
+        {
+          "encoding": "ascii",
+          "offset": 201853
+        },
+        {
+          "encoding": "ascii",
+          "offset": 201999
+        },
+        {
+          "encoding": "ascii",
+          "offset": 202526
+        },
+        {
+          "encoding": "ascii",
+          "offset": 202633
+        },
+        {
+          "encoding": "ascii",
+          "offset": 203394
+        },
+        {
+          "encoding": "ascii",
+          "offset": 204217
+        },
+        {
+          "encoding": "ascii",
+          "offset": 205059
+        },
+        {
+          "encoding": "ascii",
+          "offset": 205273
+        },
+        {
+          "encoding": "ascii",
+          "offset": 205561
+        },
+        {
+          "encoding": "ascii",
+          "offset": 205725
+        },
+        {
+          "encoding": "ascii",
+          "offset": 205950
+        },
+        {
+          "encoding": "ascii",
+          "offset": 208906
+        },
+        {
+          "encoding": "ascii",
+          "offset": 210426
+        },
+        {
+          "encoding": "ascii",
+          "offset": 210998
+        },
+        {
+          "encoding": "ascii",
+          "offset": 213315
+        },
+        {
+          "encoding": "ascii",
+          "offset": 214787
+        },
+        {
+          "encoding": "ascii",
+          "offset": 215790
+        },
+        {
+          "encoding": "ascii",
+          "offset": 219742
+        },
+        {
+          "encoding": "ascii",
+          "offset": 221490
+        },
+        {
+          "encoding": "ascii",
+          "offset": 224084
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000122/job.json",
+      "size": 6451,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 3959
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000328/stdout.log",
+      "size": 468,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 334
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000328/job.json",
+      "size": 4872,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 721
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000328/out/storage-q12-q14-summary.json",
+      "size": 563,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 347
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000317/job.json",
+      "size": 3929,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1579
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000114/job.json",
+      "size": 3317,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1186
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000343/job.json",
+      "size": 6726,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 4116
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000149/job.json",
+      "size": 5340,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 2645
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000136/job.json",
+      "size": 5534,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 2516
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000109/out/file.0xab0b0e210cf0.0xab0b0b383650.ImageSectionObject.KeePass.exe.img",
+      "size": 3229696,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 2520821
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2525315
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2708811
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2708842
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2708862
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2708876
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2715627
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2730003
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2730016
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2730029
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2730045
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2730059
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2730083
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2730165
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2730174
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2730183
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2739936
+        },
+        {
+          "encoding": "utf16le",
+          "offset": 3036785
+        },
+        {
+          "encoding": "utf16le",
+          "offset": 3051231
+        },
+        {
+          "encoding": "utf16le",
+          "offset": 3094170
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000131/job.json",
+      "size": 3639,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 536
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1274
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000335/job.json",
+      "size": 6978,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1728
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000334/job.json",
+      "size": 7358,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1852
+        },
+        {
+          "encoding": "ascii",
+          "offset": 3664
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000139/out/20261002100314853-bash-ujat.out.log",
+      "size": 1941561,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 2687
+        },
+        {
+          "encoding": "ascii",
+          "offset": 509318
+        },
+        {
+          "encoding": "ascii",
+          "offset": 515500
+        },
+        {
+          "encoding": "ascii",
+          "offset": 533833
+        },
+        {
+          "encoding": "ascii",
+          "offset": 556913
+        },
+        {
+          "encoding": "ascii",
+          "offset": 999537
+        },
+        {
+          "encoding": "ascii",
+          "offset": 999582
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1112355
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1114415
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1140605
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1140745
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1418622
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1565764
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1680920
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1699409
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1706262
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1727883
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1932056
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1934698
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1938171
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1939238
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000130/job.json",
+      "size": 7174,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1603
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000248/job.json",
+      "size": 4284,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1411
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000270/job.json",
+      "size": 8917,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 3530
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000241/job.json",
+      "size": 3899,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1668
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000241/out/create-table-contexts.json",
+      "size": 3030502,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1815169
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1822389
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1829277
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1831067
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1836269
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1838059
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000241/out/create-table-ranked.json",
+      "size": 1223632,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 742693
+        },
+        {
+          "encoding": "ascii",
+          "offset": 749895
+        },
+        {
+          "encoding": "ascii",
+          "offset": 756765
+        },
+        {
+          "encoding": "ascii",
+          "offset": 758555
+        },
+        {
+          "encoding": "ascii",
+          "offset": 763739
+        },
+        {
+          "encoding": "ascii",
+          "offset": 765529
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000018/out/pid.5372.dmp",
+      "size": 719613952,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 7934144
+        },
+        {
+          "encoding": "ascii",
+          "offset": 8681314
+        },
+        {
+          "encoding": "ascii",
+          "offset": 10602008
+        },
+        {
+          "encoding": "ascii",
+          "offset": 11612707
+        },
+        {
+          "encoding": "ascii",
+          "offset": 12625966
+        },
+        {
+          "encoding": "ascii",
+          "offset": 12659672
+        },
+        {
+          "encoding": "ascii",
+          "offset": 14337459
+        },
+        {
+          "encoding": "ascii",
+          "offset": 295714750
+        },
+        {
+          "encoding": "ascii",
+          "offset": 316809136
+        },
+        {
+          "encoding": "ascii",
+          "offset": 671078328
+        },
+        {
+          "encoding": "ascii",
+          "offset": 672185411
+        },
+        {
+          "encoding": "ascii",
+          "offset": 672311624
+        },
+        {
+          "encoding": "ascii",
+          "offset": 672643206
+        },
+        {
+          "encoding": "ascii",
+          "offset": 688690610
+        },
+        {
+          "encoding": "ascii",
+          "offset": 688810030
+        },
+        {
+          "encoding": "ascii",
+          "offset": 689474442
+        },
+        {
+          "encoding": "ascii",
+          "offset": 708980270
+        },
+        {
+          "encoding": "ascii",
+          "offset": 713024064
+        },
+        {
+          "encoding": "ascii",
+          "offset": 713077612
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000018/out/notepad-ascii.txt",
+      "size": 44884250,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1438979
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1701626
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2248164
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2449025
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2763307
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2801051
+        },
+        {
+          "encoding": "ascii",
+          "offset": 3228015
+        },
+        {
+          "encoding": "ascii",
+          "offset": 10385574
+        },
+        {
+          "encoding": "ascii",
+          "offset": 11823680
+        },
+        {
+          "encoding": "ascii",
+          "offset": 34533038
+        },
+        {
+          "encoding": "ascii",
+          "offset": 34625216
+        },
+        {
+          "encoding": "ascii",
+          "offset": 34676266
+        },
+        {
+          "encoding": "ascii",
+          "offset": 34759640
+        },
+        {
+          "encoding": "ascii",
+          "offset": 37970117
+        },
+        {
+          "encoding": "ascii",
+          "offset": 38015180
+        },
+        {
+          "encoding": "ascii",
+          "offset": 38183326
+        },
+        {
+          "encoding": "ascii",
+          "offset": 42531993
+        },
+        {
+          "encoding": "ascii",
+          "offset": 43446060
+        },
+        {
+          "encoding": "ascii",
+          "offset": 43459729
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000020/job.json",
+      "size": 3407,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1156
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000212/job.json",
+      "size": 5925,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 2738
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000224/job.json",
+      "size": 9129,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1628
+        },
+        {
+          "encoding": "ascii",
+          "offset": 5456
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000249/stdout.log",
+      "size": 2942,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 175
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000249/job.json",
+      "size": 4022,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 851
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000249/out/metrics-field-audit.json",
+      "size": 2941,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 175
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000268/job.json",
+      "size": 8790,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 3404
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000053/out/file.0xab0b0dcf8580.0xab0b0b39d810.ImageSectionObject.devobj.dll.img",
+      "size": 157184,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 145802
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000053/out/file.0xab0b0e8a4c50.0xab0b0e8812b0.ImageSectionObject.dxgi.dll.img",
+      "size": 861696,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 820964
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000053/out/file.0xab0b0d8f3700.0xab0b074d0b40.ImageSectionObject.cfgmgr32.dll.img",
+      "size": 294400,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 275688
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000053/out/file.0xab0b0d03dd40.0xab0b0b3c1920.ImageSectionObject.combase.dll.img",
+      "size": 3408384,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 2709539
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000053/out/file.0xab0b078f34c0.0xab0b076f4ca0.ImageSectionObject.ntdll.dll.img",
+      "size": 1537536,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1413555
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000053/out/file.0xab0b100da460.0xab0b152b95a0.ImageSectionObject.Exodus.exe.img",
+      "size": 172954624,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 149373954
+        },
+        {
+          "encoding": "ascii",
+          "offset": 149469513
+        },
+        {
+          "encoding": "ascii",
+          "offset": 149485067
+        },
+        {
+          "encoding": "ascii",
+          "offset": 149487121
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000053/out/file.0xab0b0e89da40.0xab0b0dcdfcc0.ImageSectionObject.rsaenh.dll.img",
+      "size": 184320,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 168715
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000053/out/file.0xab0b0d8f4510.0xab0b074d08a0.ImageSectionObject.KernelBase.dll.img",
+      "size": 2724352,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 2138940
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2141000
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2167190
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2167330
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2641600
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000053/out/file.0xab0b0d8f3bb0.0xab0b076fb2b0.ImageSectionObject.kernel32.dll.img",
+      "size": 750592,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 692066
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000053/out/file.0xab0b0d8f3890.0xab0b077b0b50.ImageSectionObject.crypt32.dll.img",
+      "size": 1384448,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1294664
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000053/out/file.0xab0b0d049250.0xab0b0d0a3010.ImageSectionObject.advapi32.dll.img",
+      "size": 666624,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 578994
+        },
+        {
+          "encoding": "ascii",
+          "offset": 596014
+        },
+        {
+          "encoding": "ascii",
+          "offset": 629720
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000053/out/file.0xab0b0d03d700.0xab0b0b3c1bf0.ImageSectionObject.msctf.dll.img",
+      "size": 1103360,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1035800
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000053/out/file.0xab0b0e85d7e0.0xab0b0dceecc0.ImageSectionObject.cryptsp.dll.img",
+      "size": 75776,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 51157
+        },
+        {
+          "encoding": "ascii",
+          "offset": 64480
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000292/job.json",
+      "size": 4296,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1418
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000235/job.json",
+      "size": 5811,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 913
+        },
+        {
+          "encoding": "ascii",
+          "offset": 923
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000203/job.json",
+      "size": 3455,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 370
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1224
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000009/out/ascii_hits.txt",
+      "size": 236432,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 230928
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000009/out/utf16_hits.txt",
+      "size": 191543,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 40737
+        },
+        {
+          "encoding": "ascii",
+          "offset": 41167
+        },
+        {
+          "encoding": "ascii",
+          "offset": 96597
+        },
+        {
+          "encoding": "ascii",
+          "offset": 110708
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000204/stdout.log",
+      "size": 257,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 38
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000204/job.json",
+      "size": 3460,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 373
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1251
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000293/job.json",
+      "size": 4313,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1459
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000052/job.json",
+      "size": 2511,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 355
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000260/job.json",
+      "size": 6047,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1639
+        },
+        {
+          "encoding": "ascii",
+          "offset": 3433
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000063/job.json",
+      "size": 3337,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1187
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000037/job.json",
+      "size": 2917,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 689
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000030/job.json",
+      "size": 3188,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 722
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000233/job.json",
+      "size": 6370,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1347
+        },
+        {
+          "encoding": "ascii",
+          "offset": 3473
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000341/out/checkpoint-redaction-snapshot.md",
+      "size": 227900,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 24510
+        },
+        {
+          "encoding": "ascii",
+          "offset": 147043
+        },
+        {
+          "encoding": "ascii",
+          "offset": 149551
+        },
+        {
+          "encoding": "ascii",
+          "offset": 162760
+        },
+        {
+          "encoding": "ascii",
+          "offset": 163332
+        },
+        {
+          "encoding": "ascii",
+          "offset": 168863
+        },
+        {
+          "encoding": "ascii",
+          "offset": 176720
+        },
+        {
+          "encoding": "ascii",
+          "offset": 179228
+        },
+        {
+          "encoding": "ascii",
+          "offset": 192437
+        },
+        {
+          "encoding": "ascii",
+          "offset": 193009
+        },
+        {
+          "encoding": "ascii",
+          "offset": 198540
+        },
+        {
+          "encoding": "ascii",
+          "offset": 200021
+        },
+        {
+          "encoding": "ascii",
+          "offset": 200175
+        },
+        {
+          "encoding": "ascii",
+          "offset": 200897
+        },
+        {
+          "encoding": "ascii",
+          "offset": 201043
+        },
+        {
+          "encoding": "ascii",
+          "offset": 201570
+        },
+        {
+          "encoding": "ascii",
+          "offset": 201677
+        },
+        {
+          "encoding": "ascii",
+          "offset": 202438
+        },
+        {
+          "encoding": "ascii",
+          "offset": 203261
+        },
+        {
+          "encoding": "ascii",
+          "offset": 204088
+        },
+        {
+          "encoding": "ascii",
+          "offset": 204302
+        },
+        {
+          "encoding": "ascii",
+          "offset": 204590
+        },
+        {
+          "encoding": "ascii",
+          "offset": 204754
+        },
+        {
+          "encoding": "ascii",
+          "offset": 204979
+        },
+        {
+          "encoding": "ascii",
+          "offset": 207935
+        },
+        {
+          "encoding": "ascii",
+          "offset": 209455
+        },
+        {
+          "encoding": "ascii",
+          "offset": 210027
+        },
+        {
+          "encoding": "ascii",
+          "offset": 212344
+        },
+        {
+          "encoding": "ascii",
+          "offset": 213816
+        },
+        {
+          "encoding": "ascii",
+          "offset": 214819
+        },
+        {
+          "encoding": "ascii",
+          "offset": 218771
+        },
+        {
+          "encoding": "ascii",
+          "offset": 220519
+        },
+        {
+          "encoding": "ascii",
+          "offset": 223113
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000145/job.json",
+      "size": 11791,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1708
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000144/job.json",
+      "size": 5264,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 2582
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000188/job.json",
+      "size": 8707,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 5685
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000347/job.json",
+      "size": 2937,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 313
+        },
+        {
+          "encoding": "ascii",
+          "offset": 841
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000172/job.json",
+      "size": 5581,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 2990
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000119/job.json",
+      "size": 4566,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 2081
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000126/job.json",
+      "size": 6646,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 3948
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000313/job.json",
+      "size": 4045,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1595
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000322/job.json",
+      "size": 5237,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 2727
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000132/job.json",
+      "size": 5222,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1973
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000150/job.json",
+      "size": 6921,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 4074
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000157/job.json",
+      "size": 5739,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 3047
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000195/job.json",
+      "size": 4526,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1691
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000159/job.json",
+      "size": 5398,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 2548
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000330/stdout.log",
+      "size": 1313,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1269
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000330/job.json",
+      "size": 5505,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 700
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2023
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000330/out/schema-role-audit.json",
+      "size": 1524,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1475
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000158/job.json",
+      "size": 4281,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1422
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000194/job.json",
+      "size": 5853,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 2114
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000169/job.json",
+      "size": 6764,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 3961
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000024/job.json",
+      "size": 3039,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 796
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000024/out/dbx-ascii.txt",
+      "size": 9932,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 807
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1448
+        },
+        {
+          "encoding": "ascii",
+          "offset": 7910
+        },
+        {
+          "encoding": "ascii",
+          "offset": 9657
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000024/out/dbx-utf16.txt",
+      "size": 3631,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 2873
+        },
+        {
+          "encoding": "ascii",
+          "offset": 3214
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000229/out/pid2352-memfs-metadata.json",
+      "size": 15261826,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 2461881
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2532710
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2770539
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2865933
+        },
+        {
+          "encoding": "ascii",
+          "offset": 3419986
+        },
+        {
+          "encoding": "ascii",
+          "offset": 3754282
+        },
+        {
+          "encoding": "ascii",
+          "offset": 4903353
+        },
+        {
+          "encoding": "ascii",
+          "offset": 6337864
+        },
+        {
+          "encoding": "ascii",
+          "offset": 7238207
+        },
+        {
+          "encoding": "ascii",
+          "offset": 7342919
+        },
+        {
+          "encoding": "ascii",
+          "offset": 7771496
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000041/out/file.0xab0b0e8a4c50.0xab0b0e8812b0.ImageSectionObject.dxgi.dll.img",
+      "size": 861696,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 820964
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000041/out/file.0xab0b0d8f3700.0xab0b074d0b40.ImageSectionObject.cfgmgr32.dll.img",
+      "size": 294400,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 275688
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000041/out/file.0xab0b0d03dd40.0xab0b0b3c1920.ImageSectionObject.combase.dll.img",
+      "size": 3408384,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 2709539
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000041/out/file.0xab0b078f34c0.0xab0b076f4ca0.ImageSectionObject.ntdll.dll.img",
+      "size": 1537536,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1413555
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000041/out/file.0xab0b0d8f4510.0xab0b074d08a0.ImageSectionObject.KernelBase.dll.img",
+      "size": 2724352,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 2138940
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2141000
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2167190
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2167330
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2641600
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000041/out/file.0xab0b0d8f3bb0.0xab0b076fb2b0.ImageSectionObject.kernel32.dll.img",
+      "size": 750592,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 692066
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000041/out/file.0xab0b0d049250.0xab0b0d0a3010.ImageSectionObject.advapi32.dll.img",
+      "size": 666624,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 578994
+        },
+        {
+          "encoding": "ascii",
+          "offset": 596014
+        },
+        {
+          "encoding": "ascii",
+          "offset": 629720
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000041/out/file.0xab0b0d03d700.0xab0b0b3c1bf0.ImageSectionObject.msctf.dll.img",
+      "size": 1103360,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1035800
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000079/out/7zg-ascii.txt",
+      "size": 44406423,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1101037
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1357243
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1851111
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1949190
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2295816
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2333560
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2749951
+        },
+        {
+          "encoding": "ascii",
+          "offset": 9907402
+        },
+        {
+          "encoding": "ascii",
+          "offset": 11345508
+        },
+        {
+          "encoding": "ascii",
+          "offset": 34055211
+        },
+        {
+          "encoding": "ascii",
+          "offset": 34147389
+        },
+        {
+          "encoding": "ascii",
+          "offset": 34198439
+        },
+        {
+          "encoding": "ascii",
+          "offset": 34281813
+        },
+        {
+          "encoding": "ascii",
+          "offset": 37492290
+        },
+        {
+          "encoding": "ascii",
+          "offset": 37537353
+        },
+        {
+          "encoding": "ascii",
+          "offset": 37705499
+        },
+        {
+          "encoding": "ascii",
+          "offset": 42054166
+        },
+        {
+          "encoding": "ascii",
+          "offset": 42968233
+        },
+        {
+          "encoding": "ascii",
+          "offset": 42981902
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000079/out/pid.1576.dmp",
+      "size": 718229504,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 7397568
+        },
+        {
+          "encoding": "ascii",
+          "offset": 8116066
+        },
+        {
+          "encoding": "ascii",
+          "offset": 9934360
+        },
+        {
+          "encoding": "ascii",
+          "offset": 10363427
+        },
+        {
+          "encoding": "ascii",
+          "offset": 11446318
+        },
+        {
+          "encoding": "ascii",
+          "offset": 11480024
+        },
+        {
+          "encoding": "ascii",
+          "offset": 13055411
+        },
+        {
+          "encoding": "ascii",
+          "offset": 294428606
+        },
+        {
+          "encoding": "ascii",
+          "offset": 315522992
+        },
+        {
+          "encoding": "ascii",
+          "offset": 669693880
+        },
+        {
+          "encoding": "ascii",
+          "offset": 670800963
+        },
+        {
+          "encoding": "ascii",
+          "offset": 670927176
+        },
+        {
+          "encoding": "ascii",
+          "offset": 671258758
+        },
+        {
+          "encoding": "ascii",
+          "offset": 687306162
+        },
+        {
+          "encoding": "ascii",
+          "offset": 687425582
+        },
+        {
+          "encoding": "ascii",
+          "offset": 688089994
+        },
+        {
+          "encoding": "ascii",
+          "offset": 707595822
+        },
+        {
+          "encoding": "ascii",
+          "offset": 711639616
+        },
+        {
+          "encoding": "ascii",
+          "offset": 711693164
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000242/job.json",
+      "size": 8124,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 4516
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000014/stdout.log",
+      "size": 147,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 34
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000014/job.json",
+      "size": 3576,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 348
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1327
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000014/out/hits.json",
+      "size": 1038293,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 255422
+        },
+        {
+          "encoding": "ascii",
+          "offset": 257906
+        },
+        {
+          "encoding": "ascii",
+          "offset": 260417
+        },
+        {
+          "encoding": "ascii",
+          "offset": 262923
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1015371
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1017383
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1017916
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1019931
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1020468
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1023035
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1025040
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000219/job.json",
+      "size": 6794,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 3832
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000013/out/file.0xab0b0dcf8580.0xab0b0b39d810.ImageSectionObject.devobj.dll.img",
+      "size": 157184,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 145802
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000013/out/file.0xab0b0e8a4c50.0xab0b0e8812b0.ImageSectionObject.dxgi.dll.img",
+      "size": 861696,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 820964
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000013/out/file.0xab0b0d8f3700.0xab0b074d0b40.ImageSectionObject.cfgmgr32.dll.img",
+      "size": 294400,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 275688
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000013/out/file.0xab0b0d03dd40.0xab0b0b3c1920.ImageSectionObject.combase.dll.img",
+      "size": 3408384,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 2709539
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000013/out/file.0xab0b078f34c0.0xab0b076f4ca0.ImageSectionObject.ntdll.dll.img",
+      "size": 1537536,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1413555
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000013/out/file.0xab0b0e69b9e0.0xab0b0e79a8a0.ImageSectionObject.dsreg.dll.img",
+      "size": 1217536,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1017352
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1017397
+        },
+        {
+          "encoding": "utf16le",
+          "offset": 862540
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000013/out/file.0xab0b0d8f4510.0xab0b074d08a0.ImageSectionObject.KernelBase.dll.img",
+      "size": 2724352,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 2138940
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2141000
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2167190
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2167330
+        },
+        {
+          "encoding": "ascii",
+          "offset": 2641600
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000013/out/file.0xab0b0d8f3bb0.0xab0b076fb2b0.ImageSectionObject.kernel32.dll.img",
+      "size": 750592,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 692066
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000013/out/file.0xab0b0d8f3890.0xab0b077b0b50.ImageSectionObject.crypt32.dll.img",
+      "size": 1384448,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1294664
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000013/out/file.0xab0b0d049250.0xab0b0d0a3010.ImageSectionObject.advapi32.dll.img",
+      "size": 666624,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 578994
+        },
+        {
+          "encoding": "ascii",
+          "offset": 596014
+        },
+        {
+          "encoding": "ascii",
+          "offset": 629720
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000013/out/file.0xab0b0d03e9c0.0xab0b07bb2a20.ImageSectionObject.setupapi.dll.img",
+      "size": 1145344,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1085398
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000013/out/file.0xab0b0d03d700.0xab0b0b3c1bf0.ImageSectionObject.msctf.dll.img",
+      "size": 1103360,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1035800
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000013/out/file.0xab0b0e85d7e0.0xab0b0dceecc0.ImageSectionObject.cryptsp.dll.img",
+      "size": 75776,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 51157
+        },
+        {
+          "encoding": "ascii",
+          "offset": 64480
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000210/job.json",
+      "size": 7649,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1970
+        },
+        {
+          "encoding": "ascii",
+          "offset": 4777
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000049/out/proc-ascii-hits.txt",
+      "size": 1968956,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 20080
+        },
+        {
+          "encoding": "ascii",
+          "offset": 21330
+        },
+        {
+          "encoding": "ascii",
+          "offset": 55287
+        },
+        {
+          "encoding": "ascii",
+          "offset": 55334
+        },
+        {
+          "encoding": "ascii",
+          "offset": 55362
+        },
+        {
+          "encoding": "ascii",
+          "offset": 55384
+        },
+        {
+          "encoding": "ascii",
+          "offset": 59980
+        },
+        {
+          "encoding": "ascii",
+          "offset": 60001
+        },
+        {
+          "encoding": "ascii",
+          "offset": 60022
+        },
+        {
+          "encoding": "ascii",
+          "offset": 60046
+        },
+        {
+          "encoding": "ascii",
+          "offset": 60068
+        },
+        {
+          "encoding": "ascii",
+          "offset": 60087
+        },
+        {
+          "encoding": "ascii",
+          "offset": 60189
+        },
+        {
+          "encoding": "ascii",
+          "offset": 60206
+        },
+        {
+          "encoding": "ascii",
+          "offset": 60223
+        },
+        {
+          "encoding": "ascii",
+          "offset": 62439
+        },
+        {
+          "encoding": "ascii",
+          "offset": 92463
+        },
+        {
+          "encoding": "ascii",
+          "offset": 92946
+        },
+        {
+          "encoding": "ascii",
+          "offset": 94804
+        },
+        {
+          "encoding": "ascii",
+          "offset": 94833
+        },
+        {
+          "encoding": "ascii",
+          "offset": 94899
+        },
+        {
+          "encoding": "ascii",
+          "offset": 96362
+        },
+        {
+          "encoding": "ascii",
+          "offset": 105871
+        },
+        {
+          "encoding": "ascii",
+          "offset": 105901
+        },
+        {
+          "encoding": "ascii",
+          "offset": 168578
+        },
+        {
+          "encoding": "ascii",
+          "offset": 184405
+        },
+        {
+          "encoding": "ascii",
+          "offset": 192986
+        },
+        {
+          "encoding": "ascii",
+          "offset": 209285
+        },
+        {
+          "encoding": "ascii",
+          "offset": 210489
+        },
+        {
+          "encoding": "ascii",
+          "offset": 211095
+        },
+        {
+          "encoding": "ascii",
+          "offset": 211382
+        },
+        {
+          "encoding": "ascii",
+          "offset": 220011
+        },
+        {
+          "encoding": "ascii",
+          "offset": 223829
+        },
+        {
+          "encoding": "ascii",
+          "offset": 233762
+        },
+        {
+          "encoding": "ascii",
+          "offset": 234919
+        },
+        {
+          "encoding": "ascii",
+          "offset": 242111
+        },
+        {
+          "encoding": "ascii",
+          "offset": 242680
+        },
+        {
+          "encoding": "ascii",
+          "offset": 245882
+        },
+        {
+          "encoding": "ascii",
+          "offset": 249478
+        },
+        {
+          "encoding": "ascii",
+          "offset": 538291
+        },
+        {
+          "encoding": "ascii",
+          "offset": 555393
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1883442
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1885669
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1888625
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1892665
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1912410
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1913757
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1918843
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1949058
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1958169
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1958601
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000049/out/proc-utf16-hits.txt",
+      "size": 1452154,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 35905
+        },
+        {
+          "encoding": "ascii",
+          "offset": 37785
+        },
+        {
+          "encoding": "ascii",
+          "offset": 39943
+        },
+        {
+          "encoding": "ascii",
+          "offset": 186595
+        },
+        {
+          "encoding": "ascii",
+          "offset": 186627
+        },
+        {
+          "encoding": "ascii",
+          "offset": 219773
+        },
+        {
+          "encoding": "ascii",
+          "offset": 220593
+        },
+        {
+          "encoding": "ascii",
+          "offset": 220665
+        },
+        {
+          "encoding": "ascii",
+          "offset": 220880
+        },
+        {
+          "encoding": "ascii",
+          "offset": 221379
+        },
+        {
+          "encoding": "ascii",
+          "offset": 221410
+        },
+        {
+          "encoding": "ascii",
+          "offset": 230034
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000049/out/proc-utf16.txt",
+      "size": 29114639,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 158455
+        },
+        {
+          "encoding": "ascii",
+          "offset": 168292
+        },
+        {
+          "encoding": "ascii",
+          "offset": 183102
+        },
+        {
+          "encoding": "ascii",
+          "offset": 833330
+        },
+        {
+          "encoding": "ascii",
+          "offset": 833362
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1588914
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1593500
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1593848
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1595222
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1595989
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1596020
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1610012
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000049/out/proc-ascii.txt",
+      "size": 52355793,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 89114
+        },
+        {
+          "encoding": "ascii",
+          "offset": 95952
+        },
+        {
+          "encoding": "ascii",
+          "offset": 362333
+        },
+        {
+          "encoding": "ascii",
+          "offset": 362380
+        },
+        {
+          "encoding": "ascii",
+          "offset": 362408
+        },
+        {
+          "encoding": "ascii",
+          "offset": 362430
+        },
+        {
+          "encoding": "ascii",
+          "offset": 387479
+        },
+        {
+          "encoding": "ascii",
+          "offset": 387500
+        },
+        {
+          "encoding": "ascii",
+          "offset": 387521
+        },
+        {
+          "encoding": "ascii",
+          "offset": 387545
+        },
+        {
+          "encoding": "ascii",
+          "offset": 387567
+        },
+        {
+          "encoding": "ascii",
+          "offset": 387607
+        },
+        {
+          "encoding": "ascii",
+          "offset": 387729
+        },
+        {
+          "encoding": "ascii",
+          "offset": 387746
+        },
+        {
+          "encoding": "ascii",
+          "offset": 387763
+        },
+        {
+          "encoding": "ascii",
+          "offset": 402580
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1694661
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1701079
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1717555
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1717584
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1718205
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1732086
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1812252
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1812282
+        },
+        {
+          "encoding": "ascii",
+          "offset": 4159544
+        },
+        {
+          "encoding": "ascii",
+          "offset": 4713487
+        },
+        {
+          "encoding": "ascii",
+          "offset": 5518193
+        },
+        {
+          "encoding": "ascii",
+          "offset": 8038873
+        },
+        {
+          "encoding": "ascii",
+          "offset": 8070923
+        },
+        {
+          "encoding": "ascii",
+          "offset": 8087102
+        },
+        {
+          "encoding": "ascii",
+          "offset": 8089872
+        },
+        {
+          "encoding": "ascii",
+          "offset": 8579841
+        },
+        {
+          "encoding": "ascii",
+          "offset": 8925892
+        },
+        {
+          "encoding": "ascii",
+          "offset": 9623466
+        },
+        {
+          "encoding": "ascii",
+          "offset": 9860304
+        },
+        {
+          "encoding": "ascii",
+          "offset": 10193863
+        },
+        {
+          "encoding": "ascii",
+          "offset": 10203735
+        },
+        {
+          "encoding": "ascii",
+          "offset": 10241479
+        },
+        {
+          "encoding": "ascii",
+          "offset": 10690939
+        },
+        {
+          "encoding": "ascii",
+          "offset": 17849647
+        },
+        {
+          "encoding": "ascii",
+          "offset": 19287753
+        },
+        {
+          "encoding": "ascii",
+          "offset": 42004581
+        },
+        {
+          "encoding": "ascii",
+          "offset": 42096759
+        },
+        {
+          "encoding": "ascii",
+          "offset": 42147809
+        },
+        {
+          "encoding": "ascii",
+          "offset": 42231183
+        },
+        {
+          "encoding": "ascii",
+          "offset": 45441660
+        },
+        {
+          "encoding": "ascii",
+          "offset": 45486723
+        },
+        {
+          "encoding": "ascii",
+          "offset": 45654869
+        },
+        {
+          "encoding": "ascii",
+          "offset": 50003536
+        },
+        {
+          "encoding": "ascii",
+          "offset": 50917603
+        },
+        {
+          "encoding": "ascii",
+          "offset": 50931272
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000049/out/proc/pid.3768.dmp",
+      "size": 769003520,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 1324277
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1328771
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1508171
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1508202
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1508222
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1508236
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1525267
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1525280
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1525293
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1525309
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1525323
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1525347
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1525429
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1525438
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1525447
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1535200
+        },
+        {
+          "encoding": "ascii",
+          "offset": 21443098
+        },
+        {
+          "encoding": "ascii",
+          "offset": 21447779
+        },
+        {
+          "encoding": "ascii",
+          "offset": 21459143
+        },
+        {
+          "encoding": "ascii",
+          "offset": 21459163
+        },
+        {
+          "encoding": "ascii",
+          "offset": 21459604
+        },
+        {
+          "encoding": "ascii",
+          "offset": 21469408
+        },
+        {
+          "encoding": "ascii",
+          "offset": 21625903
+        },
+        {
+          "encoding": "ascii",
+          "offset": 21625924
+        },
+        {
+          "encoding": "ascii",
+          "offset": 33816304
+        },
+        {
+          "encoding": "ascii",
+          "offset": 38556296
+        },
+        {
+          "encoding": "ascii",
+          "offset": 42768428
+        },
+        {
+          "encoding": "ascii",
+          "offset": 53964004
+        },
+        {
+          "encoding": "ascii",
+          "offset": 54108427
+        },
+        {
+          "encoding": "ascii",
+          "offset": 54190037
+        },
+        {
+          "encoding": "ascii",
+          "offset": 54199264
+        },
+        {
+          "encoding": "ascii",
+          "offset": 55894208
+        },
+        {
+          "encoding": "ascii",
+          "offset": 56792930
+        },
+        {
+          "encoding": "ascii",
+          "offset": 59274776
+        },
+        {
+          "encoding": "ascii",
+          "offset": 60477987
+        },
+        {
+          "encoding": "ascii",
+          "offset": 61629874
+        },
+        {
+          "encoding": "ascii",
+          "offset": 61646894
+        },
+        {
+          "encoding": "ascii",
+          "offset": 61680600
+        },
+        {
+          "encoding": "ascii",
+          "offset": 63407539
+        },
+        {
+          "encoding": "ascii",
+          "offset": 344768446
+        },
+        {
+          "encoding": "ascii",
+          "offset": 365862832
+        },
+        {
+          "encoding": "ascii",
+          "offset": 720467896
+        },
+        {
+          "encoding": "ascii",
+          "offset": 721574979
+        },
+        {
+          "encoding": "ascii",
+          "offset": 721701192
+        },
+        {
+          "encoding": "ascii",
+          "offset": 722032774
+        },
+        {
+          "encoding": "ascii",
+          "offset": 738080178
+        },
+        {
+          "encoding": "ascii",
+          "offset": 738199598
+        },
+        {
+          "encoding": "ascii",
+          "offset": 738864010
+        },
+        {
+          "encoding": "ascii",
+          "offset": 758369838
+        },
+        {
+          "encoding": "ascii",
+          "offset": 762413632
+        },
+        {
+          "encoding": "ascii",
+          "offset": 762467180
+        },
+        {
+          "encoding": "utf16le",
+          "offset": 1807473
+        },
+        {
+          "encoding": "utf16le",
+          "offset": 1821919
+        },
+        {
+          "encoding": "utf16le",
+          "offset": 1864858
+        },
+        {
+          "encoding": "utf16le",
+          "offset": 11514076
+        },
+        {
+          "encoding": "utf16le",
+          "offset": 11514150
+        },
+        {
+          "encoding": "utf16le",
+          "offset": 21484632
+        },
+        {
+          "encoding": "utf16le",
+          "offset": 21490312
+        },
+        {
+          "encoding": "utf16le",
+          "offset": 21490756
+        },
+        {
+          "encoding": "utf16le",
+          "offset": 21492683
+        },
+        {
+          "encoding": "utf16le",
+          "offset": 21493894
+        },
+        {
+          "encoding": "utf16le",
+          "offset": 21493938
+        },
+        {
+          "encoding": "utf16le",
+          "offset": 21515391
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000244/job.json",
+      "size": 7601,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 3941
+        }
+      ]
+    },
+    {
+      "path": "store/imports/j000139/out/20261002100314853-bash-ujat.out.log",
+      "size": 1941561,
+      "matches": [
+        {
+          "encoding": "ascii",
+          "offset": 2687
+        },
+        {
+          "encoding": "ascii",
+          "offset": 509318
+        },
+        {
+          "encoding": "ascii",
+          "offset": 515500
+        },
+        {
+          "encoding": "ascii",
+          "offset": 533833
+        },
+        {
+          "encoding": "ascii",
+          "offset": 556913
+        },
+        {
+          "encoding": "ascii",
+          "offset": 999537
+        },
+        {
+          "encoding": "ascii",
+          "offset": 999582
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1112355
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1114415
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1140605
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1140745
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1418622
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1565764
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1680920
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1699409
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1706262
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1727883
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1932056
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1934698
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1938171
+        },
+        {
+          "encoding": "ascii",
+          "offset": 1939238
+        }
+      ]
+    }
+  ]
+}

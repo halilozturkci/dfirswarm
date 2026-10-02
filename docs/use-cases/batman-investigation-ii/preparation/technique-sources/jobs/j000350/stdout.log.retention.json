@@ -1,0 +1,12 @@
+{
+  "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000350/stdout.log",
+  "retained": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/sensitive-prefix-1626/jobs/j000350/stdout.log",
+  "job": "j000350",
+  "bytes": 65831,
+  "sha256": "7b87e560c7c8d5dfa413e67d5bccf40103cc6c3e69ffdeb8aea1a7360732c83a",
+  "captured_at": "2026-10-02T16:35:57.066000+00:00",
+  "role": "complete flagged contextual output; no source values copied to selected Git packet",
+  "selected_git_body_copy": false,
+  "retention": "complete byte-exact private body; no truncation/redaction",
+  "archive_status": "selected observer prefix only; final complete run/custody pending"
+}

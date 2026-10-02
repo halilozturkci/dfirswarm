@@ -1,0 +1,93 @@
+{
+  "id": "j000346",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000322/gzip-utf-8-parsed.json",
+      "job:j000335/profile-review.json"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "independent": true,
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport json,base64,os\nfrom pathlib import Path\ndef obj(v):\n if isinstance(v,str):v=json.loads(v)\n assert isinstance(v,dict);return v\ns=json.loads(Path('store/jobs/j000322/out/gzip-utf-8-parsed.json').read_text());p=obj(obj(s['!fusion!cachedProfile'])['private']);m=json.loads(Path('store/jobs/j000335/out/profile-review.json').read_text());rows=[]\nfor item in m['pairs']:\n pair=obj(p[item['field']])\n for name,expected in item['keys'].items():\n  v=pair[name];isstr=isinstance(v,str);r={'field':item['field'],'component':name,'is_string':isstr,'encoded_length_matches':isstr and len(v)==expected['encoded_length'],'first_colon_at_six':isstr and v.find(':')==6,'prefix_is_base64_comma':isstr and v.startswith('base64,'),'prefix_is_base64_space':isstr and v.startswith('base64 '),'prefix_is_base64_colon':isstr and v.startswith('base64:')}\n  try:raw=base64.b64decode(v[7:],validate=True);r['strict_suffix_decoded_length_matches']=len(raw)==expected['decoded_bytes']\n  except (ValueError,TypeError):r['strict_suffix_decoded_length_matches']=False\n  rows.append(r)\nresult={'checks':rows,'values_or_secret_hashes_emitted':False};Path(os.environ['OUT'],'encoding-shape-check.json').write_text(json.dumps(result,indent=2));print(json.dumps(result))\nPY"
+  },
+  "requester": {
+    "agent": "s42120102",
+    "name": "Wallet trace",
+    "doing": "Examine wallet installation and wallet protection evidence for questions 5 and 9."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T16:24:12.238Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000335/out/profile-review.json",
+        "sha256": "1b330d1867c696b73f3f6c088dddf8a10df9056301ba3e380ae661d370ad9044"
+      },
+      {
+        "path": "store/jobs/j000322/out/gzip-utf-8-parsed.json",
+        "sha256": "7d2d26963af4eb2719198f4a316a5be56c4989f119d8e52113959b9e3eae919f"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000346-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T16:24:12.355Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000346",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 2,
+    "files": 2,
+    "bound": 0,
+    "manifest": "store/jobs/j000346/scope.1.json",
+    "manifest_sha256": "66e228587445b5296ad8198900c937e5881a37d2893faa46c54d9ec2e31a043c"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T16:24:13.079Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "13c84afae038983349687e1febed88275827fbf2d0c3dfe4c88a4facc579168b",
+    "files": 1,
+    "bytes": 2890,
+    "rejected": 0,
+    "path": "store/jobs/j000346/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

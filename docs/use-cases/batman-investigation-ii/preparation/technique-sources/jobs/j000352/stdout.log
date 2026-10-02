@@ -1,0 +1,30 @@
+{
+  "Crypto": "3.23.0",
+  "candidate_count": 4,
+  "files": [
+    {
+      "file": "instance1/config.dbx",
+      "pages": 16,
+      "first_page_skipped": true
+    },
+    {
+      "file": "instance1/contacts_polaris.db",
+      "pages": 10,
+      "first_page_skipped": true
+    },
+    {
+      "file": "instance1/photo.dbx",
+      "pages": 13,
+      "first_page_skipped": true
+    },
+    {
+      "file": "instance_db/instance.dbx",
+      "pages": 5,
+      "first_page_skipped": true
+    }
+  ],
+  "attempts": 640,
+  "authenticated_matches": 0,
+  "secret_values_or_hashes_emitted": false,
+  "scope": "direct-secret CCM/GCM, nonce8/tag4 two trailer orders, empty AAD, non-first pages only"
+}

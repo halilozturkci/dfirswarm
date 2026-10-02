@@ -1,0 +1,91 @@
+{
+  "id": "j000347",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "all"
+    ],
+    "scope": "all",
+    "timeout_seconds": 120,
+    "network": "off",
+    "command": "python3 - <<'PY'\nfrom pathlib import Path\nimport json, re\nroots=[Path('store/jobs'),Path('store/imports')]\nneedle=b'userkey'\nout=[]\nfor root in roots:\n if not root.exists(): continue\n for p in root.rglob('*'):\n  if not p.is_file(): continue\n  try: b=p.read_bytes()\n  except Exception: continue\n  matches=[]\n  for enc,n in [('ascii',needle),('utf16le',b''.join(bytes([c,0]) for c in needle))]:\n   lo=b.lower(); q=n.lower(); pos=0\n   while (i:=lo.find(q,pos))>=0:\n    matches.append({'encoding':enc,'offset':i})\n    pos=i+len(q)\n  if matches: out.append({'path':str(p),'size':len(b),'matches':matches})\nprint(json.dumps({'needle':'userkey','files_with_hits':len(out),'occurrences':sum(len(x['matches']) for x in out),'hits':out},indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120107",
+    "name": "Memory triage",
+    "doing": "Available for independent review; prior Q6 evidence handoff complete."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T16:24:59.636Z",
+  "worker": "dfs-s421201-job-j000347-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T16:24:59.658Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/catalog",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tool-output",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/work",
+      "access": "read-only; every agent's live scratch and the shared files: they may change while the job runs"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/work/extracted",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/work/quarantine",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000347",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "all"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T16:26:22.599Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "42e2cc107972e226c6037e0b20ca3229b70b5be78da6ee2fad98c82e0045c6e7",
+    "files": 0,
+    "bytes": 0,
+    "rejected": 0,
+    "path": "store/jobs/j000347/out"
+  }
+}

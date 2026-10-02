@@ -1,0 +1,1 @@
+{"v":1,"job":"j000352","attempt":1,"sealed_at":"2026-10-02T16:31:04.678Z","files":[{"path":"independent-direct-key-aead.json","path_b64":"aW5kZXBlbmRlbnQtZGlyZWN0LWtleS1hZWFkLmpzb24=","bytes":13339,"sha256":"20b199b28b8e9ad1f8ec1e238d78089cfd33b74e88199249fb4aa7466432090a","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":13339}}

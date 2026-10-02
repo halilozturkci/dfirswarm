@@ -1,0 +1,545 @@
+{
+  "Crypto": "3.23.0",
+  "candidate_count": 4,
+  "files": [
+    {
+      "file": "instance1/config.dbx",
+      "pages": 16,
+      "first_page_skipped": true
+    },
+    {
+      "file": "instance1/contacts_polaris.db",
+      "pages": 10,
+      "first_page_skipped": true
+    },
+    {
+      "file": "instance1/photo.dbx",
+      "pages": 13,
+      "first_page_skipped": true
+    },
+    {
+      "file": "instance_db/instance.dbx",
+      "pages": 5,
+      "first_page_skipped": true
+    }
+  ],
+  "rows": [
+    {
+      "field": "abTestingKeyPair",
+      "file": "instance1/config.dbx",
+      "mode": "CCM",
+      "order": "nonce8_tag4",
+      "attempts": 15,
+      "authenticated_pages": []
+    },
+    {
+      "field": "abTestingKeyPair",
+      "file": "instance1/config.dbx",
+      "mode": "CCM",
+      "order": "tag4_nonce8",
+      "attempts": 15,
+      "authenticated_pages": []
+    },
+    {
+      "field": "abTestingKeyPair",
+      "file": "instance1/config.dbx",
+      "mode": "GCM",
+      "order": "nonce8_tag4",
+      "attempts": 15,
+      "authenticated_pages": []
+    },
+    {
+      "field": "abTestingKeyPair",
+      "file": "instance1/config.dbx",
+      "mode": "GCM",
+      "order": "tag4_nonce8",
+      "attempts": 15,
+      "authenticated_pages": []
+    },
+    {
+      "field": "exodusSharesEncryptionKeyPair",
+      "file": "instance1/config.dbx",
+      "mode": "CCM",
+      "order": "nonce8_tag4",
+      "attempts": 15,
+      "authenticated_pages": []
+    },
+    {
+      "field": "exodusSharesEncryptionKeyPair",
+      "file": "instance1/config.dbx",
+      "mode": "CCM",
+      "order": "tag4_nonce8",
+      "attempts": 15,
+      "authenticated_pages": []
+    },
+    {
+      "field": "exodusSharesEncryptionKeyPair",
+      "file": "instance1/config.dbx",
+      "mode": "GCM",
+      "order": "nonce8_tag4",
+      "attempts": 15,
+      "authenticated_pages": []
+    },
+    {
+      "field": "exodusSharesEncryptionKeyPair",
+      "file": "instance1/config.dbx",
+      "mode": "GCM",
+      "order": "tag4_nonce8",
+      "attempts": 15,
+      "authenticated_pages": []
+    },
+    {
+      "field": "exodusSharesKeyPair",
+      "file": "instance1/config.dbx",
+      "mode": "CCM",
+      "order": "nonce8_tag4",
+      "attempts": 15,
+      "authenticated_pages": []
+    },
+    {
+      "field": "exodusSharesKeyPair",
+      "file": "instance1/config.dbx",
+      "mode": "CCM",
+      "order": "tag4_nonce8",
+      "attempts": 15,
+      "authenticated_pages": []
+    },
+    {
+      "field": "exodusSharesKeyPair",
+      "file": "instance1/config.dbx",
+      "mode": "GCM",
+      "order": "nonce8_tag4",
+      "attempts": 15,
+      "authenticated_pages": []
+    },
+    {
+      "field": "exodusSharesKeyPair",
+      "file": "instance1/config.dbx",
+      "mode": "GCM",
+      "order": "tag4_nonce8",
+      "attempts": 15,
+      "authenticated_pages": []
+    },
+    {
+      "field": "fiatAuthKeyPair",
+      "file": "instance1/config.dbx",
+      "mode": "CCM",
+      "order": "nonce8_tag4",
+      "attempts": 15,
+      "authenticated_pages": []
+    },
+    {
+      "field": "fiatAuthKeyPair",
+      "file": "instance1/config.dbx",
+      "mode": "CCM",
+      "order": "tag4_nonce8",
+      "attempts": 15,
+      "authenticated_pages": []
+    },
+    {
+      "field": "fiatAuthKeyPair",
+      "file": "instance1/config.dbx",
+      "mode": "GCM",
+      "order": "nonce8_tag4",
+      "attempts": 15,
+      "authenticated_pages": []
+    },
+    {
+      "field": "fiatAuthKeyPair",
+      "file": "instance1/config.dbx",
+      "mode": "GCM",
+      "order": "tag4_nonce8",
+      "attempts": 15,
+      "authenticated_pages": []
+    },
+    {
+      "field": "abTestingKeyPair",
+      "file": "instance1/contacts_polaris.db",
+      "mode": "CCM",
+      "order": "nonce8_tag4",
+      "attempts": 9,
+      "authenticated_pages": []
+    },
+    {
+      "field": "abTestingKeyPair",
+      "file": "instance1/contacts_polaris.db",
+      "mode": "CCM",
+      "order": "tag4_nonce8",
+      "attempts": 9,
+      "authenticated_pages": []
+    },
+    {
+      "field": "abTestingKeyPair",
+      "file": "instance1/contacts_polaris.db",
+      "mode": "GCM",
+      "order": "nonce8_tag4",
+      "attempts": 9,
+      "authenticated_pages": []
+    },
+    {
+      "field": "abTestingKeyPair",
+      "file": "instance1/contacts_polaris.db",
+      "mode": "GCM",
+      "order": "tag4_nonce8",
+      "attempts": 9,
+      "authenticated_pages": []
+    },
+    {
+      "field": "exodusSharesEncryptionKeyPair",
+      "file": "instance1/contacts_polaris.db",
+      "mode": "CCM",
+      "order": "nonce8_tag4",
+      "attempts": 9,
+      "authenticated_pages": []
+    },
+    {
+      "field": "exodusSharesEncryptionKeyPair",
+      "file": "instance1/contacts_polaris.db",
+      "mode": "CCM",
+      "order": "tag4_nonce8",
+      "attempts": 9,
+      "authenticated_pages": []
+    },
+    {
+      "field": "exodusSharesEncryptionKeyPair",
+      "file": "instance1/contacts_polaris.db",
+      "mode": "GCM",
+      "order": "nonce8_tag4",
+      "attempts": 9,
+      "authenticated_pages": []
+    },
+    {
+      "field": "exodusSharesEncryptionKeyPair",
+      "file": "instance1/contacts_polaris.db",
+      "mode": "GCM",
+      "order": "tag4_nonce8",
+      "attempts": 9,
+      "authenticated_pages": []
+    },
+    {
+      "field": "exodusSharesKeyPair",
+      "file": "instance1/contacts_polaris.db",
+      "mode": "CCM",
+      "order": "nonce8_tag4",
+      "attempts": 9,
+      "authenticated_pages": []
+    },
+    {
+      "field": "exodusSharesKeyPair",
+      "file": "instance1/contacts_polaris.db",
+      "mode": "CCM",
+      "order": "tag4_nonce8",
+      "attempts": 9,
+      "authenticated_pages": []
+    },
+    {
+      "field": "exodusSharesKeyPair",
+      "file": "instance1/contacts_polaris.db",
+      "mode": "GCM",
+      "order": "nonce8_tag4",
+      "attempts": 9,
+      "authenticated_pages": []
+    },
+    {
+      "field": "exodusSharesKeyPair",
+      "file": "instance1/contacts_polaris.db",
+      "mode": "GCM",
+      "order": "tag4_nonce8",
+      "attempts": 9,
+      "authenticated_pages": []
+    },
+    {
+      "field": "fiatAuthKeyPair",
+      "file": "instance1/contacts_polaris.db",
+      "mode": "CCM",
+      "order": "nonce8_tag4",
+      "attempts": 9,
+      "authenticated_pages": []
+    },
+    {
+      "field": "fiatAuthKeyPair",
+      "file": "instance1/contacts_polaris.db",
+      "mode": "CCM",
+      "order": "tag4_nonce8",
+      "attempts": 9,
+      "authenticated_pages": []
+    },
+    {
+      "field": "fiatAuthKeyPair",
+      "file": "instance1/contacts_polaris.db",
+      "mode": "GCM",
+      "order": "nonce8_tag4",
+      "attempts": 9,
+      "authenticated_pages": []
+    },
+    {
+      "field": "fiatAuthKeyPair",
+      "file": "instance1/contacts_polaris.db",
+      "mode": "GCM",
+      "order": "tag4_nonce8",
+      "attempts": 9,
+      "authenticated_pages": []
+    },
+    {
+      "field": "abTestingKeyPair",
+      "file": "instance1/photo.dbx",
+      "mode": "CCM",
+      "order": "nonce8_tag4",
+      "attempts": 12,
+      "authenticated_pages": []
+    },
+    {
+      "field": "abTestingKeyPair",
+      "file": "instance1/photo.dbx",
+      "mode": "CCM",
+      "order": "tag4_nonce8",
+      "attempts": 12,
+      "authenticated_pages": []
+    },
+    {
+      "field": "abTestingKeyPair",
+      "file": "instance1/photo.dbx",
+      "mode": "GCM",
+      "order": "nonce8_tag4",
+      "attempts": 12,
+      "authenticated_pages": []
+    },
+    {
+      "field": "abTestingKeyPair",
+      "file": "instance1/photo.dbx",
+      "mode": "GCM",
+      "order": "tag4_nonce8",
+      "attempts": 12,
+      "authenticated_pages": []
+    },
+    {
+      "field": "exodusSharesEncryptionKeyPair",
+      "file": "instance1/photo.dbx",
+      "mode": "CCM",
+      "order": "nonce8_tag4",
+      "attempts": 12,
+      "authenticated_pages": []
+    },
+    {
+      "field": "exodusSharesEncryptionKeyPair",
+      "file": "instance1/photo.dbx",
+      "mode": "CCM",
+      "order": "tag4_nonce8",
+      "attempts": 12,
+      "authenticated_pages": []
+    },
+    {
+      "field": "exodusSharesEncryptionKeyPair",
+      "file": "instance1/photo.dbx",
+      "mode": "GCM",
+      "order": "nonce8_tag4",
+      "attempts": 12,
+      "authenticated_pages": []
+    },
+    {
+      "field": "exodusSharesEncryptionKeyPair",
+      "file": "instance1/photo.dbx",
+      "mode": "GCM",
+      "order": "tag4_nonce8",
+      "attempts": 12,
+      "authenticated_pages": []
+    },
+    {
+      "field": "exodusSharesKeyPair",
+      "file": "instance1/photo.dbx",
+      "mode": "CCM",
+      "order": "nonce8_tag4",
+      "attempts": 12,
+      "authenticated_pages": []
+    },
+    {
+      "field": "exodusSharesKeyPair",
+      "file": "instance1/photo.dbx",
+      "mode": "CCM",
+      "order": "tag4_nonce8",
+      "attempts": 12,
+      "authenticated_pages": []
+    },
+    {
+      "field": "exodusSharesKeyPair",
+      "file": "instance1/photo.dbx",
+      "mode": "GCM",
+      "order": "nonce8_tag4",
+      "attempts": 12,
+      "authenticated_pages": []
+    },
+    {
+      "field": "exodusSharesKeyPair",
+      "file": "instance1/photo.dbx",
+      "mode": "GCM",
+      "order": "tag4_nonce8",
+      "attempts": 12,
+      "authenticated_pages": []
+    },
+    {
+      "field": "fiatAuthKeyPair",
+      "file": "instance1/photo.dbx",
+      "mode": "CCM",
+      "order": "nonce8_tag4",
+      "attempts": 12,
+      "authenticated_pages": []
+    },
+    {
+      "field": "fiatAuthKeyPair",
+      "file": "instance1/photo.dbx",
+      "mode": "CCM",
+      "order": "tag4_nonce8",
+      "attempts": 12,
+      "authenticated_pages": []
+    },
+    {
+      "field": "fiatAuthKeyPair",
+      "file": "instance1/photo.dbx",
+      "mode": "GCM",
+      "order": "nonce8_tag4",
+      "attempts": 12,
+      "authenticated_pages": []
+    },
+    {
+      "field": "fiatAuthKeyPair",
+      "file": "instance1/photo.dbx",
+      "mode": "GCM",
+      "order": "tag4_nonce8",
+      "attempts": 12,
+      "authenticated_pages": []
+    },
+    {
+      "field": "abTestingKeyPair",
+      "file": "instance_db/instance.dbx",
+      "mode": "CCM",
+      "order": "nonce8_tag4",
+      "attempts": 4,
+      "authenticated_pages": []
+    },
+    {
+      "field": "abTestingKeyPair",
+      "file": "instance_db/instance.dbx",
+      "mode": "CCM",
+      "order": "tag4_nonce8",
+      "attempts": 4,
+      "authenticated_pages": []
+    },
+    {
+      "field": "abTestingKeyPair",
+      "file": "instance_db/instance.dbx",
+      "mode": "GCM",
+      "order": "nonce8_tag4",
+      "attempts": 4,
+      "authenticated_pages": []
+    },
+    {
+      "field": "abTestingKeyPair",
+      "file": "instance_db/instance.dbx",
+      "mode": "GCM",
+      "order": "tag4_nonce8",
+      "attempts": 4,
+      "authenticated_pages": []
+    },
+    {
+      "field": "exodusSharesEncryptionKeyPair",
+      "file": "instance_db/instance.dbx",
+      "mode": "CCM",
+      "order": "nonce8_tag4",
+      "attempts": 4,
+      "authenticated_pages": []
+    },
+    {
+      "field": "exodusSharesEncryptionKeyPair",
+      "file": "instance_db/instance.dbx",
+      "mode": "CCM",
+      "order": "tag4_nonce8",
+      "attempts": 4,
+      "authenticated_pages": []
+    },
+    {
+      "field": "exodusSharesEncryptionKeyPair",
+      "file": "instance_db/instance.dbx",
+      "mode": "GCM",
+      "order": "nonce8_tag4",
+      "attempts": 4,
+      "authenticated_pages": []
+    },
+    {
+      "field": "exodusSharesEncryptionKeyPair",
+      "file": "instance_db/instance.dbx",
+      "mode": "GCM",
+      "order": "tag4_nonce8",
+      "attempts": 4,
+      "authenticated_pages": []
+    },
+    {
+      "field": "exodusSharesKeyPair",
+      "file": "instance_db/instance.dbx",
+      "mode": "CCM",
+      "order": "nonce8_tag4",
+      "attempts": 4,
+      "authenticated_pages": []
+    },
+    {
+      "field": "exodusSharesKeyPair",
+      "file": "instance_db/instance.dbx",
+      "mode": "CCM",
+      "order": "tag4_nonce8",
+      "attempts": 4,
+      "authenticated_pages": []
+    },
+    {
+      "field": "exodusSharesKeyPair",
+      "file": "instance_db/instance.dbx",
+      "mode": "GCM",
+      "order": "nonce8_tag4",
+      "attempts": 4,
+      "authenticated_pages": []
+    },
+    {
+      "field": "exodusSharesKeyPair",
+      "file": "instance_db/instance.dbx",
+      "mode": "GCM",
+      "order": "tag4_nonce8",
+      "attempts": 4,
+      "authenticated_pages": []
+    },
+    {
+      "field": "fiatAuthKeyPair",
+      "file": "instance_db/instance.dbx",
+      "mode": "CCM",
+      "order": "nonce8_tag4",
+      "attempts": 4,
+      "authenticated_pages": []
+    },
+    {
+      "field": "fiatAuthKeyPair",
+      "file": "instance_db/instance.dbx",
+      "mode": "CCM",
+      "order": "tag4_nonce8",
+      "attempts": 4,
+      "authenticated_pages": []
+    },
+    {
+      "field": "fiatAuthKeyPair",
+      "file": "instance_db/instance.dbx",
+      "mode": "GCM",
+      "order": "nonce8_tag4",
+      "attempts": 4,
+      "authenticated_pages": []
+    },
+    {
+      "field": "fiatAuthKeyPair",
+      "file": "instance_db/instance.dbx",
+      "mode": "GCM",
+      "order": "tag4_nonce8",
+      "attempts": 4,
+      "authenticated_pages": []
+    }
+  ],
+  "attempts": 640,
+  "authenticated_matches": 0,
+  "matches": [],
+  "secret_values_or_hashes_emitted": false,
+  "scope": "direct-secret CCM/GCM, nonce8/tag4 two trailer orders, empty AAD, non-first pages only"
+}

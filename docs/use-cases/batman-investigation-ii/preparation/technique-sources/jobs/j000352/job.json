@@ -1,0 +1,113 @@
+{
+  "id": "j000352",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000322/gzip-utf-8-parsed.json",
+      "job:j000344/pair-consistency-and-api.json",
+      "job:j000145/contact/contact/instance1/config.dbx",
+      "job:j000145/contact/contact/instance1/contacts_polaris.db",
+      "job:j000145/contact/contact/instance1/photo.dbx",
+      "job:j000145/contact/contact/instance_db/instance.dbx"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "independent": true,
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport json,base64,os\nimport Crypto\nfrom Crypto.Cipher import AES\nroot='store/jobs/j000145/out/contact/contact/'\nfiles=['instance1/config.dbx','instance1/contacts_polaris.db','instance1/photo.dbx','instance_db/instance.dbx']\ncontrol=json.load(open('store/jobs/j000344/out/pair-consistency-and-api.json'))\nassert len(control['pairs'])==4 and all(r['public_from_secret_matches'] for r in control['pairs'])\nd=json.load(open('store/jobs/j000322/out/gzip-utf-8-parsed.json'))\nnames={r['field'] for r in control['pairs']}; found={}\ndef walk(x):\n if isinstance(x,dict):\n  for k,v in x.items():\n   if k in names: found[k]=json.loads(v) if isinstance(v,str) else v\n   else: walk(v)\n elif isinstance(x,list):\n  for v in x: walk(v)\nwalk(d); assert set(found)==names\ndef decode(x):\n assert x.get('type')=='Buffer' and x['data'].startswith('base64:')\n return base64.b64decode(x['data'][7:],validate=True)\nkeys={}\nfor name,pair in found.items():\n p=decode(pair['privateKey'])\n if pair.get('keyType')=='ed25519':\n  assert len(p)==64 and p[32:]==decode(pair['publicKey']); p=p[:32]\n else: assert pair.get('curve')=='x25519' and len(p)==32\n keys[name]=p\nrows=[]; positives=[]; inventory=[]\nfor file in files:\n data=open(root+file,'rb').read(); assert len(data)%4096==0 and data[16:24]==bytes.fromhex('100001010c402020')\n count=len(data)//4096\n inventory.append({'file':file,'pages':count,'first_page_skipped':True})\n for name,key in sorted(keys.items()):\n  for mode_name,mode in [('CCM',AES.MODE_CCM),('GCM',AES.MODE_GCM)]:\n   for order in ('nonce8_tag4','tag4_nonce8'):\n    success=[]\n    for n in range(1,count):\n     page=data[n*4096:(n+1)*4096]; payload,trailer=page[:-12],page[-12:]\n     nonce,tag=(trailer[:8],trailer[8:]) if order=='nonce8_tag4' else (trailer[4:],trailer[:4])\n     try: plain=AES.new(key,mode,nonce=nonce,mac_len=4).decrypt_and_verify(payload,tag)\n     except ValueError: continue\n     success.append(n+1); positives.append({'file':file,'page':n+1,'mode':mode_name,'order':order})\n    rows.append({'field':name,'file':file,'mode':mode_name,'order':order,'attempts':count-1,'authenticated_pages':success})\nr={'Crypto':Crypto.__version__,'candidate_count':len(keys),'files':inventory,'rows':rows,'attempts':sum(x['attempts'] for x in rows),'authenticated_matches':len(positives),'matches':positives,'secret_values_or_hashes_emitted':False,'scope':'direct-secret CCM/GCM, nonce8/tag4 two trailer orders, empty AAD, non-first pages only'}\njson.dump(r,open(os.path.join(os.environ['OUT'],'independent-direct-key-aead.json'),'w'),indent=2)\nprint(json.dumps({k:r[k] for k in ('Crypto','candidate_count','files','attempts','authenticated_matches','secret_values_or_hashes_emitted','scope')},indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120107",
+    "name": "Memory triage",
+    "doing": "Available for independent review; prior Q6 evidence handoff complete."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T16:31:03.749Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000145/out/contact/contact/instance1/contacts_polaris.db",
+        "sha256": "3e959879e783854c529e8a02fd066a1384ebde6782be5428fadba72bd6ec4b8b"
+      },
+      {
+        "path": "store/jobs/j000145/out/contact/contact/instance1/photo.dbx",
+        "sha256": "6b8c28fdd0bcc4f87d881bbd4021ac7052c58054bacc2acd6755b99ec94ad942"
+      },
+      {
+        "path": "store/jobs/j000322/out/gzip-utf-8-parsed.json",
+        "sha256": "7d2d26963af4eb2719198f4a316a5be56c4989f119d8e52113959b9e3eae919f"
+      },
+      {
+        "path": "store/jobs/j000145/out/contact/contact/instance_db/instance.dbx",
+        "sha256": "a013b88dd638dd1155d11e2daa9c30b4396cca9594b611735294c2926cd003b4"
+      },
+      {
+        "path": "store/jobs/j000344/out/pair-consistency-and-api.json",
+        "sha256": "cabc4a80d8de7dff9c56f2b5394d2fb9d1b513ceb8da0570cf488f2617bee904"
+      },
+      {
+        "path": "store/jobs/j000145/out/contact/contact/instance1/config.dbx",
+        "sha256": "eb348b3f0914b0e0ed211386fd8a7fa91c0b33e48a597f7b11e1c779279a9c7b"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000352-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T16:31:03.868Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000352",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 6,
+    "files": 6,
+    "bound": 0,
+    "manifest": "store/jobs/j000352/scope.1.json",
+    "manifest_sha256": "589115138f86217ad0da3c60ade905aeb55ca4892dc24bb29743b784f75d3101"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T16:31:04.662Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "f0fb1da7a8e7013ff65bec228d176f1fc3b86c0907eea90750e05d1f6d9ed2d1",
+    "files": 1,
+    "bytes": 13339,
+    "rejected": 0,
+    "path": "store/jobs/j000352/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}
