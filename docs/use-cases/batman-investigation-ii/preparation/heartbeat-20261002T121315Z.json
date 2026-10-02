@@ -228,7 +228,7 @@
     "capped": null,
     "hash": "75398c0b0c9c87c75c09e5b21692f1fd404e06dc3c644c6115ae038130bfdbf3"
   },
-  "added_source_copies": 65,
+  "added_source_copies": 84,
   "leads_summary": {
     "open": 0,
     "active": 1,
@@ -242,5 +242,46 @@
   "summary_observed_at": "2026-10-02T12:18:22.435121+00:00",
   "mirror_at": "2026-10-02T12:18:21.831169+00:00",
   "provider_error_count_at_initial_observation": 3,
-  "last_new_provider_error_at": "2026-10-02T12:09:53.771Z"
+  "last_new_provider_error_at": "2026-10-02T12:09:53.771Z",
+  "blocker_observed_at": "2026-10-02T12:26:54.427012+00:00",
+  "blocker_summary": {
+    "state": "running",
+    "done": false,
+    "leads": {
+      "open": 0,
+      "active": 0,
+      "blocked": 0,
+      "closed": 55,
+      "waiting_on_operator": 1,
+      "uncovered": 0,
+      "chain_ok": true
+    },
+    "unestablished": [
+      "Q1 partial",
+      "Q12 not_determinable",
+      "Q13 not_determinable",
+      "Q14 not_determinable"
+    ],
+    "final_files": {
+      "work/answers.json": false,
+      "work/report.md": false,
+      "work/timeline.md": false
+    },
+    "agents_dead": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ],
+    "source": "lead seq907 L20 deferred on E195/R2; route review seq912; not proof of universal impossibility",
+    "intervention_boundary": "latest human forbids new tools/reference/messages during live run; none supplied",
+    "operator_action": "decision on continued passive wait or a change to experiment required for responding to R2; no early stop authorized"
+  },
+  "mirror_at_at_blocker": "2026-10-02T12:26:25.148935+00:00"
 }

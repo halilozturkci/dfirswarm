@@ -1,0 +1,85 @@
+{
+  "bytes": 36194,
+  "middle_range": [
+    4096,
+    32768
+  ],
+  "middle_equal_bytes": 28672,
+  "total_equal_bytes": 36083,
+  "difference_count": 111,
+  "difference_runs_half_open": [
+    [
+      0,
+      7
+    ],
+    [
+      70,
+      84
+    ],
+    [
+      147,
+      155
+    ],
+    [
+      156,
+      163
+    ],
+    [
+      243,
+      258
+    ],
+    [
+      706,
+      715
+    ],
+    [
+      1211,
+      1220
+    ],
+    [
+      32784,
+      32790
+    ],
+    [
+      32822,
+      32828
+    ],
+    [
+      32859,
+      32864
+    ],
+    [
+      32902,
+      32906
+    ],
+    [
+      33017,
+      33025
+    ],
+    [
+      36176,
+      36189
+    ]
+  ],
+  "cached_checks": [
+    {
+      "bytes": 36864,
+      "leading_equal": 4027,
+      "trailing_equal": 3384
+    },
+    {
+      "bytes": 262144,
+      "leading_equal": 4027,
+      "trailing_equal": 3384
+    }
+  ],
+  "valid_signature": true,
+  "start_header_crc_valid": true,
+  "next_header_range": [
+    36048,
+    36194
+  ],
+  "next_header_crc_valid": true,
+  "retained_extraction_success_phrase": false,
+  "retained_listing_success_phrase": true
+}

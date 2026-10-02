@@ -1,0 +1,122 @@
+{
+  "id": "j000289",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/unknown.data",
+      "job:j000153/archive-differences.json",
+      "job:j000154/cache-patched.7z",
+      "job:j000154/extract.txt",
+      "job:j000154/list.txt",
+      "job:j000041/file.0xab0b10a27530.0xab0b0d8cb390.DataSectionObject.Carmine Falcone_2.7z.dat",
+      "job:j000041/file.0xab0b10a27530.0xab0b0e3fca20.SharedCacheMap.Carmine Falcone_2.7z.vacb"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "independent": true,
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport json,os,struct,zlib\nfrom pathlib import Path\nu=Path('inputs/chall/unknown.data').read_bytes();a=Path('store/jobs/j000154/out/cache-patched.7z').read_bytes();d=json.loads(Path('store/jobs/j000153/out/archive-differences.json').read_bytes())\nassert len(u)==len(a)==36194\ncached=[]\nfor row in d:\n c=Path(row['path']).read_bytes();assert len(c)>=len(u)\n assert a[:4096]==c[:4096] and a[32768:]==c[32768:len(u)]\n cached.append({'bytes':len(c),'leading_equal':sum(x==y for x,y in zip(u[:4096],c[:4096])),'trailing_equal':sum(x==y for x,y in zip(u[32768:],c[32768:len(u)]))})\nassert a[4096:32768]==u[4096:32768]\npositions=[i for i,(x,y) in enumerate(zip(u,a)) if x!=y];runs=[]\nfor p in positions:\n if runs and runs[-1][1]==p:runs[-1][1]+=1\n else:runs.append([p,p+1])\nassert all(p<4096 or p>=32768 for p in positions)\nassert a[:6]==bytes.fromhex('377abcaf271c')\ncrc=struct.unpack_from('<I',a,8)[0];off,size,ncrc=struct.unpack_from('<QQI',a,12)\nassert zlib.crc32(a[12:32])==crc\nstart=32+off;assert start+size<=len(a);assert zlib.crc32(a[start:start+size])==ncrc\nlog=Path('store/jobs/j000154/out/extract.txt').read_text();listing=Path('store/jobs/j000154/out/list.txt').read_text()\nr={'bytes':len(u),'middle_range':[4096,32768],'middle_equal_bytes':28672,'total_equal_bytes':len(u)-len(positions),'difference_count':len(positions),'difference_runs_half_open':runs,'cached_checks':cached,'valid_signature':True,'start_header_crc_valid':True,'next_header_range':[start,start+size],'next_header_crc_valid':True,'retained_extraction_success_phrase':('Everything is Ok' in log),'retained_listing_success_phrase':('1 files' in listing or '1 file' in listing)}\n(Path(os.environ['OUT'])/'archive-correspondence.json').write_text(json.dumps(r,indent=2));print(json.dumps(r))\nPY"
+  },
+  "requester": {
+    "agent": "s42120102",
+    "name": "Wallet trace",
+    "doing": "Examine wallet installation and wallet protection evidence for questions 5 and 9."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T12:15:28.662Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000153/out/archive-differences.json",
+        "sha256": "2e180c9710d98b492ca69d270f97fd647fe2c21bcc372b1205694543c8e81dc9"
+      },
+      {
+        "path": "store/jobs/j000154/out/extract.txt",
+        "sha256": "73e1f4581a9397610f964cba09fb2961ed54d8cab28051cdf1361065eceea838"
+      },
+      {
+        "path": "inputs/chall/unknown.data",
+        "sha256": "87841ce462a019649f6206c72cf65ce5305a88b828ca45996ae9422e6f578f4f"
+      },
+      {
+        "path": "store/jobs/j000154/out/list.txt",
+        "sha256": "886ec3f66cb63cf22a48094f5c590c00d610346bb59115e830803b440725456a"
+      },
+      {
+        "path": "store/jobs/j000041/out/file.0xab0b10a27530.0xab0b0d8cb390.DataSectionObject.Carmine Falcone_2.7z.dat",
+        "sha256": "9c4778c89d6fe3ca8153bac935d19f6e9ed68b0a669207018c4472d76e0b6792"
+      },
+      {
+        "path": "store/jobs/j000041/out/file.0xab0b10a27530.0xab0b0e3fca20.SharedCacheMap.Carmine Falcone_2.7z.vacb",
+        "sha256": "b1b6d5ebb5fc7a304c66f1be31048eccefa4f425bdd79726c9b7b12bcaa601af"
+      },
+      {
+        "path": "store/jobs/j000154/out/cache-patched.7z",
+        "sha256": "dc964dd816be637dadf3f92d53bdf43b88ad5bbbcc7b37525b305d4ba4ea08d1"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000289-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T12:15:28.754Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000289",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 7,
+    "files": 7,
+    "bound": 0,
+    "manifest": "store/jobs/j000289/scope.1.json",
+    "manifest_sha256": "2c9a42b6c1a306fafa7527880c66dbde56fd8e307f4993a0b754787146ce9630"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T12:15:29.466Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "f210679ace6c704ada5d8cc91a36d365a236ab6cb403228fbd612f2fb8229b65",
+    "files": 1,
+    "bytes": 1099,
+    "rejected": 0,
+    "path": "store/jobs/j000289/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}
