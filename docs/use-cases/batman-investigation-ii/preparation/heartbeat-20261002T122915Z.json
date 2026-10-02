@@ -1,0 +1,190 @@
+{
+  "heartbeat": "2026-10-02T12:29:15.288Z",
+  "observed_at": "2026-10-02T12:35:51.950861+00:00",
+  "run": "s421201",
+  "state": "running",
+  "done": false,
+  "calls": 3701,
+  "tokens": 380854121,
+  "questions_summary": {
+    "in_scope": 14,
+    "persons": 0,
+    "unanswered": 0,
+    "proposed": 0,
+    "triage": 0,
+    "clarifications": 2,
+    "chain_ok": true
+  },
+  "leads_summary": {
+    "open": 0,
+    "active": 0,
+    "blocked": 0,
+    "closed": 58,
+    "waiting_on_operator": 1,
+    "uncovered": 0,
+    "chain_ok": true
+  },
+  "all_agent_flags": [
+    {
+      "id": "s42120100",
+      "calls": 298,
+      "done": false,
+      "dead": false,
+      "stalled": true,
+      "context_locked": false,
+      "last_event_at": "2026-10-02T12:33:14.196Z"
+    },
+    {
+      "id": "s42120101",
+      "calls": 328,
+      "done": false,
+      "dead": false,
+      "stalled": true,
+      "context_locked": false,
+      "last_event_at": "2026-10-02T12:32:54.316Z"
+    },
+    {
+      "id": "s42120102",
+      "calls": 318,
+      "done": false,
+      "dead": false,
+      "stalled": false,
+      "context_locked": false,
+      "last_event_at": "2026-10-02T12:34:48.459Z"
+    },
+    {
+      "id": "s42120103",
+      "calls": 327,
+      "done": false,
+      "dead": false,
+      "stalled": true,
+      "context_locked": false,
+      "last_event_at": "2026-10-02T12:32:34.498Z"
+    },
+    {
+      "id": "s42120104",
+      "calls": 379,
+      "done": false,
+      "dead": false,
+      "stalled": true,
+      "context_locked": false,
+      "last_event_at": "2026-10-02T12:31:48.304Z"
+    },
+    {
+      "id": "s42120105",
+      "calls": 432,
+      "done": false,
+      "dead": false,
+      "stalled": true,
+      "context_locked": false,
+      "last_event_at": "2026-10-02T12:32:08.670Z"
+    },
+    {
+      "id": "s42120106",
+      "calls": 418,
+      "done": false,
+      "dead": false,
+      "stalled": true,
+      "context_locked": false,
+      "last_event_at": "2026-10-02T12:32:17.228Z"
+    },
+    {
+      "id": "s42120107",
+      "calls": 378,
+      "done": false,
+      "dead": false,
+      "stalled": true,
+      "context_locked": false,
+      "last_event_at": "2026-10-02T12:32:18.782Z"
+    },
+    {
+      "id": "s42120108",
+      "calls": 453,
+      "done": false,
+      "dead": false,
+      "stalled": true,
+      "context_locked": false,
+      "last_event_at": "2026-10-02T12:32:40.435Z"
+    },
+    {
+      "id": "s42120109",
+      "calls": 370,
+      "done": false,
+      "dead": false,
+      "stalled": false,
+      "context_locked": false,
+      "last_event_at": "2026-10-02T12:35:07.059Z"
+    }
+  ],
+  "final_files": {
+    "work/answers.json": false,
+    "work/report.md": false,
+    "work/timeline.md": false
+  },
+  "operator_intervention": false,
+  "solution_read": false,
+  "pending_human_decision": "the prior async question has no human reply; automatic heartbeat is not an answer",
+  "operator_wait_metric": "preparation/operator-wait-1223-1230/diagnostic.json",
+  "source_copies": 516,
+  "controller_alive": true,
+  "mirror_at": "2026-10-02T12:35:29.101948+00:00",
+  "checkpoint_observed_at": "2026-10-02T12:41:37.340397+00:00",
+  "checkpoint": {
+    "report_source": "work/checkpoint-report.md",
+    "report_sha256": "bd109d46d94140e83dff658889161398ec9e6ff20862ee75f7d47f2e03e81fc8",
+    "answer_keys": [
+      "2",
+      "3",
+      "4",
+      "5",
+      "6",
+      "7",
+      "8",
+      "9",
+      "10",
+      "11"
+    ],
+    "done_trace": {
+      "agent": "s42120101",
+      "seq": 782,
+      "at": "2026-10-02T12:38:47.979Z",
+      "ok": false,
+      "goal_checks_passed": 0,
+      "goal_checks_total": 4
+    },
+    "status": "explicitly unfinished; no flag/all14 acceptance",
+    "source_snapshot_prefix": "preparation/technique-sources/work/checkpoint-1229-"
+  },
+  "latest_status_observed_at": "2026-10-02T12:41:37.514551+00:00",
+  "latest_status": {
+    "state": "running",
+    "done": false,
+    "leads": {
+      "open": 0,
+      "active": 4,
+      "blocked": 1,
+      "closed": 58,
+      "waiting_on_operator": 1,
+      "uncovered": 0,
+      "chain_ok": true
+    },
+    "final_files": {
+      "work/answers.json": false,
+      "work/report.md": false,
+      "work/timeline.md": false
+    },
+    "all_agent_dead_flags": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "mirror_at_latest_observation": "2026-10-02T12:41:31.785969+00:00"
+}

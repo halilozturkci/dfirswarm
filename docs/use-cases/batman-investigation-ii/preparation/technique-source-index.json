@@ -4069,6 +4069,91 @@
       "sha256": "905369bad349eb01f1d2e93d1e24e773a82851a9cedbdf773f5c48a5e280aa8a",
       "captured_at": "2026-10-02T12:26:54.185457+00:00",
       "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.pi-sessions",
+      "copy": "preparation/operator-wait-1223-1230/assistant-usage.jsonl",
+      "bytes": 30125,
+      "sha256": "0d5bf25b5749727028c4aa6794881c6415dd7dd0fdf5292debcc44071d4fe6b2",
+      "captured_at": "2026-10-02T12:35:51.269171+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "UTC-window usage/public-event metadata projection; full body omitted, per-record raw hashes and source prefix hashes in diagnostic"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/traces/events.jsonl",
+      "copy": "preparation/operator-wait-1223-1230/trace-activity.jsonl",
+      "bytes": 27241,
+      "sha256": "2a13761e24eef776f07777cff074e1e4af0e4394e56e08488c8166e4a0fb0fae",
+      "captured_at": "2026-10-02T12:35:51.269171+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "UTC-window usage/public-event metadata projection; full body omitted, per-record raw hashes and source prefix hashes in diagnostic"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000482-s42120106.md",
+      "copy": "preparation/technique-sources/threads/main/000482-s42120106.md",
+      "bytes": 713,
+      "sha256": "e340272968bee626b7c22f1f9fb6eafa7715344d4bc1a3e8101b99c205e331c7",
+      "captured_at": "2026-10-02T12:35:51.269171+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000484-s42120103.md",
+      "copy": "preparation/technique-sources/threads/main/000484-s42120103.md",
+      "bytes": 608,
+      "sha256": "4fe8991b9680841c8f1cceae38d7ac3b4da50cacc8b4a8ad2a240eaa5802f42e",
+      "captured_at": "2026-10-02T12:35:51.269171+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000483-s42120100.md",
+      "copy": "preparation/technique-sources/threads/main/000483-s42120100.md",
+      "bytes": 757,
+      "sha256": "6cb0c3f581e1667de848ea63f14e91251cc763d5d054effed292f6d305c813c9",
+      "captured_at": "2026-10-02T12:35:51.269171+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000481-s42120109.md",
+      "copy": "preparation/technique-sources/threads/main/000481-s42120109.md",
+      "bytes": 1000,
+      "sha256": "2f82d9ebc53eb62a9614724196370fbff95c73eb2451549b0146970593b4892f",
+      "captured_at": "2026-10-02T12:35:51.269171+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/work/checkpoint-report.md",
+      "copy": "preparation/technique-sources/work/checkpoint-1229-checkpoint-report.md",
+      "bytes": 166904,
+      "sha256": "bd109d46d94140e83dff658889161398ec9e6ff20862ee75f7d47f2e03e81fc8",
+      "captured_at": "2026-10-02T12:41:37.340397+00:00",
+      "byte_exact_source_copy": true,
+      "selection": "whole explicitly unfinished checkpoint captured at announced digest; mutable original may later change; not all14 final release"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/work/checkpoint-reviewed-answers.json",
+      "copy": "preparation/technique-sources/work/checkpoint-1229-checkpoint-reviewed-answers.json",
+      "bytes": 2853,
+      "sha256": "2c24fb5020c280561273458fce4afa42e177b7825d5192b49060b666f265b5ae",
+      "captured_at": "2026-10-02T12:41:37.340397+00:00",
+      "byte_exact_source_copy": true,
+      "selection": "whole explicitly unfinished checkpoint captured at announced digest; mutable original may later change; not all14 final release"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000485-s42120101.md",
+      "copy": "preparation/technique-sources/threads/main/000485-s42120101.md",
+      "bytes": 817,
+      "sha256": "f1f92850c75e8be95e62c38ad0ec369b92e52f2f8a8c7b969f9697a2a42ae5ec",
+      "captured_at": "2026-10-02T12:41:37.340397+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/traces/events.jsonl",
+      "copy": "preparation/technique-sources/traces/selected-1229-finish-events.jsonl",
+      "bytes": 18620,
+      "sha256": "3b9a1026c50c4bdab3c52a02e0a80a4b8a0f1efd24db062964a104d94f9b17de",
+      "captured_at": "2026-10-02T12:41:37.340397+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "whole public finish/prepare/done event records for unfinished checkpoint; not full trace chain; no thinking content"
     }
   ],
   "ledger_bindings": [
@@ -12035,7 +12120,7 @@
       "record_sha256": "a5a1e569092c055663927ac98fa47bb565afd33531ac0b7dd30437c5e4035d78"
     }
   ],
-  "updated_at": "2026-10-02T12:26:54.185457+00:00",
+  "updated_at": "2026-10-02T12:41:37.340397+00:00",
   "attestation_bindings": [
     {
       "seq": 183,

@@ -1,0 +1,123 @@
+{
+  "run": "s421201",
+  "at": "2026-10-02T12:35:51.269171+00:00",
+  "interval_start": "2026-10-02T12:23:16.956457+00:00",
+  "interval_end": "2026-10-02T12:29:51.696000+00:00",
+  "end_reason": "recorded L20 reopen event seq918, not a resource-limit stop",
+  "seconds": 394.739543,
+  "assistant_message_records": 64,
+  "by_seat": {
+    "s42120100": 6,
+    "s42120101": 11,
+    "s42120102": 6,
+    "s42120103": 5,
+    "s42120104": 6,
+    "s42120105": 5,
+    "s42120106": 9,
+    "s42120107": 7,
+    "s42120108": 4,
+    "s42120109": 5
+  },
+  "usage": {
+    "input": 643990,
+    "output": 20098,
+    "cacheRead": 6509568,
+    "cacheWrite": 0,
+    "reasoning": 8631,
+    "totalTokens": 7173656
+  },
+  "cache_read_fraction": 0.9074268406514057,
+  "public_trace_event_counts": {
+    "post": 4,
+    "context": 66,
+    "hub_call": 3,
+    "offer": 1,
+    "wait": 30,
+    "inbox": 10,
+    "route_review": 1,
+    "read": 5,
+    "hub_prompt": 3,
+    "idle_nudge": 3,
+    "claim_file": 1,
+    "leads": 2,
+    "edit": 1,
+    "file_history": 1,
+    "refresh_wallet_report": 1,
+    "release_file": 1,
+    "list_team": 3,
+    "compact_warning": 2,
+    "compact_note": 3,
+    "compact_start": 3,
+    "compact_done": 3,
+    "questions": 1,
+    "compact_forced": 1,
+    "lead_reopen": 2
+  },
+  "new_evidence_jobs": [],
+  "new_ledger_entries": [],
+  "source_prefixes": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.pi-sessions/s42120100/2026-10-02T09-56-31-784Z_01a0fc0b-43a8-750b-bc76-a67e84e611cd.jsonl",
+      "prefix_bytes": 6761875,
+      "prefix_sha256": "192b92a262fca5fca0ecee6406342a12115a7a922420454de27477f2b8a83797"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.pi-sessions/s42120101/2026-10-02T09-56-31-788Z_01a0fc0b-43ab-7609-aa6c-985bd22dcdc3.jsonl",
+      "prefix_bytes": 6288488,
+      "prefix_sha256": "f95b7694e3d3b233268f2a6158b80c1866a83bc9fce819e406d8dc8013533c39"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.pi-sessions/s42120102/2026-10-02T09-56-31-854Z_01a0fc0b-43ea-718b-a7e9-ede68b4b91ec.jsonl",
+      "prefix_bytes": 6656227,
+      "prefix_sha256": "796a9818c70e6fa7b1884636e3d17e25f97b7e12d5b96fc31f916743e610cbe2"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.pi-sessions/s42120103/2026-10-02T09-56-31-820Z_01a0fc0b-43cb-7622-a0f8-371c22822812.jsonl",
+      "prefix_bytes": 6325346,
+      "prefix_sha256": "d416b994ad9b1e643535849972d8aba09cc40b6081153addfd20e03e8aa510d2"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.pi-sessions/s42120104/2026-10-02T09-56-31-832Z_01a0fc0b-43d8-7156-971f-37188b179efd.jsonl",
+      "prefix_bytes": 12447088,
+      "prefix_sha256": "990cd8ca6212ca4032a57cf15c7eab38119885dc43aee5dd31af4279fa6f1246"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.pi-sessions/s42120105/2026-10-02T09-56-31-829Z_01a0fc0b-43d3-7556-914e-c38b82b86fcb.jsonl",
+      "prefix_bytes": 11326827,
+      "prefix_sha256": "dfb912c326b9e16783c2a5bdf151d78732f4dc753ff174acead271cefe7458bc"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.pi-sessions/s42120106/2026-10-02T09-56-31-829Z_01a0fc0b-43d1-74cd-8502-03bfae7d348c.jsonl",
+      "prefix_bytes": 13473823,
+      "prefix_sha256": "291c8aea1eb77b9ae682af0575ff10295ce54a0496803554fc02fbd92ba33b44"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.pi-sessions/s42120107/2026-10-02T09-56-31-871Z_01a0fc0b-43fe-725b-a9aa-e22f6b22172d.jsonl",
+      "prefix_bytes": 12594811,
+      "prefix_sha256": "2b1a564368d894a29db89dca12e95a09794d0b7f3187058312d6cc787ae878b3"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.pi-sessions/s42120108/2026-10-02T09-56-31-879Z_01a0fc0b-4406-7263-b111-8c37260bddd1.jsonl",
+      "prefix_bytes": 28551513,
+      "prefix_sha256": "b82967e96c0327ca52823b24ebae654478261a5ba3c8887b126a70596c53661e"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.pi-sessions/s42120109/2026-10-02T09-56-31-876Z_01a0fc0b-4403-76f7-83c3-fdb6a060ba2d.jsonl",
+      "prefix_bytes": 16364753,
+      "prefix_sha256": "aee8a10a921b5e71983a39db35ef79f6698ae2b2fa1f3e6f1a78537a406b87cc"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/traces/events.jsonl",
+      "prefix_bytes": 12869576,
+      "prefix_sha256": "71b78aafe0732c9cb3239dc5289d1c31a01a8c96634c922e3db65bf5edd081d5"
+    }
+  ],
+  "limits": [
+    "assistant record count, not an audited provider request count",
+    "reasoning is reported separately and not added again to totalTokens",
+    "no dollar billing inference; OAuth/cache usage",
+    "report editing, route reviews and register checks continue; not all activity is wasted",
+    "projected metadata omits all message bodies/private reasoning; full originals preserved by live collector; not final archive",
+    "source prefix hashes describe sequential live reads, not an atomic custody snapshot"
+  ]
+}

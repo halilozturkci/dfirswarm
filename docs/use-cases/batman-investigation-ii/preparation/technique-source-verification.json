@@ -1,10 +1,10 @@
 {
-  "at": "2026-10-02T12:26:54.709054+00:00",
-  "scope": "selected technique sources, context-pressure packet, observer docs and current heartbeat; literal current Pi OAuth/seat/console values; not a general secret absence proof",
+  "at": "2026-10-02T12:41:37.816483+00:00",
+  "scope": "selected source files, observation packets, observer docs and current heartbeat; current Pi OAuth/seat/console literal scan; not general secret absence",
   "candidate_secret_count": 13,
-  "files_scanned": 513,
-  "bytes_scanned": 30670756,
-  "source_copies_verified": 506,
+  "files_scanned": 524,
+  "bytes_scanned": 30933765,
+  "source_copies_verified": 516,
   "hits": [],
   "passed": true
 }

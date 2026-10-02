@@ -151,3 +151,15 @@ L20 seq907 (12:17:13) all14-established final-publication işini E195/pending R2
 Q1 E302'ye s07/s08'in iki source-first attesti gerçekten append edilmiş ve strength=established kaydedilmiş; answer disposition yine partial ve intended-contact kısmı declared-open. #479 bir recipient locator offset typo'su, #480 iki literal-field uyuşmazlığı uyarısını bildiriyor. Bunlar tüm Q1'in çözüldüğü anlamına gelmez; callback düzeltme talebi operatörce verilmedi. Tam iki review satırı kaynak olarak korunuyor; corrective duplicate rejection'ın kök nedeni bu olaydan genel API defect diye ilan edilmiyor.
 
 Kullanıcıya somut bekleme noktası bildirildi. Son müdahalesiz gözlem sınırı nedeniyle R2'ye audited DBX codec/reference veya yeni araç sağlanmadı; required sorular gevşetilmedi. Stop marker oluşturulmadı, controller/VM'ler sürüyor. Pasif izleme otomasyonu aktif kalır; kullanıcı ayrı koşu/erken kapatma sınırını değiştirene veya gerçek yeni ilerleme gelene kadar aynı blocker tekrar tekrar bildirilmez.
+
+### 12:29 heartbeat — sınırlı rapor için doğal yeniden açma ve bekleme ölçümü
+
+- Başlangıçta yeni ledger seq yok, provider error sayısı önceki üçle aynı; controller/mirror canlı ve tüm agent dead=false. R2/C2/C3 yanıtlanmadı; önceki kullanıcı karar sorusu hâlâ pending, bu heartbeat insan cevabı sayılmadı.
+- #481 L51'in archive-correspondence sınırını koruyarak yeniden kapandığını bildiriyor. #482/#484, tamamlanmış14-cevap yerine honest bounded-disposition artifact yayımlayıp prepare/done refusal'ı görünür kılmayı teklif ediyor. s01 L20'yi seq918–919 (12:29:51) kendisi yeniden açtı. Bu operatör release/amendment'i veya gerçek CTF completion değildir; root yeni talimat göndermedi.
+- L20 yeniden açılmadan önceki 6.58 dakikada 64 assistant record/7.17M token; çoğu cache. Yeni job/ledger entry yok, reader/rapport coordination var. Sayımlar ve proje edilmiş metadata'nın tamlık sınırı platform notlarında. Spending/token advisory sınırı nedeniyle stop yapılmadı.
+
+#### 12:38 UTC — incomplete checkpoint yayımlandı, done başarısız
+
+#485, announced digest'e bağlı explicit unfinished checkpoint'i paylaştı. Root bu tam166,904-byte report'u ve yalnız10 key içeren reviewed-answers JSON'unu byte/hash doğrulayarak repo source snapshot'ına aldı. Root final adlara yazmadı veya agent artifact'ını değiştirmedi. s01 done seq782 ok=false: goal checks0/4; final report/answers dosyaları yok ve all14 required ledger barı sağlanmıyor. CTF completion/flag ilanı veya operatör acceptance yok. Bu bir provider error veya VM ölümü değildir; bitiş reddi expected unmet goal'u koruyor.
+
+Generic closure guidance altında #482/#484 incomplete publication→done teklif etti; case'in custom checks'i all14-established final artifact istiyor. Buradaki platform adayı, refusal'da custom goal checks ile operator acceptance/requirement amendment yollarını ayrı göstermektir. Gate doğru biçimde engelledi; bu gözlemden genel finish defect/bypass çıkarılmıyor. Kullanıcıya bitişin reddedildiği bildirildi; eski pending karar sorusu tekrar sorulmadı.
