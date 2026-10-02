@@ -1,0 +1,92 @@
+{
+  "id": "j000080",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000078"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 900,
+    "network": "off",
+    "secret_output": true,
+    "command": "cat > /tmp/k.py <<'PY'\nimport os,struct,hashlib,itertools,string,json,gzip,base64,xml.etree.ElementTree as ET\nfrom Crypto.Cipher import AES,Salsa20\np=next(os.path.join('store/jobs/j000078/out',x) for x in os.listdir('store/jobs/j000078/out') if x.endswith('.dat'))\nb=open(p,'rb').read(); assert b[:8]==bytes.fromhex('03d9a29a67fb4bb5')\nver=struct.unpack('<I',b[8:12])[0]; pos=12; fields={}\nwhile True:\n fid=b[pos]; ln=struct.unpack('<H',b[pos+1:pos+3])[0]; val=b[pos+3:pos+3+ln];pos+=3+ln\n fields[fid]=val\n if fid==0:break\nseed=fields[5]; rounds=struct.unpack('<Q',fields[6])[0]; master=fields[4]; iv=fields[7]; start=fields[9]\nchars=string.printable[:-6]  # 94 printable non-whitespace ASCII\n# known positions 1..14; chars 0 and 4 unknown\nknown='i&Y'+'{}'+'Q)8h<)1T2j'\ncands=[]; buf=bytearray()\nfor a,c in itertools.product(chars,repeat=2):\n pw=a+known.format(c)\n cands.append(pw); buf += hashlib.sha256(hashlib.sha256(pw.encode()).digest()).digest()\ncipher=AES.new(seed,AES.MODE_ECB); x=bytes(buf)\nfor r in range(rounds): x=cipher.encrypt(x)\nfound=[]\nenc=b[pos:]\nfor i,pw in enumerate(cands):\n tr=hashlib.sha256(x[i*32:(i+1)*32]).digest(); key=hashlib.sha256(master+tr).digest()\n dec=AES.new(key,AES.MODE_CBC,iv).decrypt(enc)\n if dec[:32]==start: found.append((pw,key,dec))\nif len(found)!=1: raise SystemExit('matches='+str(len(found)))\npw,key,dec=found[0]\n# Remove start, parse hashed blocks\nq=32; parts=[]\nwhile True:\n idx=struct.unpack('<I',dec[q:q+4])[0]; h=dec[q+4:q+36]; n=struct.unpack('<I',dec[q+36:q+40])[0]; data=dec[q+40:q+40+n]; q+=40+n\n if n==0: break\n assert hashlib.sha256(data).digest()==h\n parts.append(data)\npayload=b''.join(parts)\nif struct.unpack('<I',fields[3])[0]==1: payload=gzip.decompress(payload)\nopen(os.environ['OUT']+'/database.xml','wb').write(payload)\nroot=ET.fromstring(payload)\n# decrypt protected values in XML document order\nsalsa=Salsa20.new(key=hashlib.sha256(fields[8]).digest(),nonce=bytes.fromhex('e830094b97205d2a'))\nentries=[]\nfor e in root.iter('Entry'):\n row={}\n for s in e.findall('String'):\n  k=s.findtext('Key',''); v=s.find('Value'); text=v.text or ''\n  if v.get('Protected')=='True':\n   raw=base64.b64decode(text); text=salsa.decrypt(raw).decode('utf-8','replace')\n  row[k]=text\n # identify ancestor is hard ET; include UUID, deletion time/history flags later\n row['_uuid']=e.findtext('UUID',''); entries.append(row)\nout={'kdbx_version':hex(ver),'rounds':rounds,'password':pw,'password_md5':hashlib.md5(pw.encode()).hexdigest(),'entries':entries}\nopen(os.environ['OUT']+'/result.json','w').write(json.dumps(out,indent=2))\nprint(json.dumps(out,indent=2))\nPY\npython3 /tmp/k.py"
+  },
+  "requester": {
+    "agent": "s42120106",
+    "name": "Vault Artifact Analyst",
+    "doing": "Establishing Q3-Q4: password-manager identity/version and password, plus the deleted stored user key."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:08:27.407Z",
+  "reuse": {
+    "op": "command:cat",
+    "objects": [
+      {
+        "path": "store/jobs/j000078/out",
+        "dir": true
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000080-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:08:27.429Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "general",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000078/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000080",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 0,
+    "bound": 1,
+    "manifest": "store/jobs/j000080/scope.1.json",
+    "manifest_sha256": "bd00e16e2e1d6e86e0db6ad5f12ab1084bdea2b93e6b378462e21476ecd7e5c0"
+  },
+  "network": "none",
+  "exit": 1,
+  "status": "failed",
+  "reason": "exit 1",
+  "finished_at": "2026-10-02T10:09:19.450Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "9ee1f77e4adb4cc8be305d8c4ad4c36e757db14b622c844762d3526f07d63d0e",
+    "files": 0,
+    "bytes": 0,
+    "rejected": 0,
+    "path": "store/jobs/j000080/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

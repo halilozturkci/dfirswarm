@@ -1,0 +1,157 @@
+{
+  "2": {
+    "answer": "61ca5520263677e648297e1aefd90343fdd0388f",
+    "status": "established",
+    "support": [
+      "E-307",
+      "E-23",
+      "E-41",
+      "E-17",
+      "E-109",
+      "E-112",
+      "E-113",
+      "E-26"
+    ],
+    "author": "s42120100",
+    "reviewer": "s42120105"
+  },
+  "3": {
+    "answer": "keepass_2.53.1:31095c0a1a117a374baa7d172ae1fd1f",
+    "status": "established",
+    "support": [
+      "E-183",
+      "E-74",
+      "E-75"
+    ],
+    "author": "s42120106",
+    "reviewer": "s42120103"
+  },
+  "4": {
+    "answer": "Azr43lKn1ght:sw1zwJjvpqVvFNANws1v",
+    "status": "established",
+    "support": [
+      "E-184",
+      "E-74",
+      "E-77"
+    ],
+    "author": "s42120106",
+    "reviewer": "s42120109"
+  },
+  "5": {
+    "answer": "exodus-2024:01:07:08:39",
+    "status": "established",
+    "support": [
+      "E-95",
+      "E-4",
+      "E-76",
+      "E-33",
+      "E-83",
+      "E-47",
+      "E-70",
+      "E-45",
+      "E-92",
+      "E-86"
+    ],
+    "author": "s42120101",
+    "reviewer": "s42120102"
+  },
+  "6": {
+    "answer": "services.exe_172.30.145.189:6969)",
+    "status": "established",
+    "support": [
+      "E-264",
+      "E-211",
+      "E-218",
+      "E-230",
+      "E-245",
+      "E-235",
+      "E-234",
+      "E-250"
+    ],
+    "author": "s42120106",
+    "reviewer": "s42120102"
+  },
+  "7": {
+    "answer": "63eeb3a466f8bab52b44e182e919b512",
+    "status": "established",
+    "support": [
+      "E-312",
+      "E-145",
+      "E-122",
+      "E-149",
+      "E-180",
+      "E-73"
+    ],
+    "author": "s42120106",
+    "reviewer": "s42120103"
+  },
+  "8": {
+    "answer": "3ba6011f5e1b6941f893df6579f87f1c823e7493:5e38ffd5e6d6115a6f4bb21b5216c37392eb544f",
+    "status": "established",
+    "support": [
+      "E-232",
+      "E-122",
+      "E-180",
+      "E-172",
+      "E-176",
+      "E-197",
+      "E-199",
+      "E-230"
+    ],
+    "author": "s42120103",
+    "reviewer": "s42120106"
+  },
+  "9": {
+    "answer": "137cb84061678165f361d39504d06578",
+    "status": "established",
+    "support": [
+      "E-108",
+      "E-9",
+      "E-13",
+      "E-15",
+      "E-38",
+      "E-40",
+      "E-51",
+      "E-106",
+      "E-42"
+    ],
+    "author": "s42120102",
+    "reviewer": "s42120100"
+  },
+  "10": {
+    "answer": "Edward Nigma:ETH:15.41:0xab42fc3fb81fca7bec9e49058d80dc928ed5de2e780a54de41d3c1a8587c4ab7",
+    "status": "established",
+    "support": [
+      "E-104",
+      "E-10",
+      "E-16",
+      "E-45",
+      "E-90",
+      "E-99",
+      "E-66",
+      "E-61",
+      "E-102",
+      "E-103"
+    ],
+    "author": "s42120101",
+    "reviewer": "s42120102"
+  },
+  "11": {
+    "answer": "Oswald Cobblepot:ETH:13.75:0xd349c1917ce21fa087caceae73991a790d311e00",
+    "status": "established",
+    "support": [
+      "E-105",
+      "E-10",
+      "E-16",
+      "E-45",
+      "E-90",
+      "E-99",
+      "E-66",
+      "E-61",
+      "E-102",
+      "E-103"
+    ],
+    "author": "s42120101",
+    "reviewer": "s42120102"
+  }
+}

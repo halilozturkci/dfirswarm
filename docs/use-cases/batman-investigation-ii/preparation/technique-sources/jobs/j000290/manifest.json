@@ -1,0 +1,1 @@
+{"v":1,"job":"j000290","attempt":1,"sealed_at":"2026-10-02T12:43:49.688Z","files":[{"path":"guard-tests.json","path_b64":"Z3VhcmQtdGVzdHMuanNvbg==","bytes":164,"sha256":"417af2a54b7bc61203aec6418a7264e8135e443150f57fce436ea19b30db87c7","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":164}}

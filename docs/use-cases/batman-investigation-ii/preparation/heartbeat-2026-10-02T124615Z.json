@@ -1,0 +1,196 @@
+{
+  "at": "2026-10-02T12:56:32.356114+00:00",
+  "scope": "sequential read-only observer snapshot; not atomic custody, analytical grading or provider invoice",
+  "summary": {
+    "id": "s421201",
+    "state": "running",
+    "done": false,
+    "calls": 4020,
+    "tokens": 420789414,
+    "model": "4xopenai-codex/gpt-6.1-sol + 3xopenai-codex/gpt-daybreak-blue-latest + 3xopenai-codex/gpt-6-luna",
+    "agents_total": 10,
+    "agents_done": 0,
+    "agents_dead": 0,
+    "phase": "running",
+    "finishing": false,
+    "stop_reason": null,
+    "hold": null
+  },
+  "questions": {
+    "in_scope": 14,
+    "persons": 0,
+    "unanswered": 0,
+    "proposed": 1,
+    "triage": 0,
+    "clarifications": 2,
+    "chain_ok": true
+  },
+  "leads": {
+    "open": 0,
+    "active": 1,
+    "blocked": 0,
+    "closed": 66,
+    "waiting_on_operator": 1,
+    "uncovered": 0,
+    "chain_ok": true
+  },
+  "agents": [
+    {
+      "id": "s42120100",
+      "done": false,
+      "dead": false,
+      "stalled": true,
+      "context_locked": false
+    },
+    {
+      "id": "s42120101",
+      "done": false,
+      "dead": false,
+      "stalled": false,
+      "context_locked": false
+    },
+    {
+      "id": "s42120102",
+      "done": false,
+      "dead": false,
+      "stalled": true,
+      "context_locked": false
+    },
+    {
+      "id": "s42120103",
+      "done": false,
+      "dead": false,
+      "stalled": false,
+      "context_locked": false
+    },
+    {
+      "id": "s42120104",
+      "done": false,
+      "dead": false,
+      "stalled": false,
+      "context_locked": false
+    },
+    {
+      "id": "s42120105",
+      "done": false,
+      "dead": false,
+      "stalled": false,
+      "context_locked": false
+    },
+    {
+      "id": "s42120106",
+      "done": false,
+      "dead": false,
+      "stalled": false,
+      "context_locked": false
+    },
+    {
+      "id": "s42120107",
+      "done": false,
+      "dead": false,
+      "stalled": false,
+      "context_locked": false
+    },
+    {
+      "id": "s42120108",
+      "done": false,
+      "dead": false,
+      "stalled": false,
+      "context_locked": false
+    },
+    {
+      "id": "s42120109",
+      "done": false,
+      "dead": false,
+      "stalled": false,
+      "context_locked": false
+    }
+  ],
+  "vm_status": [
+    {
+      "name": "dfs-s421201-s42120109",
+      "status": "Running"
+    },
+    {
+      "name": "dfs-s421201-s42120100",
+      "status": "Running"
+    },
+    {
+      "name": "dfs-s421201-s42120108",
+      "status": "Running"
+    },
+    {
+      "name": "dfs-s421201-s42120103",
+      "status": "Running"
+    },
+    {
+      "name": "dfs-s421201-s42120104",
+      "status": "Running"
+    },
+    {
+      "name": "dfs-s421201-s42120102",
+      "status": "Running"
+    },
+    {
+      "name": "dfs-s421201-s42120106",
+      "status": "Running"
+    },
+    {
+      "name": "dfs-s421201-s42120105",
+      "status": "Running"
+    },
+    {
+      "name": "dfs-s421201-s42120101",
+      "status": "Running"
+    },
+    {
+      "name": "dfs-s421201-s42120107",
+      "status": "Running"
+    }
+  ],
+  "mirror": {
+    "run": "s421201",
+    "at": "2026-10-02T12:56:08.757715+00:00",
+    "state": "LIVE; not a final custody verdict"
+  },
+  "controller": "93032 03:00:27 /Library/Frameworks/Python.framework/Versions/3.12/Resources/Python.app/Contents/MacOS/Python",
+  "final_artifacts": {
+    "report.md": false,
+    "answers.json": false,
+    "timeline.md": false
+  },
+  "unfinished_checkpoint_v2": {
+    "checkpoint-report.md": "9d17d8521a37dc5fa15e3a030ecc0a33986efde36bca2a5f9ec178610f10e05d",
+    "checkpoint-reviewed-answers.json": "1c03531062257c89f0ed09b91503e0f92aedfe8a9c6b14e67bddffa01d245aae"
+  },
+  "provider_error_observations": [
+    {
+      "agent": "s42120105",
+      "at": "2026-10-02T12:07:35.808Z",
+      "model": "gpt-daybreak-blue-latest",
+      "error": "Codex error: Our servers are currently overloaded. Please try again later."
+    },
+    {
+      "agent": "s42120105",
+      "at": "2026-10-02T12:09:53.771Z",
+      "model": "gpt-daybreak-blue-latest",
+      "error": "Codex error: Our servers are currently overloaded. Please try again later."
+    },
+    {
+      "agent": "s42120106",
+      "at": "2026-10-02T12:40:51.860Z",
+      "model": "gpt-daybreak-blue-latest",
+      "error": "Codex error: Our servers are currently overloaded. Please try again later."
+    },
+    {
+      "agent": "s42120107",
+      "at": "2026-10-02T11:36:51.557Z",
+      "model": "gpt-6-luna",
+      "error": "terminated"
+    }
+  ],
+  "new_source_copies": 93,
+  "selected_sources_total": 610,
+  "pending_human_choice": "no reply observed; heartbeat is not permission to stop or supply resource",
+  "operator_boundary": "no agent messages, hints, resources, assignments, goal changes or live platform edits"
+}

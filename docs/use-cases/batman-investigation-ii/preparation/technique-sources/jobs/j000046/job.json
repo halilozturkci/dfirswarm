@@ -1,0 +1,92 @@
+{
+  "id": "j000046",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/Carmine-Falcone.raw"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport os,re,base64,json,hashlib\nf=open('inputs/chall/Carmine-Falcone.raw','rb');out=os.environ['OUT'];report=[]\nfor start in [4385698000,4424475000]:\n f.seek(start);b=f.read(2600000);hdr=b.find(b'Content-Type: multipart/mixed;'); tail=b[hdr:]; boundary=re.search(br'boundary=\"([^\"]+)\"',tail).group(1);end=tail.find(b'--'+boundary+b'--')\n open(out+'/mail_region_'+str(start)+'.bin','wb').write(b)\n mark=b'Content-Transfer-Encoding: base64\\r\\n\\r\\n'; at=tail.find(mark); body=tail[at+len(mark):];m=re.match(br'[A-Za-z0-9+/=\\r\\n]+',body);encoded=m.group(0);decoded=base64.b64decode(encoded)\n p=out+'/contact_'+str(start)+'.rar';open(p,'wb').write(decoded)\n report.append({'region_start':start,'mail_start':start+hdr,'closing_boundary_at':end,'encoded_len':len(encoded),'decoded_len':len(decoded),'sha1':hashlib.sha1(decoded).hexdigest(),'body':tail[:at].decode('ascii','replace')})\nopen(out+'/mail_extract.json','w').write(json.dumps(report,indent=2));print(json.dumps([{k:v for k,v in x.items() if k!='body'} for x in report],indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120100",
+    "name": "Contact provenance",
+    "doing": "Investigate Q1 and Q2 contact/disguise communications and sent-file identity; model gpt-6.1-sol."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:03:47.473Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "inputs/chall/Carmine-Falcone.raw",
+        "sha256": "3e03551e1f55dd792b0bc459b5620522d61fcf2379e8f6d89ef439fef8263cac"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000046-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:03:47.535Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000046",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000046/scope.1.json",
+    "manifest_sha256": "b49448c3d23beab6b823aae8620b77cb3bb0f7910d701d14f3a140470ee8ffe0"
+  },
+  "network": "none",
+  "exit": 1,
+  "status": "failed",
+  "reason": "exit 1",
+  "finished_at": "2026-10-02T10:03:48.339Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "9bda17bb34fc87b8e397a5a67bf1dd6ad4eec176538e53a35aad3d5232e63c9a",
+    "files": 1,
+    "bytes": 2600000,
+    "rejected": 0,
+    "path": "store/jobs/j000046/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

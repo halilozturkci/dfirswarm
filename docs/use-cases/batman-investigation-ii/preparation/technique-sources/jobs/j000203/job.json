@@ -1,0 +1,92 @@
+{
+  "id": "j000203",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000130/archive/contact"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nfrom pathlib import Path\nimport json,re\nroot=Path('store/jobs/j000130/out/archive/contact')\nneed=[b'userkey',b'user_key',b'hostkeys',b'config.dbx',b'instance.dbx',b'DBKeyStore',b'dbx',b'keystore',b'key store',b'crypt',b'ry8bzv5c632r8b48#']\nout=[]\nfor p in root.rglob('*'):\n if not p.is_file(): continue\n b=p.read_bytes()\n for n in need:\n  for m in re.finditer(re.escape(n),b,re.I):\n   s=max(0,m.start()-200); e=min(len(b),m.end()+500)\n   out.append({'file':str(p.relative_to(root)),'needle':n.decode(),'offset':m.start(),'context_hex':b[s:e].hex(),'context_ascii':''.join(chr(x) if 32<=x<127 else '.' for x in b[s:e])})\nPath('$OUT/profile-key-contexts.json').write_text(json.dumps(out,indent=2))\nprint(json.dumps({'hits':len(out),'by_needle':{n.decode():sum(x['needle']==n.decode() for x in out) for n in need}},indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120104",
+    "name": "DBX Key Examiner",
+    "doing": "Establishing Q14, the userkey of the encrypted DBX database, from unknown.data and memory artefacts."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:40:57.158Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000130/out/archive/contact",
+        "dir": true
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000203-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:40:57.243Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000130/out/archive/contact",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000203",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 0,
+    "bound": 1,
+    "manifest": "store/jobs/j000203/scope.1.json",
+    "manifest_sha256": "5c52c179cb60953e99504339958d08cd86d5dd137a7b125d2d4d3651f4415138"
+  },
+  "network": "none",
+  "exit": 1,
+  "status": "failed",
+  "reason": "exit 1",
+  "finished_at": "2026-10-02T10:41:00.816Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "a6527d8f5dc64935a0e329bca384430326420d22e1c664dcaad254f380ddca2a",
+    "files": 0,
+    "bytes": 0,
+    "rejected": 0,
+    "path": "store/jobs/j000203/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

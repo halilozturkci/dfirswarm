@@ -1,0 +1,110 @@
+{
+  "id": "j000176",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000092",
+      "job:j000130",
+      "job:j000145"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport os,json\nfiles=['store/jobs/j000092/out/7zfm-ascii.txt','store/jobs/j000092/out/7zfm-utf16.txt','store/jobs/j000092/out/pid.6628.dmp','store/jobs/j000130/out/contact-extract.txt','store/jobs/j000130/out/contact-test.txt','store/jobs/j000130/stdout.log','store/jobs/j000145/out/contact-extract.txt','store/jobs/j000145/out/contact-test-slt.txt','store/jobs/j000145/stdout.log'];out=[]\nfor path in files:\n hits=[];tail=b'';pos=0;seen=set()\n with open(path,'rb') as f:\n  while True:\n   x=f.read(8*1024*1024)\n   if not x:break\n   b=tail+x;base=pos-len(tail)\n   for s in ['Salvatore','hugostrange581','contact.rar']:\n    for enc in ['utf8','utf-16le']:\n     needle=s.encode(enc).lower();low=b.lower();start=0\n     while True:\n      i=low.find(needle,start)\n      if i<0:break\n      start=i+len(needle);k=(s,enc,base+i)\n      if k in seen:continue\n      seen.add(k);hits.append({'needle':s,'encoding':enc,'offset':base+i,'context':b[max(0,i-400):i+len(needle)+500].decode(enc,errors='replace')})\n   tail=b[-1200:];pos+=len(x)\n out.append({'path':path,'bytes':pos,'hits':hits})\njson.dump(out,open(os.environ['OUT']+'/new-sweep-contexts.json','w'),indent=2)\nprint(json.dumps([{'path':x['path'],'hits':len(x['hits'])} for x in out]))\nPY"
+  },
+  "requester": {
+    "agent": "s42120100",
+    "name": "Contact provenance",
+    "doing": "Investigate Q1 and Q2 contact/disguise communications and sent-file identity; model gpt-6.1-sol."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:33:05.732Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000092/out",
+        "dir": true
+      },
+      {
+        "path": "store/jobs/j000130/out",
+        "dir": true
+      },
+      {
+        "path": "store/jobs/j000145/out",
+        "dir": true
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000176-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:33:05.761Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000092/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000130/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000145/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000176",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 3,
+    "files": 0,
+    "bound": 3,
+    "manifest": "store/jobs/j000176/scope.1.json",
+    "manifest_sha256": "e389fec1a43872bc4781dd84405c438cb25480845e86972cbcaaf4fb1ae1be4d"
+  },
+  "network": "none",
+  "exit": 1,
+  "status": "failed",
+  "reason": "exit 1",
+  "finished_at": "2026-10-02T10:33:10.167Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "4c6e7fe0e3f52de6de69cef8ab1679c3c60eeecbfb10bb47e6bdbc1474d43d22",
+    "files": 0,
+    "bytes": 0,
+    "rejected": 0,
+    "path": "store/jobs/j000176/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

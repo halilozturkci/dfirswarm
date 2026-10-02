@@ -1,0 +1,1 @@
+{"v":1,"job":"j000046","attempt":1,"sealed_at":"2026-10-02T10:03:48.354Z","files":[{"path":"mail_region_4385698000.bin","path_b64":"bWFpbF9yZWdpb25fNDM4NTY5ODAwMC5iaW4=","bytes":2600000,"sha256":"75d309a008913f95e066738872d829fcf99e5a0cb2bd82178ba09411531a3030","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":2600000}}

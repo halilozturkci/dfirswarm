@@ -1,0 +1,18 @@
+{
+  "bytes": 1732132,
+  "sha1": "61ca5520263677e648297e1aefd90343fdd0388f",
+  "sha256": "c199125c1f7596653096d31b61379b2caaa522d0a7872efd8ccc3b21638865ec",
+  "mime_filename": "contact.rar",
+  "mime_decoded_bytes": 1732132,
+  "mime_sha256": "c199125c1f7596653096d31b61379b2caaa522d0a7872efd8ccc3b21638865ec",
+  "verification": {
+    "filename": "contact.rar",
+    "bytes": 1732132,
+    "sha1": "61ca5520263677e648297e1aefd90343fdd0388f",
+    "matches_saved_rar": true
+  },
+  "j46_incorrect_padding": true,
+  "j176_missing_input": true,
+  "j46_stderr_bytes": 281,
+  "j176_stderr_bytes": 161
+}

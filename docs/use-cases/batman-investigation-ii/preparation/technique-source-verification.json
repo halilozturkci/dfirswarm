@@ -1,10 +1,10 @@
 {
-  "at": "2026-10-02T12:44:18.387461+00:00",
+  "at": "2026-10-02T13:00:26.739458+00:00",
   "scope": "indexed source files and observer docs/packets, current Pi OAuth/seat/console literals; not general secret absence",
   "candidate_secret_count": 13,
-  "files_scanned": 525,
-  "bytes_scanned": 30935610,
-  "source_copies_verified": 517,
+  "files_scanned": 618,
+  "bytes_scanned": 31508280,
+  "source_copies_verified": 610,
   "hits": [],
   "passed": true
 }

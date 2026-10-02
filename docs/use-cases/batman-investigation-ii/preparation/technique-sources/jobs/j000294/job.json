@@ -1,0 +1,88 @@
+{
+  "id": "j000294",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000067/confidential.eml"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "command": "grep -boa -i -E 'Salvatore Maroni|Hugo Strange|Contact the guy and the key' store/jobs/j000067/out/confidential.eml | head -20 > \"$OUT/q1-literal-offsets.tsv\""
+  },
+  "requester": {
+    "agent": "s42120109",
+    "name": "Memory artifact scout",
+    "doing": "Following up Q3 coverage validation and independent Q3/Q4 source review"
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T12:51:01.671Z",
+  "reuse": {
+    "op": "command:grep",
+    "objects": [
+      {
+        "path": "store/jobs/j000067/out/confidential.eml",
+        "sha256": "0b08ee11401aded668e95411b8213269705c7f1db29244e1d20a528250b33a4e"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000294-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T12:51:01.748Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000294",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000294/scope.1.json",
+    "manifest_sha256": "136ad9b7a4c698a9e15a86c895a484c9b2d1315eb3eada6ade963702a54613f7"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T12:51:02.454Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "7ee1c5f01dbb4600e23267c6e6b97de5d202aaa9893605618caf1d494b599c76",
+    "files": 1,
+    "bytes": 55,
+    "rejected": 0,
+    "path": "store/jobs/j000294/out"
+  },
+  "sensitive": {
+    "why": "derived",
+    "from": [
+      "j000067"
+    ],
+    "note": "made from the sensitive output of j000067: every output it sealed is sensitive"
+  }
+}
