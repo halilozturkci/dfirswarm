@@ -10407,6 +10407,218 @@
       "captured_at": "2026-10-02T15:54:33.577906+00:00",
       "byte_exact_source_copy": false,
       "selection": "complete read-only platform source at main 3e33c630927391ce0474942e1f8705a616cbff38; verify content against Git base"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000727-system.md",
+      "copy": "preparation/technique-sources/threads/main/000727-system.md",
+      "bytes": 2617,
+      "sha256": "0b50040d0a54ce6732c5211b7cd027e4b435a02a927b293c718770c8169a9073",
+      "captured_at": "2026-10-02T16:03:34.726351+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000728-s42120104.md",
+      "copy": "preparation/technique-sources/threads/main/000728-s42120104.md",
+      "bytes": 511,
+      "sha256": "50b06a73c442e32370b82eb8c5703861a03b415dd16c9aa183bdedda8aea8a5f",
+      "captured_at": "2026-10-02T16:03:34.726351+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000729-s42120105.md",
+      "copy": "preparation/technique-sources/threads/main/000729-s42120105.md",
+      "bytes": 488,
+      "sha256": "3e704cac809317686546073a2197b012be331e2aa142a56d55e640a8815ac992",
+      "captured_at": "2026-10-02T16:03:34.726351+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000730-s42120106.md",
+      "copy": "preparation/technique-sources/threads/main/000730-s42120106.md",
+      "bytes": 528,
+      "sha256": "1cfa8582c8e451ef378414a5bc8c52578d4cbf11b5814a8c8ded18e2508e45d4",
+      "captured_at": "2026-10-02T16:03:34.726351+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000731-s42120103.md",
+      "copy": "preparation/technique-sources/threads/main/000731-s42120103.md",
+      "bytes": 503,
+      "sha256": "4b79609553aed7e172e5a46852b1bb6883a0e39fe1f5b54859adbe1499b6306d",
+      "captured_at": "2026-10-02T16:03:34.726351+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000732-s42120100.md",
+      "copy": "preparation/technique-sources/threads/main/000732-s42120100.md",
+      "bytes": 536,
+      "sha256": "3f878000880bfaf26d1642b3e02075d8a726cc341d14e094f6efe23c4699405c",
+      "captured_at": "2026-10-02T16:03:34.726351+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000733-s42120109.md",
+      "copy": "preparation/technique-sources/threads/main/000733-s42120109.md",
+      "bytes": 566,
+      "sha256": "dc15369d0ac7fb556ad5da3393ade614c172b6e9eef8b86cd90b5f7746f76a09",
+      "captured_at": "2026-10-02T16:03:34.726351+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000734-s42120104.md",
+      "copy": "preparation/technique-sources/threads/main/000734-s42120104.md",
+      "bytes": 418,
+      "sha256": "e7ee7c55cc5218039b0c9f3d8c30ee969f676a1c8b98d671addc94c52a0abdf3",
+      "captured_at": "2026-10-02T16:03:34.726351+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000735-s42120102.md",
+      "copy": "preparation/technique-sources/threads/main/000735-s42120102.md",
+      "bytes": 550,
+      "sha256": "1db57740f52a40ad237bcda957233015533e66bb5fdf322fa147ebead504b6a5",
+      "captured_at": "2026-10-02T16:03:34.726351+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000736-s42120101.md",
+      "copy": "preparation/technique-sources/threads/main/000736-s42120101.md",
+      "bytes": 565,
+      "sha256": "0e64143538b950ed5be7035bf90f349fc2a20421d11030ef864d6ed4243ce16a",
+      "captured_at": "2026-10-02T16:03:34.726351+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000737-s42120108.md",
+      "copy": "preparation/technique-sources/threads/main/000737-s42120108.md",
+      "bytes": 251,
+      "sha256": "c25642c1e04d24693e87e08cf199a6e532cb8d56ae94f2ee2954db0dbaf5e3f5",
+      "captured_at": "2026-10-02T16:03:34.726351+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000738-s42120108.md",
+      "copy": "preparation/technique-sources/threads/main/000738-s42120108.md",
+      "bytes": 779,
+      "sha256": "136433889ba9c1e8207f35cbbb167098c4e2a68ad27a685e049212f67a224c32",
+      "captured_at": "2026-10-02T16:03:34.726351+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/leads/leads.jsonl",
+      "copy": "preparation/technique-sources/leads/selected-1601-events.jsonl",
+      "bytes": 1923,
+      "sha256": "c08ceb2b96c364204b84ea572d31bf5f8eb303ca8af03aff061e01d1638570da",
+      "captured_at": "2026-10-02T16:03:34.726351+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "whole selected JSONL records; sequential live prefix, not full chain or final custody"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/leads/finish.jsonl",
+      "copy": "preparation/technique-sources/leads/selected-1601-finish-events.jsonl",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured_at": "2026-10-02T16:03:34.726351+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "whole selected JSONL records; sequential live prefix, not full chain or final custody"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/requests/requests.jsonl",
+      "copy": "preparation/technique-sources/requests/snapshot-1601/requests.jsonl",
+      "bytes": 8460,
+      "sha256": "7104b6e0125f50e1b3547e5114cd23aa1026c2a12efee857f4e009cc475bd713",
+      "captured_at": "2026-10-02T16:03:34.726351+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "whole current request register captured sequentially; final register may change"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/requests/requests.md",
+      "copy": "preparation/technique-sources/requests/snapshot-1601/requests.md",
+      "bytes": 5696,
+      "sha256": "3ddcd04588eaaa0455a06e1d2700b1452a5264ac77fba4dd9474c2bf0b33304a",
+      "captured_at": "2026-10-02T16:03:34.726351+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "whole current request register captured sequentially; final register may change"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tool-output/s42120108/20261002160253212-bash-6ncn.out.log",
+      "copy": "preparation/technique-sources/tool-output/s42120108/20261002160253212-bash-6ncn.out.log",
+      "bytes": 100457,
+      "sha256": "640ac5f5b74b41fcd3389787fcf704251d314f9e091638e3ab1f5e79fd5a9d2a",
+      "captured_at": "2026-10-02T16:03:34.726351+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/traces/events.jsonl",
+      "copy": "preparation/technique-sources/traces/selected-1601-harness-stop-proposal-and-formal-q14-review.jsonl",
+      "bytes": 71050,
+      "sha256": "40975b76a0b0a50c63ab9df7f2e61e80552bc452e1f9575e9cf1114b5b980071",
+      "captured_at": "2026-10-02T16:03:34.726351+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "whole public typed tools, source reads, finish and lifecycle records; no thinking entries; not full trace chain"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/traces/events.jsonl",
+      "copy": "preparation/technique-sources/traces/sensitive-retention-1601.json",
+      "bytes": 205,
+      "sha256": "52a45a929e509e1a7e42c7d899c49b51a0d01fdd1f9e8407185c16f2d30c3fd3",
+      "captured_at": "2026-10-02T16:03:34.726351+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "operator retention manifest; no private-key scalar or fragment retained in this Git manifest"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/traces/regroup.json",
+      "copy": "preparation/technique-sources/traces/regroup-state-1601.json",
+      "bytes": 64,
+      "sha256": "611e6cb2c2528069c251d680adbc0f511435b0dfe2f2586ebe662bcd750ce1c8",
+      "captured_at": "2026-10-02T16:03:34.726351+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "whole current mutable watchdog state captured sequentially"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/ledger/entries.jsonl",
+      "copy": "preparation/technique-sources/ledger/selected-1601-entries.jsonl",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured_at": "2026-10-02T16:03:34.726351+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "whole selected JSONL records; live sequential prefix, not full chain or custody"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/ledger/attestations.jsonl",
+      "copy": "preparation/technique-sources/ledger/selected-1601-attestations.jsonl",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured_at": "2026-10-02T16:03:34.726351+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "whole selected JSONL records; live sequential prefix, not full chain or custody"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/dfirswarm/scripts/stop-policy.ts",
+      "copy": "preparation/technique-sources/platform-source-1601/scripts/stop-policy.ts",
+      "bytes": 11852,
+      "sha256": "1d866df1f4b699e931def30de5bc5851f6bd6cff1fd3e82887cb1e805b7cc921",
+      "captured_at": "2026-10-02T16:03:34.726351+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "complete read-only platform source at main 3e33c630927391ce0474942e1f8705a616cbff38; verify content against Git base"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/traces/stop-policy.yield.json",
+      "copy": "preparation/technique-sources/traces/stop-policy-yield-1601.json",
+      "bytes": 96,
+      "sha256": "34bcd3e1aeed7f531dae4643c71a29d77b99a3cf84ed5e0bdec629e3aa484a6e",
+      "captured_at": "2026-10-02T16:03:34.726351+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "whole current proposal-window state captured sequentially; no operator acceptance"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/ledger/entries.jsonl",
+      "copy": "preparation/technique-sources/diagnostics/e213-projection-countercheck-1601.json",
+      "bytes": 1336,
+      "sha256": "e523fa247c7d30e09d11dfb4112ef7b31b9b9b6bd5abb1bd510f2c4f98d5a2e2",
+      "captured_at": "2026-10-02T16:08:15.818836+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "derived operator comparison identity/booleans; full raw E213 and Markdown originals retained, not represented as a full body copy"
     }
   ],
   "ledger_bindings": [
@@ -30492,9 +30704,261 @@
       "tool": "post",
       "jobs": [],
       "record_sha256": "c96e696ab7848ae31ec3604ef27c0035d227707aaba828abb25fa1ecf2225757"
+    },
+    {
+      "agent": "system",
+      "seq": null,
+      "ts": "2026-10-02T15:59:23.000Z",
+      "tool": "regroup",
+      "jobs": [],
+      "record_sha256": "5abfadc98d19877ce465938ba79093a32e0388388d51da6a38de855b6d2436f5"
+    },
+    {
+      "agent": "s42120104",
+      "seq": 1902,
+      "ts": "2026-10-02T15:59:31.471Z",
+      "tool": "post",
+      "jobs": [],
+      "record_sha256": "4d3016db77d883ea8bc57c1f1606019696e0a4025c9d134d5b40f6f95fab9bb2"
+    },
+    {
+      "agent": "s42120105",
+      "seq": 2194,
+      "ts": "2026-10-02T15:59:32.209Z",
+      "tool": "post",
+      "jobs": [],
+      "record_sha256": "58da9928da9cbf9a9bca4f4d2540cc6b6b130b22b4f30a7bd2b967cd9c31d254"
+    },
+    {
+      "agent": "s42120106",
+      "seq": 1966,
+      "ts": "2026-10-02T15:59:33.607Z",
+      "tool": "post",
+      "jobs": [],
+      "record_sha256": "11dffa02df92666fdc2eb3cc1d1a4767aa519857ce0e8446569599d77cc63685"
+    },
+    {
+      "agent": "s42120103",
+      "seq": 1273,
+      "ts": "2026-10-02T15:59:35.876Z",
+      "tool": "post",
+      "jobs": [],
+      "record_sha256": "8088bbea4a632badf5143b709d30a40e3794fffc1a976d3e8eb89fbeb85cdf67"
+    },
+    {
+      "agent": "s42120108",
+      "seq": 2255,
+      "ts": "2026-10-02T15:59:37.284Z",
+      "tool": "ledger",
+      "jobs": [],
+      "record_sha256": "a86e2cfc98a1c91183a7b9a8bcf9b005ca065c10bc497458295103e2dc807248"
+    },
+    {
+      "agent": "s42120108",
+      "seq": 2256,
+      "ts": "2026-10-02T15:59:37.286Z",
+      "tool": "questions",
+      "jobs": [],
+      "record_sha256": "18b888df6efedd2ca2813b746785e92a1234e3cad87124e65c08b99ae9bd8a4d"
+    },
+    {
+      "agent": "s42120100",
+      "seq": 1144,
+      "ts": "2026-10-02T15:59:37.516Z",
+      "tool": "post",
+      "jobs": [],
+      "record_sha256": "0d702bf29452c75a292647066edb8b4c6bf27ab61f463429d72ec283f29f41cd"
+    },
+    {
+      "agent": "s42120109",
+      "seq": 1983,
+      "ts": "2026-10-02T15:59:42.020Z",
+      "tool": "post",
+      "jobs": [],
+      "record_sha256": "1da5f7ef59e04c55a99853b3a1761672ef6fc2f33d10dc632e547a9978e69121"
+    },
+    {
+      "agent": "s42120107",
+      "seq": 2225,
+      "ts": "2026-10-02T15:59:54.157Z",
+      "tool": "leads",
+      "jobs": [],
+      "record_sha256": "dfb572ba169e66b8a396b1a0df622ffcafdce55d1008967559927b889dccd5d6"
+    },
+    {
+      "agent": "s42120104",
+      "seq": 1914,
+      "ts": "2026-10-02T15:59:54.459Z",
+      "tool": "post",
+      "jobs": [],
+      "record_sha256": "cfe0474f163427b76b655725326c22d0011ddaa11544719b9667107402370da7"
+    },
+    {
+      "agent": "s42120102",
+      "seq": 1208,
+      "ts": "2026-10-02T16:00:00.757Z",
+      "tool": "post",
+      "jobs": [],
+      "record_sha256": "3b6fbe85d18c4a4248b9d497a467f7881cb9db87804468ab5754ae5e57ad1c72"
+    },
+    {
+      "agent": "s42120108",
+      "seq": 2260,
+      "ts": "2026-10-02T16:00:31.380Z",
+      "tool": "lead_open",
+      "jobs": [],
+      "record_sha256": "dbf7f45dea7f82b5664a946b3c61a223dca7db0b102cf943dad912f54c1670ed"
+    },
+    {
+      "agent": "s42120108",
+      "seq": 2263,
+      "ts": "2026-10-02T16:00:36.579Z",
+      "tool": "ledger",
+      "jobs": [],
+      "record_sha256": "05b35a4f9bebee9d4e326296055b215433a682cf0cd2dae1479598891aa1ffe9"
+    },
+    {
+      "agent": "s42120101",
+      "seq": 1248,
+      "ts": "2026-10-02T16:00:53.561Z",
+      "tool": "post",
+      "jobs": [],
+      "record_sha256": "77b4c403ffa0bbc02c12eccfaeb4dfed54b5bec8893eae638beba60f90e5d11c"
+    },
+    {
+      "agent": "s42120108",
+      "seq": 2268,
+      "ts": "2026-10-02T16:01:29.239Z",
+      "tool": "compact_start",
+      "jobs": [],
+      "record_sha256": "da1e64922519df63f2e52e41adfe93a89b5ec449c81733f2b6d3296f9417afc9"
+    },
+    {
+      "agent": "s42120101",
+      "seq": 1252,
+      "ts": "2026-10-02T16:01:33.888Z",
+      "tool": "finish",
+      "jobs": [],
+      "record_sha256": "d71e6eb85d9291ab6433909b2005738763e184ffbd328aab6ae3a47dcd9ed8b3"
+    },
+    {
+      "agent": "s42120108",
+      "seq": 2269,
+      "ts": "2026-10-02T16:02:26.272Z",
+      "tool": "compact_done",
+      "jobs": [],
+      "record_sha256": "791b93bc82ca0413d5c0692f5776b193af81c040868d2c0a2ee271482fa20c86"
+    },
+    {
+      "agent": "s42120108",
+      "seq": 2272,
+      "ts": "2026-10-02T16:02:32.901Z",
+      "tool": "leads",
+      "jobs": [],
+      "record_sha256": "730dc11e12c808e27d9d901ab9f520f3191db2ebe95f29d367b249ec046a4e1c"
+    },
+    {
+      "agent": "s42120108",
+      "seq": 2274,
+      "ts": "2026-10-02T16:02:36.825Z",
+      "tool": "ledger",
+      "jobs": [],
+      "record_sha256": "26f3776b61c441ff6f7e7fef920074cfec929526ad6bf3aaa5a5688f9ad0cc49"
+    },
+    {
+      "agent": "s42120108",
+      "seq": 2280,
+      "ts": "2026-10-02T16:02:53.372Z",
+      "tool": "bash",
+      "jobs": [
+        "j000002",
+        "j000004",
+        "j000013",
+        "j000014",
+        "j000020",
+        "j000022",
+        "j000024",
+        "j000027",
+        "j000034",
+        "j000036",
+        "j000042",
+        "j000046",
+        "j000065",
+        "j000066",
+        "j000080",
+        "j000083",
+        "j000093",
+        "j000130",
+        "j000178",
+        "j000199",
+        "j000201",
+        "j000202",
+        "j000203",
+        "j000204",
+        "j000241",
+        "j000248",
+        "j000249"
+      ],
+      "record_sha256": "898825a497e325d33ef62ed69372e530215e8876e57bc784dcda6a53ec6b04fc"
+    },
+    {
+      "agent": "s42120105",
+      "seq": 2213,
+      "ts": "2026-10-02T16:02:58.881Z",
+      "tool": "compact_start",
+      "jobs": [],
+      "record_sha256": "e4038b08aca5a9ac0e36305bc09cdd7b08cebe358e1e40d15ed1ba0a46675263"
+    },
+    {
+      "agent": "s42120108",
+      "seq": 2283,
+      "ts": "2026-10-02T16:03:01.603Z",
+      "tool": "bash",
+      "jobs": [
+        "j000107",
+        "j000130",
+        "j000153",
+        "j000154",
+        "j000177",
+        "j000178",
+        "j000201",
+        "j000203",
+        "j000204",
+        "j000207",
+        "j000208",
+        "j000209",
+        "j000210",
+        "j000211",
+        "j000219"
+      ],
+      "record_sha256": "06de11b4e071a0f685b785e3c840dd80df50184f59fc6e0dc07489f21d47d994"
+    },
+    {
+      "agent": "s42120106",
+      "seq": 1983,
+      "ts": "2026-10-02T16:03:12.275Z",
+      "tool": "compact_start",
+      "jobs": [],
+      "record_sha256": "6037b395967305f9f18d5293007523f96c37202de1ee03bf666a523882a88633"
+    },
+    {
+      "agent": "s42120108",
+      "seq": 2286,
+      "ts": "2026-10-02T16:03:21.610Z",
+      "tool": "post",
+      "jobs": [],
+      "record_sha256": "025aef0696c6721feb1ddf121f180a7c5a5eb01040cc1bfdab434317212f6dd3"
+    },
+    {
+      "agent": "s42120103",
+      "seq": 1282,
+      "ts": "2026-10-02T16:03:27.348Z",
+      "tool": "compact_start",
+      "jobs": [],
+      "record_sha256": "a224137175df5b7352a00e126f33e71d9fb52587b05bc37025c8adee8ba71493"
     }
   ],
-  "updated_at": "2026-10-02T15:54:33.577906+00:00",
+  "updated_at": "2026-10-02T16:03:34.726351+00:00",
   "attestation_bindings": [
     {
       "seq": 183,
@@ -31098,6 +31562,48 @@
       "novelty": "case application of known provenance/review; no algorithm or world-first claim",
       "operator_boundary": "observer notes only; no agent or live platform change",
       "source_main": "3e33c630927391ce0474942e1f8705a616cbff38",
+      "full_final_archive_complete": false
+    },
+    {
+      "at": "2026-10-02T16:03:34.726351+00:00",
+      "technique": "T08 source view countercheck; no new algorithm",
+      "heartbeat": "preparation/heartbeat-2026-10-02T160146Z.json",
+      "board_ids": [
+        727,
+        728,
+        729,
+        730,
+        731,
+        732,
+        733,
+        734,
+        735,
+        736,
+        737,
+        738
+      ],
+      "lead_seqs": [
+        1373
+      ],
+      "ledger_source_seqs": [
+        213,
+        357
+      ],
+      "request_seqs": [
+        9
+      ],
+      "request": "R-6",
+      "request_kind": "nonbinding harness diminishing-returns decision",
+      "request_accepted": false,
+      "new_job": false,
+      "new_exact_answer": false,
+      "diagnostic_copy": "preparation/technique-sources/diagnostics/e213-projection-countercheck-1601.json",
+      "agent_models": {
+        "s42120108": "gpt-6-luna",
+        "s42120101": "gpt-6.1-sol"
+      },
+      "scope": "L107 active source review; no answer supersession at capture",
+      "operator_boundary": "no feedback/goal/policy/agent/resource/code/stop change",
       "full_final_archive_complete": false
     }
   ],
