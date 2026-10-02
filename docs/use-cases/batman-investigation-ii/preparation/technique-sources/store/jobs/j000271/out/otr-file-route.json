@@ -1,0 +1,25 @@
+{
+  "store/jobs/j000140/out/20261002100317614-bash-ww29.out.log": {
+    "size": 1061914,
+    "hits": [
+      {
+        "needle": "otr.private_key",
+        "offset": 638091,
+        "context": "E;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC.PROCESSOR_A\n\nOFFSET 2759053098 Falcone utf16le\n\u656d\u7373\u6e65\u6567\u2f72\u6369\u6e6f\u2f73\u656e\u2f77\u7473\u7461\u7375\u6f2d\u6c6e\u6e69\u2e65\u7673g............................................................\u0001.\u00f8.C:\\Users\\Carmine Falcone\\AppData\\Roaming\\Thunderbird\\Profiles\\ifbixagh.default-release\\otr.private_key.\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5..........................................\uff78\ufc7f........\uffd0\u327f\uffb6\u1f7f............................................................\uffba\u117f................................\uffff\u01ff\uffd6\ufc7f\uffe2\ufc7f............................................\n\nOFFSET "
+      },
+      {
+        "needle": "otr.private_key",
+        "offset": 638664,
+        "context": ".................................\n\nOFFSET 2759053082 Carmine utf16le\n\u6369\u732f\u696b\u2f6e\u6c63\u7361\u6973\u2f63\u656d\u7373\u6e65\u6567\u2f72\u6369\u6e6f\u2f73\u656e\u2f77\u7473\u7461\u7375\u6f2d\u6c6e\u6e69\u2e65\u7673g............................................................\u0001.\u00f8.C:\\Users\\Carmine Falcone\\AppData\\Roaming\\Thunderbird\\Profiles\\ifbixagh.default-release\\otr.private_key.\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5..........................................\uff78\ufc7f........\uffd0\u327f\uffb6\u1f7f............................................................\uffba\u117f................................\uffff\u01ff\uffd6\ufc7f\uffe2\ufc7f....................................\n\nOFFSET 27640745"
+      }
+    ]
+  },
+  "store/jobs/j000015/out/filescan.txt": {
+    "size": 391702,
+    "hits": []
+  },
+  "store/jobs/j000130/out/file-list.tsv": {
+    "size": 1092,
+    "hits": []
+  }
+}

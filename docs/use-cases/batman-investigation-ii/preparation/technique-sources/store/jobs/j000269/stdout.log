@@ -1,0 +1,22 @@
+{
+  "bytes": 1223632,
+  "parsed_strings": 1344,
+  "literal_counts": {
+    "private_key": 30,
+    "client_email": 0,
+    "name_client": 0,
+    "infobreakage_dbkey": 0
+  },
+  "candidate_value_pattern_counts": {
+    "assignment_after_private_key": 0,
+    "assignment_after_client_email": 0,
+    "assignment_after_name_client": 0,
+    "pem_private_key_header": 0,
+    "base64_or_hex_blob_64plus": 7
+  },
+  "private_key_occurrences": 30,
+  "private_key_near_name_label": 0,
+  "private_key_near_email_label": 0,
+  "private_key_near_assignment": 0,
+  "private_key_near_pem": 0
+}

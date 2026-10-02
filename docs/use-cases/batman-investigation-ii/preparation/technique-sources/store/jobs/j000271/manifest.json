@@ -1,0 +1,1 @@
+{"v":1,"job":"j000271","attempt":1,"sealed_at":"2026-10-02T11:45:15.126Z","files":[{"path":"otr-file-route.json","path_b64":"b3RyLWZpbGUtcm91dGUuanNvbg==","bytes":2100,"sha256":"8ccc5cfcc0a23fedd22435b371995e8259da912c917d18cb1d11131b3984ee59","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":2100}}

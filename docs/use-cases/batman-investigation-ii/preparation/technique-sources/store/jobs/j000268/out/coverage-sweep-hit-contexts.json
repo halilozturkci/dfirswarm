@@ -1,0 +1,437 @@
+{
+  "objects": [
+    {
+      "path": "store/imports/j000141/out/20261002100001411-chunk_needles-ifyo.out.log",
+      "size": 122191,
+      "hits": [
+        {
+          "needle": "client_email",
+          "encoding": "ascii",
+          "offset": 116233,
+          "context": "..................................\"}], \"matched\": 439, \"returned\": 50, \"truncated\": true, \"all_results\": \"work/s42120105/tool-output/chunk_needles-b652b86a0d743049.jsonl\", \"all_results_format\": \"JSON Lines, one complete result per line\"}, \"client_email\": {\"ascii\": 0, \"utf16le\": 0, \"snippets\": [], \"matched\": 0, \"returned\": 0, \"truncated\": false}, \"dbkey\": {\"ascii\": 5, \"utf16le\": 0, \"snippets\": [{\"off\": 199068804, \"enc\": \"ascii\", \"text\": \"_Notify.PVsync::Msg_Notify.imgRequestProxy::Notify.MIDIAcess::Notify.ImageLoader::Notify.CacheStorageService::Notify.SubtleCrypto.verify.nsCMSMessage::CommonVerifySignature - can not verify.PHttpChannel::Msg_Redirect2Verify.stringify.Selection.modify.-moz-user-modify.MozUserModify.canModify | "
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000001/out/wallet-ascii.txt",
+      "size": 16516071,
+      "hits": [
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 5488017,
+          "context": "hUint8ArrayChecked(t.hexToUint8Array(r),64)},deserialize:function(e){return t.arrayToHex(e.getUint8Array(64))}}),public_key:k({name:\"public_key\",serialize:function(e,t){e.pushPublicKey(t)},deserialize:function(e){return e.getPublicKey()}}),private_key:k({name:\"private_key\",serialize:function(e,t){e.pushPrivateKey(t)},deserialize:function(e){return e.getPrivateKey()}}),signature:k({name:\"signature\",serialize:function(e,t){e.pushSignature(t)},deserialize:function(e){return e.getSignature()}})}));return e.set(\"extended_asset\",k({name:\"extended_asset\",baseName:\"\",fields:[{name:\"quantity\",typeName:\"asset\",type:e.get(\"asset\")},{name:\"contract\",typeName:\"name\",type:e.get(\"name\")}],serialize:f,deserialize:h})),e},t.getType=functi | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 5488038,
+          "context": "hexToUint8Array(r),64)},deserialize:function(e){return t.arrayToHex(e.getUint8Array(64))}}),public_key:k({name:\"public_key\",serialize:function(e,t){e.pushPublicKey(t)},deserialize:function(e){return e.getPublicKey()}}),private_key:k({name:\"private_key\",serialize:function(e,t){e.pushPrivateKey(t)},deserialize:function(e){return e.getPrivateKey()}}),signature:k({name:\"signature\",serialize:function(e,t){e.pushSignature(t)},deserialize:function(e){return e.getSignature()}})}));return e.set(\"extended_asset\",k({name:\"extended_asset\",baseName:\"\",fields:[{name:\"quantity\",typeName:\"asset\",type:e.get(\"asset\")},{name:\"contract\",typeName:\"name\",type:e.get(\"name\")}],serialize:f,deserialize:h})),e},t.getType=function(e,r){var n=e.get(r | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 5752050,
+          "context": "hUint8ArrayChecked(t.hexToUint8Array(r),64)},deserialize:function(e){return t.arrayToHex(e.getUint8Array(64))}}),public_key:I({name:\"public_key\",serialize:function(e,t){e.pushPublicKey(t)},deserialize:function(e){return e.getPublicKey()}}),private_key:I({name:\"private_key\",serialize:function(e,t){e.pushPrivateKey(t)},deserialize:function(e){return e.getPrivateKey()}}),signature:I({name:\"signature\",serialize:function(e,t){e.pushSignature(t)},deserialize:function(e){return e.getSignature()}})}));return e.set(\"extended_asset\",I({name:\"extended_asset\",baseName:\"\",fields:[{name:\"quantity\",typeName:\"asset\",type:e.get(\"asset\")},{name:\"contract\",typeName:\"name\",type:e.get(\"name\")}],serialize:p,deserialize:h})),e},t.getType=functi | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 5752071,
+          "context": "hexToUint8Array(r),64)},deserialize:function(e){return t.arrayToHex(e.getUint8Array(64))}}),public_key:I({name:\"public_key\",serialize:function(e,t){e.pushPublicKey(t)},deserialize:function(e){return e.getPublicKey()}}),private_key:I({name:\"private_key\",serialize:function(e,t){e.pushPrivateKey(t)},deserialize:function(e){return e.getPrivateKey()}}),signature:I({name:\"signature\",serialize:function(e,t){e.pushSignature(t)},deserialize:function(e){return e.getSignature()}})}));return e.set(\"extended_asset\",I({name:\"extended_asset\",baseName:\"\",fields:[{name:\"quantity\",typeName:\"asset\",type:e.get(\"asset\")},{name:\"contract\",typeName:\"name\",type:e.get(\"name\")}],serialize:p,deserialize:h})),e},t.getType=function(e,r){var n=e.get(r | "
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000001/out/wallet-utf16.txt",
+      "size": 15037460,
+      "hits": []
+    },
+    {
+      "path": "store/jobs/j000006/out/communication_hits.jsonl",
+      "size": 181107507,
+      "hits": [
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 112704421,
+          "context": "000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0001\\u0000\\u00f8\\u0000C:\\\\Users\\\\Carmine Falcone\\\\AppData\\\\Roaming\\\\Thunderbird\\\\Profiles\\\\ifbixagh.default-release\\\\otr.private_key\\u0000\\ue5e5\\ue5e5\\ue5e5\\ue5e5\\ue5e5\\ue5e5\\ue5e5\\ue5e5\\ue5e5\\ue5e5\\ue5e5\\ue5e5\\ue5e5\\ue5e5\\ue5e5\\ue5e5\\ue5e5\\ue5e5\\ue5e5\\ue5e5\\ue5e5\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\uff78\\ufc7f\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\uffd0\\u327f\\uffb6\\u1f7f\\u0000\\u0000 | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 112837011,
+          "context": "000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0001\\u0000\\u00f8\\u0000C:\\\\Users\\\\Carmine Falcone\\\\AppData\\\\Roaming\\\\Thunderbird\\\\Profiles\\\\ifbixagh.default-release\\\\otr.private_key\\u0000\\ue5e5\\ue5e5\\ue5e5\\ue5e5\\ue5e5\\ue5e5\\ue5e5\\ue5e5\\ue5e5\\ue5e5\\ue5e5\\ue5e5\\ue5e5\\ue5e5\\ue5e5\\ue5e5\\ue5e5\\ue5e5\\ue5e5\\ue5e5\\ue5e5\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\uff78\\ufc7f\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\u0000\\uffd0\\u327f\\uffb6\\u1f7f\\u0000\\u0000 | "
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000008/out/archive-ascii.txt",
+      "size": 3448994,
+      "hits": []
+    },
+    {
+      "path": "store/jobs/j000008/out/archive-utf16.txt",
+      "size": 668234,
+      "hits": []
+    },
+    {
+      "path": "store/jobs/j000013/out/file.0xab0b100c07e0.0xab0b1141dd20.ImageSectionObject.nss3.dll.img",
+      "size": 2416128,
+      "hits": []
+    },
+    {
+      "path": "store/jobs/j000018/out/notepad-ascii.txt",
+      "size": 44884250,
+      "hits": [
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 6841419,
+          "context": "1117 +s><Group><M>< | 230931132 +35bf8a3a09445e | 230931151 1b3xEe90697542ed< | 230931169 +S>< | 230931174 +[]]]></DS>< | 230931190 D><![CDATA[{\"CurUrl\":0 | 230931213 j061110 | 230931378 hn\\#2K | 230931441 JL}> | 230931446 O_lv^ | 230931544 4c0a0 | 230931709 -k_private_key | 230931731 _certific | 230931742 file | 230931755 custom_ | 230931771 set_alpn_protosJSL_CTX_set_ne | 230931829 R[Beh | 230931879 pl\"an | 230931906 dmija< | 230931925 AiMQo | 230931948 ck<dy | 230931955 & 1 sym | 230932029 so+s o | 230932057 7* st | 230932082 h<sch | 230932124 -r<for. | 230932134 efa-2 | 230932151  feP | 230932170 &el<cel | 230932186  &.Ymci~ | 230932197 +-<docu | 230932207 m<com%n<conL | 230932225 u<docuV | 230932233 %r<co | 230932611 GetV | 230932620 ersi | 230932648 Term; | 230932654 inat; | 230932660 ePro; | "
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000018/out/pid.5372.dmp",
+      "size": 719613952,
+      "hits": [
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 230931712,
+          "context": "4c0a0 | -k_private_key | _certific | custom_ | set_alpn_protosJSL_CTX_set_ne | R[Beh | pl\"an | dmija< | AiMQo | ck<dy | & 1 sym | so+s o | 7* st | h<sch | -r<for. | efa-2 | &el<cel |  &.Ymci~ | +-<doc | "
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000034/stdout.log",
+      "size": 44610,
+      "hits": []
+    },
+    {
+      "path": "store/jobs/j000034/out/tool-output/ioc_scan-62747ce3f7081774.jsonl",
+      "size": 170784,
+      "hits": []
+    },
+    {
+      "path": "store/jobs/j000049/out/proc-ascii-hits.txt",
+      "size": 1968956,
+      "hits": [
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 165436,
+          "context": "504 helpKeyword | 33759516 keyword | 33760395 LogEntrySource | 33761295 DeleteSubKeyTree | 33761332 FindEquivalentKeyUnsafe | 33761532 cbKeyUsage | 33761543 pbKeyUsage | 33761554 CertGetIntendedKeyUsage | 33761578 encodedKeyUsage | 33764395 net_log_locating_private_key_for_certificate | 33767175 _keyOrValue | 33767492 decodedKeyValue | 33767508 m_encodedKeyValue | 33767526 RegNotifyChangeKeyValue | 33767550 keyValue | 33768280 userNameSize | 33768344 entryBufSize | 33768943 get_KeySize | 33771135 keyString | 33773355 CertGetPublicKeyLength | 33776320 KeyContainerPermission | 33777723 KeyContainerPermissionAccessEntryCollection | 33779042 EntryPointNotFoundException | 33779070 ThrowKeyNotFoundException | 33779096 get_CacheEntryNotFoundException | 33780025 encodedSubjectKe | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 416466,
+          "context": "6 exodus | 279879743 exodus | 279883839 exodus | 279916606 exodus | 279924810 exodus | 279928906 exodus | 279964309 recycler\\ | 279966388 Creg add \"HKEY_CURRENT_USER\\Soft | 279967113 MSIL/Hawkeye1! | 279967687 Resources.key | 279968935 32Entry@16 | 279985405 -k_private_key | 280049262 \"Microsoft Time Source Master Clock0 | 280066500 ing(n.config.codexUpsellCaptionKey),e.additionalCalloutText=n.Host.getLocString(n.config.codexUpsellButtonKey),e.tooltip=n.Host.getLocString(n.config.codexUpsellTitleKey),e.narratorText=n.Host.getLocString(n.config.codexUpsellTitleKey)+n.Host.getLocString(n.config.codexUpsellButtonKey),e.classNames=[\"upsellSugg\",\"codexUpsellSuggestion\"];else if(this._currentUpsell==0)n.LightweightStorage.removeItem(f),n.LightweightStor | "
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000049/out/proc-ascii.txt",
+      "size": 52355793,
+      "hits": [
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 4081102,
+          "context": "ificate | 33764243 CryptHashCertificate | 33764264 CertCreateSelfSignCertificate | 33764294 get_LocalServerCertificate | 33764321 HttpReceiveClientCertificate | 33764350 get_LocalClientCertificate | 33764377 VerifyCertificate | 33764395 net_log_locating_private_key_for_certificate | 33764440 preAuthenticate | 33764456 valueToValidate | 33764472 CryptMsgUpdate | 33764487 AddOrUpdate | 33764499 forceCreate | 33764511 wantToCreate | 33764524 dontCreate | 33764535 set_Negate | 33764546 PrepareDelegate | 33764562 CreateDelegate | 33764577 certSelectionDelegate | 33764599 TCompletionDelegate | 33764619 downloadCompletionDelegate | 33764646 completionDelegate | 33764665 selectorDelegate | 33764682 get_IsCurrentDelegate | 33764704 abortDelegate | 33764718 MulticastDelegate | 33764 | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 14305492,
+          "context": "4813 +s><Group><M>< | 279984828 +35bf8a3a09445e | 279984847 1b3xEe90697542ed< | 279984865 +S>< | 279984870 +[]]]></DS>< | 279984886 D><![CDATA[{\"CurUrl\":0 | 279984909 j061110 | 279985074 hn\\#2K | 279985137 JL}> | 279985142 O_lv^ | 279985240 4c0a0 | 279985405 -k_private_key | 279985427 _certific | 279985438 file | 279985451 custom_ | 279985467 set_alpn_protosJSL_CTX_set_ne | 279985525 R[Beh | 279985575 pl\"an | 279985602 dmija< | 279985621 AiMQo | 279985644 ck<dy | 279985651 & 1 sym | 279985725 so+s o | 279985753 7* st | 279985778 h<sch | 279985820 -r<for. | 279985830 efa-2 | 279985847  feP | 279985866 &el<cel | 279985882  &.Ymci~ | 279985893 +-<docu | 279985903 m<com%n<conL | 279985921 u<docuV | 279985929 %r<co | 279986307 GetV | 279986316 ersi | 279986344 Term; | 279986350 inat; | 279986356 ePro; | "
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000049/out/proc/pid.3768.dmp",
+      "size": 769003520,
+      "hits": [
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 33764412,
+          "context": "set_ResponseDate | FormatDate | baudRate | X509Certificate | remoteCertificate | CryptHashCertificate | CertCreateSelfSignCertificate | get_LocalServerCertificate | HttpReceiveClientCertificate | get_LocalClientCertificate | VerifyCertificate | net_log_locating_private_key_for_certificate | preAuthenticate | valueToValidate | CryptMsgUpdate | AddOrUpdate | forceCreate | wantToCreate | dontCreate | set_Negate | PrepareDelegate | CreateDelegate | certSelectionDelegate | TCompletionDelegate | downloadCompletionDelegate | completionDelegate | selectorDelegate | get_IsCurrentDelegate | abortDelegate | MulticastDelegate | get_IdleServicePointTimeoutDelegate | _negate | leadingSurrogate | trailingSurrogate | IsHighSurrogate | IsSurrogate | IsLowSurrogate | get_PositiveIntermediate | concatenate | ReImpers | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 279985408,
+          "context": "4c0a0 | -k_private_key | _certific | custom_ | set_alpn_protosJSL_CTX_set_ne | R[Beh | pl\"an | dmija< | AiMQo | ck<dy | & 1 sym | so+s o | 7* st | h<sch | -r<for. | efa-2 | &el<cel |  &.Ymci~ | +-<doc | "
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000053/out/file.0xab0b100da460.0xab0b152b95a0.ImageSectionObject.Exodus.exe.img",
+      "size": 172954624,
+      "hits": [
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 147656041,
+          "context": "blink.mojom.SerialService | blink.mojom.SerialServiceClient | transport | attachment | private_key | blink.test.mojom.VirtualAuthenticator | blink.test.mojom.VirtualAuthenticatorManager | cc.mojom.RenderFrameMetadataObserver | cc.mojom.RenderFrameMetadataObserver | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 154548390,
+          "context": "..\\..\\device\\fido\\win\\type_conversions.cc | Unexpected error name:  | Unexpected CtapDeviceResponseCode:  | Incorrect HMAC output lengths:  | , (null) | null) | ..\\..\\crypto\\ec_private_key.cc | ..\\..\\device\\fido\\fido_device.cc | Sending CTAP2 AuthenticatorGetInfo request to authenticator. | The device only supports the U2F protocol. | The device supports the CTAP2 protocol. | ..\\..\\device\\fido\\fido_device_authenticator.cc | InitializeAuthenticator | Failed to compress large blob:  | Reading large blob failed with code  | Could not uncompress blob:  | Large blob array corrupted. Replacing with a new one | ..\\..\\device\\fido\\ctap2_device_operation.h |  (no payload) | -> (error re | nownError"
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 161002123,
+          "context": "rs SEQUENCE is empty | Unknown policy qualifier OID (not CPS or User Notice) | PolicyQualifierInfo is missing qualifier | PolicyQualifierInfo has trailing data | ..\\..\\net\\ssl\\threaded_ssl_private_key.cc | http_rtt_ms | transport_rtt_ms | downstream_throughput_kbps | effective_connection_type | @..\\..\\net\\nqe\\throughput_analyzer.cc | NotifyRequestCompleted | ..\\..\\net\\nqe\\network_quality_store.cc | AddNetworkQualitiesCacheObserver | ..\\..\\net\\third_party\\quiche\\src\\quiche\\quic\\core\\quic_config.cc | No send value to get for tag: | No receive value to get for tag: | This parameter does not suppo | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 162552552,
+          "context": "..\\..\\third_party\\electron_node\\src\\crypto\\crypto_dh.cc:48 | (remainder_size) < (prime_size) | DhKeyPairGenJob | ..\\..\\third_party\\electron_node\\src\\crypto\\crypto_keygen.h:37 | DhKeyPairParams | private_key_encoding.passphrase | KeyPairGenConfig | ..\\..\\third_party\\electron_node\\src\\crypto\\crypto_keygen.h:111 | DHKeyExportJob | ..\\..\\third_party\\electron_node\\src\\crypto\\crypto_keys.h:280 | ..\\..\\third_party\\electron_node\\src\\crypto\\crypto_keys.h:284 | ..\\..\\third_party\\electron_node\\src\\crypto\\ | "
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000079/out/7zg-ascii.txt",
+      "size": 44406423,
+      "hits": [
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 6363247,
+          "context": "4973 +s><Group><M>< | 229644988 +35bf8a3a09445e | 229645007 1b3xEe90697542ed< | 229645025 +S>< | 229645030 +[]]]></DS>< | 229645046 D><![CDATA[{\"CurUrl\":0 | 229645069 j061110 | 229645234 hn\\#2K | 229645297 JL}> | 229645302 O_lv^ | 229645400 4c0a0 | 229645565 -k_private_key | 229645587 _certific | 229645598 file | 229645611 custom_ | 229645627 set_alpn_protosJSL_CTX_set_ne | 229645685 R[Beh | 229645735 pl\"an | 229645762 dmija< | 229645781 AiMQo | 229645804 ck<dy | 229645811 & 1 sym | 229645885 so+s o | 229645913 7* st | 229645938 h<sch | 229645980 -r<for. | 229645990 efa-2 | 229646007  feP | 229646026 &el<cel | 229646042  &.Ymci~ | 229646053 +-<docu | 229646063 m<com%n<conL | 229646081 u<docuV | 229646089 %r<co | 229646467 GetV | 229646476 ersi | 229646504 Term; | 229646510 inat; | 229646516 ePro; | "
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000079/out/pid.1576.dmp",
+      "size": 718229504,
+      "hits": [
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 229645568,
+          "context": "4c0a0 | -k_private_key | _certific | custom_ | set_alpn_protosJSL_CTX_set_ne | R[Beh | pl\"an | dmija< | AiMQo | ck<dy | & 1 sym | so+s o | 7* st | h<sch | -r<for. | efa-2 | &el<cel |  &.Ymci~ | +-<doc | "
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000092/out/7zfm-ascii.txt",
+      "size": 45749390,
+      "hits": [
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 7705194,
+          "context": "6253 +s><Group><M>< | 233966268 +35bf8a3a09445e | 233966287 1b3xEe90697542ed< | 233966305 +S>< | 233966310 +[]]]></DS>< | 233966326 D><![CDATA[{\"CurUrl\":0 | 233966349 j061110 | 233966514 hn\\#2K | 233966577 JL}> | 233966582 O_lv^ | 233966680 4c0a0 | 233966845 -k_private_key | 233966867 _certific | 233966878 file | 233966891 custom_ | 233966907 set_alpn_protosJSL_CTX_set_ne | 233966965 R[Beh | 233967015 pl\"an | 233967042 dmija< | 233967061 AiMQo | 233967084 ck<dy | 233967091 & 1 sym | 233967165 so+s o | 233967193 7* st | 233967218 h<sch | 233967260 -r<for. | 233967270 efa-2 | 233967287  feP | 233967306 &el<cel | 233967322  &.Ymci~ | 233967333 +-<docu | 233967343 m<com%n<conL | 233967361 u<docuV | 233967369 %r<co | 233967747 GetV | 233967756 ersi | 233967784 Term; | 233967790 inat; | 233967796 ePro; | "
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000092/out/pid.6628.dmp",
+      "size": 722636800,
+      "hits": [
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 233966848,
+          "context": "4c0a0 | -k_private_key | _certific | custom_ | set_alpn_protosJSL_CTX_set_ne | R[Beh | pl\"an | dmija< | AiMQo | ck<dy | & 1 sym | so+s o | 7* st | h<sch | -r<for. | efa-2 | &el<cel |  &.Ymci~ | +-<doc | "
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000241/out/create-table-ranked.json",
+      "size": 1223632,
+      "hits": [
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 502985,
+          "context": "ypto_wallet_account_connected_sites WHERE keyring=? AND chain_id=? AND account_id=? | DeleteAccountConnect | INSERT OR REPLACE INTO account_meta_data (keyring, account_id, account_address, account_name, account_type, derive_path, encrypted_private_key, created_time_stamp, address_type, coin_type, chain_type, encrypted_public_key, fingerprint, tx_count)VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) | ,(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) | AddAccount | DELETE FROM account_meta_data WHERE keyring=? AND account_id=? | DeleteAccount | SELECT keyring, account_id, account_address, ac\" |     \"offset\": 1143046544, |     \"keywords\": [ |       \"contact\", |       \"private\", |       \"key\", |       \"account\", |       \"user\" |     ], | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 509238,
+          "context": "ypto_wallet_account_connected_sites WHERE keyring=? AND chain_id=? AND account_id=? | DeleteAccountConnect | INSERT OR REPLACE INTO account_meta_data (keyring, account_id, account_address, account_name, account_type, derive_path, encrypted_private_key, created_time_stamp, address_type, coin_type, chain_type, encrypted_public_key, fingerprint, tx_count)VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) | ,(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) | AddAccount | DELETE FROM account_meta_data WHERE keyring=? AND account_id=? | DeleteAccount | SELECT keyring, account_id, account_address, account_name, account_type, derive_path, encrypted_private_key, created_time_stamp, address_type, coin_type, encrypted_public_key, fingerpri | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 509640,
+          "context": ") | ,(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) | AddAccount | DELETE FROM account_meta_data WHERE keyring=? AND account_id=? | DeleteAccount | SELECT keyring, account_id, account_address, account_name, account_type, derive_path, encrypted_private_key, created_time_stamp, address_type, coin_type, encrypted_public_key, fingerprint, tx_count FROM account_meta_data | INSERT OR REPLACE INTO account_asset (keyring, account_id, asset_type, token_source, chain_id, chain_name,asset_metadata) VALUES (?, ?, ?, ?, ?, ?, ?) | AddAccountAsset | SELECT id, asset_type, asset_metadata from account_asset WHERE keyring = ? AND account_id = ? AND chain_name= ? AND token_source = ? AND chain_id= ? | SELECT id, asset_type, asset_metadata from | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 516952,
+          "context": "ypto_wallet_account_connected_sites WHERE keyring=? AND chain_id=? AND account_id=? | DeleteAccountConnect | INSERT OR REPLACE INTO account_meta_data (keyring, account_id, account_address, account_name, account_type, derive_path, encrypted_private_key, created_time_stamp, address_type, coin_type, chain_type, encrypted_public_key, fingerprint, tx_count)VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) | ,(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) | AddAccount | DELETE FROM account_meta_data WHERE keyring=? AND account_id=? | DeleteAccount | SELECT keyring, account_id, account_address, account_name, account_type, derive_path, encrypted_private_key, created_time_stamp, address_type, coin_type, encrypted_public_key, fingerpri | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 517354,
+          "context": ") | ,(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) | AddAccount | DELETE FROM account_meta_data WHERE keyring=? AND account_id=? | DeleteAccount | SELECT keyring, account_id, account_address, account_name, account_type, derive_path, encrypted_private_key, created_time_stamp, address_type, coin_type, encrypted_public_key, fingerprint, tx_count FROM account_meta_data | INSERT OR REPLACE INTO account_asset (keyring, account_id, asset_type, token_source, chain_id, chain_name,asset_metadata) VALUES (?, ?, ?, ?, ?, ?, ?) | AddAccountAsset | SELECT id, asset_type, asset_metadata from account_asset WHERE keyring = ? AND account_id = ? AND chain_name= ? AND token_source = ? AND chain_id= ? | SELECT id, asset_type, asset_metadata from | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 524331,
+          "context": "ypto_wallet_account_connected_sites WHERE keyring=? AND chain_id=? AND account_id=? | DeleteAccountConnect | INSERT OR REPLACE INTO account_meta_data (keyring, account_id, account_address, account_name, account_type, derive_path, encrypted_private_key, created_time_stamp, address_type, coin_type, chain_type, encrypted_public_key, fingerprint, tx_count)VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) | ,(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) | AddAccount | DELETE FROM account_meta_data WHERE keyring=? AND account_id=? | DeleteAccount | SELECT keyring, account_id, account_address, account_name, account_type, derive_path, encrypted_private_key, created_time_stamp, address_type, coin_type, encrypted_public_key, fingerpri | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 524733,
+          "context": ") | ,(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) | AddAccount | DELETE FROM account_meta_data WHERE keyring=? AND account_id=? | DeleteAccount | SELECT keyring, account_id, account_address, account_name, account_type, derive_path, encrypted_private_key, created_time_stamp, address_type, coin_type, encrypted_public_key, fingerprint, tx_count FROM account_meta_data | INSERT OR REPLACE INTO account_asset (keyring, account_id, asset_type, token_source, chain_id, chain_name,asset_metadata) VALUES (?, ?, ?, ?, ?, ?, ?) | AddAccountAsset | SELECT id, asset_type, asset_metadata from account_asset WHERE keyring = ? AND account_id = ? AND chain_name= ? AND token_source = ? AND chain_id= ? | SELECT id, asset_type, asset_metadata from | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 528612,
+          "context": "tendedPublicKeys | SELECT address_type, path, encrypted_public_key FROM crypto_wallet_extended_public_key | SELECT distinct(domain_name) FROM crypto_wallet_account_connected_sites | UPDATE account_meta_data SET account_name = ? , encrypted_private_key = ? , fingerprint = ? ,tx_count = ? WHERE keyring = ? and account_id = ? | UpdateAccount | UPDATE account_meta_data SET account_id = ? , address_type = ? , coin_type = ? , chain_type = ? , fingerprint = ? WHERE account_id = ? | MigrateAccount | UPDATE account_meta_data SET account_address = ?, encrypted_public_key = ?, fingerprint = ? WHERE account_id = ? | BatchMigrateAccount | crypto_wallet_contact | SELECT contact_name, contact_address, contact_memo, contact_type, chain_i | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 534673,
+          "context": "tendedPublicKeys | SELECT address_type, path, encrypted_public_key FROM crypto_wallet_extended_public_key | SELECT distinct(domain_name) FROM crypto_wallet_account_connected_sites | UPDATE account_meta_data SET account_name = ? , encrypted_private_key = ? , fingerprint = ? ,tx_count = ? WHERE keyring = ? and account_id = ? | UpdateAccount | UPDATE account_meta_data SET account_id = ? , address_type = ? , coin_type = ? , chain_type = ? , fingerprint = ? WHERE account_id = ? | MigrateAccount | UPDATE account_meta_data SET account_address = ?, encrypted_public_key = ?, fingerprint = ? WHERE account_id = ? | BatchMigrateAccount | crypto_wallet_contact | SELECT contact_name, contact_address, contact_memo, contact_type, chain_i | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 539839,
+          "context": "ontact_info_type_tokens\" |     \"offset\": 1143055568, |     \"keywords\": [ |       \"contact\", |       \"private\", |       \"key\", |       \"account\" |     ], |     \"context\": \"connected_sites | UPDATE account_meta_data SET account_name = ? , encrypted_private_key = ? , fingerprint = ? ,tx_count = ? WHERE keyring = ? and account_id = ? | UpdateAccount | UPDATE account_meta_data SET account_id = ? , address_type = ? , coin_type = ? , chain_type = ? , fingerprint = ? WHERE account_id = ? | MigrateAccount | UPDATE account_meta_data SET account_address = ?, encrypted_public_key = ?, fingerprint = ? WHERE account_id = ? | BatchMigrateAccount | crypto_wallet_contact | SELECT contact_name, contact_address, contact_memo, contact_type, chain_i | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 1097692,
+          "context": "_entry_store.cc | LoadKeyEntriesForType | LoadAndNotifyInBackground | SELECT host, token_binding_type, network_isolation_key, creation_time, key_name FROM key_entries | SELECT host, token_binding_type, network_isolation_key, creation_time, private_key FROM key_entries | DELETE FROM key_entries WHERE host=? AND token_binding_type=? AND key_entry_type=? AND network_isolation_key=? | CompleteLoadInForeground | INSERT INTO key_entries (host, token_binding_type, key_entry_type, network_isolation_key, creation_time, key_name) VALUES (?,?,?,?,?,?) | INSERT INTO key_entries (host, token_binding_type, key_entry_type, network_isolation_key, creation_time, private_key) VALUES (?,?,?,?,?,?) | CREATE TABLE key_entries (  host TEXT NOT | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 1098106,
+          "context": "ERT INTO key_entries (host, token_binding_type, key_entry_type, network_isolation_key, creation_time, key_name) VALUES (?,?,?,?,?,?) | INSERT INTO key_entries (host, token_binding_type, key_entry_type, network_isolation_key, creation_time, private_key) VALUES (?,?,?,?,?,?) | CREATE TABLE key_entries (  host TEXT NOT NULL,  token_binding_type INTEGER NOT NULL,  key_entry_type INTEGER NOT NULL,  network_isolation_key TEXT NOT NULL,  creation_time INTEGER NOT NULL,  key_name TEXT,  private_key BLOB,CHECK (( CASE WHEN key_name IS NULL THEN 0 ELSE 1 END+ CASE WHEN private_key IS NULL THEN 0 ELSE 1 END) = 1),  UNIQUE (host, token_binding_type, key_entry_type, network_isolation_key)) | Microsoft.TokenBinding.KeyEntryStore | last | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 1098350,
+          "context": "ate_key) VALUES (?,?,?,?,?,?) | CREATE TABLE key_entries (  host TEXT NOT NULL,  token_binding_type INTEGER NOT NULL,  key_entry_type INTEGER NOT NULL,  network_isolation_key TEXT NOT NULL,  creation_time INTEGER NOT NULL,  key_name TEXT,  private_key BLOB,CHECK (( CASE WHEN key_name IS NULL THEN 0 ELSE 1 END+ CASE WHEN private_key IS NULL THEN 0 ELSE 1 END) = 1),  UNIQUE (host, token_binding_type, key_entry_type, network_isolation_key)) | Microsoft.TokenBinding.KeyEntryStore | last_used | crea is discarded. Only queries for TXT records or probe queries are supported. | The mDNS name generator service query is discarded. No registered names to respond. | Invalid IP address to create a name for | Received an external respo | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 1098432,
+          "context": "oken_binding_type INTEGER NOT NULL,  key_entry_type INTEGER NOT NULL,  network_isolation_key TEXT NOT NULL,  creation_time INTEGER NOT NULL,  key_name TEXT,  private_key BLOB,CHECK (( CASE WHEN key_name IS NULL THEN 0 ELSE 1 END+ CASE WHEN private_key IS NULL THEN 0 ELSE 1 END) = 1),  UNIQUE (host, token_binding_type, key_entry_type, network_isolation_key)) | Microsoft.TokenBinding.KeyEntryStore | last_used | crea is discarded. Only queries for TXT records or probe queries are supported. | The mDNS name generator service query is discarded. No registered names to respond. | Invalid IP address to create a name for | Received an external response for an owned record. | Received conflicting resolution for name:  | TXT RDATA  | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 1103910,
+          "context": "_entry_store.cc | LoadKeyEntriesForType | LoadAndNotifyInBackground | SELECT host, token_binding_type, network_isolation_key, creation_time, key_name FROM key_entries | SELECT host, token_binding_type, network_isolation_key, creation_time, private_key FROM key_entries | DELETE FROM key_entries WHERE host=? AND token_binding_type=? AND key_entry_type=? AND network_isolation_key=? | CompleteLoadInForeground | INSERT INTO key_entries (host, token_binding_type, key_entry_type, network_isolation_key, creation_time, key_name) VALUES (?,?,?,?,?,?) | INSERT INTO key_entries (host, token_binding_type, key_entry_type, network_isolation_key, creation_time, private_key) VALUES (?,?,?,?,?,?) | CREATE TABLE key_entries (  host TEXT NOT | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 1104324,
+          "context": "ERT INTO key_entries (host, token_binding_type, key_entry_type, network_isolation_key, creation_time, key_name) VALUES (?,?,?,?,?,?) | INSERT INTO key_entries (host, token_binding_type, key_entry_type, network_isolation_key, creation_time, private_key) VALUES (?,?,?,?,?,?) | CREATE TABLE key_entries (  host TEXT NOT NULL,  token_binding_type INTEGER NOT NULL,  key_entry_type INTEGER NOT NULL,  network_isolation_key TEXT NOT NULL,  creation_time INTEGER NOT NULL,  key_name TEXT,  private_key BLOB,CHECK (( CASE WHEN key_name IS NULL THEN 0 ELSE 1 END+ CASE WHEN private_key IS NULL THEN 0 ELSE 1 END) = 1),  UNIQUE (host, token_binding_type, key_entry_type, network_isolation_key)) | Microsoft.TokenBinding.KeyEntryStore | last | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 1104568,
+          "context": "ate_key) VALUES (?,?,?,?,?,?) | CREATE TABLE key_entries (  host TEXT NOT NULL,  token_binding_type INTEGER NOT NULL,  key_entry_type INTEGER NOT NULL,  network_isolation_key TEXT NOT NULL,  creation_time INTEGER NOT NULL,  key_name TEXT,  private_key BLOB,CHECK (( CASE WHEN key_name IS NULL THEN 0 ELSE 1 END+ CASE WHEN private_key IS NULL THEN 0 ELSE 1 END) = 1),  UNIQUE (host, token_binding_type, key_entry_type, network_isolation_key)) | Microsoft.TokenBinding.KeyEntryStore | last_used | crea is discarded. Only queries for TXT records or probe queries are supported. | The mDNS name generator service query is discarded. No registered names to respond. | Invalid IP address to create a name for | Received an external respo | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 1104650,
+          "context": "oken_binding_type INTEGER NOT NULL,  key_entry_type INTEGER NOT NULL,  network_isolation_key TEXT NOT NULL,  creation_time INTEGER NOT NULL,  key_name TEXT,  private_key BLOB,CHECK (( CASE WHEN key_name IS NULL THEN 0 ELSE 1 END+ CASE WHEN private_key IS NULL THEN 0 ELSE 1 END) = 1),  UNIQUE (host, token_binding_type, key_entry_type, network_isolation_key)) | Microsoft.TokenBinding.KeyEntryStore | last_used | crea is discarded. Only queries for TXT records or probe queries are supported. | The mDNS name generator service query is discarded. No registered names to respond. | Invalid IP address to create a name for | Received an external response for an owned record. | Received conflicting resolution for name:  | TXT RDATA  | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 1111737,
+          "context": "_entry_store.cc | LoadKeyEntriesForType | LoadAndNotifyInBackground | SELECT host, token_binding_type, network_isolation_key, creation_time, key_name FROM key_entries | SELECT host, token_binding_type, network_isolation_key, creation_time, private_key FROM key_entries | DELETE FROM key_entries WHERE host=? AND token_binding_type=? AND key_entry_type=? AND network_isolation_key=? | CompleteLoadInForeground | INSERT INTO key_entries (host, token_binding_type, key_entry_type, network_isolation_key, creation_time, key_name) VALUES (?,?,?,?,?,?) | INSERT INTO key_entries (host, token_binding_type, key_entry_type, network_isolation_key, creation_time, private_key) VALUES (?,?,?,?,?,?) | CREATE TABLE key_entries (  host TEXT NOT | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 1112151,
+          "context": "ERT INTO key_entries (host, token_binding_type, key_entry_type, network_isolation_key, creation_time, key_name) VALUES (?,?,?,?,?,?) | INSERT INTO key_entries (host, token_binding_type, key_entry_type, network_isolation_key, creation_time, private_key) VALUES (?,?,?,?,?,?) | CREATE TABLE key_entries (  host TEXT NOT NULL,  token_binding_type INTEGER NOT NULL,  key_entry_type INTEGER NOT NULL,  network_isolation_key TEXT NOT NULL,  creation_time INTEGER NOT NULL,  key_name TEXT,  private_key BLOB,CHECK (( CASE WHEN key_name IS NULL THEN 0 ELSE 1 END+ CASE WHEN private_key IS NULL THEN 0 ELSE 1 END) = 1),  UNIQUE (host, token_binding_type, key_entry_type, network_isolation_key)) | Microsoft.TokenBinding.KeyEntryStore | last | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 1112395,
+          "context": "ate_key) VALUES (?,?,?,?,?,?) | CREATE TABLE key_entries (  host TEXT NOT NULL,  token_binding_type INTEGER NOT NULL,  key_entry_type INTEGER NOT NULL,  network_isolation_key TEXT NOT NULL,  creation_time INTEGER NOT NULL,  key_name TEXT,  private_key BLOB,CHECK (( CASE WHEN key_name IS NULL THEN 0 ELSE 1 END+ CASE WHEN private_key IS NULL THEN 0 ELSE 1 END) = 1),  UNIQUE (host, token_binding_type, key_entry_type, network_isolation_key)) | Microsoft.TokenBinding.KeyEntryStore | last_used | crea is discarded. Only queries for TXT records or probe queries are supported. | The mDNS name generator service query is discarded. No registered names to respond. | Invalid IP address to create a name for | Received an external respo | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 1112477,
+          "context": "oken_binding_type INTEGER NOT NULL,  key_entry_type INTEGER NOT NULL,  network_isolation_key TEXT NOT NULL,  creation_time INTEGER NOT NULL,  key_name TEXT,  private_key BLOB,CHECK (( CASE WHEN key_name IS NULL THEN 0 ELSE 1 END+ CASE WHEN private_key IS NULL THEN 0 ELSE 1 END) = 1),  UNIQUE (host, token_binding_type, key_entry_type, network_isolation_key)) | Microsoft.TokenBinding.KeyEntryStore | last_used | crea is discarded. Only queries for TXT records or probe queries are supported. | The mDNS name generator service query is discarded. No registered names to respond. | Invalid IP address to create a name for | Received an external response for an owned record. | Received conflicting resolution for name:  | TXT RDATA  | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 1119577,
+          "context": "_entry_store.cc | LoadKeyEntriesForType | LoadAndNotifyInBackground | SELECT host, token_binding_type, network_isolation_key, creation_time, key_name FROM key_entries | SELECT host, token_binding_type, network_isolation_key, creation_time, private_key FROM key_entries | DELETE FROM key_entries WHERE host=? AND token_binding_type=? AND key_entry_type=? AND network_isolation_key=? | CompleteLoadInForeground | INSERT INTO key_entries (host, token_binding_type, key_entry_type, network_isolation_key, creation_time, key_name) VALUES (?,?,?,?,?,?) | INSERT INTO key_entries (host, token_binding_type, key_entry_type, network_isolation_key, creation_time, private_key) VALUES (?,?,?,?,?,?) | CREATE TABLE key_entries (  host TEXT NOT | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 1119991,
+          "context": "ERT INTO key_entries (host, token_binding_type, key_entry_type, network_isolation_key, creation_time, key_name) VALUES (?,?,?,?,?,?) | INSERT INTO key_entries (host, token_binding_type, key_entry_type, network_isolation_key, creation_time, private_key) VALUES (?,?,?,?,?,?) | CREATE TABLE key_entries (  host TEXT NOT NULL,  token_binding_type INTEGER NOT NULL,  key_entry_type INTEGER NOT NULL,  network_isolation_key TEXT NOT NULL,  creation_time INTEGER NOT NULL,  key_name TEXT,  private_key BLOB,CHECK (( CASE WHEN key_name IS NULL THEN 0 ELSE 1 END+ CASE WHEN private_key IS NULL THEN 0 ELSE 1 END) = 1),  UNIQUE (host, token_binding_type, key_entry_type, network_isolation_key)) | Microsoft.TokenBinding.KeyEntryStore | last | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 1120235,
+          "context": "ate_key) VALUES (?,?,?,?,?,?) | CREATE TABLE key_entries (  host TEXT NOT NULL,  token_binding_type INTEGER NOT NULL,  key_entry_type INTEGER NOT NULL,  network_isolation_key TEXT NOT NULL,  creation_time INTEGER NOT NULL,  key_name TEXT,  private_key BLOB,CHECK (( CASE WHEN key_name IS NULL THEN 0 ELSE 1 END+ CASE WHEN private_key IS NULL THEN 0 ELSE 1 END) = 1),  UNIQUE (host, token_binding_type, key_entry_type, network_isolation_key)) | Microsoft.TokenBinding.KeyEntryStore | last_used | crea is discarded. Only queries for TXT records or probe queries are supported. | The mDNS name generator service query is discarded. No registered names to respond. | Invalid IP address to create a name for | Received an external respo | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 1120317,
+          "context": "oken_binding_type INTEGER NOT NULL,  key_entry_type INTEGER NOT NULL,  network_isolation_key TEXT NOT NULL,  creation_time INTEGER NOT NULL,  key_name TEXT,  private_key BLOB,CHECK (( CASE WHEN key_name IS NULL THEN 0 ELSE 1 END+ CASE WHEN private_key IS NULL THEN 0 ELSE 1 END) = 1),  UNIQUE (host, token_binding_type, key_entry_type, network_isolation_key)) | Microsoft.TokenBinding.KeyEntryStore | last_used | crea is discarded. Only queries for TXT records or probe queries are supported. | The mDNS name generator service query is discarded. No registered names to respond. | Invalid IP address to create a name for | Received an external response for an owned record. | Received conflicting resolution for name:  | TXT RDATA  | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 1126268,
+          "context": "_entry_store.cc | LoadKeyEntriesForType | LoadAndNotifyInBackground | SELECT host, token_binding_type, network_isolation_key, creation_time, key_name FROM key_entries | SELECT host, token_binding_type, network_isolation_key, creation_time, private_key FROM key_entries | DELETE FROM key_entries WHERE host=? AND token_binding_type=? AND key_entry_type=? AND network_isolation_key=? | CompleteLoadInForeground | INSERT INTO key_entries (host, token_binding_type, key_entry_type, network_isolation_key, creation_time, key_name) VALUES (?,?,?,?,?,?) | INSERT INTO key_entries (host, token_binding_type, key_entry_type, network_isolation_key, creation_time, private_key) VALUES (?,?,?,?,?,?) | CREATE TABLE key_entries (  host TEXT NOT | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 1126682,
+          "context": "ERT INTO key_entries (host, token_binding_type, key_entry_type, network_isolation_key, creation_time, key_name) VALUES (?,?,?,?,?,?) | INSERT INTO key_entries (host, token_binding_type, key_entry_type, network_isolation_key, creation_time, private_key) VALUES (?,?,?,?,?,?) | CREATE TABLE key_entries (  host TEXT NOT NULL,  token_binding_type INTEGER NOT NULL,  key_entry_type INTEGER NOT NULL,  network_isolation_key TEXT NOT NULL,  creation_time INTEGER NOT NULL,  key_name TEXT,  private_key BLOB,CHECK (( CASE WHEN key_name IS NULL THEN 0 ELSE 1 END+ CASE WHEN private_key IS NULL THEN 0 ELSE 1 END) = 1),  UNIQUE (host, token_binding_type, key_entry_type, network_isolation_key)) | Microsoft.TokenBinding.KeyEntryStore | last | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 1126926,
+          "context": "ate_key) VALUES (?,?,?,?,?,?) | CREATE TABLE key_entries (  host TEXT NOT NULL,  token_binding_type INTEGER NOT NULL,  key_entry_type INTEGER NOT NULL,  network_isolation_key TEXT NOT NULL,  creation_time INTEGER NOT NULL,  key_name TEXT,  private_key BLOB,CHECK (( CASE WHEN key_name IS NULL THEN 0 ELSE 1 END+ CASE WHEN private_key IS NULL THEN 0 ELSE 1 END) = 1),  UNIQUE (host, token_binding_type, key_entry_type, network_isolation_key)) | Microsoft.TokenBinding.KeyEntryStore | last_used | crea is discarded. Only queries for TXT records or probe queries are supported. | The mDNS name generator service query is discarded. No registered names to respond. | Invalid IP address to create a name for | Received an external respo | "
+        },
+        {
+          "needle": "private_key",
+          "encoding": "ascii",
+          "offset": 1127008,
+          "context": "oken_binding_type INTEGER NOT NULL,  key_entry_type INTEGER NOT NULL,  network_isolation_key TEXT NOT NULL,  creation_time INTEGER NOT NULL,  key_name TEXT,  private_key BLOB,CHECK (( CASE WHEN key_name IS NULL THEN 0 ELSE 1 END+ CASE WHEN private_key IS NULL THEN 0 ELSE 1 END) = 1),  UNIQUE (host, token_binding_type, key_entry_type, network_isolation_key)) | Microsoft.TokenBinding.KeyEntryStore | last_used | crea is discarded. Only queries for TXT records or probe queries are supported. | The mDNS name generator service query is discarded. No registered names to respond. | Invalid IP address to create a name for | Received an external response for an owned record. | Received conflicting resolution for name:  | TXT RDATA  | "
+        }
+      ]
+    }
+  ],
+  "total_hits": 53
+}

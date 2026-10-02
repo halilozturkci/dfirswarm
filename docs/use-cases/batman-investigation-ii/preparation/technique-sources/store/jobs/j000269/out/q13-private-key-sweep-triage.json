@@ -1,0 +1,298 @@
+{
+  "source": "job:j000241/create-table-ranked.json",
+  "bytes": 1223632,
+  "parsed_rows": 1344,
+  "literal_counts": {
+    "private_key": 30,
+    "client_email": 0,
+    "name_client": 0,
+    "infobreakage_dbkey": 0
+  },
+  "candidate_value_pattern_counts": {
+    "assignment_after_private_key": 0,
+    "assignment_after_client_email": 0,
+    "assignment_after_name_client": 0,
+    "pem_private_key_header": 0,
+    "base64_or_hex_blob_64plus": 7
+  },
+  "candidate_value_pattern_locations": {
+    "assignment_after_private_key": [],
+    "assignment_after_client_email": [],
+    "assignment_after_name_client": [],
+    "pem_private_key_header": [],
+    "base64_or_hex_blob_64plus": [
+      {
+        "path": "[11]/context",
+        "string_offset": 4062
+      },
+      {
+        "path": "[76]/context",
+        "string_offset": 1794
+      },
+      {
+        "path": "[76]/context",
+        "string_offset": 2000
+      },
+      {
+        "path": "[77]/context",
+        "string_offset": 1794
+      },
+      {
+        "path": "[77]/context",
+        "string_offset": 2000
+      },
+      {
+        "path": "[78]/context",
+        "string_offset": 1286
+      },
+      {
+        "path": "[78]/context",
+        "string_offset": 1492
+      }
+    ]
+  },
+  "private_key_occurrences": 30,
+  "private_key_context_flags": [
+    {
+      "path": "[132]/context",
+      "offset": 7327,
+      "adjacent_assignment": false,
+      "adjacent_pem": false,
+      "context_has_requested_name_label": false,
+      "context_has_requested_email_label": false
+    },
+    {
+      "path": "[133]/context",
+      "offset": 5726,
+      "adjacent_assignment": false,
+      "adjacent_pem": false,
+      "context_has_requested_name_label": false,
+      "context_has_requested_email_label": false
+    },
+    {
+      "path": "[133]/context",
+      "offset": 6128,
+      "adjacent_assignment": false,
+      "adjacent_pem": false,
+      "context_has_requested_name_label": false,
+      "context_has_requested_email_label": false
+    },
+    {
+      "path": "[134]/context",
+      "offset": 5530,
+      "adjacent_assignment": false,
+      "adjacent_pem": false,
+      "context_has_requested_name_label": false,
+      "context_has_requested_email_label": false
+    },
+    {
+      "path": "[134]/context",
+      "offset": 5932,
+      "adjacent_assignment": false,
+      "adjacent_pem": false,
+      "context_has_requested_name_label": false,
+      "context_has_requested_email_label": false
+    },
+    {
+      "path": "[135]/context",
+      "offset": 5002,
+      "adjacent_assignment": false,
+      "adjacent_pem": false,
+      "context_has_requested_name_label": false,
+      "context_has_requested_email_label": false
+    },
+    {
+      "path": "[135]/context",
+      "offset": 5404,
+      "adjacent_assignment": false,
+      "adjacent_pem": false,
+      "context_has_requested_name_label": false,
+      "context_has_requested_email_label": false
+    },
+    {
+      "path": "[136]/context",
+      "offset": 1398,
+      "adjacent_assignment": false,
+      "adjacent_pem": false,
+      "context_has_requested_name_label": false,
+      "context_has_requested_email_label": false
+    },
+    {
+      "path": "[137]/context",
+      "offset": 1119,
+      "adjacent_assignment": false,
+      "adjacent_pem": false,
+      "context_has_requested_name_label": false,
+      "context_has_requested_email_label": false
+    },
+    {
+      "path": "[138]/context",
+      "offset": 76,
+      "adjacent_assignment": false,
+      "adjacent_pem": false,
+      "context_has_requested_name_label": false,
+      "context_has_requested_email_label": false
+    },
+    {
+      "path": "[294]/context",
+      "offset": 5111,
+      "adjacent_assignment": false,
+      "adjacent_pem": false,
+      "context_has_requested_name_label": false,
+      "context_has_requested_email_label": false
+    },
+    {
+      "path": "[294]/context",
+      "offset": 5525,
+      "adjacent_assignment": false,
+      "adjacent_pem": false,
+      "context_has_requested_name_label": false,
+      "context_has_requested_email_label": false
+    },
+    {
+      "path": "[294]/context",
+      "offset": 5769,
+      "adjacent_assignment": false,
+      "adjacent_pem": false,
+      "context_has_requested_name_label": false,
+      "context_has_requested_email_label": false
+    },
+    {
+      "path": "[294]/context",
+      "offset": 5851,
+      "adjacent_assignment": false,
+      "adjacent_pem": false,
+      "context_has_requested_name_label": false,
+      "context_has_requested_email_label": false
+    },
+    {
+      "path": "[295]/context",
+      "offset": 3517,
+      "adjacent_assignment": false,
+      "adjacent_pem": false,
+      "context_has_requested_name_label": false,
+      "context_has_requested_email_label": false
+    },
+    {
+      "path": "[295]/context",
+      "offset": 3931,
+      "adjacent_assignment": false,
+      "adjacent_pem": false,
+      "context_has_requested_name_label": false,
+      "context_has_requested_email_label": false
+    },
+    {
+      "path": "[295]/context",
+      "offset": 4175,
+      "adjacent_assignment": false,
+      "adjacent_pem": false,
+      "context_has_requested_name_label": false,
+      "context_has_requested_email_label": false
+    },
+    {
+      "path": "[295]/context",
+      "offset": 4257,
+      "adjacent_assignment": false,
+      "adjacent_pem": false,
+      "context_has_requested_name_label": false,
+      "context_has_requested_email_label": false
+    },
+    {
+      "path": "[296]/context",
+      "offset": 3074,
+      "adjacent_assignment": false,
+      "adjacent_pem": false,
+      "context_has_requested_name_label": false,
+      "context_has_requested_email_label": false
+    },
+    {
+      "path": "[296]/context",
+      "offset": 3488,
+      "adjacent_assignment": false,
+      "adjacent_pem": false,
+      "context_has_requested_name_label": false,
+      "context_has_requested_email_label": false
+    },
+    {
+      "path": "[296]/context",
+      "offset": 3732,
+      "adjacent_assignment": false,
+      "adjacent_pem": false,
+      "context_has_requested_name_label": false,
+      "context_has_requested_email_label": false
+    },
+    {
+      "path": "[296]/context",
+      "offset": 3814,
+      "adjacent_assignment": false,
+      "adjacent_pem": false,
+      "context_has_requested_name_label": false,
+      "context_has_requested_email_label": false
+    },
+    {
+      "path": "[297]/context",
+      "offset": 2752,
+      "adjacent_assignment": false,
+      "adjacent_pem": false,
+      "context_has_requested_name_label": false,
+      "context_has_requested_email_label": false
+    },
+    {
+      "path": "[297]/context",
+      "offset": 3166,
+      "adjacent_assignment": false,
+      "adjacent_pem": false,
+      "context_has_requested_name_label": false,
+      "context_has_requested_email_label": false
+    },
+    {
+      "path": "[297]/context",
+      "offset": 3410,
+      "adjacent_assignment": false,
+      "adjacent_pem": false,
+      "context_has_requested_name_label": false,
+      "context_has_requested_email_label": false
+    },
+    {
+      "path": "[297]/context",
+      "offset": 3492,
+      "adjacent_assignment": false,
+      "adjacent_pem": false,
+      "context_has_requested_name_label": false,
+      "context_has_requested_email_label": false
+    },
+    {
+      "path": "[298]/context",
+      "offset": 1603,
+      "adjacent_assignment": false,
+      "adjacent_pem": false,
+      "context_has_requested_name_label": false,
+      "context_has_requested_email_label": false
+    },
+    {
+      "path": "[298]/context",
+      "offset": 2017,
+      "adjacent_assignment": false,
+      "adjacent_pem": false,
+      "context_has_requested_name_label": false,
+      "context_has_requested_email_label": false
+    },
+    {
+      "path": "[298]/context",
+      "offset": 2261,
+      "adjacent_assignment": false,
+      "adjacent_pem": false,
+      "context_has_requested_name_label": false,
+      "context_has_requested_email_label": false
+    },
+    {
+      "path": "[298]/context",
+      "offset": 2343,
+      "adjacent_assignment": false,
+      "adjacent_pem": false,
+      "context_has_requested_name_label": false,
+      "context_has_requested_email_label": false
+    }
+  ],
+  "interpretation_limit": "Only reports string/format indicators in the search-result JSON; it does not parse encrypted DBX or identify cryptographic values."
+}

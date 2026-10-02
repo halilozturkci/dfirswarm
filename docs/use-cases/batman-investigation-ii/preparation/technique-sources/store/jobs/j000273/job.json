@@ -1,0 +1,195 @@
+{
+  "id": "j000273",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000270",
+      "import:j000141/20261002100001411-chunk_needles-ifyo.out.log",
+      "job:j000001",
+      "job:j000006",
+      "job:j000008",
+      "job:j000013",
+      "job:j000018",
+      "job:j000034",
+      "job:j000049",
+      "job:j000053",
+      "job:j000079",
+      "job:j000092",
+      "job:j000067/confidential.eml",
+      "job:j000249/metrics-field-audit.json",
+      "job:j000271/otr-file-route.json",
+      "job:j000272/stdout.log"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "independent": true,
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport os,json\nfrom email.parser import BytesParser\nfrom email import policy\nfrom pathlib import Path\ns=json.load(open('store/jobs/j000270/out/coverage-sweep-hit-contexts-ci.json'))\nr={'objects':[],'verified_hits':0,'mismatches':[]}\nfor obj in s['objects']:\n p=obj['path'];b=Path(p).read_bytes(); rows=[]\n for h in obj['hits']:\n  n=h['needle'].encode('utf-16le' if h['encoding']=='utf16le' else 'ascii');i=h['offset'];ok=b[i:i+len(n)].lower()==n.lower()\n  r['verified_hits']+=int(ok)\n  if not ok:r['mismatches'].append([p,i,h['encoding']])\n  rows.append({'needle':h['needle'],'offset':i,'encoding':h['encoding'],'context':h['context']})\n r['objects'].append({'path':p,'size_verified':len(b)==obj['size'],'hits':rows})\nm=BytesParser(policy=policy.default).parsebytes(Path('store/jobs/j000067/out/confidential.eml').read_bytes())\nr['mail_body']=m.get_body(preferencelist=('plain',)).get_content()\nr['metrics']=json.load(open('store/jobs/j000249/out/metrics-field-audit.json'))\nr['otr_file_route']=json.load(open('store/jobs/j000271/out/otr-file-route.json'))\nr['otr_marker_output']=Path('store/jobs/j000272/stdout.log').read_text()\njson.dump(r,open(os.environ['OUT']+'/review.json','w'),indent=2)\nprint('objects',len(r['objects']),'verified_hits',r['verified_hits'],'mismatches',r['mismatches'])\nfor obj in r['objects']:\n print(obj['path'],len(obj['hits']),obj['size_verified'])\nPY"
+  },
+  "requester": {
+    "agent": "s42120100",
+    "name": "Contact provenance",
+    "doing": "Investigate Q1 and Q2 contact/disguise communications and sent-file identity; model gpt-6.1-sol."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T11:51:42.730Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000001/out",
+        "dir": true
+      },
+      {
+        "path": "store/jobs/j000006/out",
+        "dir": true
+      },
+      {
+        "path": "store/jobs/j000008/out",
+        "dir": true
+      },
+      {
+        "path": "store/jobs/j000013/out",
+        "dir": true
+      },
+      {
+        "path": "store/jobs/j000018/out",
+        "dir": true
+      },
+      {
+        "path": "store/jobs/j000034/out",
+        "dir": true
+      },
+      {
+        "path": "store/jobs/j000049/out",
+        "dir": true
+      },
+      {
+        "path": "store/jobs/j000053/out",
+        "dir": true
+      },
+      {
+        "path": "store/jobs/j000079/out",
+        "dir": true
+      },
+      {
+        "path": "store/jobs/j000092/out",
+        "dir": true
+      },
+      {
+        "path": "store/jobs/j000270/out",
+        "dir": true
+      },
+      {
+        "path": "store/jobs/j000272/stdout.log"
+      },
+      {
+        "path": "store/jobs/j000067/out/confidential.eml",
+        "sha256": "0b08ee11401aded668e95411b8213269705c7f1db29244e1d20a528250b33a4e"
+      },
+      {
+        "path": "store/jobs/j000249/out/metrics-field-audit.json",
+        "sha256": "7fd6ad5060ded967d357b41ec217fcde2a732e8b55d84c245ba611dd42a61f5c"
+      },
+      {
+        "path": "store/jobs/j000271/out/otr-file-route.json",
+        "sha256": "8ccc5cfcc0a23fedd22435b371995e8259da912c917d18cb1d11131b3984ee59"
+      },
+      {
+        "path": "store/imports/j000141/out/20261002100001411-chunk_needles-ifyo.out.log",
+        "sha256": "d6a1526bfd36998c5fe935b27b65533b494ba147e045a65399415c39a7112b26"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000273-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T11:51:44.312Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000270/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000001/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000006/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000008/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000018/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000034/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000049/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000273",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 16,
+    "files": 396,
+    "bound": 8,
+    "manifest": "store/jobs/j000273/scope.1.json",
+    "manifest_sha256": "1249a2150badf175a2a034e382abd1c4f6ea157c37fb55ba5e15c6152f4ad921"
+  },
+  "network": "none",
+  "exit": 1,
+  "status": "failed",
+  "reason": "exit 1",
+  "finished_at": "2026-10-02T11:51:45.644Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "1be57561cd27de3edb939ec7309776ee4bec5adf2f00af90993be369cbe2f6bf",
+    "files": 0,
+    "bytes": 0,
+    "rejected": 0,
+    "path": "store/jobs/j000273/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

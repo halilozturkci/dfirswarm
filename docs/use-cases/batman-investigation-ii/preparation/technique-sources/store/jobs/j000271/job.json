@@ -1,0 +1,97 @@
+{
+  "id": "j000271",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000140/20261002100317614-bash-ww29.out.log",
+      "job:j000015/filescan.txt",
+      "job:j000130/file-list.tsv"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport json,os,re\npaths=['store/jobs/j000140/out/20261002100317614-bash-ww29.out.log','store/jobs/j000015/out/filescan.txt','store/jobs/j000130/out/file-list.tsv']\nr={}\nfor p in paths:\n b=open(p,'rb').read(); hits=[]\n for needle in [b'otr.private_key',b'otr.fingerprints',b'otr.instance_tags']:\n  for m in re.finditer(re.escape(needle),b,re.I):\n   hits.append({'needle':needle.decode(),'offset':m.start(),'context':b[max(0,m.start()-300):m.end()+300].decode('utf-8','replace')})\n r[p]={'size':len(b),'hits':hits}\nopen(os.environ['OUT']+'/otr-file-route.json','w').write(json.dumps(r,indent=2));print(json.dumps(r,indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120103",
+    "name": "Wallet history",
+    "doing": "Investigating Q7 and Q8: password-protected archive and original file hashes; avoiding peers' wallet work."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T11:45:14.247Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000140/out/20261002100317614-bash-ww29.out.log",
+        "sha256": "093012438af60e2f2db0970982eccf5b4b2b0c7ed10d968f7bf4edcaf2884506"
+      },
+      {
+        "path": "store/jobs/j000130/out/file-list.tsv",
+        "sha256": "0c007727b1095a99bf2eaaeaf619679cafbe66e66791c7782a27f7c2de60a2ba"
+      },
+      {
+        "path": "store/jobs/j000015/out/filescan.txt",
+        "sha256": "fc34814d15a1ce92e7701e18fd2e2cf707d384bf250cd204089a7b70ac9d1220"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000271-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T11:45:14.320Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000271",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 3,
+    "files": 3,
+    "bound": 0,
+    "manifest": "store/jobs/j000271/scope.1.json",
+    "manifest_sha256": "e69ada6ad84377f32f79ae657f00e2978120a122a8037a117922ed4e587385f7"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T11:45:15.105Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "53ffd6638bfc72d55763054ff7315b5c4ff92204e47118e2291d4981c05c590a",
+    "files": 1,
+    "bytes": 2100,
+    "rejected": 0,
+    "path": "store/jobs/j000271/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

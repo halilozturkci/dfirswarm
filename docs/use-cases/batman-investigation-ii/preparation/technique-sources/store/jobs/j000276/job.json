@@ -1,0 +1,184 @@
+{
+  "id": "j000276",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000270",
+      "import:j000141/20261002100001411-chunk_needles-ifyo.out.log",
+      "job:j000001",
+      "job:j000006",
+      "job:j000008",
+      "job:j000013",
+      "job:j000018",
+      "job:j000034",
+      "job:j000034/stdout.log",
+      "job:j000049",
+      "job:j000053",
+      "job:j000079",
+      "job:j000092",
+      "job:j000241"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "independent": true,
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport json,os,pathlib\ns=json.load(open('store/jobs/j000270/out/coverage-sweep-hit-contexts-ci.json'));r=[]\nfor o in s['objects']:\n b=pathlib.Path(o['path']).read_bytes();checks=[]\n for h in o['hits']:\n  n=h['needle'].encode('utf-16le' if h['encoding']=='utf16le' else 'ascii');i=h['offset'];checks.append(b[i:i+len(n)].lower()==n.lower())\n r.append({'path':o['path'],'hits':len(checks),'all_hit_bytes_verify':all(checks),'size_verifies':len(b)==o['size']})\njson.dump(r,open(os.environ['OUT']+'/hit-replay.json','w'),indent=2)\nprint(json.dumps(r,indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120100",
+    "name": "Contact provenance",
+    "doing": "Investigate Q1 and Q2 contact/disguise communications and sent-file identity; model gpt-6.1-sol."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T11:52:50.148Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000001/out",
+        "dir": true
+      },
+      {
+        "path": "store/jobs/j000006/out",
+        "dir": true
+      },
+      {
+        "path": "store/jobs/j000008/out",
+        "dir": true
+      },
+      {
+        "path": "store/jobs/j000013/out",
+        "dir": true
+      },
+      {
+        "path": "store/jobs/j000018/out",
+        "dir": true
+      },
+      {
+        "path": "store/jobs/j000034/out",
+        "dir": true
+      },
+      {
+        "path": "store/jobs/j000049/out",
+        "dir": true
+      },
+      {
+        "path": "store/jobs/j000053/out",
+        "dir": true
+      },
+      {
+        "path": "store/jobs/j000079/out",
+        "dir": true
+      },
+      {
+        "path": "store/jobs/j000092/out",
+        "dir": true
+      },
+      {
+        "path": "store/jobs/j000241/out",
+        "dir": true
+      },
+      {
+        "path": "store/jobs/j000270/out",
+        "dir": true
+      },
+      {
+        "path": "store/jobs/j000034/stdout.log"
+      },
+      {
+        "path": "store/imports/j000141/out/20261002100001411-chunk_needles-ifyo.out.log",
+        "sha256": "d6a1526bfd36998c5fe935b27b65533b494ba147e045a65399415c39a7112b26"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000276-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T11:52:51.670Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000270/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000001/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000006/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000008/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000018/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000034/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000049/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000276",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 14,
+    "files": 395,
+    "bound": 8,
+    "manifest": "store/jobs/j000276/scope.1.json",
+    "manifest_sha256": "06d01b2979db47e3cba4171baa8656e3eeff0fc60294dc2c3c09eda75c640eea"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T11:52:54.027Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "278778eaf3735bf702b9b8a1b071b1ca1b2f8ef7987e459492cd603a3af4206a",
+    "files": 1,
+    "bytes": 2941,
+    "rejected": 0,
+    "path": "store/jobs/j000276/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

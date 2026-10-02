@@ -1,0 +1,114 @@
+{
+  "id": "j000274",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000265/j139-j140-private-key-contexts.json",
+      "job:j000265/stdout.log",
+      "job:j000268/coverage-sweep-hit-contexts.json",
+      "job:j000269/q13-private-key-sweep-triage.json",
+      "job:j000269/stdout.log",
+      "job:j000271/otr-file-route.json",
+      "job:j000271/stdout.log"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nfrom pathlib import Path\nimport re, json\nobjs=[('job:j000265/j139-j140-private-key-contexts.json','store/jobs/j000265/out/j139-j140-private-key-contexts.json',['private_key']),('job:j000265/stdout.log','store/jobs/j000265/stdout.log',['private_key']),('job:j000268/coverage-sweep-hit-contexts.json','store/jobs/j000268/out/coverage-sweep-hit-contexts.json',['client_email']),('job:j000269/q13-private-key-sweep-triage.json','store/jobs/j000269/out/q13-private-key-sweep-triage.json',['infobreakage_dbkey','client_email','name_client']),('job:j000269/stdout.log','store/jobs/j000269/stdout.log',['infobreakage_dbkey','client_email','name_client']),('job:j000271/otr-file-route.json','store/jobs/j000271/out/otr-file-route.json',['private_key']),('job:j000271/stdout.log','store/jobs/j000271/stdout.log',['private_key'])]\nout=[]\nfor ref,p,terms in objs:\n b=Path(p).read_bytes(); rec={'ref':ref,'size':len(b),'matches':[]}\n for term in terms:\n  needle=term.encode().lower(); pos=0\n  while (i:=b.lower().find(needle,pos))>=0:\n   lo=max(0,i-90); hi=min(len(b),i+len(needle)+120)\n   raw=b[lo:hi]\n   txt=raw.decode('utf8','replace')\n   # suppress accidental secret/private-key material after values in JSON/text\n   txt=re.sub(r'(?i)(private_key.{0,45}?[:=].{0,30}?)([^,\\\\\"\\s}]{10,})',r'\\1[REDACTED]',txt)\n   rec['matches'].append({'needle':term,'offset':i,'context':txt})\n   pos=i+len(needle)\n rec['count']=len(rec['matches']);out.append(rec)\nprint(json.dumps(out,ensure_ascii=True))\nPY"
+  },
+  "requester": {
+    "agent": "s42120107",
+    "name": "Memory triage",
+    "doing": "Examine the memory image for wallet/password-manager artifacts and claim questions 3–6 if available."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T11:52:06.697Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000265/stdout.log"
+      },
+      {
+        "path": "store/jobs/j000269/stdout.log"
+      },
+      {
+        "path": "store/jobs/j000271/stdout.log"
+      },
+      {
+        "path": "store/jobs/j000269/out/q13-private-key-sweep-triage.json",
+        "sha256": "7b15e7aadac26f77ad7a573fad5daa64d6aaa59d79ca8b693950ba53e2ba2315"
+      },
+      {
+        "path": "store/jobs/j000271/out/otr-file-route.json",
+        "sha256": "8ccc5cfcc0a23fedd22435b371995e8259da912c917d18cb1d11131b3984ee59"
+      },
+      {
+        "path": "store/jobs/j000268/out/coverage-sweep-hit-contexts.json",
+        "sha256": "aeda5dccbaef969ff3f66baff7a52f0ca2d30ef7ff5516e2e9a63f7c368c072c"
+      },
+      {
+        "path": "store/jobs/j000265/out/j139-j140-private-key-contexts.json",
+        "sha256": "b51a73abac4a60197c318d83ecc2854e7c0e3097a3533413546299044e99791c"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000274-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T11:52:06.813Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000274",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 7,
+    "files": 7,
+    "bound": 0,
+    "manifest": "store/jobs/j000274/scope.1.json",
+    "manifest_sha256": "b7a613c57b80be2a023ba34cd91411521c88608f2c9d83e0979b0010ed7d0653"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T11:52:07.521Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "caf2857e2a8bb186fba4a6f7d9130507ba68b553d116e3f47d13618889211da4",
+    "files": 0,
+    "bytes": 0,
+    "rejected": 0,
+    "path": "store/jobs/j000274/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

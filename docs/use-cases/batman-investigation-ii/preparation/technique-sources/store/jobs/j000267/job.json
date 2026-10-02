@@ -1,0 +1,92 @@
+{
+  "id": "j000267",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "import:j000139/20261002100314853-bash-ujat.out.log",
+      "import:j000140/20261002100317614-bash-ww29.out.log"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nfrom pathlib import Path\nimport re\nitems=[('store/imports/j000139/out/20261002100314853-bash-ujat.out.log',1473407),('store/imports/j000140/out/20261002100317614-bash-ww29.out.log',638095)]\nfor fn,off in items:\n b=Path(fn).read_bytes(); a=max(0,off-150); z=min(len(b),off+200); x=b[a:z].decode('utf-8','replace')\n # redact any values following private_key-like labels\n x=re.sub(r'(?i)(private_key.{0,50}?)([A-Za-z0-9_+/=-]{12,})',r'\\1[REDACTED]',x)\n print(f'{fn} size={len(b)} offset={off}\\n{x!r}\\n')\nPY"
+  },
+  "requester": {
+    "agent": "s42120107",
+    "name": "Memory triage",
+    "doing": "Examine the memory image for wallet/password-manager artifacts and claim questions 3–6 if available."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T11:42:00.979Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/imports/j000140/out/20261002100317614-bash-ww29.out.log",
+        "sha256": "093012438af60e2f2db0970982eccf5b4b2b0c7ed10d968f7bf4edcaf2884506"
+      },
+      {
+        "path": "store/imports/j000139/out/20261002100314853-bash-ujat.out.log",
+        "sha256": "752e8913336411d3deca45c2610df8242259fb71ef3c5a27b6b66bdb7212b7cd"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000267-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T11:42:01.047Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000267",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 2,
+    "files": 2,
+    "bound": 0,
+    "manifest": "store/jobs/j000267/scope.1.json",
+    "manifest_sha256": "dd300d849f40e829743a885ab5a6044e9221a303ae8f876009107e12aea6494d"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T11:42:01.767Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "d64b576514e7bdc617338164b37ad593d8d44c62fc9533bf1393bf425bc0536c",
+    "files": 0,
+    "bytes": 0,
+    "rejected": 0,
+    "path": "store/jobs/j000267/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

@@ -1,0 +1,21 @@
+objects 20 hits 157
+16 store/imports/j000141/out/20261002100001411-chunk_needles-ifyo.out.log
+20 store/jobs/j000001/out/wallet-ascii.txt
+23 store/jobs/j000001/out/wallet-utf16.txt
+2 store/jobs/j000006/out/communication_hits.jsonl
+1 store/jobs/j000008/out/archive-ascii.txt
+2 store/jobs/j000008/out/archive-utf16.txt
+1 store/jobs/j000013/out/file.0xab0b100c07e0.0xab0b1141dd20.ImageSectionObject.nss3.dll.img
+1 store/jobs/j000018/out/notepad-ascii.txt
+1 store/jobs/j000018/out/pid.5372.dmp
+9 store/jobs/j000034/stdout.log
+32 store/jobs/j000034/out/tool-output/ioc_scan-62747ce3f7081774.jsonl
+2 store/jobs/j000049/out/proc-ascii-hits.txt
+2 store/jobs/j000049/out/proc-ascii.txt
+2 store/jobs/j000049/out/proc/pid.3768.dmp
+9 store/jobs/j000053/out/file.0xab0b100da460.0xab0b152b95a0.ImageSectionObject.Exodus.exe.img
+1 store/jobs/j000079/out/7zg-ascii.txt
+1 store/jobs/j000079/out/pid.1576.dmp
+1 store/jobs/j000092/out/7zfm-ascii.txt
+1 store/jobs/j000092/out/pid.6628.dmp
+30 store/jobs/j000241/out/create-table-ranked.json
