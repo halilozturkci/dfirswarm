@@ -1,0 +1,23 @@
+{
+  "run": "s421201",
+  "at": "2026-10-02T15:16:18.904629+00:00",
+  "scope": "complete flagged originals preserved privately; selected public-tool prefix excludes whole flagged records",
+  "records": [
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/traces/events.jsonl",
+      "retained": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/sensitive-prefix-1513/trace-records/s42120108-2055.jsonl",
+      "bytes": 52656,
+      "sha256": "ea131923c283519c59c132e1a812f63ad6aacf98d94cf4faf08f95cf5a71334a",
+      "captured_at": "2026-10-02T15:16:18.904629+00:00",
+      "role": "CTF private-key fragment in a display projection; E356",
+      "selected_git_body_copy": false,
+      "retention": "complete byte-exact original body retained privately; no truncation/redaction",
+      "archive_status": "selected observer prefix only; final complete run/custody pending",
+      "agent": "s42120108",
+      "seq": 2055,
+      "ts": "2026-10-02T15:05:22.891Z",
+      "tool": "read",
+      "record_sha256": "e37e30151bbb86f1c0ed879bb6efe042a77cd0c108cde6840bb6f579ce390920"
+    }
+  ]
+}

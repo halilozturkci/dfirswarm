@@ -1,0 +1,57 @@
+[
+  {
+    "path": "inputs/chall/unknown.data",
+    "size": 36194,
+    "first16_hex": "8592cb714514c004e0b722d1b08c0000",
+    "matches": {}
+  },
+  {
+    "path": "store/jobs/j000052/out/contact.rar",
+    "size": 1732132,
+    "first16_hex": "526172211a070100bed1e9890d010509",
+    "matches": {}
+  },
+  {
+    "path": "store/jobs/j000067/out/confidential.eml",
+    "size": 2380097,
+    "first16_hex": "46726f6d202d2053756e204a616e2020",
+    "matches": {
+      "private key": {
+        "ascii_count": 1,
+        "utf16le_count": 0,
+        "ascii_offsets": [
+          5899
+        ],
+        "utf16le_offsets": []
+      }
+    }
+  },
+  {
+    "path": "store/jobs/j000067/out/archive/contact/unlink.db",
+    "size": 280,
+    "first16_hex": "3635393663636133b4d141f4fe2bc2a8",
+    "matches": {},
+    "sqlite_open_error": "DatabaseError: file is not a database"
+  },
+  {
+    "path": "store/jobs/j000067/out/archive/contact/instance1/unlink.db",
+    "size": 376,
+    "first16_hex": "3635393663636133789006fc1280b16f",
+    "matches": {},
+    "sqlite_open_error": "DatabaseError: file is not a database"
+  },
+  {
+    "path": "store/jobs/j000145/out/contact/contact/unlink.db",
+    "size": 280,
+    "first16_hex": "3635393663636133b4d141f4fe2bc2a8",
+    "matches": {},
+    "sqlite_open_error": "DatabaseError: file is not a database"
+  },
+  {
+    "path": "store/jobs/j000145/out/contact/contact/instance1/unlink.db",
+    "size": 376,
+    "first16_hex": "3635393663636133789006fc1280b16f",
+    "matches": {},
+    "sqlite_open_error": "DatabaseError: file is not a database"
+  }
+]

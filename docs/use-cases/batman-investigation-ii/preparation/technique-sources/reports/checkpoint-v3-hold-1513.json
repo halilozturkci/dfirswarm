@@ -1,0 +1,24 @@
+{
+  "run": "s421201",
+  "at": "2026-10-02T15:16:18.904629+00:00",
+  "source": "board 681 and original evidence-derived token comparison",
+  "snapshot": {
+    "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/work/checkpoint-report.md",
+    "retained": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/checkpoint-versions/d32bc2c97cd694d776c5a035911d950c95f33c5d3998df7e470c49f23b082484.md",
+    "bytes": 227900,
+    "sha256": "d32bc2c97cd694d776c5a035911d950c95f33c5d3998df7e470c49f23b082484",
+    "captured_at": "2026-10-02T15:14:46.183618+00:00",
+    "role": "complete checkpoint v3 put on HOLD by its author in board 681",
+    "source_mutable": true,
+    "byte_exact_at_capture": true,
+    "selected_git_body_copy": false,
+    "retention": "complete private immutable version; no truncation or redaction",
+    "archive_status": "selected observer prefix only; final complete run/custody pending"
+  },
+  "known_case_token_present_in_held_report": false,
+  "current_report_sha256": "d32bc2c97cd694d776c5a035911d950c95f33c5d3998df7e470c49f23b082484",
+  "known_case_token_present_in_current_report": false,
+  "token_value_emitted": false,
+  "scope": "Known-case-token probe was negative; exact whole E212 source prose comparison is positive. This is not a general secret-free assessment or proof of completed redaction.",
+  "full_sensitive_E212_prose_present_in_held_report": true
+}

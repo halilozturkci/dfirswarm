@@ -1,0 +1,131 @@
+{
+  "rows": [
+    {
+      "namespace": "fiatAuthKeyPair",
+      "algorithm_labels": {
+        "keyType": "ed25519"
+      },
+      "lengths": {
+        "privateKey": 64,
+        "publicKey": 32
+      }
+    },
+    {
+      "namespace": "abTestingKeyPair",
+      "algorithm_labels": {
+        "keyType": "ed25519"
+      },
+      "lengths": {
+        "privateKey": 64,
+        "publicKey": 32
+      }
+    },
+    {
+      "namespace": "exodusSharesEncryptionKeyPair",
+      "algorithm_labels": {
+        "curve": "x25519"
+      },
+      "lengths": {
+        "privateKey": 32,
+        "publicKey": 32
+      }
+    },
+    {
+      "namespace": "exodusSharesKeyPair",
+      "algorithm_labels": {
+        "keyType": "ed25519"
+      },
+      "lengths": {
+        "privateKey": 64,
+        "publicKey": 32
+      }
+    }
+  ],
+  "source_context_records_read": 293,
+  "source_checks": [
+    {
+      "physical_anchor": 483156133,
+      "needle": "fiatAuthKeyPair",
+      "bounded_window_bytes": 4000,
+      "allowlisted_tokens_present": [
+        "fiatAuthKeyPair",
+        "fiatOnramp"
+      ]
+    },
+    {
+      "physical_anchor": 891013463,
+      "needle": "fiatAuthKeyPair",
+      "bounded_window_bytes": 4000,
+      "allowlisted_tokens_present": [
+        "fiatAuthKeyPair",
+        "abTestingKeyPair",
+        "exodusSharesEncryptionKeyPair",
+        "exodusSharesKeyPair",
+        "fiatOnramp",
+        "fiatOnrampAuthKeyPair",
+        "abTesting"
+      ]
+    },
+    {
+      "physical_anchor": 2273951653,
+      "needle": "abTestingKeyPair",
+      "bounded_window_bytes": 4000,
+      "allowlisted_tokens_present": [
+        "abTestingKeyPair",
+        "abTesting"
+      ]
+    },
+    {
+      "physical_anchor": 2266747093,
+      "needle": "exodusSharesKeyPair",
+      "bounded_window_bytes": 4000,
+      "allowlisted_tokens_present": [
+        "exodusSharesKeyPair",
+        "makeSign",
+        "KeyPairProvider"
+      ]
+    },
+    {
+      "physical_anchor": 2469478954,
+      "needle": "abTestingKeyPair",
+      "bounded_window_bytes": 4000,
+      "allowlisted_tokens_present": [
+        "abTestingKeyPair",
+        "abTesting",
+        "privateKey"
+      ]
+    },
+    {
+      "physical_anchor": 2874516863,
+      "needle": "exodusSharesEncryptionKeyPair",
+      "bounded_window_bytes": 4000,
+      "allowlisted_tokens_present": [
+        "exodusSharesEncryptionKeyPair",
+        "genBoxKeyPair",
+        "randomBytes"
+      ]
+    },
+    {
+      "physical_anchor": 2923265597,
+      "needle": "exodusSharesKeyPair",
+      "bounded_window_bytes": 4000,
+      "allowlisted_tokens_present": [
+        "exodusSharesKeyPair",
+        "genSignKeyPair",
+        "randomBytes",
+        "makeSign",
+        "privateKey"
+      ]
+    },
+    {
+      "physical_anchor": 4598584647,
+      "needle": "exodusSharesEncryptionKeyPair",
+      "bounded_window_bytes": 4000,
+      "allowlisted_tokens_present": [
+        "exodusSharesEncryptionKeyPair"
+      ]
+    }
+  ],
+  "secret_values_or_hashes_emitted": false,
+  "limitation": "Metadata and bounded static token association do not authenticate any named-contact/private-key relation or exclude reuse elsewhere."
+}

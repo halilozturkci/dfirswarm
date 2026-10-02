@@ -1,0 +1,93 @@
+{
+  "id": "j000338",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000322/gzip-utf-8-parsed.json",
+      "job:j000332/profile-key-namespace-contexts.jsonl"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "independent": true,
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport json,pathlib,base64,os,re\nroot=json.loads(pathlib.Path('store/jobs/j000322/out/gzip-utf-8-parsed.json').read_text());profile=root['!fusion!cachedProfile']['private']\nfields=('fiatAuthKeyPair','abTestingKeyPair','exodusSharesEncryptionKeyPair','exodusSharesKeyPair')\nrows=[]\nfor field in fields:\n obj=json.loads(profile[field]); row={'namespace':field,'algorithm_labels':{k:v for k,v in obj.items() if k in ('keyType','curve') and v in ('ed25519','x25519')},'lengths':{}}\n for kind in ('privateKey','publicKey'):\n  k=obj[kind]; raw=k['data']; assert isinstance(raw,str)\n  assert raw.startswith('base64:'); decoded=base64.b64decode(raw[7:],validate=True)\n  row['lengths'][kind]=len(decoded)\n rows.append(row)\nanchors=(483156133,891013463,2273951653,2469478954,2266747093,2874516863,2923265597,4598584647)\nallow=fields+('fiatOnramp','fiatOnrampAuthKeyPair','abTesting','genBoxKeyPair','genSignKeyPair','randomBytes','makeSign','KeyPairProvider','privateKey')\nchecks=[]; total=0\nfor line in pathlib.Path('store/jobs/j000332/out/profile-key-namespace-contexts.jsonl').open():\n r=json.loads(line);total+=1\n if r['offset'] not in anchors:continue\n text=r['context'];position=r['offset']-r['context_start'];lo=max(0,position-1500);hi=min(len(text),position+2500);local=text[lo:hi]\n checks.append({'physical_anchor':r['offset'],'needle':r['needle'] if r['needle'] in fields else 'not_allowlisted','bounded_window_bytes':len(local),'allowlisted_tokens_present':[t for t in allow if t in local]})\nresult={'rows':rows,'source_context_records_read':total,'source_checks':checks,'secret_values_or_hashes_emitted':False,'limitation':'Metadata and bounded static token association do not authenticate any named-contact/private-key relation or exclude reuse elsewhere.'}\np=pathlib.Path(os.environ['OUT'])/'q13-new-source-review.json';p.write_text(json.dumps(result,indent=2));print(json.dumps(result,indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120100",
+    "name": "Contact provenance",
+    "doing": "Investigate Q1 and Q2 contact/disguise communications and sent-file identity; model gpt-6.1-sol."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T15:02:44.366Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000322/out/gzip-utf-8-parsed.json",
+        "sha256": "7d2d26963af4eb2719198f4a316a5be56c4989f119d8e52113959b9e3eae919f"
+      },
+      {
+        "path": "store/jobs/j000332/out/profile-key-namespace-contexts.jsonl",
+        "sha256": "ba8b9984f9eb8fc8f47da073edd25ecf15f327aa5cd563f6b2a7456c87442ac2"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000338-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T15:02:44.444Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000338",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 2,
+    "files": 2,
+    "bound": 0,
+    "manifest": "store/jobs/j000338/scope.1.json",
+    "manifest_sha256": "141b92e377b8ebea42e2e95411314c4743ecd34602cb321bb841e1330b3854db"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T15:02:45.177Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "5f26f9ec179ca660abf035a4489ebed077a81e3bacfd8785ac7ed8b6ab28816e",
+    "files": 1,
+    "bytes": 3135,
+    "rejected": 0,
+    "path": "store/jobs/j000338/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

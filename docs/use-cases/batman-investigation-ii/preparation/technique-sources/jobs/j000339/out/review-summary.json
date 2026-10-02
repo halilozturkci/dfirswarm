@@ -1,0 +1,14 @@
+{
+  "message_plain_parts": 1,
+  "message_characters": 66,
+  "message_private_key_phrase_present": true,
+  "retained_sweep_contexts": 157,
+  "retained_sweep_source_objects": 20,
+  "sweep_needle_counts": {
+    "client_email": 1,
+    "private_key": 156
+  },
+  "key_metadata_root_type": "dict",
+  "schema_root_type": "dict",
+  "limitation": "Retained literal/syntax inventories do not exclude differently labelled, encoded, reused or derived keys. Message text retained for semantic inspection; no secrets printed in stdout."
+}

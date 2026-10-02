@@ -1,0 +1,121 @@
+{
+  "id": "j000337",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/unknown.data",
+      "job:j000052",
+      "job:j000067",
+      "job:j000145"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "command": "python3 - <<'PY'\nimport os, sqlite3, json\npaths = [\n 'inputs/chall/unknown.data',\n 'store/jobs/j000052/out/contact.rar',\n 'store/jobs/j000067/out/confidential.eml',\n 'store/jobs/j000067/out/archive/contact/unlink.db',\n 'store/jobs/j000067/out/archive/contact/instance1/unlink.db',\n 'store/jobs/j000145/out/contact/contact/unlink.db',\n 'store/jobs/j000145/out/contact/contact/instance1/unlink.db',\n]\nneedles=[b'name_client',b'client_email',b'private_key',b'infobreakage_dbkey',b'private key']\nresult=[]\nfor p in paths:\n    item={'path':p}\n    if not os.path.isfile(p): item['status']='missing'; result.append(item); continue\n    b=open(p,'rb').read(); item['size']=len(b); item['first16_hex']=b[:16].hex()\n    item['matches']={}\n    for n in needles:\n        arr=[]; start=0\n        while True:\n            i=b.find(n,start)\n            if i<0: break\n            arr.append(i); start=i+1\n        n16=b''.join(bytes([x,0]) for x in n)\n        arr16=[]; start=0\n        while True:\n            i=b.find(n16,start)\n            if i<0: break\n            arr16.append(i); start=i+1\n        if arr or arr16: item['matches'][n.decode()]={'ascii_count':len(arr),'utf16le_count':len(arr16),'ascii_offsets':arr[:12],'utf16le_offsets':arr16[:12]}\n    if p.endswith('.db'):\n        try:\n            c=sqlite3.connect('file:'+os.path.abspath(p)+'?mode=ro&immutable=1', uri=True)\n            item['sqlite_schema']=[{'name':r[0],'type':r[1]} for r in c.execute(\"select name,type from sqlite_master order by type,name\")]\n            item['sqlite_page_count']=c.execute('pragma page_count').fetchone()[0]\n            c.close()\n        except Exception as e: item['sqlite_open_error']=type(e).__name__+': '+str(e)[:100]\n    result.append(item)\nprint(json.dumps(result,indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120109",
+    "name": "Memory artifact scout",
+    "doing": "Following up Q3 coverage validation and independent Q3/Q4 source review"
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T15:00:38.674Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000052/out",
+        "dir": true
+      },
+      {
+        "path": "store/jobs/j000067/out",
+        "dir": true
+      },
+      {
+        "path": "store/jobs/j000145/out",
+        "dir": true
+      },
+      {
+        "path": "inputs/chall/unknown.data",
+        "sha256": "87841ce462a019649f6206c72cf65ce5305a88b828ca45996ae9422e6f578f4f"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000337-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T15:00:38.753Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000052/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000067/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000145/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000337",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 4,
+    "files": 1,
+    "bound": 3,
+    "manifest": "store/jobs/j000337/scope.1.json",
+    "manifest_sha256": "0538fcc0714055131d3d53ccc39813c949a7c0e378efdd6edf72f217799f84f2"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T15:00:39.477Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "5d2bf4df38df50ec69eb47f5f77a759dbe72bd6db5de8837f852d639e2f25fdc",
+    "files": 0,
+    "bytes": 0,
+    "rejected": 0,
+    "path": "store/jobs/j000337/out"
+  },
+  "sensitive": {
+    "why": "derived",
+    "from": [
+      "j000052",
+      "j000067",
+      "j000145"
+    ],
+    "note": "made from the sensitive output of j000052, j000067, j000145: every output it sealed is sensitive"
+  }
+}

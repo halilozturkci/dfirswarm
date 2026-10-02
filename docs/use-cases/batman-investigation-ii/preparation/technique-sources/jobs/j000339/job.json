@@ -1,0 +1,102 @@
+{
+  "id": "j000339",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000067/confidential.eml",
+      "job:j000277/reviewed-sweep-contexts.json",
+      "job:j000329/nested-profile-schema.json",
+      "job:j000333/profile-key-metadata.json"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport json,os,re,email.policy\nfrom email.parser import BytesParser\nfrom pathlib import Path\np=Path(os.environ['OUT'])\nm=BytesParser(policy=email.policy.default).parsebytes(Path('store/jobs/j000067/out/confidential.eml').read_bytes())\nparts=[x for x in m.walk() if x.get_content_type()=='text/plain'];text='\\n'.join(x.get_content() for x in parts)\n(p/'original-message-text.txt').write_text(text)\na=json.load(open('store/jobs/j000277/out/reviewed-sweep-contexts.json'))\nkeys=json.load(open('store/jobs/j000333/out/profile-key-metadata.json'))\nschema=json.load(open('store/jobs/j000329/out/nested-profile-schema.json'))\nsummary={'message_plain_parts':len(parts),'message_characters':len(text),'message_private_key_phrase_present':bool(re.search(r'private\\s+key',text,re.I)),'retained_sweep_contexts':len(a),'retained_sweep_source_objects':len({x['path'] for x in a}),'sweep_needle_counts':{s:sum(x['needle']==s for x in a) for s in sorted({x['needle'] for x in a})},'key_metadata_root_type':type(keys).__name__,'schema_root_type':type(schema).__name__,'limitation':'Retained literal/syntax inventories do not exclude differently labelled, encoded, reused or derived keys. Message text retained for semantic inspection; no secrets printed in stdout.'}\n(p/'review-summary.json').write_text(json.dumps(summary,indent=2));print(json.dumps(summary))\nPY"
+  },
+  "requester": {
+    "agent": "s42120103",
+    "name": "Wallet history",
+    "doing": "Investigating Q7 and Q8: password-protected archive and original file hashes; avoiding peers' wallet work."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T15:04:46.673Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000067/out/confidential.eml",
+        "sha256": "0b08ee11401aded668e95411b8213269705c7f1db29244e1d20a528250b33a4e"
+      },
+      {
+        "path": "store/jobs/j000333/out/profile-key-metadata.json",
+        "sha256": "93c405b558067bfc96bb819e448975cebdb8d96045b7e2f8b438b744726148dc"
+      },
+      {
+        "path": "store/jobs/j000329/out/nested-profile-schema.json",
+        "sha256": "e76fcd231e8ed645d9e0807e9481bd064e783dd5f57c1a72ee6c9a701a498532"
+      },
+      {
+        "path": "store/jobs/j000277/out/reviewed-sweep-contexts.json",
+        "sha256": "e929cf314d57532257210bba053bd176ec5201ad5ead4b7c3c3cf176a3e356a3"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000339-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T15:04:46.777Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000339",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 4,
+    "files": 4,
+    "bound": 0,
+    "manifest": "store/jobs/j000339/scope.1.json",
+    "manifest_sha256": "020d37a2a26df98ca54c9919be41a0701eddcd389dd14299a04d499386d4a11b"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T15:04:47.493Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "a4c817382951729ec4b9163ac7ac1b2162b3f569b814db8bc66ea7bc85826f6f",
+    "files": 2,
+    "bytes": 589,
+    "rejected": 0,
+    "path": "store/jobs/j000339/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}
