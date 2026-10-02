@@ -1,0 +1,15 @@
+{
+  "method": "Offline single source-defined BIP32 private-key path, first64 serialized seed bytes; scrypt and authenticated SECO key/blob envelopes. No recovered code execution or key guesses.",
+  "path": "m/6649967'/1'/0",
+  "seed_serialized_bytes": 80,
+  "scrypt": {
+    "N": 16384,
+    "r": 8,
+    "p": 1
+  },
+  "cryptography_version": "50.0.2",
+  "checksum_valid": true,
+  "key_envelope_authenticated": true,
+  "payload_authenticated": true,
+  "payload_bytes": 2229
+}

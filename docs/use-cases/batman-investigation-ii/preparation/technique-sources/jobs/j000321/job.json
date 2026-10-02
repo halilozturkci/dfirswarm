@@ -1,0 +1,107 @@
+{
+  "id": "j000321",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000318/storage-key-constants.json",
+      "job:j000319/serialized-seed-4.bin",
+      "job:j000200/storage.seco",
+      "job:j000312/getter-static-runs.json",
+      "job:j000315/seed-serializer-source-contexts.jsonl"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport pathlib,json,os,hmac,hashlib,struct\nimport cryptography\nfrom cryptography.hazmat.primitives.asymmetric import ec\nfrom cryptography.hazmat.primitives.serialization import Encoding,PublicFormat\nfrom cryptography.hazmat.primitives.ciphers.aead import AESGCM\nfrom cryptography.exceptions import InvalidTag\nout=pathlib.Path(os.environ['OUT'])\nconstants=json.loads(pathlib.Path('store/jobs/j000318/out/storage-key-constants.json').read_text())['hits']\nassert len(constants)==2 and constants[0]['resolved']==constants[1]['resolved']\nresolved=constants[0]['resolved'];path=resolved['DETERMINISTIC_KEY_PATH']\nseed=pathlib.Path('store/jobs/j000319/out/serialized-seed-4.bin').read_bytes();assert len(seed)==80\nI=hmac.new(b'Bitcoin seed',seed[:64],hashlib.sha512).digest();k=int.from_bytes(I[:32],'big');chain=I[32:];order=0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141\nassert 0<k<order\nfor part in path.split('/')[1:]:\n hardened=part.endswith(\"'\");index=int(part.rstrip(\"'\"))+(0x80000000 if hardened else 0)\n key=k.to_bytes(32,'big')\n if hardened:data=b'\\0'+key\n else:data=ec.derive_private_key(k,ec.SECP256K1()).public_key().public_bytes(Encoding.X962,PublicFormat.CompressedPoint)\n I=hmac.new(chain,data+struct.pack('>I',index),hashlib.sha512).digest();left=int.from_bytes(I[:32],'big');assert left<order\n k=(left+k)%order;assert k;chain=I[32:]\ns=pathlib.Path('store/jobs/j000200/out/storage.seco').read_bytes();length=struct.unpack('>I',s[512:516])[0]\nassert len(s)==516+length and hashlib.sha256(s[256:516]+s[516:]).digest()==s[224:256]\nN,r,p=struct.unpack('>III',s[288:300]);wrapping=hashlib.scrypt(k.to_bytes(32,'big'),salt=s[256:288],n=N,r=r,p=p,dklen=32,maxmem=128*1024*1024)\nsummary={'method':'Offline single source-defined BIP32 private-key path, first64 serialized seed bytes; scrypt and authenticated SECO key/blob envelopes. No recovered code execution or key guesses.','path':path,'seed_serialized_bytes':len(seed),'scrypt':{'N':N,'r':r,'p':p},'cryptography_version':cryptography.__version__,'checksum_valid':True,'key_envelope_authenticated':False,'payload_authenticated':False}\ntry:\n blobkey=AESGCM(wrapping).decrypt(s[332:344],s[360:392]+s[344:360],None);summary['key_envelope_authenticated']=True\n plain=AESGCM(blobkey).decrypt(s[392:404],s[516:]+s[404:420],None);summary['payload_authenticated']=True;summary['payload_bytes']=len(plain)\n (out/'storage-authenticated-payload.bin').write_bytes(plain)\nexcept InvalidTag:summary['result']='Authentication failed for this one source-defined derivation/envelope interpretation; no storage-content absence inferred.'\n(out/'storage-authentication-summary.json').write_text(json.dumps(summary,indent=2));print(json.dumps(summary))\nPY"
+  },
+  "requester": {
+    "agent": "s42120100",
+    "name": "Contact provenance",
+    "doing": "Investigate Q1 and Q2 contact/disguise communications and sent-file identity; model gpt-6.1-sol."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T14:24:15.470Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000315/out/seed-serializer-source-contexts.jsonl",
+        "sha256": "051debfd33c9651d9cae061a4898efa1796a1b658a772e8bed4da0940e3436bc"
+      },
+      {
+        "path": "store/jobs/j000200/out/storage.seco",
+        "sha256": "4bfa248576916af12ce753f6202551c6dcc88adb1e320c9c7a565795bf7d526a"
+      },
+      {
+        "path": "store/jobs/j000312/out/getter-static-runs.json",
+        "sha256": "56e6e5e4f0c5e8128d0ca27489676fa5a7da7859da3a367c319095f0d67fa531"
+      },
+      {
+        "path": "store/jobs/j000318/out/storage-key-constants.json",
+        "sha256": "a430a57b28e621b3c2ede10526582cd183312e684557e69a1e862cdaaf3f52ce"
+      },
+      {
+        "path": "store/jobs/j000319/out/serialized-seed-4.bin",
+        "sha256": "b18862866050a9db54d4255ecd4fe3c7b625d21b3760960400ed4492bf9247f0"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000321-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T14:24:15.550Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000321",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 5,
+    "files": 5,
+    "bound": 0,
+    "manifest": "store/jobs/j000321/scope.1.json",
+    "manifest_sha256": "400e31283d8f535b7f4b57b02da7850802d9e1bcf9b3c0d608695884a2b177dc"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T14:24:16.269Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "73c512cce476f761e6304bd103a27d2f0ae209a15897d488695987a3c24bc910",
+    "files": 2,
+    "bytes": 2701,
+    "rejected": 0,
+    "path": "store/jobs/j000321/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

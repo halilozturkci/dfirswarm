@@ -1,0 +1,1 @@
+{"v":1,"job":"j000308","attempt":1,"sealed_at":"2026-10-02T14:03:49.446Z","files":[{"path":"setter-call-sites.json","path_b64":"c2V0dGVyLWNhbGwtc2l0ZXMuanNvbg==","bytes":5854,"sha256":"dd43e8648ab6ccbd7d57525653807c048a1440417edfa73fe953565358acb36b","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":5854}}

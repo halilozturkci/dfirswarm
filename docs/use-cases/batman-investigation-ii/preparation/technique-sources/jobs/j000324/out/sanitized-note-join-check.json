@@ -1,0 +1,14 @@
+{
+  "full_json_parsed": true,
+  "transaction_records": 2,
+  "personal_note_records": 2,
+  "outgoing_with_recipient_count": 0,
+  "incoming_count": 0,
+  "outgoing_personal_note_joins": 0,
+  "joined_note_has_nonempty_message": false,
+  "joined_outgoing_has_recipient_field": false,
+  "join_is_not_just_same_record": true,
+  "joined_record_direction_is_outgoing": false,
+  "raw_identifiers_or_names_emitted": false,
+  "note_candidate_value_emitted": false
+}

@@ -1,0 +1,554 @@
+{
+  "!blockchain!!v1!!states!exodus_0:monero": {
+    "t": "object",
+    "v": {
+      "utxos": {
+        "t": "utxocollection",
+        "v": {
+          "v": {},
+          "u": {
+            "atomic": 0,
+            "XMR": 12
+          }
+        }
+      },
+      "pendingUtxos": {
+        "t": "utxocollection",
+        "v": {
+          "v": {},
+          "u": {
+            "atomic": 0,
+            "XMR": 12
+          }
+        }
+      },
+      "monitorUtxos": {
+        "t": "utxocollection",
+        "v": {
+          "v": {},
+          "u": {
+            "atomic": 0,
+            "XMR": 12
+          }
+        }
+      },
+      "cursor": null,
+      "initialHeight": null,
+      "subaddresses": 200,
+      "_version": 1
+    }
+  },
+  "!compatibilityFlags!monero-subaddress-indexes": true,
+  "!compatibilityFlags!20210520-reset-assets-cursors": true,
+  "!compatibilityFlags!20210527-reset-vethor-cursors": true,
+  "!compatibilityFlags!solana-stake-txs-21-07-01": true,
+  "!fusion!cachedProfile": {
+    "analyticsSet": true,
+    "createdAt": "2024-01-05",
+    "desktopUser": true,
+    "analyticsUserId": "eM02uMAOTQmTPGKfCF/Xng/xgEoiYHYZSlWflkHWW+A=",
+    "abandoned": false,
+    "migrations": {
+      "20210520-reset-assets-cursors": {
+        "exodus": true
+      },
+      "20210527-reset-vethor-cursors": {
+        "exodus": true
+      }
+    },
+    "private": {
+      "fiatAuthKeyPair": "{\"publicKey\":{\"type\":\"Buffer\",\"data\":\"base64:t0Ct08SYwBS0425u540dM82WuchiPvPT4FJtFYS6CSo=\"},\"privateKey\":{\"type\":\"Buffer\",\"data\":\"base64:BlXlQQ4UvyDr4bAGdYSVlMUoh16ZL+FBW2TmZMjLhqC3QK3TxJjAFLTjbm7njR0zzZa5yGI+89PgUm0VhLoJKg==\"},\"keyType\":\"ed25519\"}",
+      "abTestingKeyPair": "{\"publicKey\":{\"type\":\"Buffer\",\"data\":\"base64:PxJw+yBLr2A/zFxb/cMQcrrEBUkbl9+/vCj8MjS2p8M=\"},\"privateKey\":{\"type\":\"Buffer\",\"data\":\"base64:CqoADITUX7XMG6LXKUlF9E5V2rSjRduZql9KXSdoJYo/EnD7IEuvYD/MXFv9wxByusQFSRuX37+8KPwyNLanww==\"},\"keyType\":\"ed25519\"}",
+      "exodusSharesEncryptionKeyPair": "{\"curve\":\"x25519\",\"privateKey\":{\"type\":\"Buffer\",\"data\":\"base64:4wJbWbzHJYyr6Rb1k8szZw7oUexq9adPmuPM71J7wuk=\"},\"publicKey\":{\"type\":\"Buffer\",\"data\":\"base64:zt80msKNvR9FhnUHwdHtB5wyXZ+05m1twOPAqOhwP2g=\"}}",
+      "exodusSharesKeyPair": "{\"publicKey\":{\"type\":\"Buffer\",\"data\":\"base64:9j0qP8GDf2EWenxEc9nxV8Lo2q8A+0W0tbSvMvE+uOc=\"},\"privateKey\":{\"type\":\"Buffer\",\"data\":\"base64:DERjbQLOFB86ddvP/+/uIqSJOWnXIN5GJcNQ/14NlAf2PSo/wYN/YRZ6fERz2fFXwujarwD7RbS1tK8y8T645w==\"},\"keyType\":\"ed25519\"}"
+    },
+    "earliestTxDate": "2024-01-05",
+    "portfolioCount": 1,
+    "hasTrezor": false,
+    "portfolioCountFunded": 0
+  },
+  "!blockchain!!v1!!states!exodus_0:algorand": {
+    "t": "object",
+    "v": {
+      "cursor": 0,
+      "balance": {
+        "t": "numberunit",
+        "v": {
+          "v": "0 ALGO",
+          "u": {
+            "microAlgo": 0,
+            "ALGO": 6
+          }
+        }
+      },
+      "accountReserve": {
+        "t": "numberunit",
+        "v": {
+          "v": "0.1 ALGO",
+          "u": {
+            "microAlgo": 0,
+            "ALGO": 6
+          }
+        }
+      },
+      "tokenBalances": {
+        "t": "object",
+        "v": {}
+      },
+      "_version": 1
+    }
+  },
+  "!blockchain!!v1!!states!exodus_0:matic": {
+    "t": "object",
+    "v": {
+      "startblock": 0,
+      "clarityCursor": "",
+      "balance": {
+        "t": "numberunit",
+        "v": {
+          "v": "0 wei",
+          "u": {
+            "wei": 0,
+            "Kwei": 3,
+            "Mwei": 6,
+            "Gwei": 9,
+            "szabo": 12,
+            "finney": 15,
+            "MATICNATIVE": 18
+          }
+        }
+      },
+      "tokenBalances": {
+        "t": "object",
+        "v": {}
+      },
+      "index": 0,
+      "_version": 1
+    }
+  },
+  "!blockchain!!v1!!states!exodus_0:solana": {
+    "t": "object",
+    "v": {
+      "balance": {
+        "t": "numberunit",
+        "v": {
+          "v": "0 SOL",
+          "u": {
+            "Lamports": 0,
+            "SOL": 9
+          }
+        }
+      },
+      "cursor": "",
+      "tokenBalances": {
+        "t": "object",
+        "v": {}
+      },
+      "_version": 1
+    }
+  },
+  "!blockchain!!v1!!states!exodus_0:ethereum": {
+    "t": "object",
+    "v": {
+      "startblock": 0,
+      "clarityCursor": "",
+      "balance": {
+        "t": "numberunit",
+        "v": {
+          "v": "0 ETH",
+          "u": {
+            "wei": 0,
+            "Kwei": 3,
+            "Mwei": 6,
+            "Gwei": 9,
+            "szabo": 12,
+            "finney": 15,
+            "ETH": 18
+          }
+        }
+      },
+      "tokenBalances": {
+        "t": "object",
+        "v": {}
+      },
+      "index": 2,
+      "staking": {
+        "t": "object",
+        "v": {
+          "ethereum": {
+            "t": "object",
+            "v": {
+              "rewardsBalance": {
+                "t": "numberunit",
+                "v": {
+                  "v": "0 wei",
+                  "u": {
+                    "wei": 0,
+                    "Kwei": 3,
+                    "Mwei": 6,
+                    "Gwei": 9,
+                    "szabo": 12,
+                    "finney": 15,
+                    "ETH": 18
+                  }
+                }
+              },
+              "isDelegating": false,
+              "activeStakedBalance": {
+                "t": "numberunit",
+                "v": {
+                  "v": "0 wei",
+                  "u": {
+                    "wei": 0,
+                    "Kwei": 3,
+                    "Mwei": 6,
+                    "Gwei": 9,
+                    "szabo": 12,
+                    "finney": 15,
+                    "ETH": 18
+                  }
+                }
+              },
+              "delegatedBalance": {
+                "t": "numberunit",
+                "v": {
+                  "v": "0 wei",
+                  "u": {
+                    "wei": 0,
+                    "Kwei": 3,
+                    "Mwei": 6,
+                    "Gwei": 9,
+                    "szabo": 12,
+                    "finney": 15,
+                    "ETH": 18
+                  }
+                }
+              },
+              "pendingBalance": {
+                "t": "numberunit",
+                "v": {
+                  "v": "0 wei",
+                  "u": {
+                    "wei": 0,
+                    "Kwei": 3,
+                    "Mwei": 6,
+                    "Gwei": 9,
+                    "szabo": 12,
+                    "finney": 15,
+                    "ETH": 18
+                  }
+                }
+              },
+              "pendingDepositedBalance": {
+                "t": "numberunit",
+                "v": {
+                  "v": "0 wei",
+                  "u": {
+                    "wei": 0,
+                    "Kwei": 3,
+                    "Mwei": 6,
+                    "Gwei": 9,
+                    "szabo": 12,
+                    "finney": 15,
+                    "ETH": 18
+                  }
+                }
+              },
+              "minDelegateAmount": {
+                "t": "numberunit",
+                "v": {
+                  "v": "0.1 ETH",
+                  "u": {
+                    "wei": 0,
+                    "Kwei": 3,
+                    "Mwei": 6,
+                    "Gwei": 9,
+                    "szabo": 12,
+                    "finney": 15,
+                    "ETH": 18
+                  }
+                }
+              },
+              "unclaimedUndelegatedBalance": {
+                "t": "numberunit",
+                "v": {
+                  "v": "0 wei",
+                  "u": {
+                    "wei": 0,
+                    "Kwei": 3,
+                    "Mwei": 6,
+                    "Gwei": 9,
+                    "szabo": 12,
+                    "finney": 15,
+                    "ETH": 18
+                  }
+                }
+              },
+              "canClaimUndelegatedBalance": false,
+              "isUndelegateInProgress": false
+            }
+          },
+          "polygon": {
+            "t": "object",
+            "v": {
+              "rewardsBalance": {
+                "t": "numberunit",
+                "v": {
+                  "v": "0 base",
+                  "u": {
+                    "base": 0,
+                    "MATIC": 18
+                  }
+                }
+              },
+              "withdrawable": {
+                "t": "numberunit",
+                "v": {
+                  "v": "0 MATIC",
+                  "u": {
+                    "base": 0,
+                    "MATIC": 18
+                  }
+                }
+              },
+              "unbondNonce": 0,
+              "isDelegating": false,
+              "delegatedBalance": {
+                "t": "numberunit",
+                "v": {
+                  "v": "0 base",
+                  "u": {
+                    "base": 0,
+                    "MATIC": 18
+                  }
+                }
+              },
+              "minRewardsToWithdraw": {
+                "t": "numberunit",
+                "v": {
+                  "v": "1000000000000000000 base",
+                  "u": {
+                    "base": 0,
+                    "MATIC": 18
+                  }
+                }
+              },
+              "minDelegateAmount": {
+                "t": "numberunit",
+                "v": {
+                  "v": "1 MATIC",
+                  "u": {
+                    "base": 0,
+                    "MATIC": 18
+                  }
+                }
+              },
+              "isUndelegateInProgress": false,
+              "canClaimUndelegatedBalance": false,
+              "unclaimedUndelegatedBalance": {
+                "t": "numberunit",
+                "v": {
+                  "v": "0 MATIC",
+                  "u": {
+                    "base": 0,
+                    "MATIC": 18
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "_version": 1
+    }
+  },
+  "!blockchain!!v1!!states!exodus_0:bsc": {
+    "t": "object",
+    "v": {
+      "startblock": 0,
+      "clarityCursor": {
+        "t": "buffer",
+        "v": "AQI0XwAAAAAAAG54FgIAAAAANMh444wBAAA="
+      },
+      "balance": {
+        "t": "numberunit",
+        "v": {
+          "v": "0 wei",
+          "u": {
+            "wei": 0,
+            "Kwei": 3,
+            "Mwei": 6,
+            "Gwei": 9,
+            "szabo": 12,
+            "finney": 15,
+            "BNBBSC": 18
+          }
+        }
+      },
+      "tokenBalances": {
+        "t": "object",
+        "v": {}
+      },
+      "index": 0,
+      "_version": 1
+    }
+  },
+  "!blockchain!!v1!!states!exodus_0:tezos": {
+    "t": "object",
+    "v": {
+      "balance": {
+        "t": "numberunit",
+        "v": {
+          "v": "0 XTZ",
+          "u": {
+            "mutez": 0,
+            "XTZ": 6
+          }
+        }
+      },
+      "cursor": 0,
+      "_version": 1
+    }
+  },
+  "!blockchain!!v1!!states!exodus_0:cardano": {
+    "t": "object",
+    "v": {
+      "utxos": {
+        "t": "utxocollection",
+        "v": {
+          "v": {},
+          "u": {
+            "lovelaces": 0,
+            "ADA": 6
+          }
+        }
+      },
+      "tokenUtxos": {
+        "t": "object",
+        "v": {
+          "snek_cardano_3831f600": {
+            "t": "utxocollection",
+            "v": {
+              "v": {},
+              "u": {
+                "base": 0,
+                "SNEKcardano3831F600": 0
+              }
+            }
+          },
+          "worldmobil_cardano_262abe57": {
+            "t": "utxocollection",
+            "v": {
+              "v": {},
+              "u": {
+                "base": 0,
+                "WORLDMOBILcardano262ABE57": 6
+              }
+            }
+          }
+        }
+      },
+      "balance": {
+        "t": "numberunit",
+        "v": {
+          "v": "0 ADA",
+          "u": {
+            "lovelaces": 0,
+            "ADA": 6
+          }
+        }
+      },
+      "cursor": 0,
+      "_version": 1
+    }
+  },
+  "!eventLog!!v1!data": [
+    {
+      "event": "view_12_words",
+      "timestamp": "2024-01-05T09:23:27+00:00",
+      "machineId": "801fb1af170d0db46ccbe8ad0cc1eab3c1db0bd39b1e5b4f06092efecd917ad5"
+    },
+    {
+      "event": "view_privkey",
+      "asset": "ethereum",
+      "timestamp": "2024-01-05T21:47:54+05:30",
+      "machineId": "2eeb21bf0c5b4c1abcf606124b8e89290bfe48d4929b0b98752a50241dd730bd"
+    }
+  ],
+  "!blockchain!!v1!!txs!exodus_0:ethereum": [
+    {
+      "currencies": {
+        "ethereum": {
+          "wei": 0,
+          "Kwei": 3,
+          "Mwei": 6,
+          "Gwei": 9,
+          "szabo": 12,
+          "finney": 15,
+          "ETH": 18
+        }
+      },
+      "txId": "0xab42fc3fb81fca7bec9e49058d80dc928ed5de2e780a54de41d3c1a8587c4ab7",
+      "date": "2024-01-05T17:12:47.000Z",
+      "confirmations": 1,
+      "dropped": false,
+      "coinAmount": "0.0069 ETH",
+      "coinName": "ethereum",
+      "from": [
+        "0xd349c1917ce21fa087caceae73991a790d311e00"
+      ],
+      "data": {
+        "data": "0x",
+        "nonce": 61,
+        "gasLimit": 21000,
+        "methodId": "0x"
+      },
+      "version": 1
+    },
+    {
+      "currencies": {
+        "ethereum": {
+          "wei": 0,
+          "Kwei": 3,
+          "Mwei": 6,
+          "Gwei": 9,
+          "szabo": 12,
+          "finney": 15,
+          "ETH": 18
+        }
+      },
+      "txId": "0x0fe9c3cc4295640b2dcec7ece1ac1e3eb5e8f0f0af61c55e3c2dd575214d3704",
+      "date": "2024-01-05T17:15:19.000Z",
+      "confirmations": 1,
+      "dropped": false,
+      "coinAmount": "-0.006154298932728 ETH",
+      "coinName": "ethereum",
+      "feeAmount": "0.000745701067272 ETH",
+      "feeCoinName": "ethereum",
+      "to": "0xd349c1917ce21fa087caceae73991a790d311e00",
+      "data": {
+        "gasLimit": 21000,
+        "nonce": 0,
+        "tipGasPrice": "35509574632",
+        "data": "0x",
+        "methodId": "0x"
+      },
+      "version": 1
+    }
+  ],
+  "!personalNotes!data": [
+    {
+      "txId": "0x0fe9c3cc4295640b2dcec7ece1ac1e3eb5e8f0f0af61c55e3c2dd575214d3704",
+      "message": "",
+      "sends": {
+        "0xd349c1917ce21fa087caceae73991a790d311e00": {
+          "message": "Oswald Cobblepot"
+        }
+      }
+    },
+    {
+      "txId": "0xab42fc3fb81fca7bec9e49058d80dc928ed5de2e780a54de41d3c1a8587c4ab7",
+      "message": "Edward Nigma"
+    }
+  ]
+}

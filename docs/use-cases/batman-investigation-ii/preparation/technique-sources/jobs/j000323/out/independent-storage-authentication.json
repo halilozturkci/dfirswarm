@@ -1,0 +1,34 @@
+{
+  "checksum_valid": true,
+  "constant_copies_agree": true,
+  "declared_payload_bytes": 2229,
+  "equals_j321_payload": true,
+  "exact_length": true,
+  "method": "pure-Python secp256k1 BIP32 plus cryptography AESGCM; one source-defined path; no guessed alternatives or secret output",
+  "path_components": [
+    {
+      "hardened": true,
+      "index": 6649967
+    },
+    {
+      "hardened": true,
+      "index": 1
+    },
+    {
+      "hardened": false,
+      "index": 0
+    }
+  ],
+  "payload_authenticated": true,
+  "payload_bytes": 2229,
+  "scrypt": {
+    "N": 16384,
+    "p": 1,
+    "r": 8
+  },
+  "secret_values_emitted": false,
+  "seed_field_bytes": 64,
+  "serialized_seed_bytes": 80,
+  "storage_bytes": 2745,
+  "wrapped_key_authenticated": true
+}

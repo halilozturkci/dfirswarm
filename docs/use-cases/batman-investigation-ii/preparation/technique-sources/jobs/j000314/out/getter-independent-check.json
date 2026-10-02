@@ -1,0 +1,108 @@
+{
+  "python": "3.11.2",
+  "raw_source_checks": [
+    {
+      "start": 1376100352,
+      "end": 1376104448,
+      "length": 4096,
+      "exact_source_bytes": true,
+      "literal_steps": [
+        {
+          "text": "getExo1HDKey(){return this.getHDKeyWithPath(j.EXO_1_PATH)}",
+          "physical_offset": 1376103300,
+          "offset_in_run": 2948
+        },
+        {
+          "text": "getDeterministicKey(){return(this._HDKeys[j.DETERMINISTIC_KEY_PATH]||this.getExo1HDKey().derive(j.DETERMINISTIC_KEY_INDEX)).privateKey}",
+          "physical_offset": 1376103669,
+          "offset_in_run": 3317
+        },
+        {
+          "text": "_deriveHDKeyWithPath({path:e,curve:t}){return(\"ed25519\"===t?this._masterEd25519:this._master).derive(e)}",
+          "physical_offset": 1376104267,
+          "offset_in_run": 3915
+        },
+        {
+          "text": "_setSeed(e){this._seed=e,this._master=Object(i.fromMasterSeed)(e.seed)",
+          "physical_offset": 1376104371,
+          "offset_in_run": 4019
+        }
+      ],
+      "constant_definitions_in_this_run": {
+        "EXO_1_PATH": false,
+        "DETERMINISTIC_KEY_PATH": false,
+        "DETERMINISTIC_KEY_INDEX": false
+      }
+    },
+    {
+      "start": 2887045120,
+      "end": 2887049217,
+      "length": 4097,
+      "exact_source_bytes": true
+    }
+  ],
+  "original_context_rows": 5,
+  "original_context_schema": [
+    {
+      "keys": [
+        "offset",
+        "needle",
+        "context_start",
+        "context"
+      ],
+      "text_fields": {
+        "needle": 19,
+        "context": 40979
+      }
+    },
+    {
+      "keys": [
+        "offset",
+        "needle",
+        "context_start",
+        "context"
+      ],
+      "text_fields": {
+        "needle": 19,
+        "context": 40979
+      }
+    },
+    {
+      "keys": [
+        "offset",
+        "needle",
+        "context_start",
+        "context"
+      ],
+      "text_fields": {
+        "needle": 19,
+        "context": 40979
+      }
+    },
+    {
+      "keys": [
+        "offset",
+        "needle",
+        "context_start",
+        "context"
+      ],
+      "text_fields": {
+        "needle": 19,
+        "context": 40979
+      }
+    },
+    {
+      "keys": [
+        "offset",
+        "needle",
+        "context_start",
+        "context"
+      ],
+      "text_fields": {
+        "needle": 19,
+        "context": 40979
+      }
+    }
+  ],
+  "scope": "Static source only. Cache-or-derive getter is not a key value or proof of execution; constants/import/class bindings remain outside this verification."
+}

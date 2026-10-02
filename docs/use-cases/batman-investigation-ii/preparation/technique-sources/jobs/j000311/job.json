@@ -1,0 +1,87 @@
+{
+  "id": "j000311",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000309/deterministic-key-contexts-ascii.jsonl"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport json,pathlib,os\nout=pathlib.Path(os.environ['OUT']);rows=[]\nfor line in pathlib.Path('store/jobs/j000309/out/deterministic-key-contexts-ascii.jsonl').open():\n r=json.loads(line);c=r['context'];p=r['offset']-r['context_start'];a=max(0,p-3500);b=min(len(c),p+6500)\n rows.append({'physical_offset':r['offset'],'slice_start':r['context_start']+a,'source':c[a:b]})\n(out/'getter-source-slices.json').write_text(json.dumps(rows,indent=2));print(json.dumps(rows,indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120100",
+    "name": "Contact provenance",
+    "doing": "Investigate Q1 and Q2 contact/disguise communications and sent-file identity; model gpt-6.1-sol."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T14:12:44.038Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000309/out/deterministic-key-contexts-ascii.jsonl",
+        "sha256": "077996f6fef5ce34f0c86faa150cde5afe750536dd79f482b31b75d342971c4e"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000311-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T14:12:44.109Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000311",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000311/scope.1.json",
+    "manifest_sha256": "239506e2c189da9a38f46628fcd33ed1390675745cc1224e8071d5dc56a38ecd"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T14:12:44.823Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "dd78dee9599263c297d4b9e38c13f9c980ef2d30b777ed0b1921cea16c377b52",
+    "files": 1,
+    "bytes": 204087,
+    "rejected": 0,
+    "path": "store/jobs/j000311/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

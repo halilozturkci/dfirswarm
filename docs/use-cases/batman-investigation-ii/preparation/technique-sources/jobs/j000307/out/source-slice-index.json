@@ -1,0 +1,41 @@
+{
+  "source_records": 925,
+  "counts": {
+    "storage.seco": 877,
+    "createStorageInternal": 14,
+    "storageFile": 19,
+    "setSecoPassphrase": 9,
+    "getSecoPassphrase": 6
+  },
+  "nearby_pattern_record_counts": {
+    "storage.seco": 887,
+    "createStorageInternal": 24,
+    "storageFile": 34,
+    "getSecoPassphrase:": 14,
+    "setSecoPassphrase(": 2
+  },
+  "selected_nonidentical_slices": 29,
+  "previous_tool_scopes": [
+    {
+      "job": "j000121",
+      "records": 12,
+      "matching_requested_anchors": {}
+    },
+    {
+      "job": "j000124",
+      "records": 3,
+      "matching_requested_anchors": {}
+    },
+    {
+      "job": "j000201",
+      "records": 126,
+      "matching_requested_anchors": {}
+    },
+    {
+      "job": "j000206",
+      "records": 29,
+      "matching_requested_anchors": {}
+    }
+  ],
+  "method": "Read every JSONL record; retain source slices around three observed symbol anchors; this does not reconstruct a complete module or classify all path hits."
+}

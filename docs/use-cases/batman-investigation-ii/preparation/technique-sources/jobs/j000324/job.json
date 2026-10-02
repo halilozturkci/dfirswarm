@@ -1,0 +1,92 @@
+{
+  "id": "j000324",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000322/gzip-utf-8-parsed.json",
+      "job:j000321/storage-authentication-summary.json"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport json,pathlib,os\np=pathlib.Path('store/jobs/j000322/out/gzip-utf-8-parsed.json')\no=json.loads(p.read_text())\ntxs=o['!blockchain!!v1!!txs!exodus_0:ethereum']; notes=o['!personalNotes!data']\nrows=txs if isinstance(txs,list) else list(txs.values()) if isinstance(txs,dict) else []; notes=notes if isinstance(notes,list) else []\ndef amount(x):\n for k in ('amount','value','coinAmount'):\n  if k in x:\n   try:return float(x[k])\n   except Exception:pass\n return None\ndef scalars(d):return {k:v for k,v in d.items() if isinstance(v,(str,int)) and k.lower() in ('txid','tx_id','transactionid','transaction_id','id')}\noutgoing=[x for x in rows if isinstance(x,dict) and amount(x)!=None and amount(x)<0 and x.get('to')]\nincoming=[x for x in rows if isinstance(x,dict) and amount(x)!=None and amount(x)>0]\njoined=[]\nfor t in outgoing:\n tp=scalars(t)\n for n in notes:\n  if isinstance(n,dict):\n   np=scalars(n)\n   if any(tp[k]==np[k] for k in tp.keys()&np.keys()):joined.append((t,n))\nsummary={'full_json_parsed':True,'transaction_records':len(rows),'personal_note_records':len(notes),'outgoing_with_recipient_count':len(outgoing),'incoming_count':len(incoming),'outgoing_personal_note_joins':len(joined),'joined_note_has_nonempty_message':any(any(isinstance(v,str) and v.strip() for k,v in n.items() if any(s in k.lower() for s in ('message','note','label','text','value'))) for t,n in joined),'joined_outgoing_has_recipient_field':any(bool(t.get('to')) for t,n in joined),'join_is_not_just_same_record':all(t is not n for t,n in joined),'joined_record_direction_is_outgoing':bool(joined) and all(amount(t)<0 for t,n in joined),'raw_identifiers_or_names_emitted':False,'note_candidate_value_emitted':False}\npath=pathlib.Path(os.environ['OUT'])/'sanitized-note-join-check.json';path.write_text(json.dumps(summary,indent=2));print(json.dumps(summary,sort_keys=True))\nPY"
+  },
+  "requester": {
+    "agent": "s42120108",
+    "name": "DBX Key Analyst",
+    "doing": "Waiting for audited offline DBX codec capability or genuinely new evidence; avoiding duplicate searches."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T14:29:28.558Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000322/out/gzip-utf-8-parsed.json",
+        "sha256": "7d2d26963af4eb2719198f4a316a5be56c4989f119d8e52113959b9e3eae919f"
+      },
+      {
+        "path": "store/jobs/j000321/out/storage-authentication-summary.json",
+        "sha256": "ed5ba66d217503dd19912d5681ec9175bc29e38f67e2fca7f3d3d7d96ecf3eda"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000324-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T14:29:28.664Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000324",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 2,
+    "files": 2,
+    "bound": 0,
+    "manifest": "store/jobs/j000324/scope.1.json",
+    "manifest_sha256": "762bd99848d2cd962aa5406e9bdad6516493217811bbd6a0f34dc2dda2c2b0b1"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T14:29:29.415Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "0c88dbd54c43dc5e7ee9fbf6368ee501416923be541bffefd7c02a9581298680",
+    "files": 1,
+    "bytes": 453,
+    "rejected": 0,
+    "path": "store/jobs/j000324/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

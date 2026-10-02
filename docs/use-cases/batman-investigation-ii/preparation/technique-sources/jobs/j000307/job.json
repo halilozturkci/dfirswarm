@@ -1,0 +1,127 @@
+{
+  "id": "j000307",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000306",
+      "job:j000121",
+      "job:j000124",
+      "job:j000201",
+      "job:j000206"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport pathlib,json,collections,os,re\nout=pathlib.Path(os.environ['OUT']);wanted={'setSecoPassphrase','getSecoPassphrase','createStorageInternal','storageFile','storage.seco'}\nprevious=[]\nfor jid in ('j000121','j000124','j000201','j000206'):\n total=0;overlap=collections.Counter()\n for p in (pathlib.Path('store/jobs')/jid/'out').glob('*.jsonl'):\n  for line in p.open():\n   r=json.loads(line);total+=1\n   if r.get('needle') in wanted:overlap[r['needle']]+=1\n previous.append({'job':jid,'records':total,'matching_requested_anchors':dict(overlap)})\ncounts=collections.Counter();selected=[];patterns=collections.Counter();seen=set()\np=pathlib.Path('store/jobs/j000306/out/storage-caller-contexts-ascii.jsonl')\nfor line in p.open():\n r=json.loads(line);counts[r['needle']]+=1;c=r['context'];i=r['offset']-r['context_start']\n nearby=c[max(0,i-1500):i+9000]\n for pat in ('setSecoPassphrase(','getSecoPassphrase:','createStorageInternal','storageFile','storage.seco'):\n  if pat in nearby:patterns[pat]+=1\n if r['needle'] in {'setSecoPassphrase','getSecoPassphrase','createStorageInternal'}:\n  text=c[max(0,i-1500):i+12000];sig=(r['needle'],text)\n  if sig not in seen:\n   seen.add(sig);selected.append({'needle':r['needle'],'physical_offset':r['offset'],'slice_start':r['context_start']+max(0,i-1500),'slice':text})\n(out/'source-slices.jsonl').write_text(''.join(json.dumps(r)+'\\n' for r in selected))\ns={'source_records':sum(counts.values()),'counts':dict(counts),'nearby_pattern_record_counts':dict(patterns),'selected_nonidentical_slices':len(selected),'previous_tool_scopes':previous,'method':'Read every JSONL record; retain source slices around three observed symbol anchors; this does not reconstruct a complete module or classify all path hits.'}\n(out/'source-slice-index.json').write_text(json.dumps(s,indent=2));print(json.dumps(s))\nPY"
+  },
+  "requester": {
+    "agent": "s42120100",
+    "name": "Contact provenance",
+    "doing": "Investigate Q1 and Q2 contact/disguise communications and sent-file identity; model gpt-6.1-sol."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T14:03:04.583Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000121/out",
+        "dir": true
+      },
+      {
+        "path": "store/jobs/j000124/out",
+        "dir": true
+      },
+      {
+        "path": "store/jobs/j000201/out",
+        "dir": true
+      },
+      {
+        "path": "store/jobs/j000206/out",
+        "dir": true
+      },
+      {
+        "path": "store/jobs/j000306/out",
+        "dir": true
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000307-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T14:03:04.637Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000306/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000121/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000124/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000201/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000206/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000307",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 5,
+    "files": 0,
+    "bound": 5,
+    "manifest": "store/jobs/j000307/scope.1.json",
+    "manifest_sha256": "f2eb1e75b0570e20d120a2a8aca1df20b74c6ecc53ae32e4032918fdf46095fa"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T14:03:05.677Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "efe166f78c44342f6493afd82cb9d390061e2c45da8cb1f7e22857ca35e1f9a3",
+    "files": 2,
+    "bytes": 1494187,
+    "rejected": 0,
+    "path": "store/jobs/j000307/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

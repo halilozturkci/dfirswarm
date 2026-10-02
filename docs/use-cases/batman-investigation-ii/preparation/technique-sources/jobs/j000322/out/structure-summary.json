@@ -1,0 +1,51 @@
+{
+  "length": 2229,
+  "prefix_hex": "1f8b080000000000000ac5585973e23810fe2b13bf1216c9d8d8a66a1e387301",
+  "suffix_hex": "d154fcfff1a911e1e7612dae8aee2f3d6f1210088177ff02202eea2c391d0000",
+  "parses": [
+    {
+      "codec": "gzip",
+      "ok": true,
+      "length": 7481,
+      "prefix_hex": "7b2221626c6f636b636861696e212176"
+    },
+    {
+      "codec": "zlib",
+      "ok": false,
+      "error": "error"
+    },
+    {
+      "codec": "rawdeflate",
+      "ok": false,
+      "error": "error"
+    },
+    {
+      "variant": "gzip",
+      "encoding": "utf-8",
+      "decoded": true,
+      "chars": 7481,
+      "json": true,
+      "json_type": "dict",
+      "keys": [
+        "!blockchain!!v1!!states!exodus_0:algorand",
+        "!blockchain!!v1!!states!exodus_0:bsc",
+        "!blockchain!!v1!!states!exodus_0:cardano",
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "!blockchain!!v1!!states!exodus_0:matic",
+        "!blockchain!!v1!!states!exodus_0:monero",
+        "!blockchain!!v1!!states!exodus_0:solana",
+        "!blockchain!!v1!!states!exodus_0:tezos",
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        "!compatibilityFlags!20210520-reset-assets-cursors",
+        "!compatibilityFlags!20210527-reset-vethor-cursors",
+        "!compatibilityFlags!monero-subaddress-indexes",
+        "!compatibilityFlags!solana-stake-txs-21-07-01",
+        "!eventLog!!v1!data",
+        "!fusion!cachedProfile",
+        "!personalNotes!data"
+      ]
+    }
+  ],
+  "string_count": 22,
+  "contact_indicator_count": 0
+}

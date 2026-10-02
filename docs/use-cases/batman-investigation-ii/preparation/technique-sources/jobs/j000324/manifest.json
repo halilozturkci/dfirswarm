@@ -1,0 +1,1 @@
+{"v":1,"job":"j000324","attempt":1,"sealed_at":"2026-10-02T14:29:29.438Z","files":[{"path":"sanitized-note-join-check.json","path_b64":"c2FuaXRpemVkLW5vdGUtam9pbi1jaGVjay5qc29u","bytes":453,"sha256":"1599f0bc9e5d554878e06220aea775f7286cbcf1a84725bf92006274d6638e5d","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":453}}

@@ -1,11 +1,41 @@
 {
-  "at": "2026-10-02T14:10:41.736831+00:00",
-  "scope": "indexed source files and observer docs/packets, current Pi OAuth/seat/console literals; not general secret absence",
-  "candidate_secret_count": 13,
-  "files_scanned": 810,
-  "bytes_scanned": 32769877,
-  "source_copies_verified": 802,
-  "retained_binary_sources_verified": 3,
-  "hits": [],
-  "passed": true
+  "run": "s421201",
+  "at": "2026-10-02T14:38:17.029309+00:00",
+  "scope": "selected observer sources and current human notes; not final complete run/Pi/custody",
+  "indexed_copies_verified": 1001,
+  "indexed_jobs": 114,
+  "trace_refs": 920,
+  "retained_binary_originals_verified": 7,
+  "lossless_encoded_copies": [
+    {
+      "copy": "preparation/technique-sources/jobs/j000306/out/storage-caller-contexts-ascii.jsonl.gz",
+      "encoded_bytes": 16891880,
+      "encoded_sha256": "3f32e82fbf251fedd29721bdd67d262c14d94cfc105db0001035ca1a8b177aae",
+      "source_bytes": 170559810,
+      "source_sha256": "7783e2f43caadfc8215009d5b47672911293e4638a24126aaa66d17e9bdba3eb",
+      "restored_bytes_verified": true
+    }
+  ],
+  "authentication_literal_scan": {
+    "active_values": 13,
+    "hits": 0,
+    "files": 1009,
+    "scanned_bytes_including_decompressed_text": 226532107,
+    "values_emitted": false
+  },
+  "git_inventory_verification": {
+    "selected_folders": [
+      {
+        "folder": "preparation/technique-sources",
+        "actual_and_cached_files": 997,
+        "match": true
+      }
+    ],
+    "indexed_staged_blobs_verified": 1001,
+    "all_staged_paths_within_case": true,
+    "staged_paths_at_verification": 208,
+    "ignored_logs_and_gzip_included": true
+  },
+  "analytical_success": false,
+  "final_full_archive_complete": false
 }

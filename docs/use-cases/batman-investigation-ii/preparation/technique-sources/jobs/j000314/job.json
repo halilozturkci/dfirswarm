@@ -1,0 +1,102 @@
+{
+  "id": "j000314",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/Carmine-Falcone.raw",
+      "job:j000312/getter-static-runs.json",
+      "job:j000309/deterministic-key-contexts-ascii.jsonl"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "independent": true,
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport os,json,pathlib,sys\nruns=json.load(open('store/jobs/j000312/out/getter-static-runs.json'))\nrows=[]\nwith open('inputs/chall/Carmine-Falcone.raw','rb') as f:\n for r in runs:\n  f.seek(r['start']); raw=f.read(r['end']-r['start']); expected=r['source'].encode('ascii')\n  rows.append({'start':r['start'],'end':r['end'],'length':len(raw),'exact_source_bytes':raw==expected})\n  if r['start']==1376100352:\n   terms=['getExo1HDKey(){return this.getHDKeyWithPath(j.EXO_1_PATH)}','getDeterministicKey(){return(this._HDKeys[j.DETERMINISTIC_KEY_PATH]||this.getExo1HDKey().derive(j.DETERMINISTIC_KEY_INDEX)).privateKey}','_deriveHDKeyWithPath({path:e,curve:t}){return(\"ed25519\"===t?this._masterEd25519:this._master).derive(e)}','_setSeed(e){this._seed=e,this._master=Object(i.fromMasterSeed)(e.seed)']\n   rows[-1]['literal_steps']=[{'text':t,'physical_offset':r['start']+raw.index(t.encode()),'offset_in_run':raw.index(t.encode())} for t in terms]\n   rows[-1]['constant_definitions_in_this_run']={k:(k+'=').encode() in raw for k in ['EXO_1_PATH','DETERMINISTIC_KEY_PATH','DETERMINISTIC_KEY_INDEX']}\nprofiles=[]\nwith open('store/jobs/j000309/out/deterministic-key-contexts-ascii.jsonl') as f:\n for line in f:\n  d=json.loads(line); profiles.append({'keys':list(d),'text_fields':{k:len(v) for k,v in d.items() if isinstance(v,str)}})\nresult={'python':sys.version.split()[0],'raw_source_checks':rows,'original_context_rows':len(profiles),'original_context_schema':profiles,'scope':'Static source only. Cache-or-derive getter is not a key value or proof of execution; constants/import/class bindings remain outside this verification.'}\np=pathlib.Path(os.environ['OUT'])/'getter-independent-check.json';p.write_text(json.dumps(result,indent=2));print(json.dumps(result))\nassert all(r['exact_source_bytes'] for r in rows)\nPY"
+  },
+  "requester": {
+    "agent": "s42120102",
+    "name": "Wallet trace",
+    "doing": "Examine wallet installation and wallet protection evidence for questions 5 and 9."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T14:17:55.296Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000309/out/deterministic-key-contexts-ascii.jsonl",
+        "sha256": "077996f6fef5ce34f0c86faa150cde5afe750536dd79f482b31b75d342971c4e"
+      },
+      {
+        "path": "inputs/chall/Carmine-Falcone.raw",
+        "sha256": "3e03551e1f55dd792b0bc459b5620522d61fcf2379e8f6d89ef439fef8263cac"
+      },
+      {
+        "path": "store/jobs/j000312/out/getter-static-runs.json",
+        "sha256": "56e6e5e4f0c5e8128d0ca27489676fa5a7da7859da3a367c319095f0d67fa531"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000314-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T14:17:55.368Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000314",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 3,
+    "files": 3,
+    "bound": 0,
+    "manifest": "store/jobs/j000314/scope.1.json",
+    "manifest_sha256": "499a0a07d0e77ca0c3946d4ce9f6fa92aa8c4d33c2a6f9d42e52ba7b742314cb"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T14:17:56.103Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "8ae0b5cb94167f678514bb29034fba24f086145cccde63de5e5af14cd5cc942e",
+    "files": 1,
+    "bytes": 2528,
+    "rejected": 0,
+    "path": "store/jobs/j000314/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

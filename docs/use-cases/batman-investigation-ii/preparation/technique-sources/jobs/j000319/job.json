@@ -1,0 +1,92 @@
+{
+  "id": "j000319",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000302/seed-authenticated-payload.bin",
+      "job:j000315/seed-serializer-source-contexts.jsonl"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport json,zlib,os,re,struct,sys\nfrom pathlib import Path\nout=Path(os.environ['OUT']);data=Path('store/jobs/j000302/out/seed-authenticated-payload.bin').read_bytes();hits=[m.start() for m in re.finditer(re.escape(b'\\x1f\\x8b\\x08'),data)];results=[]\nfor offset in hits:\n row={'offset':offset}\n try:\n  decoder=zlib.decompressobj(31);plain=decoder.decompress(data[offset:],1048576);plain+=decoder.flush();row.update({'gzip_eof':decoder.eof,'decompressed_bytes':len(plain),'gzip_member_bytes':len(data)-offset-len(decoder.unused_data),'unconsumed_bytes':len(decoder.unconsumed_tail)})\n  if decoder.eof and not decoder.unconsumed_tail:\n   filename=f'serialized-seed-{offset}.bin';(out/filename).write_bytes(plain);row['retained']=filename;row['seed_prefix_bytes']=64 if len(plain)>=64 else None;row['suffix_bytes']=len(plain)-64 if len(plain)>=64 else None;row['supported_entropy_suffix_length']=len(plain)-64 in [16,32]\n except Exception as e:row['error_type']=type(e).__name__\n results.append(row)\nsummary={'python':sys.version.split()[0],'zlib':zlib.ZLIB_VERSION,'source_rule':'E332 gzip compression before 32768-byte expansion; inspect standard gzip members inside authenticated payload, without claiming recovered shrink implementation','payload_bytes':len(data),'gzip_header_hits':len(hits),'members':results}\n(out/'gzip-member-summary.json').write_text(json.dumps(summary,indent=2));print(json.dumps(summary,sort_keys=True))\nPY"
+  },
+  "requester": {
+    "agent": "s42120103",
+    "name": "Wallet history",
+    "doing": "Investigating Q7 and Q8: password-protected archive and original file hashes; avoiding peers' wallet work."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T14:19:58.162Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000315/out/seed-serializer-source-contexts.jsonl",
+        "sha256": "051debfd33c9651d9cae061a4898efa1796a1b658a772e8bed4da0940e3436bc"
+      },
+      {
+        "path": "store/jobs/j000302/out/seed-authenticated-payload.bin",
+        "sha256": "79ae8e77696049b7e346de5cf1cd488b520dc9e8312e79f178d8f2723e79de77"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000319-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T14:19:58.239Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000319",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 2,
+    "files": 2,
+    "bound": 0,
+    "manifest": "store/jobs/j000319/scope.1.json",
+    "manifest_sha256": "590caae369b5d6626582211513fa54f0c472286326ae2dcb96e9c2f7dcc74ded"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T14:19:58.929Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "ba4f478431e8a9a83fdea1d1e16803113db9322a11346f192510b3fe48e57662",
+    "files": 2,
+    "bytes": 669,
+    "rejected": 0,
+    "path": "store/jobs/j000319/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

@@ -1,0 +1,96 @@
+{
+  "id": "j000322",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000321/storage-authenticated-payload.bin"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport os,json,gzip,zlib,re,base64,pathlib\np=pathlib.Path('store/jobs/j000321/out/storage-authenticated-payload.bin').read_bytes()\nout=pathlib.Path(os.environ['OUT'])\nres={'length':len(p),'prefix_hex':p[:32].hex(),'suffix_hex':p[-32:].hex(),'parses':[]}\nvariants=[('raw',p)]\nfor name,fn in [('gzip',gzip.decompress),('zlib',zlib.decompress),('rawdeflate',lambda x:zlib.decompress(x,-15))]:\n try:\n  q=fn(p); variants.append((name,q));res['parses'].append({'codec':name,'ok':True,'length':len(q),'prefix_hex':q[:16].hex()})\n except Exception as e:res['parses'].append({'codec':name,'ok':False,'error':type(e).__name__})\nfor vn,b in variants:\n for enc in ['utf-8','utf-16le']:\n  try:\n   t=b.decode(enc)\n   rec={'variant':vn,'encoding':enc,'decoded':True,'chars':len(t)}\n   try:\n    o=json.loads(t);rec['json']=True;rec['json_type']=type(o).__name__;rec['keys']=sorted(o.keys()) if isinstance(o,dict) else None\n    (out/f'{vn}-{enc}-parsed.json').write_text(json.dumps(o,ensure_ascii=False,indent=2))\n   except Exception:rec['json']=False\n   res['parses'].append(rec)\n  except Exception:pass\n# bounded printable strings and likely contact contexts. This sealed secret output may include personal data; do not print values.\nstrings=[]\nfor m in re.finditer(rb'[ -~]{4,}',p): strings.append({'offset':m.start(),'value':m.group().decode('ascii','replace')})\nfor m in re.finditer(rb'(?:[ -~]\\x00){4,}',p): strings.append({'offset':m.start(),'value':m.group().decode('utf-16le','replace')})\nstrings.sort(key=lambda x:x['offset'])\n(out/'all-printable-strings.json').write_text(json.dumps(strings,ensure_ascii=False,indent=2))\nterms=['contact','recipient','person','name','email','mail','address','sender','client','note','label','identity','strange','maroni','nigma','falcone']\nhits=[]\nfor s in strings:\n low=s['value'].lower()\n if any(x in low for x in terms) or re.search(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}',s['value']):hits.append(s)\n(out/'contact-indicator-strings.json').write_text(json.dumps(hits,ensure_ascii=False,indent=2))\nres['string_count']=len(strings);res['contact_indicator_count']=len(hits)\n(out/'structure-summary.json').write_text(json.dumps(res,indent=2))\nprint(json.dumps({'length':len(p),'variants':[x[0] for x in variants],'strings':len(strings),'contact_indicators':len(hits),'summary':'structure-summary.json'}))\nPY"
+  },
+  "requester": {
+    "agent": "s42120105",
+    "name": "Userkey Analyst",
+    "doing": "I will establish Q12-Q13 (contact verification database key/client email and interpreted client/private key) from unknown.data and memory artifacts; Q14 is already taken."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T14:26:33.165Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000321/out/storage-authenticated-payload.bin",
+        "sha256": "5111c162c7dfa71c231752a7c5ec3de0504e284f7e665d1f217a672644844aaa"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000322-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T14:26:33.233Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000322",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000322/scope.1.json",
+    "manifest_sha256": "9ec24edf560f094ab5cbf7b71d27d4c4153c65b668fa9cde34ba0e6150803cc6"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T14:26:33.926Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "same_as": [
+    {
+      "path": "contact-indicator-strings.json",
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "bytes": 2,
+      "job": "j000100",
+      "file": "price_code.json"
+    }
+  ],
+  "outputs": {
+    "manifest_sha256": "a3b4aed79046f0f8e386ae61b7c7f04638dd3c71fdd4962e2ef132d7d0c6bd17",
+    "files": 4,
+    "bytes": 16894,
+    "rejected": 0,
+    "path": "store/jobs/j000322/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

@@ -1,0 +1,101 @@
+{
+  "id": "j000309",
+  "attempt": 1,
+  "spec": {
+    "kind": "tool",
+    "inputs": [
+      "input:chall/Carmine-Falcone.raw"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "tool": "literal_context_scan",
+    "args": {
+      "path": "inputs/chall/Carmine-Falcone.raw",
+      "needles": [
+        "getDeterministicKey"
+      ],
+      "out_path": "{OUT}/deterministic-key-contexts-ascii.jsonl",
+      "before": 8192,
+      "after": 32768
+    }
+  },
+  "requester": {
+    "agent": "s42120100",
+    "name": "Contact provenance",
+    "doing": "Investigate Q1 and Q2 contact/disguise communications and sent-file identity; model gpt-6.1-sol."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T14:05:32.122Z",
+  "reuse": {
+    "op": "tool:literal_context_scan",
+    "objects": [
+      {
+        "path": "inputs/chall/Carmine-Falcone.raw",
+        "sha256": "3e03551e1f55dd792b0bc459b5620522d61fcf2379e8f6d89ef439fef8263cac"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000309-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T14:05:32.193Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000309",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000309/scope.1.json",
+    "manifest_sha256": "952b84454da4ebac2ef8ebac6d2795de78c86c09ad7e87eae3570f704bba5c9f"
+  },
+  "network": "none",
+  "tool_sha256": "41160e2fc3e016e10a455ea179c8aad92dedcc69f9758b80fe3470b70668231a",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T14:05:36.142Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "5b3665c43128558f889c525f27177b394e835e90b50b1f9d9dfa52c409929651",
+    "files": 1,
+    "bytes": 933943,
+    "rejected": 0,
+    "path": "store/jobs/j000309/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

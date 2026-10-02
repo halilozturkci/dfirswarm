@@ -1,0 +1,20 @@
+{
+  "python": "3.11.2",
+  "zlib": "1.2.13",
+  "source_rule": "E332 gzip compression before 32768-byte expansion; inspect standard gzip members inside authenticated payload, without claiming recovered shrink implementation",
+  "payload_bytes": 32768,
+  "gzip_header_hits": 1,
+  "members": [
+    {
+      "offset": 4,
+      "gzip_eof": true,
+      "decompressed_bytes": 80,
+      "gzip_member_bytes": 103,
+      "unconsumed_bytes": 0,
+      "retained": "serialized-seed-4.bin",
+      "seed_prefix_bytes": 64,
+      "suffix_bytes": 16,
+      "supported_entropy_suffix_length": true
+    }
+  ]
+}

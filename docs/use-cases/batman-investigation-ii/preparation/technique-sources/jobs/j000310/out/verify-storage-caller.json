@@ -1,0 +1,13 @@
+{
+  "caller_dataflow_pattern_match": true,
+  "caller_physical_offset": 2887047459,
+  "interpretation": "The source passes a runtime deterministic-key result into the storage passphrase setter; this is a mechanism finding, not a recovered value or contact identity.",
+  "method_names": [
+    "getDeterministicKey",
+    "setSecoPassphrase",
+    "getSecoPassphrase",
+    "createStorageInternal"
+  ],
+  "setter_call_site_count": 1,
+  "storage_factory_callback_found": true
+}

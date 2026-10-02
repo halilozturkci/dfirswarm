@@ -1,0 +1,1 @@
+{"v":1,"job":"j000323","attempt":1,"sealed_at":"2026-10-02T14:27:17.369Z","files":[{"path":"independent-storage-authentication.json","path_b64":"aW5kZXBlbmRlbnQtc3RvcmFnZS1hdXRoZW50aWNhdGlvbi5qc29u","bytes":750,"sha256":"4c8f82af18cc2fd71c94444df333ac48704a0c5dad7c594526d16ad37298b1e6","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":750}}

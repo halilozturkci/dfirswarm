@@ -1,0 +1,18 @@
+{
+  "v": 1,
+  "kind": "lossless text reconstruction",
+  "job": "j000306",
+  "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000306/out/storage-caller-contexts-ascii.jsonl",
+  "source_bytes": 170559810,
+  "source_sha256": "7783e2f43caadfc8215009d5b47672911293e4638a24126aaa66d17e9bdba3eb",
+  "copy": "preparation/technique-sources/jobs/j000306/out/storage-caller-contexts-ascii.jsonl.gz",
+  "encoding": "gzip",
+  "encoded_bytes": 16891880,
+  "encoded_sha256": "3f32e82fbf251fedd29721bdd67d262c14d94cfc105db0001035ca1a8b177aae",
+  "gzip_mtime": 0,
+  "restore": "gunzip to a separate destination; verify source bytes and SHA256 against the original sealed manifest",
+  "verified_restored_bytes": 170559810,
+  "verified_restored_sha256": "7783e2f43caadfc8215009d5b47672911293e4638a24126aaa66d17e9bdba3eb",
+  "at": "2026-10-02T14:22:02.532748+00:00",
+  "scope": "selected full source file; not final complete run/Pi/custody archive"
+}

@@ -1,0 +1,92 @@
+{
+  "id": "j000310",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000308/setter-call-sites.json",
+      "job:j000055/seco_code_strings.txt"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport json,re,pathlib,os\ns=json.loads(pathlib.Path('store/jobs/j000308/out/setter-call-sites.json').read_text())\nassert len(s)==1\nc=s[0]['context']\n# Deliberately retain only method-call evidence; omit all unrelated source literals.\npattern=r'const\\s+(\\w+)\\s*=\\s*await\\s+g\\.default\\.getDeterministicKey\\(\\)\\s*;\\s*m\\.default\\.setSecoPassphrase\\(\\1\\)'\nm=re.search(pattern,c)\ntext=pathlib.Path('store/jobs/j000055/out/seco_code_strings.txt').read_text(errors='replace')\nmod=(\"getSecoPassphrase:()=>a\" in text and \"Object(r.createStorageInternal)\" in text and \"file:Object(o.default)(Object(c.walletDir)()).storageFile\" in text)\nout={'setter_call_site_count':len(s),'caller_dataflow_pattern_match':bool(m),'caller_physical_offset':s[0]['physical_offset'],'storage_factory_callback_found':mod,'method_names':['getDeterministicKey','setSecoPassphrase','getSecoPassphrase','createStorageInternal'],'interpretation':'The source passes a runtime deterministic-key result into the storage passphrase setter; this is a mechanism finding, not a recovered value or contact identity.'}\npathlib.Path(os.environ['OUT'],'verify-storage-caller.json').write_text(json.dumps(out,sort_keys=True,indent=2));print(json.dumps(out,sort_keys=True))\nPY"
+  },
+  "requester": {
+    "agent": "s42120107",
+    "name": "Memory triage",
+    "doing": "Available for independent review; prior Q6 evidence handoff complete."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T14:06:11.904Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000055/out/seco_code_strings.txt",
+        "sha256": "68f06eac86f65aa91e9f6e4f3dabaf59cda9bbd8bee306884c03837b2dfe47a6"
+      },
+      {
+        "path": "store/jobs/j000308/out/setter-call-sites.json",
+        "sha256": "dd43e8648ab6ccbd7d57525653807c048a1440417edfa73fe953565358acb36b"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000310-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T14:06:11.980Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000310",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 2,
+    "files": 2,
+    "bound": 0,
+    "manifest": "store/jobs/j000310/scope.1.json",
+    "manifest_sha256": "61bb86eb4eac74948394eda46c3a4cfa43aabac60ca990059c0c124beb9e023d"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T14:06:12.690Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "ab8594ccff7450de7352a4917621dffbe1e89859f04b53a68a43e7f3ea0d03e8",
+    "files": 1,
+    "bytes": 470,
+    "rejected": 0,
+    "path": "store/jobs/j000310/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

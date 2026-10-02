@@ -1,0 +1,27 @@
+{
+  "hit_count": 2,
+  "hits": [
+    {
+      "offset": 2517395054,
+      "encoding": "UTF-16LE",
+      "source": "r.d(t,\"HD_WALLET_PURPOSE\",function(){return o}),r.d(t,\"SEGWIT_PURPOSE\",function(){return i}),r.d(t,\"TAPROOT_PURPOSE\",function(){return s}),r.d(t,\"EXODUS_PURPOSE\",function(){return a}),r.d(t,\"EXO_1_PATH\",function(){return c}),r.d(t,\"EXO_2_PATH\",function(){return u}),r.d(t,\"DETERMINISTIC_KEY_INDEX\",function(){return d}),r.d(t,\"DETERMINISTIC_KEY_PATH\",function(){return l}),r.d(t,\"METADATA_INDEX\",function(){return f}),r.d(t,\"METADATA_PATH\",function(){return p}),r.d(t,\"BIP43_PURPOSE_SYNC\",function(){return h});var n=r(89);const o=44,i=(n.HARDENED_OFFSET,84),s=(n.HARDENED_OFFSET,86),a=(n.HARDENED_OFFSET,n.HARDENED_OFFSET,n.HARDENED_OFFSET,n.HARDENED_OFFSET,parseInt(Buffer.from(\"exo\").toString(\"hex\"),\"16\")),c=`m/${a}'/1'`,u=`m/${a}'/2'`,d=0,l=`${c}/${d}`,f=1,p=`${c}/${f}`,h=`${u}/0'`}",
+      "resolved": {
+        "EXODUS_PURPOSE": 6649967,
+        "EXO_1_PATH": "m/6649967'/1'",
+        "DETERMINISTIC_KEY_INDEX": 0,
+        "DETERMINISTIC_KEY_PATH": "m/6649967'/1'/0"
+      }
+    },
+    {
+      "offset": 4343371064,
+      "encoding": "UTF-16LE",
+      "source": "r.d(t,\"HD_WALLET_PURPOSE\",function(){return o}),r.d(t,\"SEGWIT_PURPOSE\",function(){return i}),r.d(t,\"TAPROOT_PURPOSE\",function(){return s}),r.d(t,\"EXODUS_PURPOSE\",function(){return a}),r.d(t,\"EXO_1_PATH\",function(){return c}),r.d(t,\"EXO_2_PATH\",function(){return u}),r.d(t,\"DETERMINISTIC_KEY_INDEX\",function(){return d}),r.d(t,\"DETERMINISTIC_KEY_PATH\",function(){return l}),r.d(t,\"METADATA_INDEX\",function(){return f}),r.d(t,\"METADATA_PATH\",function(){return p}),r.d(t,\"BIP43_PURPOSE_SYNC\",function(){return h});var n=r(89);const o=44,i=(n.HARDENED_OFFSET,84),s=(n.HARDENED_OFFSET,86),a=(n.HARDENED_OFFSET,n.HARDENED_OFFSET,n.HARDENED_OFFSET,n.HARDENED_OFFSET,parseInt(Buffer.from(\"exo\").toString(\"hex\"),\"16\")),c=`m/${a}'/1'`,u=`m/${a}'/2'`,d=0,l=`${c}/${d}`,f=1,p=`${c}/${f}`,h=`${u}/0'`}",
+      "resolved": {
+        "EXODUS_PURPOSE": 6649967,
+        "EXO_1_PATH": "m/6649967'/1'",
+        "DETERMINISTIC_KEY_INDEX": 0,
+        "DETERMINISTIC_KEY_PATH": "m/6649967'/1'/0"
+      }
+    }
+  ]
+}

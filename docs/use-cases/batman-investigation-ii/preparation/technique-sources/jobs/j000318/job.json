@@ -1,0 +1,85 @@
+{
+  "id": "j000318",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/Carmine-Falcone.raw"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 180,
+    "network": "off",
+    "command": "python3 - <<'PY'\nimport os,json\np='inputs/chall/Carmine-Falcone.raw'; needle='r.d(t,\"EXO_1_PATH\"'.encode('utf-16le')\nchunk=8*1024*1024;ov=len(needle)-1;hits=[]\nwith open(p,'rb') as f:\n base=0;tail=b''\n while True:\n  z=f.read(chunk)\n  if not z:break\n  b=tail+z;origin=base-len(tail);pos=0\n  while True:\n   i=b.find(needle,pos)\n   if i<0:break\n   lo=max(0,i-1200)\n   if (origin+lo)%2:lo+=1\n   txt=b[lo:min(len(b),i+5000)].decode('utf-16le','replace')\n   q=txt.find('r.d(t,\"HD_WALLET_PURPOSE\"'); end=txt.find('},function',q)\n   if q>=0 and end>q:\n    src=txt[q:end+1]; a=int.from_bytes(b'exo','big'); c=f\"m/{a}'/1'\";d=0;l=f'{c}/{d}'\n    hits.append({'offset':origin+lo+2*q,'encoding':'UTF-16LE','source':src,'resolved':{'EXODUS_PURPOSE':a,'EXO_1_PATH':c,'DETERMINISTIC_KEY_INDEX':d,'DETERMINISTIC_KEY_PATH':l}})\n   pos=i+2\n  base+=len(z);tail=b[-ov:]\nu=[];seen=set()\nfor x in hits:\n if x['offset'] not in seen:u.append(x);seen.add(x['offset'])\nout={'hit_count':len(u),'hits':u}\nopen(os.path.join(os.environ['OUT'],'storage-key-constants.json'),'w').write(json.dumps(out,indent=2))\nprint(json.dumps({'hit_count':len(u),'offsets':[x['offset'] for x in u],'resolved':u[0]['resolved'] if u else None}))\nPY"
+  },
+  "requester": {
+    "agent": "s42120104",
+    "name": "DBX Key Examiner",
+    "doing": "Establishing Q14, the userkey of the encrypted DBX database, from unknown.data and memory artefacts."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T14:19:49.140Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "inputs/chall/Carmine-Falcone.raw",
+        "sha256": "3e03551e1f55dd792b0bc459b5620522d61fcf2379e8f6d89ef439fef8263cac"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000318-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T14:19:49.212Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "general",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000318",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000318/scope.1.json",
+    "manifest_sha256": "02a39485b369f9d84442200a81534d60427e2cae31a8664866c43652f710a715"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T14:19:55.023Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "6488a7637f0c536ac6e35d8e4e0d53e5e91a4b98124372ed69d5a9e7ec75cc2a",
+    "files": 1,
+    "bytes": 2234,
+    "rejected": 0,
+    "path": "store/jobs/j000318/out"
+  }
+}
