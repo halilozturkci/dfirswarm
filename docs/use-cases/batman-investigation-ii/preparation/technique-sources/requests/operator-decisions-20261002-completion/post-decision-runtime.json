@@ -1,0 +1,119 @@
+{
+  "run": "s421201",
+  "captured_at": "2026-10-02T17:31:49.208102+00:00",
+  "summary": {
+    "id": "s421201",
+    "state": "running",
+    "done": false,
+    "finishing": false,
+    "tokens": 805950741,
+    "calls": 7323
+  },
+  "requests": {
+    "total": 6,
+    "open": 0,
+    "by_kind": {},
+    "pending": 0,
+    "acquisitions_open": 0,
+    "chain_ok": true
+  },
+  "questions": {
+    "in_scope": 14,
+    "persons": 0,
+    "unanswered": 0,
+    "proposed": 1,
+    "triage": 0,
+    "clarifications": 0,
+    "chain_ok": true
+  },
+  "leads": {
+    "open": 0,
+    "active": 3,
+    "blocked": 0,
+    "closed": 115,
+    "waiting_on_operator": 2,
+    "uncovered": 0,
+    "chain_ok": true
+  },
+  "seat_vms": [
+    {
+      "created_at": "2026-10-02T09:56:25.763697+00:00",
+      "image": "dfirswarm-memory:symbols-arm64",
+      "name": "dfs-s421201-s42120109",
+      "status": "Running"
+    },
+    {
+      "created_at": "2026-10-02T09:56:25.762783+00:00",
+      "image": "dfirswarm-memory:symbols-arm64",
+      "name": "dfs-s421201-s42120100",
+      "status": "Running"
+    },
+    {
+      "created_at": "2026-10-02T09:56:25.760228+00:00",
+      "image": "dfirswarm-memory:symbols-arm64",
+      "name": "dfs-s421201-s42120108",
+      "status": "Running"
+    },
+    {
+      "created_at": "2026-10-02T09:56:25.759398+00:00",
+      "image": "dfirswarm-memory:symbols-arm64",
+      "name": "dfs-s421201-s42120103",
+      "status": "Running"
+    },
+    {
+      "created_at": "2026-10-02T09:56:25.758588+00:00",
+      "image": "dfirswarm-memory:symbols-arm64",
+      "name": "dfs-s421201-s42120104",
+      "status": "Running"
+    },
+    {
+      "created_at": "2026-10-02T09:56:25.757769+00:00",
+      "image": "dfirswarm-memory:symbols-arm64",
+      "name": "dfs-s421201-s42120102",
+      "status": "Running"
+    },
+    {
+      "created_at": "2026-10-02T09:56:25.756030+00:00",
+      "image": "dfirswarm-memory:symbols-arm64",
+      "name": "dfs-s421201-s42120106",
+      "status": "Running"
+    },
+    {
+      "created_at": "2026-10-02T09:56:25.754307+00:00",
+      "image": "dfirswarm-memory:symbols-arm64",
+      "name": "dfs-s421201-s42120105",
+      "status": "Running"
+    },
+    {
+      "created_at": "2026-10-02T09:56:25.731557+00:00",
+      "image": "dfirswarm-memory:symbols-arm64",
+      "name": "dfs-s421201-s42120101",
+      "status": "Running"
+    },
+    {
+      "created_at": "2026-10-02T09:56:25.728054+00:00",
+      "image": "dfirswarm-memory:symbols-arm64",
+      "name": "dfs-s421201-s42120107",
+      "status": "Running"
+    }
+  ],
+  "other_run_job_vms": [],
+  "controller_pid": 93032,
+  "controller_running": true,
+  "mirror_modified_at": "2026-10-02T17:31:34.326000+00:00",
+  "stop_marker_present": false,
+  "work_files_present": {
+    "report.md": false,
+    "answers.json": false,
+    "timeline.md": false
+  },
+  "automation": {
+    "id": "batman-ii-10-ajan-ko-usu",
+    "status": "ACTIVE",
+    "rrule": "FREQ=MINUTELY;INTERVAL=5",
+    "authorized_batch_boundary_saved": true
+  },
+  "analytical_success": false,
+  "final_full_archive_complete": false,
+  "operator_scope": "R-2/R-3/R-4/R-6 only; subsequent solution work remains agent-owned"
+}

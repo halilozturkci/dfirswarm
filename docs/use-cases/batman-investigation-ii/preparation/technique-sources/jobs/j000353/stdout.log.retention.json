@@ -1,0 +1,11 @@
+{
+  "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000353/stdout.log",
+  "retained": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/sensitive-prefix-1707/jobs/j000353/stdout.log",
+  "bytes": 807,
+  "sha256": "e5811d9df1cc9f68c7c1810186d3ee84a5bf82dd7d55afb5c0d3bc6dd5904053",
+  "captured_at": "2026-10-02T17:11:46.675009+00:00",
+  "role": "complete withheld counts-only packaging audit output; source exposure locations are not release clearance",
+  "selected_git_body_copy": false,
+  "retention": "complete byte-exact private body; no truncation/redaction",
+  "archive_status": "selected observer prefix only; final complete run/custody pending"
+}

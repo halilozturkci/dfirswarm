@@ -1,0 +1,12 @@
+[
+  {
+    "rid": "R-2",
+    "action": "decline",
+    "text": "The user has delegated this pending request decision to the operator. No additional offline reference, decoder, source, evidence or network access will be supplied for this evidence-only run. The original input boundary and more_evidence: no policy remain in force. This declines the requested supply; it does not establish that the codec, key or requested facts are absent or impossible to recover from the original evidence.",
+    "started_at": "2026-10-02T17:25:46.858225+00:00",
+    "completed_at": "2026-10-02T17:25:47.272968+00:00",
+    "exit_code": 2,
+    "stdout": "preparation/technique-sources/requests/operator-decisions-20261002/R-2-decline-stdout.txt",
+    "stderr": "preparation/technique-sources/requests/operator-decisions-20261002/R-2-decline-stderr.txt"
+  }
+]

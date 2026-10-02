@@ -1,0 +1,1 @@
+{"v":1,"job":"j000353","attempt":1,"sealed_at":"2026-10-02T17:04:05.836Z","files":[{"path":"j350-known-field-exposure-check.json","path_b64":"ajM1MC1rbm93bi1maWVsZC1leHBvc3VyZS1jaGVjay5qc29u","bytes":10359,"sha256":"37a6a9cc80f152030f4074a2f0c25ffc6ab4b6ec48cb61608e2ebc687200370b","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":10359}}

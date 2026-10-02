@@ -1,0 +1,148 @@
+{
+  "run": "s421201",
+  "at": "2026-10-02T17:32:57.525047+00:00",
+  "found_count": 10,
+  "open_exact_count": 4,
+  "questions": [
+    {
+      "id": "Q-1",
+      "answer": 352,
+      "result": "partial",
+      "all_asked_established": false,
+      "question_rev": 1,
+      "stale": false,
+      "pending_clarifications": []
+    },
+    {
+      "id": "Q-2",
+      "answer": 307,
+      "result": "established",
+      "all_asked_established": null,
+      "question_rev": 1,
+      "stale": false,
+      "pending_clarifications": []
+    },
+    {
+      "id": "Q-3",
+      "answer": 183,
+      "result": "established",
+      "all_asked_established": true,
+      "question_rev": 1,
+      "stale": false,
+      "pending_clarifications": []
+    },
+    {
+      "id": "Q-4",
+      "answer": 184,
+      "result": "established",
+      "all_asked_established": true,
+      "question_rev": 1,
+      "stale": false,
+      "pending_clarifications": []
+    },
+    {
+      "id": "Q-5",
+      "answer": 95,
+      "result": "established",
+      "all_asked_established": true,
+      "question_rev": 1,
+      "stale": false,
+      "pending_clarifications": []
+    },
+    {
+      "id": "Q-6",
+      "answer": 384,
+      "result": "established",
+      "all_asked_established": true,
+      "question_rev": 1,
+      "stale": false,
+      "pending_clarifications": []
+    },
+    {
+      "id": "Q-7",
+      "answer": 312,
+      "result": "established",
+      "all_asked_established": true,
+      "question_rev": 1,
+      "stale": false,
+      "pending_clarifications": []
+    },
+    {
+      "id": "Q-8",
+      "answer": 232,
+      "result": "established",
+      "all_asked_established": true,
+      "question_rev": 1,
+      "stale": false,
+      "pending_clarifications": []
+    },
+    {
+      "id": "Q-9",
+      "answer": 108,
+      "result": "established",
+      "all_asked_established": true,
+      "question_rev": 1,
+      "stale": false,
+      "pending_clarifications": []
+    },
+    {
+      "id": "Q-10",
+      "answer": 104,
+      "result": "established",
+      "all_asked_established": true,
+      "question_rev": 1,
+      "stale": false,
+      "pending_clarifications": []
+    },
+    {
+      "id": "Q-11",
+      "answer": 105,
+      "result": "established",
+      "all_asked_established": true,
+      "question_rev": 1,
+      "stale": false,
+      "pending_clarifications": []
+    },
+    {
+      "id": "Q-12",
+      "answer": 358,
+      "result": "not_determinable",
+      "all_asked_established": false,
+      "question_rev": 1,
+      "stale": false,
+      "pending_clarifications": []
+    },
+    {
+      "id": "Q-13",
+      "answer": 359,
+      "result": "not_determinable",
+      "all_asked_established": false,
+      "question_rev": 1,
+      "stale": false,
+      "pending_clarifications": []
+    },
+    {
+      "id": "Q-14",
+      "answer": 379,
+      "result": "not_determinable",
+      "all_asked_established": false,
+      "question_rev": 1,
+      "stale": false,
+      "pending_clarifications": []
+    }
+  ],
+  "question_chain": {
+    "ok": true,
+    "total": 93,
+    "broken_at": null,
+    "reason": null,
+    "head": "c071c9f7be1ef30314023cb0f619dfce899a0a1c10c33e71356c1e1ebd08c276"
+  },
+  "flag_verified": false,
+  "gold_solution_consulted": false,
+  "scope": "current recorded answer dispositions: nine established records with structured parts plus Q2 established without structured parts; not official gold-answer validation",
+  "count_rule": "Current established and non-stale answer dispositions; an explicitly false structured asked-part standing remains unresolved. Missing structured standing is not treated as false.",
+  "unstructured_established_questions": [
+    "Q-2"
+  ]
+}

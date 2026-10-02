@@ -1,0 +1,110 @@
+{
+  "id": "j000353",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000350/stdout.log",
+      "input:chall/unknown.data",
+      "job:j000342/v4-known-field-redaction-check.json",
+      "job:j000341/checkpoint-redaction-snapshot.md",
+      "job:j000154/cache-patched.7z"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport json,os,base64,sys\nfrom pathlib import Path\nout=Path(os.environ['OUT'])\npreview=Path('store/jobs/j000350/stdout.log').read_bytes(); unknown=Path('inputs/chall/unknown.data').read_bytes(); repaired_archive=Path('store/jobs/j000154/out/cache-patched.7z').read_bytes(); control=Path('store/jobs/j000341/out/checkpoint-redaction-snapshot.md').read_bytes(); prior=json.loads(Path('store/jobs/j000342/out/v4-known-field-redaction-check.json').read_text())\noriginal=unknown[243:260]; repaired=repaired_archive[243:260]; assert len(original)==len(repaired)==17\nfields=[('original17',original),('repaired17',repaired),('original_prefix15',original[:15]),('original_prefix15_plus_two_spaces',original[:15]+b'  ')]\ndef forms(token):\n r={'raw_bytes':token,'hex_lower':token.hex().encode(),'hex_upper':token.hex().upper().encode(),'base64':base64.b64encode(token),'base64_unpadded':base64.b64encode(token).rstrip(b'='),'urlsafe_base64':base64.urlsafe_b64encode(token),'urlsafe_base64_unpadded':base64.urlsafe_b64encode(token).rstrip(b'=')}\n if all(32<=x<127 for x in token):\n  text=token.decode('ascii');r['utf16le']=text.encode('utf-16le');r['json_escaped_ascii']=json.dumps(text)[1:-1].encode();r['unicode_escaped_ascii']=''.join('\\\\u%04x'%c for c in token).encode()\n return r\ndef positions(hay,needle):\n ans=[];start=0\n while True:\n  at=hay.find(needle,start)\n  if at<0:return ans\n  ans.append(at);start=at+len(needle)\nrows=[]\nfor label,token in fields:\n checks=[]\n for representation,needle in forms(token).items():\n  hits=positions(preview,needle);old=positions(control,needle)\n  checks.append({'representation':representation,'preview_hit_count':len(hits),'preview_byte_offsets':hits,'positive_control_hit_count':len(old),'positive_control_byte_offsets':old})\n rows.append({'label':label,'source_length':len(token),'checks':checks})\nprior_inventory=[(x['label'],x['source_length'],[c['representation'] for c in x['checks']]) for x in prior['fields']]\ncurrent_inventory=[(x['label'],x['source_length'],[c['representation'] for c in x['checks']]) for x in rows]\nassert current_inventory==prior_inventory and sum(len(x['checks']) for x in rows)==37\ndef check(label,rep):return next(c for x in rows if x['label']==label for c in x['checks'] if c['representation']==rep)\nfor label in ('original17','original_prefix15'):\n for rep in ('raw_bytes','json_escaped_ascii'):assert check(label,rep)['positive_control_hit_count']==2\nsynthetic_controls=[]\nfor x,(label,token) in zip(rows,fields):\n for c,(representation,needle) in zip(x['checks'],forms(token).items()):\n  ok=positions(b'control-open\\x00'+needle+b'\\x00control-close',needle)==[13]\n  synthetic_controls.append({'field':label,'representation':representation,'detected_once_at_expected_offset':ok})\nassert all(x['detected_once_at_expected_offset'] for x in synthetic_controls)\nresult={'python':sys.version.split()[0],'tested_object':'job:j000350/stdout.log','preview_bytes':len(preview),'source_objects':['input:chall/unknown.data','job:j000154/cache-patched.7z'],'inventory_reference':'job:j000342/v4-known-field-redaction-check.json','positive_control_object':'job:j000341/checkpoint-redaction-snapshot.md','tested_fields':len(rows),'representations_tested':sum(len(x['checks']) for x in rows),'all_preview_known_forms_zero':all(c['preview_hit_count']==0 for x in rows for c in x['checks']),'preview_total_labeled_hits':sum(c['preview_hit_count'] for x in rows for c in x['checks']),'prior_inventory_exact_match':True,'sealed_v3_raw_and_json_controls_match_two_each_for_full_and_prefix':True,'synthetic_controls_passed':sum(x['detected_once_at_expected_offset'] for x in synthetic_controls),'synthetic_controls_total':len(synthetic_controls),'fields':rows,'bounds':'Exact known original/repaired 17-byte field, original 15-byte prefix, documented prefix-plus-two-spaces, and the 37 prior representation labels only. No claim about shorter truncations, different encodings, obfuscation, contexts outside the retained j350 stdout preview, or any other secrets. A zero result does not authorize release; j350 remains withheld. No secret values or secret hashes are emitted.'}\n(out/'j350-known-field-exposure-check.json').write_text(json.dumps(result,indent=2));print(json.dumps({k:result[k] for k in ('python','tested_object','preview_bytes','tested_fields','representations_tested','all_preview_known_forms_zero','preview_total_labeled_hits','prior_inventory_exact_match','sealed_v3_raw_and_json_controls_match_two_each_for_full_and_prefix','synthetic_controls_passed','synthetic_controls_total','bounds')}))\nPY"
+  },
+  "requester": {
+    "agent": "s42120106",
+    "name": "Vault Artifact Analyst",
+    "doing": "Establishing Q3-Q4: password-manager identity/version and password, plus the deleted stored user key."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T17:04:04.993Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000350/stdout.log"
+      },
+      {
+        "path": "inputs/chall/unknown.data",
+        "sha256": "87841ce462a019649f6206c72cf65ce5305a88b828ca45996ae9422e6f578f4f"
+      },
+      {
+        "path": "store/jobs/j000341/out/checkpoint-redaction-snapshot.md",
+        "sha256": "d32bc2c97cd694d776c5a035911d950c95f33c5d3998df7e470c49f23b082484"
+      },
+      {
+        "path": "store/jobs/j000154/out/cache-patched.7z",
+        "sha256": "dc964dd816be637dadf3f92d53bdf43b88ad5bbbcc7b37525b305d4ba4ea08d1"
+      },
+      {
+        "path": "store/jobs/j000342/out/v4-known-field-redaction-check.json",
+        "sha256": "ee25a2ec02875dcc09a0b193c9d8fac5483566bf24f7ad27466322aaba4ff68c"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000353-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T17:04:05.083Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000353",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 5,
+    "files": 5,
+    "bound": 0,
+    "manifest": "store/jobs/j000353/scope.1.json",
+    "manifest_sha256": "095e7b22f9f0aafa79b456549661d6119f793ad33da998457c6f9f54b74199b2"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T17:04:05.822Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "fe36cd998c734da227ac2fc4c51e5caff96ad8f37a9cead939fd4e810780c529",
+    "files": 1,
+    "bytes": 10359,
+    "rejected": 0,
+    "path": "store/jobs/j000353/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

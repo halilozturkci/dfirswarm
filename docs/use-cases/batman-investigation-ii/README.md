@@ -2,7 +2,9 @@
 
 Durum: `s421201` çalışıyor; 10 gerçek VM ve 3 modelin çağrıları doğrulandı. 14 sorunun nihai çözümü henüz doğrulanmadı.
 
-16:52 heartbeat, 16:54:30 UTC kaynak kesiti: L112 güncel Q14 negatif incelemesiyle resolved kapandı. Author checkpoint-v5 yalnız Q14 bölümüne E369/E371/E373/E375/E377/E378/E379 desteğini ekledi; diğer bölüm ack'leri byte-unchanged olarak taşındı, Q14 scoped ack alındı ve23late post12folded/11not_material işlendi.233,577B taslak SHA256 `add72f3700840182f6a5b51125fc15d6fca06917b6b07306028a44ab448bcc3e` tam private version olarak korunuyor; public release/final report değil. Ten-answer subset ve Q1/Q12–Q14/flag boşlukları değişmedi.10VM/controller/mirror canlı; final files yok.1,469 selected source/142job final archive değildir. [Son kaynak kesiti](preparation/heartbeat-2026-10-02T165246Z.json).
+Kullanıcının yeni karar yetkisiyle R2 ek kaynak talebi ve R6 erken durdurma önerisi reddedildi; R3/Q6 ve R4/Q12 biçim açıklamaları cevaplandı. Açık operatör isteği **0**, soru açıklaması bekleme **0**; koşu ve 10 ajan VM'si sürüyor. Q6 için delille desteklenen dosya adı ve literal `malware_ip:port)`; Q12 için kendi Format satırı, Q13 için ayrı Format satırı esas alındı. Bu iki açıklama ve iki ret deney kaydında operatör müdahalesi olarak işaretli; Solution veya cevap değeri verilmedi. [Kararların tam kayıtları](preparation/technique-sources/requests/operator-decisions-20261002-completion/decision-receipts.json).
+
+17:07 heartbeat,17:11:46UTC kaynak kesiti: Daybreak06 j353/E381 withheld j350 preview içinde37named-form testte12labelmatch buldu; dört örtüşen alias aynı üç fiziksel yeri sayıyor. Sol02 j354/E382 original17bytes'ın aynı üç konumda eşitliğini bağımsız kontrol edip E381'i scoped attest etti.37generated-needle positivecontrols ve oldV3 full/prefix controls pass; bu global privacy/37independent probe/DBX proof değil. j350/j353/j354 whole bodies ve held control traces private tam korunuyor; metadata/hashes repoda. Q1/Q12–Q14/flag açık,10VM/controller/mirror canlı, finalfiles yok; unchangedv5 add72....1,509selectedsource/144job finalarchive değildir. [Son kaynak kesiti](preparation/heartbeat-2026-10-02T170747Z.json).
 
 - Takım: 4 GPT-6.1 Sol, 3 Daybreak Blue, 3 GPT-6 Luna; Codex OAuth.
 - Platform: kaynak main `3e33c630927391ce0474942e1f8705a616cbff38`.
@@ -15,7 +17,7 @@ Durum: `s421201` çalışıyor; 10 gerçek VM ve 3 modelin çağrıları doğrul
 
 [Koşu hedefi](goal.md) · [Delil manifesti](evidence-manifest.json) · [Canlı gözlemler](observations.md)
 
-[Platform geliştirme adayları](platform-improvements.md): gerçek koşu/iş kayıtlarına bağlı ara değerlendirme. Kullanıcının son talimatıyla operatör yalnız gözlem yapıyor; önceki dört müdahale ve etkileri kayıtta açıkça işaretli.
+[Platform geliştirme adayları](platform-improvements.md): gerçek koşu/iş kayıtlarına bağlı ara değerlendirme. Önceki dört müdahale ve kullanıcının sonraki yetkisiyle verilen dört request kararı kayıtta açıkça işaretli; bu kararların ardından çözüm çalışması yine yalnız gözleniyor.
 
 [Ajanların geliştirdiği yöntemler ve blog kaynak notları](technique-notes.md): yöntem adımları, ilk başarısız denemeler, bağımsız kontroller, kaynak kimlikleri ve özgünlük sınırları. Literatürde yeni oldukları henüz araştırılmadı.
 

@@ -1,0 +1,2 @@
+Recorded Q-12 (revision 1). Clarification C-3.
+{"ok":true,"q":"Q-12","rev":1,"clarify":"C-3","seq":92,"hash":"f9ef290b1b8b550d42a07d338eb794813c4a77d32fe0f048e098ae4452f2a959","by":"halilozturkci@192.168.1.11, operator, claimed, not enrolled, via cli","post":{"thread":"main","id":834},"delivered":[],"admitted_by":"hub"}

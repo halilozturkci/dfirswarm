@@ -1,0 +1,101 @@
+{
+  "id": "j000354",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/unknown.data",
+      "job:j000350/stdout.log",
+      "job:j000353/j350-known-field-exposure-check.json"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "independent": true,
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport json,os,sys\nfrom pathlib import Path\nsource=Path('inputs/chall/unknown.data').read_bytes()\nfield=source[243:260]\nassert len(field)==17\npreview=Path('store/jobs/j000350/stdout.log').read_bytes()\npositions=[]\nstart=0\nwhile True:\n offset=preview.find(field,start)\n if offset<0: break\n positions.append(offset)\n start=offset+1\npeer=json.loads(Path('store/jobs/j000353/out/j350-known-field-exposure-check.json').read_text())\nrow=next(c for f in peer['fields'] if f['label']=='original17' for c in f['checks'] if c['representation']=='raw_bytes')\nresult={'python':sys.version.split()[0],'source_span':[243,260],'source_field_length':len(field),'preview_bytes':len(preview),'full_field_count':len(positions),'full_field_offsets':positions,'each_exact_equality':all(preview[p:p+17]==field for p in positions),'matches_peer_full_field_locations':positions==row['preview_byte_offsets'],'synthetic_positive_control':(b'\\0'+field+b'\\0').find(field)==1,'secret_values_or_hashes_emitted':False,'bounds':'Independent positive full-original-field check only; not the 37-form audit, global redaction clearance, or DBX-key identification.'}\nassert result['synthetic_positive_control']\np=Path(os.environ['OUT'])/'independent-preview-field-check.json'\np.write_text(json.dumps(result,indent=2)+'\\n')\nprint(json.dumps(result,indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120102",
+    "name": "Wallet trace",
+    "doing": "Examine wallet installation and wallet protection evidence for questions 5 and 9."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T17:08:16.979Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000350/stdout.log"
+      },
+      {
+        "path": "store/jobs/j000353/out/j350-known-field-exposure-check.json",
+        "sha256": "37a6a9cc80f152030f4074a2f0c25ffc6ab4b6ec48cb61608e2ebc687200370b"
+      },
+      {
+        "path": "inputs/chall/unknown.data",
+        "sha256": "87841ce462a019649f6206c72cf65ce5305a88b828ca45996ae9422e6f578f4f"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000354-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T17:08:17.066Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000354",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 3,
+    "files": 3,
+    "bound": 0,
+    "manifest": "store/jobs/j000354/scope.1.json",
+    "manifest_sha256": "01c468491c1e1aae8149098d0f2b5d99ad7ca286c013eed3490e42378c0f9619"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T17:08:17.803Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "4beda40ace597e8417bfe4e6abcf3f339aba1cde4a8513c9bf112b73759d8091",
+    "files": 1,
+    "bytes": 512,
+    "rejected": 0,
+    "path": "store/jobs/j000354/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

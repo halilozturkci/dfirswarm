@@ -1,0 +1,11 @@
+{
+  "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000353/out/j350-known-field-exposure-check.json",
+  "retained": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/sensitive-prefix-1707/jobs/j000353/out/j350-known-field-exposure-check.json",
+  "bytes": 10359,
+  "sha256": "37a6a9cc80f152030f4074a2f0c25ffc6ab4b6ec48cb61608e2ebc687200370b",
+  "captured_at": "2026-10-02T17:11:46.675009+00:00",
+  "role": "complete withheld counts-only packaging audit output; source exposure locations are not release clearance",
+  "selected_git_body_copy": false,
+  "retention": "complete byte-exact private body; no truncation/redaction",
+  "archive_status": "selected observer prefix only; final complete run/custody pending"
+}

@@ -2979,7 +2979,7 @@
       "sha256": "162d28663d235810e8717957cefc17ce3b58da006b3cba4d29296781020029ab",
       "captured_at": "2026-10-02T12:01:16.938750+00:00",
       "byte_exact_source_copy": false,
-      "selection": "complete records E267–E286 selected from live prefix; not an independently chained full ledger"
+      "selection": "complete records E267\u2013E286 selected from live prefix; not an independently chained full ledger"
     },
     {
       "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000416-s42120104.md",
@@ -3760,7 +3760,7 @@
       "sha256": "ddc416409a4d7caed3f3ea78a594e8d135e96e8095777e853d61d5bb3b98fe12",
       "captured_at": "2026-10-02T12:18:22.435121+00:00",
       "byte_exact_source_copy": false,
-      "selection": "complete selected E287/E292/E294–E302; live prefix, not full chain"
+      "selection": "complete selected E287/E292/E294\u2013E302; live prefix, not full chain"
     },
     {
       "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/leads/leads.jsonl",
@@ -3769,7 +3769,7 @@
       "sha256": "22617d15c65ded4df62d7c89101f62525440ae4a3cf85219ae792ab6ff94183d",
       "captured_at": "2026-10-02T12:18:22.435121+00:00",
       "byte_exact_source_copy": false,
-      "selection": "complete lead records seq885–896 for L51 close, review, reopen and L55; not full chain"
+      "selection": "complete lead records seq885\u2013896 for L51 close, review, reopen and L55; not full chain"
     },
     {
       "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000460-s42120100.md",
@@ -11976,6 +11976,619 @@
       "captured_at": "2026-10-02T16:55:50.110743+00:00",
       "byte_exact_source_copy": false,
       "selection": "operator immutable unfinished-checkpoint retention identity and source-reference/diff metadata; fullbody private"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000353/job.json",
+      "copy": "preparation/technique-sources/jobs/j000353/job.json",
+      "bytes": 7992,
+      "sha256": "71e6d88ee9d51107d73a715ea8d28143d73658e0038a2d389ad1253692f32614",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000353/manifest.json",
+      "copy": "preparation/technique-sources/jobs/j000353/manifest.json",
+      "bytes": 357,
+      "sha256": "fe36cd998c734da227ac2fc4c51e5caff96ad8f37a9cead939fd4e810780c529",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000353/stderr.log",
+      "copy": "preparation/technique-sources/jobs/j000353/stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000353/stdout.log",
+      "copy": "preparation/technique-sources/jobs/j000353/stdout.log.retention.json",
+      "bytes": 691,
+      "sha256": "08b7ef943ac405d623788de9664164a18db7503737e00c71edff2b5efe7fcc47",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "operator withheld job-body identity; complete originals privately retained"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000353/scope.1.json",
+      "copy": "preparation/technique-sources/jobs/j000353/scope.1.json",
+      "bytes": 3305,
+      "sha256": "095e7b22f9f0aafa79b456549661d6119f793ad33da998457c6f9f54b74199b2",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000353/out/j350-known-field-exposure-check.json",
+      "copy": "preparation/technique-sources/jobs/j000353/out/j350-known-field-exposure-check.json.retention.json",
+      "bytes": 753,
+      "sha256": "54ea97b27441217c82ec7a2e07c35c374cbd483fb4fd775392b0aadfec2043c6",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "operator withheld job-body identity; complete originals privately retained"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000354/job.json",
+      "copy": "preparation/technique-sources/jobs/j000354/job.json",
+      "bytes": 4302,
+      "sha256": "0ab39b15c360fc8d64d93d8a1455c915e9dad7926503dbd4b9aa7ef5414e5ef3",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000354/manifest.json",
+      "copy": "preparation/technique-sources/jobs/j000354/manifest.json",
+      "bytes": 353,
+      "sha256": "4beda40ace597e8417bfe4e6abcf3f339aba1cde4a8513c9bf112b73759d8091",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000354/stderr.log",
+      "copy": "preparation/technique-sources/jobs/j000354/stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000354/stdout.log",
+      "copy": "preparation/technique-sources/jobs/j000354/stdout.log.retention.json",
+      "bytes": 691,
+      "sha256": "be82f9e46897d622d6bd7da12c880a0be2ecfbc38e7f0c09291d61e03e72f3fb",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "operator withheld job-body identity; complete originals privately retained"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000354/scope.1.json",
+      "copy": "preparation/technique-sources/jobs/j000354/scope.1.json",
+      "bytes": 2268,
+      "sha256": "01c468491c1e1aae8149098d0f2b5d99ad7ca286c013eed3490e42378c0f9619",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000354/out/independent-preview-field-check.json",
+      "copy": "preparation/technique-sources/jobs/j000354/out/independent-preview-field-check.json.retention.json",
+      "bytes": 751,
+      "sha256": "0111f49299ca2cf71a904df4b3dc5b1ed963d2ebd8c9b3c8987c5b558e7a71e7",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "operator withheld job-body identity; complete originals privately retained"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000798-s42120103.md",
+      "copy": "preparation/technique-sources/threads/main/000798-s42120103.md",
+      "bytes": 353,
+      "sha256": "dc3f7980114132ec4aba5d9fe2edcb3748acbca9b8c3435dbc12b8e46f2de8fe",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000799-s42120106.md",
+      "copy": "preparation/technique-sources/threads/main/000799-s42120106.md",
+      "bytes": 347,
+      "sha256": "eab7133f62f0abbbdf94897998d511c0cdad868657cdc2d19da8db1c5ae923a2",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000800-s42120102.md",
+      "copy": "preparation/technique-sources/threads/main/000800-s42120102.md",
+      "bytes": 561,
+      "sha256": "d40bee957589c52e462627c9c0907c08aade9851e456b7afea47a4a77e065f28",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000801-s42120107.md",
+      "copy": "preparation/technique-sources/threads/main/000801-s42120107.md",
+      "bytes": 580,
+      "sha256": "6393e9cdd0aa320d7e3f327c4dce7321d74cc905443026e18d12ece0d2e54839",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000802-s42120100.md",
+      "copy": "preparation/technique-sources/threads/main/000802-s42120100.md",
+      "bytes": 551,
+      "sha256": "c931111abc0727156e4f50a165775dfec8da2555abdac4bb5f8059e3fa915e20",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000803-s42120106.md",
+      "copy": "preparation/technique-sources/threads/main/000803-s42120106.md",
+      "bytes": 399,
+      "sha256": "5dc8fbb960976e835e8061ec6be99f203aa4573d45c09edf7f34a61baa37a0d0",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000804-s42120104.md",
+      "copy": "preparation/technique-sources/threads/main/000804-s42120104.md",
+      "bytes": 310,
+      "sha256": "9542ba9c33912dd81c032e1acc3e0e1a4163355af1853bdc46cce8c98544094b",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000805-s42120101.md",
+      "copy": "preparation/technique-sources/threads/main/000805-s42120101.md",
+      "bytes": 847,
+      "sha256": "87c467e8d93cb71e3b966de041e6f984e9622ae615b2246384e6c71dd15974ff",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000806-s42120102.md",
+      "copy": "preparation/technique-sources/threads/main/000806-s42120102.md",
+      "bytes": 665,
+      "sha256": "1c794f6df93f88e7bfd8385d8006219b365ddcb70e525338f3fd35f3e8baee64",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000807-s42120107.md",
+      "copy": "preparation/technique-sources/threads/main/000807-s42120107.md",
+      "bytes": 207,
+      "sha256": "bb02da55c2229b3e88ef87c8e19ffa24cf8048e888b979e50d010d91d3cecd4e",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000808-s42120107.md",
+      "copy": "preparation/technique-sources/threads/main/000808-s42120107.md",
+      "bytes": 416,
+      "sha256": "cebe04a09da69986e835e44ee646cd587ea8428c3864c15d42fbef652b2d67dd",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000809-s42120102.md",
+      "copy": "preparation/technique-sources/threads/main/000809-s42120102.md",
+      "bytes": 430,
+      "sha256": "2154bd831c5442ddd07c93e57a8e2de75f5074f66b1d04755dafc3fe79d23918",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000810-s42120106.md",
+      "copy": "preparation/technique-sources/threads/main/000810-s42120106.md",
+      "bytes": 626,
+      "sha256": "d8b65896cf7cc7e281187ef1433c1c6e7dec9fc391dba99bcb1d5add02f538ee",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000811-s42120108.md",
+      "copy": "preparation/technique-sources/threads/main/000811-s42120108.md",
+      "bytes": 625,
+      "sha256": "3dc23ea6b9344f7957261b2102bc38641d627377236644c37a0f66f1d6f3aeb1",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000812-s42120103.md",
+      "copy": "preparation/technique-sources/threads/main/000812-s42120103.md",
+      "bytes": 433,
+      "sha256": "44ac31b6176e07a94601542b3b40824b29806890a2f38c5ecab1c9fa52fe9592",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000813-s42120100.md",
+      "copy": "preparation/technique-sources/threads/main/000813-s42120100.md",
+      "bytes": 489,
+      "sha256": "e1b2e18a3255ff1ec7b683cdf99325144fa3a2dc0f2ae68cd7191d902629e871",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000814-s42120102.md",
+      "copy": "preparation/technique-sources/threads/main/000814-s42120102.md",
+      "bytes": 490,
+      "sha256": "b949368d98b11c1d34b472d5b3772dbc67d18cf5853dd0041c1cf85400b0821c",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000815-s42120104.md",
+      "copy": "preparation/technique-sources/threads/main/000815-s42120104.md",
+      "bytes": 367,
+      "sha256": "5acf1ce5bfbf05dc0aafc8b5ab0894530b0f3a9989765e0c6f3b17003a5c7008",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/leads/leads.jsonl",
+      "copy": "preparation/technique-sources/leads/selected-1707-events.jsonl",
+      "bytes": 7914,
+      "sha256": "49535c1d63fc62294e760441e378a9b1dcf10034cc80adc92fdb1f7bf331b4e4",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "whole selected JSONL records; sequential live prefix, not full chain or final custody"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/leads/finish.jsonl",
+      "copy": "preparation/technique-sources/leads/selected-1707-finish-events.jsonl",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "whole selected JSONL records; sequential live prefix, not full chain or final custody"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/requests/requests.jsonl",
+      "copy": "preparation/technique-sources/requests/snapshot-1707/requests.jsonl",
+      "bytes": 8460,
+      "sha256": "7104b6e0125f50e1b3547e5114cd23aa1026c2a12efee857f4e009cc475bd713",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "whole current request register captured sequentially; final register may change"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/requests/requests.md",
+      "copy": "preparation/technique-sources/requests/snapshot-1707/requests.md",
+      "bytes": 5696,
+      "sha256": "3ddcd04588eaaa0455a06e1d2700b1452a5264ac77fba4dd9474c2bf0b33304a",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "whole current request register captured sequentially; final register may change"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/traces/events.jsonl",
+      "copy": "preparation/technique-sources/traces/selected-1707-withheld-preview-exposure-controls-followup.jsonl",
+      "bytes": 51315,
+      "sha256": "6d9486293d67fa758524efd069f0bcd2606151f03c185fea9f7cf2616cfd1bd8",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "whole public typed tools, source reads, finish and lifecycle records; no thinking entries; not full trace chain"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/traces/events.jsonl",
+      "copy": "preparation/technique-sources/traces/sensitive-retention-1707.json",
+      "bytes": 11135,
+      "sha256": "66339df5479937329e2975c87a8609fb21635543c8ea67e9af11b7d57027eddb",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "operator retention manifest; no private-key scalar or fragment retained in this Git manifest"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/traces/regroup.json",
+      "copy": "preparation/technique-sources/traces/regroup-state-1707.json",
+      "bytes": 64,
+      "sha256": "622d07fdbc0e85c17f1310ac6d1d2b7674af99253f317185e740d150b8245d6b",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "whole current mutable watchdog state captured sequentially"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/ledger/entries.jsonl",
+      "copy": "preparation/technique-sources/ledger/selected-1707-entries.jsonl",
+      "bytes": 16998,
+      "sha256": "a5866cb2723e8001fa0f7aff019bc2859266ac441e4a1dc2b67cc41e0dad78ff",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "whole selected JSONL records; live sequential prefix, not full chain or custody"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/ledger/attestations.jsonl",
+      "copy": "preparation/technique-sources/ledger/selected-1707-attestations.jsonl",
+      "bytes": 1017,
+      "sha256": "474a52f989e5bed18f132da2a1e5087b4592659ed84c251069e5f4d7b8622791",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "whole selected JSONL records; live sequential prefix, not full chain or custody"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/traces/stop-policy.yield.json",
+      "copy": "preparation/technique-sources/traces/stop-policy-yield-1707.json",
+      "bytes": 96,
+      "sha256": "34bcd3e1aeed7f531dae4643c71a29d77b99a3cf84ed5e0bdec629e3aa484a6e",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "whole current proposal-window state captured sequentially; no operator acceptance"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/requests/requests.jsonl",
+      "copy": "preparation/technique-sources/requests/operator-decisions-20261002-completion/before-cli-view.json",
+      "bytes": 12434,
+      "sha256": "20f6f3fd6590b182b3f43979f15e7bffafae1577c4b9919bd895cb2b18dfe4e4",
+      "captured_at": "2026-10-02T17:27:49.103037+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "whole CLI projection before the authorized four decisions"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/requests/requests.jsonl",
+      "copy": "preparation/technique-sources/requests/operator-decisions-20261002-completion/before-requests.jsonl",
+      "bytes": 9996,
+      "sha256": "56cfda55442dbcac913de9931719ee885aba3b29477454757cc9cd8181d7fef3",
+      "captured_at": "2026-10-02T17:27:49.103270+00:00",
+      "byte_exact_source_copy": true,
+      "selection": "whole append-only register prefix before decisions"
+    },
+    {
+      "source": "operator CLI execution",
+      "copy": "preparation/technique-sources/requests/operator-decisions-20261002-completion/R-4-answer-stdout.txt",
+      "bytes": 322,
+      "sha256": "bfea6a18ab62710b46cc98dc178de3b6fce34957440efe1f3570f2f18b3b6129",
+      "captured_at": "2026-10-02T17:27:50.182060+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "complete CLI receipt; no shell interpolation"
+    },
+    {
+      "source": "operator CLI execution",
+      "copy": "preparation/technique-sources/requests/operator-decisions-20261002-completion/R-4-answer-stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured_at": "2026-10-02T17:27:50.182185+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "complete CLI diagnostics; no shell interpolation"
+    },
+    {
+      "source": "operator CLI execution",
+      "copy": "preparation/technique-sources/requests/operator-decisions-20261002-completion/R-6-decline-stdout.txt",
+      "bytes": 65,
+      "sha256": "690e51844b2891e82e67e57d4ec0169c5d3cde719b4f60e173f9a30f065a932f",
+      "captured_at": "2026-10-02T17:27:50.707403+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "complete CLI receipt; no shell interpolation"
+    },
+    {
+      "source": "operator CLI execution",
+      "copy": "preparation/technique-sources/requests/operator-decisions-20261002-completion/R-6-decline-stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured_at": "2026-10-02T17:27:50.707552+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "complete CLI diagnostics; no shell interpolation"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/requests/requests.jsonl",
+      "copy": "preparation/technique-sources/requests/operator-decisions-20261002-completion/after-cli-view.json",
+      "bytes": 14537,
+      "sha256": "33d9a8fa36b1d5dcbb58b225a155ce2340991f37a4b74b214bdd5ee4a7c0ee00",
+      "captured_at": "2026-10-02T17:27:51.063904+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "whole CLI projection after all four authorized decisions"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/requests/requests.jsonl",
+      "copy": "preparation/technique-sources/requests/operator-decisions-20261002-completion/after-requests.jsonl",
+      "bytes": 11422,
+      "sha256": "ce20ab1bb890df7de8aeb8e0c6a0e84a688b22f7b435b3d3e6ff2f56b726a158",
+      "captured_at": "2026-10-02T17:27:51.064487+00:00",
+      "byte_exact_source_copy": true,
+      "selection": "whole append-only register prefix after decisions"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/questions/questions.jsonl",
+      "copy": "preparation/technique-sources/requests/operator-decisions-20261002-completion/question-clarification-events.jsonl",
+      "bytes": 1663,
+      "sha256": "29da040fb5c8ba9c13b7a6c947dcb4882f2ed1aa14ecbb6c698e3a661f65a6d8",
+      "captured_at": "2026-10-02T17:27:51.065651+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "whole selected clarification ask/reply event lines, no line truncation"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/traces/events.jsonl",
+      "copy": "preparation/technique-sources/requests/operator-decisions-20261002-completion/operator-action-traces.jsonl",
+      "bytes": 3203,
+      "sha256": "8cc447e23b65c082806c8b209f79d4acbe8018df423961be93ad3046b559a697",
+      "captured_at": "2026-10-02T17:27:51.237515+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "whole operator_action records after authorized batch began; no private model reasoning"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000830-system.md",
+      "copy": "preparation/technique-sources/requests/operator-decisions-20261002-completion/posts/000830-system.md",
+      "bytes": 554,
+      "sha256": "0ab4e00f611dffce0d2a204e07f6edf158f465bfafc66077e034c7b142cb6575",
+      "captured_at": "2026-10-02T17:27:51.297664+00:00",
+      "byte_exact_source_copy": true,
+      "selection": "whole derived public operator decision/clarification post"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000831-analyst-halilozturkci-192-168-1-11.md",
+      "copy": "preparation/technique-sources/requests/operator-decisions-20261002-completion/posts/000831-analyst-halilozturkci-192-168-1-11.md",
+      "bytes": 1373,
+      "sha256": "0a3ae514dadf157c0195242d15a419a3df526cac0bb06a631b880202ec04831e",
+      "captured_at": "2026-10-02T17:27:51.298014+00:00",
+      "byte_exact_source_copy": true,
+      "selection": "whole derived public operator decision/clarification post"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000834-analyst-halilozturkci-192-168-1-11.md",
+      "copy": "preparation/technique-sources/requests/operator-decisions-20261002-completion/posts/000834-analyst-halilozturkci-192-168-1-11.md",
+      "bytes": 1336,
+      "sha256": "009a7f7ab0be415681420848c7ba09869ff126932c5f0fad98266fce8065fe7b",
+      "captured_at": "2026-10-02T17:27:51.298475+00:00",
+      "byte_exact_source_copy": true,
+      "selection": "whole derived public operator decision/clarification post"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000835-system.md",
+      "copy": "preparation/technique-sources/requests/operator-decisions-20261002-completion/posts/000835-system.md",
+      "bytes": 603,
+      "sha256": "39ffb3892b418d52ac1a940e1ebf12d1dd68e355d4fdda98f1e66bb85eba94d0",
+      "captured_at": "2026-10-02T17:27:51.298776+00:00",
+      "byte_exact_source_copy": true,
+      "selection": "whole derived public operator decision/clarification post"
+    },
+    {
+      "source": "current-chat authorization and verified CLI/register acts",
+      "copy": "preparation/technique-sources/requests/operator-decisions-20261002-completion/decision-receipts.json",
+      "bytes": 8736,
+      "sha256": "32afa352ebfacdda5b7e88b6069eba6168f6b32990942569c6f9c22f18a5f03e",
+      "captured_at": "2026-10-02T17:27:51.299539+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "generated complete operator decision receipt"
+    },
+    {
+      "source": "initial default-operator-name admission attempt",
+      "copy": "preparation/technique-sources/requests/operator-decisions-20261002/R-2-decline-stderr.txt",
+      "bytes": 101,
+      "sha256": "5afc3a630f3e424143a04a2752cfa4499b1858e27fbc2b7f54d2f4b4fb67a495",
+      "captured_at": "2026-10-02T17:27:51.306463+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "complete earlier CLI snapshot/receipt; first identity admission failure and subsequent successful R-2/R-3 acts plus protected-value rejection of R-4 are preserved; each request state checked before retry"
+    },
+    {
+      "source": "initial default-operator-name admission attempt",
+      "copy": "preparation/technique-sources/requests/operator-decisions-20261002/R-2-decline-stdout.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured_at": "2026-10-02T17:27:51.306616+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "complete earlier CLI snapshot/receipt; first identity admission failure and subsequent successful R-2/R-3 acts plus protected-value rejection of R-4 are preserved; each request state checked before retry"
+    },
+    {
+      "source": "initial default-operator-name admission attempt",
+      "copy": "preparation/technique-sources/requests/operator-decisions-20261002/before-cli-view.json",
+      "bytes": 10090,
+      "sha256": "35b422e78d0066b4ca0129acc69718e55d0228b42e8d5bbb35cb684b71c83a89",
+      "captured_at": "2026-10-02T17:27:51.306755+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "complete earlier CLI snapshot/receipt; first identity admission failure and subsequent successful R-2/R-3 acts plus protected-value rejection of R-4 are preserved; each request state checked before retry"
+    },
+    {
+      "source": "initial default-operator-name admission attempt",
+      "copy": "preparation/technique-sources/requests/operator-decisions-20261002/before-requests.jsonl",
+      "bytes": 8460,
+      "sha256": "7104b6e0125f50e1b3547e5114cd23aa1026c2a12efee857f4e009cc475bd713",
+      "captured_at": "2026-10-02T17:27:51.306882+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "complete earlier CLI snapshot/receipt; first identity admission failure and subsequent successful R-2/R-3 acts plus protected-value rejection of R-4 are preserved; each request state checked before retry"
+    },
+    {
+      "source": "initial default-operator-name admission attempt",
+      "copy": "preparation/technique-sources/requests/operator-decisions-20261002/partial-receipts.json",
+      "bytes": 840,
+      "sha256": "f81194d477ec150d4b650907d02f145d072189ec549cc04806ff2aaefabad0c3",
+      "captured_at": "2026-10-02T17:27:51.307002+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "complete earlier CLI snapshot/receipt; first identity admission failure and subsequent successful R-2/R-3 acts plus protected-value rejection of R-4 are preserved; each request state checked before retry"
+    },
+    {
+      "source": "initial default-operator-name admission attempt",
+      "copy": "preparation/technique-sources/requests/operator-decisions-20261002-retry/R-2-decline-stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured_at": "2026-10-02T17:27:51.307119+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "complete earlier CLI snapshot/receipt; first identity admission failure and subsequent successful R-2/R-3 acts plus protected-value rejection of R-4 are preserved; each request state checked before retry"
+    },
+    {
+      "source": "initial default-operator-name admission attempt",
+      "copy": "preparation/technique-sources/requests/operator-decisions-20261002-retry/R-2-decline-stdout.txt",
+      "bytes": 65,
+      "sha256": "4feb9ec38d00415cb9f9155df8c2bd66d631fac690557312367ca95e8363b649",
+      "captured_at": "2026-10-02T17:27:51.307375+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "complete earlier CLI snapshot/receipt; first identity admission failure and subsequent successful R-2/R-3 acts plus protected-value rejection of R-4 are preserved; each request state checked before retry"
+    },
+    {
+      "source": "initial default-operator-name admission attempt",
+      "copy": "preparation/technique-sources/requests/operator-decisions-20261002-retry/R-3-answer-stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured_at": "2026-10-02T17:27:51.307552+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "complete earlier CLI snapshot/receipt; first identity admission failure and subsequent successful R-2/R-3 acts plus protected-value rejection of R-4 are preserved; each request state checked before retry"
+    },
+    {
+      "source": "initial default-operator-name admission attempt",
+      "copy": "preparation/technique-sources/requests/operator-decisions-20261002-retry/R-3-answer-stdout.txt",
+      "bytes": 320,
+      "sha256": "fb879b8327e32e80bd28edd4aeb5180c52b7ce8814797d49f20c2a0b2f72fa7d",
+      "captured_at": "2026-10-02T17:27:51.307687+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "complete earlier CLI snapshot/receipt; first identity admission failure and subsequent successful R-2/R-3 acts plus protected-value rejection of R-4 are preserved; each request state checked before retry"
+    },
+    {
+      "source": "initial default-operator-name admission attempt",
+      "copy": "preparation/technique-sources/requests/operator-decisions-20261002-retry/R-4-answer-stderr.txt",
+      "bytes": 130,
+      "sha256": "d6b98a87a1cc0cb0e1e610d85421a0410d21bd9c2fa5b961a60e2d80d5f723a3",
+      "captured_at": "2026-10-02T17:27:51.307817+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "complete earlier CLI snapshot/receipt; first identity admission failure and subsequent successful R-2/R-3 acts plus protected-value rejection of R-4 are preserved; each request state checked before retry"
+    },
+    {
+      "source": "initial default-operator-name admission attempt",
+      "copy": "preparation/technique-sources/requests/operator-decisions-20261002-retry/R-4-answer-stdout.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured_at": "2026-10-02T17:27:51.307933+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "complete earlier CLI snapshot/receipt; first identity admission failure and subsequent successful R-2/R-3 acts plus protected-value rejection of R-4 are preserved; each request state checked before retry"
+    },
+    {
+      "source": "initial default-operator-name admission attempt",
+      "copy": "preparation/technique-sources/requests/operator-decisions-20261002-retry/before-cli-view.json",
+      "bytes": 10090,
+      "sha256": "35b422e78d0066b4ca0129acc69718e55d0228b42e8d5bbb35cb684b71c83a89",
+      "captured_at": "2026-10-02T17:27:51.308079+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "complete earlier CLI snapshot/receipt; first identity admission failure and subsequent successful R-2/R-3 acts plus protected-value rejection of R-4 are preserved; each request state checked before retry"
+    },
+    {
+      "source": "initial default-operator-name admission attempt",
+      "copy": "preparation/technique-sources/requests/operator-decisions-20261002-retry/before-requests.jsonl",
+      "bytes": 8460,
+      "sha256": "7104b6e0125f50e1b3547e5114cd23aa1026c2a12efee857f4e009cc475bd713",
+      "captured_at": "2026-10-02T17:27:51.308210+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "complete earlier CLI snapshot/receipt; first identity admission failure and subsequent successful R-2/R-3 acts plus protected-value rejection of R-4 are preserved; each request state checked before retry"
+    },
+    {
+      "source": "initial default-operator-name admission attempt",
+      "copy": "preparation/technique-sources/requests/operator-decisions-20261002-retry/partial-receipts.json",
+      "bytes": 2721,
+      "sha256": "c381bb0c27cff5660259ff84c144e5e86bd9b3244327f89f050acef3a8ca3ec6",
+      "captured_at": "2026-10-02T17:27:51.308338+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "complete earlier CLI snapshot/receipt; first identity admission failure and subsequent successful R-2/R-3 acts plus protected-value rejection of R-4 are preserved; each request state checked before retry"
+    },
+    {
+      "source": "authorized local console read API, msb VM inventory and preserved local controller/mirror/automation state",
+      "copy": "preparation/technique-sources/requests/operator-decisions-20261002-completion/post-decision-runtime.json",
+      "bytes": 3150,
+      "sha256": "74d0098518a9d899c5dfc96aa6d38fedf659d3c00add55788947d6a45dcba768",
+      "captured_at": "2026-10-02T17:31:49.208102+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "explicit scalar runtime snapshot; no token emitted, no agent instructions or reasoning"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/questions/questions.jsonl",
+      "copy": "preparation/technique-sources/requests/operator-decisions-20261002-completion/current-answer-tally.json",
+      "bytes": 3675,
+      "sha256": "166c2e216c9e9a2258e7e56210546e57daf1d6c18ccb37b816c90c148797178d",
+      "captured_at": "2026-10-02T17:32:57.525047+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "whole generated current answer-state tally through official question views; no answer values or reasoning"
     }
   ],
   "ledger_bindings": [
@@ -13516,6 +14129,24 @@
       "at": "2026-10-02T16:34:58.346Z",
       "hash": "aa05de40e28ca004397618eaed1343ad4e2ab16cbc0a432183200ee166401ae3",
       "prev": "2c5aa264f4da07bb788c70f84fa9057da73b17015ad703fbf136f90d212e09c1",
+      "supersedes": null
+    },
+    {
+      "seq": 381,
+      "kind": "finding",
+      "by": "s42120106",
+      "at": "2026-10-02T17:06:01.393Z",
+      "hash": "bafdd77830fbefc146cb1e87f0723826bbc92779872067c52aad083ff5e23d4c",
+      "prev": "aa05de40e28ca004397618eaed1343ad4e2ab16cbc0a432183200ee166401ae3",
+      "supersedes": null
+    },
+    {
+      "seq": 382,
+      "kind": "finding",
+      "by": "s42120102",
+      "at": "2026-10-02T17:08:30.489Z",
+      "hash": "9f27f804fa6564dd9a52fb853a44e36bd44f31589108348f299603329746909f",
+      "prev": "bafdd77830fbefc146cb1e87f0723826bbc92779872067c52aad083ff5e23d4c",
       "supersedes": null
     }
   ],
@@ -16224,6 +16855,48 @@
       },
       "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
       "job": "j000352"
+    },
+    {
+      "requester": {
+        "agent": "s42120106",
+        "name": "Vault Artifact Analyst",
+        "doing": "Establishing Q3-Q4: password-manager identity/version and password, plus the deleted stored user key."
+      },
+      "state": "committed",
+      "status": "ok",
+      "exit": 0,
+      "started_at": "2026-10-02T17:04:05.083Z",
+      "finished_at": "2026-10-02T17:04:05.822Z",
+      "outputs": {
+        "manifest_sha256": "fe36cd998c734da227ac2fc4c51e5caff96ad8f37a9cead939fd4e810780c529",
+        "files": 1,
+        "bytes": 10359,
+        "rejected": 0,
+        "path": "store/jobs/j000353/out"
+      },
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+      "job": "j000353"
+    },
+    {
+      "requester": {
+        "agent": "s42120102",
+        "name": "Wallet trace",
+        "doing": "Examine wallet installation and wallet protection evidence for questions 5 and 9."
+      },
+      "state": "committed",
+      "status": "ok",
+      "exit": 0,
+      "started_at": "2026-10-02T17:08:17.066Z",
+      "finished_at": "2026-10-02T17:08:17.803Z",
+      "outputs": {
+        "manifest_sha256": "4beda40ace597e8417bfe4e6abcf3f339aba1cde4a8513c9bf112b73759d8091",
+        "files": 1,
+        "bytes": 512,
+        "rejected": 0,
+        "path": "store/jobs/j000354/out"
+      },
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+      "job": "j000354"
     }
   ],
   "trace_refs": [
@@ -35440,9 +36113,626 @@
       "tool": "compact_done",
       "jobs": [],
       "record_sha256": "37aa0fb2a6e2ca09a2056d1fc49bfb0d01e97bee512ef32328f2fc9d31452ddc"
+    },
+    {
+      "agent": "s42120101",
+      "seq": 1329,
+      "ts": "2026-10-02T16:55:46.648Z",
+      "tool": "lead_close",
+      "jobs": [],
+      "record_sha256": "1691678a0667ddb3c27c9dcc867840496840977b46661c67719e0edbc9e01fd2"
+    },
+    {
+      "agent": "s42120102",
+      "seq": 1339,
+      "ts": "2026-10-02T16:56:04.258Z",
+      "tool": "leads",
+      "jobs": [],
+      "record_sha256": "47484cce7accbb31737d030eed4c3579f0b8e8966915b61f3f099e8f202e42fb"
+    },
+    {
+      "agent": "s42120103",
+      "seq": 1398,
+      "ts": "2026-10-02T16:56:08.771Z",
+      "tool": "post",
+      "jobs": [],
+      "record_sha256": "3fcdef5b47a2a3433eb0e7efefbf79ec19beede91b5358d7074b740a943ff53e"
+    },
+    {
+      "agent": "s42120106",
+      "seq": 2113,
+      "ts": "2026-10-02T16:56:11.264Z",
+      "tool": "post",
+      "jobs": [],
+      "record_sha256": "54e7c11d037bea2c4442f1a1800f355becd9825e6e082123c419b8b472e94c4c"
+    },
+    {
+      "agent": "s42120109",
+      "seq": 2177,
+      "ts": "2026-10-02T16:56:19.644Z",
+      "tool": "finish",
+      "jobs": [],
+      "record_sha256": "26f8d752905d7015c061cbcb04a57ae1839d98e71f91074f160b54692954f051"
+    },
+    {
+      "agent": "s42120108",
+      "seq": 2575,
+      "ts": "2026-10-02T16:56:20.392Z",
+      "tool": "finish",
+      "jobs": [],
+      "record_sha256": "b2b655fe5c64eae88f647bc1b9f0df420ce92574b1d6d12e0cb83349ae76a026"
+    },
+    {
+      "agent": "s42120107",
+      "seq": 2462,
+      "ts": "2026-10-02T16:56:31.635Z",
+      "tool": "compact_done",
+      "jobs": [],
+      "record_sha256": "8691add93394709ec3c494e66a3d56906711e2fb96ad23bf8722f2b42e5c71b1"
+    },
+    {
+      "agent": "s42120102",
+      "seq": 1343,
+      "ts": "2026-10-02T16:56:32.190Z",
+      "tool": "post",
+      "jobs": [],
+      "record_sha256": "32f832170d708353f905cc889aa26ca020d019d126e75478432853c596d881d0"
+    },
+    {
+      "agent": "s42120107",
+      "seq": 2468,
+      "ts": "2026-10-02T16:56:52.234Z",
+      "tool": "post",
+      "jobs": [],
+      "record_sha256": "e2238bb92c785b566123e134284ea1cf0cb03965a6330098b7eb184b489d2889"
+    },
+    {
+      "agent": "s42120105",
+      "seq": 2408,
+      "ts": "2026-10-02T16:57:22.387Z",
+      "tool": "leads",
+      "jobs": [],
+      "record_sha256": "7231f13cb4f3b033b28d02d46f9f1ef6d7c63ca7998ffe31d1a8069631b757ba"
+    },
+    {
+      "agent": "s42120100",
+      "seq": 1269,
+      "ts": "2026-10-02T16:57:44.504Z",
+      "tool": "post",
+      "jobs": [],
+      "record_sha256": "aa30632eec558a531a73ece7fbb07fd635d0268ed2b504eba7e4f21bf4e45269"
+    },
+    {
+      "agent": "s42120106",
+      "seq": 2121,
+      "ts": "2026-10-02T16:57:52.985Z",
+      "tool": "post",
+      "jobs": [],
+      "record_sha256": "4c4e857ed68f6b51dcd776c5e94905fd3245b6dc5d7169f3723f5be9d564bc3e"
+    },
+    {
+      "agent": "s42120104",
+      "seq": 2163,
+      "ts": "2026-10-02T16:58:00.056Z",
+      "tool": "post",
+      "jobs": [],
+      "record_sha256": "b21527671c13356a3f3ee3af263b22074a0bf4dbdfeddcbde43f3138c831ee70"
+    },
+    {
+      "agent": "s42120101",
+      "seq": 1331,
+      "ts": "2026-10-02T16:58:04.042Z",
+      "tool": "post",
+      "jobs": [],
+      "record_sha256": "c6cb834fd8392e4909492f1c0e0bec1eef6be4a2a63a7f625fe7a3669fc9cb89"
+    },
+    {
+      "agent": "s42120107",
+      "seq": 2488,
+      "ts": "2026-10-02T16:58:21.744Z",
+      "tool": "ledger",
+      "jobs": [],
+      "record_sha256": "17d7bfc7ffddc98977dfa5295d8893e095ae9b6b9ed08fa387c5780f79169e15"
+    },
+    {
+      "agent": "s42120102",
+      "seq": 1351,
+      "ts": "2026-10-02T16:58:34.284Z",
+      "tool": "post",
+      "jobs": [
+        "j000342"
+      ],
+      "record_sha256": "68fddea642f93807761f5d5702dbced11708a7eba8457e7d9d287b246e88f931"
+    },
+    {
+      "agent": "s42120107",
+      "seq": 2491,
+      "ts": "2026-10-02T16:58:41.829Z",
+      "tool": "compact_done",
+      "jobs": [],
+      "record_sha256": "c1b8ed7b0af31e8f7636c7d741d5d5ffb8643f97b6617a2462ee54ffee840db5"
+    },
+    {
+      "agent": "s42120107",
+      "seq": 2496,
+      "ts": "2026-10-02T16:59:20.482Z",
+      "tool": "compact_done",
+      "jobs": [],
+      "record_sha256": "aca4e6899b49d76f35f2c4e20159ee773a7b46cfe2aec5323db90288e2c8a98a"
+    },
+    {
+      "agent": "s42120107",
+      "seq": 2501,
+      "ts": "2026-10-02T16:59:39.424Z",
+      "tool": "post",
+      "jobs": [],
+      "record_sha256": "da5c6e0f81f2dd96233f61a9c9ed6ee30a724d68b6cfcfed399646e1644f3183"
+    },
+    {
+      "agent": "s42120102",
+      "seq": 1357,
+      "ts": "2026-10-02T17:00:25.474Z",
+      "tool": "lead_open",
+      "jobs": [
+        "j000342",
+        "j000350"
+      ],
+      "record_sha256": "3c03261cb49279943c02d07b17f1689ff8bbb746621745f1e0ded6fbd7ad7ce2"
+    },
+    {
+      "agent": "s42120106",
+      "seq": 2133,
+      "ts": "2026-10-02T17:00:31.721Z",
+      "tool": "offer",
+      "jobs": [],
+      "record_sha256": "f44895a5e3ac0453e919be055e34a5c6f3fbb46966e4abb5273fa48b1d71c28c"
+    },
+    {
+      "agent": "s42120102",
+      "seq": 1359,
+      "ts": "2026-10-02T17:00:31.832Z",
+      "tool": "post",
+      "jobs": [],
+      "record_sha256": "c6f2479ebf9fa9c75fcfe406ac542ce5028def857207ed33f54e9bfaa1d59314"
+    },
+    {
+      "agent": "s42120106",
+      "seq": 2136,
+      "ts": "2026-10-02T17:00:38.995Z",
+      "tool": "read",
+      "jobs": [
+        "j000002",
+        "j000004",
+        "j000034",
+        "j000058",
+        "j000067",
+        "j000092",
+        "j000115",
+        "j000154",
+        "j000177",
+        "j000201",
+        "j000207",
+        "j000209",
+        "j000237",
+        "j000239",
+        "j000252",
+        "j000254",
+        "j000263",
+        "j000265",
+        "j000291",
+        "j000316",
+        "j000318",
+        "j000350"
+      ],
+      "record_sha256": "0ba3b3d6b82a0a5840eb923cb10c198b9bcf875e7d4e6a5cf15b47ff2e7978bf"
+    },
+    {
+      "agent": "s42120106",
+      "seq": 2137,
+      "ts": "2026-10-02T17:00:38.995Z",
+      "tool": "read",
+      "jobs": [
+        "j000342"
+      ],
+      "record_sha256": "78fb7d13b5958b236c630d71c0cafb61df4407da21e681d8f763d2de1e3e7a8a"
+    },
+    {
+      "agent": "s42120106",
+      "seq": 2138,
+      "ts": "2026-10-02T17:00:39.005Z",
+      "tool": "ledger",
+      "jobs": [],
+      "record_sha256": "bc9d875df9ef0d6a1e0cd9da6b11cb514448540f31878f8378015834e464de29"
+    },
+    {
+      "agent": "s42120106",
+      "seq": 2139,
+      "ts": "2026-10-02T17:00:39.011Z",
+      "tool": "job_status",
+      "jobs": [
+        "j000342"
+      ],
+      "record_sha256": "8870951bf63a3b94e7e9636e43c06292157107c92d2d02955ae33996615b3fba"
+    },
+    {
+      "agent": "s42120106",
+      "seq": 2145,
+      "ts": "2026-10-02T17:01:19.607Z",
+      "tool": "compact_start",
+      "jobs": [],
+      "record_sha256": "4ccae6c544304c20f86e5a08f26fd69566719397939061d9f1c968628f0e814f"
+    },
+    {
+      "agent": "s42120106",
+      "seq": 2146,
+      "ts": "2026-10-02T17:02:21.568Z",
+      "tool": "compact_done",
+      "jobs": [],
+      "record_sha256": "aaca6294132fa796e853fe8b447e96865cc4334ea83d894c2486646cc4f506c9"
+    },
+    {
+      "agent": "s42120106",
+      "seq": 2150,
+      "ts": "2026-10-02T17:02:39.009Z",
+      "tool": "read",
+      "jobs": [
+        "j000342"
+      ],
+      "record_sha256": "a38885ad109c6277dc734ff17767e4daf4f970238a90db7b16ceb90abea3c14e"
+    },
+    {
+      "agent": "s42120106",
+      "seq": 2151,
+      "ts": "2026-10-02T17:02:39.042Z",
+      "tool": "job_status",
+      "jobs": [
+        "j000154"
+      ],
+      "record_sha256": "1d0e94dc45f922302a8b4aecefd86b2bd24a4a8007807732d568debc94672dc3"
+    },
+    {
+      "agent": "s42120106",
+      "seq": 2152,
+      "ts": "2026-10-02T17:02:39.066Z",
+      "tool": "job_status",
+      "jobs": [
+        "j000341"
+      ],
+      "record_sha256": "a4c96c42bf1a663b358e821765ededcc8127d2bbbe6f05085a595039485e899d"
+    },
+    {
+      "agent": "s42120106",
+      "seq": 2153,
+      "ts": "2026-10-02T17:02:39.076Z",
+      "tool": "leads",
+      "jobs": [],
+      "record_sha256": "f5ca6a1cd99c13a6588ae80304fd69ada6790831f5a715772a1fd53add3ec958"
+    },
+    {
+      "agent": "s42120106",
+      "seq": 2156,
+      "ts": "2026-10-02T17:02:46.385Z",
+      "tool": "ledger",
+      "jobs": [],
+      "record_sha256": "438f94de815e3dc5c55b86ef11efbde7ff4ceb8002a9ba3a3802f4ebe9347822"
+    },
+    {
+      "agent": "s42120106",
+      "seq": 2160,
+      "ts": "2026-10-02T17:03:28.093Z",
+      "tool": "job_run",
+      "jobs": [
+        "j000154",
+        "j000341",
+        "j000342",
+        "j000350"
+      ],
+      "record_sha256": "a1e4d7f7df8da79fefefac2c25006c8976d76cafd2d4e676415f0b8fd062b84f"
+    },
+    {
+      "agent": "s42120106",
+      "seq": 2164,
+      "ts": "2026-10-02T17:04:06.111Z",
+      "tool": "job_run",
+      "jobs": [
+        "j000154",
+        "j000283",
+        "j000287",
+        "j000288",
+        "j000289",
+        "j000291",
+        "j000337",
+        "j000340",
+        "j000341",
+        "j000342",
+        "j000350",
+        "j000353"
+      ],
+      "record_sha256": "f2a35937a66841dcd08deb77b65452ada493a3251832524412c201928a8d71ec"
+    },
+    {
+      "agent": "s42120106",
+      "seq": 2169,
+      "ts": "2026-10-02T17:04:46.108Z",
+      "tool": "compact_start",
+      "jobs": [],
+      "record_sha256": "5748d096f9d0afbd569e977db14e02f3daacfe59dd946cb3b952c90eb01ce545"
+    },
+    {
+      "agent": "s42120106",
+      "seq": 2170,
+      "ts": "2026-10-02T17:05:34.621Z",
+      "tool": "compact_done",
+      "jobs": [],
+      "record_sha256": "11248f9bf32194ea53101ee01253ec726aa8249100a30cd6cf6f88eb932bd6aa"
+    },
+    {
+      "agent": "s42120106",
+      "seq": 2172,
+      "ts": "2026-10-02T17:05:42.966Z",
+      "tool": "read",
+      "jobs": [
+        "j000154",
+        "j000341",
+        "j000342",
+        "j000350",
+        "j000353"
+      ],
+      "record_sha256": "492360b977f9163c9c24ca3126fdcbcde1a7fc00d6a5c4eb546e521e0f978a9e"
+    },
+    {
+      "agent": "s42120106",
+      "seq": 2175,
+      "ts": "2026-10-02T17:06:01.394Z",
+      "tool": "record",
+      "jobs": [
+        "j000154",
+        "j000342",
+        "j000350",
+        "j000353"
+      ],
+      "record_sha256": "eaa403dac71a5fee9033c440554aeaf4ab016e2b69263c6542ab68adb5a3489b"
+    },
+    {
+      "agent": "s42120106",
+      "seq": 2179,
+      "ts": "2026-10-02T17:06:12.935Z",
+      "tool": "lead_close",
+      "jobs": [
+        "j000353"
+      ],
+      "record_sha256": "57e089658aafe0ff2eff266efb4c1498262c4800f17153a3bd6683571b942a2c"
+    },
+    {
+      "agent": "s42120106",
+      "seq": 2181,
+      "ts": "2026-10-02T17:06:19.254Z",
+      "tool": "post",
+      "jobs": [
+        "j000353"
+      ],
+      "record_sha256": "7c684e7f858ab07f918a1781463eedd4d15fc1cae3b64faf7faf69ae0ccb50b6"
+    },
+    {
+      "agent": "s42120108",
+      "seq": 2612,
+      "ts": "2026-10-02T17:06:50.174Z",
+      "tool": "post",
+      "jobs": [],
+      "record_sha256": "59d4673f1d34867df5e06c6f895a94affd9121ef39107668c24c431e2fc58df6"
+    },
+    {
+      "agent": "s42120102",
+      "seq": 1368,
+      "ts": "2026-10-02T17:06:50.288Z",
+      "tool": "leads",
+      "jobs": [],
+      "record_sha256": "7e18a680181fa0b0c73c78e1afe4cd5ff2b68f1a80010363b730c4cb876ac8a4"
+    },
+    {
+      "agent": "s42120103",
+      "seq": 1420,
+      "ts": "2026-10-02T17:06:50.314Z",
+      "tool": "post",
+      "jobs": [],
+      "record_sha256": "37f13155d59a41cea69a8bac46effc678beb4996f1bd93252d391644f0a23607"
+    },
+    {
+      "agent": "s42120102",
+      "seq": 1370,
+      "ts": "2026-10-02T17:07:34.129Z",
+      "tool": "read",
+      "jobs": [
+        "j000154",
+        "j000341",
+        "j000342",
+        "j000350",
+        "j000353"
+      ],
+      "record_sha256": "b890d2e96121554b32da4c373d140393e32d0a668109bb1d32864ec43c9e3a2e"
+    },
+    {
+      "agent": "s42120109",
+      "seq": 2219,
+      "ts": "2026-10-02T17:07:45.359Z",
+      "tool": "compact_start",
+      "jobs": [],
+      "record_sha256": "7107c0c94a3ec8b24018089de539cdc8b3fb47d37a16a3347a3323fd8ba3f146"
+    },
+    {
+      "agent": "s42120105",
+      "seq": 2439,
+      "ts": "2026-10-02T17:07:55.250Z",
+      "tool": "finish",
+      "jobs": [],
+      "record_sha256": "5b08caba40aa8ca078853187277367738defa66bd8229fad3110ec0247ffa388"
+    },
+    {
+      "agent": "s42120102",
+      "seq": 1372,
+      "ts": "2026-10-02T17:08:00.402Z",
+      "tool": "lead_open",
+      "jobs": [
+        "j000350",
+        "j000353"
+      ],
+      "record_sha256": "5b33d9ae20eb1f3650ee7a54efa0f917090a71c32fdd30d7d13daccbd01ebbfe"
+    },
+    {
+      "agent": "s42120109",
+      "seq": 2220,
+      "ts": "2026-10-02T17:08:12.320Z",
+      "tool": "compact_done",
+      "jobs": [],
+      "record_sha256": "b49275de76894485315230b52f4d795eecaf746819af09f3a93e8b80f7ce0477"
+    },
+    {
+      "agent": "s42120102",
+      "seq": 1374,
+      "ts": "2026-10-02T17:08:18.093Z",
+      "tool": "job_run",
+      "jobs": [
+        "j000278",
+        "j000279",
+        "j000281",
+        "j000282",
+        "j000287",
+        "j000288",
+        "j000337",
+        "j000350",
+        "j000353",
+        "j000354"
+      ],
+      "record_sha256": "efe5af68f9905501127f517f99ed0b5666eee63b9f83fbd60e3d0a81d267b6c5"
+    },
+    {
+      "agent": "s42120102",
+      "seq": 1376,
+      "ts": "2026-10-02T17:08:30.487Z",
+      "tool": "record",
+      "jobs": [
+        "j000350",
+        "j000353",
+        "j000354"
+      ],
+      "record_sha256": "e93417e2e183bab58150f5d8d8af200f0c2e1c5b5d6559f7c496efc4660b4e05"
+    },
+    {
+      "agent": "s42120100",
+      "seq": 1292,
+      "ts": "2026-10-02T17:08:32.990Z",
+      "tool": "leads",
+      "jobs": [],
+      "record_sha256": "7b5f5428b004a75d8790673db2282fcb6a69df20faa3c0889dffccd9690d6e8d"
+    },
+    {
+      "agent": "s42120102",
+      "seq": 1379,
+      "ts": "2026-10-02T17:08:44.089Z",
+      "tool": "attest",
+      "jobs": [
+        "j000350",
+        "j000353",
+        "j000354"
+      ],
+      "record_sha256": "368fe9fe6d192404b17ea6658ef9eab38786994690183f4e059dfe551016f834"
+    },
+    {
+      "agent": "s42120102",
+      "seq": 1381,
+      "ts": "2026-10-02T17:08:57.117Z",
+      "tool": "lead_close",
+      "jobs": [
+        "j000354"
+      ],
+      "record_sha256": "f6df723cf72539bc38ad2f7a4c0ea1db342b30b4ddd4dc59878ffc481e326606"
+    },
+    {
+      "agent": "s42120100",
+      "seq": 1294,
+      "ts": "2026-10-02T17:09:03.020Z",
+      "tool": "post",
+      "jobs": [],
+      "record_sha256": "cce4b53993f76787a7dda031fc7ce23e926c547da7be489eb4eb2066878c89d0"
+    },
+    {
+      "agent": "s42120102",
+      "seq": 1383,
+      "ts": "2026-10-02T17:09:04.852Z",
+      "tool": "post",
+      "jobs": [],
+      "record_sha256": "6bcc4e20a0e62118f0f8c371364cbf6c5759ea3a694153f1116ca6c01e537be1"
+    },
+    {
+      "agent": "s42120105",
+      "seq": 2447,
+      "ts": "2026-10-02T17:09:22.071Z",
+      "tool": "compact_start",
+      "jobs": [],
+      "record_sha256": "d29129756b0c194b6096bafa5cdebffcbfa868ee65b0cabab4aa252e210544f2"
+    },
+    {
+      "agent": "s42120104",
+      "seq": 2203,
+      "ts": "2026-10-02T17:09:44.327Z",
+      "tool": "post",
+      "jobs": [],
+      "record_sha256": "62e961b8f7ad1047662ae7b410bb235f97a3818f63d1f77d274e13d12511695f"
+    },
+    {
+      "agent": "s42120105",
+      "seq": 2448,
+      "ts": "2026-10-02T17:10:39.355Z",
+      "tool": "compact_done",
+      "jobs": [],
+      "record_sha256": "c62dc6164ccb4f61f47b08ac1b7ad122eb6c2acb6fc323af458b4a5574fc4087"
+    },
+    {
+      "agent": "s42120107",
+      "seq": 2531,
+      "ts": "2026-10-02T17:11:05.151Z",
+      "tool": "leads",
+      "jobs": [],
+      "record_sha256": "f28abba5aaaa565a20b138d420538519d9faa24edf6ef6e30b7ef2b97f0c5570"
+    },
+    {
+      "agent": "s42120107",
+      "seq": 2533,
+      "ts": "2026-10-02T17:11:05.335Z",
+      "tool": "finish",
+      "jobs": [],
+      "record_sha256": "774411e2af21f8c202204e222b4fb33291cb3ccd4061366bad6288f03b22274a"
+    },
+    {
+      "agent": "system",
+      "seq": null,
+      "record_sha256": "964041c92261d6416a03783b6e2509af0dd39cbb119baf2db0ab1ddd79d932bf",
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/traces/events.jsonl",
+      "copy": "preparation/technique-sources/requests/operator-decisions-20261002-completion/operator-action-traces.jsonl"
+    },
+    {
+      "agent": "system",
+      "seq": null,
+      "record_sha256": "c560aa253eceae20c24ceaaa1f3f1700d39bb600a5de5a5042ea234886d1fde9",
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/traces/events.jsonl",
+      "copy": "preparation/technique-sources/requests/operator-decisions-20261002-completion/operator-action-traces.jsonl"
+    },
+    {
+      "agent": "system",
+      "seq": null,
+      "record_sha256": "80411be2c164c6d7fa39fbaee791ef5b383dd3dc4a017883bb1e74e2ec33047b",
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/traces/events.jsonl",
+      "copy": "preparation/technique-sources/requests/operator-decisions-20261002-completion/operator-action-traces.jsonl"
+    },
+    {
+      "agent": "system",
+      "seq": null,
+      "record_sha256": "ec3061ea76695b966449fe65868e34f3d2e15c27c079a89f86720d3e0df2d324",
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/traces/events.jsonl",
+      "copy": "preparation/technique-sources/requests/operator-decisions-20261002-completion/operator-action-traces.jsonl"
     }
   ],
-  "updated_at": "2026-10-02T17:03:01.731555+00:00",
+  "updated_at": "2026-10-02T17:32:57.525047+00:00",
   "attestation_bindings": [
     {
       "seq": 183,
@@ -35739,6 +37029,16 @@
         "reproduced",
         "other_route"
       ]
+    },
+    {
+      "seq": 381,
+      "by": "s42120102",
+      "at": "2026-10-02T17:08:44.061Z",
+      "hash": "80686090d8e4df9553f7c0f91f24f3dc30c48fe106e9dd7f144c739a7c9f5dbd",
+      "prev": "0674e716dcfe9fd63851ad6f94091b3ad534d063325af0978172a24614b70bbf",
+      "strength": null,
+      "act": "attest",
+      "review_fields": []
     }
   ],
   "retained_binary_artifacts": [
@@ -36024,6 +37324,242 @@
       "selected_git_body_copy": false,
       "retention": "complete byte-exact private body; no truncation/redaction",
       "archive_status": "selected observer prefix only; final complete run/custody pending"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000353/stdout.log",
+      "retained": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/sensitive-prefix-1707/jobs/j000353/stdout.log",
+      "bytes": 807,
+      "sha256": "e5811d9df1cc9f68c7c1810186d3ee84a5bf82dd7d55afb5c0d3bc6dd5904053",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "role": "complete withheld counts-only packaging audit output; source exposure locations are not release clearance",
+      "selected_git_body_copy": false,
+      "retention": "complete byte-exact private body; no truncation/redaction",
+      "archive_status": "selected observer prefix only; final complete run/custody pending"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000353/out/j350-known-field-exposure-check.json",
+      "retained": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/sensitive-prefix-1707/jobs/j000353/out/j350-known-field-exposure-check.json",
+      "bytes": 10359,
+      "sha256": "37a6a9cc80f152030f4074a2f0c25ffc6ab4b6ec48cb61608e2ebc687200370b",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "role": "complete withheld counts-only packaging audit output; source exposure locations are not release clearance",
+      "selected_git_body_copy": false,
+      "retention": "complete byte-exact private body; no truncation/redaction",
+      "archive_status": "selected observer prefix only; final complete run/custody pending"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000354/stdout.log",
+      "retained": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/sensitive-prefix-1707/jobs/j000354/stdout.log",
+      "bytes": 512,
+      "sha256": "a5bd541b2a9aa0db4a8b33c30e8d44549f5509eb9d2f2b2c7c75c3961fd2199c",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "role": "complete withheld counts-only packaging audit output; source exposure locations are not release clearance",
+      "selected_git_body_copy": false,
+      "retention": "complete byte-exact private body; no truncation/redaction",
+      "archive_status": "selected observer prefix only; final complete run/custody pending"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000354/out/independent-preview-field-check.json",
+      "retained": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/sensitive-prefix-1707/jobs/j000354/out/independent-preview-field-check.json",
+      "bytes": 512,
+      "sha256": "a5bd541b2a9aa0db4a8b33c30e8d44549f5509eb9d2f2b2c7c75c3961fd2199c",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "role": "complete withheld counts-only packaging audit output; source exposure locations are not release clearance",
+      "selected_git_body_copy": false,
+      "retention": "complete byte-exact private body; no truncation/redaction",
+      "archive_status": "selected observer prefix only; final complete run/custody pending"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/traces/events.jsonl",
+      "retained": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/sensitive-prefix-1707/trace-records/s42120106-2136.jsonl",
+      "bytes": 13836,
+      "sha256": "b30a394643f7a7aff058f52650fae69e71d4d644d1ed18507a9b0260778424c7",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "role": "protected case-form display record; full original retained",
+      "selected_git_body_copy": false,
+      "retention": "complete byte-exact original body retained privately; no truncation/redaction",
+      "archive_status": "selected observer prefix only; final complete run/custody pending",
+      "agent": "s42120106",
+      "seq": 2136,
+      "ts": "2026-10-02T17:00:38.995Z",
+      "tool": "read",
+      "record_sha256": "0ba3b3d6b82a0a5840eb923cb10c198b9bcf875e7d4e6a5cf15b47ff2e7978bf"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/traces/events.jsonl",
+      "retained": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/sensitive-prefix-1707/trace-records/s42120106-2164.jsonl",
+      "bytes": 5336,
+      "sha256": "78319da04f275ae380d300ebfc1e29f4c18cc8257244bcb893880544defffa68",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "role": "withheld counts-only packaging-control trace; E381/E382",
+      "selected_git_body_copy": false,
+      "retention": "complete byte-exact original body retained privately; no truncation/redaction",
+      "archive_status": "selected observer prefix only; final complete run/custody pending",
+      "agent": "s42120106",
+      "seq": 2164,
+      "ts": "2026-10-02T17:04:06.111Z",
+      "tool": "job_run",
+      "record_sha256": "f2a35937a66841dcd08deb77b65452ada493a3251832524412c201928a8d71ec"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/traces/events.jsonl",
+      "retained": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/sensitive-prefix-1707/trace-records/s42120106-2172.jsonl",
+      "bytes": 11595,
+      "sha256": "701b4804265540d3a669d7e57de137f977fdd62e69750004b0ed487a9700d027",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "role": "withheld counts-only packaging-control trace; E381/E382",
+      "selected_git_body_copy": false,
+      "retention": "complete byte-exact original body retained privately; no truncation/redaction",
+      "archive_status": "selected observer prefix only; final complete run/custody pending",
+      "agent": "s42120106",
+      "seq": 2172,
+      "ts": "2026-10-02T17:05:42.966Z",
+      "tool": "read",
+      "record_sha256": "492360b977f9163c9c24ca3126fdcbcde1a7fc00d6a5c4eb546e521e0f978a9e"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/traces/events.jsonl",
+      "retained": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/sensitive-prefix-1707/trace-records/s42120106-2175.jsonl",
+      "bytes": 2444,
+      "sha256": "6bab0ec6e848b21d900d33fe36d80fc7d50957fc1e7ac691e6c5c8ad15f78ddb",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "role": "withheld counts-only packaging-control trace; E381/E382",
+      "selected_git_body_copy": false,
+      "retention": "complete byte-exact original body retained privately; no truncation/redaction",
+      "archive_status": "selected observer prefix only; final complete run/custody pending",
+      "agent": "s42120106",
+      "seq": 2175,
+      "ts": "2026-10-02T17:06:01.394Z",
+      "tool": "record",
+      "record_sha256": "eaa403dac71a5fee9033c440554aeaf4ab016e2b69263c6542ab68adb5a3489b"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/traces/events.jsonl",
+      "retained": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/sensitive-prefix-1707/trace-records/s42120106-2179.jsonl",
+      "bytes": 926,
+      "sha256": "3432e333193035965674b885b4449980484d60584813436fae198dba0ef0e05d",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "role": "withheld counts-only packaging-control trace; E381/E382",
+      "selected_git_body_copy": false,
+      "retention": "complete byte-exact original body retained privately; no truncation/redaction",
+      "archive_status": "selected observer prefix only; final complete run/custody pending",
+      "agent": "s42120106",
+      "seq": 2179,
+      "ts": "2026-10-02T17:06:12.935Z",
+      "tool": "lead_close",
+      "record_sha256": "57e089658aafe0ff2eff266efb4c1498262c4800f17153a3bd6683571b942a2c"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/traces/events.jsonl",
+      "retained": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/sensitive-prefix-1707/trace-records/s42120106-2181.jsonl",
+      "bytes": 918,
+      "sha256": "53a93350eecb75793065c317051fbb6c0f6c93683fcbf6157c011e5c05d092cc",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "role": "withheld counts-only packaging-control trace; E381/E382",
+      "selected_git_body_copy": false,
+      "retention": "complete byte-exact original body retained privately; no truncation/redaction",
+      "archive_status": "selected observer prefix only; final complete run/custody pending",
+      "agent": "s42120106",
+      "seq": 2181,
+      "ts": "2026-10-02T17:06:19.254Z",
+      "tool": "post",
+      "record_sha256": "7c684e7f858ab07f918a1781463eedd4d15fc1cae3b64faf7faf69ae0ccb50b6"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/traces/events.jsonl",
+      "retained": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/sensitive-prefix-1707/trace-records/s42120102-1370.jsonl",
+      "bytes": 11595,
+      "sha256": "8b610b42afd300c8dcdf2f99617ac1fd3d18a88511eb87b87bdb5ca2fe8d7cdc",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "role": "withheld counts-only packaging-control trace; E381/E382",
+      "selected_git_body_copy": false,
+      "retention": "complete byte-exact original body retained privately; no truncation/redaction",
+      "archive_status": "selected observer prefix only; final complete run/custody pending",
+      "agent": "s42120102",
+      "seq": 1370,
+      "ts": "2026-10-02T17:07:34.129Z",
+      "tool": "read",
+      "record_sha256": "b890d2e96121554b32da4c373d140393e32d0a668109bb1d32864ec43c9e3a2e"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/traces/events.jsonl",
+      "retained": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/sensitive-prefix-1707/trace-records/s42120102-1372.jsonl",
+      "bytes": 1560,
+      "sha256": "67866eb66a850161bfeb6d5a6a0d46107067de640b01a17b6b261eed8a933acd",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "role": "withheld counts-only packaging-control trace; E381/E382",
+      "selected_git_body_copy": false,
+      "retention": "complete byte-exact original body retained privately; no truncation/redaction",
+      "archive_status": "selected observer prefix only; final complete run/custody pending",
+      "agent": "s42120102",
+      "seq": 1372,
+      "ts": "2026-10-02T17:08:00.402Z",
+      "tool": "lead_open",
+      "record_sha256": "5b33d9ae20eb1f3650ee7a54efa0f917090a71c32fdd30d7d13daccbd01ebbfe"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/traces/events.jsonl",
+      "retained": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/sensitive-prefix-1707/trace-records/s42120102-1374.jsonl",
+      "bytes": 2007,
+      "sha256": "ef9341570970e1fbe053e9eddba598af80dde57fccf1650fbe0d3846ef5d6725",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "role": "withheld counts-only packaging-control trace; E381/E382",
+      "selected_git_body_copy": false,
+      "retention": "complete byte-exact original body retained privately; no truncation/redaction",
+      "archive_status": "selected observer prefix only; final complete run/custody pending",
+      "agent": "s42120102",
+      "seq": 1374,
+      "ts": "2026-10-02T17:08:18.093Z",
+      "tool": "job_run",
+      "record_sha256": "efe5af68f9905501127f517f99ed0b5666eee63b9f83fbd60e3d0a81d267b6c5"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/traces/events.jsonl",
+      "retained": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/sensitive-prefix-1707/trace-records/s42120102-1376.jsonl",
+      "bytes": 1693,
+      "sha256": "0bae83fdcf1a1c82a1c8776ad21843afb1b9fa4d438326edc497210cebdea587",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "role": "withheld counts-only packaging-control trace; E381/E382",
+      "selected_git_body_copy": false,
+      "retention": "complete byte-exact original body retained privately; no truncation/redaction",
+      "archive_status": "selected observer prefix only; final complete run/custody pending",
+      "agent": "s42120102",
+      "seq": 1376,
+      "ts": "2026-10-02T17:08:30.487Z",
+      "tool": "record",
+      "record_sha256": "e93417e2e183bab58150f5d8d8af200f0c2e1c5b5d6559f7c496efc4660b4e05"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/traces/events.jsonl",
+      "retained": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/sensitive-prefix-1707/trace-records/s42120102-1379.jsonl",
+      "bytes": 1081,
+      "sha256": "35305b33f2100f9af48b657a2ae711e39ed19dbee97e588eb742ffe960d31eab",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "role": "withheld counts-only packaging-control trace; E381/E382",
+      "selected_git_body_copy": false,
+      "retention": "complete byte-exact original body retained privately; no truncation/redaction",
+      "archive_status": "selected observer prefix only; final complete run/custody pending",
+      "agent": "s42120102",
+      "seq": 1379,
+      "ts": "2026-10-02T17:08:44.089Z",
+      "tool": "attest",
+      "record_sha256": "368fe9fe6d192404b17ea6658ef9eab38786994690183f4e059dfe551016f834"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/traces/events.jsonl",
+      "retained": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/sensitive-prefix-1707/trace-records/s42120102-1381.jsonl",
+      "bytes": 715,
+      "sha256": "0243f3ece06b75061682b209577766c8c2dcee47ff89f863fc23b2d3db172254",
+      "captured_at": "2026-10-02T17:11:46.675009+00:00",
+      "role": "withheld counts-only packaging-control trace; E381/E382",
+      "selected_git_body_copy": false,
+      "retention": "complete byte-exact original body retained privately; no truncation/redaction",
+      "archive_status": "selected observer prefix only; final complete run/custody pending",
+      "agent": "s42120102",
+      "seq": 1381,
+      "ts": "2026-10-02T17:08:57.117Z",
+      "tool": "lead_close",
+      "record_sha256": "f6df723cf72539bc38ad2f7a4c0ea1db342b30b4ddd4dc59878ffc481e326606"
     }
   ],
   "observer_followups": [
@@ -36683,6 +38219,83 @@
         "bounds": "nudge declares standing-entry/lead-close/job-commit criterion; accepted review ignored by that measured progress field, not evidence of a crash or forced stop"
       },
       "operator_boundary": "read-only observation, report-diff/hash/custody; no agent feedback/resource/role/goal/policy/live code change",
+      "full_final_archive_complete": false
+    },
+    {
+      "at": "2026-10-02T17:11:46.675009+00:00",
+      "technique": "T17 follow-up: source-specific exposure controls across a different retained object",
+      "heartbeat": "preparation/heartbeat-2026-10-02T170747Z.json",
+      "jobs": [
+        "j000353",
+        "j000354"
+      ],
+      "ledger_seqs": [
+        381,
+        382
+      ],
+      "lead_seqs": [
+        1495,
+        1496,
+        1497,
+        1498,
+        1499,
+        1500,
+        1501,
+        1502,
+        1503,
+        1504,
+        1505,
+        1506
+      ],
+      "boards": "798 through latest immutable selected1707prefix",
+      "actor_models": {
+        "s42120101": "gpt-6.1-sol",
+        "s42120102": "gpt-6.1-sol",
+        "s42120106": "gpt-daybreak-blue-latest",
+        "s42120107": "gpt-6-luna"
+      },
+      "observed_result": {
+        "jobs": [
+          "j000353",
+          "j000354"
+        ],
+        "finding_seqs": [
+          381,
+          382
+        ],
+        "accepted_attest_target": 381,
+        "attestation_hash": "80686090d8e4df9553f7c0f91f24f3dc30c48fe106e9dd7f144c739a7c9f5dbd",
+        "named_representation_tests": 37,
+        "labeled_positive_matches": 12,
+        "distinct_full_original_field_locations": 3,
+        "synthetic_constructed_needle_controls": 37,
+        "synthetic_passes": 37,
+        "direct_equality_second_agent": true,
+        "independent_repeat_of_37_form_generator": false,
+        "hold_continues": true,
+        "changes_exact_q14": false
+      },
+      "independence": "second examiner scans original17 full bytes before comparing peer locations; same input/body/Python bytes.find; not independent reimplementation or validation of all37 encodings",
+      "controls_limits": "generated-needle haystacks validate literal finder/position behavior; same generator defines forms and fixtures. HistoricalV3 control actual full/prefix raw+JSON at two locations only; no independent positive reference per all representations or universal other-secrets test",
+      "retention": "all j353/j354stdout and sealed output bodies privately preserved; metadata/hash manifests and high-level findings in Git. Whole typed trace records referencing held jobs retained privately; no truncation",
+      "new_exact_answer": false,
+      "operator_boundary": "no message/input/resource/code/test/lead/role/goal/policy feedback; observed complete sealed outputs and source metadata only",
+      "full_final_archive_complete": false
+    },
+    {
+      "at": "2026-10-02T17:27:51.308349+00:00",
+      "kind": "authorized operator request decisions",
+      "receipt": "preparation/technique-sources/requests/operator-decisions-20261002-completion/decision-receipts.json",
+      "requests": [
+        "R-2",
+        "R-3",
+        "R-4",
+        "R-6"
+      ],
+      "operator_boundary": "Two explicit user-authorized clarification replies and two request declines; the run is not claimed to have been intervention-free. Subsequent solution work remains agent-owned.",
+      "request_chain_ok": true,
+      "open_requests_after_batch": 0,
+      "new_exact_answer": false,
       "full_final_archive_complete": false
     }
   ],

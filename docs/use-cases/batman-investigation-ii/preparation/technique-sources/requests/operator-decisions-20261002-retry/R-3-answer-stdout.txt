@@ -1,0 +1,2 @@
+Recorded Q-6 (revision 1). Clarification C-2.
+{"ok":true,"q":"Q-6","rev":1,"clarify":"C-2","seq":91,"hash":"61ba30760dd64d39a78af43b50498b0c86945650b5f1e3e35ae131a43ea0cb60","by":"halilozturkci@192.168.1.11, operator, claimed, not enrolled, via cli","post":{"thread":"main","id":831},"delivered":[],"admitted_by":"hub"}

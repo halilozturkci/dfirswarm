@@ -1,0 +1,1 @@
+{"v":1,"job":"j000354","attempt":1,"sealed_at":"2026-10-02T17:08:17.817Z","files":[{"path":"independent-preview-field-check.json","path_b64":"aW5kZXBlbmRlbnQtcHJldmlldy1maWVsZC1jaGVjay5qc29u","bytes":512,"sha256":"a5bd541b2a9aa0db4a8b33c30e8d44549f5509eb9d2f2b2c7c75c3961fd2199c","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":512}}

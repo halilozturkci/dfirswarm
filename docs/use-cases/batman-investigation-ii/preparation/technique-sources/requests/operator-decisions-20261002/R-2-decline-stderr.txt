@@ -1,0 +1,1 @@
+BLOCKER: --as operator: no one is enrolled on this install under operator (swarm.sh examiner enroll)
