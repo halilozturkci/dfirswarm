@@ -1,6 +1,6 @@
 # Batman Investigation II — 10 ajanlı gerçek VM koşusu
 
-Durum: `s421201` çalışıyor; 10 gerçek VM ve 3 modelin çağrıları doğrulandı. 14 sorunun nihai çözümü henüz doğrulanmadı.
+Güncel durum: 2 Ekim 2026 23:03 İstanbul kontrolünde `s421201` ajan VM’lerinin 10’u da Stopped, controller93032 çalışmıyor ve geçici preparation/controller/UI log yolları yok. 10 recorded established cevap, Q1 partial ve Q12–Q14 not_determinable; flag/all14 doğrulanmadı. VM duruş nedeni henüz belirlenmedi. Seçilmiş önceki kayıtlar repoda; final bütün trace/Pi/custody/kısmi kapanış paketi henüz tamamlanmadı. [Güncel salt okunur durum kanıtı](preparation/runtime-status-2026-10-02T195930Z.json). Aşağıdaki canlı kaynak kesiti açıklamaları kendi tarihleri için geçerlidir.
 
 Kullanıcının yeni karar yetkisiyle R2 ek kaynak talebi ve R6 erken durdurma önerisi reddedildi; R3/Q6 ve R4/Q12 biçim açıklamaları cevaplandı. Açık operatör isteği **0**, soru açıklaması bekleme **0**; koşu ve 10 ajan VM'si sürüyor. Q6 için delille desteklenen dosya adı ve literal `malware_ip:port)`; Q12 için kendi Format satırı, Q13 için ayrı Format satırı esas alındı. Bu iki açıklama ve iki ret deney kaydında operatör müdahalesi olarak işaretli; Solution veya cevap değeri verilmedi. [Kararların tam kayıtları](preparation/technique-sources/requests/operator-decisions-20261002-completion/decision-receipts.json).
 
