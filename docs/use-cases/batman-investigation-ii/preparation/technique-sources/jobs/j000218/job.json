@@ -1,0 +1,98 @@
+{
+  "id": "j000218",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "all"
+    ],
+    "scope": "all",
+    "timeout_seconds": 120,
+    "network": "off",
+    "independent": true,
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport os,json,zipfile,hashlib\nout=os.environ['OUT'];z=zipfile.ZipFile('store/jobs/j000190/out/outer/Carmine Falcone.zip');rows=[]\nfor n in z.namelist():\n b=z.read(n);d=bytes(x^0x33 for x in b);known=open('store/jobs/j000200/out/'+n,'rb').read();rows.append({'name':n,'size':len(d),'sha1':hashlib.sha1(d).hexdigest(),'matches_validated_original':d==known,'seco_magic':d[:4].hex()})\nr={'zip_bad_member':z.testzip(),'members':rows,'catalogue':open('catalog/gen/g0008/members.tsv').read(),'old_gui_rows':len(json.load(open('store/jobs/j000116/out/gui/detail.json')))}\njson.dump(r,open(out+'/original-audit.json','w'),indent=2)\nPY"
+  },
+  "requester": {
+    "agent": "s42120103",
+    "name": "Wallet history",
+    "doing": "Investigating Q7 and Q8: password-protected archive and original file hashes; avoiding peers' wallet work."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:48:31.103Z",
+  "worker": "dfs-s421201-job-j000218-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:48:31.120Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/catalog",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tool-output",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/work",
+      "access": "read-only; every agent's live scratch and the shared files: they may change while the job runs"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/work/extracted",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/work/quarantine",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000218",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "all"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:48:31.834Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "3ef63cd68be514723617874ccfad34124f28bc1305637e9b927f5b33e81c0c9e",
+    "files": 1,
+    "bytes": 796,
+    "rejected": 0,
+    "path": "store/jobs/j000218/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

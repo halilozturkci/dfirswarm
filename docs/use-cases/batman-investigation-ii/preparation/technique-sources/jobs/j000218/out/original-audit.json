@@ -1,0 +1,21 @@
+{
+  "zip_bad_member": null,
+  "members": [
+    {
+      "name": "seed.seco",
+      "size": 33284,
+      "sha1": "3ba6011f5e1b6941f893df6579f87f1c823e7493",
+      "matches_validated_original": true,
+      "seco_magic": "5345434f"
+    },
+    {
+      "name": "storage.seco",
+      "size": 2745,
+      "sha1": "5e38ffd5e6d6115a6f4bb21b5216c37392eb544f",
+      "matches_validated_original": true,
+      "seco_magic": "5345434f"
+    }
+  ],
+  "catalogue": "n\ttype\tpath\tpath_b64\tsize\tpacked\tmtime\ttz\tmode\tuid\tgid\tlink\tlocator\tflags\n0\tfile\tseed.seco\tc2VlZC5zZWNv\t33284\t33284\t2024-01-07T10:37:30Z\tutc\t100666\t\t\t\tzip:index=0;header=0\t\n1\tfile\tstorage.seco\tc3RvcmFnZS5zZWNv\t2745\t2745\t2024-01-07T10:37:30Z\tutc\t100666\t\t\t\tzip:index=1;header=33348\t\n",
+  "old_gui_rows": 8
+}
