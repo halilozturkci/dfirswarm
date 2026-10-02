@@ -1,0 +1,107 @@
+{
+  "id": "j000283",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/unknown.data",
+      "job:j000270/coverage-sweep-hit-contexts-ci.json",
+      "job:j000241/create-table-ranked.json",
+      "job:j000269/q13-private-key-sweep-triage.json"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "independent": true,
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport json,re,os\nfrom pathlib import Path\nb=Path('inputs/chall/unknown.data').read_bytes()\nd=json.loads(Path('store/jobs/j000270/out/coverage-sweep-hit-contexts-ci.json').read_bytes())\ns=json.loads(Path('store/jobs/j000241/out/create-table-ranked.json').read_bytes());old=json.loads(Path('store/jobs/j000269/out/q13-private-key-sweep-triage.json').read_bytes())\nstrings=[]\ndef walk(x):\n if isinstance(x,str):strings.append(x)\n elif isinstance(x,dict):\n  for v in x.values():walk(v)\n elif isinstance(x,list):\n  for v in x:walk(v)\nwalk(s)\nterms=['private_key','client_email','name_client','infobreakage_dbkey'];counts=[sum(len(re.findall(re.escape(t),x,re.I)) for x in strings) for t in terms]\nassert counts==[old['literal_counts'][t] for t in terms]\npatterns=[r'private_key\\s*[:=]\\s*[\"\\']',r'client_email\\s*[:=]\\s*[\"\\']',r'name_client\\s*[:=]\\s*[\"\\']',r'-----BEGIN [A-Z ]*PRIVATE KEY-----',r'(?<![A-Za-z0-9])[A-Fa-f0-9]{64,}(?![A-Za-z0-9])']\npc=[sum(len(re.findall(p,x,re.I)) for x in strings) for p in patterns]\nassert pc==[0,0,0,0,7]\nrows=[h for o in d['objects'] for h in o['hits']];assert len(rows)==d['total_hits']\nflags=[]\nfor i,h in enumerate(rows):\n c=h['context'];flags.append({'i':i,'chars':len(c),'pattern_counts':[len(re.findall(p,c,re.I)) for p in patterns],'address_count':len(re.findall(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}',c)),'path_hint':('Thunderbird' in c and 'otr.' in c),'symbol_hint':bool(re.search(r'CKO_|CKM_|SSL_|SEC_ERROR_|serialize|deserialize|SERIALIZE|DESERIALIZE',c))})\nr={'blob_bytes':len(b),'blob_signature_tests':[b.startswith(q) for q in [b'SQLite format 3\\0',b'PK\\x03\\x04',b'7z\\xbc\\xaf\\x27\\x1c',b'<?xml',b'{',b'[']],'source_objects':len(d['objects']),'context_count':len(rows),'string_count':len(strings),'counts':counts,'pattern_counts':pc,'flags':flags}\n(Path(os.environ['OUT'])/'review-checks.json').write_text(json.dumps(r,indent=2));print(json.dumps({k:v for k,v in r.items() if k!='flags'}))\nPY"
+  },
+  "requester": {
+    "agent": "s42120102",
+    "name": "Wallet trace",
+    "doing": "Examine wallet installation and wallet protection evidence for questions 5 and 9."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T12:00:57.245Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000241/out/create-table-ranked.json",
+        "sha256": "3953e5d1395370a61b8d55c06bcaf18e0a9ed05a4f1727e051f20f2f13508ba8"
+      },
+      {
+        "path": "store/jobs/j000270/out/coverage-sweep-hit-contexts-ci.json",
+        "sha256": "42bc25557ef88db7e387c85b89b588ba2fb2a62e2dc8aa5680a01f4af4e1ad76"
+      },
+      {
+        "path": "store/jobs/j000269/out/q13-private-key-sweep-triage.json",
+        "sha256": "7b15e7aadac26f77ad7a573fad5daa64d6aaa59d79ca8b693950ba53e2ba2315"
+      },
+      {
+        "path": "inputs/chall/unknown.data",
+        "sha256": "87841ce462a019649f6206c72cf65ce5305a88b828ca45996ae9422e6f578f4f"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000283-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T12:00:57.315Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000283",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 4,
+    "files": 4,
+    "bound": 0,
+    "manifest": "store/jobs/j000283/scope.1.json",
+    "manifest_sha256": "bf38cf1fff92b0fc3e50ea195391a0f61d7b0c52d67511259d29638400b67ab5"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T12:00:58.082Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "d98a74b8e7369bc19951e2c2e3b3305f166622c47cdcfce1b0b3df23037b82a1",
+    "files": 1,
+    "bytes": 34269,
+    "rejected": 0,
+    "path": "store/jobs/j000283/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}
