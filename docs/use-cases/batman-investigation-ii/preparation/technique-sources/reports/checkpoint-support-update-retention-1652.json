@@ -1,0 +1,65 @@
+{
+  "run": "s421201",
+  "at": "2026-10-02T16:55:50.110743+00:00",
+  "role": "complete immutable observer version of unfinished live draft; not agent-facing change or final output freeze",
+  "old_source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/work/checkpoint-report.md",
+  "old_bytes": 228871,
+  "old_sha256": "a6950d3f59e2cac7df8119299ef184081d15ad0e946ed276360f366bce4b660b",
+  "current_source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/work/checkpoint-report.md",
+  "current_bytes": 233577,
+  "current_sha256": "add72f3700840182f6a5b51125fc15d6fca06917b6b07306028a44ab448bcc3e",
+  "retained": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/sensitive-prefix-1652/checkpoint-support-update-add72f3700840182f6a5b51125fc15d6fca06917b6b07306028a44ab448bcc3e.md",
+  "stable_re_read_at_capture": true,
+  "lines_replaced_or_removed": 7,
+  "lines_added_or_replaced": 19,
+  "changed_heading_contexts": [
+    "## 14.",
+    "### Sources and derivation",
+    "### Supplementary observations"
+  ],
+  "source_mentions": {
+    "357": {
+      "old": 2,
+      "current": 0
+    },
+    "369": {
+      "old": 0,
+      "current": 6
+    },
+    "371": {
+      "old": 0,
+      "current": 4
+    },
+    "373": {
+      "old": 0,
+      "current": 5
+    },
+    "375": {
+      "old": 0,
+      "current": 4
+    },
+    "376": {
+      "old": 0,
+      "current": 0
+    },
+    "377": {
+      "old": 0,
+      "current": 5
+    },
+    "378": {
+      "old": 0,
+      "current": 4
+    },
+    "379": {
+      "old": 0,
+      "current": 2
+    },
+    "380": {
+      "old": 0,
+      "current": 0
+    }
+  },
+  "scope": "diff counts/headings/reference occurrence counts only; not semantic truth, absence or privacy/publication certification",
+  "values_or_value_hashes_emitted": false,
+  "retention": "complete private body; Git manifest/proof only; no truncation/root-redaction"
+}
