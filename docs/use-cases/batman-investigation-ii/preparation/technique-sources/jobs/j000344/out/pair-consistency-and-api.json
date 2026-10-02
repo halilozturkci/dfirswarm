@@ -1,0 +1,41 @@
+{
+  "versions": {
+    "PyCryptodome": "3.23.0",
+    "cryptography": "50.0.2"
+  },
+  "pairs": [
+    {
+      "field": "abTestingKeyPair",
+      "private_bytes": 64,
+      "public_bytes": 32,
+      "public_from_secret_matches": true,
+      "direct_secret_bytes": 32
+    },
+    {
+      "field": "exodusSharesEncryptionKeyPair",
+      "private_bytes": 32,
+      "public_bytes": 32,
+      "public_from_secret_matches": true,
+      "direct_secret_bytes": 32
+    },
+    {
+      "field": "exodusSharesKeyPair",
+      "private_bytes": 64,
+      "public_bytes": 32,
+      "public_from_secret_matches": true,
+      "direct_secret_bytes": 32
+    },
+    {
+      "field": "fiatAuthKeyPair",
+      "private_bytes": 64,
+      "public_bytes": 32,
+      "public_from_secret_matches": true,
+      "direct_secret_bytes": 32
+    }
+  ],
+  "synthetic_aead_controls": {
+    "8": true,
+    "11": true
+  },
+  "secret_values_or_hashes_emitted": false
+}

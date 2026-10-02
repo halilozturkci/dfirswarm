@@ -1,0 +1,92 @@
+{
+  "id": "j000344",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000322/gzip-utf-8-parsed.json",
+      "job:j000333/profile-key-metadata.json"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport json, os, base64, inspect\nimport Crypto, cryptography\nfrom Crypto.Cipher import AES\nfrom cryptography.hazmat.primitives.asymmetric import ed25519,x25519\nfrom cryptography.hazmat.primitives.serialization import Encoding,PublicFormat\nprint('PyCryptodome',Crypto.__version__,'cryptography',cryptography.__version__)\nopen(os.path.join(os.environ['OUT'],'aes-api-help.txt'),'w').write(inspect.getdoc(AES.new))\nd=json.load(open('store/jobs/j000322/out/gzip-utf-8-parsed.json'))\nnames={'fiatAuthKeyPair','abTestingKeyPair','exodusSharesEncryptionKeyPair','exodusSharesKeyPair'}\nfound={}\ndef walk(x):\n if isinstance(x,dict):\n  for k,v in x.items():\n   if k in names: found[k]=json.loads(v) if isinstance(v,str) else v\n   else: walk(v)\n elif isinstance(x,list):\n  for v in x: walk(v)\nwalk(d)\nassert set(found)==names, 'expected four named pair objects'\ndef buf(x):\n assert isinstance(x,dict) and x.get('type')=='Buffer'\n z=x['data']; assert isinstance(z,str) and z.startswith('base64:')\n return base64.b64decode(z[7:],validate=True)\nrows=[]\nfor name,x in sorted(found.items()):\n p,q=buf(x['privateKey']),buf(x['publicKey'])\n if x.get('keyType')=='ed25519':\n  assert len(p)==64 and len(q)==32\n  derived=ed25519.Ed25519PrivateKey.from_private_bytes(p[:32]).public_key().public_bytes(Encoding.Raw,PublicFormat.Raw)\n  consistent=(derived==q and p[32:]==q)\n elif x.get('curve')=='x25519':\n  assert len(p)==32 and len(q)==32\n  derived=x25519.X25519PrivateKey.from_private_bytes(p).public_key().public_bytes(Encoding.Raw,PublicFormat.Raw)\n  consistent=derived==q\n else: raise ValueError('unexpected algorithm label')\n rows.append({'field':name,'private_bytes':len(p),'public_bytes':len(q),'public_from_secret_matches':consistent,'direct_secret_bytes':32})\nassert all(r['public_from_secret_matches'] for r in rows)\ncontrols={}\nfor mode in (AES.MODE_CCM,AES.MODE_GCM):\n c=AES.new(b'\\0'*32,mode,nonce=b'\\0'*8,mac_len=4)\n ct,tag=c.encrypt_and_digest(b'local synthetic control')\n controls[str(mode)]=AES.new(b'\\0'*32,mode,nonce=b'\\0'*8,mac_len=4).decrypt_and_verify(ct,tag)==b'local synthetic control'\nr={'versions':{'PyCryptodome':Crypto.__version__,'cryptography':cryptography.__version__},'pairs':rows,'synthetic_aead_controls':controls,'secret_values_or_hashes_emitted':False}\njson.dump(r,open(os.path.join(os.environ['OUT'],'pair-consistency-and-api.json'),'w'),indent=2)\nprint('pairs',len(rows),'consistent',sum(v['public_from_secret_matches'] for v in rows),'control_modes',len(controls),'no secret values or hashes emitted')\nPY"
+  },
+  "requester": {
+    "agent": "s42120101",
+    "name": "Wallet trail",
+    "doing": "Investigating the installed cryptocurrency wallet and transfer artifacts for questions 5, 10 and 11."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T16:15:19.136Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000322/out/gzip-utf-8-parsed.json",
+        "sha256": "7d2d26963af4eb2719198f4a316a5be56c4989f119d8e52113959b9e3eae919f"
+      },
+      {
+        "path": "store/jobs/j000333/out/profile-key-metadata.json",
+        "sha256": "93c405b558067bfc96bb819e448975cebdb8d96045b7e2f8b438b744726148dc"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000344-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T16:15:19.211Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000344",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 2,
+    "files": 2,
+    "bound": 0,
+    "manifest": "store/jobs/j000344/scope.1.json",
+    "manifest_sha256": "6f2d0f2cf7588acabb8009e42605a0af522463e050cf7cf305ac5920d4cc02af"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T16:15:19.964Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "583412e8f2789394e7eba731b770b3a681cd5887e522b3b340357f479a401661",
+    "files": 2,
+    "bytes": 4609,
+    "rejected": 0,
+    "path": "store/jobs/j000344/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

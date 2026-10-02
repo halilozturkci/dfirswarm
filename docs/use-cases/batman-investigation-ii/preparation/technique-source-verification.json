@@ -1,10 +1,10 @@
 {
   "run": "s421201",
-  "at": "2026-10-02T16:15:30.292641+00:00",
+  "at": "2026-10-02T16:24:58.431392+00:00",
   "scope": "selected observer sources and staged human notes; not final complete run/Pi/custody",
-  "indexed_copies_verified": 1334,
-  "indexed_jobs": 132,
-  "trace_refs": 1587,
+  "indexed_copies_verified": 1365,
+  "indexed_jobs": 135,
+  "trace_refs": 1605,
   "retained_binary_originals_verified": 7,
   "retained_sensitive_text_originals_verified": 9,
   "retained_sensitive_text_source_equality": "verified for append-only trace records and immutable tool bodies; mutable checkpoint version equality established at capture",
@@ -22,21 +22,21 @@
   "authentication_literal_scan": {
     "active_values": 13,
     "hits": 0,
-    "files": 1352,
-    "scanned_bytes_including_decompressed_text": 246872024,
+    "files": 1383,
+    "scanned_bytes_including_decompressed_text": 247020612,
     "values_emitted": false
   },
   "git_inventory_verification": {
     "selected_folders": [
       {
         "folder": "preparation/technique-sources",
-        "actual_and_cached_files": 1330,
+        "actual_and_cached_files": 1361,
         "match": true
       }
     ],
-    "indexed_staged_blobs_verified": 1334,
+    "indexed_staged_blobs_verified": 1365,
     "all_staged_paths_within_case": true,
-    "staged_paths_at_verification": 34,
+    "staged_paths_at_verification": 37,
     "ignored_logs_and_gzip_included": true
   },
   "analytical_success": false,

@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  File "<stdin>", line 51, in <module>
+  File "<stdin>", line 44, in decode
+AssertionError
