@@ -1,0 +1,112 @@
+[
+  {
+    "anchor": 1101107200,
+    "start": 1100845056,
+    "bytes": 2097152,
+    "counts": {
+      "unpad": {
+        "ascii": 0,
+        "utf-16le": 0
+      },
+      "padTo": {
+        "ascii": 0,
+        "utf-16le": 0
+      },
+      "randomBytes": {
+        "ascii": 0,
+        "utf-16le": 0
+      },
+      "padBuffer": {
+        "ascii": 0,
+        "utf-16le": 0
+      },
+      "padding": {
+        "ascii": 6,
+        "utf-16le": 0
+      },
+      "readUInt32BE": {
+        "ascii": 0,
+        "utf-16le": 0
+      },
+      "seed.seco": {
+        "ascii": 0,
+        "utf-16le": 0
+      },
+      "setSecoPassphrase": {
+        "ascii": 1,
+        "utf-16le": 0
+      },
+      "getSecoPassphrase": {
+        "ascii": 1,
+        "utf-16le": 0
+      },
+      "serialize": {
+        "ascii": 1,
+        "utf-16le": 5
+      },
+      "deserialize": {
+        "ascii": 0,
+        "utf-16le": 0
+      },
+      "entropy": {
+        "ascii": 0,
+        "utf-16le": 0
+      }
+    }
+  },
+  {
+    "anchor": 2244853760,
+    "start": 2244591616,
+    "bytes": 2097152,
+    "counts": {
+      "unpad": {
+        "ascii": 0,
+        "utf-16le": 0
+      },
+      "padTo": {
+        "ascii": 0,
+        "utf-16le": 0
+      },
+      "randomBytes": {
+        "ascii": 0,
+        "utf-16le": 0
+      },
+      "padBuffer": {
+        "ascii": 0,
+        "utf-16le": 0
+      },
+      "padding": {
+        "ascii": 3,
+        "utf-16le": 0
+      },
+      "readUInt32BE": {
+        "ascii": 0,
+        "utf-16le": 0
+      },
+      "seed.seco": {
+        "ascii": 0,
+        "utf-16le": 0
+      },
+      "setSecoPassphrase": {
+        "ascii": 1,
+        "utf-16le": 0
+      },
+      "getSecoPassphrase": {
+        "ascii": 1,
+        "utf-16le": 0
+      },
+      "serialize": {
+        "ascii": 33,
+        "utf-16le": 0
+      },
+      "deserialize": {
+        "ascii": 15,
+        "utf-16le": 0
+      },
+      "entropy": {
+        "ascii": 10,
+        "utf-16le": 0
+      }
+    }
+  }
+]

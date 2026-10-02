@@ -1,0 +1,1 @@
+{"v":1,"job":"j000301","attempt":1,"sealed_at":"2026-10-02T13:53:05.592Z","files":[{"path":"asar-cache-keyword-offsets.json","path_b64":"YXNhci1jYWNoZS1rZXl3b3JkLW9mZnNldHMuanNvbg==","bytes":588,"sha256":"7b628554d260949661cf6768ff10f6ab7153b0ab8eefd7f967947185aa7438a8","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":588}}

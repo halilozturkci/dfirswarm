@@ -1,0 +1,37 @@
+{
+  "checks": {
+    "AESGCM": {
+      "count": 0,
+      "offsets": []
+    },
+    "METADATA_LEN_BYTES": {
+      "count": 0,
+      "offsets": []
+    },
+    "aes-256-gcm": {
+      "count": 0,
+      "offsets": []
+    },
+    "createStorageInternal": {
+      "count": 0,
+      "offsets": []
+    },
+    "getSecoPassphrase": {
+      "count": 0,
+      "offsets": []
+    },
+    "scrypt": {
+      "count": 0,
+      "offsets": []
+    },
+    "seed.seco": {
+      "count": 0,
+      "offsets": []
+    },
+    "storage.seco": {
+      "count": 0,
+      "offsets": []
+    }
+  },
+  "input_bytes": 128974848
+}

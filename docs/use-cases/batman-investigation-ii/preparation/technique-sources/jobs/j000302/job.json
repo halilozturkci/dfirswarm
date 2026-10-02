@@ -1,0 +1,92 @@
+{
+  "id": "j000302",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000200/seed.seco",
+      "job:j000019/uri_passwords.json"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport json,hashlib,struct,os,re,collections,sys\nfrom pathlib import Path\nimport cryptography\nfrom cryptography.hazmat.primitives.ciphers.aead import AESGCM\nout=Path(os.environ['OUT']); data=Path('store/jobs/j000200/out/seed.seco').read_bytes()\nrecords=json.loads(Path('store/jobs/j000019/out/uri_passwords.json').read_text()); records=records if isinstance(records,list) else [records]\npws={bytes.fromhex(x['password_utf8_hex']) for x in records if isinstance(x,dict) and isinstance(x.get('password_utf8_hex'),str)}\nassert len(pws)==1\nassert data[:4]==b'SECO' and struct.unpack('>I',data[512:516])[0]==len(data)-516\nassert hashlib.sha256(data[256:]).digest()==data[224:256]\nn,r,p=struct.unpack('>III',data[288:300]); assert n<=1048576 and r<=32 and p<=32\nk=hashlib.scrypt(next(iter(pws)),salt=data[256:288],n=n,r=r,p=p,dklen=32)\nkey=AESGCM(k).decrypt(data[332:344],data[360:392]+data[344:360],None);assert len(key)==32\nplain=AESGCM(key).decrypt(data[392:404],data[516:]+data[404:420],None)\n(out/'seed-authenticated-payload.bin').write_bytes(plain)\nkeywords=['contact','client','email','storage','passphrase','mnemonic','entropy','privateKey','masterSeed','name','recipient','infobreakage','Maroni','Strange']\nsummary={'python':sys.version.split()[0],'cryptography':cryptography.__version__,'candidate_records':len(records),'distinct_candidates':len(pws),'checksum_valid':True,'wrapped_key_authenticated':True,'payload_authenticated':True,'plaintext_bytes':len(plain),'scrypt':{'n':n,'r':r,'p':p},'payload_retained':True,'leading_format':[],'keyword_occurrences':{},'ascii_runs_count':0,'utf8_entire_valid':False}\nfor label,magic in [('SQLite',b'SQLite format 3\\x00'),('gzip',b'\\x1f\\x8b'),('zlib',b'\\x78\\x9c'),('SECO',b'SECO'),('JSON_object',b'{'),('JSON_array',b'['),('ZIP',b'PK\\x03\\x04')]:\n if plain.startswith(magic):summary['leading_format'].append(label)\nfor word in keywords:\n summary['keyword_occurrences'][word]={'ascii':len(list(re.finditer(re.escape(word.encode()),plain,re.I))),'utf16le':len(list(re.finditer(re.escape(word.encode('utf-16le')),plain,re.I)))}\nsummary['ascii_runs_count']=len(re.findall(rb'[\\x20-\\x7e]{4,}',plain))\ntry: plain.decode('utf8');summary['utf8_entire_valid']=True\nexcept UnicodeDecodeError:pass\n# Only structural JSON information is retained in this report; no values or unknown keys.\ntry:\n obj=json.loads(plain); summary['whole_payload_json']=True;summary['json_root_type']=type(obj).__name__\nexcept (ValueError,UnicodeDecodeError):summary['whole_payload_json']=False\n(out/'seed-structure.json').write_text(json.dumps(summary,indent=2,sort_keys=True));print(json.dumps(summary,sort_keys=True))\nPY"
+  },
+  "requester": {
+    "agent": "s42120103",
+    "name": "Wallet history",
+    "doing": "Investigating Q7 and Q8: password-protected archive and original file hashes; avoiding peers' wallet work."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T13:54:17.953Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000200/out/seed.seco",
+        "sha256": "a3ab69f3061f2405b08966ac6242fd9332c562efd0bd59400f911af50716e32e"
+      },
+      {
+        "path": "store/jobs/j000019/out/uri_passwords.json",
+        "sha256": "bfea74ef44ac3d6641d72ed0cd6589dd422adbfbea0060a121a50089f42882bc"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000302-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T13:54:18.042Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000302",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 2,
+    "files": 2,
+    "bound": 0,
+    "manifest": "store/jobs/j000302/scope.1.json",
+    "manifest_sha256": "4121fb18de51048ab445b45f7db45694ada1cbe14e356a61b9f4af7a0705339e"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T13:54:18.810Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "0de4c410455c9de0700bc4a3836083c529119a26d00b1521a0dc483dcc335f65",
+    "files": 2,
+    "bytes": 34092,
+    "rejected": 0,
+    "path": "store/jobs/j000302/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

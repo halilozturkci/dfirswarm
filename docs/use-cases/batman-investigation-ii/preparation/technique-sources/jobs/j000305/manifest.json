@@ -1,0 +1,1 @@
+{"v":1,"job":"j000305","attempt":1,"sealed_at":"2026-10-02T13:58:34.110Z","files":[{"path":"app-asar-data-offsets.json","path_b64":"YXBwLWFzYXItZGF0YS1vZmZzZXRzLmpzb24=","bytes":1765,"sha256":"b22480dfe48ca713ee9238613e0c0b3a94c2df4b475e7aa0d9841db5d970323d","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":1765}}

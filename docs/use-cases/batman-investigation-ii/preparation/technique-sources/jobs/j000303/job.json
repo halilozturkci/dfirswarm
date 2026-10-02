@@ -1,0 +1,92 @@
+{
+  "id": "j000303",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000200/seed.seco",
+      "job:j000019/uri_passwords.json"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport json,hashlib,struct,re,os\nfrom pathlib import Path\nfrom cryptography.hazmat.primitives.ciphers.aead import AESGCM\nbase=Path('store/jobs/j000200/out')\nb=(base/'seed.seco').read_bytes()\nassert b[:4]==b'SECO'\nrecords=json.loads(Path('store/jobs/j000019/out/uri_passwords.json').read_text())\nrows=records if isinstance(records,list) else [records]\nplains=[]\nfor row in rows:\n    h=row.get('password_utf8_hex') if isinstance(row,dict) else None\n    if not isinstance(h,str): continue\n    try: pw=bytes.fromhex(h)\n    except ValueError: continue\n    n,r,p=struct.unpack('>III',b[288:300])\n    key=AESGCM(hashlib.scrypt(pw,salt=b[256:288],n=n,r=r,p=p,dklen=32)).decrypt(b[332:344],b[360:392]+b[344:360],None)\n    plain=AESGCM(key).decrypt(b[392:404],b[516:]+b[404:420],None)\n    plains.append(plain)\nuniq=list(dict.fromkeys(plains))\nassert len(uniq)==1\np=uniq[0]\nneedles=[b'contact',b'intended',b'recipient',b'client_email',b'name_client',b'salvatore',b'hugo',b'maroni',b'falcone',b'@',b'email',b'address']\ncounts={n.decode('ascii'):p.lower().count(n.lower()) for n in needles}\nprintable=sum(32<=x<127 or x in (9,10,13) for x in p)\nreport={'authenticated':True,'plaintext_bytes':len(p),'unique_authenticated_plaintext_count':len(uniq),'prefix_class':('json-like' if p.lstrip().startswith((b'{',b'[')) else 'non-json-like'),'ascii_printable_fraction':round(printable/len(p),4) if p else 0,'literal_occurrence_counts':counts,'email_like_regex_count':len(re.findall(rb'[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,128}\\.[A-Za-z]{2,24}',p)),'interpretation_limit':'Authenticated Exodus seed payload only; indicators do not identify its semantic fields or establish intended-contact linkage.'}\nPath(os.environ['OUT'],'seed-content-indicators.json').write_text(json.dumps(report,sort_keys=True,indent=2))\nprint(json.dumps(report,sort_keys=True))\nPY"
+  },
+  "requester": {
+    "agent": "s42120107",
+    "name": "Memory triage",
+    "doing": "Available for independent review; prior Q6 evidence handoff complete."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T13:54:34.955Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000200/out/seed.seco",
+        "sha256": "a3ab69f3061f2405b08966ac6242fd9332c562efd0bd59400f911af50716e32e"
+      },
+      {
+        "path": "store/jobs/j000019/out/uri_passwords.json",
+        "sha256": "bfea74ef44ac3d6641d72ed0cd6589dd422adbfbea0060a121a50089f42882bc"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000303-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T13:54:35.042Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000303",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 2,
+    "files": 2,
+    "bound": 0,
+    "manifest": "store/jobs/j000303/scope.1.json",
+    "manifest_sha256": "e1fb28631686eb793a27ba1e3cd3a594a4ae1073f38202b1f41e30f02df2ccce"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T13:54:37.089Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "6e672880e227b55548fd1bc97e01ba046edfc8d6dd04e2a02d1d9f8003304752",
+    "files": 1,
+    "bytes": 616,
+    "rejected": 0,
+    "path": "store/jobs/j000303/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

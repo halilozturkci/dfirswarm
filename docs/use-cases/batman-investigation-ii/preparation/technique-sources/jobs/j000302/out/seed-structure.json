@@ -1,0 +1,78 @@
+{
+  "ascii_runs_count": 375,
+  "candidate_records": 48,
+  "checksum_valid": true,
+  "cryptography": "50.0.2",
+  "distinct_candidates": 1,
+  "keyword_occurrences": {
+    "Maroni": {
+      "ascii": 0,
+      "utf16le": 0
+    },
+    "Strange": {
+      "ascii": 0,
+      "utf16le": 0
+    },
+    "client": {
+      "ascii": 0,
+      "utf16le": 0
+    },
+    "contact": {
+      "ascii": 0,
+      "utf16le": 0
+    },
+    "email": {
+      "ascii": 0,
+      "utf16le": 0
+    },
+    "entropy": {
+      "ascii": 0,
+      "utf16le": 0
+    },
+    "infobreakage": {
+      "ascii": 0,
+      "utf16le": 0
+    },
+    "masterSeed": {
+      "ascii": 0,
+      "utf16le": 0
+    },
+    "mnemonic": {
+      "ascii": 0,
+      "utf16le": 0
+    },
+    "name": {
+      "ascii": 0,
+      "utf16le": 0
+    },
+    "passphrase": {
+      "ascii": 0,
+      "utf16le": 0
+    },
+    "privateKey": {
+      "ascii": 0,
+      "utf16le": 0
+    },
+    "recipient": {
+      "ascii": 0,
+      "utf16le": 0
+    },
+    "storage": {
+      "ascii": 0,
+      "utf16le": 0
+    }
+  },
+  "leading_format": [],
+  "payload_authenticated": true,
+  "payload_retained": true,
+  "plaintext_bytes": 32768,
+  "python": "3.11.2",
+  "scrypt": {
+    "n": 16384,
+    "p": 1,
+    "r": 8
+  },
+  "utf8_entire_valid": false,
+  "whole_payload_json": false,
+  "wrapped_key_authenticated": true
+}

@@ -1,0 +1,101 @@
+{
+  "id": "j000304",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/Carmine-Falcone.raw",
+      "job:j000055/seco_code_strings.txt",
+      "job:j000062/seco_more.txt"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport json,re,os\nfrom pathlib import Path\nout=Path(os.environ['OUT']); image=Path('inputs/chall/Carmine-Falcone.raw')\nanchors=[1101107200,2244853760];terms=['unpad','padTo','randomBytes','padBuffer','padding','readUInt32BE','seed.seco','setSecoPassphrase','getSecoPassphrase','serialize','deserialize','entropy']\nsummary=[];contexts=[];runs=[]\nwith image.open('rb') as f:\n for a in anchors:\n  start=a-262144;f.seek(start);b=f.read(2097152);(out/f'window-{a}.bin').write_bytes(b)\n  row={'anchor':a,'start':start,'bytes':len(b),'counts':{}}\n  for term in terms:\n   row['counts'][term]={}\n   for encoding in ['ascii','utf-16le']:\n    needle=term.encode(encoding);positions=[m.start() for m in re.finditer(re.escape(needle),b,re.I)];row['counts'][term][encoding]=len(positions)\n    for pos in positions:\n     context=b[max(0,pos-256):min(len(b),pos+len(needle)+768)]\n     contexts.append({'anchor':a,'physical_offset':start+pos,'term':term,'encoding':encoding,'context':context.decode(encoding,errors='replace')})\n  for m in re.finditer(rb'[\\x20-\\x7e\\t\\r\\n]{80,}',b):\n   runs.append({'physical_offset':start+m.start(),'length':len(m.group()),'text':m.group().decode('ascii')})\n  summary.append(row)\n(out/'source-contexts.json').write_text(json.dumps(contexts,indent=2));(out/'source-ascii-runs.jsonl').write_text(''.join(json.dumps(x)+'\\n' for x in runs));(out/'window-summary.json').write_text(json.dumps(summary,indent=2));print(json.dumps({'windows':summary,'context_records':len(contexts),'long_ascii_runs':len(runs)},sort_keys=True))\nPY"
+  },
+  "requester": {
+    "agent": "s42120103",
+    "name": "Wallet history",
+    "doing": "Investigating Q7 and Q8: password-protected archive and original file hashes; avoiding peers' wallet work."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T13:57:56.523Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "inputs/chall/Carmine-Falcone.raw",
+        "sha256": "3e03551e1f55dd792b0bc459b5620522d61fcf2379e8f6d89ef439fef8263cac"
+      },
+      {
+        "path": "store/jobs/j000062/out/seco_more.txt",
+        "sha256": "482a24644a61c36ff6f427c9da81055b2105911c27b203c30886d5a5393fc653"
+      },
+      {
+        "path": "store/jobs/j000055/out/seco_code_strings.txt",
+        "sha256": "68f06eac86f65aa91e9f6e4f3dabaf59cda9bbd8bee306884c03837b2dfe47a6"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000304-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T13:57:56.598Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000304",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 3,
+    "files": 3,
+    "bound": 0,
+    "manifest": "store/jobs/j000304/scope.1.json",
+    "manifest_sha256": "dce5efd93b8e2d01e2c7093dbfac04439c77e6d6990d0c91fb91d82b2f7ca309"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T13:57:57.835Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "e26cb25b3d52a203f3b99644d2b8d736a310acbb5e66e41fbfe3a0f48e551bfa",
+    "files": 5,
+    "bytes": 4493984,
+    "rejected": 0,
+    "path": "store/jobs/j000304/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

@@ -1,0 +1,88 @@
+{
+  "id": "j000305",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000053/file.0xab0b138cf350.0xab0b0d3f1370.DataSectionObject.app.asar.dat",
+      "job:j000053/file.0xab0b138ce9f0.0xab0b0d3f1370.DataSectionObject.app.asar.dat"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport json,os\nfrom pathlib import Path\npaths=[\n'store/jobs/j000053/out/file.0xab0b138cf350.0xab0b0d3f1370.DataSectionObject.app.asar.dat',\n'store/jobs/j000053/out/file.0xab0b138ce9f0.0xab0b0d3f1370.DataSectionObject.app.asar.dat']\nterms=['createStorageInternal','getSecoPassphrase','storage.seco','seed.seco','METADATA_LEN_BYTES','scrypt','AESGCM','aes-256-gcm','seco']\nout={'files':{}}\nfor name in paths:\n b=Path(name).read_bytes(); result={'bytes':len(b),'checks':{}}\n for t in terms:\n  hits=[]\n  for enc in (t.encode(),t.encode('utf-16le')):\n   start=0\n   while True:\n    i=b.find(enc,start)\n    if i<0:break\n    hits.append(i); start=i+1\n  result['checks'][t]={'count':len(hits),'offsets':hits[:30]}\n out['files'][Path(name).name]=result\nPath(os.environ['OUT'],'app-asar-data-offsets.json').write_text(json.dumps(out,sort_keys=True,indent=2))\nprint(json.dumps(out,sort_keys=True))\nPY"
+  },
+  "requester": {
+    "agent": "s42120109",
+    "name": "Memory artifact scout",
+    "doing": "Following up Q3 coverage validation and independent Q3/Q4 source review"
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T13:58:33.309Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000053/out/file.0xab0b138cf350.0xab0b0d3f1370.DataSectionObject.app.asar.dat",
+        "sha256": "6f24bf600caea398176af2347f3d86141b8608723ebaa3edba61dc88fc940fc0"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000305-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T13:58:33.376Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000305",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 2,
+    "files": 2,
+    "bound": 0,
+    "manifest": "store/jobs/j000305/scope.1.json",
+    "manifest_sha256": "aba96ff66f60061d8a2e39a50130de1feecabe2f016b2b9321bc18b0b8f946d4"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T13:58:34.096Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "52f4aa0c072e5ad892b1e1d04aa4b5238e7ab05ef9dabad8cbbf2c7802cf172b",
+    "files": 1,
+    "bytes": 1765,
+    "rejected": 0,
+    "path": "store/jobs/j000305/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}
