@@ -1,0 +1,43 @@
+{
+  "run": "s421201",
+  "kind": "external observer preservation; shared registry/audit held privately in full, not published",
+  "files": [
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/registry.json",
+      "retained": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/interrupted-20261002T200442Z/external/registry.json",
+      "bytes": 985522,
+      "sha256": "d45ed88d3e374233cfdc2c0f394c98f0f0b82a43ae6d83e4fc884f6918ef66d6",
+      "whole_file_private": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/operator-audit.jsonl",
+      "retained": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/interrupted-20261002T200442Z/external/operator-audit.jsonl",
+      "bytes": 193104,
+      "sha256": "31c58d16251f4c4e49ec117ce06ead2454447f48172299d896e357e6b5ef16d1",
+      "whole_file_private": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201.custody-anchor.json",
+      "retained": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/interrupted-20261002T200442Z/external/s421201.custody-anchor.json",
+      "bytes": 2745,
+      "sha256": "6f02a70c5ce5d559aeaa4ddc9b3f3a8a066aee906dc57aa1a9200d626f8d3778",
+      "whole_file_private": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201.journal-anchor.json",
+      "retained": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/interrupted-20261002T200442Z/external/s421201.journal-anchor.json",
+      "bytes": 119,
+      "sha256": "2d91ba9a89d64c99df4c49ab1dea8aafce056359386a2c6e27c3f93eb8fe85eb",
+      "whole_file_private": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201.trace-anchor.json",
+      "retained": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/interrupted-20261002T200442Z/external/s421201.trace-anchor.json",
+      "bytes": 276,
+      "sha256": "b6b4009f0b74c2e6be2ec8344a2249e4b521c7b3bb99ac1ec2524bc8d3ec9e7f",
+      "whole_file_private": true
+    }
+  ],
+  "own_audit_matching_lines": 18,
+  "originals_unchanged": true
+}

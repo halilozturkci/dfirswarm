@@ -1,0 +1,44 @@
+{
+  "at": "2026-10-02T20:44:23.289Z",
+  "node": "v24.13.1",
+  "cases": [
+    {
+      "name": "no digest",
+      "equal_value_and_metadata": true
+    },
+    {
+      "name": "repeated exact digests",
+      "equal_value_and_metadata": true
+    },
+    {
+      "name": "embedded in longer hex run",
+      "equal_value_and_metadata": true
+    },
+    {
+      "name": "overlapping same digest",
+      "equal_value_and_metadata": true
+    },
+    {
+      "name": "overlapping different digests ordered",
+      "equal_value_and_metadata": true
+    },
+    {
+      "name": "inserted following digest",
+      "equal_value_and_metadata": true
+    },
+    {
+      "name": "inserted already processed digest",
+      "equal_value_and_metadata": true
+    },
+    {
+      "name": "uppercase remains case sensitive",
+      "equal_value_and_metadata": true
+    },
+    {
+      "name": "Unicode and adjacent matches",
+      "equal_value_and_metadata": true
+    }
+  ],
+  "all_passed": true,
+  "scope": "finite meaningful parity probes; not an exhaustive proof or production change"
+}

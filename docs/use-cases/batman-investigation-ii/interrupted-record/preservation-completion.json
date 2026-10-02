@@ -1,0 +1,9 @@
+{
+  "run": "s421201",
+  "original_inventory_stats_unchanged_after_archival": true,
+  "frozen_original_files_read_only": 153236,
+  "snapshot_contains_only_original_baseline_regular_files": true,
+  "rejected_readable_projection_private": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/interrupted-20261002T200442Z/rejected-readable-projection",
+  "source_trace_sha256": "1c19b2ffe658061e519f69f0cc0edaf441f8ab717ea6a1e23a4dc81e69f4a80c",
+  "no_agent_or_original_run_mutation": true
+}

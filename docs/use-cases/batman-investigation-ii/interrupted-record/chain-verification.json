@@ -1,0 +1,213 @@
+{
+  "run": "s421201",
+  "at": "2026-10-02T20:17:00.140Z",
+  "kind": "read-only observer verification of interrupted run; no stop or custody seal written",
+  "trace": {
+    "ok": true,
+    "chained": 23082,
+    "total": 23082,
+    "unverified": 8,
+    "disputed": 0
+  },
+  "ledger": {
+    "ok": true,
+    "total": 387,
+    "chained": 387,
+    "broken_at": null,
+    "reason": null
+  },
+  "chains": {
+    "leads": {
+      "ok": true,
+      "total": 1537,
+      "broken_at": null,
+      "reason": null,
+      "head": "32d521c1aeb0085548418ca5c5b169b0008d51362b9fc59b7b2d23eb84ea85c3"
+    },
+    "finish": {
+      "ok": true,
+      "total": 156,
+      "broken_at": null,
+      "reason": null,
+      "head": "8fb97a031dc80e50cd90d17070b024c3e22ac50d2fc3b1da9a6b94827e30210c"
+    },
+    "questions": {
+      "ok": true,
+      "total": 93,
+      "broken_at": null,
+      "reason": null,
+      "head": "c071c9f7be1ef30314023cb0f619dfce899a0a1c10c33e71356c1e1ebd08c276"
+    },
+    "requests": {
+      "ok": true,
+      "total": 13,
+      "broken_at": null,
+      "reason": null,
+      "head": "e92d6826c7201f4fdf85daa31c7063fc5d0d528fc154a9ce8382136204c506fc"
+    },
+    "journal": {
+      "total": 2835,
+      "head": "563041b7d1efacf1ed50518558eca8b07d4b67cc50fc96d8009aae8d758a6c81",
+      "ok": true,
+      "error": null
+    }
+  },
+  "formal_verdict_verifies": false,
+  "private_report": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/interrupted-20261002T200442Z/custody-readonly.json",
+  "report_shape": [
+    "sandbox",
+    "verdict",
+    "prefix",
+    "after_seal",
+    "changed",
+    "seal_drift",
+    "seal_after",
+    "not_sealed",
+    "work",
+    "now",
+    "signature",
+    "timestamp",
+    "touched",
+    "earlier",
+    "ok"
+  ],
+  "no_mutations_to_original": true,
+  "all14_complete": false,
+  "flag_verified": false,
+  "current_checks": [
+    {
+      "name": "evidence",
+      "status": "passed",
+      "reason": null,
+      "expected": 2,
+      "checked": 2
+    },
+    {
+      "name": "acquisition hashes",
+      "status": "not_applicable",
+      "reason": "none were given at kickoff (--inputs-hashes)",
+      "expected": null,
+      "checked": null
+    },
+    {
+      "name": "sessions",
+      "status": "passed",
+      "reason": null,
+      "expected": 10,
+      "checked": 10
+    },
+    {
+      "name": "kept outputs",
+      "status": "passed",
+      "reason": null,
+      "expected": 31,
+      "checked": 31
+    },
+    {
+      "name": "trace",
+      "status": "failed",
+      "reason": "chain broken at line 847 (edited)",
+      "expected": null,
+      "checked": 23084
+    },
+    {
+      "name": "ledger",
+      "status": "passed",
+      "reason": null,
+      "expected": null,
+      "checked": 387
+    },
+    {
+      "name": "ledger attestations",
+      "status": "passed",
+      "reason": null,
+      "expected": null,
+      "checked": 50
+    },
+    {
+      "name": "ledger disputes",
+      "status": "passed",
+      "reason": null,
+      "expected": null,
+      "checked": 6
+    },
+    {
+      "name": "lead register",
+      "status": "passed",
+      "reason": null,
+      "expected": null,
+      "checked": 1537
+    },
+    {
+      "name": "question register",
+      "status": "passed",
+      "reason": null,
+      "expected": null,
+      "checked": 93
+    },
+    {
+      "name": "operator requests",
+      "status": "passed",
+      "reason": null,
+      "expected": null,
+      "checked": 13
+    },
+    {
+      "name": "store sweeps",
+      "status": "passed",
+      "reason": null,
+      "expected": null,
+      "checked": 25
+    },
+    {
+      "name": "finish register",
+      "status": "passed",
+      "reason": null,
+      "expected": null,
+      "checked": 156
+    },
+    {
+      "name": "case policy",
+      "status": "passed",
+      "reason": null,
+      "expected": null,
+      "checked": null
+    },
+    {
+      "name": "model gateway log",
+      "status": "not_applicable",
+      "reason": "the run's model calls did not go through the host's gateway",
+      "expected": null,
+      "checked": null
+    },
+    {
+      "name": "VMs",
+      "status": "failed",
+      "reason": "0 snapshot(s) not verified, 10 not put away",
+      "expected": 10,
+      "checked": 10
+    },
+    {
+      "name": "work files",
+      "status": "passed",
+      "reason": null,
+      "expected": null,
+      "checked": 75
+    },
+    {
+      "name": "store",
+      "status": "passed",
+      "reason": null,
+      "expected": 84410,
+      "checked": 84410
+    },
+    {
+      "name": "operator audit",
+      "status": "failed",
+      "reason": "2 operator line(s) on the trace are not on the audit",
+      "expected": 9,
+      "checked": 7
+    }
+  ],
+  "readonly_touched_count": 0
+}

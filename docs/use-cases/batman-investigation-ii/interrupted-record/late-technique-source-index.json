@@ -1,0 +1,273 @@
+{
+  "run": "s421201",
+  "kind": "late observed-source index, original body content retained privately, no feedback to agents",
+  "jobs": [
+    {
+      "job": "j000355",
+      "agent": "s42120104",
+      "started_at": "2026-10-02T17:29:07.220Z",
+      "finished_at": "2026-10-02T17:29:51.951Z",
+      "status": "ok",
+      "exit": 0,
+      "files": [
+        {
+          "path": "store/jobs/j000355/job.json",
+          "bytes": 4305,
+          "sha256": "2806c7e5d1d087cfad2ec7d2ecc35a1175887d35a76a6c1a91f12739e0ee0694",
+          "whole_original_in_private_snapshot": true
+        },
+        {
+          "path": "store/jobs/j000355/manifest.json",
+          "bytes": 341,
+          "sha256": "3a67b9007c903e8325a0fed10443ad1bb3e8380debd7abafefecfa52db390f7d",
+          "whole_original_in_private_snapshot": true
+        },
+        {
+          "path": "store/jobs/j000355/out/exact-substring-locations.json",
+          "bytes": 5852,
+          "sha256": "3f278a3d1bb44ee6264318cf5c1af23c02aadab1c863c3f6a68ca1ba312cd7bd",
+          "whole_original_in_private_snapshot": true
+        }
+      ],
+      "trace_refs": [
+        {
+          "agent": "s42120104",
+          "seq": 2262,
+          "ts": "2026-10-02T17:29:19.235Z",
+          "tool": "job_run",
+          "record_sha256": "649bb18e4b30b3233a6e1a42106dfab225416f9981e89bbf49d2a7e6b05cbcfc"
+        },
+        {
+          "agent": "s42120104",
+          "seq": 2269,
+          "ts": "2026-10-02T17:29:57.805Z",
+          "tool": "read",
+          "record_sha256": "b31f115b95d9a50a6aa6544ba2c64141ba4ba36c7aef4c6a10bc09ebc95f5d34"
+        },
+        {
+          "agent": "s42120104",
+          "seq": 2272,
+          "ts": "2026-10-02T17:30:15.130Z",
+          "tool": "read",
+          "record_sha256": "654e65587bf9f69f8226f8f16b0f2c3a47783a47a2c43c556f64a30ac622561c"
+        },
+        {
+          "agent": "s42120104",
+          "seq": 2275,
+          "ts": "2026-10-02T17:30:27.813Z",
+          "tool": "record",
+          "record_sha256": "baa043eb1254335b000dc375af12c36d5b651976227cbf8482164ac970752d1c"
+        },
+        {
+          "agent": "system",
+          "seq": 1785,
+          "ts": "2026-10-02T17:30:27.904Z",
+          "tool": "hub_call",
+          "record_sha256": "1d15952098eba338e155a7c41bb3e82172cb4e2a8126aa772e59b4447c2572fa"
+        },
+        {
+          "agent": "s42120104",
+          "seq": 2276,
+          "ts": "2026-10-02T17:30:27.870Z",
+          "tool": "record_leads",
+          "record_sha256": "eddd26be912dcf90879fd84ffbf583d1d09e39f8ae75f9c75868b6870a3af054"
+        },
+        {
+          "agent": "s42120104",
+          "seq": 2286,
+          "ts": "2026-10-02T17:31:17.146Z",
+          "tool": "lead_close",
+          "record_sha256": "b92efff036135b9e6d6070dcab73afba41080fc6b09c9c7d1da81638254e5118"
+        },
+        {
+          "agent": "s42120100",
+          "seq": 1361,
+          "ts": "2026-10-02T17:36:15.180Z",
+          "tool": "job_run",
+          "record_sha256": "13c96f41869ed8ad6e90be55e7a9eb359475c5d43f9ef10ec5307f7e20eb3c10"
+        }
+      ]
+    },
+    {
+      "job": "j000356",
+      "agent": "s42120104",
+      "started_at": "2026-10-02T17:30:53.934Z",
+      "finished_at": "2026-10-02T17:30:54.630Z",
+      "status": "ok",
+      "exit": 0,
+      "files": [
+        {
+          "path": "store/jobs/j000356/job.json",
+          "bytes": 4013,
+          "sha256": "c2ca12908aea6edc38080aac1424fd4512ce07ac7af47fbdf0bd6b12aef7b111",
+          "whole_original_in_private_snapshot": true
+        },
+        {
+          "path": "store/jobs/j000356/manifest.json",
+          "bytes": 324,
+          "sha256": "c8905a9c4bc56b26d8aaf3a37da0f942cacfd02357bec8d0e827933436b99c70",
+          "whole_original_in_private_snapshot": true
+        },
+        {
+          "path": "store/jobs/j000356/out/hostkeys-structure.json",
+          "bytes": 817,
+          "sha256": "f3d53bf4bb768a3d0d35538f94058af54a9951b52e7e914861b092c0dc641acb",
+          "whole_original_in_private_snapshot": true
+        }
+      ],
+      "trace_refs": [
+        {
+          "agent": "s42120104",
+          "seq": 2279,
+          "ts": "2026-10-02T17:30:54.953Z",
+          "tool": "job_run",
+          "record_sha256": "80be890d201266542cd28b24a71ccb1ccda26d55089bb0b1715ba85057461afa"
+        },
+        {
+          "agent": "s42120104",
+          "seq": 2282,
+          "ts": "2026-10-02T17:31:08.530Z",
+          "tool": "record",
+          "record_sha256": "cff41d372572d6caa28f8c6a7a0f2b0f6776a88a4fbfd4997bef458487fe2956"
+        },
+        {
+          "agent": "system",
+          "seq": 1790,
+          "ts": "2026-10-02T17:31:08.621Z",
+          "tool": "hub_call",
+          "record_sha256": "d4cf328bcabe9fb2f295fafd6bf07c4facfb9959294f2d6f44271d75150c7f1b"
+        },
+        {
+          "agent": "s42120104",
+          "seq": 2283,
+          "ts": "2026-10-02T17:31:08.586Z",
+          "tool": "record_leads",
+          "record_sha256": "8d08bda3952e29f412f03760504a04aa2de23ec2747d93be05fe38f8394f85f3"
+        },
+        {
+          "agent": "s42120104",
+          "seq": 2286,
+          "ts": "2026-10-02T17:31:17.146Z",
+          "tool": "lead_close",
+          "record_sha256": "b92efff036135b9e6d6070dcab73afba41080fc6b09c9c7d1da81638254e5118"
+        },
+        {
+          "agent": "s42120100",
+          "seq": 1361,
+          "ts": "2026-10-02T17:36:15.180Z",
+          "tool": "job_run",
+          "record_sha256": "13c96f41869ed8ad6e90be55e7a9eb359475c5d43f9ef10ec5307f7e20eb3c10"
+        }
+      ]
+    },
+    {
+      "job": "j000357",
+      "agent": "s42120100",
+      "started_at": "2026-10-02T17:36:14.017Z",
+      "finished_at": "2026-10-02T17:36:14.853Z",
+      "status": "ok",
+      "exit": 0,
+      "files": [
+        {
+          "path": "store/jobs/j000357/job.json",
+          "bytes": 4957,
+          "sha256": "a3c510b2859fb6770162a390d77bb46bce7ddf9cfb3b9d0aec33143e588f36b7",
+          "whole_original_in_private_snapshot": true
+        },
+        {
+          "path": "store/jobs/j000357/manifest.json",
+          "bytes": 355,
+          "sha256": "7312afe6c8ab3ce7bda7059ad66a9ba3187eb703ad8f95b5fe59471a29c25a47",
+          "whole_original_in_private_snapshot": true
+        },
+        {
+          "path": "store/jobs/j000357/out/archive-application-attribution.json",
+          "bytes": 3680,
+          "sha256": "2ca3994f08368976d08f31931f5348ae490908ccb514187764547b56970d6baa",
+          "whole_original_in_private_snapshot": true
+        }
+      ],
+      "trace_refs": [
+        {
+          "agent": "s42120100",
+          "seq": 1361,
+          "ts": "2026-10-02T17:36:15.180Z",
+          "tool": "job_run",
+          "record_sha256": "13c96f41869ed8ad6e90be55e7a9eb359475c5d43f9ef10ec5307f7e20eb3c10"
+        },
+        {
+          "agent": "s42120100",
+          "seq": 1363,
+          "ts": "2026-10-02T17:36:59.810Z",
+          "tool": "record",
+          "record_sha256": "223e22ed14f5c11267c71a60a60acc6d3d4408b9a26b851aed21171a3a52175f"
+        },
+        {
+          "agent": "system",
+          "seq": 1799,
+          "ts": "2026-10-02T17:36:59.959Z",
+          "tool": "hub_call",
+          "record_sha256": "38635513bd04c8d9c12f7879d77038a2ddf578f4efc4332d483edcec1d4f71f1"
+        },
+        {
+          "agent": "s42120100",
+          "seq": 1364,
+          "ts": "2026-10-02T17:36:59.921Z",
+          "tool": "record_leads",
+          "record_sha256": "e8482282fde8ae25bca152ca4cbfdb7d09633c142d7aa9861f1702ad2f729973"
+        },
+        {
+          "agent": "s42120100",
+          "seq": 1366,
+          "ts": "2026-10-02T17:37:13.176Z",
+          "tool": "lead_close",
+          "record_sha256": "09514eb9422263a0fc68b55ba070ee0cba2adb2dd3bf06be9e28b433dc6498a7"
+        }
+      ]
+    }
+  ],
+  "ledger": [
+    {
+      "seq": 384,
+      "kind": "answer",
+      "by": "s42120106",
+      "at": "2026-10-02T17:29:44.859Z",
+      "hash": "35b584810c4346283ff7e5823484cb60367933b8147528f9ae90efb8de614d97",
+      "answers": null
+    },
+    {
+      "seq": 385,
+      "kind": "absence",
+      "by": "s42120104",
+      "at": "2026-10-02T17:30:27.835Z",
+      "hash": "2eb3fdecf81be8b34c195f24e343d2b8d58b2039be98610404005620fb0ffe02",
+      "answers": [
+        "14"
+      ]
+    },
+    {
+      "seq": 386,
+      "kind": "finding",
+      "by": "s42120104",
+      "at": "2026-10-02T17:31:08.551Z",
+      "hash": "d12543ab8a2efdf073e895c0786a7368377b8897dd81d6bcbf93f77a7efce209",
+      "answers": [
+        "14"
+      ]
+    },
+    {
+      "seq": 387,
+      "kind": "finding",
+      "by": "s42120100",
+      "at": "2026-10-02T17:36:59.834Z",
+      "hash": "daf13d9a5524bbf41d67fc0fb504a3b233ac6d5d11a15a856c395e9443e30783",
+      "answers": [
+        "12",
+        "13",
+        "14"
+      ]
+    }
+  ],
+  "no_raw_fragment_aead_job_result": true,
+  "last_committed_job": "j000357"
+}

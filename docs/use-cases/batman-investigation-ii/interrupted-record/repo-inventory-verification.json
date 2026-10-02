@@ -1,0 +1,185 @@
+{
+  "v": 1,
+  "run": "s421201",
+  "at": "2026-10-02T21:10:19.876179+00:00",
+  "scope": "Git index versus working-tree record archive; self-report excluded from hashes",
+  "archive_files_excluding_this_report": 28,
+  "archive_files_including_this_report": 29,
+  "all_archive_files_in_git_index": true,
+  "all_staged_record_bytes_match": true,
+  "encrypted_parts": 19,
+  "all_part_sha256_and_sizes_match": true,
+  "staged_changes_before_self_report": 40,
+  "all_staged_changes_case_only": true,
+  "private_key_or_auth_file_staged": false,
+  "files": [
+    {
+      "path": "docs/use-cases/batman-investigation-ii/interrupted-record/README.md",
+      "bytes": 4140,
+      "sha256": "74069708443b27967358253345695efd5033426fd216b4b11283d06e793d8b27",
+      "staged_bytes_match": true
+    },
+    {
+      "path": "docs/use-cases/batman-investigation-ii/interrupted-record/archive-redactor-parity.json",
+      "bytes": 1057,
+      "sha256": "a8fdc9fcaa1ad416afe4b77280924f433b76914031cdbe445348a93e78ff47a3",
+      "staged_bytes_match": true
+    },
+    {
+      "path": "docs/use-cases/batman-investigation-ii/interrupted-record/archive-verification.json",
+      "bytes": 4895,
+      "sha256": "5df56c3d6cca9bf222d019aabff0b85eb83c39efc844e9b3d40fd7c121e3bdfd",
+      "staged_bytes_match": true
+    },
+    {
+      "path": "docs/use-cases/batman-investigation-ii/interrupted-record/chain-verification.json",
+      "bytes": 4702,
+      "sha256": "a79978412112132bc00cd9fe54b807eea22456d2b5a94bb5b2e3f77ecb775316",
+      "staged_bytes_match": true
+    },
+    {
+      "path": "docs/use-cases/batman-investigation-ii/interrupted-record/external-source-custody.json",
+      "bytes": 2111,
+      "sha256": "8bc1d3e00710c078d128a3010abd5c27cd1db9cc9d91b470adeda0a10d025e17",
+      "staged_bytes_match": true
+    },
+    {
+      "path": "docs/use-cases/batman-investigation-ii/interrupted-record/late-technique-source-index.json",
+      "bytes": 8824,
+      "sha256": "dd8f58b3849cff2db03d538c095b5a99ed428c80737ade23b90371174ae753db",
+      "staged_bytes_match": true
+    },
+    {
+      "path": "docs/use-cases/batman-investigation-ii/interrupted-record/preservation-completion.json",
+      "bytes": 501,
+      "sha256": "b1723bb5b0a4cb071e4dada2823ade959f4f2b51271c43652b2515c678ac30ee",
+      "staged_bytes_match": true
+    },
+    {
+      "path": "docs/use-cases/batman-investigation-ii/interrupted-record/record.tar.gz.aes.part-0001",
+      "bytes": 16777216,
+      "sha256": "7d29255fb074e0fcdc5ab27585a601e1578b3580387561db87d0ebc11ba207e3",
+      "staged_bytes_match": true
+    },
+    {
+      "path": "docs/use-cases/batman-investigation-ii/interrupted-record/record.tar.gz.aes.part-0002",
+      "bytes": 16777216,
+      "sha256": "da6f03ac7f97508b57fc1902b1ec55c64196ba812e206054e7cb68f0b26e3039",
+      "staged_bytes_match": true
+    },
+    {
+      "path": "docs/use-cases/batman-investigation-ii/interrupted-record/record.tar.gz.aes.part-0003",
+      "bytes": 16777216,
+      "sha256": "4a9ffdf2cbdeef867bb6b7a49e9b151a3cf15c901c13a8a0df4e672481d4710c",
+      "staged_bytes_match": true
+    },
+    {
+      "path": "docs/use-cases/batman-investigation-ii/interrupted-record/record.tar.gz.aes.part-0004",
+      "bytes": 16777216,
+      "sha256": "be0df508916d84adebe21b66e8a2a10ee0c839bb1a19535c85e8250fad30a76d",
+      "staged_bytes_match": true
+    },
+    {
+      "path": "docs/use-cases/batman-investigation-ii/interrupted-record/record.tar.gz.aes.part-0005",
+      "bytes": 16777216,
+      "sha256": "ccea85e74fe66c846b5b3729e142257bfdb3de6f6fdc988f86969fd37b50ecc4",
+      "staged_bytes_match": true
+    },
+    {
+      "path": "docs/use-cases/batman-investigation-ii/interrupted-record/record.tar.gz.aes.part-0006",
+      "bytes": 16777216,
+      "sha256": "87ba08ec977da9949abca96be725e56b446dc50000a8858a250516725d83a73e",
+      "staged_bytes_match": true
+    },
+    {
+      "path": "docs/use-cases/batman-investigation-ii/interrupted-record/record.tar.gz.aes.part-0007",
+      "bytes": 16777216,
+      "sha256": "6b24b96d59458f22b8e145759b7f81f704f5784f70d8734e0ba8ec9cfb567305",
+      "staged_bytes_match": true
+    },
+    {
+      "path": "docs/use-cases/batman-investigation-ii/interrupted-record/record.tar.gz.aes.part-0008",
+      "bytes": 16777216,
+      "sha256": "12478858b8330cf780cadc6b8d38926d69b9e620ed9e1f0eb090917d50e0f1e2",
+      "staged_bytes_match": true
+    },
+    {
+      "path": "docs/use-cases/batman-investigation-ii/interrupted-record/record.tar.gz.aes.part-0009",
+      "bytes": 16777216,
+      "sha256": "bdeb33bee826e0271904468d449ad49157c874e19c6ecb6874ec861b82d5f8d3",
+      "staged_bytes_match": true
+    },
+    {
+      "path": "docs/use-cases/batman-investigation-ii/interrupted-record/record.tar.gz.aes.part-0010",
+      "bytes": 16777216,
+      "sha256": "56118b2143273fee1cc15d44815a2b6f16f7ca29dcd17bc9b9999eeedc2344d7",
+      "staged_bytes_match": true
+    },
+    {
+      "path": "docs/use-cases/batman-investigation-ii/interrupted-record/record.tar.gz.aes.part-0011",
+      "bytes": 16777216,
+      "sha256": "c9d758e3e0956256fae8246fead1cff3af899dfd3b12b04022ab8c3684d1dff2",
+      "staged_bytes_match": true
+    },
+    {
+      "path": "docs/use-cases/batman-investigation-ii/interrupted-record/record.tar.gz.aes.part-0012",
+      "bytes": 16777216,
+      "sha256": "7261f8ef111249fdfd48ba4f877d231acd59d7721d09b1166a6187d80c3c7458",
+      "staged_bytes_match": true
+    },
+    {
+      "path": "docs/use-cases/batman-investigation-ii/interrupted-record/record.tar.gz.aes.part-0013",
+      "bytes": 16777216,
+      "sha256": "cfc5c542ade9c16d265fb68983def7f951962c12bb7f065b786371584fa622b6",
+      "staged_bytes_match": true
+    },
+    {
+      "path": "docs/use-cases/batman-investigation-ii/interrupted-record/record.tar.gz.aes.part-0014",
+      "bytes": 16777216,
+      "sha256": "5b4c1ee21009f9cda0f392027d4a83d881584ee963547e46c540727527e55b4d",
+      "staged_bytes_match": true
+    },
+    {
+      "path": "docs/use-cases/batman-investigation-ii/interrupted-record/record.tar.gz.aes.part-0015",
+      "bytes": 16777216,
+      "sha256": "34839e9120e74d4cadd7ba2b9aa3eeed262ea4f40bae7a8f6a30623d2dc765ca",
+      "staged_bytes_match": true
+    },
+    {
+      "path": "docs/use-cases/batman-investigation-ii/interrupted-record/record.tar.gz.aes.part-0016",
+      "bytes": 16777216,
+      "sha256": "76d43725a874d80cd5dd9a648cc14ef041df1d237a21eb6858ed9b356dd1085b",
+      "staged_bytes_match": true
+    },
+    {
+      "path": "docs/use-cases/batman-investigation-ii/interrupted-record/record.tar.gz.aes.part-0017",
+      "bytes": 16777216,
+      "sha256": "4a5b1b1c2a75401e83bc1d64f44f7c74619855f5169991d150b4df3a6df175e7",
+      "staged_bytes_match": true
+    },
+    {
+      "path": "docs/use-cases/batman-investigation-ii/interrupted-record/record.tar.gz.aes.part-0018",
+      "bytes": 16777216,
+      "sha256": "00919c5f8c8a94e94dc097de2ce5ed74f57c88dd797bf9c669588ef2e30722eb",
+      "staged_bytes_match": true
+    },
+    {
+      "path": "docs/use-cases/batman-investigation-ii/interrupted-record/record.tar.gz.aes.part-0019",
+      "bytes": 13584115,
+      "sha256": "30555447b2e4bd35e67e4b7d924d8f35e039a87488bdda8decdabd948fa17a79",
+      "staged_bytes_match": true
+    },
+    {
+      "path": "docs/use-cases/batman-investigation-ii/interrupted-record/snapshot-verification.json",
+      "bytes": 3406,
+      "sha256": "59999e5b140c84d6cc4a85924a8aa6c7d0ed826fbf98d98ae583ef0299ebb3a0",
+      "staged_bytes_match": true
+    },
+    {
+      "path": "docs/use-cases/batman-investigation-ii/interrupted-record/unicode-line-reader-probe.json",
+      "bytes": 671,
+      "sha256": "bbdc5ff82756812e0c407720f20c8e0f9b41889d2a3067431d7273af6290fb91",
+      "staged_bytes_match": true
+    }
+  ]
+}

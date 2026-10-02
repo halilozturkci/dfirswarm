@@ -2979,7 +2979,7 @@
       "sha256": "162d28663d235810e8717957cefc17ce3b58da006b3cba4d29296781020029ab",
       "captured_at": "2026-10-02T12:01:16.938750+00:00",
       "byte_exact_source_copy": false,
-      "selection": "complete records E267\u2013E286 selected from live prefix; not an independently chained full ledger"
+      "selection": "complete records E267–E286 selected from live prefix; not an independently chained full ledger"
     },
     {
       "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000416-s42120104.md",
@@ -3760,7 +3760,7 @@
       "sha256": "ddc416409a4d7caed3f3ea78a594e8d135e96e8095777e853d61d5bb3b98fe12",
       "captured_at": "2026-10-02T12:18:22.435121+00:00",
       "byte_exact_source_copy": false,
-      "selection": "complete selected E287/E292/E294\u2013E302; live prefix, not full chain"
+      "selection": "complete selected E287/E292/E294–E302; live prefix, not full chain"
     },
     {
       "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/leads/leads.jsonl",
@@ -3769,7 +3769,7 @@
       "sha256": "22617d15c65ded4df62d7c89101f62525440ae4a3cf85219ae792ab6ff94183d",
       "captured_at": "2026-10-02T12:18:22.435121+00:00",
       "byte_exact_source_copy": false,
-      "selection": "complete lead records seq885\u2013896 for L51 close, review, reopen and L55; not full chain"
+      "selection": "complete lead records seq885–896 for L51 close, review, reopen and L55; not full chain"
     },
     {
       "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000460-s42120100.md",
@@ -38297,6 +38297,26 @@
       "open_requests_after_batch": 0,
       "new_exact_answer": false,
       "full_final_archive_complete": false
+    },
+    {
+      "at": "2026-10-02T20:04:42.020Z",
+      "technique": "T16/T18 wrapping discrimination and T08 source attribution",
+      "source_index": "interrupted-record/late-technique-source-index.json",
+      "jobs": [
+        "j000355",
+        "j000356",
+        "j000357"
+      ],
+      "ledger_seqs": [
+        384,
+        385,
+        386,
+        387
+      ],
+      "all14_complete": false,
+      "kind": "read-only late-record observation",
+      "full_retained_snapshot": "interrupted-record/snapshot-verification.json",
+      "no_agent_feedback": true
     }
   ],
   "observer_snapshot_aliases": [

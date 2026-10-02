@@ -1,0 +1,165 @@
+{
+  "v": 1,
+  "run": "s421201",
+  "kind": "observer snapshot of interrupted run; not successful final custody",
+  "started_at": "2026-10-02T20:15:26.804743+00:00",
+  "completed_at": "2026-10-02T20:17:11.927521+00:00",
+  "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+  "private_snapshot": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/interrupted-20261002T200442Z/source/s421201",
+  "private_manifest": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/interrupted-20261002T200442Z/source-file-manifest.jsonl",
+  "private_manifest_sha256": "d1b1b3d0c86dc2cb2aa4465afa1cef935ed22764ef136605260d9731502cf0f2",
+  "regular_files": 153236,
+  "source_bytes": 18032011433,
+  "all_regular_files_byte_exact": true,
+  "source_inventory_and_stats_unchanged": true,
+  "symlinks": [
+    {
+      "path": "inputs",
+      "target": "/Users/halilozturkci/DFIR/SwarmInputs/batman-investigation-ii",
+      "followed": false
+    }
+  ],
+  "nonregular_not_copied": [
+    {
+      "path": "traces/.collector.sock",
+      "type": "socket"
+    }
+  ],
+  "categories": {
+    ".kickoff": {
+      "files": 1,
+      "bytes": 702
+    },
+    ".pi": {
+      "files": 2,
+      "bytes": 71528
+    },
+    ".pi-sessions": {
+      "files": 10,
+      "bytes": 265651306
+    },
+    ".runtime-cache": {
+      "files": 12,
+      "bytes": 2168896
+    },
+    "SWARM.md": {
+      "files": 1,
+      "bytes": 21803
+    },
+    "budget.json": {
+      "files": 1,
+      "bytes": 11772
+    },
+    "catalog": {
+      "files": 60,
+      "bytes": 77348
+    },
+    "collector.pid": {
+      "files": 1,
+      "bytes": 6
+    },
+    "history": {
+      "files": 310,
+      "bytes": 31873859
+    },
+    "hub.dir": {
+      "files": 1,
+      "bytes": 74
+    },
+    "hub.pid": {
+      "files": 1,
+      "bytes": 6
+    },
+    "idle-nudge.pid": {
+      "files": 1,
+      "bytes": 6
+    },
+    "inbox": {
+      "files": 40,
+      "bytes": 14330
+    },
+    "inhibit.pid": {
+      "files": 1,
+      "bytes": 6
+    },
+    "inputs.json": {
+      "files": 1,
+      "bytes": 1073
+    },
+    "layout.json": {
+      "files": 1,
+      "bytes": 259
+    },
+    "leads": {
+      "files": 3,
+      "bytes": 1184051
+    },
+    "ledger": {
+      "files": 5,
+      "bytes": 4243244
+    },
+    "locks": {
+      "files": 1,
+      "bytes": 207
+    },
+    "names.json": {
+      "files": 1,
+      "bytes": 2818
+    },
+    "network": {
+      "files": 1,
+      "bytes": 1038
+    },
+    "operator-requests.jsonl": {
+      "files": 1,
+      "bytes": 8650
+    },
+    "questions": {
+      "files": 2,
+      "bytes": 67963
+    },
+    "requests": {
+      "files": 3,
+      "bytes": 19170
+    },
+    "store": {
+      "files": 151725,
+      "bytes": 17576905301
+    },
+    "team.json": {
+      "files": 1,
+      "bytes": 1259
+    },
+    "threads": {
+      "files": 864,
+      "bytes": 459789
+    },
+    "tool-output": {
+      "files": 41,
+      "bytes": 6750505
+    },
+    "tools": {
+      "files": 45,
+      "bytes": 201080
+    },
+    "traces": {
+      "files": 14,
+      "bytes": 21006599
+    },
+    "vm": {
+      "files": 10,
+      "bytes": 1557017
+    },
+    "work": {
+      "files": 75,
+      "bytes": 119709768
+    }
+  },
+  "original_inputs_followed_or_copied": false,
+  "vm_disks_copied": false,
+  "auth_secrets_in_git": false,
+  "solution_read": false,
+  "formal_stop_custody_present": false,
+  "all14_complete": false,
+  "flag_verified": false
+}

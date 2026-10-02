@@ -1,0 +1,33 @@
+{
+  "at": "2026-10-02T20:23:23.488Z",
+  "node": "v24.13.1",
+  "actual": {
+    "lf_lines": 23082,
+    "readline": {
+      "lines": 23084,
+      "invalid": 3,
+      "first_invalid": 847
+    },
+    "lf_chain": {
+      "ok": true,
+      "chained": 23082,
+      "total": 23082,
+      "unverified": 8,
+      "disputed": 0
+    }
+  },
+  "synthetic": {
+    "json_value_has_literal_u2028_and_u2029": true,
+    "lf_lines": 1,
+    "readline": {
+      "lines": 3,
+      "invalid": 3,
+      "first_invalid": 1
+    }
+  },
+  "source": {
+    "file": "scripts/custody.ts",
+    "line": 161
+  },
+  "operator_scope": "read-only observer probe; no original, agent, or platform-code changes"
+}
