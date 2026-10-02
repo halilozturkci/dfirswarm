@@ -1,0 +1,7 @@
+tls: CA cert found at /.msb/tls/ca.pem, installing into guest trust store
+tls: copied CA cert to /usr/local/share/ca-certificates/microsandbox-ca.pem
+tls: copied CA cert to /usr/local/share/ca-certificates/microsandbox-ca.crt
+tls: copied CA cert to /etc/pki/ca-trust/source/anchors/microsandbox-ca.pem
+tls: copied CA cert to /etc/pki/ca-trust/source/anchors/microsandbox-ca.crt
+tls: CA cert installed, bundle=/etc/ssl/certs/ca-certificates.crt
+[    5.773930] reboot: Power down

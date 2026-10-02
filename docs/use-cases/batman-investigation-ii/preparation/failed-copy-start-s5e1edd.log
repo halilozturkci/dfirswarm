@@ -1,0 +1,73 @@
+WARN: openai-codex/gpt-daybreak-blue-latest names no dated model (latest): the provider can change what answers under it between one run and the next, or within a run. For a run you will compare or repeat, name a dated model id; the record keeps the ids asked for and the date (model_identity), and a seat the provider answers with another model is said on the board and to you (model_reported).
+WARN: 14 VMs of 6144 MiB take 86016 of this host's 131072 MiB; whatever else it runs shares the rest
+WARN: 28 vCPUs on 16 cores: the agents' tools will share them
+Copy check:   2.0 of 4.5 GiB read again from the source
+Copy check:   4.0 of 4.5 GiB read again from the source
+Required:     Q-1, Q-2, Q-3, Q-4, Q-5, Q-6, Q-7, Q-8, Q-9, Q-10, Q-11, Q-12, Q-13, Q-14 must be established: only an answer that answers each ends the run on it, or your acceptance of its limits
+Swarm id:     s5e1edd
+Label:        batman-investigation-ii-10-models
+Disk:         the runs volume is encrypted at rest
+Isolated cwd: /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd
+N:            10 (s5e1edd00 s5e1edd01 s5e1edd02 s5e1edd03 s5e1edd04 s5e1edd05 s5e1edd06 s5e1edd07 s5e1edd08 s5e1edd09)
+Isolation:    one microVM per agent (dfirswarm-memory:symbols-arm64)
+Compaction:   self (notice 40% · warning 50% · compact 60% of each model's ceiling)
+Models:       4xopenai-codex/gpt-6.1-sol + 3xopenai-codex/gpt-daybreak-blue-latest + 3xopenai-codex/gpt-6-luna
+              s5e1edd00 -> openai-codex/gpt-6.1-sol
+              s5e1edd01 -> openai-codex/gpt-6.1-sol
+              s5e1edd02 -> openai-codex/gpt-6.1-sol
+              s5e1edd03 -> openai-codex/gpt-6.1-sol
+              s5e1edd04 -> openai-codex/gpt-daybreak-blue-latest
+              s5e1edd05 -> openai-codex/gpt-daybreak-blue-latest
+              s5e1edd06 -> openai-codex/gpt-daybreak-blue-latest
+              s5e1edd07 -> openai-codex/gpt-6-luna
+              s5e1edd08 -> openai-codex/gpt-6-luna
+              s5e1edd09 -> openai-codex/gpt-6-luna
+Cap:          none: until solved, no wall clock; spend is recorded and shown, and nothing is stopped for it (advisory: $0, 30000000 tokens)
+Until solved: no caps and no wall clock; done when every question in scope has a disposition under the bar (a reviewed not_determinable included: examination-limited); no abandon; a regroup after 10 minutes without progress, then with backoff; otherwise only swarm.sh stop s5e1edd ends it
+Stop policy:  operator: no wall clock, caps advisory; only you stop the run (swarm.sh stop s5e1edd)
+Goal:         /tmp/dfirswarm-batman-ii-preparation/goal.md
+DoD:          from the goal document; checks run by scripts/await-done.sh
+Operator:     what the run asks of you (a lead's needs, evidence it does not have, a clarification, a network item, a stop proposed) is an operator request with an id: swarm.sh requests s5e1edd list, and the console's Requests tab; a lead's is answered with swarm.sh lead s5e1edd note L-<n> "<answer>", evidence with swarm.sh evidence s5e1edd add PATH --for R-<n> --why TEXT
+Questions:    the goal's are Q-n in questions/questions.md; ask the swarm one while it runs with swarm.sh question s5e1edd add --text "<question>" --why "<why>" [--as ID], or the console's Questions tab
+Panes:        Herdr right/down grid; tab then workspace fallback if a split fails
+Tools:        forging on (make_tool / tools; scripts under tools/<name>/ run as subprocesses)
+Inputs:       2 file(s), 4718627 KB from /Users/halilozturkci/DFIR/SwarmInputs/batman-investigation-ii, read-only under inputs/; kernel guard: microvm (each agent's VM mounts it read-only; the host refuses every write)
+Trace:        written by the collector, hash-chained; each line attributed by the VM channel it came in on
+Write guard:  microvm: each agent writes only its own work/<id>/, work/extracted/<id>/, work/quarantine/<id>/, tool-output/<id>/ and Pi session; the rest of the run is read-only in its VM, shared files and the board are written by the hub, and of this host a VM has only its mounts (vm/<id>.json), read-only
+Signers:      out of every VM: none mounts where the machine key and the examiners are kept
+Quarantine:   each seat's work/extracted/<id> and work/quarantine/<id> are its own no-exec holes in its VM; the rest of work/ is read-only there
+              no-exec stops a file executing, not an interpreter reading it, and a job's output under store/ is not no-exec: a command or job that runs or evaluates code from the evidence is flagged (the trace, the seat's reply, the report), never refused
+Idle nudge:   an agent silent for 180s is prompted to continue (3 times, then on with backoff: the run is until solved; a provider error is retried the same way)
+Key:          openai-codex/gpt-6.1-sol -> openai-codex subscription (OAuth, refreshed by Pi): consumer plan; not for customer data
+Key:          openai-codex/gpt-daybreak-blue-latest -> openai-codex subscription (OAuth, refreshed by Pi): consumer plan; not for customer data
+Key:          openai-codex/gpt-6-luna -> openai-codex subscription (OAuth, refreshed by Pi): consumer plan; not for customer data
+Net:          each VM reaches its models' hosts and nothing else (msb, deny by default)
+Harness:      frozen for this run at 3e33c630927391ce0474942e1f8705a616cbff38 (the checkout can change; these VMs and the hub will not see it)
+Jobs:         up to 4 worker VM(s) at a time, one kept for short jobs, 2 vCPU and 6144 MiB each, no network unless a job asks for the run's allowlist
+              derived catalogue on: what jobs make is offered to the recipes by content, in the lowest lane (one worker), within 300 worker-s each 10 min, at most 50 generations (--derived-limit N sets it) and 2 GiB a run (--no-derived-catalog: off)
+VMs:          creating 10 on dfirswarm-memory:symbols-arm64 (2 vCPU, 4096 MiB memory, 12288 MiB disk each)...
+BLOCKER: the agents' VMs did not come up as this run needs them.
+  s5e1edd00: the evidence can execute in the VM (exec)
+  s5e1edd01: the evidence can execute in the VM (exec)
+  s5e1edd02: the evidence can execute in the VM (exec)
+  s5e1edd03: the evidence can execute in the VM (exec)
+  s5e1edd04: the evidence can execute in the VM (exec)
+  s5e1edd05: the evidence can execute in the VM (exec)
+  s5e1edd06: the evidence can execute in the VM (exec)
+  s5e1edd07: the evidence can execute in the VM (exec)
+  s5e1edd08: the evidence can execute in the VM (exec)
+  s5e1edd09: the evidence can execute in the VM (exec)
+  (details: /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/traces/vm-create.log)
+              s5e1edd05: stopped and removed
+              s5e1edd06: stopped and removed
+              s5e1edd00: stopped and removed
+              s5e1edd09: stopped and removed
+              s5e1edd01: stopped and removed
+              s5e1edd04: stopped and removed
+              s5e1edd03: stopped and removed
+              s5e1edd08: stopped and removed
+              s5e1edd07: stopped and removed
+              s5e1edd02: stopped and removed
+Kickoff did not finish (exit 1): putting away what it started.
+              none left to stop (the hub had put them away, or none was made)
+Recorded as failed; the sandbox stays for reading: /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd

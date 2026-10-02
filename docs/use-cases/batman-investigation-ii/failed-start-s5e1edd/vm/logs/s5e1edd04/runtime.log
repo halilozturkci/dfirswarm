@@ -1,0 +1,34 @@
+2026-10-02T09:54:29.148728Z  INFO microsandbox_runtime::runner::vm: sandbox starting sandbox=dfs-s5e1edd-s5e1edd04
+2026-10-02T09:54:29.149165Z  INFO microsandbox_runtime::runner::relay: agent relay listening on /Users/halilozturkci/.microsandbox/run/sandboxes/a1c63bda6f8b79e2bd4c6bb2/agent.sock
+2026-10-02T09:54:29.610542Z  INFO microsandbox_checkpoint_timing: root journal admission timing operation="root_journal_admission" reused_layers=0 hashed_layers=0 total_us=2
+2026-10-02T09:54:29.676546Z  INFO microsandbox_runtime::runner::vm: entering VM sandbox=dfs-s5e1edd-s5e1edd04
+2026-10-02T09:54:29.701311Z  INFO microsandbox_runtime::runner::vm: host placement acknowledged before guest execution pinned_vcpus=0 inherited_vcpus=2 memory=Inherited
+2026-10-02T09:54:29.927406Z  INFO microsandbox_runtime::runner::relay: agent relay: installed bind identity maps host_owner_uid=501 guest_uid=0 guest_gid=0 mounts=18
+2026-10-02T09:54:29.939046Z  INFO microsandbox_runtime::runner::relay: agent relay: bound dedicated agent-bulk port
+2026-10-02T09:54:29.939825Z  INFO microsandbox_runtime::runner::relay: agent relay: received core.ready from agentd dual_port=true
+2026-10-02T09:54:29.941226Z  INFO microsandbox_runtime::runner::relay: agent relay: client connected slot=0 id_start=1 id_end_exclusive=33554431
+2026-10-02T09:54:29.943292Z  INFO microsandbox_runtime::runner::relay: agent relay: selected local-shm-v1 slot=0 local_shm=true
+2026-10-02T09:54:29.963833Z  INFO microsandbox_runtime::runner::relay: agent relay: client connected slot=1 id_start=33554432 id_end_exclusive=67108862
+2026-10-02T09:54:29.964533Z  INFO microsandbox_runtime::runner::relay: agent relay: selected local-shm-v1 slot=1 local_shm=true
+2026-10-02T09:54:29.966683Z  INFO microsandbox_runtime::runner::relay: agent relay: client disconnected slot=1 error=agent relay: unexpected EOF
+2026-10-02T09:54:29.968714Z  INFO microsandbox_runtime::runner::relay: agent relay: client connected slot=1 id_start=33554432 id_end_exclusive=67108862
+2026-10-02T09:54:29.969389Z  INFO microsandbox_runtime::runner::relay: agent relay: selected local-shm-v1 slot=1 local_shm=true
+2026-10-02T09:54:30.137086Z  WARN msb_krun_devices::virtio::vsock::custom_stream: custom vsock backend closed: backend event closed
+2026-10-02T09:54:30.137096Z  WARN msb_krun_devices::virtio::vsock::muxer_thread: deferring proxy removal: 5996709441200722824
+2026-10-02T09:54:30.137348Z  WARN msb_krun_devices::virtio::vsock::custom_stream: error shutting down custom vsock backend: Socket is not connected (os error 57)
+2026-10-02T09:54:30.138985Z  INFO msb_krun_devices::virtio::vsock::muxer: immediately removing proxy: 5996709441200722824
+2026-10-02T09:54:30.500784Z  INFO microsandbox_runtime::runner::relay: agent relay: client disconnected slot=1 error=agent relay: unexpected EOF
+2026-10-02T09:54:33.379700Z  INFO microsandbox_runtime::runner::relay: agent relay: client disconnected slot=0 error=agent relay: unexpected EOF
+2026-10-02T09:54:36.097522Z  INFO microsandbox_runtime::runner::relay: agent relay: client connected slot=0 id_start=1 id_end_exclusive=33554431
+2026-10-02T09:54:36.098045Z  INFO microsandbox_runtime::runner::relay: agent relay: selected local-shm-v1 slot=0 local_shm=true
+2026-10-02T09:54:36.099098Z  INFO microsandbox_runtime::runner::relay: agent relay: client connected slot=1 id_start=33554432 id_end_exclusive=67108862
+2026-10-02T09:54:36.099564Z  INFO microsandbox_runtime::runner::relay: agent relay: selected local-shm-v1 slot=1 local_shm=true
+2026-10-02T09:54:36.366317Z  INFO microsandbox_runtime::runner::relay: agent relay: client disconnected slot=1 error=agent relay: unexpected EOF
+2026-10-02T09:54:36.366314Z  INFO microsandbox_runtime::runner::relay: agent relay: client disconnected slot=0 error=agent relay: unexpected EOF
+2026-10-02T09:54:36.378016Z  INFO microsandbox_runtime::runner::relay: agent relay: client connected slot=0 id_start=1 id_end_exclusive=33554431
+2026-10-02T09:54:36.378549Z  INFO microsandbox_runtime::runner::relay: agent relay: selected local-shm-v1 slot=0 local_shm=true
+2026-10-02T09:54:36.379058Z  INFO microsandbox_runtime::runner::relay: agent relay: client slot=0 sent core.shutdown, notifying drain
+2026-10-02T09:54:36.379071Z  INFO microsandbox_runtime::runner::vm: graceful shutdown requested; waiting for guest poweroff
+2026-10-02T09:54:36.379104Z  INFO microsandbox_runtime::runner::relay: agent relay: client disconnected slot=0 error=agent relay: unexpected EOF
+2026-10-02T09:54:36.458828Z  INFO msb_krun_vmm::macos::vstate: vCPU 0 received shutdown signal
+2026-10-02T09:54:36.458848Z  INFO msb_krun_vmm: Vmm is stopping.

@@ -1,0 +1,9 @@
+NOTE: contact: active with lookups: none grants nothing: no lookup is allowed
+WARN: openai-codex/gpt-daybreak-blue-latest names no dated model (latest): the provider can change what answers under it between one run and the next, or within a run. For a run you will compare or repeat, name a dated model id; the record keeps the ids asked for and the date (model_identity), and a seat the provider answers with another model is said on the board and to you (model_reported).
+WARN: 14 VMs of 6144 MiB take 86016 of this host's 131072 MiB; whatever else it runs shares the rest
+WARN: 28 vCPUs on 16 cores: the agents' tools will share them
+Key:          openai-codex/gpt-6.1-sol -> openai-codex subscription (OAuth, refreshed by Pi): consumer plan; not for customer data
+Key:          openai-codex/gpt-daybreak-blue-latest -> openai-codex subscription (OAuth, refreshed by Pi): consumer plan; not for customer data
+Key:          openai-codex/gpt-6-luna -> openai-codex subscription (OAuth, refreshed by Pi): consumer plan; not for customer data
+Isolation:    one microVM per agent (dfirswarm-memory:symbols-arm64, sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7)
+Check:        the start would go ahead (microvm, 10 agent(s), sandbox /Users/halilozturkci/DFIR/SwarmRuns-vm/s89ed02); nothing was written

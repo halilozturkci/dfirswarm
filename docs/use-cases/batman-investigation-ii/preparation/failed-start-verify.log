@@ -1,0 +1,10 @@
+Files:        98 of 98 re-hashed against MANIFEST.txt, all match, none missing, none added
+Signature:    none (the package was not signed)
+Components:   every part is there or declared absent (COMPONENTS.json)
+Absent:       custody.json: no custody was taken for this run (swarm.sh stop takes it); custody.json.sig: custody.json was not signed (--custody-sign-key); custody.json.tsr: custody.json was not timestamped (--custody-timestamp-url); artifacts.sealed.json: no custody was taken, so nothing sealed work/; ledger.jsonl: nothing was recorded; ledger-attestations.jsonl: no entry has a second author; ledger-disputes.jsonl: no agent disputed an entry; ledger-sweeps.jsonl: no store sweep ran (no coverage record named what a hit would contain); finish.jsonl: the run has no finish register (no seat coordinated a finish, or a run from before it); leads.jsonl: no lead was opened; leads.md: no lead was opened; operator-requests.jsonl: nothing was asked of the operator; requests.jsonl: nothing was asked of the operator, or the run is from before the chain; requests.md: nothing was asked of the operator; material: in the run, and not copied: it is not a regular file there, or it is empty; network/grants.jsonl: the run made no network request; network/fetches.jsonl: the run fetched nothing; operator-hosts.jsonl: the operator allowed no host during the run; trace/model-gateway.jsonl: the run had no model gateway (a host run); review.jsonl: no examiner has reviewed this run; release: no release was sealed for this run (no custody taken, or a run from before releases)
+Verdict:      no custody.json in the package
+Trace:        1 lines, chain intact
+Questions:    16 events, chain intact; not sealed by this verdict (a custody from before the question register was sealed)
+Journal:      3 lines, chain intact
+Releases:     none (a run stopped before releases were written, or with no custody taken; swarm.sh releases <id> --draft writes one for a run that has a verdict)
+FILES VERIFIED, UNSIGNED: docs/use-cases/batman-investigation-ii/failed-start-s5e1edd
