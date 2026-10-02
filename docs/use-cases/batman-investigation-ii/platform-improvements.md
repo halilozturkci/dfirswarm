@@ -90,3 +90,9 @@ Ayrı ayrıntı: E313 kind=limitation kabul edildi ama reply failed-job için qu
 - Yanlışlıkla Q15 open, proposed scope'ta kaldı; in_scope14 korunuyor. Mevcut objective/parent admission sınırı bu olayda etkili. Önerilmiş kayıtların mevcut scope ve 'unanswered' sayısından ayrı, immutable origin/reason'ıyla gösterilmesi ve yetkili disposition geçmişinin anlaşılır olması adayı. Root bu soruyu silmedi/reject/admit etmedi; kullanıcı CTF şartları gevşetilmedi.
 
 Birincil kaynaklar: selected-1246-record-review-and-finish-events.jsonl, selected-1246 question/lead/ledger satırları, #486/#494/#496/#499/#500/#506/#512–#516, j290–j294 tam metadata/log/output. Dosya hashleri technique-source-index.json içinde; runtime final custody bekliyor.
+
+### 13:03 takip — integrity kontrolü ile required-answer readiness ayrımı
+
+İkinci actual done (s01 trace868, 13:02:28.935 UTC)1/4 check geçti, ok=false; #518 eski failed-source kusurlarının giderildiğini bildiriyor. Q1 partial ve Q12–Q14 not_determinable unchanged; no final files. Geçen ledger-check'i all14 çözüm diye sunmak yanlış olur. Kaynak `scripts/check-answers.ts:585` unmet must-establish disposition'ını dışlar; `:670` open defect yokluğunu check-success yapar. Ayrı finish readiness, `extensions/finish.ts:1483` mustEstablish/establishesBy barını uygular. Bu ayrım kaynakta zaten var; mevcut gate'in missing values'ı kabul ettiği veya bypass olduğu iddia edilmez.
+
+Operatör ekranı adayı: goal command checks1/4, answer disposition/review, required answer gaps4 ve readiness engellerini aynı snapshot bağlarıyla ayrı gösterme. `unanswered=0` kayıt yokluğunu saydığı için bu vaka14 solved demek değildir. Q1 fresh s09 established-strength review'u da yalnız declared parts'ı doğruluyor; whole-answer partial kalıyor. Offline replay fixture'ı bu mevcut ayrımı ve fresh attest sonrası değişmeyen open part'ı korumalıdır. Canlı code/policy/agent davranışı değiştirilmedi.

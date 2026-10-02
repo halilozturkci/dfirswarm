@@ -1,0 +1,1 @@
+{"v":1,"job":"j000295","attempt":1,"sealed_at":"2026-10-02T12:56:47.472Z","files":[{"path":"q1-alias-offsets.tsv","path_b64":"cTEtYWxpYXMtb2Zmc2V0cy50c3Y=","bytes":156,"sha256":"e223fa66d72328e7434b5b5708b9a9b5e0ae5576dc9aff1dfa441ede58a08042","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":156}}

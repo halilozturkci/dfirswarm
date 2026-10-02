@@ -1,0 +1,81 @@
+{
+  "id": "j000296",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000013/out/file.0xab0b12173150.0xab0b13e414d0.DataSectionObject.global-messages-db.sqlite.dat"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "command": "python3 - <<'PY' > \"$OUT/q1-identity-literal.txt\"\np='store/jobs/j000013/out/file.0xab0b12173150.0xab0b13e414d0.DataSectionObject.global-messages-db.sqlite.dat'\nwith open(p,'rb') as f:\n    f.seek(982894)\n    b=f.read(12)\nprint(f'offset=982894 length={len(b)} value={b.decode(\"ascii\", errors=\"replace\")}')\nPY"
+  },
+  "requester": {
+    "agent": "s42120109",
+    "name": "Memory artifact scout",
+    "doing": "Following up Q3 coverage validation and independent Q3/Q4 source review"
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T12:58:05.280Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000013/out/file.0xab0b12173150.0xab0b13e414d0.DataSectionObject.global-messages-db.sqlite.dat",
+        "sha256": "4883e9cb57142734023a2aed2ac145a80d1b6ad24d7463a7a6b2015fe19c6eed"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000296-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T12:58:05.355Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000296",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000296/scope.1.json",
+    "manifest_sha256": "e491dd7ca8a117d895a243a4604708fa44a814af31ba902da1883a5a9b9f8a3b"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T12:58:06.041Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "d14a18e050fabc45482e3f02bd688b7d4ad2bf567e9455f4824c429f509d01af",
+    "files": 1,
+    "bytes": 43,
+    "rejected": 0,
+    "path": "store/jobs/j000296/out"
+  }
+}

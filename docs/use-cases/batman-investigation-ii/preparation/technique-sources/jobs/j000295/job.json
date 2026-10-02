@@ -1,0 +1,94 @@
+{
+  "id": "j000295",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000088/identity-locators.json",
+      "job:j000087/mail-identities.json"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "command": "{ grep -boa -F 'Hugo Strange' store/jobs/j000088/out/identity-locators.json; grep -boa -F 'Hugo, finish setting up your new Google Account' store/jobs/j000087/out/mail-identities.json; } | head -10 > \"$OUT/q1-alias-offsets.tsv\""
+  },
+  "requester": {
+    "agent": "s42120109",
+    "name": "Memory artifact scout",
+    "doing": "Following up Q3 coverage validation and independent Q3/Q4 source review"
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T12:56:46.543Z",
+  "reuse": {
+    "op": null,
+    "objects": [
+      {
+        "path": "store/jobs/j000087/out/mail-identities.json",
+        "sha256": "00b0cf892e57637bc75d4dc6d2a56d469e6b9867ac1572824b319d3316f1cd37"
+      },
+      {
+        "path": "store/jobs/j000088/out/identity-locators.json",
+        "sha256": "6b29cb13898f261fc670be3033d051a1aeb8ba9239a4ab05a6b310c45fd06ac6"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000295-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T12:56:46.625Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000295",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 2,
+    "files": 2,
+    "bound": 0,
+    "manifest": "store/jobs/j000295/scope.1.json",
+    "manifest_sha256": "06f45c77fedab78cc4e23f5d1ab18046c8ceb4be578b7768369cec12cd94b778"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T12:56:47.435Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "1358a41682593e76a3a17551ed5ba4099eaf301e41e940edf4a6f16809291cb1",
+    "files": 1,
+    "bytes": 156,
+    "rejected": 0,
+    "path": "store/jobs/j000295/out"
+  },
+  "sensitive": {
+    "why": "derived",
+    "from": [
+      "j000087",
+      "j000088"
+    ],
+    "note": "made from the sensitive output of j000087, j000088: every output it sealed is sensitive"
+  }
+}
