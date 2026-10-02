@@ -1,0 +1,122 @@
+{
+  "cap_usd": 0.0,
+  "spent_usd": 0,
+  "tokens": 0,
+  "calls": 0,
+  "wall_clock_minutes": 0,
+  "started_at": "2026-10-02T09:54:22Z",
+  "source": "pi.sessionManager.getEntries",
+  "hard_kill": false,
+  "cap_steer_sent": false,
+  "metered": false,
+  "cap_tokens": 30000000,
+  "until_solved": true,
+  "stall_minutes": 10,
+  "stop_policy": "operator",
+  "coordination": {
+    "first_choice_stagger_sec": 20,
+    "first_choice_bound_sec": 90
+  },
+  "agents": {
+    "s5e1edd00": {
+      "spent_usd": 0,
+      "tokens": 0,
+      "calls": 0,
+      "input": 0,
+      "output": 0,
+      "cache_read": 0,
+      "cache_write": 0,
+      "model": "openai-codex/gpt-6.1-sol"
+    },
+    "s5e1edd01": {
+      "spent_usd": 0,
+      "tokens": 0,
+      "calls": 0,
+      "input": 0,
+      "output": 0,
+      "cache_read": 0,
+      "cache_write": 0,
+      "model": "openai-codex/gpt-6.1-sol"
+    },
+    "s5e1edd02": {
+      "spent_usd": 0,
+      "tokens": 0,
+      "calls": 0,
+      "input": 0,
+      "output": 0,
+      "cache_read": 0,
+      "cache_write": 0,
+      "model": "openai-codex/gpt-6.1-sol"
+    },
+    "s5e1edd03": {
+      "spent_usd": 0,
+      "tokens": 0,
+      "calls": 0,
+      "input": 0,
+      "output": 0,
+      "cache_read": 0,
+      "cache_write": 0,
+      "model": "openai-codex/gpt-6.1-sol"
+    },
+    "s5e1edd04": {
+      "spent_usd": 0,
+      "tokens": 0,
+      "calls": 0,
+      "input": 0,
+      "output": 0,
+      "cache_read": 0,
+      "cache_write": 0,
+      "model": "openai-codex/gpt-daybreak-blue-latest"
+    },
+    "s5e1edd05": {
+      "spent_usd": 0,
+      "tokens": 0,
+      "calls": 0,
+      "input": 0,
+      "output": 0,
+      "cache_read": 0,
+      "cache_write": 0,
+      "model": "openai-codex/gpt-daybreak-blue-latest"
+    },
+    "s5e1edd06": {
+      "spent_usd": 0,
+      "tokens": 0,
+      "calls": 0,
+      "input": 0,
+      "output": 0,
+      "cache_read": 0,
+      "cache_write": 0,
+      "model": "openai-codex/gpt-daybreak-blue-latest"
+    },
+    "s5e1edd07": {
+      "spent_usd": 0,
+      "tokens": 0,
+      "calls": 0,
+      "input": 0,
+      "output": 0,
+      "cache_read": 0,
+      "cache_write": 0,
+      "model": "openai-codex/gpt-6-luna"
+    },
+    "s5e1edd08": {
+      "spent_usd": 0,
+      "tokens": 0,
+      "calls": 0,
+      "input": 0,
+      "output": 0,
+      "cache_read": 0,
+      "cache_write": 0,
+      "model": "openai-codex/gpt-6-luna"
+    },
+    "s5e1edd09": {
+      "spent_usd": 0,
+      "tokens": 0,
+      "calls": 0,
+      "input": 0,
+      "output": 0,
+      "cache_read": 0,
+      "cache_write": 0,
+      "model": "openai-codex/gpt-6-luna"
+    }
+  }
+}

@@ -1,0 +1,2 @@
+Linux dfs-batman-ii-preflight 6.12.109 #1 SMP Fri Jul 24 13:01:52 WAT 2026 aarch64 GNU/Linux
+-rwxr-xr-x 1 root root 224 Oct  1 21:31 /opt/dfir/venv/bin/vol

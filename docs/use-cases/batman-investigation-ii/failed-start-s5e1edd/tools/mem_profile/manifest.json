@@ -1,0 +1,23 @@
+{
+  "name": "mem_profile",
+  "description": "Say what a memory container actually is before anything is run against it: crash dump, hibernation file, LiME or AVML capture, ELF core, or flat physical memory — with the header fields, the physical memory runs where the format lists them, and what the bytes suggest about the operating system.",
+  "params": {
+    "path": {
+      "type": "string",
+      "description": "The memory image, dump or hibernation file"
+    },
+    "scan_mb": {
+      "type": "integer",
+      "description": "How many megabytes to sample for operating-system hints (default 64)"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 300,
+  "example": "{\"path\": \"inputs/memory.raw\"}",
+  "by": "maintainer",
+  "at": "2026-09-22T17:00:00.000Z",
+  "version": 1,
+  "sha256": "9903dd4b596b9dd930a02de8be0d4f0e5ee6a08759b591faeef569daedbc763d",
+  "pack": "memory-forensics"
+}

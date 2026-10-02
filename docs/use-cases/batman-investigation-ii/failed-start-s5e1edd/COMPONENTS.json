@@ -1,0 +1,167 @@
+{
+  "v": 1,
+  "note": "Each part a recipient holds this record to: present, or absent with why. It is under MANIFEST.txt, and its signature: a part taken out of the package, and out of this list, breaks it. swarm.sh verify fails on a part that is missing and not declared absent.",
+  "components": [
+    {
+      "path": "custody.json",
+      "what": "the custody verdict",
+      "present": false,
+      "reason": "no custody was taken for this run (swarm.sh stop takes it)"
+    },
+    {
+      "path": "trace/custody-anchor.json",
+      "what": "the verdict's anchor, kept outside the run",
+      "present": true
+    },
+    {
+      "path": "custody.json.sig",
+      "what": "the verdict's signature",
+      "present": false,
+      "reason": "custody.json was not signed (--custody-sign-key)"
+    },
+    {
+      "path": "custody.json.tsr",
+      "what": "the verdict's RFC 3161 timestamp token",
+      "present": false,
+      "reason": "custody.json was not timestamped (--custody-timestamp-url)"
+    },
+    {
+      "path": "artifacts.sealed.json",
+      "what": "the index of work/ custody sealed at stop",
+      "present": false,
+      "reason": "no custody was taken, so nothing sealed work/"
+    },
+    {
+      "path": "trace/events.jsonl",
+      "what": "the trace",
+      "present": true
+    },
+    {
+      "path": "trace/trace-anchor.json",
+      "what": "the trace's anchor",
+      "present": true
+    },
+    {
+      "path": "ledger.jsonl",
+      "what": "the ledger",
+      "present": false,
+      "reason": "nothing was recorded"
+    },
+    {
+      "path": "ledger-attestations.jsonl",
+      "what": "the ledger's attestations",
+      "present": false,
+      "reason": "no entry has a second author"
+    },
+    {
+      "path": "ledger-disputes.jsonl",
+      "what": "the agents' disputes of entries",
+      "present": false,
+      "reason": "no agent disputed an entry"
+    },
+    {
+      "path": "ledger-sweeps.jsonl",
+      "what": "the store sweeps: what the hub found when it searched every output the run held for each coverage record's strings, and each evidence addition's reverse sweep of its files for the standing records' strings (a chain of its own, sealed by custody)",
+      "present": false,
+      "reason": "no store sweep ran (no coverage record named what a hit would contain)"
+    },
+    {
+      "path": "finish.jsonl",
+      "what": "the finish register: the coordinator's lease, readiness, the checks and the report's reviews (unsigned, sealed by custody)",
+      "present": false,
+      "reason": "the run has no finish register (no seat coordinated a finish, or a run from before it)"
+    },
+    {
+      "path": "leads.jsonl",
+      "what": "the lead register: how the investigation proceeded (unsigned, sealed by custody)",
+      "present": false,
+      "reason": "no lead was opened"
+    },
+    {
+      "path": "leads.md",
+      "what": "the lead register, rendered",
+      "present": false,
+      "reason": "no lead was opened"
+    },
+    {
+      "path": "questions.jsonl",
+      "what": "the question register: what the examination was asked, by whom (the goal, an agent, a person, claimed or signed), and how each question stood (unsigned as a whole, sealed by custody)",
+      "present": true
+    },
+    {
+      "path": "questions.md",
+      "what": "the question register, rendered",
+      "present": true
+    },
+    {
+      "path": "operator-requests.jsonl",
+      "what": "what the run asked of the operator, one line per request as it stood",
+      "present": false,
+      "reason": "nothing was asked of the operator"
+    },
+    {
+      "path": "requests.jsonl",
+      "what": "the operator requests' chain: every request (a lead's needs, an acquisition, a clarification, a network item, a stop proposed) with its id and lifecycle (unsigned, sealed by custody)",
+      "present": false,
+      "reason": "nothing was asked of the operator, or the run is from before the chain"
+    },
+    {
+      "path": "requests.md",
+      "what": "the operator requests, rendered",
+      "present": false,
+      "reason": "nothing was asked of the operator"
+    },
+    {
+      "path": "material",
+      "what": "what entered the run after its kickoff (evidence add, material add): each addition's provenance record and manifest; the bytes stay with the evidence",
+      "present": false,
+      "reason": "in the run, and not copied: it is not a regular file there, or it is empty"
+    },
+    {
+      "path": "network/grants.jsonl",
+      "what": "the dynamic network's requests, decisions and grants (a chain of its own, sealed by custody)",
+      "present": false,
+      "reason": "the run made no network request"
+    },
+    {
+      "path": "network/fetches.jsonl",
+      "what": "every fetch the fetch service made (a chain of its own, sealed by custody)",
+      "present": false,
+      "reason": "the run fetched nothing"
+    },
+    {
+      "path": "operator-hosts.jsonl",
+      "what": "the hosts the operator allowed while the run went on",
+      "present": false,
+      "reason": "the operator allowed no host during the run"
+    },
+    {
+      "path": "store/journal.jsonl",
+      "what": "the store's journal",
+      "present": true
+    },
+    {
+      "path": "trace/model-gateway.jsonl",
+      "what": "the model gateway's call log (a chain of its own, sealed by custody by its lines and their sha256)",
+      "present": false,
+      "reason": "the run had no model gateway (a host run)"
+    },
+    {
+      "path": "trace/journal-anchor.json",
+      "what": "the journal's anchor",
+      "present": true
+    },
+    {
+      "path": "review.jsonl",
+      "what": "the examiner's review",
+      "present": false,
+      "reason": "no examiner has reviewed this run"
+    },
+    {
+      "path": "release",
+      "what": "the report's releases: the machine's drafts and the examiner's adoptions, each signed",
+      "present": false,
+      "reason": "no release was sealed for this run (no custody taken, or a run from before releases)"
+    }
+  ]
+}

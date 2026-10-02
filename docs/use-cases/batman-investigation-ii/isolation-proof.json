@@ -1,0 +1,319 @@
+{
+  "run": "s421201",
+  "at": "2026-10-02T09:57:44.852640+00:00",
+  "passed": 10,
+  "total": 10,
+  "results": [
+    {
+      "agent": "s42120100",
+      "model": "openai-codex/gpt-6.1-sol",
+      "vm": "dfs-s421201-s42120100",
+      "exit": 0,
+      "forbidden_visible": [],
+      "evidence_present": true,
+      "network": {
+        "github": {
+          "reachable": false,
+          "error": "URLError"
+        },
+        "raw_github": {
+          "reachable": false,
+          "error": "URLError"
+        },
+        "web_search": {
+          "reachable": false,
+          "error": "URLError"
+        },
+        "host_console": {
+          "reachable": false,
+          "error": "URLError"
+        }
+      },
+      "evidence_write": {
+        "errno": 30,
+        "readonly": true
+      },
+      "pass": true
+    },
+    {
+      "agent": "s42120101",
+      "model": "openai-codex/gpt-6.1-sol",
+      "vm": "dfs-s421201-s42120101",
+      "exit": 0,
+      "forbidden_visible": [],
+      "evidence_present": true,
+      "network": {
+        "github": {
+          "reachable": false,
+          "error": "URLError"
+        },
+        "raw_github": {
+          "reachable": false,
+          "error": "URLError"
+        },
+        "web_search": {
+          "reachable": false,
+          "error": "URLError"
+        },
+        "host_console": {
+          "reachable": false,
+          "error": "URLError"
+        }
+      },
+      "evidence_write": {
+        "errno": 30,
+        "readonly": true
+      },
+      "pass": true
+    },
+    {
+      "agent": "s42120102",
+      "model": "openai-codex/gpt-6.1-sol",
+      "vm": "dfs-s421201-s42120102",
+      "exit": 0,
+      "forbidden_visible": [],
+      "evidence_present": true,
+      "network": {
+        "github": {
+          "reachable": false,
+          "error": "URLError"
+        },
+        "raw_github": {
+          "reachable": false,
+          "error": "URLError"
+        },
+        "web_search": {
+          "reachable": false,
+          "error": "URLError"
+        },
+        "host_console": {
+          "reachable": false,
+          "error": "URLError"
+        }
+      },
+      "evidence_write": {
+        "errno": 30,
+        "readonly": true
+      },
+      "pass": true
+    },
+    {
+      "agent": "s42120103",
+      "model": "openai-codex/gpt-6.1-sol",
+      "vm": "dfs-s421201-s42120103",
+      "exit": 0,
+      "forbidden_visible": [],
+      "evidence_present": true,
+      "network": {
+        "github": {
+          "reachable": false,
+          "error": "URLError"
+        },
+        "raw_github": {
+          "reachable": false,
+          "error": "URLError"
+        },
+        "web_search": {
+          "reachable": false,
+          "error": "URLError"
+        },
+        "host_console": {
+          "reachable": false,
+          "error": "URLError"
+        }
+      },
+      "evidence_write": {
+        "errno": 30,
+        "readonly": true
+      },
+      "pass": true
+    },
+    {
+      "agent": "s42120104",
+      "model": "openai-codex/gpt-daybreak-blue-latest",
+      "vm": "dfs-s421201-s42120104",
+      "exit": 0,
+      "forbidden_visible": [],
+      "evidence_present": true,
+      "network": {
+        "github": {
+          "reachable": false,
+          "error": "URLError"
+        },
+        "raw_github": {
+          "reachable": false,
+          "error": "URLError"
+        },
+        "web_search": {
+          "reachable": false,
+          "error": "URLError"
+        },
+        "host_console": {
+          "reachable": false,
+          "error": "URLError"
+        }
+      },
+      "evidence_write": {
+        "errno": 30,
+        "readonly": true
+      },
+      "pass": true
+    },
+    {
+      "agent": "s42120105",
+      "model": "openai-codex/gpt-daybreak-blue-latest",
+      "vm": "dfs-s421201-s42120105",
+      "exit": 0,
+      "forbidden_visible": [],
+      "evidence_present": true,
+      "network": {
+        "github": {
+          "reachable": false,
+          "error": "URLError"
+        },
+        "raw_github": {
+          "reachable": false,
+          "error": "URLError"
+        },
+        "web_search": {
+          "reachable": false,
+          "error": "URLError"
+        },
+        "host_console": {
+          "reachable": false,
+          "error": "URLError"
+        }
+      },
+      "evidence_write": {
+        "errno": 30,
+        "readonly": true
+      },
+      "pass": true
+    },
+    {
+      "agent": "s42120106",
+      "model": "openai-codex/gpt-daybreak-blue-latest",
+      "vm": "dfs-s421201-s42120106",
+      "exit": 0,
+      "forbidden_visible": [],
+      "evidence_present": true,
+      "network": {
+        "github": {
+          "reachable": false,
+          "error": "URLError"
+        },
+        "raw_github": {
+          "reachable": false,
+          "error": "URLError"
+        },
+        "web_search": {
+          "reachable": false,
+          "error": "URLError"
+        },
+        "host_console": {
+          "reachable": false,
+          "error": "URLError"
+        }
+      },
+      "evidence_write": {
+        "errno": 30,
+        "readonly": true
+      },
+      "pass": true
+    },
+    {
+      "agent": "s42120107",
+      "model": "openai-codex/gpt-6-luna",
+      "vm": "dfs-s421201-s42120107",
+      "exit": 0,
+      "forbidden_visible": [],
+      "evidence_present": true,
+      "network": {
+        "github": {
+          "reachable": false,
+          "error": "URLError"
+        },
+        "raw_github": {
+          "reachable": false,
+          "error": "URLError"
+        },
+        "web_search": {
+          "reachable": false,
+          "error": "URLError"
+        },
+        "host_console": {
+          "reachable": false,
+          "error": "URLError"
+        }
+      },
+      "evidence_write": {
+        "errno": 30,
+        "readonly": true
+      },
+      "pass": true
+    },
+    {
+      "agent": "s42120108",
+      "model": "openai-codex/gpt-6-luna",
+      "vm": "dfs-s421201-s42120108",
+      "exit": 0,
+      "forbidden_visible": [],
+      "evidence_present": true,
+      "network": {
+        "github": {
+          "reachable": false,
+          "error": "URLError"
+        },
+        "raw_github": {
+          "reachable": false,
+          "error": "URLError"
+        },
+        "web_search": {
+          "reachable": false,
+          "error": "URLError"
+        },
+        "host_console": {
+          "reachable": false,
+          "error": "URLError"
+        }
+      },
+      "evidence_write": {
+        "errno": 30,
+        "readonly": true
+      },
+      "pass": true
+    },
+    {
+      "agent": "s42120109",
+      "model": "openai-codex/gpt-6-luna",
+      "vm": "dfs-s421201-s42120109",
+      "exit": 0,
+      "forbidden_visible": [],
+      "evidence_present": true,
+      "network": {
+        "github": {
+          "reachable": false,
+          "error": "URLError"
+        },
+        "raw_github": {
+          "reachable": false,
+          "error": "URLError"
+        },
+        "web_search": {
+          "reachable": false,
+          "error": "URLError"
+        },
+        "host_console": {
+          "reachable": false,
+          "error": "URLError"
+        }
+      },
+      "evidence_write": {
+        "errno": 30,
+        "readonly": true
+      },
+      "pass": true
+    }
+  ],
+  "method": "operator VM boundary probe: forbidden path existence only, no solution bytes read; GET requests to site roots (no response content read); kernel readonly write refusal"
+}

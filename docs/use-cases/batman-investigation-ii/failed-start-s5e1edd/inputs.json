@@ -1,0 +1,40 @@
+{
+  "source": "/Users/halilozturkci/DFIR/SwarmInputs/batman-investigation-ii",
+  "copied_at": "2026-10-02T09:54:20Z",
+  "files": [
+    {
+      "path": "inputs/chall/Carmine-Falcone.raw",
+      "bytes": 4831838208,
+      "sha256": "3e03551e1f55dd792b0bc459b5620522d61fcf2379e8f6d89ef439fef8263cac",
+      "sha1": "90c4c10aae6ecc1b5f9a41de089326baa67f856f",
+      "md5": "ee8097a9891b2573b56efe30de616de0",
+      "mtime_ms": 1704654391000,
+      "ctime_ms": 1790934848959
+    },
+    {
+      "path": "inputs/chall/unknown.data",
+      "bytes": 36194,
+      "sha256": "87841ce462a019649f6206c72cf65ce5305a88b828ca45996ae9422e6f578f4f",
+      "sha1": "f9ebbb09e1cb5285c242e411f6ba8e3f78e0c0b6",
+      "md5": "bc1ac4eb6499418c2a6931751b4c52bf",
+      "mtime_ms": 1705258436000,
+      "ctime_ms": 1790934848960
+    }
+  ],
+  "bytes": 4831874402,
+  "enforce": "auto",
+  "guard": "microvm",
+  "digests": [
+    "sha256",
+    "sha1",
+    "md5"
+  ],
+  "quarantine": true,
+  "source_checked": {
+    "by": "content",
+    "files": 2,
+    "mismatches": 0,
+    "seconds": 1.9
+  },
+  "held": "copy"
+}

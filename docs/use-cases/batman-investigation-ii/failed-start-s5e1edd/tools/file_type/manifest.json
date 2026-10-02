@@ -1,0 +1,27 @@
+{
+  "name": "file_type",
+  "description": "Say what a file actually is from its first bytes, and whether that agrees with its extension. An extension is a claim by whoever named the file; on a case that matters it is often a lie.",
+  "params": {
+    "path": {
+      "type": "string",
+      "description": "A file, or a directory to walk"
+    },
+    "mismatch_only": {
+      "type": "boolean",
+      "description": "Return only files whose bytes disagree with their extension"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Maximum files to return (default 500)"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 120,
+  "example": "{\"path\": \"work/extracted\", \"mismatch_only\": true}",
+  "by": "maintainer",
+  "at": "2026-10-01T12:00:00.000Z",
+  "version": 2,
+  "sha256": "500909af160275d5d2c86e1b25f34a1f9a2938b77a481ce0aec52b27a52fa960",
+  "pack": "computer-forensics-base"
+}

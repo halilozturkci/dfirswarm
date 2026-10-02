@@ -1,0 +1,591 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DRAFT — DFIR Swarm report s5e1edd</title>
+<meta name="generator" content="DFIR Swarm 0.3.0">
+<meta name="dcterms.created" content="2026-10-02T10:01:57.768Z">
+<meta name="dfirswarm.release" content="none: a draft rendering">
+<style>
+:root {
+  --paper: #ffffff; --paper-2: #f6f3ec; --paper-3: #efebe1; --card: #fffdf9;
+  --ink: #171615; --ink-2: #4f4c46; --ink-3: #726d64;
+  --line: #e2ddd1; --line-2: #cbc5b6; --rule: #171615;
+  --kelp: #0e7c7b; --kelp-soft: #dcefee; --kelp-ink: #0a5d5c;
+  --saffron: #c9822a; --saffron-soft: #fbebd3; --saffron-ink: #8a540a;
+  --brick: #b23a48; --brick-soft: #f5dade; --brick-ink: #8b2532;
+  --slate: #3e5c76; --slate-soft: #dce4ec; --slate-ink: #2c4660;
+  --moss: #4c7a34; --moss-soft: #e1edd8; --moss-ink: #2f5a1c;
+  --sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  --serif: "Instrument Serif", Georgia, "Times New Roman", serif;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--paper-2); color: var(--ink); font: 10.5pt/1.6 var(--sans); }
+main { max-width: 54rem; margin: 0 auto; padding: 0 0 4rem; background: var(--paper); box-shadow: 0 0 0 1px var(--line); }
+section, .cover, .toc, .preamble, footer { padding-left: clamp(1.25rem, 5vw, 3.25rem); padding-right: clamp(1.25rem, 5vw, 3.25rem); }
+
+h1, h2, h3, h4 { font-family: var(--serif); font-weight: 400; line-height: 1.12; margin: 0 0 .5em; }
+h1 { font-size: clamp(2.2rem, 6vw, 3.1rem); letter-spacing: -.01em; }
+h2 { font-size: 1.6rem; margin: 0 0 1rem; }
+h3 { font-size: 1.12rem; margin: 2em 0 .6em; }
+h4 { font-size: .95rem; font-family: var(--sans); font-weight: 650; letter-spacing: .01em; margin: 1.6em 0 .4em; }
+p, li { margin: .55em 0; }
+ul, ol { padding-left: 1.3em; }
+a { color: var(--kelp-ink); }
+code { font-family: var(--mono); font-size: .86em; background: var(--paper-2); padding: .1em .32em; border-radius: 3px; overflow-wrap: anywhere; }
+pre { background: var(--paper-2); border: 1px solid var(--line); border-radius: 8px; padding: .75rem .95rem; overflow-x: auto; }
+pre code { background: none; padding: 0; font-size: .82em; }
+blockquote { margin: .8em 0; padding: .1em 0 .1em 1rem; border-left: 3px solid var(--line-2); color: var(--ink-2); }
+hr { border: 0; border-top: 1px solid var(--line); margin: 2em 0; }
+.url { color: var(--ink-3); font-family: var(--mono); font-size: .8em; }
+.lede { font-size: 1.02rem; color: var(--ink-2); max-width: 42em; }
+
+/* Every table has to fit the page: a 64-character hash in a five-column row
+   used to push the whole table past the paper. Fixed layout plus breaking
+   inside the cell is what keeps it inside. */
+table { border-collapse: collapse; width: 100%; table-layout: fixed; margin: 1.1em 0; font-size: .92em; }
+th, td { text-align: left; padding: .45rem .6rem; border-bottom: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; }
+thead th { border-bottom: 1px solid var(--line-2); }
+th { font-family: var(--sans); font-size: .68rem; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-3); font-weight: 650; }
+tbody tr:last-child td { border-bottom: 0; }
+td.num, th.num, .tabular { font-variant-numeric: tabular-nums; }
+th.num, td.num { text-align: right; }
+.hash { font-family: var(--mono); font-size: .76em; overflow-wrap: anywhere; word-break: break-all; color: var(--ink-2); line-height: 1.45; }
+.when { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.when .t { display: block; color: var(--ink-2); font-size: .92em; }
+
+/* --- cover ---------------------------------------------------------------- */
+.cover { padding-top: 3rem; padding-bottom: 2.25rem; border-bottom: 2px solid var(--rule); }
+.cover .mark { display: flex; align-items: center; gap: .7rem; color: var(--ink); }
+.cover .mark svg { width: 30px; height: 30px; }
+.cover .wordmark { font-family: var(--serif); font-style: italic; font-size: 1.05rem; }
+.cover .kicker { margin: 2.6rem 0 .5rem; font-size: .7rem; letter-spacing: .18em; text-transform: uppercase; color: var(--ink-3); }
+.cover h1 { margin: 0; }
+.cover .case-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: .6rem; margin: .7rem 0 0; font-size: 1.15rem; color: var(--ink-2); }
+.cover .case-line strong { font-weight: 650; color: var(--ink); }
+.scorecard { display: grid; grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr)); gap: 1px; margin: 2rem 0 1.75rem; background: var(--line); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.scorecard .cell { background: var(--card); padding: .7rem .85rem; }
+.scorecard .k { font-size: .62rem; letter-spacing: .11em; text-transform: uppercase; color: var(--ink-3); }
+.scorecard .v { font-family: var(--serif); font-size: 1.55rem; line-height: 1.1; margin-top: .15rem; font-variant-numeric: tabular-nums; }
+.scorecard .s { font-size: .74rem; color: var(--ink-3); margin-top: .1rem; }
+.facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: .35rem 1.4rem; font-size: .92em; }
+.facts dt { font-size: .66rem; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); padding-top: .3em; }
+.facts dd { margin: 0; }
+
+/* --- chips ---------------------------------------------------------------- */
+.chip { display: inline-block; border-radius: 999px; padding: .1em .6em; font-size: .7rem; font-weight: 650; letter-spacing: .02em; line-height: 1.6; white-space: nowrap; vertical-align: .08em; }
+.chip-kelp { background: var(--kelp-soft); color: var(--kelp-ink); }
+.chip-saffron { background: var(--saffron-soft); color: var(--saffron-ink); }
+.chip-brick { background: var(--brick-soft); color: var(--brick-ink); }
+.chip-slate { background: var(--slate-soft); color: var(--slate-ink); }
+.chip-moss { background: var(--moss-soft); color: var(--moss-ink); }
+.chip-none { background: var(--paper-3); color: var(--ink-2); }
+/* In a table cell or an exhibit's head a chip may wrap: a nowrap chip wider
+   than its column was cut off at the table's edge, on a phone and in the
+   console's narrow report pane. */
+td .chip, .exhibit .chips .chip { white-space: normal; }
+/* The artifact and hand-over tables: room for the path and the hash, and a
+   last column wide enough for its chip or its reason. */
+table.artifacts th:nth-child(1) { width: 36%; }
+table.artifacts th:nth-child(2) { width: 11%; }
+table.artifacts th:nth-child(3) { width: 37%; }
+table.artifacts th:nth-child(4) { width: 16%; }
+table.handover th:nth-child(1) { width: 22%; }
+table.handover th:nth-child(2) { width: 10%; }
+table.handover th:nth-child(3) { width: 33%; }
+table.handover th:nth-child(4) { width: 35%; }
+
+/* --- contents ------------------------------------------------------------- */
+.toc { padding-top: 2rem; padding-bottom: 1.5rem; border-bottom: 1px solid var(--line); }
+.toc h2 { font-size: 1.05rem; font-family: var(--sans); font-weight: 650; letter-spacing: .01em; }
+.toc ol { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 0 2rem; }
+.toc li { border-bottom: 1px solid var(--line); padding: .45em 0; display: grid; grid-template-columns: 1.6rem 1fr; align-items: baseline; }
+.toc .n { font-family: var(--mono); font-size: .78rem; color: var(--ink-3); }
+.toc a { text-decoration: none; color: var(--ink); }
+.toc a:hover { text-decoration: underline; }
+.toc .desc { grid-column: 2; font-size: .76rem; color: var(--ink-3); }
+
+/* --- sections ------------------------------------------------------------- */
+section { padding-top: 2.5rem; }
+.sec-head { display: flex; align-items: baseline; gap: .8rem; border-bottom: 1px solid var(--rule); padding-bottom: .55rem; margin-bottom: 1.2rem; }
+.sec-head .n { font-family: var(--mono); font-size: .8rem; color: var(--ink-3); padding-top: .2rem; }
+.sec-head h2 { margin: 0; }
+.sec-head .count { margin-left: auto; font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); white-space: nowrap; }
+
+/* --- the summary ---------------------------------------------------------- */
+.verdicts { display: flex; flex-direction: column; gap: .5rem; margin: 1rem 0; }
+.verdict { display: grid; grid-template-columns: 3.1rem minmax(0, 1fr); gap: .9rem; align-items: start; padding: .7rem .9rem .7rem .75rem; border: 1px solid var(--line); border-left: 3px solid var(--kelp); border-radius: 8px; background: var(--card); }
+.verdict.c-medium { border-left-color: var(--saffron); }
+.verdict.c-low { border-left-color: var(--line-2); }
+.verdict .no { font-family: var(--mono); font-size: .74rem; color: var(--ink-3); padding-top: .18rem; }
+.verdict .claim { font-size: .98rem; line-height: 1.45; }
+.verdict .meta { font-size: .78rem; color: var(--ink-3); margin-top: .3rem; }
+.group-head { display: flex; align-items: baseline; gap: .55rem; margin: 1.6rem 0 .3rem; }
+.group-head .t { font-size: .72rem; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); }
+.group-head .rule { flex: 1; border-bottom: 1px solid var(--line); transform: translateY(-.25em); }
+
+/* --- the timeline --------------------------------------------------------- */
+/* A five-column table of long forensic strings cannot be made to fit a page.
+   The same rows as a rail: the stamp on the left, the claim and its citation
+   stacked on the right, nothing to scroll sideways for. */
+.tl { margin: 1.2rem 0 0; border-left: 1px solid var(--line-2); padding-left: 0; list-style: none; }
+.tl li { position: relative; padding: 0 0 1.15rem 1.4rem; }
+.tl li::before { content: ""; position: absolute; left: -4.5px; top: .55rem; width: 8px; height: 8px; border-radius: 50%; background: var(--slate); box-shadow: 0 0 0 3px var(--paper); }
+.tl .stamp { display: flex; flex-wrap: wrap; align-items: baseline; gap: .5rem; font-variant-numeric: tabular-nums; font-size: .78rem; color: var(--ink-3); }
+.tl .stamp .date { font-weight: 650; color: var(--ink-2); }
+.tl .stamp .no { font-family: var(--mono); }
+.tl .what { margin: .15rem 0 .25rem; line-height: 1.45; }
+.tl dl { display: grid; grid-template-columns: 4.6rem minmax(0, 1fr); gap: .1rem .7rem; margin: 0; font-size: .8rem; }
+.tl dt { color: var(--ink-3); }
+.tl dd { margin: 0; color: var(--ink-2); overflow-wrap: anywhere; }
+
+/* --- exhibits ------------------------------------------------------------- */
+.exhibit { border: 1px solid var(--line); border-left: 3px solid var(--slate); border-radius: 8px; background: var(--card); padding: .75rem .95rem; margin: .6rem 0; }
+.exhibit .head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .5rem; }
+.exhibit .no { font-family: var(--mono); font-size: .74rem; color: var(--ink-3); font-weight: 650; }
+.exhibit .chips { margin-left: auto; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .35rem; }
+.exhibit .value { margin: .35rem 0 .5rem; font-size: .98rem; line-height: 1.45; }
+.exhibit dl { display: grid; grid-template-columns: 5.4rem minmax(0, 1fr); gap: .18rem .8rem; margin: 0; font-size: .82em; }
+.exhibit dt { color: var(--ink-3); }
+.exhibit dd { margin: 0; overflow-wrap: anywhere; color: var(--ink-2); }
+.exhibit-ioc { border-left-color: var(--saffron); }
+.exhibit-finding { border-left-color: var(--kelp); }
+.exhibit-absence { border-left-style: dashed; }
+.exhibit-hypothesis { border-left-style: dotted; }
+.exhibit-limitation { border-left-color: var(--brick); border-left-style: dashed; }
+
+/* --- spend ---------------------------------------------------------------- */
+.bars { margin: 1rem 0; display: flex; flex-direction: column; gap: .45rem; }
+.bar { display: grid; grid-template-columns: minmax(6rem, 11rem) minmax(0, 1fr) 4.5rem; align-items: center; gap: .7rem; font-size: .82rem; }
+.bar .track { height: 7px; background: var(--paper-3); border-radius: 999px; overflow: hidden; }
+.bar .fill { height: 100%; background: var(--slate); border-radius: 999px; }
+.bar .v { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-2); }
+.bar .name { font-family: var(--mono); font-size: .74rem; overflow-wrap: anywhere; }
+
+.note { background: var(--paper-2); border: 1px solid var(--line); border-radius: 8px; padding: .7rem .95rem; font-size: .9em; color: var(--ink-2); }
+.note strong { color: var(--ink); }
+.embedded { border: 1px solid var(--line); border-radius: 8px; padding: .3rem 1.1rem 1.1rem; background: var(--card); margin-top: 1rem; }
+.embedded h3 { margin-top: 1.4em; }
+footer { margin-top: 3rem; padding-top: 1.1rem; border-top: 1px solid var(--line); font-size: .8em; color: var(--ink-3); }
+.watermark { position: fixed; top: 40%; left: 0; right: 0; text-align: center; font: 700 110pt/1 var(--sans); letter-spacing: .12em; color: rgba(178, 58, 72, .10); transform: rotate(-28deg); pointer-events: none; z-index: 0; }
+.release-banner { margin: 1.4rem 0 0; padding: .6rem .85rem; border: 2px solid var(--brick); background: var(--brick-soft); color: var(--brick-ink); font-weight: 600; }
+.release-banner.adopted { border-color: var(--moss); background: var(--moss-soft); color: var(--moss-ink); }
+footer p { max-width: 44em; }
+
+@media (max-width: 34rem) {
+  .verdict { grid-template-columns: minmax(0, 1fr); gap: .25rem; }
+  .exhibit dl, .tl dl { grid-template-columns: minmax(0, 1fr); }
+  .exhibit dt, .tl dt { font-size: .68rem; letter-spacing: .06em; text-transform: uppercase; margin-top: .3rem; }
+  .bar { grid-template-columns: minmax(0, 1fr) 4rem; }
+  .bar .track { grid-column: 1 / -1; }
+}
+
+@media print {
+  /* The page box: A4 with a running header and a page counter. Chrome only
+     honours the margin boxes when it is driving the print itself, so a
+     browser "Save as PDF" may draw its own header instead; that is stated
+     in the document rather than silently different. */
+  @page { size: A4; margin: 15mm 16mm; }
+  @page :first { margin-top: 12mm; }
+
+  html, body { background: #fff; }
+  body { font-size: 9.3pt; line-height: 1.5; }
+  main { max-width: none; margin: 0; padding: 0; box-shadow: none; }
+  section, .cover, .toc, .preamble, footer { padding-left: 0; padding-right: 0; }
+
+  /* The cover is a page of its own, and the contents follow it. */
+  .cover { min-height: 0; padding-top: 0; break-after: page; page-break-after: always; }
+  .cover h1 { font-size: 2.6rem; }
+  .toc { break-after: page; page-break-after: always; }
+  section { padding-top: 0; margin-top: 1.4rem; }
+
+  /* Nothing a reader has to follow should be cut in half. */
+  h1, h2, h3, h4, .sec-head { break-after: avoid-page; page-break-after: avoid; }
+  .exhibit, .verdict, .tl li, tr, pre, blockquote, .note, .scorecard { break-inside: avoid-page; page-break-inside: avoid; }
+  p, li { orphans: 3; widows: 3; }
+
+  /* A forty-row table runs over several pages; its column headers have to be
+     on every one of them. */
+  thead { display: table-header-group; }
+  tfoot { display: table-footer-group; }
+
+  /* Chips, rails and bars carry meaning, so their ground has to survive the
+     printer's "background graphics off" default where the browser allows it. */
+  .chip, .scorecard, .verdict, .exhibit, .note, .bar .fill, .bar .track, .tl li::before {
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+
+  .page-break { break-before: page; page-break-before: always; }
+  .screen-only { display: none !important; }
+}
+
+.rb code { white-space: pre-wrap; }
+.rb .note { margin: .8rem 0; }
+.rb .note.draft-banner { border-color: var(--brick); background: var(--brick-soft); color: var(--brick-ink); }
+.rb dl { display: grid; grid-template-columns: minmax(7rem, 12rem) minmax(0, 1fr); gap: .2rem .9rem; margin: .6rem 0; }
+.rb dt { color: var(--ink-3); font-size: .9em; }
+.rb dd { margin: 0; overflow-wrap: anywhere; }
+.draft-mark { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; z-index: 5; font-family: var(--serif); font-size: clamp(5rem, 20vw, 13rem); letter-spacing: .08em; color: rgba(178, 58, 72, .08); transform: rotate(-28deg); user-select: none; }
+.rb .chips { display: inline-flex; flex-wrap: wrap; gap: .3rem; vertical-align: baseline; }
+.rb .chip { white-space: normal; }
+.voice { margin: .7rem 0; padding: .2rem 0 .2rem .9rem; border-left: 3px solid var(--line-2); }
+.voice .vl { display: block; font-family: var(--sans); font-style: normal; font-size: .62rem; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); margin-bottom: .15rem; }
+.voice .chips { display: flex; margin: .1rem 0 .3rem; }
+.v-fact { border-left-color: var(--slate); }
+.v-interpretation { border-left: 3px dotted var(--kelp); font-family: var(--serif); font-style: italic; font-size: 1.05em; color: var(--ink); }
+.v-opinion { border: 1px solid var(--saffron); border-left-width: 4px; background: var(--saffron-soft); border-radius: 6px; padding: .5rem .85rem; }
+.v-opinion .vt { font-size: 1.04rem; line-height: 1.45; }
+.v-computed { border-left: 3px double var(--line-2); color: var(--ink-2); font-size: .94em; }
+dd.v-fact, dd.v-interpretation, dd.v-opinion, dd.v-computed { margin: 0 0 .15rem; padding-left: .6rem; }
+dd.v-opinion { padding: .2rem .5rem; }
+.answer { border: 1px solid var(--line); border-radius: 10px; background: var(--card); padding: .8rem 1.1rem 1rem; margin: 1.5rem 0; }
+.answer > .head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .6rem; border-bottom: 1px solid var(--line); padding-bottom: .5rem; }
+.answer > .head .bt { margin: 0; font-size: 1.12rem; flex: 1 1 20rem; }
+.answer h4 { margin: 1.3em 0 .35em; font-size: .78rem; letter-spacing: .09em; text-transform: uppercase; color: var(--ink-2); }
+.answer.unanswered { border-style: dashed; }
+.cite { border-left: 2px solid var(--line); padding: .25rem 0 .25rem .8rem; margin: .5rem 0; }
+.cite .ch { line-height: 1.45; }
+.cite .chips { margin: .25rem 0; }
+.cite dl, .rb .exhibit dl { display: grid; grid-template-columns: 7.2rem minmax(0, 1fr); gap: .15rem .8rem; margin: .2rem 0 0; font-size: .84em; }
+.cite dt, .rb .exhibit dt { color: var(--ink-3); }
+.cite dd, .rb .exhibit dd { margin: 0; overflow-wrap: anywhere; color: var(--ink-2); }
+.rb .exhibit .head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .5rem; }
+.rb .exhibit .bt { margin: 0; font-family: var(--mono); font-size: .8rem; color: var(--ink-3); font-weight: 650; }
+.rb .exhibit .head .chips { margin-left: auto; justify-content: flex-end; }
+.rb .exhibit-answer { border-left-color: var(--saffron); }
+.rb .job { border-left-color: var(--line-2); }
+.rb table.status th:nth-child(1) { width: 18%; }
+.rb table.status th:nth-child(2) { width: 34%; }
+.rb table.timeline th:nth-child(1) { width: 20%; }
+.rb table.timeline th:nth-child(4) { width: 10%; }
+.rb .embedded.working { border-style: dashed; }
+.rb details.uncited { margin: 1rem 0; border: 1px dashed var(--line-2); border-radius: 8px; padding: .5rem .9rem; }
+.rb details.uncited > summary { cursor: pointer; font-weight: 650; color: var(--ink-2); }
+.rb .tl { margin: 1.2rem 0 0; border-left: 1px solid var(--line-2); padding-left: 0; list-style: none; }
+.rb .tl li { position: relative; padding: 0 0 1.1rem 1.4rem; margin: 0; }
+.rb .tl li::before { content: ""; position: absolute; left: -4.5px; top: .55rem; width: 8px; height: 8px; border-radius: 50%; background: var(--slate); box-shadow: 0 0 0 3px var(--paper); }
+.rb .tl .stamp { display: flex; flex-wrap: wrap; align-items: baseline; gap: .5rem; font-variant-numeric: tabular-nums; font-size: .78rem; color: var(--ink-3); }
+.rb .tl .stamp .date { font-weight: 650; color: var(--ink-2); }
+.rb .tl .stamp .no { font-family: var(--mono); }
+.rb .tl .what { margin: .15rem 0 .2rem; line-height: 1.45; }
+.rb .tl .meta { font-size: .8rem; color: var(--ink-3); overflow-wrap: anywhere; }
+@media (max-width: 34rem) {
+  .rb dl, .cite dl, .rb .exhibit dl { grid-template-columns: minmax(0, 1fr); }
+  .rb dt, .cite dt, .rb .exhibit dt { font-size: .68rem; letter-spacing: .06em; text-transform: uppercase; margin-top: .3rem; }
+}
+@media print {
+  .answer { break-inside: auto; }
+  .answer h4 { break-after: avoid-page; }
+  .cite, .voice, .rb .tl li { break-inside: avoid-page; }
+  .draft-mark, .draft-banner, .voice, .v-opinion, .answer { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
+</style>
+<body>
+<div class="watermark" aria-hidden="true">DRAFT</div>
+<main>
+  <header class="cover">
+    <div class="mark"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="DFIR Swarm">
+  <title>DFIR Swarm</title>
+  <path d="M 21 11 H 11 V 53 H 21" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 43 11 H 53 V 53 H 43" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="27" cy="21" r="3.6" fill="currentColor"/>
+  <circle cx="39" cy="20" r="3.6" fill="currentColor"/>
+  <circle cx="32" cy="32" r="3.6" fill="currentColor"/>
+  <circle cx="41" cy="37" r="3.6" fill="currentColor"/>
+  <circle cx="27" cy="44" r="3.6" fill="currentColor"/>
+</svg>
+<span class="wordmark">DFIR Swarm</span></div>
+    <p class="kicker">Forensic report</p>
+    <h1>batman-investigation-ii-10-models</h1>
+    <p class="case-line"><strong>no findings recorded</strong> <span class="chip chip-saffron">did not finish</span> <span class="chip chip-brick">draft</span></p>
+    <p class="release-banner">DRAFT: no examiner has adopted this report. It is a rendering of the run's record as it stands, and every conclusion in it is the agents'.</p>
+    <div class="scorecard"><div class="cell"><div class="k">Findings</div><div class="v">0</div><div class="s">0 at high confidence</div></div><div class="cell"><div class="k">Indicators</div><div class="v">0</div><div class="s">recorded with their source</div></div><div class="cell"><div class="k">Dated events</div><div class="v">0</div><div class="s">on the timeline</div></div><div class="cell"><div class="k">Evidence files</div><div class="v">2</div><div class="s">4.5 GB</div></div><div class="cell"><div class="k">Elapsed</div><div class="v">—</div><div class="s">10 agents</div></div><div class="cell"><div class="k">Spend</div><div class="v">free</div><div class="s">local models</div></div></div>
+    <dl class="facts">
+      <dt>Examiner</dt><dd>none: no enrolled examiner has adopted this report</dd>
+      
+      <dt>Release</dt><dd>none: a rendering, not a release</dd>
+      <dt>Run</dt><dd class="hash">s5e1edd</dd>
+      <dt>Period</dt><dd class="tabular">2026-10-02T09:54:22Z → 2026-10-02T09:54:20.800Z</dd>
+      <dt>Tool</dt><dd>DFIR Swarm 0.3.0 (commit 3e33c6309273)</dd>
+      <dt>Prepared by</dt><dd>an AI agent swarm (10 agents); its findings are the agents' conclusions until an examiner reviews them</dd>
+      <dt>Generated</dt><dd class="tabular">2026-10-02T10:01:57.768Z</dd>
+    </dl>
+  </header>
+
+  <nav class="toc" aria-label="Contents">
+    <h2>Contents</h2>
+    <ol><li><span class="n">1</span><a href="#s1">Summary for decision makers</a><span class="desc">the answer in brief, and where each question stands</span></li><li><span class="n">2</span><a href="#s2">Request, scope and questions</a><span class="desc">what was asked, by whom, and how each question was examined</span></li><li><span class="n">3</span><a href="#s3">Evidence and its handling</a><span class="desc">what was examined, its hashes, and how it was held</span></li><li><span class="n">4</span><a href="#s4">Method and roles</a><span class="desc">who did what, with which tools, and who checked it</span></li><li><span class="n">5</span><a href="#s5">Answers</a><span class="desc">each question: the answer, how it was reached, how sure</span></li><li><span class="n">6</span><a href="#s6">What happened</a><span class="desc">the swarm's account, the timeline, and how far its times can be trusted</span></li><li><span class="n">7</span><a href="#s7">Conclusions and opinions</a><span class="desc">the swarm's conclusions, marked as opinion, with their basis</span></li><li><span class="n">8</span><a href="#s8">Limitations, negative findings and open questions</a><span class="desc">what could not be established, what was searched and not found, what is still open</span></li><li><span class="n">9</span><a href="#s9">Recommendations</a><span class="desc">what the swarm recommends, when the goal asked</span></li><li><span class="n">10</span><a href="#s10">Review and adoption</a><span class="desc">who reviewed it, what they adopted, and the release</span></li><li><span class="n"></span><a href="#sA">Appendix A: Exhibits</a><span class="desc">every ledger entry, whole</span></li><li><span class="n"></span><a href="#sB">Appendix B: Jobs and their method records</a><span class="desc">every job: what ran, where, what it declared, what it sealed</span></li><li><span class="n"></span><a href="#sC">Appendix C: The swarm's working report</a><span class="desc">the agents' own document, verbatim, without authority</span></li><li><span class="n"></span><a href="#sD">Appendix D: Chain of custody</a><span class="desc">the custody record, and how to check it again</span></li><li><span class="n"></span><a href="#sE">Appendix E: Artifacts produced</a><span class="desc">what the run produced, hashed</span></li><li><span class="n"></span><a href="#sF">Appendix F: The question and lead registers</a><span class="desc">every question and lead event, every disposition reviewable</span></li></ol>
+    <p class="note">Section numbers, not page numbers: the pagination belongs to whatever prints this file, and a number this document computed itself would be wrong in every engine but one. <code>swarm.sh report &lt;id&gt; --pdf</code> prints it through a browser, which numbers the pages in the footer and puts this document's title and the print date at the top of each one.</p>
+  </nav>
+
+<div class="draft-mark" aria-hidden="true">DRAFT</div>
+<div class="preamble rb"><div class="note draft-banner"><strong>DRAFT.</strong> No release v1 exists for this run: this is a working render of what the ledger holds now, not an adopted report. No human has reviewed it.</div>
+<h3>How to read this report</h3>
+<p>Each answer in §5 leads with the answer in plain words, then says how it was obtained, what it indicates, why that confidence, what else could explain it, what speaks against it, what limits it and what would change it; the technical detail follows, and every claim cites an exhibit by its number (an E and the entry's number in the ledger), whole in Appendix A. Four kinds of sentence are set apart:</p>
+<dl><dt>Observed</dt><dd class="v-fact">what an agent saw in the evidence, with where and how.</dd><dt>Interpretation</dt><dd class="v-interpretation">what an agent says the observation means, and the step from one to the other.</dd><dt>Opinion</dt><dd class="v-opinion">a conclusion the swarm draws from several entries: an answer, a summary, a significance.</dd><dt>Computed</dt><dd class="v-computed">what this report worked out from the ledger itself, such as how many independent-looking sources an answer has.</dd></dl>
+<ul><li><span class="chip chip-slate">observed</span> <span class="chip chip-saffron">inferred</span> seen in the evidence, or reasoned from it.</li><li><span class="chip chip-saffron">single-source</span> every object the entry rests on comes from one evidence object: three outputs of one disk image are one source.</li><li><span class="chip chip-saffron">independence unknown</span> <span class="chip chip-saffron">origin not recorded</span> a job that could read every input rests on whatever it read; a file an agent made, or imported, has no recorded origin.</li><li><span class="chip chip-none">not attested</span> no agent other than its author re-derived it from the sealed objects.</li><li><span class="chip chip-none">not independently reviewed</span> no human has checked it. An agent's attestation is not peer review.</li><li><span class="chip chip-brick">disputed</span> an agent says why it does not hold, and has not withdrawn that.</li><li><span class="chip chip-saffron">qualified (failed job)</span> it rests on the kept output of a job that did not succeed, and says why those bytes still hold.</li><li><span class="chip chip-brick">superseded</span> a later entry corrects it; it is kept as it was recorded and supports nothing.</li><li><span class="chip chip-brick">unsupported tokens</span> a hash, path, time, address or account in an answer that none of the entries it cites holds.</li><li><span class="chip chip-none">interpretation not recorded</span> the finding was recorded before findings said what they indicate.</li></ul></div>
+
+  <section id="s1">
+    <div class="sec-head"><span class="n">1</span><h2>Summary for decision makers</h2></div>
+<div class="rb"><div class="note">The swarm recorded no findings and no answers: nothing was written to the ledger, so this report has no conclusions to carry. That is not the same as finding nothing; §8 says what limited the run.</div>
+<h3>Each question</h3>
+<table class="status"><thead><tr><th>Question</th><th>Status</th><th>Asked by</th><th>Answer</th><th>Leads</th><th>Accepted</th><th>Tokens</th></tr></thead><tbody><tr><td><a href="#qc-Q-1">Q-1</a></td><td><span class="chip chip-brick">not answered</span> <span class="chip chip-saffron">must be established</span></td><td>Q-1 · the goal</td><td>none</td><td>0</td><td>—</td><td>—</td></tr><tr><td><a href="#qc-Q-2">Q-2</a></td><td><span class="chip chip-brick">not answered</span> <span class="chip chip-saffron">must be established</span></td><td>Q-2 · the goal</td><td>none</td><td>0</td><td>—</td><td>—</td></tr><tr><td><a href="#qc-Q-3">Q-3</a></td><td><span class="chip chip-brick">not answered</span> <span class="chip chip-saffron">must be established</span></td><td>Q-3 · the goal</td><td>none</td><td>0</td><td>—</td><td>—</td></tr><tr><td><a href="#qc-Q-4">Q-4</a></td><td><span class="chip chip-brick">not answered</span> <span class="chip chip-saffron">must be established</span></td><td>Q-4 · the goal</td><td>none</td><td>0</td><td>—</td><td>—</td></tr><tr><td><a href="#qc-Q-5">Q-5</a></td><td><span class="chip chip-brick">not answered</span> <span class="chip chip-saffron">must be established</span></td><td>Q-5 · the goal</td><td>none</td><td>0</td><td>—</td><td>—</td></tr><tr><td><a href="#qc-Q-6">Q-6</a></td><td><span class="chip chip-brick">not answered</span> <span class="chip chip-saffron">must be established</span></td><td>Q-6 · the goal</td><td>none</td><td>0</td><td>—</td><td>—</td></tr><tr><td><a href="#qc-Q-7">Q-7</a></td><td><span class="chip chip-brick">not answered</span> <span class="chip chip-saffron">must be established</span></td><td>Q-7 · the goal</td><td>none</td><td>0</td><td>—</td><td>—</td></tr><tr><td><a href="#qc-Q-8">Q-8</a></td><td><span class="chip chip-brick">not answered</span> <span class="chip chip-saffron">must be established</span></td><td>Q-8 · the goal</td><td>none</td><td>0</td><td>—</td><td>—</td></tr><tr><td><a href="#qc-Q-9">Q-9</a></td><td><span class="chip chip-brick">not answered</span> <span class="chip chip-saffron">must be established</span></td><td>Q-9 · the goal</td><td>none</td><td>0</td><td>—</td><td>—</td></tr><tr><td><a href="#qc-Q-10">Q-10</a></td><td><span class="chip chip-brick">not answered</span> <span class="chip chip-saffron">must be established</span></td><td>Q-10 · the goal</td><td>none</td><td>0</td><td>—</td><td>—</td></tr><tr><td><a href="#qc-Q-11">Q-11</a></td><td><span class="chip chip-brick">not answered</span> <span class="chip chip-saffron">must be established</span></td><td>Q-11 · the goal</td><td>none</td><td>0</td><td>—</td><td>—</td></tr><tr><td><a href="#qc-Q-12">Q-12</a></td><td><span class="chip chip-brick">not answered</span> <span class="chip chip-saffron">must be established</span></td><td>Q-12 · the goal</td><td>none</td><td>0</td><td>—</td><td>—</td></tr><tr><td><a href="#qc-Q-13">Q-13</a></td><td><span class="chip chip-brick">not answered</span> <span class="chip chip-saffron">must be established</span></td><td>Q-13 · the goal</td><td>none</td><td>0</td><td>—</td><td>—</td></tr><tr><td><a href="#qc-Q-14">Q-14</a></td><td><span class="chip chip-brick">not answered</span> <span class="chip chip-saffron">must be established</span></td><td>Q-14 · the goal</td><td>none</td><td>0</td><td>—</td><td>—</td></tr></tbody></table>
+<p>Each question's chain (who asked it, every revision, the leads that worked it, the result, the acceptance and how the tokens are counted) is in <a href="#chains">§2</a>; each answer, with how it was reached, in §5; the whole register in Appendix F.</p>
+<p><strong>Must be established. </strong>These questions were required to be established: only an answer that answers each ends the run on it, or the operator's acceptance of its limits. Q-1 (required by the goal); Q-2 (required by the goal); Q-3 (required by the goal); Q-4 (required by the goal); Q-5 (required by the goal); Q-6 (required by the goal); Q-7 (required by the goal); Q-8 (required by the goal); Q-9 (required by the goal); Q-10 (required by the goal); Q-11 (required by the goal); Q-12 (required by the goal); Q-13 (required by the goal); Q-14 (required by the goal).</p>
+<p>Prepared by an AI agent swarm. No human has reviewed it: every answer here is the swarm's until an examiner adopts it (§10).</p></div>
+  </section>
+
+  <section id="s2">
+    <div class="sec-head"><span class="n">2</span><h2>Request, scope and questions</h2></div>
+<div class="rb"><p class="lede">What was asked, in the goal's own words (from SWARM.md):</p>
+<div class="embedded goal"><p>Solve Batman Investigation II (Gotham Underground Corruption) from the two supplied evidence files. Establish all 14 exact answers from evidence. No solution, write-up, previous case run, author repository, online search or external challenge material may be read or requested. External systems named in the evidence are never contacted. Suspicious files are examined as bytes and never executed. Passwords and private keys recovered here belong to a synthetic CTF and are required answers; include them only as needed to demonstrate the requested answer.</p></div>
+<h3>The questions</h3>
+<div class="note">The goal numbers no questions, and no entry names one.</div>
+<h3>The limits the run worked within</h3>
+<ul><li>N: 10</li><li>Swarm id: <code>s5e1edd</code></li></ul>
+<h3 id="chains">How each question was examined</h3>
+<p>14 questions: 14 from the goal. The question register (questions/questions.jsonl, 16 events; chain intact) keeps each one's asker, revisions, scope and acts; every event is in Appendix F. Each chain runs from who asked to what it cost: the asker, why, every verbatim revision, what came with it, the proposition tested, the leads that worked it (a negative lead counted here and listed whole in Appendix F), the result and what speaks against it, the operator's acceptance, the gaps that bound it, and its tokens.</p>
+<p><strong>How the cost is counted. </strong>No token record was found (no gateway log, no Pi sessions, and no seat total in budget.json): no cost can be given to a question.</p>
+<h3>Original questions (the goal's) (14)</h3>
+<p>What the goal asked. The report answers each or says why it cannot; the finish line held the run to them.</p>
+<div class="answer chain" id="qc-Q-1"><div class="head"><h4 class="bt">Q-1 · who asked Carmine falcon to contact someone and who is falcone disguised as?<br>   Format: <code>disguse-name_person-contacted (all lowercase)</code></h4><span class="chips"><span class="chip chip-slate">goal</span> <span class="chip chip-brick">not answered</span></span></div><dl><dt>Asked by</dt><dd>the goal</dd><dt>When</dt><dd>2026-10-02T09:54:22.915Z</dd><dt>Why</dt><dd>a question of the goal</dd><dt>Weight</dt><dd>material; priority normal</dd><dt>Revisions</dt><dd>r1, 2026-10-02T09:54:22.915Z, by the goal: <strong>who asked Carmine falcon to contact someone and who is falcone disguised as?<br>   Format: <code>disguse-name_person-contacted (all lowercase)</code></strong></dd><dt>Scope</dt><dd>in scope at 2026-10-02T09:54:22.915Z: a question of the goal</dd><dt>Proposition tested</dt><dd>none stated: the question was worked as asked</dd></dl>
+<p><strong>Leads (0)</strong></p>
+<p>No lead names this question.</p>
+<p><strong>Result</strong></p>
+<p><span class="chip chip-brick">not answered</span> No standing answer.</p>
+<p><strong>Cost: </strong>not known (no token record).</p></div>
+<div class="answer chain" id="qc-Q-2"><div class="head"><h4 class="bt">Q-2 · what is the hash of the file that he sent him to contact<br>   Format: <code>sha1sum</code></h4><span class="chips"><span class="chip chip-slate">goal</span> <span class="chip chip-brick">not answered</span></span></div><dl><dt>Asked by</dt><dd>the goal</dd><dt>When</dt><dd>2026-10-02T09:54:22.915Z</dd><dt>Why</dt><dd>a question of the goal</dd><dt>Weight</dt><dd>material; priority normal</dd><dt>Revisions</dt><dd>r1, 2026-10-02T09:54:22.915Z, by the goal: <strong>what is the hash of the file that he sent him to contact<br>   Format: <code>sha1sum</code></strong></dd><dt>Scope</dt><dd>in scope at 2026-10-02T09:54:22.915Z: a question of the goal</dd><dt>Proposition tested</dt><dd>none stated: the question was worked as asked</dd></dl>
+<p><strong>Leads (0)</strong></p>
+<p>No lead names this question.</p>
+<p><strong>Result</strong></p>
+<p><span class="chip chip-brick">not answered</span> No standing answer.</p>
+<p><strong>Cost: </strong>not known (no token record).</p></div>
+<div class="answer chain" id="qc-Q-3"><div class="head"><h4 class="bt">Q-3 · what is the password of his password manager<br>   Format: <code>password_manager_name_with_version:md5(password)</code></h4><span class="chips"><span class="chip chip-slate">goal</span> <span class="chip chip-brick">not answered</span></span></div><dl><dt>Asked by</dt><dd>the goal</dd><dt>When</dt><dd>2026-10-02T09:54:22.915Z</dd><dt>Why</dt><dd>a question of the goal</dd><dt>Weight</dt><dd>material; priority normal</dd><dt>Revisions</dt><dd>r1, 2026-10-02T09:54:22.915Z, by the goal: <strong>what is the password of his password manager<br>   Format: <code>password_manager_name_with_version:md5(password)</code></strong></dd><dt>Scope</dt><dd>in scope at 2026-10-02T09:54:22.915Z: a question of the goal</dd><dt>Proposition tested</dt><dd>none stated: the question was worked as asked</dd></dl>
+<p><strong>Leads (0)</strong></p>
+<p>No lead names this question.</p>
+<p><strong>Result</strong></p>
+<p><span class="chip chip-brick">not answered</span> No standing answer.</p>
+<p><strong>Cost: </strong>not known (no token record).</p></div>
+<div class="answer chain" id="qc-Q-4"><div class="head"><h4 class="bt">Q-4 · what is the key he stored in his password manager that he deleted?<br>   Format: <code>(format: user_name:key)</code></h4><span class="chips"><span class="chip chip-slate">goal</span> <span class="chip chip-brick">not answered</span></span></div><dl><dt>Asked by</dt><dd>the goal</dd><dt>When</dt><dd>2026-10-02T09:54:22.915Z</dd><dt>Why</dt><dd>a question of the goal</dd><dt>Weight</dt><dd>material; priority normal</dd><dt>Revisions</dt><dd>r1, 2026-10-02T09:54:22.915Z, by the goal: <strong>what is the key he stored in his password manager that he deleted?<br>   Format: <code>(format: user_name:key)</code></strong></dd><dt>Scope</dt><dd>in scope at 2026-10-02T09:54:22.915Z: a question of the goal</dd><dt>Proposition tested</dt><dd>none stated: the question was worked as asked</dd></dl>
+<p><strong>Leads (0)</strong></p>
+<p>No lead names this question.</p>
+<p><strong>Result</strong></p>
+<p><span class="chip chip-brick">not answered</span> No standing answer.</p>
+<p><strong>Cost: </strong>not known (no token record).</p></div>
+<div class="answer chain" id="qc-Q-5"><div class="head"><h4 class="bt">Q-5 · what is the cryptocurrency wallet installed and when is it installed?<br>   Format: <code>wallet_name-date-time(in format YYYY:MM:DD:HH:MM)</code></h4><span class="chips"><span class="chip chip-slate">goal</span> <span class="chip chip-brick">not answered</span></span></div><dl><dt>Asked by</dt><dd>the goal</dd><dt>When</dt><dd>2026-10-02T09:54:22.915Z</dd><dt>Why</dt><dd>a question of the goal</dd><dt>Weight</dt><dd>material; priority normal</dd><dt>Revisions</dt><dd>r1, 2026-10-02T09:54:22.915Z, by the goal: <strong>what is the cryptocurrency wallet installed and when is it installed?<br>   Format: <code>wallet_name-date-time(in format YYYY:MM:DD:HH:MM)</code></strong></dd><dt>Scope</dt><dd>in scope at 2026-10-02T09:54:22.915Z: a question of the goal</dd><dt>Proposition tested</dt><dd>none stated: the question was worked as asked</dd></dl>
+<p><strong>Leads (0)</strong></p>
+<p>No lead names this question.</p>
+<p><strong>Result</strong></p>
+<p><span class="chip chip-brick">not answered</span> No standing answer.</p>
+<p><strong>Cost: </strong>not known (no token record).</p></div>
+<div class="answer chain" id="qc-Q-6"><div class="head"><h4 class="bt">Q-6 · what is the malware that wants to steal the cryptocurrency wallet and ip it's trying to send to with port number?<br>   Format: <code>malware_ip:port)</code></h4><span class="chips"><span class="chip chip-slate">goal</span> <span class="chip chip-brick">not answered</span></span></div><dl><dt>Asked by</dt><dd>the goal</dd><dt>When</dt><dd>2026-10-02T09:54:22.915Z</dd><dt>Why</dt><dd>a question of the goal</dd><dt>Weight</dt><dd>material; priority normal</dd><dt>Revisions</dt><dd>r1, 2026-10-02T09:54:22.915Z, by the goal: <strong>what is the malware that wants to steal the cryptocurrency wallet and ip it's trying to send to with port number?<br>   Format: <code>malware_ip:port)</code></strong></dd><dt>Scope</dt><dd>in scope at 2026-10-02T09:54:22.915Z: a question of the goal</dd><dt>Proposition tested</dt><dd>none stated: the question was worked as asked</dd></dl>
+<p><strong>Leads (0)</strong></p>
+<p>No lead names this question.</p>
+<p><strong>Result</strong></p>
+<p><span class="chip chip-brick">not answered</span> No standing answer.</p>
+<p><strong>Cost: </strong>not known (no token record).</p></div>
+<div class="answer chain" id="qc-Q-7"><div class="head"><h4 class="bt">Q-7 · Eventhough Falcone's Network Moniter blockked the file sent, falcone made sure to zip with a password and noted it down temproarily in his screen and sent it to a detective for analysis.what is the password of the zip file?<br>   Format: <code>md5(password)</code></h4><span class="chips"><span class="chip chip-slate">goal</span> <span class="chip chip-brick">not answered</span></span></div><dl><dt>Asked by</dt><dd>the goal</dd><dt>When</dt><dd>2026-10-02T09:54:22.915Z</dd><dt>Why</dt><dd>a question of the goal</dd><dt>Weight</dt><dd>material; priority normal</dd><dt>Revisions</dt><dd>r1, 2026-10-02T09:54:22.915Z, by the goal: <strong>Eventhough Falcone's Network Moniter blockked the file sent, falcone made sure to zip with a password and noted it down temproarily in his screen and sent it to a detective for analysis.what is the password of the zip file?<br>   Format: <code>md5(password)</code></strong></dd><dt>Scope</dt><dd>in scope at 2026-10-02T09:54:22.915Z: a question of the goal</dd><dt>Proposition tested</dt><dd>none stated: the question was worked as asked</dd></dl>
+<p><strong>Leads (0)</strong></p>
+<p>No lead names this question.</p>
+<p><strong>Result</strong></p>
+<p><span class="chip chip-brick">not answered</span> No standing answer.</p>
+<p><strong>Cost: </strong>not known (no token record).</p></div>
+<div class="answer chain" id="qc-Q-8"><div class="head"><h4 class="bt">Q-8 · what is the hash of the original files in the zip file before the stealer modified them?<br>   Format: <code>sha1sum:sha1sum</code></h4><span class="chips"><span class="chip chip-slate">goal</span> <span class="chip chip-brick">not answered</span></span></div><dl><dt>Asked by</dt><dd>the goal</dd><dt>When</dt><dd>2026-10-02T09:54:22.915Z</dd><dt>Why</dt><dd>a question of the goal</dd><dt>Weight</dt><dd>material; priority normal</dd><dt>Revisions</dt><dd>r1, 2026-10-02T09:54:22.915Z, by the goal: <strong>what is the hash of the original files in the zip file before the stealer modified them?<br>   Format: <code>sha1sum:sha1sum</code></strong></dd><dt>Scope</dt><dd>in scope at 2026-10-02T09:54:22.915Z: a question of the goal</dd><dt>Proposition tested</dt><dd>none stated: the question was worked as asked</dd></dl>
+<p><strong>Leads (0)</strong></p>
+<p>No lead names this question.</p>
+<p><strong>Result</strong></p>
+<p><span class="chip chip-brick">not answered</span> No standing answer.</p>
+<p><strong>Cost: </strong>not known (no token record).</p></div>
+<div class="answer chain" id="qc-Q-9"><div class="head"><h4 class="bt">Q-9 · what is the password that Carmine Falcone protected the wallet with<br>   Format: <code>md5(password)</code></h4><span class="chips"><span class="chip chip-slate">goal</span> <span class="chip chip-brick">not answered</span></span></div><dl><dt>Asked by</dt><dd>the goal</dd><dt>When</dt><dd>2026-10-02T09:54:22.915Z</dd><dt>Why</dt><dd>a question of the goal</dd><dt>Weight</dt><dd>material; priority normal</dd><dt>Revisions</dt><dd>r1, 2026-10-02T09:54:22.915Z, by the goal: <strong>what is the password that Carmine Falcone protected the wallet with<br>   Format: <code>md5(password)</code></strong></dd><dt>Scope</dt><dd>in scope at 2026-10-02T09:54:22.915Z: a question of the goal</dd><dt>Proposition tested</dt><dd>none stated: the question was worked as asked</dd></dl>
+<p><strong>Leads (0)</strong></p>
+<p>No lead names this question.</p>
+<p><strong>Result</strong></p>
+<p><span class="chip chip-brick">not answered</span> No standing answer.</p>
+<p><strong>Cost: </strong>not known (no token record).</p></div>
+<div class="answer chain" id="qc-Q-10"><div class="head"><h4 class="bt">Q-10 · who did Carmine falcone recive money from?<br>   Format: <code>name_person:curreny_used(3 or 4 letter significance):amount(in dollars with precision of 2 decimal places):transaction_id</code></h4><span class="chips"><span class="chip chip-slate">goal</span> <span class="chip chip-brick">not answered</span></span></div><dl><dt>Asked by</dt><dd>the goal</dd><dt>When</dt><dd>2026-10-02T09:54:22.915Z</dd><dt>Why</dt><dd>a question of the goal</dd><dt>Weight</dt><dd>material; priority normal</dd><dt>Revisions</dt><dd>r1, 2026-10-02T09:54:22.915Z, by the goal: <strong>who did Carmine falcone recive money from?<br>   Format: <code>name_person:curreny_used(3 or 4 letter significance):amount(in dollars with precision of 2 decimal places):transaction_id</code></strong></dd><dt>Scope</dt><dd>in scope at 2026-10-02T09:54:22.915Z: a question of the goal</dd><dt>Proposition tested</dt><dd>none stated: the question was worked as asked</dd></dl>
+<p><strong>Leads (0)</strong></p>
+<p>No lead names this question.</p>
+<p><strong>Result</strong></p>
+<p><span class="chip chip-brick">not answered</span> No standing answer.</p>
+<p><strong>Cost: </strong>not known (no token record).</p></div>
+<div class="answer chain" id="qc-Q-11"><div class="head"><h4 class="bt">Q-11 · who did Carmine falcone send money to?<br>   Format: <code>name_person:curreny_used(3 or 4 letter significance):amount(in dollars with precision of 2 decimal places):addres</code></h4><span class="chips"><span class="chip chip-slate">goal</span> <span class="chip chip-brick">not answered</span></span></div><dl><dt>Asked by</dt><dd>the goal</dd><dt>When</dt><dd>2026-10-02T09:54:22.915Z</dd><dt>Why</dt><dd>a question of the goal</dd><dt>Weight</dt><dd>material; priority normal</dd><dt>Revisions</dt><dd>r1, 2026-10-02T09:54:22.915Z, by the goal: <strong>who did Carmine falcone send money to?<br>   Format: <code>name_person:curreny_used(3 or 4 letter significance):amount(in dollars with precision of 2 decimal places):addres</code></strong></dd><dt>Scope</dt><dd>in scope at 2026-10-02T09:54:22.915Z: a question of the goal</dd><dt>Proposition tested</dt><dd>none stated: the question was worked as asked</dd></dl>
+<p><strong>Leads (0)</strong></p>
+<p>No lead names this question.</p>
+<p><strong>Result</strong></p>
+<p><span class="chip chip-brick">not answered</span> No standing answer.</p>
+<p><strong>Cost: </strong>not known (no token record).</p></div>
+<div class="answer chain" id="qc-Q-12"><div class="head"><h4 class="bt">Q-12 · what is the name and client private key that Salvatore asked for contact verification?<br>   Format: <code>infobreakage_dbkey:client_email</code></h4><span class="chips"><span class="chip chip-slate">goal</span> <span class="chip chip-brick">not answered</span></span></div><dl><dt>Asked by</dt><dd>the goal</dd><dt>When</dt><dd>2026-10-02T09:54:22.915Z</dd><dt>Why</dt><dd>a question of the goal</dd><dt>Weight</dt><dd>material; priority normal</dd><dt>Revisions</dt><dd>r1, 2026-10-02T09:54:22.915Z, by the goal: <strong>what is the name and client private key that Salvatore asked for contact verification?<br>   Format: <code>infobreakage_dbkey:client_email</code></strong></dd><dt>Scope</dt><dd>in scope at 2026-10-02T09:54:22.915Z: a question of the goal</dd><dt>Proposition tested</dt><dd>none stated: the question was worked as asked</dd></dl>
+<p><strong>Leads (0)</strong></p>
+<p>No lead names this question.</p>
+<p><strong>Result</strong></p>
+<p><span class="chip chip-brick">not answered</span> No standing answer.</p>
+<p><strong>Cost: </strong>not known (no token record).</p></div>
+<div class="answer chain" id="qc-Q-13"><div class="head"><h4 class="bt">Q-13 · what is the information interpreted further from previous question<br>   Format: <code>name_client:private_key</code></h4><span class="chips"><span class="chip chip-slate">goal</span> <span class="chip chip-brick">not answered</span></span></div><dl><dt>Asked by</dt><dd>the goal</dd><dt>When</dt><dd>2026-10-02T09:54:22.915Z</dd><dt>Why</dt><dd>a question of the goal</dd><dt>Weight</dt><dd>material; priority normal</dd><dt>Revisions</dt><dd>r1, 2026-10-02T09:54:22.915Z, by the goal: <strong>what is the information interpreted further from previous question<br>   Format: <code>name_client:private_key</code></strong></dd><dt>Scope</dt><dd>in scope at 2026-10-02T09:54:22.915Z: a question of the goal</dd><dt>Proposition tested</dt><dd>none stated: the question was worked as asked</dd></dl>
+<p><strong>Leads (0)</strong></p>
+<p>No lead names this question.</p>
+<p><strong>Result</strong></p>
+<p><span class="chip chip-brick">not answered</span> No standing answer.</p>
+<p><strong>Cost: </strong>not known (no token record).</p></div>
+<div class="answer chain" id="qc-Q-14"><div class="head"><h4 class="bt">Q-14 · what is the userkey of the encrypted dbx database?<br>   Format: <code>userkey</code></h4><span class="chips"><span class="chip chip-slate">goal</span> <span class="chip chip-brick">not answered</span></span></div><dl><dt>Asked by</dt><dd>the goal</dd><dt>When</dt><dd>2026-10-02T09:54:22.915Z</dd><dt>Why</dt><dd>a question of the goal</dd><dt>Weight</dt><dd>material; priority normal</dd><dt>Revisions</dt><dd>r1, 2026-10-02T09:54:22.915Z, by the goal: <strong>what is the userkey of the encrypted dbx database?<br>   Format: <code>userkey</code></strong></dd><dt>Scope</dt><dd>in scope at 2026-10-02T09:54:22.915Z: a question of the goal</dd><dt>Proposition tested</dt><dd>none stated: the question was worked as asked</dd></dl>
+<p><strong>Leads (0)</strong></p>
+<p>No lead names this question.</p>
+<p><strong>Result</strong></p>
+<p><span class="chip chip-brick">not answered</span> No standing answer.</p>
+<p><strong>Cost: </strong>not known (no token record).</p></div>
+<h3 id="unresolved">Unresolved (14)</h3>
+<p>Questions in scope that no answer settles: none standing, one that is negative, not determinable, partial, disputed, unreviewed or stale, or one asked after the run's done. The report's conclusions do not cover them; each says what would.</p>
+<ul><li><a href="#qc-Q-1">Q-1</a>: <span class="chip chip-brick">not answered</span> What would settle it: the record does not say.</li><li><a href="#qc-Q-2">Q-2</a>: <span class="chip chip-brick">not answered</span> What would settle it: the record does not say.</li><li><a href="#qc-Q-3">Q-3</a>: <span class="chip chip-brick">not answered</span> What would settle it: the record does not say.</li><li><a href="#qc-Q-4">Q-4</a>: <span class="chip chip-brick">not answered</span> What would settle it: the record does not say.</li><li><a href="#qc-Q-5">Q-5</a>: <span class="chip chip-brick">not answered</span> What would settle it: the record does not say.</li><li><a href="#qc-Q-6">Q-6</a>: <span class="chip chip-brick">not answered</span> What would settle it: the record does not say.</li><li><a href="#qc-Q-7">Q-7</a>: <span class="chip chip-brick">not answered</span> What would settle it: the record does not say.</li><li><a href="#qc-Q-8">Q-8</a>: <span class="chip chip-brick">not answered</span> What would settle it: the record does not say.</li><li><a href="#qc-Q-9">Q-9</a>: <span class="chip chip-brick">not answered</span> What would settle it: the record does not say.</li><li><a href="#qc-Q-10">Q-10</a>: <span class="chip chip-brick">not answered</span> What would settle it: the record does not say.</li><li><a href="#qc-Q-11">Q-11</a>: <span class="chip chip-brick">not answered</span> What would settle it: the record does not say.</li><li><a href="#qc-Q-12">Q-12</a>: <span class="chip chip-brick">not answered</span> What would settle it: the record does not say.</li><li><a href="#qc-Q-13">Q-13</a>: <span class="chip chip-brick">not answered</span> What would settle it: the record does not say.</li><li><a href="#qc-Q-14">Q-14</a>: <span class="chip chip-brick">not answered</span> What would settle it: the record does not say.</li></ul></div>
+  </section>
+
+  <section id="s3">
+    <div class="sec-head"><span class="n">3</span><h2>Evidence and its handling</h2><span class="count">2 files</span></div>
+<div class="rb"><p>Copied from <code>/Users/halilozturkci/DFIR/SwarmInputs/batman-investigation-ii</code> at 2026-10-02T09:54:20Z into <code>inputs/</code>, read-only, as a second layer (<code>--inputs-copy</code>): each agent's microVM had the copy mounted read-only, and the host refused every write through that mount.</p>
+<p>Guard requested <code>auto</code>, set up as <code>microvm</code>; measured per pane: no pane reported.</p>
+<table><thead><tr><th>File</th><th class="num">Size</th><th>sha256 at kickoff</th><th>sha1</th><th>md5</th><th class="num">Named by</th></tr></thead><tbody><tr><td><code>inputs/chall/Carmine-Falcone.raw</code></td><td class="num">4.5 GB</td><td class="hash">3e03551e1f55dd792b0bc459b5620522d61fcf2379e8f6d89ef439fef8263cac</td><td class="hash">90c4c10aae6ecc1b5f9a41de089326baa67f856f</td><td class="hash">ee8097a9891b2573b56efe30de616de0</td><td class="num">—</td></tr><tr><td><code>inputs/chall/unknown.data</code></td><td class="num">35.3 KB</td><td class="hash">87841ce462a019649f6206c72cf65ce5305a88b828ca45996ae9422e6f578f4f</td><td class="hash">f9ebbb09e1cb5285c242e411f6ba8e3f78e0c0b6</td><td class="hash">bc1ac4eb6499418c2a6931751b4c52bf</td><td class="num">—</td></tr></tbody></table>
+<p>2 files, 4.5 GB in total. the copy was checked against its source at kickoff by content: 2 files hashed again from the source, 0 mismatches (2 s)</p>
+<h3>Coverage, from the trace</h3>
+<p>2 of 2 evidence files named by no command on the trace (0 calls matched). A file a command named was not necessarily examined. The table's last column counts the calls that named each file.</p><p>Named by no command: <code>inputs/chall/Carmine-Falcone.raw</code>, <code>inputs/chall/unknown.data</code>.</p>
+<h3>Acquisition</h3>
+<p>Acquisition record: not provided. The hashes above were taken when the run began, not when the evidence was acquired: nothing in this report ties the copy examined to the original acquisition, so the evidence's continuity before the run rests on the word of whoever supplied it.</p>
+<h3>At the end of the run</h3>
+<p>No host custody was taken (swarm.sh stop takes it): nothing here says the evidence was unchanged at the end of the run.</p>
+<h3>How jobs read it</h3>
+<p>No job ran in a worker VM: the agents read the evidence themselves, and the ledger's evidence lines say how.</p>
+<h3>The record</h3>
+<ul><li>The ledger (ledger/entries.jsonl): empty.</li><li>The attestations (ledger/attestations.jsonl): none.</li><li>The disputes (ledger/disputes.jsonl): none.</li></ul></div>
+  </section>
+
+  <section id="s4">
+    <div class="sec-head"><span class="n">4</span><h2>Method and roles</h2></div>
+<div class="rb"><p class="lede">10 AI agents worked the case as peers. Nobody assigned the work: each read the goal, chose its part and said so (below). What they established went into a hash-chained ledger as it was found, each entry with where it was seen and how; the answers in §5 are entries of that ledger, citing by hash the entries they rest on.</p>
+<dl><dt>Recorded findings, events, searches and limitations</dt><dd>nobody</dd><dt>Wrote the answers</dt><dd>nobody (no answer is recorded)</dd><dt>Re-derived or disputed</dt><dd>nobody</dd></dl>
+<table class="agents"><thead><tr><th>Agent</th><th>Calls itself</th><th>Said it was doing</th><th>Model</th><th>Recorded</th><th>Acts</th></tr></thead><tbody><tr><td><code>s5e1edd00</code></td><td>—</td><td>—</td><td>openai-codex/gpt-6.1-sol</td><td>nothing</td><td>none</td></tr><tr><td><code>s5e1edd01</code></td><td>—</td><td>—</td><td>openai-codex/gpt-6.1-sol</td><td>nothing</td><td>none</td></tr><tr><td><code>s5e1edd02</code></td><td>—</td><td>—</td><td>openai-codex/gpt-6.1-sol</td><td>nothing</td><td>none</td></tr><tr><td><code>s5e1edd03</code></td><td>—</td><td>—</td><td>openai-codex/gpt-6.1-sol</td><td>nothing</td><td>none</td></tr><tr><td><code>s5e1edd04</code></td><td>—</td><td>—</td><td>openai-codex/gpt-daybreak-blue-latest</td><td>nothing</td><td>none</td></tr><tr><td><code>s5e1edd05</code></td><td>—</td><td>—</td><td>openai-codex/gpt-daybreak-blue-latest</td><td>nothing</td><td>none</td></tr><tr><td><code>s5e1edd06</code></td><td>—</td><td>—</td><td>openai-codex/gpt-daybreak-blue-latest</td><td>nothing</td><td>none</td></tr><tr><td><code>s5e1edd07</code></td><td>—</td><td>—</td><td>openai-codex/gpt-6-luna</td><td>nothing</td><td>none</td></tr><tr><td><code>s5e1edd08</code></td><td>—</td><td>—</td><td>openai-codex/gpt-6-luna</td><td>nothing</td><td>none</td></tr><tr><td><code>s5e1edd09</code></td><td>—</td><td>—</td><td>openai-codex/gpt-6-luna</td><td>nothing</td><td>none</td></tr></tbody></table>
+<h3>Spend, calls and context</h3>
+
+<table><thead><tr><th>Agent</th><th>Model</th><th class="num">Spent</th><th class="num">Calls</th><th class="num">Tokens</th></tr></thead><tbody><tr><td class="hash">s5e1edd00</td><td>openai-codex/gpt-6.1-sol</td><td class="num">free</td><td class="num">0</td><td class="num">0</td></tr><tr><td class="hash">s5e1edd01</td><td>openai-codex/gpt-6.1-sol</td><td class="num">free</td><td class="num">0</td><td class="num">0</td></tr><tr><td class="hash">s5e1edd02</td><td>openai-codex/gpt-6.1-sol</td><td class="num">free</td><td class="num">0</td><td class="num">0</td></tr><tr><td class="hash">s5e1edd03</td><td>openai-codex/gpt-6.1-sol</td><td class="num">free</td><td class="num">0</td><td class="num">0</td></tr><tr><td class="hash">s5e1edd04</td><td>openai-codex/gpt-daybreak-blue-latest</td><td class="num">free</td><td class="num">0</td><td class="num">0</td></tr><tr><td class="hash">s5e1edd05</td><td>openai-codex/gpt-daybreak-blue-latest</td><td class="num">free</td><td class="num">0</td><td class="num">0</td></tr><tr><td class="hash">s5e1edd06</td><td>openai-codex/gpt-daybreak-blue-latest</td><td class="num">free</td><td class="num">0</td><td class="num">0</td></tr><tr><td class="hash">s5e1edd07</td><td>openai-codex/gpt-6-luna</td><td class="num">free</td><td class="num">0</td><td class="num">0</td></tr><tr><td class="hash">s5e1edd08</td><td>openai-codex/gpt-6-luna</td><td class="num">free</td><td class="num">0</td><td class="num">0</td></tr><tr><td class="hash">s5e1edd09</td><td>openai-codex/gpt-6-luna</td><td class="num">free</td><td class="num">0</td><td class="num">0</td></tr></tbody></table>
+<p>
+  Unmetered (local models).,
+  0 tokens, 1 tool calls in —.
+  
+  
+  
+</p>
+
+
+<h3>Jobs, images and tools</h3>
+<p>No job ran in a worker VM.</p>
+<h3>How corroboration is counted</h3>
+<div class="voice v-computed"><span class="vl">Computed by this report</span><div class="vt">Each ref an entry rests on is traced to the evidence objects it came from: an input by its path; a job's output to the inputs that job declared (and a job over another job's output to that job's); an import or an agent's own file to itself, its origin not recorded. Refs that share an object are one corroboration group: two outputs of one disk image are one source. A group is a provenance group, not proof of independence: two different logs may still copy one another, and a job that declared scope all is its own group of unknown independence.</div></div>
+<h3 id="proceeded">How the investigation proceeded</h3>
+<p>The swarm opened no lead: the order of its work is in the trace and the board, not in a register of what was found to follow.</p>
+<h3>What an agent checked</h3>
+<p>No agent attested or disputed anything: every entry is its author's word alone.</p>
+<h3>What a human checked</h3>
+<p>No human checked any of it: no examiner review is recorded for this run.</p></div>
+  </section>
+
+  <section id="s5">
+    <div class="sec-head"><span class="n">5</span><h2>Answers</h2><span class="count">no structured answers</span></div>
+<div class="rb"><div class="note">No question is named by the goal or by any entry.</div>
+<h3>The premises the examination took</h3>
+<p>A given was designated by the operator (the goal or the register) and is not proved again; a supplied assertion is assumed as asserted, not as established; a proposition under test (an agent's, not admitted) is assumed only conditionally. Each answer below says which premises it rests on and how.</p>
+<table class="premises"><thead><tr><th>Premise</th><th>Class</th><th>Words (verbatim)</th><th>Where</th><th>Scope</th><th>Designated by</th><th>Cited by</th></tr></thead><tbody><tr><td>P-1 (revision 1)</td><td>a given</td><td>This is a synthetic offline CTF. The supplied memory image is presented as Carmine Falcone's laptop memory, and unknown.data is the additional handout evidence. Their actual contents and recoverability remain to be examined.</td><td>the goal (the registry's copy), Premises, item 1</td><td>unbounded</td><td>the goal</td><td>no standing answer</td></tr></tbody></table></div>
+  </section>
+
+  <section id="s6">
+    <div class="sec-head"><span class="n">6</span><h2>What happened</h2><span class="count">0 events</span></div>
+<div class="rb"><div class="note">No narrative answer was recorded: the timeline below is the ledger's dated events, in order, without the swarm's account of them.</div>
+<h3>Timeline</h3>
+<p>No dated events were recorded, so this report has no timeline.</p>
+<h3>Clocks and precision</h3>
+<div class="voice v-computed"><span class="vl">Computed by this report</span><div class="vt">With no dated events, there are no clocks to weigh.</div></div></div>
+  </section>
+
+  <section id="s7">
+    <div class="sec-head"><span class="n">7</span><h2>Conclusions and opinions</h2></div>
+<div class="rb"><p class="lede">What follows are opinions: conclusions the swarm drew from the entries they cite, not observations. Each is given with its basis, so a reader can weigh the one against the other.</p>
+<div class="note">No question has a standing answer, so the swarm offers no conclusion here.</div></div>
+  </section>
+
+  <section id="s8">
+    <div class="sec-head"><span class="n">8</span><h2>Limitations, negative findings and open questions</h2></div>
+<div class="rb"><h3>Limitations recorded</h3>
+<p>The swarm recorded none. That is not a statement that the examination had no limits.</p>
+<h3>Searched and not found</h3>
+<p>Each is valid only for the stated scope: what was searched, where, and how. Not found by that search is not absent from the evidence.</p>
+<p>No search that found nothing was recorded.</p>
+<h3>Questions not answered</h3>
+<p>No question was named.</p>
+<h3>Evidence gaps and acquisition requests</h3>
+<p>Generated from the records (acquisition requests, limitations, coverage records and answers), never written by hand. A gap bounds what an answer can say; it is never a finding that something is absent. The case policy said of more evidence: no (an acquisition was answered at once, &quot;no additional input under this case policy&quot;).</p>
+<p>No acquisition was requested.</p>
+<p>No gap is recorded: no acquisition was declined or left open, no limitation names an unavailable, inaccessible or unexamined source, and no answer is not determinable. That is what the records say, not a statement that the examination had no limits.</p>
+<h3>The limits of this run</h3>
+<ul><li>Prepared by an AI agent swarm. The findings are the agents' conclusions, each recorded with the source it rests on; none is an examiner's opinion until an examiner has reviewed it.</li><li>The models' output is not deterministic: running the case again would not give the same words. The reproducible record is the trace, the kept tool outputs and the sealed sessions, not a re-run.</li><li>The swarm did not finish: there is no <code>done/SWARM_DONE</code>, so no agent stated that the definition of done was met.</li><li>No findings were recorded, so nothing in this report is stated as a conclusion.</li><li>2 of 2 evidence files were named by no command on the trace (§3). An artefact nobody opened is not evidence of absence.</li><li>This document reports what the swarm recorded. An artefact nobody opened is not evidence of absence, and the trace is the record of what was actually read.</li></ul>
+<h3>What this report does not claim</h3>
+<ul><li>It was prepared by an AI agent swarm. The models' output is not deterministic: running the case again would not give the same words; the reproducible record is the ledger, the sealed job outputs and the trace.</li><li>A method record says what ran and how it ended, not which bytes a tool read.</li><li>A corroboration group is a provenance group, not proof of independence.</li><li>An agent's attestation is not peer review, and no answer is an examiner's opinion until an examiner adopts it.</li><li>An artefact nobody opened is not evidence of absence.</li></ul></div>
+  </section>
+
+  <section id="s9">
+    <div class="sec-head"><span class="n">9</span><h2>Recommendations</h2></div>
+<div class="rb"><p>The goal did not ask for recommendations, and none are made.</p></div>
+  </section>
+
+  <section id="s10">
+    <div class="sec-head"><span class="n">10</span><h2>Review and adoption</h2></div>
+<div class="rb"><div class="note"><strong>No human has reviewed this report. </strong>It was prepared by an AI agent swarm. The attestations in §4 are agents re-deriving agents' work, not independent review. Until an examiner adopts each answer, every answer here is the swarm's.</div>
+<dl><dt>Examiner</dt><dd>not recorded</dd><dt>Technical review</dt><dd>No technical review</dd><dt>Signed</dt><dd>not signed</dd><dt>Release</dt><dd>draft: no release v1 exists</dd></dl></div>
+  </section>
+
+  <section id="sA" class="page-break">
+    <div class="sec-head"><h2>Appendix A: Exhibits</h2><span class="count">0 entries</span></div>
+<div class="rb"><p class="lede">Every entry of the ledger, whole, grouped by kind and in the order it was recorded. A corrected entry stays as it was recorded, marked; an exhibit's number is its ledger seq, so the console, ledger.jsonl and this document name the same row.</p>
+<div class="note">The ledger is empty.</div></div>
+  </section>
+
+  <section id="sB">
+    <div class="sec-head"><h2>Appendix B: Jobs and their method records</h2><span class="count">0 jobs, 0 cited</span></div>
+<div class="rb"><p class="lede">Every job the run's job service ran, from its record (store/jobs/&lt;id&gt;/job.json) and the manifest of its sealed output. A method record describes recorded execution, not proven reads.</p>
+<div class="note">No job ran.</div></div>
+  </section>
+
+  <section id="sC" class="page-break">
+    <div class="sec-head"><h2>Appendix C: The swarm's working report</h2></div>
+<div class="rb"><p>The swarm left no working report (work/report.md).</p></div>
+  </section>
+
+  <section id="sD" class="page-break">
+    <div class="sec-head"><h2>Appendix D: Chain of custody</h2></div>
+<table><thead><tr><th>Item</th><th>Recorded</th></tr></thead><tbody><tr><td>Case</td><td class="">—</td></tr><tr><td>Examiner</td><td class="">—</td></tr><tr><td>Tool</td><td class="">DFIR Swarm 0.3.0 (commit 3e33c6309273)</td></tr><tr><td>Reproducibility</td><td class="">harness commit 3e33c630927391ce0474942e1f8705a616cbff38; Pi 0.87.1; Node v24.13.1; msb msb 0.7.2; image sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7; models openai-codex/gpt-6-luna, openai-codex/gpt-6.1-sol, openai-codex/gpt-daybreak-blue-latest. The models' outputs are not deterministic: the trace, the kept tool outputs and the sealed sessions are the reproducible record, not a re-run.</td></tr><tr><td>Host clock</td><td class="">time zone Europe/Istanbul (UTC+0300); clock synchronised: not known. The harness stamps its own times in UTC.</td></tr><tr><td>Run</td><td class="">s5e1edd</td></tr><tr><td>Started</td><td class="">2026-10-02T09:54:22Z</td></tr><tr><td>Ended</td><td class="">2026-10-02T09:54:20.800Z</td></tr><tr><td>Sandbox</td><td class="hash">/Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd</td></tr><tr><td>Evidence</td><td class="">2 file(s), 4.5 GB, from /Users/halilozturkci/DFIR/SwarmInputs/batman-investigation-ii; the copy was checked against its source at kickoff by content: 2 files hashed again from the source, 0 mismatches (2 s)</td></tr><tr><td>Evidence intact at the end</td><td class="">not checked (no host custody was taken; an agent's check is absent too)</td></tr><tr><td>Network</td><td class="">each agent's VM, deny by default: chatgpt.com</td></tr><tr><td>Egress enforcement</td><td class="">enforced (microVM network policy on the host: deny by default, each VM's allowed hosts only; a denied name does not resolve and a hard-coded address has no route)</td></tr><tr><td>Write guard</td><td class="">enforced (microVM: each agent could write only its own work/&lt;id&gt;/, work/extracted/&lt;id&gt;/, work/quarantine/&lt;id&gt;/, tool-output/&lt;id&gt;/ and Pi session; the rest of the run was read-only in its VM, shared files and the board were written by the hub on the host, and of the host the VM was given only what its record lists as mounted, all read-only: the harness code, the packs, the evidence, the run)</td></tr><tr><td>Terminal socket</td><td class="">out of reach: the agents ran in microVMs, and no host socket but each one's own hub link was in its VM</td></tr><tr><td>Pi extensions</td><td class="">read-only to the panes</td></tr><tr><td>Attribution</td><td class="">by channel (each agent's VM reached the hub on its own vsock port, and the hub named the sender from the port a line came in on; no agent held a token)</td></tr><tr><td>Guard measured</td><td class="">not recorded (this run predates the field)</td></tr><tr><td>Isolation</td><td class="">one microVM per agent (microsandbox 0.7.2), image dfirswarm-memory:symbols-arm64 (sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7)</td></tr><tr><td>Image digest</td><td class="">every VM booted sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7, resolved once at kickoff</td></tr><tr><td>Image record</td><td class="">profile memory; built from computer-forensics-base 1.6.0, memory-forensics 1.3.0; pinned downloads aeskeyfind 1.0-11, avml 0.20.0, bulk_extractor 2.2.0, ccl_indexeddb_dump 0.3.18, memprocfs 5.18.11, vol-isf-ntkrnlmp.pdb-D9424FC4861E47C10FAD1B35DEC6DCC8-1 D9424FC4861E47C10FAD1B35DEC6DCC8-1, vol-windows-symbols 2019-10-16; NOT for redistribution (35 programs; see /etc/dfirswarm/NOTICE in the image)</td></tr><tr><td>VM s5e1edd00</td><td class="">dfs-s5e1edd-s5e1edd00: 2 vCPU, 4096 MiB; writable: /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/work/s5e1edd00, /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/work/extracted/s5e1edd00 (no-exec), /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/work/quarantine/s5e1edd00 (no-exec), /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/tool-output/s5e1edd00, /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/.pi-sessions/s5e1edd00; everything else mounted read-only; could reach: chatgpt.com:443; secrets swapped in on the way out: openai-codex (subscription token) → chatgpt.com; installed at stop: nothing outside the image; disk at stop: not kept; msb's database cleared of it after removal</td></tr><tr><td>VM s5e1edd01</td><td class="">dfs-s5e1edd-s5e1edd01: 2 vCPU, 4096 MiB; writable: /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/work/s5e1edd01, /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/work/extracted/s5e1edd01 (no-exec), /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/work/quarantine/s5e1edd01 (no-exec), /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/tool-output/s5e1edd01, /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/.pi-sessions/s5e1edd01; everything else mounted read-only; could reach: chatgpt.com:443; secrets swapped in on the way out: openai-codex (subscription token) → chatgpt.com; installed at stop: nothing outside the image; disk at stop: not kept; msb's database cleared of it after removal</td></tr><tr><td>VM s5e1edd02</td><td class="">dfs-s5e1edd-s5e1edd02: 2 vCPU, 4096 MiB; writable: /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/work/s5e1edd02, /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/work/extracted/s5e1edd02 (no-exec), /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/work/quarantine/s5e1edd02 (no-exec), /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/tool-output/s5e1edd02, /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/.pi-sessions/s5e1edd02; everything else mounted read-only; could reach: chatgpt.com:443; secrets swapped in on the way out: openai-codex (subscription token) → chatgpt.com; installed at stop: nothing outside the image; disk at stop: not kept; msb's database cleared of it after removal</td></tr><tr><td>VM s5e1edd03</td><td class="">dfs-s5e1edd-s5e1edd03: 2 vCPU, 4096 MiB; writable: /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/work/s5e1edd03, /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/work/extracted/s5e1edd03 (no-exec), /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/work/quarantine/s5e1edd03 (no-exec), /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/tool-output/s5e1edd03, /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/.pi-sessions/s5e1edd03; everything else mounted read-only; could reach: chatgpt.com:443; secrets swapped in on the way out: openai-codex (subscription token) → chatgpt.com; installed at stop: nothing outside the image; disk at stop: not kept; msb's database cleared of it after removal</td></tr><tr><td>VM s5e1edd04</td><td class="">dfs-s5e1edd-s5e1edd04: 2 vCPU, 4096 MiB; writable: /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/work/s5e1edd04, /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/work/extracted/s5e1edd04 (no-exec), /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/work/quarantine/s5e1edd04 (no-exec), /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/tool-output/s5e1edd04, /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/.pi-sessions/s5e1edd04; everything else mounted read-only; could reach: chatgpt.com:443; secrets swapped in on the way out: openai-codex (subscription token) → chatgpt.com; installed at stop: nothing outside the image; disk at stop: not kept; msb's database cleared of it after removal</td></tr><tr><td>VM s5e1edd05</td><td class="">dfs-s5e1edd-s5e1edd05: 2 vCPU, 4096 MiB; writable: /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/work/s5e1edd05, /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/work/extracted/s5e1edd05 (no-exec), /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/work/quarantine/s5e1edd05 (no-exec), /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/tool-output/s5e1edd05, /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/.pi-sessions/s5e1edd05; everything else mounted read-only; could reach: chatgpt.com:443; secrets swapped in on the way out: openai-codex (subscription token) → chatgpt.com; installed at stop: nothing outside the image; disk at stop: not kept; msb's database cleared of it after removal</td></tr><tr><td>VM s5e1edd06</td><td class="">dfs-s5e1edd-s5e1edd06: 2 vCPU, 4096 MiB; writable: /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/work/s5e1edd06, /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/work/extracted/s5e1edd06 (no-exec), /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/work/quarantine/s5e1edd06 (no-exec), /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/tool-output/s5e1edd06, /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/.pi-sessions/s5e1edd06; everything else mounted read-only; could reach: chatgpt.com:443; secrets swapped in on the way out: openai-codex (subscription token) → chatgpt.com; installed at stop: nothing outside the image; disk at stop: not kept; msb's database cleared of it after removal</td></tr><tr><td>VM s5e1edd07</td><td class="">dfs-s5e1edd-s5e1edd07: 2 vCPU, 4096 MiB; writable: /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/work/s5e1edd07, /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/work/extracted/s5e1edd07 (no-exec), /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/work/quarantine/s5e1edd07 (no-exec), /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/tool-output/s5e1edd07, /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/.pi-sessions/s5e1edd07; everything else mounted read-only; could reach: chatgpt.com:443; secrets swapped in on the way out: openai-codex (subscription token) → chatgpt.com; installed at stop: nothing outside the image; disk at stop: not kept; msb's database cleared of it after removal</td></tr><tr><td>VM s5e1edd08</td><td class="">dfs-s5e1edd-s5e1edd08: 2 vCPU, 4096 MiB; writable: /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/work/s5e1edd08, /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/work/extracted/s5e1edd08 (no-exec), /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/work/quarantine/s5e1edd08 (no-exec), /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/tool-output/s5e1edd08, /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/.pi-sessions/s5e1edd08; everything else mounted read-only; could reach: chatgpt.com:443; secrets swapped in on the way out: openai-codex (subscription token) → chatgpt.com; installed at stop: nothing outside the image; disk at stop: not kept; msb's database cleared of it after removal</td></tr><tr><td>VM s5e1edd09</td><td class="">dfs-s5e1edd-s5e1edd09: 2 vCPU, 4096 MiB; writable: /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/work/s5e1edd09, /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/work/extracted/s5e1edd09 (no-exec), /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/work/quarantine/s5e1edd09 (no-exec), /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/tool-output/s5e1edd09, /Users/halilozturkci/DFIR/SwarmRuns-vm/s5e1edd/.pi-sessions/s5e1edd09; everything else mounted read-only; could reach: chatgpt.com:443; secrets swapped in on the way out: openai-codex (subscription token) → chatgpt.com; installed at stop: nothing outside the image; disk at stop: not kept; msb's database cleared of it after removal</td></tr><tr><td>Trace integrity</td><td class="">intact: 1 of 1 lines hash-chained</td></tr><tr><td>Egress refused</td><td class="">not observable: each agent's microVM refused everything outside its rules, and that refusal leaves no log; msb stopped no credential placeholder on its way to another host</td></tr><tr><td>Content sent to</td><td class="">openai-codex/gpt-6.1-sol → chatgpt.com, auth.openai.com; openai-codex/gpt-daybreak-blue-latest → chatgpt.com, auth.openai.com; openai-codex/gpt-6-luna → chatgpt.com, auth.openai.com</td></tr><tr><td>Installed during the run</td><td class="">nothing</td></tr><tr><td>Ledger</td><td class="">0 entries (0 events, 0 indicators, 0 findings)</td></tr><tr><td>Examiner review</td><td class="">not reviewed by an examiner: every finding here is the agents' conclusion</td></tr><tr><td>Releases</td><td class="">none: no release was sealed (custody at stop writes v0; swarm.sh releases &lt;id&gt; --draft writes one for a run that has a verdict)</td></tr><tr><td>Coverage</td><td class="">2 of 2 evidence files named by no command on the trace (0 calls matched). A file a command named was not necessarily examined.</td></tr><tr><td>Grounding</td><td class="">0 entries with a source a call named before it was recorded; 0 not grounded in the trace; 0 whose source names no path</td></tr><tr><td>Disk encryption</td><td class="">on, where the run is kept</td></tr><tr><td>Legal hold</td><td class="">not held</td></tr><tr><td>Notify hook</td><td class="">none</td></tr><tr><td>Host custody check</td><td class="">not taken (swarm.sh stop takes it)</td></tr><tr><td>Trace</td><td class="">1 tool calls</td></tr><tr><td>Verdict signature</td><td class="">custody.json is not signed (--custody-sign-key)</td></tr><tr><td>Trusted timestamp</td><td class="">no trusted timestamp (--custody-timestamp-url)</td></tr><tr><td>Reference clock</td><td class="">no reference clock named (--time-reference)</td></tr><tr><td>What the anchors are</td><td class="">files of the operator's own account beside the run: they hold the agents to account, and a signature and a trusted timestamp hold the verdict itself; they do not hold the operator's account to account</td></tr><tr><td>Check it again</td><td class="">swarm.sh custody-verify s5e1edd (writes nothing in the run: every check, the sealed prefix and the lines after it, every chain's sealed length and head, every work file against the index custody sealed, the signature and the timestamp token, its signature too with --tsa-ca FILE); a package: swarm.sh verify &lt;package&gt; --allowed-signers FILE</td></tr></tbody></table><h3>The operator's actions on this run (1)</h3>
+<p>From <code>operator-audit.jsonl</code> beside the registry, chained, where no agent writes: who ran which command, from which host, and how.</p>
+<table><thead><tr><th>When (UTC)</th><th>Command</th><th>OS user</th><th>Host</th><th>Via</th></tr></thead><tbody><tr><td class="tabular">2026-10-02T10:01:57Z</td><td>package</td><td>halilozturkci</td><td>192.168.1.11</td><td>cli</td></tr></tbody></table><h3>Files handed over with this report (21)</h3>
+<p>What a court or a counterparty receives beside this document, as the dossier read each file when it generated this report: its size and sha256, or why it is absent. This report is not in the list, since its own hash cannot be inside it; <code>court-set.json</code> carries it.</p>
+<table class="handover"><thead><tr><th>File</th><th class="num">Size</th><th>sha256</th><th>Contents</th></tr></thead><tbody><tr><td><code>summary.md</code></td><td class="num">8.0 KB</td><td class="hash">8c93d98aa47a1a91eeb29ae6e1eddb118c32695f1a452b886f468f5b326f364c</td><td>The run summary, rendered from the sandbox's own files.</td></tr><tr><td><code>artifacts.json</code></td><td class="num">180 B</td><td class="hash">acc9362bb2c66b61e2481698e28b74453bc4fd9286d42cb37154059f89a1c706</td><td>Every file under work/, with its sha256 — including what stays in the sandbox.</td></tr><tr><td><code>ledger.jsonl</code></td><td class="num">—</td><td class="hash">absent: nothing recorded</td><td>The timeline, indicators, findings and searches that found nothing, as the agents recorded them, corrections included.</td></tr><tr><td><code>ledger.md</code></td><td class="num">—</td><td class="hash">absent: nothing recorded</td><td>The same ledger, rendered.</td></tr><tr><td><code>trace.jsonl</code></td><td class="num">1.2 KB</td><td class="hash">93a3b0e865b65de6bff97093a17d469cd649e331ac6dd022e4e2070b6787ef39</td><td>Every tool call the swarm made, whole — not the page the Traces tab shows.</td></tr><tr><td><code>custody.json</code></td><td class="num">—</td><td class="hash">absent: not written for this run (swarm.sh stop takes custody)</td><td>The host's custody verdict at stop: the evidence re-hashed, the trace and ledger chains, the kept outputs, each VM.</td></tr><tr><td><code>custody-anchor.json</code></td><td class="num">2.7 KB</td><td class="hash">e68f1cca0bebc706afd1d68fbd930752a9b0014a55a9ac7b5d18cbf69f869e08</td><td>The kickoff's anchor outside the run, with each verdict's hash: custody.json is checked against it.</td></tr><tr><td><code>inputs.json</code></td><td class="num">1.1 KB</td><td class="hash">df569ca6d4f844f03770031c59ac22b176dd29b0243d6331ae3d3cd9aa0147cd</td><td>The evidence manifest the kickoff wrote: every name with its sha256, and md5 and sha1 when taken.</td></tr><tr><td><code>artifacts.sealed.json</code></td><td class="num">—</td><td class="hash">absent: no custody verdict indexed work/ (swarm.sh stop takes custody)</td><td>The index of work/ custody wrote at stop, byte for byte: the one custody.json and its anchor name, which every handed-over work/ file is held to. artifacts.json beside the report is generated when it is.</td></tr><tr><td><code>vm-s5e1edd00.json</code></td><td class="num">152.0 KB</td><td class="hash">55f008cce212e2dd3b50c9497676ae14a501bc0f38d10eb1e73f25eef242591c</td><td>The record of s5e1edd00's VM: its image, size, mounts, network, placeholders, probe, and what its stop did.</td></tr><tr><td><code>vm-s5e1edd01.json</code></td><td class="num">152.0 KB</td><td class="hash">f89443f33b0215396a4c8891b36227d6fb066de98caaf8eea44a0368d2c48583</td><td>The record of s5e1edd01's VM: its image, size, mounts, network, placeholders, probe, and what its stop did.</td></tr><tr><td><code>vm-s5e1edd02.json</code></td><td class="num">152.0 KB</td><td class="hash">482dcdb68b90b5cfca169c78b96e9fcae78c1de4a42a38f59959b2e5d14f5fed</td><td>The record of s5e1edd02's VM: its image, size, mounts, network, placeholders, probe, and what its stop did.</td></tr><tr><td><code>vm-s5e1edd03.json</code></td><td class="num">152.0 KB</td><td class="hash">8fabfd4bd95525f433d9bcdf68903b05502464cc935e5622b3c06da3487ff840</td><td>The record of s5e1edd03's VM: its image, size, mounts, network, placeholders, probe, and what its stop did.</td></tr><tr><td><code>vm-s5e1edd04.json</code></td><td class="num">152.0 KB</td><td class="hash">38237f7cfe1878bb77ffcbce05d1997160e8462e5210c0bfdc2ef613a4a4811e</td><td>The record of s5e1edd04's VM: its image, size, mounts, network, placeholders, probe, and what its stop did.</td></tr><tr><td><code>vm-s5e1edd05.json</code></td><td class="num">152.0 KB</td><td class="hash">1a3d98f01c4bdca900352aa620273efa0bf2535404ab7684ae368c2fe3bc680c</td><td>The record of s5e1edd05's VM: its image, size, mounts, network, placeholders, probe, and what its stop did.</td></tr><tr><td><code>vm-s5e1edd06.json</code></td><td class="num">152.0 KB</td><td class="hash">71735d5747d9562cc1216079802cb3110b625163ae05a6322291b8cf038c96dc</td><td>The record of s5e1edd06's VM: its image, size, mounts, network, placeholders, probe, and what its stop did.</td></tr><tr><td><code>vm-s5e1edd07.json</code></td><td class="num">152.0 KB</td><td class="hash">d5ea619b477bd72f1b33173b3ade320d34f6d92b257bd55cbb0fadb203e0b0bb</td><td>The record of s5e1edd07's VM: its image, size, mounts, network, placeholders, probe, and what its stop did.</td></tr><tr><td><code>vm-s5e1edd08.json</code></td><td class="num">152.0 KB</td><td class="hash">34dfd607746a4da5f0349890e4cfbed007977100ece18f961fea8cfeddce013a</td><td>The record of s5e1edd08's VM: its image, size, mounts, network, placeholders, probe, and what its stop did.</td></tr><tr><td><code>vm-s5e1edd09.json</code></td><td class="num">152.0 KB</td><td class="hash">ff43204b173dd4c377d231ae698daf1b910398278d1d6246c016fddc8061bd29</td><td>The record of s5e1edd09's VM: its image, size, mounts, network, placeholders, probe, and what its stop did.</td></tr><tr><td><code>operator-audit.jsonl</code></td><td class="num">247 B</td><td class="hash">5e2d7756a17cf33ab0cf1c490c0f33e5d66d3fdd14b219656cd5b5d483331454</td><td>This run's lines of the operator's record (who ran which command, from where), as written; the record's chain runs over the whole file in the runs directory.</td></tr><tr><td><code>review.jsonl</code></td><td class="num">—</td><td class="hash">absent: no examiner has reviewed this run</td><td>The examiner's review: each entry accepted, rejected or amended, and the sign-off over the ledger's head and the report's sha256, chained.</td></tr></tbody></table>
+  </section>
+
+  <section id="sE">
+    <div class="sec-head"><h2>Appendix E: Artifacts produced</h2><span class="count">none</span></div>
+<div class="note">Nothing under <code>work/</code>.</div>
+  </section>
+
+  <section id="sF" class="page-break">
+    <div class="sec-head"><h2>Appendix F: The question and lead registers</h2><span class="count">16 question events, 0 lead events</span></div>
+<div class="rb"><p class="lede">The question and lead registers as the harness kept them, whole: every event with its seq, time and author, and every disposition with what it rests on and whether an agent other than the one who made it reviewed it. The body counts the negative and duplicate leads; they are here in full.</p>
+<h3>The question register</h3>
+<p>16 events; chain intact, head 171ab202ac590587c56e64e6b8d4fea9c301554ad5213b67217d707e6a500644.</p>
+<table class="register"><thead><tr><th>Seq</th><th>When</th><th>Who</th><th>Event</th><th>What</th></tr></thead><tbody><tr><td>1</td><td>2026-10-02T09:54:22.915Z</td><td>the goal</td><td>open Q-1 r1</td><td><code>{&quot;act&quot;:{&quot;text&quot;:&quot;who asked Carmine falcon to contact someone and who is falcone disguised as?\n   Format: `disguse-name_person-contacted (all lowercase)`&quot;,&quot;why&quot;:&quot;a question of the goal&quot;,&quot;materiality&quot;:&quot;material&quot;,&quot;priority&quot;:&quot;normal&quot;,&quot;must_establish&quot;:true},&quot;decided&quot;:{&quot;scope&quot;:&quot;in_scope&quot;,&quot;scope_why&quot;:&quot;a question of the goal&quot;,&quot;section&quot;:&quot;1&quot;,&quot;leading_forms&quot;:[],&quot;completeness&quot;:true}}</code></td></tr><tr><td>2</td><td>2026-10-02T09:54:22.915Z</td><td>the goal</td><td>open Q-2 r1</td><td><code>{&quot;act&quot;:{&quot;text&quot;:&quot;what is the hash of the file that he sent him to contact\n   Format: `sha1sum`&quot;,&quot;why&quot;:&quot;a question of the goal&quot;,&quot;materiality&quot;:&quot;material&quot;,&quot;priority&quot;:&quot;normal&quot;,&quot;must_establish&quot;:true},&quot;decided&quot;:{&quot;scope&quot;:&quot;in_scope&quot;,&quot;scope_why&quot;:&quot;a question of the goal&quot;,&quot;section&quot;:&quot;2&quot;,&quot;leading_forms&quot;:[]}}</code></td></tr><tr><td>3</td><td>2026-10-02T09:54:22.915Z</td><td>the goal</td><td>open Q-3 r1</td><td><code>{&quot;act&quot;:{&quot;text&quot;:&quot;what is the password of his password manager\n   Format: `password_manager_name_with_version:md5(password)`&quot;,&quot;why&quot;:&quot;a question of the goal&quot;,&quot;materiality&quot;:&quot;material&quot;,&quot;priority&quot;:&quot;normal&quot;,&quot;must_establish&quot;:true},&quot;decided&quot;:{&quot;scope&quot;:&quot;in_scope&quot;,&quot;scope_why&quot;:&quot;a question of the goal&quot;,&quot;section&quot;:&quot;3&quot;,&quot;leading_forms&quot;:[]}}</code></td></tr><tr><td>4</td><td>2026-10-02T09:54:22.915Z</td><td>the goal</td><td>open Q-4 r1</td><td><code>{&quot;act&quot;:{&quot;text&quot;:&quot;what is the key he stored in his password manager that he deleted?\n   Format: `(format: user_name:key)`&quot;,&quot;why&quot;:&quot;a question of the goal&quot;,&quot;materiality&quot;:&quot;material&quot;,&quot;priority&quot;:&quot;normal&quot;,&quot;must_establish&quot;:true},&quot;decided&quot;:{&quot;scope&quot;:&quot;in_scope&quot;,&quot;scope_why&quot;:&quot;a question of the goal&quot;,&quot;section&quot;:&quot;4&quot;,&quot;leading_forms&quot;:[]}}</code></td></tr><tr><td>5</td><td>2026-10-02T09:54:22.915Z</td><td>the goal</td><td>open Q-5 r1</td><td><code>{&quot;act&quot;:{&quot;text&quot;:&quot;what is the cryptocurrency wallet installed and when is it installed?\n   Format: `wallet_name-date-time(in format YYYY:MM:DD:HH:MM)`&quot;,&quot;why&quot;:&quot;a question of the goal&quot;,&quot;materiality&quot;:&quot;material&quot;,&quot;priority&quot;:&quot;normal&quot;,&quot;must_establish&quot;:true},&quot;decided&quot;:{&quot;scope&quot;:&quot;in_scope&quot;,&quot;scope_why&quot;:&quot;a question of the goal&quot;,&quot;section&quot;:&quot;5&quot;,&quot;leading_forms&quot;:[]}}</code></td></tr><tr><td>6</td><td>2026-10-02T09:54:22.915Z</td><td>the goal</td><td>open Q-6 r1</td><td><code>{&quot;act&quot;:{&quot;text&quot;:&quot;what is the malware that wants to steal the cryptocurrency wallet and ip it's trying to send to with port number?\n   Format: `malware_ip:port)`&quot;,&quot;why&quot;:&quot;a question of the goal&quot;,&quot;materiality&quot;:&quot;material&quot;,&quot;priority&quot;:&quot;normal&quot;,&quot;must_establish&quot;:true},&quot;decided&quot;:{&quot;scope&quot;:&quot;in_scope&quot;,&quot;scope_why&quot;:&quot;a question of the goal&quot;,&quot;section&quot;:&quot;6&quot;,&quot;leading_forms&quot;:[]}}</code></td></tr><tr><td>7</td><td>2026-10-02T09:54:22.915Z</td><td>the goal</td><td>open Q-7 r1</td><td><code>{&quot;act&quot;:{&quot;text&quot;:&quot;Eventhough Falcone's Network Moniter blockked the file sent, falcone made sure to zip with a password and noted it down temproarily in his screen and sent it to a detective for analysis.what is the password of the zip file?\n   Format: `md5(password)`&quot;,&quot;why&quot;:&quot;a question of the goal&quot;,&quot;materiality&quot;:&quot;material&quot;,&quot;priority&quot;:&quot;normal&quot;,&quot;must_establish&quot;:true},&quot;decided&quot;:{&quot;scope&quot;:&quot;in_scope&quot;,&quot;scope_why&quot;:&quot;a question of the goal&quot;,&quot;section&quot;:&quot;7&quot;,&quot;leading_forms&quot;:[]}}</code></td></tr><tr><td>8</td><td>2026-10-02T09:54:22.915Z</td><td>the goal</td><td>open Q-8 r1</td><td><code>{&quot;act&quot;:{&quot;text&quot;:&quot;what is the hash of the original files in the zip file before the stealer modified them?\n   Format: `sha1sum:sha1sum`&quot;,&quot;why&quot;:&quot;a question of the goal&quot;,&quot;materiality&quot;:&quot;material&quot;,&quot;priority&quot;:&quot;normal&quot;,&quot;must_establish&quot;:true},&quot;decided&quot;:{&quot;scope&quot;:&quot;in_scope&quot;,&quot;scope_why&quot;:&quot;a question of the goal&quot;,&quot;section&quot;:&quot;8&quot;,&quot;leading_forms&quot;:[]}}</code></td></tr><tr><td>9</td><td>2026-10-02T09:54:22.915Z</td><td>the goal</td><td>open Q-9 r1</td><td><code>{&quot;act&quot;:{&quot;text&quot;:&quot;what is the password that Carmine Falcone protected the wallet with\n   Format: `md5(password)`&quot;,&quot;why&quot;:&quot;a question of the goal&quot;,&quot;materiality&quot;:&quot;material&quot;,&quot;priority&quot;:&quot;normal&quot;,&quot;must_establish&quot;:true},&quot;decided&quot;:{&quot;scope&quot;:&quot;in_scope&quot;,&quot;scope_why&quot;:&quot;a question of the goal&quot;,&quot;section&quot;:&quot;9&quot;,&quot;leading_forms&quot;:[]}}</code></td></tr><tr><td>10</td><td>2026-10-02T09:54:22.915Z</td><td>the goal</td><td>open Q-10 r1</td><td><code>{&quot;act&quot;:{&quot;text&quot;:&quot;who did Carmine falcone recive money from?\n   Format: `name_person:curreny_used(3 or 4 letter significance):amount(in dollars with precision of 2 decimal places):transaction_id`&quot;,&quot;why&quot;:&quot;a question of the goal&quot;,&quot;materiality&quot;:&quot;material&quot;,&quot;priority&quot;:&quot;normal&quot;,&quot;must_establish&quot;:true},&quot;decided&quot;:{&quot;scope&quot;:&quot;in_scope&quot;,&quot;scope_why&quot;:&quot;a question of the goal&quot;,&quot;section&quot;:&quot;10&quot;,&quot;leading_forms&quot;:[]}}</code></td></tr><tr><td>11</td><td>2026-10-02T09:54:22.915Z</td><td>the goal</td><td>open Q-11 r1</td><td><code>{&quot;act&quot;:{&quot;text&quot;:&quot;who did Carmine falcone send money to?\n   Format: `name_person:curreny_used(3 or 4 letter significance):amount(in dollars with precision of 2 decimal places):addres`&quot;,&quot;why&quot;:&quot;a question of the goal&quot;,&quot;materiality&quot;:&quot;material&quot;,&quot;priority&quot;:&quot;normal&quot;,&quot;must_establish&quot;:true},&quot;decided&quot;:{&quot;scope&quot;:&quot;in_scope&quot;,&quot;scope_why&quot;:&quot;a question of the goal&quot;,&quot;section&quot;:&quot;11&quot;,&quot;leading_forms&quot;:[]}}</code></td></tr><tr><td>12</td><td>2026-10-02T09:54:22.915Z</td><td>the goal</td><td>open Q-12 r1</td><td><code>{&quot;act&quot;:{&quot;text&quot;:&quot;what is the name and client private key that Salvatore asked for contact verification?\n   Format: `infobreakage_dbkey:client_email`&quot;,&quot;why&quot;:&quot;a question of the goal&quot;,&quot;materiality&quot;:&quot;material&quot;,&quot;priority&quot;:&quot;normal&quot;,&quot;must_establish&quot;:true},&quot;decided&quot;:{&quot;scope&quot;:&quot;in_scope&quot;,&quot;scope_why&quot;:&quot;a question of the goal&quot;,&quot;section&quot;:&quot;12&quot;,&quot;leading_forms&quot;:[]}}</code></td></tr><tr><td>13</td><td>2026-10-02T09:54:22.915Z</td><td>the goal</td><td>open Q-13 r1</td><td><code>{&quot;act&quot;:{&quot;text&quot;:&quot;what is the information interpreted further from previous question\n   Format: `name_client:private_key`&quot;,&quot;why&quot;:&quot;a question of the goal&quot;,&quot;materiality&quot;:&quot;material&quot;,&quot;priority&quot;:&quot;normal&quot;,&quot;must_establish&quot;:true},&quot;decided&quot;:{&quot;scope&quot;:&quot;in_scope&quot;,&quot;scope_why&quot;:&quot;a question of the goal&quot;,&quot;section&quot;:&quot;13&quot;,&quot;leading_forms&quot;:[]}}</code></td></tr><tr><td>14</td><td>2026-10-02T09:54:22.915Z</td><td>the goal</td><td>open Q-14 r1</td><td><code>{&quot;act&quot;:{&quot;text&quot;:&quot;what is the userkey of the encrypted dbx database?\n   Format: `userkey`&quot;,&quot;why&quot;:&quot;a question of the goal&quot;,&quot;materiality&quot;:&quot;material&quot;,&quot;priority&quot;:&quot;normal&quot;,&quot;must_establish&quot;:true},&quot;decided&quot;:{&quot;scope&quot;:&quot;in_scope&quot;,&quot;scope_why&quot;:&quot;a question of the goal&quot;,&quot;section&quot;:&quot;14&quot;,&quot;leading_forms&quot;:[]}}</code></td></tr><tr><td>15</td><td>2026-10-02T09:54:22.915Z</td><td>the goal</td><td>premise_add r1</td><td><code>{&quot;act&quot;:{&quot;premise&quot;:{&quot;text&quot;:&quot;This is a synthetic offline CTF. The supplied memory image is presented as Carmine Falcone's laptop memory, and unknown.data is the additional handout evidence. Their actual contents and recoverability remain to be examined.&quot;},&quot;why&quot;:&quot;a premise of the goal&quot;},&quot;decided&quot;:{&quot;class&quot;:&quot;given&quot;,&quot;authority&quot;:&quot;goal&quot;,&quot;locator&quot;:&quot;the goal (the registry's copy), Premises, item 1&quot;},&quot;p&quot;:&quot;P-1&quot;}</code></td></tr><tr><td>16</td><td>2026-10-02T09:54:22.915Z</td><td>system</td><td>seed</td><td><code>{&quot;source&quot;:&quot;registry&quot;,&quot;questions&quot;:[&quot;Q-1&quot;,&quot;Q-2&quot;,&quot;Q-3&quot;,&quot;Q-4&quot;,&quot;Q-5&quot;,&quot;Q-6&quot;,&quot;Q-7&quot;,&quot;Q-8&quot;,&quot;Q-9&quot;,&quot;Q-10&quot;,&quot;Q-11&quot;,&quot;Q-12&quot;,&quot;Q-13&quot;,&quot;Q-14&quot;],&quot;objectives&quot;:[],&quot;premises&quot;:[&quot;P-1&quot;]}</code></td></tr></tbody></table>
+<h3>The lead register</h3>
+<p>No lead was opened.</p>
+<h3>The finish</h3>
+<p>No finish register: a run from before one seat coordinated the finish, or one no seat called done in.</p></div>
+  </section>
+
+  <footer>
+    <p>Produced by DFIR Swarm 0.3.0 from the run's own files. This document is self-contained: it fetches no stylesheet, script, font or image, so it renders the same on a machine with no network. The evidence hashes above are the ones recorded at kickoff; the artifact hashes are of the files as they stood when this was generated.</p>
+    <p>DFIR Swarm is free software under the GNU Affero General Public License v3 or later. The name and the wordmark are not covered by that licence.</p>
+  </footer>
+</main>
+</body>
+</html>

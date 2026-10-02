@@ -1,0 +1,51 @@
+{
+  "name": "ioc_scan",
+  "description": "Stream a large binary for ASCII and UTF-16LE needles; return offsets, unique strings, and context snippets.",
+  "params": {
+    "path": {
+      "type": "string",
+      "description": "Binary to scan (default inputs/[UNALLOCATED])"
+    },
+    "needles": {
+      "type": "string",
+      "description": "Pipe-separated ASCII needles"
+    },
+    "max_hits": {
+      "type": "integer",
+      "description": "Max hit records to return"
+    },
+    "context": {
+      "type": "integer",
+      "description": "Snippet bytes after match"
+    },
+    "start": {
+      "type": "integer",
+      "description": "Start offset"
+    },
+    "length": {
+      "type": "integer",
+      "description": "Max bytes to scan"
+    },
+    "chunk": {
+      "type": "integer",
+      "description": "Read chunk size"
+    },
+    "skip_zeros": {
+      "type": "boolean",
+      "description": "Deprecated and refused: skipping nearly-zero chunks can hide hits"
+    },
+    "unique_only": {
+      "type": "boolean",
+      "description": "Dedup similar snippets"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 120,
+  "example": "{\"path\": \"inputs/[UNALLOCATED]\", \"needles\": \"sysinternals|psexec|http://|https://|IEUser\", \"max_hits\": 30, \"length\": 50000000}",
+  "by": "s183900",
+  "at": "2026-09-18T22:16:43.028Z",
+  "version": 3,
+  "sha256": "9f4f78324179f6ce6a2057cac5b65e5afe849c575b7b140e8028cc515907e4ab",
+  "pack": "computer-forensics-base"
+}

@@ -1,0 +1,92 @@
+[
+  {
+    "agent": "s42120108",
+    "assistant_turns": 27,
+    "models": [
+      "gpt-6-luna"
+    ],
+    "errors": [],
+    "tokens": 1499666
+  },
+  {
+    "agent": "s42120106",
+    "assistant_turns": 16,
+    "models": [
+      "gpt-daybreak-blue-latest"
+    ],
+    "errors": [],
+    "tokens": 895128
+  },
+  {
+    "agent": "s42120101",
+    "assistant_turns": 26,
+    "models": [
+      "gpt-6.1-sol"
+    ],
+    "errors": [],
+    "tokens": 1582800
+  },
+  {
+    "agent": "s42120100",
+    "assistant_turns": 24,
+    "models": [
+      "gpt-6.1-sol"
+    ],
+    "errors": [],
+    "tokens": 1321765
+  },
+  {
+    "agent": "s42120107",
+    "assistant_turns": 31,
+    "models": [
+      "gpt-6-luna"
+    ],
+    "errors": [],
+    "tokens": 1914724
+  },
+  {
+    "agent": "s42120109",
+    "assistant_turns": 30,
+    "models": [
+      "gpt-6-luna"
+    ],
+    "errors": [],
+    "tokens": 2074343
+  },
+  {
+    "agent": "s42120102",
+    "assistant_turns": 22,
+    "models": [
+      "gpt-6.1-sol"
+    ],
+    "errors": [],
+    "tokens": 1262478
+  },
+  {
+    "agent": "s42120105",
+    "assistant_turns": 14,
+    "models": [
+      "gpt-daybreak-blue-latest"
+    ],
+    "errors": [],
+    "tokens": 749953
+  },
+  {
+    "agent": "s42120104",
+    "assistant_turns": 13,
+    "models": [
+      "gpt-daybreak-blue-latest"
+    ],
+    "errors": [],
+    "tokens": 704521
+  },
+  {
+    "agent": "s42120103",
+    "assistant_turns": 26,
+    "models": [
+      "gpt-6.1-sol"
+    ],
+    "errors": [],
+    "tokens": 1421823
+  }
+]

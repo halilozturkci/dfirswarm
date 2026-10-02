@@ -1,0 +1,21 @@
+{
+  "archive": {
+    "name": "Gotham_Underground.zip",
+    "bytes": 2132713982,
+    "sha256": "ea20458d8d1904797d7134f0249c3029df561dd1664647c958698832a450b636"
+  },
+  "staged_root": "/Users/halilozturkci/DFIR/SwarmInputs/batman-investigation-ii",
+  "members": [
+    {
+      "path": "chall/Carmine-Falcone.raw",
+      "bytes": 4831838208,
+      "sha256": "3e03551e1f55dd792b0bc459b5620522d61fcf2379e8f6d89ef439fef8263cac"
+    },
+    {
+      "path": "chall/unknown.data",
+      "bytes": 36194,
+      "sha256": "87841ce462a019649f6206c72cf65ce5305a88b828ca45996ae9422e6f578f4f"
+    }
+  ],
+  "solution_read": false
+}

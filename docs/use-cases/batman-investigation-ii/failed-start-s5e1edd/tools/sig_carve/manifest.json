@@ -1,0 +1,31 @@
+{
+  "name": "sig_carve",
+  "description": "Scan a binary file for multiple file signatures (magic bytes) and return offsets, context, and estimated sizes. Signatures defined inline.",
+  "params": {
+    "path": {
+      "type": "string",
+      "description": "Path to binary file to scan"
+    },
+    "sig": {
+      "type": "string",
+      "description": "Signature name (MZ,PK,regf,MAM,SCCA,EVTX,OLE,LNK,SQLite,RAR,7z,GZ,BZ2,PDF,PNG,JFIF,PCH) or 'all'"
+    },
+    "context": {
+      "type": "integer",
+      "description": "Context bytes to show (default 64)"
+    },
+    "max_hits": {
+      "type": "integer",
+      "description": "Max hits per signature (default 500)"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 120,
+  "example": "{\"path\": \"inputs/[UNALLOCATED]\", \"sig\": \"all\", \"max_hits\": 10}",
+  "by": "s183906",
+  "at": "2026-09-18T22:13:29.602Z",
+  "version": 1,
+  "sha256": "bfa35a1fe1c14e645ff881dcf662f8c5e72697540a71b7da7fee5ceb37925c95",
+  "pack": "computer-forensics-base"
+}

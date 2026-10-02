@@ -1,0 +1,31 @@
+{
+  "name": "sqlite_query",
+  "description": "Run a read-only sqlite3 query against a database file and return stdout/stderr plus exit code.",
+  "params": {
+    "db_path": {
+      "type": "string",
+      "description": "Path to the SQLite database file."
+    },
+    "sql": {
+      "type": "string",
+      "description": "SQL statement(s) to run."
+    },
+    "csv": {
+      "type": "boolean",
+      "description": "Emit CSV with headers via sqlite3 -csv -header when true."
+    },
+    "readonly": {
+      "type": "boolean",
+      "description": "Open the database in immutable read-only mode when true."
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 30,
+  "example": "{\"db_path\":\"work/extracted/memory/chrome_History\",\"sql\":\"select count(*) from urls;\",\"csv\":true,\"readonly\":true}",
+  "by": "s881002",
+  "at": "2026-09-18T13:31:25.586Z",
+  "version": 3,
+  "sha256": "ca4160a64010a8a7e00ca914a8cf3801a84c30ee4ef6ad54c11720042af59a7c",
+  "pack": "computer-forensics-base"
+}

@@ -1,0 +1,12 @@
+{
+  "run": "s421201",
+  "sandbox": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+  "controller_pid": 93032,
+  "started_at": "2026-10-02T09:56:40.502666+00:00",
+  "state": "LIVE",
+  "models": {
+    "openai-codex/gpt-6.1-sol": 4,
+    "openai-codex/gpt-daybreak-blue-latest": 3,
+    "openai-codex/gpt-6-luna": 3
+  }
+}

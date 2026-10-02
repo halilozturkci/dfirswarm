@@ -1,0 +1,39 @@
+{
+  "name": "feature_scan",
+  "description": "Sweep a whole image or blob with bulk_extractor and return what it found per feature: addresses, URLs, domains, card numbers, EXIF, telephone numbers and more, with counts, the top values and the offset each came from. Works with no file system at all.",
+  "params": {
+    "path": {
+      "type": "string",
+      "description": "An image, a partition, or any blob"
+    },
+    "out_dir": {
+      "type": "string",
+      "description": "Where the feature files land, under work/. Must not already exist."
+    },
+    "only": {
+      "type": "array",
+      "description": "Run only these scanners, e.g. [\"email\",\"url\",\"exif\"]"
+    },
+    "disable": {
+      "type": "array",
+      "description": "Scanners to turn off, e.g. [\"wordlist\"]"
+    },
+    "top": {
+      "type": "integer",
+      "description": "How many distinct values to return per feature (default 15)"
+    },
+    "timeout_seconds": {
+      "type": "integer",
+      "description": "Give up after this long (default 900)"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 1200,
+  "example": "{\"path\": \"inputs/disk.raw\", \"out_dir\": \"work/features\", \"only\": [\"email\", \"url\"]}",
+  "by": "maintainer",
+  "at": "2026-09-22T14:00:00.000Z",
+  "version": 2,
+  "sha256": "846b131be2e353ab4fb94f24fc489a38535d0165900db6a7dd24717abd3f863d",
+  "pack": "computer-forensics-base"
+}

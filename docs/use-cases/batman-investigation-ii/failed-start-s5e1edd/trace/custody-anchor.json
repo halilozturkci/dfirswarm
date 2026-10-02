@@ -1,0 +1,92 @@
+{
+  "run": "s5e1edd",
+  "started_at": "2026-10-02T09:54:20Z",
+  "isolation": "microvm",
+  "inputs_manifest_sha256": "df569ca6d4f844f03770031c59ac22b176dd29b0243d6331ae3d3cd9aa0147cd",
+  "case_policy_sha256": "4eb4c65108dab9ead4135dce9c7cda7a72d0762982ecc258744c2e73387293c0",
+  "credentials": {
+    "customer_case": false,
+    "seats": [
+      {
+        "seat": "s5e1edd00",
+        "model": "openai-codex/gpt-6.1-sol",
+        "provider": "openai-codex",
+        "credential": "oauth",
+        "owner": null,
+        "plan": "consumer plan; not for customer data"
+      },
+      {
+        "seat": "s5e1edd01",
+        "model": "openai-codex/gpt-6.1-sol",
+        "provider": "openai-codex",
+        "credential": "oauth",
+        "owner": null,
+        "plan": "consumer plan; not for customer data"
+      },
+      {
+        "seat": "s5e1edd02",
+        "model": "openai-codex/gpt-6.1-sol",
+        "provider": "openai-codex",
+        "credential": "oauth",
+        "owner": null,
+        "plan": "consumer plan; not for customer data"
+      },
+      {
+        "seat": "s5e1edd03",
+        "model": "openai-codex/gpt-6.1-sol",
+        "provider": "openai-codex",
+        "credential": "oauth",
+        "owner": null,
+        "plan": "consumer plan; not for customer data"
+      },
+      {
+        "seat": "s5e1edd04",
+        "model": "openai-codex/gpt-daybreak-blue-latest",
+        "provider": "openai-codex",
+        "credential": "oauth",
+        "owner": null,
+        "plan": "consumer plan; not for customer data"
+      },
+      {
+        "seat": "s5e1edd05",
+        "model": "openai-codex/gpt-daybreak-blue-latest",
+        "provider": "openai-codex",
+        "credential": "oauth",
+        "owner": null,
+        "plan": "consumer plan; not for customer data"
+      },
+      {
+        "seat": "s5e1edd06",
+        "model": "openai-codex/gpt-daybreak-blue-latest",
+        "provider": "openai-codex",
+        "credential": "oauth",
+        "owner": null,
+        "plan": "consumer plan; not for customer data"
+      },
+      {
+        "seat": "s5e1edd07",
+        "model": "openai-codex/gpt-6-luna",
+        "provider": "openai-codex",
+        "credential": "oauth",
+        "owner": null,
+        "plan": "consumer plan; not for customer data"
+      },
+      {
+        "seat": "s5e1edd08",
+        "model": "openai-codex/gpt-6-luna",
+        "provider": "openai-codex",
+        "credential": "oauth",
+        "owner": null,
+        "plan": "consumer plan; not for customer data"
+      },
+      {
+        "seat": "s5e1edd09",
+        "model": "openai-codex/gpt-6-luna",
+        "provider": "openai-codex",
+        "credential": "oauth",
+        "owner": null,
+        "plan": "consumer plan; not for customer data"
+      }
+    ]
+  }
+}

@@ -1,0 +1,1 @@
+record only: the jobs' outputs stay in the run, each named by its sha256

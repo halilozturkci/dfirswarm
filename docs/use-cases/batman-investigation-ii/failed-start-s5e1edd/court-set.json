@@ -1,0 +1,165 @@
+{
+  "run": "s5e1edd",
+  "note": "Every file handed over with this run's report, with its size and sha256 as the dossier read it, or the reason it is absent. report.html is listed with the hash of the report as generated beside this file.",
+  "files": [
+    {
+      "name": "report.html",
+      "present": true,
+      "bytes": 100923,
+      "sha256": "ae2bf20f7badb63be3a1df763b0e53cd6d572c2c4fae4e468889c5ff9a3e34fc",
+      "description": "The report: cover, evidence, timeline, exhibits, method, artifacts, custody, and the list of the files handed over with it. One file, nothing fetched."
+    },
+    {
+      "name": "summary.md",
+      "present": true,
+      "bytes": 8161,
+      "sha256": "8c93d98aa47a1a91eeb29ae6e1eddb118c32695f1a452b886f468f5b326f364c",
+      "description": "The run summary, rendered from the sandbox's own files."
+    },
+    {
+      "name": "artifacts.json",
+      "present": true,
+      "bytes": 180,
+      "sha256": "acc9362bb2c66b61e2481698e28b74453bc4fd9286d42cb37154059f89a1c706",
+      "description": "Every file under work/, with its sha256 as it is now — including what stays in the sandbox. The index custody sealed at stop is artifacts.sealed.json."
+    },
+    {
+      "name": "ledger.jsonl",
+      "present": false,
+      "bytes": null,
+      "sha256": null,
+      "reason": "nothing recorded",
+      "description": "The timeline, indicators, findings and searches that found nothing, as the agents recorded them, corrections included."
+    },
+    {
+      "name": "ledger.md",
+      "present": false,
+      "bytes": null,
+      "sha256": null,
+      "reason": "nothing recorded",
+      "description": "The same ledger, rendered."
+    },
+    {
+      "name": "trace.jsonl",
+      "present": true,
+      "bytes": 1230,
+      "sha256": "93a3b0e865b65de6bff97093a17d469cd649e331ac6dd022e4e2070b6787ef39",
+      "description": "Every tool call the swarm made, whole — not the page the Traces tab shows."
+    },
+    {
+      "name": "custody.json",
+      "present": false,
+      "bytes": null,
+      "sha256": null,
+      "reason": "not written for this run (swarm.sh stop takes custody)",
+      "description": "The host's custody verdict at stop: the evidence re-hashed, the trace and ledger chains, the kept outputs, each VM."
+    },
+    {
+      "name": "custody-anchor.json",
+      "present": true,
+      "bytes": 2745,
+      "sha256": "e68f1cca0bebc706afd1d68fbd930752a9b0014a55a9ac7b5d18cbf69f869e08",
+      "description": "The kickoff's anchor outside the run, with each verdict's hash: custody.json is checked against it."
+    },
+    {
+      "name": "inputs.json",
+      "present": true,
+      "bytes": 1082,
+      "sha256": "df569ca6d4f844f03770031c59ac22b176dd29b0243d6331ae3d3cd9aa0147cd",
+      "description": "The evidence manifest the kickoff wrote: every name with its sha256, and md5 and sha1 when taken."
+    },
+    {
+      "name": "artifacts.sealed.json",
+      "present": false,
+      "bytes": null,
+      "sha256": null,
+      "reason": "no custody verdict indexed work/ (swarm.sh stop takes custody)",
+      "description": "The index of work/ custody wrote at stop, byte for byte: the one custody.json and its anchor name, which every handed-over work/ file is held to. artifacts.json beside the report is generated when it is."
+    },
+    {
+      "name": "vm-s5e1edd00.json",
+      "present": true,
+      "bytes": 155612,
+      "sha256": "55f008cce212e2dd3b50c9497676ae14a501bc0f38d10eb1e73f25eef242591c",
+      "description": "The record of s5e1edd00's VM: its image, size, mounts, network, placeholders, probe, and what its stop did."
+    },
+    {
+      "name": "vm-s5e1edd01.json",
+      "present": true,
+      "bytes": 155612,
+      "sha256": "f89443f33b0215396a4c8891b36227d6fb066de98caaf8eea44a0368d2c48583",
+      "description": "The record of s5e1edd01's VM: its image, size, mounts, network, placeholders, probe, and what its stop did."
+    },
+    {
+      "name": "vm-s5e1edd02.json",
+      "present": true,
+      "bytes": 155611,
+      "sha256": "482dcdb68b90b5cfca169c78b96e9fcae78c1de4a42a38f59959b2e5d14f5fed",
+      "description": "The record of s5e1edd02's VM: its image, size, mounts, network, placeholders, probe, and what its stop did."
+    },
+    {
+      "name": "vm-s5e1edd03.json",
+      "present": true,
+      "bytes": 155612,
+      "sha256": "8fabfd4bd95525f433d9bcdf68903b05502464cc935e5622b3c06da3487ff840",
+      "description": "The record of s5e1edd03's VM: its image, size, mounts, network, placeholders, probe, and what its stop did."
+    },
+    {
+      "name": "vm-s5e1edd04.json",
+      "present": true,
+      "bytes": 155612,
+      "sha256": "38237f7cfe1878bb77ffcbce05d1997160e8462e5210c0bfdc2ef613a4a4811e",
+      "description": "The record of s5e1edd04's VM: its image, size, mounts, network, placeholders, probe, and what its stop did."
+    },
+    {
+      "name": "vm-s5e1edd05.json",
+      "present": true,
+      "bytes": 155612,
+      "sha256": "1a3d98f01c4bdca900352aa620273efa0bf2535404ab7684ae368c2fe3bc680c",
+      "description": "The record of s5e1edd05's VM: its image, size, mounts, network, placeholders, probe, and what its stop did."
+    },
+    {
+      "name": "vm-s5e1edd06.json",
+      "present": true,
+      "bytes": 155610,
+      "sha256": "71735d5747d9562cc1216079802cb3110b625163ae05a6322291b8cf038c96dc",
+      "description": "The record of s5e1edd06's VM: its image, size, mounts, network, placeholders, probe, and what its stop did."
+    },
+    {
+      "name": "vm-s5e1edd07.json",
+      "present": true,
+      "bytes": 155611,
+      "sha256": "d5ea619b477bd72f1b33173b3ade320d34f6d92b257bd55cbb0fadb203e0b0bb",
+      "description": "The record of s5e1edd07's VM: its image, size, mounts, network, placeholders, probe, and what its stop did."
+    },
+    {
+      "name": "vm-s5e1edd08.json",
+      "present": true,
+      "bytes": 155611,
+      "sha256": "34dfd607746a4da5f0349890e4cfbed007977100ece18f961fea8cfeddce013a",
+      "description": "The record of s5e1edd08's VM: its image, size, mounts, network, placeholders, probe, and what its stop did."
+    },
+    {
+      "name": "vm-s5e1edd09.json",
+      "present": true,
+      "bytes": 155612,
+      "sha256": "ff43204b173dd4c377d231ae698daf1b910398278d1d6246c016fddc8061bd29",
+      "description": "The record of s5e1edd09's VM: its image, size, mounts, network, placeholders, probe, and what its stop did."
+    },
+    {
+      "name": "operator-audit.jsonl",
+      "present": true,
+      "bytes": 247,
+      "sha256": "5e2d7756a17cf33ab0cf1c490c0f33e5d66d3fdd14b219656cd5b5d483331454",
+      "description": "This run's lines of the operator's record (who ran which command, from where), as written; the record's chain runs over the whole file in the runs directory."
+    },
+    {
+      "name": "review.jsonl",
+      "present": false,
+      "bytes": null,
+      "sha256": null,
+      "reason": "no examiner has reviewed this run",
+      "description": "The examiner's review: each entry accepted, rejected or amended, and the sign-off over the ledger's head and the report's sha256, chained."
+    }
+  ]
+}

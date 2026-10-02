@@ -1,0 +1,61 @@
+{
+  "swarm_id": "s5e1edd",
+  "n": 10,
+  "agents": [
+    {
+      "id": "s5e1edd00",
+      "role": "worker",
+      "model": "openai-codex/gpt-6.1-sol"
+    },
+    {
+      "id": "s5e1edd01",
+      "role": "worker",
+      "model": "openai-codex/gpt-6.1-sol"
+    },
+    {
+      "id": "s5e1edd02",
+      "role": "worker",
+      "model": "openai-codex/gpt-6.1-sol"
+    },
+    {
+      "id": "s5e1edd03",
+      "role": "worker",
+      "model": "openai-codex/gpt-6.1-sol"
+    },
+    {
+      "id": "s5e1edd04",
+      "role": "worker",
+      "model": "openai-codex/gpt-daybreak-blue-latest"
+    },
+    {
+      "id": "s5e1edd05",
+      "role": "worker",
+      "model": "openai-codex/gpt-daybreak-blue-latest"
+    },
+    {
+      "id": "s5e1edd06",
+      "role": "worker",
+      "model": "openai-codex/gpt-daybreak-blue-latest"
+    },
+    {
+      "id": "s5e1edd07",
+      "role": "worker",
+      "model": "openai-codex/gpt-6-luna"
+    },
+    {
+      "id": "s5e1edd08",
+      "role": "worker",
+      "model": "openai-codex/gpt-6-luna"
+    },
+    {
+      "id": "s5e1edd09",
+      "role": "worker",
+      "model": "openai-codex/gpt-6-luna"
+    }
+  ],
+  "models": [
+    "openai-codex/gpt-6-luna",
+    "openai-codex/gpt-6.1-sol",
+    "openai-codex/gpt-daybreak-blue-latest"
+  ]
+}

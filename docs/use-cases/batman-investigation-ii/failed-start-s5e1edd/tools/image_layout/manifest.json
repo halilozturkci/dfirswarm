@@ -1,0 +1,23 @@
+{
+  "name": "image_layout",
+  "description": "One pass over an image: container type, E01 acquisition record, the partition table in sectors, and each volume's file system, cluster size and serial. Returns the -o offset every other command needs.",
+  "params": {
+    "image": {
+      "type": "string",
+      "description": "Path to the image (raw, split raw's first segment, or E01)"
+    },
+    "sector_size": {
+      "type": "integer",
+      "description": "Force a sector size in bytes when the container does not say (512 or 4096)"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 300,
+  "example": "{\"image\": \"inputs/disk.E01\"}",
+  "by": "maintainer",
+  "at": "2026-09-22T09:00:00.000Z",
+  "version": 1,
+  "sha256": "e19f9cb6e74965ffef898eed9755cd0567313e2598dd98e5d09a72b5d8dfa859",
+  "pack": "computer-forensics-base"
+}

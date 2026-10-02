@@ -1,0 +1,28 @@
+{
+  "name": "ad1_extract",
+  "description": "Write the files and folders of an AccessData AD1 logical image out as a tree, each file inflated, hashed (SHA-256) and checked against the MD5 and SHA-1 the image records, with a manifest (ad1_extract.tsv) of what went where. Run it as a job (job_run tool=ad1_extract) so the files are sealed into the store and the derived catalogue takes them in turn (an archive or a disk image inside). The catalogue's members.tsv for the image (recipe ad1-items) gives the item numbers.",
+  "params": {
+    "image": {
+      "type": "string",
+      "description": "The AD1 image's first segment (.ad1), under inputs/ or a job's output under store/; its further segments are looked for beside it (x.ad2, ...)",
+      "required": true
+    },
+    "members": {
+      "type": "array",
+      "description": "Items from the catalogue's members.tsv for this image: their locators (ad1:item=<address>, the same in a partial and a whole read) or their numbers (n); a folder takes its subtree. Default: every item"
+    },
+    "out_dir": {
+      "type": "string",
+      "description": "A new or empty directory for the tree. Default: in a job $OUT/<image name less .ad1> (in a job it must be inside $OUT); called directly, work/<your id>/ad1/<image name less .ad1>"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 1800,
+  "example": "{\"image\": \"inputs/disk.ad1\"}",
+  "by": "maintainer",
+  "at": "2026-10-01T12:00:00.000Z",
+  "version": 1,
+  "sha256": "56ba75fa0d7efd197f5b4c981c12794b972b7b6ff2717173e6fc28a0f0b85a71",
+  "pack": "computer-forensics-base"
+}

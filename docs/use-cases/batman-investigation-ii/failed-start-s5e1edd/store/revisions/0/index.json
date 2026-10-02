@@ -1,0 +1,9 @@
+{
+  "revision": 0,
+  "at": "2026-10-02T09:54:20.506Z",
+  "census": {
+    "path": "catalog/coverage.tsv",
+    "sha256": null
+  },
+  "generations": []
+}

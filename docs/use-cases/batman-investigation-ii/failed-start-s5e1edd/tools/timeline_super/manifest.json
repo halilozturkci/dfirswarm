@@ -1,0 +1,43 @@
+{
+  "name": "timeline_super",
+  "description": "Build a super timeline with Plaso: log2timeline over the whole image, then psort to JSON lines. Returns the storage file, the event count, the first and last event, and a sample. Slow by design; give it a narrow parser list when you know what you are after.",
+  "params": {
+    "source": {
+      "type": "string",
+      "description": "An image, a partition, a directory or a triage collection"
+    },
+    "out_dir": {
+      "type": "string",
+      "description": "Where the storage file and the output land, under work/"
+    },
+    "parsers": {
+      "type": "string",
+      "description": "Plaso parser filter, e.g. 'winreg,winevtx,prefetch' — far faster than the default"
+    },
+    "timezone": {
+      "type": "string",
+      "description": "The evidence machine's timezone, e.g. 'Europe/Istanbul'. Output stays UTC."
+    },
+    "psort_filter": {
+      "type": "string",
+      "description": "A psort event filter, e.g. \"date > '2026-02-01'\""
+    },
+    "sample": {
+      "type": "integer",
+      "description": "How many events to return inline (default 20)"
+    },
+    "timeout_seconds": {
+      "type": "integer",
+      "description": "Give up after this long (default 1800)"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 3600,
+  "example": "{\"source\": \"inputs/disk.E01\", \"out_dir\": \"work/timeline\", \"parsers\": \"winreg,winevtx,prefetch,filestat\"}",
+  "by": "maintainer",
+  "at": "2026-09-22T14:00:00.000Z",
+  "version": 3,
+  "sha256": "415f089fa75d1ae409bdc46116e72c5fefe5b4052dcca795f9ed8ee7451235b3",
+  "pack": "computer-forensics-base"
+}

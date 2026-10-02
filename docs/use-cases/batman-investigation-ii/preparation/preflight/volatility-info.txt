@@ -1,0 +1,24 @@
+Volatility 3 Framework 2.28.2
+
+Variable	Value
+
+Kernel Base	0xf80567a00000
+DTB	0x1aa000
+Symbols	file:///symbols/windows/ntkrnlmp.pdb/81BC5C377C525081645F9958F209C5271.json.xz
+Is64Bit	True
+IsPAE	False
+layer_name	0 WindowsIntel32e
+memory_layer	1 FileLayer
+KdVersionBlock	0xf8056860f2a8
+Major/Minor	15.19041
+MachineType	34404
+KeNumberProcessors	8
+SystemTime	2024-01-07 19:06:23+00:00
+NtSystemRoot	C:\Windows
+NtProductType	NtProductWinNt
+NtMajorVersion	10
+NtMinorVersion	0
+PE MajorOperatingSystemVersion	10
+PE MinorOperatingSystemVersion	0
+PE Machine	34404
+PE TimeDateStamp	Sun Aug 11 05:47:24 2069

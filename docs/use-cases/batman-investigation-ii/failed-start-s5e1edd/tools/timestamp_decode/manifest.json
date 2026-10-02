@@ -1,0 +1,27 @@
+{
+  "name": "timestamp_decode",
+  "description": "Take a number out of an artefact and say what date it could be under every epoch in common forensic use — Unix, FILETIME, Apple, WebKit, HFS+, DOS, OLE and more — with the plausible readings ranked. For when a field holds a number and nothing says which clock it came from.",
+  "params": {
+    "value": {
+      "type": "string",
+      "description": "The number, in decimal or as 0x hex"
+    },
+    "plausible_only": {
+      "type": "boolean",
+      "description": "Return only readings that land between 1990 and twenty years from now (default true)"
+    },
+    "hex": {
+      "type": "boolean",
+      "description": "Treat a bare value as hexadecimal"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 30,
+  "example": "{\"value\": \"133502964000000000\"}",
+  "by": "maintainer",
+  "at": "2026-09-22T14:00:00.000Z",
+  "version": 1,
+  "sha256": "9b9b08bb27f2d00c020e1bfe603681d0b46763df74206a55c9b524c058e23021",
+  "pack": "computer-forensics-base"
+}

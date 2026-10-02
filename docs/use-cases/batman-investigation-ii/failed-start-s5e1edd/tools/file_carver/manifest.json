@@ -1,0 +1,35 @@
+{
+  "name": "file_carver",
+  "description": "Carve files from a raw binary dump by header/footer signatures. Given a path, an offset, and a signature type, extracts the file (using header size fields or footer markers), computes SHA256, and returns JSON with offset, size, hash, and first 128 bytes hex.",
+  "params": {
+    "path": {
+      "type": "string",
+      "description": "Path to the raw binary dump to carve from"
+    },
+    "offset": {
+      "type": "integer",
+      "description": "Byte offset where the file signature starts"
+    },
+    "sig_type": {
+      "type": "string",
+      "description": "Signature type with a lossless size parser: PE, ZIP, PDF, SQLite, regf, PNG, JPEG, GIF"
+    },
+    "max_size": {
+      "type": "integer",
+      "description": "Safety ceiling for a complete file (default 100MB); a larger file is refused, never cut"
+    },
+    "output": {
+      "type": "string",
+      "description": "Optional output file path. If omitted, returns metadata only."
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 30,
+  "example": "{\"path\":\"inputs/[UNALLOCATED]\",\"offset\":675840,\"sig_type\":\"PE\",\"output\":\"work/s183904/carved/pe_675840.bin\"}",
+  "by": "s183904",
+  "at": "2026-09-18T22:20:17.004Z",
+  "version": 2,
+  "sha256": "f7a0e0f35db1d34c489d143331e813100af364c747f1efe0b8cad0a21028c485",
+  "pack": "computer-forensics-base"
+}

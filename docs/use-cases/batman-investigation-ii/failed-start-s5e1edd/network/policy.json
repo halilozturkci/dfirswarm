@@ -1,0 +1,41 @@
+{
+  "v": 2,
+  "policy": "ctf",
+  "network": "closed",
+  "lookups": "none",
+  "contact": "passive",
+  "disclosure": {
+    "hash": "allow",
+    "public_indicator": "allow",
+    "coordinate": "allow",
+    "internal_name": "deny",
+    "personal": "deny",
+    "file_upload": "deny"
+  },
+  "evidence_link": "required",
+  "active_contact": "evidence_linked",
+  "sockets": "none",
+  "category_override": false,
+  "steward": "off",
+  "legal": "",
+  "provider_retention": "",
+  "more_evidence": "no",
+  "material_use": {
+    "acquired_evidence": "evidence",
+    "case_material": "reference",
+    "operator_supplied": "reference",
+    "external_capture": "reference"
+  },
+  "material_note": "an examiner records what a capture establishes; a published case's write-ups are never material",
+  "sources": {
+    "policy": "flag",
+    "disclosure": "preset",
+    "material_use": "preset",
+    "network": "flag",
+    "lookups": "flag",
+    "contact": "flag",
+    "legal": "default",
+    "provider_retention": "default",
+    "more_evidence": "flag"
+  }
+}

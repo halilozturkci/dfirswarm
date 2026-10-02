@@ -1,0 +1,13 @@
+{
+  "name": "check_inputs",
+  "description": "Diff inputs/ against inputs.json (size and sha256). Fails if the manifest is missing or any file differs.",
+  "params": {},
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 30,
+  "by": "sfcc304",
+  "at": "2026-09-18T15:41:47.088Z",
+  "version": 2,
+  "sha256": "3717f009cdceb8b3e3dec15decf3c3512ff9ca4aaca1714b98194afce6d62e2a",
+  "pack": "computer-forensics-base"
+}

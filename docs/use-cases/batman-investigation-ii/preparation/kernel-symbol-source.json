@@ -1,0 +1,12 @@
+{
+  "url": "https://msdl.microsoft.com/download/symbols/ntkrnlmp.pdb/81BC5C377C525081645F9958F209C5271/ntkrnlmp.pdb",
+  "retrieved_at": "2026-10-02T09:48:26.293604+00:00",
+  "bytes": 8596480,
+  "sha256": "bc88e1752c1a3d4c0db1cf25b014c587277d5fb1951587c0c07c49551d49504c",
+  "purpose": "offline kernel symbols, no challenge solution",
+  "isf": {
+    "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics/vendor/symbols/windows/ntkrnlmp.pdb/81BC5C377C525081645F9958F209C5271.json.xz",
+    "bytes": 583868,
+    "sha256": "059dbb59d2413b3e1dcb68c5241e8eecf5c5348d1cbe71950c4f6189dada5e2c"
+  }
+}
