@@ -1,0 +1,2 @@
+{"amount_sign": "positive", "coinAmount_type": "str", "note_join_count": 1, "notes": [{"message_present": true, "message_type": "str", "note_keys": ["message", "txId"], "sends_present": false}], "recipient_to_present": false, "row_index": 0}
+{"amount_sign": "negative", "coinAmount_type": "str", "note_join_count": 1, "notes": [{"message_present": false, "message_type": "str", "note_keys": ["message", "sends", "txId"], "sends_present": true}], "recipient_to_present": true, "row_index": 1}

@@ -1,0 +1,1 @@
+{"v":1,"job":"j000330","attempt":1,"sealed_at":"2026-10-02T14:39:55.349Z","files":[{"path":"schema-role-audit.json","path_b64":"c2NoZW1hLXJvbGUtYXVkaXQuanNvbg==","bytes":1524,"sha256":"8cfd49b01e716020d1498a62cbb681b47656917ba9d5dc66158c09b0ae3ceb86","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":1524}}

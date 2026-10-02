@@ -1,0 +1,1 @@
+{"v":1,"job":"j000332","attempt":1,"sealed_at":"2026-10-02T14:42:22.078Z","files":[{"path":"profile-key-namespace-contexts.jsonl","path_b64":"cHJvZmlsZS1rZXktbmFtZXNwYWNlLWNvbnRleHRzLmpzb25s","bytes":13568642,"sha256":"ba8b9984f9eb8fc8f47da073edd25ecf15f327aa5cd563f6b2a7456c87442ac2","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":13568642}}

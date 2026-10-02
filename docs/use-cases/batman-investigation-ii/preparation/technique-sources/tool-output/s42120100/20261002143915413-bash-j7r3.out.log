@@ -1,0 +1,771 @@
+{
+  "v": 4,
+  "seq": 304,
+  "kind": "answer",
+  "value": "Primary requester interpretation: hugo strange_salvatore maroni. The intended-contact alternative required by C-1 remains unresolved.",
+  "confidence": "medium",
+  "because": "Both complete retained failure logs and output inventories were re-read; failures are not absence or identity evidence.",
+  "confidence_why": "Explicit request and associated recipient identity establish requester and presented mail persona. Failed attempts establish neither identities nor absence, and intended-contact identity remains unauthenticated.",
+  "qualifies": [
+    {
+      "ref": "E-26",
+      "why": "Complete j46 stderr reports Incorrect padding; its only output is a physical region, not a decoded attachment. Used only to document this failed attempt. Successful E23/E41/E54 supply attachment and identity claims; no absence is inferred."
+    },
+    {
+      "ref": "E-143",
+      "why": "Complete j176 stderr reports missing undeclared j130 stdout; its output directory is empty. Used only to document the failure. E146 records the later successful corrected scan; no negative or identity conclusion rests on j176."
+    },
+    {
+      "ref": "E-150",
+      "why": "Failed preliminary routes and contextual trees support no absence claim; positive claims rest on successful mail/identity findings."
+    }
+  ],
+  "section": "question:1",
+  "reasoning": "E-23 identifies Salvatore Maroni as requester; E-54 associates the recipient with Hugo Strange. Assuming P-1, this is the presented mail disguise. E-41 establishes complete attachment bytes through successful cached MIME recovery. E-150 corrects E-116's contextual memory/cache scope; E-107/E-109/E-112/E-113 and E-146 are dependent metadata, paths or reader echoes, not new actors or complete filesystem-area coverage. E-26 establishes only the preliminary contiguous physical decode failure, not missing attachment bytes or a contrary identity. E-143 establishes only a scan failure caused by an undeclared input, with no retained contexts; E-146 supplies the later successful corrected result. E-20 bounds a preliminary parse rather than successful complete MIME recovery. E-195 documents the unavailable audited DBX codec; E-289 preserves readable-profile/sweep bounds without DBX/log plaintext. E-300 is a partial-decoding limitation: E-295/E-298/E-299 do not establish authenticated contact records. E-303 supports repaired-archive structure, not intended-contact identity or authenticated key linkage. E-212 proves token construction, not a key role or contact identity. These observations preserve the requester/persona and leave the C-1 intended-contact alternative open.",
+  "support": [
+    {
+      "seq": 23,
+      "hash": "5a412ad6d3b392f081f81d15b146b8973c7d5bf0a6a46ebad996d2b92a7f3aac"
+    },
+    {
+      "seq": 54,
+      "hash": "ce5f1cc82dfa8bd621a219fd831a0173628e5c1a1e7d9f8c96665ac53faca2a0"
+    },
+    {
+      "seq": 41,
+      "hash": "c100bb85c49ecedc3ddff8e659f3f0734615da1c8985e541747bffd97453d1ec"
+    },
+    {
+      "seq": 150,
+      "hash": "7264c4156ec031edac875bb668ec70df9ae4d3d8f8658fd38bdd97e1aae0c172"
+    },
+    {
+      "seq": 116,
+      "hash": "7e6bbcdd2506c15b9fc4a231a51bc164d9bbddef6383b948249ece2b7f48a0f5"
+    },
+    {
+      "seq": 107,
+      "hash": "caae2dc39f3023e44f28828d76daabb68bbee68ecd178a5a4b960bc830e19370"
+    },
+    {
+      "seq": 109,
+      "hash": "63c85746aca5e163b5720fa5f38d6f311e089afc655b48fae01bfaa3bde92fe4"
+    },
+    {
+      "seq": 112,
+      "hash": "590305af7f2df7b14959d45dac31b851a3449c70a92bb4e4d46d23bbecefd7f7"
+    },
+    {
+      "seq": 113,
+      "hash": "3e6c0635dbde7174aca6926a9f816cdea8e8715c93ee4657696bfcd821ae8af9"
+    },
+    {
+      "seq": 146,
+      "hash": "2dbb16b6f7788a55ef32602f187fc1b5e0cfa180aecc07acdad31ccc58f541f5"
+    },
+    {
+      "seq": 26,
+      "hash": "42c726fea00dba54a419e0672e7f5d1820178d8e247621f447a9aeedf5725d6b"
+    },
+    {
+      "seq": 143,
+      "hash": "dff66b4bb7a7de04de6a7d00fd9ff81a162bbefda57b22504e172a2ddd46efc5"
+    },
+    {
+      "seq": 289,
+      "hash": "de58ab7abf5e89530184ce73ebe81a87e9c91e422f3c6ede0cddc64b43e14ac6"
+    },
+    {
+      "seq": 295,
+      "hash": "30abeb18affc2b6c5eca12369197d963babf1f6fa80e8b4d508f6b0333c39052"
+    },
+    {
+      "seq": 298,
+      "hash": "8fc58bad0dd88e6446ac823a5190bc10a85d78c3624d6439e85047fb66223c0d"
+    },
+    {
+      "seq": 299,
+      "hash": "c5a48b24a150ca0b7dea06ef6bd22ba6b4b5a1a786c8c3f4416cb6eee5a7e5f0"
+    },
+    {
+      "seq": 303,
+      "hash": "b2f6c8d417938f89e5896095bf1d8f999680bcd33c94192ec759096f82b48f95"
+    },
+    {
+      "seq": 212,
+      "hash": "749c44d84934cbb423343d3ad9eefb3442a0106ab9922c8f32cb965618227183"
+    }
+  ],
+  "limitations": [
+    {
+      "seq": 20,
+      "hash": "f506304d62e1414cade07203068f36fcca829c74720fdb1fc79c02243ed1dac9"
+    },
+    {
+      "seq": 195,
+      "hash": "e940633d6cf0ffa40b875f34ea045fc30502251e47af84e4d4cb70606e18d43c"
+    },
+    {
+      "seq": 300,
+      "hash": "fe834c8f8ae441bdc685dedc118c1728e749254503de3143a0806fb1b8373937"
+    }
+  ],
+  "alternatives_open": "Another person could be named in undecoded contact records. Constructed tokens and incidental parser prefixes cannot settle identity; physical attribution rests on P-1.",
+  "would_change": "Authenticated intended-contact identity linkage would settle the alternative; contradictory recipient/account evidence would change persona attribution.",
+  "result": "partial",
+  "contrary_none_why": "No standing observation conflicts with the retained requester or recipient identity; intended contact is a distinct unresolved part. Failed attempts are not contrary evidence.",
+  "finish_material": "Correct the failed-attempt support defect named by the first done refusal: explicitly qualify E26/j46 and E143/j176. Primary requester/persona support and intended-contact uncertainty are unchanged.",
+  "parts": [
+    {
+      "id": "alias",
+      "part": "Disguise identity",
+      "status": "established",
+      "refs": [
+        "E-54"
+      ]
+    },
+    {
+      "id": "requester",
+      "part": "Person who asked Falcone to contact someone",
+      "status": "established",
+      "refs": [
+        "E-23"
+      ]
+    },
+    {
+      "id": "intended",
+      "part": "Intended contact and alternative formatted answer required by C-1",
+      "status": "open",
+      "open_by": "E-195"
+    }
+  ],
+  "premises": [
+    {
+      "id": "P-1",
+      "rev": 1,
+      "stance": "assumed"
+    }
+  ],
+  "premise_tested": {
+    "outcome": "Successful retained request and recipient account/welcome evidence establish requester and associated mail persona independently of preliminary failures.",
+    "refs": [
+      "E-23",
+      "E-54"
+    ]
+  },
+  "confidence_rule": 1,
+  "by": "s42120100",
+  "authors": [
+    "s42120100"
+  ],
+  "at": "2026-10-02T12:42:33.880Z",
+  "supersedes": 302,
+  "prev": "b2f6c8d417938f89e5896095bf1d8f999680bcd33c94192ec759096f82b48f95",
+  "hash": "3d13c86a573ae8c1c9ef51519b9041c2469938234e3f223f1262db1c8ae9f6f8"
+}
+{
+  "v": 4,
+  "seq": 340,
+  "kind": "finding",
+  "value": "An independent pure-Python secp256k1/BIP32 implementation using the two-source-copy constant set and the first 64 bytes of the validated serialized seed reproduced storage.seco authentication: the SECO checksum, wrapped-key AES-GCM tag, and payload AES-GCM tag all validated, yielding 2,229 bytes byte-identical to j321's retained payload.",
+  "source": "job:j000323/independent-storage-authentication.json",
+  "evidence": "Independent Python 3.11.2 job cross-checked both j318 resolved source copies; implemented secp256k1 point addition, scalar multiplication, compressed public-key encoding, and BIP32 CKDpriv without using j321's EC implementation; derived only the source-defined three-component path; validated exact SECO length and SHA-256 checksum; used stored scrypt N=16384,r=8,p=1 and AES-GCM for both envelopes; constant-time compared the resulting plaintext with j321. No secret value or hash was output.",
+  "confidence": "high",
+  "refs": [
+    "job:j000323/independent-storage-authentication.json",
+    "job:j000318/storage-key-constants.json",
+    "job:j000319/serialized-seed-4.bin",
+    "job:j000200/storage.seco",
+    "job:j000321/storage-authenticated-payload.bin"
+  ],
+  "answers": [
+    "1"
+  ],
+  "sensitive": true,
+  "basis": "observed",
+  "rel": [
+    {
+      "to": 338,
+      "kind": "supports"
+    }
+  ],
+  "confidence_why": "Successful authentication of both independent AES-GCM envelopes is a strong cryptographic discriminator, and the independently implemented EC/BIP32 route agrees with j321 byte-for-byte. Inputs are sealed source constants, authenticated serialized seed bytes, and the restored storage artefact. The finding is limited to provenance and authentication, not payload semantics or contact attribution.",
+  "indicates": "The source-defined HD chain from the authenticated seed is the valid storage passphrase derivation and j321's retained 2,229-byte object is the authenticated storage payload available for the separate contact-content route.",
+  "alternatives": [
+    {
+      "explanation": "A different guessed seed field, HD path, or key happened to produce a plausible plaintext.",
+      "status": "rejected",
+      "why": "Only the source-defined 64-byte seed field and exact recovered path were used, and both AES-GCM tags authenticated; no alternatives were attempted."
+    },
+    {
+      "explanation": "j321's result depended on its particular elliptic-curve implementation or contained a different payload.",
+      "status": "rejected",
+      "why": "j323 independently implemented secp256k1/BIP32 arithmetic and its authenticated plaintext is byte-identical to j321's retained payload."
+    },
+    {
+      "explanation": "Authentication alone identifies the intended contact.",
+      "status": "open",
+      "why": "Cryptographic validity establishes the payload but not the semantic interpretation; L71 separately inspects its content."
+    }
+  ],
+  "method": [
+    {
+      "command": "python3 - <<'PY'\nimport pathlib,json,hashlib,struct,os\nout=pathlib.Path(os.environ['OUT']);r=[]\nfor name in ['seed.seco','storage.seco']:\n src=pathlib.Path('store/jobs/j000190/out/inner')/name;b=bytes(x^0x33 for x in src.read_bytes());(out/name).write_bytes(b)\n n=struct.unpack('>I',b[512:516])[0]\n r.append({'name':name,'size':len(b),'magic_hex':b[:4].hex(),'payload_length':n,'exact_length':len(b)==516+n,'sha1':hashlib.sha1(b).hexdigest(),'checksum_valid':hashlib.sha256(b[256:512]+b[512:516]+b[516:516+n]).digest()==b[224:256]})\n(out/'decoded_inventory.json').write_text(json.dumps(r,indent=2));print(json.dumps(r,indent=2))\nPY",
+      "declared_scope": [
+        "job:j000190/inner/"
+      ],
+      "exit": 0,
+      "image": "dfirswarm-memory:symbols-arm64",
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+      "job": "j000200",
+      "job_kind": "command",
+      "kind": "job",
+      "network": "off",
+      "status": "ok"
+    },
+    {
+      "command": "python3 - <<'PY'\nimport os,json\np='inputs/chall/Carmine-Falcone.raw'; needle='r.d(t,\"EXO_1_PATH\"'.encode('utf-16le')\nchunk=8*1024*1024;ov=len(needle)-1;hits=[]\nwith open(p,'rb') as f:\n base=0;tail=b''\n while True:\n  z=f.read(chunk)\n  if not z:break\n  b=tail+z;origin=base-len(tail);pos=0\n  while True:\n   i=b.find(needle,pos)\n   if i<0:break\n   lo=max(0,i-1200)\n   if (origin+lo)%2:lo+=1\n   txt=b[lo:min(len(b),i+5000)].decode('utf-16le','replace')\n   q=txt.find('r.d(t,\"HD_WALLET_PURPOSE\"'); end=txt.find('},function',q)\n   if q>=0 and end>q:\n    src=txt[q:end+1]; a=int.from_bytes(b'exo','big'); c=f\"m/{a}'/1'\";d=0;l=f'{c}/{d}'\n    hits.append({'offset':origin+lo+2*q,'encoding':'UTF-16LE','source':src,'resolved':{'EXODUS_PURPOSE':a,'EXO_1_PATH':c,'DETERMINISTIC_KEY_INDEX':d,'DETERMINISTIC_KEY_PATH':l}})\n   pos=i+2\n  base+=len(z);tail=b[-ov:]\nu=[];seen=set()\nfor x in hits:\n if x['offset'] not in seen:u.append(x);seen.add(x['offset'])\nout={'hit_count':len(u),'hits':u}\nopen(os.path.join(os.environ['OUT'],'storage-key-constants.json'),'w').write(json.dumps(out,indent=2))\nprint(json.dumps({'hit_count':len(u),'offsets':[x['offset'] for x in u],'resolved':u[0]['resolved'] if u else None}))\nPY",
+      "declared_scope": [
+        "input:chall/Carmine-Falcone.raw"
+      ],
+      "exit": 0,
+      "image": "dfirswarm-memory:symbols-arm64",
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+      "job": "j000318",
+      "job_kind": "command",
+      "kind": "job",
+      "network": "off",
+      "status": "ok"
+    },
+    {
+      "command": "python3 - <<'PY'\nimport json,zlib,os,re,struct,sys\nfrom pathlib import Path\nout=Path(os.environ['OUT']);data=Path('store/jobs/j000302/out/seed-authenticated-payload.bin').read_bytes();hits=[m.start() for m in re.finditer(re.escape(b'\\x1f\\x8b\\x08'),data)];results=[]\nfor offset in hits:\n row={'offset':offset}\n try:\n  decoder=zlib.decompressobj(31);plain=decoder.decompress(data[offset:],1048576);plain+=decoder.flush();row.update({'gzip_eof':decoder.eof,'decompressed_bytes':len(plain),'gzip_member_bytes':len(data)-offset-len(decoder.unused_data),'unconsumed_bytes':len(decoder.unconsumed_tail)})\n  if decoder.eof and not decoder.unconsumed_tail:\n   filename=f'serialized-seed-{offset}.bin';(out/filename).write_bytes(plain);row['retained']=filename;row['seed_prefix_bytes']=64 if len(plain)>=64 else None;row['suffix_bytes']=len(plain)-64 if len(plain)>=64 else None;row['supported_entropy_suffix_length']=len(plain)-64 in [16,32]\n except Exception as e:row['error_type']=type(e).__name__\n results.append(row)\nsummary={'python':sys.version.split()[0],'zlib':zlib.ZLIB_VERSION,'source_rule':'E332 gzip compression before 32768-byte expansion; inspect standard gzip members inside authenticated payload, without claiming recovered shrink implementation','payload_bytes':len(data),'gzip_header_hits':len(hits),'members':results}\n(out/'gzip-member-summary.json').write_text(json.dumps(summary,indent=2));print(json.dumps(summary,sort_keys=True))\nPY",
+      "declared_scope": [
+        "job:j000302/seed-authenticated-payload.bin",
+        "job:j000315/seed-serializer-source-contexts.jsonl"
+      ],
+      "exit": 0,
+      "image": "dfirswarm-memory:symbols-arm64",
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+      "job": "j000319",
+      "job_kind": "command",
+      "kind": "job",
+      "network": "off",
+      "status": "ok"
+    },
+    {
+      "command": "python3 - <<'PY'\nimport pathlib,json,os,hmac,hashlib,struct\nimport cryptography\nfrom cryptography.hazmat.primitives.asymmetric import ec\nfrom cryptography.hazmat.primitives.serialization import Encoding,PublicFormat\nfrom cryptography.hazmat.primitives.ciphers.aead import AESGCM\nfrom cryptography.exceptions import InvalidTag\nout=pathlib.Path(os.environ['OUT'])\nconstants=json.loads(pathlib.Path('store/jobs/j000318/out/storage-key-constants.json').read_text())['hits']\nassert len(constants)==2 and constants[0]['resolved']==constants[1]['resolved']\nresolved=constants[0]['resolved'];path=resolved['DETERMINISTIC_KEY_PATH']\nseed=pathlib.Path('store/jobs/j000319/out/serialized-seed-4.bin').read_bytes();assert len(seed)==80\nI=hmac.new(b'Bitcoin seed',seed[:64],hashlib.sha512).digest();k=int.from_bytes(I[:32],'big');chain=I[32:];order=0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141\nassert 0<k<order\nfor part in path.split('/')[1:]:\n hardened=part.endswith(\"'\");index=int(part.rstrip(\"'\"))+(0x80000000 if hardened else 0)\n key=k.to_bytes(32,'big')\n if hardened:data=b'\\0'+key\n else:data=ec.derive_private_key(k,ec.SECP256K1()).public_key().public_bytes(Encoding.X962,PublicFormat.CompressedPoint)\n I=hmac.new(chain,data+struct.pack('>I',index),hashlib.sha512).digest();left=int.from_bytes(I[:32],'big');assert left<order\n k=(left+k)%order;assert k;chain=I[32:]\ns=pathlib.Path('store/jobs/j000200/out/storage.seco').read_bytes();length=struct.unpack('>I',s[512:516])[0]\nassert len(s)==516+length and hashlib.sha256(s[256:516]+s[516:]).digest()==s[224:256]\nN,r,p=struct.unpack('>III',s[288:300]);wrapping=hashlib.scrypt(k.to_bytes(32,'big'),salt=s[256:288],n=N,r=r,p=p,dklen=32,maxmem=128*1024*1024)\nsummary={'method':'Offline single source-defined BIP32 private-key path, first64 serialized seed bytes; scrypt and authenticated SECO key/blob envelopes. No recovered code execution or key guesses.','path':path,'seed_serialized_bytes':len(seed),'scrypt':{'N':N,'r':r,'p':p},'cryptography_version':cryptography.__version__,'checksum_valid':True,'key_envelope_authenticated':False,'payload_authenticated':False}\ntry:\n blobkey=AESGCM(wrapping).decrypt(s[332:344],s[360:392]+s[344:360],None);summary['key_envelope_authenticated']=True\n plain=AESGCM(blobkey).decrypt(s[392:404],s[516:]+s[404:420],None);summary['payload_authenticated']=True;summary['payload_bytes']=len(plain)\n (out/'storage-authenticated-payload.bin').write_bytes(plain)\nexcept InvalidTag:summary['result']='Authentication failed for this one source-defined derivation/envelope interpretation; no storage-content absence inferred.'\n(out/'storage-authentication-summary.json').write_text(json.dumps(summary,indent=2));print(json.dumps(summary))\nPY",
+      "declared_scope": [
+        "job:j000318/storage-key-constants.json",
+        "job:j000319/serialized-seed-4.bin",
+        "job:j000200/storage.seco",
+        "job:j000312/getter-static-runs.json",
+        "job:j000315/seed-serializer-source-contexts.jsonl"
+      ],
+      "exit": 0,
+      "image": "dfirswarm-memory:symbols-arm64",
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+      "job": "j000321",
+      "job_kind": "command",
+      "kind": "job",
+      "network": "off",
+      "status": "ok"
+    },
+    {
+      "command": "python3 - <<'PY'\nimport pathlib,json,os,hmac,hashlib,struct\nfrom cryptography.hazmat.primitives.ciphers.aead import AESGCM\nout=pathlib.Path(os.environ['OUT'])\n# Recover and cross-check source-defined constants from both retained source copies.\nc=json.loads(pathlib.Path('store/jobs/j000318/out/storage-key-constants.json').read_text())['hits']\nassert len(c)==2 and c[0]['resolved']==c[1]['resolved']\nr=c[0]['resolved']; assert r['EXODUS_PURPOSE']==int.from_bytes(b'exo','big')\nassert r['DETERMINISTIC_KEY_INDEX']==0\nassert r['EXO_1_PATH']==f\"m/{r['EXODUS_PURPOSE']}'/1'\"\nassert r['DETERMINISTIC_KEY_PATH']==r['EXO_1_PATH']+f\"/{r['DETERMINISTIC_KEY_INDEX']}\"\npath=r['DETERMINISTIC_KEY_PATH']\nseed=pathlib.Path('store/jobs/j000319/out/serialized-seed-4.bin').read_bytes(); assert len(seed)==80\n# Independent pure-Python secp256k1 arithmetic for compressed public keys.\np=0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F\nn=0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141\nG=(0x79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798,\n   0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8)\ndef add(P,Q):\n if P is None:return Q\n if Q is None:return P\n x1,y1=P;x2,y2=Q\n if x1==x2 and (y1+y2)%p==0:return None\n if P==Q:\n  m=(3*x1*x1)*pow(2*y1,-1,p)%p\n else:m=(y2-y1)*pow((x2-x1)%p,-1,p)%p\n x3=(m*m-x1-x2)%p; return x3,(m*(x1-x3)-y1)%p\ndef mul(k,P=G):\n R=None\n while k:\n  if k&1:R=add(R,P)\n  P=add(P,P);k>>=1\n return R\ndef pub(k):\n x,y=mul(k);return bytes([2+(y&1)])+x.to_bytes(32,'big')\nI=hmac.new(b'Bitcoin seed',seed[:64],hashlib.sha512).digest(); k=int.from_bytes(I[:32],'big'); chain=I[32:]\nassert 0<k<n\ncomponents=[]\nfor part in path.split('/')[1:]:\n hard=part.endswith(\"'\"); idx=int(part.rstrip(\"'\"))+(0x80000000 if hard else 0)\n data=(b'\\0'+k.to_bytes(32,'big')) if hard else pub(k)\n I=hmac.new(chain,data+struct.pack('>I',idx),hashlib.sha512).digest(); left=int.from_bytes(I[:32],'big')\n assert left<n; k=(k+left)%n; assert k; chain=I[32:];components.append({'index':idx&0x7fffffff,'hardened':hard})\ns=pathlib.Path('store/jobs/j000200/out/storage.seco').read_bytes(); assert s[:4]==b'SECO'\nL=struct.unpack('>I',s[512:516])[0]; exact=len(s)==516+L\nchecksum=hashlib.sha256(s[256:]).digest()==s[224:256]\nassert exact and checksum\nN,rr,pp=struct.unpack('>III',s[288:300]); wrap=hashlib.scrypt(k.to_bytes(32,'big'),salt=s[256:288],n=N,r=rr,p=pp,dklen=32,maxmem=128*1024*1024)\nblobkey=AESGCM(wrap).decrypt(s[332:344],s[360:392]+s[344:360],None)\nplain=AESGCM(blobkey).decrypt(s[392:404],s[516:]+s[404:420],None)\nprior=pathlib.Path('store/jobs/j000321/out/storage-authenticated-payload.bin').read_bytes()\nres={'method':'pure-Python secp256k1 BIP32 plus cryptography AESGCM; one source-defined path; no guessed alternatives or secret output','constant_copies_agree':True,'path_components':components,'serialized_seed_bytes':len(seed),'seed_field_bytes':64,'storage_bytes':len(s),'declared_payload_bytes':L,'exact_length':exact,'checksum_valid':checksum,'scrypt':{'N':N,'r':rr,'p':pp},'wrapped_key_authenticated':len(blobkey)==32,'payload_authenticated':True,'payload_bytes':len(plain),'equals_j321_payload':hmac.compare_digest(plain,prior),'secret_values_emitted':False}\n(out/'independent-storage-authentication.json').write_text(json.dumps(res,indent=2,sort_keys=True)); print(json.dumps(res,sort_keys=True))\nPY",
+      "declared_scope": [
+        "job:j000318/storage-key-constants.json",
+        "job:j000319/serialized-seed-4.bin",
+        "job:j000200/storage.seco",
+        "job:j000321/storage-authenticated-payload.bin"
+      ],
+      "exit": 0,
+      "image": "dfirswarm-memory:symbols-arm64",
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+      "job": "j000323",
+      "job_kind": "command",
+      "kind": "job",
+      "network": "off",
+      "status": "ok"
+    }
+  ],
+  "by": "s42120106",
+  "authors": [
+    "s42120106"
+  ],
+  "at": "2026-10-02T14:27:35.161Z",
+  "prev": "efacc1c336af0c50834a7975a9ee1b161f87cb60f319c4fb9dcaf3fe19ab9b7b",
+  "hash": "ee625caf1e74b883269e61466723e6c7f0c129ee822220b22537fb149db5006d"
+}
+{
+  "v": 4,
+  "seq": 344,
+  "kind": "finding",
+  "value": "The authenticated Exodus storage JSON records two Ethereum transactions and two exact txId-matched personal-note objects. The negative-amount outgoing transaction's `to` address equals the sole key in its matched note's nonempty `sends` object, whose nested message is `Oswald Cobblepot`; the positive-amount incoming transaction's matched top-level message is `Edward Nigma`.",
+  "source": "Authenticated `storage.seco` payload, gzip JSON paths `!blockchain!!v1!!txs!exodus_0:ethereum` and `!personalNotes!data`",
+  "evidence": "Read complete job:j000322/gzip-utf-8-parsed.json. Join each note to the transaction on exact txId. For the negative coinAmount row, verify its `to` value equals the key under the joined note's `sends` object and read that nested object's `message`; separately read the positive row's joined top-level `message`. E342 independently verifies the transaction direction and note structure but did not report the nested sends value.",
+  "confidence": "high",
+  "refs": [
+    "job:j000321/storage-authentication-summary.json",
+    "job:j000322/gzip-utf-8-parsed.json",
+    "job:j000326/tx-note-join-structure.json",
+    "job:j000327/stdout.log"
+  ],
+  "answers": [
+    "1"
+  ],
+  "sensitive": true,
+  "basis": "observed",
+  "because": "E339 did not distinguish the outgoing note's empty top-level message from its nonempty nested `sends` message, permitting an incorrect reading. This correction states the exact field-level join and preserves the bounded semantic conclusion.",
+  "rel": [
+    {
+      "to": 342,
+      "kind": "supports"
+    }
+  ],
+  "confidence_why": "The payload was authenticated independently in E338/E340 before parsing, and the relation is an exact equality across transaction txId, note txId, outgoing `to`, and nested `sends` key within the same sealed JSON. E342 independently reproduced the row direction and nested sends presence. This establishes the wallet's per-send label, not by itself that the email request referred to this transaction.",
+  "indicates": "The wallet owner labeled the recipient of the outgoing Ethereum send as Oswald Cobblepot. This is evidence-backed identity for a sent payment, while identifying that person as the email's intended contact remains an inference because the storage JSON does not reference the email or attachment.",
+  "alternatives": [
+    {
+      "explanation": "Oswald Cobblepot is the top-level message on the incoming transaction rather than the outgoing recipient label.",
+      "status": "rejected",
+      "why": "The outgoing row's matched note has an empty top-level message but its nested `sends` object is keyed by the exact outgoing `to` address and contains the Oswald Cobblepot message; the positive row's top-level message is Edward Nigma.",
+      "test_refs": [
+        "job:j000322/gzip-utf-8-parsed.json",
+        "job:j000326/tx-note-join-structure.json",
+        "job:j000327/stdout.log"
+      ]
+    },
+    {
+      "explanation": "The outgoing wallet label proves Oswald Cobblepot was the person meant by the earlier email's phrase 'the guy'.",
+      "status": "open",
+      "why": "The authenticated wallet object contains no direct reference to that email or its contact attachment; timing and case context make it a candidate, not a direct cross-artifact join."
+    }
+  ],
+  "significance": "Corrects E339's ambiguous use of 'message': the outgoing identity is in the nested `sends` message, whereas the incoming identity is in the top-level message.",
+  "method": [
+    {
+      "command": "python3 - <<'PY'\nimport pathlib,json,os,hmac,hashlib,struct\nimport cryptography\nfrom cryptography.hazmat.primitives.asymmetric import ec\nfrom cryptography.hazmat.primitives.serialization import Encoding,PublicFormat\nfrom cryptography.hazmat.primitives.ciphers.aead import AESGCM\nfrom cryptography.exceptions import InvalidTag\nout=pathlib.Path(os.environ['OUT'])\nconstants=json.loads(pathlib.Path('store/jobs/j000318/out/storage-key-constants.json').read_text())['hits']\nassert len(constants)==2 and constants[0]['resolved']==constants[1]['resolved']\nresolved=constants[0]['resolved'];path=resolved['DETERMINISTIC_KEY_PATH']\nseed=pathlib.Path('store/jobs/j000319/out/serialized-seed-4.bin').read_bytes();assert len(seed)==80\nI=hmac.new(b'Bitcoin seed',seed[:64],hashlib.sha512).digest();k=int.from_bytes(I[:32],'big');chain=I[32:];order=0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141\nassert 0<k<order\nfor part in path.split('/')[1:]:\n hardened=part.endswith(\"'\");index=int(part.rstrip(\"'\"))+(0x80000000 if hardened else 0)\n key=k.to_bytes(32,'big')\n if hardened:data=b'\\0'+key\n else:data=ec.derive_private_key(k,ec.SECP256K1()).public_key().public_bytes(Encoding.X962,PublicFormat.CompressedPoint)\n I=hmac.new(chain,data+struct.pack('>I',index),hashlib.sha512).digest();left=int.from_bytes(I[:32],'big');assert left<order\n k=(left+k)%order;assert k;chain=I[32:]\ns=pathlib.Path('store/jobs/j000200/out/storage.seco').read_bytes();length=struct.unpack('>I',s[512:516])[0]\nassert len(s)==516+length and hashlib.sha256(s[256:516]+s[516:]).digest()==s[224:256]\nN,r,p=struct.unpack('>III',s[288:300]);wrapping=hashlib.scrypt(k.to_bytes(32,'big'),salt=s[256:288],n=N,r=r,p=p,dklen=32,maxmem=128*1024*1024)\nsummary={'method':'Offline single source-defined BIP32 private-key path, first64 serialized seed bytes; scrypt and authenticated SECO key/blob envelopes. No recovered code execution or key guesses.','path':path,'seed_serialized_bytes':len(seed),'scrypt':{'N':N,'r':r,'p':p},'cryptography_version':cryptography.__version__,'checksum_valid':True,'key_envelope_authenticated':False,'payload_authenticated':False}\ntry:\n blobkey=AESGCM(wrapping).decrypt(s[332:344],s[360:392]+s[344:360],None);summary['key_envelope_authenticated']=True\n plain=AESGCM(blobkey).decrypt(s[392:404],s[516:]+s[404:420],None);summary['payload_authenticated']=True;summary['payload_bytes']=len(plain)\n (out/'storage-authenticated-payload.bin').write_bytes(plain)\nexcept InvalidTag:summary['result']='Authentication failed for this one source-defined derivation/envelope interpretation; no storage-content absence inferred.'\n(out/'storage-authentication-summary.json').write_text(json.dumps(summary,indent=2));print(json.dumps(summary))\nPY",
+      "declared_scope": [
+        "job:j000318/storage-key-constants.json",
+        "job:j000319/serialized-seed-4.bin",
+        "job:j000200/storage.seco",
+        "job:j000312/getter-static-runs.json",
+        "job:j000315/seed-serializer-source-contexts.jsonl"
+      ],
+      "exit": 0,
+      "image": "dfirswarm-memory:symbols-arm64",
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+      "job": "j000321",
+      "job_kind": "command",
+      "kind": "job",
+      "network": "off",
+      "status": "ok"
+    },
+    {
+      "command": "python3 - <<'PY'\nimport os,json,gzip,zlib,re,base64,pathlib\np=pathlib.Path('store/jobs/j000321/out/storage-authenticated-payload.bin').read_bytes()\nout=pathlib.Path(os.environ['OUT'])\nres={'length':len(p),'prefix_hex':p[:32].hex(),'suffix_hex':p[-32:].hex(),'parses':[]}\nvariants=[('raw',p)]\nfor name,fn in [('gzip',gzip.decompress),('zlib',zlib.decompress),('rawdeflate',lambda x:zlib.decompress(x,-15))]:\n try:\n  q=fn(p); variants.append((name,q));res['parses'].append({'codec':name,'ok':True,'length':len(q),'prefix_hex':q[:16].hex()})\n except Exception as e:res['parses'].append({'codec':name,'ok':False,'error':type(e).__name__})\nfor vn,b in variants:\n for enc in ['utf-8','utf-16le']:\n  try:\n   t=b.decode(enc)\n   rec={'variant':vn,'encoding':enc,'decoded':True,'chars':len(t)}\n   try:\n    o=json.loads(t);rec['json']=True;rec['json_type']=type(o).__name__;rec['keys']=sorted(o.keys()) if isinstance(o,dict) else None\n    (out/f'{vn}-{enc}-parsed.json').write_text(json.dumps(o,ensure_ascii=False,indent=2))\n   except Exception:rec['json']=False\n   res['parses'].append(rec)\n  except Exception:pass\n# bounded printable strings and likely contact contexts. This sealed secret output may include personal data; do not print values.\nstrings=[]\nfor m in re.finditer(rb'[ -~]{4,}',p): strings.append({'offset':m.start(),'value':m.group().decode('ascii','replace')})\nfor m in re.finditer(rb'(?:[ -~]\\x00){4,}',p): strings.append({'offset':m.start(),'value':m.group().decode('utf-16le','replace')})\nstrings.sort(key=lambda x:x['offset'])\n(out/'all-printable-strings.json').write_text(json.dumps(strings,ensure_ascii=False,indent=2))\nterms=['contact','recipient','person','name','email','mail','address','sender','client','note','label','identity','strange','maroni','nigma','falcone']\nhits=[]\nfor s in strings:\n low=s['value'].lower()\n if any(x in low for x in terms) or re.search(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}',s['value']):hits.append(s)\n(out/'contact-indicator-strings.json').write_text(json.dumps(hits,ensure_ascii=False,indent=2))\nres['string_count']=len(strings);res['contact_indicator_count']=len(hits)\n(out/'structure-summary.json').write_text(json.dumps(res,indent=2))\nprint(json.dumps({'length':len(p),'variants':[x[0] for x in variants],'strings':len(strings),'contact_indicators':len(hits),'summary':'structure-summary.json'}))\nPY",
+      "declared_scope": [
+        "job:j000321/storage-authenticated-payload.bin"
+      ],
+      "exit": 0,
+      "image": "dfirswarm-memory:symbols-arm64",
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+      "job": "j000322",
+      "job_kind": "command",
+      "kind": "job",
+      "network": "off",
+      "status": "ok"
+    },
+    {
+      "command": "python3 - <<'PY'\nimport json,pathlib,os,decimal\nx=json.loads(pathlib.Path('store/jobs/j000322/out/gzip-utf-8-parsed.json').read_text())\ntxs=x['!blockchain!!v1!!txs!exodus_0:ethereum']; notes=x['!personalNotes!data']\nrows=txs if isinstance(txs,list) else list(txs.values()) if isinstance(txs,dict) else []\ndef amt(t):\n try:return decimal.Decimal(t['coinAmount'])\n except Exception:return None\njoined=[]\nfor t in rows:\n for n in notes:\n  if isinstance(t,dict) and isinstance(n,dict) and t.get('txId')==n.get('txId'):\n   v=n.get('message'); sends=n.get('sends')\n   joined.append({'direction':'outgoing' if amt(t) is not None and amt(t)<0 else 'incoming' if amt(t) is not None and amt(t)>0 else 'unknown','message_present':isinstance(v,str) and bool(v.strip()),'sends_dict_nonempty':isinstance(sends,dict) and bool(sends),'tx_fields_have_to': 'to' in t,'note_fields':sorted(n.keys())})\nres={'tx_records':len(rows),'note_records':len(notes),'txid_joins':len(joined),'joined':joined,'identity_or_transaction_values_emitted':False}\npathlib.Path(os.environ['OUT'],'tx-note-join-structure.json').write_text(json.dumps(res,indent=2));print(json.dumps(res,sort_keys=True))\nPY",
+      "declared_scope": [
+        "job:j000322/gzip-utf-8-parsed.json"
+      ],
+      "exit": 0,
+      "image": "dfirswarm-memory:symbols-arm64",
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+      "job": "j000326",
+      "job_kind": "command",
+      "kind": "job",
+      "network": "off",
+      "status": "ok"
+    },
+    {
+      "command": "python3 - <<'PY'\nimport json,pathlib,re,decimal,os\nx=json.loads(pathlib.Path('store/jobs/j000322/out/gzip-utf-8-parsed.json').read_text()); txs=x['!blockchain!!v1!!txs!exodus_0:ethereum']; ns=x['!personalNotes!data']\nfor i,t in enumerate(txs):\n raw=t.get('coinAmount'); s=raw.strip() if isinstance(raw,str) else ''\n m=re.match(r'^([+-]?\\d+(?:\\.\\d+)?)',s)\n sign='unparsed'\n if m:\n  v=decimal.Decimal(m.group(1)); sign='negative' if v<0 else 'positive' if v>0 else 'zero'\n matches=[n for n in ns if n.get('txId')==t.get('txId')]\n r={'row_index':i,'coinAmount_type':type(raw).__name__,'amount_sign':sign,'recipient_to_present':bool(t.get('to')),'note_join_count':len(matches)}\n if matches:\n  r['notes']=[{'message_present':isinstance(n.get('message'),str) and bool(n.get('message').strip()),'message_type':type(n.get('message')).__name__,'sends_present':bool(n.get('sends')),'note_keys':sorted(n.keys())} for n in matches]\n print(json.dumps(r,sort_keys=True))\nPY",
+      "declared_scope": [
+        "job:j000322/gzip-utf-8-parsed.json"
+      ],
+      "exit": 0,
+      "image": "dfirswarm-memory:symbols-arm64",
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+      "job": "j000327",
+      "job_kind": "command",
+      "kind": "job",
+      "network": "off",
+      "status": "ok"
+    }
+  ],
+  "by": "s42120105",
+  "authors": [
+    "s42120105"
+  ],
+  "at": "2026-10-02T14:34:26.333Z",
+  "supersedes": 339,
+  "prev": "5181fff7e6ba92a3cd53c58a2269633b7578f08a76d07f587928a96a5002b186",
+  "hash": "455b9a6f8a0182494cfc4abdddae8d815051e1ef0dff67f3af6c4502e912d142"
+}
+{
+  "v": 4,
+  "seq": 345,
+  "kind": "finding",
+  "value": "Independent parsing confirms two Ethereum transaction records and two exact txId-matched personal-note entries: the positive-amount record's matched note has a nonempty top-level message, while the negative-amount record with a `to` field has an empty top-level message and a nonempty nested sends object.",
+  "source": "job:j000322/gzip-utf-8-parsed.json",
+  "evidence": "j000326 and j000327 joined exact txId values and emitted only structural information; they distinguished top-level message presence from a nested sends object, but did not inspect the nested object's message or compare its key to the transaction `to` address. E344 reports that additional field-level result; this entry does not rederive that part.",
+  "confidence": "high",
+  "refs": [
+    "job:j000322/gzip-utf-8-parsed.json",
+    "job:j000326/tx-note-join-structure.json",
+    "job:j000327/stdout.log"
+  ],
+  "answers": [
+    "1"
+  ],
+  "sensitive": true,
+  "basis": "observed",
+  "because": "E344 clarified that the outgoing recipient's message is nested under sends; my earlier interpretation wrongly treated the top-level message field as the only possible outgoing label.",
+  "rel": [
+    {
+      "to": 344,
+      "kind": "supports"
+    }
+  ],
+  "confidence_why": "The sanitized checks directly establish the top-level message and sends-field presence for each exact txId match. This is one authenticated JSON source; the nested sends key/message semantics were not checked by my jobs.",
+  "indicates": "This check only distinguishes the top-level note message from a separate nested sends object. It does not contradict the possibility that the outgoing transaction is labeled through that nested object, and it does not establish whether any wallet label is the email request's intended contact.",
+  "alternatives": [
+    {
+      "explanation": "The nested sends object may provide a message specifically for the outgoing `to` address.",
+      "status": "open",
+      "why": "My checks established only that sends is nonempty and did not inspect its key or nested message; E344 reports this additional mapping and the source object should be read for that claim.",
+      "test_refs": [
+        "job:j000322/gzip-utf-8-parsed.json"
+      ]
+    },
+    {
+      "explanation": "A wallet label alone identifies the contact sought by the email.",
+      "status": "open",
+      "why": "No direct email-to-transaction or email-to-note reference was tested in this storage-only route."
+    }
+  ],
+  "method": [
+    {
+      "command": "python3 - <<'PY'\nimport os,json,gzip,zlib,re,base64,pathlib\np=pathlib.Path('store/jobs/j000321/out/storage-authenticated-payload.bin').read_bytes()\nout=pathlib.Path(os.environ['OUT'])\nres={'length':len(p),'prefix_hex':p[:32].hex(),'suffix_hex':p[-32:].hex(),'parses':[]}\nvariants=[('raw',p)]\nfor name,fn in [('gzip',gzip.decompress),('zlib',zlib.decompress),('rawdeflate',lambda x:zlib.decompress(x,-15))]:\n try:\n  q=fn(p); variants.append((name,q));res['parses'].append({'codec':name,'ok':True,'length':len(q),'prefix_hex':q[:16].hex()})\n except Exception as e:res['parses'].append({'codec':name,'ok':False,'error':type(e).__name__})\nfor vn,b in variants:\n for enc in ['utf-8','utf-16le']:\n  try:\n   t=b.decode(enc)\n   rec={'variant':vn,'encoding':enc,'decoded':True,'chars':len(t)}\n   try:\n    o=json.loads(t);rec['json']=True;rec['json_type']=type(o).__name__;rec['keys']=sorted(o.keys()) if isinstance(o,dict) else None\n    (out/f'{vn}-{enc}-parsed.json').write_text(json.dumps(o,ensure_ascii=False,indent=2))\n   except Exception:rec['json']=False\n   res['parses'].append(rec)\n  except Exception:pass\n# bounded printable strings and likely contact contexts. This sealed secret output may include personal data; do not print values.\nstrings=[]\nfor m in re.finditer(rb'[ -~]{4,}',p): strings.append({'offset':m.start(),'value':m.group().decode('ascii','replace')})\nfor m in re.finditer(rb'(?:[ -~]\\x00){4,}',p): strings.append({'offset':m.start(),'value':m.group().decode('utf-16le','replace')})\nstrings.sort(key=lambda x:x['offset'])\n(out/'all-printable-strings.json').write_text(json.dumps(strings,ensure_ascii=False,indent=2))\nterms=['contact','recipient','person','name','email','mail','address','sender','client','note','label','identity','strange','maroni','nigma','falcone']\nhits=[]\nfor s in strings:\n low=s['value'].lower()\n if any(x in low for x in terms) or re.search(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}',s['value']):hits.append(s)\n(out/'contact-indicator-strings.json').write_text(json.dumps(hits,ensure_ascii=False,indent=2))\nres['string_count']=len(strings);res['contact_indicator_count']=len(hits)\n(out/'structure-summary.json').write_text(json.dumps(res,indent=2))\nprint(json.dumps({'length':len(p),'variants':[x[0] for x in variants],'strings':len(strings),'contact_indicators':len(hits),'summary':'structure-summary.json'}))\nPY",
+      "declared_scope": [
+        "job:j000321/storage-authenticated-payload.bin"
+      ],
+      "exit": 0,
+      "image": "dfirswarm-memory:symbols-arm64",
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+      "job": "j000322",
+      "job_kind": "command",
+      "kind": "job",
+      "network": "off",
+      "status": "ok"
+    },
+    {
+      "command": "python3 - <<'PY'\nimport json,pathlib,os,decimal\nx=json.loads(pathlib.Path('store/jobs/j000322/out/gzip-utf-8-parsed.json').read_text())\ntxs=x['!blockchain!!v1!!txs!exodus_0:ethereum']; notes=x['!personalNotes!data']\nrows=txs if isinstance(txs,list) else list(txs.values()) if isinstance(txs,dict) else []\ndef amt(t):\n try:return decimal.Decimal(t['coinAmount'])\n except Exception:return None\njoined=[]\nfor t in rows:\n for n in notes:\n  if isinstance(t,dict) and isinstance(n,dict) and t.get('txId')==n.get('txId'):\n   v=n.get('message'); sends=n.get('sends')\n   joined.append({'direction':'outgoing' if amt(t) is not None and amt(t)<0 else 'incoming' if amt(t) is not None and amt(t)>0 else 'unknown','message_present':isinstance(v,str) and bool(v.strip()),'sends_dict_nonempty':isinstance(sends,dict) and bool(sends),'tx_fields_have_to': 'to' in t,'note_fields':sorted(n.keys())})\nres={'tx_records':len(rows),'note_records':len(notes),'txid_joins':len(joined),'joined':joined,'identity_or_transaction_values_emitted':False}\npathlib.Path(os.environ['OUT'],'tx-note-join-structure.json').write_text(json.dumps(res,indent=2));print(json.dumps(res,sort_keys=True))\nPY",
+      "declared_scope": [
+        "job:j000322/gzip-utf-8-parsed.json"
+      ],
+      "exit": 0,
+      "image": "dfirswarm-memory:symbols-arm64",
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+      "job": "j000326",
+      "job_kind": "command",
+      "kind": "job",
+      "network": "off",
+      "status": "ok"
+    },
+    {
+      "command": "python3 - <<'PY'\nimport json,pathlib,re,decimal,os\nx=json.loads(pathlib.Path('store/jobs/j000322/out/gzip-utf-8-parsed.json').read_text()); txs=x['!blockchain!!v1!!txs!exodus_0:ethereum']; ns=x['!personalNotes!data']\nfor i,t in enumerate(txs):\n raw=t.get('coinAmount'); s=raw.strip() if isinstance(raw,str) else ''\n m=re.match(r'^([+-]?\\d+(?:\\.\\d+)?)',s)\n sign='unparsed'\n if m:\n  v=decimal.Decimal(m.group(1)); sign='negative' if v<0 else 'positive' if v>0 else 'zero'\n matches=[n for n in ns if n.get('txId')==t.get('txId')]\n r={'row_index':i,'coinAmount_type':type(raw).__name__,'amount_sign':sign,'recipient_to_present':bool(t.get('to')),'note_join_count':len(matches)}\n if matches:\n  r['notes']=[{'message_present':isinstance(n.get('message'),str) and bool(n.get('message').strip()),'message_type':type(n.get('message')).__name__,'sends_present':bool(n.get('sends')),'note_keys':sorted(n.keys())} for n in matches]\n print(json.dumps(r,sort_keys=True))\nPY",
+      "declared_scope": [
+        "job:j000322/gzip-utf-8-parsed.json"
+      ],
+      "exit": 0,
+      "image": "dfirswarm-memory:symbols-arm64",
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+      "job": "j000327",
+      "job_kind": "command",
+      "kind": "job",
+      "network": "off",
+      "status": "ok"
+    }
+  ],
+  "by": "s42120108",
+  "authors": [
+    "s42120108"
+  ],
+  "at": "2026-10-02T14:35:42.905Z",
+  "supersedes": 342,
+  "prev": "455b9a6f8a0182494cfc4abdddae8d815051e1ef0dff67f3af6c4502e912d142",
+  "hash": "f02ca503751f1243a3b331d5e593eb15c91d931210ffd3c0d01033aca886f036"
+}
+{
+  "v": 4,
+  "seq": 346,
+  "kind": "finding",
+  "value": "Reinterpretation of the parsed JSON confirms exact txId joins but only for the top-level message distinction: the incoming positive-amount transaction's note has a populated top-level message; the outgoing negative-amount row's note has an empty top-level message and a populated nested sends object. My jobs did not inspect the nested sends message/address correspondence.",
+  "source": "job:j000322/gzip-utf-8-parsed.json",
+  "evidence": "j000326 and j000327 joined exact txIds and emitted per-row direction, top-level message presence, and sends-object presence; they did not extract nested sends keys or messages. E344 provides the distinct field-level clarification.",
+  "confidence": "high",
+  "refs": [
+    "job:j000322/gzip-utf-8-parsed.json",
+    "job:j000326/tx-note-join-structure.json",
+    "job:j000327/stdout.log"
+  ],
+  "answers": [
+    "1"
+  ],
+  "sensitive": true,
+  "basis": "observed",
+  "because": "E344 clarified the nested outgoing sends message and my prior description overstated what the jobs checked by treating top-level message fields as exhaustive.",
+  "rel": [
+    {
+      "to": 344,
+      "kind": "supports"
+    }
+  ],
+  "confidence_why": "The limited structural result is directly reproducible from a complete parsed authenticated JSON object; nested sends semantics are outside my script's tested output.",
+  "indicates": "This confirms the top-level message is not the outgoing label, but does not test or refute an outgoing identity stored in the nested sends object. Neither field-level relation alone establishes that the wallet contact was the person sought in the email.",
+  "alternatives": [
+    {
+      "explanation": "Nested sends may map a recipient-specific message to the outgoing transaction.",
+      "status": "open",
+      "why": "My jobs did not compare the nested sends key with `to` or inspect its message; E344 records that distinction.",
+      "test_refs": [
+        "job:j000322/gzip-utf-8-parsed.json"
+      ]
+    },
+    {
+      "explanation": "The wallet-labeled recipient is the email contact.",
+      "status": "open",
+      "why": "No direct cross-artifact link to the email is established by this parsed wallet object."
+    }
+  ],
+  "method": [
+    {
+      "command": "python3 - <<'PY'\nimport os,json,gzip,zlib,re,base64,pathlib\np=pathlib.Path('store/jobs/j000321/out/storage-authenticated-payload.bin').read_bytes()\nout=pathlib.Path(os.environ['OUT'])\nres={'length':len(p),'prefix_hex':p[:32].hex(),'suffix_hex':p[-32:].hex(),'parses':[]}\nvariants=[('raw',p)]\nfor name,fn in [('gzip',gzip.decompress),('zlib',zlib.decompress),('rawdeflate',lambda x:zlib.decompress(x,-15))]:\n try:\n  q=fn(p); variants.append((name,q));res['parses'].append({'codec':name,'ok':True,'length':len(q),'prefix_hex':q[:16].hex()})\n except Exception as e:res['parses'].append({'codec':name,'ok':False,'error':type(e).__name__})\nfor vn,b in variants:\n for enc in ['utf-8','utf-16le']:\n  try:\n   t=b.decode(enc)\n   rec={'variant':vn,'encoding':enc,'decoded':True,'chars':len(t)}\n   try:\n    o=json.loads(t);rec['json']=True;rec['json_type']=type(o).__name__;rec['keys']=sorted(o.keys()) if isinstance(o,dict) else None\n    (out/f'{vn}-{enc}-parsed.json').write_text(json.dumps(o,ensure_ascii=False,indent=2))\n   except Exception:rec['json']=False\n   res['parses'].append(rec)\n  except Exception:pass\n# bounded printable strings and likely contact contexts. This sealed secret output may include personal data; do not print values.\nstrings=[]\nfor m in re.finditer(rb'[ -~]{4,}',p): strings.append({'offset':m.start(),'value':m.group().decode('ascii','replace')})\nfor m in re.finditer(rb'(?:[ -~]\\x00){4,}',p): strings.append({'offset':m.start(),'value':m.group().decode('utf-16le','replace')})\nstrings.sort(key=lambda x:x['offset'])\n(out/'all-printable-strings.json').write_text(json.dumps(strings,ensure_ascii=False,indent=2))\nterms=['contact','recipient','person','name','email','mail','address','sender','client','note','label','identity','strange','maroni','nigma','falcone']\nhits=[]\nfor s in strings:\n low=s['value'].lower()\n if any(x in low for x in terms) or re.search(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}',s['value']):hits.append(s)\n(out/'contact-indicator-strings.json').write_text(json.dumps(hits,ensure_ascii=False,indent=2))\nres['string_count']=len(strings);res['contact_indicator_count']=len(hits)\n(out/'structure-summary.json').write_text(json.dumps(res,indent=2))\nprint(json.dumps({'length':len(p),'variants':[x[0] for x in variants],'strings':len(strings),'contact_indicators':len(hits),'summary':'structure-summary.json'}))\nPY",
+      "declared_scope": [
+        "job:j000321/storage-authenticated-payload.bin"
+      ],
+      "exit": 0,
+      "image": "dfirswarm-memory:symbols-arm64",
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+      "job": "j000322",
+      "job_kind": "command",
+      "kind": "job",
+      "network": "off",
+      "status": "ok"
+    },
+    {
+      "command": "python3 - <<'PY'\nimport json,pathlib,os,decimal\nx=json.loads(pathlib.Path('store/jobs/j000322/out/gzip-utf-8-parsed.json').read_text())\ntxs=x['!blockchain!!v1!!txs!exodus_0:ethereum']; notes=x['!personalNotes!data']\nrows=txs if isinstance(txs,list) else list(txs.values()) if isinstance(txs,dict) else []\ndef amt(t):\n try:return decimal.Decimal(t['coinAmount'])\n except Exception:return None\njoined=[]\nfor t in rows:\n for n in notes:\n  if isinstance(t,dict) and isinstance(n,dict) and t.get('txId')==n.get('txId'):\n   v=n.get('message'); sends=n.get('sends')\n   joined.append({'direction':'outgoing' if amt(t) is not None and amt(t)<0 else 'incoming' if amt(t) is not None and amt(t)>0 else 'unknown','message_present':isinstance(v,str) and bool(v.strip()),'sends_dict_nonempty':isinstance(sends,dict) and bool(sends),'tx_fields_have_to': 'to' in t,'note_fields':sorted(n.keys())})\nres={'tx_records':len(rows),'note_records':len(notes),'txid_joins':len(joined),'joined':joined,'identity_or_transaction_values_emitted':False}\npathlib.Path(os.environ['OUT'],'tx-note-join-structure.json').write_text(json.dumps(res,indent=2));print(json.dumps(res,sort_keys=True))\nPY",
+      "declared_scope": [
+        "job:j000322/gzip-utf-8-parsed.json"
+      ],
+      "exit": 0,
+      "image": "dfirswarm-memory:symbols-arm64",
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+      "job": "j000326",
+      "job_kind": "command",
+      "kind": "job",
+      "network": "off",
+      "status": "ok"
+    },
+    {
+      "command": "python3 - <<'PY'\nimport json,pathlib,re,decimal,os\nx=json.loads(pathlib.Path('store/jobs/j000322/out/gzip-utf-8-parsed.json').read_text()); txs=x['!blockchain!!v1!!txs!exodus_0:ethereum']; ns=x['!personalNotes!data']\nfor i,t in enumerate(txs):\n raw=t.get('coinAmount'); s=raw.strip() if isinstance(raw,str) else ''\n m=re.match(r'^([+-]?\\d+(?:\\.\\d+)?)',s)\n sign='unparsed'\n if m:\n  v=decimal.Decimal(m.group(1)); sign='negative' if v<0 else 'positive' if v>0 else 'zero'\n matches=[n for n in ns if n.get('txId')==t.get('txId')]\n r={'row_index':i,'coinAmount_type':type(raw).__name__,'amount_sign':sign,'recipient_to_present':bool(t.get('to')),'note_join_count':len(matches)}\n if matches:\n  r['notes']=[{'message_present':isinstance(n.get('message'),str) and bool(n.get('message').strip()),'message_type':type(n.get('message')).__name__,'sends_present':bool(n.get('sends')),'note_keys':sorted(n.keys())} for n in matches]\n print(json.dumps(r,sort_keys=True))\nPY",
+      "declared_scope": [
+        "job:j000322/gzip-utf-8-parsed.json"
+      ],
+      "exit": 0,
+      "image": "dfirswarm-memory:symbols-arm64",
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+      "job": "j000327",
+      "job_kind": "command",
+      "kind": "job",
+      "network": "off",
+      "status": "ok"
+    }
+  ],
+  "by": "s42120108",
+  "authors": [
+    "s42120108"
+  ],
+  "at": "2026-10-02T14:36:06.228Z",
+  "supersedes": 343,
+  "prev": "f02ca503751f1243a3b331d5e593eb15c91d931210ffd3c0d01033aca886f036",
+  "hash": "c396769490036ead024e77c4944b0757fc2b1b4f3e3bd7ef88544e94b9f5666e"
+}
+{
+  "v": 4,
+  "seq": 348,
+  "kind": "finding",
+  "value": "Independent source reading confirms that the negative-amount Ethereum transaction\u2019s exact txId-matched note has an empty top-level message, but its `to` address equals the sole key in the nonempty nested `sends` object whose nested message is `Oswald Cobblepot`; the positive-amount transaction instead joins to the top-level message `Edward Nigma`.",
+  "source": "Authenticated storage JSON at job:j000322/gzip-utf-8-parsed.json",
+  "evidence": "Read the complete JSON arrays at `!blockchain!!v1!!txs!exodus_0:ethereum` and `!personalNotes!data`; join on exact txId, parse coinAmount signs, then compare the negative row's `to` value with the sole nested `sends` key and read its nested message.",
+  "confidence": "high",
+  "refs": [
+    "job:j000322/gzip-utf-8-parsed.json",
+    "job:j000321/storage-authentication-summary.json"
+  ],
+  "answers": [
+    "1"
+  ],
+  "sensitive": true,
+  "basis": "observed",
+  "locators": [
+    {
+      "ref": "job:j000322/gzip-utf-8-parsed.json",
+      "at": "`!blockchain!!v1!!txs!exodus_0:ethereum` two rows and `!personalNotes!data` two rows; exact txId and address joins"
+    }
+  ],
+  "rel": [
+    {
+      "to": 344,
+      "kind": "supports"
+    }
+  ],
+  "confidence_why": "The parsed JSON comes from the independently authenticated storage payload (E338/E340); the relation is exact equality across txId and address fields in the complete sealed object. This is the same source family, so it verifies semantics rather than independently acquiring the label.",
+  "indicates": "The wallet records Oswald Cobblepot as the recipient-specific label for the outgoing Ethereum send. The storage object contains no reference to the separate email or attachment, so this establishes a wallet relationship/candidate, not by itself the person the email intended to contact.",
+  "alternatives": [
+    {
+      "explanation": "The Oswald Cobblepot text is the incoming transaction's top-level message rather than the outgoing recipient-specific label.",
+      "status": "rejected",
+      "why": "The incoming positive row\u2019s exact txId-matched top-level message is Edward Nigma; Oswald Cobblepot is nested under the negative row's sends object keyed by the exact outgoing `to` address.",
+      "test_refs": [
+        "job:j000322/gzip-utf-8-parsed.json"
+      ]
+    },
+    {
+      "explanation": "The outgoing wallet label proves the labeled person was the contact sought in the email.",
+      "status": "open",
+      "why": "No email identifier, attachment reference, or other direct cross-artifact join appears in the authenticated storage object."
+    }
+  ],
+  "method": [
+    {
+      "command": "python3 - <<'PY'\nimport pathlib,json,os,hmac,hashlib,struct\nimport cryptography\nfrom cryptography.hazmat.primitives.asymmetric import ec\nfrom cryptography.hazmat.primitives.serialization import Encoding,PublicFormat\nfrom cryptography.hazmat.primitives.ciphers.aead import AESGCM\nfrom cryptography.exceptions import InvalidTag\nout=pathlib.Path(os.environ['OUT'])\nconstants=json.loads(pathlib.Path('store/jobs/j000318/out/storage-key-constants.json').read_text())['hits']\nassert len(constants)==2 and constants[0]['resolved']==constants[1]['resolved']\nresolved=constants[0]['resolved'];path=resolved['DETERMINISTIC_KEY_PATH']\nseed=pathlib.Path('store/jobs/j000319/out/serialized-seed-4.bin').read_bytes();assert len(seed)==80\nI=hmac.new(b'Bitcoin seed',seed[:64],hashlib.sha512).digest();k=int.from_bytes(I[:32],'big');chain=I[32:];order=0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141\nassert 0<k<order\nfor part in path.split('/')[1:]:\n hardened=part.endswith(\"'\");index=int(part.rstrip(\"'\"))+(0x80000000 if hardened else 0)\n key=k.to_bytes(32,'big')\n if hardened:data=b'\\0'+key\n else:data=ec.derive_private_key(k,ec.SECP256K1()).public_key().public_bytes(Encoding.X962,PublicFormat.CompressedPoint)\n I=hmac.new(chain,data+struct.pack('>I',index),hashlib.sha512).digest();left=int.from_bytes(I[:32],'big');assert left<order\n k=(left+k)%order;assert k;chain=I[32:]\ns=pathlib.Path('store/jobs/j000200/out/storage.seco').read_bytes();length=struct.unpack('>I',s[512:516])[0]\nassert len(s)==516+length and hashlib.sha256(s[256:516]+s[516:]).digest()==s[224:256]\nN,r,p=struct.unpack('>III',s[288:300]);wrapping=hashlib.scrypt(k.to_bytes(32,'big'),salt=s[256:288],n=N,r=r,p=p,dklen=32,maxmem=128*1024*1024)\nsummary={'method':'Offline single source-defined BIP32 private-key path, first64 serialized seed bytes; scrypt and authenticated SECO key/blob envelopes. No recovered code execution or key guesses.','path':path,'seed_serialized_bytes':len(seed),'scrypt':{'N':N,'r':r,'p':p},'cryptography_version':cryptography.__version__,'checksum_valid':True,'key_envelope_authenticated':False,'payload_authenticated':False}\ntry:\n blobkey=AESGCM(wrapping).decrypt(s[332:344],s[360:392]+s[344:360],None);summary['key_envelope_authenticated']=True\n plain=AESGCM(blobkey).decrypt(s[392:404],s[516:]+s[404:420],None);summary['payload_authenticated']=True;summary['payload_bytes']=len(plain)\n (out/'storage-authenticated-payload.bin').write_bytes(plain)\nexcept InvalidTag:summary['result']='Authentication failed for this one source-defined derivation/envelope interpretation; no storage-content absence inferred.'\n(out/'storage-authentication-summary.json').write_text(json.dumps(summary,indent=2));print(json.dumps(summary))\nPY",
+      "declared_scope": [
+        "job:j000318/storage-key-constants.json",
+        "job:j000319/serialized-seed-4.bin",
+        "job:j000200/storage.seco",
+        "job:j000312/getter-static-runs.json",
+        "job:j000315/seed-serializer-source-contexts.jsonl"
+      ],
+      "exit": 0,
+      "image": "dfirswarm-memory:symbols-arm64",
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+      "job": "j000321",
+      "job_kind": "command",
+      "kind": "job",
+      "network": "off",
+      "status": "ok"
+    },
+    {
+      "command": "python3 - <<'PY'\nimport os,json,gzip,zlib,re,base64,pathlib\np=pathlib.Path('store/jobs/j000321/out/storage-authenticated-payload.bin').read_bytes()\nout=pathlib.Path(os.environ['OUT'])\nres={'length':len(p),'prefix_hex':p[:32].hex(),'suffix_hex':p[-32:].hex(),'parses':[]}\nvariants=[('raw',p)]\nfor name,fn in [('gzip',gzip.decompress),('zlib',zlib.decompress),('rawdeflate',lambda x:zlib.decompress(x,-15))]:\n try:\n  q=fn(p); variants.append((name,q));res['parses'].append({'codec':name,'ok':True,'length':len(q),'prefix_hex':q[:16].hex()})\n except Exception as e:res['parses'].append({'codec':name,'ok':False,'error':type(e).__name__})\nfor vn,b in variants:\n for enc in ['utf-8','utf-16le']:\n  try:\n   t=b.decode(enc)\n   rec={'variant':vn,'encoding':enc,'decoded':True,'chars':len(t)}\n   try:\n    o=json.loads(t);rec['json']=True;rec['json_type']=type(o).__name__;rec['keys']=sorted(o.keys()) if isinstance(o,dict) else None\n    (out/f'{vn}-{enc}-parsed.json').write_text(json.dumps(o,ensure_ascii=False,indent=2))\n   except Exception:rec['json']=False\n   res['parses'].append(rec)\n  except Exception:pass\n# bounded printable strings and likely contact contexts. This sealed secret output may include personal data; do not print values.\nstrings=[]\nfor m in re.finditer(rb'[ -~]{4,}',p): strings.append({'offset':m.start(),'value':m.group().decode('ascii','replace')})\nfor m in re.finditer(rb'(?:[ -~]\\x00){4,}',p): strings.append({'offset':m.start(),'value':m.group().decode('utf-16le','replace')})\nstrings.sort(key=lambda x:x['offset'])\n(out/'all-printable-strings.json').write_text(json.dumps(strings,ensure_ascii=False,indent=2))\nterms=['contact','recipient','person','name','email','mail','address','sender','client','note','label','identity','strange','maroni','nigma','falcone']\nhits=[]\nfor s in strings:\n low=s['value'].lower()\n if any(x in low for x in terms) or re.search(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}',s['value']):hits.append(s)\n(out/'contact-indicator-strings.json').write_text(json.dumps(hits,ensure_ascii=False,indent=2))\nres['string_count']=len(strings);res['contact_indicator_count']=len(hits)\n(out/'structure-summary.json').write_text(json.dumps(res,indent=2))\nprint(json.dumps({'length':len(p),'variants':[x[0] for x in variants],'strings':len(strings),'contact_indicators':len(hits),'summary':'structure-summary.json'}))\nPY",
+      "declared_scope": [
+        "job:j000321/storage-authenticated-payload.bin"
+      ],
+      "exit": 0,
+      "image": "dfirswarm-memory:symbols-arm64",
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+      "job": "j000322",
+      "job_kind": "command",
+      "kind": "job",
+      "network": "off",
+      "status": "ok"
+    }
+  ],
+  "by": "s42120104",
+  "authors": [
+    "s42120104"
+  ],
+  "at": "2026-10-02T14:37:30.061Z",
+  "prev": "3fac41e5cf0d85620502fc67eebef1b9cf0c7f32a159fd0ffe9cd0d176cb9186",
+  "hash": "8af252778ced8b5b1ebde69f6514c03a27f65ad7fe478749b6796fa2c118d9b5"
+}
+SOURCE ROOT TYPE dict ROOT KEYS ['!blockchain!!v1!!states!exodus_0:monero', '!compatibilityFlags!monero-subaddress-indexes', '!compatibilityFlags!20210520-reset-assets-cursors', '!compatibilityFlags!20210527-reset-vethor-cursors', '!compatibilityFlags!solana-stake-txs-21-07-01', '!fusion!cachedProfile', '!blockchain!!v1!!states!exodus_0:algorand', '!blockchain!!v1!!states!exodus_0:matic', '!blockchain!!v1!!states!exodus_0:solana', '!blockchain!!v1!!states!exodus_0:ethereum', '!blockchain!!v1!!states!exodus_0:bsc', '!blockchain!!v1!!states!exodus_0:tezos', '!blockchain!!v1!!states!exodus_0:cardano', '!eventLog!!v1!data', '!blockchain!!v1!!txs!exodus_0:ethereum', '!personalNotes!data']
+SIZE 14297
+MAIL FIRST 5000 chars From - Sun Jan  7 10:23:26 2024
+X-Account-Key: account1
+X-UIDL: GmailId18ce36f454d0cff6
+X-Mozilla-Status: 0001
+X-Mozilla-Status2: 10000000
+X-Mozilla-Keys:                                                                                 
+Delivered-To: hugostrange581@gmail.com
+Received: by 2002:a05:6022:40d:b0:4c:3150:8b54 with SMTP id 13csp2364093lam;
+        Sun, 7 Jan 2024 02:19:31 -0800 (PST)
+X-Received: by 2002:a17:902:e54a:b0:1d4:da6d:c121 with SMTP id n10-20020a170902e54a00b001d4da6dc121mr2645206plf.13.1704622769391;
+        Sun, 07 Jan 2024 02:19:29 -0800 (PST)
+ARC-Seal: i=1; a=rsa-sha256; t=1704622769; cv=none;
+        d=google.com; s=arc-20160816;
+        b=ItbX4aNOB1AGYrNr2Df50eCFaN7j6G9xlRfc/Y9MSJwqf+jgVGM5IRyZRshSMYfcta
+         bwrktSzZg6YzTyO0ZGdEcLDrUNYUTdzq68mEnNr46N+BCqK96D6lY4kCPltsPGhc3ADG
+         Vm8Rn1LpahAGIbPPq6qDfRBpOIMtt88vRzQo5xgYjeeHeSjZJyS5hmirgeM+Mxt03hBa
+         CGhyO1NQGJEk8ISBhODv2d8gTa55V4YDP1uiedC+ehF1vQgC65/R0oA2Fh90H0qqBwzt
+         zUg1knbzdglcn1a+2DzfyjqrO9ZUgdIgzT+pV1Ym7J569yP7aKuoIPbq8cuyoISZNU+q
+         Z08g==
+ARC-Message-Signature: i=1; a=rsa-sha256; c=relaxed/relaxed; d=google.com; s=arc-20160816;
+        h=subject:from:to:content-language:user-agent:mime-version:date
+         :message-id:dkim-signature;
+        bh=L6x2VWUJu/VUSi7WYOdqw1owKHYl8t5/Q7FMhYWaNxw=;
+        fh=IhRMBSyYkZi19lH82f2YrEGcRTRCWbtNAhVYsBZyGsE=;
+        b=Ar/SS9z0LR8KOXORZOTnnSaGChMQbRTSXbZgPccmds2mHFoD7pEAZnq/WQnMYdSn3w
+         8T3fp0IAkbs8SSKHMfaXkKrpyxtakLhKNNIksYXcs1N2ntzfK+kaUZBl6FV3c8fXpJlq
+         sKr67tXN0P9zvcaAcnzvVikaH+T3hn8RxBS+1czvkRbXrJKsRZG+2vNH4AvTGwJV5JFy
+         xPvmBvmz0DQf9AaKZJF0baSuS2FCo/yTHO0HysrkFsreLR4Pxcc8qcWLMouUlSsxrmJo
+         oEvp/ZRZdAjZKVqIsKiD35NcR4manYxEegtjl8jB1n2fdyuRJNJ331qH36nopj6Ksu9o
+         ymuQ==
+ARC-Authentication-Results: i=1; mx.google.com;
+       dkim=pass header.i=@gmail.com header.s=20230601 header.b=cIialuOv;
+       spf=pass (google.com: domain of salvatoremaroni3376@gmail.com designates 209.85.220.41 as permitted sender) smtp.mailfrom=salvatoremaroni3376@gmail.com;
+       dmarc=pass (p=NONE sp=QUARANTINE dis=NONE) header.from=gmail.com
+Return-Path: <salvatoremaroni3376@gmail.com>
+Received: from mail-sor-f41.google.com (mail-sor-f41.google.com. [209.85.220.41])
+        by mx.google.com with SMTPS id y5-20020a170902700500b001d3c24df06esor1924313plk.0.2024.01.07.02.19.29
+        for <hugostrange581@gmail.com>
+        (Google Transport Security);
+        Sun, 07 Jan 2024 02:19:29 -0800 (PST)
+Received-SPF: pass (google.com: domain of salvatoremaroni3376@gmail.com designates 209.85.220.41 as permitted sender) client-ip=209.85.220.41;
+Authentication-Results: mx.google.com;
+       dkim=pass header.i=@gmail.com header.s=20230601 header.b=cIialuOv;
+       spf=pass (google.com: domain of salvatoremaroni3376@gmail.com designates 209.85.220.41 as permitted sender) smtp.mailfrom=salvatoremaroni3376@gmail.com;
+       dmarc=pass (p=NONE sp=QUARANTINE dis=NONE) header.from=gmail.com
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+        d=gmail.com; s=20230601; t=1704622768; x=1705227568; dara=google.com;
+        h=subject:from:to:content-language:user-agent:mime-version:date
+         :message-id:from:to:cc:subject:date:message-id:reply-to;
+        bh=L6x2VWUJu/VUSi7WYOdqw1owKHYl8t5/Q7FMhYWaNxw=;
+        b=cIialuOvcfRrK/9g/IPm0su/XBmq999J5WXLqqN1AzhOj72Y/IPBQW2B8OgVj27jMe
+         OUY2/cguUB4wW3oat6eSkFF2+Z9yEkia6gNKYAy90NFbKpoNawINAkKqN0cLDEuQd/CI
+         nanOsab9EtbFibHPOBDfWznK9Zt032b+jOanbzerFJQlBTSs+StVk3bH1gcWgHTisfTY
+         v1W6vjtDC/rXt+J+QPXjiAZpX8RnZjaYoiMcHML70nhoNLcGfqp6zProjDx1J6T2FzCM
+         YStUeCZgwVT817R3xtkCGu58e9oKN2dQVuypgHXH9Vk9JyDJt11pQBWl5591J46XCGY+
+         JcmA==
+X-Google-DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+        d=1e100.net; s=20230601; t=1704622768; x=1705227568;
+        h=subject:from:to:content-language:user-agent:mime-version:date
+         :message-id:x-gm-message-state:from:to:cc:subject:date:message-id
+         :reply-to;
+        bh=L6x2VWUJu/VUSi7WYOdqw1owKHYl8t5/Q7FMhYWaNxw=;
+        b=wm10RmxaT17s5piejeDYq/EpEtHxliJ72tBgAp4uDQriDUHjZwx70ApuR/IfTFsyKE
+         Jp7HTNPHJdQyPF+uduFZefKvI9YajFa2AiqwOymfvFj1K2ybJ4cz8gq9QiHAGCdLz41X
+         wJoJ3IYgCw3ty3eCKtI6K6CGSvXHvz7TPy7rlVf+kZY+nc4c5o50liVVjvs21jwHSwFo
+         HvN9vOXCvb4enlKiIqqPjgY+GnGjjczHJpc3AfV7aaaU470WXjX8v10Qz2W/ZzCWuS0h
+         LwrzzUW+gCPmIl5sdsrT/XSkmpq7HGjjZD5M382Wb+/x7X7cO0DP3MEaWC6NlYJ/ZADu
+         QyaA==
+X-Gm-Message-State: AOJu0Yyv8yhr8N0SSfAETgbGKlwAAXHBQ8dPe0iUUHmbk4oykMYSTuoR
+	ErKG++vrWZ5uSwIcHfIukc3n4Q98KhcEOA==
+X-Google-Smtp-Source: AGHT+IEaR13fr5QwtA2EVAeeqRlt5MHwDILGsc17qMCuDr64g/xiFSQi2/n9+TmXEoQztdSMzBFY3Q==
+X-Received: by 2002:a17:902:e54a:b0:1d4:da6d:c121 with SMTP id n10-20020a170902e54a00b001d4da6dc121mr2644778plf.13.1704622743610;
+        Sun, 07 Jan 2024 02:19:03 -0800 (PST)
+Return-Path: <salvatoremaroni3376@gmail.com>
+Received: from [10.0.2.15] ([59.89.233.32])
+        by smtp.gmail.com with ESMTPSA id ji

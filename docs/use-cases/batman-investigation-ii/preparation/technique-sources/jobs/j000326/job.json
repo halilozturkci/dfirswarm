@@ -1,0 +1,87 @@
+{
+  "id": "j000326",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000322/gzip-utf-8-parsed.json"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport json,pathlib,os,decimal\nx=json.loads(pathlib.Path('store/jobs/j000322/out/gzip-utf-8-parsed.json').read_text())\ntxs=x['!blockchain!!v1!!txs!exodus_0:ethereum']; notes=x['!personalNotes!data']\nrows=txs if isinstance(txs,list) else list(txs.values()) if isinstance(txs,dict) else []\ndef amt(t):\n try:return decimal.Decimal(t['coinAmount'])\n except Exception:return None\njoined=[]\nfor t in rows:\n for n in notes:\n  if isinstance(t,dict) and isinstance(n,dict) and t.get('txId')==n.get('txId'):\n   v=n.get('message'); sends=n.get('sends')\n   joined.append({'direction':'outgoing' if amt(t) is not None and amt(t)<0 else 'incoming' if amt(t) is not None and amt(t)>0 else 'unknown','message_present':isinstance(v,str) and bool(v.strip()),'sends_dict_nonempty':isinstance(sends,dict) and bool(sends),'tx_fields_have_to': 'to' in t,'note_fields':sorted(n.keys())})\nres={'tx_records':len(rows),'note_records':len(notes),'txid_joins':len(joined),'joined':joined,'identity_or_transaction_values_emitted':False}\npathlib.Path(os.environ['OUT'],'tx-note-join-structure.json').write_text(json.dumps(res,indent=2));print(json.dumps(res,sort_keys=True))\nPY"
+  },
+  "requester": {
+    "agent": "s42120108",
+    "name": "DBX Key Analyst",
+    "doing": "Waiting for audited offline DBX codec capability or genuinely new evidence; avoiding duplicate searches."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T14:30:28.263Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000322/out/gzip-utf-8-parsed.json",
+        "sha256": "7d2d26963af4eb2719198f4a316a5be56c4989f119d8e52113959b9e3eae919f"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000326-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T14:30:28.370Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000326",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000326/scope.1.json",
+    "manifest_sha256": "52e911303a94d39ed9dcaaee47d1d1ffb7edd7843aae07319b3a6b595b1b12ed"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T14:30:29.718Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "81fcedf327344a1e63e6adb34097a78c8e478e8ae82021944fece4f8b18d121f",
+    "files": 1,
+    "bytes": 564,
+    "rejected": 0,
+    "path": "store/jobs/j000326/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

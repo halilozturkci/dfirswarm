@@ -1,0 +1,1 @@
+{"v":1,"job":"j000329","attempt":1,"sealed_at":"2026-10-02T14:36:14.374Z","files":[{"path":"nested-profile-schema.json","path_b64":"bmVzdGVkLXByb2ZpbGUtc2NoZW1hLmpzb24=","bytes":10428,"sha256":"e76fcd231e8ed645d9e0807e9481bd064e783dd5f57c1a72ee6c9a701a498532","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":10428}}

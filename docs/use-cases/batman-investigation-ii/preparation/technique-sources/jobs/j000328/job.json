@@ -1,0 +1,92 @@
+{
+  "id": "j000328",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000321/storage-authenticated-payload.bin",
+      "job:j000322/gzip-utf-8-parsed.json"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nfrom pathlib import Path\nimport gzip,json,os,re,sys\nout=Path(os.environ['OUT']);packed=Path('store/jobs/j000321/out/storage-authenticated-payload.bin').read_bytes();raw=gzip.decompress(packed);obj=json.loads(raw.decode('utf8'));peer=json.loads(Path('store/jobs/j000322/out/gzip-utf-8-parsed.json').read_text());terms=['infobreakage','client_email','name_client','private_key','privatekey','userkey','hostkey','dropbox','dbx','database','dbkey','verify','verification','credential','secret','passphrase','email'];fields=[];matches=[];strings=0;email_like=0\n# Retain paths/types only. Dynamic dictionary keys may themselves contain personal data, so this output is sensitive.\ndef walk(v,path):\n global strings,email_like\n row={'path':path,'type':type(v).__name__}\n if isinstance(v,(str,list,dict)):row['length']=len(v)\n fields.append(row)\n if isinstance(v,dict):\n  for k,val in v.items():\n   found=[t for t in terms if t.casefold() in k.casefold()]\n   if found:matches.append({'path':path+[k],'location':'field_name','terms':found,'value_type':type(val).__name__})\n   walk(val,path+[k])\n elif isinstance(v,list):\n  for i,val in enumerate(v):walk(val,path+[i])\n elif isinstance(v,str):\n  strings+=1;found=[t for t in terms if t.casefold() in v.casefold()]\n  if found:matches.append({'path':path,'location':'string_value','terms':found,'value_length':len(v)})\n  if re.search(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}',v):email_like+=1;matches.append({'path':path,'location':'email_pattern','value_length':len(v)})\nwalk(obj,[])\nsummary={'python':sys.version.split()[0],'gzip_bytes':len(packed),'json_utf8_bytes':len(raw),'json_root_type':type(obj).__name__,'equal_to_j322_object':obj==peer,'field_nodes':len(fields),'string_scalars':strings,'email_pattern_scalars':email_like,'marker_matches':len(matches),'terms':terms,'all_object_nodes_walked':True}\n(out/'storage-q12-q14-summary.json').write_text(json.dumps(summary,indent=2));(out/'storage-field-inventory.json').write_text(json.dumps({'fields':fields,'matches':matches},indent=2));print(json.dumps(summary,sort_keys=True))\nPY"
+  },
+  "requester": {
+    "agent": "s42120103",
+    "name": "Wallet history",
+    "doing": "Investigating Q7 and Q8: password-protected archive and original file hashes; avoiding peers' wallet work."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T14:35:18.142Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000321/out/storage-authenticated-payload.bin",
+        "sha256": "5111c162c7dfa71c231752a7c5ec3de0504e284f7e665d1f217a672644844aaa"
+      },
+      {
+        "path": "store/jobs/j000322/out/gzip-utf-8-parsed.json",
+        "sha256": "7d2d26963af4eb2719198f4a316a5be56c4989f119d8e52113959b9e3eae919f"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000328-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T14:35:18.233Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000328",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 2,
+    "files": 2,
+    "bound": 0,
+    "manifest": "store/jobs/j000328/scope.1.json",
+    "manifest_sha256": "3faf6521acb8722fef31c166e92410807c2eb40edd50c7356ca516aec67b8cd0"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T14:35:18.967Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "29d04093fad4626546db574cfb8a82bd35458c7508d73f8d59ba079f1ad2e8b2",
+    "files": 2,
+    "bytes": 82653,
+    "rejected": 0,
+    "path": "store/jobs/j000328/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

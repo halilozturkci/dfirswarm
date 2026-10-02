@@ -1,0 +1,31 @@
+{
+  "python": "3.11.2",
+  "gzip_bytes": 2229,
+  "json_utf8_bytes": 7481,
+  "json_root_type": "dict",
+  "equal_to_j322_object": true,
+  "field_nodes": 419,
+  "string_scalars": 106,
+  "email_pattern_scalars": 0,
+  "marker_matches": 4,
+  "terms": [
+    "infobreakage",
+    "client_email",
+    "name_client",
+    "private_key",
+    "privatekey",
+    "userkey",
+    "hostkey",
+    "dropbox",
+    "dbx",
+    "database",
+    "dbkey",
+    "verify",
+    "verification",
+    "credential",
+    "secret",
+    "passphrase",
+    "email"
+  ],
+  "all_object_nodes_walked": true
+}

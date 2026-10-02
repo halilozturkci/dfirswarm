@@ -1,0 +1,97 @@
+{
+  "id": "j000330",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000322/gzip-utf-8-parsed.json",
+      "job:j000329/nested-profile-schema.json",
+      "job:j000055/seco_code_strings.txt"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport json,pathlib,os,re,collections\np=json.loads(pathlib.Path('store/jobs/j000322/out/gzip-utf-8-parsed.json').read_text())\n# Recursively inventory object keys and node types without preserving scalar values.\nkeys=collections.Counter(); types=collections.Counter(); paths=[]; suspicious=[]; targeted=[]\nneedles=('dbx','dropbox','userkey','dbkey','client','email','privatekey','private_key','hostkey')\ndef walk(x,path='$'):\n    types[type(x).__name__]+=1\n    if isinstance(x,dict):\n        for k,v in x.items():\n            ks=str(k); keys[ks]+=1; kp=path+'.'+ks\n            low=ks.lower()\n            if any(n in low for n in needles):\n                suspicious.append({'path':kp,'value_type':type(v).__name__})\n            if 'keypair' in low.replace('_','') or ks in ('fiatAuthKeyPair','abTestingKeyPair','exodusSharesEncryptionKeyPair','exodusSharesKeyPair'):\n                target_fields=sorted(str(z) for z in v.keys()) if isinstance(v,dict) else []\n                targeted.append({'path':kp,'value_type':type(v).__name__,'child_fields':target_fields})\n            walk(v,kp)\n    elif isinstance(x,list):\n        for i,v in enumerate(x):walk(v,f'{path}[]')\nwalk(p)\n# Full-schema baseline from earlier independent inventory, but expose only size/root counts.\nprior=json.loads(pathlib.Path('store/jobs/j000329/out/nested-profile-schema.json').read_text())\ncode=pathlib.Path('store/jobs/j000055/out/seco_code_strings.txt').read_text(errors='replace').lower()\nrole_terms={s:code.count(s.lower()) for s in ['fiatAuthKeyPair','abTestingKeyPair','exodusSharesEncryptionKeyPair','exodusSharesKeyPair','dropbox','client_email','dbx','userkey','privateKey']}\nout={'independent_json_parse':True,'root_type':type(p).__name__,'root_fields':len(p) if isinstance(p,dict) else None,'node_type_counts':dict(types),'total_key_occurrences':sum(keys.values()),'keypair_namespace_objects':targeted,'contact_or_dbx_path_names':suspicious,'prior_schema_node_count':prior.get('nodes'),'prior_schema_profile_root_fields':prior.get('profile_root_fields'),'source_keyword_counts':role_terms,'source_code_context_scope':'narrow j55 source fragment only; zero hits cannot exclude other bundle modules','scalar_values_retained_or_emitted':False,'interpretation':'The path/name schema is checked; values and any private key bytes are never emitted. Generic cached key-pair namespaces alone do not identify DBX/client key role.'}\npathlib.Path(os.environ['OUT'],'schema-role-audit.json').write_text(json.dumps(out,sort_keys=True,indent=2));print(json.dumps(out,sort_keys=True))\nPY"
+  },
+  "requester": {
+    "agent": "s42120107",
+    "name": "Memory triage",
+    "doing": "Available for independent review; prior Q6 evidence handoff complete."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T14:39:54.481Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000055/out/seco_code_strings.txt",
+        "sha256": "68f06eac86f65aa91e9f6e4f3dabaf59cda9bbd8bee306884c03837b2dfe47a6"
+      },
+      {
+        "path": "store/jobs/j000322/out/gzip-utf-8-parsed.json",
+        "sha256": "7d2d26963af4eb2719198f4a316a5be56c4989f119d8e52113959b9e3eae919f"
+      },
+      {
+        "path": "store/jobs/j000329/out/nested-profile-schema.json",
+        "sha256": "e76fcd231e8ed645d9e0807e9481bd064e783dd5f57c1a72ee6c9a701a498532"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000330-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T14:39:54.575Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000330",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 3,
+    "files": 3,
+    "bound": 0,
+    "manifest": "store/jobs/j000330/scope.1.json",
+    "manifest_sha256": "70bb7e09b9e656d9a1f03ccd44172a5ab6c51bfb9cd8acc2c9a2550d574560c0"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T14:39:55.335Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "40cf1807ff50c18c098341d4ce6ac4afb65453270fce4e46366991358914bede",
+    "files": 1,
+    "bytes": 1524,
+    "rejected": 0,
+    "path": "store/jobs/j000330/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

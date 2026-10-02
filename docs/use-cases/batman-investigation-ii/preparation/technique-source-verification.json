@@ -1,10 +1,10 @@
 {
   "run": "s421201",
-  "at": "2026-10-02T14:38:17.029309+00:00",
-  "scope": "selected observer sources and current human notes; not final complete run/Pi/custody",
-  "indexed_copies_verified": 1001,
-  "indexed_jobs": 114,
-  "trace_refs": 920,
+  "at": "2026-10-02T14:53:49.645981+00:00",
+  "scope": "selected observer sources and staged human notes; not final complete run/Pi/custody",
+  "indexed_copies_verified": 1080,
+  "indexed_jobs": 122,
+  "trace_refs": 1058,
   "retained_binary_originals_verified": 7,
   "lossless_encoded_copies": [
     {
@@ -19,21 +19,21 @@
   "authentication_literal_scan": {
     "active_values": 13,
     "hits": 0,
-    "files": 1009,
-    "scanned_bytes_including_decompressed_text": 226532107,
+    "files": 1086,
+    "scanned_bytes_including_decompressed_text": 240825090,
     "values_emitted": false
   },
   "git_inventory_verification": {
     "selected_folders": [
       {
         "folder": "preparation/technique-sources",
-        "actual_and_cached_files": 997,
+        "actual_and_cached_files": 1076,
         "match": true
       }
     ],
-    "indexed_staged_blobs_verified": 1001,
+    "indexed_staged_blobs_verified": 1080,
     "all_staged_paths_within_case": true,
-    "staged_paths_at_verification": 208,
+    "staged_paths_at_verification": 85,
     "ignored_logs_and_gzip_included": true
   },
   "analytical_success": false,

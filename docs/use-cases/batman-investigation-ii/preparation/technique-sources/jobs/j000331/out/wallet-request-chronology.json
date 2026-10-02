@@ -1,0 +1,22 @@
+{
+  "method": "Compare explicitly zoned wallet transaction date fields to retained MIME Date header; source clocks only, no external block-time verification or email-to-payment attribution.",
+  "rows": [
+    {
+      "amount_sign": "positive",
+      "stored_wallet_date": "2024-01-05T17:12:47Z",
+      "request_header_date": "2024-01-07T10:17:39Z",
+      "request_minus_wallet_seconds": 147892,
+      "wallet_timestamp_precedes_request_header": true
+    },
+    {
+      "amount_sign": "negative",
+      "stored_wallet_date": "2024-01-05T17:15:19Z",
+      "request_header_date": "2024-01-07T10:17:39Z",
+      "request_minus_wallet_seconds": 147740,
+      "wallet_timestamp_precedes_request_header": true
+    }
+  ],
+  "email_plain_body": [
+    "Contact the guy and the key for his reply is his private key!!"
+  ]
+}

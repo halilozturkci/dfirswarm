@@ -1,0 +1,87 @@
+{
+  "id": "j000329",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000322/gzip-utf-8-parsed.json"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nfrom pathlib import Path\nimport json,os,sys\nobj=json.loads(Path('store/jobs/j000322/out/gzip-utf-8-parsed.json').read_text());profile=obj['!fusion!cachedProfile'];rows=[];decoded=[]\ndef walk(v,path,depth=0):\n row={'path':path,'type':type(v).__name__}\n if isinstance(v,(str,list,dict)):row['length']=len(v)\n rows.append(row)\n if isinstance(v,dict):\n  for k,x in v.items():walk(x,path+[k],depth)\n elif isinstance(v,list):\n  for i,x in enumerate(v):walk(x,path+[i],depth)\n elif isinstance(v,str) and depth<4:\n  try:x=json.loads(v)\n  except (ValueError,TypeError):return\n  if isinstance(x,(dict,list)):\n   decoded.append({'path':path,'decoded_type':type(x).__name__});walk(x,path+['<decoded_JSON>'],depth+1)\nwalk(profile,['!fusion!cachedProfile']);summary={'python':sys.version.split()[0],'profile_root_fields':len(profile),'nodes':len(rows),'decoded_structured_string_count':len(decoded),'secret_scalar_values_emitted':False};out=Path(os.environ['OUT']);(out/'nested-profile-schema.json').write_text(json.dumps({'summary':summary,'decoded':decoded,'fields':rows},indent=2));print(json.dumps(summary,sort_keys=True))\nPY"
+  },
+  "requester": {
+    "agent": "s42120103",
+    "name": "Wallet history",
+    "doing": "Investigating Q7 and Q8: password-protected archive and original file hashes; avoiding peers' wallet work."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T14:36:13.546Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000322/out/gzip-utf-8-parsed.json",
+        "sha256": "7d2d26963af4eb2719198f4a316a5be56c4989f119d8e52113959b9e3eae919f"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000329-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T14:36:13.643Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000329",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000329/scope.1.json",
+    "manifest_sha256": "074b7a0b5f0a8fdc6d9da2ee2bcbc0e909824188f348648be82b01bbb3b808ed"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T14:36:14.362Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "35143d5e8bd3f0ae70941f7aa9e7393d33520018cb89ce7d4fa519e130bfcbec",
+    "files": 1,
+    "bytes": 10428,
+    "rejected": 0,
+    "path": "store/jobs/j000329/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

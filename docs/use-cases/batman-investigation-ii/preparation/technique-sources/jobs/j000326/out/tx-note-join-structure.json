@@ -1,0 +1,29 @@
+{
+  "tx_records": 2,
+  "note_records": 2,
+  "txid_joins": 2,
+  "joined": [
+    {
+      "direction": "unknown",
+      "message_present": true,
+      "sends_dict_nonempty": false,
+      "tx_fields_have_to": false,
+      "note_fields": [
+        "message",
+        "txId"
+      ]
+    },
+    {
+      "direction": "unknown",
+      "message_present": false,
+      "sends_dict_nonempty": true,
+      "tx_fields_have_to": true,
+      "note_fields": [
+        "message",
+        "sends",
+        "txId"
+      ]
+    }
+  ],
+  "identity_or_transaction_values_emitted": false
+}

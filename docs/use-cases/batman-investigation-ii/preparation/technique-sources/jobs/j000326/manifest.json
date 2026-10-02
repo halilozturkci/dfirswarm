@@ -1,0 +1,1 @@
+{"v":1,"job":"j000326","attempt":1,"sealed_at":"2026-10-02T14:30:29.731Z","files":[{"path":"tx-note-join-structure.json","path_b64":"dHgtbm90ZS1qb2luLXN0cnVjdHVyZS5qc29u","bytes":564,"sha256":"1d9ed0e9ed108a45344a7c398b7f7c9c931f3788dc01bd6aa70a200c4e72a88f","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":564}}

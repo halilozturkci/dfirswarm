@@ -1,0 +1,92 @@
+{
+  "id": "j000331",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000322/gzip-utf-8-parsed.json",
+      "job:j000067/confidential.eml"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport pathlib,json,email,email.policy,email.utils,datetime,re,decimal,os\nx=json.loads(pathlib.Path('store/jobs/j000322/out/gzip-utf-8-parsed.json').read_text())\nm=email.message_from_bytes(pathlib.Path('store/jobs/j000067/out/confidential.eml').read_bytes(),policy=email.policy.default)\nrequest=email.utils.parsedate_to_datetime(str(m['Date'])).astimezone(datetime.timezone.utc)\nrows=[]\nfor t in x['!blockchain!!v1!!txs!exodus_0:ethereum']:\n date=datetime.datetime.fromisoformat(t['date'].replace('Z','+00:00'))\n amount=decimal.Decimal(re.match(r'^([+-]?\\d+(?:\\.\\d+)?)',t['coinAmount']).group(1))\n rows.append({'amount_sign':'negative' if amount<0 else 'positive' if amount>0 else 'zero','stored_wallet_date':date.isoformat().replace('+00:00','Z'),'request_header_date':request.isoformat().replace('+00:00','Z'),'request_minus_wallet_seconds':int((request-date).total_seconds()),'wallet_timestamp_precedes_request_header':date<request})\nres={'method':'Compare explicitly zoned wallet transaction date fields to retained MIME Date header; source clocks only, no external block-time verification or email-to-payment attribution.','rows':rows,'email_plain_body':[p.get_content().strip() for p in m.walk() if p.get_content_type()=='text/plain']}\npathlib.Path(os.environ['OUT'],'wallet-request-chronology.json').write_text(json.dumps(res,indent=2));print(json.dumps(res))\nPY"
+  },
+  "requester": {
+    "agent": "s42120100",
+    "name": "Contact provenance",
+    "doing": "Investigate Q1 and Q2 contact/disguise communications and sent-file identity; model gpt-6.1-sol."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T14:40:37.266Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000067/out/confidential.eml",
+        "sha256": "0b08ee11401aded668e95411b8213269705c7f1db29244e1d20a528250b33a4e"
+      },
+      {
+        "path": "store/jobs/j000322/out/gzip-utf-8-parsed.json",
+        "sha256": "7d2d26963af4eb2719198f4a316a5be56c4989f119d8e52113959b9e3eae919f"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000331-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T14:40:37.341Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000331",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 2,
+    "files": 2,
+    "bound": 0,
+    "manifest": "store/jobs/j000331/scope.1.json",
+    "manifest_sha256": "4f153ca9dc98a58a787bc7a0b2e9043d50db7c4e21b5ff632f6ed63a775f9e7e"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T14:40:38.085Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "250a7130200eff65268525504ccdd511450ef32a328c6512852d49b48d78894d",
+    "files": 1,
+    "bytes": 810,
+    "rejected": 0,
+    "path": "store/jobs/j000331/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

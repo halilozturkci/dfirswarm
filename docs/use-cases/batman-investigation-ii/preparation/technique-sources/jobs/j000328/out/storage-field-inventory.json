@@ -1,0 +1,4700 @@
+{
+  "fields": [
+    {
+      "path": [],
+      "type": "dict",
+      "length": 16
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:monero"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:monero",
+        "t"
+      ],
+      "type": "str",
+      "length": 6
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:monero",
+        "v"
+      ],
+      "type": "dict",
+      "length": 7
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:monero",
+        "v",
+        "utxos"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:monero",
+        "v",
+        "utxos",
+        "t"
+      ],
+      "type": "str",
+      "length": 14
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:monero",
+        "v",
+        "utxos",
+        "v"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:monero",
+        "v",
+        "utxos",
+        "v",
+        "v"
+      ],
+      "type": "dict",
+      "length": 0
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:monero",
+        "v",
+        "utxos",
+        "v",
+        "u"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:monero",
+        "v",
+        "utxos",
+        "v",
+        "u",
+        "atomic"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:monero",
+        "v",
+        "utxos",
+        "v",
+        "u",
+        "XMR"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:monero",
+        "v",
+        "pendingUtxos"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:monero",
+        "v",
+        "pendingUtxos",
+        "t"
+      ],
+      "type": "str",
+      "length": 14
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:monero",
+        "v",
+        "pendingUtxos",
+        "v"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:monero",
+        "v",
+        "pendingUtxos",
+        "v",
+        "v"
+      ],
+      "type": "dict",
+      "length": 0
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:monero",
+        "v",
+        "pendingUtxos",
+        "v",
+        "u"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:monero",
+        "v",
+        "pendingUtxos",
+        "v",
+        "u",
+        "atomic"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:monero",
+        "v",
+        "pendingUtxos",
+        "v",
+        "u",
+        "XMR"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:monero",
+        "v",
+        "monitorUtxos"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:monero",
+        "v",
+        "monitorUtxos",
+        "t"
+      ],
+      "type": "str",
+      "length": 14
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:monero",
+        "v",
+        "monitorUtxos",
+        "v"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:monero",
+        "v",
+        "monitorUtxos",
+        "v",
+        "v"
+      ],
+      "type": "dict",
+      "length": 0
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:monero",
+        "v",
+        "monitorUtxos",
+        "v",
+        "u"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:monero",
+        "v",
+        "monitorUtxos",
+        "v",
+        "u",
+        "atomic"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:monero",
+        "v",
+        "monitorUtxos",
+        "v",
+        "u",
+        "XMR"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:monero",
+        "v",
+        "cursor"
+      ],
+      "type": "NoneType"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:monero",
+        "v",
+        "initialHeight"
+      ],
+      "type": "NoneType"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:monero",
+        "v",
+        "subaddresses"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:monero",
+        "v",
+        "_version"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!compatibilityFlags!monero-subaddress-indexes"
+      ],
+      "type": "bool"
+    },
+    {
+      "path": [
+        "!compatibilityFlags!20210520-reset-assets-cursors"
+      ],
+      "type": "bool"
+    },
+    {
+      "path": [
+        "!compatibilityFlags!20210527-reset-vethor-cursors"
+      ],
+      "type": "bool"
+    },
+    {
+      "path": [
+        "!compatibilityFlags!solana-stake-txs-21-07-01"
+      ],
+      "type": "bool"
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile"
+      ],
+      "type": "dict",
+      "length": 11
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "analyticsSet"
+      ],
+      "type": "bool"
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "createdAt"
+      ],
+      "type": "str",
+      "length": 10
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "desktopUser"
+      ],
+      "type": "bool"
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "analyticsUserId"
+      ],
+      "type": "str",
+      "length": 44
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "abandoned"
+      ],
+      "type": "bool"
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "migrations"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "migrations",
+        "20210520-reset-assets-cursors"
+      ],
+      "type": "dict",
+      "length": 1
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "migrations",
+        "20210520-reset-assets-cursors",
+        "exodus"
+      ],
+      "type": "bool"
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "migrations",
+        "20210527-reset-vethor-cursors"
+      ],
+      "type": "dict",
+      "length": 1
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "migrations",
+        "20210527-reset-vethor-cursors",
+        "exodus"
+      ],
+      "type": "bool"
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private"
+      ],
+      "type": "dict",
+      "length": 4
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "fiatAuthKeyPair"
+      ],
+      "type": "str",
+      "length": 248
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "abTestingKeyPair"
+      ],
+      "type": "str",
+      "length": 248
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "exodusSharesEncryptionKeyPair"
+      ],
+      "type": "str",
+      "length": 201
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "exodusSharesKeyPair"
+      ],
+      "type": "str",
+      "length": 248
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "earliestTxDate"
+      ],
+      "type": "str",
+      "length": 10
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "portfolioCount"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "hasTrezor"
+      ],
+      "type": "bool"
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "portfolioCountFunded"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:algorand"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:algorand",
+        "t"
+      ],
+      "type": "str",
+      "length": 6
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:algorand",
+        "v"
+      ],
+      "type": "dict",
+      "length": 5
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:algorand",
+        "v",
+        "cursor"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:algorand",
+        "v",
+        "balance"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:algorand",
+        "v",
+        "balance",
+        "t"
+      ],
+      "type": "str",
+      "length": 10
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:algorand",
+        "v",
+        "balance",
+        "v"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:algorand",
+        "v",
+        "balance",
+        "v",
+        "v"
+      ],
+      "type": "str",
+      "length": 6
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:algorand",
+        "v",
+        "balance",
+        "v",
+        "u"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:algorand",
+        "v",
+        "balance",
+        "v",
+        "u",
+        "microAlgo"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:algorand",
+        "v",
+        "balance",
+        "v",
+        "u",
+        "ALGO"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:algorand",
+        "v",
+        "accountReserve"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:algorand",
+        "v",
+        "accountReserve",
+        "t"
+      ],
+      "type": "str",
+      "length": 10
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:algorand",
+        "v",
+        "accountReserve",
+        "v"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:algorand",
+        "v",
+        "accountReserve",
+        "v",
+        "v"
+      ],
+      "type": "str",
+      "length": 8
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:algorand",
+        "v",
+        "accountReserve",
+        "v",
+        "u"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:algorand",
+        "v",
+        "accountReserve",
+        "v",
+        "u",
+        "microAlgo"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:algorand",
+        "v",
+        "accountReserve",
+        "v",
+        "u",
+        "ALGO"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:algorand",
+        "v",
+        "tokenBalances"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:algorand",
+        "v",
+        "tokenBalances",
+        "t"
+      ],
+      "type": "str",
+      "length": 6
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:algorand",
+        "v",
+        "tokenBalances",
+        "v"
+      ],
+      "type": "dict",
+      "length": 0
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:algorand",
+        "v",
+        "_version"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:matic"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:matic",
+        "t"
+      ],
+      "type": "str",
+      "length": 6
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:matic",
+        "v"
+      ],
+      "type": "dict",
+      "length": 6
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:matic",
+        "v",
+        "startblock"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:matic",
+        "v",
+        "clarityCursor"
+      ],
+      "type": "str",
+      "length": 0
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:matic",
+        "v",
+        "balance"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:matic",
+        "v",
+        "balance",
+        "t"
+      ],
+      "type": "str",
+      "length": 10
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:matic",
+        "v",
+        "balance",
+        "v"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:matic",
+        "v",
+        "balance",
+        "v",
+        "v"
+      ],
+      "type": "str",
+      "length": 5
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:matic",
+        "v",
+        "balance",
+        "v",
+        "u"
+      ],
+      "type": "dict",
+      "length": 7
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:matic",
+        "v",
+        "balance",
+        "v",
+        "u",
+        "wei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:matic",
+        "v",
+        "balance",
+        "v",
+        "u",
+        "Kwei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:matic",
+        "v",
+        "balance",
+        "v",
+        "u",
+        "Mwei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:matic",
+        "v",
+        "balance",
+        "v",
+        "u",
+        "Gwei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:matic",
+        "v",
+        "balance",
+        "v",
+        "u",
+        "szabo"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:matic",
+        "v",
+        "balance",
+        "v",
+        "u",
+        "finney"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:matic",
+        "v",
+        "balance",
+        "v",
+        "u",
+        "MATICNATIVE"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:matic",
+        "v",
+        "tokenBalances"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:matic",
+        "v",
+        "tokenBalances",
+        "t"
+      ],
+      "type": "str",
+      "length": 6
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:matic",
+        "v",
+        "tokenBalances",
+        "v"
+      ],
+      "type": "dict",
+      "length": 0
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:matic",
+        "v",
+        "index"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:matic",
+        "v",
+        "_version"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:solana"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:solana",
+        "t"
+      ],
+      "type": "str",
+      "length": 6
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:solana",
+        "v"
+      ],
+      "type": "dict",
+      "length": 4
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:solana",
+        "v",
+        "balance"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:solana",
+        "v",
+        "balance",
+        "t"
+      ],
+      "type": "str",
+      "length": 10
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:solana",
+        "v",
+        "balance",
+        "v"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:solana",
+        "v",
+        "balance",
+        "v",
+        "v"
+      ],
+      "type": "str",
+      "length": 5
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:solana",
+        "v",
+        "balance",
+        "v",
+        "u"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:solana",
+        "v",
+        "balance",
+        "v",
+        "u",
+        "Lamports"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:solana",
+        "v",
+        "balance",
+        "v",
+        "u",
+        "SOL"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:solana",
+        "v",
+        "cursor"
+      ],
+      "type": "str",
+      "length": 0
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:solana",
+        "v",
+        "tokenBalances"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:solana",
+        "v",
+        "tokenBalances",
+        "t"
+      ],
+      "type": "str",
+      "length": 6
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:solana",
+        "v",
+        "tokenBalances",
+        "v"
+      ],
+      "type": "dict",
+      "length": 0
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:solana",
+        "v",
+        "_version"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "t"
+      ],
+      "type": "str",
+      "length": 6
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v"
+      ],
+      "type": "dict",
+      "length": 7
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "startblock"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "clarityCursor"
+      ],
+      "type": "str",
+      "length": 0
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "balance"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "balance",
+        "t"
+      ],
+      "type": "str",
+      "length": 10
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "balance",
+        "v"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "balance",
+        "v",
+        "v"
+      ],
+      "type": "str",
+      "length": 5
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "balance",
+        "v",
+        "u"
+      ],
+      "type": "dict",
+      "length": 7
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "balance",
+        "v",
+        "u",
+        "wei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "balance",
+        "v",
+        "u",
+        "Kwei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "balance",
+        "v",
+        "u",
+        "Mwei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "balance",
+        "v",
+        "u",
+        "Gwei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "balance",
+        "v",
+        "u",
+        "szabo"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "balance",
+        "v",
+        "u",
+        "finney"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "balance",
+        "v",
+        "u",
+        "ETH"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "tokenBalances"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "tokenBalances",
+        "t"
+      ],
+      "type": "str",
+      "length": 6
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "tokenBalances",
+        "v"
+      ],
+      "type": "dict",
+      "length": 0
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "index"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "t"
+      ],
+      "type": "str",
+      "length": 6
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "t"
+      ],
+      "type": "str",
+      "length": 6
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v"
+      ],
+      "type": "dict",
+      "length": 10
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "rewardsBalance"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "rewardsBalance",
+        "t"
+      ],
+      "type": "str",
+      "length": 10
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "rewardsBalance",
+        "v"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "rewardsBalance",
+        "v",
+        "v"
+      ],
+      "type": "str",
+      "length": 5
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "rewardsBalance",
+        "v",
+        "u"
+      ],
+      "type": "dict",
+      "length": 7
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "rewardsBalance",
+        "v",
+        "u",
+        "wei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "rewardsBalance",
+        "v",
+        "u",
+        "Kwei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "rewardsBalance",
+        "v",
+        "u",
+        "Mwei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "rewardsBalance",
+        "v",
+        "u",
+        "Gwei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "rewardsBalance",
+        "v",
+        "u",
+        "szabo"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "rewardsBalance",
+        "v",
+        "u",
+        "finney"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "rewardsBalance",
+        "v",
+        "u",
+        "ETH"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "isDelegating"
+      ],
+      "type": "bool"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "activeStakedBalance"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "activeStakedBalance",
+        "t"
+      ],
+      "type": "str",
+      "length": 10
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "activeStakedBalance",
+        "v"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "activeStakedBalance",
+        "v",
+        "v"
+      ],
+      "type": "str",
+      "length": 5
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "activeStakedBalance",
+        "v",
+        "u"
+      ],
+      "type": "dict",
+      "length": 7
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "activeStakedBalance",
+        "v",
+        "u",
+        "wei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "activeStakedBalance",
+        "v",
+        "u",
+        "Kwei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "activeStakedBalance",
+        "v",
+        "u",
+        "Mwei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "activeStakedBalance",
+        "v",
+        "u",
+        "Gwei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "activeStakedBalance",
+        "v",
+        "u",
+        "szabo"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "activeStakedBalance",
+        "v",
+        "u",
+        "finney"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "activeStakedBalance",
+        "v",
+        "u",
+        "ETH"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "delegatedBalance"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "delegatedBalance",
+        "t"
+      ],
+      "type": "str",
+      "length": 10
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "delegatedBalance",
+        "v"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "delegatedBalance",
+        "v",
+        "v"
+      ],
+      "type": "str",
+      "length": 5
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "delegatedBalance",
+        "v",
+        "u"
+      ],
+      "type": "dict",
+      "length": 7
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "delegatedBalance",
+        "v",
+        "u",
+        "wei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "delegatedBalance",
+        "v",
+        "u",
+        "Kwei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "delegatedBalance",
+        "v",
+        "u",
+        "Mwei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "delegatedBalance",
+        "v",
+        "u",
+        "Gwei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "delegatedBalance",
+        "v",
+        "u",
+        "szabo"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "delegatedBalance",
+        "v",
+        "u",
+        "finney"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "delegatedBalance",
+        "v",
+        "u",
+        "ETH"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "pendingBalance"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "pendingBalance",
+        "t"
+      ],
+      "type": "str",
+      "length": 10
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "pendingBalance",
+        "v"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "pendingBalance",
+        "v",
+        "v"
+      ],
+      "type": "str",
+      "length": 5
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "pendingBalance",
+        "v",
+        "u"
+      ],
+      "type": "dict",
+      "length": 7
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "pendingBalance",
+        "v",
+        "u",
+        "wei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "pendingBalance",
+        "v",
+        "u",
+        "Kwei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "pendingBalance",
+        "v",
+        "u",
+        "Mwei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "pendingBalance",
+        "v",
+        "u",
+        "Gwei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "pendingBalance",
+        "v",
+        "u",
+        "szabo"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "pendingBalance",
+        "v",
+        "u",
+        "finney"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "pendingBalance",
+        "v",
+        "u",
+        "ETH"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "pendingDepositedBalance"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "pendingDepositedBalance",
+        "t"
+      ],
+      "type": "str",
+      "length": 10
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "pendingDepositedBalance",
+        "v"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "pendingDepositedBalance",
+        "v",
+        "v"
+      ],
+      "type": "str",
+      "length": 5
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "pendingDepositedBalance",
+        "v",
+        "u"
+      ],
+      "type": "dict",
+      "length": 7
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "pendingDepositedBalance",
+        "v",
+        "u",
+        "wei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "pendingDepositedBalance",
+        "v",
+        "u",
+        "Kwei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "pendingDepositedBalance",
+        "v",
+        "u",
+        "Mwei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "pendingDepositedBalance",
+        "v",
+        "u",
+        "Gwei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "pendingDepositedBalance",
+        "v",
+        "u",
+        "szabo"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "pendingDepositedBalance",
+        "v",
+        "u",
+        "finney"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "pendingDepositedBalance",
+        "v",
+        "u",
+        "ETH"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "minDelegateAmount"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "minDelegateAmount",
+        "t"
+      ],
+      "type": "str",
+      "length": 10
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "minDelegateAmount",
+        "v"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "minDelegateAmount",
+        "v",
+        "v"
+      ],
+      "type": "str",
+      "length": 7
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "minDelegateAmount",
+        "v",
+        "u"
+      ],
+      "type": "dict",
+      "length": 7
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "minDelegateAmount",
+        "v",
+        "u",
+        "wei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "minDelegateAmount",
+        "v",
+        "u",
+        "Kwei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "minDelegateAmount",
+        "v",
+        "u",
+        "Mwei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "minDelegateAmount",
+        "v",
+        "u",
+        "Gwei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "minDelegateAmount",
+        "v",
+        "u",
+        "szabo"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "minDelegateAmount",
+        "v",
+        "u",
+        "finney"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "minDelegateAmount",
+        "v",
+        "u",
+        "ETH"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "unclaimedUndelegatedBalance"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "unclaimedUndelegatedBalance",
+        "t"
+      ],
+      "type": "str",
+      "length": 10
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "unclaimedUndelegatedBalance",
+        "v"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "unclaimedUndelegatedBalance",
+        "v",
+        "v"
+      ],
+      "type": "str",
+      "length": 5
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "unclaimedUndelegatedBalance",
+        "v",
+        "u"
+      ],
+      "type": "dict",
+      "length": 7
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "unclaimedUndelegatedBalance",
+        "v",
+        "u",
+        "wei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "unclaimedUndelegatedBalance",
+        "v",
+        "u",
+        "Kwei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "unclaimedUndelegatedBalance",
+        "v",
+        "u",
+        "Mwei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "unclaimedUndelegatedBalance",
+        "v",
+        "u",
+        "Gwei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "unclaimedUndelegatedBalance",
+        "v",
+        "u",
+        "szabo"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "unclaimedUndelegatedBalance",
+        "v",
+        "u",
+        "finney"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "unclaimedUndelegatedBalance",
+        "v",
+        "u",
+        "ETH"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "canClaimUndelegatedBalance"
+      ],
+      "type": "bool"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "ethereum",
+        "v",
+        "isUndelegateInProgress"
+      ],
+      "type": "bool"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "t"
+      ],
+      "type": "str",
+      "length": 6
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v"
+      ],
+      "type": "dict",
+      "length": 10
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "rewardsBalance"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "rewardsBalance",
+        "t"
+      ],
+      "type": "str",
+      "length": 10
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "rewardsBalance",
+        "v"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "rewardsBalance",
+        "v",
+        "v"
+      ],
+      "type": "str",
+      "length": 6
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "rewardsBalance",
+        "v",
+        "u"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "rewardsBalance",
+        "v",
+        "u",
+        "base"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "rewardsBalance",
+        "v",
+        "u",
+        "MATIC"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "withdrawable"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "withdrawable",
+        "t"
+      ],
+      "type": "str",
+      "length": 10
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "withdrawable",
+        "v"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "withdrawable",
+        "v",
+        "v"
+      ],
+      "type": "str",
+      "length": 7
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "withdrawable",
+        "v",
+        "u"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "withdrawable",
+        "v",
+        "u",
+        "base"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "withdrawable",
+        "v",
+        "u",
+        "MATIC"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "unbondNonce"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "isDelegating"
+      ],
+      "type": "bool"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "delegatedBalance"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "delegatedBalance",
+        "t"
+      ],
+      "type": "str",
+      "length": 10
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "delegatedBalance",
+        "v"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "delegatedBalance",
+        "v",
+        "v"
+      ],
+      "type": "str",
+      "length": 6
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "delegatedBalance",
+        "v",
+        "u"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "delegatedBalance",
+        "v",
+        "u",
+        "base"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "delegatedBalance",
+        "v",
+        "u",
+        "MATIC"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "minRewardsToWithdraw"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "minRewardsToWithdraw",
+        "t"
+      ],
+      "type": "str",
+      "length": 10
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "minRewardsToWithdraw",
+        "v"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "minRewardsToWithdraw",
+        "v",
+        "v"
+      ],
+      "type": "str",
+      "length": 24
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "minRewardsToWithdraw",
+        "v",
+        "u"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "minRewardsToWithdraw",
+        "v",
+        "u",
+        "base"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "minRewardsToWithdraw",
+        "v",
+        "u",
+        "MATIC"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "minDelegateAmount"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "minDelegateAmount",
+        "t"
+      ],
+      "type": "str",
+      "length": 10
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "minDelegateAmount",
+        "v"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "minDelegateAmount",
+        "v",
+        "v"
+      ],
+      "type": "str",
+      "length": 7
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "minDelegateAmount",
+        "v",
+        "u"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "minDelegateAmount",
+        "v",
+        "u",
+        "base"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "minDelegateAmount",
+        "v",
+        "u",
+        "MATIC"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "isUndelegateInProgress"
+      ],
+      "type": "bool"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "canClaimUndelegatedBalance"
+      ],
+      "type": "bool"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "unclaimedUndelegatedBalance"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "unclaimedUndelegatedBalance",
+        "t"
+      ],
+      "type": "str",
+      "length": 10
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "unclaimedUndelegatedBalance",
+        "v"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "unclaimedUndelegatedBalance",
+        "v",
+        "v"
+      ],
+      "type": "str",
+      "length": 7
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "unclaimedUndelegatedBalance",
+        "v",
+        "u"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "unclaimedUndelegatedBalance",
+        "v",
+        "u",
+        "base"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "staking",
+        "v",
+        "polygon",
+        "v",
+        "unclaimedUndelegatedBalance",
+        "v",
+        "u",
+        "MATIC"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:ethereum",
+        "v",
+        "_version"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:bsc"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:bsc",
+        "t"
+      ],
+      "type": "str",
+      "length": 6
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:bsc",
+        "v"
+      ],
+      "type": "dict",
+      "length": 6
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:bsc",
+        "v",
+        "startblock"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:bsc",
+        "v",
+        "clarityCursor"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:bsc",
+        "v",
+        "clarityCursor",
+        "t"
+      ],
+      "type": "str",
+      "length": 6
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:bsc",
+        "v",
+        "clarityCursor",
+        "v"
+      ],
+      "type": "str",
+      "length": 36
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:bsc",
+        "v",
+        "balance"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:bsc",
+        "v",
+        "balance",
+        "t"
+      ],
+      "type": "str",
+      "length": 10
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:bsc",
+        "v",
+        "balance",
+        "v"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:bsc",
+        "v",
+        "balance",
+        "v",
+        "v"
+      ],
+      "type": "str",
+      "length": 5
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:bsc",
+        "v",
+        "balance",
+        "v",
+        "u"
+      ],
+      "type": "dict",
+      "length": 7
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:bsc",
+        "v",
+        "balance",
+        "v",
+        "u",
+        "wei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:bsc",
+        "v",
+        "balance",
+        "v",
+        "u",
+        "Kwei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:bsc",
+        "v",
+        "balance",
+        "v",
+        "u",
+        "Mwei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:bsc",
+        "v",
+        "balance",
+        "v",
+        "u",
+        "Gwei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:bsc",
+        "v",
+        "balance",
+        "v",
+        "u",
+        "szabo"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:bsc",
+        "v",
+        "balance",
+        "v",
+        "u",
+        "finney"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:bsc",
+        "v",
+        "balance",
+        "v",
+        "u",
+        "BNBBSC"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:bsc",
+        "v",
+        "tokenBalances"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:bsc",
+        "v",
+        "tokenBalances",
+        "t"
+      ],
+      "type": "str",
+      "length": 6
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:bsc",
+        "v",
+        "tokenBalances",
+        "v"
+      ],
+      "type": "dict",
+      "length": 0
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:bsc",
+        "v",
+        "index"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:bsc",
+        "v",
+        "_version"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:tezos"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:tezos",
+        "t"
+      ],
+      "type": "str",
+      "length": 6
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:tezos",
+        "v"
+      ],
+      "type": "dict",
+      "length": 3
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:tezos",
+        "v",
+        "balance"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:tezos",
+        "v",
+        "balance",
+        "t"
+      ],
+      "type": "str",
+      "length": 10
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:tezos",
+        "v",
+        "balance",
+        "v"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:tezos",
+        "v",
+        "balance",
+        "v",
+        "v"
+      ],
+      "type": "str",
+      "length": 5
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:tezos",
+        "v",
+        "balance",
+        "v",
+        "u"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:tezos",
+        "v",
+        "balance",
+        "v",
+        "u",
+        "mutez"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:tezos",
+        "v",
+        "balance",
+        "v",
+        "u",
+        "XTZ"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:tezos",
+        "v",
+        "cursor"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:tezos",
+        "v",
+        "_version"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:cardano"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:cardano",
+        "t"
+      ],
+      "type": "str",
+      "length": 6
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:cardano",
+        "v"
+      ],
+      "type": "dict",
+      "length": 5
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:cardano",
+        "v",
+        "utxos"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:cardano",
+        "v",
+        "utxos",
+        "t"
+      ],
+      "type": "str",
+      "length": 14
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:cardano",
+        "v",
+        "utxos",
+        "v"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:cardano",
+        "v",
+        "utxos",
+        "v",
+        "v"
+      ],
+      "type": "dict",
+      "length": 0
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:cardano",
+        "v",
+        "utxos",
+        "v",
+        "u"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:cardano",
+        "v",
+        "utxos",
+        "v",
+        "u",
+        "lovelaces"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:cardano",
+        "v",
+        "utxos",
+        "v",
+        "u",
+        "ADA"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:cardano",
+        "v",
+        "tokenUtxos"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:cardano",
+        "v",
+        "tokenUtxos",
+        "t"
+      ],
+      "type": "str",
+      "length": 6
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:cardano",
+        "v",
+        "tokenUtxos",
+        "v"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:cardano",
+        "v",
+        "tokenUtxos",
+        "v",
+        "snek_cardano_3831f600"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:cardano",
+        "v",
+        "tokenUtxos",
+        "v",
+        "snek_cardano_3831f600",
+        "t"
+      ],
+      "type": "str",
+      "length": 14
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:cardano",
+        "v",
+        "tokenUtxos",
+        "v",
+        "snek_cardano_3831f600",
+        "v"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:cardano",
+        "v",
+        "tokenUtxos",
+        "v",
+        "snek_cardano_3831f600",
+        "v",
+        "v"
+      ],
+      "type": "dict",
+      "length": 0
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:cardano",
+        "v",
+        "tokenUtxos",
+        "v",
+        "snek_cardano_3831f600",
+        "v",
+        "u"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:cardano",
+        "v",
+        "tokenUtxos",
+        "v",
+        "snek_cardano_3831f600",
+        "v",
+        "u",
+        "base"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:cardano",
+        "v",
+        "tokenUtxos",
+        "v",
+        "snek_cardano_3831f600",
+        "v",
+        "u",
+        "SNEKcardano3831F600"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:cardano",
+        "v",
+        "tokenUtxos",
+        "v",
+        "worldmobil_cardano_262abe57"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:cardano",
+        "v",
+        "tokenUtxos",
+        "v",
+        "worldmobil_cardano_262abe57",
+        "t"
+      ],
+      "type": "str",
+      "length": 14
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:cardano",
+        "v",
+        "tokenUtxos",
+        "v",
+        "worldmobil_cardano_262abe57",
+        "v"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:cardano",
+        "v",
+        "tokenUtxos",
+        "v",
+        "worldmobil_cardano_262abe57",
+        "v",
+        "v"
+      ],
+      "type": "dict",
+      "length": 0
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:cardano",
+        "v",
+        "tokenUtxos",
+        "v",
+        "worldmobil_cardano_262abe57",
+        "v",
+        "u"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:cardano",
+        "v",
+        "tokenUtxos",
+        "v",
+        "worldmobil_cardano_262abe57",
+        "v",
+        "u",
+        "base"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:cardano",
+        "v",
+        "tokenUtxos",
+        "v",
+        "worldmobil_cardano_262abe57",
+        "v",
+        "u",
+        "WORLDMOBILcardano262ABE57"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:cardano",
+        "v",
+        "balance"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:cardano",
+        "v",
+        "balance",
+        "t"
+      ],
+      "type": "str",
+      "length": 10
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:cardano",
+        "v",
+        "balance",
+        "v"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:cardano",
+        "v",
+        "balance",
+        "v",
+        "v"
+      ],
+      "type": "str",
+      "length": 5
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:cardano",
+        "v",
+        "balance",
+        "v",
+        "u"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:cardano",
+        "v",
+        "balance",
+        "v",
+        "u",
+        "lovelaces"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:cardano",
+        "v",
+        "balance",
+        "v",
+        "u",
+        "ADA"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:cardano",
+        "v",
+        "cursor"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!states!exodus_0:cardano",
+        "v",
+        "_version"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!eventLog!!v1!data"
+      ],
+      "type": "list",
+      "length": 2
+    },
+    {
+      "path": [
+        "!eventLog!!v1!data",
+        0
+      ],
+      "type": "dict",
+      "length": 3
+    },
+    {
+      "path": [
+        "!eventLog!!v1!data",
+        0,
+        "event"
+      ],
+      "type": "str",
+      "length": 13
+    },
+    {
+      "path": [
+        "!eventLog!!v1!data",
+        0,
+        "timestamp"
+      ],
+      "type": "str",
+      "length": 25
+    },
+    {
+      "path": [
+        "!eventLog!!v1!data",
+        0,
+        "machineId"
+      ],
+      "type": "str",
+      "length": 64
+    },
+    {
+      "path": [
+        "!eventLog!!v1!data",
+        1
+      ],
+      "type": "dict",
+      "length": 4
+    },
+    {
+      "path": [
+        "!eventLog!!v1!data",
+        1,
+        "event"
+      ],
+      "type": "str",
+      "length": 12
+    },
+    {
+      "path": [
+        "!eventLog!!v1!data",
+        1,
+        "asset"
+      ],
+      "type": "str",
+      "length": 8
+    },
+    {
+      "path": [
+        "!eventLog!!v1!data",
+        1,
+        "timestamp"
+      ],
+      "type": "str",
+      "length": 25
+    },
+    {
+      "path": [
+        "!eventLog!!v1!data",
+        1,
+        "machineId"
+      ],
+      "type": "str",
+      "length": 64
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum"
+      ],
+      "type": "list",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        0
+      ],
+      "type": "dict",
+      "length": 10
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        0,
+        "currencies"
+      ],
+      "type": "dict",
+      "length": 1
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        0,
+        "currencies",
+        "ethereum"
+      ],
+      "type": "dict",
+      "length": 7
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        0,
+        "currencies",
+        "ethereum",
+        "wei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        0,
+        "currencies",
+        "ethereum",
+        "Kwei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        0,
+        "currencies",
+        "ethereum",
+        "Mwei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        0,
+        "currencies",
+        "ethereum",
+        "Gwei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        0,
+        "currencies",
+        "ethereum",
+        "szabo"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        0,
+        "currencies",
+        "ethereum",
+        "finney"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        0,
+        "currencies",
+        "ethereum",
+        "ETH"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        0,
+        "txId"
+      ],
+      "type": "str",
+      "length": 66
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        0,
+        "date"
+      ],
+      "type": "str",
+      "length": 24
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        0,
+        "confirmations"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        0,
+        "dropped"
+      ],
+      "type": "bool"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        0,
+        "coinAmount"
+      ],
+      "type": "str",
+      "length": 10
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        0,
+        "coinName"
+      ],
+      "type": "str",
+      "length": 8
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        0,
+        "from"
+      ],
+      "type": "list",
+      "length": 1
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        0,
+        "from",
+        0
+      ],
+      "type": "str",
+      "length": 42
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        0,
+        "data"
+      ],
+      "type": "dict",
+      "length": 4
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        0,
+        "data",
+        "data"
+      ],
+      "type": "str",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        0,
+        "data",
+        "nonce"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        0,
+        "data",
+        "gasLimit"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        0,
+        "data",
+        "methodId"
+      ],
+      "type": "str",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        0,
+        "version"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        1
+      ],
+      "type": "dict",
+      "length": 12
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        1,
+        "currencies"
+      ],
+      "type": "dict",
+      "length": 1
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        1,
+        "currencies",
+        "ethereum"
+      ],
+      "type": "dict",
+      "length": 7
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        1,
+        "currencies",
+        "ethereum",
+        "wei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        1,
+        "currencies",
+        "ethereum",
+        "Kwei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        1,
+        "currencies",
+        "ethereum",
+        "Mwei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        1,
+        "currencies",
+        "ethereum",
+        "Gwei"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        1,
+        "currencies",
+        "ethereum",
+        "szabo"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        1,
+        "currencies",
+        "ethereum",
+        "finney"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        1,
+        "currencies",
+        "ethereum",
+        "ETH"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        1,
+        "txId"
+      ],
+      "type": "str",
+      "length": 66
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        1,
+        "date"
+      ],
+      "type": "str",
+      "length": 24
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        1,
+        "confirmations"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        1,
+        "dropped"
+      ],
+      "type": "bool"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        1,
+        "coinAmount"
+      ],
+      "type": "str",
+      "length": 22
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        1,
+        "coinName"
+      ],
+      "type": "str",
+      "length": 8
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        1,
+        "feeAmount"
+      ],
+      "type": "str",
+      "length": 21
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        1,
+        "feeCoinName"
+      ],
+      "type": "str",
+      "length": 8
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        1,
+        "to"
+      ],
+      "type": "str",
+      "length": 42
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        1,
+        "data"
+      ],
+      "type": "dict",
+      "length": 5
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        1,
+        "data",
+        "gasLimit"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        1,
+        "data",
+        "nonce"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        1,
+        "data",
+        "tipGasPrice"
+      ],
+      "type": "str",
+      "length": 11
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        1,
+        "data",
+        "data"
+      ],
+      "type": "str",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        1,
+        "data",
+        "methodId"
+      ],
+      "type": "str",
+      "length": 2
+    },
+    {
+      "path": [
+        "!blockchain!!v1!!txs!exodus_0:ethereum",
+        1,
+        "version"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!personalNotes!data"
+      ],
+      "type": "list",
+      "length": 2
+    },
+    {
+      "path": [
+        "!personalNotes!data",
+        0
+      ],
+      "type": "dict",
+      "length": 3
+    },
+    {
+      "path": [
+        "!personalNotes!data",
+        0,
+        "txId"
+      ],
+      "type": "str",
+      "length": 66
+    },
+    {
+      "path": [
+        "!personalNotes!data",
+        0,
+        "message"
+      ],
+      "type": "str",
+      "length": 0
+    },
+    {
+      "path": [
+        "!personalNotes!data",
+        0,
+        "sends"
+      ],
+      "type": "dict",
+      "length": 1
+    },
+    {
+      "path": [
+        "!personalNotes!data",
+        0,
+        "sends",
+        "0xd349c1917ce21fa087caceae73991a790d311e00"
+      ],
+      "type": "dict",
+      "length": 1
+    },
+    {
+      "path": [
+        "!personalNotes!data",
+        0,
+        "sends",
+        "0xd349c1917ce21fa087caceae73991a790d311e00",
+        "message"
+      ],
+      "type": "str",
+      "length": 16
+    },
+    {
+      "path": [
+        "!personalNotes!data",
+        1
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!personalNotes!data",
+        1,
+        "txId"
+      ],
+      "type": "str",
+      "length": 66
+    },
+    {
+      "path": [
+        "!personalNotes!data",
+        1,
+        "message"
+      ],
+      "type": "str",
+      "length": 12
+    }
+  ],
+  "matches": [
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "fiatAuthKeyPair"
+      ],
+      "location": "string_value",
+      "terms": [
+        "privatekey"
+      ],
+      "value_length": 248
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "abTestingKeyPair"
+      ],
+      "location": "string_value",
+      "terms": [
+        "privatekey"
+      ],
+      "value_length": 248
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "exodusSharesEncryptionKeyPair"
+      ],
+      "location": "string_value",
+      "terms": [
+        "privatekey"
+      ],
+      "value_length": 201
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "exodusSharesKeyPair"
+      ],
+      "location": "string_value",
+      "terms": [
+        "privatekey"
+      ],
+      "value_length": 248
+    }
+  ]
+}

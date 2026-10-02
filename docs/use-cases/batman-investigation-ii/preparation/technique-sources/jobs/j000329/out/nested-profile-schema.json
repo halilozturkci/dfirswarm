@@ -1,0 +1,570 @@
+{
+  "summary": {
+    "python": "3.11.2",
+    "profile_root_fields": 11,
+    "nodes": 52,
+    "decoded_structured_string_count": 4,
+    "secret_scalar_values_emitted": false
+  },
+  "decoded": [
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "fiatAuthKeyPair"
+      ],
+      "decoded_type": "dict"
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "abTestingKeyPair"
+      ],
+      "decoded_type": "dict"
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "exodusSharesEncryptionKeyPair"
+      ],
+      "decoded_type": "dict"
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "exodusSharesKeyPair"
+      ],
+      "decoded_type": "dict"
+    }
+  ],
+  "fields": [
+    {
+      "path": [
+        "!fusion!cachedProfile"
+      ],
+      "type": "dict",
+      "length": 11
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "analyticsSet"
+      ],
+      "type": "bool"
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "createdAt"
+      ],
+      "type": "str",
+      "length": 10
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "desktopUser"
+      ],
+      "type": "bool"
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "analyticsUserId"
+      ],
+      "type": "str",
+      "length": 44
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "abandoned"
+      ],
+      "type": "bool"
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "migrations"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "migrations",
+        "20210520-reset-assets-cursors"
+      ],
+      "type": "dict",
+      "length": 1
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "migrations",
+        "20210520-reset-assets-cursors",
+        "exodus"
+      ],
+      "type": "bool"
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "migrations",
+        "20210527-reset-vethor-cursors"
+      ],
+      "type": "dict",
+      "length": 1
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "migrations",
+        "20210527-reset-vethor-cursors",
+        "exodus"
+      ],
+      "type": "bool"
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private"
+      ],
+      "type": "dict",
+      "length": 4
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "fiatAuthKeyPair"
+      ],
+      "type": "str",
+      "length": 248
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "fiatAuthKeyPair",
+        "<decoded_JSON>"
+      ],
+      "type": "dict",
+      "length": 3
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "fiatAuthKeyPair",
+        "<decoded_JSON>",
+        "publicKey"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "fiatAuthKeyPair",
+        "<decoded_JSON>",
+        "publicKey",
+        "type"
+      ],
+      "type": "str",
+      "length": 6
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "fiatAuthKeyPair",
+        "<decoded_JSON>",
+        "publicKey",
+        "data"
+      ],
+      "type": "str",
+      "length": 51
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "fiatAuthKeyPair",
+        "<decoded_JSON>",
+        "privateKey"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "fiatAuthKeyPair",
+        "<decoded_JSON>",
+        "privateKey",
+        "type"
+      ],
+      "type": "str",
+      "length": 6
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "fiatAuthKeyPair",
+        "<decoded_JSON>",
+        "privateKey",
+        "data"
+      ],
+      "type": "str",
+      "length": 95
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "fiatAuthKeyPair",
+        "<decoded_JSON>",
+        "keyType"
+      ],
+      "type": "str",
+      "length": 7
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "abTestingKeyPair"
+      ],
+      "type": "str",
+      "length": 248
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "abTestingKeyPair",
+        "<decoded_JSON>"
+      ],
+      "type": "dict",
+      "length": 3
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "abTestingKeyPair",
+        "<decoded_JSON>",
+        "publicKey"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "abTestingKeyPair",
+        "<decoded_JSON>",
+        "publicKey",
+        "type"
+      ],
+      "type": "str",
+      "length": 6
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "abTestingKeyPair",
+        "<decoded_JSON>",
+        "publicKey",
+        "data"
+      ],
+      "type": "str",
+      "length": 51
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "abTestingKeyPair",
+        "<decoded_JSON>",
+        "privateKey"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "abTestingKeyPair",
+        "<decoded_JSON>",
+        "privateKey",
+        "type"
+      ],
+      "type": "str",
+      "length": 6
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "abTestingKeyPair",
+        "<decoded_JSON>",
+        "privateKey",
+        "data"
+      ],
+      "type": "str",
+      "length": 95
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "abTestingKeyPair",
+        "<decoded_JSON>",
+        "keyType"
+      ],
+      "type": "str",
+      "length": 7
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "exodusSharesEncryptionKeyPair"
+      ],
+      "type": "str",
+      "length": 201
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "exodusSharesEncryptionKeyPair",
+        "<decoded_JSON>"
+      ],
+      "type": "dict",
+      "length": 3
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "exodusSharesEncryptionKeyPair",
+        "<decoded_JSON>",
+        "curve"
+      ],
+      "type": "str",
+      "length": 6
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "exodusSharesEncryptionKeyPair",
+        "<decoded_JSON>",
+        "privateKey"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "exodusSharesEncryptionKeyPair",
+        "<decoded_JSON>",
+        "privateKey",
+        "type"
+      ],
+      "type": "str",
+      "length": 6
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "exodusSharesEncryptionKeyPair",
+        "<decoded_JSON>",
+        "privateKey",
+        "data"
+      ],
+      "type": "str",
+      "length": 51
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "exodusSharesEncryptionKeyPair",
+        "<decoded_JSON>",
+        "publicKey"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "exodusSharesEncryptionKeyPair",
+        "<decoded_JSON>",
+        "publicKey",
+        "type"
+      ],
+      "type": "str",
+      "length": 6
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "exodusSharesEncryptionKeyPair",
+        "<decoded_JSON>",
+        "publicKey",
+        "data"
+      ],
+      "type": "str",
+      "length": 51
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "exodusSharesKeyPair"
+      ],
+      "type": "str",
+      "length": 248
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "exodusSharesKeyPair",
+        "<decoded_JSON>"
+      ],
+      "type": "dict",
+      "length": 3
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "exodusSharesKeyPair",
+        "<decoded_JSON>",
+        "publicKey"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "exodusSharesKeyPair",
+        "<decoded_JSON>",
+        "publicKey",
+        "type"
+      ],
+      "type": "str",
+      "length": 6
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "exodusSharesKeyPair",
+        "<decoded_JSON>",
+        "publicKey",
+        "data"
+      ],
+      "type": "str",
+      "length": 51
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "exodusSharesKeyPair",
+        "<decoded_JSON>",
+        "privateKey"
+      ],
+      "type": "dict",
+      "length": 2
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "exodusSharesKeyPair",
+        "<decoded_JSON>",
+        "privateKey",
+        "type"
+      ],
+      "type": "str",
+      "length": 6
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "exodusSharesKeyPair",
+        "<decoded_JSON>",
+        "privateKey",
+        "data"
+      ],
+      "type": "str",
+      "length": 95
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "private",
+        "exodusSharesKeyPair",
+        "<decoded_JSON>",
+        "keyType"
+      ],
+      "type": "str",
+      "length": 7
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "earliestTxDate"
+      ],
+      "type": "str",
+      "length": 10
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "portfolioCount"
+      ],
+      "type": "int"
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "hasTrezor"
+      ],
+      "type": "bool"
+    },
+    {
+      "path": [
+        "!fusion!cachedProfile",
+        "portfolioCountFunded"
+      ],
+      "type": "int"
+    }
+  ]
+}
