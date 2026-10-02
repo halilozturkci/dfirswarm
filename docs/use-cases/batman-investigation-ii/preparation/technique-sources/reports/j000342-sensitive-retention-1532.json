@@ -1,0 +1,12 @@
+{
+  "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000342/out/v4-report-snapshot.md",
+  "retained": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/sensitive-prefix-1532/jobs/j000342-v4-report-snapshot.md",
+  "job": "j000342",
+  "bytes": 228871,
+  "sha256": "a6950d3f59e2cac7df8119299ef184081d15ad0e946ed276360f366bce4b660b",
+  "captured_at": "2026-10-02T15:36:05.467061+00:00",
+  "role": "complete sealed v4 independently checked known-field snapshot; unrestricted public packaging not authorized",
+  "selected_git_body_copy": false,
+  "retention": "complete byte-exact private body; no truncation/redaction",
+  "archive_status": "selected observer prefix only; final complete run/custody pending"
+}

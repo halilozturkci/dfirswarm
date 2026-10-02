@@ -1,0 +1,307 @@
+{
+  "python": "3.11.2",
+  "snapshot_bytes": 228871,
+  "control_bytes": 227900,
+  "tested_fields": 4,
+  "representations_tested": 37,
+  "all_v4_known_forms_zero": true,
+  "v3_full_field_and_prefix_raw_controls_match_two_each": true,
+  "fields": [
+    {
+      "label": "original17",
+      "source_length": 17,
+      "checks": [
+        {
+          "representation": "raw_bytes",
+          "v4_hit_count": 0,
+          "v4_byte_offsets": [],
+          "v3_control_hit_count": 2,
+          "v3_control_byte_offsets": [
+            23864,
+            203442
+          ]
+        },
+        {
+          "representation": "hex_lower",
+          "v4_hit_count": 0,
+          "v4_byte_offsets": [],
+          "v3_control_hit_count": 0,
+          "v3_control_byte_offsets": []
+        },
+        {
+          "representation": "hex_upper",
+          "v4_hit_count": 0,
+          "v4_byte_offsets": [],
+          "v3_control_hit_count": 0,
+          "v3_control_byte_offsets": []
+        },
+        {
+          "representation": "base64",
+          "v4_hit_count": 0,
+          "v4_byte_offsets": [],
+          "v3_control_hit_count": 0,
+          "v3_control_byte_offsets": []
+        },
+        {
+          "representation": "base64_unpadded",
+          "v4_hit_count": 0,
+          "v4_byte_offsets": [],
+          "v3_control_hit_count": 0,
+          "v3_control_byte_offsets": []
+        },
+        {
+          "representation": "urlsafe_base64",
+          "v4_hit_count": 0,
+          "v4_byte_offsets": [],
+          "v3_control_hit_count": 0,
+          "v3_control_byte_offsets": []
+        },
+        {
+          "representation": "urlsafe_base64_unpadded",
+          "v4_hit_count": 0,
+          "v4_byte_offsets": [],
+          "v3_control_hit_count": 0,
+          "v3_control_byte_offsets": []
+        },
+        {
+          "representation": "utf16le",
+          "v4_hit_count": 0,
+          "v4_byte_offsets": [],
+          "v3_control_hit_count": 0,
+          "v3_control_byte_offsets": []
+        },
+        {
+          "representation": "json_escaped_ascii",
+          "v4_hit_count": 0,
+          "v4_byte_offsets": [],
+          "v3_control_hit_count": 2,
+          "v3_control_byte_offsets": [
+            23864,
+            203442
+          ]
+        },
+        {
+          "representation": "unicode_escaped_ascii",
+          "v4_hit_count": 0,
+          "v4_byte_offsets": [],
+          "v3_control_hit_count": 0,
+          "v3_control_byte_offsets": []
+        }
+      ]
+    },
+    {
+      "label": "repaired17",
+      "source_length": 17,
+      "checks": [
+        {
+          "representation": "raw_bytes",
+          "v4_hit_count": 0,
+          "v4_byte_offsets": [],
+          "v3_control_hit_count": 0,
+          "v3_control_byte_offsets": []
+        },
+        {
+          "representation": "hex_lower",
+          "v4_hit_count": 0,
+          "v4_byte_offsets": [],
+          "v3_control_hit_count": 0,
+          "v3_control_byte_offsets": []
+        },
+        {
+          "representation": "hex_upper",
+          "v4_hit_count": 0,
+          "v4_byte_offsets": [],
+          "v3_control_hit_count": 0,
+          "v3_control_byte_offsets": []
+        },
+        {
+          "representation": "base64",
+          "v4_hit_count": 0,
+          "v4_byte_offsets": [],
+          "v3_control_hit_count": 0,
+          "v3_control_byte_offsets": []
+        },
+        {
+          "representation": "base64_unpadded",
+          "v4_hit_count": 0,
+          "v4_byte_offsets": [],
+          "v3_control_hit_count": 0,
+          "v3_control_byte_offsets": []
+        },
+        {
+          "representation": "urlsafe_base64",
+          "v4_hit_count": 0,
+          "v4_byte_offsets": [],
+          "v3_control_hit_count": 0,
+          "v3_control_byte_offsets": []
+        },
+        {
+          "representation": "urlsafe_base64_unpadded",
+          "v4_hit_count": 0,
+          "v4_byte_offsets": [],
+          "v3_control_hit_count": 0,
+          "v3_control_byte_offsets": []
+        }
+      ]
+    },
+    {
+      "label": "original_prefix15",
+      "source_length": 15,
+      "checks": [
+        {
+          "representation": "raw_bytes",
+          "v4_hit_count": 0,
+          "v4_byte_offsets": [],
+          "v3_control_hit_count": 2,
+          "v3_control_byte_offsets": [
+            23864,
+            203442
+          ]
+        },
+        {
+          "representation": "hex_lower",
+          "v4_hit_count": 0,
+          "v4_byte_offsets": [],
+          "v3_control_hit_count": 0,
+          "v3_control_byte_offsets": []
+        },
+        {
+          "representation": "hex_upper",
+          "v4_hit_count": 0,
+          "v4_byte_offsets": [],
+          "v3_control_hit_count": 0,
+          "v3_control_byte_offsets": []
+        },
+        {
+          "representation": "base64",
+          "v4_hit_count": 0,
+          "v4_byte_offsets": [],
+          "v3_control_hit_count": 0,
+          "v3_control_byte_offsets": []
+        },
+        {
+          "representation": "base64_unpadded",
+          "v4_hit_count": 0,
+          "v4_byte_offsets": [],
+          "v3_control_hit_count": 0,
+          "v3_control_byte_offsets": []
+        },
+        {
+          "representation": "urlsafe_base64",
+          "v4_hit_count": 0,
+          "v4_byte_offsets": [],
+          "v3_control_hit_count": 0,
+          "v3_control_byte_offsets": []
+        },
+        {
+          "representation": "urlsafe_base64_unpadded",
+          "v4_hit_count": 0,
+          "v4_byte_offsets": [],
+          "v3_control_hit_count": 0,
+          "v3_control_byte_offsets": []
+        },
+        {
+          "representation": "utf16le",
+          "v4_hit_count": 0,
+          "v4_byte_offsets": [],
+          "v3_control_hit_count": 0,
+          "v3_control_byte_offsets": []
+        },
+        {
+          "representation": "json_escaped_ascii",
+          "v4_hit_count": 0,
+          "v4_byte_offsets": [],
+          "v3_control_hit_count": 2,
+          "v3_control_byte_offsets": [
+            23864,
+            203442
+          ]
+        },
+        {
+          "representation": "unicode_escaped_ascii",
+          "v4_hit_count": 0,
+          "v4_byte_offsets": [],
+          "v3_control_hit_count": 0,
+          "v3_control_byte_offsets": []
+        }
+      ]
+    },
+    {
+      "label": "original_prefix15_plus_two_spaces",
+      "source_length": 17,
+      "checks": [
+        {
+          "representation": "raw_bytes",
+          "v4_hit_count": 0,
+          "v4_byte_offsets": [],
+          "v3_control_hit_count": 0,
+          "v3_control_byte_offsets": []
+        },
+        {
+          "representation": "hex_lower",
+          "v4_hit_count": 0,
+          "v4_byte_offsets": [],
+          "v3_control_hit_count": 0,
+          "v3_control_byte_offsets": []
+        },
+        {
+          "representation": "hex_upper",
+          "v4_hit_count": 0,
+          "v4_byte_offsets": [],
+          "v3_control_hit_count": 0,
+          "v3_control_byte_offsets": []
+        },
+        {
+          "representation": "base64",
+          "v4_hit_count": 0,
+          "v4_byte_offsets": [],
+          "v3_control_hit_count": 0,
+          "v3_control_byte_offsets": []
+        },
+        {
+          "representation": "base64_unpadded",
+          "v4_hit_count": 0,
+          "v4_byte_offsets": [],
+          "v3_control_hit_count": 0,
+          "v3_control_byte_offsets": []
+        },
+        {
+          "representation": "urlsafe_base64",
+          "v4_hit_count": 0,
+          "v4_byte_offsets": [],
+          "v3_control_hit_count": 0,
+          "v3_control_byte_offsets": []
+        },
+        {
+          "representation": "urlsafe_base64_unpadded",
+          "v4_hit_count": 0,
+          "v4_byte_offsets": [],
+          "v3_control_hit_count": 0,
+          "v3_control_byte_offsets": []
+        },
+        {
+          "representation": "utf16le",
+          "v4_hit_count": 0,
+          "v4_byte_offsets": [],
+          "v3_control_hit_count": 0,
+          "v3_control_byte_offsets": []
+        },
+        {
+          "representation": "json_escaped_ascii",
+          "v4_hit_count": 0,
+          "v4_byte_offsets": [],
+          "v3_control_hit_count": 0,
+          "v3_control_byte_offsets": []
+        },
+        {
+          "representation": "unicode_escaped_ascii",
+          "v4_hit_count": 0,
+          "v4_byte_offsets": [],
+          "v3_control_hit_count": 0,
+          "v3_control_byte_offsets": []
+        }
+      ]
+    }
+  ],
+  "bounds": "Known exact field/prefix/reconstruction representations only. No secret scalar/hash output, candidate authentication, truncated/obfuscated all-secret survey or certification of old versions."
+}

@@ -1,0 +1,103 @@
+{
+  "id": "j000342",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "work/s42120102/checkpoint-v4-redaction-snapshot.md",
+      "job:j000341/checkpoint-redaction-snapshot.md",
+      "input:chall/unknown.data",
+      "job:j000154/cache-patched.7z"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "independent": true,
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport json,os,base64,shutil,sys\nfrom pathlib import Path\nout=Path(os.environ['OUT']); report_path=Path('work/s42120102/checkpoint-v4-redaction-snapshot.md');report=report_path.read_bytes();baseline=Path('store/jobs/j000341/out/checkpoint-redaction-snapshot.md').read_bytes()\noriginal=Path('inputs/chall/unknown.data').read_bytes()[243:260];repaired=Path('store/jobs/j000154/out/cache-patched.7z').read_bytes()[243:260];assert len(original)==len(repaired)==17\nfields=[('original17',original),('repaired17',repaired),('original_prefix15',original[:15]),('original_prefix15_plus_two_spaces',original[:15]+b'  ')]\nrows=[]\ndef positions(hay,needle):\n result=[];start=0\n while True:\n  at=hay.find(needle,start)\n  if at<0:return result\n  result.append(at);start=at+len(needle)\nfor label,token in fields:\n forms={'raw_bytes':token,'hex_lower':token.hex().encode(),'hex_upper':token.hex().upper().encode(),'base64':base64.b64encode(token),'base64_unpadded':base64.b64encode(token).rstrip(b'='),'urlsafe_base64':base64.urlsafe_b64encode(token),'urlsafe_base64_unpadded':base64.urlsafe_b64encode(token).rstrip(b'=')}\n if all(32<=x<127 for x in token):\n  text=token.decode('ascii');forms['utf16le']=text.encode('utf-16le');forms['json_escaped_ascii']=json.dumps(text)[1:-1].encode();forms['unicode_escaped_ascii']=''.join('\\\\u%04x'%c for c in token).encode()\n checks=[]\n for form,needle in forms.items():\n  current=positions(report,needle);old=positions(baseline,needle)\n  checks.append({'representation':form,'v4_hit_count':len(current),'v4_byte_offsets':current,'v3_control_hit_count':len(old),'v3_control_byte_offsets':old})\n rows.append({'label':label,'source_length':len(token),'checks':checks})\nassert next(x for x in rows[0]['checks'] if x['representation']=='raw_bytes')['v3_control_hit_count']==2\nassert next(x for x in rows[2]['checks'] if x['representation']=='raw_bytes')['v3_control_hit_count']==2\nresult={'python':sys.version.split()[0],'snapshot_bytes':len(report),'control_bytes':len(baseline),'tested_fields':len(rows),'representations_tested':sum(len(x['checks']) for x in rows),'all_v4_known_forms_zero':all(c['v4_hit_count']==0 for x in rows for c in x['checks']),'v3_full_field_and_prefix_raw_controls_match_two_each':True,'fields':rows,'bounds':'Known exact field/prefix/reconstruction representations only. No secret scalar/hash output, candidate authentication, truncated/obfuscated all-secret survey or certification of old versions.'}\n(out/'v4-known-field-redaction-check.json').write_text(json.dumps(result,indent=2));shutil.copyfile(report_path,out/'v4-report-snapshot.md');print(json.dumps({k:v for k,v in result.items() if k!='fields'}))\nPY"
+  },
+  "requester": {
+    "agent": "s42120102",
+    "name": "Wallet trace",
+    "doing": "Examine wallet installation and wallet protection evidence for questions 5 and 9."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T15:26:40.895Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "inputs/chall/unknown.data",
+        "sha256": "87841ce462a019649f6206c72cf65ce5305a88b828ca45996ae9422e6f578f4f"
+      },
+      {
+        "path": "store/jobs/j000341/out/checkpoint-redaction-snapshot.md",
+        "sha256": "d32bc2c97cd694d776c5a035911d950c95f33c5d3998df7e470c49f23b082484"
+      },
+      {
+        "path": "store/jobs/j000154/out/cache-patched.7z",
+        "sha256": "dc964dd816be637dadf3f92d53bdf43b88ad5bbbcc7b37525b305d4ba4ea08d1"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000342-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T15:26:40.978Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000342",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 4,
+    "files": 4,
+    "bound": 0,
+    "manifest": "store/jobs/j000342/scope.1.json",
+    "manifest_sha256": "2688fcf4c38c0e21e3be37784fcc29dcffc3e3a8e95c0568f14ce38ad12070c0"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T15:26:41.699Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "ea77981395aebafc21590c6232ac92e41f5147de93bbe86c1209e82731881d7b",
+    "files": 2,
+    "bytes": 237511,
+    "rejected": 0,
+    "path": "store/jobs/j000342/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}
