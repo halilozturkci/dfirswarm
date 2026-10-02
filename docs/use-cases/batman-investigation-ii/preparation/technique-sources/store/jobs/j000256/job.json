@@ -1,0 +1,118 @@
+{
+  "id": "j000256",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000130/archive/contact/apex.sqlite3",
+      "job:j000130/archive/contact/apex.sqlite3-wal",
+      "job:j000130/archive/contact/instance1/sync/nucleus.sqlite3",
+      "job:j000130/archive/contact/instance1/sync/nucleus.sqlite3-wal"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport sqlite3,shutil,pathlib,json,os,struct\nroot=pathlib.Path('store/jobs/j000130/out/archive/contact');out=pathlib.Path(os.environ['OUT']);report=[]\ndef dump(c):\n r={}\n for name,sql in c.execute(\"select name,sql from sqlite_master where type='table'\"):\n  esc='\"'+name.replace('\"','\"\"')+'\"';cur=c.execute('select * from '+esc);rows=cur.fetchall()\n  r[name]={'sql':sql,'columns':[a[0] for a in cur.description],'count':len(rows),'rows':[[{'blob_hex':v.hex()} if isinstance(v,bytes) else v for v in row] for row in rows]}\n return r\nfor label,rel in [('apex','apex.sqlite3'),('nucleus','instance1/sync/nucleus.sqlite3')]:\n src=root/rel;wal=pathlib.Path(str(src)+'-wal');d=out/label;d.mkdir();db=d/src.name;shutil.copyfile(src,db);shutil.copyfile(wal,str(db)+'-wal')\n wb=wal.read_bytes();page=struct.unpack_from('>I',wb,8)[0];step=24+page;frames=(len(wb)-32)//step;assert (len(wb)-32)%step==0\n commits=[{'frame':i+1,'page_number':struct.unpack_from('>I',wb,32+i*step)[0],'db_size_pages':struct.unpack_from('>I',wb,36+i*step)[0]} for i in range(frames) if struct.unpack_from('>I',wb,36+i*step)[0]]\n base=sqlite3.connect('file:'+str(src)+'?mode=ro&immutable=1',uri=True);b=dump(base);base.close()\n c=sqlite3.connect(str(db));q=c.execute('pragma quick_check').fetchall();j=c.execute('pragma journal_mode').fetchone()[0];s=dump(c);backup=sqlite3.connect(str(d/'committed-snapshot.sqlite3'));c.backup(backup);backup.close();c.close()\n json.dump({'immutable_base':b,'committed_snapshot':s},open(d/'all-rows.json','w'),indent=2)\n report.append({'label':label,'sqlite_version':sqlite3.sqlite_version,'wal_length':len(wb),'page_size':page,'frames':frames,'commits':commits,'journal_mode':j,'snapshot_quick_check':q,'base_counts':{k:v['count'] for k,v in b.items()},'snapshot_counts':{k:v['count'] for k,v in s.items()},'changed_tables':[k for k in set(b)|set(s) if b.get(k)!=s.get(k)]})\njson.dump(report,open(out/'wal-reconstruction.json','w'),indent=2);print(json.dumps(report,indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120103",
+    "name": "Wallet history",
+    "doing": "Investigating Q7 and Q8: password-protected archive and original file hashes; avoiding peers' wallet work."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T11:17:57.664Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000130/out/archive/contact/instance1/sync/nucleus.sqlite3-wal",
+        "sha256": "3162b83de24f16ac798c5a123a14a75b0849c63f964032d0213285bf97f354cb"
+      },
+      {
+        "path": "store/jobs/j000130/out/archive/contact/instance1/sync/nucleus.sqlite3",
+        "sha256": "4886322008145653c2c8fe6432650bbb2520127c848dbc52b7a571e751884648"
+      },
+      {
+        "path": "store/jobs/j000130/out/archive/contact/apex.sqlite3",
+        "sha256": "d207893df8d52ed73de0f2ee58f311a17b71f9c7f275017510b0075cd81680ef"
+      },
+      {
+        "path": "store/jobs/j000130/out/archive/contact/apex.sqlite3-wal",
+        "sha256": "f91c3619a4ed5a3c32eb60ac4917e641123349bd4e8a06d8070d437d91bab32b"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000256-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T11:17:57.753Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000256",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 4,
+    "files": 4,
+    "bound": 0,
+    "manifest": "store/jobs/j000256/scope.1.json",
+    "manifest_sha256": "b74fef2c6f8220fac7cfaa3ebf1afbd6b0790cbf59672fdd4b4331604699ed3c"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T11:17:58.530Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "same_as": [
+    {
+      "path": "apex/apex.sqlite3",
+      "sha256": "d207893df8d52ed73de0f2ee58f311a17b71f9c7f275017510b0075cd81680ef",
+      "bytes": 114688,
+      "job": "j000130",
+      "file": "archive/contact/apex.sqlite3"
+    },
+    {
+      "path": "nucleus/nucleus.sqlite3",
+      "sha256": "a2c3074b0c1973f90ffee1b292d943b213ffe422bfecabd8b7c2ad2c72d7f619",
+      "bytes": 81920,
+      "job": "j000194",
+      "file": "tmp6/nucleus.sqlite3"
+    }
+  ],
+  "outputs": {
+    "manifest_sha256": "0377f5412d5f38b174e79e5bf0f536444b47c7558272cac5bbbdf9adce77dc9b",
+    "files": 7,
+    "bytes": 833278,
+    "rejected": 0,
+    "path": "store/jobs/j000256/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

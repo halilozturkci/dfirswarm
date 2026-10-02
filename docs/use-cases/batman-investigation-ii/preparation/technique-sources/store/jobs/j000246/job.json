@@ -1,0 +1,87 @@
+{
+  "id": "j000246",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000130/archive/contact/metrics/store.bin"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport os,zlib,json,re\nb=open('store/jobs/j000130/out/archive/contact/metrics/store.bin','rb').read();z=zlib.decompressobj();d=z.decompress(b,16*1024*1024);d+=z.flush();open(os.environ['OUT']+'/metrics-decoded.bin','wb').write(d)\ns={'python_zlib_runtime':zlib.ZLIB_RUNTIME_VERSION,'input_length':len(b),'decoded_length':len(d),'eof':z.eof,'unused_data_length':len(z.unused_data),'unconsumed_tail_length':len(z.unconsumed_tail),'prefix_hex':d[:64].hex()};json.dump(s,open(os.environ['OUT']+'/decode-summary.json','w'),indent=2)\nss=[{'offset':m.start(),'value':m.group().decode('ascii')} for m in re.finditer(rb'[ -~]{4,}',d)];json.dump(ss,open(os.environ['OUT']+'/metrics-strings.json','w'),indent=2)\nprint(json.dumps(s));print(json.dumps(ss[:200],indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120103",
+    "name": "Wallet history",
+    "doing": "Investigating Q7 and Q8: password-protected archive and original file hashes; avoiding peers' wallet work."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T11:10:10.481Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000130/out/archive/contact/metrics/store.bin",
+        "sha256": "544053e5346ef2639f45167780a73a43da2067ab35d07c6a15724746a2936fc1"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000246-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T11:10:10.571Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000246",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000246/scope.1.json",
+    "manifest_sha256": "3c1a1943b9092752390d44503c01ab2752cb0dc318f6e09b5dd6024a2810a3ac"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T11:10:11.300Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "a4d81fe9c6c5deea19e0aea58d8f851176a3c2ca938fc399ec36085dacc7db05",
+    "files": 3,
+    "bytes": 72922,
+    "rejected": 0,
+    "path": "store/jobs/j000246/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

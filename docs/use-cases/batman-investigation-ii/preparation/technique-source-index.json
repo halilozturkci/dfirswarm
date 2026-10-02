@@ -1412,6 +1412,695 @@
       "captured_at": "2026-10-02T11:16:07.303616+00:00",
       "byte_exact_source_copy": false,
       "selection": "whole original records for listed seqs, not an independently chained full ledger"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000243/job.json",
+      "copy": "preparation/technique-sources/store/jobs/j000243/job.json",
+      "bytes": 5190,
+      "sha256": "333ad8b3219e1c45bc50b9e1bfc02a0b071eb78e4eef685e5cb4f2d9eb28ea08",
+      "captured_at": "2026-10-02T11:27:04.016986+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000243/manifest.json",
+      "copy": "preparation/technique-sources/store/jobs/j000243/manifest.json",
+      "bytes": 485,
+      "sha256": "f479ca12ed4810b0ec9246c2d964d416449c9bb4170e3bdf0a81f60575990f25",
+      "captured_at": "2026-10-02T11:27:04.017169+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000243/stdout.log",
+      "copy": "preparation/technique-sources/store/jobs/j000243/stdout.log",
+      "bytes": 845,
+      "sha256": "c8e3bb996f797c98b6ae839332aa0f9feba387ea084555371952eedb7909fbdf",
+      "captured_at": "2026-10-02T11:27:04.017343+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000243/stderr.log",
+      "copy": "preparation/technique-sources/store/jobs/j000243/stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured_at": "2026-10-02T11:27:04.017474+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000243/out/xref_review.json",
+      "copy": "preparation/technique-sources/store/jobs/j000243/out/xref_review.json",
+      "bytes": 1072,
+      "sha256": "f1e623d74bf026755af53dfc385b2842ae98714d282d13c3fa2a780b9a132c79",
+      "captured_at": "2026-10-02T11:27:04.017791+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000245/job.json",
+      "copy": "preparation/technique-sources/store/jobs/j000245/job.json",
+      "bytes": 7820,
+      "sha256": "37e9163a4aa5ecc3d26072f09f6871029d6c90d0b6923c155ec0eb269b5e3704",
+      "captured_at": "2026-10-02T11:27:04.018068+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000245/manifest.json",
+      "copy": "preparation/technique-sources/store/jobs/j000245/manifest.json",
+      "bytes": 334,
+      "sha256": "a86dac446f14dec2044272647964fe18cf15897cc5e2261b13869131904fc80c",
+      "captured_at": "2026-10-02T11:27:04.018226+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000245/stdout.log",
+      "copy": "preparation/technique-sources/store/jobs/j000245/stdout.log",
+      "bytes": 6751,
+      "sha256": "caf77387a9f44113a2a64ad696886ef4f874dc43ec459ea9058947d3614f7101",
+      "captured_at": "2026-10-02T11:27:04.018383+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000245/stderr.log",
+      "copy": "preparation/technique-sources/store/jobs/j000245/stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured_at": "2026-10-02T11:27:04.018503+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000245/out/q6-static-control-flow.json",
+      "copy": "preparation/technique-sources/store/jobs/j000245/out/q6-static-control-flow.json",
+      "bytes": 6750,
+      "sha256": "5e7f5194d65be962adca2b9744ab38c0272fc14008d980730c9b385bbecb3d8f",
+      "captured_at": "2026-10-02T11:27:04.018805+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000246/job.json",
+      "copy": "preparation/technique-sources/store/jobs/j000246/job.json",
+      "bytes": 3320,
+      "sha256": "bf3eb07cfef3080a674775da6d3890dbc43961f53af844bfbb6ea6690e7f590b",
+      "captured_at": "2026-10-02T11:27:04.019046+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000246/manifest.json",
+      "copy": "preparation/technique-sources/store/jobs/j000246/manifest.json",
+      "bytes": 671,
+      "sha256": "a4d81fe9c6c5deea19e0aea58d8f851176a3c2ca938fc399ec36085dacc7db05",
+      "captured_at": "2026-10-02T11:27:04.019201+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000246/stdout.log",
+      "copy": "preparation/technique-sources/store/jobs/j000246/stdout.log",
+      "bytes": 12497,
+      "sha256": "98a4e096f40357a00fb02e70cf84e0461609665da2d0b952b9f5db5d04d2db55",
+      "captured_at": "2026-10-02T11:27:04.019429+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000246/stderr.log",
+      "copy": "preparation/technique-sources/store/jobs/j000246/stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured_at": "2026-10-02T11:27:04.019568+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000246/out/decode-summary.json",
+      "copy": "preparation/technique-sources/store/jobs/j000246/out/decode-summary.json",
+      "bytes": 309,
+      "sha256": "08ba647dfe56c9b4620bfd5358855ef002be1b32e665748694dd38d6ecff1bfd",
+      "captured_at": "2026-10-02T11:27:04.019879+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000248/job.json",
+      "copy": "preparation/technique-sources/store/jobs/j000248/job.json",
+      "bytes": 4284,
+      "sha256": "67c830e508f4852c8244baa9319e04329bfb42ef5959c6664da9ceceb4b765ec",
+      "captured_at": "2026-10-02T11:27:04.020141+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000248/manifest.json",
+      "copy": "preparation/technique-sources/store/jobs/j000248/manifest.json",
+      "bytes": 505,
+      "sha256": "88c40fda0a2e9cdb7446da318defc05b4a153df596d9dc10d848af9458c63ad2",
+      "captured_at": "2026-10-02T11:27:04.020312+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000248/stdout.log",
+      "copy": "preparation/technique-sources/store/jobs/j000248/stdout.log",
+      "bytes": 1503,
+      "sha256": "031f70c5d5316c1d204b9e4bd186c04c187325a7d0db91486543e78c512d1093",
+      "captured_at": "2026-10-02T11:27:04.020474+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000248/stderr.log",
+      "copy": "preparation/technique-sources/store/jobs/j000248/stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured_at": "2026-10-02T11:27:04.020611+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000248/out/metrics-cbor.json",
+      "copy": "preparation/technique-sources/store/jobs/j000248/out/metrics-cbor.json",
+      "bytes": 190044,
+      "sha256": "8f7125b62bf136c29755bf5b043ef8496ed35fd8d29dc75ee28893dee677d3c3",
+      "captured_at": "2026-10-02T11:27:04.021151+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000248/out/metrics-cbor-summary.json",
+      "copy": "preparation/technique-sources/store/jobs/j000248/out/metrics-cbor-summary.json",
+      "bytes": 1502,
+      "sha256": "a78b0c0fcd9d6b02741ec4187ca7f4272db0c296616ddc72683b43785b6797d1",
+      "captured_at": "2026-10-02T11:27:04.021348+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000249/job.json",
+      "copy": "preparation/technique-sources/store/jobs/j000249/job.json",
+      "bytes": 4022,
+      "sha256": "7c057a742b1124d42670780aebcd87ad0799a7f9343f3e46a66bdb789874d4b6",
+      "captured_at": "2026-10-02T11:27:04.021595+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000249/manifest.json",
+      "copy": "preparation/technique-sources/store/jobs/j000249/manifest.json",
+      "bytes": 327,
+      "sha256": "7e0006fc26fc34692e3ca143ee062edb186fc2cd60cadbf3d7990e4a34d54638",
+      "captured_at": "2026-10-02T11:27:04.021739+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000249/stdout.log",
+      "copy": "preparation/technique-sources/store/jobs/j000249/stdout.log",
+      "bytes": 2942,
+      "sha256": "8fcd3102b7117b4957cbfbad1144ec052bfcaa4a5d0cdc6c8253eacfc1faa99d",
+      "captured_at": "2026-10-02T11:27:04.021880+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000249/stderr.log",
+      "copy": "preparation/technique-sources/store/jobs/j000249/stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured_at": "2026-10-02T11:27:04.022003+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000249/out/metrics-field-audit.json",
+      "copy": "preparation/technique-sources/store/jobs/j000249/out/metrics-field-audit.json",
+      "bytes": 2941,
+      "sha256": "7fd6ad5060ded967d357b41ec217fcde2a732e8b55d84c245ba611dd42a61f5c",
+      "captured_at": "2026-10-02T11:27:04.022282+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000251/job.json",
+      "copy": "preparation/technique-sources/store/jobs/j000251/job.json",
+      "bytes": 5347,
+      "sha256": "21469fd8de8cc68e3d0cf522f4c9fde5116436547cede365c5c008f03a0b2f99",
+      "captured_at": "2026-10-02T11:27:04.022539+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000251/manifest.json",
+      "copy": "preparation/technique-sources/store/jobs/j000251/manifest.json",
+      "bytes": 141,
+      "sha256": "a766e287cc2ccec2de4c8d9f1e6b4d7b681e44d75479e8bc1eee8beb906cd08b",
+      "captured_at": "2026-10-02T11:27:04.022678+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000251/stdout.log",
+      "copy": "preparation/technique-sources/store/jobs/j000251/stdout.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured_at": "2026-10-02T11:27:04.022795+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000251/stderr.log",
+      "copy": "preparation/technique-sources/store/jobs/j000251/stderr.log",
+      "bytes": 89,
+      "sha256": "648c6f75097064c7bd2a53101483b10143adb0939b84114109f0d92958b38048",
+      "captured_at": "2026-10-02T11:27:04.022945+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000252/job.json",
+      "copy": "preparation/technique-sources/store/jobs/j000252/job.json",
+      "bytes": 5272,
+      "sha256": "cec2cc371d8a20d893580248248e0153aabbc4077c930184f99417a859495083",
+      "captured_at": "2026-10-02T11:27:04.023242+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000252/manifest.json",
+      "copy": "preparation/technique-sources/store/jobs/j000252/manifest.json",
+      "bytes": 141,
+      "sha256": "f6a21e8b7a09796f0f0419c9123f6ddef8ce6682e9fa764fbdf013917cfc5ea6",
+      "captured_at": "2026-10-02T11:27:04.023403+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000252/stdout.log",
+      "copy": "preparation/technique-sources/store/jobs/j000252/stdout.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured_at": "2026-10-02T11:27:04.023537+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000252/stderr.log",
+      "copy": "preparation/technique-sources/store/jobs/j000252/stderr.log",
+      "bytes": 184,
+      "sha256": "28853034094fd465ab9d93e0377c5651d195ff1246f36f76fe06fa1b2dccc967",
+      "captured_at": "2026-10-02T11:27:04.023684+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000253/job.json",
+      "copy": "preparation/technique-sources/store/jobs/j000253/job.json",
+      "bytes": 5218,
+      "sha256": "8f67b8d554ca82a790519afca068014419283a673b072d9b1484f9f36bc60e5a",
+      "captured_at": "2026-10-02T11:27:04.023965+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000253/manifest.json",
+      "copy": "preparation/technique-sources/store/jobs/j000253/manifest.json",
+      "bytes": 340,
+      "sha256": "4cee822bbc25e77dbef4eeb38c59a6a741d7815306d9eaa0551e49329607ffb3",
+      "captured_at": "2026-10-02T11:27:04.024106+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000253/stdout.log",
+      "copy": "preparation/technique-sources/store/jobs/j000253/stdout.log",
+      "bytes": 126,
+      "sha256": "bc9528c3b44cdc34ef5cf44b44c98d4cc4bb22355762d2e7045848da0ccc97dd",
+      "captured_at": "2026-10-02T11:27:04.024259+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000253/stderr.log",
+      "copy": "preparation/technique-sources/store/jobs/j000253/stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured_at": "2026-10-02T11:27:04.024413+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000253/out/independent-control-flow.json",
+      "copy": "preparation/technique-sources/store/jobs/j000253/out/independent-control-flow.json",
+      "bytes": 8532,
+      "sha256": "391327df16dc99bdfb9e8f1ebdb928115d4c8bfaf3d1724a29e1d74623ce989d",
+      "captured_at": "2026-10-02T11:27:04.024758+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000254/job.json",
+      "copy": "preparation/technique-sources/store/jobs/j000254/job.json",
+      "bytes": 5220,
+      "sha256": "299b93dcd3e956aa9d78ac4ce6fd9fa4fbb70353d39491127a0750a5bcd13e1f",
+      "captured_at": "2026-10-02T11:27:04.025014+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000254/manifest.json",
+      "copy": "preparation/technique-sources/store/jobs/j000254/manifest.json",
+      "bytes": 339,
+      "sha256": "1cda2acc286d757d8cf82a77cdcf068d6474e55d43c0380678b24a176d3d8c2e",
+      "captured_at": "2026-10-02T11:27:04.025156+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000254/stdout.log",
+      "copy": "preparation/technique-sources/store/jobs/j000254/stdout.log",
+      "bytes": 651,
+      "sha256": "4cfb9226360427a4a449e72a38daa08f4e7850abfe486c39c8259a1533d5109d",
+      "captured_at": "2026-10-02T11:27:04.025302+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000254/stderr.log",
+      "copy": "preparation/technique-sources/store/jobs/j000254/stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured_at": "2026-10-02T11:27:04.025429+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000254/out/independent-metrics-audit.json",
+      "copy": "preparation/technique-sources/store/jobs/j000254/out/independent-metrics-audit.json",
+      "bytes": 650,
+      "sha256": "4d72f7eab4cf52592747cc36f0015a1281d4fee2b44e63523ba1360a1d776617",
+      "captured_at": "2026-10-02T11:27:04.025713+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000255/job.json",
+      "copy": "preparation/technique-sources/store/jobs/j000255/job.json",
+      "bytes": 4247,
+      "sha256": "309ca444dc849904c59fded7dd831c9441c457e2c1eef4f477ab0ccf13df47c9",
+      "captured_at": "2026-10-02T11:27:04.025964+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000255/manifest.json",
+      "copy": "preparation/technique-sources/store/jobs/j000255/manifest.json",
+      "bytes": 341,
+      "sha256": "01471bb6bfad3c97f75fa67967ea0e7999b193a74ab6ca4da98b3584051892a3",
+      "captured_at": "2026-10-02T11:27:04.026111+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000255/stdout.log",
+      "copy": "preparation/technique-sources/store/jobs/j000255/stdout.log",
+      "bytes": 1528,
+      "sha256": "d6fb5daf0c6bef3fd2c1f34e4ad3d80ffb4948677120a2bf2304cbbb832fe8d2",
+      "captured_at": "2026-10-02T11:27:04.026261+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000255/stderr.log",
+      "copy": "preparation/technique-sources/store/jobs/j000255/stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured_at": "2026-10-02T11:27:04.026384+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000255/out/services-page-map-recheck.json",
+      "copy": "preparation/technique-sources/store/jobs/j000255/out/services-page-map-recheck.json",
+      "bytes": 1527,
+      "sha256": "e6904852c836f601500f3a2de0246922c4f3a3aab0ff9a96f3c4cf88771ac11b",
+      "captured_at": "2026-10-02T11:27:04.026657+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000256/job.json",
+      "copy": "preparation/technique-sources/store/jobs/j000256/job.json",
+      "bytes": 5770,
+      "sha256": "baafaf241899c2f4372fbd6230148c22dc71f425b5ceaa41d824f95cfe6da670",
+      "captured_at": "2026-10-02T11:27:04.026896+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000256/manifest.json",
+      "copy": "preparation/technique-sources/store/jobs/j000256/manifest.json",
+      "bytes": 1530,
+      "sha256": "0377f5412d5f38b174e79e5bf0f536444b47c7558272cac5bbbdf9adce77dc9b",
+      "captured_at": "2026-10-02T11:27:04.027036+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000256/stdout.log",
+      "copy": "preparation/technique-sources/store/jobs/j000256/stdout.log",
+      "bytes": 5541,
+      "sha256": "cc9692dfc8945564df668867e8eb54e3526fd3d4a766231386003c5eff158ebe",
+      "captured_at": "2026-10-02T11:27:04.027181+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000256/stderr.log",
+      "copy": "preparation/technique-sources/store/jobs/j000256/stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured_at": "2026-10-02T11:27:04.027301+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000256/out/wal-reconstruction.json",
+      "copy": "preparation/technique-sources/store/jobs/j000256/out/wal-reconstruction.json",
+      "bytes": 5540,
+      "sha256": "a8bcf915789edbfaa3e05d6fd31d60395db72ed8681e02f72c59736b9b716635",
+      "captured_at": "2026-10-02T11:27:04.027583+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000256/out/apex/all-rows.json",
+      "copy": "preparation/technique-sources/store/jobs/j000256/out/apex/all-rows.json",
+      "bytes": 427430,
+      "sha256": "3f98ef4835e68d60e84b5817a7d12231cbecf8200eee43eaf6805a79a9e9e5a3",
+      "captured_at": "2026-10-02T11:27:04.028523+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000256/out/nucleus/all-rows.json",
+      "copy": "preparation/technique-sources/store/jobs/j000256/out/nucleus/all-rows.json",
+      "bytes": 7092,
+      "sha256": "16d20e1a5fef7e3cbb0d7454f2a2d24c142d8a6069569d849296be42cc3387dc",
+      "captured_at": "2026-10-02T11:27:04.029050+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000257/job.json",
+      "copy": "preparation/technique-sources/store/jobs/j000257/job.json",
+      "bytes": 3455,
+      "sha256": "026e9ceb7389ed022107839b8cc0e70813af1005cb3e6542c72cbfacf2e9592b",
+      "captured_at": "2026-10-02T11:27:04.029347+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000257/manifest.json",
+      "copy": "preparation/technique-sources/store/jobs/j000257/manifest.json",
+      "bytes": 323,
+      "sha256": "c8bfc9231d4a007cbf3b71bd535b24c77b33119c56f02530a315a016a0614d0e",
+      "captured_at": "2026-10-02T11:27:04.029498+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000257/stdout.log",
+      "copy": "preparation/technique-sources/store/jobs/j000257/stdout.log",
+      "bytes": 409,
+      "sha256": "843efedb70180a7616a2c1d7067603a54f878c0139b92abef68bc58c2e695f8f",
+      "captured_at": "2026-10-02T11:27:04.029643+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000257/stderr.log",
+      "copy": "preparation/technique-sources/store/jobs/j000257/stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured_at": "2026-10-02T11:27:04.029767+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000257/out/q3-coverage-route.json",
+      "copy": "preparation/technique-sources/store/jobs/j000257/out/q3-coverage-route.json",
+      "bytes": 408,
+      "sha256": "dc4b96e70a1140ee54dfc8e4aeba3c30037d2d94b504860ec107b8f9171eefb2",
+      "captured_at": "2026-10-02T11:27:04.030052+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000259/job.json",
+      "copy": "preparation/technique-sources/store/jobs/j000259/job.json",
+      "bytes": 5894,
+      "sha256": "733a8d4f104f86ebbcbdf15ee9a33bd7edf0461fe915a9b718dbab8118951310",
+      "captured_at": "2026-10-02T11:27:04.030288+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000259/manifest.json",
+      "copy": "preparation/technique-sources/store/jobs/j000259/manifest.json",
+      "bytes": 338,
+      "sha256": "8f9f617cff16cfbdd9195d86fcc9f0147cd15f8f66000d9e21456bcc81a79508",
+      "captured_at": "2026-10-02T11:27:04.030426+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000259/stdout.log",
+      "copy": "preparation/technique-sources/store/jobs/j000259/stdout.log",
+      "bytes": 739,
+      "sha256": "a072d835993683deb76c5bb49d903eb817a6899f74f129dab1f6a79eeeaf6b4e",
+      "captured_at": "2026-10-02T11:27:04.030560+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000259/stderr.log",
+      "copy": "preparation/technique-sources/store/jobs/j000259/stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured_at": "2026-10-02T11:27:04.030693+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000259/out/q3-full-provenance-check.json",
+      "copy": "preparation/technique-sources/store/jobs/j000259/out/q3-full-provenance-check.json",
+      "bytes": 738,
+      "sha256": "80fbfefedafe3158ae2f6a6f3f4f1896d106e80f449cc78aa01e6c8a17ba5d67",
+      "captured_at": "2026-10-02T11:27:04.030988+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000333-s42120100.md",
+      "copy": "preparation/technique-sources/threads/main/000333-s42120100.md",
+      "bytes": 548,
+      "sha256": "d3f590ca7ffb8dba0261bace8a481b60282867bbf28927d070c2c52bacfaaabb",
+      "captured_at": "2026-10-02T11:27:04.043803+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000334-s42120102.md",
+      "copy": "preparation/technique-sources/threads/main/000334-s42120102.md",
+      "bytes": 530,
+      "sha256": "a6bd7ca35db537342fb6b662fd089c7b9f3ae214041bad629a3b8e082e404c9f",
+      "captured_at": "2026-10-02T11:27:04.044006+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000336-s42120106.md",
+      "copy": "preparation/technique-sources/threads/main/000336-s42120106.md",
+      "bytes": 424,
+      "sha256": "fd00aef852b4f2c5c356f1cf0e23782545a88fc19b3c5a71507af23f0af77a4b",
+      "captured_at": "2026-10-02T11:27:04.044222+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000337-s42120106.md",
+      "copy": "preparation/technique-sources/threads/main/000337-s42120106.md",
+      "bytes": 754,
+      "sha256": "fb559f2a7613b96e6c79639bd4fd2a589f01cd11e374d3c7ace198af37d29e92",
+      "captured_at": "2026-10-02T11:27:04.044402+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000339-s42120103.md",
+      "copy": "preparation/technique-sources/threads/main/000339-s42120103.md",
+      "bytes": 674,
+      "sha256": "99e1de92d19b6a31444d28142e3c973b1f5dbad0ff805e91fe8f89f3c52f0d7f",
+      "captured_at": "2026-10-02T11:27:04.044617+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000340-s42120104.md",
+      "copy": "preparation/technique-sources/threads/main/000340-s42120104.md",
+      "bytes": 618,
+      "sha256": "48318d17c35d885a0755d8f6b0975fa928f46bb10bfdbdb33292ad206e454fba",
+      "captured_at": "2026-10-02T11:27:04.044807+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000341-s42120103.md",
+      "copy": "preparation/technique-sources/threads/main/000341-s42120103.md",
+      "bytes": 499,
+      "sha256": "a877fb371dfc48b56ed294c48fadb5e2c1ce1a60c7ea9336487f43c707c492dd",
+      "captured_at": "2026-10-02T11:27:04.044985+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000342-s42120105.md",
+      "copy": "preparation/technique-sources/threads/main/000342-s42120105.md",
+      "bytes": 621,
+      "sha256": "633ab7d9b84383c11c61cdd6c9acc0f3d0d17fdf7bef175d94bef9051908ded7",
+      "captured_at": "2026-10-02T11:27:04.045161+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000344-s42120108.md",
+      "copy": "preparation/technique-sources/threads/main/000344-s42120108.md",
+      "bytes": 509,
+      "sha256": "e05132a168e1dd88971e3c716927fe3176814d117f18860f0a907f7957347f5c",
+      "captured_at": "2026-10-02T11:27:04.045370+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000345-s42120106.md",
+      "copy": "preparation/technique-sources/threads/main/000345-s42120106.md",
+      "bytes": 402,
+      "sha256": "5d8bb56a22dd0cfe58e652f4fe4dc938c11159345b4627a2165767ecdfeace29",
+      "captured_at": "2026-10-02T11:27:04.045805+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000346-s42120102.md",
+      "copy": "preparation/technique-sources/threads/main/000346-s42120102.md",
+      "bytes": 629,
+      "sha256": "bb95c195c364ec3d96e740102a237267b3507de2bcda94205f0f72c20402de48",
+      "captured_at": "2026-10-02T11:27:04.046097+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000348-s42120106.md",
+      "copy": "preparation/technique-sources/threads/main/000348-s42120106.md",
+      "bytes": 574,
+      "sha256": "c72f6e872a8bebe9daec51e8b8207ec85bac2066c11cc5b5f0f6a995051ebba7",
+      "captured_at": "2026-10-02T11:27:04.046349+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000352-s42120109.md",
+      "copy": "preparation/technique-sources/threads/main/000352-s42120109.md",
+      "bytes": 701,
+      "sha256": "eb63e52ab1fd9837292f827bc8bba289cec2dc5d241c46f25299f9fcd4655a47",
+      "captured_at": "2026-10-02T11:27:04.046666+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000354-s42120109.md",
+      "copy": "preparation/technique-sources/threads/main/000354-s42120109.md",
+      "bytes": 673,
+      "sha256": "a5001eeea407a86537b3e4356da16419dfc8d7485cdf18563b6f2bd374422500",
+      "captured_at": "2026-10-02T11:27:04.046922+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000359-s42120109.md",
+      "copy": "preparation/technique-sources/threads/main/000359-s42120109.md",
+      "bytes": 665,
+      "sha256": "167597a1dfe103d6afe1a777a66026fa695280e38e781ae16dfbc8d62c49d35c",
+      "captured_at": "2026-10-02T11:27:04.047294+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000360-s42120109.md",
+      "copy": "preparation/technique-sources/threads/main/000360-s42120109.md",
+      "bytes": 631,
+      "sha256": "0c4da9ecb79ba2552dc82cbd9c5cc44d45c11e15183eb5186b7ae58bffcd75ad",
+      "captured_at": "2026-10-02T11:27:04.047500+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000364-s42120103.md",
+      "copy": "preparation/technique-sources/threads/main/000364-s42120103.md",
+      "bytes": 691,
+      "sha256": "8dc8471277bd0f12517e6c125241dd5125e996440fb8a77fb3f2d409a0c4f87c",
+      "captured_at": "2026-10-02T11:27:04.047786+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000365-s42120109.md",
+      "copy": "preparation/technique-sources/threads/main/000365-s42120109.md",
+      "bytes": 728,
+      "sha256": "8d422811731ea979b099a84d1aeee4cc18b191b48ec4ba2e9ba015794d773d94",
+      "captured_at": "2026-10-02T11:27:04.048005+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000366-s42120105.md",
+      "copy": "preparation/technique-sources/threads/main/000366-s42120105.md",
+      "bytes": 646,
+      "sha256": "252f32c74e4b9733c6ba417c5029bbcd0079730a211dbb0bfd5bba5059ec157a",
+      "captured_at": "2026-10-02T11:27:04.048223+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/ledger/entries.jsonl",
+      "copy": "preparation/technique-sources/ledger/selected-1121-entries.jsonl",
+      "bytes": 136135,
+      "sha256": "2e9af303530dd4588ec2fa0dfa1843cdae1e97a5c097b8e10a38ec1ecbc77396",
+      "captured_at": "2026-10-02T11:27:04.053203+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "whole original records seq234..253, not an independently chained full ledger"
     }
   ],
   "ledger_bindings": [
@@ -1629,6 +2318,186 @@
       "at": "2026-10-02T11:08:36.497Z",
       "hash": "13d57c118bff7e579e1cdb1c0c1d1af061398c71ac47ea205b25d7d5dda06720",
       "prev": "9be3145fd1fdbaa41597da8a70c9344e9e171df620c7401011c11180b8f1cc1c",
+      "supersedes": null
+    },
+    {
+      "seq": 234,
+      "kind": "finding",
+      "by": "s42120102",
+      "at": "2026-10-02T11:10:09.863Z",
+      "hash": "11edd615dabc24117ba29d0df4ae8ec120a73bb2a95c475c42ece4db4eae1aba",
+      "prev": "13d57c118bff7e579e1cdb1c0c1d1af061398c71ac47ea205b25d7d5dda06720",
+      "supersedes": null
+    },
+    {
+      "seq": 235,
+      "kind": "finding",
+      "by": "s42120106",
+      "at": "2026-10-02T11:10:43.307Z",
+      "hash": "7546ae00a86baeb0ba582ecdfb579222046697510e319950b17ed22c446465e7",
+      "prev": "11edd615dabc24117ba29d0df4ae8ec120a73bb2a95c475c42ece4db4eae1aba",
+      "supersedes": null
+    },
+    {
+      "seq": 236,
+      "kind": "limitation",
+      "by": "s42120105",
+      "at": "2026-10-02T11:11:43.631Z",
+      "hash": "940f2597485c6624f7a804bc2adc57f6b2a016480b4a5789c93c4a414deb61bc",
+      "prev": "7546ae00a86baeb0ba582ecdfb579222046697510e319950b17ed22c446465e7",
+      "supersedes": null
+    },
+    {
+      "seq": 237,
+      "kind": "finding",
+      "by": "s42120103",
+      "at": "2026-10-02T11:12:07.445Z",
+      "hash": "5d3fcf02f1be31c295fd77ee1ee7bb4698eb95a1932e1a135b2ee9cccbf688db",
+      "prev": "940f2597485c6624f7a804bc2adc57f6b2a016480b4a5789c93c4a414deb61bc",
+      "supersedes": null
+    },
+    {
+      "seq": 238,
+      "kind": "absence",
+      "by": "s42120103",
+      "at": "2026-10-02T11:12:23.350Z",
+      "hash": "061c83eaa36e5d4ef5e1470305caa4dc530fd7c7d470e1946ffbe69a9fdca6e2",
+      "prev": "5d3fcf02f1be31c295fd77ee1ee7bb4698eb95a1932e1a135b2ee9cccbf688db",
+      "supersedes": null
+    },
+    {
+      "seq": 239,
+      "kind": "limitation",
+      "by": "s42120102",
+      "at": "2026-10-02T11:14:46.620Z",
+      "hash": "31c92da01d33db4a70c51570fd763927a2c4ed39c98992b77e79e2bd9a2e8e5b",
+      "prev": "061c83eaa36e5d4ef5e1470305caa4dc530fd7c7d470e1946ffbe69a9fdca6e2",
+      "supersedes": null
+    },
+    {
+      "seq": 240,
+      "kind": "coverage",
+      "by": "s42120106",
+      "at": "2026-10-02T11:14:53.550Z",
+      "hash": "bef35cf1e155cdcf5bc6cf15eab0414d256347a46e37ff2386cd3bceab58e4d0",
+      "prev": "31c92da01d33db4a70c51570fd763927a2c4ed39c98992b77e79e2bd9a2e8e5b",
+      "supersedes": 214
+    },
+    {
+      "seq": 241,
+      "kind": "limitation",
+      "by": "s42120108",
+      "at": "2026-10-02T11:15:10.181Z",
+      "hash": "95b44b4a0fdd0d7c2d953a925b4adec4fc378f7b84b9ee7e64cf72c813fbe70a",
+      "prev": "bef35cf1e155cdcf5bc6cf15eab0414d256347a46e37ff2386cd3bceab58e4d0",
+      "supersedes": null
+    },
+    {
+      "seq": 242,
+      "kind": "limitation",
+      "by": "s42120107",
+      "at": "2026-10-02T11:15:28.826Z",
+      "hash": "09359f10a3b7a4f4cd44a442ae742dd4a27fcc17ec1d339402cf0eccfa622e2a",
+      "prev": "95b44b4a0fdd0d7c2d953a925b4adec4fc378f7b84b9ee7e64cf72c813fbe70a",
+      "supersedes": null
+    },
+    {
+      "seq": 243,
+      "kind": "finding",
+      "by": "s42120107",
+      "at": "2026-10-02T11:15:40.120Z",
+      "hash": "97e319b4ea4a27e0ca6ff8e18ddb6b9f9c51f34114e5f93d9acbcc25a9846328",
+      "prev": "09359f10a3b7a4f4cd44a442ae742dd4a27fcc17ec1d339402cf0eccfa622e2a",
+      "supersedes": null
+    },
+    {
+      "seq": 244,
+      "kind": "finding",
+      "by": "s42120108",
+      "at": "2026-10-02T11:15:52.032Z",
+      "hash": "d7a913b67cf981720a49d5ad86efb69c367ca79bdff2be8b2b67ca84e0a32706",
+      "prev": "97e319b4ea4a27e0ca6ff8e18ddb6b9f9c51f34114e5f93d9acbcc25a9846328",
+      "supersedes": null
+    },
+    {
+      "seq": 245,
+      "kind": "finding",
+      "by": "s42120102",
+      "at": "2026-10-02T11:16:15.293Z",
+      "hash": "3141198c3bcc028d9bf8c26433ff8ca9ae7eef71ef9d4d492c035ab7a6255f25",
+      "prev": "d7a913b67cf981720a49d5ad86efb69c367ca79bdff2be8b2b67ca84e0a32706",
+      "supersedes": null
+    },
+    {
+      "seq": 246,
+      "kind": "coverage",
+      "by": "s42120106",
+      "at": "2026-10-02T11:18:25.182Z",
+      "hash": "86158f025f95ba309742bc117ef82605f66748d0726da30fd0af5010849f6372",
+      "prev": "3141198c3bcc028d9bf8c26433ff8ca9ae7eef71ef9d4d492c035ab7a6255f25",
+      "supersedes": 240
+    },
+    {
+      "seq": 247,
+      "kind": "finding",
+      "by": "s42120106",
+      "at": "2026-10-02T11:18:57.460Z",
+      "hash": "1fd6e5ffb3e4465ec228f883bf528d9ae42bb0d82575b619cc49e95650305fab",
+      "prev": "86158f025f95ba309742bc117ef82605f66748d0726da30fd0af5010849f6372",
+      "supersedes": null
+    },
+    {
+      "seq": 248,
+      "kind": "finding",
+      "by": "s42120103",
+      "at": "2026-10-02T11:19:16.492Z",
+      "hash": "94745e3a1471194b0ad1ccecc572b1411daac9b3794858b4f7455e2735686370",
+      "prev": "1fd6e5ffb3e4465ec228f883bf528d9ae42bb0d82575b619cc49e95650305fab",
+      "supersedes": null
+    },
+    {
+      "seq": 249,
+      "kind": "coverage",
+      "by": "s42120106",
+      "at": "2026-10-02T11:19:22.956Z",
+      "hash": "8c2873ca8820f97983a65a8a632177971d9bf894ad5ec08d3b74e87ebc2db1be",
+      "prev": "94745e3a1471194b0ad1ccecc572b1411daac9b3794858b4f7455e2735686370",
+      "supersedes": 246
+    },
+    {
+      "seq": 250,
+      "kind": "finding",
+      "by": "s42120107",
+      "at": "2026-10-02T11:19:33.005Z",
+      "hash": "4159bf664bc21f40fb80224073ebe581ca9bebd7aa94c6be1b042eec2d0e1c35",
+      "prev": "8c2873ca8820f97983a65a8a632177971d9bf894ad5ec08d3b74e87ebc2db1be",
+      "supersedes": null
+    },
+    {
+      "seq": 251,
+      "kind": "finding",
+      "by": "s42120106",
+      "at": "2026-10-02T11:20:26.730Z",
+      "hash": "0409721ada2b98321f5100b122dfc4bf4f2d2e35bac577f740dd794be3c2e889",
+      "prev": "4159bf664bc21f40fb80224073ebe581ca9bebd7aa94c6be1b042eec2d0e1c35",
+      "supersedes": null
+    },
+    {
+      "seq": 252,
+      "kind": "coverage",
+      "by": "s42120106",
+      "at": "2026-10-02T11:20:43.756Z",
+      "hash": "f74b59da6d8bae83a4b0a5ac8a7aa5b48a2d0fd8785365818b539ab8f285d4ee",
+      "prev": "0409721ada2b98321f5100b122dfc4bf4f2d2e35bac577f740dd794be3c2e889",
+      "supersedes": 249
+    },
+    {
+      "seq": 253,
+      "kind": "limitation",
+      "by": "s42120109",
+      "at": "2026-10-02T11:21:30.545Z",
+      "hash": "adb2505f4ac38b6842b23470c1f11b4cd4feeab3afc88fd50324ec6991224a26",
+      "prev": "f74b59da6d8bae83a4b0a5ac8a7aa5b48a2d0fd8785365818b539ab8f285d4ee",
       "supersedes": null
     }
   ],
@@ -2106,6 +2975,227 @@
         "bytes": 53,
         "rejected": 0,
         "path": "store/jobs/j000242/out"
+      },
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7"
+    },
+    {
+      "job": "j000243",
+      "requester": "s42120102",
+      "state": "committed",
+      "status": "ok",
+      "exit": 0,
+      "started_at": "2026-10-02T11:09:29.101Z",
+      "finished_at": "2026-10-02T11:09:29.866Z",
+      "outputs": {
+        "manifest_sha256": "f479ca12ed4810b0ec9246c2d964d416449c9bb4170e3bdf0a81f60575990f25",
+        "files": 2,
+        "bytes": 1772,
+        "rejected": 0,
+        "path": "store/jobs/j000243/out"
+      },
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7"
+    },
+    {
+      "job": "j000245",
+      "requester": "s42120106",
+      "state": "committed",
+      "status": "ok",
+      "exit": 0,
+      "started_at": "2026-10-02T11:09:37.855Z",
+      "finished_at": "2026-10-02T11:09:38.673Z",
+      "outputs": {
+        "manifest_sha256": "a86dac446f14dec2044272647964fe18cf15897cc5e2261b13869131904fc80c",
+        "files": 1,
+        "bytes": 6750,
+        "rejected": 0,
+        "path": "store/jobs/j000245/out"
+      },
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7"
+    },
+    {
+      "job": "j000246",
+      "requester": "s42120103",
+      "state": "committed",
+      "status": "ok",
+      "exit": 0,
+      "started_at": "2026-10-02T11:10:10.571Z",
+      "finished_at": "2026-10-02T11:10:11.300Z",
+      "outputs": {
+        "manifest_sha256": "a4d81fe9c6c5deea19e0aea58d8f851176a3c2ca938fc399ec36085dacc7db05",
+        "files": 3,
+        "bytes": 72922,
+        "rejected": 0,
+        "path": "store/jobs/j000246/out"
+      },
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7"
+    },
+    {
+      "job": "j000248",
+      "requester": "s42120103",
+      "state": "committed",
+      "status": "ok",
+      "exit": 0,
+      "started_at": "2026-10-02T11:11:04.139Z",
+      "finished_at": "2026-10-02T11:11:04.856Z",
+      "outputs": {
+        "manifest_sha256": "88c40fda0a2e9cdb7446da318defc05b4a153df596d9dc10d848af9458c63ad2",
+        "files": 2,
+        "bytes": 191546,
+        "rejected": 0,
+        "path": "store/jobs/j000248/out"
+      },
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7"
+    },
+    {
+      "job": "j000249",
+      "requester": "s42120103",
+      "state": "committed",
+      "status": "ok",
+      "exit": 0,
+      "started_at": "2026-10-02T11:11:40.061Z",
+      "finished_at": "2026-10-02T11:11:40.762Z",
+      "outputs": {
+        "manifest_sha256": "7e0006fc26fc34692e3ca143ee062edb186fc2cd60cadbf3d7990e4a34d54638",
+        "files": 1,
+        "bytes": 2941,
+        "rejected": 0,
+        "path": "store/jobs/j000249/out"
+      },
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7"
+    },
+    {
+      "job": "j000251",
+      "requester": "s42120102",
+      "state": "committed",
+      "status": "failed",
+      "exit": 1,
+      "started_at": "2026-10-02T11:14:07.364Z",
+      "finished_at": "2026-10-02T11:14:08.072Z",
+      "outputs": {
+        "manifest_sha256": "a766e287cc2ccec2de4c8d9f1e6b4d7b681e44d75479e8bc1eee8beb906cd08b",
+        "files": 0,
+        "bytes": 0,
+        "rejected": 0,
+        "path": "store/jobs/j000251/out"
+      },
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7"
+    },
+    {
+      "job": "j000252",
+      "requester": "s42120108",
+      "state": "committed",
+      "status": "failed",
+      "exit": 1,
+      "started_at": "2026-10-02T11:14:37.570Z",
+      "finished_at": "2026-10-02T11:14:38.294Z",
+      "outputs": {
+        "manifest_sha256": "f6a21e8b7a09796f0f0419c9123f6ddef8ce6682e9fa764fbdf013917cfc5ea6",
+        "files": 0,
+        "bytes": 0,
+        "rejected": 0,
+        "path": "store/jobs/j000252/out"
+      },
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7"
+    },
+    {
+      "job": "j000253",
+      "requester": "s42120102",
+      "state": "committed",
+      "status": "ok",
+      "exit": 0,
+      "started_at": "2026-10-02T11:15:31.337Z",
+      "finished_at": "2026-10-02T11:15:32.055Z",
+      "outputs": {
+        "manifest_sha256": "4cee822bbc25e77dbef4eeb38c59a6a741d7815306d9eaa0551e49329607ffb3",
+        "files": 1,
+        "bytes": 8532,
+        "rejected": 0,
+        "path": "store/jobs/j000253/out"
+      },
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7"
+    },
+    {
+      "job": "j000254",
+      "requester": "s42120108",
+      "state": "committed",
+      "status": "ok",
+      "exit": 0,
+      "started_at": "2026-10-02T11:15:39.432Z",
+      "finished_at": "2026-10-02T11:15:40.188Z",
+      "outputs": {
+        "manifest_sha256": "1cda2acc286d757d8cf82a77cdcf068d6474e55d43c0380678b24a176d3d8c2e",
+        "files": 1,
+        "bytes": 650,
+        "rejected": 0,
+        "path": "store/jobs/j000254/out"
+      },
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7"
+    },
+    {
+      "job": "j000255",
+      "requester": "s42120107",
+      "state": "committed",
+      "status": "ok",
+      "exit": 0,
+      "started_at": "2026-10-02T11:17:09.277Z",
+      "finished_at": "2026-10-02T11:17:09.978Z",
+      "outputs": {
+        "manifest_sha256": "01471bb6bfad3c97f75fa67967ea0e7999b193a74ab6ca4da98b3584051892a3",
+        "files": 1,
+        "bytes": 1527,
+        "rejected": 0,
+        "path": "store/jobs/j000255/out"
+      },
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7"
+    },
+    {
+      "job": "j000256",
+      "requester": "s42120103",
+      "state": "committed",
+      "status": "ok",
+      "exit": 0,
+      "started_at": "2026-10-02T11:17:57.753Z",
+      "finished_at": "2026-10-02T11:17:58.530Z",
+      "outputs": {
+        "manifest_sha256": "0377f5412d5f38b174e79e5bf0f536444b47c7558272cac5bbbdf9adce77dc9b",
+        "files": 7,
+        "bytes": 833278,
+        "rejected": 0,
+        "path": "store/jobs/j000256/out"
+      },
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7"
+    },
+    {
+      "job": "j000257",
+      "requester": "s42120106",
+      "state": "committed",
+      "status": "ok",
+      "exit": 0,
+      "started_at": "2026-10-02T11:18:44.873Z",
+      "finished_at": "2026-10-02T11:18:45.846Z",
+      "outputs": {
+        "manifest_sha256": "c8bfc9231d4a007cbf3b71bd535b24c77b33119c56f02530a315a016a0614d0e",
+        "files": 1,
+        "bytes": 408,
+        "rejected": 0,
+        "path": "store/jobs/j000257/out"
+      },
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7"
+    },
+    {
+      "job": "j000259",
+      "requester": "s42120106",
+      "state": "committed",
+      "status": "ok",
+      "exit": 0,
+      "started_at": "2026-10-02T11:20:11.762Z",
+      "finished_at": "2026-10-02T11:20:12.755Z",
+      "outputs": {
+        "manifest_sha256": "8f9f617cff16cfbdd9195d86fcc9f0147cd15f8f66000d9e21456bcc81a79508",
+        "files": 1,
+        "bytes": 738,
+        "rejected": 0,
+        "path": "store/jobs/j000259/out"
       },
       "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7"
     }
@@ -5306,6 +6396,759 @@
         "j000205"
       ],
       "record_sha256": "7a4fd344f705c8682165d97a206af7a01abdad69a51c9adc8579a4daf471fcb8"
+    },
+    {
+      "agent": "s42120106",
+      "seq": 875,
+      "ts": "2026-10-02T11:09:44.515Z",
+      "tool": "read",
+      "jobs": [
+        "j000243"
+      ],
+      "record_sha256": "4aca593c69b89009449915e734f8877e0ec5449c12a3170852465acb19c76ea7"
+    },
+    {
+      "agent": "system",
+      "seq": 831,
+      "ts": "2026-10-02T11:10:10.046Z",
+      "tool": "hub_call",
+      "jobs": [
+        "j000243"
+      ],
+      "record_sha256": "aa75d5cef42ee362ecc5d3bd075c156a6962e6839cb32ce1e11cb3f358b3ab44"
+    },
+    {
+      "agent": "s42120102",
+      "seq": 499,
+      "ts": "2026-10-02T11:10:10.014Z",
+      "tool": "record_leads",
+      "jobs": [
+        "j000243"
+      ],
+      "record_sha256": "6d0daae9f6f523366d8869188ea87e011e2003dbaa6f0ba675c7e666d53a72e5"
+    },
+    {
+      "agent": "s42120103",
+      "seq": 523,
+      "ts": "2026-10-02T11:10:11.632Z",
+      "tool": "job_run",
+      "jobs": [
+        "j000246"
+      ],
+      "record_sha256": "ed92832d041c98053156e9c3e32954ed61072a29e38f137233d4518eb23432f4"
+    },
+    {
+      "agent": "s42120103",
+      "seq": 525,
+      "ts": "2026-10-02T11:10:31.392Z",
+      "tool": "job_status",
+      "jobs": [
+        "j000246"
+      ],
+      "record_sha256": "e9315b43290fe7be74d03307b1da4e797de2a02774e6943e0ca06ac1b00b6091"
+    },
+    {
+      "agent": "s42120103",
+      "seq": 528,
+      "ts": "2026-10-02T11:11:05.135Z",
+      "tool": "job_run",
+      "jobs": [
+        "j000246",
+        "j000248"
+      ],
+      "record_sha256": "91aba84b4124f1a7b703c8168adb43feec619cb9cb7f9c2eb4d1e1fd056172fe"
+    },
+    {
+      "agent": "s42120103",
+      "seq": 532,
+      "ts": "2026-10-02T11:12:07.419Z",
+      "tool": "record",
+      "jobs": [
+        "j000246",
+        "j000248",
+        "j000249"
+      ],
+      "record_sha256": "7673352c71ee41f6f12f4efda6eacdf71a99efb8c63327e22901a12eeaec0ba7"
+    },
+    {
+      "agent": "system",
+      "seq": 844,
+      "ts": "2026-10-02T11:12:07.487Z",
+      "tool": "hub_call",
+      "jobs": [
+        "j000246",
+        "j000248",
+        "j000249"
+      ],
+      "record_sha256": "6f3b0564db8a202c22f4f140f5b8bfdff47f56c89dd5e6fb02a9003c7e36f374"
+    },
+    {
+      "agent": "s42120103",
+      "seq": 533,
+      "ts": "2026-10-02T11:12:07.454Z",
+      "tool": "record_leads",
+      "jobs": [
+        "j000246",
+        "j000248",
+        "j000249"
+      ],
+      "record_sha256": "a978069477f6e77b5c389a1a048ac2f2de31bc6dbf02038526911a186996c375"
+    },
+    {
+      "agent": "s42120103",
+      "seq": 535,
+      "ts": "2026-10-02T11:12:23.324Z",
+      "tool": "record",
+      "jobs": [
+        "j000248",
+        "j000249"
+      ],
+      "record_sha256": "b469080e7dee92d4fffe4b2bb793d9ee33de69c5a1a174bdc7f5705b8dd94940"
+    },
+    {
+      "agent": "s42120103",
+      "seq": 537,
+      "ts": "2026-10-02T11:12:32.444Z",
+      "tool": "lead_close",
+      "jobs": [
+        "j000248",
+        "j000249"
+      ],
+      "record_sha256": "a4e7b26cc1b3f95099f4ff6a8a1c0bb7bf64383a150e09d67474fa8577b16c9a"
+    },
+    {
+      "agent": "s42120103",
+      "seq": 539,
+      "ts": "2026-10-02T11:12:43.098Z",
+      "tool": "post",
+      "jobs": [
+        "j000248",
+        "j000249"
+      ],
+      "record_sha256": "dec6ea801914bb51e74525f9192e25519a69103a20243243f4a1071a5fd5256b"
+    },
+    {
+      "agent": "system",
+      "seq": 854,
+      "ts": "2026-10-02T11:14:46.795Z",
+      "tool": "hub_call",
+      "jobs": [
+        "j000251"
+      ],
+      "record_sha256": "f4f461e431689e0269ac0331ad6670cd21b2bd55567baa18f3bc5f2c0614dce5"
+    },
+    {
+      "agent": "s42120102",
+      "seq": 517,
+      "ts": "2026-10-02T11:14:46.761Z",
+      "tool": "record_leads",
+      "jobs": [
+        "j000251"
+      ],
+      "record_sha256": "59babe98c178a2cdd146b3654e5dd47d810d7242add3d6a21c48fdd356fb8e82"
+    },
+    {
+      "agent": "s42120108",
+      "seq": 895,
+      "ts": "2026-10-02T11:14:59.186Z",
+      "tool": "bash",
+      "jobs": [
+        "j000252"
+      ],
+      "record_sha256": "d47d3ffcf7c612f7c53cffd6f50263eec1d1b6006dae307b2b144c31fdf26c25"
+    },
+    {
+      "agent": "s42120108",
+      "seq": 897,
+      "ts": "2026-10-02T11:15:04.797Z",
+      "tool": "record",
+      "jobs": [
+        "j000252"
+      ],
+      "record_sha256": "5c466164034692e116e77261d57ea769961fef0292d02526248f64ad8d850ffb"
+    },
+    {
+      "agent": "s42120108",
+      "seq": 900,
+      "ts": "2026-10-02T11:15:10.162Z",
+      "tool": "record",
+      "jobs": [
+        "j000252"
+      ],
+      "record_sha256": "d06c3596746c77bbab91234d380256ac6f52c170a284b7794c6bc2d466c1a0ec"
+    },
+    {
+      "agent": "system",
+      "seq": 858,
+      "ts": "2026-10-02T11:15:10.233Z",
+      "tool": "hub_call",
+      "jobs": [
+        "j000252"
+      ],
+      "record_sha256": "029b1e75fee771308f8d694bfbfd4b8016b1c874a60aaad3bd71fcef950e509a"
+    },
+    {
+      "agent": "s42120108",
+      "seq": 901,
+      "ts": "2026-10-02T11:15:10.198Z",
+      "tool": "record_leads",
+      "jobs": [
+        "j000252"
+      ],
+      "record_sha256": "1615039c945e09b59df6725e463ec73c0c912225b90b1c119f90efea083292d5"
+    },
+    {
+      "agent": "s42120108",
+      "seq": 904,
+      "ts": "2026-10-02T11:15:20.374Z",
+      "tool": "record",
+      "jobs": [
+        "j000252"
+      ],
+      "record_sha256": "9fc726175ff07ddcd550db2cf69e201511d6c848f8aafe8df44051dc9ab9dc1f"
+    },
+    {
+      "agent": "s42120108",
+      "seq": 911,
+      "ts": "2026-10-02T11:15:52.012Z",
+      "tool": "record",
+      "jobs": [
+        "j000254"
+      ],
+      "record_sha256": "95c4d45cebd98299c80188a0874a1530e9294253325f9df445ea625d188f1fc2"
+    },
+    {
+      "agent": "system",
+      "seq": 869,
+      "ts": "2026-10-02T11:15:52.083Z",
+      "tool": "hub_call",
+      "jobs": [
+        "j000254"
+      ],
+      "record_sha256": "6a375e3955c11806aa8ab913f4e6646e69c17f490f5eb82dfc766fc09cf2f79e"
+    },
+    {
+      "agent": "s42120108",
+      "seq": 912,
+      "ts": "2026-10-02T11:15:52.048Z",
+      "tool": "record_leads",
+      "jobs": [
+        "j000254"
+      ],
+      "record_sha256": "67f5d2b084dc205ea8c9caaf21ac46a693fcd6a60314ad618ae053feaaf8ebb8"
+    },
+    {
+      "agent": "s42120108",
+      "seq": 915,
+      "ts": "2026-10-02T11:16:08.197Z",
+      "tool": "lead_close",
+      "jobs": [
+        "j000254"
+      ],
+      "record_sha256": "3b33b45fb4e0eca10743089e27460bdd540f50c9a582d8a1b85cd80ec7cc258f"
+    },
+    {
+      "agent": "s42120102",
+      "seq": 521,
+      "ts": "2026-10-02T11:16:15.465Z",
+      "tool": "record",
+      "jobs": [
+        "j000253"
+      ],
+      "record_sha256": "67e7abde8d91c031134466fb78bf2f59bc1afb53745225ba755720d33b5fce6e"
+    },
+    {
+      "agent": "system",
+      "seq": 873,
+      "ts": "2026-10-02T11:16:15.530Z",
+      "tool": "hub_call",
+      "jobs": [
+        "j000253"
+      ],
+      "record_sha256": "d6fce479db2d7c62ece149775fb3ca55ac02fbf2a32d443f57ee45000c258ad6"
+    },
+    {
+      "agent": "s42120102",
+      "seq": 522,
+      "ts": "2026-10-02T11:16:15.495Z",
+      "tool": "record_leads",
+      "jobs": [
+        "j000253"
+      ],
+      "record_sha256": "c77fef63cb86958a374fea52347fba4dcdcb978cc1ae218c56c59dcca732872f"
+    },
+    {
+      "agent": "s42120108",
+      "seq": 918,
+      "ts": "2026-10-02T11:16:17.654Z",
+      "tool": "post",
+      "jobs": [
+        "j000254"
+      ],
+      "record_sha256": "a93682c265ae2104c67aa493208643b1dfb54df616826c4263f3c2f2aca1b82f"
+    },
+    {
+      "agent": "s42120102",
+      "seq": 525,
+      "ts": "2026-10-02T11:16:26.270Z",
+      "tool": "attest",
+      "jobs": [
+        "j000245",
+        "j000253"
+      ],
+      "record_sha256": "79d06563d47619837af9697c0562777330d9bc07ef6ae0b8526143191e78a4ed"
+    },
+    {
+      "agent": "s42120107",
+      "seq": 770,
+      "ts": "2026-10-02T11:17:10.264Z",
+      "tool": "job_run",
+      "jobs": [
+        "j000243",
+        "j000245",
+        "j000253",
+        "j000255"
+      ],
+      "record_sha256": "869f216ac04493ebaa35fda5200fa9ac5fe5b25d5118a16268feb480cd48effd"
+    },
+    {
+      "agent": "s42120102",
+      "seq": 531,
+      "ts": "2026-10-02T11:17:10.380Z",
+      "tool": "lead_close",
+      "jobs": [
+        "j000243",
+        "j000253"
+      ],
+      "record_sha256": "b644431907b2d570141b61cad45c40c864b99bf0ef8b78cf63993fadeedc09ec"
+    },
+    {
+      "agent": "s42120107",
+      "seq": 774,
+      "ts": "2026-10-02T11:17:39.368Z",
+      "tool": "read",
+      "jobs": [
+        "j000253"
+      ],
+      "record_sha256": "8104a6d6501c93de9207afa58bfa17baa3b2e689a067e5d94129b46cd9983577"
+    },
+    {
+      "agent": "s42120107",
+      "seq": 777,
+      "ts": "2026-10-02T11:17:47.340Z",
+      "tool": "read",
+      "jobs": [
+        "j000253"
+      ],
+      "record_sha256": "0a3cd1b0efbb94b9c1f2b714259b185dabd682a47353c3450973b8612602f68e"
+    },
+    {
+      "agent": "s42120107",
+      "seq": 780,
+      "ts": "2026-10-02T11:17:57.217Z",
+      "tool": "read",
+      "jobs": [
+        "j000245"
+      ],
+      "record_sha256": "f2f1b3be8438c24787a9eb6f0783c2fdab6cb327cd85e7fb0235b93856afe959"
+    },
+    {
+      "agent": "s42120103",
+      "seq": 553,
+      "ts": "2026-10-02T11:17:58.738Z",
+      "tool": "job_run",
+      "jobs": [
+        "j000256"
+      ],
+      "record_sha256": "884a056afbab800fa6a6574f730ea27b5c5fe87402f88c6c0f1f2559570aac3f"
+    },
+    {
+      "agent": "s42120107",
+      "seq": 783,
+      "ts": "2026-10-02T11:18:03.081Z",
+      "tool": "read",
+      "jobs": [
+        "j000245"
+      ],
+      "record_sha256": "b9b030b3bab6cf6efd05d5f13c0603c60f224054d80d719b215e1729e8729ebd"
+    },
+    {
+      "agent": "s42120103",
+      "seq": 555,
+      "ts": "2026-10-02T11:18:05.871Z",
+      "tool": "read",
+      "jobs": [
+        "j000256"
+      ],
+      "record_sha256": "396d8270ceb766fdd4817eb2038833fc2a2bf7c4d72dd24b1fc7dd1fa62c3d7a"
+    },
+    {
+      "agent": "s42120102",
+      "seq": 539,
+      "ts": "2026-10-02T11:18:19.161Z",
+      "tool": "read",
+      "jobs": [
+        "j000246",
+        "j000248",
+        "j000249",
+        "j000254"
+      ],
+      "record_sha256": "1bb47c1f977edd990d0f06d83cdc74d5fce9c81ff25ec16a4379d079de8db4e9"
+    },
+    {
+      "agent": "s42120103",
+      "seq": 557,
+      "ts": "2026-10-02T11:18:25.866Z",
+      "tool": "bash",
+      "jobs": [
+        "j000256"
+      ],
+      "record_sha256": "9b853dc7a2b7881e4aea153d47ef6213fb369d6676fa704ba129e4681e9569a9"
+    },
+    {
+      "agent": "s42120106",
+      "seq": 982,
+      "ts": "2026-10-02T11:18:46.884Z",
+      "tool": "job_run",
+      "jobs": [
+        "j000243",
+        "j000257"
+      ],
+      "record_sha256": "933eebb33fdcc8465adeddb5da0c6888618325cfcdd8fa368227152d9eb1cb6b"
+    },
+    {
+      "agent": "s42120106",
+      "seq": 985,
+      "ts": "2026-10-02T11:18:57.624Z",
+      "tool": "record",
+      "jobs": [
+        "j000257"
+      ],
+      "record_sha256": "dff14aad844a383e1da3c4b2a675e0205afc1c459de54d405ad19232927698a7"
+    },
+    {
+      "agent": "system",
+      "seq": 884,
+      "ts": "2026-10-02T11:18:57.697Z",
+      "tool": "hub_call",
+      "jobs": [
+        "j000257"
+      ],
+      "record_sha256": "8c378e67e06a944177a28358c6b316773c6a57e1b7cc6ae4304ff4f0b435dc44"
+    },
+    {
+      "agent": "s42120106",
+      "seq": 986,
+      "ts": "2026-10-02T11:18:57.661Z",
+      "tool": "record_leads",
+      "jobs": [
+        "j000257"
+      ],
+      "record_sha256": "d575fc12861958593feed6eb7c024c89a43ed2856f71e33e1290e1f320884fa5"
+    },
+    {
+      "agent": "s42120103",
+      "seq": 562,
+      "ts": "2026-10-02T11:19:16.465Z",
+      "tool": "record",
+      "jobs": [
+        "j000256"
+      ],
+      "record_sha256": "13d2b8aa174d0d0c491e53420e97d2a7f444a566512620f0d8ea4ae9e33912cb"
+    },
+    {
+      "agent": "system",
+      "seq": 887,
+      "ts": "2026-10-02T11:19:16.544Z",
+      "tool": "hub_call",
+      "jobs": [
+        "j000256"
+      ],
+      "record_sha256": "6d672714a8c1aed6d2dc1ca4ce3c69d3af1664a79d5e6a66a3b56fe4a7ebced6"
+    },
+    {
+      "agent": "s42120103",
+      "seq": 563,
+      "ts": "2026-10-02T11:19:16.508Z",
+      "tool": "record_leads",
+      "jobs": [
+        "j000256"
+      ],
+      "record_sha256": "2688700d99f7855b707fbbc555ec7c43b146838cf4d867852ba628329428250c"
+    },
+    {
+      "agent": "s42120106",
+      "seq": 989,
+      "ts": "2026-10-02T11:19:22.945Z",
+      "tool": "record",
+      "jobs": [
+        "j000257"
+      ],
+      "record_sha256": "47a2d84df8ca7b84a0713fab7af1adfa0a1d658db4c60d50f88f09723e223850"
+    },
+    {
+      "agent": "s42120103",
+      "seq": 565,
+      "ts": "2026-10-02T11:19:28.172Z",
+      "tool": "lead_close",
+      "jobs": [
+        "j000256"
+      ],
+      "record_sha256": "c7d31529d3f8b89dcbe73986768279b22d8befef5df3b9fdfdb3641acf340141"
+    },
+    {
+      "agent": "s42120106",
+      "seq": 993,
+      "ts": "2026-10-02T11:19:29.932Z",
+      "tool": "post",
+      "jobs": [
+        "j000257"
+      ],
+      "record_sha256": "31c5ee376573d9b8d62fa4aabbf078ad8846825b6fab93d73ad13999ce0f6dff"
+    },
+    {
+      "agent": "s42120107",
+      "seq": 792,
+      "ts": "2026-10-02T11:19:33.174Z",
+      "tool": "record",
+      "jobs": [
+        "j000255"
+      ],
+      "record_sha256": "143075fd032eb84bb632043a63433ec479b6c3ae552e7f976d865c4af39cc656"
+    },
+    {
+      "agent": "system",
+      "seq": 891,
+      "ts": "2026-10-02T11:19:33.525Z",
+      "tool": "hub_call",
+      "jobs": [
+        "j000255"
+      ],
+      "record_sha256": "1ccf2621e8a7cdebd254cc6b973dfbbda2f14f56e1fbfef2c47397107dafcb07"
+    },
+    {
+      "agent": "s42120107",
+      "seq": 793,
+      "ts": "2026-10-02T11:19:33.489Z",
+      "tool": "record_leads",
+      "jobs": [
+        "j000255"
+      ],
+      "record_sha256": "fb8f477459a2725ae402998e5fe2debd879e74e0fe0960a6492d49166cbbcebf"
+    },
+    {
+      "agent": "s42120103",
+      "seq": 567,
+      "ts": "2026-10-02T11:19:41.656Z",
+      "tool": "post",
+      "jobs": [
+        "j000256"
+      ],
+      "record_sha256": "390f127fe82705e6ab72c8f3eac8541a775e31a6c40dbdaf1a6ed69d5af4675c"
+    },
+    {
+      "agent": "s42120109",
+      "seq": 743,
+      "ts": "2026-10-02T11:19:49.978Z",
+      "tool": "job_run",
+      "jobs": [
+        "j000257"
+      ],
+      "record_sha256": "6b2c6d7c18fb4dc7caa306bbaf11df265bb3f3786a06179ae2643f4aa75b6784"
+    },
+    {
+      "agent": "s42120109",
+      "seq": 746,
+      "ts": "2026-10-02T11:19:55.771Z",
+      "tool": "read",
+      "jobs": [
+        "j000257"
+      ],
+      "record_sha256": "1228c0754ed4811e48a7260658361b7f82cdf3ed9b04d340a2656f72ae677e36"
+    },
+    {
+      "agent": "s42120105",
+      "seq": 877,
+      "ts": "2026-10-02T11:20:13.689Z",
+      "tool": "read",
+      "jobs": [
+        "j000256"
+      ],
+      "record_sha256": "fab74ab34176b8545b09a0d8ad8155fd7dc4835be978949cd869456737234f00"
+    },
+    {
+      "agent": "s42120106",
+      "seq": 1001,
+      "ts": "2026-10-02T11:20:13.758Z",
+      "tool": "job_run",
+      "jobs": [
+        "j000243",
+        "j000249",
+        "j000259"
+      ],
+      "record_sha256": "5de96cc3d2255b3ea965582c8debdb17be188c4a5f67fcfcacec409110531e36"
+    },
+    {
+      "agent": "s42120109",
+      "seq": 752,
+      "ts": "2026-10-02T11:20:20.403Z",
+      "tool": "post",
+      "jobs": [
+        "j000257"
+      ],
+      "record_sha256": "bc0d558170ff71ac0437b59d8b4f2ebfd746fd4c7fad3f449ac4a8d59849d2e9"
+    },
+    {
+      "agent": "s42120105",
+      "seq": 880,
+      "ts": "2026-10-02T11:20:24.637Z",
+      "tool": "bash",
+      "jobs": [
+        "j000256"
+      ],
+      "record_sha256": "f71cab763a1c754395ec9083258c6fe28d654719aff2a1516f6d343efb901095"
+    },
+    {
+      "agent": "s42120106",
+      "seq": 1004,
+      "ts": "2026-10-02T11:20:26.702Z",
+      "tool": "record",
+      "jobs": [
+        "j000259"
+      ],
+      "record_sha256": "44127f2abbe1697438ed4bdb32c1d8aec5f62ada5b3264f8c17ad5f74a8ad29b"
+    },
+    {
+      "agent": "system",
+      "seq": 895,
+      "ts": "2026-10-02T11:20:26.769Z",
+      "tool": "hub_call",
+      "jobs": [
+        "j000259"
+      ],
+      "record_sha256": "3db177ce0f08d4957700153d9759d68b7fdb77b6b7b897812aca7cde3fd31df4"
+    },
+    {
+      "agent": "s42120106",
+      "seq": 1005,
+      "ts": "2026-10-02T11:20:26.732Z",
+      "tool": "record_leads",
+      "jobs": [
+        "j000259"
+      ],
+      "record_sha256": "d653b21637788896c12365f1354646dbb2a2b88bea52f08e4e59c990e64fcaa0"
+    },
+    {
+      "agent": "s42120106",
+      "seq": 1008,
+      "ts": "2026-10-02T11:20:43.900Z",
+      "tool": "record",
+      "jobs": [
+        "j000259"
+      ],
+      "record_sha256": "ef02925dff766aa9af0963c9efd106e00fce8492c84c3d15916791351573c5d7"
+    },
+    {
+      "agent": "s42120105",
+      "seq": 886,
+      "ts": "2026-10-02T11:21:00.046Z",
+      "tool": "bash",
+      "jobs": [
+        "j000256"
+      ],
+      "record_sha256": "0ef007cf16be560a37642c51b778457d19613d8d9f7503b06e440dfa1e46deaf"
+    },
+    {
+      "agent": "s42120109",
+      "seq": 756,
+      "ts": "2026-10-02T11:21:30.516Z",
+      "tool": "record",
+      "jobs": [
+        "j000257"
+      ],
+      "record_sha256": "65de47fca2c77309f0c0ad438368aaa86d8b45ed52aa828b6b8003391fa5174c"
+    },
+    {
+      "agent": "s42120109",
+      "seq": 760,
+      "ts": "2026-10-02T11:21:37.621Z",
+      "tool": "record",
+      "jobs": [
+        "j000257"
+      ],
+      "record_sha256": "e897856d10c02ea97388fae9da4a02c0d419785dd2945aa100b2cd802762fb69"
+    },
+    {
+      "agent": "s42120106",
+      "seq": 1020,
+      "ts": "2026-10-02T11:22:14.387Z",
+      "tool": "post",
+      "jobs": [
+        "j000259"
+      ],
+      "record_sha256": "f27a4dc987d7651fda90598b838452cd445f9a0a6906545203a924af0851a6d2"
+    },
+    {
+      "agent": "s42120106",
+      "seq": 1021,
+      "ts": "2026-10-02T11:22:14.409Z",
+      "tool": "post",
+      "jobs": [
+        "j000259"
+      ],
+      "record_sha256": "1aa76c3d664ea9f0059df9d57a8e73c5f47a78711b4e977c29dbd537374fd88c"
+    },
+    {
+      "agent": "s42120106",
+      "seq": 1022,
+      "ts": "2026-10-02T11:22:14.430Z",
+      "tool": "post",
+      "jobs": [
+        "j000259"
+      ],
+      "record_sha256": "b2cd1bab7a8c4ac493d965971d5a99a7920c4bda23f72120686fbd1a92be4623"
+    },
+    {
+      "agent": "s42120105",
+      "seq": 908,
+      "ts": "2026-10-02T11:24:16.643Z",
+      "tool": "job_run",
+      "jobs": [
+        "j000256"
+      ],
+      "record_sha256": "7ce8d70839f2f043f3acf5a08f27e2530df113bf25085b0b74ebd0580059c137"
+    },
+    {
+      "agent": "s42120105",
+      "seq": 911,
+      "ts": "2026-10-02T11:24:25.122Z",
+      "tool": "record",
+      "jobs": [
+        "j000256"
+      ],
+      "record_sha256": "2cd9b70f6e6b6badfe5d7c73c660bb4939906489e14b3aca284f043d8bfbcc13"
+    },
+    {
+      "agent": "s42120103",
+      "seq": 580,
+      "ts": "2026-10-02T11:25:32.427Z",
+      "tool": "bash",
+      "jobs": [
+        "j000259"
+      ],
+      "record_sha256": "9a06514d0d93924b2e44c0f34811f13e8ced713670c343848485abe075a649a4"
+    },
+    {
+      "agent": "s42120103",
+      "seq": 582,
+      "ts": "2026-10-02T11:26:37.923Z",
+      "tool": "job_run",
+      "jobs": [
+        "j000257",
+        "j000259"
+      ],
+      "record_sha256": "1d555371a8ffcc762fe943e36ce71816e787d41325aca9c78a3a491fa4a3a8e3"
     }
-  ]
+  ],
+  "updated_at": "2026-10-02T11:27:04.016327+00:00"
 }

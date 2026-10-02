@@ -1,0 +1,102 @@
+{
+  "id": "j000243",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/Carmine-Falcone.raw",
+      "job:j000223/file.0xab0b0d34fe90.0xab0b106cf320.ImageSectionObject.services.exe.img",
+      "job:j000232/summary.json"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "independent": true,
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport os,json,struct\np='store/jobs/j000223/out/file.0xab0b0d34fe90.0xab0b106cf320.ImageSectionObject.services.exe.img';b=open(p,'rb').read();s=json.load(open('store/jobs/j000232/out/summary.json'));q=struct.unpack_from('<I',b,60)[0];base=struct.unpack_from('<Q',b,q+48)[0];opt=struct.unpack_from('<H',b,q+20)[0];n=struct.unpack_from('<H',b,q+6)[0];sections=[]\nfor i in range(n):\n off=q+24+opt+40*i;vs,rva,rs,ptr=struct.unpack_from('<IIII',b,off+8);sections.append((rva,rs,ptr))\ndef offva(o):\n for rva,rs,ptr in sections:\n  if ptr<=o<ptr+rs:return base+rva+o-ptr\n raise ValueError(o)\nr={'image_base':base,'xrefs':[],'physical_comparisons':[]}\nfor x in s['xrefs']:\n off=x['instruction_off'];instr=b[off:off+7];assert instr[:2]==b'\\x48\\x8d';assert instr[2]&0xc7==5\n disp=struct.unpack('<i',instr[3:])[0];va=offva(off);target=va+7+disp;targetoff=s['targets'][x['target']]['off'];actual=offva(targetoff);fn=x['function'];actualstring=b[targetoff:targetoff+len(x['target'])].decode('ascii');assert target==actual;assert fn['start']<=va<fn['end'];assert actualstring==x['target']\n r['xrefs'].append({'instruction_fileoffset':off,'bytes_hex':instr.hex(),'instruction_va':va,'signed_disp':disp,'target_va':target,'target_fileoffset':targetoff,'literal':actualstring,'go_function_start':fn['start'],'go_function_end':fn['end'],'function_size':fn['end']-fn['start']})\n for_rva=fn['start']-base\n for rva,rs,ptr in sections:\n  if rva<=for_rva<rva+rs:\n   start=ptr+for_rva-rva;length=fn['end']-fn['start'];r['function_file_start']=start;r['function_size']=length;open(os.environ['OUT']+'/target_function.bin','wb').write(b[start:start+length])\nwith open('inputs/chall/Carmine-Falcone.raw','rb') as f:\n for phy,fileoff,length in [(320252368,1172944,19),(3487571968,2031616,14)]:\n  f.seek(phy);v=f.read(length);w=b[fileoff:fileoff+length];assert v==w;r['physical_comparisons'].append({'physical':phy,'fileoffset':fileoff,'length':length,'identical':True})\njson.dump(r,open(os.environ['OUT']+'/xref_review.json','w'),indent=2);print(json.dumps(r))\nPY"
+  },
+  "requester": {
+    "agent": "s42120102",
+    "name": "Wallet trace",
+    "doing": "Examine wallet installation and wallet protection evidence for questions 5 and 9."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T11:09:29.029Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "inputs/chall/Carmine-Falcone.raw",
+        "sha256": "3e03551e1f55dd792b0bc459b5620522d61fcf2379e8f6d89ef439fef8263cac"
+      },
+      {
+        "path": "store/jobs/j000232/out/summary.json",
+        "sha256": "e88b1f372dc5ec9d573ef8b837a6e898acf08adf21946fa741e8154e651ecf89"
+      },
+      {
+        "path": "store/jobs/j000223/out/file.0xab0b0d34fe90.0xab0b106cf320.ImageSectionObject.services.exe.img",
+        "sha256": "fa77c2c1076f47055a0a37a08e29eb88238489a3ca74ccd6b5187f31218b0cea"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000243-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T11:09:29.101Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000243",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 3,
+    "files": 3,
+    "bound": 0,
+    "manifest": "store/jobs/j000243/scope.1.json",
+    "manifest_sha256": "af3740d61ee07ceb79d994ba78da42a66fac0decbd5aa4e4f5181d86c1583a16"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T11:09:29.866Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "f479ca12ed4810b0ec9246c2d964d416449c9bb4170e3bdf0a81f60575990f25",
+    "files": 2,
+    "bytes": 1772,
+    "rejected": 0,
+    "path": "store/jobs/j000243/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

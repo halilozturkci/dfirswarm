@@ -1,0 +1,803 @@
+{"python_zlib_runtime": "1.2.13", "input_length": 2322, "decoded_length": 16774, "eof": true, "unused_data_length": 0, "unconsumed_tail_length": 0, "prefix_hex": "82a26f63757272656e745f6275636b657473a078207065725f6e616d6573706163655f6167677265676174696f6e5f706572696f64b81882694e616d65737061"}
+[
+  {
+    "offset": 2,
+    "value": "ocurrent_buckets"
+  },
+  {
+    "offset": 19,
+    "value": "x per_namespace_aggregation_period"
+  },
+  {
+    "offset": 56,
+    "value": "iNamespacetclient_sync_boundary"
+  },
+  {
+    "offset": 88,
+    "value": "dsecs"
+  },
+  {
+    "offset": 94,
+    "value": "<enanos"
+  },
+  {
+    "offset": 103,
+    "value": "iNamespacex"
+  },
+  {
+    "offset": 115,
+    "value": "desktop_consolidated_eng"
+  },
+  {
+    "offset": 140,
+    "value": "dsecs"
+  },
+  {
+    "offset": 146,
+    "value": "<enanos"
+  },
+  {
+    "offset": 155,
+    "value": "iNamespacejsmb_funnel"
+  },
+  {
+    "offset": 177,
+    "value": "dsecs"
+  },
+  {
+    "offset": 183,
+    "value": "<enanos"
+  },
+  {
+    "offset": 192,
+    "value": "iNamespacewdesktop_backup_instance"
+  },
+  {
+    "offset": 227,
+    "value": "dsecs"
+  },
+  {
+    "offset": 233,
+    "value": "<enanos"
+  },
+  {
+    "offset": 242,
+    "value": "iNamespacewdesktop_sync_everything"
+  },
+  {
+    "offset": 277,
+    "value": "dsecs"
+  },
+  {
+    "offset": 283,
+    "value": "<enanos"
+  },
+  {
+    "offset": 292,
+    "value": "iNamespaceldesktop_tray"
+  },
+  {
+    "offset": 316,
+    "value": "dsecs"
+  },
+  {
+    "offset": 322,
+    "value": "<enanos"
+  },
+  {
+    "offset": 331,
+    "value": "iNamespacewdesktop_external_backup"
+  },
+  {
+    "offset": 366,
+    "value": "dsecs"
+  },
+  {
+    "offset": 372,
+    "value": "<enanos"
+  },
+  {
+    "offset": 381,
+    "value": "iNamespacepdesktop_electron"
+  },
+  {
+    "offset": 409,
+    "value": "dsecs"
+  },
+  {
+    "offset": 415,
+    "value": "<enanos"
+  },
+  {
+    "offset": 424,
+    "value": "iNamespacevmanaged_electron_views"
+  },
+  {
+    "offset": 458,
+    "value": "dsecs"
+  },
+  {
+    "offset": 464,
+    "value": "<enanos"
+  },
+  {
+    "offset": 473,
+    "value": "iNamespaceldesktop_perf"
+  },
+  {
+    "offset": 497,
+    "value": "dsecs"
+  },
+  {
+    "offset": 503,
+    "value": "<enanos"
+  },
+  {
+    "offset": 512,
+    "value": "iNamespacenfeature_gating"
+  },
+  {
+    "offset": 538,
+    "value": "dsecs"
+  },
+  {
+    "offset": 544,
+    "value": "<enanos"
+  },
+  {
+    "offset": 553,
+    "value": "iNamespaceoevent_reporting"
+  },
+  {
+    "offset": 580,
+    "value": "dsecs"
+  },
+  {
+    "offset": 586,
+    "value": "<enanos"
+  },
+  {
+    "offset": 595,
+    "value": "iNamespacetdesktop_setup_wizard"
+  },
+  {
+    "offset": 627,
+    "value": "dsecs"
+  },
+  {
+    "offset": 633,
+    "value": "<enanos"
+  },
+  {
+    "offset": 642,
+    "value": "iNamespacerclient_sync_events"
+  },
+  {
+    "offset": 672,
+    "value": "dsecs"
+  },
+  {
+    "offset": 678,
+    "value": "<enanos"
+  },
+  {
+    "offset": 687,
+    "value": "iNamespacewdesktop_js_memory_usage"
+  },
+  {
+    "offset": 722,
+    "value": "dsecs"
+  },
+  {
+    "offset": 728,
+    "value": "<enanos"
+  },
+  {
+    "offset": 737,
+    "value": "iNamespacepanalytics_client"
+  },
+  {
+    "offset": 765,
+    "value": "dsecs"
+  },
+  {
+    "offset": 771,
+    "value": "<enanos"
+  },
+  {
+    "offset": 780,
+    "value": "iNamespacewdesktop_computer_backup"
+  },
+  {
+    "offset": 815,
+    "value": "dsecs"
+  },
+  {
+    "offset": 821,
+    "value": "<enanos"
+  },
+  {
+    "offset": 830,
+    "value": "iNamespaceodesktop_release"
+  },
+  {
+    "offset": 857,
+    "value": "dsecs"
+  },
+  {
+    "offset": 863,
+    "value": "<enanos"
+  },
+  {
+    "offset": 872,
+    "value": "iNamespacendesktop_health"
+  },
+  {
+    "offset": 898,
+    "value": "dsecs"
+  },
+  {
+    "offset": 904,
+    "value": "<enanos"
+  },
+  {
+    "offset": 913,
+    "value": "iNamespacetdesktop_ui_framework"
+  },
+  {
+    "offset": 945,
+    "value": "dsecs"
+  },
+  {
+    "offset": 951,
+    "value": "<enanos"
+  },
+  {
+    "offset": 960,
+    "value": "iNamespacejamp_client"
+  },
+  {
+    "offset": 982,
+    "value": "dsecs"
+  },
+  {
+    "offset": 988,
+    "value": "<enanos"
+  },
+  {
+    "offset": 997,
+    "value": "iNamespacex"
+  },
+  {
+    "offset": 1009,
+    "value": "desktop_consolidated_user"
+  },
+  {
+    "offset": 1035,
+    "value": "dsecs"
+  },
+  {
+    "offset": 1041,
+    "value": "<enanos"
+  },
+  {
+    "offset": 1050,
+    "value": "iNamespacemdesktop_fenix"
+  },
+  {
+    "offset": 1075,
+    "value": "dsecs"
+  },
+  {
+    "offset": 1081,
+    "value": "<enanos"
+  },
+  {
+    "offset": 1090,
+    "value": "iNamespacegdbxconn"
+  },
+  {
+    "offset": 1109,
+    "value": "dsecs"
+  },
+  {
+    "offset": 1115,
+    "value": "<enanos"
+  },
+  {
+    "offset": 1125,
+    "value": "hsamplers"
+  },
+  {
+    "offset": 1137,
+    "value": "iNamespacepanalytics_client"
+  },
+  {
+    "offset": 1165,
+    "value": "nperiod_sampler"
+  },
+  {
+    "offset": 1181,
+    "value": "fconfig"
+  },
+  {
+    "offset": 1189,
+    "value": "pdrop_probability"
+  },
+  {
+    "offset": 1209,
+    "value": "jrng_configkIndependentcrngkIndependentnmetric_sampler"
+  },
+  {
+    "offset": 1264,
+    "value": "fconfig"
+  },
+  {
+    "offset": 1272,
+    "value": "pdrop_probability"
+  },
+  {
+    "offset": 1292,
+    "value": "nsample_sampler"
+  },
+  {
+    "offset": 1308,
+    "value": "fconfig"
+  },
+  {
+    "offset": 1316,
+    "value": "pdrop_probability"
+  },
+  {
+    "offset": 1336,
+    "value": "jrng_configiPermanentcrng"
+  },
+  {
+    "offset": 1362,
+    "value": "iPermanent"
+  },
+  {
+    "offset": 1382,
+    "value": "iNamespacewdesktop_computer_backup"
+  },
+  {
+    "offset": 1417,
+    "value": "nperiod_sampler"
+  },
+  {
+    "offset": 1433,
+    "value": "fconfig"
+  },
+  {
+    "offset": 1441,
+    "value": "pdrop_probability"
+  },
+  {
+    "offset": 1461,
+    "value": "jrng_configkIndependentcrngkIndependentnmetric_sampler"
+  },
+  {
+    "offset": 1516,
+    "value": "fconfig"
+  },
+  {
+    "offset": 1524,
+    "value": "pdrop_probability"
+  },
+  {
+    "offset": 1544,
+    "value": "nsample_sampler"
+  },
+  {
+    "offset": 1560,
+    "value": "fconfig"
+  },
+  {
+    "offset": 1568,
+    "value": "pdrop_probability"
+  },
+  {
+    "offset": 1588,
+    "value": "jrng_configiPermanentcrng"
+  },
+  {
+    "offset": 1614,
+    "value": "iPermanent"
+  },
+  {
+    "offset": 1634,
+    "value": "iNamespacetdesktop_ui_framework"
+  },
+  {
+    "offset": 1666,
+    "value": "nperiod_sampler"
+  },
+  {
+    "offset": 1682,
+    "value": "fconfig"
+  },
+  {
+    "offset": 1690,
+    "value": "pdrop_probability"
+  },
+  {
+    "offset": 1710,
+    "value": "jrng_configkIndependentcrngkIndependentnmetric_sampler"
+  },
+  {
+    "offset": 1765,
+    "value": "fconfig"
+  },
+  {
+    "offset": 1773,
+    "value": "pdrop_probability"
+  },
+  {
+    "offset": 1793,
+    "value": "nsample_sampler"
+  },
+  {
+    "offset": 1809,
+    "value": "fconfig"
+  },
+  {
+    "offset": 1817,
+    "value": "pdrop_probability"
+  },
+  {
+    "offset": 1837,
+    "value": "jrng_configiPermanentcrng"
+  },
+  {
+    "offset": 1863,
+    "value": "iPermanent"
+  },
+  {
+    "offset": 1883,
+    "value": "iNamespacejsmb_funnel"
+  },
+  {
+    "offset": 1905,
+    "value": "nperiod_sampler"
+  },
+  {
+    "offset": 1921,
+    "value": "fconfig"
+  },
+  {
+    "offset": 1929,
+    "value": "pdrop_probability"
+  },
+  {
+    "offset": 1949,
+    "value": "jrng_configkIndependentcrngkIndependentnmetric_sampler"
+  },
+  {
+    "offset": 2004,
+    "value": "fconfig"
+  },
+  {
+    "offset": 2012,
+    "value": "pdrop_probability"
+  },
+  {
+    "offset": 2032,
+    "value": "nsample_sampler"
+  },
+  {
+    "offset": 2048,
+    "value": "fconfig"
+  },
+  {
+    "offset": 2056,
+    "value": "pdrop_probability"
+  },
+  {
+    "offset": 2076,
+    "value": "jrng_configiPermanentcrng"
+  },
+  {
+    "offset": 2102,
+    "value": "iPermanent"
+  },
+  {
+    "offset": 2122,
+    "value": "iNamespacevmanaged_electron_views"
+  },
+  {
+    "offset": 2156,
+    "value": "nperiod_sampler"
+  },
+  {
+    "offset": 2172,
+    "value": "fconfig"
+  },
+  {
+    "offset": 2180,
+    "value": "pdrop_probability"
+  },
+  {
+    "offset": 2200,
+    "value": "jrng_configkIndependentcrngkIndependentnmetric_sampler"
+  },
+  {
+    "offset": 2255,
+    "value": "fconfig"
+  },
+  {
+    "offset": 2263,
+    "value": "pdrop_probability"
+  },
+  {
+    "offset": 2283,
+    "value": "nsample_sampler"
+  },
+  {
+    "offset": 2299,
+    "value": "fconfig"
+  },
+  {
+    "offset": 2307,
+    "value": "pdrop_probability"
+  },
+  {
+    "offset": 2327,
+    "value": "jrng_configiPermanentcrng"
+  },
+  {
+    "offset": 2353,
+    "value": "iPermanent"
+  },
+  {
+    "offset": 2373,
+    "value": "iNamespacex"
+  },
+  {
+    "offset": 2385,
+    "value": "desktop_consolidated_user"
+  },
+  {
+    "offset": 2411,
+    "value": "nperiod_sampler"
+  },
+  {
+    "offset": 2427,
+    "value": "fconfig"
+  },
+  {
+    "offset": 2435,
+    "value": "pdrop_probability"
+  },
+  {
+    "offset": 2455,
+    "value": "jrng_configkIndependentcrngkIndependentnmetric_sampler"
+  },
+  {
+    "offset": 2510,
+    "value": "fconfig"
+  },
+  {
+    "offset": 2518,
+    "value": "pdrop_probability"
+  },
+  {
+    "offset": 2538,
+    "value": "nsample_sampler"
+  },
+  {
+    "offset": 2554,
+    "value": "fconfig"
+  },
+  {
+    "offset": 2562,
+    "value": "pdrop_probability"
+  },
+  {
+    "offset": 2582,
+    "value": "jrng_configiPermanentcrng"
+  },
+  {
+    "offset": 2608,
+    "value": "iPermanent"
+  },
+  {
+    "offset": 2628,
+    "value": "iNamespacetdesktop_setup_wizard"
+  },
+  {
+    "offset": 2660,
+    "value": "nperiod_sampler"
+  },
+  {
+    "offset": 2676,
+    "value": "fconfig"
+  },
+  {
+    "offset": 2684,
+    "value": "pdrop_probability"
+  },
+  {
+    "offset": 2704,
+    "value": "jrng_configkIndependentcrngkIndependentnmetric_sampler"
+  },
+  {
+    "offset": 2759,
+    "value": "fconfig"
+  },
+  {
+    "offset": 2767,
+    "value": "pdrop_probability"
+  },
+  {
+    "offset": 2787,
+    "value": "nsample_sampler"
+  },
+  {
+    "offset": 2803,
+    "value": "fconfig"
+  },
+  {
+    "offset": 2811,
+    "value": "pdrop_probability"
+  },
+  {
+    "offset": 2831,
+    "value": "jrng_configiPermanentcrng"
+  },
+  {
+    "offset": 2857,
+    "value": "iPermanent"
+  },
+  {
+    "offset": 2877,
+    "value": "iNamespacegdbxconn"
+  },
+  {
+    "offset": 2896,
+    "value": "nperiod_sampler"
+  },
+  {
+    "offset": 2912,
+    "value": "fconfig"
+  },
+  {
+    "offset": 2920,
+    "value": "pdrop_probability"
+  },
+  {
+    "offset": 2940,
+    "value": "jrng_configkIndependentcrngkIndependentnmetric_sampler"
+  },
+  {
+    "offset": 2995,
+    "value": "fconfig"
+  },
+  {
+    "offset": 3003,
+    "value": "pdrop_probability"
+  },
+  {
+    "offset": 3023,
+    "value": "nsample_sampler"
+  },
+  {
+    "offset": 3039,
+    "value": "fconfig"
+  },
+  {
+    "offset": 3047,
+    "value": "pdrop_probability"
+  },
+  {
+    "offset": 3067,
+    "value": "jrng_configiPermanentcrng"
+  },
+  {
+    "offset": 3093,
+    "value": "iPermanent"
+  },
+  {
+    "offset": 3113,
+    "value": "iNamespacewdesktop_external_backup"
+  },
+  {
+    "offset": 3148,
+    "value": "nperiod_sampler"
+  },
+  {
+    "offset": 3164,
+    "value": "fconfig"
+  },
+  {
+    "offset": 3172,
+    "value": "pdrop_probability"
+  },
+  {
+    "offset": 3192,
+    "value": "jrng_configkIndependentcrngkIndependentnmetric_sampler"
+  },
+  {
+    "offset": 3247,
+    "value": "fconfig"
+  },
+  {
+    "offset": 3255,
+    "value": "pdrop_probability"
+  },
+  {
+    "offset": 3275,
+    "value": "nsample_sampler"
+  },
+  {
+    "offset": 3291,
+    "value": "fconfig"
+  },
+  {
+    "offset": 3299,
+    "value": "pdrop_probability"
+  },
+  {
+    "offset": 3319,
+    "value": "jrng_configiPermanentcrng"
+  },
+  {
+    "offset": 3345,
+    "value": "iPermanent"
+  },
+  {
+    "offset": 3360,
+    "value": "-s6B"
+  },
+  {
+    "offset": 3365,
+    "value": "iNamespacewdesktop_js_memory_usage"
+  },
+  {
+    "offset": 3400,
+    "value": "nperiod_sampler"
+  },
+  {
+    "offset": 3416,
+    "value": "fconfig"
+  },
+  {
+    "offset": 3424,
+    "value": "pdrop_probability"
+  },
+  {
+    "offset": 3444,
+    "value": "jrng_configkIndependentcrngkIndependentnmetric_sampler"
+  },
+  {
+    "offset": 3499,
+    "value": "fconfig"
+  },
+  {
+    "offset": 3507,
+    "value": "pdrop_probability"
+  },
+  {
+    "offset": 3527,
+    "value": "nsample_sampler"
+  },
+  {
+    "offset": 3543,
+    "value": "fconfig"
+  },
+  {
+    "offset": 3551,
+    "value": "pdrop_probability"
+  },
+  {
+    "offset": 3571,
+    "value": "jrng_configiPermanentcrng"
+  },
+  {
+    "offset": 3597,
+    "value": "iPermanent"
+  },
+  {
+    "offset": 3617,
+    "value": "iNamespacetclient_sync_boundary"
+  }
+]

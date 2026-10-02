@@ -1,0 +1,116 @@
+{
+  "id": "j000259",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/Carmine-Falcone.raw",
+      "job:j000109/version-strings.txt",
+      "job:j000078/file.0xab0b138c5bc0.0xab0b0d5e4230.DataSectionObject.bruce.kdbx.dat",
+      "job:j000105/match.json",
+      "job:j000107/entries.json",
+      "job:j000179/keepass-source-compare.json"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport json,pathlib,mmap,os,struct\np=lambda s:pathlib.Path(s)\nvp=p('store/jobs/j000109/out/version-strings.txt'); vtxt=vp.read_text(errors='replace')\nkdbx=p('store/jobs/j000078/out/file.0xab0b138c5bc0.0xab0b0d5e4230.DataSectionObject.bruce.kdbx.dat').read_bytes()\nmatch_raw=p('store/jobs/j000105/out/match.json').read_text(errors='replace'); match=json.loads(match_raw)\nentries_raw=p('store/jobs/j000107/out/entries.json').read_text(errors='replace'); entries=json.loads(entries_raw)\ncmp_raw=p('store/jobs/j000179/out/keepass-source-compare.json').read_text(errors='replace'); cmp=json.loads(cmp_raw)\ndigest='31095c0a1a117a374baa7d172ae1fd1f'\n# recursively count exact digest without emitting any other string values\ndef count_obj(o,target):\n if isinstance(o,dict): return sum(count_obj(k,target)+count_obj(v,target) for k,v in o.items())\n if isinstance(o,list): return sum(count_obj(x,target) for x in o)\n return int(isinstance(o,str) and o.lower()==target)\nraw=p('inputs/chall/Carmine-Falcone.raw')\nwith raw.open('rb') as f:\n m=mmap.mmap(f.fileno(),0,access=mmap.ACCESS_READ)\n ro={s:{'ascii':m.find(s.encode()),'utf16le':m.find(s.encode('utf-16le'))} for s in ['KeePass Password Safe 2','2.53.1']}\n m.close()\nout={\n 'declared_objects_read':6,\n 'raw_size':raw.stat().st_size,\n 'raw_version_literal_offsets':ro,\n 'resource_product_present':'KeePass Password Safe 2' in vtxt,\n 'resource_version_present':'2.53.1' in vtxt,\n 'kdbx_size':len(kdbx),\n 'kdbx_signature_hex':kdbx[:8].hex(),\n 'match_json_type':type(match).__name__,\n 'match_digest_exact_occurrences':count_obj(match,digest),\n 'entries_json_type':type(entries).__name__,\n 'entries_digest_exact_occurrences':count_obj(entries,digest),\n 'compare_json_type':type(cmp).__name__,\n 'compare_digest_exact_occurrences':count_obj(cmp,digest),\n 'digest_consistent_across_match_entries_compare':all(count_obj(x,digest)>0 for x in [match,entries,cmp]),\n 'note':'No password plaintext or Q4 credential field is emitted.'\n}\npath=pathlib.Path(os.environ['OUT'])/'q3-full-provenance-check.json'; path.write_text(json.dumps(out,indent=2))\nprint(json.dumps(out,indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120106",
+    "name": "Vault Artifact Analyst",
+    "doing": "Establishing Q3-Q4: password-manager identity/version and password, plus the deleted stored user key."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T11:20:11.687Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000179/out/keepass-source-compare.json",
+        "sha256": "1890680d517a2eccba8bb09e455daef3767f006684623550b5ab1953539c8c6a"
+      },
+      {
+        "path": "inputs/chall/Carmine-Falcone.raw",
+        "sha256": "3e03551e1f55dd792b0bc459b5620522d61fcf2379e8f6d89ef439fef8263cac"
+      },
+      {
+        "path": "store/jobs/j000107/out/entries.json",
+        "sha256": "5e1e941774aad60e462d6af2bfd94d9f65e84e28f47030d062583d1f68da0c6b"
+      },
+      {
+        "path": "store/jobs/j000105/out/match.json",
+        "sha256": "62bf67ef745b055f697a77272b365d4a73ec5906695363960e0d373174dbef6c"
+      },
+      {
+        "path": "store/jobs/j000078/out/file.0xab0b138c5bc0.0xab0b0d5e4230.DataSectionObject.bruce.kdbx.dat",
+        "sha256": "7b55391c40b18b8a9afc43dff0c9814ba6bc0e6566358aa994ff93da76b5e220"
+      },
+      {
+        "path": "store/jobs/j000109/out/version-strings.txt",
+        "sha256": "cdd4c761794acf00a91d27f0f3dcf09c7f320cab3b9f532bddb81c02d900095b"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000259-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T11:20:11.762Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000259",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 6,
+    "files": 6,
+    "bound": 0,
+    "manifest": "store/jobs/j000259/scope.1.json",
+    "manifest_sha256": "3a0b05701fec4ad350f21f4d4126e7b87a51939190f51351c34fddf646e5716d"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T11:20:12.755Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "8f9f617cff16cfbdd9195d86fcc9f0147cd15f8f66000d9e21456bcc81a79508",
+    "files": 1,
+    "bytes": 738,
+    "rejected": 0,
+    "path": "store/jobs/j000259/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

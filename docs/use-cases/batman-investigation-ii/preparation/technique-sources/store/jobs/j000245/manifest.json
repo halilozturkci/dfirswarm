@@ -1,0 +1,1 @@
+{"v":1,"job":"j000245","attempt":1,"sealed_at":"2026-10-02T11:09:38.686Z","files":[{"path":"q6-static-control-flow.json","path_b64":"cTYtc3RhdGljLWNvbnRyb2wtZmxvdy5qc29u","bytes":6750,"sha256":"5e7f5194d65be962adca2b9744ab38c0272fc14008d980730c9b385bbecb3d8f","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":6750}}

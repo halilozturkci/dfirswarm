@@ -1,0 +1,289 @@
+[
+  {
+    "label": "apex",
+    "sqlite_version": "3.40.1",
+    "wal_length": 127752,
+    "page_size": 4096,
+    "frames": 31,
+    "commits": [
+      {
+        "frame": 3,
+        "page_number": 3,
+        "db_size_pages": 28
+      },
+      {
+        "frame": 31,
+        "page_number": 28,
+        "db_size_pages": 28
+      }
+    ],
+    "journal_mode": "wal",
+    "snapshot_quick_check": [
+      [
+        "ok"
+      ]
+    ],
+    "base_counts": {
+      "apex_stormcrow": 1
+    },
+    "snapshot_counts": {
+      "apex_stormcrow": 1
+    },
+    "changed_tables": []
+  },
+  {
+    "label": "nucleus",
+    "sqlite_version": "3.40.1",
+    "wal_length": 255472,
+    "page_size": 4096,
+    "frames": 62,
+    "commits": [
+      {
+        "frame": 17,
+        "page_number": 17,
+        "db_size_pages": 17
+      },
+      {
+        "frame": 21,
+        "page_number": 20,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 22,
+        "page_number": 2,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 23,
+        "page_number": 2,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 24,
+        "page_number": 2,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 25,
+        "page_number": 2,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 26,
+        "page_number": 2,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 27,
+        "page_number": 2,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 28,
+        "page_number": 2,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 29,
+        "page_number": 2,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 31,
+        "page_number": 5,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 32,
+        "page_number": 3,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 33,
+        "page_number": 2,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 34,
+        "page_number": 2,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 35,
+        "page_number": 2,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 36,
+        "page_number": 2,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 37,
+        "page_number": 2,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 38,
+        "page_number": 2,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 39,
+        "page_number": 2,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 40,
+        "page_number": 11,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 41,
+        "page_number": 12,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 42,
+        "page_number": 10,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 43,
+        "page_number": 10,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 44,
+        "page_number": 10,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 45,
+        "page_number": 9,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 47,
+        "page_number": 9,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 48,
+        "page_number": 2,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 49,
+        "page_number": 2,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 50,
+        "page_number": 2,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 51,
+        "page_number": 2,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 52,
+        "page_number": 2,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 53,
+        "page_number": 2,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 54,
+        "page_number": 2,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 55,
+        "page_number": 2,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 56,
+        "page_number": 11,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 57,
+        "page_number": 12,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 58,
+        "page_number": 3,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 59,
+        "page_number": 2,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 60,
+        "page_number": 2,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 61,
+        "page_number": 2,
+        "db_size_pages": 20
+      },
+      {
+        "frame": 62,
+        "page_number": 2,
+        "db_size_pages": 20
+      }
+    ],
+    "journal_mode": "wal",
+    "snapshot_quick_check": [
+      [
+        "ok"
+      ]
+    ],
+    "base_counts": {},
+    "snapshot_counts": {
+      "config": 11,
+      "local_tree": 1,
+      "synced_tree": 1,
+      "remote_tree": 1,
+      "remote_tombstones": 0,
+      "remote_overlay": 0,
+      "commit_intents": 0,
+      "reconstruct_intents": 0,
+      "periodic_jobs": 3,
+      "migration_reassociate_data": 0,
+      "migration_blocklist_data": 0,
+      "fileid_oid_map": 0,
+      "fp_migration_hashing_deleted_node_fileids": 0,
+      "file_block_upload_tokens": 0,
+      "deleted_files": 0
+    },
+    "changed_tables": [
+      "remote_overlay",
+      "periodic_jobs",
+      "migration_blocklist_data",
+      "fileid_oid_map",
+      "fp_migration_hashing_deleted_node_fileids",
+      "deleted_files",
+      "synced_tree",
+      "remote_tombstones",
+      "commit_intents",
+      "local_tree",
+      "config",
+      "migration_reassociate_data",
+      "reconstruct_intents",
+      "file_block_upload_tokens",
+      "remote_tree"
+    ]
+  }
+]

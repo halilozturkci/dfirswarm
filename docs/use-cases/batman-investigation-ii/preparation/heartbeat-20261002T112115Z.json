@@ -1,0 +1,116 @@
+{
+  "heartbeat": "2026-10-02T11:21:15.079Z",
+  "observed_at": "2026-10-02T11:27:04.016327+00:00",
+  "run": "s421201",
+  "state": "running",
+  "done": false,
+  "calls": 2539,
+  "tokens": 250572767,
+  "questions_summary": {
+    "in_scope": 14,
+    "persons": 0,
+    "unanswered": 3,
+    "proposed": 0,
+    "triage": 0,
+    "clarifications": 1,
+    "chain_ok": true
+  },
+  "dispositions": {
+    "Q-2": {
+      "answer": "E-44",
+      "result": "established",
+      "stale": false
+    },
+    "Q-9": {
+      "answer": "E-108",
+      "result": "established",
+      "stale": false
+    },
+    "Q-1": {
+      "answer": "E-151",
+      "result": "partial",
+      "stale": false
+    },
+    "Q-3": {
+      "answer": "E-183",
+      "result": "established",
+      "stale": false
+    },
+    "Q-4": {
+      "answer": "E-184",
+      "result": "established",
+      "stale": false
+    },
+    "Q-5": {
+      "answer": "E-95",
+      "result": "established",
+      "stale": false
+    },
+    "Q-10": {
+      "answer": "E-104",
+      "result": "established",
+      "stale": false
+    },
+    "Q-11": {
+      "answer": "E-105",
+      "result": "established",
+      "stale": false
+    },
+    "Q-7": {
+      "answer": "E-196",
+      "result": "established",
+      "stale": false
+    },
+    "Q-14": {
+      "answer": "E-216",
+      "result": "not_determinable",
+      "reviewed": true,
+      "reviewed_by": [
+        "s42120100"
+      ],
+      "coverage": [
+        "E-213 partial"
+      ],
+      "stale": false
+    },
+    "Q-8": {
+      "answer": "E-232",
+      "result": "established",
+      "stale": false
+    }
+  },
+  "pending_requests": [
+    {
+      "rid": "R-2",
+      "id": null,
+      "title": "Identify Dropbox DBX 4096-byte page codec from plaintext header and 12-byte reserve",
+      "questions": [
+        "Q-12",
+        "Q-13"
+      ],
+      "at": "2026-10-02T10:48:47.511Z"
+    },
+    {
+      "rid": "R-3",
+      "id": "C-2",
+      "title": "Q-6: clarification C-2",
+      "questions": [
+        "Q-6"
+      ],
+      "at": "2026-10-02T10:58:14.755Z"
+    }
+  ],
+  "final_files": {
+    "work/answers.json": false,
+    "work/report.md": false,
+    "work/timeline.md": false
+  },
+  "controller_alive": true,
+  "agents_intervened": false,
+  "solution_read": false,
+  "added_source_copies": 86,
+  "notes": [
+    "New bounded static control-flow reproduction, complete metrics decode and WAL corroboration. Not full challenge success.",
+    "Review-upgrade path exists in ledger-rules.ts; duplicate replies are not assumed to prove unconditional renewal defect."
+  ]
+}

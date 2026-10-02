@@ -1,0 +1,9 @@
+{
+  "python_zlib_runtime": "1.2.13",
+  "input_length": 2322,
+  "decoded_length": 16774,
+  "eof": true,
+  "unused_data_length": 0,
+  "unconsumed_tail_length": 0,
+  "prefix_hex": "82a26f63757272656e745f6275636b657473a078207065725f6e616d6573706163655f6167677265676174696f6e5f706572696f64b81882694e616d65737061"
+}

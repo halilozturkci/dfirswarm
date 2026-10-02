@@ -1,0 +1,88 @@
+{
+  "id": "j000245",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000223/file.0xab0b0d34fe90.0xab0b106cf320.ImageSectionObject.services.exe.img"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "command": "python3 - <<'PY'\nimport pathlib,struct,json,hashlib,os\nimport pefile\np=pathlib.Path('store/jobs/j000223/out/file.0xab0b0d34fe90.0xab0b106cf320.ImageSectionObject.services.exe.img')\nb=p.read_bytes(); pe=pefile.PE(data=b); ib=pe.OPTIONAL_HEADER.ImageBase\nout=pathlib.Path(os.environ['OUT'])\ndef va2off(va):\n rva=va-ib\n for s in pe.sections:\n  if s.VirtualAddress<=rva<s.VirtualAddress+s.SizeOfRawData: return s.PointerToRawData+(rva-s.VirtualAddress)\ndef off2va(o):\n for s in pe.sections:\n  if s.PointerToRawData<=o<s.PointerToRawData+s.SizeOfRawData: return ib+s.VirtualAddress+(o-s.PointerToRawData)\ndef hx(va,n):\n o=va2off(va); return {'va':hex(va),'file_offset':o,'bytes_hex':b[o:o+n].hex()}\ndef call(va):\n o=va2off(va); assert b[o]==0xe8; d=struct.unpack_from('<i',b,o+1)[0]; return {'at':hex(va),'file_offset':o,'bytes_hex':b[o:o+5].hex(),'target':hex(va+5+d)}\ndef lea_target(va):\n o=va2off(va); assert 0x40<=b[o]<=0x4f and b[o+1]==0x8d and b[o+2]&0xc7==5\n d=struct.unpack_from('<i',b,o+3)[0]; t=va+7+d; to=va2off(t)\n return {'at':hex(va),'file_offset':o,'bytes_hex':b[o:o+7].hex(),'target_va':hex(t),'target_file_offset':to,'target_bytes_ascii':b[to:to+64].decode('ascii','backslashreplace')}\n# Go function table bounds prove all main refs are in one function; names are absent where sparse cache has zeroed name pages.\ng=b.find(b'\\xf1\\xff\\xff\\xff\\x00\\x00\\x01\\x08'); n=struct.unpack_from('<Q',b,g+8)[0]; textStart=struct.unpack_from('<Q',b,g+24)[0]; po=struct.unpack_from('<Q',b,g+64)[0]; ft=g+po\nfuncs=[]\nfor i in range(n):\n e,fo=struct.unpack_from('<II',b,ft+i*8); ne=struct.unpack_from('<I',b,ft+(i+1)*8)[0]; funcs.append((textStart+e,textStart+ne,fo,i))\nmain=next(x for x in funcs if x[0]==0x9a7220); xorfun=next(x for x in funcs if x[0]==0x9a6d60); sendfun=next(x for x in funcs if x[0]==0x9a6f00)\nwallet_leas=[]\nfor va in [0x9a723a,0x9a728f,0x9a72aa,0x9a72c5,0x9a72e0,0x9a730f,0x9a7328,0x9a747a]: wallet_leas.append(lea_target(va))\n# recognize exact xor loop inside helper: load one byte, XOR 0x33, store to output, increment, compare, loop\nsig=bytes.fromhex('0fb6341a83f6334088341848ffc34839d97fed')\nxo=b.find(sig,va2off(xorfun[0]),va2off(xorfun[1])); assert xo>=0\n# tcp literal and Go ABI register shuffle in send helper\ntcp=lea_target(0x9a6f49)\n# Retained pclntab string contains net.Dial but sparse _func metadata page does not preserve address binding.\nnetdial_name_off=b.find(b'net.Dial\\x00')\nresult={\n 'artifact':{'path':str(p),'sha256':hashlib.sha256(b).hexdigest(),'size':len(b),'image_base':hex(ib)},\n 'go_pclntab':{'file_offset':g,'nfunc':n,'text_start':hex(textStart),'main_like_function':{'start':hex(main[0]),'end':hex(main[1]),'index':main[3]},'xor_helper':{'start':hex(xorfun[0]),'end':hex(xorfun[1]),'index':xorfun[3]},'network_helper':{'start':hex(sendfun[0]),'end':hex(sendfun[1]),'index':sendfun[3]},'note':'The sparse cached image preserves functab boundaries but zeros the corresponding custom-function name metadata pages.'},\n 'main_string_references':wallet_leas,\n 'main_control_flow':{\n  'xor_call':call(0x9a73b0),\n  'aggregation_call_after_xor_outputs':call(0x9a740e),\n  'payload_prepare_call':call(0x9a746f),\n  'payload_register_move_then_endpoint_and_send':hx(0x9a746f,28),\n  'endpoint_lea':lea_target(0x9a747a),\n  'network_helper_call':call(0x9a7486),\n  'decoded_register_flow':'The call at 0x9a746f returns AX/BX; instructions 48 89 c1 and 48 89 df move those values to CX/DI, then LEA loads the endpoint into AX, BB 13 loads length 19 into BX, and the call at 0x9a7486 targets 0x9a6f00.'},\n 'xor_helper_loop':{'signature_file_offset':xo,'signature_va':hex(off2va(xo)),'bytes_hex':sig.hex(),'decoded':'MOVZX ESI,byte [RDX+RBX]; XOR ESI,0x33; MOV byte [RAX+RBX],SIL; INC RBX; CMP RCX,RBX; JG back to the byte loop.'},\n 'network_helper':{\n  'endpoint_to_network_args_and_tcp':hx(0x9a6f40,42),\n  'tcp_lea':tcp,\n  'first_call':call(0x9a6f60),\n  'first_call_error_test':hx(0x9a6f60,15),\n  'payload_reload_and_open_like_call':hx(0x9a6fc0,26),\n  'copy_like_call_context':hx(0x9a7010,47),\n  'net_Dial_name_file_offset':netdial_name_off,\n  'net_Dial_name_bytes':b[netdial_name_off:netdial_name_off+9].decode(),\n  'decoded':'The helper saves CX/DI (payload string) at entry. It moves endpoint AX/BX into CX/DI, loads pointer to literal tcp into AX and length 3 into BX, and calls 0x97a4e0; RCX is immediately tested as the error interface. It later reloads the saved payload string and calls 0x94ac60, checks the returned error word, and passes the opened-object/result plus the connection into 0x9431a0 before deferred interface-method closes. This is the Go ABI/control-flow shape of net.Dial(\"tcp\", endpoint), opening the prepared payload, and copying it to the connection, but the sparse image lost the relevant symbol-address metadata; the retained net.Dial name string corroborates the first call family.'\n },\n 'boundary':'Static code establishes targeting, transformation and transmission capability/intent; it does not show that a connection or past transfer succeeded.'\n}\n(out/'q6-static-control-flow.json').write_text(json.dumps(result,indent=2)); print(json.dumps(result,indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120106",
+    "name": "Vault Artifact Analyst",
+    "doing": "Establishing Q3-Q4: password-manager identity/version and password, plus the deleted stored user key."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T11:09:37.796Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000223/out/file.0xab0b0d34fe90.0xab0b106cf320.ImageSectionObject.services.exe.img",
+        "sha256": "fa77c2c1076f47055a0a37a08e29eb88238489a3ca74ccd6b5187f31218b0cea"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000245-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T11:09:37.855Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000245",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000245/scope.1.json",
+    "manifest_sha256": "761e08785bc569013516ab63f00045c9b70c6ceb992e73dfe745b5d9cb32dadb"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T11:09:38.673Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "a86dac446f14dec2044272647964fe18cf15897cc5e2261b13869131904fc80c",
+    "files": 1,
+    "bytes": 6750,
+    "rejected": 0,
+    "path": "store/jobs/j000245/out"
+  },
+  "sensitive": {
+    "why": "derived",
+    "from": [
+      "j000223"
+    ],
+    "note": "made from the sensitive output of j000223: every output it sealed is sensitive"
+  }
+}

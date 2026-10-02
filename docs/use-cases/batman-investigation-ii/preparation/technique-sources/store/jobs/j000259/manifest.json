@@ -1,0 +1,1 @@
+{"v":1,"job":"j000259","attempt":1,"sealed_at":"2026-10-02T11:20:12.781Z","files":[{"path":"q3-full-provenance-check.json","path_b64":"cTMtZnVsbC1wcm92ZW5hbmNlLWNoZWNrLmpzb24=","bytes":738,"sha256":"80fbfefedafe3158ae2f6a6f3f4f1896d106e80f449cc78aa01e6c8a17ba5d67","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":738}}

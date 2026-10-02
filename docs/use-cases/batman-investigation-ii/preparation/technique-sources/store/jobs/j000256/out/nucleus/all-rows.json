@@ -1,0 +1,264 @@
+{
+  "immutable_base": {},
+  "committed_snapshot": {
+    "config": {
+      "sql": "CREATE TABLE config (key INTEGER PRIMARY KEY, value BLOB NOT NULL)",
+      "columns": [
+        "key",
+        "value"
+      ],
+      "count": 11,
+      "rows": [
+        [
+          1,
+          {
+            "blob_hex": "0a270a0f0893c6a2960810e3d881f4cbc3830318012093c6a2960830033a0812060801100150014200122e41426a64634e5178367a7969764761645070727a34414b324267364771314a4e5749416d66485f64326e76563167"
+          }
+        ],
+        [
+          2,
+          {
+            "blob_hex": "0a180893c6a296081210ffffffffffffffffffffffffffffffff"
+          }
+        ],
+        [
+          4,
+          {
+            "blob_hex": "0802"
+          }
+        ],
+        [
+          5,
+          {
+            "blob_hex": "0802"
+          }
+        ],
+        [
+          6,
+          {
+            "blob_hex": ""
+          }
+        ],
+        [
+          7,
+          {
+            "blob_hex": "0884f3daac061801"
+          }
+        ],
+        [
+          10,
+          {
+            "blob_hex": "0803"
+          }
+        ],
+        [
+          13,
+          {
+            "blob_hex": "01"
+          }
+        ],
+        [
+          16,
+          {
+            "blob_hex": "0883f3daac06"
+          }
+        ],
+        [
+          20,
+          {
+            "blob_hex": "1085f3daac061886f3daac062086f3daac062886f3daac06300138014002"
+          }
+        ],
+        [
+          21,
+          {
+            "blob_hex": ""
+          }
+        ]
+      ]
+    },
+    "local_tree": {
+      "sql": "CREATE TABLE local_tree (\n                key BLOB PRIMARY KEY,\n                value BLOB NOT NULL\n            ) WITHOUT ROWID",
+      "columns": [
+        "key",
+        "value"
+      ],
+      "count": 1,
+      "rows": [
+        [
+          {
+            "blob_hex": "ffffffffffffffffffffffffffffffff"
+          },
+          {
+            "blob_hex": "0a2c0a10ffffffffffffffffffffffffffffffff1210ffffffffffffffffffffffffffffffff2202080132021801121608d2e3b892f1b2cad31710d2e3b892f1b2cad317180518fcc8a013"
+          }
+        ]
+      ]
+    },
+    "synced_tree": {
+      "sql": "CREATE TABLE synced_tree (\n                key BLOB PRIMARY KEY,\n                value BLOB NOT NULL\n            ) WITHOUT ROWID",
+      "columns": [
+        "key",
+        "value"
+      ],
+      "count": 1,
+      "rows": [
+        [
+          {
+            "blob_hex": "ffffffffffffffffffffffffffffffff"
+          },
+          {
+            "blob_hex": "122c0a10ffffffffffffffffffffffffffffffff1210ffffffffffffffffffffffffffffffff2202080142021801"
+          }
+        ]
+      ]
+    },
+    "remote_tree": {
+      "sql": "CREATE TABLE remote_tree (\n                key BLOB PRIMARY KEY,\n                value BLOB NOT NULL\n            ) WITHOUT ROWID",
+      "columns": [
+        "key",
+        "value"
+      ],
+      "count": 1,
+      "rows": [
+        [
+          {
+            "blob_hex": "ffffffffffffffffffffffffffffffff"
+          },
+          {
+            "blob_hex": "0a380a10ffffffffffffffffffffffffffffffff1210ffffffffffffffffffffffffffffffff22020801420e0a020a00220812060801100150011a00"
+          }
+        ]
+      ]
+    },
+    "remote_tombstones": {
+      "sql": "CREATE TABLE remote_tombstones (\n                key BLOB PRIMARY KEY,\n                value BLOB NOT NULL\n            ) WITHOUT ROWID",
+      "columns": [
+        "key",
+        "value"
+      ],
+      "count": 0,
+      "rows": []
+    },
+    "remote_overlay": {
+      "sql": "CREATE TABLE remote_overlay (\n                key BLOB PRIMARY KEY,\n                value BLOB NOT NULL\n            ) WITHOUT ROWID",
+      "columns": [
+        "key",
+        "value"
+      ],
+      "count": 0,
+      "rows": []
+    },
+    "commit_intents": {
+      "sql": "CREATE TABLE commit_intents (\n                key BLOB PRIMARY KEY,\n                value BLOB NOT NULL\n            ) WITHOUT ROWID",
+      "columns": [
+        "key",
+        "value"
+      ],
+      "count": 0,
+      "rows": []
+    },
+    "reconstruct_intents": {
+      "sql": "CREATE TABLE reconstruct_intents (\n                key BLOB PRIMARY KEY,\n                value BLOB NOT NULL\n            ) WITHOUT ROWID",
+      "columns": [
+        "key",
+        "value"
+      ],
+      "count": 0,
+      "rows": []
+    },
+    "periodic_jobs": {
+      "sql": "CREATE TABLE periodic_jobs (\n                key BLOB PRIMARY KEY,\n                value BLOB NOT NULL\n            ) WITHOUT ROWID",
+      "columns": [
+        "key",
+        "value"
+      ],
+      "count": 3,
+      "rows": [
+        [
+          {
+            "blob_hex": "01000000"
+          },
+          {
+            "blob_hex": "0886f3daac06"
+          }
+        ],
+        [
+          {
+            "blob_hex": "02000000"
+          },
+          {
+            "blob_hex": "0886f3daac06"
+          }
+        ],
+        [
+          {
+            "blob_hex": "04000000"
+          },
+          {
+            "blob_hex": "0886f3daac06"
+          }
+        ]
+      ]
+    },
+    "migration_reassociate_data": {
+      "sql": "CREATE TABLE migration_reassociate_data (\n                key BLOB PRIMARY KEY,\n                value BLOB NOT NULL\n            ) WITHOUT ROWID",
+      "columns": [
+        "key",
+        "value"
+      ],
+      "count": 0,
+      "rows": []
+    },
+    "migration_blocklist_data": {
+      "sql": "CREATE TABLE migration_blocklist_data (\n                key BLOB PRIMARY KEY,\n                value BLOB NOT NULL\n            ) WITHOUT ROWID",
+      "columns": [
+        "key",
+        "value"
+      ],
+      "count": 0,
+      "rows": []
+    },
+    "fileid_oid_map": {
+      "sql": "CREATE TABLE fileid_oid_map (\n                key BLOB PRIMARY KEY,\n                value BLOB NOT NULL\n            ) WITHOUT ROWID",
+      "columns": [
+        "key",
+        "value"
+      ],
+      "count": 0,
+      "rows": []
+    },
+    "fp_migration_hashing_deleted_node_fileids": {
+      "sql": "CREATE TABLE fp_migration_hashing_deleted_node_fileids (\n                key BLOB PRIMARY KEY,\n                value BLOB NOT NULL\n            ) WITHOUT ROWID",
+      "columns": [
+        "key",
+        "value"
+      ],
+      "count": 0,
+      "rows": []
+    },
+    "file_block_upload_tokens": {
+      "sql": "CREATE TABLE file_block_upload_tokens (\n        fileid BLOB NOT NULL,\n        block_hash BLOB NOT NULL,\n        ts INTEGER NOT NULL,\n        token BLOB NOT NULL,\n        PRIMARY KEY(fileid, block_hash)\n    ) WITHOUT ROWID\n    ",
+      "columns": [
+        "fileid",
+        "block_hash",
+        "ts",
+        "token"
+      ],
+      "count": 0,
+      "rows": []
+    },
+    "deleted_files": {
+      "sql": "CREATE TABLE deleted_files (\n        identifier BLOB PRIMARY KEY,\n        prune_after INTEGER NOT NULL,\n        dirtied_on INTEGER,\n        original_data BLOB NOT NULL,\n        last_observed_stat BLOB\n    )",
+      "columns": [
+        "identifier",
+        "prune_after",
+        "dirtied_on",
+        "original_data",
+        "last_observed_stat"
+      ],
+      "count": 0,
+      "rows": []
+    }
+  }
+}

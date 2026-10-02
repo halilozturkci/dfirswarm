@@ -1,0 +1,93 @@
+{
+  "id": "j000255",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000222/cache-mapping.json",
+      "job:j000223/file.0xab0b0d34fe90.0xab0b106cf320.ImageSectionObject.services.exe.img"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "independent": true,
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport json, os, string\nmapping=json.load(open('store/jobs/j000222/out/cache-mapping.json',encoding='utf-8'))\nimg='store/jobs/j000223/out/file.0xab0b0d34fe90.0xab0b106cf320.ImageSectionObject.services.exe.img'\ndata=open(img,'rb').read()\n# Verify only the claimed image-section offsets and print bounded values.\nchecks=[]\nfor h in mapping.get('hits',[]):\n    if h.get('name')!='\\\\Users\\\\Carmine Falcone\\\\Desktop\\\\services.exe': continue\n    off=h.get('file_offset')\n    b=data[off:off+96]\n    txt=''.join(chr(x) if chr(x) in string.printable else '.' for x in b)\n    checks.append({'name':h.get('name'),'kind':h.get('kind'),'physical_page':h.get('physical_page'),'target':h.get('target'),'file_offset':off,'bytes_available':len(b),'prefix_ascii':txt})\nneedles={'wallet_name':(1167188,b'exodus.wallet'),'endpoint':(1172944,b'172.30.145.189:6969'),'go_build_info':(2031616,b'go1.')}\nneedle_checks={k:{'offset':o,'expected':v.decode('ascii'),'present_at_offset':data[o:o+len(v)]==v,'surrounding_ascii':''.join(chr(x) if chr(x) in string.printable else '.' for x in data[o:o+64])} for k,(o,v) in needles.items()}\nout={'image_path':os.path.basename(img),'image_size':len(data),'mapping_hits':checks,'literal_checks':needle_checks}\nwith open(os.path.join(os.environ['OUT'],'services-page-map-recheck.json'),'w') as f: json.dump(out,f,indent=2)\nprint(json.dumps(out,indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120107",
+    "name": "Memory triage",
+    "doing": "Examine the memory image for wallet/password-manager artifacts and claim questions 3–6 if available."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T11:17:09.199Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000222/out/cache-mapping.json",
+        "sha256": "3687237f9d52b74f09c69c7225b927a07f7d078f18f7b488b187367f95779a5c"
+      },
+      {
+        "path": "store/jobs/j000223/out/file.0xab0b0d34fe90.0xab0b106cf320.ImageSectionObject.services.exe.img",
+        "sha256": "fa77c2c1076f47055a0a37a08e29eb88238489a3ca74ccd6b5187f31218b0cea"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000255-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T11:17:09.277Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000255",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 2,
+    "files": 2,
+    "bound": 0,
+    "manifest": "store/jobs/j000255/scope.1.json",
+    "manifest_sha256": "6142c062cd70eff95009c8084e8a6b32fe995afc2643ce69fee5a0ae0a62160f"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T11:17:09.978Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "01471bb6bfad3c97f75fa67967ea0e7999b193a74ab6ca4da98b3584051892a3",
+    "files": 1,
+    "bytes": 1527,
+    "rejected": 0,
+    "path": "store/jobs/j000255/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

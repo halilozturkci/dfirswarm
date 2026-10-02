@@ -1,0 +1,35 @@
+{
+  "compressed_bytes": 2322,
+  "decoded_bytes": 16774,
+  "zlib_eof": true,
+  "unused_bytes": 0,
+  "unconsumed_bytes": 0,
+  "cbor_consumed": 16774,
+  "major_type_counts": {
+    "4": 390,
+    "5": 340,
+    "3": 1358,
+    "0": 206,
+    "7": 193
+  },
+  "scalar_string_occurrences": 1358,
+  "unique_scalar_strings": 114,
+  "map_pairs": 854,
+  "array2_root": true,
+  "term_matches": {
+    "userkey": [],
+    "user_key": [],
+    "hostkey": [],
+    "key": [],
+    "codec": [],
+    "crypt": [],
+    "sqlite": [],
+    "email": [],
+    "contact": [],
+    "password": []
+  },
+  "handout_token_literal_occurrences": 0,
+  "strings_with_dbx": [
+    "dbxconn"
+  ]
+}

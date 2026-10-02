@@ -1,0 +1,87 @@
+{
+  "id": "j000248",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000246/metrics-decoded.bin"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport os,json,struct\nb=open('store/jobs/j000246/out/metrics-decoded.bin','rb').read();p=0;counts={}\ndef take(n):\n global p\n assert 0<=n<=len(b)-p,(p,n);v=b[p:p+n];p+=n;return v\ndef read(depth=0):\n assert depth<100\n v=take(1)[0];m=v>>5;a=v&31;counts[m]=counts.get(m,0)+1\n if m==7:\n  if a==20:return False\n  if a==21:return True\n  if a in (22,23):return None\n  if a==25:return struct.unpack('>e',take(2))[0]\n  if a==26:return struct.unpack('>f',take(4))[0]\n  if a==27:return struct.unpack('>d',take(8))[0]\n  raise ValueError(('unsupported simple',a,p))\n if a<24:n=a\n elif a in (24,25,26,27):n=int.from_bytes(take(1<<(a-24)),'big')\n else:raise ValueError(('unsupported length',a,p))\n if m==0:return n\n if m==1:return -1-n\n if m==2:return {'bytes_hex':take(n).hex()}\n if m==3:return take(n).decode('utf8')\n if m==4:return [read(depth+1) for _ in range(n)]\n if m==5:return {'map':[[read(depth+1),read(depth+1)] for _ in range(n)]}\n if m==6:return {'tag':n,'value':read(depth+1)}\n raise ValueError(m)\nx=read();assert p==len(b),(p,len(b));json.dump(x,open(os.environ['OUT']+'/metrics-cbor.json','w'),indent=2)\nterms=['userkey','user_key','hostkeys','dbx','crypt','sqlite','codec','key','password','email','contact'];s=b.lower();hits=[]\nfor t in terms:\n n=t.encode();i=0\n while True:\n  j=s.find(n,i)\n  if j<0:break\n  hits.append({'term':t,'offset':j,'context_ascii':''.join(chr(c) if 32<=c<127 else '.' for c in b[max(0,j-80):j+160])});i=j+len(n)\nsumm={'consumed':p,'decoded_length':len(b),'major_counts':counts,'root_type':'array' if isinstance(x,list) else 'object','root_length':len(x),'key_contexts':hits};json.dump(summ,open(os.environ['OUT']+'/metrics-cbor-summary.json','w'),indent=2);print(json.dumps(summ,indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120103",
+    "name": "Wallet history",
+    "doing": "Investigating Q7 and Q8: password-protected archive and original file hashes; avoiding peers' wallet work."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T11:11:04.078Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000246/out/metrics-decoded.bin",
+        "sha256": "826e1bf087d8913007100fe5ec6abb2a22f957e3715d44b99eea382320a2a599"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000248-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T11:11:04.139Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000248",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000248/scope.1.json",
+    "manifest_sha256": "0d2d6f9d19159ff24bc71c1b605976763bcbc117059c5bf7096911794cd7a286"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T11:11:04.856Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "88c40fda0a2e9cdb7446da318defc05b4a153df596d9dc10d848af9458c63ad2",
+    "files": 2,
+    "bytes": 191546,
+    "rejected": 0,
+    "path": "store/jobs/j000248/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

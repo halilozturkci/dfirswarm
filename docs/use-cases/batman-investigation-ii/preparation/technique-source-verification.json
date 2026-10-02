@@ -1,10 +1,10 @@
 {
-  "at": "2026-10-02T11:18:50.590760+00:00",
-  "scope": "new technique note, README, index and selected source copies; literal current Pi OAuth, VM seat-token and console-token scan; not a general secret absence proof",
+  "at": "2026-10-02T11:27:56.331779+00:00",
+  "scope": "technique notes/index/source copies, README, observation/platform notes and this heartbeat snapshot; literal current Pi OAuth/seat/console values; not a general secret absence proof",
   "candidate_secret_count": 13,
-  "files_scanned": 179,
-  "bytes_scanned": 26531144,
+  "files_scanned": 268,
+  "bytes_scanned": 27547849,
+  "source_copies_verified": 262,
   "hits": [],
-  "source_copies_verified": 176,
   "passed": true
 }

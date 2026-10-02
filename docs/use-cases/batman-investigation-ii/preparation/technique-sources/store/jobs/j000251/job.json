@@ -1,0 +1,89 @@
+{
+  "id": "j000251",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000223/file.0xab0b0d34fe90.0xab0b106cf320.ImageSectionObject.services.exe.img"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "independent": true,
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport os,json,struct\nb=open('store/jobs/j000223/out/file.0xab0b0d34fe90.0xab0b106cf320.ImageSectionObject.services.exe.img','rb').read();q=struct.unpack_from('<I',b,60)[0];base=struct.unpack_from('<Q',b,q+48)[0];opt=struct.unpack_from('<H',b,q+20)[0];secs=[]\nfor i in range(struct.unpack_from('<H',b,q+6)[0]):\n off=q+24+opt+40*i;vs,rva,rs,p=struct.unpack_from('<IIII',b,off+8);secs.append((rva,rs,p))\ndef ova(o):\n for rv,sz,p in secs:\n  if p<=o<p+sz:return base+rv+o-p\n raise ValueError(o)\nmagic=b'\\xf1\\xff\\xff\\xff\\x00\\x00\\x01\\x08';h=b.index(magic);n,nf,ts,no,cu,ft,pt,po=struct.unpack_from('<8Q',b,h+8);tab=h+po\nentries=[struct.unpack_from('<II',b,tab+8*i) for i in range(n)];ends=[e[0] for e in entries[1:]]+[struct.unpack_from('<I',b,tab+8*n)[0]]\nassert all(a[0]<z for a,z in zip(entries,ends));fn=[{'index':i,'start':ts+e[0],'end':ts+z} for i,(e,z) in enumerate(zip(entries,ends))]\ndef owner(v):return next(x for x in fn if x['start']<=v<x['end'])\nr={'pclntab_offset':h,'function_count':n,'checks':[],'functions':[]}\nfor o in [944560,944654,944751,944774,943456]:\n assert b[o]==0xe8;v=ova(o);to=v+5+struct.unpack_from('<i',b,o+1)[0];r['checks'].append({'kind':'CALL_rel32','fileoffset':o,'va':v,'target':to,'caller':owner(v),'callee':owner(to),'bytes':b[o:o+5].hex()})\nfor o,lit in [(944186,b'USERPROFILE'),(944271,b'Appdata'),(944298,b'Roaming'),(944325,b'Exodus'),(944352,b'exodus.wallet'),(944399,b'USERNAME'),(944424,b'.zip'),(944762,b'172.30.145.189:6969'),(943433,b'tcp')]:\n assert b[o:o+2]==b'\\x48\\x8d';v=ova(o);t=v+7+struct.unpack_from('<i',b,o+3)[0]\n for rv,sz,p in secs:\n  if base+rv<=t<base+rv+sz:to=p+t-base-rv;break\n assert b[to:to+len(lit)]==lit;r['checks'].append({'kind':'LEA_RIP_rel32','fileoffset':o,'va':v,'target':t,'target_fileoffset':to,'literal':lit.decode(),'owner':owner(v)})\nfor o,l,expected in [(944756,6,'4889c14889df'),(944769,5,'bb13000000'),(943043,18,'0fb6341a83f6334088341848ffc34839d97fed'),(943461,9,'4885c90f8576010000')]:\n assert b[o:o+l].hex()==expected;r['checks'].append({'kind':'exact_register_or_loop_or_error_test','fileoffset':o,'va':ova(o),'bytes':expected})\nr['functions']=[fn[i] for i in [2543,2545,2548]]\nfor i in [2543,2545,2548]:\n f=fn[i];v=f['start']\n for rv,sz,p in secs:\n  if base+rv<=v<base+rv+sz:start=p+v-base-rv;break\n r['functions'][[2543,2545,2548].index(i)]['fileoffset']=start;r['functions'][[2543,2545,2548].index(i)]['bytes_hex']=b[start:start+f['end']-f['start']].hex()\njson.dump(r,open(os.environ['OUT']+'/independent-control-flow.json','w'),indent=2);print('Verified Go functab boundaries, five calls, nine string LEAs, register moves, XOR loop and TCP-call error test; no execution.')\nPY"
+  },
+  "requester": {
+    "agent": "s42120102",
+    "name": "Wallet trace",
+    "doing": "Examine wallet installation and wallet protection evidence for questions 5 and 9."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T11:14:07.300Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000223/out/file.0xab0b0d34fe90.0xab0b106cf320.ImageSectionObject.services.exe.img",
+        "sha256": "fa77c2c1076f47055a0a37a08e29eb88238489a3ca74ccd6b5187f31218b0cea"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000251-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T11:14:07.364Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000251",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000251/scope.1.json",
+    "manifest_sha256": "f769238ac65f5a6fc248a282fb4fcbf5aa8a3cd3a7254ef76aaaa873e83c0f49"
+  },
+  "network": "none",
+  "exit": 1,
+  "status": "failed",
+  "reason": "exit 1",
+  "finished_at": "2026-10-02T11:14:08.072Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "a766e287cc2ccec2de4c8d9f1e6b4d7b681e44d75479e8bc1eee8beb906cd08b",
+    "files": 0,
+    "bytes": 0,
+    "rejected": 0,
+    "path": "store/jobs/j000251/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

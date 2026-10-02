@@ -1,0 +1,44 @@
+{
+  "image_path": "file.0xab0b0d34fe90.0xab0b106cf320.ImageSectionObject.services.exe.img",
+  "image_size": 3000832,
+  "mapping_hits": [
+    {
+      "name": "\\Users\\Carmine Falcone\\Desktop\\services.exe",
+      "kind": "ImageSectionObject",
+      "physical_page": 320249856,
+      "target": 320252368,
+      "file_offset": 1172944,
+      "bytes_available": 96,
+      "prefix_ascii": "172.30.145.189:6969WaitForSingleObjectreflect.Value.IsNilreflect.Value.Floatcriterion too shorts"
+    },
+    {
+      "name": "\\Users\\Carmine Falcone\\Desktop\\services.exe",
+      "kind": "ImageSectionObject",
+      "physical_page": 3487571968,
+      "target": 3487571968,
+      "file_offset": 2031616,
+      "bytes_available": 96,
+      "prefix_ascii": ". Go buildinf:...................go1.21.5..0w.\f.t..A.......path\tcommand-line-arguments\nbuild\t-bu"
+    }
+  ],
+  "literal_checks": {
+    "wallet_name": {
+      "offset": 1167188,
+      "expected": "exodus.wallet",
+      "present_at_offset": true,
+      "surrounding_ascii": "exodus.walletFindFirstFilelame referraldalTLDpSugct?profMemActiv"
+    },
+    "endpoint": {
+      "offset": 1172944,
+      "expected": "172.30.145.189:6969",
+      "present_at_offset": true,
+      "surrounding_ascii": "172.30.145.189:6969WaitForSingleObjectreflect.Value.IsNilreflect"
+    },
+    "go_build_info": {
+      "offset": 2031616,
+      "expected": "go1.",
+      "present_at_offset": false,
+      "surrounding_ascii": ". Go buildinf:...................go1.21.5..0w.\f.t..A.......path\t"
+    }
+  }
+}

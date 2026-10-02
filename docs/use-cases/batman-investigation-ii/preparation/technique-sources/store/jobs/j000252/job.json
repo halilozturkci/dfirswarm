@@ -1,0 +1,97 @@
+{
+  "id": "j000252",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000130/archive/contact/metrics/store.bin",
+      "input:chall/unknown.data"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport json,zlib,collections,os\nraw=open('store/jobs/j000130/archive/contact/metrics/store.bin','rb').read()\nd=zlib.decompressobj(); buf=d.decompress(raw); buf+=d.flush()\nassert d.eof and not d.unused_data and not d.unconsumed_tail\np=0; counts=collections.Counter(); scalar=[]; map_pairs=0\n\ndef take(n):\n global p\n assert 0<=n<=len(buf)-p\n b=buf[p:p+n]; p+=n; return b\n\ndef item(depth=0):\n global map_pairs\n assert depth<128\n h=take(1)[0]; major=h>>5; ai=h&31; counts[major]+=1\n if major==7:\n  if ai==20:return False\n  if ai==21:return True\n  if ai in (22,23):return None\n  if ai==24:return {'simple':take(1)[0]}\n  if ai==25:return {'float16':take(2).hex()}\n  if ai==26:return {'float32':take(4).hex()}\n  if ai==27:return {'float64':take(8).hex()}\n  raise ValueError(('simple',ai,p))\n if ai<24:n=ai\n elif ai in (24,25,26,27):n=int.from_bytes(take(1<<(ai-24)),'big')\n else:raise ValueError(('indefinite/reserved',major,ai,p))\n if major==0:return n\n if major==1:return -1-n\n if major==2:return {'bytes_len':n,'hex':take(n).hex()}\n if major==3:\n  s=take(n).decode('utf8'); scalar.append(s); return s\n if major==4:return [item(depth+1) for _ in range(n)]\n if major==5:\n  pairs=[]\n  for _ in range(n):\n   k=item(depth+1); v=item(depth+1); pairs.append([k,v])\n  map_pairs += len(pairs); return {'__pairs__':pairs}\n if major==6:return {'__tag__':n,'value':item(depth+1)}\n raise ValueError(('major',major,p))\nroot=item(); assert p==len(buf)\nu=open('inputs/chall/unknown.data','rb').read()[243:260].decode('ascii')\nterms=('userkey','user_key','hostkey','key','codec','crypt','sqlite','email','contact','password')\nuniq=sorted(set(scalar)); hits={t:[s for s in uniq if t in s.lower()] for t in terms}\nresult={'source':'job:j000130/archive/contact/metrics/store.bin','compressed_bytes':len(raw),'decoded_bytes':len(buf),'zlib_eof':d.eof,'unused_bytes':len(d.unused_data),'unconsumed_bytes':len(d.unconsumed_tail),'cbor_consumed':p,'major_type_counts':dict(counts),'scalar_string_occurrences':len(scalar),'unique_scalar_strings':len(uniq),'map_pairs':map_pairs,'array2_root':isinstance(root,list) and len(root)==2,'term_matches':hits,'handout_token_literal_occurrences':sum(u in s for s in scalar),'strings_with_dbx':[s for s in uniq if 'dbx' in s.lower()]}\njson.dump(result,open(os.environ['OUT']+'/independent-metrics-audit.json','w'),indent=2)\nprint(json.dumps(result,indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120108",
+    "name": "DBX Key Analyst",
+    "doing": "independent review of Q14 negative and assessing codec limitation for Q12–Q14"
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T11:14:37.499Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000130/out/archive/contact/metrics/store.bin",
+        "sha256": "544053e5346ef2639f45167780a73a43da2067ab35d07c6a15724746a2936fc1"
+      },
+      {
+        "path": "inputs/chall/unknown.data",
+        "sha256": "87841ce462a019649f6206c72cf65ce5305a88b828ca45996ae9422e6f578f4f"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000252-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T11:14:37.570Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000252",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 2,
+    "files": 2,
+    "bound": 0,
+    "manifest": "store/jobs/j000252/scope.1.json",
+    "manifest_sha256": "bfac78a6b7d48b109d5824d355902b26166512bb83eab79e1ded9da4738b4d80"
+  },
+  "network": "none",
+  "exit": 1,
+  "status": "failed",
+  "reason": "exit 1",
+  "finished_at": "2026-10-02T11:14:38.294Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "f6a21e8b7a09796f0f0419c9123f6ddef8ce6682e9fa764fbdf013917cfc5ea6",
+    "files": 0,
+    "bytes": 0,
+    "rejected": 0,
+    "path": "store/jobs/j000252/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

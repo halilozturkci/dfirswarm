@@ -1,0 +1,90 @@
+{
+  "id": "j000257",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/Carmine-Falcone.raw",
+      "job:j000109/version-strings.txt"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "command": "python3 - <<'PY'\nimport json,mmap,pathlib,os\nraw=pathlib.Path('inputs/chall/Carmine-Falcone.raw')\nvp=pathlib.Path('store/jobs/j000109/out/version-strings.txt')\ntext=vp.read_text(errors='replace')\nneed=['KeePass Password Safe 2','2.53.1']\nout={'version_output':str(vp),'version_output_checks':{s:(s in text) for s in need},'raw_size':raw.stat().st_size,'raw_offsets':{}}\nwith raw.open('rb') as f:\n m=mmap.mmap(f.fileno(),0,access=mmap.ACCESS_READ)\n for s in need:\n  out['raw_offsets'][s]={'ascii':m.find(s.encode()),'utf16le':m.find(s.encode('utf-16le'))}\n m.close()\nout['all_version_output_checks']=all(out['version_output_checks'].values())\npath=pathlib.Path(os.environ['OUT'])/'q3-coverage-route.json'\npath.write_text(json.dumps(out,indent=2))\nprint(json.dumps(out,indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120106",
+    "name": "Vault Artifact Analyst",
+    "doing": "Establishing Q3-Q4: password-manager identity/version and password, plus the deleted stored user key."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T11:18:44.800Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "inputs/chall/Carmine-Falcone.raw",
+        "sha256": "3e03551e1f55dd792b0bc459b5620522d61fcf2379e8f6d89ef439fef8263cac"
+      },
+      {
+        "path": "store/jobs/j000109/out/version-strings.txt",
+        "sha256": "cdd4c761794acf00a91d27f0f3dcf09c7f320cab3b9f532bddb81c02d900095b"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000257-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T11:18:44.873Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000257",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 2,
+    "files": 2,
+    "bound": 0,
+    "manifest": "store/jobs/j000257/scope.1.json",
+    "manifest_sha256": "597bf3a5e40919c3866f6227803cf5d133f24865712cea279322faaf2dc4eb67"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T11:18:45.846Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "c8bfc9231d4a007cbf3b71bd535b24c77b33119c56f02530a315a016a0614d0e",
+    "files": 1,
+    "bytes": 408,
+    "rejected": 0,
+    "path": "store/jobs/j000257/out"
+  }
+}

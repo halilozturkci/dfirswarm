@@ -1,0 +1,101 @@
+{
+  "id": "j000249",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000248/metrics-cbor.json",
+      "input:chall/unknown.data",
+      "job:j000107/entries.json"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport os,json\nx=json.load(open('store/jobs/j000248/out/metrics-cbor.json'));strings=[]\ndef walk(o):\n if isinstance(o,str):strings.append(o)\n elif isinstance(o,list):\n  for v in o:walk(v)\n elif isinstance(o,dict):\n  for k,v in o.items():walk(v)\nwalk(x);u=open('inputs/chall/unknown.data','rb').read()[243:260].decode('ascii');es=json.load(open('store/jobs/j000107/out/entries.json'))['entries'];pw=next(e['Password'] for e in es if 'Recycle Bin' in e.get('_groups',[]))\nuniq=sorted(set(strings)); terms=['userkey','user_key','hostkey','key','codec','crypt','sqlite','email','contact','password'];r={'scalar_string_count':len(strings),'unique_scalar_string_count':len(uniq),'candidate_substring_counts':{'handout':sum(u in s for s in strings),'recycle_entry':sum(pw in s for s in strings)},'term_strings':{t:[s for s in uniq if t in s.lower()] for t in terms},'all_unique_strings':uniq}\njson.dump(r,open(os.environ['OUT']+'/metrics-field-audit.json','w'),indent=2);print(json.dumps(r,indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120103",
+    "name": "Wallet history",
+    "doing": "Investigating Q7 and Q8: password-protected archive and original file hashes; avoiding peers' wallet work."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T11:11:39.992Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000107/out/entries.json",
+        "sha256": "5e1e941774aad60e462d6af2bfd94d9f65e84e28f47030d062583d1f68da0c6b"
+      },
+      {
+        "path": "inputs/chall/unknown.data",
+        "sha256": "87841ce462a019649f6206c72cf65ce5305a88b828ca45996ae9422e6f578f4f"
+      },
+      {
+        "path": "store/jobs/j000248/out/metrics-cbor.json",
+        "sha256": "8f7125b62bf136c29755bf5b043ef8496ed35fd8d29dc75ee28893dee677d3c3"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000249-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T11:11:40.061Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000249",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 3,
+    "files": 3,
+    "bound": 0,
+    "manifest": "store/jobs/j000249/scope.1.json",
+    "manifest_sha256": "567da221b0533969319277e5602ab5fe297171f5d1103026b536d23353183396"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T11:11:40.762Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "7e0006fc26fc34692e3ca143ee062edb186fc2cd60cadbf3d7990e4a34d54638",
+    "files": 1,
+    "bytes": 2941,
+    "rejected": 0,
+    "path": "store/jobs/j000249/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

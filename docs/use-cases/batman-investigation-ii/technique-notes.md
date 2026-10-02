@@ -23,6 +23,8 @@ Koşu: `s421201`. İlk derleme: 2026-10-02, 11:16 UTC. Durum: canlı gözlem; CT
 | T06 | Metin adayı → gerçek uygulama biçimi → iki katmanlı kriptografik doğrulama | s02 Sol, s00 Sol review | SECO şifreli anahtar ve 32,768 byte payload doğrulandı; checksum geçti | Güçlü vaka doğrulaması; kullanılan kripto standart, yeni kripto değil |
 | T07 | Kendi skorunun test ettiği sonucu üretmesini fark edip hatalı aramayı geri çekme | s05 Daybreak | 83,036 çıktı üreten iş delil sayılmadı; exact-header kontrolüyle sınırlı tekrar yapıldı | Başarı hikâyesinden çok önemli bir hata ve iyileşme anlatısı |
 | T08 | Aynı byte'a yanlış rol atamasını ve kayıt eksiltme önerisini peer veto ile durdurma | s01 Sol, s06 Daybreak, s04 Daybreak, s00 Sol | Q14 rol iddiası daraltıldı; locator silme önerisi geri çekildi | Koordinasyon örneği; başarılı bypass veya tüm CTF çözümü yok |
+| T09 | Sıkıştırılmış telemetry dosyasını tam decode edip sınırları ölçülen alan incelemesi | s03 Sol, s08 Luna | zlib EOF ve CBOR tam tüketimi iki uygulamada doğrulandı; key/contact binding bulunmadı | Standart formatların vaka uyarlaması; negatif yalnız bu dosyaya ait |
+| T10 | Immutable SQLite görünümünü WAL ile karşılaştırıp eski sonuçla byte eşitliğini kontrol etme | s03 Sol, s05 Daybreak önceki kaynak | Boş nucleus base yerine 15 tablo görünür; snapshot önceki j194 ile aynı | Yeni key keşfi değil; önceki işin yapısal corroboration'ı |
 
 ### T01 — dosya boyutu doğruyken yedi sayfanın yok olması
 
@@ -142,6 +144,41 @@ Dosya çıkarma aracındaki hata mesajı tüm formatın kullanılamaz olduğu ka
 **Blog değeri.** Ajanların birbirinin iddiasını daraltması, formal review ile informal board veto'yu ayırması ve kayıtları eksilterek ilerlemek yerine kapsamı açıkça ifade etmeyi seçmesi.
 
 **Sınırlar.** Bu davranışlar controlled comparison değildir; üç modelin başarısını sıralamaz. Self-correction bazı soruları gerçekten çözerken, bilinmeyen codec yüzünden Q14 hâlâ çözülmüş değildir. Güvenilir bir negatif sınır final CTF başarısıyla aynı şey değildir.
+
+### T09 — opaque blob'dan tam decode edilmiş alan incelemesine
+
+**Açılan boşluk.** s00'nın profile review'u compressed metrics ve structured WAL'ı kapsamamıştı. #333 bu sınırı diğer ajanlarla paylaştı. s03, başka ajanların geniş crypto tahminlerini çoğaltmak yerine `metrics/store.bin` için somut format rotası L36'yı açtı; operatör yeni yol vermedi.
+
+**Gözlenen yöntem.** j246'da 2,322 byte, tek zlib stream üzerinden 16,774 byte'a açıldı; EOF true, unused/unconsumed tail sıfır. j248'in sınırlı CBOR okuyucusu tüm 16,774 byte'ı tüketti, array-2 kökü ve iç major-type sayılarını kaydetti. j249 her array/map scalar'ını dolaştı: 1,358 string occurrence, 114 farklı scalar string. `dbxconn` telemetry namespace'i vardı; key/codec/email/contact terimleri ve iki delil adayı için olumlu bağ yoktu. Salt decoded byte strings araması yerine formatı tamamen okuyup alan kapsamı ölçüldü.
+
+**Bağımsız kontrol.** s08'in ilk j252 işi yanlış mounted path yüzünden dosyayı açmadan durdu; E241 bunu bulgu saymadı. j254, özgün compressed dosyayı ayrı uygulamayla yeniden açtı/parse etti: aynı tam tüketim, 1,358/114 string sayımı ve 854 map pair elde edildi. E244/#344 yalnız kendi gerçek kontrolünü doğrular; o ikinci audit'te handout token literal kontrolü görüldü, öteki key adayının ayrı kontrol edildiği bu sonuçtan çıkarılmaz.
+
+**Kaynaklar / zaman.** E237/E238 11:12 UTC; E244 11:15:52 UTC; j246/j248/j249/j252/j254; pano #333/#339/#341/#344. Kaynak kopyası decoded CBOR JSON'un tamamını içerir; burada yalnız sonuç özeti verilir.
+
+**Olası blog katkısı.** Bir scalar'ın adı içinde `dbx` geçmesi codec açıklaması olduğunu göstermez. Kapsamı encoded byte taramasından decoded semantic alanlara genişletirken EOF, consumed byte, major-type ve occurrence counts ile tamlığı görünür tutma. Bu known zlib/CBOR formatlarının uygulamasıdır; yeni codec bulunmadı.
+
+**Sınırlar.** İki orijinal delil dışına çıkılmadı, fakat profile bytes'a ulaşılması önceki operatör 7zz tedarikine bağımlıydı. Bu negatif yalnız ilgili metrics dosyasıdır; diğer telemetry, encrypted logs, hostkeys, DBX pages veya memory'nin tamamı hakkında negatif çıkarılamaz. Q12/Q13/Q14 çözülmedi.
+
+### T10 — WAL-aware görünüm ve yeni keşifle corroboration'ı ayırma
+
+**Sorun.** Immutable/read-only base query, WAL'da committed veriyi dışarıda bırakabiliyordu. s03 j256'da apex/nucleus base ve matching WAL dosyalarını türetilmiş writable output'a kopyaladı; base'in immutable görünümü ile normal WAL-backed görünümü karşılaştırdı. Kaynak delile yazmadı.
+
+**Sonuç.** 4,096-byte nucleus base'inde tablo yoktu; 62-frame WAL / 41 commit marker sonrasında 15 tablo, config 11 satır, üç tree tablosunda birer satır ve periodic_jobs 3 satır görüldü. Apex 31 frame / iki commit marker; tek feature-config satırı değişmedi. Backup ile materialize edilen iki snapshot `quick_check=ok` verdi. Bu bütün tarihsel WAL commit'lerinin incelenmesi değil, SQLite tarafından görünür current committed state'in çıkarımıdır.
+
+**İyi kalibrasyon.** 81,920-byte nucleus snapshot, s05'in önceki j194/tmp6 çıktısıyla aynı bytes olarak raporlandı (E248, job `same_as`). s03 #364 bunu yeni contact/userkey keşfi diye sunmadı; önceki işin corroboration'ı diye ayırdı. s05 #366, bir config BLOB'daki opaque printable değeri label/schema/crypto bağ olmadan key diye yükseltmedi.
+
+**Kaynaklar.** E248 11:19:16 UTC; j256 `wal-reconstruction.json`, iki tam `all-rows.json`, snapshot manifest hashleri; j194 önceki kaynak; #342/#364/#366. Türetilmiş binary snapshot'lar canlı sandbox'ta; seçilmiş kaynak kopyası hash/byte envanterini taşır, binary'nin bu nota kopyalandığını iddia etmez.
+
+**Blog değeri / sınır.** WAL-aware SQLite incelemesi bilinen tekniktir. Bu vaka için değer: hangi görünümün gerçekten okunduğu, boş base'in yanlış negatif yaratabilmesi ve önceki çıktıyla byte eşitliğinin duplicate discovery iddiasını durdurması. Görülen config yapısı DBX secret rolünü kanıtlamadı; DBX formatı çözülmedi.
+
+## 11:21 UTC güncellemesi — T03/T04/T05 bağımsız kontrolün sınırı
+
+- s02 E234/j243 iki LEA'nın hedeflerini PE header/section üzerinden ayrı hesapladı ve raw-memory bytes ile cached endpoint/Go bytes'ı karşılaştırdı. Bu iş Go işlev sınırını j232'den ödünç alıyordu; bağımsız functab türetmesi diye sayılmaz.
+- s06 E235/j245, wallet path parçalarını, XOR helper çağrısını, hazırlanmış sonucu/endpoint'i alan network helper'ı, `tcp` argümanını ve immediate error check'i statik olarak inceledi. Exact library symbol adları sparse name metadata'dan doğrulanamadı; dial/open/copy isimleri ABI/literal/control-flow benzerliğine dayanan bounded yorumdur.
+- s02'nin ilk j251 critic'i 18-byte beklediği XOR signature gerçekte 19-byte olduğu için durdu; E239 bunu examiner script hatası saydı, artifact contradiction saymadı. j253 literal uzunluğundan hesaplanan kontrollerle tekrarlandı: 2,549 monotonic Go entry, beş CALL ve dokuz LEA target'ı, register moves, exact loop ve error branch yeniden türetildi (E245). E235'e resmi finding attest'i yazıldı. Bu, henüz final Q6 answer review'u değildir.
+- s07 E250/j255 cached image'ın offset bytes'ını kontrol etti; mapping satırlarını j222'den okudu. Bu nedenle CONTROL_AREA page mapping bağımsız yeniden türetmesi değil, shared mapping'in byte-offset doğrulamasıdır. Blogda bu bağımsızlık düzeyi açık kalır.
+- Q8 E232'ye s06'nın fresh source-first established review'u kaydedildi (#345). Kaynak düzeltmesinden sonra review durumu yenilendi; hash değerleri değişmedi.
+- Q6 hâlâ nihai answer olarak dispose edilmedi. C2/R3 format/filename-versus-family sorusu pending; ajanlara açıklama gönderilmedi. Statik yetenek/intent ve geçmişte başarılı theft/transfer ayrı tutuluyor.
 
 ## Bloglar için ilk taslak konular
 

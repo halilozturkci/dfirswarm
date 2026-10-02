@@ -1,0 +1,26 @@
+{
+  "declared_objects_read": 6,
+  "raw_size": 4831838208,
+  "raw_version_literal_offsets": {
+    "KeePass Password Safe 2": {
+      "ascii": 11252295,
+      "utf16le": 3714386
+    },
+    "2.53.1": {
+      "ascii": 343883866,
+      "utf16le": 5844802
+    }
+  },
+  "resource_product_present": true,
+  "resource_version_present": true,
+  "kdbx_size": 4096,
+  "kdbx_signature_hex": "03d9a29a67fb4bb5",
+  "match_json_type": "dict",
+  "match_digest_exact_occurrences": 1,
+  "entries_json_type": "dict",
+  "entries_digest_exact_occurrences": 1,
+  "compare_json_type": "dict",
+  "compare_digest_exact_occurrences": 1,
+  "digest_consistent_across_match_entries_compare": true,
+  "note": "No password plaintext or Q4 credential field is emitted."
+}

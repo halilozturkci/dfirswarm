@@ -1,0 +1,45 @@
+{
+  "image_base": 9175040,
+  "xrefs": [
+    {
+      "instruction_fileoffset": 944352,
+      "bytes_hex": "488d0d6d700300",
+      "instruction_va": 10121952,
+      "signed_disp": 225389,
+      "target_va": 10347348,
+      "target_fileoffset": 1167188,
+      "literal": "exodus.wallet",
+      "go_function_start": 10121760,
+      "go_function_end": 10122460,
+      "function_size": 700
+    },
+    {
+      "instruction_fileoffset": 944762,
+      "bytes_hex": "488d054f850300",
+      "instruction_va": 10122362,
+      "signed_disp": 230735,
+      "target_va": 10353104,
+      "target_fileoffset": 1172944,
+      "literal": "172.30.145.189:6969",
+      "go_function_start": 10121760,
+      "go_function_end": 10122460,
+      "function_size": 700
+    }
+  ],
+  "physical_comparisons": [
+    {
+      "physical": 320252368,
+      "fileoffset": 1172944,
+      "length": 19,
+      "identical": true
+    },
+    {
+      "physical": 3487571968,
+      "fileoffset": 2031616,
+      "length": 14,
+      "identical": true
+    }
+  ],
+  "function_file_start": 944160,
+  "function_size": 700
+}

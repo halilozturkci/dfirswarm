@@ -1,0 +1,1 @@
+{"v":1,"job":"j000249","attempt":1,"sealed_at":"2026-10-02T11:11:40.774Z","files":[{"path":"metrics-field-audit.json","path_b64":"bWV0cmljcy1maWVsZC1hdWRpdC5qc29u","bytes":2941,"sha256":"7fd6ad5060ded967d357b41ec217fcde2a732e8b55d84c245ba611dd42a61f5c","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":2941}}

@@ -1,0 +1,1 @@
+{"v":1,"job":"j000257","attempt":1,"sealed_at":"2026-10-02T11:18:45.861Z","files":[{"path":"q3-coverage-route.json","path_b64":"cTMtY292ZXJhZ2Utcm91dGUuanNvbg==","bytes":408,"sha256":"dc4b96e70a1140ee54dfc8e4aeba3c30037d2d94b504860ec107b8f9171eefb2","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":408}}

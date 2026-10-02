@@ -1,0 +1,19 @@
+{
+  "version_output": "store/jobs/j000109/out/version-strings.txt",
+  "version_output_checks": {
+    "KeePass Password Safe 2": true,
+    "2.53.1": true
+  },
+  "raw_size": 4831838208,
+  "raw_offsets": {
+    "KeePass Password Safe 2": {
+      "ascii": 11252295,
+      "utf16le": 3714386
+    },
+    "2.53.1": {
+      "ascii": 343883866,
+      "utf16le": 5844802
+    }
+  },
+  "all_version_output_checks": true
+}
