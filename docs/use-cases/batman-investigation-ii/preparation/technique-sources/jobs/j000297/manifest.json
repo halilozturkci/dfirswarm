@@ -1,0 +1,1 @@
+{"v":1,"job":"j000297","attempt":1,"sealed_at":"2026-10-02T13:43:25.388Z","files":[{"path":"storage-inspection.json","path_b64":"c3RvcmFnZS1pbnNwZWN0aW9uLmpzb24=","bytes":129,"sha256":"0df3803f8a6848484b9ee7db6e78fd4ce6d46d9f6f9b91ca7e34fb4d9fe6cc8f","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":129}}

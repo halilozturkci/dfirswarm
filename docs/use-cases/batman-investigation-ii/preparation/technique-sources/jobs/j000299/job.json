@@ -1,0 +1,87 @@
+{
+  "id": "j000299",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000019/uri_passwords.json"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport json,os,collections\nfrom pathlib import Path\nraw=json.loads(Path('store/jobs/j000019/out/uri_passwords.json').read_text())\nitems=raw if isinstance(raw,list) else [raw]\nvals=[]\nfor x in items:\n h=x.get('password_utf8_hex') if isinstance(x,dict) else None\n if isinstance(h,str):\n  try: vals.append(bytes.fromhex(h))\n  except Exception: pass\nlengths=collections.Counter(len(x) for x in vals)\nout={'records':len(items),'usable_values':len(vals),'distinct_values_in_memory':len(set(vals)),'value_lengths':dict(sorted(lengths.items()))}\nPath(os.environ['OUT'],'candidate-counts.json').write_text(json.dumps(out,sort_keys=True,indent=2))\nprint(json.dumps(out,sort_keys=True))\nPY"
+  },
+  "requester": {
+    "agent": "s42120109",
+    "name": "Memory artifact scout",
+    "doing": "Following up Q3 coverage validation and independent Q3/Q4 source review"
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T13:46:16.050Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000019/out/uri_passwords.json",
+        "sha256": "bfea74ef44ac3d6641d72ed0cd6589dd422adbfbea0060a121a50089f42882bc"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000299-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T13:46:16.118Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000299",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000299/scope.1.json",
+    "manifest_sha256": "00ee90029e4e65fdd3543e88f3de2e374296a9ff4b8b757bd7379e32d154feb6"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T13:46:16.796Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "a36a4802dbe69a392500d314d801d2ceba685fd30dedd48b0b9ef4c96d419690",
+    "files": 1,
+    "bytes": 115,
+    "rejected": 0,
+    "path": "store/jobs/j000299/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

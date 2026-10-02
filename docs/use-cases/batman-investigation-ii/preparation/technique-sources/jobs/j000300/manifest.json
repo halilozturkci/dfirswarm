@@ -1,0 +1,1 @@
+{"v":1,"job":"j000300","attempt":1,"sealed_at":"2026-10-02T13:48:29.336Z","files":[{"path":"seco-metadata-profile.json","path_b64":"c2Vjby1tZXRhZGF0YS1wcm9maWxlLmpzb24=","bytes":1138,"sha256":"b30876c3a2f0474f6032ba3c162dbc0761ce6b5b35fa57486e8c5e933363b586","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":1138}}

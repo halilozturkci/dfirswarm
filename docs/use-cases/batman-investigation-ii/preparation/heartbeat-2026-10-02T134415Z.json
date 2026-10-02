@@ -1,0 +1,393 @@
+{
+  "at": "2026-10-02T13:48:50.328291+00:00",
+  "scope": "sequential read-only observer prefix; not atomic custody or gold grading",
+  "summary": {
+    "id": "s421201",
+    "state": "running",
+    "done": false,
+    "calls": 4488,
+    "tokens": 472445115,
+    "phase": "running",
+    "finishing": false,
+    "agents_dead": 0,
+    "hold": null,
+    "stop_reason": null
+  },
+  "questions": {
+    "in_scope": 14,
+    "persons": 0,
+    "unanswered": 0,
+    "proposed": 1,
+    "triage": 0,
+    "clarifications": 2,
+    "chain_ok": true
+  },
+  "leads": {
+    "open": 0,
+    "active": 1,
+    "blocked": 0,
+    "closed": 70,
+    "waiting_on_operator": 1,
+    "uncovered": 0,
+    "chain_ok": true
+  },
+  "requests": {
+    "total": 4,
+    "open": 3,
+    "by_kind": {
+      "lead": 1,
+      "clarification": 2
+    },
+    "pending": 3,
+    "acquisitions_open": 0,
+    "chain_ok": true
+  },
+  "agents": [
+    {
+      "id": "s42120100",
+      "dead": false,
+      "done": false,
+      "stalled": false,
+      "context_locked": false
+    },
+    {
+      "id": "s42120101",
+      "dead": false,
+      "done": false,
+      "stalled": false,
+      "context_locked": false
+    },
+    {
+      "id": "s42120102",
+      "dead": false,
+      "done": false,
+      "stalled": false,
+      "context_locked": false
+    },
+    {
+      "id": "s42120103",
+      "dead": false,
+      "done": false,
+      "stalled": false,
+      "context_locked": false
+    },
+    {
+      "id": "s42120104",
+      "dead": false,
+      "done": false,
+      "stalled": false,
+      "context_locked": false
+    },
+    {
+      "id": "s42120105",
+      "dead": false,
+      "done": false,
+      "stalled": false,
+      "context_locked": false
+    },
+    {
+      "id": "s42120106",
+      "dead": false,
+      "done": false,
+      "stalled": false,
+      "context_locked": false
+    },
+    {
+      "id": "s42120107",
+      "dead": false,
+      "done": false,
+      "stalled": false,
+      "context_locked": false
+    },
+    {
+      "id": "s42120108",
+      "dead": false,
+      "done": false,
+      "stalled": false,
+      "context_locked": false
+    },
+    {
+      "id": "s42120109",
+      "dead": false,
+      "done": false,
+      "stalled": false,
+      "context_locked": false
+    }
+  ],
+  "controller": "93032 03:52:44 /Library/Frameworks/Python.framework/Versions/3.12/Resources/Python.app/Contents/MacOS/Python",
+  "vms": [
+    {
+      "created_at": "2026-10-02T09:56:25.763697+00:00",
+      "image": "dfirswarm-memory:symbols-arm64",
+      "name": "dfs-s421201-s42120109",
+      "status": "Running"
+    },
+    {
+      "created_at": "2026-10-02T09:56:25.762783+00:00",
+      "image": "dfirswarm-memory:symbols-arm64",
+      "name": "dfs-s421201-s42120100",
+      "status": "Running"
+    },
+    {
+      "created_at": "2026-10-02T09:56:25.760228+00:00",
+      "image": "dfirswarm-memory:symbols-arm64",
+      "name": "dfs-s421201-s42120108",
+      "status": "Running"
+    },
+    {
+      "created_at": "2026-10-02T09:56:25.759398+00:00",
+      "image": "dfirswarm-memory:symbols-arm64",
+      "name": "dfs-s421201-s42120103",
+      "status": "Running"
+    },
+    {
+      "created_at": "2026-10-02T09:56:25.758588+00:00",
+      "image": "dfirswarm-memory:symbols-arm64",
+      "name": "dfs-s421201-s42120104",
+      "status": "Running"
+    },
+    {
+      "created_at": "2026-10-02T09:56:25.757769+00:00",
+      "image": "dfirswarm-memory:symbols-arm64",
+      "name": "dfs-s421201-s42120102",
+      "status": "Running"
+    },
+    {
+      "created_at": "2026-10-02T09:56:25.756030+00:00",
+      "image": "dfirswarm-memory:symbols-arm64",
+      "name": "dfs-s421201-s42120106",
+      "status": "Running"
+    },
+    {
+      "created_at": "2026-10-02T09:56:25.754307+00:00",
+      "image": "dfirswarm-memory:symbols-arm64",
+      "name": "dfs-s421201-s42120105",
+      "status": "Running"
+    },
+    {
+      "created_at": "2026-10-02T09:56:25.731557+00:00",
+      "image": "dfirswarm-memory:symbols-arm64",
+      "name": "dfs-s421201-s42120101",
+      "status": "Running"
+    },
+    {
+      "created_at": "2026-10-02T09:56:25.728054+00:00",
+      "image": "dfirswarm-memory:symbols-arm64",
+      "name": "dfs-s421201-s42120107",
+      "status": "Running"
+    }
+  ],
+  "model_observations": {
+    "s42120100": {
+      "model": "gpt-6.1-sol",
+      "provider": "openai-codex",
+      "last_assistant_at": "2026-10-02T13:47:37.944Z"
+    },
+    "s42120101": {
+      "model": "gpt-6.1-sol",
+      "provider": "openai-codex",
+      "last_assistant_at": "2026-10-02T13:45:28.257Z"
+    },
+    "s42120102": {
+      "model": "gpt-6.1-sol",
+      "provider": "openai-codex",
+      "last_assistant_at": "2026-10-02T13:47:07.100Z"
+    },
+    "s42120103": {
+      "model": "gpt-6.1-sol",
+      "provider": "openai-codex",
+      "last_assistant_at": "2026-10-02T13:47:34.377Z"
+    },
+    "s42120104": {
+      "model": "gpt-daybreak-blue-latest",
+      "provider": "openai-codex",
+      "last_assistant_at": "2026-10-02T13:48:47.627Z"
+    },
+    "s42120105": {
+      "model": "gpt-daybreak-blue-latest",
+      "provider": "openai-codex",
+      "last_assistant_at": "2026-10-02T13:48:46.400Z"
+    },
+    "s42120106": {
+      "model": "gpt-daybreak-blue-latest",
+      "provider": "openai-codex",
+      "last_assistant_at": "2026-10-02T13:48:50.101Z"
+    },
+    "s42120107": {
+      "model": "gpt-6-luna",
+      "provider": "openai-codex",
+      "last_assistant_at": "2026-10-02T13:48:45.908Z"
+    },
+    "s42120108": {
+      "model": "gpt-6-luna",
+      "provider": "openai-codex",
+      "last_assistant_at": "2026-10-02T13:48:46.355Z"
+    },
+    "s42120109": {
+      "model": "gpt-6-luna",
+      "provider": "openai-codex",
+      "last_assistant_at": "2026-10-02T13:48:28.516Z"
+    }
+  },
+  "mirror": {
+    "run": "s421201",
+    "at": "2026-10-02T13:48:34.004069+00:00",
+    "state": "LIVE; not a final custody verdict"
+  },
+  "standing_answers": [
+    {
+      "question": 1,
+      "entry": 304,
+      "result": "partial",
+      "inconclusive": null,
+      "hash": "3d13c86a573ae8c1c9ef51519b9041c2469938234e3f223f1262db1c8ae9f6f8"
+    },
+    {
+      "question": 2,
+      "entry": 307,
+      "result": "established",
+      "inconclusive": null,
+      "hash": "1c01b87f6d0241dd06dc5defc6b7148941a8846fd5d38896ee4bbea8fed7b850"
+    },
+    {
+      "question": 3,
+      "entry": 183,
+      "result": "established",
+      "inconclusive": null,
+      "hash": "acba3aa10c2f598ec0de7900c57a32c595be94798c2a9ac7af0f2c346961a458"
+    },
+    {
+      "question": 4,
+      "entry": 184,
+      "result": "established",
+      "inconclusive": null,
+      "hash": "7afe19eb74717b91506819fcc0e1abb4cc099f5de01e1f8fc8edd1527b284421"
+    },
+    {
+      "question": 5,
+      "entry": 95,
+      "result": "established",
+      "inconclusive": null,
+      "hash": "2f6023d420de606f276b700a1e5a66d9c9df53f83fcd16ac09a065617b50ecf3"
+    },
+    {
+      "question": 6,
+      "entry": 264,
+      "result": "established",
+      "inconclusive": null,
+      "hash": "5fbdce8b3b53a40ad36c402b0340dbe9bafa7ba57b84d6e6c7906ed16f37e6c4"
+    },
+    {
+      "question": 7,
+      "entry": 312,
+      "result": "established",
+      "inconclusive": null,
+      "hash": "06de5ae67cdaa196f44e47bcd4d71b663f9f921ce19b861445f0bac0c44c9b3b"
+    },
+    {
+      "question": 8,
+      "entry": 232,
+      "result": "established",
+      "inconclusive": null,
+      "hash": "9be3145fd1fdbaa41597da8a70c9344e9e171df620c7401011c11180b8f1cc1c"
+    },
+    {
+      "question": 9,
+      "entry": 108,
+      "result": "established",
+      "inconclusive": null,
+      "hash": "70d595467142c04a1aad708df305eadcb66406ca8cff7d261dde277ffec5c58c"
+    },
+    {
+      "question": 10,
+      "entry": 104,
+      "result": "established",
+      "inconclusive": null,
+      "hash": "d859f980562721612ee8ff97a3f888d493c5de0987d5dc84d0f8d9c7de073f75"
+    },
+    {
+      "question": 11,
+      "entry": 105,
+      "result": "established",
+      "inconclusive": null,
+      "hash": "5cd207deea3f4d088c53092f3632d662d81e657fbd953e3fd61942a55437f6ff"
+    },
+    {
+      "question": 12,
+      "entry": 290,
+      "result": "not_determinable",
+      "inconclusive": null,
+      "hash": "6294be3f9fb41dc00967c979f2d1fc9d2c848dc6fd0416e30b37e3b9a224e2e4"
+    },
+    {
+      "question": 13,
+      "entry": 291,
+      "result": "not_determinable",
+      "inconclusive": null,
+      "hash": "23f9284c63b31340b4aab6d55e5983fb9a3ecbebdb43ff94a0ea500f26dbbed2"
+    },
+    {
+      "question": 14,
+      "entry": 311,
+      "result": "not_determinable",
+      "inconclusive": true,
+      "hash": "ed884ac10cea946c7b2cd6b521e8e022d22b9e1ec0b4da7caf17069c891246e6"
+    }
+  ],
+  "final_artifacts": {
+    "report.md": false,
+    "answers.json": false,
+    "timeline.md": false
+  },
+  "checkpoint_sha256": {
+    "checkpoint-report.md": "9d17d8521a37dc5fa15e3a030ecc0a33986efde36bca2a5f9ec178610f10e05d",
+    "checkpoint-reviewed-answers.json": "1c03531062257c89f0ed09b91503e0f92aedfe8a9c6b14e67bddffa01d245aae"
+  },
+  "l71_followup": {
+    "agent": "s42120109",
+    "model": "gpt-6-luna",
+    "jobs": [
+      "j000297",
+      "j000298",
+      "j000299"
+    ],
+    "records": [
+      319,
+      320
+    ],
+    "candidate_records": 48,
+    "distinct_values": 1,
+    "seed_authenticated_records": 48,
+    "storage_authenticated_records": 0,
+    "new_q1_answer": false
+  },
+  "provider_error_observations": [
+    {
+      "agent": "s42120105",
+      "at": "2026-10-02T12:07:35.808Z",
+      "model": "gpt-daybreak-blue-latest",
+      "error": "Codex error: Our servers are currently overloaded. Please try again later."
+    },
+    {
+      "agent": "s42120105",
+      "at": "2026-10-02T12:09:53.771Z",
+      "model": "gpt-daybreak-blue-latest",
+      "error": "Codex error: Our servers are currently overloaded. Please try again later."
+    },
+    {
+      "agent": "s42120106",
+      "at": "2026-10-02T12:40:51.860Z",
+      "model": "gpt-daybreak-blue-latest",
+      "error": "Codex error: Our servers are currently overloaded. Please try again later."
+    },
+    {
+      "agent": "s42120107",
+      "at": "2026-10-02T11:36:51.557Z",
+      "model": "gpt-6-luna",
+      "error": "terminated"
+    }
+  ],
+  "new_source_copies": 33,
+  "selected_sources_total": 733,
+  "operator_boundary": "no agent message/hint/resource/assignment/question reply/goal/release/live code edit; existing watchdog only"
+}

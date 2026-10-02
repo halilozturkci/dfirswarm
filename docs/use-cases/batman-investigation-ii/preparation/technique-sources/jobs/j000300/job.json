@@ -1,0 +1,93 @@
+{
+  "id": "j000300",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000200/seed.seco",
+      "job:j000200/storage.seco"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "command": "python3 - <<'PY'\nimport hashlib,struct,json,os\nfrom pathlib import Path\nbase=Path('store/jobs/j000200/out')\nfiles={name:(base/name).read_bytes() for name in ('seed.seco','storage.seco')}\ndef desc(b):\n n,r,p=struct.unpack('>III',b[288:300])\n return {'size':len(b),'magic':b[:4].decode('ascii','replace'),'checksum_valid':hashlib.sha256(b[256:512]+b[512:516]+b[516:]).digest()==b[224:256],'payload_length_field':struct.unpack('>I',b[512:516])[0],'exact_length':len(b)==516+struct.unpack('>I',b[512:516])[0],'scrypt_params':[n,r,p],'metadata_fields':{'salt_256_288_nonzero':any(b[256:288]),'reserved_300_332_nonzero':any(b[300:332]),'nonce1_332_344_nonzero':any(b[332:344]),'tag1_344_360_nonzero':any(b[344:360]),'wrappedkey_360_392_nonzero':any(b[360:392]),'nonce2_392_404_nonzero':any(b[392:404]),'tag2_404_420_nonzero':any(b[404:420])}}\nout={name:desc(b) for name,b in files.items()}\nout['comparison']={'scrypt_params_equal':out['seed.seco']['scrypt_params']==out['storage.seco']['scrypt_params'],'salts_equal':files['seed.seco'][256:288]==files['storage.seco'][256:288],'metadata_key_blocks_equal':files['seed.seco'][332:420]==files['storage.seco'][332:420]}\nPath(os.environ['OUT'],'seco-metadata-profile.json').write_text(json.dumps(out,indent=2,sort_keys=True))\nprint(json.dumps(out,sort_keys=True))\nPY"
+  },
+  "requester": {
+    "agent": "s42120109",
+    "name": "Memory artifact scout",
+    "doing": "Following up Q3 coverage validation and independent Q3/Q4 source review"
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T13:48:28.566Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000200/out/storage.seco",
+        "sha256": "4bfa248576916af12ce753f6202551c6dcc88adb1e320c9c7a565795bf7d526a"
+      },
+      {
+        "path": "store/jobs/j000200/out/seed.seco",
+        "sha256": "a3ab69f3061f2405b08966ac6242fd9332c562efd0bd59400f911af50716e32e"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000300-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T13:48:28.637Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000300",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 2,
+    "files": 2,
+    "bound": 0,
+    "manifest": "store/jobs/j000300/scope.1.json",
+    "manifest_sha256": "ff70f687555828d3bd7ab80fbd37c4839f00cc1eeb5bc138fb700f6d602f25f9"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T13:48:29.324Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "b09e838fc08a8741a090978752401c82b4a95e3f46f3a9e1b853ba267d4a1d80",
+    "files": 1,
+    "bytes": 1138,
+    "rejected": 0,
+    "path": "store/jobs/j000300/out"
+  },
+  "sensitive": {
+    "why": "derived",
+    "from": [
+      "j000200"
+    ],
+    "note": "made from the sensitive output of j000200: every output it sealed is sensitive"
+  }
+}

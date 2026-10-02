@@ -1,0 +1,97 @@
+{
+  "id": "j000298",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000200/seed.seco",
+      "job:j000200/storage.seco",
+      "job:j000019/uri_passwords.json"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport json, hashlib, struct, os\nfrom pathlib import Path\nfrom cryptography.hazmat.primitives.ciphers.aead import AESGCM\nbase=Path('store/jobs/j000200/out')\nseed=(base/'seed.seco').read_bytes(); storage=(base/'storage.seco').read_bytes()\nraw=json.loads(Path('store/jobs/j000019/out/uri_passwords.json').read_text())\ncandidates=raw if isinstance(raw,list) else [raw]\ndef check(data,pw,keep_plain=False):\n    if len(data)<516 or data[:4]!=b'SECO': return {'header':False}\n    csum=hashlib.sha256(data[256:512]+data[512:516]+data[516:]).digest()==data[224:256]\n    n,r,p=struct.unpack('>III',data[288:300])\n    try:\n        dkey=hashlib.scrypt(pw,salt=data[256:288],n=n,r=r,p=p,dklen=32)\n        key=AESGCM(dkey).decrypt(data[332:344],data[360:392]+data[344:360],None)\n    except Exception:\n        return {'header':True,'checksum':csum,'key_auth':False,'payload_auth':False}\n    try:\n        plain=AESGCM(key).decrypt(data[392:404],data[516:]+data[404:420],None)\n        result={'header':True,'checksum':csum,'key_auth':len(key)==32,'payload_auth':True,'plaintext_bytes':len(plain)}\n        if keep_plain:\n            result['plain']=plain\n        return result\n    except Exception:\n        return {'header':True,'checksum':csum,'key_auth':len(key)==32,'payload_auth':False}\nseed_auth=[]; storage_auth=[]; skips=0; storage_kinds=[]\nfor i,item in enumerate(candidates):\n    hx=item.get('password_utf8_hex') if isinstance(item,dict) else None\n    if not isinstance(hx,str): skips+=1; continue\n    try: pw=bytes.fromhex(hx)\n    except Exception: skips+=1; continue\n    s=check(seed,pw)\n    if s.get('key_auth') and s.get('payload_auth'): seed_auth.append(i)\n    w=check(storage,pw,keep_plain=True)\n    if w.get('key_auth') and w.get('payload_auth'):\n        storage_auth.append(i)\n        b=w['plain']\n        storage_kinds.append('sqlite' if b.startswith(b'SQLite format 3\\x00') else ('json' if b.lstrip().startswith((b'{',b'[')) else ('gzip' if b.startswith(b'\\x1f\\x8b') else ('zlib' if b[:2] in (b'\\x78\\x01',b'\\x78\\x9c',b'\\x78\\xda') else 'unrecognized'))))\n        del w['plain']\nsummary={'candidate_count':len(candidates),'candidate_records_skipped':skips,'seed_authenticated_indices':seed_auth,'storage_authenticated_indices':storage_auth,'storage_plaintext_kinds':storage_kinds,'seed_valid_seco_checksum':hashlib.sha256(seed[256:512]+seed[512:516]+seed[516:]).digest()==seed[224:256],'storage_valid_seco_checksum':hashlib.sha256(storage[256:512]+storage[512:516]+storage[516:]).digest()==storage[224:256]}\nPath(os.environ['OUT'],'storage-auth-summary.json').write_text(json.dumps(summary,sort_keys=True,indent=2))\nprint(json.dumps(summary,sort_keys=True))\nPY"
+  },
+  "requester": {
+    "agent": "s42120109",
+    "name": "Memory artifact scout",
+    "doing": "Following up Q3 coverage validation and independent Q3/Q4 source review"
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T13:45:23.846Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000200/out/storage.seco",
+        "sha256": "4bfa248576916af12ce753f6202551c6dcc88adb1e320c9c7a565795bf7d526a"
+      },
+      {
+        "path": "store/jobs/j000200/out/seed.seco",
+        "sha256": "a3ab69f3061f2405b08966ac6242fd9332c562efd0bd59400f911af50716e32e"
+      },
+      {
+        "path": "store/jobs/j000019/out/uri_passwords.json",
+        "sha256": "bfea74ef44ac3d6641d72ed0cd6589dd422adbfbea0060a121a50089f42882bc"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000298-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T13:45:23.926Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000298",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 3,
+    "files": 3,
+    "bound": 0,
+    "manifest": "store/jobs/j000298/scope.1.json",
+    "manifest_sha256": "a07b2d72003ae19af861f11545bcc7f118666599870fd5fdba88c209a6dfbd6a"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T13:45:27.217Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "0533f5c0cb35d5b21bbc091c9e33c3e7c274500ed6eafc32e72cbaa681cbf395",
+    "files": 1,
+    "bytes": 620,
+    "rejected": 0,
+    "path": "store/jobs/j000298/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}
