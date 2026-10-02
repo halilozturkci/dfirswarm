@@ -1,0 +1,85 @@
+{
+  "id": "j000037",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/Carmine-Falcone.raw"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 1800,
+    "network": "off",
+    "command": "vol --offline -s /tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics/vendor/symbols -f inputs/chall/Carmine-Falcone.raw -q -r csv windows.filescan > \"$OUT/filescan.csv\" && grep -aiE 'contact\\.rar|apex\\.sqlite|\\.kdbx|unknown|\\.dbx' \"$OUT/filescan.csv\" > \"$OUT/relevant-files.csv\" || true; wc -l \"$OUT/filescan.csv\" \"$OUT/relevant-files.csv\"; cat \"$OUT/relevant-files.csv\""
+  },
+  "requester": {
+    "agent": "s42120105",
+    "name": "Userkey Analyst",
+    "doing": "I will establish Q12-Q13 (contact verification database key/client email and interpreted client/private key) from unknown.data and memory artifacts; Q14 is already taken."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:01:28.781Z",
+  "reuse": {
+    "op": "command:vol",
+    "objects": [
+      {
+        "path": "inputs/chall/Carmine-Falcone.raw",
+        "sha256": "3e03551e1f55dd792b0bc459b5620522d61fcf2379e8f6d89ef439fef8263cac"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000037-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:02:40.493Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "general",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000037",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000037/scope.1.json",
+    "manifest_sha256": "fbefbb2608278105cf4cbb96edaca6e130b7f10a6eb8a0406b99d176b394993e"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:03:07.259Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "5773a078bd6e7915637d5a417eae4af6e3177962dbe763a1b78ff2a968f7059e",
+    "files": 2,
+    "bytes": 427266,
+    "rejected": 0,
+    "path": "store/jobs/j000037/out"
+  }
+}

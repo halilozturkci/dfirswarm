@@ -1,0 +1,1 @@
+{"v":1,"job":"j000088","attempt":1,"sealed_at":"2026-10-02T10:09:33.034Z","files":[{"path":"identity-locators.json","path_b64":"aWRlbnRpdHktbG9jYXRvcnMuanNvbg==","bytes":3478,"sha256":"6b29cb13898f261fc670be3033d051a1aeb8ba9239a4ab05a6b310c45fd06ac6","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":3478}}

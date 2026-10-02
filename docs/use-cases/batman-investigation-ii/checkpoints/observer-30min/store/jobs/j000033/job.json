@@ -1,0 +1,85 @@
+{
+  "id": "j000033",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/Carmine-Falcone.raw"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 900,
+    "network": "off",
+    "command": "python3 - <<'PY'\np='inputs/chall/Carmine-Falcone.raw'; needles=[b'172.30.145.189',bytes.fromhex('ac1e91bd')]\nwith open(p,'rb') as f:\n data=f.read(320252368+5000)\nfor n in needles:\n pos=0; found=[]\n while 1:\n  i=data.find(n,pos)\n  if i<0: break\n  found.append(i); pos=i+1\n  if len(found)>=3: break\nfor n,offs in zip(needles,[found]): pass\nfor n in needles:\n with open(p,'rb') as f:\n  pos=0; found=[]\n  while True:\n   c=f.read(8*1024*1024)\n   if not c: break\n   i=c.find(n)\n   if i>=0: found.append(pos+i)\n   pos+=len(c)\n   if len(found)>=4: break\n print('NEEDLE',n.hex(),found)\n for off in found[:4]:\n  with open(p,'rb') as f:f.seek(max(0,off-200)); b=f.read(400)\n  print('OFFSET',off,'HEX',b.hex())\n  import re\n  print('ASCII',[(m.start()+max(0,off-200),m.group().decode('latin1')) for m in re.finditer(rb'[ -~]{5,}',b)])\nPY"
+  },
+  "requester": {
+    "agent": "s42120109",
+    "name": "Memory artifact scout",
+    "doing": "Inspecting supplied memory for wallet/password-manager artifacts; select uncovered questions"
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:01:05.650Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "inputs/chall/Carmine-Falcone.raw",
+        "sha256": "3e03551e1f55dd792b0bc459b5620522d61fcf2379e8f6d89ef439fef8263cac"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000033-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:03:50.153Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "general",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000033",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000033/scope.1.json",
+    "manifest_sha256": "ddc7bf98f28647b51512ba5e14269023fee369839251e3b615ed13ae3a3dd1a1"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:03:55.104Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "bec87f973a7e33c801873e13a32e0ad536284cb1dc1a8b218f4a1e5d40118e22",
+    "files": 0,
+    "bytes": 0,
+    "rejected": 0,
+    "path": "store/jobs/j000033/out"
+  }
+}

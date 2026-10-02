@@ -1,0 +1,1 @@
+{"v":1,"job":"j000173","attempt":1,"sealed_at":"2026-10-02T10:32:00.926Z","files":[{"path":"go_buildinfo.json","path_b64":"Z29fYnVpbGRpbmZvLmpzb24=","bytes":17725,"sha256":"89daeb90ad864b5c92d71ec8baf160c486cd5ef6f2026f5e9ab7535e016bcbd7","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":17725}}

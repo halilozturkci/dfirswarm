@@ -1,0 +1,85 @@
+{
+  "id": "j000007",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/unknown.data"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "command": "python3 - <<'PY'\np='inputs/chall/unknown.data'\nb=open(p,'rb').read()\nprint(len(b), b[:200].hex())\nfor enc in ('utf-8','utf-16le'):\n try: print(enc,b.decode(enc,errors='ignore'))\n except Exception as e: print(e)\nPY"
+  },
+  "requester": {
+    "agent": "s42120109",
+    "name": "Memory artifact scout",
+    "doing": "Inspecting supplied memory for wallet/password-manager artifacts; select uncovered questions"
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T09:57:46.398Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "inputs/chall/unknown.data",
+        "sha256": "87841ce462a019649f6206c72cf65ce5305a88b828ca45996ae9422e6f578f4f"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000007-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T09:57:46.448Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000007",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000007/scope.1.json",
+    "manifest_sha256": "ae30ce2984bd30079c89a5faab8798d23487514c9400dbf05ad19af6982ca6ca"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T09:57:47.149Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "7096f6f7199272b8e257c299b223232763cb931286f355eb0f529c0d22e117cc",
+    "files": 0,
+    "bytes": 0,
+    "rejected": 0,
+    "path": "store/jobs/j000007/out"
+  }
+}

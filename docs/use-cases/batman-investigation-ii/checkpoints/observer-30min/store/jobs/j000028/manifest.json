@@ -1,0 +1,1 @@
+{"v":1,"job":"j000028","attempt":1,"sealed_at":"2026-10-02T10:00:01.783Z","files":[{"path":"tx-records.jsonl","path_b64":"dHgtcmVjb3Jkcy5qc29ubA==","bytes":43332,"sha256":"2e6c9e480e04381f807ac041ad452e476b8efc911c250bda6820e0ec8c18c7ef","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":43332}}

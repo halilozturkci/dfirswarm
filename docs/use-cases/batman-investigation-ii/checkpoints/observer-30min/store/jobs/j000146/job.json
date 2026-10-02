@@ -1,0 +1,108 @@
+{
+  "id": "j000146",
+  "attempt": 1,
+  "spec": {
+    "kind": "detect",
+    "inputs": [
+      "job:j000145"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 1800,
+    "network": "off",
+    "targets": [
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000145/out/selftest/known.7z"
+        ],
+        "name": "job:j000145/selftest/known.7z",
+        "ref": "job:j000145/selftest/known.7z",
+        "sha256": "09825830e3aed04fd1493f6925e3fec994e135ae1d58500b39df9f401f1deb39"
+      }
+    ],
+    "pairs": [
+      {
+        "t": 0,
+        "recipe": "computer-forensics-base/archive-members"
+      }
+    ],
+    "trigger": "derived"
+  },
+  "requester": {
+    "agent": "derived",
+    "name": "derived catalogue"
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:21:52.428Z",
+  "worker": "dfs-s421201-job-j000146-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:21:52.450Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "derived",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000145/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000146",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 2,
+    "files": 0,
+    "bound": 1,
+    "manifest": "store/jobs/j000146/scope.1.json",
+    "manifest_sha256": "78fe33eb229096901c2c3ccec41eb951629267fabc2d19bcc334220bd8aac624"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:21:53.109Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "same_as": [
+    {
+      "path": "probes/0-computer-forensics-base_archive-members.out",
+      "sha256": "d373a46c432eb26cc4e94af8d475d9c251b90f7f3cd6d96acc77ce138327f5aa",
+      "bytes": 57,
+      "job": "j000050",
+      "file": "probes/21-computer-forensics-base_archive-members.out"
+    }
+  ],
+  "outputs": {
+    "manifest_sha256": "66015119e60fc7d1a2fe2fdc57d4d9e1d39b61521aed5d5337b6cbe893f79361",
+    "files": 2,
+    "bytes": 158,
+    "rejected": 0,
+    "path": "store/jobs/j000146/out"
+  },
+  "sensitive": {
+    "why": "derived",
+    "from": [
+      "j000050",
+      "j000145"
+    ],
+    "note": "made from the sensitive output of j000050, j000145: every output it sealed is sensitive"
+  }
+}

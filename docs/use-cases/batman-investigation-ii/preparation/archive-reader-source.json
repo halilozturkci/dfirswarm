@@ -1,0 +1,11 @@
+{
+  "source_page": "https://www.7-zip.org/download.html",
+  "url": "https://github.com/ip7z/7zip/releases/download/26.03/7z2603-linux-arm64.tar.xz",
+  "version": "26.03",
+  "arch": "linux-arm64",
+  "retrieved_at": "2026-10-02T10:15:45.259471+00:00",
+  "archive_sha256": "2389ba20e4d8295e8709c20b6263b69bd1ec4972fe38a04ad7a1badbf595b996",
+  "binary_sha256": "9a26e7d54bfdae8a8f1750cdb70697547b738c2334aa89f3d3f2c8645c8443fe",
+  "binary_bytes": 2469256,
+  "purpose": "complete RAR reader; operator tool only; no CTF solution or case answers"
+}

@@ -1,0 +1,101 @@
+5929 /Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000027/filescan.txt
+0xab0b07602690	\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\Settings\settings.dat.LOG1
+0xab0b07602b40	\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\Settings\settings.dat.LOG2
+0xab0b07605250	\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\Settings\settings.dat
+0xab0b07606510	\Users\Carmine Falcone\AppData\Local\Microsoft\Windows\WebCacheLock.dat
+0xab0b07607960	\Users\Carmine Falcone\AppData\Local\Microsoft\OneDrive\21.220.1024.0005\WnsClientApi.dll
+0xab0b07608770	\Users\Carmine Falcone\AppData\Local\Microsoft\Windows\WebCache\WebCacheV01.jfm
+0xab0b0760ab60	\Users\Carmine Falcone\AppData\Local\Microsoft\Windows\WebCache\WebCacheV01.dat
+0xab0b0760ae80	\Users\Carmine Falcone\AppData\Local\Microsoft\Windows\WebCache\WebCacheV01.dat
+0xab0b0761c310	\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\AC\Microsoft\CryptnetUrlCache\MetaData
+0xab0b0761d120	\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\AC\Microsoft\Internet Explorer\DOMStore\BM88RJTK
+0xab0b0762b540	\Users\Carmine Falcone\AppData\Local\Microsoft\input\en-US\userdict_v1.0409.dat
+0xab0b0762bd10	\Users\Carmine Falcone\AppData\Local\Microsoft\input\en-US\userdict_v1.0409.dat
+0xab0b0762c800	\Users\Carmine Falcone\AppData\Local\Microsoft\input\en-GB\userdict_v1.0809.dat
+0xab0b076381f0	\Windows\SystemResources\zipfldr.dll.mun
+0xab0b0763ec30	\Users\Carmine Falcone\AppData\Local\Microsoft\Edge\User Data\Default\History-journal
+0xab0b0763f400	\Users\Carmine Falcone\AppData\Local\Microsoft\Edge\User Data\Default\shared_proto_db\metadata\LOG
+0xab0b07640080	\Users\Carmine Falcone\AppData\Local\Microsoft\Edge\User Data\Default\History
+0xab0b07640210	\Users\Carmine Falcone\AppData\Local\Microsoft\Edge\User Data\Default\Sync Data\LevelDB\MANIFEST-000001
+0xab0b07640b70	\Users\Carmine Falcone\AppData\Local\Microsoft\Edge\User Data\Default\Site Characteristics Database\000003.log
+0xab0b07640e90	\Users\Carmine Falcone\AppData\Local\Microsoft\Edge\User Data\Default\Site Characteristics Database\LOG
+0xab0b076411b0	\Users\Carmine Falcone\AppData\Local\Microsoft\Edge\User Data\Default\Favicons
+0xab0b07641ca0	\Users\Carmine Falcone\AppData\Local\Microsoft\Edge\User Data\Default\Sync Data\LevelDB\000003.log
+0xab0b07641e30	\Users\Carmine Falcone\AppData\Local\Microsoft\Edge\User Data\Default\Site Characteristics Database\MANIFEST-000001
+0xab0b0775c8a0	\Users\Carmine Falcone\AppData\LocalLow\Microsoft\CryptnetUrlCache\Content\E2C6CBAF0AF08CF203BA74BF0D0AB6D5_6372E0472AFF76BB926C97818BC773B9
+0xab0b0775d390	\Users\Carmine Falcone\Desktop
+0xab0b0775fc30	\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\LocalState\AppIconCache\100\Microsoft_Windows_SecHealthUI_cw5n1h2txyewy!SecHealthUI
+0xab0b0d3263b0	\Users\Carmine Falcone\NTUSER.DAT{53b39e87-18c4-11ea-a811-000d3aa4692b}.TxR.blf
+0xab0b0d326690	\Device\HarddiskVolume2\Users\Carmine Falcone\NTUSER.DAT{53b39e87-18c4-11ea-a811-000d3aa4692b}.TxR
+0xab0b0d326ae0	\Users\Carmine Falcone\NTUSER.DAT{53b39e87-18c4-11ea-a811-000d3aa4692b}.TxR.0.regtrans-ms
+0xab0b0d326c50	\Users\Carmine Falcone\NTUSER.DAT{53b39e87-18c4-11ea-a811-000d3aa4692b}.TxR.1.regtrans-ms
+0xab0b0d3274f0	\Users\Carmine Falcone\NTUSER.DAT{53b39e87-18c4-11ea-a811-000d3aa4692b}.TxR.2.regtrans-ms
+0xab0b0d327c20	\Users\Carmine Falcone\AppData\Local\Microsoft\Windows\UsrClass.dat{3fa90f00-ad64-11ee-ba50-080027f4961d}.TxR.0.regtrans-ms
+0xab0b0d3281e0	\Users\Carmine Falcone\AppData\Local\Microsoft\Windows\UsrClass.dat{3fa90f00-ad64-11ee-ba50-080027f4961d}.TxR.2.regtrans-ms
+0xab0b0d328910	\Users\Carmine Falcone\AppData\Local\Microsoft\Windows\UsrClass.dat{3fa90f00-ad64-11ee-ba50-080027f4961d}.TxR.blf
+0xab0b0d3291b0	\Users\Carmine Falcone\AppData\Local\Microsoft\Windows\UsrClass.dat{3fa90f00-ad64-11ee-ba50-080027f4961d}.TxR.1.regtrans-ms
+0xab0b0d329bc0	\Device\HarddiskVolume2\Users\Carmine Falcone\AppData\Local\Microsoft\Windows\UsrClass.dat{3fa90f00-ad64-11ee-ba50-080027f4961d}.TxR
+0xab0b0d343690	\Users\Carmine Falcone\AppData\Roaming\Exodus\Partitions\monero\Session Storage\LOG
+0xab0b0d346bb0	\Program Files\Mozilla Thunderbird\pingsender.exe
+0xab0b0d347ce0	\Users\Carmine Falcone\AppData\Roaming\Exodus\Partitions\monero\Session Storage\LOG
+0xab0b0d349db0	\Users\Carmine Falcone\AppData\Roaming\Microsoft\Windows\Themes\CachedFiles\CachedImage_1920_1016_POS4.jpg
+0xab0b0d34a8a0	\Users\Carmine Falcone\AppData\Roaming\Microsoft\Internet Explorer\Quick Launch\desktop.ini
+0xab0b0d34b9d0	\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\AppData\CacheStorage\CacheStorage.edb
+0xab0b0d34bcf0	\Users\Carmine Falcone\AppData\Local\Microsoft\Windows\Explorer\thumbcache_256.db
+0xab0b0d34c970	\Users\Carmine Falcone\AppData\Local\Microsoft\Edge\User Data\Crashpad\settings.dat
+0xab0b0d34ddc0	\Users\Carmine Falcone\AppData\Local\Microsoft\TokenBroker\Cache\5a2a7058cf8d1e56c20e6b19a7c48eb2386d141b.tbres
+0xab0b0d34eef0	\Users\Carmine Falcone\AppData\Local\Microsoft\TokenBroker\Cache\e8ddd4cbd9c0504aace6ef7a13fa20d04fd52408.tbres
+0xab0b0d34fe90	\Users\Carmine Falcone\Desktop\services.exe
+0xab0b0d352280	\Users\Carmine Falcone\AppData\Roaming\Microsoft\Windows\SendTo\Bluetooth File Transfer.LNK
+0xab0b0d354990	\Users\Carmine Falcone\AppData\Local\exodus\app-24.1.1\chrome_100_percent.pak
+0xab0b0d3581d0	\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\AppData\Indexed DB\IndexedDB.edb
+0xab0b0d3597b0	\Users\Carmine Falcone\Desktop\Exodus.lnk
+0xab0b0d359df0	\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\LocalState\AppIconCache\100\{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}_notepad_exe
+0xab0b0d35a110	\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\AppData\Indexed DB\IndexedDB.jfm
+0xab0b0d35ad90	\Users\Carmine Falcone\AppData\Roaming\Microsoft\Protect\S-1-5-21-3776610481-2634725347-3460535496-1001\Preferred
+0xab0b0d35bba0	\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\LocalState\AppIconCache\100\{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}_notepad_exe
+0xab0b0d35bd30	\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\LocalState\AppIconCache\100\{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}_notepad_exe
+0xab0b0d35d310	\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\LocalState\AppIconCache\100\{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}_narrator_exe
+0xab0b0d35d7c0	\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\LocalState\AppIconCache\100\Microsoft_MicrosoftStickyNotes_8wekyb3d8bbwe!App
+0xab0b0d35dae0	\Users\Carmine Falcone\AppData\Local\exodus\Exodus.exe
+0xab0b0d35dc70	\Windows\Prefetch\EXODUS.EXE-3AAE9DF6.pf
+0xab0b0d35f890	\Users\Carmine Falcone\AppData\Local\exodus\app-24.1.1\ffmpeg.dll
+0xab0b0d35fbb0	\Users\Carmine Falcone\AppData\Local\exodus\app-24.1.1\v8_context_snapshot.bin
+0xab0b0d35fd40	\Users\Carmine Falcone\AppData\Local\exodus\app-24.1.1\chrome_200_percent.pak
+0xab0b0d360830	\Program Files\KeePass Password Safe 2\KeePass.XmlSerializers.dll
+0xab0b0d361640	\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\LocalState\AppIconCache\100\Microsoft_Office_OneNote_8wekyb3d8bbwe!microsoft_onenoteim
+0xab0b0d361e10	\Users\Carmine Falcone\AppData\Local\exodus\app-24.1.1\locales\en-GB.pak
+0xab0b0d362130	\Users\Carmine Falcone\AppData\Local\exodus\app-24.1.1\icudtl.dat
+0xab0b0d362db0	\Users\Carmine Falcone\AppData\Roaming\Exodus\Partitions\network\Session Storage\LOG
+0xab0b0d364390	\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\LocalState\AppIconCache\100\{6D809377-6AF0-444B-8957-A3773F02200E}_KeePass Password Safe 2_KeePass_exe
+0xab0b0d365330	\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\LocalState\AppIconCache\100\com_squirrel_exodus_Exodus
+0xab0b0d365970	\Users\Carmine Falcone\AppData\Local\Microsoft\Internet Explorer\CacheStorage\edb.log
+0xab0b0d3662d0	\Users\Carmine Falcone\AppData\Local\exodus\app-24.1.1\resources.pak
+0xab0b0d3665f0	\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\LocalState\AppIconCache\100\D78BF5DD33499EC2
+0xab0b0d366c30	\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\LocalState\AppIconCache\100\{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}_notepad_exe
+0xab0b0d366dc0	\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\AppData\CacheStorage\CacheStorage.jfm
+0xab0b0d367d60	\Users\Carmine Falcone\AppData\Local\exodus\app-24.1.1\resources\app.asar
+0xab0b0d367ef0	\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\LocalState\AppIconCache\100\Microsoft_WindowsStore_8wekyb3d8bbwe!App
+0xab0b0d368210	\Users\Carmine Falcone\AppData\Local\Microsoft\Internet Explorer\CacheStorage\edb.log
+0xab0b0d369340	\Program Files\Mozilla Thunderbird\nss3.dll
+0xab0b0d36a470	\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\AppData\CacheStorage\CacheStorage.edb
+0xab0b0d36a790	\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\AppData\CacheStorage\CacheStorage.jfm
+0xab0b0d36a920	\Program Files\Mozilla Thunderbird\lgpllibs.dll
+0xab0b0d36aab0	\Program Files\Mozilla Thunderbird\xul.dll
+0xab0b0d36add0	\Users\Carmine Falcone\AppData\Local\Packages\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\Settings\settings.dat
+0xab0b0d36b0f0	\Users\Carmine Falcone\AppData\Local\Packages\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\Settings\settings.dat.LOG1
+0xab0b0d36b280	\Users\Carmine Falcone\AppData\Local\Packages\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\Settings\settings.dat.LOG2
+0xab0b0d36b5a0	\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\AC\INetCache\MSIMGSIZ.DAT
+0xab0b0d36b730	\Windows\Prefetch\KEEPASS.EXE-CD8A3C32.pf
+0xab0b0d36c540	\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\LocalState\AppIconCache\100\Microsoft_MicrosoftStickyNotes_8wekyb3d8bbwe!App
+0xab0b0d36c860	\Users\Carmine Falcone\AppData\Local\Thunderbird\Profiles\ifbixagh.default-release\cache2\entries\1E65A5D5D6148C63D981779FF4D806940484B12E
+0xab0b0d36cd10	\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\LocalState\AppIconCache\100\{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}_notepad_exe
+0xab0b0d36cea0	\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\LocalState\AppIconCache\100\Microsoft_Office_OneNote_8wekyb3d8bbwe!microsoft_onenoteim
+0xab0b0d36d990	\Users\Carmine Falcone\AppData\Roaming\Thunderbird\Profiles\ifbixagh.default-release\encrypted-openpgp-passphrase.txt
+0xab0b0d36db20	\Windows\Prefetch\EXODUS.EXE-BBF7486C.pf
+0xab0b0d36e610	\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\LocalState\AppIconCache\100\{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}_notepad_exe
+0xab0b0d36e930	\Users\Carmine Falcone\AppData\Local\Thunderbird\Profiles\ifbixagh.default-release\cache2\entries\03334BD6E47ACCE424D27A80E2BABCBFB3EB37E2
+0xab0b0d36f740	\Users\Carmine Falcone\AppData\Local\Thunderbird\Profiles\ifbixagh.default-release\cache2\entries\1F1CE9EF53409B9A865CDFFCA28A64A276D0DED8
+0xab0b0d370a00	\Users\Carmine Falcone\AppData\Local\Thunderbird\Profiles\ifbixagh.default-release\cache2\entries\372F1EA24EED08EB6838EA846F1537ACA244C257
+0xab0b0d370b90	\Users\Carmine Falcone\AppData\Local\Thunderbird\Profiles\ifbixagh.default-release\cache2\entries\410FED4835E61A742E696A3BB097BDDB14A86C38
+0xab0b0d3711d0	\Users\Carmine Falcone\AppData\Local\Thunderbird\Profiles\ifbixagh.default-release\cache2\entries\4A34ABDC5E66F74E6652F423BD1B33DB9ECF6972

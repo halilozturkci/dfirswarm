@@ -1,0 +1,12 @@
+{
+  "at": "2026-10-02T10:35:18.077568+00:00",
+  "checkpoint": "observer-30min",
+  "source_snapshot_hashes_matched": 1106,
+  "hash_mismatches": [],
+  "files_on_disk": 1108,
+  "files_staged_or_tracked": 1108,
+  "missing_from_git": [],
+  "git_without_file": [],
+  "forced_ignored_files": 353,
+  "state": "active-run checkpoint; not final custody"
+}

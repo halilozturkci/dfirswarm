@@ -1,0 +1,102 @@
+{
+  "id": "j000141",
+  "attempt": 1,
+  "spec": {
+    "kind": "import",
+    "inputs": [
+      "tool-output/s42120105/20261002100001411-chunk_needles-ifyo.out.log"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "note": "the seal of tool:s42120105/20261002100001411-chunk_needles-ifyo.out.log, which a record cites",
+    "source": "tool-output/s42120105/20261002100001411-chunk_needles-ifyo.out.log",
+    "seal": {
+      "kind": "tool",
+      "ref": "tool:s42120105/20261002100001411-chunk_needles-ifyo.out.log",
+      "digest": "d6a1526bfd36998c5fe935b27b65533b494ba147e045a65399415c39a7112b26",
+      "line_sha256": "9153a93534746ba304cf15b6d0b26bdc3831b8c7276a48125f56158a88f5c507",
+      "path": "tool-output/s42120105/20261002100001411-chunk_needles-ifyo.out.log",
+      "origin": {
+        "ref": "tool:s42120105/20261002100001411-chunk_needles-ifyo.out.log",
+        "kind": "tool",
+        "line_sha256": "9153a93534746ba304cf15b6d0b26bdc3831b8c7276a48125f56158a88f5c507",
+        "seat": "s42120105",
+        "tool": "chunk_needles",
+        "args": {
+          "path": "inputs/chall/Carmine-Falcone.raw",
+          "needles": "apex.sqlite3|contact.rar|Contact the guy|private key|client_email|dbkey|infobreakage|info breakage|Info Breakage",
+          "context": 512,
+          "max_hits": 50
+        },
+        "ts": "2026-10-02T10:00:39.809Z",
+        "recv_ts": "2026-10-02T10:00:39.811Z",
+        "sid": "92f8a239aa2f",
+        "seq": 75,
+        "tool_sha256": null,
+        "path": "tool-output/s42120105/20261002100001411-chunk_needles-ifyo.out.log",
+        "field": "result.full_output",
+        "digest": "d6a1526bfd36998c5fe935b27b65533b494ba147e045a65399415c39a7112b26",
+        "bytes": 122191
+      }
+    }
+  },
+  "requester": {
+    "agent": "s42120100",
+    "name": "Contact provenance",
+    "doing": "Investigate Q1 and Q2 contact/disguise communications and sent-file identity; model gpt-6.1-sol."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:21:13.482Z",
+  "worker": "dfs-s421201-job-j000141-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:21:13.538Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000141",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000141/scope.1.json",
+    "manifest_sha256": "16f357fec9f4ef54c72f88db4f248c6cf4853ac6bc52b6f529d7831e4fd834c2"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:21:14.227Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "573146571ded469e882cbe3feba489c7530c117f52aa1a61ed06917550cbd44a",
+    "files": 1,
+    "bytes": 122191,
+    "rejected": 0,
+    "path": "store/jobs/j000141/out"
+  }
+}

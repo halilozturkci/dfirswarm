@@ -1,0 +1,87 @@
+{
+  "id": "j000100",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000053/file.0xab0b138ce9f0.0xab0b1052da20.SharedCacheMap.app.asar.vacb"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport os,json,struct,re\np='store/jobs/j000053/out/file.0xab0b138ce9f0.0xab0b1052da20.SharedCacheMap.app.asar.vacb'\nwith open(p,'rb') as f:\n h=f.read(16);header_len=struct.unpack('<I',h[12:16])[0];head=json.loads(f.read(header_len));base=8+struct.unpack('<I',h[4:8])[0]\n files=[]\n def walk(t,p=''):\n  for n,d in t.get('files',{}).items():\n   name=p+n\n   if 'files' in d:walk(d,name+'/')\n   elif 'offset' in d:files.append((name,int(d['offset']),d['size']))\n walk(head)\n json.dump({'base':base,'files':files},open(os.environ['OUT']+'/asar_inventory.json','w'))\n snippets=[]\n for n,o,s in files:\n  if not n.endswith(('.js','.json')):continue\n  f.seek(base+o);b=f.read(s)\n  for term in [b'getPriceOnClose',b'getHistoricalAssetDailyPriceSelector',b'getHistoricalAssetHourlyPriceSelector']:\n   for m in re.finditer(re.escape(term),b):\n    snippets.append({'file':n,'file_offset':m.start(),'asar_offset':base+o+m.start(),'term':term.decode(),'context':b[max(0,m.start()-700):m.start()+1500].decode(errors='replace')})\n json.dump(snippets,open(os.environ['OUT']+'/price_code.json','w'),indent=2)\n print('files',len(files),'base',base,'snippets',len(snippets))\nPY"
+  },
+  "requester": {
+    "agent": "s42120102",
+    "name": "Wallet trace",
+    "doing": "Examine wallet installation and wallet protection evidence for questions 5 and 9."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:10:52.504Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000053/out/file.0xab0b138ce9f0.0xab0b1052da20.SharedCacheMap.app.asar.vacb",
+        "sha256": "4a44fc5643664d5fbc9e851cd1eade648c920c3e7f4234a79cb8f4a3a8085f81"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000100-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:10:52.560Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000100",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000100/scope.1.json",
+    "manifest_sha256": "352c827562d88342c2987b3c75158c283094c19956aaa22537ec40b0f000ddd3"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:10:53.284Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "c7793be2d79f94f5cee98692a13058791f41635085ac70f9be27d987503a53b6",
+    "files": 2,
+    "bytes": 165159,
+    "rejected": 0,
+    "path": "store/jobs/j000100/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

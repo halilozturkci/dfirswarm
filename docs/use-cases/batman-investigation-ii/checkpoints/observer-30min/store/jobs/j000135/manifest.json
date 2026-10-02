@@ -1,0 +1,1 @@
+{"v":1,"job":"j000135","attempt":1,"sealed_at":"2026-10-02T10:19:52.249Z","files":[{"path":"usd-calculation.json","path_b64":"dXNkLWNhbGN1bGF0aW9uLmpzb24=","bytes":699,"sha256":"51ea0671396b7095bbdf2cc36ab0b33f4800507736fd64403f9be751e8e3af98","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":699}}

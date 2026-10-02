@@ -1,0 +1,85 @@
+{
+  "id": "j000032",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/Carmine-Falcone.raw"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 900,
+    "network": "off",
+    "command": "vol --offline -s /tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics/vendor/symbols -f inputs/chall/Carmine-Falcone.raw windows.mftscan.MFTScan > \"$OUT/mftscan.txt\" 2> \"$OUT/mftscan.stderr\""
+  },
+  "requester": {
+    "agent": "s42120101",
+    "name": "Wallet trail",
+    "doing": "Investigating the installed cryptocurrency wallet and transfer artifacts for questions 5, 10 and 11."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:01:04.889Z",
+  "reuse": {
+    "op": "command:vol",
+    "objects": [
+      {
+        "path": "inputs/chall/Carmine-Falcone.raw",
+        "sha256": "3e03551e1f55dd792b0bc459b5620522d61fcf2379e8f6d89ef439fef8263cac"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000032-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:03:46.931Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "general",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000032",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000032/scope.1.json",
+    "manifest_sha256": "94da98998f0d42cd74f74f80e6bceeba4116cc9f14042185e4b577449def5cef"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:05:20.339Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "f2956925f16ea6b1361032200bff228093281700a1a01e3bc40cec462c15e248",
+    "files": 2,
+    "bytes": 27724824,
+    "rejected": 0,
+    "path": "store/jobs/j000032/out"
+  }
+}

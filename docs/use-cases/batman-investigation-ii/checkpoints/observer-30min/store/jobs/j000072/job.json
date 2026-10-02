@@ -1,0 +1,94 @@
+{
+  "id": "j000072",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/Carmine-Falcone.raw"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 900,
+    "network": "off",
+    "command": "export TMPDIR=\"$OUT\"; vol --offline -s /tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics/vendor/symbols -f inputs/chall/Carmine-Falcone.raw windows.registry.hivelist.HiveList --dump > \"$OUT/hivelist.txt\" 2> \"$OUT/hivelist.stderr\"; cat \"$OUT/hivelist.txt\"; ls -l \"$OUT\""
+  },
+  "requester": {
+    "agent": "s42120108",
+    "name": "DBX Key Analyst",
+    "doing": "Establish Q6 malware identity and destination from memory evidence."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:07:06.426Z",
+  "reuse": {
+    "op": "command:export",
+    "objects": [
+      {
+        "path": "inputs/chall/Carmine-Falcone.raw",
+        "sha256": "3e03551e1f55dd792b0bc459b5620522d61fcf2379e8f6d89ef439fef8263cac"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000072-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:07:06.477Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "general",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000072",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000072/scope.1.json",
+    "manifest_sha256": "12f94161afab23a82ff4389ee5e5910d789b411e49262794a2baca421ef54544"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:07:07.873Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "same_as": [
+    {
+      "path": "hivelist.txt",
+      "sha256": "deb23d14b738f4c1db7839e84d926663f50d6e609d1489c797a3932ed7c3de2c",
+      "bytes": 63,
+      "job": "j000066",
+      "file": "hivelist.txt"
+    }
+  ],
+  "outputs": {
+    "manifest_sha256": "15c0acc3fd3cc7dbfa5b89b3095ad0e60a666588c4d896be6e82f34ed5b03abc",
+    "files": 2,
+    "bytes": 2061,
+    "rejected": 0,
+    "path": "store/jobs/j000072/out"
+  }
+}

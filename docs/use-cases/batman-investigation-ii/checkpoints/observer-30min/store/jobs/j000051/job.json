@@ -1,0 +1,91 @@
+{
+  "id": "j000051",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/Carmine-Falcone.raw"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 180,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport re,collections,json,os\np='inputs/chall/Carmine-Falcone.raw'; out=os.environ['OUT']\n# CVE-2023-32784-style UTF-16LE sequences: repeated black circles followed by one BMP codepoint\nrg=re.compile(rb'((?:\\xcf\\x25){1,64})(..)',re.S)\ncounts=collections.defaultdict(collections.Counter); examples=[]; sig=bytes.fromhex('03d9a29a67fb4bb5'); sigh=[]\noff=0; tail=b''\nwith open(p,'rb') as f:\n while True:\n  b=f.read(32<<20)\n  if not b: break\n  x=tail+b; base=off-len(tail)\n  for m in rg.finditer(x):\n   pos=len(m.group(1))//2\n   cp=int.from_bytes(m.group(2),'little')\n   # keep likely typed password char after at least two bullets; position is zero-based typed index\n   if pos>=2 and 0x20<=cp<=0x7e:\n    ch=chr(cp); counts[pos][ch]+=1\n    if len(examples)<1000: examples.append({'offset':base+m.start(),'position':pos,'char':ch})\n  s=0\n  while True:\n   i=x.find(sig,s)\n   if i<0: break\n   a=base+i\n   if a>=0 and (not sigh or a!=sigh[-1]): sigh.append(a)\n   s=i+1\n  off+=len(b); tail=x[-132:]\nres={'method':'streaming 32MiB chunks; regex repeated UTF-16LE U+25CF followed by printable ASCII UTF-16LE','position_counts':{str(k):dict(v) for k,v in sorted(counts.items())},'examples':examples,'kdbx_signature_offsets':sigh}\nwith open(out+'/keepass_residue.json','w') as g: json.dump(res,g,indent=2)\nprint(json.dumps({'position_counts':res['position_counts'],'kdbx_signature_offsets':sigh},indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120106",
+    "name": "Vault Artifact Analyst",
+    "doing": "Establishing Q3-Q4: password-manager identity/version and password, plus the deleted stored user key."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:04:30.073Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "inputs/chall/Carmine-Falcone.raw",
+        "sha256": "3e03551e1f55dd792b0bc459b5620522d61fcf2379e8f6d89ef439fef8263cac"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000051-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:04:45.721Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "general",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000051",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000051/scope.1.json",
+    "manifest_sha256": "1b1232c1ec51da2236b78ba537a49560718efb69218ac44abe92e4a21f12eb54"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:05:46.636Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "869f39e3145f8e482b1a2c7611113a790a31e47f1ff8fe89be7f072bf019548e",
+    "files": 1,
+    "bytes": 10292,
+    "rejected": 0,
+    "path": "store/jobs/j000051/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

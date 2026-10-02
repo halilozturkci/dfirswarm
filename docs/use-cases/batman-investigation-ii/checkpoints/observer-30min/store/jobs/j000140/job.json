@@ -1,0 +1,100 @@
+{
+  "id": "j000140",
+  "attempt": 1,
+  "spec": {
+    "kind": "import",
+    "inputs": [
+      "tool-output/s42120104/20261002100317614-bash-ww29.out.log"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "note": "the seal of tool:s42120104/20261002100317614-bash-ww29.out.log, which a record cites",
+    "source": "tool-output/s42120104/20261002100317614-bash-ww29.out.log",
+    "seal": {
+      "kind": "tool",
+      "ref": "tool:s42120104/20261002100317614-bash-ww29.out.log",
+      "digest": "093012438af60e2f2db0970982eccf5b4b2b0c7ed10d968f7bf4edcaf2884506",
+      "line_sha256": "8a79d684a213b89139cff6652f1b15c11d04850d1961b0c6cc487ad00c684635",
+      "path": "tool-output/s42120104/20261002100317614-bash-ww29.out.log",
+      "origin": {
+        "ref": "tool:s42120104/20261002100317614-bash-ww29.out.log",
+        "kind": "tool",
+        "line_sha256": "8a79d684a213b89139cff6652f1b15c11d04850d1961b0c6cc487ad00c684635",
+        "seat": "s42120104",
+        "tool": "bash",
+        "args": {
+          "command": "python3 - <<'PY'\nimport json,re\np='store/jobs/j000006/out/communication_hits.jsonl'\nfor line in open(p,errors='ignore'):\n try:x=json.loads(line)\n except:continue\n c=x.get('context','')\n if re.search(r'(?i)(infobreak|salvatore|user.?key|dbx|private.?key|client)',c):\n  print('\\nOFFSET',x.get('offset'),x.get('needle'),x.get('encoding'));print(c[:2500].replace('\\x00','.'))\nPY",
+          "timeout": 60
+        },
+        "ts": "2026-10-02T10:03:17.809Z",
+        "recv_ts": "2026-10-02T10:03:17.813Z",
+        "sid": "b0df44b24128",
+        "seq": 105,
+        "tool_sha256": null,
+        "path": "tool-output/s42120104/20261002100317614-bash-ww29.out.log",
+        "field": "result.full_output",
+        "digest": "093012438af60e2f2db0970982eccf5b4b2b0c7ed10d968f7bf4edcaf2884506",
+        "bytes": 1061914
+      }
+    }
+  },
+  "requester": {
+    "agent": "s42120100",
+    "name": "Contact provenance",
+    "doing": "Investigate Q1 and Q2 contact/disguise communications and sent-file identity; model gpt-6.1-sol."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:21:12.657Z",
+  "worker": "dfs-s421201-job-j000140-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:21:12.706Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000140",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000140/scope.1.json",
+    "manifest_sha256": "2e8aa386dc7497db5d459325c882dccb758a415faf8abde518a31f9aa1385bbd"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:21:13.392Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "daccbb26c4a9566d1a9ce104e5b6d9c1f8f6cd7b70f34d15c0b90477b975a356",
+    "files": 1,
+    "bytes": 1061914,
+    "rejected": 0,
+    "path": "store/jobs/j000140/out"
+  }
+}

@@ -1,0 +1,621 @@
+{
+  "path": "inputs/chall/Carmine-Falcone.raw",
+  "scanned_start": 0,
+  "scanned_end": 4831838208,
+  "size": 4831838208,
+  "hit_count_returned": 100,
+  "counts": {
+    "private key": 439,
+    "user-key": 124,
+    "Salvatore": 55,
+    "user key": 19,
+    "database key": 2
+  },
+  "hits": [
+    {
+      "offset": 1646882,
+      "needle": "user-key",
+      "enc": "utf16",
+      "snippet": "s.-.w.i.n.-.n.t.u.s.e.r.-.k.e.y.b.o.a.r.d.-.l.1.-.1.-.1.......................e.x.t.-.m.s.-.w.i.n.-.n.t.u.s.e.r.-.k.e.y.b.o.a.r.d.-.l.1.-.2.-.0.......................e.x.t.-.m.s.-.w.i.n.-.n.t.u.s.e.r.-.k.e.y.b.o.a.r.d.-.l.1.-.3.-.0.......................e.x.t.-.m.s.-.w.i.n.-.n.t.u.s.e.r.-.m.e.n.u.-.l.1.-.1.-.3............."
+    },
+    {
+      "offset": 1646970,
+      "needle": "user-key",
+      "enc": "utf16",
+      "snippet": "s.-.w.i.n.-.n.t.u.s.e.r.-.k.e.y.b.o.a.r.d.-.l.1.-.2.-.0.......................e.x.t.-.m.s.-.w.i.n.-.n.t.u.s.e.r.-.k.e.y.b.o.a.r.d.-.l.1.-.3.-.0.......................e.x.t.-.m.s.-.w.i.n.-.n.t.u.s.e.r.-.m.e.n.u.-.l.1.-.1.-.3.......................e.x.t.-.m.s.-.w.i.n.-.n.t.u.s.e.r.-.m.e.s.s.a.g.e.-.l.1.-.1.-.3..............."
+    },
+    {
+      "offset": 1647058,
+      "needle": "user-key",
+      "enc": "utf16",
+      "snippet": "s.-.w.i.n.-.n.t.u.s.e.r.-.k.e.y.b.o.a.r.d.-.l.1.-.3.-.0.......................e.x.t.-.m.s.-.w.i.n.-.n.t.u.s.e.r.-.m.e.n.u.-.l.1.-.1.-.3.......................e.x.t.-.m.s.-.w.i.n.-.n.t.u.s.e.r.-.m.e.s.s.a.g.e.-.l.1.-.1.-.3.....................e.x.t.-.m.s.-.w.i.n.-.n.t.u.s.e.r.-.m.i.s.c.-.l.1.-.1.-.0.......................e."
+    },
+    {
+      "offset": 1655640,
+      "needle": "user-key",
+      "enc": "utf16",
+      "snippet": "t.c.o.r.e.-.n.t.u.s.e.r.-.k.e.y.b.o.a.r.d.-.l.1.-.1.-.0.....................e.x.t.-.m.s.-.w.i.n.-.r.t.c.o.r.e.-.n.t.u.s.e.r.-.m.e.s.s.a.g.e.-.a.n.s.i.-.l.1.-.1.-.0.....................e.x.t.-.m.s.-.w.i.n.-.r.t.c.o.r.e.-.n.t.u.s.e.r.-.m.e.s.s.a.g.e.-.l.1.-.1.-.0.......................e.x.t.-.m.s.-.w.i.n.-.r.t.c.o.r.e.-.n.t."
+    },
+    {
+      "offset": 23740790,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": "uld not acquire private key.(error getting name)..                                                                Chromium, SHA2 Probe.CAPI: .CreateCreateHash failed.CryptGetHashParam HP_HASHSIZE failed.CryptSetHashParam HP_HASHVAL failed.CryptSignHash failed.P.r.o.v.i.d.e.r. .H.a.n.d.l.e...(.e.r.r.o.r. .g.e.t.t.i.n.g. .p.r.o"
+    },
+    {
+      "offset": 42194728,
+      "needle": "user key",
+      "enc": "ascii",
+      "snippet": "te %d bytes for user key buffer.AslRegistryBuildUserPath........AslRegistryBuildMachinePath failed for %ws [%x].AslRegistryBuildMachinePath.....RtlFormatCurrentUserKeyPath failed [%x].NtOpenKey failed for %ws [%x]...AslRegistryGetKey.......AslRegistryBuildUserPath failed for %ws [%x]....ZwCreateSection failed [%x].....NtQu"
+    },
+    {
+      "offset": 60143949,
+      "needle": "user-key",
+      "enc": "ascii",
+      "snippet": "...ext-ms-win-ntuser-keyboard-l1-1-0.dll...........ext-ms-win-ntuser-misc-l1-1-0.dll...............e.x.t.-.m.s.-.w.i.n.-.r.t.c.o.r.e.-.n.t.u.s.e.r.-.u.s.e.r.s.e.c.u.r.i.t.y.-.l.1.-.1.-.0.........ext-ms-win-rtcore-ntuser-usersecurity-l1-1-0.dll................ext-ms-win-ntuser-private-l1-1-0.dll............ext-ms-win-ntuser"
+    },
+    {
+      "offset": 63153078,
+      "needle": "private key",
+      "enc": "utf16",
+      "snippet": "M.i.s.s.i.n.g. .p.r.i.v.a.t.e. .k.e.y.\".).;.r.e.t.u.r.n. .s...e.n.c.o.d.e.(.t.h.i.s...n.e.t.w.o.r.k...w.i.f.,.t.h.i.s..._._.d.,.t.h.i.s...c.o.m.p.r.e.s.s.e.d.).}.,.E.C.P.a.i.r...p.r.o.t.o.t.y.p.e...s.i.g.n.=.f.u.n.c.t.i.o.n.(.e.).{.i.f.(.!.t.h.i.s..._._.d.).t.h.r.o.w. .n.e.w. .E.r.r.o.r.(.\".M.i.s.s.i.n.g. .p.r.i.v.a.t.e. .k.e"
+    },
+    {
+      "offset": 63153370,
+      "needle": "private key",
+      "enc": "utf16",
+      "snippet": "M.i.s.s.i.n.g. .p.r.i.v.a.t.e. .k.e.y.\".).;.r.e.t.u.r.n. .n...s.i.g.n.(.e.,.t.h.i.s..._._.d.).}.,.E.C.P.a.i.r...p.r.o.t.o.t.y.p.e...v.e.r.i.f.y.=.f.u.n.c.t.i.o.n.(.e.,.t.).{.r.e.t.u.r.n. .n...v.e.r.i.f.y.(.e.,.t.h.i.s...p.u.b.l.i.c.K.e.y.,.t.).}.,.e...e.x.p.o.r.t.s.=.{.m.a.k.e.R.a.n.d.o.m.:.f.u.n.c.t.i.o.n.(.e.).{.o.(.l.,.e.)"
+    },
+    {
+      "offset": 72463856,
+      "needle": "private key",
+      "enc": "utf16",
+      "snippet": "M.i.s.s.i.n.g. .p.r.i.v.a.t.e. .k.e.y.\".).;.r.e.t.u.r.n. .i...s.i.g.n.(.e.,.t.h.i.s...d.).}.,.E.C.P.a.i.r...p.r.o.t.o.t.y.p.e...t.o.W.I.F.=.f.u.n.c.t.i.o.n.(.).{.i.f.(.!.t.h.i.s...d.).t.h.r.o.w. .n.e.w. .E.r.r.o.r.(.\".M.i.s.s.i.n.g. .p.r.i.v.a.t.e. .k.e.y.\".).;.r.e.t.u.r.n. .u...e.n.c.o.d.e.(.t.h.i.s...n.e.t.w.o.r.k...w.i.f.,"
+    },
+    {
+      "offset": 72464074,
+      "needle": "private key",
+      "enc": "utf16",
+      "snippet": "M.i.s.s.i.n.g. .p.r.i.v.a.t.e. .k.e.y.\".).;.r.e.t.u.r.n. .u...e.n.c.o.d.e.(.t.h.i.s...n.e.t.w.o.r.k...w.i.f.,.t.h.i.s...d...t.o.B.u.f.f.e.r.(.3.2.).,.t.h.i.s...c.o.m.p.r.e.s.s.e.d.).}.,.E.C.P.a.i.r...p.r.o.t.o.t.y.p.e...v.e.r.i.f.y.=.f.u.n.c.t.i.o.n.(.e.,.t.).{.r.e.t.u.r.n. .i...v.e.r.i.f.y.(.e.,.t.,.t.h.i.s...Q.).}.,.e...e.x"
+    },
+    {
+      "offset": 109958317,
+      "needle": "user-key",
+      "enc": "ascii",
+      "snippet": "...ext-ms-win-ntuser-keyboard-l1-1-0.dll...........ext-ms-win-ntuser-gui-l1-1-0.dll................ext-ms-win-ntuser-menu-l1-1-1.dll...............ext-ms-win-ntuser-menu-l1-1-0.dll...............ext-ms-win-ntuser-message-l1-1-0.dll............ext-ms-win-ntuser-message-l1-1-1.dll............ext-ms-win-ntuser-misc-l1-2-0.dll"
+    },
+    {
+      "offset": 118130525,
+      "needle": "user-key",
+      "enc": "ascii",
+      "snippet": "...ext-ms-win-ntuser-keyboard-l1-1-0.dll...........ext-ms-win-ntuser-message-l1-1-0.dll....e.x.t.-.m.s.-.w.i.n.-.n.t.u.s.e.r.-.m.e.s.s.a.g.e.-.l.1.-.1.-.0.........e.x.t.-.m.s.-.w.i.n.-.n.t.u.s.e.r.-.m.e.s.s.a.g.e.-.l.1.-.1.-.1.........e.x.t.-.m.s.-.w.i.n.-.n.t.u.s.e.r.-.m.e.s.s.a.g.e.-.l.1.-.1.-.2.........e.x.t.-.m.s.-.w.i"
+    },
+    {
+      "offset": 125513892,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": "...M........get private key.......... .....Y........got hacked.......... ....N.........guarantee before paying.......... .....]........guarantee file recovery.......... ..B..b........guaranteed recovery.......... ..............happycoins.......... ....IY........install tor.......... ..............irrevocably changed.........."
+    },
+    {
+      "offset": 142272101,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": "ify(e),\"Invalid private key\"),this._privateKey=e,this._publicKey=i.publicKeyCreate(e,!0),this._identifier=p(this.publicKey),this._fingerprint=this._identifier.slice(0,4).readUInt32BE(0)}}),Object.defineProperty(u.prototype,\"publicKey\",{get:function(){return this._publicKey},set:function(e){n(33===e.length||65===e.length,\"Publ"
+    },
+    {
+      "offset": 140845252,
+      "needle": "private key",
+      "enc": "utf16",
+      "snippet": "I.n.v.a.l.i.d. .p.r.i.v.a.t.e. .k.e.y.\".).;.c.=.g.(.r...s.l.i.c.e.(.4.6.,.7.8.).,.u.,.t.).}.e.l.s.e. .c.=.m.(.r...s.l.i.c.e.(.4.5.,.7.8.).,.u.,.t.).;.r.e.t.u.r.n. .c...d.e.p.t.h.=.i.,.c...i.n.d.e.x.=.a.,.c...p.a.r.e.n.t.F.i.n.g.e.r.p.r.i.n.t.=.s.,.c.}.,.f.r.o.m.P.r.i.v.a.t.e.K.e.y.:.g.,.f.r.o.m.P.u.b.l.i.c.K.e.y.:.m.,.f.r.o.m"
+    },
+    {
+      "offset": 141407698,
+      "needle": "private key",
+      "enc": "utf16",
+      "snippet": "p.u.t. .t.h.e. .p.r.i.v.a.t.e. .k.e.y. .t.o. .s.i.g.n. .t.h.e. .b.l.o.c.k.\".).;.c.o.n.s.t. .r.=.i...d.e.f.a.u.l.t...d.e.c.2.h.e.x.(.e...b.a.l.a.n.c.e.,.1.6.)...t.o.U.p.p.e.r.C.a.s.e.(.).,.n.=.(.0.,.a...g.e.t.P.u.b.l.i.c.K.e.y.).(.t.)...t.o.S.t.r.i.n.g.(.\".h.e.x.\".).,.o.=.t.h.i.s...n.a.n.o.A.d.d.r.e.s.s...d.e.r.i.v.e.A.d.d.r.e"
+    },
+    {
+      "offset": 152508557,
+      "needle": "user-key",
+      "enc": "ascii",
+      "snippet": "...ext-ms-win-ntuser-keyboard-l1-1-0.dll...........api-ms-win-core-com-l1-1-0.dll..api-ms-win-shcore-stream-l1-1-0.dll.............api-ms-win-shcore-comhelpers-l1-1-0.dll.........PROPSYS.dll.....SspiCli.dll.....api-ms-win-core-com-l2-1-1.dll..profapi.dll.....api-ms-win-core-winrt-string-l1-1-0.dll................F........."
+    },
+    {
+      "offset": 158328848,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": "wError(\"invalid private key\",e.code,n)}s.defineReadOnly(this,\"privateKey\",i.hexlify(r)),s.defineReadOnly(this,\"keyPair\",new a.KeyPair(r)),s.defineReadOnly(this,\"publicKey\",this.keyPair.publicKey),s.defineReadOnly(this,\"address\",a.computeAddress(this.keyPair.publicKey)),s.setType(this,\"SigningKey\")}return e.prototype.signDiges"
+    },
+    {
+      "offset": 159326639,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": " Error(\"Missing private key\");return s.encode(this.network.wif,this.__d,this.compressed)},ECPair.prototype.sign=function(e){if(!this.__d)throw new Error(\"Missing private key\");return n.sign(e,this.__d)},ECPair.prototype.verify=function(e,t){return n.verify(e,this.publicKey,t)},e.exports={makeRandom:function(e){o(l,e);const t="
+    },
+    {
+      "offset": 159326785,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": " Error(\"Missing private key\");return n.sign(e,this.__d)},ECPair.prototype.verify=function(e,t){return n.verify(e,this.publicKey,t)},e.exports={makeRandom:function(e){o(l,e);const t=(e=e||{}).rng||a;let r;do{r=t(32),o(i.Buffer256bit,r)}while(!n.isPrivate(r));return u(r,e)},fromPrivateKey:u,fromPublicKey:function(e,t){return o("
+    },
+    {
+      "offset": 159210032,
+      "needle": "Salvatore",
+      "enc": "ascii",
+      "snippet": "................Salvatore Maroni <salvatoremaroni3376@gmail.com>..................................c...............................................c......................................./........@................................................................(...s.c.r.o.l.l.b.a.r.-.u.p.-.b.o.t.t.o.m...........@............"
+    },
+    {
+      "offset": 207016268,
+      "needle": "private key",
+      "enc": "utf16",
+      "snippet": "r.(.\".t.h.i.s. .p.r.i.v.a.t.e. .k.e.y. .d.o.e.s. .n.o.t. .s.u.p.p.o.r.t. .k.e.y. .d.e.r.i.v.a.t.i.o.n.\".).;.c.o.n.s.t.{.k.e.y.D.a.t.a.:.t.,.c.h.a.i.n.C.o.d.e.:.r.}.=.a.w.a.i.t. .d...d.e.r.i.v.e.(.t.h.i.s...t.o.B.y.t.e.s.(.).,.t.h.i.s..._.c.h.a.i.n.C.o.d.e.,.e.).,.a.=.n...d.e.f.a.u.l.t...s.i.g.n...k.e.y.P.a.i.r...f.r.o.m.S.e.e"
+    },
+    {
+      "offset": 235271983,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": " Error(\"Invalid private key\");var h=BigInteger.fromBuffer(r.slice(46,78));p=new ECPair(h,null,{network:a})}else{var m=l.Point.decodeFrom(u,r.slice(45,78));u.validate(m),p=new ECPair(null,m,{network:a})}var g=new HDNode(p,f);return g.depth=i,g.index=d,g.parentFingerprint=s,g},HDNode.prototype.getAddress=function(){return this."
+    },
+    {
+      "offset": 248164368,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": "LID.]...........private key should be a Buffer..]...b.,~....EC_PRIVATE_KEY_LENGTH_INVALID...]...........private key length is invalid...]....3R&....EC_PRIVATE_KEY_TWEAK_ADD_FAIL...]....m..6...tweak out of range or resulting private key is invalid..]......G....EC_PRIVATE_KEY_TWEAK_MUL_FAIL...]...........tweak out of range..].."
+    },
+    {
+      "offset": 248164456,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": "D...]...........private key length is invalid...]....3R&....EC_PRIVATE_KEY_TWEAK_ADD_FAIL...]....m..6...tweak out of range or resulting private key is invalid..]......G....EC_PRIVATE_KEY_TWEAK_MUL_FAIL...]...........tweak out of range..]...j..<....EC_PRIVATE_KEY_EXPORT_DER_FAIL..]...&O......couldn't export to DER format...].."
+    },
+    {
+      "offset": 248164576,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": "ge or resulting private key is invalid..]......G....EC_PRIVATE_KEY_TWEAK_MUL_FAIL...]...........tweak out of range..]...j..<....EC_PRIVATE_KEY_EXPORT_DER_FAIL..]...&O......couldn't export to DER format...]...........EC_PRIVATE_KEY_IMPORT_DER_FAIL..]......x....couldn't import from DER format.]...........EC_PUBLIC_KEYS_TYPE_INV"
+    },
+    {
+      "offset": 248166204,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": "ction failed or private key is invalid..]......}....ECDSA_RECOVER_FAIL..]...~...*...couldn't recover public key from signature..]...Z..[....MSG32_TYPE_INVALID..]...\".......message should be a Buffer..]....8P.....MSG32_LENGTH_INVALID].....}.....message length is invalid...]...BN#o....OPTIONS_TYPE_INVALID]...........options sho"
+    },
+    {
+      "offset": 257466732,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": "ction failed or private key is invalid..]...NK{c....ECDSA_RECOVER_FAIL..]....V1.*...couldn't recover public key from signature..]...........MSG32_TYPE_INVALID..].....N.....message should be a Buffer..]...........MSG32_LENGTH_INVALID]......c....message length is invalid...]...2..&....OPTIONS_TYPE_INVALID]...b.......options sho"
+    },
+    {
+      "offset": 262391585,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": "eKey: Account's private key if this is an external account. Optional.\"),Object(v.defineDoc)(I,\"Vote for a proxy account.\\nUsage: vote({ proxy: 'everstakeone' })\\nArguments:\\n  proxy: The proxy account to vote for. Mandatory.\"),Object(v.defineDoc)(C,`Rent CPU and NET resources for running transactions.\\nUsage: powerup()\\n     "
+    },
+    {
+      "offset": 269278178,
+      "needle": "private key",
+      "enc": "utf16",
+      "snippet": "i.n.v.a.l.i.d. .p.r.i.v.a.t.e. .k.e.y. .l.e.n.g.t.h.:. .$.{.e...l.e.n.g.t.h.}. .b.y.t.e.s.`.).}.s.t.a.t.i.c. .f.r.o.m.S.t.r.i.n.g.(.e.).{.r.e.t.u.r.n. .v...f.r.o.m.B.y.t.e.s.(.u...d.e.c.o.d.e.(.e.).).}.s.t.a.t.i.c. .a.s.y.n.c. .f.r.o.m.M.n.e.m.o.n.i.c.(.e.,.t.=.\".\".).{.r.e.t.u.r.n.(.\".s.t.r.i.n.g.\".=.=.t.y.p.e.o.f. .e.?.a.w.a"
+    },
+    {
+      "offset": 295706260,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": "ify(e),\"Invalid private key\"),this._privateKey=e,this._publicKey=Buffer.from(a.publicKeyCreate(e,!0)),this._identifier=h(this.publicKey),this._fingerprint=this._identifier.slice(0,4).readUInt32BE(0)}}),Object.defineProperty(l.prototype,\"publicKey\",{get:function(){return this._publicKey},set:function(e){n(33===e.length||65===e"
+    },
+    {
+      "offset": 299080277,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": "control of your private keys.\"},{link:\"https://www.youtube.com/watch?v=6427CefMQfM&list=PLFb4p066AZRoKOh7Y6enCdIh9I1ehPLlq&index=3&t=0s\",text:\"Learn how to set up a brand new Trezor Model T hardware wallet.\"},{link:\"https://www.youtube.com/watch?v=nnp307qU5JE&list=PLFb4p066AZRoKOh7Y6enCdIh9I1ehPLlq&index=4&t=0s\",text:\"Connect"
+    },
+    {
+      "offset": 299080687,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": ",text:\"Import a private key.\"},{link:\"https://www.youtube.com/watch?v=BbtDtQ1xW5s&list=PLFb4p066AZRoKOh7Y6enCdIh9I1ehPLlq\",text:\"Sync your desktop wallet with your mobile phone to access funds on the go.\"},{link:\"https://www.youtube.com/watch?v=vt4qnmV_PTI&list=PLFb4p066AZRoKOh7Y6enCdIh9I1ehPLlq&index=24&t=0s\",text:\"Set up Ex"
+    },
+    {
+      "offset": 301273166,
+      "needle": "private key",
+      "enc": "utf16",
+      "snippet": "M.i.s.s.i.n.g. .p.r.i.v.a.t.e. .k.e.y. .f.o.r. .h.a.r.d.e.n.e.d. .c.h.i.l.d. .k.e.y.\".).;.r.[.0.].=.0.,.t.h.i.s...p.r.i.v.a.t.e.K.e.y...c.o.p.y.(.r.,.1.).,.r...w.r.i.t.e.U.I.n.t.3.2.B.E.(.e.,.3.3.).}.e.l.s.e. .t.h.i.s...p.u.b.l.i.c.K.e.y...c.o.p.y.(.r.,.0.).,.r...w.r.i.t.e.U.I.n.t.3.2.B.E.(.e.,.3.3.).;.l.e.t. .n.,.a.=.o...h.m"
+    },
+    {
+      "offset": 310023054,
+      "needle": "private key",
+      "enc": "utf16",
+      "snippet": "n.o.t. .g.e.t. .p.r.i.v.a.t.e. .k.e.y.s. .f.o.r. .h.a.r.d.w.a.r.e. .w.a.l.l.e.t.\".).;.l.e.t.[.e.].=.a.w.a.i.t. .s...d.e.f.a.u.l.t...c.u.r.r.e.n.t...g.e.t.P.r.i.v.a.t.e.K.e.y.s.(.l...b.a.s.e.A.s.s.e.t...n.a.m.e.,.w.,.[.d.].).;.e...s.t.a.r.t.s.W.i.t.h.(.\".0.x.\".).&.&.(.e.=.e...s.l.i.c.e.(.2.).).,._...p.r.i.v.K.e.y.=.e.}.r.e.t.u"
+    },
+    {
+      "offset": 310248850,
+      "needle": "private key",
+      "enc": "utf16",
+      "snippet": "M.i.s.s.i.n.g. .p.r.i.v.a.t.e. .k.e.y.\".).;.r.e.t.u.r.n. .a...e.n.c.o.d.e.(.t.h.i.s...n.e.t.w.o.r.k...w.i.f.,.t.h.i.s..._._.d.,.t.h.i.s...c.o.m.p.r.e.s.s.e.d.).}.,.E.C.P.a.i.r...p.r.o.t.o.t.y.p.e...s.i.g.n.=.f.u.n.c.t.i.o.n.(.e.).{.i.f.(.!.t.h.i.s..._._.d.).t.h.r.o.w. .n.e.w. .E.r.r.o.r.(.\".M.i.s.s.i.n.g. .p.r.i.v.a.t.e. .k.e"
+    },
+    {
+      "offset": 326613252,
+      "needle": "private key",
+      "enc": "utf16",
+      "snippet": "i.l.e.d. .o.r. .p.r.i.v.a.t.e. .k.e.y. .i.s. .i.n.v.a.l.i.d.\".,.E.C.D.S.A._.R.E.C.O.V.E.R._.F.A.I.L.:.\".c.o.u.l.d.n.'.t. .r.e.c.o.v.e.r. .p.u.b.l.i.c. .k.e.y. .f.r.o.m. .s.i.g.n.a.t.u.r.e.\".,.M.S.G.3.2._.T.Y.P.E._.I.N.V.A.L.I.D.:.\".m.e.s.s.a.g.e. .s.h.o.u.l.d. .b.e. .a. .B.u.f.f.e.r.\".,.M.S.G.3.2._.L.E.N.G.T.H._.I.N.V.A.L.I.D"
+    },
+    {
+      "offset": 339995283,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": "d mnemonic or a private key to continue:`,title:\"Import an Existing Hedera Account\",cancel:!0,img:i.a.createElement(b.default,{size:70,assetName:\"hedera\"}),success:\"Import\",inputs:[{name:\"privateKeyInput\",trim:!0}]});if(!E)return e();const S=x.trim();let T;if(S.includes(\" \")){if(!await Object(a.validateMnemonic)(S))return awa"
+    },
+    {
+      "offset": 339995918,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": "\",text:`Invalid private key: ${S}`,type:\"warning\",cancel:!1,success:\"Back to wallet\"}),e()}const O=Object(a.getPublicKey)(T).toString(\"hex\"),I=Object(f.default)(t)({assetName:\"hedera\",walletAccount:r}).toString();if(O===I.slice(24))return await Object(v.default)({title:\"Unable to Import Account\",text:\"You cannot import your o"
+    },
+    {
+      "offset": 392399357,
+      "needle": "user-key",
+      "enc": "ascii",
+      "snippet": "...ext-ms-win-ntuser-keyboard-l1-1-0.dll...........ext-ms-win-rtcore-ntuser-rawinput-l1-1-0.dll....api-ms-win-rtcore-ntuser-private-l1-1-9.dll.....ext-ms-win-rtcore-ntuser-dpi-l1-2-0.dll................................Fbad function call.......permission denied.......file exists.....no such device..filename too long.......d"
+    },
+    {
+      "offset": 389847301,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": "nd for supplied private key.\");const g=d.store.getState();if(h===Object(l.default)(g)({assetName:f,walletAccount:t}).toString())return{status:\"own-key\"};const y=m[0],{mainAccountName:b}=Object(c.default)(g)(\"eosio\",t),v=Object(u.default)(g)(f),w=await Object(i.fetchPowerUpFee)(v),A=e.currency.defaultUnit(w.powerUpMaxPayment),"
+    },
+    {
+      "offset": 393520317,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": "single copy of..private key wh....ich allow you to decryptR.files i....s on a secret server..t..intern..da....rk web..Dakkatoni.A!MTB.TrojanDr....opper:O97M/GraceWire.CI.......4......./D......B..*!E...G.....f...PRP ....= \"%\" & Dialog4.TextBox1.Tag..e3........car.CheckCar(redoMochup,..3.Contr..<.olTip..(.\"\")...B...?..ExpandEnv"
+    },
+    {
+      "offset": 400141165,
+      "needle": "user-key",
+      "enc": "ascii",
+      "snippet": "...ext-ms-win-ntuser-keyboard-l1-1-0.dll...........ext-ms-win-rtcore-ntuser-window-ext-l1-1-0.dll..ext-ms-win-session-usermgr-l1-1-0.dll...........ext-ms-win-session-usertoken-l1-1-0.dll.........ext-ms-win-devmgmt-policy-l1-1-0.dll............ext-ms-win-mrmcorer-resmanager-l1-1-0.dll.......api-ms-win-core-winrt-string-l1-1"
+    },
+    {
+      "offset": 400140938,
+      "needle": "user-key",
+      "enc": "utf16",
+      "snippet": "s.-.w.i.n.-.n.t.u.s.e.r.-.k.e.y.b.o.a.r.d.-.l.1.-.1.-.0...............e.x.t.-.m.s.-.w.i.n.-.n.t.u.s.e.r.-.k.e.y.b.o.a.r.d.-.l.1.-.2.-.0...............e.x.t.-.m.s.-.w.i.n.-.n.t.u.s.e.r.-.k.e.y.b.o.a.r.d.-.l.1.-.3.-.0...............ext-ms-win-ntuser-keyboard-l1-1-0.dll...........ext-ms-win-rtcore-ntuser-window-ext-l1-1-0.dll"
+    },
+    {
+      "offset": 400141018,
+      "needle": "user-key",
+      "enc": "utf16",
+      "snippet": "s.-.w.i.n.-.n.t.u.s.e.r.-.k.e.y.b.o.a.r.d.-.l.1.-.2.-.0...............e.x.t.-.m.s.-.w.i.n.-.n.t.u.s.e.r.-.k.e.y.b.o.a.r.d.-.l.1.-.3.-.0...............ext-ms-win-ntuser-keyboard-l1-1-0.dll...........ext-ms-win-rtcore-ntuser-window-ext-l1-1-0.dll..ext-ms-win-session-usermgr-l1-1-0.dll...........ext-ms-win-session-usertoken-l"
+    },
+    {
+      "offset": 400141098,
+      "needle": "user-key",
+      "enc": "utf16",
+      "snippet": "s.-.w.i.n.-.n.t.u.s.e.r.-.k.e.y.b.o.a.r.d.-.l.1.-.3.-.0...............ext-ms-win-ntuser-keyboard-l1-1-0.dll...........ext-ms-win-rtcore-ntuser-window-ext-l1-1-0.dll..ext-ms-win-session-usermgr-l1-1-0.dll...........ext-ms-win-session-usertoken-l1-1-0.dll.........ext-ms-win-devmgmt-policy-l1-1-0.dll............ext-ms-win-mrm"
+    },
+    {
+      "offset": 414949063,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": "sh at encrypted private key..Supported only sha1 hash at encrypted private key..Failed to add signature to the key..Failed to get subkey at idx %zu..wrong base64 padding length %zu..Invalid deleted sigs count: %zu instead of %zu..failed to get hash context..Unexpected detached signature input..Failed to update rawpkt..Too few"
+    },
+    {
+      "offset": 414949114,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": "sh at encrypted private key..Failed to add signature to the key..Failed to get subkey at idx %zu..wrong base64 padding length %zu..Invalid deleted sigs count: %zu instead of %zu..failed to get hash context..Unexpected detached signature input..Failed to update rawpkt..Too few b..W.-i.....3.9.t......:.e*....:...j.W.[p.S|<?.7.."
+    },
+    {
+      "offset": 426088838,
+      "needle": "private key",
+      "enc": "utf16",
+      "snippet": "e.s.u.l.t.e.d. .p.r.i.v.a.t.e. .k.e.y. .i.s. .i.n.v.a.l.i.d.\".,.o.=.\".T.h.e. .t.w.e.a.k. .w.a.s. .o.u.t. .o.f. .r.a.n.g.e. .o.r. .e.q.u.a.l. .t.o. .z.e.r.o.\".,.i.=.\".U.n.k.n.o.w. .e.r.r.o.r. .o.n. .c.o.n.t.e.x.t. .r.a.n.d.o.m.i.z.a.t.i.o.n.\".,.s.=.\".P.r.i.v.a.t.e. .K.e.y. .i.s. .i.n.v.a.l.i.d.\".,.a.=.\".P.u.b.l.i.c. .K.e.y. .c"
+    },
+    {
+      "offset": 426089512,
+      "needle": "private key",
+      "enc": "utf16",
+      "snippet": " .o.r. .t.h.e. .p.r.i.v.a.t.e. .k.e.y. .w.a.s. .i.n.v.a.l.i.d.\".,.f.=.\".P.u.b.l.i.c. .k.e.y. .c.o.u.l.d. .n.o.t. .b.e. .r.e.c.o.v.e.r.\".,.p.=.\".S.c.a.l.a.r. .w.a.s. .i.n.v.a.l.i.d. .(.z.e.r.o. .o.r. .o.v.e.r.f.l.o.w.).\".;.f.u.n.c.t.i.o.n. .h.(.e.,.t.).{.i.f.(.!.e.).t.h.r.o.w. .n.e.w. .E.r.r.o.r.(.t.).}.f.u.n.c.t.i.o.n. .g.(.e"
+    },
+    {
+      "offset": 426185378,
+      "needle": "private key",
+      "enc": "utf16",
+      "snippet": "e. .i.s. .n.o. .p.r.i.v.a.t.e. .k.e.y. .f.o.r. .a.d.d.r.e.s.s. .$.{.e.}.`.).,.{.k.e.y.:.E.C.P.a.i.r...f.r.o.m.W.I.F.(.t.,.I.).,.p.u.r.p.o.s.e.:.n.}.}.c.o.n.s.t. .i.=.A.[.e.].;.o.(.).(.y.,.\".h.d.k.e.y.s. .m.u.s.t. .b.e. .p.r.o.v.i.d.e.d.\".).,.o.(.).(.n.,.`.p.u.r.p.o.s.e. .f.o.r. .a.d.d.r.e.s.s. .$.{.e.}. .c.o.u.l.d. .n.o.t. .b"
+    },
+    {
+      "offset": 448095106,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": "d corresponding private key. <br> Possible solutions: <br><ul><li>If you have a smartcard, please insert it now. <li>If you are using a new machine, or if you are using a new %brand% profile, you will need to restore your certificate and private key from a backup. Certificate backups usually end in \".p12\".</ul>.PK..........!<"
+    },
+    {
+      "offset": 448095328,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": "certificate and private key from a backup. Certificate backups usually end in \".p12\".</ul>.PK..........!<lz.7[...[...A...chrome/en-US/locale/en-US/messenger-smime/msgReadSecurityInfo.dtd<!-- This Source Code Form is subject to the terms of the Mozilla Public.   - License, v. 2.0. If a copy of the MPL was not distributed with "
+    },
+    {
+      "offset": 451959228,
+      "needle": "private key",
+      "enc": "utf16",
+      "snippet": "t.a.i.n.i.n.g. .p.r.i.v.a.t.e. .k.e.y.\".).;.i.f.(.\".P.V.T._.R.1._.\".=.=.=.e...s.u.b.s.t.r.(.0.,.7.).).r.e.t.u.r.n. .h.(.e...s.u.b.s.t.r.(.7.).,.f...r.1.,.t...p.r.i.v.a.t.e.K.e.y.D.a.t.a.S.i.z.e.,.\".R.1.\".).;.i.f.(.\".P.V.T._.K.1._.\".=.=.=.e...s.u.b.s.t.r.(.0.,.7.).).r.e.t.u.r.n. .h.(.e...s.u.b.s.t.r.(.7.).,.f...k.1.,.t...p.r.i"
+    },
+    {
+      "offset": 451959882,
+      "needle": "private key",
+      "enc": "utf16",
+      "snippet": "o.g.n.i.z.e.d. .p.r.i.v.a.t.e. .k.e.y. .t.y.p.e.\".).;.f.o.r.(.v.a.r. .o.=.0.;.o.<.t...p.r.i.v.a.t.e.K.e.y.D.a.t.a.S.i.z.e.;.+.+.o.).n...d.a.t.a.[.o.].=.r.[.o.+.1.].;.r.e.t.u.r.n. .n.}.,.t...p.r.i.v.a.t.e.K.e.y.T.o.L.e.g.a.c.y.S.t.r.i.n.g.=.f.u.n.c.t.i.o.n.(.e.).{.i.f.(.e...t.y.p.e.=.=.=.f...k.1.&.&.e...d.a.t.a...l.e.n.g.t.h.="
+    },
+    {
+      "offset": 477357724,
+      "needle": "private key",
+      "enc": "utf16",
+      "snippet": "t.o. .t.h.i.s. .p.r.i.v.a.t.e. .k.e.y... .P.l.e.a.s.e. .s.e.l.e.c.t. .o.n.e...\".,.\". .\".,.o...a...c.r.e.a.t.e.E.l.e.m.e.n.t.(.m.,.n.u.l.l.,.o...a...c.r.e.a.t.e.E.l.e.m.e.n.t.(.s...d.e.f.a.u.l.t.,.{.s.e.a.r.c.h.a.b.l.e.:.!.1.,.o.p.t.i.o.n.s.:.c.,.i.d.:.\".p.i.c.k.-.a.c.c.o.u.n.t.\".,.v.a.l.u.e.K.e.y.:.\".n.a.m.e.\".,.c.o.m.p.o.n.e"
+    },
+    {
+      "offset": 478915361,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": "ify(e),\"Invalid private key\"),this._privateKey=e,this._publicKey=s.publicKeyCreate(e,!0),this._identifier=f(this.publicKey),this._fingerprint=this._identifier.slice(0,4).readUInt32BE(0)}}),Object.defineProperty(d.prototype,\"publicKey\",{get:function(){return this._publicKey},set:function(e){n(33===e.length||65===e.length,\"Publ"
+    },
+    {
+      "offset": 524302329,
+      "needle": "user key",
+      "enc": "ascii",
+      "snippet": "ailed to create user key path for \"%ws\" [%x]...........\\.S.o.f.t.w.a.r.e.\\.M.i.c.r.o.s.o.f.t.\\.W.i.n.d.o.w.s. .N.T.\\.C.u.r.r.e.n.t.V.e.r.s.i.o.n.\\.A.p.p.C.o.m.p.a.t.F.l.a.g.s.\\.L.a.y.e.r.s...Failed to create user key path \"%ws\" [%x].......Failed NtSetValueKey [%x].......Failed to get perm layer path...SdbSetPermLayerKeys.<"
+    },
+    {
+      "offset": 524302521,
+      "needle": "user key",
+      "enc": "ascii",
+      "snippet": "ailed to create user key path \"%ws\" [%x].......Failed NtSetValueKey [%x].......Failed to get perm layer path...SdbSetPermLayerKeys.<...>.......SdbDeletePermLayerKeys..Failed to open Key for \"%S\" [%x]........Failed to delete value from Key \"%S\" [%x]...!...#.......Bad layer string........SdbGetLayerCommandLine..Bad layer nam"
+    },
+    {
+      "offset": 524573533,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": "OT contain your private keys or passwords. It only includes your Exodus public addresses, transaction history, wallet settings, and error log.\"}),success:\"Ok\",learnMore:\"https://www.exodus.com/support/article/191-safe-report\",imgClassName:\"icon-safe-report\",showX:!0})}},\"Safe Report\"))};t.default=(({active:e,reducedMargin:t,o"
+    },
+    {
+      "offset": 555367937,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": "pting to import private key..SSL sent or received too many records with the same symmetric key..PKCS #11 driver violates the spec in an incompatible way..Failure to create Symmetric Key context..Certificate is revoked in issuer's certificate revocation list..The OCSP server requires a signature on this request..SSL received a"
+    },
+    {
+      "offset": 557940594,
+      "needle": "private key",
+      "enc": "utf16",
+      "snippet": "N.V.A.L.I.D.:.\".p.r.i.v.a.t.e. .k.e.y. .s.h.o.u.l.d. .b.e. .a. .B.u.f.f.e.r.\".,.E.C._.P.R.I.V.A.T.E._.K.E.Y._.L.E.N.G.T.H._.I.N.V.A.L.I.D.:.\".p.r.i.v.a.t.e. ..+.%..I^..xLCfvs.1.T.Ez_aNd.Bu.-.].@l6~Zq.K.,}.K....M.w.n..?.....>ng...D).l5..2.K..\"1F..[Uu.-.8../...;g...|y/.!<Z.}/]..'...V.T..v...Sl...|..[X>..N.?.NBA.*.A...V..e......"
+    },
+    {
+      "offset": 554321856,
+      "needle": "Salvatore",
+      "enc": "ascii",
+      "snippet": " ....... .......Salvatore Maroni <salvatoremaroni3376@gmail.com>................................................H.........................s.....0.......p...........\"...h.e.a.d.e.r.-.r.e.c.i.p.i.e.n.t...................................s.............................p.r.e.s.e.n.t.a.t.i.o.n......................................"
+    },
+    {
+      "offset": 601367907,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": ".....Unexpected private key parameter; keyObj.fpr=\"......K.(C........acceptanceResult#...<...........getAcceptance$.......'t.........getAcceptance failed: %......f..........fingerprintAcceptance&..................emailDecided'....R:.........getKeyAcceptanceForEmail(.....;(........getValidKeysForAllRecipients)....76A........ad"
+    },
+    {
+      "offset": 606724346,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": " Error(\"Missing private key\");if(!e.signSchnorr)throw new Error(\"signSchnorr not supported by ecc library\");return Buffer.from(e.signSchnorr(t,this.privateKey))}verify(t,r){return e.verify(t,this.publicKey,r)}verifySchnorr(t,r){if(!e.verifySchnorr)throw new Error(\"verifySchnorr not supported by ecc library\");return e.verifySc"
+    },
+    {
+      "offset": 616750173,
+      "needle": "user-key",
+      "enc": "ascii",
+      "snippet": "...ext-ms-win-ntuser-keyboard-l1-1-0.dll...e.x.t.-.m.s.-.w.i.n.-.n.t.u.s.e.r.-.m.o.u.s.e.-.l.1.-.1.-.0.....e.x.t.-.m.s.-.w.i.n.-.n.t.u.s.e.r.-.m.o.u.s.e.-.l.1.-.1.-.1.............ext-ms-win-ntuser-mouse-l1-1-0.dll..............api-ms-win-rtcore-ntuser-private-l1-1-10.dll....a.p.i.-.m.s.-.w.i.n.-.c.o.r.e.-.s.y.n.c.h.-.l.1.-"
+    },
+    {
+      "offset": 639280896,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": "$...there is no private key for address ]...n..M....fromWIF.]...........hdkeys must be provided.]....D......purpose for address ].....k..... could not be resolved..]....4.1....hdkey for purpose for ..].....'..... and address ...]....8.Z:...Non-witness outputs require the full previous transaction...]...........rawData.]...*.."
+    },
+    {
+      "offset": 651441805,
+      "needle": "user-key",
+      "enc": "ascii",
+      "snippet": "...ext-ms-win-ntuser-keyboard-l1-1-0.dll...........ext-ms-win-ntuser-menu-l1-1-2.dll...............ext-ms-win-ntuser-misc-l1-2-0.dll...............ext-ms-win-ntuser-misc-l1-1-0.dll...............ext-ms-win-ntuser-misc-l1-5-0.dll...............ext-ms-win-ntuser-private-l1-2-0.dll............ext-ms-win-ntuser-private-l1-3-2."
+    },
+    {
+      "offset": 666505271,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": "'The public and private keys must be of the same type',.      'InvalidAccessError');.  }..  if (.    key.algorithm.name === 'ECDH' &&.    key.algorithm.namedCurve !== baseKey.algorithm.namedCurve.  ) {.    throw lazyDOMException('Named curve mismatch', 'InvalidAccessError');.  }..  const bits = await jobPromise(() => new ECDH"
+    },
+    {
+      "offset": 664766078,
+      "needle": "private key",
+      "enc": "utf16",
+      "snippet": ",.3.2.).,.g.(.\".p.r.i.v.a.t.e. .k.e.y.\".,.n.,.3.2.).,.h.(.\".O.b.j.e.c.t.\".=.=.=.b.(.o.).,.\".E.x.p.e.c.t.e.d. .o.p.t.i.o.n.s. .t.o. .b.e. .a.n. .O.b.j.e.c.t.\".).,.v.o.i.d. .0.!.=.=.o...d.a.t.a.&.&.g.(.\".o.p.t.i.o.n.s...d.a.t.a.\".,.o...d.a.t.a.).,.v.o.i.d. .0.!.=.=.o...n.o.n.c.e.f.n.&.&.h.(.\".F.u.n.c.t.i.o.n.\".=.=.=.b.(.o...n.o"
+    },
+    {
+      "offset": 664767916,
+      "needle": "private key",
+      "enc": "utf16",
+      "snippet": "6.5.].).,.g.(.\".p.r.i.v.a.t.e. .k.e.y.\".,.r.,.3.2.).,.h.(.\".O.b.j.e.c.t.\".=.=.=.b.(.n.).,.\".E.x.p.e.c.t.e.d. .o.p.t.i.o.n.s. .t.o. .b.e. .a.n. .O.b.j.e.c.t.\".).,.v.o.i.d. .0.!.=.=.n...d.a.t.a.&.&.g.(.\".o.p.t.i.o.n.s...d.a.t.a.\".,.n...d.a.t.a.).,.v.o.i.d. .0.!.=.=.n...h.a.s.h.f.n.?.(.h.(.\".F.u.n.c.t.i.o.n.\".=.=.=.b.(.n...h.a.s"
+    },
+    {
+      "offset": 689834496,
+      "needle": "private key",
+      "enc": "utf16",
+      "snippet": "I.n.v.a.l.i.d. .p.r.i.v.a.t.e. .k.e.y.:. .$.{.r.}.`.).,.\".o.w.n.-.k.e.y.\".=.=.=.a...s.t.a.t.u.s.&.&.(.e.=.\".Y.o.u. .c.a.n.n.o.t. .i.m.p.o.r.t. .y.o.u.r. .o.w.n. .p.r.i.v.a.t.e. .k.e.y.\".).,.\".n.o.-.a.c.c.o.u.n.t.\".=.=.=.a...s.t.a.t.u.s.&.&.(.e.=.`.A.c.c.o.u.n.t. .n.o.t. .f.o.u.n.d. .f.o.r. .p.r.i.v.a.t.e. .k.e.y.:. .$.{.r.}.`"
+    },
+    {
+      "offset": 689834642,
+      "needle": "private key",
+      "enc": "utf16",
+      "snippet": "o.u.r. .o.w.n. .p.r.i.v.a.t.e. .k.e.y.\".).,.\".n.o.-.a.c.c.o.u.n.t.\".=.=.=.a...s.t.a.t.u.s.&.&.(.e.=.`.A.c.c.o.u.n.t. .n.o.t. .f.o.u.n.d. .f.o.r. .p.r.i.v.a.t.e. .k.e.y.:. .$.{.r.}.`.).,.\".h.a.s.-.a.c.c.o.u.n.t.\".=.=.=.a...s.t.a.t.u.s.&.&.(.e.=.\".Y.o.u. .a.l.r.e.a.d.y. .h.a.v.e. .a.n. .E.O.S. .a.c.c.o.u.n.t. .i.n. .t.h.i.s. .w"
+    },
+    {
+      "offset": 689834772,
+      "needle": "private key",
+      "enc": "utf16",
+      "snippet": "u.n.d. .f.o.r. .p.r.i.v.a.t.e. .k.e.y.:. .$.{.r.}.`.).,.\".h.a.s.-.a.c.c.o.u.n.t.\".=.=.=.a...s.t.a.t.u.s.&.&.(.e.=.\".Y.o.u. .a.l.r.e.a.d.y. .h.a.v.e. .a.n. .E.O.S. .a.c.c.o.u.n.t. .i.n. .t.h.i.s. .w.a.l.l.e.t...\".).,.\".u.s.e.d.-.a.c.c.o.u.n.t.\".=.=.=.a...s.t.a.t.u.s.&.&.(.e.=.\".A.c.c.o.u.n.t. .i.s. .a.l.r.e.a.d.y. .i.n. .u.s.e"
+    },
+    {
+      "offset": 716129050,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": "d to create the private key from PEM string..The resulting key pair is missing public key parameters..PrivateKeyToPEMString.Failed to allocate temporary memory bio.Failed to write private key.PublicKeyToPEMString.Failed to write public key.Making key pair.Failed to make RSA key pair.Failed to allocate EC key.Failed to make EC"
+    },
+    {
+      "offset": 716129214,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": "Failed to write private key.PublicKeyToPEMString.Failed to write public key.Making key pair.Failed to make RSA key pair.Failed to allocate EC key.Failed to make EC key pair.ECDSA key requested for unknown curve.Key type requested not understood.Returning key pair...\\..\\third_party\\boringssl\\src\\crypto\\bio\\bio_mem.c..........."
+    },
+    {
+      "offset": 738114872,
+      "needle": "Salvatore",
+      "enc": "utf16",
+      "snippet": "............|...S.a.l.v.a.t.o.r.e. .M.a.r.o.n.i.,. .1.0.:.1.7. .A.M.,. .C.o.n.f.i.d.e.n.t.i.a.l.!.!.,. .R.e.a.d.,. .A.t.t.a.c.h.m.e.n.t.s.................H.............@.r.............................................................@.......................................@.r.................................................."
+    },
+    {
+      "offset": 781792732,
+      "needle": "Salvatore",
+      "enc": "ascii",
+      "snippet": "mail.com..From: Salvatore Maroni <salvatoremaroni3376@gmail.com>..Subject: Confidential!!............................................................................................................................................................................................................................................"
+    },
+    {
+      "offset": 792526605,
+      "needle": "user-key",
+      "enc": "ascii",
+      "snippet": "...ext-ms-win-ntuser-keyboard-l1-1-0.dll...........ext-ms-win-ntuser-keyboard-l1-2-0.dll...........ext-ms-win-ntuser-misc-l1-2-0.dll...............ext-ms-win-ntuser-mouse-l1-1-0.dll..............ext-ms-win-ntuser-private-l1-1-1.dll............e.x.t.-.m.s.-.w.D8.x.md.I..)...!<.8z[y..f.O.. ...*.&./N..b.w...........]VE.<<._.."
+    },
+    {
+      "offset": 792526653,
+      "needle": "user-key",
+      "enc": "ascii",
+      "snippet": "...ext-ms-win-ntuser-keyboard-l1-2-0.dll...........ext-ms-win-ntuser-misc-l1-2-0.dll...............ext-ms-win-ntuser-mouse-l1-1-0.dll..............ext-ms-win-ntuser-private-l1-1-1.dll............e.x.t.-.m.s.-.w.D8.x.md.I..)...!<.8z[y..f.O.. ...*.&./N..b.w...........]VE.<<._...?......X..g..c.&.....R`.]la.0@..._.!....F...M5?"
+    },
+    {
+      "offset": 827583725,
+      "needle": "user-key",
+      "enc": "ascii",
+      "snippet": "...ext-ms-win-ntuser-keyboard-l1-2-0.dll...........ext-ms-win-ntuser-menu-l1-1-2.dll...............ext-ms-win-ntuser-menu-l1-1-0.dll...............ext-ms-win-ntuser-menu-l1-1-1.dll...............ext-ms-win-ntuser-message-l1-1-2.dll............ext-ms-win-ntuser-mouse-l1-1-0.dll..............e.x.t.-.m.s.-.w.i.n.-.n.t.u.s.e.r"
+    },
+    {
+      "offset": 832577316,
+      "needle": "private key",
+      "enc": "utf16",
+      "snippet": "I.n.v.a.l.i.d. .p.r.i.v.a.t.e. .k.e.y.\".).;.v.a.r. .h.=.B.i.g.I.n.t.e.g.e.r...f.r.o.m.B.u.f.f.e.r.(.r...s.l.i.c.e.(.4.6.,.7.8.).).;.p.=.n.e.w. .E.C.P.a.i.r.(.h.,.n.u.l.l.,.{.n.e.t.w.o.r.k.:.a.}.).}.e.l.s.e.{.v.a.r. .m.=.l...P.o.i.n.t.....|...w...V...........................................................................w...T"
+    },
+    {
+      "offset": 851621562,
+      "needle": "private key",
+      "enc": "utf16",
+      "snippet": " .f.i.n.d. .a. .p.r.i.v.a.t.e. .k.e.y. .i.n. .t.h.e. .P.E.M. .f.i.l.e.\".).;.c.o.n.s.t. .g.=.e...s.l.i.c.e.(.u.+.r...l.e.n.g.t.h.,.d.).,.m.=.s...d.e.c.o.d.e.(.g.).;.i.f.(.t.).{.l.e.t. .e.;.t.r.y.{.e.=.o...E.n.c.r.y.p.t.e.d.P.r.i.v.a.t.e.K.e.y.I.n.f.o...p.a.r.s.e.(.m.).}.c.a.t.c.h.(.e.).{.t.h.r.o.w. .n.e.w. .n...d.e.f.a.u.l.t.("
+    },
+    {
+      "offset": 851621928,
+      "needle": "private key",
+      "enc": "utf16",
+      "snippet": "c.r.y.p.t.e.d. .p.r.i.v.a.t.e. .k.e.y.:. .$.{.e...m.e.s.s.a.g.e.}.`.).}.c.o.n.s.t. .r.=.a.w.a.i.t. .e...d.e.c.r.y.p.t.(.t.).;.i.f.(.\".1...3...1.0.1...1.1.2.\".!.=.=.r...a.l.g.I.d...a.l.g.I.d.e.n.t.).t.h.r.o.w. .n.e.w. .n...d.e.f.a.u.l.t.(.`.u.n.k.n.o.w.n. .p.r.i.v.a.t.e. .k.e.y. .a.l.g.o.r.i.t.h.m. .$.{.r...a.l.g.I.d...t.o.S.t"
+    },
+    {
+      "offset": 851622168,
+      "needle": "private key",
+      "enc": "utf16",
+      "snippet": "u.n.k.n.o.w.n. .p.r.i.v.a.t.e. .k.e.y. .a.l.g.o.r.i.t.h.m. .$.{.r...a.l.g.I.d...t.o.S.t.r.i.n.g.(.).}.`.).;.c.o.n.s.t. .s.=.i...d.e.c.o.d.e.(.r...p.r.i.v.a.t.e.K.e.y.).;.i.f.(.\".b.y.t.e.s.\".i.n. .s.).r.e.t.u.r.n. .a...d.e.f.a.u.l.t...s.i.g.n...k.e.y.P.a.i.r...f.r.o.m.S.e.e.d.(.s...b.y.t.e.s.).;.t.h.r.o.w. .n.e.w. .n...d.e.f.a"
+    },
+    {
+      "offset": 869629837,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": " Error(\"Missing private key\");return o.sign(e,this.d)},ECPair.prototype.toWIF=function(){if(!this.d)throw new Error(\"Missing privatRCRD(....id.....................cOd.....R]..............................Cj....D..QR.............................Cj....C..CR.............................Cj....B..4R.............................Cj.."
+    },
+    {
+      "offset": 873179842,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": "EDpurchase of a private keyrename or modify encrypted filespay ransomRansom:Win32/Hardbit!MTB..!FormBook.IRV!MTB...RemcosRAT.I!MTB......f....D.x...]Vt,ojmf..c...R.R.......+...(............o........X...o......2....o......(.....+..*.....o........(.....o..........+....o...........o.........X.....o......2...(...+....,..o........,"
+    },
+    {
+      "offset": 899484013,
+      "needle": "user-key",
+      "enc": "ascii",
+      "snippet": "...ext-ms-win-ntuser-keyboard-l1-1-0.dll...........api-ms-win-rtcore-session-l1-1-1.dll............e.x.t.-.m.s.-.o.n.e.c.o.r.e.-.m.p.c.-.i.n.p.u.t.-.l.1.-.1.-.0...ext-ms-win-ntuser-rim-l1-1-0.dll........\".......D.......T........... ...........ext-ms-win-mininput-inputhost-l1-1-0.dll........api-ms-win-rtcore-ntuser-wmpointe"
+    },
+    {
+      "offset": 907829817,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": ".......Import a private key.....................*..u+...+...+...*......................%.......Q...F...$.....'.........%...I....'<.........K...d...........5...[....\\.@5...ault............t.default...................5......m8.c@5...d...l.K@....%...........5........g:@5....h....Y@5.........b@5...R.,n..d@5.........7@5...a..+e.V@"
+    },
+    {
+      "offset": 921223486,
+      "needle": "private key",
+      "enc": "utf16",
+      "snippet": "I.n.v.a.l.i.d. .p.r.i.v.a.t.e. .k.e.y.\".).,.t.h.i.s..._.p.r.i.v.a.t.e.K.e.y.=.e.,.t.h.i.s..._.p.u.b.l.i.c.K.e.y.=.s...p.u.b.l.i.c.K.e.y.C.r.e.a.t.e.(.e.,.!.0.).,.t.h.i.s..._.i.d.e.n.t.i.f.i.e.r.=.f.(.t.h.i.s...p.u.b.l.i.c.K.e.y.).,.t.h.i.s..._.f.i.n.g.e.r.p.r.i.n.t.=.t.h.i.s..._.i.d.e.n.t.i.f.i.e.r...s.l.i.c.e.(.0.,.4.)...r.e"
+    },
+    {
+      "offset": 926137508,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": "The ECDSA P-256 private key in PKCS#8 format....]....x?*....userHandle..].......b...An opaque byte sequence with a maximum size of 64 bytes mapping the credential to a specific user...]....v......signCount...]....q......Signature counter. This is incremented by one for each successful assertion. See https://w3c.github.io/weba"
+    },
+    {
+      "offset": 940362860,
+      "needle": "private key",
+      "enc": "ascii",
+      "snippet": "ed to unprotect private key Y....P._........unlockWithPasswordZ.....]\\.3........pass[....6z.........rnp_key_unlock\\......x..........unlock]......)}.........autoPassword^....L.|........retrieveOpenPGPPassword_....(...........passwords`.........2........getPassphrasePrompta....pR..........userFlagsb........u2........pushc....DL"
+    },
+    {
+      "offset": 944460088,
+      "needle": "private key",
+      "enc": "utf16",
+      "snippet": "y.t.e.s. .o.f. .p.r.i.v.a.t.e. .k.e.y.\".).;.t.=.S.(.e.).}.e.l.s.e.{.i.f.(.!.w.(.e.).).t.h.r.o.w. .n.e.w. .T.y.p.e.E.r.r.o.r.(.\".E.x.p.e.c.t.e.d. .v.a.l.i.d. .p.r.i.v.a.t.e. .k.e.y.\".).;.i.f.(.3.2.!.=.=.e...l.e.n.g.t.h.).t.h.r.o.w. .n.e.w. .E.r.r.o.r.(.\".E.x.p.e.c.t.e.d. .3.2. .b.y.t.e.s. .o.f. .p.r.i.v.a.t.e. .k.e.y.\".).;.t.="
+    },
+    {
+      "offset": 944460230,
+      "needle": "private key",
+      "enc": "utf16",
+      "snippet": "d. .v.a.l.i.d. .p.r.i.v.a.t.e. .k.e.y.\".).;.i.f.(.3.2.!.=.=.e...l.e.n.g.t.h.).t.h.r.o.w. .n.e.w. .E.r.r.o.r.(.\".E.x.p.e.c.t.e.d. .3.2. .b.y.t.e.s. .o.f. .p.r.i.v.a.t.e. .k.e.y.\".).;.t.=.O.(.e.).}.i.f.(.!.F.(.t.).).t.h.r.o.w. .n.e.w. .E.r.r.o.r.(.\".E.x.p.e.c.t.e.d. .p.r.i.v.a.t.e. .k.e.y.:. .0. .<. .k.e.y. .<. .n.\".).;.r.e.t.u"
+    },
+    {
+      "offset": 944460368,
+      "needle": "private key",
+      "enc": "utf16",
+      "snippet": "y.t.e.s. .o.f. .p.r.i.v.a.t.e. .k.e.y.\".).;.t.=.O.(.e.).}.i.f.(.!.F.(.t.).).t.h.r.o.w. .n.e.w. .E.r.r.o.r.(.\".E.x.p.e.c.t.e.d. .p.r.i.v.a.t.e. .k.e.y.:. .0. .<. .k.e.y. .<. .n.\".).;.r.e.t.u.r.n. .t.}.f.u.n.c.t.i.o.n. .V.(.e.).{.r.e.t.u.r.n. .e. .i.n.s.t.a.n.c.e.o.f. .P.o.i.n.t.?.(.e...a.s.s.e.r.t.V.a.l.i.d.i.t.y.(.).,.e.).:.P"
+    },
+    {
+      "offset": 944460480,
+      "needle": "private key",
+      "enc": "utf16",
+      "snippet": "x.p.e.c.t.e.d. .p.r.i.v.a.t.e. .k.e.y.:. .0. .<. .k.e.y. .<. .n.\".).;.r.e.t.u.r.n. .t.}.f.u.n.c.t.i.o.n. .V.(.e.).{.r.e.t.u.r.n. .e. .i.n.s.t.a.n.c.e.o.f. .P.o.i.n.t.?.(.e...a.s.s.e.r.t.V.a.l.i.d.i.t.y.(.).,.e.).:.P.o.i.n.t...f.r.o.m.H.e.x.(.e.).}.f.u.n.c.t.i.o.n. .G.(.e.).{.i.f.(.e. .i.n.s.t.a.n.c.e.o.f. .b.).r.e.t.u.r.n. .e"
+    },
+    {
+      "offset": 967941309,
+      "needle": "user-key",
+      "enc": "ascii",
+      "snippet": "...ext-ms-win-ntuser-keyboard-l1-1-0.dll...................#..............FK..............F........Bcp47Langs.dll..api-ms-win-rtcore-ntuser-private-l1-1-7.dll.....ext-ms-win-shell32-shellfolders-l1-1-0.dll......api-ms-win-shcore-taskpool-l1-1-0.dll...........e.x.t.-.m.s.-.w.i.n.-.g.l.o.b.a.l.i.z.a.t.i.o.n.-.i.n.p.u.t.-.l.1"
+    },
+    {
+      "offset": 968538134,
+      "needle": "private key",
+      "enc": "utf16",
+      "snippet": "y.t.e.s. .o.f. .p.r.i.v.a.t.e. .k.e.y.\".).;.t.=.k.(.e.).}.e.l.s.e.{.i.f.(.!.v.(.e.).).t.h.r.o.w. .n.e.w. .T.y.p.e.E.r.r.o.r.(.\".E.x.p.e.c.t.e.d. .v.a.l.i.d. .p.r.i.v.a.t.e. .k.e.y.\".).;.i.f.(.3.2.!.=.=.e...l.e.n.g.t.h.).t.h.r.o.w. .n.e.w. .E.r.r.o.r.(.\".E.x.p.e.c.t.e.d. .3.2. .b.y.t.e.s. .o.f. .p.r.i.v.a.t.e. .k.e.y.\".).;.t.="
+    },
+    {
+      "offset": 968538414,
+      "needle": "private key",
+      "enc": "utf16",
+      "snippet": "y.t.e.s. .o.f. .p.r.i.v.a.t.e. .k.e.y.\".).;.t.=.C.(.e.).}.i.f.(.!.L.(.t.).).t.h.r.o.w. .n.e.w. .E.r.r.o.r.(.\".E.x.p.e.c.t.e.d. .p.r.i.v.a.t.e. .k.e.y.:. .0. .<. .k.e.y. .<. .n.\".).;.r.e.t.u.r.n. .t.}.f.u.n.c.t.i.o.n. .K.(.e.).{.r.e.t.u.r.n. .e. .i.n.s.t.a.n.c.e.o.f. .P.o.i.n.t.?.(.e...a.s.s.e.r.t.V.a.l.i.d.i.t.y.(.).,.e.).:.P"
+    }
+  ],
+  "matched": 419,
+  "returned": 100,
+  "truncated": true,
+  "all_results": "store/jobs/j000034/out/tool-output/ioc_scan-62747ce3f7081774.jsonl",
+  "all_results_format": "JSON Lines, one complete result per line"
+}

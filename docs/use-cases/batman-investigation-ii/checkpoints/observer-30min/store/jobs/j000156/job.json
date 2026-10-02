@@ -1,0 +1,108 @@
+{
+  "id": "j000156",
+  "attempt": 1,
+  "spec": {
+    "kind": "recipe",
+    "inputs": [
+      "job:j000154/cache-patched.7z"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 1800,
+    "network": "allowlist",
+    "parent": "j000154",
+    "recipe": "computer-forensics-base/archive-members",
+    "target": {
+      "paths": [
+        "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000154/out/cache-patched.7z"
+      ],
+      "name": "job:j000154/cache-patched.7z",
+      "ref": "job:j000154/cache-patched.7z",
+      "sha256": "dc964dd816be637dadf3f92d53bdf43b88ad5bbbcc7b37525b305d4ba4ea08d1"
+    }
+  },
+  "requester": {
+    "agent": "derived",
+    "name": "derived catalogue"
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:25:06.060Z",
+  "dedup_key": "e4d843db9c6b4a0402dd0c7640e2ee670e47539bf401f58e2c8c51e4506e3593",
+  "worker": "dfs-s421201-job-j000156-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:25:06.118Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "derived",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000156",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000156/scope.1.json",
+    "manifest_sha256": "68102704ecc9ade4059541c4ddafafa0b16b3bc71ffaff11de9b783602a7bef8"
+  },
+  "network": "none",
+  "tool_sha256": "fc2f2a957135dbc2138ed9e1ad5266be9f1ed4ed9bae5c6491a6d2d8d02949f5",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:25:07.407Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "same_as": [
+    {
+      "path": "index.tsv",
+      "sha256": "beafd7e518da6aa2a03c7d936e05834fc93a00ef317a203e8f96d111792b210b",
+      "bytes": 144,
+      "job": "j000056",
+      "file": "index.tsv"
+    },
+    {
+      "path": "members.tsv",
+      "sha256": "6035530695b7e3df31140cbb74515150f07eb58ba09992ab1210b62f1a5c6d6a",
+      "bytes": 200,
+      "job": "j000056",
+      "file": "members.tsv"
+    }
+  ],
+  "outputs": {
+    "manifest_sha256": "ae0b366bcfa5deabb2aade7e038f3185502ea877f973733fd6ae4ee05b7abaa7",
+    "files": 3,
+    "bytes": 684,
+    "rejected": 0,
+    "path": "store/jobs/j000156/out"
+  },
+  "sensitive": {
+    "why": "derived",
+    "from": [
+      "j000056",
+      "j000154"
+    ],
+    "note": "made from the sensitive output of j000056, j000154: every output it sealed is sensitive"
+  },
+  "generation": "g0005",
+  "revision": 6
+}

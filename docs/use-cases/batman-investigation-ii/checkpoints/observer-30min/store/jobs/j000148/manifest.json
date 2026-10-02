@@ -1,0 +1,1 @@
+{"v":1,"job":"j000148","attempt":1,"sealed_at":"2026-10-02T10:22:12.266Z","files":[{"path":"hostkeys-crypto-tests.json","path_b64":"aG9zdGtleXMtY3J5cHRvLXRlc3RzLmpzb24=","bytes":3534,"sha256":"7a02dc64ff2a513b5440939f8044e16073810b27fd68bf3dfba54717297206b5","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":3534}}

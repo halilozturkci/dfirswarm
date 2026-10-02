@@ -1,0 +1,107 @@
+{
+  "id": "j000159",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000107/entries.json",
+      "job:j000130/archive/contact/instance1/hostkeys",
+      "job:j000130/archive/contact/instance1/config.dbx",
+      "job:j000130/archive/contact/instance_db/hostkeys",
+      "job:j000130/archive/contact/instance_db/instance.dbx"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport os,json,hashlib,itertools,struct\nfrom Crypto.Cipher import AES,ChaCha20_Poly1305\nent=json.load(open('store/jobs/j000107/out/entries.json'))['entries'];pw=next(e['Password'] for e in ent if 'Recycle Bin' in e.get('_groups',[])).encode()\npairs=[('i1','store/jobs/j000130/out/archive/contact/instance1/hostkeys','store/jobs/j000130/out/archive/contact/instance1/config.dbx'),('idb','store/jobs/j000130/out/archive/contact/instance_db/hostkeys','store/jobs/j000130/out/archive/contact/instance_db/instance.dbx')]\nres=[]\nfor lab,hp,dp in pairs:\n h=open(hp,'rb').read();p=open(dp,'rb').read()[:4096]\n keys={'pw-md5':hashlib.md5(pw).digest(),'pw-sha256':hashlib.sha256(pw).digest(),'pw-raw16':pw[:16],'pw-last16':pw[-16:]}\n for o in range(len(h)):\n  for n in (16,24,32):\n   if o+n<=len(h):keys[f'h{o}:{n}']=h[o:o+n]\n nonces={}\n for nlen in (12,16):\n  for endian in ('little','big'):\n   for side in ('left','right'):\n    nb=(1).to_bytes(4,endian);nonces[f'p1-{nlen}-{endian}-{side}']=(nb+bytes(nlen-4)) if side=='left' else (bytes(nlen-4)+nb)\n  nonces[f'zero{nlen}']=bytes(nlen);nonces[f'hfirst{nlen}']=h[1:1+nlen];nonces[f'hlast{nlen}']=h[-nlen:];nonces[f'dbfirst{nlen}']=p[:nlen]\n for taglen in (12,16):\n  if taglen>=len(p):continue\n  tag=p[-taglen:]\n  cts={'all-except-tail':p[:-taglen],'skip-clear':p[:16]+p[24:-taglen],'after-clear':p[24:-taglen]}\n  aads={'none':b'','clear':p[16:24],'header24':p[:24], 'pageno-le':(1).to_bytes(4,'little'),'pageno-be':(1).to_bytes(4,'big')}\n  for kn,k in keys.items():\n   for nn,nonce in nonces.items():\n    for cn,ct in cts.items():\n     for an,aad in aads.items():\n      try:c=AES.new(k,AES.MODE_GCM,nonce=nonce,mac_len=taglen);c.update(aad);pt=c.decrypt_and_verify(ct,tag);res.append([lab,kn,nn,taglen,cn,an,pt[:100].hex()])\n      except:pass\nprint('matches',res)\nopen(os.environ['OUT']+'/gcm-page-tests.json','w').write(json.dumps({'matches':res},indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120104",
+    "name": "DBX Key Examiner",
+    "doing": "Establishing Q14, the userkey of the encrypted DBX database, from unknown.data and memory artefacts."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:26:31.066Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000130/out/archive/contact/instance1/hostkeys",
+        "sha256": "05c1bb92109acc5198cdd403d5ef72a166bf0965b3a8d4083e3522c18f526be5"
+      },
+      {
+        "path": "store/jobs/j000107/out/entries.json",
+        "sha256": "5e1e941774aad60e462d6af2bfd94d9f65e84e28f47030d062583d1f68da0c6b"
+      },
+      {
+        "path": "store/jobs/j000130/out/archive/contact/instance_db/hostkeys",
+        "sha256": "7354c1f37bc0b42fb6abaa668114de19f7ec3826ad37c2230f1c3de1fbe51756"
+      },
+      {
+        "path": "store/jobs/j000130/out/archive/contact/instance_db/instance.dbx",
+        "sha256": "a013b88dd638dd1155d11e2daa9c30b4396cca9594b611735294c2926cd003b4"
+      },
+      {
+        "path": "store/jobs/j000130/out/archive/contact/instance1/config.dbx",
+        "sha256": "eb348b3f0914b0e0ed211386fd8a7fa91c0b33e48a597f7b11e1c779279a9c7b"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000159-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:26:31.128Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000159",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 5,
+    "files": 5,
+    "bound": 0,
+    "manifest": "store/jobs/j000159/scope.1.json",
+    "manifest_sha256": "a7ce63614fb9f8523995bad8a093a571f1fe3e23394a23140f866026da98a06b"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:26:41.944Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "fe5383fb7433949f677ff5961452067f1296c554d5c777913623bc4725245fa4",
+    "files": 1,
+    "bytes": 19,
+    "rejected": 0,
+    "path": "store/jobs/j000159/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

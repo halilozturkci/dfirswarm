@@ -1,0 +1,85 @@
+{
+  "id": "j000011",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/unknown.data"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "command": "python3 - <<'PY'\nimport pathlib\np=pathlib.Path('inputs/chall/unknown.data').read_bytes()\nprint(len(p),p[:40].hex())\nPY"
+  },
+  "requester": {
+    "agent": "s42120108",
+    "name": "DBX Key Analyst",
+    "doing": "Establish Q6 malware identity and destination from memory evidence."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T09:57:53.655Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "inputs/chall/unknown.data",
+        "sha256": "87841ce462a019649f6206c72cf65ce5305a88b828ca45996ae9422e6f578f4f"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000011-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T09:57:53.707Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000011",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000011/scope.1.json",
+    "manifest_sha256": "7792ef2d4252eb8562e34a348435a8aee4439f4092135f61b91cfef39edf871c"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T09:57:54.478Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "2c7cee2edce4cd2d8e887f715a273cd985f76f6a563ac1b01bbfdce4cba1de77",
+    "files": 0,
+    "bytes": 0,
+    "rejected": 0,
+    "path": "store/jobs/j000011/out"
+  }
+}

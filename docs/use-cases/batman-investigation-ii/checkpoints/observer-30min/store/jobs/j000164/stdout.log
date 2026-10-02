@@ -1,0 +1,656 @@
+{
+  "entries_json_type": "dict",
+  "entries_json_top_keys": [
+    "password_md5",
+    "meta",
+    "entries"
+  ],
+  "entries_json_count": null,
+  "entries_with_credential_fields": [
+    {
+      "path": [
+        "entries",
+        "0"
+      ],
+      "fields": {
+        "Password": {
+          "chars": 20,
+          "utf8_bytes": 20
+        },
+        "Title": {
+          "chars": 36,
+          "utf8_bytes": 36
+        },
+        "UserName": {
+          "chars": 10,
+          "utf8_bytes": 10
+        }
+      },
+      "value_offsets_in_entries_json": {
+        "Password": [
+          248
+        ],
+        "Title": [
+          287
+        ],
+        "UserName": [
+          362,
+          936,
+          7676
+        ]
+      }
+    },
+    {
+      "path": [
+        "entries",
+        "1"
+      ],
+      "fields": {
+        "Password": {
+          "chars": 20,
+          "utf8_bytes": 20
+        },
+        "Title": {
+          "chars": 14,
+          "utf8_bytes": 14
+        },
+        "UserName": {
+          "chars": 30,
+          "utf8_bytes": 30
+        }
+      },
+      "value_offsets_in_entries_json": {
+        "Password": [
+          844
+        ],
+        "Title": [
+          883
+        ],
+        "UserName": [
+          936
+        ]
+      }
+    },
+    {
+      "path": [
+        "entries",
+        "2"
+      ],
+      "fields": {
+        "Password": {
+          "chars": 20,
+          "utf8_bytes": 20
+        },
+        "Title": {
+          "chars": 46,
+          "utf8_bytes": 46
+        },
+        "UserName": {
+          "chars": 12,
+          "utf8_bytes": 12
+        }
+      },
+      "value_offsets_in_entries_json": {
+        "Password": [
+          1438
+        ],
+        "Title": [
+          1477
+        ],
+        "UserName": [
+          1562
+        ]
+      }
+    },
+    {
+      "path": [
+        "entries",
+        "3"
+      ],
+      "fields": {
+        "Password": {
+          "chars": 20,
+          "utf8_bytes": 20
+        },
+        "Title": {
+          "chars": 29,
+          "utf8_bytes": 29
+        },
+        "UserName": {
+          "chars": 14,
+          "utf8_bytes": 14
+        }
+      },
+      "value_offsets_in_entries_json": {
+        "Password": [
+          2046
+        ],
+        "Title": [
+          2085
+        ],
+        "UserName": [
+          2153
+        ]
+      }
+    },
+    {
+      "path": [
+        "entries",
+        "4"
+      ],
+      "fields": {
+        "Password": {
+          "chars": 20,
+          "utf8_bytes": 20
+        },
+        "Title": {
+          "chars": 51,
+          "utf8_bytes": 51
+        },
+        "UserName": {
+          "chars": 6,
+          "utf8_bytes": 6
+        }
+      },
+      "value_offsets_in_entries_json": {
+        "Password": [
+          2639
+        ],
+        "Title": [
+          2678
+        ],
+        "UserName": [
+          2768
+        ]
+      }
+    },
+    {
+      "path": [
+        "entries",
+        "5"
+      ],
+      "fields": {
+        "Password": {
+          "chars": 20,
+          "utf8_bytes": 20
+        },
+        "Title": {
+          "chars": 40,
+          "utf8_bytes": 40
+        },
+        "UserName": {
+          "chars": 15,
+          "utf8_bytes": 15
+        }
+      },
+      "value_offsets_in_entries_json": {
+        "Password": [
+          3246
+        ],
+        "Title": [
+          3285
+        ],
+        "UserName": [
+          3364
+        ]
+      }
+    },
+    {
+      "path": [
+        "entries",
+        "6"
+      ],
+      "fields": {
+        "Password": {
+          "chars": 20,
+          "utf8_bytes": 20
+        },
+        "Title": {
+          "chars": 35,
+          "utf8_bytes": 35
+        },
+        "UserName": {
+          "chars": 16,
+          "utf8_bytes": 16
+        }
+      },
+      "value_offsets_in_entries_json": {
+        "Password": [
+          3851
+        ],
+        "Title": [
+          3890
+        ],
+        "UserName": [
+          3964
+        ]
+      }
+    },
+    {
+      "path": [
+        "entries",
+        "7"
+      ],
+      "fields": {
+        "Password": {
+          "chars": 20,
+          "utf8_bytes": 20
+        },
+        "Title": {
+          "chars": 55,
+          "utf8_bytes": 55
+        },
+        "UserName": {
+          "chars": 13,
+          "utf8_bytes": 13
+        }
+      },
+      "value_offsets_in_entries_json": {
+        "Password": [
+          4452
+        ],
+        "Title": [
+          4491
+        ],
+        "UserName": [
+          4585
+        ]
+      }
+    },
+    {
+      "path": [
+        "entries",
+        "8"
+      ],
+      "fields": {
+        "Password": {
+          "chars": 20,
+          "utf8_bytes": 20
+        },
+        "Title": {
+          "chars": 33,
+          "utf8_bytes": 33
+        },
+        "UserName": {
+          "chars": 12,
+          "utf8_bytes": 12
+        }
+      },
+      "value_offsets_in_entries_json": {
+        "Password": [
+          5070
+        ],
+        "Title": [
+          5109
+        ],
+        "UserName": [
+          5181
+        ]
+      }
+    },
+    {
+      "path": [
+        "entries",
+        "9"
+      ],
+      "fields": {
+        "Password": {
+          "chars": 20,
+          "utf8_bytes": 20
+        },
+        "Title": {
+          "chars": 128,
+          "utf8_bytes": 128
+        },
+        "UserName": {
+          "chars": 11,
+          "utf8_bytes": 11
+        }
+      },
+      "value_offsets_in_entries_json": {
+        "Password": [
+          5665
+        ],
+        "Title": [
+          5704
+        ],
+        "UserName": [
+          5871
+        ]
+      }
+    },
+    {
+      "path": [
+        "entries",
+        "10"
+      ],
+      "fields": {
+        "Password": {
+          "chars": 20,
+          "utf8_bytes": 20
+        },
+        "Title": {
+          "chars": 43,
+          "utf8_bytes": 43
+        },
+        "UserName": {
+          "chars": 9,
+          "utf8_bytes": 9
+        }
+      },
+      "value_offsets_in_entries_json": {
+        "Password": [
+          6354
+        ],
+        "Title": [
+          6393
+        ],
+        "UserName": [
+          6475
+        ]
+      }
+    },
+    {
+      "path": [
+        "entries",
+        "11"
+      ],
+      "fields": {
+        "Password": {
+          "chars": 20,
+          "utf8_bytes": 20
+        },
+        "Title": {
+          "chars": 46,
+          "utf8_bytes": 46
+        },
+        "UserName": {
+          "chars": 8,
+          "utf8_bytes": 8
+        }
+      },
+      "value_offsets_in_entries_json": {
+        "Password": [
+          6956
+        ],
+        "Title": [
+          6995
+        ],
+        "UserName": [
+          7080
+        ]
+      }
+    },
+    {
+      "path": [
+        "entries",
+        "12"
+      ],
+      "fields": {
+        "Password": {
+          "chars": 20,
+          "utf8_bytes": 20
+        },
+        "Title": {
+          "chars": 38,
+          "utf8_bytes": 38
+        },
+        "UserName": {
+          "chars": 10,
+          "utf8_bytes": 10
+        }
+      },
+      "value_offsets_in_entries_json": {
+        "Password": [
+          7560
+        ],
+        "Title": [
+          7599
+        ],
+        "UserName": [
+          362,
+          936,
+          7676
+        ]
+      }
+    },
+    {
+      "path": [
+        "entries",
+        "13"
+      ],
+      "fields": {
+        "Password": {
+          "chars": 20,
+          "utf8_bytes": 20
+        },
+        "Title": {
+          "chars": 59,
+          "utf8_bytes": 59
+        },
+        "UserName": {
+          "chars": 7,
+          "utf8_bytes": 7
+        }
+      },
+      "value_offsets_in_entries_json": {
+        "Password": [
+          8158
+        ],
+        "Title": [
+          8197
+        ],
+        "UserName": [
+          8295
+        ]
+      }
+    },
+    {
+      "path": [
+        "entries",
+        "14"
+      ],
+      "fields": {
+        "Password": {
+          "chars": 20,
+          "utf8_bytes": 20
+        },
+        "Title": {
+          "chars": 37,
+          "utf8_bytes": 37
+        },
+        "UserName": {
+          "chars": 5,
+          "utf8_bytes": 5
+        }
+      },
+      "value_offsets_in_entries_json": {
+        "Password": [
+          8774
+        ],
+        "Title": [
+          8813
+        ],
+        "UserName": [
+          8889
+        ]
+      }
+    },
+    {
+      "path": [
+        "entries",
+        "15"
+      ],
+      "fields": {
+        "Password": {
+          "chars": 20,
+          "utf8_bytes": 20
+        },
+        "Title": {
+          "chars": 22,
+          "utf8_bytes": 22
+        },
+        "UserName": {
+          "chars": 12,
+          "utf8_bytes": 12
+        }
+      },
+      "value_offsets_in_entries_json": {
+        "Password": [
+          9366
+        ],
+        "Title": [
+          9405
+        ],
+        "UserName": [
+          9466
+        ]
+      }
+    },
+    {
+      "path": [
+        "entries",
+        "16"
+      ],
+      "fields": {
+        "Password": {
+          "chars": 20,
+          "utf8_bytes": 20
+        },
+        "Title": {
+          "chars": 25,
+          "utf8_bytes": 25
+        },
+        "UserName": {
+          "chars": 12,
+          "utf8_bytes": 12
+        }
+      },
+      "value_offsets_in_entries_json": {
+        "Password": [
+          9950
+        ],
+        "Title": [
+          9989
+        ],
+        "UserName": [
+          10053
+        ]
+      }
+    }
+  ],
+  "xml_recyclebin_enabled": "True",
+  "xml_recyclebin_uuid_present": true,
+  "xml_recyclebin_uuid_offset": 1079,
+  "xml_recyclebin_entries": [
+    {
+      "path": [
+        "bruce",
+        "Recycle Bin"
+      ],
+      "entry_index": 0,
+      "fields": {
+        "Notes": {
+          "chars": 0,
+          "utf8_bytes": 0,
+          "offset_xml": null
+        },
+        "Password": {
+          "chars": 28,
+          "utf8_bytes": 28,
+          "offset_xml": 28368
+        },
+        "Title": {
+          "chars": 25,
+          "utf8_bytes": 25,
+          "offset_xml": 28474
+        },
+        "URL": {
+          "chars": 0,
+          "utf8_bytes": 0,
+          "offset_xml": null
+        },
+        "UserName": {
+          "chars": 12,
+          "utf8_bytes": 12,
+          "offset_xml": 28656
+        }
+      },
+      "deletion_time_present": false,
+      "deletion_time_offset": null
+    }
+  ],
+  "xml_groups": [
+    {
+      "path": [
+        "bruce"
+      ],
+      "uuid_matches_recyclebin": false,
+      "entry_count": 16,
+      "uuid_offset_xml": 1443
+    },
+    {
+      "path": [
+        "bruce",
+        "General"
+      ],
+      "uuid_matches_recyclebin": false,
+      "entry_count": 0,
+      "uuid_offset_xml": 22122
+    },
+    {
+      "path": [
+        "bruce",
+        "Windows"
+      ],
+      "uuid_matches_recyclebin": false,
+      "entry_count": 0,
+      "uuid_offset_xml": 22908
+    },
+    {
+      "path": [
+        "bruce",
+        "Network"
+      ],
+      "uuid_matches_recyclebin": false,
+      "entry_count": 0,
+      "uuid_offset_xml": 23694
+    },
+    {
+      "path": [
+        "bruce",
+        "Internet"
+      ],
+      "uuid_matches_recyclebin": false,
+      "entry_count": 0,
+      "uuid_offset_xml": 24479
+    },
+    {
+      "path": [
+        "bruce",
+        "eMail"
+      ],
+      "uuid_matches_recyclebin": false,
+      "entry_count": 0,
+      "uuid_offset_xml": 25265
+    },
+    {
+      "path": [
+        "bruce",
+        "Homebanking"
+      ],
+      "uuid_matches_recyclebin": false,
+      "entry_count": 0,
+      "uuid_offset_xml": 26049
+    },
+    {
+      "path": [
+        "bruce",
+        "Recycle Bin"
+      ],
+      "uuid_matches_recyclebin": true,
+      "entry_count": 1,
+      "uuid_offset_xml": 1079
+    }
+  ]
+}

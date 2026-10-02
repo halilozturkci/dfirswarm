@@ -1,0 +1,19 @@
+image_bytes 4831838208 buildinfo_hits 2
+3487571968 8 2 go1.21.5 0w��tA�����path	command-line-arguments
+build	-buildmode=exe
+build	-compiler=gc
+build	-ldflags="-extldflags -static"
+build	CGO_ENABLED=0
+build	GOARCH=amd64
+build	GOOS=windows
+build	GOAMD64=v1
+�2C1
+3729207296 8 2 go1.21.5 0w��tA�����path	command-line-arguments
+build	-buildmode=exe
+build	-compiler=gc
+build	-ldflags="-extldflags -static"
+build	CGO_ENABLED=0
+build	GOARCH=amd64
+build	GOOS=windows
+build	GOAMD64=v1
+�2C1

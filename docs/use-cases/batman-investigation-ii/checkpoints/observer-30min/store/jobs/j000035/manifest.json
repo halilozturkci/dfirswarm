@@ -1,0 +1,1 @@
+{"v":1,"job":"j000035","attempt":1,"sealed_at":"2026-10-02T10:03:56.241Z","files":[{"path":"dumpfiles.txt","path_b64":"ZHVtcGZpbGVzLnR4dA==","bytes":30,"sha256":"bbd286d7b0ebf78850099bcfc7949b506f6f8a2002439c7dfc85b9810ed9f8d7","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":30}}

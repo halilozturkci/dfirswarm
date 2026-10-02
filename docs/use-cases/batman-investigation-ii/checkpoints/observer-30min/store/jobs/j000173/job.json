@@ -1,0 +1,91 @@
+{
+  "id": "j000173",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/Carmine-Falcone.raw"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport os,json,struct,pathlib\nsrc='inputs/chall/Carmine-Falcone.raw';magic=b'\\xff Go buildinf:'; hits=[]\nwith open(src,'rb') as f:\n prev=b'';n=0\n while True:\n  c=f.read(16*1024*1024)\n  if not c:break\n  b=prev+c;base=n-len(prev);pos=0\n  while True:\n   j=b.find(magic,pos)\n   if j<0:break\n   off=base+j\n   if not hits or off!=hits[-1]:hits.append(off)\n   pos=j+1\n  n+=len(c);prev=b[-32:]\n def varstr(b,p):\n  v=0;s=0\n  for i in range(10):\n   z=b[p];p+=1;v|=(z&127)<<s\n   if not z&128:return b[p:p+v].decode('utf8','replace'),p+v\n   s+=7\n  raise ValueError('badvarint')\n rows=[]\n for off in hits:\n  f.seek(off);b=f.read(16384);r={'offset':off,'header_hex':b[:32].hex(),'ptr_size':b[14],'flags':b[15]}\n  if b[15]&2:\n   try:r['version'],p=varstr(b,32);r['module'],p=varstr(b,p)\n   except Exception as e:r['parse_error']=str(e)\n  else:r['pointer_fields_hex']=b[16:32].hex()\n  r['context_ascii']=''.join(chr(x) if 32<=x<127 or x in (9,10,13) else '.' for x in b[:8192]);rows.append(r)\npathlib.Path(os.environ['OUT'],'go_buildinfo.json').write_text(json.dumps({'size':n,'hits':rows},indent=2))\nprint('image_bytes',n,'buildinfo_hits',len(rows))\nfor r in rows:print(r['offset'],r['ptr_size'],r['flags'],r.get('version'),r.get('module','')[:200])\nPY"
+  },
+  "requester": {
+    "agent": "s42120102",
+    "name": "Wallet trace",
+    "doing": "Examine wallet installation and wallet protection evidence for questions 5 and 9."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:31:56.504Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "inputs/chall/Carmine-Falcone.raw",
+        "sha256": "3e03551e1f55dd792b0bc459b5620522d61fcf2379e8f6d89ef439fef8263cac"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000173-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:31:56.555Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000173",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000173/scope.1.json",
+    "manifest_sha256": "88327b876a16ebc73f8d3d3c30408de1675c692c53e9d5b283533a78644501c3"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:32:00.914Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "663345011602d6e933c2660e707d727238a806c727b9b964ef8ffd475303d84f",
+    "files": 1,
+    "bytes": 17725,
+    "rejected": 0,
+    "path": "store/jobs/j000173/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

@@ -1,0 +1,1 @@
+{"v":1,"job":"j000064","attempt":1,"sealed_at":"2026-10-02T10:06:33.940Z","files":[{"path":"install-and-fiat.txt","path_b64":"aW5zdGFsbC1hbmQtZmlhdC50eHQ=","bytes":18405,"sha256":"c0ddcd57c366815bfa149dc2b60d8705d2b76a9997eacde9607afd403858acb1","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":18405}}

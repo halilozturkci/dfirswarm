@@ -1,0 +1,10 @@
+total 8.0K
+-rw-r--r-- 1 root root  188 Oct  2 10:07 dumpfiles.txt
+-rw------- 1 root root 4.0K Oct  2 10:07 file.0xab0b138c5bc0.0xab0b0d5e4230.DataSectionObject.bruce.kdbx.dat
+-rw------- 1 root root    0 Oct  2 10:07 file.0xab0b138c5bc0.0xab0b11e8d010.SharedCacheMap.bruce.kdbx.vacb
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000078/dumpfiles.txt:                                                       ASCII text
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000078/file.0xab0b138c5bc0.0xab0b0d5e4230.DataSectionObject.bruce.kdbx.dat: Keepass password database 2.x KDBX
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000078/file.0xab0b138c5bc0.0xab0b11e8d010.SharedCacheMap.bruce.kdbx.vacb:   empty
+fdb69eab43380998c92230cd385cfc04a0c9463b9d577b70d5405d09393c47c5  /Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000078/dumpfiles.txt
+7b55391c40b18b8a9afc43dff0c9814ba6bc0e6566358aa994ff93da76b5e220  /Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000078/file.0xab0b138c5bc0.0xab0b0d5e4230.DataSectionObject.bruce.kdbx.dat
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  /Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000078/file.0xab0b138c5bc0.0xab0b11e8d010.SharedCacheMap.bruce.kdbx.vacb

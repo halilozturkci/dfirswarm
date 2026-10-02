@@ -1,0 +1,1 @@
+{"v":1,"job":"j000081","attempt":1,"sealed_at":"2026-10-02T10:08:42.501Z","files":[{"path":"historical-price-code.txt","path_b64":"aGlzdG9yaWNhbC1wcmljZS1jb2RlLnR4dA==","bytes":0,"sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":0}}

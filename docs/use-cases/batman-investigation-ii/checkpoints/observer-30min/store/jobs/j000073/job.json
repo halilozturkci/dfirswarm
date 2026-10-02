@@ -1,0 +1,81 @@
+{
+  "id": "j000073",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000039/context.bin"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "command": "python3 - <<'PY'\nfrom pathlib import Path\nb=Path('store/jobs/j000039/out/context.bin').read_bytes()\nprint('length',len(b))\nfor needle in [b'MZ',b'PE\\0\\0',b'\\xff Go buildinf:',b'Go buildinf:',b'\\x7fELF',b'go1.']:\n poss=[]; s=0\n while (i:=b.find(needle,s))>=0: poss.append(i);s=i+1\n print(repr(needle),poss[:30],len(poss))\nfor x in [b'path\\t',b'mod\\t',b'build\\t',b'github.com/',b'wallet',b'Electron']:\n print(repr(x),[i for i in range(len(b)) if b.startswith(x,i)][:10])\nPY"
+  },
+  "requester": {
+    "agent": "s42120109",
+    "name": "Memory artifact scout",
+    "doing": "Checking independent malware-attribution paths for Q6; raw-byte verification is complete, awaiting L-8's attribution work"
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:07:18.573Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000039/out/context.bin",
+        "sha256": "c9ecd11036dcbf9f06d14877ada501944a0f4e656bdb18c51bf595d21ee3ac19"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000073-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:07:18.625Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000073",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000073/scope.1.json",
+    "manifest_sha256": "391d1ec87a31067d4e532571412deba354d43a3a3456f3975286fd80443d3c41"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:07:19.396Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "a41e8a0ec8ed92e8d3927e45534a969c69cba5c2a359a9182616ae08710fcf1e",
+    "files": 0,
+    "bytes": 0,
+    "rejected": 0,
+    "path": "store/jobs/j000073/out"
+  }
+}

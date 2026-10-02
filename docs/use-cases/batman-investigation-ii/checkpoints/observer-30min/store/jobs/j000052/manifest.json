@@ -1,0 +1,1 @@
+{"v":1,"job":"j000052","attempt":1,"sealed_at":"2026-10-02T10:04:42.243Z","files":[{"path":"contact.rar","path_b64":"Y29udGFjdC5yYXI=","bytes":1732132,"sha256":"c199125c1f7596653096d31b61379b2caaa522d0a7872efd8ccc3b21638865ec","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":1732132}}

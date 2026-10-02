@@ -1,0 +1,1 @@
+{"v":1,"job":"j000164","attempt":1,"sealed_at":"2026-10-02T10:27:55.464Z","files":[{"path":"keepass-structure-redacted.json","path_b64":"a2VlcGFzcy1zdHJ1Y3R1cmUtcmVkYWN0ZWQuanNvbg==","bytes":11502,"sha256":"11d7709afa4fe398a4d91346f8abf48e893e47fc15636587a2eee1816b11cab5","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":11502}}

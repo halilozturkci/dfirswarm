@@ -1,0 +1,1 @@
+{"v":1,"job":"j000021","attempt":1,"sealed_at":"2026-10-02T09:59:36.137Z","files":[{"path":"candidate-records.txt","path_b64":"Y2FuZGlkYXRlLXJlY29yZHMudHh0","bytes":113467,"sha256":"033fad8de6d699d37e23914b89cb1b09e9f94e2a3c1ca8765406aed9c670b954","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":113467}}

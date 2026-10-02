@@ -1,0 +1,101 @@
+{
+  "id": "j000168",
+  "attempt": 1,
+  "spec": {
+    "kind": "tool",
+    "inputs": [
+      "input:chall/Carmine-Falcone.raw"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 360,
+    "network": "off",
+    "tool": "mem_fs",
+    "args": {
+      "path": "inputs/chall/Carmine-Falcone.raw",
+      "mount": "work/s42120107/memfs",
+      "list": "sys/proc/proc.txt",
+      "timeout_seconds": 300
+    }
+  },
+  "requester": {
+    "agent": "s42120107",
+    "name": "Memory triage",
+    "doing": "Examine the memory image for wallet/password-manager artifacts and claim questions 3–6 if available."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:30:14.861Z",
+  "reuse": {
+    "op": "tool:mem_fs",
+    "objects": [
+      {
+        "path": "inputs/chall/Carmine-Falcone.raw",
+        "sha256": "3e03551e1f55dd792b0bc459b5620522d61fcf2379e8f6d89ef439fef8263cac"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000168-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:30:14.920Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "general",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000168",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000168/scope.1.json",
+    "manifest_sha256": "b0e244bcf4fade538a04c20aa503cadfeef2815446b3b76176b8a6fe31dd31c5"
+  },
+  "network": "none",
+  "tool_sha256": "62e8a31ca6947490160a2635fb97256752fbd6e31e4fa4ae4507d2712e64ef46",
+  "write_refused": {
+    "error": "Read-only file system",
+    "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/work",
+    "file": "stderr.log",
+    "line": 26,
+    "lines": 1,
+    "files": 1
+  },
+  "exit": 1,
+  "status": "failed",
+  "reason": "exit 1: a write outside $OUT was refused (\"Read-only file system\" on /Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/work, store/jobs/j000168/stderr.log line 26). In a worker the job starts in the run's directory, and it and the whole run are read-only: only this job's output directory, $OUT (/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000168), is writable. Point the program's log, temp or output options there, or cd \"$OUT\" before running it",
+  "finished_at": "2026-10-02T10:30:15.642Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "d61ef7b92d4dc3a7038086d21c05627d27f4913e8db3636016a9e042a45d617c",
+    "files": 0,
+    "bytes": 0,
+    "rejected": 0,
+    "path": "store/jobs/j000168/out"
+  }
+}

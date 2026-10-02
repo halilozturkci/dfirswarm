@@ -1,0 +1,87 @@
+{
+  "id": "j000019",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000001/wallet-ascii.txt"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport os,re,json,urllib.parse,hashlib\nsrc='store/jobs/j000001/out/wallet-ascii.txt'\nout=[]\nfor l in open(src,encoding='utf-8',errors='replace'):\n if 'walletDir%22' not in l or 'passphrase%22' not in l: continue\n offset,s=l.split(' ',1)\n m=re.search(r'%7[Bb].*?%7[Dd]',s)\n if not m:continue\n try:d=json.loads(urllib.parse.unquote(m.group()))\n except Exception:continue\n if 'passphrase' not in d:continue\n out.append({'physical_string_offset':int(offset),'walletDir':d['walletDir'],'password_characters':len(d['passphrase']),'password_utf8_hex':d['passphrase'].encode().hex(),'password_md5':hashlib.md5(d['passphrase'].encode()).hexdigest(),'encoded_json':m.group()})\njson.dump(out,open(os.environ['OUT']+'/uri_passwords.json','w'),indent=2)\nprint('Parsed records',len(out),'distinct MD5s',sorted(set(x['password_md5'] for x in out)))\nPY"
+  },
+  "requester": {
+    "agent": "s42120102",
+    "name": "Wallet trace",
+    "doing": "Examine wallet installation and wallet protection evidence for questions 5 and 9."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T09:59:02.508Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000001/out/wallet-ascii.txt",
+        "sha256": "dc4436e1381e07290f1184bc047ba8a11699ff88b756c8bf4853f01400119759"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000019-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T09:59:37.051Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000019",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000019/scope.1.json",
+    "manifest_sha256": "a2eabe47a017e80e35393c60e945009dfff9e1d81a4ac3bbfbd360737672c0ed"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T09:59:37.789Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "41240c10fdb6312c25369ce8f25700a4fe473c1cd278047cd68a40b3e11cdb8e",
+    "files": 1,
+    "bytes": 23942,
+    "rejected": 0,
+    "path": "store/jobs/j000019/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

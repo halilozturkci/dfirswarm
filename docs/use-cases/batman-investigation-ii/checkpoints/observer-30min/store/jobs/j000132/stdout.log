@@ -1,0 +1,7 @@
+apex.sqlite3 tables=apex_stormcrow
+instance1/home.db tables=activity_feed,nonlocal_resources,notification_items,paper_resources,recents,sfj_resources,starred_items,suggest_items,unpresentable_notif_records
+instance1/sync_history.db tables=sync_history
+instance1/avatarcache.db tables=avatarcache
+instance1/icon.db tables=ext_icon_table,folder_icon_table,path_icon_table
+instance1/preview_cache.db tables=url_asset_table
+instance1/sync/nucleus.sqlite3 tables=

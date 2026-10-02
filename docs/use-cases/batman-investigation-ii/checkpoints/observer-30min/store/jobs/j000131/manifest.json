@@ -1,0 +1,1 @@
+{"v":1,"job":"j000131","attempt":1,"sealed_at":"2026-10-02T10:19:30.500Z","files":[{"path":"profile-needle-hits.json","path_b64":"cHJvZmlsZS1uZWVkbGUtaGl0cy5qc29u","bytes":8169,"sha256":"1c9bc6821d75768c3dd386a03ce8f6f510010edce02687cd4d43bfeebb7250aa","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":8169}}

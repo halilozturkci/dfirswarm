@@ -1,0 +1,115 @@
+{
+  "id": "j000084",
+  "attempt": 1,
+  "spec": {
+    "kind": "detect",
+    "inputs": [
+      "job:j000079"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 1800,
+    "network": "off",
+    "targets": [
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000079/out/pid.1576.dmp"
+        ],
+        "name": "job:j000079/pid.1576.dmp",
+        "ref": "job:j000079/pid.1576.dmp",
+        "sha256": "45a49cefe5a57f9ef999445e4aeeec5157546727b7a5e0c80fbb4e82a80a076d"
+      }
+    ],
+    "pairs": [
+      {
+        "t": 0,
+        "recipe": "computer-forensics-base/memory-windows"
+      }
+    ],
+    "trigger": "derived"
+  },
+  "requester": {
+    "agent": "derived",
+    "name": "derived catalogue"
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:08:55.008Z",
+  "worker": "dfs-s421201-job-j000084-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:08:55.026Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "derived",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000079/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000084",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 2,
+    "files": 0,
+    "bound": 1,
+    "manifest": "store/jobs/j000084/scope.1.json",
+    "manifest_sha256": "f30c9db9fc3e27857ab989ed5c7bc99a953a3427bc6aaa63db943e75a20684b9"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:08:57.713Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "same_as": [
+    {
+      "path": "detect.tsv",
+      "sha256": "af08a328b44b66ac60458f3b28509ef5e9bb9c9e6f8100fe55a35a591c0d7edd",
+      "bytes": 148,
+      "job": "j000023",
+      "file": "detect.tsv"
+    },
+    {
+      "path": "probes/0-computer-forensics-base_memory-windows.out",
+      "sha256": "ce2210dd4ec2211d1dd3f80649cf2ee6e5c2b6dcc97f367bd1c9cac2bafe75d4",
+      "bytes": 105,
+      "job": "j000023",
+      "file": "probes/0-computer-forensics-base_memory-windows.out"
+    }
+  ],
+  "outputs": {
+    "manifest_sha256": "5451966d537db2e5f0747e43070c9e33d66121d4383ea4799eedf485d079a56c",
+    "files": 2,
+    "bytes": 253,
+    "rejected": 0,
+    "path": "store/jobs/j000084/out"
+  },
+  "sensitive": {
+    "why": "derived",
+    "from": [
+      "j000023",
+      "j000079"
+    ],
+    "note": "made from the sensitive output of j000023, j000079: every output it sealed is sensitive"
+  }
+}

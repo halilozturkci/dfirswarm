@@ -1,0 +1,70 @@
+
+7-Zip (z) 26.03 (arm64) : Copyright (c) 1999-2026 Igor Pavlov : 2026-09-03
+ 64-bit arm_v:8-A locale=C.UTF-8 Threads:2 OPEN_MAX:4096, ASM
+
+Scanning the drive for archives:
+1 file, 146 bytes (1 KiB)
+
+Extracting archive: /tmp/tmp.rq2zv0j1v0/test.zip
+--
+Path = /tmp/tmp.rq2zv0j1v0/test.zip
+Type = zip
+Physical Size = 146
+
+Everything is Ok
+
+Size:       30
+Compressed: 146
+SELFTEST_OK
+
+Testing archive: store/jobs/j000052/out/contact.rar
+--
+Path = store/jobs/j000052/out/contact.rar
+Type = Rar5
+Physical Size = 1732132
+Characteristics = Locator QuickOpen:1731355
+Encrypted = -
+Solid = -
+Blocks = 49
+Method = v6:16M:m0:m3
+Multivolume = -
+Volumes = 1
+
+Everything is Ok
+
+Folders: 17
+Files: 32
+Size:       19471004
+Compressed: 1732132
+0	contact/QuitReports/9b20bb09-4d75-4d75-ad6f-3c8c37491caf.dbt
+10485760	contact/logs/1/1-50ff-6596cc9c.tmp
+114688	contact/apex.sqlite3
+120	contact/._.DS_Store
+121	contact/info.json
+12288	contact/instance1/avatarcache.db
+12288	contact/instance1/preview_cache.db
+127752	contact/apex.sqlite3-wal
+177	contact/._Crashpad
+20480	contact/instance_db/instance.dbx
+2322	contact/metrics/store.bin
+255472	contact/instance1/sync/nucleus.sqlite3-wal
+280	contact/unlink.db
+28672	contact/instance1/icon.db
+32576	contact/logs/1/1-ba02-6596c671
+32768	contact/apex.sqlite3-shm
+32768	contact/instance1/sync/nucleus.sqlite3-shm
+376	contact/instance1/unlink.db
+40	contact/Crashpad/settings.dat
+4096	contact/instance1/sync/nucleus.sqlite3
+40960	contact/instance1/contacts_polaris.db
+5	contact/dropbox.pid
+53248	contact/instance1/photo.dbx
+57856	contact/logs/1/1-93c2-6596b825
+65536	contact/instance1/config.dbx
+73728	contact/instance1/home.db
+77	contact/host.db
+8000000	contact/events/store
+81	contact/instance1/hostkeys
+81	contact/instance_db/hostkeys
+8192	contact/instance1/sync_history.db
+8196	contact/.DS_Store

@@ -1,0 +1,191 @@
+{
+  "id": "j000067",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/Carmine-Falcone.raw"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 900,
+    "network": "off",
+    "secret_output": true,
+    "command": "set -u\nmkdir -p \"$OUT/dump\" \"$OUT/archive\"\nvol --offline -s /tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics/vendor/symbols -f inputs/chall/Carmine-Falcone.raw -q -o \"$OUT/dump\" windows.dumpfiles --virtaddr 0xab0b10cde210 > \"$OUT/volatility-dumpfiles.txt\" 2> \"$OUT/volatility-stderr.txt\"\npython3 - <<'PY'\nimport os,json,hashlib\nfrom pathlib import Path\nfrom email import policy\nfrom email.parser import BytesParser\nout=Path(os.environ['OUT'])\nfs=list((out/'dump').glob('*Inbox.dat'))\nif not fs: raise SystemExit('no Inbox.dat dumped')\np=fs[0]; d=p.read_bytes()\nmid=b'Message-ID: <d3a63f93-a0ee-4718-a71a-d9646de2698b@gmail.com>'\ni=d.find(mid)\nif i<0: raise SystemExit('target Message-ID absent')\nbeg=d.rfind(b'From - ',0,i); end=d.find(b'\\nFrom - ',i)\nmb=d[beg:end if end>=0 else None]\n(out/'confidential.eml').write_bytes(mb)\nfirst=mb.find(b'\\n')\nmsg=BytesParser(policy=policy.default).parsebytes(mb[first+1:])\nparts=[]\nfor part in msg.walk():\n    payload=part.get_payload(decode=True) or b''\n    row={'type':part.get_content_type(),'filename':part.get_filename(),'disposition':part.get_content_disposition(),'decoded_bytes':len(payload),'sha256':hashlib.sha256(payload).hexdigest() if payload else None}\n    if part.get_filename():\n        (out/part.get_filename()).write_bytes(payload)\n    elif part.get_content_type()=='text/plain':\n        row['text']=payload.decode(part.get_content_charset() or 'utf-8','replace')\n    parts.append(row)\nsummary={'source_dump':p.name,'mbox_offset':beg,'message_id':str(msg['Message-ID']),'from':str(msg['From']),'to':str(msg['To']),'subject':str(msg['Subject']),'date':str(msg['Date']),'parts':parts}\n(out/'message-summary.json').write_text(json.dumps(summary,indent=2))\nPY\n7z l -slt \"$OUT/contact.rar\" > \"$OUT/archive-list.txt\" 2> \"$OUT/archive-list-stderr.txt\" || true\n7z x -y -o\"$OUT/archive\" \"$OUT/contact.rar\" > \"$OUT/archive-extract.txt\" 2> \"$OUT/archive-extract-stderr.txt\" || true\nfind \"$OUT/archive\" -type f -printf '%P\\t%s\\t' -exec sha256sum {} \\; > \"$OUT/archive-extracted-manifest.tsv\"\ncat \"$OUT/message-summary.json\"\n"
+  },
+  "requester": {
+    "agent": "s42120105",
+    "name": "Userkey Analyst",
+    "doing": "I will establish Q12-Q13 (contact verification database key/client email and interpreted client/private key) from unknown.data and memory artifacts; Q14 is already taken."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:06:36.626Z",
+  "reuse": {
+    "op": "command:set",
+    "objects": [
+      {
+        "path": "inputs/chall/Carmine-Falcone.raw",
+        "sha256": "3e03551e1f55dd792b0bc459b5620522d61fcf2379e8f6d89ef439fef8263cac"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000067-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:06:36.679Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "general",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000067",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000067/scope.1.json",
+    "manifest_sha256": "586335f4f3b16a82662134756aefa81f454d64c633d31069baee4b915a70568a"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:06:38.522Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "same_as": [
+    {
+      "path": "archive/contact/Crashpad/settings.dat",
+      "sha256": "6927a3347a532094d2b16c6699e175d4b53a1032e562af8389cba03e1df912b1",
+      "bytes": 40,
+      "job": "j000063",
+      "file": "profile/contact/Crashpad/settings.dat"
+    },
+    {
+      "path": "archive/contact/dropbox.pid",
+      "sha256": "05b28cc19c7c282b96a1ac54001c43da1b5ed79ab4f2556259c713f4dba14c32",
+      "bytes": 5,
+      "job": "j000063",
+      "file": "profile/contact/dropbox.pid"
+    },
+    {
+      "path": "archive/contact/instance1/config.dbx",
+      "sha256": "eb348b3f0914b0e0ed211386fd8a7fa91c0b33e48a597f7b11e1c779279a9c7b",
+      "bytes": 65536,
+      "job": "j000063",
+      "file": "profile/contact/instance1/config.dbx"
+    },
+    {
+      "path": "archive/contact/instance1/contacts_polaris.db",
+      "sha256": "3e959879e783854c529e8a02fd066a1384ebde6782be5428fadba72bd6ec4b8b",
+      "bytes": 40960,
+      "job": "j000063",
+      "file": "profile/contact/instance1/contacts_polaris.db"
+    },
+    {
+      "path": "archive/contact/instance1/hostkeys",
+      "sha256": "05c1bb92109acc5198cdd403d5ef72a166bf0965b3a8d4083e3522c18f526be5",
+      "bytes": 81,
+      "job": "j000063",
+      "file": "profile/contact/instance1/hostkeys"
+    },
+    {
+      "path": "archive/contact/instance1/photo.dbx",
+      "sha256": "6b8c28fdd0bcc4f87d881bbd4021ac7052c58054bacc2acd6755b99ec94ad942",
+      "bytes": 53248,
+      "job": "j000063",
+      "file": "profile/contact/instance1/photo.dbx"
+    },
+    {
+      "path": "archive/contact/instance1/unlink.db",
+      "sha256": "d4c3f483d3ff6e8cb8918ff23a090e56b1684e00d4053aad30b6c1d46b17438d",
+      "bytes": 376,
+      "job": "j000063",
+      "file": "profile/contact/instance1/unlink.db"
+    },
+    {
+      "path": "archive/contact/instance_db/hostkeys",
+      "sha256": "7354c1f37bc0b42fb6abaa668114de19f7ec3826ad37c2230f1c3de1fbe51756",
+      "bytes": 81,
+      "job": "j000063",
+      "file": "profile/contact/instance_db/hostkeys"
+    },
+    {
+      "path": "archive/contact/instance_db/instance.dbx",
+      "sha256": "a013b88dd638dd1155d11e2daa9c30b4396cca9594b611735294c2926cd003b4",
+      "bytes": 20480,
+      "job": "j000063",
+      "file": "profile/contact/instance_db/instance.dbx"
+    },
+    {
+      "path": "archive/contact/logs/1/1-93c2-6596b825",
+      "sha256": "cf245305b694273148de2ae8c995b5869893c6f2c05819c78927bf224db39adf",
+      "bytes": 57856,
+      "job": "j000063",
+      "file": "profile/contact/logs/1/1-93c2-6596b825"
+    },
+    {
+      "path": "archive/contact/logs/1/1-ba02-6596c671",
+      "sha256": "44ee4edc2cc6bfdb69c4607fcd7fa55c4fcd1027530e5aeac9fc66667f796291",
+      "bytes": 32576,
+      "job": "j000063",
+      "file": "profile/contact/logs/1/1-ba02-6596c671"
+    },
+    {
+      "path": "archive/contact/metrics/store.bin",
+      "sha256": "544053e5346ef2639f45167780a73a43da2067ab35d07c6a15724746a2936fc1",
+      "bytes": 2322,
+      "job": "j000063",
+      "file": "profile/contact/metrics/store.bin"
+    },
+    {
+      "path": "archive/contact/unlink.db",
+      "sha256": "a4e25aaaf8d85e8d8668de330c73d08b60fb1a521b87d69ddf29184a7b0b4e3e",
+      "bytes": 280,
+      "job": "j000063",
+      "file": "profile/contact/unlink.db"
+    },
+    {
+      "path": "contact.rar",
+      "sha256": "c199125c1f7596653096d31b61379b2caaa522d0a7872efd8ccc3b21638865ec",
+      "bytes": 1732132,
+      "job": "j000052",
+      "file": "contact.rar"
+    }
+  ],
+  "outputs": {
+    "manifest_sha256": "17268f7b5a9c2422bc26fa8507bddbb15ae7cab5ad94764a5d8673099adfd456",
+    "files": 43,
+    "bytes": 6909597,
+    "rejected": 0,
+    "path": "store/jobs/j000067/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

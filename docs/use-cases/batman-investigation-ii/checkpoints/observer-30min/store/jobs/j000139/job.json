@@ -1,0 +1,100 @@
+{
+  "id": "j000139",
+  "attempt": 1,
+  "spec": {
+    "kind": "import",
+    "inputs": [
+      "tool-output/s42120104/20261002100314853-bash-ujat.out.log"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "note": "the seal of tool:s42120104/20261002100314853-bash-ujat.out.log, which a record cites",
+    "source": "tool-output/s42120104/20261002100314853-bash-ujat.out.log",
+    "seal": {
+      "kind": "tool",
+      "ref": "tool:s42120104/20261002100314853-bash-ujat.out.log",
+      "digest": "752e8913336411d3deca45c2610df8242259fb71ef3c5a27b6b66bdb7212b7cd",
+      "line_sha256": "7524d489f69fa053ec773b770a5adc94b90e4529e281a517dd036957b4007e6d",
+      "path": "tool-output/s42120104/20261002100314853-bash-ujat.out.log",
+      "origin": {
+        "ref": "tool:s42120104/20261002100314853-bash-ujat.out.log",
+        "kind": "tool",
+        "line_sha256": "7524d489f69fa053ec773b770a5adc94b90e4529e281a517dd036957b4007e6d",
+        "seat": "s42120104",
+        "tool": "bash",
+        "args": {
+          "command": "find store/jobs/j000013/out -type f -print0 | xargs -0 grep -aEin -m 20 'user.?key|dbx|info.?break|private.?key|client.?email|contact.?verification|Salvatore' 2>/dev/null | head -300",
+          "timeout": 60
+        },
+        "ts": "2026-10-02T10:03:15.043Z",
+        "recv_ts": "2026-10-02T10:03:15.048Z",
+        "sid": "b0df44b24128",
+        "seq": 104,
+        "tool_sha256": null,
+        "path": "tool-output/s42120104/20261002100314853-bash-ujat.out.log",
+        "field": "result.full_output",
+        "digest": "752e8913336411d3deca45c2610df8242259fb71ef3c5a27b6b66bdb7212b7cd",
+        "bytes": 1941561
+      }
+    }
+  },
+  "requester": {
+    "agent": "s42120100",
+    "name": "Contact provenance",
+    "doing": "Investigate Q1 and Q2 contact/disguise communications and sent-file identity; model gpt-6.1-sol."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:21:11.830Z",
+  "worker": "dfs-s421201-job-j000139-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:21:11.879Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000139",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000139/scope.1.json",
+    "manifest_sha256": "e5313a9e3e0b559174ed1f6c74849475cbf43da90037084f8912eb7c309f29e4"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:21:12.573Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "d8a03a43596417e2aa5d3d5c262fbdc24cb3ed5cf4e1ffe91e3db9698afd5425",
+    "files": 1,
+    "bytes": 1941561,
+    "rejected": 0,
+    "path": "store/jobs/j000139/out"
+  }
+}

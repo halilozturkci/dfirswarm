@@ -1,0 +1,100 @@
+{
+  "id": "j000038",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/Carmine-Falcone.raw",
+      "job:j000001"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport os,re,json\nout=open(os.environ['OUT']+'/transfer-context.jsonl','w'); f=open('inputs/chall/Carmine-Falcone.raw','rb')\nfor fn,enc in [('wallet-ascii.txt','ascii'),('wallet-utf16.txt','utf-16le')]:\n for line in open('store/jobs/j000001/out/'+fn,errors='replace'):\n  for name in ['Edward Nigma','Oswald Cobblepot']:\n   if name not in line:continue\n   m=re.match(r'\\s*(\\d+) (.*)',line);p=int(m[1])+m[2].index(name)*(2 if enc=='utf-16le' else 1)\n   f.seek(max(0,p-2048));b=f.read(4096)\n   vals=[]\n   for e in ['ascii','utf-16le']:\n    s=b.decode(e,errors='replace');vals.extend(re.findall(r'[\\x20-\\x7e]{5,}',s))\n   out.write(json.dumps({'offset':p,'name':name,'context':vals})+'\\n')\nprint('context output bytes',out.tell())\nPY"
+  },
+  "requester": {
+    "agent": "s42120101",
+    "name": "Wallet trail",
+    "doing": "Investigating the installed cryptocurrency wallet and transfer artifacts for questions 5, 10 and 11."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:01:36.666Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000001/out",
+        "dir": true
+      },
+      {
+        "path": "inputs/chall/Carmine-Falcone.raw",
+        "sha256": "3e03551e1f55dd792b0bc459b5620522d61fcf2379e8f6d89ef439fef8263cac"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000038-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:01:36.728Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000001/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000038",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 2,
+    "files": 1,
+    "bound": 1,
+    "manifest": "store/jobs/j000038/scope.1.json",
+    "manifest_sha256": "a28092cd903d6ef8d49e294ab56dee72751de717afe0ddf4e4bd6ccf1881147f"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:01:37.546Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "19116016c35790102aaeced159947462353934427518e4385c13e437f6860854",
+    "files": 1,
+    "bytes": 126512,
+    "rejected": 0,
+    "path": "store/jobs/j000038/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

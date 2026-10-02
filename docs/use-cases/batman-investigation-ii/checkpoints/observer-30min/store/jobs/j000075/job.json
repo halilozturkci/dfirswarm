@@ -1,0 +1,92 @@
+{
+  "id": "j000075",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000067/confidential.eml",
+      "job:j000067/contact.rar"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport email,email.policy,hashlib,json,os\np='store/jobs/j000067/out/confidential.eml';m=email.message_from_binary_file(open(p,'rb'),policy=email.policy.default);a=[]\nfor part in m.walk():\n if part.get_filename():\n  b=part.get_payload(decode=True);a.append({'filename':part.get_filename(),'bytes':len(b),'sha1':hashlib.sha1(b).hexdigest(),'matches_saved_rar':b==open('store/jobs/j000067/out/contact.rar','rb').read()})\nopen(os.environ['OUT']+'/attachment-verification.json','w').write(json.dumps(a,indent=2));print(json.dumps(a))\nPY"
+  },
+  "requester": {
+    "agent": "s42120100",
+    "name": "Contact provenance",
+    "doing": "Investigate Q1 and Q2 contact/disguise communications and sent-file identity; model gpt-6.1-sol."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:07:37.645Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000067/out/confidential.eml",
+        "sha256": "0b08ee11401aded668e95411b8213269705c7f1db29244e1d20a528250b33a4e"
+      },
+      {
+        "path": "store/jobs/j000067/out/contact.rar",
+        "sha256": "c199125c1f7596653096d31b61379b2caaa522d0a7872efd8ccc3b21638865ec"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000075-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:07:37.700Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000075",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 2,
+    "files": 2,
+    "bound": 0,
+    "manifest": "store/jobs/j000075/scope.1.json",
+    "manifest_sha256": "06034a31228704c0c5e27e68cc01bfc3be95db0c2e403fb55e8bbbf0b7eae784"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:07:38.423Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "2ba81eb6ed9803a200154ea7dfa778a728cd7d30302afb39c37494e5d924998e",
+    "files": 1,
+    "bytes": 150,
+    "rejected": 0,
+    "path": "store/jobs/j000075/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

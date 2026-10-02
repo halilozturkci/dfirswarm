@@ -1,0 +1,1 @@
+{"v":1,"job":"j000042","attempt":1,"sealed_at":"2026-10-02T10:02:24.940Z","files":[{"path":"mail_sqlite.txt","path_b64":"bWFpbF9zcWxpdGUudHh0","bytes":285,"sha256":"33f0bbd1bdbcb493b47072a7e5f2d96ea0f2c7b34afef7e6890f20c45b9457a4","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":285}}

@@ -1,0 +1,1 @@
+{"path": "inputs/chall/Carmine-Falcone.raw", "anchor_path": "store/jobs/j000041/out/file.0xab0b10a27530.0xab0b0d8cb390.DataSectionObject.Carmine Falcone_2.7z.dat", "bytes_scanned": 4831838208, "anchors": [{"start": 300, "length": 32, "hits": [2980073772], "count": 1}, {"start": 34000, "length": 32, "hits": [2547782864], "count": 1}]}

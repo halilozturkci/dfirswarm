@@ -1,0 +1,282 @@
+[
+  {
+    "score": 5,
+    "file": "store/jobs/j000145/out/contact/contact/instance_db/instance.dbx",
+    "key": "zero-pad32",
+    "mode": "OFB",
+    "iv": "last16",
+    "prefix": "8cfe7517aea3ed6c60de2dbb21cb9be3ba5277d2e5b744b67700bd0d131e6ef6667730696d5c0e92b8459341df6cb42362a56eaa3225a26da2ec3bb6d520e59adb4a1af0dc2b26a912c64c39051b538c9afb4b28264515e0485cb59f33fb64b0",
+    "why": [
+      [
+        "btree",
+        5
+      ]
+    ]
+  },
+  {
+    "score": 5,
+    "file": "store/jobs/j000145/out/contact/contact/instance_db/instance.dbx",
+    "key": "zero-pad32",
+    "mode": "CTR",
+    "iv": "last12-1",
+    "prefix": "0fe69fce830634b5f24005a8e504aaa1cdb87baa8115388f50792e9ba25953362ee04e4eedffc19f06b61dc31fe8c43876830e439a24fdfdc8df4b1bd6472b0c3008e182604fabb2bc1c229a0db7425eb80269e2dab2bf70587af0be253d792c",
+    "why": [
+      [
+        "btree",
+        13
+      ]
+    ]
+  },
+  {
+    "score": 5,
+    "file": "store/jobs/j000145/out/contact/contact/instance_db/instance.dbx",
+    "key": "zero-pad24",
+    "mode": "CTR",
+    "iv": "first12-1",
+    "prefix": "5eb35458cd9c9ee591ebd1a9ecb4e0932bc6424711d0fcdedf6a4d4707aa1be219c909b2fbed73bfc45a57db406b7afd47decd8e95f6195f7c09ff22ec9dcda750dd7274197dacb05d9e302e0295c63bc2ec9358580cfd7690432f0bee01a8d5",
+    "why": [
+      [
+        "btree",
+        2
+      ]
+    ]
+  },
+  {
+    "score": 5,
+    "file": "store/jobs/j000145/out/contact/contact/instance_db/instance.dbx",
+    "key": "zero-pad24",
+    "mode": "CFB8",
+    "iv": "zero16",
+    "prefix": "b3266e4bcc2d5b24720d397311042d5cf2db732427639410dd86f7af929221f94ac839f2e52ed3271a8d3271fb5594848bc4700136495d86a87af3c15eeff2a1fdbaa39baad1c876a628eb6b057f9e307bcf9cbd76c8cca24d97e5d74456ebfb",
+    "why": [
+      [
+        "btree",
+        5
+      ]
+    ]
+  },
+  {
+    "score": 5,
+    "file": "store/jobs/j000145/out/contact/contact/instance_db/instance.dbx",
+    "key": "zero-pad24",
+    "mode": "CFB8",
+    "iv": "last16",
+    "prefix": "e838ee1ebd1eca78243a2f7fe3b785dcf2db732427639410dd86f7af929221f94ac839f2e52ed3271a8d3271fb5594848bc4700136495d86a87af3c15eeff2a1fdbaa39baad1c876a628eb6b057f9e307bcf9cbd76c8cca24d97e5d74456ebfb",
+    "why": [
+      [
+        "btree",
+        5
+      ]
+    ]
+  },
+  {
+    "score": 5,
+    "file": "store/jobs/j000145/out/contact/contact/instance_db/instance.dbx",
+    "key": "zero-pad24",
+    "mode": "CFB8",
+    "iv": "first8last8",
+    "prefix": "7e23e61cbba06070243a2f7fe3b785dcf2db732427639410dd86f7af929221f94ac839f2e52ed3271a8d3271fb5594848bc4700136495d86a87af3c15eeff2a1fdbaa39baad1c876a628eb6b057f9e307bcf9cbd76c8cca24d97e5d74456ebfb",
+    "why": [
+      [
+        "btree",
+        5
+      ]
+    ]
+  },
+  {
+    "score": 5,
+    "file": "store/jobs/j000145/out/contact/contact/instance_db/instance.dbx",
+    "key": "zero-pad24",
+    "mode": "CFB8",
+    "iv": "first16",
+    "prefix": "8d55edc12908d8ca884e1f4362ecd1b0f2db732427639410dd86f7af929221f94ac839f2e52ed3271a8d3271fb5594848bc4700136495d86a87af3c15eeff2a1fdbaa39baad1c876a628eb6b057f9e307bcf9cbd76c8cca24d97e5d74456ebfb",
+    "why": [
+      [
+        "btree",
+        5
+      ]
+    ]
+  },
+  {
+    "score": 5,
+    "file": "store/jobs/j000145/out/contact/contact/instance_db/instance.dbx",
+    "key": "sha512-32",
+    "mode": "OFB",
+    "iv": "zero16",
+    "prefix": "4e483670657a6c045f417a31ed218cc2d0d96d7b79e89e8b30d7f2bf40ecdec8bc2c0789be47e7461ad66bfb2c9b59f030487f2aba768855c45e09388a5a602304ea8c8e4b2e17f9344a76e80a865a5cb386382a73e595825da3ba734280b4da",
+    "why": [
+      [
+        "btree",
+        10
+      ]
+    ]
+  },
+  {
+    "score": 5,
+    "file": "store/jobs/j000145/out/contact/contact/instance_db/instance.dbx",
+    "key": "sha512-32",
+    "mode": "CTR",
+    "iv": "first8-1",
+    "prefix": "385114c9df903f3fe54dc60c0f627a696f780b89672fb3527771ed9dd372af7c7c6f52d02c6cdd378afcab282c9c061a379207351fb9a4685e1e250cfdc7f70d8c5f54074220a67831004a0d0d130dc89bf069d56d5b8e2a699530aa340c96d1",
+    "why": [
+      [
+        "btree",
+        13
+      ]
+    ]
+  },
+  {
+    "score": 5,
+    "file": "store/jobs/j000145/out/contact/contact/instance_db/instance.dbx",
+    "key": "sha512-32",
+    "mode": "CTR",
+    "iv": "first12-0",
+    "prefix": "a4f4ccae5a2470358291cacdf6915f717546ffd55fbd4164e52bdc55f1ef976d339c95468c1253b11e4d91ee7bc0418a601242537ee0c9af6f002f01c106b946f37f865c780598490456df130da67c1c56c96337c1a3637c8233d241cc3e1504",
+    "why": [
+      [
+        "btree",
+        13
+      ]
+    ]
+  },
+  {
+    "score": 5,
+    "file": "store/jobs/j000145/out/contact/contact/instance_db/instance.dbx",
+    "key": "sha512-32",
+    "mode": "CFB128",
+    "iv": "zero16",
+    "prefix": "4e483670657a6c045f417a31ed218cc2ff3465832a813fc91a5f6867d81b96bd509f2e94b985d3df39ac47dab80de8f8fa859db66929a08309a46aff8ebd8aa1267468ace07453f840f5c9f005fc1ecd8c69586146aff94961f3d562f23ecae9",
+    "why": [
+      [
+        "btree",
+        5
+      ]
+    ]
+  },
+  {
+    "score": 5,
+    "file": "store/jobs/j000145/out/contact/contact/instance_db/instance.dbx",
+    "key": "sha512-32",
+    "mode": "CFB128",
+    "iv": "last16",
+    "prefix": "d5ecf573c42315a66f1c7c3dd01e2823ff3465832a813fc91a5f6867d81b96bd509f2e94b985d3df39ac47dab80de8f8fa859db66929a08309a46aff8ebd8aa1267468ace07453f840f5c9f005fc1ecd8c69586146aff94961f3d562f23ecae9",
+    "why": [
+      [
+        "btree",
+        5
+      ]
+    ]
+  },
+  {
+    "score": 5,
+    "file": "store/jobs/j000145/out/contact/contact/instance_db/instance.dbx",
+    "key": "sha512-32",
+    "mode": "CFB128",
+    "iv": "first8last8",
+    "prefix": "3a0beff6c81abc8dd44746a95b4f9bd9ff3465832a813fc91a5f6867d81b96bd509f2e94b985d3df39ac47dab80de8f8fa859db66929a08309a46aff8ebd8aa1267468ace07453f840f5c9f005fc1ecd8c69586146aff94961f3d562f23ecae9",
+    "why": [
+      [
+        "btree",
+        5
+      ]
+    ]
+  },
+  {
+    "score": 5,
+    "file": "store/jobs/j000145/out/contact/contact/instance_db/instance.dbx",
+    "key": "sha512-32",
+    "mode": "CFB128",
+    "iv": "first16",
+    "prefix": "89eee4852d8b2acd574cff2ea4baceedff3465832a813fc91a5f6867d81b96bd509f2e94b985d3df39ac47dab80de8f8fa859db66929a08309a46aff8ebd8aa1267468ace07453f840f5c9f005fc1ecd8c69586146aff94961f3d562f23ecae9",
+    "why": [
+      [
+        "btree",
+        5
+      ]
+    ]
+  },
+  {
+    "score": 5,
+    "file": "store/jobs/j000145/out/contact/contact/instance_db/instance.dbx",
+    "key": "sha384-32",
+    "mode": "OFB",
+    "iv": "last16",
+    "prefix": "d7451f6c3aeaa36bb7368a9f410408f4d93440b95c8585afcb37dd58acc0f30ed3b47137adca8d928b9d4cca25d368c3afae1c074580464dc09dac3e1095d7fe2141bab48eddfaa92ba051af0533d24621416ac47b6c40ff0cbd6c6945604099",
+    "why": [
+      [
+        "btree",
+        5
+      ]
+    ]
+  },
+  {
+    "score": 5,
+    "file": "store/jobs/j000145/out/contact/contact/instance_db/instance.dbx",
+    "key": "sha384-24",
+    "mode": "CTR",
+    "iv": "first12-0",
+    "prefix": "c938e5329c802fc4a313794b3d4e542e83782772bdea62f899b2ad0361643110df0eec8ec05f3a31e40ea614a2a9b84b4a2a8361fadbc4030d8c5486ddda35a2beae49323c0135dbb2a2b78b0232377c2ef5ed31b498786e3d22025df3ffbe0b",
+    "why": [
+      [
+        "btree",
+        2
+      ]
+    ]
+  },
+  {
+    "score": 5,
+    "file": "store/jobs/j000145/out/contact/contact/instance_db/instance.dbx",
+    "key": "sha256-last24",
+    "mode": "OFB",
+    "iv": "last16",
+    "prefix": "4c1454ebf2157ad65e294188f88d3c57315ddc4b96b2438dc027838153e5a40808955721a134ba39d980eecb2380886fa648c70d62d19d0885ae717fc0fb075b4cf73f999536977c8d15352d0d6be521d9603721e49824a355c223f26420af90",
+    "why": [
+      [
+        "btree",
+        13
+      ]
+    ]
+  },
+  {
+    "score": 5,
+    "file": "store/jobs/j000145/out/contact/contact/instance_db/instance.dbx",
+    "key": "sha256-last16",
+    "mode": "CTR",
+    "iv": "last8-0",
+    "prefix": "f642ae3afaf1700d5f2880816b2d1be055e9e8fc4519ec63d99aecf252c6a071ce1a1c0f447bbfb3e56c2ee0624ff52a47d6e791f0337ba7a8e2e489b3b50c63def202e407e577ddf715bd02054e4ea9970aa59dd4cf2f25709a52a771526332",
+    "why": [
+      [
+        "btree",
+        5
+      ]
+    ]
+  },
+  {
+    "score": 5,
+    "file": "store/jobs/j000145/out/contact/contact/instance_db/instance.dbx",
+    "key": "rawlast16",
+    "mode": "CTR",
+    "iv": "last8-0",
+    "prefix": "3b1823470f7d552a09905909de310da7cd7a1896cb17597f36f4bf0c72621f1505be7688b0196ee29585ebbdd00c4a1baf3d43dc3a2d7d6075a1b48aa8f67dfc87801952bde345c8c4d017230d775dc2fe38e135164a457e83768d27ab080568",
+    "why": [
+      [
+        "btree",
+        13
+      ]
+    ]
+  },
+  {
+    "score": 5,
+    "file": "store/jobs/j000145/out/contact/contact/instance_db/instance.dbx",
+    "key": "pbkdf2-sha512-b'sw1zwJjv'-64000",
+    "mode": "OFB",
+    "iv": "last16",
+    "prefix": "7df5d730175d0124170d5cd69ef389a78d3f56abc69325438180c91766b151d85d111030648abb6b58e61d494bcae77c74d00c99cf6fe2a19d6bdf635151f44eab19e6c93587a3675cd920960d1b0bceab1fb30f3483668d7c187e092214fcb1",
+    "why": [
+      [
+        "btree",
+        13
+      ]
+    ]
+  }
+]

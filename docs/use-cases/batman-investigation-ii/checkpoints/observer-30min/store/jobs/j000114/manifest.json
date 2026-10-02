@@ -1,0 +1,1 @@
+{"v":1,"job":"j000114","attempt":1,"sealed_at":"2026-10-02T10:14:43.839Z","files":[{"path":"four-bullets.json","path_b64":"Zm91ci1idWxsZXRzLmpzb24=","bytes":5881,"sha256":"628532d9a448a2ec8304514f67dcf3e21c9b0bb0cc317a918a19697d7c8e3c7c","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":5881}}

@@ -1,0 +1,88 @@
+[
+  {
+    "offset": 877111456,
+    "sha256_4096": "99ee9cdf4cab8f4e275b80a6bf15c7bcc9c2da157f96df685ac72db10856c1d1",
+    "stream_start_verified": true,
+    "header_end": 222,
+    "blocks": [
+      {
+        "index": 0,
+        "length": 3474,
+        "complete": true,
+        "hash_ok": false
+      },
+      {
+        "index": 2180983064,
+        "length": 573309892,
+        "complete": false,
+        "available": 286
+      }
+    ],
+    "xml_bytes": 0,
+    "xml_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "decompress_note": "error('Error -3 while decompressing data: invalid distance too far back')"
+  },
+  {
+    "offset": 1304934584,
+    "sha256_4096": "f8776c4ed70b876afaf7d9d42c0b5172c5c37ede9e42c7053e29991e0f5e8b5f",
+    "stream_start_verified": false,
+    "header_end": 222,
+    "blocks": [
+      {
+        "index": 1819210413,
+        "length": 1780768387,
+        "complete": false,
+        "available": 3800
+      }
+    ],
+    "xml_bytes": 0,
+    "xml_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "decompress_note": "error('Error -5 while decompressing data: incomplete or truncated stream')"
+  },
+  {
+    "offset": 3105492992,
+    "sha256_4096": "7b55391c40b18b8a9afc43dff0c9814ba6bc0e6566358aa994ff93da76b5e220",
+    "stream_start_verified": true,
+    "header_end": 222,
+    "blocks": [
+      {
+        "index": 0,
+        "length": 3474,
+        "complete": true,
+        "hash_ok": true
+      },
+      {
+        "index": 1,
+        "length": 0,
+        "complete": true,
+        "hash_ok": true
+      },
+      {
+        "index": 235802126,
+        "length": 2317915841,
+        "complete": false,
+        "available": 246
+      }
+    ],
+    "xml_bytes": 29220,
+    "xml_sha256": "cc48c96b02281ae7e441f0dafa2594809793634b59b4c28e0116e9e7be109144",
+    "decompress_note": null
+  },
+  {
+    "offset": 4591231224,
+    "sha256_4096": "47da0e4be380e0d431cada55d18f43ac3f09d69085472dfe215090c426af4fe0",
+    "stream_start_verified": false,
+    "header_end": 222,
+    "blocks": [
+      {
+        "index": 484831600,
+        "length": 344422277,
+        "complete": false,
+        "available": 3800
+      }
+    ],
+    "xml_bytes": 0,
+    "xml_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "decompress_note": "error('Error -5 while decompressing data: incomplete or truncated stream')"
+  }
+]

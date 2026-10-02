@@ -1,0 +1,26 @@
+
+7-Zip (z) 26.03 (arm64) : Copyright (c) 1999-2026 Igor Pavlov : 2026-09-03
+ 64-bit arm_v:8-A locale=C.UTF-8 Threads:1 OPEN_MAX:4096, ASM
+
+Scanning the drive for archives:
+1 file, 1732132 bytes (1692 KiB)
+
+Testing archive: /sample/contact.rar
+--
+Path = /sample/contact.rar
+Type = Rar5
+Physical Size = 1732132
+Characteristics = Locator QuickOpen:1731355
+Encrypted = -
+Solid = -
+Blocks = 49
+Method = v6:16M:m0:m3
+Multivolume = -
+Volumes = 1
+
+Everything is Ok
+
+Folders: 17
+Files: 32
+Size:       19471004
+Compressed: 1732132

@@ -1,0 +1,1 @@
+{"v":1,"job":"j000165","attempt":1,"sealed_at":"2026-10-02T10:28:04.648Z","files":[{"path":"anchor-offsets.json","path_b64":"YW5jaG9yLW9mZnNldHMuanNvbg==","bytes":449,"sha256":"70cf3be7fad0cbe8a17196b177846d88873e86eb9c95f500b987d9c7a8c4bd53","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":449}}

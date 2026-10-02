@@ -1,0 +1,31 @@
+Volatility 3 Framework 2.28.2
+
+Offset	FileFullPath	File output
+
+0xd58a14450000		Disabled
+0xd58a14484000	\REGISTRY\MACHINE\SYSTEM	Disabled
+0xd58a1451e000	\REGISTRY\MACHINE\HARDWARE	Disabled
+0xd58a14eee000	\SystemRoot\System32\Config\SAM	Disabled
+0xd58a14eec000	\SystemRoot\System32\Config\SECURITY	Disabled
+0xd58a14ef0000	\SystemRoot\System32\Config\DEFAULT	Disabled
+0xd58a14ee8000	\SystemRoot\System32\Config\SOFTWARE	Disabled
+0xd58a1888c000	\Device\HarddiskVolume1\Boot\BCD	Disabled
+0xd58a17e0f000	\??\C:\Windows\ServiceProfiles\NetworkService\NTUSER.DAT	Disabled
+0xd58a17f64000	\??\C:\Windows\ServiceProfiles\LocalService\NTUSER.DAT	Disabled
+0xd58a17f07000	\SystemRoot\System32\Config\BBI	Disabled
+0xd58a1930e000	\??\C:\Windows\AppCompat\Programs\Amcache.hve	Disabled
+0xd58a1a829000	\??\C:\Users\Carmine Falcone\ntuser.dat	Disabled
+0xd58a1ab5e000	\??\C:\Users\Carmine Falcone\AppData\Local\Microsoft\Windows\UsrClass.dat	Disabled
+0xd58a1b5ef000	\??\C:\ProgramData\Microsoft\Windows\AppRepository\Packages\Microsoft.Windows.StartMenuExperienceHost_10.0.19041.1_neutral_neutral_cw5n1h2txyewy\ActivationStore.dat	Disabled
+0xd58a1b5f5000	\??\C:\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\Settings\settings.dat	Disabled
+0xd58a1bb11000	\??\C:\ProgramData\Microsoft\Windows\AppRepository\Packages\Microsoft.Windows.Search_1.14.0.19041_neutral_neutral_cw5n1h2txyewy\ActivationStore.dat	Disabled
+0xd58a1ac19000	\??\C:\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\Settings\settings.dat	Disabled
+0xd58a1baa7000	\??\C:\ProgramData\Microsoft\Windows\AppRepository\Packages\Microsoft.SkypeApp_14.53.77.0_x64__kzf8qxf38zg5c\ActivationStore.dat	Disabled
+0xd58a1c76d000	\??\C:\Windows\ServiceProfiles\NetworkService\AppData\Local\Microsoft\Windows\DeliveryOptimization\State\dosvcState.dat	Disabled
+0xd58a1cb94000	\??\C:\ProgramData\Microsoft\Windows\AppRepository\Packages\MicrosoftWindows.Client.CBS_120.2202.130.0_x64__cw5n1h2txyewy\ActivationStore.dat	Disabled
+0xd58a1cfe0000	\??\C:\Users\Carmine Falcone\AppData\Local\Packages\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\Settings\settings.dat	Disabled
+0xd58a1880a000	\??\C:\ProgramData\Microsoft\Windows\AppRepository\Packages\Microsoft.Windows.ShellExperienceHost_10.0.19041.1_neutral_neutral_cw5n1h2txyewy\ActivationStore.dat	Disabled
+0xd58a1e58b000	\??\C:\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.ShellExperienceHost_cw5n1h2txyewy\Settings\settings.dat	Disabled
+0xd58a1f6dd000	\??\C:\ProgramData\Microsoft\Windows\AppRepository\Packages\Microsoft.Windows.Photos_2019.19071.12548.0_x64__8wekyb3d8bbwe\ActivationStore.dat	Disabled
+0xd58a1e9b2000	\??\C:\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.Photos_8wekyb3d8bbwe\Settings\settings.dat	Disabled
+0xd58a1e4ed000	\??\C:\ProgramData\Microsoft\Windows\AppRepository\Packages\Microsoft.UI.Xaml.2.0_2.1810.18004.0_x64__8wekyb3d8bbwe\ActivationStore.dat	Disabled

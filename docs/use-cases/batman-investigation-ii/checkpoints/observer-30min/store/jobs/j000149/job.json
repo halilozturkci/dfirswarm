@@ -1,0 +1,102 @@
+{
+  "id": "j000149",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000130/archive/contact/instance1/hostkeys",
+      "job:j000130/archive/contact/instance1/config.dbx",
+      "job:j000130/archive/contact/instance_db/hostkeys",
+      "job:j000130/archive/contact/instance_db/instance.dbx"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport os,json,hashlib,itertools\nfrom Crypto.Cipher import AES,ChaCha20\npairs=[('instance1','store/jobs/j000130/out/archive/contact/instance1/hostkeys','store/jobs/j000130/out/archive/contact/instance1/config.dbx'),('instance_db','store/jobs/j000130/out/archive/contact/instance_db/hostkeys','store/jobs/j000130/out/archive/contact/instance_db/instance.dbx')]\nknown=b'SQLite format 3\\0';res=[];best=[]\nfor label,hp,dp in pairs:\n h=open(hp,'rb').read();p=open(dp,'rb').read()[:4096]\n keys={}\n for off in range(0,82):\n  for ln in (16,24,32):\n   if off+ln<=len(h):keys[f'slice-{off}-{ln}']=h[off:off+ln]\n for n,x in list(keys.items()):\n  if len(x)!=32:keys[n+'-sha256']=hashlib.sha256(x).digest()\n for kn,k in keys.items():\n  if len(k) in (16,24,32):\n   for op in ('decrypt','encrypt'):\n    q=getattr(AES.new(k,AES.MODE_ECB),op)(p[:16]); eq=sum(a==b for a,b in zip(q,known));best.append([eq,label,kn,'ECB-'+op,q.hex()])\n    for ivname,iv in [('zero',b'\\0'*16),('last16',p[-16:]),('hostlast16',h[-16:]),('host1-17',h[1:17])]:\n     q=AES.new(k,AES.MODE_CBC,iv).decrypt(p[:16]);eq=sum(a==b for a,b in zip(q,known));best.append([eq,label,kn,'CBC-'+ivname,q.hex()])\n    for nl in (8,12):\n     for nonce_name,nonce in [('pagelast',p[-nl:]),('hostlast',h[-nl:]),('zero',b'\\0'*nl)]:\n      for ini in (0,1):\n       try:q=AES.new(k,AES.MODE_CTR,nonce=nonce,initial_value=ini).decrypt(p[:16])\n       except:continue\n       eq=sum(a==b for a,b in zip(q,known));best.append([eq,label,kn,f'CTR-{nonce_name}-{nl}-{ini}',q.hex()])\n  if len(k)==32:\n   for nl in (8,12):\n    for nn,nonce in [('pagelast',p[-nl:]),('hostlast',h[-nl:]),('zero',b'\\0'*nl)]:\n     q=ChaCha20.new(key=k,nonce=nonce).decrypt(p[:16]);eq=sum(a==b for a,b in zip(q,known));best.append([eq,label,kn,f'chacha-{nn}-{nl}',q.hex()])\nfor x in best:\n if x[0]==16:res.append(x)\nprint('matches',res);print('best',sorted(best,reverse=True)[:15])\nopen(os.environ['OUT']+'/hostkey-page-tests.json','w').write(json.dumps({'matches':res,'best':sorted(best,reverse=True)[:50]},indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120104",
+    "name": "DBX Key Examiner",
+    "doing": "Establishing Q14, the userkey of the encrypted DBX database, from unknown.data and memory artefacts."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:22:46.056Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000130/out/archive/contact/instance1/hostkeys",
+        "sha256": "05c1bb92109acc5198cdd403d5ef72a166bf0965b3a8d4083e3522c18f526be5"
+      },
+      {
+        "path": "store/jobs/j000130/out/archive/contact/instance_db/hostkeys",
+        "sha256": "7354c1f37bc0b42fb6abaa668114de19f7ec3826ad37c2230f1c3de1fbe51756"
+      },
+      {
+        "path": "store/jobs/j000130/out/archive/contact/instance_db/instance.dbx",
+        "sha256": "a013b88dd638dd1155d11e2daa9c30b4396cca9594b611735294c2926cd003b4"
+      },
+      {
+        "path": "store/jobs/j000130/out/archive/contact/instance1/config.dbx",
+        "sha256": "eb348b3f0914b0e0ed211386fd8a7fa91c0b33e48a597f7b11e1c779279a9c7b"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000149-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:22:46.115Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000149",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 4,
+    "files": 4,
+    "bound": 0,
+    "manifest": "store/jobs/j000149/scope.1.json",
+    "manifest_sha256": "42ca8e11963422a71445c711457301df2dd2d2d5138e4f346645198fbb898606"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:22:46.962Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "7395f14ab2e007028fa03615bc05c83cf3547e58e8832d65511e10abb5f474e3",
+    "files": 1,
+    "bytes": 6518,
+    "rejected": 0,
+    "path": "store/jobs/j000149/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

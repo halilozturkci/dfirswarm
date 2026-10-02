@@ -1,0 +1,106 @@
+{
+  "id": "j000158",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000145/contact/contact/apex.sqlite3",
+      "job:j000145/contact/contact/apex.sqlite3-wal",
+      "job:j000145/contact/contact/apex.sqlite3-shm"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "set -euo pipefail\nmkdir -p \"$OUT/db\"\ncp store/jobs/j000145/out/contact/contact/apex.sqlite3 \"$OUT/db/apex.sqlite3\"\ncp store/jobs/j000145/out/contact/contact/apex.sqlite3-wal \"$OUT/db/apex.sqlite3-wal\"\ncp store/jobs/j000145/out/contact/contact/apex.sqlite3-shm \"$OUT/db/apex.sqlite3-shm\"\npython3 - \"$OUT/db/apex.sqlite3\" \"$OUT/apex-rows.json\" <<'PY'\nimport sqlite3,sys,json,base64,re\np,o=sys.argv[1:]\nc=sqlite3.connect(p)\nrows=[]\nfor k,v in c.execute('select key,value from apex_stormcrow order by key'):\n b=bytes(v)\n rows.append({'key':k,'length':len(b),'hex':b.hex(),'base64':base64.b64encode(b).decode(),'utf8':b.decode('utf-8','replace'),'printable_strings':[x.decode('ascii','replace') for x in re.findall(rb'[\\x20-\\x7e]{4,}',b)]})\njson.dump({'journal_mode':c.execute('pragma journal_mode').fetchone()[0],'integrity_check':c.execute('pragma integrity_check').fetchone()[0],'count':len(rows),'rows':rows},open(o,'w'),indent=2)\nPY\ncat \"$OUT/apex-rows.json\""
+  },
+  "requester": {
+    "agent": "s42120105",
+    "name": "Userkey Analyst",
+    "doing": "I will establish Q12-Q13 (contact verification database key/client email and interpreted client/private key) from unknown.data and memory artifacts; Q14 is already taken."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:25:23.689Z",
+  "reuse": {
+    "op": "command:set",
+    "objects": [
+      {
+        "path": "store/jobs/j000145/out/contact/contact/apex.sqlite3-shm",
+        "sha256": "a1b061c0e7e93cf21cbc65d147d93faac68e0db9ac23c500946c8a2ef9bce6c4"
+      },
+      {
+        "path": "store/jobs/j000145/out/contact/contact/apex.sqlite3",
+        "sha256": "d207893df8d52ed73de0f2ee58f311a17b71f9c7f275017510b0075cd81680ef"
+      },
+      {
+        "path": "store/jobs/j000145/out/contact/contact/apex.sqlite3-wal",
+        "sha256": "f91c3619a4ed5a3c32eb60ac4917e641123349bd4e8a06d8070d437d91bab32b"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000158-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:25:23.744Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000158",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 3,
+    "files": 3,
+    "bound": 0,
+    "manifest": "store/jobs/j000158/scope.1.json",
+    "manifest_sha256": "2fd9270ccc8e0ffc4b09eaa265c4ddb7c09f5719241321281722ecb000fc5a27"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:25:24.474Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "same_as": [
+    {
+      "path": "db/apex.sqlite3",
+      "sha256": "d207893df8d52ed73de0f2ee58f311a17b71f9c7f275017510b0075cd81680ef",
+      "bytes": 114688,
+      "job": "j000130",
+      "file": "archive/contact/apex.sqlite3"
+    }
+  ],
+  "outputs": {
+    "manifest_sha256": "98e1a68265abdd1fd40874941a8b140b69afee0d0f1f1444f5838659de262659",
+    "files": 2,
+    "bytes": 760503,
+    "rejected": 0,
+    "path": "store/jobs/j000158/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

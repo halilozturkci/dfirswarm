@@ -1,0 +1,81 @@
+{
+  "id": "j000068",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000039/context.bin"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 60,
+    "network": "off",
+    "command": "python3 - <<'PY'\np='store/jobs/j000039/out/context.bin'; b=open(p,'rb').read(); base=320186832\nfor n in [b'Go buildinf:',b'go1.',b'path\\t',b'mod\\t',b'github.com/',b'golang.org/',b'172.30.145.189',b'6969',b'MZ',b'PE\\0\\0']:\n print(repr(n), [base+i for i in range(len(b)) if b.startswith(n,i)][:20])\nPY"
+  },
+  "requester": {
+    "agent": "s42120107",
+    "name": "Memory triage",
+    "doing": "Examine the memory image for wallet/password-manager artifacts and claim questions 3–6 if available."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:06:48.378Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000039/out/context.bin",
+        "sha256": "c9ecd11036dcbf9f06d14877ada501944a0f4e656bdb18c51bf595d21ee3ac19"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000068-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:06:48.426Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000068",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000068/scope.1.json",
+    "manifest_sha256": "d6d469ece1b65afd0f2a52fc53846ca3f990a1a145cb9c8e668ef3915b44a2a1"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:06:49.193Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "8e085e55e82b3aaa973ff22a1c6f04df6435e39bc03f6b5fbef450916d0929b6",
+    "files": 0,
+    "bytes": 0,
+    "rejected": 0,
+    "path": "store/jobs/j000068/out"
+  }
+}

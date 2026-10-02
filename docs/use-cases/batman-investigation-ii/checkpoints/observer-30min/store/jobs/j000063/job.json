@@ -1,0 +1,88 @@
+{
+  "id": "j000063",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000052/contact.rar"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "set -eu\n7z x -y -o\"$OUT/profile\" store/jobs/j000052/out/contact.rar >/dev/null\nfind \"$OUT/profile\" -type f -printf '%s\\t%p\\n' | sort > \"$OUT/files.tsv\"\nfor f in \"$OUT/profile\"/contact/info.json \"$OUT/profile\"/contact/host.db \"$OUT/profile\"/contact/instance1/hostkeys \"$OUT/profile\"/contact/instance_db/hostkeys \"$OUT/profile\"/contact/instance1/config.dbx \"$OUT/profile\"/contact/instance_db/instance.dbx; do echo \"==== $f\"; file \"$f\"; xxd -l 256 \"$f\"; strings -a -n 4 \"$f\" | head -60; done > \"$OUT/triage.txt\"\nsha256sum \"$OUT/profile\"/contact/instance1/config.dbx \"$OUT/profile\"/contact/instance_db/instance.dbx \"$OUT/profile\"/contact/instance1/hostkeys \"$OUT/profile\"/contact/instance_db/hostkeys > \"$OUT/hashes.txt\"\ncat \"$OUT/files.tsv\" \"$OUT/triage.txt\" \"$OUT/hashes.txt\""
+  },
+  "requester": {
+    "agent": "s42120104",
+    "name": "DBX Key Examiner",
+    "doing": "Establishing Q14, the userkey of the encrypted DBX database, from unknown.data and memory artefacts."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:06:07.931Z",
+  "reuse": {
+    "op": "command:set",
+    "objects": [
+      {
+        "path": "store/jobs/j000052/out/contact.rar",
+        "sha256": "c199125c1f7596653096d31b61379b2caaa522d0a7872efd8ccc3b21638865ec"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000063-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:06:07.978Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000063",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000063/scope.1.json",
+    "manifest_sha256": "7daab77258afc1306b3d5ec8eb09d3caa2d41a100c00ca2553af243db214e04e"
+  },
+  "network": "none",
+  "exit": 2,
+  "status": "failed",
+  "reason": "exit 2",
+  "finished_at": "2026-10-02T10:06:08.677Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "32deba35c447f2b80ebcc67ed28db420d959cfe6cae45f3e1f439a2ef13a1439",
+    "files": 32,
+    "bytes": 273841,
+    "rejected": 0,
+    "path": "store/jobs/j000063/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

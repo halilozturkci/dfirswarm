@@ -1,0 +1,100 @@
+{
+  "id": "j000167",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000111/user-uninstall.txt",
+      "job:j000032/mftscan.txt",
+      "job:j000064/install-and-fiat.txt"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "independent": true,
+    "command": "python3 - <<'PY'\nimport pathlib,json,os\npaths=['store/jobs/j000111/out/user-uninstall.txt','store/jobs/j000032/out/mftscan.txt','store/jobs/j000064/out/install-and-fiat.txt']\nr=[]\nfor p in paths:\n b=pathlib.Path(p).read_bytes();off=0\n for line in b.splitlines(keepends=True):\n  s=line.decode('utf8','replace')\n  if (p==paths[0] and ('DisplayName' in s or 'InstallDate' in s or '\\texodus\\t' in s)) or (p==paths[1] and ('EXODUS-WINDOWS' in s or ('SquirrelSetup.log' in s and '08:39:08' in s))) or (p==paths[2] and '--updateSelf=' in s):\n   r.append({'source':p,'offset':off,'line':s.rstrip()})\n  off+=len(line)\nresult={'selected_records':r,'derived_minute':'2024:01:07:08:39','later_log_is_self_update':any('--updateSelf=' in x['line'] for x in r)}\npathlib.Path(os.environ['OUT'],'install_review.json').write_text(json.dumps(result,indent=2))\nprint(json.dumps(result,indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120102",
+    "name": "Wallet trace",
+    "doing": "Examine wallet installation and wallet protection evidence for questions 5 and 9."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:29:20.395Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000111/out/user-uninstall.txt",
+        "sha256": "7f1d7494422ce795ac98322907177259881f288208a5d6d4c97cc7c73ae2f744"
+      },
+      {
+        "path": "store/jobs/j000032/out/mftscan.txt",
+        "sha256": "8cbfcf201f5863337b93420d14a60330a04659175aabcc0b8a51157b02ce171a"
+      },
+      {
+        "path": "store/jobs/j000064/out/install-and-fiat.txt",
+        "sha256": "c0ddcd57c366815bfa149dc2b60d8705d2b76a9997eacde9607afd403858acb1"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000167-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:29:20.457Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000167",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 3,
+    "files": 3,
+    "bound": 0,
+    "manifest": "store/jobs/j000167/scope.1.json",
+    "manifest_sha256": "0955ee7345263368dc74c60f431f811cc845798986ad05d0d595591a72f93ed3"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:29:21.292Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "85c9a0924698dd33636b9faad7e67d81cb0399c81a95c134b69b60c2c0c2a774",
+    "files": 1,
+    "bytes": 2585,
+    "rejected": 0,
+    "path": "store/jobs/j000167/out"
+  },
+  "sensitive": {
+    "why": "derived",
+    "from": [
+      "j000064",
+      "j000111"
+    ],
+    "note": "made from the sensitive output of j000064, j000111: every output it sealed is sensitive"
+  }
+}

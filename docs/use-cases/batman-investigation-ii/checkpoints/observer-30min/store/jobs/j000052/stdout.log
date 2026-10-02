@@ -1,0 +1,16 @@
+{
+ "import": "work/extracted/s42120105/contact.rar",
+ "copied_live": false,
+ "copied_from": "the snapshot the hub took at the job's start (its sha256 in the job's scope manifest)",
+ "producer_fenced": false,
+ "files": [
+  {
+   "path": "contact.rar",
+   "bytes": 1732132,
+   "sha256": "c199125c1f7596653096d31b61379b2caaa522d0a7872efd8ccc3b21638865ec",
+   "hashed_before_and_after": true,
+   "unchanged_while_copied": true
+  }
+ ],
+ "changed_while_copied": []
+}

@@ -1,0 +1,92 @@
+{
+  "id": "j000123",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000049/out/proc/pid.3768.dmp",
+      "job:j000079/out/pid.1576.dmp"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport json,os\nneedles=[b'172.30.145.189',b'\\xac\\x1e\\x91\\xbd']\npaths=['store/jobs/j000049/out/proc/pid.3768.dmp','store/jobs/j000079/out/pid.1576.dmp']\nout=[]\nfor path in paths:\n hits=[[] for _ in needles];pos=0;tail=b''\n with open(path,'rb') as f:\n  while True:\n   chunk=f.read(8*1024*1024)\n   if not chunk:break\n   data=tail+chunk;base=pos-len(tail)\n   for i,n in enumerate(needles):\n    start=0\n    while True:\n     k=data.find(n,start)\n     if k<0:break\n     off=base+k\n     if off>=0 and (not hits[i] or off!=hits[i][-1]):hits[i].append(off)\n     start=k+1\n   pos+=len(chunk);tail=data[-(max(map(len,needles))-1):]\n out.append({'path':path,'length':pos,'hits':{n.hex():hs for n,hs in zip(needles,hits)}})\nprint(json.dumps(out,indent=2))\nopen(os.path.join(os.environ['OUT'],'process-hit-offsets.json'),'w').write(json.dumps(out,indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120109",
+    "name": "Memory artifact scout",
+    "doing": "Checking independent malware-attribution paths for Q6; raw-byte verification is complete, awaiting L-8's attribution work"
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:17:56.664Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000049/out/proc/pid.3768.dmp",
+        "sha256": "14c05028e308b210e085769b718199cb74160112bb1f40394285be3e11e9bf29"
+      },
+      {
+        "path": "store/jobs/j000079/out/pid.1576.dmp",
+        "sha256": "45a49cefe5a57f9ef999445e4aeeec5157546727b7a5e0c80fbb4e82a80a076d"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000123-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:17:56.724Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000123",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 2,
+    "files": 2,
+    "bound": 0,
+    "manifest": "store/jobs/j000123/scope.1.json",
+    "manifest_sha256": "3bb7038b65aea3b62addf6ea091585c46765c669a0b05f8daff1cccf48c84500"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:17:59.129Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "a5ca9c1012b7a3d8e51e1e937d6981ca58c50120e6d0481cb8701311caafb6f3",
+    "files": 1,
+    "bytes": 2787,
+    "rejected": 0,
+    "path": "store/jobs/j000123/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

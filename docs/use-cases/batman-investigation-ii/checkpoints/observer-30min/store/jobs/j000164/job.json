@@ -1,0 +1,92 @@
+{
+  "id": "j000164",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000107/out/entries.json",
+      "job:j000107/out/database.xml"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 30,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport json, xml.etree.ElementTree as ET, re, os\nrootdir='store/jobs/j000107/out'\nejp=os.path.join(rootdir,'entries.json'); xp=os.path.join(rootdir,'database.xml')\nebytes=open(ejp,'rb').read(); text=ebytes.decode('utf-8','replace'); obj=json.loads(text)\n# Print only structural clues; never emit usernames, passwords, or their hashes.\nsummary={'entries_json_type':type(obj).__name__,'entries_json_top_keys':list(obj.keys()) if isinstance(obj,dict) else None,'entries_json_count':len(obj) if isinstance(obj,list) else None}\n# Search recursive entries and report only field names, lengths, and offsets for password-like literals.\ndef walk(x,path=[]):\n if isinstance(x,dict):\n  keys=set(x.keys())\n  if any(k.lower() in ('password','username','user_name','title') for k in keys):\n   vals={k:v for k,v in x.items() if k.lower() in ('password','username','user_name','title') and isinstance(v,str)}\n   if vals:\n    details={'path':path,'fields':{k:{'chars':len(v),'utf8_bytes':len(v.encode())} for k,v in vals.items()}}\n    # Record offsets of values only; do not output values.\n    loc={}\n    for k,v in vals.items():\n     enc=json.dumps(v,ensure_ascii=False)[1:-1].encode('utf-8')\n     offs=[]; start=0\n     while enc and (p:=ebytes.find(enc,start))>=0: offs.append(p); start=p+1\n     loc[k]=offs[:5]\n    details['value_offsets_in_entries_json']=loc\n    summary.setdefault('entries_with_credential_fields',[]).append(details)\n  for k,v in x.items(): walk(v,path+[str(k)])\n elif isinstance(x,list):\n  for i,v in enumerate(x): walk(v,path+[str(i)])\nwalk(obj)\n# Parse KeePass XML. Namespace agnostic.\ndef child(el,name): return next((c for c in el if c.tag.split('}')[-1]==name),None)\ndef val(el,name):\n c=child(el,name); return (c.text or '') if c is not None else None\nrt=ET.fromstring(open(xp,'rb').read())\nmeta=next((e for e in rt.iter() if e.tag.split('}')[-1]=='Meta'),None)\nrb_enabled=val(meta,'RecycleBinEnabled') if meta is not None else None\nrb_uuid=val(meta,'RecycleBinUUID') if meta is not None else None\nsummary['xml_recyclebin_enabled']=rb_enabled\nsummary['xml_recyclebin_uuid_present']=bool(rb_uuid)\nsummary['xml_recyclebin_uuid_offset']=open(xp,'rb').read().find(rb_uuid.encode()) if rb_uuid else None\nroot=next((e for e in rt.iter() if e.tag.split('}')[-1]=='Root'),None)\npaths=[]; groups=[]\ndef group_walk(g,path):\n name=val(g,'Name') or ''; gp=path+[name]\n uuid=val(g,'UUID'); entries=[c for c in g if c.tag.split('}')[-1]=='Entry']\n groups.append({'path':gp,'uuid_matches_recyclebin':bool(uuid and rb_uuid and uuid==rb_uuid),'entry_count':len(entries),'uuid_offset_xml':open(xp,'rb').read().find(uuid.encode()) if uuid else None})\n for i,e in enumerate(entries):\n  if rb_uuid and uuid==rb_uuid:\n   fieldmap={}\n   for s in (c for c in e if c.tag.split('}')[-1]=='String'):\n    k=val(s,'Key'); v=child(s,'Value')\n    if k and v is not None:\n     vv=v.text or ''\n     fieldmap[k]={'chars':len(vv),'utf8_bytes':len(vv.encode()),'offset_xml':open(xp,'rb').read().find(vv.encode()) if vv else None}\n   times=child(e,'Times'); deltime=val(times,'DeletionTime') if times is not None else None\n   summary.setdefault('xml_recyclebin_entries',[]).append({'path':gp,'entry_index':i,'fields':fieldmap,'deletion_time_present':bool(deltime),'deletion_time_offset':open(xp,'rb').read().find(deltime.encode()) if deltime else None})\n for c in (c for c in g if c.tag.split('}')[-1]=='Group'): group_walk(c,gp)\nif root:\n for g in (c for c in root if c.tag.split('}')[-1]=='Group'): group_walk(g,[])\nsummary['xml_groups']=groups\nprint(json.dumps(summary,indent=2))\nopen(os.path.join(os.environ['OUT'],'keepass-structure-redacted.json'),'w').write(json.dumps(summary,indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120109",
+    "name": "Memory artifact scout",
+    "doing": "Independently review the source support for Q3 and Q4 KeePass answers after closing my Q6 VAD-attribution route."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:27:54.677Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000107/out/entries.json",
+        "sha256": "5e1e941774aad60e462d6af2bfd94d9f65e84e28f47030d062583d1f68da0c6b"
+      },
+      {
+        "path": "store/jobs/j000107/out/database.xml",
+        "sha256": "cc48c96b02281ae7e441f0dafa2594809793634b59b4c28e0116e9e7be109144"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000164-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:27:54.734Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000164",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 2,
+    "files": 2,
+    "bound": 0,
+    "manifest": "store/jobs/j000164/scope.1.json",
+    "manifest_sha256": "8144a38cacaedaae0a8ecc7aca078375bd2ca3cf63216815ab42afaa268d9aec"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:27:55.453Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "a5408ca11cb5c5535d08cee8d35bc3ca86c20249e5231a7056af02c43bcff056",
+    "files": 1,
+    "bytes": 11502,
+    "rejected": 0,
+    "path": "store/jobs/j000164/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

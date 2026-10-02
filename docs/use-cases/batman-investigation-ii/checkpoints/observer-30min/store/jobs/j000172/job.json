@@ -1,0 +1,85 @@
+{
+  "id": "j000172",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/unknown.data",
+      "job:j000130/archive/contact/instance1/hostkeys",
+      "job:j000130/archive/contact/instance_db/hostkeys"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "cat > /tmp/t.py <<'PY'\nimport hashlib,hmac,json,os,itertools\nfrom Crypto.Protocol.KDF import HKDF,PBKDF2,scrypt\nfrom Crypto.Hash import SHA1,SHA256,SHA512,MD5\nu=open('inputs/chall/unknown.data','rb').read(); cand=u[243:260]\nassert all(32<=x<127 for x in cand)\nps=[('candidate',cand)]\nfor nm,fn in [('md5',hashlib.md5),('sha1',hashlib.sha1),('sha256',hashlib.sha256),('sha512',hashlib.sha512)]: ps.append((nm,fn(cand).digest()))\nouts=[]\nfor lab,path in [('i1','store/jobs/j000130/out/archive/contact/instance1/hostkeys'),('idb','store/jobs/j000130/out/archive/contact/instance_db/hostkeys')]:\n b=open(path,'rb').read(); assert len(b)==81\n # all plausible permutations version plus fields lengths 16,32,32\n for lens in set(itertools.permutations((16,32,32))):\n  a=b[1:1+lens[0]];bb=b[1+lens[0]:1+lens[0]+lens[1]];c=b[1+lens[0]+lens[1]:]\n  fields=[a,bb,c]\n  for ti,tag in enumerate(fields):\n   if len(tag)!=32:continue\n   parts=[x for i,x in enumerate(fields) if i!=ti]\n   msgs={'concat':b''.join(parts),'verconcat':b[:1]+b''.join(parts),'rev':b''.join(parts[::-1]),'all-not-tag':b[1:1+sum(len(x) for x in fields[:ti])]+b[1+sum(len(x) for x in fields[:ti+1]):]}\n   salts={'empty':b'','field0':fields[0],'field1':fields[1],'field2':fields[2], 'dropbox':b'dropbox','hostkeys':b'hostkeys','dbx':b'dbx'}\n   keys=[]\n   for pn,p in ps:\n    keys.append((pn,p));keys.append((pn+'sha256',hashlib.sha256(p).digest()));keys.append((pn+'sha512',hashlib.sha512(p).digest()))\n    for sn,s in salts.items():\n     for it in (1,2,1000,10000,100000):\n      keys.append((f'{pn}-pbkdf2sha1-{sn}-{it}',hashlib.pbkdf2_hmac('sha1',p,s,it,64)))\n      keys.append((f'{pn}-pbkdf2sha256-{sn}-{it}',hashlib.pbkdf2_hmac('sha256',p,s,it,64)))\n     for info in (b'',b'hostkeys',b'dropbox',b'dbx'):\n      keys.append((f'{pn}-hkdf-{sn}-{info!r}',HKDF(p,64,s,SHA256,context=info)))\n   for kn,k in keys:\n    variants=[('whole',k),('first16',k[:16]),('last16',k[-16:]),('first32',k[:32]),('last32',k[-32:])]\n    if len(k)>=64:variants += [('mid32',k[16:48])]\n    for kv,kk in variants:\n     for mn,msg in msgs.items():\n      for alg in ('sha256','sha1','sha512'):\n       d=hmac.new(kk,msg,alg).digest()\n       if hmac.compare_digest(d[:32],tag): outs.append([lab,lens,ti,mn,kn,kv,alg])\nprint('candidate_len',len(cand),'matches',outs)\nopen(os.environ['OUT']+'/unknown-candidate-hostkeys-mac.json','w').write(json.dumps({'candidate_offset':243,'candidate_length':17,'matches':outs},indent=2))\nPY\npython3 /tmp/t.py"
+  },
+  "requester": {
+    "agent": "s42120104",
+    "name": "DBX Key Examiner",
+    "doing": "Establishing Q14, the userkey of the encrypted DBX database, from unknown.data and memory artefacts."
+  },
+  "state": "running",
+  "accepted_at": "2026-10-02T10:31:31.113Z",
+  "reuse": {
+    "op": "command:cat",
+    "objects": [
+      {
+        "path": "store/jobs/j000130/out/archive/contact/instance1/hostkeys",
+        "sha256": "05c1bb92109acc5198cdd403d5ef72a166bf0965b3a8d4083e3522c18f526be5"
+      },
+      {
+        "path": "store/jobs/j000130/out/archive/contact/instance_db/hostkeys",
+        "sha256": "7354c1f37bc0b42fb6abaa668114de19f7ec3826ad37c2230f1c3de1fbe51756"
+      },
+      {
+        "path": "inputs/chall/unknown.data",
+        "sha256": "87841ce462a019649f6206c72cf65ce5305a88b828ca45996ae9422e6f578f4f"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000172-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:31:31.171Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000172",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 3,
+    "files": 3,
+    "bound": 0,
+    "manifest": "store/jobs/j000172/scope.1.json",
+    "manifest_sha256": "11769d3be6bede2221f231e2fcb0b3110abc0bd71e1d7aea8fbc82c70babc90f"
+  },
+  "network": "none"
+}

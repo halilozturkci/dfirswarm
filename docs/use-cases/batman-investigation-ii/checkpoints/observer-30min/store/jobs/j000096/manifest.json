@@ -1,0 +1,1 @@
+{"v":1,"job":"j000096","attempt":1,"sealed_at":"2026-10-02T10:10:29.314Z","files":[{"path":"price-selection-code.txt","path_b64":"cHJpY2Utc2VsZWN0aW9uLWNvZGUudHh0","bytes":21178,"sha256":"08ce205d59aa43a277738777aaebb5864ca1e401d1d17a0cd41a39be01659820","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":21178}}

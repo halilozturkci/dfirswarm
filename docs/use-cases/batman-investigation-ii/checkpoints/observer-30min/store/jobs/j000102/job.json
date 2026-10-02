@@ -1,0 +1,87 @@
+{
+  "id": "j000102",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000049/proc/pid.3768.dmp"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport re,collections,json,os\np='store/jobs/j000049/out/proc/pid.3768.dmp'; rg=re.compile(rb'((?:\\xcf\\x25){1,64})(..)'); c=collections.defaultdict(collections.Counter); ex=[];off=0;tail=b''\nwith open(p,'rb') as f:\n while 1:\n  b=f.read(32<<20)\n  if not b:break\n  x=tail+b;base=off-len(tail)\n  for m in rg.finditer(x):\n   pos=len(m.group(1))//2;cp=int.from_bytes(m.group(2),'little')\n   if 0x20<=cp<=0x7e:\n    c[pos][chr(cp)]+=1;ex.append([base+m.start(),pos,chr(cp)])\n  off+=len(b);tail=x[-132:]\nr={'counts':{str(k):dict(v) for k,v in sorted(c.items())},'examples':ex}\nopen(os.environ['OUT']+'/process-residue.json','w').write(json.dumps(r,indent=2)); print(json.dumps(r['counts'],indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120106",
+    "name": "Vault Artifact Analyst",
+    "doing": "Establishing Q3-Q4: password-manager identity/version and password, plus the deleted stored user key."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:11:17.066Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000049/out/proc/pid.3768.dmp",
+        "sha256": "14c05028e308b210e085769b718199cb74160112bb1f40394285be3e11e9bf29"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000102-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:11:17.114Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000102",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000102/scope.1.json",
+    "manifest_sha256": "5600c1669d6f78ab8b4566761dbed3d86106fb258984b4dfaf3dc08668cd4767"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:11:26.346Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "5b08a68963d5bdea9a49c699a79fb01589cc6f1a1a3ffd48820555ac183e6817",
+    "files": 1,
+    "bytes": 7529,
+    "rejected": 0,
+    "path": "store/jobs/j000102/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

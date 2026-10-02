@@ -1,0 +1,1 @@
+{"v":1,"job":"j000133","attempt":1,"sealed_at":"2026-10-02T10:19:48.746Z","files":[{"path":"hourly_usd_derivation.json","path_b64":"aG91cmx5X3VzZF9kZXJpdmF0aW9uLmpzb24=","bytes":1060,"sha256":"7a64d8fb489cf9b7da63bfd1c9685bcadbd4b793723a833fadf93b2a25154d88","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":1060}}

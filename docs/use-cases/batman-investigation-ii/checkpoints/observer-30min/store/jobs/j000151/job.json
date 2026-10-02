@@ -1,0 +1,91 @@
+{
+  "id": "j000151",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/Carmine-Falcone.raw"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 900,
+    "network": "off",
+    "secret_output": true,
+    "command": "cat > \"$OUT/deref.py\" <<'PY'\nimport os,json\nfrom volatility3.plugins.windows import windows\nclass Deref(windows.Windows):\n def _generator(self):\n  out=[]\n  for sn,dn,wp,wn in self.list_windows(self.context,self.config_path,self.config['kernel']):\n   if wp.vol.offset!=0xbd5b448f45b0:continue\n   w=wp.dereference();row={'pointer':hex(wp.vol.offset),'object':hex(w.vol.offset),'type':w.vol.type_name,'size':w.vol.size}\n   for a in ['subPointer','strName','cbwndExtra','dwUserData','spwndParent','spwndOwner','pcls','style','ExStyle','lpfnWndProc','fnid']:\n    try:\n     v=getattr(w,a);row[a]=str(v)\n     if a=='strName': row['strName_value']=str(v.get_string())\n     try:d=v.dereference();row[a+'_deref']={'address':hex(d.vol.offset),'type':d.vol.type_name}\n     except Exception as e:row[a+'_derr']=str(e)\n    except Exception as e:row[a+'_error']=str(e)\n   lay=self.context.layers[w.vol.layer_name];row['hex']=lay.read(w.vol.offset,512,pad=True).hex();out.append(row)\n  json.dump(out,open(os.environ['OUTJSON'],'w'),indent=2)\n  yield from super()._generator()\nPY\nOUTJSON=\"$OUT/target.json\" vol --offline -p \"$OUT\" -s /tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics/vendor/symbols -f inputs/chall/Carmine-Falcone.raw deref.Deref > \"$OUT/windows.txt\"\ncat \"$OUT/target.json\""
+  },
+  "requester": {
+    "agent": "s42120106",
+    "name": "Vault Artifact Analyst",
+    "doing": "Establishing Q3-Q4: password-manager identity/version and password, plus the deleted stored user key."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:23:49.200Z",
+  "reuse": {
+    "op": "command:cat",
+    "objects": [
+      {
+        "path": "inputs/chall/Carmine-Falcone.raw",
+        "sha256": "3e03551e1f55dd792b0bc459b5620522d61fcf2379e8f6d89ef439fef8263cac"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000151-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:23:49.255Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "general",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000151",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000151/scope.1.json",
+    "manifest_sha256": "4fbce94ea9417e97d2b082368f60a66165ba0c75d5b44803b231cfa9b44b19c3"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:24:19.187Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "49c9328b9edc761f3d5b158eaac581294a51b5f46feb482e5959c8da228ec246",
+    "files": 3,
+    "bytes": 59367,
+    "rejected": 0,
+    "path": "store/jobs/j000151/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

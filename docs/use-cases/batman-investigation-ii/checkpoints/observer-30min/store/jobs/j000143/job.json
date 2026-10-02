@@ -1,0 +1,91 @@
+{
+  "id": "j000143",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/Carmine-Falcone.raw"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 900,
+    "network": "off",
+    "secret_output": true,
+    "command": "cat > \"$OUT/ptrscan.py\" <<'PY'\nimport os,json,struct,re\nfrom volatility3.plugins.windows import windows\nclass Ptrscan(windows.Windows):\n def _generator(self):\n  out=[]\n  for sn,dn,w,wn in self.list_windows(self.context,self.config_path,self.config['kernel']):\n   if w.vol.offset!=0xbd5b448f45b0:continue\n   sp=w.subPointer.dereference();lay=self.context.layers[sp.vol.layer_name];root=lay.read(sp.vol.offset,4096,pad=True)\n   queue=[];seen=set()\n   def ptrs(b,path):\n    for off in range(0,len(b)-7,8):\n     q=struct.unpack_from('<Q',b,off)[0]\n     if 0x100000<=q<0x800000000000 and q not in seen:queue.append((q,path+[off]))\n   ptrs(root,[])\n   while queue:\n    q,path=queue.pop(0);seen.add(q)\n    try:b=lay.read(q,16384,pad=False)\n    except:continue\n    u=[[m.start(),m.group().decode('utf-16le','ignore')] for m in re.finditer(rb'(?:[\\x20-\\x7e]\\x00){3,}',b)]\n    a=[[m.start(),m.group().decode('ascii','ignore')] for m in re.finditer(rb'[\\x20-\\x7e]{4,}',b)]\n    if u or a:out.append({'path':path,'address':hex(q),'utf16':u,'ascii':a})\n    if len(path)<2:ptrs(b,path)\n   json.dump(out,open(os.environ['OUTJSON'],'w'),indent=2)\n  yield from super()._generator()\nPY\nOUTJSON=\"$OUT/results.json\" vol --offline -p \"$OUT\" -s /tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics/vendor/symbols -f inputs/chall/Carmine-Falcone.raw ptrscan.Ptrscan > \"$OUT/windows.txt\"\npython3 - <<'PY'\nimport json,os\nfor e in json.load(open(os.environ['OUT']+'/results.json')):\n print(e['path'],e['address'],'U',e['utf16'][:30],'A',e['ascii'][:10])\nPY"
+  },
+  "requester": {
+    "agent": "s42120106",
+    "name": "Vault Artifact Analyst",
+    "doing": "Establishing Q3-Q4: password-manager identity/version and password, plus the deleted stored user key."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:21:28.684Z",
+  "reuse": {
+    "op": "command:cat",
+    "objects": [
+      {
+        "path": "inputs/chall/Carmine-Falcone.raw",
+        "sha256": "3e03551e1f55dd792b0bc459b5620522d61fcf2379e8f6d89ef439fef8263cac"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000143-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:21:28.734Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "general",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000143",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000143/scope.1.json",
+    "manifest_sha256": "708f7779f6833ddd42cfe7e7f24a8e0ef131aad636c8aa466a133d02573c7cc2"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:21:58.593Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "e0bf2c4bacba4a6f1994360b994ed6123b88d67c31789ea302186aa172356e6b",
+    "files": 3,
+    "bytes": 59004,
+    "rejected": 0,
+    "path": "store/jobs/j000143/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

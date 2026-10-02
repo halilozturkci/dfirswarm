@@ -1,0 +1,15 @@
+
+7-Zip (z) 26.03 (arm64) : Copyright (c) 1999-2026 Igor Pavlov : 2026-09-03
+ 64-bit arm_v:8-A locale=C.UTF-8 Threads:1 OPEN_MAX:4096, ASM
+
+Scanning the drive:
+1 file, 19 bytes (1 KiB)
+
+Creating archive: /tmp/reader-test/probe.7z
+
+Add new data to archive: 1 file, 19 bytes (1 KiB)
+
+
+Files read from disk: 1
+Archive size: 145 bytes (1 KiB)
+Everything is Ok

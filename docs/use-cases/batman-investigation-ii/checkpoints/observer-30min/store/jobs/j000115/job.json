@@ -1,0 +1,87 @@
+{
+  "id": "j000115",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000078/file.0xab0b138c5bc0.0xab0b0d5e4230.DataSectionObject.bruce.kdbx.dat"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nfrom Crypto.Cipher import AES\nfrom hashlib import sha256\nimport struct,string,json,os,sys\np='store/jobs/j000078/out/file.0xab0b138c5bc0.0xab0b0d5e4230.DataSectionObject.bruce.kdbx.dat'\nb=open(p,'rb').read(); pos=12; f={}\nwhile True:\n i=b[pos]; n=struct.unpack_from('<H',b,pos+1)[0]; v=b[pos+3:pos+3+n]; pos+=3+n\n f[i]=v\n if i==0:break\nprint('payload',pos,'size',len(b),'rounds',struct.unpack('<Q',f[6])[0])\nmaster,seed,iv,start=f[4],f[5],f[7],f[9]; rounds=struct.unpack('<Q',f[6])[0]; ct=b[pos:pos+32]\nsuffix='i&YéQ)8h<)1T2j'\n# printable ASCII plus common extended characters\nchars=list(string.printable[:-6])+[chr(i) for i in range(0xa0,0x100)]\nseen=set();hits=[]\nfor first in chars:\n if first in seen:continue\n seen.add(first); pw=first+suffix\n pk=sha256(pw.encode('utf-8')).digest(); comp=sha256(pk).digest(); aes=AES.new(seed,AES.MODE_ECB)\n x=comp\n for _ in range(rounds): x=aes.encrypt(x)\n trans=sha256(x).digest(); key=sha256(master+trans).digest()\n pt=AES.new(key,AES.MODE_CBC,iv).decrypt(ct)\n if pt==start:\n  hits.append(pw); print('MATCH first codepoint',ord(first),'len',len(pw))\nout={'payload_offset':pos,'rounds':rounds,'suffix_codepoints':[ord(x) for x in suffix],'tested_first_codepoints':[ord(x) for x in seen],'matches':hits}\nopen(os.environ['OUT']+'/kdbx-first-char.json','w').write(json.dumps(out,ensure_ascii=False,indent=2))\nprint('hits',len(hits))\nif not hits:sys.exit(2)\nPY"
+  },
+  "requester": {
+    "agent": "s42120104",
+    "name": "DBX Key Examiner",
+    "doing": "Establishing Q14, the userkey of the encrypted DBX database, from unknown.data and memory artefacts."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:15:21.911Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000078/out/file.0xab0b138c5bc0.0xab0b0d5e4230.DataSectionObject.bruce.kdbx.dat",
+        "sha256": "7b55391c40b18b8a9afc43dff0c9814ba6bc0e6566358aa994ff93da76b5e220"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000115-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:15:21.964Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000115",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000115/scope.1.json",
+    "manifest_sha256": "06291a262f1c1e3a49c2ce66f8694570ac0e46a2cb6c47dfd514651639749c3d"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:15:32.586Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "65806d2287fb7604141d3d41980dec1cdff2cd89686d9ba4c90dbbbf628adecf",
+    "files": 1,
+    "bytes": 1912,
+    "rejected": 0,
+    "path": "store/jobs/j000115/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

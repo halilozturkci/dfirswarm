@@ -1,0 +1,16 @@
+{
+ "import": "tool-output/s42120105/20261002100001411-chunk_needles-ifyo.out.log",
+ "copied_live": false,
+ "copied_from": "the snapshot the hub took at the job's start (its sha256 in the job's scope manifest)",
+ "producer_fenced": false,
+ "files": [
+  {
+   "path": "20261002100001411-chunk_needles-ifyo.out.log",
+   "bytes": 122191,
+   "sha256": "d6a1526bfd36998c5fe935b27b65533b494ba147e045a65399415c39a7112b26",
+   "hashed_before_and_after": true,
+   "unchanged_while_copied": true
+  }
+ ],
+ "changed_while_copied": []
+}

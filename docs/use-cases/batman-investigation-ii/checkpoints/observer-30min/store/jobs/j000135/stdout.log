@@ -1,0 +1,22 @@
+[
+  {
+    "txId": "0xab42fc3fb81fca7bec9e49058d80dc928ed5de2e780a54de41d3c1a8587c4ab7",
+    "date": "2024-01-05T17:12:47.000Z",
+    "coinAmount": "0.0069",
+    "selected_bin": 1704474000000,
+    "price": "2233.8489501324125",
+    "usd_unrounded": "15.41355775591364625",
+    "usd_2decimals": "15.41",
+    "fee_separate": null
+  },
+  {
+    "txId": "0x0fe9c3cc4295640b2dcec7ece1ac1e3eb5e8f0f0af61c55e3c2dd575214d3704",
+    "date": "2024-01-05T17:15:19.000Z",
+    "coinAmount": "0.006154298932728",
+    "selected_bin": 1704474000000,
+    "price": "2233.8489501324125",
+    "usd_unrounded": "13.74777420967546954302984630",
+    "usd_2decimals": "13.75",
+    "fee_separate": "0.000745701067272 ETH"
+  }
+]

@@ -1,0 +1,93 @@
+{
+  "id": "j000122",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000049/out/proc/pid.3768.dmp",
+      "job:j000078/out/file.0xab0b138c5bc0.0xab0b0d5e4230.DataSectionObject.bruce.kdbx.dat"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 300,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport os,re,struct,hashlib,json,string,zlib\nfrom collections import Counter\nfrom Crypto.Cipher import AES\nout=os.environ['OUT']; dump='store/jobs/j000049/out/proc/pid.3768.dmp'; db='store/jobs/j000078/out/file.0xab0b138c5bc0.0xab0b0d5e4230.DataSectionObject.bruce.kdbx.dat'\npat=b'\\xcf\\x25'; counts=Counter(); examples={}; base=0; ov=b''\nwith open(dump,'rb') as f:\n while True:\n  b=f.read(8<<20)\n  if not b: break\n  x=ov+b; i=0\n  while True:\n   i=x.find(pat,i)\n   if i<0: break\n   if i>=2 and x[i-2:i]==pat: i+=2; continue\n   j=i\n   while x[j:j+2]==pat: j+=2\n   if j+2<=len(x):\n    n=(j-i)//2; cp=int.from_bytes(x[j:j+2],'little'); counts[(n,cp)]+=1; examples.setdefault((n,cp),base-len(ov)+i)\n   i=j\n  ov=x[-128:]; base+=len(b)\nseries=[]\nfor n in range(1,15):\n opts=[(k,cp,examples[(n,cp)]) for (nn,cp),k in counts.items() if nn==n and k>=10 and cp!=0]; opts.sort(reverse=True)\n if not opts: raise SystemExit(f'missing residue position {n}')\n k,cp,at=opts[0]; series.append((n,cp,k,at))\nsuffix=''.join(chr(cp) for n,cp,k,at in series)\nd=open(db,'rb').read(); pos=12; fld={}\nwhile True:\n fid=d[pos]; ln=struct.unpack_from('<H',d,pos+1)[0]; val=d[pos+3:pos+3+ln]; pos+=3+ln\n if fid==0: break\n fld[fid]=val\nseed,ts,iv,start=fld[4],fld[5],fld[7],fld[9]; rounds=struct.unpack('<Q',fld[6])[0]\ncands=[chr(i)+suffix for i in range(32,127)]\nblocks=b''.join(hashlib.sha256(hashlib.sha256(p.encode()).digest()).digest() for p in cands); cipher=AES.new(ts,AES.MODE_ECB)\nfor _ in range(rounds): blocks=cipher.encrypt(blocks)\nct=d[pos:pos+((len(d)-pos)//16)*16]; found=[]\nfor i,pw in enumerate(cands):\n tr=hashlib.sha256(blocks[i*32:(i+1)*32]).digest(); mk=hashlib.sha256(seed+tr).digest(); plain=AES.new(mk,AES.MODE_CBC,iv).decrypt(ct)\n if plain[:32]==start: found.append((pw,plain))\nif len(found)!=1: raise SystemExit(f'candidate count {len(found)}')\npw,plain=found[0]; open(out+'/decrypted-prefix.bin','wb').write(plain)\np=32; chunks=[]; blockmeta=[]\nwhile p+40<=len(plain):\n idx=struct.unpack_from('<I',plain,p)[0]; h=plain[p+4:p+36]; ln=struct.unpack_from('<I',plain,p+36)[0]; p+=40\n if p+ln>len(plain): blockmeta.append({'index':idx,'length':ln,'complete':False,'available':len(plain)-p}); break\n chunk=plain[p:p+ln]; p+=ln; ok=(hashlib.sha256(chunk).digest()==h) if ln else True; blockmeta.append({'index':idx,'length':ln,'complete':True,'sha256_ok':ok}); chunks.append(chunk)\nstream=b''.join(chunks); open(out+'/hashed-block-stream-prefix.bin','wb').write(stream)\nxml=b''; zerr=None\ntry:\n z=zlib.decompressobj(16+zlib.MAX_WBITS); xml=z.decompress(stream); open(out+'/database-prefix.xml','wb').write(xml)\nexcept Exception as e: zerr=repr(e)\nrec={'method':'KeePass UTF-16 bullet residue; dominant 10-copy n=1..14 series; batched AES-KDF printable first-character validation against KDBX stream-start bytes','residue_positions':[{'bullet_count':n,'codepoint':cp,'count':k,'example_process_dump_offset':at} for n,cp,k,at in series],'password':pw,'password_length':len(pw),'password_utf8_hex':pw.encode().hex(),'kdbx_rounds':rounds,'stream_start_verified':True,'database_bytes':len(d),'ciphertext_prefix_bytes':len(ct),'blocks':blockmeta,'decompressed_prefix_bytes':len(xml),'decompress_error':zerr}\nopen(out+'/recovery.json','w').write(json.dumps(rec,indent=2,ensure_ascii=False)); print(json.dumps({'password_length':len(pw),'password_sha256':hashlib.sha256(pw.encode()).hexdigest(),'stream_start_verified':True,'decompressed_prefix_bytes':len(xml),'blocks':blockmeta},indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120105",
+    "name": "Userkey Analyst",
+    "doing": "I will establish Q12-Q13 (contact verification database key/client email and interpreted client/private key) from unknown.data and memory artifacts; Q14 is already taken."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:17:28.345Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000049/out/proc/pid.3768.dmp",
+        "sha256": "14c05028e308b210e085769b718199cb74160112bb1f40394285be3e11e9bf29"
+      },
+      {
+        "path": "store/jobs/j000078/out/file.0xab0b138c5bc0.0xab0b0d5e4230.DataSectionObject.bruce.kdbx.dat",
+        "sha256": "7b55391c40b18b8a9afc43dff0c9814ba6bc0e6566358aa994ff93da76b5e220"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000122-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:17:28.402Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "general",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000122",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 2,
+    "files": 2,
+    "bound": 0,
+    "manifest": "store/jobs/j000122/scope.1.json",
+    "manifest_sha256": "07277006e53c8bd3b47bcaa414fdf85b393fdb6b2a689c331ae8e73c089e15f7"
+  },
+  "network": "none",
+  "exit": 1,
+  "status": "failed",
+  "reason": "exit 1",
+  "finished_at": "2026-10-02T10:17:30.536Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "007aa5854f1a8cb5be1b5f395206ba619f1d43b89f0914ff6dd879133f27397c",
+    "files": 0,
+    "bytes": 0,
+    "rejected": 0,
+    "path": "store/jobs/j000122/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

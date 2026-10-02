@@ -1,0 +1,85 @@
+{
+  "id": "j000125",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/Carmine-Falcone.raw"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "command": "python3 - <<'PY'\nimport os\np='inputs/chall/Carmine-Falcone.raw'; start=316000000; size=9000000\nwith open(p,'rb') as f:\n f.seek(start); b=f.read(size)\nopen(os.environ['OUT']+'/region.bin','wb').write(b)\nprint('offset',start,'bytes',len(b))\nPY\nstrings -a -t d -n 5 \"$OUT/region.bin\" > \"$OUT/ascii.txt\"\nstrings -a -e l -t d -n 5 \"$OUT/region.bin\" > \"$OUT/utf16.txt\"\ngrep -Ein '172\\.30\\.145\\.189|6969|steal|wallet|exodus|bitcoin|ethereum|github\\.com|golang|\\.go|redline|brostealer|lumma|malware|http' \"$OUT/ascii.txt\" \"$OUT/utf16.txt\" > \"$OUT/hits.txt\" || true\nwc -l \"$OUT\"/*.txt; head -200 \"$OUT/hits.txt\""
+  },
+  "requester": {
+    "agent": "s42120107",
+    "name": "Memory triage",
+    "doing": "Examine the memory image for wallet/password-manager artifacts and claim questions 3–6 if available."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:18:09.543Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "inputs/chall/Carmine-Falcone.raw",
+        "sha256": "3e03551e1f55dd792b0bc459b5620522d61fcf2379e8f6d89ef439fef8263cac"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000125-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:18:09.591Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000125",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000125/scope.1.json",
+    "manifest_sha256": "cb8e850d6f256679a9e9f828dded81634dcd816f374ec6ffb74481b9a8dbc5de"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:18:10.404Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "4a15ae37319f8b9150e731ab1f833c719bb166f5fc329b295775d4f8c1d9439b",
+    "files": 4,
+    "bytes": 10181811,
+    "rejected": 0,
+    "path": "store/jobs/j000125/out"
+  }
+}

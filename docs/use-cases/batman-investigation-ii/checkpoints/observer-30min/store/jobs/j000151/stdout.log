@@ -1,0 +1,47 @@
+[
+  {
+    "pointer": "0xbd5b448f45b0",
+    "object": "0xbd5b448f47e0",
+    "type": "gui-win10-19041-x641!tagWND",
+    "size": 296,
+    "subPointer": "208199630274288",
+    "subPointer_deref": {
+      "address": "0xbd5b41013ef0",
+      "type": "gui-win10-19041-x641!subTagWNDType"
+    },
+    "strName": "<LARGE_UNICODE_STRING gui-win10-19041-x641!_LARGE_UNICODE_STRING (.strName): layer_name_Process624 @ 0xbd5b448f48c8 #16>",
+    "strName_value": "",
+    "strName_derr": "StructType has no attribute: gui-win10-19041-x641!_LARGE_UNICODE_STRING.dereference",
+    "cbwndExtra": "0",
+    "cbwndExtra_derr": "Unable to find dereference for type <class 'volatility3.framework.objects.Integer'>",
+    "dwUserData": "2560",
+    "dwUserData_derr": "Unable to find dereference for type <class 'volatility3.framework.objects.Integer'>",
+    "spwndParent": "208199689913664",
+    "spwndParent_deref": {
+      "address": "0xbd5b448f4540",
+      "type": "gui-win10-19041-x641!tagWND"
+    },
+    "spwndOwner": "208199689913664",
+    "spwndOwner_deref": {
+      "address": "0xbd5b448f4540",
+      "type": "gui-win10-19041-x641!tagWND"
+    },
+    "pcls": "15",
+    "pcls_deref": {
+      "address": "0xf",
+      "type": "gui-win10-19041-x641!tagCLS"
+    },
+    "style": "0",
+    "style_derr": "Unable to find dereference for type <class 'volatility3.framework.objects.Integer'>",
+    "ExStyle": "81648",
+    "ExStyle_derr": "Unable to find dereference for type <class 'volatility3.framework.objects.Integer'>",
+    "lpfnWndProc": "0",
+    "lpfnWndProc_deref": {
+      "address": "0x0",
+      "type": "gui-win10-19041-x641!void"
+    },
+    "fnid": "0",
+    "fnid_derr": "Unable to find dereference for type <class 'volatility3.framework.objects.Integer'>",
+    "hex": "2e030900000000000200000000000000a0f8a2465bbdffff10a8ec0d0babffffe0478f445bbdfffff03e01415bbdfffff03e010000000000000000000000000000000000000000000000000000000000000000000000000030498f445bbdffff000000000000000040458f445bbdffff00000000000000000000000000000000000000000000000010759e445bbdffff90879a465bbdffff80ec02415bbdffff00000000000000000f000000000000000000000000000000404001415bbdffff00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000010fa85465bbdffff0000000000000000000000000000000000000000000000000000000000000000000000000000000052030c00000000000100000000000000a0f8a2465bbdffff10a8ec0d0babffff30498f445bbdffff70ed02415bbdffff70ed02000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000e0478f445bbdffff40458f445bbdffff000000000000000000000000000000000000000000000000a0759e445bbdffffd0819a465bbdffff000000000000000000000000000000000104000000000000"
+  }
+]

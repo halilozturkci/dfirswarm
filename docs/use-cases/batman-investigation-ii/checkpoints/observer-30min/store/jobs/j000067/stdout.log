@@ -1,0 +1,33 @@
+{
+  "source_dump": "file.0xab0b10cde210.0xab0b079ebbb0.DataSectionObject.Inbox.dat",
+  "mbox_offset": 114367,
+  "message_id": "<d3a63f93-a0ee-4718-a71a-d9646de2698b@gmail.com>",
+  "from": "Salvatore Maroni <salvatoremaroni3376@gmail.com>",
+  "to": "hugostrange581@gmail.com",
+  "subject": "Confidential!!",
+  "date": "Sun, 07 Jan 2024 10:17:39 +0000",
+  "parts": [
+    {
+      "type": "multipart/mixed",
+      "filename": null,
+      "disposition": null,
+      "decoded_bytes": 0,
+      "sha256": null
+    },
+    {
+      "type": "text/plain",
+      "filename": null,
+      "disposition": null,
+      "decoded_bytes": 66,
+      "sha256": "02299125eabcebc28a010178be4e68b29f2c058a8b4d1c3c2500540905fa05b2",
+      "text": "Contact the guy and the key for his reply is his private key!!\r\n\r\n"
+    },
+    {
+      "type": "application/octet-stream",
+      "filename": "contact.rar",
+      "disposition": "attachment",
+      "decoded_bytes": 1732132,
+      "sha256": "c199125c1f7596653096d31b61379b2caaa522d0a7872efd8ccc3b21638865ec"
+    }
+  ]
+}

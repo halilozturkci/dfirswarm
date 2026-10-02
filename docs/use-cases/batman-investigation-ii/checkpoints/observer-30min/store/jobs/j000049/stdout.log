@@ -1,0 +1,20 @@
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000049:
+total 89M
+-rw-r--r-- 1 root root   84 Oct  2 10:04 dump-info.txt
+-rw-r--r-- 1 root root 5.7M Oct  2 10:04 memmap.txt
+drwxr-xr-x 3 root root   96 Oct  2 10:04 proc
+-rw-r--r-- 1 root root 1.9M Oct  2 10:04 proc-ascii-hits.txt
+-rw-r--r-- 1 root root  50M Oct  2 10:04 proc-ascii.txt
+-rw-r--r-- 1 root root 1.4M Oct  2 10:04 proc-utf16-hits.txt
+-rw-r--r-- 1 root root  28M Oct  2 10:04 proc-utf16.txt
+
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000049/proc:
+total 737M
+-rw------- 1 root root 734M Oct  2 10:04 pid.3768.dmp
+       1 /Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000049/dump-info.txt
+  105658 /Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000049/memmap.txt
+   19366 /Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000049/proc-ascii-hits.txt
+ 2651337 /Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000049/proc-ascii.txt
+   14363 /Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000049/proc-utf16-hits.txt
+  686215 /Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000049/proc-utf16.txt
+ 3476940 total

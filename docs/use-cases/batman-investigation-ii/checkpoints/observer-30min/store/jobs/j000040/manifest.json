@@ -1,0 +1,1 @@
+{"v":1,"job":"j000040","attempt":1,"sealed_at":"2026-10-02T10:01:44.088Z","files":[{"path":"wallet_loader_and_logs.txt","path_b64":"d2FsbGV0X2xvYWRlcl9hbmRfbG9ncy50eHQ=","bytes":9416,"sha256":"7fbfcaaaa412c9a2c9912d3758352c844f4625438b713686a0ed04df876cd668","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":9416}}

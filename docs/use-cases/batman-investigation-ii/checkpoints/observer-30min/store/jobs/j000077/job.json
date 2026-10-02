@@ -1,0 +1,91 @@
+{
+  "id": "j000077",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000069"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport json,glob,datetime,os,decimal\np=glob.glob('store/jobs/j000069/out/*market-history*.dat')[0];x=json.loads(open(p,'rb').read().rstrip(b'\\0'));out={}\nfor bucket,assets in x['USD'].items():\n if not isinstance(assets,dict):continue\n for key,rows in assets.items():\n  if key not in ['ETH','ethereum']:continue\n  out[bucket]={key:[[t,v] for t,v in rows if 1704326400000<=t<=1704672000000]}\nprint(json.dumps(out,indent=2));json.dump(out,open(os.environ['OUT']+'/eth-history.json','w'),indent=2)\nPY"
+  },
+  "requester": {
+    "agent": "s42120101",
+    "name": "Wallet trail",
+    "doing": "Investigating the installed cryptocurrency wallet and transfer artifacts for questions 5, 10 and 11."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:07:44.635Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000069/out",
+        "dir": true
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000077-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:07:44.658Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000069/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000077",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 0,
+    "bound": 1,
+    "manifest": "store/jobs/j000077/scope.1.json",
+    "manifest_sha256": "3f1849b4bb5bf31759591e36eccac909bf1734693d352781f99e462d35f7f68c"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:07:45.394Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "1ac10cb16820b2a3952e11164def00d1489b6b470891fc8aded2a43e27860735",
+    "files": 1,
+    "bytes": 9237,
+    "rejected": 0,
+    "path": "store/jobs/j000077/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

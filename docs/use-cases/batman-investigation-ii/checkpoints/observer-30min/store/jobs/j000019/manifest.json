@@ -1,0 +1,1 @@
+{"v":1,"job":"j000019","attempt":1,"sealed_at":"2026-10-02T09:59:37.800Z","files":[{"path":"uri_passwords.json","path_b64":"dXJpX3Bhc3N3b3Jkcy5qc29u","bytes":23942,"sha256":"bfea74ef44ac3d6641d72ed0cd6589dd422adbfbea0060a121a50089f42882bc","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":23942}}

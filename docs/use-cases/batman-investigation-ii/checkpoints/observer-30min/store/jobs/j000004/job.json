@@ -1,0 +1,86 @@
+{
+  "id": "j000004",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/Carmine-Falcone.raw"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 900,
+    "network": "off",
+    "command": "python3 - <<'PY'\nfrom pathlib import Path\np=Path('inputs/chall/Carmine-Falcone.raw')\nneedles=[b'infobreakage',b'InfoBreakage',b'Salvatore',b'salvatore',b'unknown.data',b'.dbx',b'DBX',b'client_email',b'private_key',b'client private',b'contact verification']\n# include UTF16LE variants\npatterns=[]\nfor n in needles:\n patterns.append((n.decode('ascii','ignore')+' [ascii]',n.lower()))\n patterns.append((n.decode('ascii','ignore')+' [utf16]',b''.join(bytes([c,0]) for c in n.lower())))\nchunk=8*1024*1024; overlap=512; pos=0; tail=b''; hits=[]; counts={x[0]:0 for x in patterns}\nwith p.open('rb') as f:\n while True:\n  b=f.read(chunk)\n  if not b: break\n  data=tail+b; base=pos-len(tail); low=data.lower()\n  for label,pat in patterns:\n   start=0\n   while True:\n    i=low.find(pat,start)\n    if i<0: break\n    off=base+i; counts[label]+=1\n    if counts[label]<=100:\n     lo=max(0,i-256); hi=min(len(data),i+len(pat)+512)\n     import base64\n     hits.append((label,off,base64.b64encode(data[lo:hi]).decode()))\n    start=i+1\n  pos += len(b); tail=data[-overlap:]\nimport json\nPath('$OUT/hits.json').write_text(json.dumps({'counts':counts,'hits':hits},indent=2))\n# printable render contexts with ASCII and UTF16 collapsed\nwith Path('$OUT/hits.txt').open('w') as o:\n for label,off,b64 in hits:\n  import base64,re\n  raw=base64.b64decode(b64)\n  asc=''.join(chr(c) if 32<=c<127 else '.' for c in raw)\n  u=''.join(chr(raw[i]) if raw[i+1]==0 and 32<=raw[i]<127 else '.' for i in range(0,len(raw)-1,2))\n  o.write(f'=== {label} @ {off} (0x{off:x}) ===\\nASCII {asc}\\nUTF16 {u}\\n')\nprint(json.dumps(counts))\nPY"
+  },
+  "requester": {
+    "agent": "s42120105",
+    "name": "Userkey Analyst",
+    "doing": "I will establish Q12-Q13 (contact verification database key/client email and interpreted client/private key) from unknown.data and memory artifacts; Q14 is already taken."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T09:57:41.332Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "inputs/chall/Carmine-Falcone.raw",
+        "sha256": "3e03551e1f55dd792b0bc459b5620522d61fcf2379e8f6d89ef439fef8263cac"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000004-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T09:58:12.509Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "general",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000004",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000004/scope.1.json",
+    "manifest_sha256": "6339543397657903cbf761ec3f79496661a8dd348180397c7db667e9870cd748"
+  },
+  "network": "none",
+  "exit": 1,
+  "status": "failed",
+  "reason": "exit 1",
+  "finished_at": "2026-10-02T09:58:59.304Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "6d99c88aeb566c6985f1bf4ca0526f62dce83ff1a09dfbc3988e4045c367f4a1",
+    "files": 0,
+    "bytes": 0,
+    "rejected": 0,
+    "path": "store/jobs/j000004/out"
+  }
+}

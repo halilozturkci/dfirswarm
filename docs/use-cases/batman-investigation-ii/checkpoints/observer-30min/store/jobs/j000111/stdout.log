@@ -1,0 +1,21 @@
+
+Last Write Time	Hive Offset	Type	Key	Name	Data	Volatile
+
+2024-01-07 08:39:51.000000 UTC	0xd58a1a829000	Key	\??\C:\Users\Carmine Falcone\ntuser.dat\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall	exodus	N/A	False
+* 2024-01-07 08:39:51.000000 UTC	0xd58a1a829000	REG_SZ	\??\C:\Users\Carmine Falcone\ntuser.dat\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\exodus	DisplayIcon	C:\Users\Carmine Falcone\AppData\Local\exodus\app.ico	False
+* 2024-01-07 08:39:51.000000 UTC	0xd58a1a829000	REG_SZ	\??\C:\Users\Carmine Falcone\ntuser.dat\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\exodus	DisplayName	Exodus	False
+* 2024-01-07 08:39:51.000000 UTC	0xd58a1a829000	REG_SZ	\??\C:\Users\Carmine Falcone\ntuser.dat\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\exodus	DisplayVersion	24.1.1	False
+* 2024-01-07 08:39:51.000000 UTC	0xd58a1a829000	REG_SZ	\??\C:\Users\Carmine Falcone\ntuser.dat\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\exodus	InstallDate	20240107	False
+* 2024-01-07 08:39:51.000000 UTC	0xd58a1a829000	REG_SZ	\??\C:\Users\Carmine Falcone\ntuser.dat\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\exodus	InstallLocation	C:\Users\Carmine Falcone\AppData\Local\exodus	False
+* 2024-01-07 08:39:51.000000 UTC	0xd58a1a829000	REG_SZ	\??\C:\Users\Carmine Falcone\ntuser.dat\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\exodus	Publisher	Exodus Movement Inc	False
+* 2024-01-07 08:39:51.000000 UTC	0xd58a1a829000	REG_SZ	\??\C:\Users\Carmine Falcone\ntuser.dat\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\exodus	QuietUninstallString	"C:\Users\Carmine Falcone\AppData\Local\exodus\Update.exe" --uninstall -s	False
+* 2024-01-07 08:39:51.000000 UTC	0xd58a1a829000	REG_SZ	\??\C:\Users\Carmine Falcone\ntuser.dat\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\exodus	UninstallString	"C:\Users\Carmine Falcone\AppData\Local\exodus\Update.exe" --uninstall	False
+* 2024-01-07 08:39:51.000000 UTC	0xd58a1a829000	REG_SZ	\??\C:\Users\Carmine Falcone\ntuser.dat\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\exodus	URLUpdateInfo		False
+* 2024-01-07 08:39:51.000000 UTC	0xd58a1a829000	REG_DWORD	\??\C:\Users\Carmine Falcone\ntuser.dat\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\exodus	EstimatedSize	193279	False
+* 2024-01-07 08:39:51.000000 UTC	0xd58a1a829000	REG_DWORD	\??\C:\Users\Carmine Falcone\ntuser.dat\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\exodus	NoModify	1	False
+* 2024-01-07 08:39:51.000000 UTC	0xd58a1a829000	REG_DWORD	\??\C:\Users\Carmine Falcone\ntuser.dat\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\exodus	NoRepair	1	False
+* 2024-01-07 08:39:51.000000 UTC	0xd58a1a829000	REG_DWORD	\??\C:\Users\Carmine Falcone\ntuser.dat\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\exodus	Language	1033	False
+2024-01-07 08:33:21.000000 UTC	0xd58a1a829000	Key	\??\C:\Users\Carmine Falcone\ntuser.dat\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall	OneDriveSetup.exe	N/A	False
+* 2024-01-07 08:33:21.000000 UTC	0xd58a1a829000	REG_SZ	\??\C:\Users\Carmine Falcone\ntuser.dat\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\OneDriveSetup.exe	DisplayName	Microsoft OneDrive	False
+* 2024-01-07 08:33:21.000000 UTC	0xd58a1a829000	REG_SZ	\??\C:\Users\Carmine Falcone\ntuser.dat\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\OneDriveSetup.exe	DisplayIcon	C:\Users\Carmine Falcone\AppData\Local\Microsoft\OneDrive\21.220.1024.0005\OneDriveSetup.exe,-101	False
+28 /Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000111/user-uninstall.txt

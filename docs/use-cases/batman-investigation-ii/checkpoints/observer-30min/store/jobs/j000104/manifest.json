@@ -1,0 +1,1 @@
+{"v":1,"job":"j000104","attempt":1,"sealed_at":"2026-10-02T10:12:01.354Z","files":[{"path":"encoded-candidates.json","path_b64":"ZW5jb2RlZC1jYW5kaWRhdGVzLmpzb24=","bytes":2,"sha256":"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":2}}

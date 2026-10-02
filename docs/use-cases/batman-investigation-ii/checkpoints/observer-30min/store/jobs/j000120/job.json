@@ -1,0 +1,107 @@
+{
+  "id": "j000120",
+  "attempt": 1,
+  "spec": {
+    "kind": "tool",
+    "inputs": [
+      "input:chall/Carmine-Falcone.raw"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "tool": "gui_window_detail",
+    "args": {
+      "image": "inputs/chall/Carmine-Falcone.raw",
+      "symbols": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics/vendor/symbols",
+      "pid": 5372,
+      "out_dir": "{OUT}/gui"
+    }
+  },
+  "requester": {
+    "agent": "s42120103",
+    "name": "Wallet history",
+    "doing": "Investigating Q7 and Q8: password-protected archive and original file hashes; avoiding peers' wallet work."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:17:08.539Z",
+  "reuse": {
+    "op": "tool:gui_window_detail",
+    "objects": [
+      {
+        "path": "inputs/chall/Carmine-Falcone.raw",
+        "sha256": "3e03551e1f55dd792b0bc459b5620522d61fcf2379e8f6d89ef439fef8263cac"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000120-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:17:08.591Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000120",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000120/scope.1.json",
+    "manifest_sha256": "095795de0c23586e39116c09fa7d6ced5db662c6a17a795aad65aa7792d3b262"
+  },
+  "network": "none",
+  "tool_sha256": "a7a5cf0d09a07b957de3b531609a9d3183e48ca4e1bdcae65d0248e396ad8977",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:17:39.322Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "same_as": [
+    {
+      "path": "gui/vol.stderr",
+      "sha256": "495a1d75f665f09f5d325806fae5cd45191c2410eb37a2a3e50bfc2f26ccf0f7",
+      "bytes": 489,
+      "job": "j000018",
+      "file": "notepad.stderr"
+    }
+  ],
+  "outputs": {
+    "manifest_sha256": "9ed4edc1cb03e9b44ce20ff78bf7e0e9024b47068bd821695b84068cbfc93205",
+    "files": 3,
+    "bytes": 74430,
+    "rejected": 0,
+    "path": "store/jobs/j000120/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

@@ -1,0 +1,1 @@
+{"v":1,"job":"j000115","attempt":1,"sealed_at":"2026-10-02T10:15:32.598Z","files":[{"path":"kdbx-first-char.json","path_b64":"a2RieC1maXJzdC1jaGFyLmpzb24=","bytes":1912,"sha256":"07e20c37219616df8c541a6962f29378cce799067b1849c05a2011f26f92610c","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":1912}}

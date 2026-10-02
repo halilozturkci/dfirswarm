@@ -1,0 +1,74 @@
+{
+  "id": "j000097",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "command": "vol --offline -s /tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics/vendor/symbols --help | grep -i -A1 -B1 amcache || true"
+  },
+  "requester": {
+    "agent": "s42120108",
+    "name": "DBX Key Analyst",
+    "doing": "Establish Q6 malware identity and destination from memory evidence."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:10:27.457Z",
+  "reuse": {
+    "op": "command:vol",
+    "objects": []
+  },
+  "worker": "dfs-s421201-job-j000097-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:10:29.399Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000097",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 0,
+    "files": 0,
+    "bound": 0,
+    "manifest": "store/jobs/j000097/scope.1.json",
+    "manifest_sha256": "2fc02ddcc090d30272edaeef2ef216b91f3fcbebce5c8af9799258a7e52c0942"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:10:30.324Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "e43fa8514cbe943c2bcb51bbca00cd301f48d23b457a571d07d317a4eb1b485f",
+    "files": 0,
+    "bytes": 0,
+    "rejected": 0,
+    "path": "store/jobs/j000097/out"
+  }
+}

@@ -1,0 +1,93 @@
+{
+  "id": "j000058",
+  "attempt": 1,
+  "spec": {
+    "kind": "recipe",
+    "inputs": [
+      "job:j000052/contact.rar"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 1800,
+    "network": "off",
+    "note": "Catalogue recovered contact.rar contents for Q12-Q14 DBX userkey examination",
+    "recipe": "computer-forensics-base/archive-members",
+    "target": {
+      "paths": [
+        "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000052/out/contact.rar"
+      ],
+      "name": "store/jobs/j000052/out/contact.rar",
+      "ref": "job:j000052/contact.rar",
+      "sha256": "c199125c1f7596653096d31b61379b2caaa522d0a7872efd8ccc3b21638865ec"
+    }
+  },
+  "requester": {
+    "agent": "s42120104",
+    "name": "DBX Key Examiner",
+    "doing": "Establishing Q14, the userkey of the encrypted DBX database, from unknown.data and memory artefacts."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:05:50.032Z",
+  "dedup_key": "86c3c3fd1e27e4efd28a09e4f2086de80bc153f191e585c5981a1055bb0915f9",
+  "worker": "dfs-s421201-job-j000058-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:05:50.081Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "general",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000058",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000058/scope.1.json",
+    "manifest_sha256": "7eadd75b57e402bc3ffd630ce80727d31862727f28e0d156808129c347c315d3"
+  },
+  "network": "none",
+  "tool_sha256": "fc2f2a957135dbc2138ed9e1ad5266be9f1ed4ed9bae5c6491a6d2d8d02949f5",
+  "exit": 2,
+  "status": "failed",
+  "reason": "exit 2",
+  "finished_at": "2026-10-02T10:05:50.768Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "fed05c4f6a385d76e834af16bfec05f51c0f9413ebdf8cd72abefa09eaa7de1b",
+    "files": 1,
+    "bytes": 378,
+    "rejected": 0,
+    "path": "store/jobs/j000058/out"
+  },
+  "sensitive": {
+    "why": "derived",
+    "from": [
+      "j000052"
+    ],
+    "note": "made from the sensitive output of j000052: every output it sealed is sensitive"
+  },
+  "generation": "g0002",
+  "revision": 2
+}

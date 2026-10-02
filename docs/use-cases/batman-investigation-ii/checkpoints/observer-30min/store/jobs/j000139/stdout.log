@@ -1,0 +1,16 @@
+{
+ "import": "tool-output/s42120104/20261002100314853-bash-ujat.out.log",
+ "copied_live": false,
+ "copied_from": "the snapshot the hub took at the job's start (its sha256 in the job's scope manifest)",
+ "producer_fenced": false,
+ "files": [
+  {
+   "path": "20261002100314853-bash-ujat.out.log",
+   "bytes": 1941561,
+   "sha256": "752e8913336411d3deca45c2610df8242259fb71ef3c5a27b6b66bdb7212b7cd",
+   "hashed_before_and_after": true,
+   "unchanged_while_copied": true
+  }
+ ],
+ "changed_while_copied": []
+}

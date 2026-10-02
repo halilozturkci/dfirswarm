@@ -1,0 +1,1 @@
+{"v":1,"job":"j000141","attempt":1,"sealed_at":"2026-10-02T10:21:14.240Z","files":[{"path":"20261002100001411-chunk_needles-ifyo.out.log","path_b64":"MjAyNjEwMDIxMDAwMDE0MTEtY2h1bmtfbmVlZGxlcy1pZnlvLm91dC5sb2c=","bytes":122191,"sha256":"d6a1526bfd36998c5fe935b27b65533b494ba147e045a65399415c39a7112b26","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":122191}}

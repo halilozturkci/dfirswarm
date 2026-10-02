@@ -1,0 +1,7 @@
+Volatility 3 Framework 2.28.2
+usage: vol windows.registry.amcache.Amcache [-h]
+
+Extract information on executed applications from the AmCache.
+
+options:
+  -h, --help  show this help message and exit

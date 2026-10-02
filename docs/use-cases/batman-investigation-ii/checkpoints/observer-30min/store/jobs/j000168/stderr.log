@@ -1,0 +1,26 @@
+Traceback (most recent call last):
+  File "/usr/lib/python3.11/pathlib.py", line 1117, in mkdir
+    os.mkdir(self, mode)
+FileNotFoundError: [Errno 2] No such file or directory: '/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/work/s42120107/memfs'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/usr/lib/python3.11/pathlib.py", line 1117, in mkdir
+    os.mkdir(self, mode)
+FileNotFoundError: [Errno 2] No such file or directory: '/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/work/s42120107'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools/mem_fs/run.py", line 179, in <module>
+    main()
+  File "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools/mem_fs/run.py", line 87, in main
+    mount.mkdir(parents=True, exist_ok=True)
+  File "/usr/lib/python3.11/pathlib.py", line 1121, in mkdir
+    self.parent.mkdir(parents=True, exist_ok=True)
+  File "/usr/lib/python3.11/pathlib.py", line 1121, in mkdir
+    self.parent.mkdir(parents=True, exist_ok=True)
+  File "/usr/lib/python3.11/pathlib.py", line 1117, in mkdir
+    os.mkdir(self, mode)
+OSError: [Errno 30] Read-only file system: '/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/work'

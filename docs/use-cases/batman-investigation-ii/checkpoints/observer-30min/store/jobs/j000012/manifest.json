@@ -1,0 +1,1 @@
+{"v":1,"job":"j000012","attempt":1,"sealed_at":"2026-10-02T10:05:49.225Z","files":[{"path":"wallet_context.jsonl","path_b64":"d2FsbGV0X2NvbnRleHQuanNvbmw=","bytes":849022790,"sha256":"ff603b1b57b7273a7269149a9dec01d2de3bb93fad096bc50fe72906d113db3c","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":849022790}}

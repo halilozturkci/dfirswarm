@@ -1,0 +1,11 @@
+                        volatility configs for them
+    windows.amcache.Amcache
+                        Extract information on executed applications from the
+                        AmCache (deprecated).
+    windows.bigpools.BigPools
+--
+                        themselves.
+    windows.registry.amcache.Amcache
+                        Extract information on executed applications from the
+                        AmCache.
+    windows.registry.cachedump.Cachedump

@@ -1,0 +1,101 @@
+{
+  "id": "j000091",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/Carmine-Falcone.raw"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 900,
+    "network": "off",
+    "command": "vol --offline -s /tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics/vendor/symbols -f inputs/chall/Carmine-Falcone.raw windows.registry.printkey.PrintKey --offset 0xd58a14ee8000 --key 'Microsoft\\\\Windows\\\\CurrentVersion\\\\Uninstall' --recurse > \"$OUT/uninstall.txt\" 2> \"$OUT/uninstall.stderr\"; grep -i -C 5 'Exodus' \"$OUT/uninstall.txt\" || true; wc -l \"$OUT/uninstall.txt\""
+  },
+  "requester": {
+    "agent": "s42120108",
+    "name": "DBX Key Analyst",
+    "doing": "Establish Q6 malware identity and destination from memory evidence."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:09:47.937Z",
+  "reuse": {
+    "op": "command:vol",
+    "objects": [
+      {
+        "path": "inputs/chall/Carmine-Falcone.raw",
+        "sha256": "3e03551e1f55dd792b0bc459b5620522d61fcf2379e8f6d89ef439fef8263cac"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000091-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:09:48.001Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "general",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000091",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000091/scope.1.json",
+    "manifest_sha256": "64007a5bf8d261d3b6c1a82c0c878ab34f2f3ea85788ce12d10bd0924622a8fc"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:09:49.585Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "same_as": [
+    {
+      "path": "uninstall.stderr",
+      "sha256": "495a1d75f665f09f5d325806fae5cd45191c2410eb37a2a3e50bfc2f26ccf0f7",
+      "bytes": 489,
+      "job": "j000018",
+      "file": "notepad.stderr"
+    }
+  ],
+  "outputs": {
+    "manifest_sha256": "0c32c1368aae39dcf9927a45df34bc1fdc681d3a81f735b6371c130c95511682",
+    "files": 2,
+    "bytes": 687,
+    "rejected": 0,
+    "path": "store/jobs/j000091/out"
+  },
+  "sensitive": {
+    "why": "derived",
+    "from": [
+      "j000018"
+    ],
+    "note": "made from the sensitive output of j000018: every output it sealed is sensitive"
+  }
+}

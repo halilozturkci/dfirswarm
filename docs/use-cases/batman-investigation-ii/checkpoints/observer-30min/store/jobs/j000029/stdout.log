@@ -1,0 +1,321 @@
+{
+  "path": "inputs/chall/Carmine-Falcone.raw",
+  "scanned_start": 0,
+  "scanned_end": 4831838208,
+  "size": 4831838208,
+  "hit_count_returned": 50,
+  "counts": {
+    "Exodus": 19585,
+    "6969": 437,
+    "stealer": 236,
+    "wallet stealer": 2,
+    "172.30.145.189": 1
+  },
+  "hits": [
+    {
+      "offset": 3269559,
+      "needle": "6969",
+      "enc": "ascii",
+      "snippet": "...s@(..625f3434696938.5g5b..0..U..\"......D.................t..h(.c5n623g5..m5d5q..@.............8.%f.e...7.6......J626063.B!.5g35356a6a9.5h"
+    },
+    {
+      "offset": 2910044,
+      "needle": "Exodus",
+      "enc": "ascii",
+      "snippet": ");if(Object(p.isExodusSharesPaymentTx)(e,r,s))return i.a.createElement(i.a.Fragment,null,\"Purchased..\",i.a.createElement(A,{asset:s[c.EXODUS_S"
+    },
+    {
+      "offset": 2910295,
+      "needle": "Exodus",
+      "enc": "ascii",
+      "snippet": ");if(Object(p.isExodusAlgorandAirdrop)(e))return i.a.createElement(i.a.Fragment,null,\"Enabled..\",i.a.createElement(A,{asset:s[c.EXODUS_SHARES_"
+    },
+    {
+      "offset": 2910540,
+      "needle": "Exodus",
+      "enc": "ascii",
+      "snippet": ");if(Object(p.isExodusSharesRefundTx)(e,r,s))return i.a.createElement(i.a.Fragment,null,\"Refunded for Purchase of..\",i.a.createElement(A,{asse"
+    },
+    {
+      "offset": 1769116,
+      "needle": "Exodus",
+      "enc": "utf16",
+      "snippet": "R.o.a.m.i.n.g.\\.E.x.o.d.u.s.\\.P.a.r.t.i.t.i.o.n.s.\\.n.e.t.w.o.r.k.\\.C.a.c.h.e.\\.C.a.c.h.e._.D.a.t.a.\\.d.a.t.a._.0.......MuUn.........q........"
+    },
+    {
+      "offset": 2801038,
+      "needle": "Exodus",
+      "enc": "utf16",
+      "snippet": "..o.a.m.i.n.g.\\.E.x.o.d.u.s.\\.W.e.b.S.t.o.r.a.g.e.\\...l...............IoNm........\\.W.i.n.d.o.w.s.\\.P.r.e.f.e.t.c.h.\\.S.V.C.H.O.S.T...E.X.E.-."
+    },
+    {
+      "offset": 3231762,
+      "needle": "Exodus",
+      "enc": "utf16",
+      "snippet": "-.2.4...1...1.\\.E.x.o.d.u.s...e.x.e...}.......%.c.o.m.m.o.n._.a.p.p.d.a.t.a.%.\\.U.S.O.P.r.i.v.a.t.e.\\.U.p.d.a.t.e.S.t.o.r.e.\\.s.t.o.r.e...d.b."
+    },
+    {
+      "offset": 4821228,
+      "needle": "Exodus",
+      "enc": "utf16",
+      "snippet": "-.2.4...1...1.\\.E.x.o.d.u.s...e.x.e...x.e...e.x.e................................. @\\.D.e.v.i.c.e.\\.H.a.r.d.d.i.s.k.V.o.l.u.m.e.2.\\.U.s.e.r.s."
+    },
+    {
+      "offset": 4821452,
+      "needle": "Exodus",
+      "enc": "utf16",
+      "snippet": "-.2.4...1...1.\\.E.x.o.d.u.s...e.x.e...U.I......................................... @P.k......n......P.k.......|.M.i.0........................."
+    },
+    {
+      "offset": 5818497,
+      "needle": "Exodus",
+      "enc": "utf16",
+      "snippet": ".0,o..e.1.......E.x.o.d.u.s.....tI}B[.).......E..\\..PC..:/...aX.N.. c.=~..\\by....)...l.n.k...E..\\....5..E..\\....5.w.A@.p.s.(.e.i.....o........"
+    },
+    {
+      "offset": 7818936,
+      "needle": "Exodus",
+      "enc": "utf16",
+      "snippet": "_.e.x.o.d.u.s._.E.x.o.d.u.s...]...j.s.................................... .......$..........#;....H......oB.......H......`.......p............"
+    },
+    {
+      "offset": 8922290,
+      "needle": "6969",
+      "enc": "utf16",
+      "snippet": "e.6.7.-.f.e.f.d.6.9.6.9.e.a.6.8...t.m.p.........i.....z.i.....z.i.................@...............(...(...............A-......A-......0....."
+    },
+    {
+      "offset": 8922554,
+      "needle": "6969",
+      "enc": "utf16",
+      "snippet": "e.6.7.-.f.e.f.d.6.9.6.9.e.a.6.8...t.m.p.........i.......i.......i.................@...............(...(.x.............A-......A-......0...x."
+    },
+    {
+      "offset": 8924268,
+      "needle": "6969",
+      "enc": "utf16",
+      "snippet": "e.6.7.-.f.e.f.d.6.9.6.9.e.a.6.8...t.m.p.......i.....t.i.....t.i.....h...........@...............(. .H. ..............3.......3........4....."
+    },
+    {
+      "offset": 16367160,
+      "needle": "6969",
+      "enc": "utf16",
+      "snippet": "l.I.n.M.s.\".:.1.6.9.6.9.5.,.\".C.o.m.p.l.e.t.e.\".:.0.,.\".I.n.c.o.m.p.l.e.t.e.\".:.0.,.\".R.e.d.i.s.c.o.v.e.r.\".:.f.a.l.s.e.,.\".K.V.V.e.r.s.i.o."
+    },
+    {
+      "offset": 10936570,
+      "needle": "stealer",
+      "enc": "ascii",
+      "snippet": "ALF:PWS:MSIL/Brostealer.RS!MTB...........Jg@....r....1....y....9._.!#ALF:JASYP:Trojan:MSIL/Redline!atmn.........,.d.@......a.......>.?..+F.`..."
+    },
+    {
+      "offset": 8527943,
+      "needle": "Exodus",
+      "enc": "ascii",
+      "snippet": " Account\",text:`Exodus supports only one EOS account. Your account name is ${r.mainAccountName}.`,learnMore:\"https://support.exodus.com/articl"
+    },
+    {
+      "offset": 10825328,
+      "needle": "Exodus",
+      "enc": "ascii",
+      "snippet": "sset}),r.o(a,\"isExodusSharesAsset\")&&r.d(t,\"isExodusSharesAsset\",function(){return a.isExodusSharesAsset}),r.o(a,\"isMultiNetworkAsset\")&&r.d(t"
+    },
+    {
+      "offset": 10825358,
+      "needle": "Exodus",
+      "enc": "ascii",
+      "snippet": "set\")&&r.d(t,\"isExodusSharesAsset\",function(){return a.isExodusSharesAsset}),r.o(a,\"isMultiNetworkAsset\")&&r.d(t,\"isMultiNetworkAsset\",functio"
+    },
+    {
+      "offset": 10825399,
+      "needle": "Exodus",
+      "enc": "ascii",
+      "snippet": "on(){return a.isExodusSharesAsset}),r.o(a,\"isMultiNetworkAsset\")&&r.d(t,\"isMultiNetworkAsset\",function(){return a.isMultiNetworkAsset}),r.o(a,"
+    },
+    {
+      "offset": 13844996,
+      "needle": "Exodus",
+      "enc": "ascii",
+      "snippet": "squirrel.exodus.Exodus..k..............y....b....... .J..... .........J.....`.J........y......z.2.3.LMEM....p5.......:q................y......"
+    },
+    {
+      "offset": 13847732,
+      "needle": "Exodus",
+      "enc": "ascii",
+      "snippet": "squirrel.exodus.Exodus..............m..x....................*.......@.J.....0.J.....n..x....D78BF5DD33499EC2..F.......J.............s..x......"
+    },
+    {
+      "offset": 15156052,
+      "needle": "Exodus",
+      "enc": "ascii",
+      "snippet": "7...Great news! Exodus now includes a hot new feature that will help it update automatically. That means no more pop-ups (like this one!) aski"
+    },
+    {
+      "offset": 15156265,
+      "needle": "Exodus",
+      "enc": "ascii",
+      "snippet": "test version of Exodus just this once. Then, enable the auto-update feature in Settings > Personalize..%.......................(...article/27-"
+    },
+    {
+      "offset": 16379912,
+      "needle": "Exodus",
+      "enc": "ascii",
+      "snippet": "................Exodus..............\\Exodus.........,...........-............~..Z...............E*..9...........:...%...M...-............~..v."
+    },
+    {
+      "offset": 16379933,
+      "needle": "Exodus",
+      "enc": "ascii",
+      "snippet": "s..............\\Exodus.........,...........-............~..Z...............E*..9...........:...%...M...-............~..v...............E*..u.."
+    },
+    {
+      "offset": 16380169,
+      "needle": "Exodus",
+      "enc": "ascii",
+      "snippet": "AppData\\Roaming\\Exodus\\exodus.wallet\\storage.seco.lock.........S.......%....@......q7Y.U.L..t..}u..1.......Am...........V...RY.E...)$;.m....@."
+    },
+    {
+      "offset": 16380453,
+      "needle": "Exodus",
+      "enc": "ascii",
+      "snippet": "AppData\\Roaming\\Exodus\\exodus.wallet\\storage.seco.lock..X\\.i................... ...............Q...Q...........1...%.......}.................."
+    },
+    {
+      "offset": 16380767,
+      "needle": "Exodus",
+      "enc": "ascii",
+      "snippet": "AppData\\Roaming\\Exodus\\exodus.wallet\\storage.seco.lock\\..............Users...-...........-...................E*..............................."
+    },
+    {
+      "offset": 16381020,
+      "needle": "Exodus",
+      "enc": "ascii",
+      "snippet": ")...............Exodus..............\\Exodus.........,...=...e...-...........-...\\...............E*..............:...y.......-...........-...x."
+    },
+    {
+      "offset": 16381041,
+      "needle": "Exodus",
+      "enc": "ascii",
+      "snippet": "s..............\\Exodus.........,...=...e...-...........-...\\...............E*..............:...y.......-...........-...x...............E*....."
+    },
+    {
+      "offset": 16381285,
+      "needle": "Exodus",
+      "enc": "ascii",
+      "snippet": "AppData\\Roaming\\Exodus\\exodus.wallet\\storage.seco.lock..A..........Q...Q...Q...Q...5.....@....A5........6.@5..........?5...........5.........."
+    },
+    {
+      "offset": 16382872,
+      "needle": "Exodus",
+      "enc": "ascii",
+      "snippet": "e...............Exodus..............\\Exodus.........,...y.......-...........i...\\...............E*..............:...........-...........i...x."
+    },
+    {
+      "offset": 16382893,
+      "needle": "Exodus",
+      "enc": "ascii",
+      "snippet": "s..............\\Exodus.........,...y.......-...........i...\\...............E*..............:...........-...........i...x...............E*....."
+    },
+    {
+      "offset": 8851834,
+      "needle": "Exodus",
+      "enc": "utf16",
+      "snippet": "-.2.4...1...1.\\.E.x.o.d.u.s...e.x.e...-.-.t.y.p.e.=.r.e.n.d.e.r.e.r...-.-.u.s.e.r.-.d.a.t.a.-.d.i.r.=.C.:.\\.U.s.e.r.s.\\.C.a.r.m.i.n.e. .F.a.l."
+    },
+    {
+      "offset": 8852002,
+      "needle": "Exodus",
+      "enc": "utf16",
+      "snippet": "R.o.a.m.i.n.g.\\.E.x.o.d.u.s...-.-.s.t.a.n.d.a.r.d.-.s.c.h.e.m.e.s...-.-.s.e.c.u.r.e.-.s.c.h.e.m.e.s.=.e.x.o.d.u.s.-.d.a.p.p.-.a.p.i.,.e.x.o.d."
+    },
+    {
+      "offset": 8852552,
+      "needle": "Exodus",
+      "enc": "utf16",
+      "snippet": "..e.x.o.d.u.s...E.x.o.d.u.s...-.-.a.p.p.-.p.a.t.h.=.C.:.\\.U.s.e.r.s.\\.C.a.r.m.i.n.e. .F.a.l.c.o.n.e.\\.A.p.p.D.a.t.a.\\.L.o.c.a.l.\\.e.x.o.d.u.s."
+    },
+    {
+      "offset": 9355476,
+      "needle": "Exodus",
+      "enc": "utf16",
+      "snippet": "-.2.4...1...1.\\.E.x.o.d.u.s...e.x.e.\". .-.-.t.y.p.e.=.r.e.n.d.e.r.e.r. .-.-.u.s.e.r.-.d.a.t.a.-.d.i.r.=.\".C.:.\\.U.s.e.r.s.\\.C.a.r.m.i.n.e. .F."
+    },
+    {
+      "offset": 9355648,
+      "needle": "Exodus",
+      "enc": "utf16",
+      "snippet": "R.o.a.m.i.n.g.\\.E.x.o.d.u.s.\". .-.-.s.t.a.n.d.a.r.d.-.s.c.h.e.m.e.s. .-.-.s.e.c.u.r.e.-.s.c.h.e.m.e.s.=.e.x.o.d.u.s.-.d.a.p.p.-.a.p.i.,.e.x.o."
+    },
+    {
+      "offset": 9356200,
+      "needle": "Exodus",
+      "enc": "utf16",
+      "snippet": "..e.x.o.d.u.s...E.x.o.d.u.s. .-.-.a.p.p.-.p.a.t.h.=.\".C.:.\\.U.s.e.r.s.\\.C.a.r.m.i.n.e. .F.a.l.c.o.n.e.\\.A.p.p.D.a.t.a.\\.L.o.c.a.l.\\.e.x.o.d.u."
+    },
+    {
+      "offset": 9475412,
+      "needle": "Exodus",
+      "enc": "utf16",
+      "snippet": "S.t.a.k.i.n.g. .E.x.o.d.u.s.\".,.d.a.t.e.:.\".2.0.2.2.-.0.8.-.2.9.T.2.1.:.0.0.:.0.0...0.0.0.Z.\".,.i.d.:.\".V.3.y.V.H.Y.N.v.y.N.w.\".}.,.{.a.s.s.e."
+    },
+    {
+      "offset": 9476712,
+      "needle": "Exodus",
+      "enc": "utf16",
+      "snippet": ",.t.i.t.l.e.:.\".E.x.o.d.u.s. .W.e.b.3. .W.a.l.l.e.t. ..  .E.x.p.l.o.r.e. .E.t.h.e.r.e.u.m. .a.n.d. .S.o.l.a.n.a. .d.a.p.p.s. .i.n. .O.n.e. .W."
+    },
+    {
+      "offset": 9476862,
+      "needle": "Exodus",
+      "enc": "utf16",
+      "snippet": "W.a.l.l.e.t. .(.E.x.o.d.u.s. .B.r.o.w.s.e.r. .E.x.t.e.n.s.i.o.n.).\".,.d.a.t.e.:.\".2.0.2.2.-.0.8.-.1.7.T.2.1.:.0.0.:.0.0...0.0.0.Z.\".,.i.d.:.\"."
+    },
+    {
+      "offset": 9950465,
+      "needle": "Exodus",
+      "enc": "utf16",
+      "snippet": "-.2.4...1...1.\\.E.x.o.d.u.s...e.x.e...\".C.:.\\.U.s.e.r.s.\\.C.a.r.m.i.n.e. .F.a.l.c.o.n.e.\\.A.p.p.D.a.t.a.\\.L.o.c.a.l.\\.e.x.o.d.u.s.\\.a.p.p.-.2."
+    },
+    {
+      "offset": 10065340,
+      "needle": "Exodus",
+      "enc": "utf16",
+      "snippet": "R.o.a.m.i.n.g.\\.E.x.o.d.u.s.\\.P.a.r.t.i.t.i.o.n.s.\\.m.o.n.e.r.o.\\.D.a.w.n.C.a.c.h.e.\\.d.a.t.a._.1...t.S.e.c.u.r.i.t.y.~.R.F.2.d.0.e.a.b...T.M."
+    },
+    {
+      "offset": 10509282,
+      "needle": "Exodus",
+      "enc": "utf16",
+      "snippet": "....5.m.i.n.g.\\.E.x.o.d.u.s.\\.P.a.r.t.i.t.i.o.n.s.\\.m.a.i.n.\\.C.a.c.h.e.\\.C.a.c.h.e._.D.a.t.a.\\.f._.0.0.0.0.0.d........0.D........Mpus........"
+    },
+    {
+      "offset": 11017888,
+      "needle": "Exodus",
+      "enc": "utf16",
+      "snippet": "R.o.a.m.i.n.g.\\.E.x.o.d.u.s.\\.P.r.e.f.e.r.e.n.c.e.s.~.R.F.7.1.2.a.e.2...T.M.P..........._..0.................................................."
+    },
+    {
+      "offset": 11227360,
+      "needle": "Exodus",
+      "enc": "utf16",
+      "snippet": "R.o.a.m.i.n.g.\\.E.x.o.d.u.s.\\.P.a.r.t.i.t.i.o.n.s.\\.w.a.l.l.e.t.\\.N.e.t.w.o.r.k.\\.N.e.t.w.o.r.k. .P.e.r.s.i.s.t.e.n.t. .S.t.a.t.e...3.9.....e."
+    },
+    {
+      "offset": 11232208,
+      "needle": "Exodus",
+      "enc": "utf16",
+      "snippet": "R.o.a.m.i.n.g.\\.E.x.o.d.u.s.\\.P.a.r.t.i.t.i.o.n.s.\\.n.e.t.w.o.r.k.\\.I.n.d.e.x.e.d.D.B.\\.f.i.l.e._._.0...i.n.d.e.x.e.d.d.b...l.e.v.e.l.d.b....."
+    },
+    {
+      "offset": 12038242,
+      "needle": "Exodus",
+      "enc": "utf16",
+      "snippet": "R.o.a.m.i.n.g.\\.E.x.o.d.u.s.\\.e.x.o.d.u.s...w.a.l.l.e.t.\\.s.t.o.r.a.g.e...s.e.c.o...t.m.p...F.6.1.e.3.9.2...T.M.P...r.e.p.o.r.t.i.n.g.\\.a.r.c."
+    }
+  ],
+  "matched": 8405,
+  "returned": 50,
+  "truncated": true,
+  "all_results": "store/jobs/j000029/out/tool-output/ioc_scan-ddc4a301ce69ee03.jsonl",
+  "all_results_format": "JSON Lines, one complete result per line"
+}

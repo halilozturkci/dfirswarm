@@ -1,0 +1,9 @@
+Volatility 3 Framework 2.28.2
+usage: vol windows.registry.hivelist.HiveList [-h] [--filter FILTER] [--dump]
+
+Lists the registry hives present in a particular memory image.
+
+options:
+  -h, --help       show this help message and exit
+  --filter FILTER  String to filter hive names returned
+  --dump           Extract listed registry hives

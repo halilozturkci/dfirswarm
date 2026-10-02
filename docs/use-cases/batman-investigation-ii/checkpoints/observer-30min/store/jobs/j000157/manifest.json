@@ -1,0 +1,1 @@
+{"v":1,"job":"j000157","attempt":1,"sealed_at":"2026-10-02T10:25:22.561Z","files":[{"path":"sqlite-header-structure-tests.json","path_b64":"c3FsaXRlLWhlYWRlci1zdHJ1Y3R1cmUtdGVzdHMuanNvbg==","bytes":75527,"sha256":"fe36c5254344d9f5aca041530935cba72c3478e4c6687792c397f3215666d110","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":75527}}

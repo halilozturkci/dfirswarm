@@ -1,0 +1,1 @@
+{"v":1,"job":"j000087","attempt":1,"sealed_at":"2026-10-02T10:09:17.708Z","files":[{"path":"mail-identities.json","path_b64":"bWFpbC1pZGVudGl0aWVzLmpzb24=","bytes":62400,"sha256":"00b0cf892e57637bc75d4dc6d2a56d469e6b9867ac1572824b319d3316f1cd37","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":62400}}

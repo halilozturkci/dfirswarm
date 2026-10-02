@@ -1,0 +1,85 @@
+{
+  "id": "j000129",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/Carmine-Falcone.raw"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "command": "python3 - <<'PY'\nimport os,hashlib,json\np='inputs/chall/Carmine-Falcone.raw'; off=320252368; size=os.path.getsize(p); lo=max(0,off-4096); hi=min(size,off+8192)\nwith open(p,'rb') as f: f.seek(lo); b=f.read(hi-lo)\nwith open(os.environ['OUT']+'/endpoint-neighborhood.bin','wb') as f:f.write(b)\nwith open(os.environ['OUT']+'/endpoint-neighborhood.json','w') as f:json.dump({'image_size':size,'candidate_offset':off,'window_start':lo,'window_end':hi,'window_bytes':len(b),'sha256':hashlib.sha256(b).hexdigest(),'ascii':b.decode('latin1','replace')},f,indent=2)\nprint(json.dumps({'image_size':size,'candidate_offset':off,'window_start':lo,'window_end':hi,'window_bytes':len(b),'sha256':hashlib.sha256(b).hexdigest(),'ascii_context':b.decode('latin1','replace')},indent=2))\nPY\n"
+  },
+  "requester": {
+    "agent": "s42120108",
+    "name": "DBX Key Analyst",
+    "doing": "Independently examine Q6 malware identity and destination from memory evidence."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:19:15.894Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "inputs/chall/Carmine-Falcone.raw",
+        "sha256": "3e03551e1f55dd792b0bc459b5620522d61fcf2379e8f6d89ef439fef8263cac"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000129-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:19:15.944Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000129",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000129/scope.1.json",
+    "manifest_sha256": "7069880087a7bcffce34e482f5caf6d5a66438cd5da92379114eda671987956c"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:19:16.606Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "2e448f50396d1965c8d4dcfa084e81a8210e714455c9943d04a8be66c36d5ddc",
+    "files": 2,
+    "bytes": 54711,
+    "rejected": 0,
+    "path": "store/jobs/j000129/out"
+  }
+}

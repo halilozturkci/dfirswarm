@@ -1,0 +1,1 @@
+{"v":1,"job":"j000139","attempt":1,"sealed_at":"2026-10-02T10:21:12.588Z","files":[{"path":"20261002100314853-bash-ujat.out.log","path_b64":"MjAyNjEwMDIxMDAzMTQ4NTMtYmFzaC11amF0Lm91dC5sb2c=","bytes":1941561,"sha256":"752e8913336411d3deca45c2610df8242259fb71ef3c5a27b6b66bdb7212b7cd","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":1941561}}

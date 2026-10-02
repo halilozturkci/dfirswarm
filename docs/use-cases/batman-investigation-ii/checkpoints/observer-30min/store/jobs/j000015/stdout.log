@@ -1,0 +1,503 @@
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d19560	0x4	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d19860	0x8	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b11eb4160	0xc	WaitCompletionPacket	0x1	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b107593c0	0x10	IoCompletion	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b152e7d90	0x14	TpWorkerFactory	0xf00ff	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0e643b40	0x18	IRTimer	0x100002	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b11eb4640	0x1c	WaitCompletionPacket	0x1	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0e6430a0	0x20	IRTimer	0x100002	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b11eb31f0	0x24	WaitCompletionPacket	0x1	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10758cb0	0x28	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10757f90	0x2c	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10757c10	0x30	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a14c31b00	0x34	Directory	0x3	KnownDlls
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d19c60	0x38	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d196e0	0x3c	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0f84bc80	0x40	File	0x100020	\Device\HarddiskVolume2\Program Files\KeePass Password Safe 2
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10759110	0x44	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10758d90	0x48	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10484070	0x4c	ALPC Port	0x1f0001	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b107592d0	0x50	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b107591f0	0x54	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a1b09f2f0	0x58	Key	0x20019	MACHINE\SYSTEM\CONTROLSET001\CONTROL\NLS\SORTING\VERSIONS
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b12fb0650	0x5c	Mutant	0x1f0001	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0e5d52c0	0x64	TpWorkerFactory	0xf00ff	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0e643e70	0x68	IRTimer	0x100002	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b11eb37a0	0x6c	WaitCompletionPacket	0x1	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0e644a20	0x70	IRTimer	0x100002	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b11eb3870	0x74	WaitCompletionPacket	0x1	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b107583f0	0x78	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10757dd0	0x7c	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10757eb0	0x80	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075b950	0x84	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10758f50	0x88	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b12fb1d70	0x8c	Mutant	0x1f0001	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a1d352790	0x90	Key	0xf003f	USER\S-1-5-21-3776610481-2634725347-3460535496-1001
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10759e30	0x94	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10759490	0x98	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10758070	0x9c	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10759570	0xa0	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10757a50	0xa4	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10758150	0xa8	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10758310	0xac	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075adf0	0xb0	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a1d35de50	0xb4	Key	0x1	MACHINE\SYSTEM\CONTROLSET001\CONTROL\SESSION MANAGER
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075a370	0xb8	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075b090	0xbc	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a1d364cd0	0xc0	Key	0x9	MACHINE\SOFTWARE\MICROSOFT\WINDOWS NT\CURRENTVERSION\IMAGE FILE EXECUTION OPTIONS
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075bb10	0xc4	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1ca60	0xc8	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075bdb0	0xcc	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d191e0	0xd0	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075c590	0xd4	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075a440	0xd8	IoCompletion	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0d909b00	0xdc	WindowStation	0xf037f	WinSta0
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0deca810	0xe0	Desktop	0xf01ff	Default
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0d909b00	0xe4	WindowStation	0xf037f	WinSta0
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075a610	0xe8	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a1d3692f0	0xec	Key	0x20019	MACHINE\SOFTWARE\MICROSOFT\.NETFRAMEWORK
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d19ee0	0xf0	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d19b60	0xf4	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1a1e0	0xf8	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075ad10	0xfc	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10759b90	0x100	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10759c70	0x104	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b107598f0	0x108	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b11eb4980	0x10c	WaitCompletionPacket	0x1	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a1898c920	0x110	Directory	0xf	BaseNamedObjects
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a1bbae110	0x114	Section	0xf0007	Cor_Private_IPCBlock_v4_3768
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1a560	0x118	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1a7e0	0x11c	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a1c66db80	0x120	Directory	0xf000f	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a1ae04390	0x124	Section	0xf0007	Cor_SxSPublic_IPCBlock
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b12fb4110	0x128	Mutant	0x1f0001	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1abe0	0x12c	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1a860	0x130	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1a960	0x134	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1a8e0	0x138	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1b060	0x13c	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b11e57080	0x140	Thread	0x1fffff	Tid 4684 Pid 3768
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b11a0a080	0x144	Thread	0x1fffff	Tid 860 Pid 3768
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1ba60	0x148	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1b6e0	0x14c	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1bb60	0x150	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1b460	0x154	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b12fb3350	0x158	Mutant	0x1f0001	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1b160	0x15c	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1b0e0	0x160	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1a260	0x164	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1af60	0x168	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1ac60	0x16c	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1ade0	0x170	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1b4e0	0x174	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1b760	0x178	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1b260	0x180	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1b5e0	0x184	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1bbe0	0x188	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1bf60	0x18c	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1b860	0x194	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1c060	0x198	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1c0e0	0x19c	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1b9e0	0x1a0	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0728c420	0x1a4	Event	0x100001	LowMemoryCondition
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1c160	0x1a8	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1b360	0x1ac	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1cfe0	0x1b0	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1cce0	0x1b4	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1c860	0x1b8	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1d160	0x1bc	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1c5e0	0x1c0	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1c260	0x1c4	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b11ce2080	0x1c8	Thread	0x1fffff	Tid 4536 Pid 3768
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a1d3690d0	0x1cc	Key	0x20019	MACHINE\SYSTEM\CONTROLSET001\CONTROL\NLS\SORTING\IDS
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a1d3680e0	0x1d0	Key	0x20019	MACHINE
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1c2e0	0x1d8	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a1d368300	0x1dc	Key	0x20019	USER\S-1-5-21-3776610481-2634725347-3460535496-1001_CLASSES\LOCAL SETTINGS\SOFTWARE\MICROSOFT
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a1d367ec0	0x1e0	Key	0x20019	USER\S-1-5-21-3776610481-2634725347-3460535496-1001_CLASSES\LOCAL SETTINGS
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1cd60	0x1e4	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075a1b0	0x1e8	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075a530	0x1ec	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075a6f0	0x1f0	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1c7e0	0x1f4	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1cde0	0x1f8	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1c760	0x1fc	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1c8e0	0x200	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1c960	0x204	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1c9e0	0x208	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10759730	0x20c	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075a7d0	0x210	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075b170	0x214	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10759650	0x218	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b107599d0	0x21c	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075a8b0	0x220	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10759d50	0x224	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075a990	0x228	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075ab50	0x22c	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075a0d0	0x230	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1c360	0x234	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1c3e0	0x238	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1cb60	0x23c	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075ac30	0x240	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10759f10	0x244	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0e2111a0	0x248	File	0x100001	\Device\CNG
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0d0869f0	0x24c	ALPC Port	0x1f0001	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075b330	0x250	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075c130	0x254	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1ce60	0x258	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b11ce2080	0x25c	Thread	0x1fffff	Tid 4536 Pid 3768
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0faa0070	0x260	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075b500	0x264	IoCompletion	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0bf46060	0x268	TpWorkerFactory	0xf00ff	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0e6431b0	0x26c	IRTimer	0x100002	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b11eb3a10	0x270	WaitCompletionPacket	0x1	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0e6434e0	0x274	IRTimer	0x100002	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b11eb3460	0x278	WaitCompletionPacket	0x1	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b12fb3870	0x27c	Event	0x1f0003	CPFATE_3768_v4.0.30319
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075be90	0x280	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1050cae0	0x284	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1050d0e0	0x288	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1050c2e0	0x28c	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1050c660	0x290	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075b410	0x294	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075c4b0	0x298	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075b6b0	0x29c	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1050cc60	0x2a0	Semaphore	0x100003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b104affe0	0x2a4	Semaphore	0x100003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b104b9d60	0x2a8	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0dd03550	0x2ac	File	0x100003	\Device\KsecDD
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075b790	0x2b0	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075cc90	0x2b4	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0dd036e0	0x2b8	File	0x100001	\Device\KsecDD
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1cae0	0x2bc	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a1fb8bea0	0x2c0	Key	0x20019	MACHINE\SOFTWARE\MICROSOFT\FUSION\PUBLISHERPOLICY\DEFAULT
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075b870	0x2c4	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075b5d0	0x2c8	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b11e57080	0x2cc	Thread	0x1fffff	Tid 4684 Pid 3768
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0dd033c0	0x2d0	File	0x100020	\Device\HarddiskVolume2\Windows\WinSxS\amd64_microsoft.windows.common-controls_6595b64144ccf1df_6.0.19041.1_none_b555e41d4684ddec
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075d0f0	0x2d4	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1cbe0	0x2d8	Semaphore	0x100003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a1fb90a10	0x2dc	Key	0x20019	MACHINE
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1cc60	0x2e0	Semaphore	0x100003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075bf70	0x2e4	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075c9f0	0x2e8	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075c910	0x2ec	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075bcd0	0x2f0	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075c830	0x2f4	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075b250	0x2f8	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075c210	0x2fc	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075c670	0x300	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075cd70	0x304	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075c750	0x308	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075d380	0x30c	IoCompletion	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075d9b0	0x310	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075bbf0	0x314	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075c2f0	0x318	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075cbb0	0x31c	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075ba30	0x320	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075cad0	0x324	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075c3d0	0x328	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075d630	0x32c	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075da90	0x330	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075d710	0x334	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075e890	0x338	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075de10	0x33c	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075e6d0	0x340	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075def0	0x344	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a1ae06310	0x348	Section	0x6	windows_shell_global_counters
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b12fb6750	0x34c	Semaphore	0x1f0003	SM0:3768:304:WilStaging_02_p0
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b12fb5c10	0x350	Semaphore	0x1f0003	SM0:3768:304:WilStaging_02_p0h
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a1fb90b20	0x354	Key	0x1	USER\S-1-5-21-3776610481-2634725347-3460535496-1001\SOFTWARE\MICROSOFT\WINDOWS\CURRENTVERSION\EXPLORER
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b107b5c90	0x358	Mutant	0x1f0001	SM0:3768:304:WilStaging_02
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b107b5ed0	0x35c	Mutant	0x1f0001	SM0:3768:120:WilError_03
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b12fb6890	0x360	Semaphore	0x1f0003	SM0:3768:120:WilError_03_p0
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b12fb6bb0	0x364	Semaphore	0x1f0003	SM0:3768:120:WilError_03_p0h
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a1fb8fe60	0x368	Key	0x20019	USER
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075d2b0	0x36c	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075cf30	0x370	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075e7b0	0x374	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075dd30	0x378	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b107b5f90	0x37c	Mutant	0x1f0001	KeePassAppMutex
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1cee0	0x380	Semaphore	0x100003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1db60	0x384	Semaphore	0x100003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1e160	0x388	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b11e57080	0x38c	Thread	0x1fffff	Tid 4684 Pid 3768
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b11ce50b0	0x390	ALPC Port	0x1f0001	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b107b4b50	0x394	Mutant	0x1f0001	KeePassAppMutexEx
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075d7f0	0x398	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0766ba80	0x39c	ALPC Port	0x1f0001	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1d4e0	0x3a0	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a1fb8b730	0x3a4	Key	0xf003f	USER\S-1-5-21-3776610481-2634725347-3460535496-1001_CLASSES
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0d21ed00	0x3ac	ALPC Port	0x1f0001	OLEF6B8CEF411981EB5D446481AF865
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1d1e0	0x3b0	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1d8e0	0x3b4	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a17c64660	0x3b8	Section	0xf0005	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b11e023e0	0x3bc	Event	0x100000	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10bf9280	0x3c0	Timer	0x100002	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1de60	0x3c4	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0729f040	0x3c8	Thread	0x1fffff	Tid 472 Pid 3768
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b077dfce0	0x3cc	ALPC Port	0x1f0001	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075d1d0	0x3d0	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a17e376f0	0x3d4	Section	0x4	Theme3829024453
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a17e37570	0x3d8	Section	0x4	Theme3925742436
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0dd03b90	0x3dc	File	0x100020	\Device\HarddiskVolume2\Windows\WinSxS\amd64_microsoft.windows.gdiplus_6595b64144ccf1df_1.1.19041.264_none_faeb9d41761776a3
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075e0b0	0x3e0	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1d660	0x3e4	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0fa72080	0x3e8	Thread	0x1fffff	Tid 5644 Pid 3768
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075e970	0x3ec	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075d8d0	0x3f0	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0fe28a80	0x3f4	ALPC Port	0x1f0001	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0dd041d0	0x3f8	File	0x120089	\Device\HarddiskVolume2\Windows\Fonts\StaticCache.dat
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1d5e0	0x3fc	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0dd02740	0x404	File	0x100001	\Device\HarddiskVolume2\Program Files\WindowsApps\Microsoft.LanguageExperiencePacken-GB_19041.53.185.0_neutral__8wekyb3d8bbwe\Windows\System32\en-GB\msftedit.dll.mui
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075d550	0x408	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a1b0a43b0	0x40c	Key	0xf003f	USER\S-1-5-21-3776610481-2634725347-3460535496-1001_CLASSES
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0dd04810	0x410	File	0x100001	\Device\HarddiskVolume2\Program Files\WindowsApps\Microsoft.LanguageExperiencePacken-GB_19041.53.185.0_neutral__8wekyb3d8bbwe\Windows\System32\en-GB\winnlsres.dll.mui
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075ce50	0x414	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a1926c660	0x418	Section	0xf0007	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0dd04cc0	0x41c	File	0x100001	\Device\HarddiskVolume2\Program Files\WindowsApps\Microsoft.LanguageExperiencePacken-GB_19041.53.185.0_neutral__8wekyb3d8bbwe\Windows\System32\en-GB\user32.dll.mui
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a17d37cf0	0x420	Section	0x4	__ComCatalogCache__
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075e5f0	0x424	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a1d368520	0x428	Key	0xf003f	USER\S-1-5-21-3776610481-2634725347-3460535496-1001_CLASSES
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075d470	0x42c	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0728c4a0	0x430	Event	0x100001	MaximumCommitCondition
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a17d37cf0	0x434	Section	0x4	__ComCatalogCache__
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075e190	0x438	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1d6e0	0x43c	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a1d368eb0	0x440	Key	0x10	USER\S-1-5-21-3776610481-2634725347-3460535496-1001_CLASSES
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075e270	0x444	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075e350	0x448	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075db70	0x44c	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075dc50	0x450	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075e430	0x454	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075e510	0x458	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075ec10	0x45c	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075eb30	0x460	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075fd90	0x464	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075f930	0x468	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075fe70	0x46c	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075f5b0	0x470	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a1f610090	0x474	Section	0xf0007	eb8HWNDInterface:f02ec
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a1f610090	0x478	Section	0xf0007	eb8HWNDInterface:f02ec
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0dd02a60	0x47c	File	0x100020	\Device\HarddiskVolume2\Windows\WinSxS\amd64_microsoft.windows.common-controls_6595b64144ccf1df_6.0.19041.1_none_b555e41d4684ddec
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1d760	0x480	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a1d36c4e0	0x484	Key	0x20019	MACHINE\SOFTWARE\MICROSOFT\WINDOWSRUNTIME
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a1d36d4d0	0x488	Key	0x20019	MACHINE\SOFTWARE\MICROSOFT\WINDOWSRUNTIME\ACTIVATABLECLASSID
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d52080	0x48c	Thread	0x1fffff	Tid 7724 Pid 3768
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1ef60	0x490	Semaphore	0x100003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1ed60	0x494	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1e860	0x498	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075f690	0x49c	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075ff50	0x4a0	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075edd0	0x4a4	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075ecf0	0x4a8	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075faf0	0x4ac	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0dd02bf0	0x4b0	File	0x100020	\Device\HarddiskVolume2\Windows\System32
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1eb60	0x4b4	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b110a9de0	0x4c0	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0faa1800	0x4c4	IoCompletion	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0e2094a0	0x4c8	File	0x100001	\Device\HarddiskVolume2\Program Files\WindowsApps\Microsoft.LanguageExperiencePacken-GB_19041.53.185.0_neutral__8wekyb3d8bbwe\Windows\System32\en-GB\UIAutomationCore.dll.mui
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075f770	0x4cc	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075fbd0	0x4d4	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1efe0	0x4d8	Semaphore	0x100003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b107601f0	0x4dc	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a1d36c920	0x4e0	Key	0x20019	MACHINE\SOFTWARE\POLICIES
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a1d36d5e0	0x4e4	Key	0x20019	USER\S-1-5-21-3776610481-2634725347-3460535496-1001\SOFTWARE\POLICIES
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a1d36bd70	0x4e8	Key	0x20019	USER\S-1-5-21-3776610481-2634725347-3460535496-1001\SOFTWARE
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a1d36f7e0	0x4ec	Key	0x20019	MACHINE\SOFTWARE
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a1d36e7f0	0x4f0	Key	0x20019	MACHINE\SOFTWARE\WOW6432NODE
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0dd02d80	0x4f4	File	0x100020	\Device\HarddiskVolume2\Windows\WinSxS\amd64_microsoft.windows.common-controls_6595b64144ccf1df_6.0.19041.1_none_b555e41d4684ddec
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075ea50	0x4f8	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1f160	0x4fc	Semaphore	0x100003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075ef90	0x500	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10558ce0	0x504	ALPC Port	0x1f0001	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b11eb6790	0x50c	WaitCompletionPacket	0x1	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075f230	0x510	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075f4d0	0x514	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0deee210	0x518	Event	0x100000	TermSrvReadyEvent
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1e760	0x51c	Semaphore	0x100003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1e560	0x520	Semaphore	0x100003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1e7e0	0x524	Semaphore	0x100003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1e660	0x528	Semaphore	0x100003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1ebe0	0x52c	Semaphore	0x100003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10760110	0x530	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075eeb0	0x534	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b107602d0	0x538	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075f310	0x53c	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075fa10	0x540	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075fcb0	0x544	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075f070	0x548	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075f150	0x54c	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b107603b0	0x550	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10760490	0x554	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10760570	0x558	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b11e57080	0x55c	Thread	0x1fffff	Tid 4684 Pid 3768
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1052cce0	0x560	ALPC Port	0x1f0001	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1f060	0x564	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0d11e770	0x568	Timer	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0d11ead0	0x56c	Timer	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1e260	0x570	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b11eb7be0	0x574	WaitCompletionPacket	0x1	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1e5e0	0x578	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b11eb7cb0	0x57c	WaitCompletionPacket	0x1	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b11eb7d80	0x580	WaitCompletionPacket	0x1	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b11eb6450	0x584	WaitCompletionPacket	0x1	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b11e57080	0x588	Thread	0x1fffff	Tid 4684 Pid 3768
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b11eb6520	0x58c	WaitCompletionPacket	0x1	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b107b4cb0	0x590	IoCompletionReserve	0xf0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b11e57080	0x594	Thread	0x1fffff	Tid 4684 Pid 3768
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b104a7d00	0x598	ALPC Port	0x1f0001	[CoreUI]-PID(3768)-TID(4684) a73f0162-db5f-4b1f-a68c-38457143b3a7
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1103ace0	0x59c	ALPC Port	0x1f0001	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b11eb66c0	0x5a0	WaitCompletionPacket	0x1	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0d085ce0	0x5a4	ALPC Port	0x1f0001	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b104ba4e0	0x5a8	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10761370	0x5ac	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1075f3f0	0x5b0	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10760e30	0x5b4	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a1fb90c30	0x5b8	Key	0x20019	MACHINE\SOFTWARE\MICROSOFT\WINDOWS\CURRENTVERSION\EXPLORER\FOLDERDESCRIPTIONS\{7C5A40EF-A0FB-4BFC-874A-C0F2E0B9FA8E}\PROPERTYBAG
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b107616f0	0x5bc	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10762090	0x5c0	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10761d10	0x5c4	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10762170	0x5c8	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b107618b0	0x5cc	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10760b90	0x5d0	EtwRegistration	0x804	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10c32ce0	0x5d4	ALPC Port	0x1f0001	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1e4e0	0x5d8	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1ece0	0x5dc	Semaphore	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1eee0	0x5e0	Semaphore	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10760c80	0x5e4	IoCompletion	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1f0e0	0x5e8	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1e3e0	0x5ec	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1e2e0	0x5f0	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1f860	0x5f4	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0fa55080	0x5f8	Thread	0x1fffff	Tid 1676 Pid 3768
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1fce0	0x5fc	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1fc60	0x600	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1f260	0x604	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1f760	0x608	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b11e1ee60	0x60c	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b12fec080	0x610	Thread	0x1fffff	Tid 8928 Pid 3768
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0dd04680	0x614	File	0x120089	\Device\HarddiskVolume2\Program Files\KeePass Password Safe 2\KeePass.XmlSerializers.dll
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a1b103d90	0x618	Section	0xf0005	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a1b103750	0x61c	Section	0xf0005	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0dd06a70	0x624	File	0x120089	\Device\HarddiskVolume2\Windows\Microsoft.NET\assembly\GAC_MSIL\System.Security\v4.0_4.0.0.0__b03f5f7f11d50a3a\System.Security.dll
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1fd60	0x628	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a1b102710	0x62c	Section	0xf0005	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1f960	0x630	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b11e1e1e0	0x634	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xd58a1fb6d910	0x638	Key	0x20019	MACHINE\SOFTWARE\MICROSOFT\WINDOWS\CURRENTVERSION\EXPLORER\FOLDERDESCRIPTIONS\{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\PROPERTYBAG
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1fde0	0x63c	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0dd062a0	0x640	File	0x120089	\Device\HarddiskVolume2\Windows\Fonts\micross.ttf
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d1f9e0	0x644	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b10d69080	0x648	Thread	0x1fffff	Tid 4740 Pid 3768
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b11e1e8e0	0x658	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b104a1080	0x664	Thread	0x1fffff	Tid 6344 Pid 3768
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b104b2c60	0x668	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0db6f7e0	0x674	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b152c1ce0	0x67c	ALPC Port	0x1f0001	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b1217ca70	0x690	File	0x100001	\Device\HarddiskVolume2\Windows\System32\en-US\KernelBase.dll.mui
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b0d650070	0x694	ALPC Port	0x1f0001	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b11e1f060	0x698	Event	0x1f0003	-
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/handles3768.txt:3768	KeePass.exe	0xab0b12510080	0x69c	Thread	0x1fffff	Tid 10100 Pid 3768
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x800000	0x31a000	KeePass.exe	C:\Program Files\KeePass Password Safe 2\KeePass.exe	-1	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb55e50000	0x1f4000	ntdll.dll	C:\Windows\SYSTEM32\ntdll.dll	-1	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb465a0000	0x65000	MSCOREE.DLL	C:\Windows\SYSTEM32\MSCOREE.DLL	-1	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb53ec0000	0xbd000	KERNEL32.dll	C:\Windows\System32\KERNEL32.dll	-1	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb53780000	0x2c7000	KERNELBASE.dll	C:\Windows\System32\KERNELBASE.dll	-1	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb55a10000	0xaa000	ADVAPI32.dll	C:\Windows\System32\ADVAPI32.dll	-1	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb55040000	0x9e000	msvcrt.dll	C:\Windows\System32\msvcrt.dll	-1	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb54860000	0x9b000	sechost.dll	C:\Windows\System32\sechost.dll	-1	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb54a30000	0x123000	RPCRT4.dll	C:\Windows\System32\RPCRT4.dll	-1	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb440e0000	0xaa000	mscoreei.dll	C:\Windows\Microsoft.NET\Framework64\v4.0.30319\mscoreei.dll	6	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb549d0000	0x55000	SHLWAPI.dll	C:\Windows\System32\SHLWAPI.dll	-1	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb51530000	0x13000	kernel.appcore.dll	C:\Windows\SYSTEM32\kernel.appcore.dll	-1	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb4dcf0000	0xa000	VERSION.dll	C:\Windows\SYSTEM32\VERSION.dll	6	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb1cea0000	0xac1000	clr.dll	C:\Windows\Microsoft.NET\Framework64\v4.0.30319\clr.dll	-1	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb53f80000	0x1a0000	USER32.dll	C:\Windows\System32\USER32.dll	-1	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb53ca0000	0x22000	win32u.dll	C:\Windows\System32\win32u.dll	-1	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb559e0000	0x2a000	GDI32.dll	C:\Windows\System32\GDI32.dll	6	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb535a0000	0x109000	gdi32full.dll	C:\Windows\System32\gdi32full.dll	6	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb42900000	0xbd000	ucrtbase_clr0400.dll	C:\Windows\SYSTEM32\ucrtbase_clr0400.dll	-1	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb4f4b0000	0x16000	VCRUNTIME140_CLR0400.dll	C:\Windows\SYSTEM32\VCRUNTIME140_CLR0400.dll	-1	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb53c00000	0x9d000	msvcp_win.dll	C:\Windows\System32\msvcp_win.dll	-1	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb53b00000	0x100000	ucrtbase.dll	C:\Windows\System32\ucrtbase.dll	-1	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb55310000	0x30000	IMM32.DLL	C:\Windows\System32\IMM32.DLL	6	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb55820000	0x8000	psapi.dll	C:\Windows\System32\psapi.dll	6	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb1b8a0000	0x1600000	mscorlib.ni.dll	C:\Windows\assembly\NativeImages_v4.0.30319_64\mscorlib\5c1b7b73113a6f079ae59ad2eb210951\mscorlib.ni.dll	6	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb55bd0000	0x129000	ole32.dll	C:\Windows\System32\ole32.dll	-1	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb54ce0000	0x354000	combase.dll	C:\Windows\System32\combase.dll	-1	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb536b0000	0x7f000	bcryptPrimitives.dll	C:\Windows\System32\bcryptPrimitives.dll	-1	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb51070000	0x9f000	uxtheme.dll	C:\Windows\system32\uxtheme.dll	6	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb52eb0000	0x18000	CRYPTSP.dll	C:\Windows\SYSTEM32\CRYPTSP.dll	6	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb52660000	0x34000	rsaenh.dll	C:\Windows\system32\rsaenh.dll	6	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb53e90000	0x27000	bcrypt.dll	C:\Windows\System32\bcrypt.dll	-1	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb52ea0000	0xc000	CRYPTBASE.dll	C:\Windows\SYSTEM32\CRYPTBASE.dll	6	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb427b0000	0x14e000	clrjit.dll	C:\Windows\Microsoft.NET\Framework64\v4.0.30319\clrjit.dll	6	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb1ac20000	0xc71000	System.ni.dll	C:\Windows\assembly\NativeImages_v4.0.30319_64\System\3c22c13412b49e04ae306a2aa7768c12\System.ni.dll	6	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb1aa20000	0x1f4000	System.Drawing.ni.dll	C:\Windows\assembly\NativeImages_v4.0.30319_64\System.Drawing\d1dbf25a46457c722a3c8ec5fba82a3c\System.Drawing.ni.dll	6	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb19970000	0x10a6000	System.Windows.Forms.ni.dll	C:\Windows\assembly\NativeImages_v4.0.30319_64\System.Windows.Forms\643f6e4c2cc680e910153253d83f3e08\System.Windows.Forms.ni.dll	6	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb54bc0000	0x115000	MSCTF.dll	C:\Windows\System32\MSCTF.dll	6	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb54900000	0xcd000	OLEAUT32.dll	C:\Windows\System32\OLEAUT32.dll	-1	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb55170000	0xae000	ShCore.dll	C:\Windows\System32\ShCore.dll	-1	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb18ef0000	0xa75000	System.Core.ni.dll	C:\Windows\assembly\NativeImages_v4.0.30319_64\System.Core\9f1384ea928c337294ff4b399659933b\System.Core.ni.dll	6	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb42670000	0x133000	System.Configuration.ni.dll	C:\Windows\assembly\NativeImages_v4.0.30319_64\System.Configuration\dd3156eef1bb1556bc78b02b7fb822c1\System.Configuration.ni.dll	6	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb18640000	0x8ab000	System.Xml.ni.dll	C:\Windows\assembly\NativeImages_v4.0.30319_64\System.Xml\7372c76325e4265046715460fae96ff8\System.Xml.ni.dll	6	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb54120000	0x731000	shell32.dll	C:\Windows\System32\shell32.dll	6	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb51730000	0x78a000	windows.storage.dll	C:\Windows\SYSTEM32\windows.storage.dll	6	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb52f50000	0x2b000	Wldp.dll	C:\Windows\SYSTEM32\Wldp.dll	6	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb534e0000	0x1f000	profapi.dll	C:\Windows\SYSTEM32\profapi.dll	6	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb45900000	0x29a000	comctl32.dll	C:\Windows\WinSxS\amd64_microsoft.windows.common-controls_6595b64144ccf1df_6.0.19041.1_none_b555e41d4684ddec\comctl32.dll	6	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb51270000	0xd9000	Wer.dll	C:\Windows\SYSTEM32\Wer.dll	6	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb4d840000	0xc000	secur32.dll	C:\Windows\SYSTEM32\secur32.dll	6	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb53460000	0x31000	SSPICLI.DLL	C:\Windows\SYSTEM32\SSPICLI.DLL	6	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb37180000	0x1a5000	gdiplus.dll	C:\Windows\WinSxS\amd64_microsoft.windows.gdiplus_6595b64144ccf1df_1.1.19041.264_none_faeb9d41761776a3\gdiplus.dll	6	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb4a9c0000	0x27e000	DWrite.dll	C:\Windows\SYSTEM32\DWrite.dll	6	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb4ced0000	0xac000	TextShaping.dll	C:\Windows\System32\TextShaping.dll	6	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb40f10000	0x347000	MsftEdit.DLL	C:\Windows\SYSTEM32\MsftEdit.DLL	6	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb4d8c0000	0x1b4000	WindowsCodecs.dll	C:\Windows\SYSTEM32\WindowsCodecs.dll	6	2024-01-07 19:04:42.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb55ac0000	0xa8000	clbcatq.dll	C:\Windows\System32\clbcatq.dll	-1	2024-01-07 19:04:43.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb3b770000	0x3e000	dataexchange.dll	C:\Windows\system32\dataexchange.dll	6	2024-01-07 19:04:43.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb4f710000	0x263000	d3d11.dll	C:\Windows\system32\d3d11.dll	6	2024-01-07 19:04:43.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb503a0000	0x1e5000	dcomp.dll	C:\Windows\system32\dcomp.dll	6	2024-01-07 19:04:43.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb51f20000	0xf3000	dxgi.dll	C:\Windows\system32\dxgi.dll	6	2024-01-07 19:04:43.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb4d1c0000	0x208000	twinapi.appcore.dll	C:\Windows\system32\twinapi.appcore.dll	6	2024-01-07 19:04:43.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb4a810000	0x1a7000	Windows.Globalization.dll	C:\Windows\System32\Windows.Globalization.dll	6	2024-01-07 19:04:43.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb491d0000	0x5a000	Bcp47Langs.dll	C:\Windows\System32\Bcp47Langs.dll	6	2024-01-07 19:04:43.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb47fd0000	0x2d000	bcp47mrm.dll	C:\Windows\System32\bcp47mrm.dll	6	2024-01-07 19:04:43.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb4a410000	0x25000	globinputhost.dll	C:\Windows\SYSTEM32\globinputhost.dll	6	2024-01-07 19:04:43.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb3a9c0000	0x2f2000	UIAutomationCore.dll	C:\Windows\SYSTEM32\UIAutomationCore.dll	6	2024-01-07 19:04:43.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb4edd0000	0xf5000	PROPSYS.dll	C:\Windows\SYSTEM32\PROPSYS.dll	6	2024-01-07 19:04:43.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb53340000	0xa2000	sxs.dll	C:\Windows\SYSTEM32\sxs.dll	-1	2024-01-07 19:04:43.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb4c000000	0x12000	Accessibility.ni.dll	C:\Windows\assembly\NativeImages_v4.0.30319_64\Accessibility\586ed23cb27e69e90eee6d49206356b8\Accessibility.ni.dll	6	2024-01-07 19:04:43.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb3b800000	0x66000	oleacc.dll	C:\Windows\SYSTEM32\oleacc.dll	6	2024-01-07 19:04:43.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb46750000	0xa9000	tiptsf.dll	C:\Program Files\Common Files\microsoft shared\ink\tiptsf.dll	6	2024-01-07 19:04:43.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb48390000	0xfc000	textinputframework.dll	C:\Windows\SYSTEM32\textinputframework.dll	6	2024-01-07 19:04:43.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb50590000	0x35a000	CoreUIComponents.dll	C:\Windows\System32\CoreUIComponents.dll	-1	2024-01-07 19:04:43.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb50c70000	0xf2000	CoreMessaging.dll	C:\Windows\System32\CoreMessaging.dll	-1	2024-01-07 19:04:43.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb550e0000	0x6b000	WS2_32.dll	C:\Windows\System32\WS2_32.dll	-1	2024-01-07 19:04:43.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb52310000	0x33000	ntmarta.dll	C:\Windows\SYSTEM32\ntmarta.dll	-1	2024-01-07 19:04:43.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb4f5b0000	0x156000	wintypes.dll	C:\Windows\SYSTEM32\wintypes.dll	-1	2024-01-07 19:04:43.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb4f060000	0x14000	wtsapi32.dll	C:\Windows\SYSTEM32\wtsapi32.dll	6	2024-01-07 19:04:43.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb532e0000	0x5a000	WINSTA.dll	C:\Windows\SYSTEM32\WINSTA.dll	-1	2024-01-07 19:04:43.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb3b130000	0x21f000	explorerframe.dll	C:\Windows\system32\explorerframe.dll	6	2024-01-07 19:04:44.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb51240000	0x2e000	DwmApi.dll	C:\Windows\SYSTEM32\DwmApi.dll	6	2024-01-07 19:04:44.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/dlllist3768.txt:3768	KeePass.exe	0x7ffb4acd0000	0x24000	clrcompression.dll	C:\Windows\Microsoft.NET\Framework64\v4.0.30319\clrcompression.dll	6	2024-01-07 19:04:44.000000 UTC	Disabled
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/filescan.txt:0xab0b0d360830	\Program Files\KeePass Password Safe 2\KeePass.XmlSerializers.dll
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/filescan.txt:0xab0b0d364390	\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\LocalState\AppIconCache\100\{6D809377-6AF0-444B-8957-A3773F02200E}_KeePass Password Safe 2_KeePass_exe
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/filescan.txt:0xab0b0d36b730	\Windows\Prefetch\KEEPASS.EXE-CD8A3C32.pf
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/filescan.txt:0xab0b0dd04680	\Program Files\KeePass Password Safe 2\KeePass.XmlSerializers.dll
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/filescan.txt:0xab0b0e210cf0	\Program Files\KeePass Password Safe 2\KeePass.exe
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/filescan.txt:0xab0b0f84bc80	\Program Files\KeePass Password Safe 2
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/filescan.txt:0xab0b108497a0	\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\LocalState\AppIconCache\100\{6D809377-6AF0-444B-8957-A3773F02200E}_KeePass Password Safe 2_KeePass_exe
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/filescan.txt:0xab0b10a0da40	\Users\Carmine Falcone\Desktop\KeePass 2.lnk
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/filescan.txt:0xab0b10a0f1b0	\Users\Carmine Falcone\Downloads\KeePass-2.53.1-Setup.exe
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/filescan.txt:0xab0b10a3b3f0	\Program Files\KeePass Password Safe 2\KeePass.exe.config
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/filescan.txt:0xab0b10cb0540	\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\LocalState\AppIconCache\100\{6D809377-6AF0-444B-8957-A3773F02200E}_KeePass Password Safe 2_KeePass_exe
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/filescan.txt:0xab0b10cb7750	\Program Files\KeePass Password Safe 2\unins000.exe
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/filescan.txt:0xab0b10cb8240	\Program Files\KeePass Password Safe 2\KeePass.exe
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/filescan.txt:0xab0b10cca990	\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\LocalState\AppIconCache\100\{6D809377-6AF0-444B-8957-A3773F02200E}_KeePass Password Safe 2_KeePass_exe
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/filescan.txt:0xab0b11490510	\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\LocalState\AppIconCache\100\{6D809377-6AF0-444B-8957-A3773F02200E}_KeePass Password Safe 2_KeePass_exe
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/filescan.txt:0xab0b138a5cd0	\Users\Carmine Falcone\AppData\Roaming\KeePass\KeePass.config.xml
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/filescan.txt:0xab0b138c37d0	\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\LocalState\AppIconCache\100\{6D809377-6AF0-444B-8957-A3773F02200E}_KeePass Password Safe 2_KeePass_exe
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/filescan.txt:0xab0b138c5bc0	\Users\Carmine Falcone\Downloads\bruce.kdbx
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/filescan.txt:0xab0b138c8140	\Users\Carmine Falcone\AppData\Local\Packages\Microsoft.Windows.Search_cw5n1h2txyewy\LocalState\AppIconCache\100\{6D809377-6AF0-444B-8957-A3773F02200E}_KeePass Password Safe 2_KeePass_exe
+/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000015/filescan.txt:0xab0b138cb660	\Program Files\KeePass Password Safe 2\KeePass.config.xml

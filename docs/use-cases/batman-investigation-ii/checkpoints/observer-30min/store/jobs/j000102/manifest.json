@@ -1,0 +1,1 @@
+{"v":1,"job":"j000102","attempt":1,"sealed_at":"2026-10-02T10:11:26.364Z","files":[{"path":"process-residue.json","path_b64":"cHJvY2Vzcy1yZXNpZHVlLmpzb24=","bytes":7529,"sha256":"e678404a129c52f9ce0ddd68a4619a40b3f2378156927ad2d8d6f5679e63bc54","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":7529}}

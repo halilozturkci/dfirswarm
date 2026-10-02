@@ -1,0 +1,1 @@
+{"v":1,"job":"j000118","attempt":1,"sealed_at":"2026-10-02T10:16:30.145Z","files":[{"path":"caller_flag.txt","path_b64":"Y2FsbGVyX2ZsYWcudHh0","bytes":8246,"sha256":"1afcbdd6b1cbd8ad33082f3b6c83955dadb0be76875b0d07c22d124b010f1fd3","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":8246}}

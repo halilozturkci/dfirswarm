@@ -1,0 +1,1 @@
+{"v":1,"job":"j000014","attempt":1,"sealed_at":"2026-10-02T09:59:26.565Z","files":[{"path":"hits.json","path_b64":"aGl0cy5qc29u","bytes":1038293,"sha256":"d378f0d20c9123bd03a9e2714b4936643231b21a51ed0cace0fe64d246bc8b91","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":1038293}}

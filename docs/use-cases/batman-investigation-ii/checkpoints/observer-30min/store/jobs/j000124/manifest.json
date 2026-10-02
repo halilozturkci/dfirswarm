@@ -1,0 +1,1 @@
+{"v":1,"job":"j000124","attempt":1,"sealed_at":"2026-10-02T10:18:09.750Z","files":[{"path":"flag_assignment.jsonl","path_b64":"ZmxhZ19hc3NpZ25tZW50Lmpzb25s","bytes":29728,"sha256":"3127a0d370a4d5dcd599c2a87e814faa126e1b9d6893b00b65c912e9bf18076b","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":29728}}

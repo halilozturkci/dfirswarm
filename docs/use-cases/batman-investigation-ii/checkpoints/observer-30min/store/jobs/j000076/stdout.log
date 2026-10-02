@@ -1,0 +1,11 @@
+Volatility 3 Framework 2.28.2
+usage: vol windows.registry.printkey.PrintKey [-h] [--offset OFFSET]
+                                              [--key KEY] [--recurse]
+
+Lists the registry keys under a hive or specific key value.
+
+options:
+  -h, --help       show this help message and exit
+  --offset OFFSET  Hive Offset
+  --key KEY        Key to start from
+  --recurse        Recurses through keys

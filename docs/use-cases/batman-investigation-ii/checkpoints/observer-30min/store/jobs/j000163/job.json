@@ -1,0 +1,97 @@
+{
+  "id": "j000163",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000019/uri_passwords.json",
+      "job:j000054"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "independent": true,
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport os,json,struct,hashlib\nfrom cryptography.hazmat.primitives.ciphers.aead import AESGCM\nb=open('store/jobs/j000054/out/file.0xab0b138cf1c0.0xab0b0d6bf3d0.DataSectionObject.seed.seco.dat','rb').read();v=json.load(open('store/jobs/j000019/out/uri_passwords.json'));pw=bytes.fromhex(v[0]['password_utf8_hex'])\nm=b[256:512];n,r,p=struct.unpack_from('>III',m,32);l=struct.unpack_from('>I',b,512)[0];cipher=b[516:516+l]\nres={'md5_utf8':hashlib.md5(pw).hexdigest(),'file_bytes':len(b),'ciphertext_bytes':l,'checksum':hashlib.sha256(m+struct.pack('>I',l)+cipher).digest()==b[224:256],'controls':{}}\nfor name,candidate in [('utf8',pw),('latin1',pw.decode('utf8').encode('latin1')),('wrong_one_byte',bytes([pw[0]^1])+pw[1:])]:\n key=hashlib.scrypt(candidate,salt=m[:32],n=n,r=r,p=p,dklen=32)\n try:\n  secret=AESGCM(key).decrypt(m[76:88],m[104:136]+m[88:104],None)\n  raw=AESGCM(secret).decrypt(m[136:148],cipher+m[148:164],None)\n  res['controls'][name]={'key_auth':True,'payload_auth':True,'plaintext_bytes':len(raw)}\n except Exception as e:res['controls'][name]={'rejected':True,'error':type(e).__name__}\njson.dump(res,open(os.environ['OUT']+'/review-auth.json','w'),indent=2);print(json.dumps(res))\nPY"
+  },
+  "requester": {
+    "agent": "s42120100",
+    "name": "Contact provenance",
+    "doing": "Investigate Q1 and Q2 contact/disguise communications and sent-file identity; model gpt-6.1-sol."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:27:34.879Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000054/out",
+        "dir": true
+      },
+      {
+        "path": "store/jobs/j000019/out/uri_passwords.json",
+        "sha256": "bfea74ef44ac3d6641d72ed0cd6589dd422adbfbea0060a121a50089f42882bc"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000163-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:27:34.937Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000054/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000163",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 2,
+    "files": 1,
+    "bound": 1,
+    "manifest": "store/jobs/j000163/scope.1.json",
+    "manifest_sha256": "4f9b9ba34b7982da8958090a5e40ebb93b4b2560e203cf77637766b5719cdd95"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:27:35.733Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "c5e86fff118a2ce2870968938007cba1914f91cf7f10b11b3344d085e57702d1",
+    "files": 1,
+    "bytes": 406,
+    "rejected": 0,
+    "path": "store/jobs/j000163/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

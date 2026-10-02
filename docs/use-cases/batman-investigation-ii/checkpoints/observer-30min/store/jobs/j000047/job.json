@@ -1,0 +1,475 @@
+{
+  "id": "j000047",
+  "attempt": 1,
+  "spec": {
+    "kind": "detect",
+    "inputs": [
+      "job:j000013",
+      "job:j000041"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 1800,
+    "network": "off",
+    "targets": [
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b100c1910.0xab0b135a99b0.ImageSectionObject.xul.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b100c1910.0xab0b135a99b0.ImageSectionObject.xul.dll.img",
+        "ref": "job:j000013/file.0xab0b100c1910.0xab0b135a99b0.ImageSectionObject.xul.dll.img",
+        "sha256": "411b926a554341408be72e883c2431171a4d25801713862aae9db72477f82064"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0e8a3990.0xab0b0e880a20.ImageSectionObject.windows.storage.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0e8a3990.0xab0b0e880a20.ImageSectionObject.windows.storage.dll.img",
+        "ref": "job:j000013/file.0xab0b0e8a3990.0xab0b0e880a20.ImageSectionObject.windows.storage.dll.img",
+        "sha256": "4bc2aa9f8d70097854069a92b46aa3b5c04505fc802082b19decbe45c4aa89b6"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0d03da20.0xab0b076f92b0.ImageSectionObject.shell32.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0d03da20.0xab0b076f92b0.ImageSectionObject.shell32.dll.img",
+        "ref": "job:j000013/file.0xab0b0d03da20.0xab0b076f92b0.ImageSectionObject.shell32.dll.img",
+        "sha256": "1315ca30754403dca5ae7ce814ca959ef3e43c26a4ad49922c1fe460d1de23f6"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0e442510.0xab0b0df97a20.ImageSectionObject.OneCoreUAPCommonProxyStub.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0e442510.0xab0b0df97a20.ImageSectionObject.OneCoreUAPCommonProxyStub.dll.img",
+        "ref": "job:j000013/file.0xab0b0e442510.0xab0b0df97a20.ImageSectionObject.OneCoreUAPCommonProxyStub.dll.img",
+        "sha256": "f3319ee35951ce72a0f280578a83d35dde7b97a0bda3d81fa2c325ac9f22df6f"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0dc9ce80.0xab0b0e670c50.ImageSectionObject.d2d1.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0dc9ce80.0xab0b0e670c50.ImageSectionObject.d2d1.dll.img",
+        "ref": "job:j000013/file.0xab0b0dc9ce80.0xab0b0e670c50.ImageSectionObject.d2d1.dll.img",
+        "sha256": "6f159f51e5f102b076058646c6bfb14f35089185241a2f5aad3fba16b0c3c3e2"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b101e6180.0xab0b0e2aea20.ImageSectionObject.wininet.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b101e6180.0xab0b0e2aea20.ImageSectionObject.wininet.dll.img",
+        "ref": "job:j000013/file.0xab0b101e6180.0xab0b0e2aea20.ImageSectionObject.wininet.dll.img",
+        "sha256": "2afb163ef9f2027682ec35a3fc011992f2032f9ef45e6d3dcd4ddb6132291039"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0e369d30.0xab0b0fa61a20.ImageSectionObject.cdp.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0e369d30.0xab0b0fa61a20.ImageSectionObject.cdp.dll.img",
+        "ref": "job:j000013/file.0xab0b0e369d30.0xab0b0fa61a20.ImageSectionObject.cdp.dll.img",
+        "sha256": "7852c3606158d9587964e5436676b9e403ab69116b4e3e9c0887924f810bec74"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b10cdf7f0.0xab0b11027cb0.ImageSectionObject.rnp.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b10cdf7f0.0xab0b11027cb0.ImageSectionObject.rnp.dll.img",
+        "ref": "job:j000013/file.0xab0b10cdf7f0.0xab0b11027cb0.ImageSectionObject.rnp.dll.img",
+        "sha256": "48abacc5fafd0cc6ac037200b6e13819d5246ca5822818aaf8ca325807071317"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0d03dd40.0xab0b0b3c1920.ImageSectionObject.combase.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0d03dd40.0xab0b0b3c1920.ImageSectionObject.combase.dll.img",
+        "ref": "job:j000013/file.0xab0b0d03dd40.0xab0b0b3c1920.ImageSectionObject.combase.dll.img",
+        "sha256": "866e118ae2f2e16830205e80ebd43496812cf8a772c2b76a4331863420de095e"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0e618090.0xab0b0e7cbb20.ImageSectionObject.CoreUIComponents.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0e618090.0xab0b0e7cbb20.ImageSectionObject.CoreUIComponents.dll.img",
+        "ref": "job:j000013/file.0xab0b0e618090.0xab0b0e7cbb20.ImageSectionObject.CoreUIComponents.dll.img",
+        "sha256": "cb6b031a52065c50eb6dd30dc4500d0e3346bd1d4c4c7c0345b30f580985c807"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0d8f4510.0xab0b074d08a0.ImageSectionObject.KernelBase.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0d8f4510.0xab0b074d08a0.ImageSectionObject.KernelBase.dll.img",
+        "ref": "job:j000013/file.0xab0b0d8f4510.0xab0b074d08a0.ImageSectionObject.KernelBase.dll.img",
+        "sha256": "2c1e07f939a466e161978635e719ee60d3b737868f6c732ac19922e15fe293a0"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0dd0d960.0xab0b0dd3bcc0.ImageSectionObject.comctl32.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0dd0d960.0xab0b0dd3bcc0.ImageSectionObject.comctl32.dll.img",
+        "ref": "job:j000013/file.0xab0b0dd0d960.0xab0b0dd3bcc0.ImageSectionObject.comctl32.dll.img",
+        "sha256": "e4c2161904f87f41e4e29418adda55fd0d4c6491779de4541a3a4f3b345d0c87"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0db2b120.0xab0b0dbc0870.ImageSectionObject.iertutil.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0db2b120.0xab0b0dbc0870.ImageSectionObject.iertutil.dll.img",
+        "ref": "job:j000013/file.0xab0b0db2b120.0xab0b0dbc0870.ImageSectionObject.iertutil.dll.img",
+        "sha256": "a57a7ef55a0c0f49531d3fe47ada94faa31116b6a9d24dbb61b9fccd7260683a"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0e211650.0xab0b0e5d1a20.ImageSectionObject.DWrite.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0e211650.0xab0b0e5d1a20.ImageSectionObject.DWrite.dll.img",
+        "ref": "job:j000013/file.0xab0b0e211650.0xab0b0e5d1a20.ImageSectionObject.DWrite.dll.img",
+        "sha256": "672cc48c0327720fa05e96547f9478826f625cc75dee46c89271faa4a3d7384a"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b100c07e0.0xab0b1141dd20.ImageSectionObject.nss3.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b100c07e0.0xab0b1141dd20.ImageSectionObject.nss3.dll.img",
+        "ref": "job:j000013/file.0xab0b100c07e0.0xab0b1141dd20.ImageSectionObject.nss3.dll.img",
+        "sha256": "b98f8d011910b85e450bd75f0867e04edc8fc47c830c6131a1ac81083fd2a79e"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0e61a160.0xab0b0e672a20.ImageSectionObject.d3d11.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0e61a160.0xab0b0e672a20.ImageSectionObject.d3d11.dll.img",
+        "ref": "job:j000013/file.0xab0b0e61a160.0xab0b0e672a20.ImageSectionObject.d3d11.dll.img",
+        "sha256": "cd2a44a0ffed9c35cef6bbd0c579541f9205630ae07ec246367431da317afcc6"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b10a22580.0xab0b14311a00.ImageSectionObject.ExplorerFrame.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b10a22580.0xab0b14311a00.ImageSectionObject.ExplorerFrame.dll.img",
+        "ref": "job:j000013/file.0xab0b10a22580.0xab0b14311a00.ImageSectionObject.ExplorerFrame.dll.img",
+        "sha256": "00d7ad1851b10153c162bcf30e030bdb6d321389e86cebc71af121c77ae8cf77"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0db2d9c0.0xab0b0d983d50.ImageSectionObject.twinapi.appcore.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0db2d9c0.0xab0b0d983d50.ImageSectionObject.twinapi.appcore.dll.img",
+        "ref": "job:j000013/file.0xab0b0db2d9c0.0xab0b0d983d50.ImageSectionObject.twinapi.appcore.dll.img",
+        "sha256": "26723944f585621b5b01bec6e2bab3c1a2b8d10b606a3281e31f18031698aad3"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0db2a4a0.0xab0b0dbc7a20.ImageSectionObject.urlmon.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0db2a4a0.0xab0b0dbc7a20.ImageSectionObject.urlmon.dll.img",
+        "ref": "job:j000013/file.0xab0b0db2a4a0.0xab0b0dbc7a20.ImageSectionObject.urlmon.dll.img",
+        "sha256": "53a2aa3289f0857aceed923e84185c0229b976ceade4adb0345ee945948d2ecc"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0e619e40.0xab0b0e7988e0.ImageSectionObject.dcomp.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0e619e40.0xab0b0e7988e0.ImageSectionObject.dcomp.dll.img",
+        "ref": "job:j000013/file.0xab0b0e619e40.0xab0b0e7988e0.ImageSectionObject.dcomp.dll.img",
+        "sha256": "5fa4d5388185596a463dd87637cab692975006e930d6a0ce1d333cee04857f38"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b106584c0.0xab0b12108c90.ImageSectionObject.dbghelp.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b106584c0.0xab0b12108c90.ImageSectionObject.dbghelp.dll.img",
+        "ref": "job:j000013/file.0xab0b106584c0.0xab0b12108c90.ImageSectionObject.dbghelp.dll.img",
+        "sha256": "f46dcd46903d06e4914d50ed690ba5e5c1b52c57570c187c8b38a41a6b820e2d"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000041/out/file.0xab0b11c87310.0xab0b104dbcd0.ImageSectionObject.7z.dll.img"
+        ],
+        "name": "job:j000041/file.0xab0b11c87310.0xab0b104dbcd0.ImageSectionObject.7z.dll.img",
+        "ref": "job:j000041/file.0xab0b11c87310.0xab0b104dbcd0.ImageSectionObject.7z.dll.img",
+        "sha256": "0f86c4c407d8ccff1c63340b1c2cf3bf3bd0dd3881af20e9730cc8df1719e541"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0db32970.0xab0b0df5ca20.ImageSectionObject.WindowsCodecs.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0db32970.0xab0b0df5ca20.ImageSectionObject.WindowsCodecs.dll.img",
+        "ref": "job:j000013/file.0xab0b0db32970.0xab0b0df5ca20.ImageSectionObject.WindowsCodecs.dll.img",
+        "sha256": "e4f3aa98c1e3d2c9a7f03ea82bd9257b1c19f8a950afa4d8ad6be668a3334cc7"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0d8f3250.0xab0b076fb010.ImageSectionObject.user32.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0d8f3250.0xab0b076fb010.ImageSectionObject.user32.dll.img",
+        "ref": "job:j000013/file.0xab0b0d8f3250.0xab0b076fb010.ImageSectionObject.user32.dll.img",
+        "sha256": "64ee8759b4e9591bc66e92d7f5fcfe526837dee8eb1e731fef2ec2a4d2a8c0af"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0e210e80.0xab0b0e0282b0.ImageSectionObject.Windows.Globalization.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0e210e80.0xab0b0e0282b0.ImageSectionObject.Windows.Globalization.dll.img",
+        "ref": "job:j000013/file.0xab0b0e210e80.0xab0b0e0282b0.ImageSectionObject.Windows.Globalization.dll.img",
+        "sha256": "4c79d35e4adf76a047e2734b7da9b4952bae38fe5a586b42923cd5f977206301"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b078f34c0.0xab0b076f4ca0.ImageSectionObject.ntdll.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b078f34c0.0xab0b076f4ca0.ImageSectionObject.ntdll.dll.img",
+        "ref": "job:j000013/file.0xab0b078f34c0.0xab0b076f4ca0.ImageSectionObject.ntdll.dll.img",
+        "sha256": "a6c60a128da1e4f7ffeacfb41bbda6807defd3369345cd49162e20ae97790cff"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b10cb6940.0xab0b0d19ba90.ImageSectionObject.TaskFlowDataEngine.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b10cb6940.0xab0b0d19ba90.ImageSectionObject.TaskFlowDataEngine.dll.img",
+        "ref": "job:j000013/file.0xab0b10cb6940.0xab0b0d19ba90.ImageSectionObject.TaskFlowDataEngine.dll.img",
+        "sha256": "d5287fb946c63a21c1e68be3c722e1c8c88d79dc821751c08002b20674b2af3e"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0db28d30.0xab0b0db78a60.ImageSectionObject.AudioSes.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0db28d30.0xab0b0db78a60.ImageSectionObject.AudioSes.dll.img",
+        "ref": "job:j000013/file.0xab0b0db28d30.0xab0b0db78a60.ImageSectionObject.AudioSes.dll.img",
+        "sha256": "66d3c953e6bf70b4f1f3f80b72848522fa6bf17e5e0013553bb757529113af9f"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0d8f3890.0xab0b077b0b50.ImageSectionObject.crypt32.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0d8f3890.0xab0b077b0b50.ImageSectionObject.crypt32.dll.img",
+        "ref": "job:j000013/file.0xab0b0d8f3890.0xab0b077b0b50.ImageSectionObject.crypt32.dll.img",
+        "sha256": "6add03e895dade8dc87da4a3519ccd9210c0b36938ad9a3beb869127f485fc8a"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0e619b20.0xab0b0e7878e0.ImageSectionObject.WinTypes.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0e619b20.0xab0b0e7878e0.ImageSectionObject.WinTypes.dll.img",
+        "ref": "job:j000013/file.0xab0b0e619b20.0xab0b0e7878e0.ImageSectionObject.WinTypes.dll.img",
+        "sha256": "b9ca4bb9c7c5acd6527f3593e5263d300c08498251a52258183e228296a1324c"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0e29e320.0xab0b07280820.ImageSectionObject.InputHost.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0e29e320.0xab0b07280820.ImageSectionObject.InputHost.dll.img",
+        "ref": "job:j000013/file.0xab0b0e29e320.0xab0b07280820.ImageSectionObject.InputHost.dll.img",
+        "sha256": "350f93a0489bb9fd346cb91558d813103dabfb06c368ea94e5b042640a048f4d"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0e29ae00.0xab0b0e0297f0.ImageSectionObject.Windows.UI.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0e29ae00.0xab0b0e0297f0.ImageSectionObject.Windows.UI.dll.img",
+        "ref": "job:j000013/file.0xab0b0e29ae00.0xab0b0e0297f0.ImageSectionObject.Windows.UI.dll.img",
+        "sha256": "2bc5ae4afd6894da7af3a58b7c826fe03f34a48b7781cbdea79a3132bf6f0e5a"
+      }
+    ],
+    "pairs": [
+      {
+        "t": 0,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 1,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 2,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 3,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 4,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 5,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 6,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 7,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 8,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 9,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 10,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 11,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 12,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 13,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 14,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 15,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 16,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 17,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 18,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 19,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 20,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 21,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 22,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 23,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 24,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 25,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 26,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 27,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 28,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 29,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 30,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 31,
+        "recipe": "computer-forensics-base/disk-volumes"
+      }
+    ],
+    "trigger": "derived"
+  },
+  "requester": {
+    "agent": "derived",
+    "name": "derived catalogue"
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:03:59.397Z",
+  "worker": "dfs-s421201-job-j000047-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:03:59.430Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "derived",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000041/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000047",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 34,
+    "files": 0,
+    "bound": 2,
+    "manifest": "store/jobs/j000047/scope.1.json",
+    "manifest_sha256": "f621fd4e885082096d33651a6ee8901a182af017f53b34940d6cafea2b47ef0b"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:04:02.542Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "4c0fa1d4646435b56b726c5532296dddb9e80f2e635a199f316086e961e7dd81",
+    "files": 33,
+    "bytes": 7094,
+    "rejected": 0,
+    "path": "store/jobs/j000047/out"
+  },
+  "sensitive": {
+    "why": "derived",
+    "from": [
+      "j000041"
+    ],
+    "note": "made from the sensitive output of j000041: every output it sealed is sensitive"
+  }
+}

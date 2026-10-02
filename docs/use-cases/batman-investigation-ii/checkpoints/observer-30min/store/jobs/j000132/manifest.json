@@ -1,0 +1,1 @@
+{"v":1,"job":"j000132","attempt":1,"sealed_at":"2026-10-02T10:19:44.304Z","files":[{"path":"sqlite-inventory.json","path_b64":"c3FsaXRlLWludmVudG9yeS5qc29u","bytes":221950,"sha256":"e2497f816fba9d690087572b2730c50730a60669d51020d3dee0bfc585716424","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":221950}}

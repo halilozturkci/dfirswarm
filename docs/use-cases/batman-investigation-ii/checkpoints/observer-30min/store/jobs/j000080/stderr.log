@@ -1,0 +1,7 @@
+Traceback (most recent call last):
+  File "/tmp/k.py", line 24, in <module>
+    dec=AES.new(key,AES.MODE_CBC,iv).decrypt(enc)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/dfir/venv/lib/python3.11/site-packages/Crypto/Cipher/_mode_cbc.py", line 246, in decrypt
+    raise ValueError("Data must be padded to %d byte boundary in CBC mode" % self.block_size)
+ValueError: Data must be padded to 16 byte boundary in CBC mode

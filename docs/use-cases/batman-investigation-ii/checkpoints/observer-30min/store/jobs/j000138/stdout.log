@@ -1,0 +1,104 @@
+{
+  "region_base": 316000000,
+  "region_bytes": 9000000,
+  "sha256": "c09ffa5480f7608069381363b4f282be689eb82278d2f09b4c1a2ae390b8a12c",
+  "term_hits": {
+    "172.30.145.189": [
+      4252368
+    ],
+    "6969": [
+      4252383
+    ],
+    "RedLine": [
+      2769136
+    ],
+    "Redline": [
+      639066,
+      639143,
+      639249,
+      640232,
+      1651242,
+      1651906,
+      7968209,
+      8786057
+    ],
+    "StealerRunner": [
+      7909895
+    ],
+    "stealer.done": [
+      755027
+    ],
+    "wallet": [
+      2094987,
+      2095003,
+      3262755,
+      3262867,
+      3264016,
+      3264523,
+      3264803,
+      3265113,
+      3265631,
+      3548927,
+      3548997,
+      4234147,
+      4236803,
+      4485022,
+      5820108,
+      7829959,
+      7830113,
+      7830503,
+      7830657
+    ],
+    "Exodus": [
+      721456,
+      810476,
+      2342222,
+      3262741,
+      3262853,
+      3264002,
+      3264248,
+      3264269,
+      3264509,
+      3264789,
+      3265099,
+      3265348,
+      3265369,
+      3265617
+    ],
+    "GOLANG": [],
+    "Go build": [],
+    "Go build ID": [],
+    "W32\u0000": []
+  },
+  "mz_offsets": [
+    1250672,
+    2849024,
+    5048576,
+    5810432,
+    5929216,
+    8694593,
+    8897361
+  ],
+  "ascii_runs_near_endpoint": [
+    {
+      "region_offset": 4251702,
+      "raw_offset": 320251702,
+      "text": "bad manualFreeListruntime: textAddr cleantimers: bad p frames elided..."
+    },
+    {
+      "region_offset": 4251774,
+      "raw_offset": 320251774,
+      "text": ", locked to threadruntime.semacreateruntime.semawakeupoperation canceledno child processesconnection refusedRFS specific erroridentifier removedinput/output errormultihop attemptedfile name too longno locks availablestreams pipe errorLookupAccountNameWCreateFileMappingWGetFileAttributesWSetFileAttributesWCommandLineToArgvWuse of closed fileCuba Standard TimeOmsk Standard TimeArab Standard TimeIran Standard TimeRussia Time Zone 3Fiji Standard TimeGetComputerNameExWGetModuleFileNameW298023223876953125reflect."
+    },
+    {
+      "region_offset": 4252995,
+      "raw_offset": 320252995,
+      "text": ",  g->atomicstatus=unexpected g statusbad runtime"
+    },
+    {
+      "region_offset": 4253046,
+      "raw_offset": 320253046,
+      "text": "mstartm not found in allmstopm holding lockssemaRoot rotateLeftbad notifyList sizeruntime: preempt g0runtime: pcdata is bad ABI descriptiondodeltimer: wrong Padjusttimers: bad pbad file descriptordisk quota exceededtoo many open filesdevice not a streamdirectory not emptyCryptReleaseContextGetTokenInformationCreateSymbolicLinkWGetCurrentProcessIdEgypt Standard TimeSudan Standard TimeLibya Standard TimeBahia Standard TimeHaiti Standard TimeYukon Standard TimeAltai Standard TimeIndia Standard TimeSyria Standa"
+    }
+  ]
+}

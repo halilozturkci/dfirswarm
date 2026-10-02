@@ -1,0 +1,26 @@
+{
+  "password_length": 15,
+  "password_sha256": "24da375dbf8acd2262609e59c0fdce6be4607fb3cacfb54f48c66e9a016ea41c",
+  "stream_start_verified": true,
+  "decompressed_prefix_bytes": 29220,
+  "blocks": [
+    {
+      "index": 0,
+      "length": 3474,
+      "complete": true,
+      "sha256_ok": true
+    },
+    {
+      "index": 1,
+      "length": 0,
+      "complete": true,
+      "sha256_ok": true
+    },
+    {
+      "index": 235802126,
+      "length": 2317915841,
+      "complete": false,
+      "available": 246
+    }
+  ]
+}

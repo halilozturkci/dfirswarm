@@ -1,0 +1,23 @@
+Volatility 3 Framework 2.28.2
+usage: vol windows.vadyarascan.VadYaraScan [-h] [--insensitive] [--wide]
+                                           [--yara-string YARA_STRING]
+                                           [--yara-file YARA_FILE]
+                                           [--yara-compiled-file YARA_COMPILED_FILE]
+                                           [--max-size MAX_SIZE]
+                                           [--pid [PID ...]]
+
+Scans all the Virtual Address Descriptor memory maps using yara.
+
+options:
+  -h, --help            show this help message and exit
+  --insensitive         Makes the search case insensitive
+  --wide                Match wide (unicode) strings
+  --yara-string YARA_STRING
+                        Yara rules (as a string)
+  --yara-file YARA_FILE
+                        Yara rules (as a file)
+  --yara-compiled-file YARA_COMPILED_FILE
+                        Yara compiled rules (as a file)
+  --max-size MAX_SIZE   Set the maximum size (default is 1GB)
+  --pid [PID ...]       Process IDs to include (all other processes are
+                        excluded)

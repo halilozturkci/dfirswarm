@@ -1,0 +1,117 @@
+{
+  "id": "j000132",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000130/archive/contact/apex.sqlite3",
+      "job:j000130/archive/contact/instance1/home.db",
+      "job:j000130/archive/contact/instance1/sync_history.db",
+      "job:j000130/archive/contact/instance1/avatarcache.db",
+      "job:j000130/archive/contact/instance1/icon.db",
+      "job:j000130/archive/contact/instance1/preview_cache.db",
+      "job:j000130/archive/contact/instance1/sync/nucleus.sqlite3"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport sqlite3,os,json\nroot='store/jobs/j000130/out/archive/contact'; names=['apex.sqlite3','instance1/home.db','instance1/sync_history.db','instance1/avatarcache.db','instance1/icon.db','instance1/preview_cache.db','instance1/sync/nucleus.sqlite3']\nout={}\nfor n in names:\n p=os.path.join(root,n)\n try:\n  db=sqlite3.connect('file:'+p+'?mode=ro&immutable=1',uri=True); rows=db.execute(\"select name,sql from sqlite_master where type in ('table','view') order by name\").fetchall(); item={'schema':rows,'tables':{}}\n  for tab,sql in rows:\n   if not tab.startswith('sqlite_'):\n    try:\n     cur=db.execute('select * from \"'+tab.replace('\"','\"\"')+'\"'); cols=[x[0] for x in cur.description]; rr=cur.fetchmany(100); item['tables'][tab]={'columns':cols,'rows':[[('blob:'+bytes(v).hex()) if isinstance(v,(bytes,bytearray)) else v for v in r] for r in rr]}\n    except Exception as e:item['tables'][tab]={'error':str(e)}\n  out[n]=item;db.close()\n except Exception as e:out[n]={'error':str(e)}\nopen(os.environ['OUT']+'/sqlite-inventory.json','w').write(json.dumps(out,indent=2,default=str))\nfor n,x in out.items():print(n, 'error='+x['error'] if 'error'in x else 'tables='+','.join(x['tables']))\nPY"
+  },
+  "requester": {
+    "agent": "s42120104",
+    "name": "DBX Key Examiner",
+    "doing": "Establishing Q14, the userkey of the encrypted DBX database, from unknown.data and memory artefacts."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:19:43.536Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000130/out/archive/contact/instance1/icon.db",
+        "sha256": "0e46e106bea4cfc0f49617a8cb5c1a62e7af60e04a487630ce48a7ed36595e7e"
+      },
+      {
+        "path": "store/jobs/j000130/out/archive/contact/instance1/sync/nucleus.sqlite3",
+        "sha256": "4886322008145653c2c8fe6432650bbb2520127c848dbc52b7a571e751884648"
+      },
+      {
+        "path": "store/jobs/j000130/out/archive/contact/instance1/preview_cache.db",
+        "sha256": "5d6c8186d2c719300d7a2477ecbc5805d76a17e4e4f8d9ef49b84d43710c7406"
+      },
+      {
+        "path": "store/jobs/j000130/out/archive/contact/instance1/sync_history.db",
+        "sha256": "cf863f62c7539f2366f3220452640ecf689e009ceae211cd806c89ac515d1d61"
+      },
+      {
+        "path": "store/jobs/j000130/out/archive/contact/instance1/avatarcache.db",
+        "sha256": "cfb8f46df4736c5793bf29127ff8640f02cb9a293b7fdf137e265db609ae2fd2"
+      },
+      {
+        "path": "store/jobs/j000130/out/archive/contact/apex.sqlite3",
+        "sha256": "d207893df8d52ed73de0f2ee58f311a17b71f9c7f275017510b0075cd81680ef"
+      },
+      {
+        "path": "store/jobs/j000130/out/archive/contact/instance1/home.db",
+        "sha256": "f05b1cce6e8d706e53a5c526219d07ac177c7463445c3b0c5ec60a70d179789a"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000132-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:19:43.596Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000132",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 7,
+    "files": 7,
+    "bound": 0,
+    "manifest": "store/jobs/j000132/scope.1.json",
+    "manifest_sha256": "b29724444a61ef2c6b45c8928a35bd924202c7a314a876a2d7910358e33bc06e"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:19:44.292Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "63bf7f5c615b683f1f636c2219bd5400654645a520e5d2f747af597535146422",
+    "files": 1,
+    "bytes": 221950,
+    "rejected": 0,
+    "path": "store/jobs/j000132/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

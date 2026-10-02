@@ -1,0 +1,87 @@
+{
+  "id": "j000040",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000001/wallet-ascii.txt"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport os,re,json\nout=[]\nfor l in open('store/jobs/j000001/out/wallet-ascii.txt',errors='replace'):\n if l.startswith('3636473856 ') or l.startswith('979742720 ') or '\"wallet load success: C:' in l:\n  out.append(l)\nopen(os.environ['OUT']+'/wallet_loader_and_logs.txt','w').writelines(out)\nprint('records',len(out))\nPY"
+  },
+  "requester": {
+    "agent": "s42120102",
+    "name": "Wallet trace",
+    "doing": "Examine wallet installation and wallet protection evidence for questions 5 and 9."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:01:43.293Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000001/out/wallet-ascii.txt",
+        "sha256": "dc4436e1381e07290f1184bc047ba8a11699ff88b756c8bf4853f01400119759"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000040-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:01:43.346Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000040",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000040/scope.1.json",
+    "manifest_sha256": "f213bf9df4a740df99ef539a2b4cb6be3edecf32b128f95a453cf2f0670a0e24"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:01:44.076Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "d2692bb0b8861a2efce0274cd4fcc4e4600baa08be544110d1e6fcfd65d12076",
+    "files": 1,
+    "bytes": 9416,
+    "rejected": 0,
+    "path": "store/jobs/j000040/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

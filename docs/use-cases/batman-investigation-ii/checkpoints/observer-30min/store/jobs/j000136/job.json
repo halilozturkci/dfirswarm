@@ -1,0 +1,112 @@
+{
+  "id": "j000136",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/Carmine-Falcone.raw",
+      "job:j000126/recovery.json"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 300,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport os,json,struct,hashlib,zlib\nfrom Crypto.Cipher import AES\nout=os.environ['OUT']; img='inputs/chall/Carmine-Falcone.raw'; pw=json.load(open('store/jobs/j000126/out/recovery.json'))['password']; offsets=[877111456,1304934584,3105492992,4591231224]; summary=[]\nwith open(img,'rb') as f:\n for off0 in offsets:\n  f.seek(off0); d=f.read(4096); pos=12; fld={}\n  try:\n   while True:\n    fid=d[pos]; ln=struct.unpack_from('<H',d,pos+1)[0]; val=d[pos+3:pos+3+ln]; pos+=3+ln\n    if fid==0: break\n    fld[fid]=val\n   seed,ts,iv,start=fld[4],fld[5],fld[7],fld[9]; rounds=struct.unpack('<Q',fld[6])[0]\n   ck=hashlib.sha256(hashlib.sha256(pw.encode()).digest()).digest(); c=AES.new(ts,AES.MODE_ECB)\n   for _ in range(rounds): ck=c.encrypt(ck)\n   mk=hashlib.sha256(seed+hashlib.sha256(ck).digest()).digest(); ct=d[pos:pos+((len(d)-pos)//16)*16]; plain=AES.new(mk,AES.MODE_CBC,iv).decrypt(ct); verified=plain[:32]==start\n   p=32; chunks=[]; bm=[]\n   while p+40<=len(plain):\n    idx=struct.unpack_from('<I',plain,p)[0]; h=plain[p+4:p+36]; ln=struct.unpack_from('<I',plain,p+36)[0]; p+=40\n    if p+ln>len(plain): bm.append({'index':idx,'length':ln,'complete':False,'available':len(plain)-p}); break\n    ch=plain[p:p+ln]; p+=ln; bm.append({'index':idx,'length':ln,'complete':True,'hash_ok':hashlib.sha256(ch).digest()==h if ln else True}); chunks.append(ch)\n   stream=b''.join(chunks); xml=b''; err=None\n   try: xml=zlib.decompress(stream,16+zlib.MAX_WBITS)\n   except Exception as e:\n    try: z=zlib.decompressobj(16+zlib.MAX_WBITS); xml=z.decompress(stream); err=repr(e)\n    except Exception as e2: err=repr(e2)\n   name=str(off0); open(out+'/'+name+'.kdbx-prefix','wb').write(d); open(out+'/'+name+'.xml','wb').write(xml)\n   summary.append({'offset':off0,'sha256_4096':hashlib.sha256(d).hexdigest(),'stream_start_verified':verified,'header_end':pos,'blocks':bm,'xml_bytes':len(xml),'xml_sha256':hashlib.sha256(xml).hexdigest(),'decompress_note':err})\n  except Exception as e: summary.append({'offset':off0,'error':repr(e)})\nopen(out+'/versions.json','w').write(json.dumps(summary,indent=2)); print(json.dumps(summary,indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120105",
+    "name": "Userkey Analyst",
+    "doing": "I will establish Q12-Q13 (contact verification database key/client email and interpreted client/private key) from unknown.data and memory artifacts; Q14 is already taken."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:19:56.832Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "inputs/chall/Carmine-Falcone.raw",
+        "sha256": "3e03551e1f55dd792b0bc459b5620522d61fcf2379e8f6d89ef439fef8263cac"
+      },
+      {
+        "path": "store/jobs/j000126/out/recovery.json",
+        "sha256": "809077379f0460ae62b4885edbd9ba079bd53a0b08463831a90dc7e4f57af268"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000136-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:19:56.894Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "general",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000136",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 2,
+    "files": 2,
+    "bound": 0,
+    "manifest": "store/jobs/j000136/scope.1.json",
+    "manifest_sha256": "52ee1dc0a842e1eb47e8632be278a7e4346964ab0033796ef277896042e59e95"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:19:57.917Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "same_as": [
+    {
+      "path": "3105492992.kdbx-prefix",
+      "sha256": "7b55391c40b18b8a9afc43dff0c9814ba6bc0e6566358aa994ff93da76b5e220",
+      "bytes": 4096,
+      "job": "j000078",
+      "file": "file.0xab0b138c5bc0.0xab0b0d5e4230.DataSectionObject.bruce.kdbx.dat"
+    },
+    {
+      "path": "3105492992.xml",
+      "sha256": "cc48c96b02281ae7e441f0dafa2594809793634b59b4c28e0116e9e7be109144",
+      "bytes": 29220,
+      "job": "j000107",
+      "file": "database.xml"
+    }
+  ],
+  "outputs": {
+    "manifest_sha256": "90b1e070874dbc162ff2ee58a7b9556b75f82a06c1f5bed2c919c70949833b14",
+    "files": 9,
+    "bytes": 48011,
+    "rejected": 0,
+    "path": "store/jobs/j000136/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

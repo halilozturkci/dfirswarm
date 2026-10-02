@@ -1,0 +1,1 @@
+{"v":1,"job":"j000169","attempt":1,"sealed_at":"2026-10-02T10:30:21.498Z","files":[{"path":"dbx-offset24-tests.json","path_b64":"ZGJ4LW9mZnNldDI0LXRlc3RzLmpzb24=","bytes":48310,"sha256":"f584300a6abd2183a11d68b370e6039f1548e9ac3c2fbcece63383bf02f3997c","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":48310}}

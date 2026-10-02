@@ -1,0 +1,91 @@
+{
+  "id": "j000127",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/Carmine-Falcone.raw"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 900,
+    "network": "off",
+    "secret_output": true,
+    "command": "cat > \"$OUT/detail2.py\" <<'PY'\nimport os,json\nfrom volatility3.plugins.windows import windows\nclass Detail2(windows.Windows):\n def _generator(self):\n  out=[]\n  for sn,dn,w,wn in self.list_windows(self.context,self.config_path,self.config['kernel']):\n   if w.vol.offset != 0xbd5b448f45b0: continue\n   row={'window':hex(w.vol.offset),'name':wn,'type':w.vol.type_name,'size':w.vol.size,'layer':w.vol.layer_name}\n   lay=self.context.layers[w.vol.layer_name]\n   row['hex']=lay.read(w.vol.offset,1024,pad=True).hex()\n   for attr in ['subPointer','strName','cbwndExtra','dwUserData','spwndParent','spwndOwner','pcls','style','ExStyle','lpfnWndProc']:\n    try:\n     v=getattr(w,attr); row[attr]=str(v)\n     try:\n      d=v.dereference(); row[attr+'_deref']={'address':hex(d.vol.offset),'type':d.vol.type_name,'layer':d.vol.layer_name,'hex':self.context.layers[d.vol.layer_name].read(d.vol.offset,4096,pad=True).hex()}\n     except Exception as e: row[attr+'_deref_error']=str(e)\n    except Exception as e: row[attr+'_error']=str(e)\n   out.append(row)\n  json.dump(out,open(os.environ['DETAIL_OUT'],'w'),indent=2)\n  yield from super()._generator()\nPY\nDETAIL_OUT=\"$OUT/target.json\" vol --offline -p \"$OUT\" -s /tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics/vendor/symbols -f inputs/chall/Carmine-Falcone.raw detail2.Detail2 > \"$OUT/windows.txt\"\ncat \"$OUT/target.json\""
+  },
+  "requester": {
+    "agent": "s42120106",
+    "name": "Vault Artifact Analyst",
+    "doing": "Establishing Q3-Q4: password-manager identity/version and password, plus the deleted stored user key."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:18:16.004Z",
+  "reuse": {
+    "op": "command:cat",
+    "objects": [
+      {
+        "path": "inputs/chall/Carmine-Falcone.raw",
+        "sha256": "3e03551e1f55dd792b0bc459b5620522d61fcf2379e8f6d89ef439fef8263cac"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000127-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:18:16.057Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "general",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000127",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000127/scope.1.json",
+    "manifest_sha256": "ffb909ad955c8e167d1369aaa9c198c93e688280129f94e5aeec2a193bf0ca3f"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:18:47.180Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "5f2638ac7f4310003910be2ebe69908bcc64111aafdf9503b9b710e7198f4498",
+    "files": 3,
+    "bytes": 101619,
+    "rejected": 0,
+    "path": "store/jobs/j000127/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

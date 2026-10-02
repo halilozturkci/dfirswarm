@@ -1,0 +1,1 @@
+{"v":1,"job":"j000038","attempt":1,"sealed_at":"2026-10-02T10:01:37.558Z","files":[{"path":"transfer-context.jsonl","path_b64":"dHJhbnNmZXItY29udGV4dC5qc29ubA==","bytes":126512,"sha256":"603de9dd287ef95ca5c39cdbfbbe5a605fc770222d798bbf4d1ce5f24d16296a","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":126512}}

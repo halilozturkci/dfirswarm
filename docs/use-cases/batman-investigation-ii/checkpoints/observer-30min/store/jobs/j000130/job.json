@@ -1,0 +1,187 @@
+{
+  "id": "j000130",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "import:mat-0001/7zz",
+      "job:j000052/contact.rar"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "command": "set -euo pipefail\nD=$(mktemp -d); cp store/imports/mat-0001/out/7zz \"$D/7zz\"; chmod +x \"$D/7zz\"\n# Known-input functional test made locally in the isolated job.\npython3 - \"$D/test.zip\" <<'PY'\nimport zipfile,sys\nwith zipfile.ZipFile(sys.argv[1],'w') as z:z.writestr('known.txt',b'official-reader-selftest-2026\\n')\nPY\nmkdir \"$D/testout\"; \"$D/7zz\" x -y -o\"$D/testout\" \"$D/test.zip\" >\"$OUT/selftest.txt\"\ncmp <(printf 'official-reader-selftest-2026\\n') \"$D/testout/known.txt\"\nprintf 'SELFTEST_OK\\n' >>\"$OUT/selftest.txt\"\n# Integrity-test and extract recovered evidence archive.\n\"$D/7zz\" t store/jobs/j000052/out/contact.rar >\"$OUT/contact-test.txt\" 2>\"$OUT/contact-test-stderr.txt\"\nmkdir \"$OUT/archive\"; \"$D/7zz\" x -y -o\"$OUT/archive\" store/jobs/j000052/out/contact.rar >\"$OUT/contact-extract.txt\" 2>\"$OUT/contact-extract-stderr.txt\"\nfind \"$OUT/archive\" -type f -printf '%s\\t%P\\n' | sort >\"$OUT/file-list.tsv\"\nsha256sum \"$OUT\"/archive/contact/instance1/{config.dbx,photo.dbx,contacts_polaris.db,hostkeys} \"$OUT\"/archive/contact/instance_db/{instance.dbx,hostkeys} >\"$OUT/key-files.sha256\"\ncat \"$OUT/selftest.txt\"; tail -20 \"$OUT/contact-test.txt\"; cat \"$OUT/file-list.tsv\""
+  },
+  "requester": {
+    "agent": "s42120104",
+    "name": "DBX Key Examiner",
+    "doing": "Establishing Q14, the userkey of the encrypted DBX database, from unknown.data and memory artefacts."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:19:17.896Z",
+  "reuse": {
+    "op": "command:set",
+    "objects": [
+      {
+        "path": "store/imports/mat-0001/out/7zz",
+        "sha256": "9a26e7d54bfdae8a8f1750cdb70697547b738c2334aa89f3d3f2c8645c8443fe"
+      },
+      {
+        "path": "store/jobs/j000052/out/contact.rar",
+        "sha256": "c199125c1f7596653096d31b61379b2caaa522d0a7872efd8ccc3b21638865ec"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000130-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:19:17.946Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000130",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 2,
+    "files": 2,
+    "bound": 0,
+    "manifest": "store/jobs/j000130/scope.1.json",
+    "manifest_sha256": "49cece26de9e3582bb82ff87218907219c328a12f9341bc2984ee4c7fe081554"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:19:18.761Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "same_as": [
+    {
+      "path": "archive/contact/Crashpad/settings.dat",
+      "sha256": "6927a3347a532094d2b16c6699e175d4b53a1032e562af8389cba03e1df912b1",
+      "bytes": 40,
+      "job": "j000063",
+      "file": "profile/contact/Crashpad/settings.dat"
+    },
+    {
+      "path": "archive/contact/dropbox.pid",
+      "sha256": "05b28cc19c7c282b96a1ac54001c43da1b5ed79ab4f2556259c713f4dba14c32",
+      "bytes": 5,
+      "job": "j000063",
+      "file": "profile/contact/dropbox.pid"
+    },
+    {
+      "path": "archive/contact/instance1/config.dbx",
+      "sha256": "eb348b3f0914b0e0ed211386fd8a7fa91c0b33e48a597f7b11e1c779279a9c7b",
+      "bytes": 65536,
+      "job": "j000063",
+      "file": "profile/contact/instance1/config.dbx"
+    },
+    {
+      "path": "archive/contact/instance1/contacts_polaris.db",
+      "sha256": "3e959879e783854c529e8a02fd066a1384ebde6782be5428fadba72bd6ec4b8b",
+      "bytes": 40960,
+      "job": "j000063",
+      "file": "profile/contact/instance1/contacts_polaris.db"
+    },
+    {
+      "path": "archive/contact/instance1/hostkeys",
+      "sha256": "05c1bb92109acc5198cdd403d5ef72a166bf0965b3a8d4083e3522c18f526be5",
+      "bytes": 81,
+      "job": "j000063",
+      "file": "profile/contact/instance1/hostkeys"
+    },
+    {
+      "path": "archive/contact/instance1/photo.dbx",
+      "sha256": "6b8c28fdd0bcc4f87d881bbd4021ac7052c58054bacc2acd6755b99ec94ad942",
+      "bytes": 53248,
+      "job": "j000063",
+      "file": "profile/contact/instance1/photo.dbx"
+    },
+    {
+      "path": "archive/contact/instance1/unlink.db",
+      "sha256": "d4c3f483d3ff6e8cb8918ff23a090e56b1684e00d4053aad30b6c1d46b17438d",
+      "bytes": 376,
+      "job": "j000063",
+      "file": "profile/contact/instance1/unlink.db"
+    },
+    {
+      "path": "archive/contact/instance_db/hostkeys",
+      "sha256": "7354c1f37bc0b42fb6abaa668114de19f7ec3826ad37c2230f1c3de1fbe51756",
+      "bytes": 81,
+      "job": "j000063",
+      "file": "profile/contact/instance_db/hostkeys"
+    },
+    {
+      "path": "archive/contact/instance_db/instance.dbx",
+      "sha256": "a013b88dd638dd1155d11e2daa9c30b4396cca9594b611735294c2926cd003b4",
+      "bytes": 20480,
+      "job": "j000063",
+      "file": "profile/contact/instance_db/instance.dbx"
+    },
+    {
+      "path": "archive/contact/logs/1/1-93c2-6596b825",
+      "sha256": "cf245305b694273148de2ae8c995b5869893c6f2c05819c78927bf224db39adf",
+      "bytes": 57856,
+      "job": "j000063",
+      "file": "profile/contact/logs/1/1-93c2-6596b825"
+    },
+    {
+      "path": "archive/contact/logs/1/1-ba02-6596c671",
+      "sha256": "44ee4edc2cc6bfdb69c4607fcd7fa55c4fcd1027530e5aeac9fc66667f796291",
+      "bytes": 32576,
+      "job": "j000063",
+      "file": "profile/contact/logs/1/1-ba02-6596c671"
+    },
+    {
+      "path": "archive/contact/metrics/store.bin",
+      "sha256": "544053e5346ef2639f45167780a73a43da2067ab35d07c6a15724746a2936fc1",
+      "bytes": 2322,
+      "job": "j000063",
+      "file": "profile/contact/metrics/store.bin"
+    },
+    {
+      "path": "archive/contact/unlink.db",
+      "sha256": "a4e25aaaf8d85e8d8668de330c73d08b60fb1a521b87d69ddf29184a7b0b4e3e",
+      "bytes": 280,
+      "job": "j000063",
+      "file": "profile/contact/unlink.db"
+    }
+  ],
+  "outputs": {
+    "manifest_sha256": "d485875ffcea2deb3ee62fa0d8b223b0cd9f586d536948c7e8519737b23c6e48",
+    "files": 39,
+    "bytes": 19474575,
+    "rejected": 0,
+    "path": "store/jobs/j000130/out"
+  },
+  "sensitive": {
+    "why": "derived",
+    "from": [
+      "j000052",
+      "j000063"
+    ],
+    "note": "made from the sensitive output of j000052, j000063: every output it sealed is sensitive"
+  }
+}

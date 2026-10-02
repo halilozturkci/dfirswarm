@@ -1,0 +1,709 @@
+{
+  "id": "j000048",
+  "attempt": 1,
+  "spec": {
+    "kind": "detect",
+    "inputs": [
+      "job:j000013",
+      "job:j000041"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 1800,
+    "network": "off",
+    "targets": [
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0e20fbc0.0xab0b0f7e08a0.ImageSectionObject.Windows.UI.Immersive.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0e20fbc0.0xab0b0f7e08a0.ImageSectionObject.Windows.UI.Immersive.dll.img",
+        "ref": "job:j000013/file.0xab0b0e20fbc0.0xab0b0f7e08a0.ImageSectionObject.Windows.UI.Immersive.dll.img",
+        "sha256": "2858c703e13f59277deade4cbb6140e5b290f6558c6e75adeb2048f87ce0b096"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0e69b9e0.0xab0b0e79a8a0.ImageSectionObject.dsreg.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0e69b9e0.0xab0b0e79a8a0.ImageSectionObject.dsreg.dll.img",
+        "ref": "job:j000013/file.0xab0b0e69b9e0.0xab0b0e79a8a0.ImageSectionObject.dsreg.dll.img",
+        "sha256": "78a599c58e6c83d6a5205f9655dc6af09e77d61cf47c65a17428093b983b4fed"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0d0490c0.0xab0b07b56a20.ImageSectionObject.ole32.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0d0490c0.0xab0b07b56a20.ImageSectionObject.ole32.dll.img",
+        "ref": "job:j000013/file.0xab0b0d0490c0.0xab0b07b56a20.ImageSectionObject.ole32.dll.img",
+        "sha256": "fd0548d623a5e98a95a7ffe032def157cb81903443fb96ce7e6d550002c215a4"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0d03e1f0.0xab0b077b7ba0.ImageSectionObject.rpcrt4.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0d03e1f0.0xab0b077b7ba0.ImageSectionObject.rpcrt4.dll.img",
+        "ref": "job:j000013/file.0xab0b0d03e1f0.0xab0b077b7ba0.ImageSectionObject.rpcrt4.dll.img",
+        "sha256": "8631cdfadaea1f2a907eaf47be1598e518399eb0408fa5431d072af561ff5c16"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0d03e9c0.0xab0b07bb2a20.ImageSectionObject.setupapi.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0d03e9c0.0xab0b07bb2a20.ImageSectionObject.setupapi.dll.img",
+        "ref": "job:j000013/file.0xab0b0d03e9c0.0xab0b07bb2a20.ImageSectionObject.setupapi.dll.img",
+        "sha256": "cac359fc685bcff16a2172c2bc0fdb395372a47d289392e3464bbded8e42bc1f"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0d03d700.0xab0b0b3c1bf0.ImageSectionObject.msctf.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0d03d700.0xab0b0b3c1bf0.ImageSectionObject.msctf.dll.img",
+        "ref": "job:j000013/file.0xab0b0d03d700.0xab0b0b3c1bf0.ImageSectionObject.msctf.dll.img",
+        "sha256": "e90efb90e4bd1822458adc47f2047f0730db51b778f9ec5684f80ab87358cd05"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0d8f49c0.0xab0b0d00cbf0.ImageSectionObject.ucrtbase.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0d8f49c0.0xab0b0d00cbf0.ImageSectionObject.ucrtbase.dll.img",
+        "ref": "job:j000013/file.0xab0b0d8f49c0.0xab0b0d00cbf0.ImageSectionObject.ucrtbase.dll.img",
+        "sha256": "c0856b8d2b25ed800fe71678657510f6433071bc4959e2886b509927a4e0b85a"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0e445580.0xab0b0dfa8a20.ImageSectionObject.winhttp.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0e445580.0xab0b0dfa8a20.ImageSectionObject.winhttp.dll.img",
+        "ref": "job:j000013/file.0xab0b0e445580.0xab0b0dfa8a20.ImageSectionObject.winhttp.dll.img",
+        "sha256": "49d9643a3c0356bad4b4ec79b18e864f01b6b7ebc59f7935e61c8646c9fb3d0d"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0e29c700.0xab0b07260c70.ImageSectionObject.TextInputFramework.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0e29c700.0xab0b07260c70.ImageSectionObject.TextInputFramework.dll.img",
+        "ref": "job:j000013/file.0xab0b0e29c700.0xab0b07260c70.ImageSectionObject.TextInputFramework.dll.img",
+        "sha256": "85e83bcddde5423964c1c6228e93b3eac789b30e949f8af353fc6a380b0a1609"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0d8f4380.0xab0b0d0a9010.ImageSectionObject.gdi32full.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0d8f4380.0xab0b0d0a9010.ImageSectionObject.gdi32full.dll.img",
+        "ref": "job:j000013/file.0xab0b0d8f4380.0xab0b0d0a9010.ImageSectionObject.gdi32full.dll.img",
+        "sha256": "d325bcdaadd1381e0978eae4f51d3250577a9dbaaeea7bc09f30170c1c715b46"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0e6a1480.0xab0b0da1a7f0.ImageSectionObject.propsys.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0e6a1480.0xab0b0da1a7f0.ImageSectionObject.propsys.dll.img",
+        "ref": "job:j000013/file.0xab0b0e6a1480.0xab0b0da1a7f0.ImageSectionObject.propsys.dll.img",
+        "sha256": "fbb5ff7061fc346cff3d60027fcc1b6ca5f48f9dc2b1ba5f7592b927aea78350"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000041/out/file.0xab0b11c70570.0xab0b11019c80.ImageSectionObject.7zFM.exe.img"
+        ],
+        "name": "job:j000041/file.0xab0b11c70570.0xab0b11019c80.ImageSectionObject.7zFM.exe.img",
+        "ref": "job:j000041/file.0xab0b11c70570.0xab0b11019c80.ImageSectionObject.7zFM.exe.img",
+        "sha256": "3ec8c2e75bebe2ffb30a03062576345352ae5f41e8dd2b76354826c90c47e758"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0e616c40.0xab0b0e1084e0.ImageSectionObject.CoreMessaging.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0e616c40.0xab0b0e1084e0.ImageSectionObject.CoreMessaging.dll.img",
+        "ref": "job:j000013/file.0xab0b0e616c40.0xab0b0e1084e0.ImageSectionObject.CoreMessaging.dll.img",
+        "sha256": "8d6893de746548c3b0e90f20bc74069e4f3b792d6222001cf51997b3f475fcee"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0e8a4c50.0xab0b0e8812b0.ImageSectionObject.dxgi.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0e8a4c50.0xab0b0e8812b0.ImageSectionObject.dxgi.dll.img",
+        "ref": "job:j000013/file.0xab0b0e8a4c50.0xab0b0e8812b0.ImageSectionObject.dxgi.dll.img",
+        "sha256": "f7e5ee9abd34ba90142ca1f8bebee5b691e8446d0113c508231b9fa82831151d"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000041/out/file.0xab0b0d03ece0.0xab0b0d13ac40.ImageSectionObject.comdlg32.dll.img"
+        ],
+        "name": "job:j000041/file.0xab0b0d03ece0.0xab0b0d13ac40.ImageSectionObject.comdlg32.dll.img",
+        "ref": "job:j000041/file.0xab0b0d03ece0.0xab0b0d13ac40.ImageSectionObject.comdlg32.dll.img",
+        "sha256": "05ca8e62dab319339931a6f0fabd83b22510245405bf4c7a095f6df90b8f5ff1"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0d03d890.0xab0b076f32f0.ImageSectionObject.oleaut32.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0d03d890.0xab0b076f32f0.ImageSectionObject.oleaut32.dll.img",
+        "ref": "job:j000013/file.0xab0b0d03d890.0xab0b076f32f0.ImageSectionObject.oleaut32.dll.img",
+        "sha256": "5d9d62e80dc52a99bc68ccfe84d442ebea7cd5c3157dcbac16d0a8331fa9ee87"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0e85c9d0.0xab0b0e83ac80.ImageSectionObject.dnsapi.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0e85c9d0.0xab0b0e83ac80.ImageSectionObject.dnsapi.dll.img",
+        "ref": "job:j000013/file.0xab0b0e85c9d0.0xab0b0e83ac80.ImageSectionObject.dnsapi.dll.img",
+        "sha256": "4b9e9a2446bde8e75ba59f7d186a52fb377dc17c96b46b02cb71ee935659d25a"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0d8f3bb0.0xab0b076fb2b0.ImageSectionObject.kernel32.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0d8f3bb0.0xab0b076fb2b0.ImageSectionObject.kernel32.dll.img",
+        "ref": "job:j000013/file.0xab0b0d8f3bb0.0xab0b076fb2b0.ImageSectionObject.kernel32.dll.img",
+        "sha256": "e94afc4ef598823c4a48785113cfef5b41cd6d7a626e5855bff70325a85d5f3d"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b100c5790.0xab0b07665d10.ImageSectionObject.freebl3.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b100c5790.0xab0b07665d10.ImageSectionObject.freebl3.dll.img",
+        "ref": "job:j000013/file.0xab0b100c5790.0xab0b07665d10.ImageSectionObject.freebl3.dll.img",
+        "sha256": "d67f53e44b7537138a7b54fe3564f295e6fd87ecf31e4c9efc5d94624b61680e"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000041/out/file.0xab0b0e20ec20.0xab0b072f5010.ImageSectionObject.TextShaping.dll.img"
+        ],
+        "name": "job:j000041/file.0xab0b0e20ec20.0xab0b072f5010.ImageSectionObject.TextShaping.dll.img",
+        "ref": "job:j000041/file.0xab0b0e20ec20.0xab0b072f5010.ImageSectionObject.TextShaping.dll.img",
+        "sha256": "56c25cded0728c09ee77e4f6410c7e160b65180f717df28b5f627442aa787eda"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0d03e830.0xab0b076fac10.ImageSectionObject.SHCore.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0d03e830.0xab0b076fac10.ImageSectionObject.SHCore.dll.img",
+        "ref": "job:j000013/file.0xab0b0d03e830.0xab0b076fac10.ImageSectionObject.SHCore.dll.img",
+        "sha256": "dcb5d5f90ea809d6a1ea5b92a77f2439b1951bde1590ada89f608d9c3f7474dc"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b10a0b330.0xab0b113e8270.ImageSectionObject.twinapi.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b10a0b330.0xab0b113e8270.ImageSectionObject.twinapi.dll.img",
+        "ref": "job:j000013/file.0xab0b10a0b330.0xab0b113e8270.ImageSectionObject.twinapi.dll.img",
+        "sha256": "c41afcc62a34852271b26a978df61fa7be5dd00e763dcb4df65468d342872dc2"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b10cb09f0.0xab0b0d19eb20.ImageSectionObject.mozglue.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b10cb09f0.0xab0b0d19eb20.ImageSectionObject.mozglue.dll.img",
+        "ref": "job:j000013/file.0xab0b10cb09f0.0xab0b0d19eb20.ImageSectionObject.mozglue.dll.img",
+        "sha256": "4b391e5f88342f5d3b06b46cf7aefca4e97866b11b26b12f8691a05774000744"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0d049250.0xab0b0d0a3010.ImageSectionObject.advapi32.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0d049250.0xab0b0d0a3010.ImageSectionObject.advapi32.dll.img",
+        "ref": "job:j000013/file.0xab0b0d049250.0xab0b0d0a3010.ImageSectionObject.advapi32.dll.img",
+        "sha256": "bfdd702955cb7e31e1d3d481ed5eb1fe65a4f2cdd55cb3489c6979766ecab261"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0d049700.0xab0b0d0a6910.ImageSectionObject.clbcatq.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0d049700.0xab0b0d0a6910.ImageSectionObject.clbcatq.dll.img",
+        "ref": "job:j000013/file.0xab0b0d049700.0xab0b0d0a6910.ImageSectionObject.clbcatq.dll.img",
+        "sha256": "8fa4a9724e6397705d670d39ad466886eb2b9c2d9ed1ed5f88130c47925e521c"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0db2e7d0.0xab0b0db7fc80.ImageSectionObject.WindowManagementAPI.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0db2e7d0.0xab0b0db7fc80.ImageSectionObject.WindowManagementAPI.dll.img",
+        "ref": "job:j000013/file.0xab0b0db2e7d0.0xab0b0db7fc80.ImageSectionObject.WindowManagementAPI.dll.img",
+        "sha256": "bb2671694a4639c2cdfb6ed448e380582c988e36e0a3e18775a0580766055822"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0e43ae50.0xab0b0d987960.ImageSectionObject.mscms.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0e43ae50.0xab0b0d987960.ImageSectionObject.mscms.dll.img",
+        "ref": "job:j000013/file.0xab0b0e43ae50.0xab0b0d987960.ImageSectionObject.mscms.dll.img",
+        "sha256": "19ae53ce9fb22aa00a0c2784d8f49a35087578696b65366f7f41cceb40d829a4"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0e613400.0xab0b0b31d010.ImageSectionObject.uxtheme.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0e613400.0xab0b0b31d010.ImageSectionObject.uxtheme.dll.img",
+        "ref": "job:j000013/file.0xab0b0e613400.0xab0b0b31d010.ImageSectionObject.uxtheme.dll.img",
+        "sha256": "2f857aed478acd1bb6bd5b7effaf37e8aa7179d269745c3b3ed39a6632192d5d"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0d03ded0.0xab0b0d00d270.ImageSectionObject.msvcrt.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0d03ded0.0xab0b0d00d270.ImageSectionObject.msvcrt.dll.img",
+        "ref": "job:j000013/file.0xab0b0d03ded0.0xab0b0d00d270.ImageSectionObject.msvcrt.dll.img",
+        "sha256": "ebc16235ef3b9f8e82804dd143a16e574b686bbaa2add4f23eb6269f201327b3"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0d8f3570.0xab0b0745bb40.ImageSectionObject.msvcp_win.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0d8f3570.0xab0b0745bb40.ImageSectionObject.msvcp_win.dll.img",
+        "ref": "job:j000013/file.0xab0b0d8f3570.0xab0b0745bb40.ImageSectionObject.msvcp_win.dll.img",
+        "sha256": "4aca6df8d5f20cfcd00c2ae79679a638b8f0264b4826617a60ffc6b3d80f36fd"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0d03dbb0.0xab0b076f9010.ImageSectionObject.sechost.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0d03dbb0.0xab0b076f9010.ImageSectionObject.sechost.dll.img",
+        "ref": "job:j000013/file.0xab0b0d03dbb0.0xab0b076f9010.ImageSectionObject.sechost.dll.img",
+        "sha256": "49204b70d9b425d93c9f465be35664464c9cdd69254dd56d6fb625809d3d6089"
+      },
+      {
+        "paths": [
+          "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out/file.0xab0b0e20f580.0xab0b0e5ee2b0.ImageSectionObject.directmanipulation.dll.img"
+        ],
+        "name": "job:j000013/file.0xab0b0e20f580.0xab0b0e5ee2b0.ImageSectionObject.directmanipulation.dll.img",
+        "ref": "job:j000013/file.0xab0b0e20f580.0xab0b0e5ee2b0.ImageSectionObject.directmanipulation.dll.img",
+        "sha256": "15ed4aac8e2065cc861538788cc192d59a37c69ec8d8242e68004f17358df0c6"
+      }
+    ],
+    "pairs": [
+      {
+        "t": 0,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 1,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 2,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 3,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 4,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 5,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 6,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 7,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 8,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 9,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 10,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 11,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 12,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 13,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 14,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 15,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 16,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 17,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 18,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 19,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 20,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 21,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 22,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 23,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 24,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 25,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 26,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 27,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 28,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 29,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 30,
+        "recipe": "computer-forensics-base/disk-volumes"
+      },
+      {
+        "t": 31,
+        "recipe": "computer-forensics-base/disk-volumes"
+      }
+    ],
+    "trigger": "derived"
+  },
+  "requester": {
+    "agent": "derived",
+    "name": "derived catalogue"
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:04:02.633Z",
+  "worker": "dfs-s421201-job-j000048-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:04:02.668Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "derived",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000013/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000041/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000048",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 34,
+    "files": 0,
+    "bound": 2,
+    "manifest": "store/jobs/j000048/scope.1.json",
+    "manifest_sha256": "e27b86068b0d2a7f64821b350088a7937fa64bad46e66699d51a2fb43ac65543"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:04:05.284Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "same_as": [
+    {
+      "path": "detect.tsv",
+      "sha256": "90677104c60bad7b69d0137e25c8c814a2b2d6890d886ba2dc3dea5909692db8",
+      "bytes": 4214,
+      "job": "j000047",
+      "file": "detect.tsv"
+    },
+    {
+      "path": "probes/0-computer-forensics-base_disk-volumes.out",
+      "sha256": "27a00924c24ee6753798301478511e123047770e197e2a0f37881d17d05d2827",
+      "bytes": 90,
+      "job": "j000047",
+      "file": "probes/0-computer-forensics-base_disk-volumes.out"
+    },
+    {
+      "path": "probes/1-computer-forensics-base_disk-volumes.out",
+      "sha256": "27a00924c24ee6753798301478511e123047770e197e2a0f37881d17d05d2827",
+      "bytes": 90,
+      "job": "j000047",
+      "file": "probes/0-computer-forensics-base_disk-volumes.out"
+    },
+    {
+      "path": "probes/10-computer-forensics-base_disk-volumes.out",
+      "sha256": "27a00924c24ee6753798301478511e123047770e197e2a0f37881d17d05d2827",
+      "bytes": 90,
+      "job": "j000047",
+      "file": "probes/0-computer-forensics-base_disk-volumes.out"
+    },
+    {
+      "path": "probes/11-computer-forensics-base_disk-volumes.out",
+      "sha256": "27a00924c24ee6753798301478511e123047770e197e2a0f37881d17d05d2827",
+      "bytes": 90,
+      "job": "j000047",
+      "file": "probes/0-computer-forensics-base_disk-volumes.out"
+    },
+    {
+      "path": "probes/12-computer-forensics-base_disk-volumes.out",
+      "sha256": "27a00924c24ee6753798301478511e123047770e197e2a0f37881d17d05d2827",
+      "bytes": 90,
+      "job": "j000047",
+      "file": "probes/0-computer-forensics-base_disk-volumes.out"
+    },
+    {
+      "path": "probes/13-computer-forensics-base_disk-volumes.out",
+      "sha256": "27a00924c24ee6753798301478511e123047770e197e2a0f37881d17d05d2827",
+      "bytes": 90,
+      "job": "j000047",
+      "file": "probes/0-computer-forensics-base_disk-volumes.out"
+    },
+    {
+      "path": "probes/14-computer-forensics-base_disk-volumes.out",
+      "sha256": "27a00924c24ee6753798301478511e123047770e197e2a0f37881d17d05d2827",
+      "bytes": 90,
+      "job": "j000047",
+      "file": "probes/0-computer-forensics-base_disk-volumes.out"
+    },
+    {
+      "path": "probes/15-computer-forensics-base_disk-volumes.out",
+      "sha256": "27a00924c24ee6753798301478511e123047770e197e2a0f37881d17d05d2827",
+      "bytes": 90,
+      "job": "j000047",
+      "file": "probes/0-computer-forensics-base_disk-volumes.out"
+    },
+    {
+      "path": "probes/16-computer-forensics-base_disk-volumes.out",
+      "sha256": "27a00924c24ee6753798301478511e123047770e197e2a0f37881d17d05d2827",
+      "bytes": 90,
+      "job": "j000047",
+      "file": "probes/0-computer-forensics-base_disk-volumes.out"
+    },
+    {
+      "path": "probes/17-computer-forensics-base_disk-volumes.out",
+      "sha256": "27a00924c24ee6753798301478511e123047770e197e2a0f37881d17d05d2827",
+      "bytes": 90,
+      "job": "j000047",
+      "file": "probes/0-computer-forensics-base_disk-volumes.out"
+    },
+    {
+      "path": "probes/18-computer-forensics-base_disk-volumes.out",
+      "sha256": "27a00924c24ee6753798301478511e123047770e197e2a0f37881d17d05d2827",
+      "bytes": 90,
+      "job": "j000047",
+      "file": "probes/0-computer-forensics-base_disk-volumes.out"
+    },
+    {
+      "path": "probes/19-computer-forensics-base_disk-volumes.out",
+      "sha256": "27a00924c24ee6753798301478511e123047770e197e2a0f37881d17d05d2827",
+      "bytes": 90,
+      "job": "j000047",
+      "file": "probes/0-computer-forensics-base_disk-volumes.out"
+    },
+    {
+      "path": "probes/2-computer-forensics-base_disk-volumes.out",
+      "sha256": "27a00924c24ee6753798301478511e123047770e197e2a0f37881d17d05d2827",
+      "bytes": 90,
+      "job": "j000047",
+      "file": "probes/0-computer-forensics-base_disk-volumes.out"
+    },
+    {
+      "path": "probes/20-computer-forensics-base_disk-volumes.out",
+      "sha256": "27a00924c24ee6753798301478511e123047770e197e2a0f37881d17d05d2827",
+      "bytes": 90,
+      "job": "j000047",
+      "file": "probes/0-computer-forensics-base_disk-volumes.out"
+    },
+    {
+      "path": "probes/21-computer-forensics-base_disk-volumes.out",
+      "sha256": "27a00924c24ee6753798301478511e123047770e197e2a0f37881d17d05d2827",
+      "bytes": 90,
+      "job": "j000047",
+      "file": "probes/0-computer-forensics-base_disk-volumes.out"
+    },
+    {
+      "path": "probes/22-computer-forensics-base_disk-volumes.out",
+      "sha256": "27a00924c24ee6753798301478511e123047770e197e2a0f37881d17d05d2827",
+      "bytes": 90,
+      "job": "j000047",
+      "file": "probes/0-computer-forensics-base_disk-volumes.out"
+    },
+    {
+      "path": "probes/23-computer-forensics-base_disk-volumes.out",
+      "sha256": "27a00924c24ee6753798301478511e123047770e197e2a0f37881d17d05d2827",
+      "bytes": 90,
+      "job": "j000047",
+      "file": "probes/0-computer-forensics-base_disk-volumes.out"
+    },
+    {
+      "path": "probes/24-computer-forensics-base_disk-volumes.out",
+      "sha256": "27a00924c24ee6753798301478511e123047770e197e2a0f37881d17d05d2827",
+      "bytes": 90,
+      "job": "j000047",
+      "file": "probes/0-computer-forensics-base_disk-volumes.out"
+    },
+    {
+      "path": "probes/25-computer-forensics-base_disk-volumes.out",
+      "sha256": "27a00924c24ee6753798301478511e123047770e197e2a0f37881d17d05d2827",
+      "bytes": 90,
+      "job": "j000047",
+      "file": "probes/0-computer-forensics-base_disk-volumes.out"
+    },
+    {
+      "path": "probes/26-computer-forensics-base_disk-volumes.out",
+      "sha256": "27a00924c24ee6753798301478511e123047770e197e2a0f37881d17d05d2827",
+      "bytes": 90,
+      "job": "j000047",
+      "file": "probes/0-computer-forensics-base_disk-volumes.out"
+    },
+    {
+      "path": "probes/27-computer-forensics-base_disk-volumes.out",
+      "sha256": "27a00924c24ee6753798301478511e123047770e197e2a0f37881d17d05d2827",
+      "bytes": 90,
+      "job": "j000047",
+      "file": "probes/0-computer-forensics-base_disk-volumes.out"
+    },
+    {
+      "path": "probes/28-computer-forensics-base_disk-volumes.out",
+      "sha256": "27a00924c24ee6753798301478511e123047770e197e2a0f37881d17d05d2827",
+      "bytes": 90,
+      "job": "j000047",
+      "file": "probes/0-computer-forensics-base_disk-volumes.out"
+    },
+    {
+      "path": "probes/29-computer-forensics-base_disk-volumes.out",
+      "sha256": "27a00924c24ee6753798301478511e123047770e197e2a0f37881d17d05d2827",
+      "bytes": 90,
+      "job": "j000047",
+      "file": "probes/0-computer-forensics-base_disk-volumes.out"
+    },
+    {
+      "path": "probes/3-computer-forensics-base_disk-volumes.out",
+      "sha256": "27a00924c24ee6753798301478511e123047770e197e2a0f37881d17d05d2827",
+      "bytes": 90,
+      "job": "j000047",
+      "file": "probes/0-computer-forensics-base_disk-volumes.out"
+    },
+    {
+      "path": "probes/30-computer-forensics-base_disk-volumes.out",
+      "sha256": "27a00924c24ee6753798301478511e123047770e197e2a0f37881d17d05d2827",
+      "bytes": 90,
+      "job": "j000047",
+      "file": "probes/0-computer-forensics-base_disk-volumes.out"
+    },
+    {
+      "path": "probes/31-computer-forensics-base_disk-volumes.out",
+      "sha256": "27a00924c24ee6753798301478511e123047770e197e2a0f37881d17d05d2827",
+      "bytes": 90,
+      "job": "j000047",
+      "file": "probes/0-computer-forensics-base_disk-volumes.out"
+    },
+    {
+      "path": "probes/4-computer-forensics-base_disk-volumes.out",
+      "sha256": "27a00924c24ee6753798301478511e123047770e197e2a0f37881d17d05d2827",
+      "bytes": 90,
+      "job": "j000047",
+      "file": "probes/0-computer-forensics-base_disk-volumes.out"
+    },
+    {
+      "path": "probes/5-computer-forensics-base_disk-volumes.out",
+      "sha256": "27a00924c24ee6753798301478511e123047770e197e2a0f37881d17d05d2827",
+      "bytes": 90,
+      "job": "j000047",
+      "file": "probes/0-computer-forensics-base_disk-volumes.out"
+    },
+    {
+      "path": "probes/6-computer-forensics-base_disk-volumes.out",
+      "sha256": "27a00924c24ee6753798301478511e123047770e197e2a0f37881d17d05d2827",
+      "bytes": 90,
+      "job": "j000047",
+      "file": "probes/0-computer-forensics-base_disk-volumes.out"
+    },
+    {
+      "path": "probes/7-computer-forensics-base_disk-volumes.out",
+      "sha256": "27a00924c24ee6753798301478511e123047770e197e2a0f37881d17d05d2827",
+      "bytes": 90,
+      "job": "j000047",
+      "file": "probes/0-computer-forensics-base_disk-volumes.out"
+    },
+    {
+      "path": "probes/8-computer-forensics-base_disk-volumes.out",
+      "sha256": "27a00924c24ee6753798301478511e123047770e197e2a0f37881d17d05d2827",
+      "bytes": 90,
+      "job": "j000047",
+      "file": "probes/0-computer-forensics-base_disk-volumes.out"
+    },
+    {
+      "path": "probes/9-computer-forensics-base_disk-volumes.out",
+      "sha256": "27a00924c24ee6753798301478511e123047770e197e2a0f37881d17d05d2827",
+      "bytes": 90,
+      "job": "j000047",
+      "file": "probes/0-computer-forensics-base_disk-volumes.out"
+    }
+  ],
+  "outputs": {
+    "manifest_sha256": "22a3cabf663328816587db68b866c29348a76c1533ae631fc8825b2a7b0eeab4",
+    "files": 33,
+    "bytes": 7094,
+    "rejected": 0,
+    "path": "store/jobs/j000048/out"
+  },
+  "sensitive": {
+    "why": "derived",
+    "from": [
+      "j000041",
+      "j000047"
+    ],
+    "note": "made from the sensitive output of j000041, j000047: every output it sealed is sensitive"
+  }
+}

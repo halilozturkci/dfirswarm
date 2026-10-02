@@ -1,0 +1,97 @@
+{
+  "id": "j000160",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000092/pid.6628.dmp",
+      "job:j000092/7zfm-map.txt",
+      "job:j000041/file.0xab0b10a27530.0xab0b0d8cb390.DataSectionObject.Carmine Falcone_2.7z.dat"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport os,json,collections\nout=os.environ['OUT'];a=open('store/jobs/j000041/out/file.0xab0b10a27530.0xab0b0d8cb390.DataSectionObject.Carmine Falcone_2.7z.dat','rb').read();needle=a[300:332];maps=[]\nfor l in open('store/jobs/j000092/out/7zfm-map.txt'):\n q=l.split()\n if len(q)>=4 and q[0].startswith('0x'):maps.append(tuple(int(v,16) for v in q[:4]))\nfn='store/jobs/j000092/out/pid.6628.dmp';hits=[]\nwith open(fn,'rb') as f:\n off=0;tail=b''\n while True:\n  b=f.read(1048576)\n  if not b:break\n  d=tail+b;s=0\n  while True:\n   i=d.find(needle,s)\n   if i<0:break\n   hit=off-len(tail)+i;s=i+1\n   if hit not in hits:hits.append(hit)\n  tail=d[-31:];off+=len(b)\nr=[]\nwith open(fn,'rb') as f:\n for hit in hits[:30]:\n  for va,pa,n,fo in maps:\n   if fo<=hit<fo+n:base=va+hit-fo-300;break\n  else:continue\n  data=bytearray(36194);covered=0\n  for va,pa,n,fo in maps:\n   s=max(base,va);e=min(base+len(data),va+n)\n   if e>s:f.seek(fo+s-va);data[s-base:e-base]=f.read(e-s);covered+=e-s\n  p='candidate_'+str(hit)+'.7z';open(out+'/'+p,'wb').write(data);r.append({'hit':hit,'base_va':hex(base),'covered':covered,'file':p,'magic':data[:8].hex(),'cache_first_page_equal':bytes(data[:4096])==a[:4096]})\njson.dump({'needle_cache_range':[300,332],'hits':hits,'candidates':r},open(out+'/buffer-candidates.json','w'),indent=2)\nPY"
+  },
+  "requester": {
+    "agent": "s42120103",
+    "name": "Wallet history",
+    "doing": "Investigating Q7 and Q8: password-protected archive and original file hashes; avoiding peers' wallet work."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:26:38.438Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000041/out/file.0xab0b10a27530.0xab0b0d8cb390.DataSectionObject.Carmine Falcone_2.7z.dat",
+        "sha256": "9c4778c89d6fe3ca8153bac935d19f6e9ed68b0a669207018c4472d76e0b6792"
+      },
+      {
+        "path": "store/jobs/j000092/out/7zfm-map.txt",
+        "sha256": "b80c6fb2ad95957d491c342dd1a7b129c67724870fd6498a8df5ccf76af93fc4"
+      },
+      {
+        "path": "store/jobs/j000092/out/pid.6628.dmp",
+        "sha256": "f698142ec6d45498f20977676018d1049b154862db8ea9bfacd0d97ea14c11fb"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000160-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:26:38.492Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000160",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 3,
+    "files": 3,
+    "bound": 0,
+    "manifest": "store/jobs/j000160/scope.1.json",
+    "manifest_sha256": "5a6c6dc69fab07dc1d9728117fbb56116c73ead9c7ef18b536ecaf6a10196ed4"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:26:39.900Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "f2a09fa7f840819b1edc10bc16a91dd55345fd1d7336ec7ea0bccbe23781c264",
+    "files": 2,
+    "bytes": 36504,
+    "rejected": 0,
+    "path": "store/jobs/j000160/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

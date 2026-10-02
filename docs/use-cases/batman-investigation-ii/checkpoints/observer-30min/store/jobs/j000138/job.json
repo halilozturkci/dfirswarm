@@ -1,0 +1,87 @@
+{
+  "id": "j000138",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000125/region.bin"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport os,re,json\np='store/jobs/j000125/out/region.bin'; b=open(p,'rb').read(); base=316000000\nterms=[b'172.30.145.189',b'6969',b'RedLine',b'Redline',b'StealerRunner',b'stealer.done',b'wallet',b'Exodus',b'GOLANG',b'Go build',b'Go build ID',b'W32\\x00']\nres={'region_base':base,'region_bytes':len(b),'sha256':__import__('hashlib').sha256(b).hexdigest(),'term_hits':{},'mz_offsets':[],'ascii_runs_near_endpoint':[]}\nfor t in terms:\n arr=[]; i=0\n while True:\n  i=b.find(t,i)\n  if i<0:break\n  arr.append(i);i+=1\n res['term_hits'][t.decode('latin1')]=arr[:100]\nfor m in re.finditer(b'MZ',b):\n if m.start()<len(b)-64 and b'PE\\0\\0' in b[m.start():m.start()+1024]:res['mz_offsets'].append(m.start())\n# print runs limited to +/- 2048 of candidate raw offset rel=4252368\nfor m in re.finditer(rb'[\\x20-\\x7e]{6,}',b):\n if abs(m.start()-4252368)<=2048:\n  res['ascii_runs_near_endpoint'].append({'region_offset':m.start(),'raw_offset':base+m.start(),'text':m.group().decode('ascii','replace')[:512]})\nout=os.environ['OUT']+'/region-analysis.json';open(out,'w').write(json.dumps(res,indent=2));print(json.dumps(res,indent=2))\nPY\n"
+  },
+  "requester": {
+    "agent": "s42120108",
+    "name": "DBX Key Analyst",
+    "doing": "Independently examine Q6 malware identity and destination from memory evidence."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:20:52.278Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000125/out/region.bin",
+        "sha256": "c09ffa5480f7608069381363b4f282be689eb82278d2f09b4c1a2ae390b8a12c"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000138-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:20:52.589Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000138",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000138/scope.1.json",
+    "manifest_sha256": "b6a42dc5b88484d984f102a268a9d7b2f56c4a883b452fb58b1f01f26e8ea924"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:20:53.487Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "785292eb7c38f778d43128727451bda3dfa80d64040345d61705822d819c2e4b",
+    "files": 1,
+    "bytes": 2785,
+    "rejected": 0,
+    "path": "store/jobs/j000138/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

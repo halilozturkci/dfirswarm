@@ -1,0 +1,13 @@
+length 131072
+b'MZ' [113220] 1
+b'PE\x00\x00' [] 0
+b'\xff Go buildinf:' [] 0
+b'Go buildinf:' [] 0
+b'\x7fELF' [] 0
+b'go1.' [] 0
+b'path\t' []
+b'mod\t' []
+b'build\t' []
+b'github.com/' []
+b'wallet' [47315, 49971]
+b'Electron' []

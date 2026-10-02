@@ -1,0 +1,1 @@
+{"v":1,"job":"j000077","attempt":1,"sealed_at":"2026-10-02T10:07:45.417Z","files":[{"path":"eth-history.json","path_b64":"ZXRoLWhpc3RvcnkuanNvbg==","bytes":9237,"sha256":"677b10bd60c8d677ba7b124cf2d6b5ce803403118636828b9618ac83a74d3438","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":9237}}

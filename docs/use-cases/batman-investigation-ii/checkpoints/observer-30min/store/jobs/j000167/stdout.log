@@ -1,0 +1,46 @@
+{
+  "selected_records": [
+    {
+      "source": "store/jobs/j000111/out/user-uninstall.txt",
+      "offset": 88,
+      "line": "2024-01-07 08:39:51.000000 UTC\t0xd58a1a829000\tKey\t\\??\\C:\\Users\\Carmine Falcone\\ntuser.dat\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\texodus\tN/A\tFalse"
+    },
+    {
+      "source": "store/jobs/j000111/out/user-uninstall.txt",
+      "offset": 473,
+      "line": "* 2024-01-07 08:39:51.000000 UTC\t0xd58a1a829000\tREG_SZ\t\\??\\C:\\Users\\Carmine Falcone\\ntuser.dat\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\exodus\tDisplayName\tExodus\tFalse"
+    },
+    {
+      "source": "store/jobs/j000111/out/user-uninstall.txt",
+      "offset": 834,
+      "line": "* 2024-01-07 08:39:51.000000 UTC\t0xd58a1a829000\tREG_SZ\t\\??\\C:\\Users\\Carmine Falcone\\ntuser.dat\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\exodus\tInstallDate\t20240107\tFalse"
+    },
+    {
+      "source": "store/jobs/j000111/out/user-uninstall.txt",
+      "offset": 2983,
+      "line": "* 2024-01-07 08:33:21.000000 UTC\t0xd58a1a829000\tREG_SZ\t\\??\\C:\\Users\\Carmine Falcone\\ntuser.dat\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\OneDriveSetup.exe\tDisplayName\tMicrosoft OneDrive\tFalse"
+    },
+    {
+      "source": "store/jobs/j000032/out/mftscan.txt",
+      "offset": 11257896,
+      "line": "* 0x534a4920\tFILE\t89142\t2\tFile\tArchive\tFILE_NAME\t2024-01-07 08:39:03.000000 UTC\t2024-01-07 08:39:03.000000 UTC\t2024-01-07 08:39:03.000000 UTC\t2024-01-07 08:39:03.000000 UTC\tEXODUS-WINDOWS-X64-24.1.1.EXE-5FE34CD7.pf"
+    },
+    {
+      "source": "store/jobs/j000032/out/mftscan.txt",
+      "offset": 14177199,
+      "line": "* 0x8b05e528\tFILE\t89153\t2\tFile\tArchive\tFILE_NAME\t2024-01-07 08:39:08.000000 UTC\t2024-01-07 08:39:08.000000 UTC\t2024-01-07 08:39:08.000000 UTC\t2024-01-07 08:39:08.000000 UTC\tSquirrelSetup.log"
+    },
+    {
+      "source": "store/jobs/j000032/out/mftscan.txt",
+      "offset": 25518209,
+      "line": "* 0x10109c920\tFILE\t89142\t2\tFile\tArchive\tFILE_NAME\t2024-01-07 08:39:03.000000 UTC\t2024-01-07 08:39:03.000000 UTC\t2024-01-07 08:39:03.000000 UTC\t2024-01-07 08:39:03.000000 UTC\tEXODUS-WINDOWS-X64-24.1.1.EXE-5FE34CD7.pf"
+    },
+    {
+      "source": "store/jobs/j000064/out/install-and-fiat.txt",
+      "offset": 10132,
+      "line": "1782852011 2024-01-07 09:52:35> Program: Starting Squirrel Updater: --updateSelf=C:\\Users\\Carmine Falcone\\AppData\\Local\\SquirrelTemp\\Update.exe"
+    }
+  ],
+  "derived_minute": "2024:01:07:08:39",
+  "later_log_is_self_update": true
+}

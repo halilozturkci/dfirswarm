@@ -1,0 +1,101 @@
+{
+  "id": "j000153",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/unknown.data",
+      "job:j000041/file.0xab0b10a27530.0xab0b0d8cb390.DataSectionObject.Carmine Falcone_2.7z.dat",
+      "job:j000041/file.0xab0b10a27530.0xab0b0e3fca20.SharedCacheMap.Carmine Falcone_2.7z.vacb"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport os,json,collections\nu=open('inputs/chall/unknown.data','rb').read();paths=['store/jobs/j000041/out/file.0xab0b10a27530.0xab0b0d8cb390.DataSectionObject.Carmine Falcone_2.7z.dat','store/jobs/j000041/out/file.0xab0b10a27530.0xab0b0e3fca20.SharedCacheMap.Carmine Falcone_2.7z.vacb'];r=[]\nfor p in paths:\n a=open(p,'rb').read()[:len(u)];runs=[];s=None\n for i,(x,y) in enumerate(zip(a,u)):\n  if x!=y and s is None:s=i\n  if x==y and s is not None:runs.append([s,i]);s=None\n if s is not None:runs.append([s,len(u)])\n r.append({'path':p,'difference_runs':runs[:100],'nonzero_cached_mismatch':sum(x!=0 and x!=y for x,y in zip(a,u)),'cached_zero':a.count(0),'blocks':[{'start':s,'same':sum(x==y for x,y in zip(a[s:s+4096],u[s:s+4096])),'nonzero_cached':sum(x!=0 for x in a[s:s+4096])}for s in range(0,len(u),4096)]})\njson.dump(r,open(os.environ['OUT']+'/archive-differences.json','w'),indent=2)\nPY"
+  },
+  "requester": {
+    "agent": "s42120103",
+    "name": "Wallet history",
+    "doing": "Investigating Q7 and Q8: password-protected archive and original file hashes; avoiding peers' wallet work."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:24:27.056Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "inputs/chall/unknown.data",
+        "sha256": "87841ce462a019649f6206c72cf65ce5305a88b828ca45996ae9422e6f578f4f"
+      },
+      {
+        "path": "store/jobs/j000041/out/file.0xab0b10a27530.0xab0b0d8cb390.DataSectionObject.Carmine Falcone_2.7z.dat",
+        "sha256": "9c4778c89d6fe3ca8153bac935d19f6e9ed68b0a669207018c4472d76e0b6792"
+      },
+      {
+        "path": "store/jobs/j000041/out/file.0xab0b10a27530.0xab0b0e3fca20.SharedCacheMap.Carmine Falcone_2.7z.vacb",
+        "sha256": "b1b6d5ebb5fc7a304c66f1be31048eccefa4f425bdd79726c9b7b12bcaa601af"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000153-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:24:27.256Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000153",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 3,
+    "files": 3,
+    "bound": 0,
+    "manifest": "store/jobs/j000153/scope.1.json",
+    "manifest_sha256": "3241cffe9f6d6c76df9e3e8f692cc815c798c60ae86bf3df73270d54aa57a863"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:24:28.033Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "33d7ced49a440304c2d169eeb70c87c74d9ed509b4310246ba4200eef81fef5c",
+    "files": 1,
+    "bytes": 11120,
+    "rejected": 0,
+    "path": "store/jobs/j000153/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

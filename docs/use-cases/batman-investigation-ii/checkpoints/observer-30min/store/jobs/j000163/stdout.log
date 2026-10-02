@@ -1,0 +1,1 @@
+{"md5_utf8": "137cb84061678165f361d39504d06578", "file_bytes": 36864, "ciphertext_bytes": 32768, "checksum": true, "controls": {"utf8": {"key_auth": true, "payload_auth": true, "plaintext_bytes": 32768}, "latin1": {"rejected": true, "error": "InvalidTag"}, "wrong_one_byte": {"rejected": true, "error": "InvalidTag"}}}

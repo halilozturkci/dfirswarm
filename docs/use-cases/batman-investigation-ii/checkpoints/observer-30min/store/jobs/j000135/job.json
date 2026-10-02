@@ -1,0 +1,93 @@
+{
+  "id": "j000135",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000077/eth-history.json",
+      "job:j000028/tx-records.jsonl"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "independent": true,
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport json,os,datetime,decimal\nD=decimal.Decimal\nh=json.load(open('store/jobs/j000077/out/eth-history.json'),parse_float=D);prices=dict(h['hourly']['ETH']);out=[];seen=set()\nfor line in open('store/jobs/j000028/out/tx-records.jsonl'):\n v=json.loads(line)['value']\n if not isinstance(v,dict) or 'coinAmount'not in v:continue\n if v['txId']in seen:continue\n seen.add(v['txId']);ts=int(datetime.datetime.fromisoformat(v['date'].replace('Z','+00:00')).timestamp()*1000);floor=ts//3600000*3600000\n p=None\n for lag in range(24):\n  k=floor-lag*3600000\n  if k in prices:p=prices[k]['close'];break\n if p is None:continue\n amount=abs(D(v['coinAmount'].split()[0]));usd=amount*p\n out.append({'txId':v['txId'],'date':v['date'],'coinAmount':str(amount),'selected_bin':k,'price':str(p),'usd_unrounded':str(usd),'usd_2decimals':str(usd.quantize(D('.01'))),'fee_separate':v.get('feeAmount')})\njson.dump(out,open(os.environ['OUT']+'/usd-calculation.json','w'),indent=2);print(json.dumps(out,indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120101",
+    "name": "Wallet trail",
+    "doing": "Investigating the installed cryptocurrency wallet and transfer artifacts for questions 5, 10 and 11."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:19:51.497Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000028/out/tx-records.jsonl",
+        "sha256": "2e6c9e480e04381f807ac041ad452e476b8efc911c250bda6820e0ec8c18c7ef"
+      },
+      {
+        "path": "store/jobs/j000077/out/eth-history.json",
+        "sha256": "677b10bd60c8d677ba7b124cf2d6b5ce803403118636828b9618ac83a74d3438"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000135-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:19:51.555Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000135",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 2,
+    "files": 2,
+    "bound": 0,
+    "manifest": "store/jobs/j000135/scope.1.json",
+    "manifest_sha256": "5b3e815c769cedd8938cfaf81be2d964109d5b5b2ee1dea64a9c00b29e2af363"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:19:52.236Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "b40e96713914e1475f16eeee2f7ed7aa2d4c1b6dbfb6f3ccf6d7b5748ca9d557",
+    "files": 1,
+    "bytes": 699,
+    "rejected": 0,
+    "path": "store/jobs/j000135/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

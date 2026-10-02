@@ -1,0 +1,6 @@
+Volatility 3 Framework 2.28.2
+
+Offset	FileFullPath	File output
+total 8
+-rw-r--r-- 1 root root 1998 Oct  2 10:06 hivelist.stderr
+-rw-r--r-- 1 root root   63 Oct  2 10:06 hivelist.txt

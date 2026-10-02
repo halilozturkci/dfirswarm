@@ -1,0 +1,1 @@
+{"v":1,"job":"j000138","attempt":1,"sealed_at":"2026-10-02T10:20:53.607Z","files":[{"path":"region-analysis.json","path_b64":"cmVnaW9uLWFuYWx5c2lzLmpzb24=","bytes":2785,"sha256":"68bfbc64c8eff8f0324c517aaf67b282dd233b8654d0162e4b7a70df239c6469","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":2785}}

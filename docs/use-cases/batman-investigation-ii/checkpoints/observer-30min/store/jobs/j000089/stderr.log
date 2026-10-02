@@ -1,0 +1,22 @@
+Progress:    0.00		Updating caches for 1 files...Progress:    0.00		Scanning FileLayer using PageMapScannerProgress:   15.11		Scanning FileLayer using PageMapScannerProgress:   64.75		Scanning FileLayer using PageMapScannerProgress:  100.00		Stacking attempts finished             Progress:    0.00		Scanning layer_name using PdbSignatureScannerProgress:    0.00		Scanning layer_name using PdbSignatureScannerProgress:  100.00		PDB scanning finished                        Traceback (most recent call last):
+  File "/opt/dfir/venv/bin/vol", line 8, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/opt/dfir/venv/lib/python3.11/site-packages/volatility3/cli/__init__.py", line 942, in main
+    CommandLine().run()
+  File "/opt/dfir/venv/lib/python3.11/site-packages/volatility3/cli/__init__.py", line 527, in run
+    renderer.render(grid)
+  File "/opt/dfir/venv/lib/python3.11/site-packages/volatility3/cli/text_renderer.py", line 330, in render
+    grid.populate(visitor, outfd)
+  File "/opt/dfir/venv/lib/python3.11/site-packages/volatility3/framework/renderers/__init__.py", line 318, in populate
+    for level, item in self._generator:
+  File "/opt/dfir/venv/lib/python3.11/site-packages/volatility3/framework/plugins/windows/vadyarascan.py", line 57, in _generator
+    rules = yarascan.YaraScan.process_yara_options(dict(self.config))
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/dfir/venv/lib/python3.11/site-packages/volatility3/framework/plugins/yarascan.py", line 189, in process_yara_options
+    rules = YaraScanner.get_rule(rule)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/dfir/venv/lib/python3.11/site-packages/volatility3/framework/plugins/yarascan.py", line 86, in get_rule
+    return yara.compile(
+           ^^^^^^^^^^^^^
+yara.SyntaxError: line 1: syntax error, unexpected floating point number, expecting <condition>

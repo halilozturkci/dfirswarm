@@ -1,0 +1,102 @@
+{
+  "id": "j000157",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000130/archive/contact/instance1/hostkeys",
+      "job:j000130/archive/contact/instance1/config.dbx",
+      "job:j000130/archive/contact/instance_db/hostkeys",
+      "job:j000130/archive/contact/instance_db/instance.dbx"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "cat > /tmp/y.py <<'PY'\nimport os,struct,json,hashlib,itertools\nfrom Crypto.Cipher import AES,ChaCha20\npairs=[('instance1','store/jobs/j000130/out/archive/contact/instance1/hostkeys','store/jobs/j000130/out/archive/contact/instance1/config.dbx'),('instance_db','store/jobs/j000130/out/archive/contact/instance_db/hostkeys','store/jobs/j000130/out/archive/contact/instance_db/instance.dbx')]\ndef score(h):\n def be(o):return int.from_bytes(h[o-24:o-20],'big')\n s=0; why=[]\n vals={o:be(o) for o in range(24,100,4)}\n for o,maxv,w in [(24,1000000,1),(28,100000,2),(32,100000,1),(36,100000,1),(40,100000,1),(44,4,6),(48,100000000,1),(52,100000,1),(56,3,6),(60,100000000,1),(64,1,3),(68,0xffffffff,0),(92,1000000,1)]:\n  v=vals[o]\n  if (o==44 and 1<=v<=4) or (o==56 and 1<=v<=3) or (o==64 and v<=1) or (o not in (44,56,64) and v<=maxv):s+=w;why.append([o,v])\n z=sum(x==0 for x in h[72-24:92-24]);s+=z\n ver=vals[96]\n if 2000000<=ver<=5000000:s+=8;why.append([96,ver])\n return s,why,vals\nouts=[]\nfor lab,hp,dp in pairs:\n h=open(hp,'rb').read();p=open(dp,'rb').read()[:4096]\n keys={}\n for off in range(len(h)):\n  for n in (16,24,32):\n   if off+n<=len(h):keys[f's{off}:{n}']=h[off:off+n]\n for kn,k in list(keys.items()):\n  keys[kn+'h']=hashlib.sha256(k).digest()\n for kn,k in keys.items():\n  # stream source starts at s, decrypt enough to cover 24:100\n  for start in (0,16,24):\n   skip=24-start;n=100-start;ct=p[start:n]\n   ivs={'dbfirst':p[:16],'dblasts':p[-12:]+b'\\0'*4,'dblastsfront':b'\\0'*4+p[-12:],'hostlast':h[-16:],'zero':bytes(16)}\n   for ivn,iv in ivs.items():\n    modes=[]\n    try:modes.append(('ctr',AES.new(k,AES.MODE_CTR,nonce=b'',initial_value=int.from_bytes(iv,'big')).decrypt(ct)))\n    except:pass\n    try:modes.append(('ctrle',AES.new(k,AES.MODE_CTR,nonce=b'',initial_value=int.from_bytes(iv,'little')).decrypt(ct)))\n    except:pass\n    if len(ct)%16==0:\n     for mn,mode in [('cbc',AES.MODE_CBC),('ofb',AES.MODE_OFB),('cfb128',AES.MODE_CFB)]:\n      try:\n       c=AES.new(k,mode,iv,segment_size=128) if mode==AES.MODE_CFB else AES.new(k,mode,iv);modes.append((mn,c.decrypt(ct)))\n      except:pass\n    for mn,pt in modes:\n     hdr=pt[skip:skip+76];sc,why,vals=score(hdr);outs.append([sc,lab,kn,start,ivn,mn,hdr.hex(),why])\nouts.sort(reverse=True)\nprint('top');\nfor x in outs[:30]:print(x[:6],x[7])\nopen(os.environ['OUT']+'/sqlite-header-structure-tests.json','w').write(json.dumps({'top':outs[:200]},indent=2))\nPY\npython3 /tmp/y.py"
+  },
+  "requester": {
+    "agent": "s42120104",
+    "name": "DBX Key Examiner",
+    "doing": "Establishing Q14, the userkey of the encrypted DBX database, from unknown.data and memory artefacts."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:25:21.523Z",
+  "reuse": {
+    "op": "command:cat",
+    "objects": [
+      {
+        "path": "store/jobs/j000130/out/archive/contact/instance1/hostkeys",
+        "sha256": "05c1bb92109acc5198cdd403d5ef72a166bf0965b3a8d4083e3522c18f526be5"
+      },
+      {
+        "path": "store/jobs/j000130/out/archive/contact/instance_db/hostkeys",
+        "sha256": "7354c1f37bc0b42fb6abaa668114de19f7ec3826ad37c2230f1c3de1fbe51756"
+      },
+      {
+        "path": "store/jobs/j000130/out/archive/contact/instance_db/instance.dbx",
+        "sha256": "a013b88dd638dd1155d11e2daa9c30b4396cca9594b611735294c2926cd003b4"
+      },
+      {
+        "path": "store/jobs/j000130/out/archive/contact/instance1/config.dbx",
+        "sha256": "eb348b3f0914b0e0ed211386fd8a7fa91c0b33e48a597f7b11e1c779279a9c7b"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000157-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:25:21.581Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000157",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 4,
+    "files": 4,
+    "bound": 0,
+    "manifest": "store/jobs/j000157/scope.1.json",
+    "manifest_sha256": "1226566395a57da85f63b0db676b374f3e87f2c8cf80a784e6431a2013cacb70"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:25:22.550Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "c24023d9cfa7e1e306392133942c9d926eb2fc350c95b8c3d79888d6ba8f30ef",
+    "files": 1,
+    "bytes": 75527,
+    "rejected": 0,
+    "path": "store/jobs/j000157/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

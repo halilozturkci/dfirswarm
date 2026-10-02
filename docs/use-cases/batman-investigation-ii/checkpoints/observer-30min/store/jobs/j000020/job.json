@@ -1,0 +1,86 @@
+{
+  "id": "j000020",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/Carmine-Falcone.raw"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "command": "python3 - <<'PY'\nfrom pathlib import Path\np=Path('inputs/chall/Carmine-Falcone.raw')\n# full MIME occurrence and nearby memory, ±2 MiB\ncenter=1159529627; start=center-2*1024*1024; size=4*1024*1024\nwith p.open('rb') as f: f.seek(start); d=f.read(size)\nPath('$OUT/email-region.bin').write_bytes(d)\n# Extract printable ASCII strings >=4 with absolute offsets, plus UTF16LE\nimport re\nwith Path('$OUT/email-strings.txt').open('w',errors='replace') as o:\n for m in re.finditer(rb'[\\x20-\\x7e\\t\\r\\n]{4,}',d):\n  o.write(f'ASCII abs={start+m.start()} rel={m.start()} len={len(m.group())}\\n{m.group().decode(\"ascii\",\"replace\")}\\n---\\n')\n for m in re.finditer(rb'(?:[\\x20-\\x7e]\\x00){4,}',d):\n  o.write(f'UTF16LE abs={start+m.start()} rel={m.start()} len={len(m.group())}\\n{m.group().decode(\"utf-16le\",\"replace\")}\\n---\\n')\nprint(start,size)\nPY"
+  },
+  "requester": {
+    "agent": "s42120105",
+    "name": "Userkey Analyst",
+    "doing": "I will establish Q12-Q13 (contact verification database key/client email and interpreted client/private key) from unknown.data and memory artifacts; Q14 is already taken."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T09:59:02.751Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "inputs/chall/Carmine-Falcone.raw",
+        "sha256": "3e03551e1f55dd792b0bc459b5620522d61fcf2379e8f6d89ef439fef8263cac"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000020-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T09:59:36.228Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000020",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000020/scope.1.json",
+    "manifest_sha256": "a157d2dd89c39daad1075a883b147aaa37712f5f30cc40fe647bed98e72ded5f"
+  },
+  "network": "none",
+  "exit": 1,
+  "status": "failed",
+  "reason": "exit 1",
+  "finished_at": "2026-10-02T09:59:36.955Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "aff62905eceb6927eaacc8dcb365909a76175bf95b31c53437f104d6d174fdb3",
+    "files": 0,
+    "bytes": 0,
+    "rejected": 0,
+    "path": "store/jobs/j000020/out"
+  }
+}
