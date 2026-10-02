@@ -1,0 +1,42 @@
+{
+  "needle": "private_key",
+  "case_insensitive": true,
+  "objects": [
+    {
+      "path": "store/jobs/j000139/out/20261002100314853-bash-ujat.out.log",
+      "size": 1941561,
+      "occurrence_count": 1,
+      "occurrences": [
+        {
+          "offset": 1473407,
+          "window_start": 1473107,
+          "window_end": 1473718,
+          "context_utf8": "T_VERIFY\u0000CKA_VERIFY\u0000KEY-SIZE-VERIFY\u0000SEC_ERROR_PKCS12_UNABLE_TO_EXPORT_KEY\u0000SEC_ERROR_PKCS12_UNABLE_TO_IMPORT_KEY\u0000SSL_ERROR_WEAK_SERVER_CERT_KEY\u0000CKO_SECRET_KEY\u0000SEC_ERROR_NO_KEY\u0000CKM_EXTRACT_KEY_FROM_KEY\u0000SSL_ERROR_WEAK_SERVER_EPHEMERAL_DH_KEY\u0000SEC_ERROR_FILING_KEY\u0000SEC_ERROR_CANNOT_MOVE_SENSITIVE_KEY\u0000CKO_PRIVATE_KEY\u0000CKM_CONCATENATE_BASE_AND_KEY\u0000SEC_ERROR_INVALID_KEY\u0000SSL_ERROR_RX_MALFORMED_PRE_SHARED_KEY\u0000SEC_ERROR_REVOKED_KEY\u0000SEC_ERROR_BAD_KEY\u0000CKO_PUBLIC_KEY\u0000generated columns cannot be part of the PRIMARY KEY\u0000AUTOINCREMENT is only allowed on an INTEGER PRIMARY KEY\u0000docid INTEGER PRIMARY KEY\u0000FOREIGN KEY\u0000USE TEMP ",
+          "context_hex": "545f56455249465900434b415f564552494659004b45592d53495a452d564552494659005345435f4552524f525f504b435331325f554e41424c455f544f5f4558504f52545f4b4559005345435f4552524f525f504b435331325f554e41424c455f544f5f494d504f52545f4b45590053534c5f4552524f525f5745414b5f5345525645525f434552545f4b455900434b4f5f5345435245545f4b4559005345435f4552524f525f4e4f5f4b455900434b4d5f455854524143545f4b45595f46524f4d5f4b45590053534c5f4552524f525f5745414b5f5345525645525f455048454d4552414c5f44485f4b4559005345435f4552524f525f46494c494e475f4b4559005345435f4552524f525f43414e4e4f545f4d4f56455f53454e5349544956455f4b455900434b4f5f505249564154455f4b455900434b4d5f434f4e434154454e4154455f424153455f414e445f4b4559005345435f4552524f525f494e56414c49445f4b45590053534c5f4552524f525f52585f4d414c464f524d45445f5052455f5348415245445f4b4559005345435f4552524f525f5245564f4b45445f4b4559005345435f4552524f525f4241445f4b455900434b4f5f5055424c49435f4b45590067656e65726174656420636f6c756d6e732063616e6e6f742062652070617274206f6620746865205052494d415259204b4559004155544f494e4352454d454e54206973206f6e6c7920616c6c6f776564206f6e20616e20494e5445474552205052494d415259204b455900646f63696420494e5445474552205052494d415259204b455900464f524549474e204b4559005553452054454d5020"
+        }
+      ]
+    },
+    {
+      "path": "store/jobs/j000140/out/20261002100317614-bash-ww29.out.log",
+      "size": 1061914,
+      "occurrence_count": 2,
+      "occurrences": [
+        {
+          "offset": 638095,
+          "window_start": 637795,
+          "window_end": 638406,
+          "context_utf8": "AT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC.PROCESSOR_A\n\nOFFSET 2759053098 Falcone utf16le\n\u656d\u7373\u6e65\u6567\u2f72\u6369\u6e6f\u2f73\u656e\u2f77\u7473\u7461\u7375\u6f2d\u6c6e\u6e69\u2e65\u7673g............................................................\u0001.\u00f8.C:\\Users\\Carmine Falcone\\AppData\\Roaming\\Thunderbird\\Profiles\\ifbixagh.default-release\\otr.private_key.\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5..........................................\uff78\ufc7f........\uffd0\u327f\uffb6\u1f7f............................................................\uffba\u117f................................\uffff\u01ff\uffd6\ufc7f\uffe2\ufc7f............................................\n\nOFFSET ",
+          "context_hex": "41543b2e434d443b2e5642533b2e5642453b2e4a533b2e4a53453b2e5753463b2e5753483b2e4d53432e50524f434553534f525f410a0a4f464653455420323735393035333039382046616c636f6e652075746631366c650ae695ade78db3e6b9a5e695a7e2bdb2e68da9e6b9afe2bdb3e695aee2bdb7e791b3e791a1e78db5e6bcade6b1aee6b9a9e2b9a5e799b3672e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e012ec3b82e433a5c55736572735c4361726d696e652046616c636f6e655c417070446174615c526f616d696e675c5468756e646572626972645c50726f66696c65735c69666269786167682e64656661756c742d72656c656173655c6f74722e707269766174655f6b65792eee97a5ee97a5ee97a5ee97a5ee97a5ee97a5ee97a5ee97a5ee97a5ee97a5ee97a5ee97a5ee97a5ee97a5ee97a5ee97a5ee97a5ee97a5ee97a5ee97a5ee97a52e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2eefbdb8efb1bf2e2e2e2e2e2e2e2eefbf90e389bfefbeb6e1bdbf2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2eefbebae185bf2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2eefbfbfc7bfefbf96efb1bfefbfa2efb1bf2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e0a0a4f464653455420"
+        },
+        {
+          "offset": 638668,
+          "window_start": 638368,
+          "window_end": 638979,
+          "context_utf8": ".............................\n\nOFFSET 2759053082 Carmine utf16le\n\u6369\u732f\u696b\u2f6e\u6c63\u7361\u6973\u2f63\u656d\u7373\u6e65\u6567\u2f72\u6369\u6e6f\u2f73\u656e\u2f77\u7473\u7461\u7375\u6f2d\u6c6e\u6e69\u2e65\u7673g............................................................\u0001.\u00f8.C:\\Users\\Carmine Falcone\\AppData\\Roaming\\Thunderbird\\Profiles\\ifbixagh.default-release\\otr.private_key.\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5\ue5e5..........................................\uff78\ufc7f........\uffd0\u327f\uffb6\u1f7f............................................................\uffba\u117f................................\uffff\u01ff\uffd6\ufc7f\uffe2\ufc7f....................................\n\nOFFSET 27640745",
+          "context_hex": "2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e0a0a4f46465345542032373539303533303832204361726d696e652075746631366c650ae68da9e78cafe6a5abe2bdaee6b1a3e78da1e6a5b3e2bda3e695ade78db3e6b9a5e695a7e2bdb2e68da9e6b9afe2bdb3e695aee2bdb7e791b3e791a1e78db5e6bcade6b1aee6b9a9e2b9a5e799b3672e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e012ec3b82e433a5c55736572735c4361726d696e652046616c636f6e655c417070446174615c526f616d696e675c5468756e646572626972645c50726f66696c65735c69666269786167682e64656661756c742d72656c656173655c6f74722e707269766174655f6b65792eee97a5ee97a5ee97a5ee97a5ee97a5ee97a5ee97a5ee97a5ee97a5ee97a5ee97a5ee97a5ee97a5ee97a5ee97a5ee97a5ee97a5ee97a5ee97a5ee97a5ee97a52e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2eefbdb8efb1bf2e2e2e2e2e2e2e2eefbf90e389bfefbeb6e1bdbf2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2eefbebae185bf2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2eefbfbfc7bfefbf96efb1bfefbfa2efb1bf2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e0a0a4f4646534554203237363430373435"
+        }
+      ]
+    }
+  ],
+  "total_occurrences": 3
+}

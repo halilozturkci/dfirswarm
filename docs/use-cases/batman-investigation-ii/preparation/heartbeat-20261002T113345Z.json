@@ -1,0 +1,222 @@
+{
+  "heartbeat": "2026-10-02T11:33:45.528Z",
+  "observed_at": "2026-10-02T11:45:34.377158+00:00",
+  "run": "s421201",
+  "state": "running",
+  "done": false,
+  "calls": 2822,
+  "tokens": 280412202,
+  "questions_summary": {
+    "in_scope": 14,
+    "persons": 0,
+    "unanswered": 0,
+    "proposed": 0,
+    "triage": 0,
+    "clarifications": 2,
+    "chain_ok": true
+  },
+  "dispositions": {
+    "Q-2": {
+      "answer": "E-44",
+      "result": "established",
+      "stale": false
+    },
+    "Q-9": {
+      "answer": "E-108",
+      "result": "established",
+      "stale": false
+    },
+    "Q-1": {
+      "answer": "E-151",
+      "result": "partial",
+      "stale": false
+    },
+    "Q-3": {
+      "answer": "E-183",
+      "result": "established",
+      "stale": false
+    },
+    "Q-4": {
+      "answer": "E-184",
+      "result": "established",
+      "stale": false
+    },
+    "Q-5": {
+      "answer": "E-95",
+      "result": "established",
+      "stale": false
+    },
+    "Q-10": {
+      "answer": "E-104",
+      "result": "established",
+      "stale": false
+    },
+    "Q-11": {
+      "answer": "E-105",
+      "result": "established",
+      "stale": false
+    },
+    "Q-7": {
+      "answer": "E-196",
+      "result": "established",
+      "stale": false
+    },
+    "Q-14": {
+      "answer": "E-216",
+      "result": "not_determinable",
+      "reviewed": true,
+      "reviewed_by": [
+        "s42120100"
+      ],
+      "coverage": [
+        "E-213 partial"
+      ],
+      "stale": false
+    },
+    "Q-8": {
+      "answer": "E-232",
+      "result": "established",
+      "stale": false
+    },
+    "Q-6": {
+      "answer": "E-264",
+      "result": "established",
+      "stale": false
+    },
+    "Q-12": {
+      "answer": "E-263",
+      "result": "not_determinable",
+      "reviewed": true,
+      "reviewed_by": [
+        "s42120108"
+      ],
+      "coverage": [
+        "E-260 complete"
+      ],
+      "stale": false
+    },
+    "Q-13": {
+      "answer": "E-265",
+      "result": "not_determinable",
+      "reviewed": true,
+      "reviewed_by": [
+        "s42120108"
+      ],
+      "coverage": [
+        "E-260 complete"
+      ],
+      "stale": false
+    }
+  },
+  "agent07": {
+    "id": "s42120107",
+    "calls": 271,
+    "last_event_at": "2026-10-02T11:43:32.008Z",
+    "context_tokens": 70332,
+    "context_level": "idle",
+    "context_locked": false,
+    "compactions": 11,
+    "handoffs": 11,
+    "dead": false,
+    "stalled": true
+  },
+  "all_agent_flags": [
+    {
+      "id": "s42120100",
+      "calls": 226,
+      "dead": false,
+      "stalled": true,
+      "context_locked": false,
+      "last_event_at": "2026-10-02T11:42:50.687Z"
+    },
+    {
+      "id": "s42120101",
+      "calls": 236,
+      "dead": false,
+      "stalled": false,
+      "context_locked": false,
+      "last_event_at": "2026-10-02T11:45:25.053Z"
+    },
+    {
+      "id": "s42120102",
+      "calls": 257,
+      "dead": false,
+      "stalled": true,
+      "context_locked": false,
+      "last_event_at": "2026-10-02T11:42:38.307Z"
+    },
+    {
+      "id": "s42120103",
+      "calls": 268,
+      "dead": false,
+      "stalled": false,
+      "context_locked": false,
+      "last_event_at": "2026-10-02T11:45:15.368Z"
+    },
+    {
+      "id": "s42120104",
+      "calls": 276,
+      "dead": false,
+      "stalled": false,
+      "context_locked": false,
+      "last_event_at": "2026-10-02T11:44:51.014Z"
+    },
+    {
+      "id": "s42120105",
+      "calls": 322,
+      "dead": false,
+      "stalled": false,
+      "context_locked": false,
+      "last_event_at": "2026-10-02T11:45:18.104Z"
+    },
+    {
+      "id": "s42120106",
+      "calls": 342,
+      "dead": false,
+      "stalled": true,
+      "context_locked": false,
+      "last_event_at": "2026-10-02T11:42:37.620Z"
+    },
+    {
+      "id": "s42120107",
+      "calls": 271,
+      "dead": false,
+      "stalled": true,
+      "context_locked": false,
+      "last_event_at": "2026-10-02T11:43:32.008Z"
+    },
+    {
+      "id": "s42120108",
+      "calls": 339,
+      "dead": false,
+      "stalled": false,
+      "context_locked": false,
+      "last_event_at": "2026-10-02T11:45:12.059Z"
+    },
+    {
+      "id": "s42120109",
+      "calls": 285,
+      "dead": false,
+      "stalled": false,
+      "context_locked": false,
+      "last_event_at": "2026-10-02T11:45:09.290Z"
+    }
+  ],
+  "final_files": {
+    "work/answers.json": false,
+    "work/report.md": false,
+    "work/timeline.md": false
+  },
+  "controller_alive": true,
+  "operator_intervention": false,
+  "solution_read": false,
+  "q6_attestation": {
+    "seq": 264,
+    "by": "s42120102",
+    "at": "2026-10-02T11:41:35.958Z",
+    "strength": "established",
+    "capped": null,
+    "hash": "75398c0b0c9c87c75c09e5b21692f1fd404e06dc3c644c6115ae038130bfdbf3"
+  },
+  "added_source_copies": 29
+}

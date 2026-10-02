@@ -1,0 +1,98 @@
+{
+  "id": "j000262",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "work/s42120101/report-draft.md",
+      "job:j000067/confidential.eml",
+      "job:j000067/contact.rar",
+      "job:j000075/attachment-verification.json"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport os,json,hashlib,re\nfrom pathlib import Path\nfrom email.parser import BytesParser\nfrom email.policy import default\nr=Path('work/s42120101/report-draft.md').read_bytes();t=r.decode();sec1=t.split('## 1.')[1].split('## 2.')[0];sec2=t.split('## 2.')[1].split('## 3.')[0]\nm=BytesParser(policy=default).parsebytes(Path('store/jobs/j000067/out/confidential.eml').read_bytes());a=list(m.iter_attachments()); payload=a[0].get_payload(decode=True)\nv=json.loads(Path('store/jobs/j000075/out/attachment-verification.json').read_text());body=m.get_body(preferencelist=('plain',)).get_content()\nres={'draft_sha256':hashlib.sha256(r).hexdigest(),'section1_intended_contact_explicitly_unresolved': 'Intended-contact alternative awaits' in sec1 and 'remains under L-5' in sec1,'section1_distinguishes_requester': 'requester versus intended-contact' in sec1.lower(),'section1_assumes_case_premise':'Assuming P-1' in sec1,'section2_complete_mime_e41': 'E-41 establishes complete MIME attachment bytes' in sec2,'section2_failed_carve_explicit':'Physical contiguous carving failed (E-26)' in sec2,'mime_attachment_count':len(a),'mime_filename':a[0].get_filename(),'mime_decoded_bytes':len(payload),'mime_sha1':hashlib.sha1(payload).hexdigest(),'mime_matches_saved_archive':payload==Path('store/jobs/j000067/out/contact.rar').read_bytes(),'draft_section2_digest_occurrences':sec2.count(hashlib.sha1(payload).hexdigest()),'independent_j75_manifest':v,'body_request_present':'Contact the guy' in body,'body_named_intended_contact':False,'historical_review_coverage_e59_mentions':sec2.count('E-59'),'scope':'Draft Q1/Q2 wording and original MIME identity only. No independent certification of my own ledger answers; no DBX intended-contact decryption.'}\nPath(os.environ['OUT'],'contact-draft-check.json').write_text(json.dumps(res,indent=2)); print(json.dumps(res,indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120100",
+    "name": "Contact provenance",
+    "doing": "Investigate Q1 and Q2 contact/disguise communications and sent-file identity; model gpt-6.1-sol."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T11:30:02.997Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000067/out/confidential.eml",
+        "sha256": "0b08ee11401aded668e95411b8213269705c7f1db29244e1d20a528250b33a4e"
+      },
+      {
+        "path": "store/jobs/j000075/out/attachment-verification.json",
+        "sha256": "72fd10f2ba0599d500bac10631742590082729f3034a65269ee4c3535f50b166"
+      },
+      {
+        "path": "store/jobs/j000067/out/contact.rar",
+        "sha256": "c199125c1f7596653096d31b61379b2caaa522d0a7872efd8ccc3b21638865ec"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000262-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T11:30:03.077Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000262",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 4,
+    "files": 4,
+    "bound": 0,
+    "manifest": "store/jobs/j000262/scope.1.json",
+    "manifest_sha256": "8cc801dc8fe245d29b76b70d61a6fefd553947290b2a350d6fdac3fb37e755ed"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T11:30:03.874Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "14b93689e89e5cca0158841e7d4949e08d30fb990a3e60e5f68669dba1c31a94",
+    "files": 1,
+    "bytes": 1022,
+    "rejected": 0,
+    "path": "store/jobs/j000262/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

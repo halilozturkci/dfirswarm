@@ -1,0 +1,26 @@
+{
+  "draft_sha256": "b00bd9b7edc89e31fdd498d59837b21b0301293688e08e3f48b29b9d60178971",
+  "section1_intended_contact_explicitly_unresolved": true,
+  "section1_distinguishes_requester": true,
+  "section1_assumes_case_premise": true,
+  "section2_complete_mime_e41": true,
+  "section2_failed_carve_explicit": true,
+  "mime_attachment_count": 1,
+  "mime_filename": "contact.rar",
+  "mime_decoded_bytes": 1732132,
+  "mime_sha1": "61ca5520263677e648297e1aefd90343fdd0388f",
+  "mime_matches_saved_archive": true,
+  "draft_section2_digest_occurrences": 2,
+  "independent_j75_manifest": [
+    {
+      "filename": "contact.rar",
+      "bytes": 1732132,
+      "sha1": "61ca5520263677e648297e1aefd90343fdd0388f",
+      "matches_saved_rar": true
+    }
+  ],
+  "body_request_present": true,
+  "body_named_intended_contact": false,
+  "historical_review_coverage_e59_mentions": 7,
+  "scope": "Draft Q1/Q2 wording and original MIME identity only. No independent certification of my own ledger answers; no DBX intended-contact decryption."
+}

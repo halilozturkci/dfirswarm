@@ -1,0 +1,86 @@
+{
+  "id": "j000265",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000139/20261002100314853-bash-ujat.out.log",
+      "job:j000140/20261002100317614-bash-ww29.out.log"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "command": "python3 - <<'PY'\nimport json, pathlib, os\npaths=[\n 'store/jobs/j000139/out/20261002100314853-bash-ujat.out.log',\n 'store/jobs/j000140/out/20261002100317614-bash-ww29.out.log']\nneedle=b'private_key'\nout=[]\nfor p in paths:\n b=pathlib.Path(p).read_bytes(); offs=[]; pos=0\n while True:\n  i=b.lower().find(needle,pos)\n  if i<0: break\n  lo=max(0,i-300); hi=min(len(b),i+len(needle)+300)\n  raw=b[lo:hi]\n  offs.append({'offset':i,'window_start':lo,'window_end':hi,'context_utf8':raw.decode('utf-8','replace'),'context_hex':raw.hex()})\n  pos=i+1\n out.append({'path':p,'size':len(b),'occurrence_count':len(offs),'occurrences':offs})\nres={'needle':'private_key','case_insensitive':True,'objects':out,'total_occurrences':sum(x['occurrence_count'] for x in out)}\npathlib.Path(os.environ['OUT'],'j139-j140-private-key-contexts.json').write_text(json.dumps(res,indent=2))\nprint(json.dumps(res,indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120104",
+    "name": "DBX Key Examiner",
+    "doing": "Establishing Q14, the userkey of the encrypted DBX database, from unknown.data and memory artefacts."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T11:41:34.480Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000140/out/20261002100317614-bash-ww29.out.log",
+        "sha256": "093012438af60e2f2db0970982eccf5b4b2b0c7ed10d968f7bf4edcaf2884506"
+      },
+      {
+        "path": "store/jobs/j000139/out/20261002100314853-bash-ujat.out.log",
+        "sha256": "752e8913336411d3deca45c2610df8242259fb71ef3c5a27b6b66bdb7212b7cd"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000265-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T11:41:34.555Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000265",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 2,
+    "files": 2,
+    "bound": 0,
+    "manifest": "store/jobs/j000265/scope.1.json",
+    "manifest_sha256": "1ec228fc8274b0f50fe642bb949fc85838c1bec9e874a749fcd58eeabf1c9037"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T11:41:35.266Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "2ab204d18aac7436b3f12f63fd6510aa2db4662b4b16e13b8b2afd6a6633fddc",
+    "files": 1,
+    "bytes": 6968,
+    "rejected": 0,
+    "path": "store/jobs/j000265/out"
+  }
+}

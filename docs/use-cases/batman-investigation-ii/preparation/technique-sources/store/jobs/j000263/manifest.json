@@ -1,0 +1,1 @@
+{"v":1,"job":"j000263","attempt":1,"sealed_at":"2026-10-02T11:31:54.296Z","files":[{"path":"q12-q13-coverage-provenance.json","path_b64":"cTEyLXExMy1jb3ZlcmFnZS1wcm92ZW5hbmNlLmpzb24=","bytes":3966,"sha256":"198b196903d3171b5719172c1a43f96e24b1af6c904a8e1c81627d8bdbec4bd4","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":3966}}

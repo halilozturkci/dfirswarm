@@ -1,0 +1,202 @@
+{
+  "run": "s421201",
+  "observed_at": "2026-10-02T11:45:34.377158+00:00",
+  "agent": "s42120107",
+  "model": "openai-codex/gpt-6-luna",
+  "ledger_call": {
+    "ts": "2026-10-02T11:21:50.249Z",
+    "seq": 813,
+    "args": {
+      "kind": "finding"
+    },
+    "trace_result": {
+      "ok": true,
+      "n": 127,
+      "duration_ms": 14
+    },
+    "reply_text_chars": 654942,
+    "reply_text_utf8_bytes": 654996
+  },
+  "context_events": [
+    {
+      "ts": "2026-10-02T11:21:38.879Z",
+      "seq": 807,
+      "ok": true,
+      "tokens": 61787,
+      "cached": 47616,
+      "window": 272000,
+      "ceiling": 272000,
+      "percent": 22.7,
+      "level": "idle",
+      "cycle": 10,
+      "locked": false
+    },
+    {
+      "ts": "2026-10-02T11:21:44.822Z",
+      "seq": 810,
+      "ok": true,
+      "tokens": 68923,
+      "cached": 55808,
+      "window": 272000,
+      "ceiling": 272000,
+      "percent": 25.3,
+      "level": "idle",
+      "cycle": 10,
+      "locked": false
+    },
+    {
+      "ts": "2026-10-02T11:21:47.657Z",
+      "seq": 812,
+      "ok": true,
+      "tokens": 73529,
+      "cached": 62976,
+      "window": 272000,
+      "ceiling": 272000,
+      "percent": 27,
+      "level": "idle",
+      "cycle": 10,
+      "locked": false
+    },
+    {
+      "ts": "2026-10-02T11:21:50.302Z",
+      "seq": 815,
+      "ok": true,
+      "tokens": 238267,
+      "cached": 70144,
+      "window": 272000,
+      "ceiling": 272000,
+      "percent": 87.6,
+      "level": "forced",
+      "cycle": 10,
+      "locked": true
+    },
+    {
+      "ts": "2026-10-02T11:36:51.563Z",
+      "seq": 816,
+      "ok": true,
+      "tokens": 239637,
+      "cached": 70144,
+      "window": 272000,
+      "ceiling": 272000,
+      "percent": 88.1,
+      "level": "forced",
+      "cycle": 10,
+      "locked": true
+    },
+    {
+      "ts": "2026-10-02T11:37:38.938Z",
+      "seq": 819,
+      "ok": true,
+      "tokens": 275913,
+      "cached": 74240,
+      "window": 272000,
+      "ceiling": 272000,
+      "percent": 101.4,
+      "level": "forced",
+      "cycle": 10,
+      "locked": true
+    },
+    {
+      "ts": "2026-10-02T11:38:44.715Z",
+      "seq": 823,
+      "ok": true,
+      "tokens": 47936,
+      "cached": 38400,
+      "window": 272000,
+      "ceiling": 272000,
+      "percent": 17.6,
+      "level": "idle",
+      "cycle": 11,
+      "locked": false
+    },
+    {
+      "ts": "2026-10-02T11:38:49.801Z",
+      "seq": 825,
+      "ok": true,
+      "tokens": 49319,
+      "cached": 42496,
+      "window": 272000,
+      "ceiling": 272000,
+      "percent": 18.1,
+      "level": "idle",
+      "cycle": 11,
+      "locked": false
+    },
+    {
+      "ts": "2026-10-02T11:38:56.747Z",
+      "seq": 828,
+      "ok": true,
+      "tokens": 49501,
+      "cached": 47616,
+      "window": 272000,
+      "ceiling": 272000,
+      "percent": 18.2,
+      "level": "idle",
+      "cycle": 11,
+      "locked": false
+    },
+    {
+      "ts": "2026-10-02T11:39:06.715Z",
+      "seq": 831,
+      "ok": true,
+      "tokens": 52011,
+      "cached": 48640,
+      "window": 272000,
+      "ceiling": 272000,
+      "percent": 19.1,
+      "level": "idle",
+      "cycle": 11,
+      "locked": false
+    },
+    {
+      "ts": "2026-10-02T11:39:16.945Z",
+      "seq": 834,
+      "ok": true,
+      "tokens": 52563,
+      "cached": 48640,
+      "window": 272000,
+      "ceiling": 272000,
+      "percent": 19.3,
+      "level": "idle",
+      "cycle": 11,
+      "locked": false
+    }
+  ],
+  "assistant_error": {
+    "timestamp": "2026-10-02T11:36:51.557Z",
+    "stopReason": "error",
+    "errorMessage": "terminated"
+  },
+  "recovery_compact_done": {
+    "ts": "2026-10-02T11:38:29.433Z",
+    "seq": 820,
+    "result": {
+      "ok": true,
+      "tokens_before": 275913,
+      "tokens_after": null,
+      "summary_chars": 9149,
+      "summary_tokens": 16529,
+      "summary_usd": 0.0026433000000000003,
+      "summary_model": "openai-codex/gpt-6-luna",
+      "summary_model_source": "agent-model",
+      "from_extension": true,
+      "cycle": 11,
+      "note_chars": 7764
+    }
+  },
+  "latest_agent": {
+    "id": "s42120107",
+    "calls": 271,
+    "last_event_at": "2026-10-02T11:43:32.008Z",
+    "context_tokens": 70332,
+    "context_level": "idle",
+    "context_locked": false,
+    "compactions": 11,
+    "handoffs": 11,
+    "dead": false,
+    "stalled": true
+  },
+  "operator_intervention": false,
+  "interpretation": "Large ledger read precedes forced lock and later terminated error; precise error causality unproven. Self-compaction cycle11 completes and resumes without observer input. Context values are harness measures, not actual billed/new-output token counts.",
+  "packet_boundary": "selected complete public records and one full public tool reply; all other runtime records remain in live mirror/source for final full archive"
+}

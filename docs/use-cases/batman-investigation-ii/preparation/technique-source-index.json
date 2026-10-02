@@ -2247,6 +2247,242 @@
       "captured_at": "2026-10-02T11:32:40.309895+00:00",
       "byte_exact_source_copy": false,
       "selection": "whole Q3 s03 attestation record, not an independently chained full ledger"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.pi-sessions/s42120107/2026-10-02T09-56-31-871Z_01a0fc0b-43fe-725b-a9aa-e22f6b22172d.jsonl",
+      "copy": "preparation/context-pressure-s07-1133/full-ledger-tool-result.jsonl",
+      "bytes": 1262487,
+      "sha256": "47982071c1d8b95af979fd49860f545d4378b6f13ad76d151b3071843efd1ed7",
+      "captured_at": "2026-10-02T11:45:34.377158+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "one complete original public toolResult record; no assistant thinking/handoff note selected"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/traces/events.jsonl",
+      "copy": "preparation/context-pressure-s07-1133/selected-trace-events.jsonl",
+      "bytes": 5480,
+      "sha256": "811499293f11aa89522565780163b1f663926863fa458974ec1f2204831ca1bc",
+      "captured_at": "2026-10-02T11:45:34.377158+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "complete original selected public lifecycle/context/ledger rows; not an independently chained full trace"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000262/job.json",
+      "copy": "preparation/technique-sources/store/jobs/j000262/job.json",
+      "bytes": 4834,
+      "sha256": "d4f2f6e0c6865888320b8aa9f59392d4d404da9164ec04c616814aeb72f50666",
+      "captured_at": "2026-10-02T11:45:34.377158+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000262/manifest.json",
+      "copy": "preparation/technique-sources/store/jobs/j000262/manifest.json",
+      "bytes": 327,
+      "sha256": "14b93689e89e5cca0158841e7d4949e08d30fb990a3e60e5f68669dba1c31a94",
+      "captured_at": "2026-10-02T11:45:34.377158+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000262/stdout.log",
+      "copy": "preparation/technique-sources/store/jobs/j000262/stdout.log",
+      "bytes": 1023,
+      "sha256": "efeaaf583d74243f9be964c9577b940a5c11985d4c78636b289145c29de7aa82",
+      "captured_at": "2026-10-02T11:45:34.377158+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000262/stderr.log",
+      "copy": "preparation/technique-sources/store/jobs/j000262/stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured_at": "2026-10-02T11:45:34.377158+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000262/out/contact-draft-check.json",
+      "copy": "preparation/technique-sources/store/jobs/j000262/out/contact-draft-check.json",
+      "bytes": 1022,
+      "sha256": "dd8a8b6d4809c49bffbc1fd7b10d7da3e51d3211727bcc4b27fdbe04af9c5154",
+      "captured_at": "2026-10-02T11:45:34.377158+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000263/job.json",
+      "copy": "preparation/technique-sources/store/jobs/j000263/job.json",
+      "bytes": 8006,
+      "sha256": "b89868b6c410892fd518442cc3c8d1e67aae157d0e97bef8e34cf464bd97ccea",
+      "captured_at": "2026-10-02T11:45:34.377158+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000263/manifest.json",
+      "copy": "preparation/technique-sources/store/jobs/j000263/manifest.json",
+      "bytes": 347,
+      "sha256": "94dda797adab6c74cd528b01a7f63adcc18b9e42c6e1c7e30f8b47efb5eb4816",
+      "captured_at": "2026-10-02T11:45:34.377158+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000263/stdout.log",
+      "copy": "preparation/technique-sources/store/jobs/j000263/stdout.log",
+      "bytes": 19,
+      "sha256": "aff9e4a1783541b43d79f2707691cd7afcfc4757dd41731ef4710c2c3dc2eabb",
+      "captured_at": "2026-10-02T11:45:34.377158+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000263/stderr.log",
+      "copy": "preparation/technique-sources/store/jobs/j000263/stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured_at": "2026-10-02T11:45:34.377158+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000263/out/q12-q13-coverage-provenance.json",
+      "copy": "preparation/technique-sources/store/jobs/j000263/out/q12-q13-coverage-provenance.json",
+      "bytes": 3966,
+      "sha256": "198b196903d3171b5719172c1a43f96e24b1af6c904a8e1c81627d8bdbec4bd4",
+      "captured_at": "2026-10-02T11:45:34.377158+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000265/job.json",
+      "copy": "preparation/technique-sources/store/jobs/j000265/job.json",
+      "bytes": 3517,
+      "sha256": "99632ab9cd293c138a7b3d39a393ca17b059e18924dae7b48967d36f5b1bf742",
+      "captured_at": "2026-10-02T11:45:34.377158+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000265/manifest.json",
+      "copy": "preparation/technique-sources/store/jobs/j000265/manifest.json",
+      "bytes": 354,
+      "sha256": "2ab204d18aac7436b3f12f63fd6510aa2db4662b4b16e13b8b2afd6a6633fddc",
+      "captured_at": "2026-10-02T11:45:34.377158+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000265/stdout.log",
+      "copy": "preparation/technique-sources/store/jobs/j000265/stdout.log",
+      "bytes": 6969,
+      "sha256": "e51216ab02a3340e55e17d494c4436c26939512f86819bd9c9a5be1c5cd75341",
+      "captured_at": "2026-10-02T11:45:34.377158+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000265/stderr.log",
+      "copy": "preparation/technique-sources/store/jobs/j000265/stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured_at": "2026-10-02T11:45:34.377158+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000265/out/j139-j140-private-key-contexts.json",
+      "copy": "preparation/technique-sources/store/jobs/j000265/out/j139-j140-private-key-contexts.json",
+      "bytes": 6968,
+      "sha256": "b51a73abac4a60197c318d83ecc2854e7c0e3097a3533413546299044e99791c",
+      "captured_at": "2026-10-02T11:45:34.377158+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000382-s42120100.md",
+      "copy": "preparation/technique-sources/threads/main/000382-s42120100.md",
+      "bytes": 907,
+      "sha256": "b2f477d417745d25dbb720bda672470391f40914c62a7dd8499aa4b3ee11de71",
+      "captured_at": "2026-10-02T11:45:34.377158+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000383-s42120101.md",
+      "copy": "preparation/technique-sources/threads/main/000383-s42120101.md",
+      "bytes": 493,
+      "sha256": "ed4d65227ef5a7e92672cb7f9711fdad2978959926f70d0804d5b52e9fb96a93",
+      "captured_at": "2026-10-02T11:45:34.377158+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000387-system.md",
+      "copy": "preparation/technique-sources/threads/main/000387-system.md",
+      "bytes": 532,
+      "sha256": "7708ec7fff1dc47a2dce16761c0287eb5162a4f0cf053d910ac8965c57cc8364",
+      "captured_at": "2026-10-02T11:45:34.377158+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000389-s42120107.md",
+      "copy": "preparation/technique-sources/threads/main/000389-s42120107.md",
+      "bytes": 836,
+      "sha256": "47a34f6ccad996edddef029460db7d41da62ddb72400ed9f554297f8a14955d6",
+      "captured_at": "2026-10-02T11:45:34.377158+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000390-s42120107.md",
+      "copy": "preparation/technique-sources/threads/main/000390-s42120107.md",
+      "bytes": 511,
+      "sha256": "2afed9a5153310ce80534d11ec7ef8362e69306f3429be097750ccdb3f2fe9a7",
+      "captured_at": "2026-10-02T11:45:34.377158+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000391-s42120102.md",
+      "copy": "preparation/technique-sources/threads/main/000391-s42120102.md",
+      "bytes": 535,
+      "sha256": "1f4329b5163644121097b3ae8cb714a2850529e2e4afd94910e7df9210e0e7d3",
+      "captured_at": "2026-10-02T11:45:34.377158+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000392-s42120108.md",
+      "copy": "preparation/technique-sources/threads/main/000392-s42120108.md",
+      "bytes": 874,
+      "sha256": "505e24c3081fdf2f4d5c56d63449ced7954efdce39eafbadd4c26cb4f0848fd1",
+      "captured_at": "2026-10-02T11:45:34.377158+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000393-s42120106.md",
+      "copy": "preparation/technique-sources/threads/main/000393-s42120106.md",
+      "bytes": 546,
+      "sha256": "93247dd32d9ccbfc1aaf8c44e09b753269f7d2f4391417051d6957032e151fbd",
+      "captured_at": "2026-10-02T11:45:34.377158+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000398-s42120104.md",
+      "copy": "preparation/technique-sources/threads/main/000398-s42120104.md",
+      "bytes": 557,
+      "sha256": "0651076081eec13f6e1ca75263fbde10f13b39e6d1040328438cad854a6a99df",
+      "captured_at": "2026-10-02T11:45:34.377158+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000399-s42120106.md",
+      "copy": "preparation/technique-sources/threads/main/000399-s42120106.md",
+      "bytes": 414,
+      "sha256": "19e422d1144718e762fe8062e13c76bce32c60289b2cd1d3c1b971af69f8d33a",
+      "captured_at": "2026-10-02T11:45:34.377158+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/ledger/entries.jsonl",
+      "copy": "preparation/technique-sources/ledger/selected-1133-entries.jsonl",
+      "bytes": 128552,
+      "sha256": "fad7fdbcb9ffcce0d5b55da270db4062df10c3604b23ed232f45bb3735155387",
+      "captured_at": "2026-10-02T11:45:34.377158+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "complete original records seq256..266; not a independently chained full ledger"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/ledger/attestations.jsonl",
+      "copy": "preparation/technique-sources/ledger/selected-1133-attestations.jsonl",
+      "bytes": 5566,
+      "sha256": "354b5affbf7ec383e22a10484ca55bd18ae84aa64d7a7fe2537457eeb0b13a6b",
+      "captured_at": "2026-10-02T11:45:34.377158+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "complete Q6 s02 attestation record; not independently chained full ledger"
     }
   ],
   "ledger_bindings": [
@@ -2662,6 +2898,105 @@
       "at": "2026-10-02T11:27:12.279Z",
       "hash": "091a4812dee8530c0aa63f7f79dc91e1314da7c97a516fc15bef946203d5c394",
       "prev": "10827b86d8efb27b76eb592b096fba7c8941769c3d68cd2d888123c6b2f5e0af",
+      "supersedes": null
+    },
+    {
+      "seq": 256,
+      "kind": "finding",
+      "by": "s42120100",
+      "at": "2026-10-02T11:30:29.790Z",
+      "hash": "27295429bd6fb4506cf9bb34d6dd3d93d367d4fcc2482a1345417aefc5a8c67e",
+      "prev": "091a4812dee8530c0aa63f7f79dc91e1314da7c97a516fc15bef946203d5c394",
+      "supersedes": null
+    },
+    {
+      "seq": 257,
+      "kind": "coverage",
+      "by": "s42120105",
+      "at": "2026-10-02T11:31:29.010Z",
+      "hash": "e639099bba3737780333931c78a6eb65d64c8d74954069a8a3ad45c021a715b3",
+      "prev": "27295429bd6fb4506cf9bb34d6dd3d93d367d4fcc2482a1345417aefc5a8c67e",
+      "supersedes": null
+    },
+    {
+      "seq": 258,
+      "kind": "finding",
+      "by": "s42120105",
+      "at": "2026-10-02T11:32:04.877Z",
+      "hash": "67e85ffcdd8fd4d1e4a8afd4a732e4763e4bde9dcaf07d58a5497a40e94e9e77",
+      "prev": "e639099bba3737780333931c78a6eb65d64c8d74954069a8a3ad45c021a715b3",
+      "supersedes": null
+    },
+    {
+      "seq": 259,
+      "kind": "coverage",
+      "by": "s42120105",
+      "at": "2026-10-02T11:32:32.209Z",
+      "hash": "421d2fcf5172e94c0c3e7e448ce80997d0e56a8084d109ea702565ef4dd11205",
+      "prev": "67e85ffcdd8fd4d1e4a8afd4a732e4763e4bde9dcaf07d58a5497a40e94e9e77",
+      "supersedes": 257
+    },
+    {
+      "seq": 260,
+      "kind": "coverage",
+      "by": "s42120105",
+      "at": "2026-10-02T11:33:15.545Z",
+      "hash": "f0dd160673ae54f8738ac42414b87e11216794905bf7ce6fe5330a3f84919a8e",
+      "prev": "421d2fcf5172e94c0c3e7e448ce80997d0e56a8084d109ea702565ef4dd11205",
+      "supersedes": 259
+    },
+    {
+      "seq": 261,
+      "kind": "limitation",
+      "by": "s42120108",
+      "at": "2026-10-02T11:36:13.059Z",
+      "hash": "5e5ca4eece0589b66f5c7fa9d0a47218f13c1ded7ac3fb7a87b13e0edabe3380",
+      "prev": "f0dd160673ae54f8738ac42414b87e11216794905bf7ce6fe5330a3f84919a8e",
+      "supersedes": null
+    },
+    {
+      "seq": 262,
+      "kind": "answer",
+      "by": "s42120106",
+      "at": "2026-10-02T11:38:27.108Z",
+      "hash": "e9f3a905df3d483c1ba899d3c08b4be7fccc4e1df0830d619e8273cc121fd6c1",
+      "prev": "5e5ca4eece0589b66f5c7fa9d0a47218f13c1ded7ac3fb7a87b13e0edabe3380",
+      "supersedes": null
+    },
+    {
+      "seq": 263,
+      "kind": "answer",
+      "by": "s42120105",
+      "at": "2026-10-02T11:40:12.868Z",
+      "hash": "1ba5aee72c5a2e221f27048ae261cbc2669e66a37edd54b09ac3a300372ae847",
+      "prev": "e9f3a905df3d483c1ba899d3c08b4be7fccc4e1df0830d619e8273cc121fd6c1",
+      "supersedes": null
+    },
+    {
+      "seq": 264,
+      "kind": "answer",
+      "by": "s42120106",
+      "at": "2026-10-02T11:40:14.993Z",
+      "hash": "5fbdce8b3b53a40ad36c402b0340dbe9bafa7ba57b84d6e6c7906ed16f37e6c4",
+      "prev": "1ba5aee72c5a2e221f27048ae261cbc2669e66a37edd54b09ac3a300372ae847",
+      "supersedes": 262
+    },
+    {
+      "seq": 265,
+      "kind": "answer",
+      "by": "s42120105",
+      "at": "2026-10-02T11:40:33.878Z",
+      "hash": "adae9a455cf43462131dbdea554fe3c4445d43c83f977dcd200daf5d3b53c03e",
+      "prev": "5fbdce8b3b53a40ad36c402b0340dbe9bafa7ba57b84d6e6c7906ed16f37e6c4",
+      "supersedes": null
+    },
+    {
+      "seq": 266,
+      "kind": "finding",
+      "by": "s42120104",
+      "at": "2026-10-02T11:41:56.349Z",
+      "hash": "089e04cdf3cf3523293522eba59557c7aa6f36d557efa4c2989077c576340b08",
+      "prev": "adae9a455cf43462131dbdea554fe3c4445d43c83f977dcd200daf5d3b53c03e",
       "supersedes": null
     }
   ],
@@ -3394,6 +3729,57 @@
         "bytes": 14799,
         "rejected": 0,
         "path": "store/jobs/j000261/out"
+      },
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7"
+    },
+    {
+      "job": "j000262",
+      "requester": "s42120100",
+      "state": "committed",
+      "status": "ok",
+      "exit": 0,
+      "started_at": "2026-10-02T11:30:03.077Z",
+      "finished_at": "2026-10-02T11:30:03.874Z",
+      "outputs": {
+        "manifest_sha256": "14b93689e89e5cca0158841e7d4949e08d30fb990a3e60e5f68669dba1c31a94",
+        "files": 1,
+        "bytes": 1022,
+        "rejected": 0,
+        "path": "store/jobs/j000262/out"
+      },
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7"
+    },
+    {
+      "job": "j000263",
+      "requester": "s42120105",
+      "state": "committed",
+      "status": "ok",
+      "exit": 0,
+      "started_at": "2026-10-02T11:31:53.545Z",
+      "finished_at": "2026-10-02T11:31:54.275Z",
+      "outputs": {
+        "manifest_sha256": "94dda797adab6c74cd528b01a7f63adcc18b9e42c6e1c7e30f8b47efb5eb4816",
+        "files": 1,
+        "bytes": 3966,
+        "rejected": 0,
+        "path": "store/jobs/j000263/out"
+      },
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7"
+    },
+    {
+      "job": "j000265",
+      "requester": "s42120104",
+      "state": "committed",
+      "status": "ok",
+      "exit": 0,
+      "started_at": "2026-10-02T11:41:34.555Z",
+      "finished_at": "2026-10-02T11:41:35.266Z",
+      "outputs": {
+        "manifest_sha256": "2ab204d18aac7436b3f12f63fd6510aa2db4662b4b16e13b8b2afd6a6633fddc",
+        "files": 1,
+        "bytes": 6968,
+        "rejected": 0,
+        "path": "store/jobs/j000265/out"
       },
       "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7"
     }
@@ -7488,7 +7874,7 @@
       "record_sha256": "722b2262f6cef89da8abeb93e412c37a6e76bd4aa3bad86e9d5bf9b66adf179f"
     }
   ],
-  "updated_at": "2026-10-02T11:32:40.309895+00:00",
+  "updated_at": "2026-10-02T11:45:34.377158+00:00",
   "attestation_bindings": [
     {
       "seq": 183,
@@ -7496,6 +7882,14 @@
       "at": "2026-10-02T11:27:45.324Z",
       "hash": "945fff7a9b0c783321e0e7fc2f598980df4420d053de56449d3c80fe18ea0766",
       "prev": "1495a73a85096b8d5870d9515d40575b23efbc49f7b08aaabca960ceaac1b618",
+      "strength": "established"
+    },
+    {
+      "seq": 264,
+      "by": "s42120102",
+      "at": "2026-10-02T11:41:35.958Z",
+      "hash": "75398c0b0c9c87c75c09e5b21692f1fd404e06dc3c644c6115ae038130bfdbf3",
+      "prev": "1ef1ff82ab9efc72354025d8b80cfd8e21c181ad6906731258cc1b64a8508efe",
       "strength": "established"
     }
   ]

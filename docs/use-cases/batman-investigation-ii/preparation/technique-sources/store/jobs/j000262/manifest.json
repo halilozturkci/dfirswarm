@@ -1,0 +1,1 @@
+{"v":1,"job":"j000262","attempt":1,"sealed_at":"2026-10-02T11:30:03.903Z","files":[{"path":"contact-draft-check.json","path_b64":"Y29udGFjdC1kcmFmdC1jaGVjay5qc29u","bytes":1022,"sha256":"dd8a8b6d4809c49bffbc1fd7b10d7da3e51d3211727bcc4b27fdbe04af9c5154","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":1022}}

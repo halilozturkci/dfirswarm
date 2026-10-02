@@ -1,0 +1,117 @@
+{
+  "objects": [
+    {
+      "path": "inputs/chall/Carmine-Falcone.raw",
+      "size": 4831838208,
+      "sample_sha256": "164ee36e16bda36f6a62914b9bddced08e9fb049102840e5bc085831818d1ff9",
+      "read_bytes": 8192
+    },
+    {
+      "path": "inputs/chall/unknown.data",
+      "size": 36194,
+      "sha256": "87841ce462a019649f6206c72cf65ce5305a88b828ca45996ae9422e6f578f4f",
+      "read_bytes": 36194
+    },
+    {
+      "path": "store/jobs/j000145/out/contact/contact/info.json",
+      "size": 121,
+      "sha256": "2863eb4ed8c305e3ad0eccdc27f4deca76c2c3f063f87fd338132c79e55b04cc",
+      "read_bytes": 121,
+      "json_valid": true
+    },
+    {
+      "path": "store/jobs/j000145/out/contact/contact/instance1/config.dbx",
+      "size": 65536,
+      "sha256": "eb348b3f0914b0e0ed211386fd8a7fa91c0b33e48a597f7b11e1c779279a9c7b",
+      "read_bytes": 65536
+    },
+    {
+      "path": "store/jobs/j000145/out/contact/contact/instance1/contacts_polaris.db",
+      "size": 40960,
+      "sha256": "3e959879e783854c529e8a02fd066a1384ebde6782be5428fadba72bd6ec4b8b",
+      "read_bytes": 40960
+    },
+    {
+      "path": "store/jobs/j000145/out/contact/contact/instance1/photo.dbx",
+      "size": 53248,
+      "sha256": "6b8c28fdd0bcc4f87d881bbd4021ac7052c58054bacc2acd6755b99ec94ad942",
+      "read_bytes": 53248
+    },
+    {
+      "path": "store/jobs/j000145/out/contact/contact/instance1/hostkeys",
+      "size": 81,
+      "sha256": "05c1bb92109acc5198cdd403d5ef72a166bf0965b3a8d4083e3522c18f526be5",
+      "read_bytes": 81
+    },
+    {
+      "path": "store/jobs/j000145/out/contact/contact/instance_db/instance.dbx",
+      "size": 20480,
+      "sha256": "a013b88dd638dd1155d11e2daa9c30b4396cca9594b611735294c2926cd003b4",
+      "read_bytes": 20480
+    },
+    {
+      "path": "store/jobs/j000145/out/contact/contact/instance_db/hostkeys",
+      "size": 81,
+      "sha256": "7354c1f37bc0b42fb6abaa668114de19f7ec3826ad37c2230f1c3de1fbe51756",
+      "read_bytes": 81
+    },
+    {
+      "path": "store/jobs/j000194/out/plaintext-sqlite-search.json",
+      "size": 6209,
+      "sha256": "b765e6a5722da8a84f104c23e05f450b4b9ae5d3b173dec056d3efccd4b54635",
+      "read_bytes": 6209,
+      "json_valid": true
+    },
+    {
+      "path": "store/jobs/j000239/out/provider-email-contexts.json",
+      "size": 316705,
+      "sha256": "250ce57b2db43fa8a4516d1a315ca65d6cb07040e0375d75320913d3da6c425a",
+      "read_bytes": 316705,
+      "json_valid": true
+    },
+    {
+      "path": "store/jobs/j000241/out/create-table-contexts.json",
+      "size": 3030502,
+      "sha256": "fde187bedc8489dbba84579a58f3ea4e202754b3803da225b5c9704e959f11da",
+      "read_bytes": 3030502,
+      "json_valid": true
+    },
+    {
+      "path": "store/jobs/j000242/out/targeted-ctr-validation.json",
+      "size": 53,
+      "sha256": "27e031241a2c08b5e2ccc18f90e912211461f3039606cf3ac049f64bb86f11c3",
+      "read_bytes": 53,
+      "json_valid": true
+    },
+    {
+      "path": "store/jobs/j000249/out/metrics-field-audit.json",
+      "size": 2941,
+      "sha256": "7fd6ad5060ded967d357b41ec217fcde2a732e8b55d84c245ba611dd42a61f5c",
+      "read_bytes": 2941,
+      "json_valid": true
+    },
+    {
+      "path": "store/jobs/j000256/out/nucleus/all-rows.json",
+      "size": 7092,
+      "sha256": "16d20e1a5fef7e3cbb0d7454f2a2d24c142d8a6069569d849296be42cc3387dc",
+      "read_bytes": 7092,
+      "json_valid": true
+    },
+    {
+      "path": "store/jobs/j000256/out/apex/all-rows.json",
+      "size": 427430,
+      "sha256": "3f98ef4835e68d60e84b5817a7d12231cbecf8200eee43eaf6805a79a9e9e5a3",
+      "read_bytes": 427430,
+      "json_valid": true
+    },
+    {
+      "path": "store/jobs/j000260/out/nucleus-hostkeys-auth.json",
+      "size": 174,
+      "sha256": "d84f0a30f0bf5476e79cc97141cc25cac8da37331a5e270d42bc88234b372eaf",
+      "read_bytes": 174,
+      "json_valid": true
+    }
+  ],
+  "count": 17,
+  "purpose": "Q12/Q13 provenance declaration and machine-readability check; no secret values emitted"
+}

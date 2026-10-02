@@ -1,0 +1,171 @@
+{
+  "id": "j000263",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/Carmine-Falcone.raw",
+      "input:chall/unknown.data",
+      "job:j000145/contact/contact/info.json",
+      "job:j000145/contact/contact/instance1/config.dbx",
+      "job:j000145/contact/contact/instance1/contacts_polaris.db",
+      "job:j000145/contact/contact/instance1/photo.dbx",
+      "job:j000145/contact/contact/instance1/hostkeys",
+      "job:j000145/contact/contact/instance_db/instance.dbx",
+      "job:j000145/contact/contact/instance_db/hostkeys",
+      "job:j000194/plaintext-sqlite-search.json",
+      "job:j000239/provider-email-contexts.json",
+      "job:j000241/create-table-contexts.json",
+      "job:j000242/targeted-ctr-validation.json",
+      "job:j000249/metrics-field-audit.json",
+      "job:j000256/nucleus/all-rows.json",
+      "job:j000256/apex/all-rows.json",
+      "job:j000260/nucleus-hostkeys-auth.json"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport os,json,hashlib\npaths=[\n'inputs/chall/Carmine-Falcone.raw','inputs/chall/unknown.data',\n'store/jobs/j000145/out/contact/contact/info.json',\n'store/jobs/j000145/out/contact/contact/instance1/config.dbx',\n'store/jobs/j000145/out/contact/contact/instance1/contacts_polaris.db',\n'store/jobs/j000145/out/contact/contact/instance1/photo.dbx',\n'store/jobs/j000145/out/contact/contact/instance1/hostkeys',\n'store/jobs/j000145/out/contact/contact/instance_db/instance.dbx',\n'store/jobs/j000145/out/contact/contact/instance_db/hostkeys',\n'store/jobs/j000194/out/plaintext-sqlite-search.json',\n'store/jobs/j000239/out/provider-email-contexts.json',\n'store/jobs/j000241/out/create-table-contexts.json',\n'store/jobs/j000242/out/targeted-ctr-validation.json',\n'store/jobs/j000249/out/metrics-field-audit.json',\n'store/jobs/j000256/out/nucleus/all-rows.json',\n'store/jobs/j000256/out/apex/all-rows.json',\n'store/jobs/j000260/out/nucleus-hostkeys-auth.json']\nr=[]\nfor p in paths:\n st=os.stat(p); ent={'path':p,'size':st.st_size}\n with open(p,'rb') as f:\n  if st.st_size<=20_000_000:\n   b=f.read(); ent['sha256']=hashlib.sha256(b).hexdigest(); ent['read_bytes']=len(b)\n   if p.endswith('.json'):\n    json.loads(b);ent['json_valid']=True\n  else:\n   first=f.read(4096);f.seek(max(0,st.st_size-4096));last=f.read(4096);ent['sample_sha256']=hashlib.sha256(first+last).hexdigest();ent['read_bytes']=len(first)+len(last)\n r.append(ent)\nout={'objects':r,'count':len(r),'purpose':'Q12/Q13 provenance declaration and machine-readability check; no secret values emitted'}\nopen(os.environ['OUT']+'/q12-q13-coverage-provenance.json','w').write(json.dumps(out,indent=2))\nprint('checked',len(r),'objects')\nPY"
+  },
+  "requester": {
+    "agent": "s42120105",
+    "name": "Userkey Analyst",
+    "doing": "I will establish Q12-Q13 (contact verification database key/client email and interpreted client/private key) from unknown.data and memory artifacts; Q14 is already taken."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T11:31:53.372Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000145/out/contact/contact/instance1/hostkeys",
+        "sha256": "05c1bb92109acc5198cdd403d5ef72a166bf0965b3a8d4083e3522c18f526be5"
+      },
+      {
+        "path": "store/jobs/j000256/out/nucleus/all-rows.json",
+        "sha256": "16d20e1a5fef7e3cbb0d7454f2a2d24c142d8a6069569d849296be42cc3387dc"
+      },
+      {
+        "path": "store/jobs/j000239/out/provider-email-contexts.json",
+        "sha256": "250ce57b2db43fa8a4516d1a315ca65d6cb07040e0375d75320913d3da6c425a"
+      },
+      {
+        "path": "store/jobs/j000242/out/targeted-ctr-validation.json",
+        "sha256": "27e031241a2c08b5e2ccc18f90e912211461f3039606cf3ac049f64bb86f11c3"
+      },
+      {
+        "path": "store/jobs/j000145/out/contact/contact/info.json",
+        "sha256": "2863eb4ed8c305e3ad0eccdc27f4deca76c2c3f063f87fd338132c79e55b04cc"
+      },
+      {
+        "path": "inputs/chall/Carmine-Falcone.raw",
+        "sha256": "3e03551e1f55dd792b0bc459b5620522d61fcf2379e8f6d89ef439fef8263cac"
+      },
+      {
+        "path": "store/jobs/j000145/out/contact/contact/instance1/contacts_polaris.db",
+        "sha256": "3e959879e783854c529e8a02fd066a1384ebde6782be5428fadba72bd6ec4b8b"
+      },
+      {
+        "path": "store/jobs/j000256/out/apex/all-rows.json",
+        "sha256": "3f98ef4835e68d60e84b5817a7d12231cbecf8200eee43eaf6805a79a9e9e5a3"
+      },
+      {
+        "path": "store/jobs/j000145/out/contact/contact/instance1/photo.dbx",
+        "sha256": "6b8c28fdd0bcc4f87d881bbd4021ac7052c58054bacc2acd6755b99ec94ad942"
+      },
+      {
+        "path": "store/jobs/j000145/out/contact/contact/instance_db/hostkeys",
+        "sha256": "7354c1f37bc0b42fb6abaa668114de19f7ec3826ad37c2230f1c3de1fbe51756"
+      },
+      {
+        "path": "store/jobs/j000249/out/metrics-field-audit.json",
+        "sha256": "7fd6ad5060ded967d357b41ec217fcde2a732e8b55d84c245ba611dd42a61f5c"
+      },
+      {
+        "path": "inputs/chall/unknown.data",
+        "sha256": "87841ce462a019649f6206c72cf65ce5305a88b828ca45996ae9422e6f578f4f"
+      },
+      {
+        "path": "store/jobs/j000145/out/contact/contact/instance_db/instance.dbx",
+        "sha256": "a013b88dd638dd1155d11e2daa9c30b4396cca9594b611735294c2926cd003b4"
+      },
+      {
+        "path": "store/jobs/j000194/out/plaintext-sqlite-search.json",
+        "sha256": "b765e6a5722da8a84f104c23e05f450b4b9ae5d3b173dec056d3efccd4b54635"
+      },
+      {
+        "path": "store/jobs/j000260/out/nucleus-hostkeys-auth.json",
+        "sha256": "d84f0a30f0bf5476e79cc97141cc25cac8da37331a5e270d42bc88234b372eaf"
+      },
+      {
+        "path": "store/jobs/j000145/out/contact/contact/instance1/config.dbx",
+        "sha256": "eb348b3f0914b0e0ed211386fd8a7fa91c0b33e48a597f7b11e1c779279a9c7b"
+      },
+      {
+        "path": "store/jobs/j000241/out/create-table-contexts.json",
+        "sha256": "fde187bedc8489dbba84579a58f3ea4e202754b3803da225b5c9704e959f11da"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000263-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T11:31:53.545Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000263",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 17,
+    "files": 15,
+    "bound": 1,
+    "manifest": "store/jobs/j000263/scope.1.json",
+    "manifest_sha256": "036c45bf8e0e0d012a920bb0cc423ba604ceb9f22de0338e64a6f5c4694eba08"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T11:31:54.275Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "94dda797adab6c74cd528b01a7f63adcc18b9e42c6e1c7e30f8b47efb5eb4816",
+    "files": 1,
+    "bytes": 3966,
+    "rejected": 0,
+    "path": "store/jobs/j000263/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}
