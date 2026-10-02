@@ -1,0 +1,311 @@
+{
+  "id": "j000145",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "import:mat-0001/7zz",
+      "job:j000067/contact.rar"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 600,
+    "network": "off",
+    "secret_output": true,
+    "command": "set -euo pipefail\nTMP=$(mktemp -d /tmp/official7zz.XXXXXX)\ncp store/imports/mat-0001/out/7zz \"$TMP/7zz\"\nchmod 700 \"$TMP/7zz\"\nmkdir -p \"$OUT/selftest/src\" \"$OUT/selftest/extracted\"\nprintf 'DFIR offline known-answer self-test\\n' > \"$OUT/selftest/src/known.txt\"\n\"$TMP/7zz\" a -bd -y \"$OUT/selftest/known.7z\" \"$OUT/selftest/src/known.txt\" > \"$OUT/selftest/create.txt\"\n\"$TMP/7zz\" t -bd \"$OUT/selftest/known.7z\" > \"$OUT/selftest/test.txt\"\n\"$TMP/7zz\" x -bd -y \"$OUT/selftest/known.7z\" -o\"$OUT/selftest/extracted\" > \"$OUT/selftest/extract.txt\"\ncmp \"$OUT/selftest/src/known.txt\" \"$OUT/selftest/extracted/known.txt\"\nprintf 'selftest_sha256=' > \"$OUT/selftest/result.txt\"; sha256sum \"$OUT/selftest/extracted/known.txt\" | awk '{print $1}' >> \"$OUT/selftest/result.txt\"\n\"$TMP/7zz\" t -bd -slt store/jobs/j000067/out/contact.rar > \"$OUT/contact-test-slt.txt\"\nmkdir -p \"$OUT/contact\"\n\"$TMP/7zz\" x -bd -y store/jobs/j000067/out/contact.rar -o\"$OUT/contact\" > \"$OUT/contact-extract.txt\"\nfind \"$OUT/contact\" -type f -printf '%P\\t%s\\n' | sort > \"$OUT/contact-files.tsv\"\nfind \"$OUT/contact\" -type f -print0 | sort -z | xargs -0 sha256sum > \"$OUT/contact-sha256.txt\"\n\"$TMP/7zz\" i > \"$OUT/7zz-info.txt\"\ncat \"$OUT/selftest/result.txt\"; tail -20 \"$OUT/contact-test-slt.txt\"; wc -l \"$OUT/contact-files.tsv\""
+  },
+  "requester": {
+    "agent": "s42120105",
+    "name": "Userkey Analyst",
+    "doing": "I will establish Q12-Q13 (contact verification database key/client email and interpreted client/private key) from unknown.data and memory artifacts; Q14 is already taken."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:21:51.420Z",
+  "reuse": {
+    "op": "command:set",
+    "objects": [
+      {
+        "path": "store/imports/mat-0001/out/7zz",
+        "sha256": "9a26e7d54bfdae8a8f1750cdb70697547b738c2334aa89f3d3f2c8645c8443fe"
+      },
+      {
+        "path": "store/jobs/j000067/out/contact.rar",
+        "sha256": "c199125c1f7596653096d31b61379b2caaa522d0a7872efd8ccc3b21638865ec"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000145-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:21:51.477Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "general",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000145",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 2,
+    "files": 2,
+    "bound": 0,
+    "manifest": "store/jobs/j000145/scope.1.json",
+    "manifest_sha256": "ce50122c7e7620a783418d2259d73c8f5c9ee2a513a7b55969e3ee1070a531f1"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:21:52.314Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "same_as": [
+    {
+      "path": "contact/contact/.DS_Store",
+      "sha256": "42a539302650da1d3025b399b960a94cc5911a9df6c0603e64a70293d3c1a7f9",
+      "bytes": 8196,
+      "job": "j000130",
+      "file": "archive/contact/.DS_Store"
+    },
+    {
+      "path": "contact/contact/._.DS_Store",
+      "sha256": "2f380f4a3d05a8d90c2106f50da75064e9ce57a598599dc5404f8f69a0223aa9",
+      "bytes": 120,
+      "job": "j000130",
+      "file": "archive/contact/._.DS_Store"
+    },
+    {
+      "path": "contact/contact/._Crashpad",
+      "sha256": "2045723dc29a3042ff84fa18851ee6b4fef6be6a4ce4ab7f5eeaf2b0b179e51a",
+      "bytes": 177,
+      "job": "j000130",
+      "file": "archive/contact/._Crashpad"
+    },
+    {
+      "path": "contact/contact/Crashpad/settings.dat",
+      "sha256": "6927a3347a532094d2b16c6699e175d4b53a1032e562af8389cba03e1df912b1",
+      "bytes": 40,
+      "job": "j000063",
+      "file": "profile/contact/Crashpad/settings.dat"
+    },
+    {
+      "path": "contact/contact/apex.sqlite3",
+      "sha256": "d207893df8d52ed73de0f2ee58f311a17b71f9c7f275017510b0075cd81680ef",
+      "bytes": 114688,
+      "job": "j000130",
+      "file": "archive/contact/apex.sqlite3"
+    },
+    {
+      "path": "contact/contact/apex.sqlite3-shm",
+      "sha256": "a1b061c0e7e93cf21cbc65d147d93faac68e0db9ac23c500946c8a2ef9bce6c4",
+      "bytes": 32768,
+      "job": "j000130",
+      "file": "archive/contact/apex.sqlite3-shm"
+    },
+    {
+      "path": "contact/contact/apex.sqlite3-wal",
+      "sha256": "f91c3619a4ed5a3c32eb60ac4917e641123349bd4e8a06d8070d437d91bab32b",
+      "bytes": 127752,
+      "job": "j000130",
+      "file": "archive/contact/apex.sqlite3-wal"
+    },
+    {
+      "path": "contact/contact/dropbox.pid",
+      "sha256": "05b28cc19c7c282b96a1ac54001c43da1b5ed79ab4f2556259c713f4dba14c32",
+      "bytes": 5,
+      "job": "j000063",
+      "file": "profile/contact/dropbox.pid"
+    },
+    {
+      "path": "contact/contact/events/store",
+      "sha256": "6b79c60b1618c51f030927d85c01dd6cb9b2b78fb9eff46fa3ec931c92b853cc",
+      "bytes": 8000000,
+      "job": "j000130",
+      "file": "archive/contact/events/store"
+    },
+    {
+      "path": "contact/contact/host.db",
+      "sha256": "b5711cff475fdb87ba00dabbf9351cada694b56a20bf9b0de60d3e53b3d11837",
+      "bytes": 77,
+      "job": "j000130",
+      "file": "archive/contact/host.db"
+    },
+    {
+      "path": "contact/contact/info.json",
+      "sha256": "2863eb4ed8c305e3ad0eccdc27f4deca76c2c3f063f87fd338132c79e55b04cc",
+      "bytes": 121,
+      "job": "j000130",
+      "file": "archive/contact/info.json"
+    },
+    {
+      "path": "contact/contact/instance1/avatarcache.db",
+      "sha256": "cfb8f46df4736c5793bf29127ff8640f02cb9a293b7fdf137e265db609ae2fd2",
+      "bytes": 12288,
+      "job": "j000130",
+      "file": "archive/contact/instance1/avatarcache.db"
+    },
+    {
+      "path": "contact/contact/instance1/config.dbx",
+      "sha256": "eb348b3f0914b0e0ed211386fd8a7fa91c0b33e48a597f7b11e1c779279a9c7b",
+      "bytes": 65536,
+      "job": "j000063",
+      "file": "profile/contact/instance1/config.dbx"
+    },
+    {
+      "path": "contact/contact/instance1/contacts_polaris.db",
+      "sha256": "3e959879e783854c529e8a02fd066a1384ebde6782be5428fadba72bd6ec4b8b",
+      "bytes": 40960,
+      "job": "j000063",
+      "file": "profile/contact/instance1/contacts_polaris.db"
+    },
+    {
+      "path": "contact/contact/instance1/home.db",
+      "sha256": "f05b1cce6e8d706e53a5c526219d07ac177c7463445c3b0c5ec60a70d179789a",
+      "bytes": 73728,
+      "job": "j000130",
+      "file": "archive/contact/instance1/home.db"
+    },
+    {
+      "path": "contact/contact/instance1/hostkeys",
+      "sha256": "05c1bb92109acc5198cdd403d5ef72a166bf0965b3a8d4083e3522c18f526be5",
+      "bytes": 81,
+      "job": "j000063",
+      "file": "profile/contact/instance1/hostkeys"
+    },
+    {
+      "path": "contact/contact/instance1/icon.db",
+      "sha256": "0e46e106bea4cfc0f49617a8cb5c1a62e7af60e04a487630ce48a7ed36595e7e",
+      "bytes": 28672,
+      "job": "j000130",
+      "file": "archive/contact/instance1/icon.db"
+    },
+    {
+      "path": "contact/contact/instance1/photo.dbx",
+      "sha256": "6b8c28fdd0bcc4f87d881bbd4021ac7052c58054bacc2acd6755b99ec94ad942",
+      "bytes": 53248,
+      "job": "j000063",
+      "file": "profile/contact/instance1/photo.dbx"
+    },
+    {
+      "path": "contact/contact/instance1/preview_cache.db",
+      "sha256": "5d6c8186d2c719300d7a2477ecbc5805d76a17e4e4f8d9ef49b84d43710c7406",
+      "bytes": 12288,
+      "job": "j000130",
+      "file": "archive/contact/instance1/preview_cache.db"
+    },
+    {
+      "path": "contact/contact/instance1/sync/nucleus.sqlite3",
+      "sha256": "4886322008145653c2c8fe6432650bbb2520127c848dbc52b7a571e751884648",
+      "bytes": 4096,
+      "job": "j000130",
+      "file": "archive/contact/instance1/sync/nucleus.sqlite3"
+    },
+    {
+      "path": "contact/contact/instance1/sync/nucleus.sqlite3-shm",
+      "sha256": "2a7f060e03d530736900602046976334f01ed8989e9d5edc78f6ccc962aeaeb6",
+      "bytes": 32768,
+      "job": "j000130",
+      "file": "archive/contact/instance1/sync/nucleus.sqlite3-shm"
+    },
+    {
+      "path": "contact/contact/instance1/sync/nucleus.sqlite3-wal",
+      "sha256": "3162b83de24f16ac798c5a123a14a75b0849c63f964032d0213285bf97f354cb",
+      "bytes": 255472,
+      "job": "j000130",
+      "file": "archive/contact/instance1/sync/nucleus.sqlite3-wal"
+    },
+    {
+      "path": "contact/contact/instance1/sync_history.db",
+      "sha256": "cf863f62c7539f2366f3220452640ecf689e009ceae211cd806c89ac515d1d61",
+      "bytes": 8192,
+      "job": "j000130",
+      "file": "archive/contact/instance1/sync_history.db"
+    },
+    {
+      "path": "contact/contact/instance1/unlink.db",
+      "sha256": "d4c3f483d3ff6e8cb8918ff23a090e56b1684e00d4053aad30b6c1d46b17438d",
+      "bytes": 376,
+      "job": "j000063",
+      "file": "profile/contact/instance1/unlink.db"
+    },
+    {
+      "path": "contact/contact/instance_db/hostkeys",
+      "sha256": "7354c1f37bc0b42fb6abaa668114de19f7ec3826ad37c2230f1c3de1fbe51756",
+      "bytes": 81,
+      "job": "j000063",
+      "file": "profile/contact/instance_db/hostkeys"
+    },
+    {
+      "path": "contact/contact/instance_db/instance.dbx",
+      "sha256": "a013b88dd638dd1155d11e2daa9c30b4396cca9594b611735294c2926cd003b4",
+      "bytes": 20480,
+      "job": "j000063",
+      "file": "profile/contact/instance_db/instance.dbx"
+    },
+    {
+      "path": "contact/contact/logs/1/1-50ff-6596cc9c.tmp",
+      "sha256": "163a1ec633eaf7f67a8ea1b2561b5597a2368dc7a7993308931fd8663f85b463",
+      "bytes": 10485760,
+      "job": "j000130",
+      "file": "archive/contact/logs/1/1-50ff-6596cc9c.tmp"
+    },
+    {
+      "path": "contact/contact/logs/1/1-93c2-6596b825",
+      "sha256": "cf245305b694273148de2ae8c995b5869893c6f2c05819c78927bf224db39adf",
+      "bytes": 57856,
+      "job": "j000063",
+      "file": "profile/contact/logs/1/1-93c2-6596b825"
+    },
+    {
+      "path": "contact/contact/logs/1/1-ba02-6596c671",
+      "sha256": "44ee4edc2cc6bfdb69c4607fcd7fa55c4fcd1027530e5aeac9fc66667f796291",
+      "bytes": 32576,
+      "job": "j000063",
+      "file": "profile/contact/logs/1/1-ba02-6596c671"
+    },
+    {
+      "path": "contact/contact/metrics/store.bin",
+      "sha256": "544053e5346ef2639f45167780a73a43da2067ab35d07c6a15724746a2936fc1",
+      "bytes": 2322,
+      "job": "j000063",
+      "file": "profile/contact/metrics/store.bin"
+    },
+    {
+      "path": "contact/contact/unlink.db",
+      "sha256": "a4e25aaaf8d85e8d8668de330c73d08b60fb1a521b87d69ddf29184a7b0b4e3e",
+      "bytes": 280,
+      "job": "j000063",
+      "file": "profile/contact/unlink.db"
+    }
+  ],
+  "outputs": {
+    "manifest_sha256": "f2063918bdd48b1cd654513f479d23cc9dd02d4e364a3c5fdd2603efc871009e",
+    "files": 44,
+    "bytes": 19485975,
+    "rejected": 0,
+    "path": "store/jobs/j000145/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

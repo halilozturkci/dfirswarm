@@ -1,0 +1,170 @@
+{
+  "at": "2026-10-02T13:20:12.001416+00:00",
+  "scope": "read-only sequential observer prefix; not atomic custody, new agent direction or gold grading",
+  "summary": {
+    "id": "s421201",
+    "state": "running",
+    "done": false,
+    "calls": 4242,
+    "tokens": 446448940,
+    "phase": "running",
+    "finishing": false,
+    "agents_dead": 0,
+    "hold": null,
+    "stop_reason": null
+  },
+  "questions": {
+    "in_scope": 14,
+    "persons": 0,
+    "unanswered": 0,
+    "proposed": 1,
+    "triage": 0,
+    "clarifications": 2,
+    "chain_ok": true
+  },
+  "leads": {
+    "open": 0,
+    "active": 0,
+    "blocked": 0,
+    "closed": 70,
+    "waiting_on_operator": 1,
+    "uncovered": 0,
+    "chain_ok": true
+  },
+  "agents": [
+    {
+      "id": "s42120100",
+      "dead": false,
+      "done": false,
+      "stalled": true,
+      "context_locked": false
+    },
+    {
+      "id": "s42120101",
+      "dead": false,
+      "done": false,
+      "stalled": false,
+      "context_locked": true
+    },
+    {
+      "id": "s42120102",
+      "dead": false,
+      "done": false,
+      "stalled": true,
+      "context_locked": false
+    },
+    {
+      "id": "s42120103",
+      "dead": false,
+      "done": false,
+      "stalled": true,
+      "context_locked": false
+    },
+    {
+      "id": "s42120104",
+      "dead": false,
+      "done": false,
+      "stalled": true,
+      "context_locked": false
+    },
+    {
+      "id": "s42120105",
+      "dead": false,
+      "done": false,
+      "stalled": true,
+      "context_locked": false
+    },
+    {
+      "id": "s42120106",
+      "dead": false,
+      "done": false,
+      "stalled": false,
+      "context_locked": false
+    },
+    {
+      "id": "s42120107",
+      "dead": false,
+      "done": false,
+      "stalled": true,
+      "context_locked": false
+    },
+    {
+      "id": "s42120108",
+      "dead": false,
+      "done": false,
+      "stalled": false,
+      "context_locked": false
+    },
+    {
+      "id": "s42120109",
+      "dead": false,
+      "done": false,
+      "stalled": true,
+      "context_locked": false
+    }
+  ],
+  "controller": "93032 03:24:06 /Library/Frameworks/Python.framework/Versions/3.12/Resources/Python.app/Contents/MacOS/Python",
+  "mirror": {
+    "run": "s421201",
+    "at": "2026-10-02T13:19:50.036488+00:00",
+    "state": "LIVE; not a final custody verdict"
+  },
+  "final_artifacts": {
+    "report.md": false,
+    "answers.json": false,
+    "timeline.md": false
+  },
+  "checkpoint_sha256": {
+    "checkpoint-report.md": "9d17d8521a37dc5fa15e3a030ecc0a33986efde36bca2a5f9ec178610f10e05d",
+    "checkpoint-reviewed-answers.json": "1c03531062257c89f0ed09b91503e0f92aedfe8a9c6b14e67bddffa01d245aae"
+  },
+  "regroup": {
+    "trace_at": "2026-10-02T13:14:51.000Z",
+    "post": 524,
+    "count": 1,
+    "legacy_questions_listed": [
+      "14"
+    ],
+    "required_gaps_from_standing_answers": [
+      "1",
+      "12",
+      "13",
+      "14"
+    ],
+    "uncited_object": "catalogue g0004 / job:j000145/selftest/known.7z",
+    "classification_records": [
+      "E-317",
+      "E-318"
+    ],
+    "new_analysis_job": false
+  },
+  "provider_error_observations": [
+    {
+      "agent": "s42120105",
+      "at": "2026-10-02T12:07:35.808Z",
+      "model": "gpt-daybreak-blue-latest",
+      "error": "Codex error: Our servers are currently overloaded. Please try again later."
+    },
+    {
+      "agent": "s42120105",
+      "at": "2026-10-02T12:09:53.771Z",
+      "model": "gpt-daybreak-blue-latest",
+      "error": "Codex error: Our servers are currently overloaded. Please try again later."
+    },
+    {
+      "agent": "s42120106",
+      "at": "2026-10-02T12:40:51.860Z",
+      "model": "gpt-daybreak-blue-latest",
+      "error": "Codex error: Our servers are currently overloaded. Please try again later."
+    },
+    {
+      "agent": "s42120107",
+      "at": "2026-10-02T11:36:51.557Z",
+      "model": "gpt-6-luna",
+      "error": "terminated"
+    }
+  ],
+  "new_source_copies": 42,
+  "selected_sources_total": 673,
+  "operator_boundary": "no agent message/hint/resource/assignment/goal/release/live code change; autonomous watchdog is existing platform behavior"
+}

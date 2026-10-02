@@ -1,0 +1,11 @@
+{
+  "recipe": "archive-members",
+  "target": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000145/out/selftest/known.7z",
+  "format": "7z",
+  "members": 1,
+  "covered": "the archive's list of members",
+  "not_covered": "member contents; archives inside the archive",
+  "limits_hit": [],
+  "errors": [],
+  "status": "complete"
+}

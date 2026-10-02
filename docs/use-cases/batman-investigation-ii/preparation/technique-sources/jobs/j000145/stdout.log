@@ -1,0 +1,22 @@
+selftest_sha256=2cc07e49d580a4c72d824600fe488e2680ea824047b4d0775cc668c23e5f4932
+
+Testing archive: store/jobs/j000067/out/contact.rar
+--
+Path = store/jobs/j000067/out/contact.rar
+Type = Rar5
+Physical Size = 1732132
+Characteristics = Locator QuickOpen:1731355
+Encrypted = -
+Solid = -
+Blocks = 49
+Method = v6:16M:m0:m3
+Multivolume = -
+Volumes = 1
+
+Everything is Ok
+
+Folders: 17
+Files: 32
+Size:       19471004
+Compressed: 1732132
+32 /Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000145/contact-files.tsv

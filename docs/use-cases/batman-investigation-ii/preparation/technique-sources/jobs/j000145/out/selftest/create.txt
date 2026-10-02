@@ -1,0 +1,15 @@
+
+7-Zip (z) 26.03 (arm64) : Copyright (c) 1999-2026 Igor Pavlov : 2026-09-03
+ 64-bit arm_v:8-A locale=C.UTF-8 Threads:2 OPEN_MAX:4096, ASM
+
+Scanning the drive:
+1 file, 36 bytes (1 KiB)
+
+Creating archive: /Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000145/selftest/known.7z
+
+Add new data to archive: 1 file, 36 bytes (1 KiB)
+
+
+Files read from disk: 1
+Archive size: 162 bytes (1 KiB)
+Everything is Ok
