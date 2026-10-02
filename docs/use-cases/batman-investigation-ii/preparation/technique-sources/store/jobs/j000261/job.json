@@ -1,0 +1,127 @@
+{
+  "id": "j000261",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000109",
+      "job:j000078/file.0xab0b138c5bc0.0xab0b0d5e4230.DataSectionObject.bruce.kdbx.dat",
+      "job:j000105/match.json",
+      "job:j000107/database.xml",
+      "job:j000107/entries.json",
+      "job:j000010/relevant.txt",
+      "job:j000015/dlllist3768.txt",
+      "job:j000015/filescan.txt"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "independent": true,
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport os,json,pathlib,hashlib,struct,gzip,xml.etree.ElementTree as ET\nimport Crypto,pefile\nfrom Crypto.Cipher import AES\nout=pathlib.Path(os.environ['OUT']);kp=pathlib.Path('store/jobs/j000109/out/file.0xab0b0e210cf0.0xab0b0b383650.ImageSectionObject.KeePass.exe.img');pe=pefile.PE(str(kp));vs={}\nfor group in pe.FileInfo:\n for fi in group:\n  for table in getattr(fi,'StringTable',[]):\n   vs.update({k.decode():v.decode() for k,v in table.entries.items()})\nkdbx=pathlib.Path('store/jobs/j000078/out/file.0xab0b138c5bc0.0xab0b0d5e4230.DataSectionObject.bruce.kdbx.dat');b=kdbx.read_bytes();assert b[:8]==bytes.fromhex('03d9a29a67fb4bb5');pos=12;f={}\nwhile True:\n tag=b[pos];n=struct.unpack_from('<H',b,pos+1)[0];f[tag]=b[pos+3:pos+3+n];pos+=3+n\n if tag==0:break\npw=json.load(open('store/jobs/j000105/out/match.json'))['matches'];assert len(pw)==1\nrounds=int.from_bytes(f[6],'little')\ndef key(p):\n x=hashlib.sha256(hashlib.sha256(p.encode('utf-8')).digest()).digest();a=AES.new(f[5],AES.MODE_ECB)\n for _ in range(rounds):x=a.encrypt(x)\n return hashlib.sha256(f[4]+hashlib.sha256(x).digest()).digest()\nk=key(pw[0]);dec=AES.new(k,AES.MODE_CBC,f[7]).decrypt(b[pos:pos+32]);assert dec==f[9]\nrival=key(pw[0]+'!');assert AES.new(rival,AES.MODE_CBC,f[7]).decrypt(b[pos:pos+32])!=f[9]\nend=len(b.rstrip(b'\\0'));end=pos+((end-pos+15)//16)*16;d=AES.new(k,AES.MODE_CBC,f[7]).decrypt(b[pos:end]);q=32;parts=[];checks=[]\nwhile True:\n idx=int.from_bytes(d[q:q+4],'little');h=d[q+4:q+36];n=int.from_bytes(d[q+36:q+40],'little');z=d[q+40:q+40+n];q+=40+n\n if n==0:break\n assert hashlib.sha256(z).digest()==h;parts.append(z);checks.append({'index':idx,'length':n,'hash_valid':True})\np=b''.join(parts);p=gzip.decompress(p) if int.from_bytes(f[3],'little')==1 else p;root=ET.fromstring(p);xml_peer=pathlib.Path('store/jobs/j000107/out/database.xml').read_bytes();digest=hashlib.md5(pw[0].encode('utf-8')).hexdigest();entries=json.load(open('store/jobs/j000107/out/entries.json'))\nvt=pathlib.Path('store/jobs/j000109/out/version-strings.txt').read_bytes();process=pathlib.Path('store/jobs/j000010/out/relevant.txt').read_text();modules=pathlib.Path('store/jobs/j000015/out/dlllist3768.txt').read_text();files=pathlib.Path('store/jobs/j000015/out/filescan.txt').read_text();dump=pathlib.Path('store/jobs/j000109/out/dump.txt').read_text()\nresult={'pefile_version':pefile.__version__,'Crypto_version':Crypto.__version__,'product':vs.get('ProductName'),'product_version':vs.get('ProductVersion'),'file_version':vs.get('FileVersion'),'original_filename':vs.get('OriginalFilename'),'resource_output_locators':{v:vt.find(v.encode()) for v in ['KeePass Password Safe 2','2.53.1']},'process_rows':[l for l in process.splitlines() if '3768' in l],'module_rows':[l for l in modules.splitlines() if 'KeePass.exe' in l],'file_object_rows':[l for l in files.splitlines() if '0xab0b0e210cf0' in l or 'bruce.kdbx' in l],'dump_rows':dump.splitlines(),'KDBX_size':len(b),'transform_rounds':rounds,'candidate_count':len(pw),'candidate_verifier_valid':True,'altered_candidate_verifier_valid':False,'hashed_blocks':checks,'authenticated_XML_matches_peer':p==xml_peer,'XML_root':root.tag,'MD5_UTF8':digest,'MD5_matches_metadata':digest==entries['password_md5']}\njson.dump(result,open(out/'q3-independent-review.json','w'),indent=2);print(json.dumps(result,indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120103",
+    "name": "Wallet history",
+    "doing": "Investigating Q7 and Q8: password-protected archive and original file hashes; avoiding peers' wallet work."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T11:26:36.874Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000109/out",
+        "dir": true
+      },
+      {
+        "path": "store/jobs/j000010/out/relevant.txt",
+        "sha256": "524581502840a200d471ab7ebc72296ac6b85a016a588c374037f70c96af48b1"
+      },
+      {
+        "path": "store/jobs/j000107/out/entries.json",
+        "sha256": "5e1e941774aad60e462d6af2bfd94d9f65e84e28f47030d062583d1f68da0c6b"
+      },
+      {
+        "path": "store/jobs/j000105/out/match.json",
+        "sha256": "62bf67ef745b055f697a77272b365d4a73ec5906695363960e0d373174dbef6c"
+      },
+      {
+        "path": "store/jobs/j000078/out/file.0xab0b138c5bc0.0xab0b0d5e4230.DataSectionObject.bruce.kdbx.dat",
+        "sha256": "7b55391c40b18b8a9afc43dff0c9814ba6bc0e6566358aa994ff93da76b5e220"
+      },
+      {
+        "path": "store/jobs/j000015/out/dlllist3768.txt",
+        "sha256": "b565db393966f5cc63c963c0f3445bc8d28da2f6cc10a678fe0bfa78642b64b9"
+      },
+      {
+        "path": "store/jobs/j000107/out/database.xml",
+        "sha256": "cc48c96b02281ae7e441f0dafa2594809793634b59b4c28e0116e9e7be109144"
+      },
+      {
+        "path": "store/jobs/j000015/out/filescan.txt",
+        "sha256": "fc34814d15a1ce92e7701e18fd2e2cf707d384bf250cd204089a7b70ac9d1220"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000261-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T11:26:36.951Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000109/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000261",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 8,
+    "files": 7,
+    "bound": 1,
+    "manifest": "store/jobs/j000261/scope.1.json",
+    "manifest_sha256": "e53dbfee1cb73bc996c19db6f2fc7fc01237fe401a097a089e27be2aeb1a86bc"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T11:26:37.860Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "c6527f8550293c52733489634731e61ff322d096fe8d315c91f045f2fdf6e43c",
+    "files": 1,
+    "bytes": 14799,
+    "rejected": 0,
+    "path": "store/jobs/j000261/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

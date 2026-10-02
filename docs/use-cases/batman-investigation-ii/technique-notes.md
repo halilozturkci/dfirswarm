@@ -194,3 +194,13 @@ Her taslakta zaman çizelgesi, kaynak kimlikleri, ilk yanlış/eksik iddia, düz
 Her yeni yöntem için: kimlik/tarih, ajan/model, çözmeye çalıştığı sorun, önceki yaklaşımın neden yetmediği, gözlenen uygulama adımları, job/board/ledger/trace kaynakları ve hashleri, pozitif/negatif kontroller, başarısız denemeler, diğer ajanların gerçekten yeniden türettiği kısım, operatör girdisine bağımlılık, ispatlanan sonuç, ispatlanmayan iddia, olası özgün katkı ve blog görseli.
 
 Son çıktılar dondurulduktan sonra tekniklerin nihai cevaplarla ilişkisi ve literatür/araç dokümanlarında öncülleri ayrıca araştırılmalı. Bu araştırmanın sonuçları ajanlara geri gönderilmez; gözlem deneyi değiştirilmez.
+
+## 11:28 heartbeat — pozitif ve negatif kontrolle Q3 yeniden türetmesi
+
+s03 Sol, E255/j261 ile s06'nın Q3 sonucunu yeni bir source-first critic rotasında inceledi. PE resource parser `2.53.1.0` sürümünü okudu; önceki resource text `2.53.1` biçimindeydi. Koşu içindeki filename/process/module/FILE_OBJECT attribution'ı kontrol edildi. Önceden kayıtlı tek parola adayıyla KDBX3'ün 60,000 AES transform round'u yeniden uygulandı; 32-byte stream-start verifier ve 3,474-byte nonempty block'un SHA256 kontrolü geçti. Gzip/XML çıktısı önceki decoded XML ile byte eşitti; değiştirilmiş aday stream-start verifier'dan geçmedi. Bu bir yeni password araması değil, aynı evidence-derived adayın ayrı uygulamayla doğrulanmasıdır; format/kripto bilinen yöntemlerdir.
+
+E183'e s03'ün 11:27:45 UTC attesti `strength=established`, cap yok şeklinde gerçekten append edildi; hash `945fff7a9b0c783321e0e7fc2f598980df4420d053de56449d3c80fe18ea0766`. Bu, s09'un eski capped review'unun kendiliğinden değiştiği anlamına gelmez. Aynı answer'a farklı critic ile yeni doğrulama eklendi. T06 blog anlatısına güçlü örnek: yalnız önceki JSON'daki başarı alanına onay vermek yerine PE/KDBX kaynak bytes'ı, olumlu format doğrulaması ve değişmiş-aday negatif kontrolü.
+
+T10 takip sınırı: opaque nucleus config değeri j260/E254'te ASCII ve decoded biçimleriyle sınırlı 192 key derivation/packet testine alındı, zero authentication kaydedildi. Bilinmeyen serializer/codec yüzünden rolü hâlâ açık; bu sonuç bütün olası DBX mimarilerini dışlamaz ve yeni key keşfi değildir.
+
+Kaynaklar: j260 `nucleus-hostkeys-auth.json`; j261 tam `q3-independent-review.json`, job komutu/manifest/stdout/stderr; E254/E255; E183'ün s03 attesti; pano #371/#376/#378. Q12 C3/R4 soru açıklaması isteği ile Q6 C2/R3 ve codec R2 hâlâ pending. Yeni operatör mesajı veya araç girdisi yok; tam14/flag doğrulanmadı.

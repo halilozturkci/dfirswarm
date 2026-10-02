@@ -1,0 +1,65 @@
+{
+  "heartbeat": "2026-10-02T11:28:45.101Z",
+  "observed_at": "2026-10-02T11:32:40.309895+00:00",
+  "run": "s421201",
+  "state": "running",
+  "done": false,
+  "calls": 2619,
+  "tokens": 258052854,
+  "questions_summary": {
+    "in_scope": 14,
+    "persons": 0,
+    "unanswered": 3,
+    "proposed": 0,
+    "triage": 0,
+    "clarifications": 2,
+    "chain_ok": true
+  },
+  "q3_attestation": {
+    "seq": 183,
+    "by": "s42120103",
+    "at": "2026-10-02T11:27:45.324Z",
+    "strength": "established",
+    "capped": null,
+    "hash": "945fff7a9b0c783321e0e7fc2f598980df4420d053de56449d3c80fe18ea0766"
+  },
+  "pending_requests": [
+    {
+      "rid": "R-2",
+      "id": null,
+      "title": "Identify Dropbox DBX 4096-byte page codec from plaintext header and 12-byte reserve",
+      "at": "2026-10-02T10:48:47.511Z",
+      "questions": [
+        "Q-12",
+        "Q-13"
+      ]
+    },
+    {
+      "rid": "R-3",
+      "id": "C-2",
+      "title": "Q-6: clarification C-2",
+      "at": "2026-10-02T10:58:14.755Z",
+      "questions": [
+        "Q-6"
+      ]
+    },
+    {
+      "rid": "R-4",
+      "id": "C-3",
+      "title": "Q-12: clarification C-3",
+      "at": "2026-10-02T11:28:07.370Z",
+      "questions": [
+        "Q-12"
+      ]
+    }
+  ],
+  "final_files": {
+    "work/answers.json": false,
+    "work/report.md": false,
+    "work/timeline.md": false
+  },
+  "controller_alive": true,
+  "agents_intervened": false,
+  "solution_read": false,
+  "new_source_copies": 18
+}

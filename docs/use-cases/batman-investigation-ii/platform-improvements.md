@@ -45,3 +45,5 @@ Q3 kaynak incelemesinden sonra E240 → E246 → E249 → E252 coverage düzeltm
 Geliştirme adayı: `appended:false` cevabında mevcut review gücü, güncel başvuru için hesaplanan cap sebepleri ve bunlara bağlı source/coverage kimliklerini operatör panelinde birlikte görünür kılmak. Aynı koşuyu geçmiş kapsamıyla yeniden kurabilmek için evaluation snapshot'ı saklamak. Yeni reviewer atamasını otomatikleştirmek ya da ajanlara yol göstermek önerilmiyor.
 
 Diğer somut olay: j224 timed-out olurken 83,036 artifact/3.7 GB üretti; ajan E220'de bunları bozuk score'un ürünü olarak reddetti. Artifact fan-out/byte hızının timeout ve manifest tamlığıyla aynı üst görünümde sunulması kayıt/kaynak ölçümü açısından adaydır. Bu gözlemden keyfi iş durdurma, otomatik delil silme ya da analitik başarı sınıflaması çıkarılmaz.
+
+11:28 takip: s03'ün ayrı source-first E183 review'u 11:27:45'te gerçekten `established`/capsiz append edildi (j261/E255). Aynı answer için yeni reviewer rotası başarılı oldu; önceki s09 review'unun otomatik upgrade olduğu iddia edilmez. Duplicate cevabından tüm ledger review'larının kilitlendiği sonucu çıkarılmamalı.

@@ -1,0 +1,97 @@
+{
+  "id": "j000260",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000256/nucleus/all-rows.json",
+      "job:j000145/contact/contact/instance1/hostkeys",
+      "job:j000145/contact/contact/instance_db/hostkeys"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "cat > /tmp/nucleus_packet.py <<'PY'\nimport json,base64,hashlib,ctypes,glob,os\nfrom Crypto.Cipher import AES\nD=json.load(open('store/jobs/j000256/out/nucleus/all-rows.json'))\nb=bytes.fromhex(D['committed_snapshot']['config']['rows'][0][1]['blob_hex'])\ns=b[43:].decode('ascii'); raw=base64.urlsafe_b64decode(s+'==')\nH=[open('store/jobs/j000145/out/contact/contact/instance1/hostkeys','rb').read(),open('store/jobs/j000145/out/contact/contact/instance_db/hostkeys','rb').read()]\nso=ctypes.CDLL(glob.glob('/opt/dfir/venv/lib/python3.11/site-packages/pyzmq.libs/libsodium*.so*')[0]); so.sodium_init()\nsecret=so.crypto_secretbox_open_easy; secret.restype=ctypes.c_int\nsealopen=so.crypto_box_seal_open; sealopen.restype=ctypes.c_int\nscalarmult=so.crypto_scalarmult_base; scalarmult.restype=ctypes.c_int\nO=[]\ndef add(n,k):\n if k not in [x[1] for x in O]: O.append((n,k))\nfor pfx,p in [('ascii',s.encode()),('decoded',raw)]:\n add(pfx+'-sha256',hashlib.sha256(p).digest()); add(pfx+'-sha384',hashlib.sha384(p).digest()); add(pfx+'-sha512',hashlib.sha512(p).digest()); add(pfx+'-blake2s',hashlib.blake2s(p).digest()); add(pfx+'-blake2b',hashlib.blake2b(p).digest()); add(pfx+'-rawzero',p.ljust(64,b'\\0')[:64])\n for salt in [b'',b'dropbox',b'Dropbox',b'hostkeys',b'userkey']:\n  for a in ['sha1','sha256','sha512']:\n   for it in [1,1000,10000,65536,100000,256000]: add(f'{pfx}-pbkdf2-{a}-{salt!r}-{it}',hashlib.pbkdf2_hmac(a,p,salt,it,64))\nR=[]\nfor kn,k in O:\n for kl in [32,48,64]:\n  if len(k)<kl: continue\n  for order in ['tagfirst','taglast']:\n   for aad in [False,True]:\n    ps=[]; ok=True\n    for z in H:\n     x=z[1:]; tag,ct=(x[:16],x[16:]) if order=='tagfirst' else (x[-16:],x[:-16])\n     try:\n      c=AES.new(k[:kl],AES.MODE_SIV)\n      if aad:c.update(z[:1])\n      ps.append(c.decrypt_and_verify(ct,tag).hex())\n     except: ok=False; break\n    if ok:R.append({'kdf':kn,'alg':'AES-SIV','keylen':kl,'order':order,'aad_version':aad,'plain':ps})\n if len(k)>=32:\n  key=k[:32]; ps=[];ok=True\n  for z in H:\n   x=z[1:];out=ctypes.create_string_buffer(len(x)-16);rc=secret(out,ctypes.c_char_p(x),len(x),ctypes.c_char_p(b'\\0'*24),ctypes.c_char_p(key))\n   if rc:ok=False;break\n   ps.append(out.raw.hex())\n  if ok:R.append({'kdf':kn,'alg':'XSalsa20-Poly1305-zero24','plain':ps})\n  sk=ctypes.create_string_buffer(key);pk=ctypes.create_string_buffer(32);scalarmult(pk,sk);ps=[];ok=True\n  for z in H:\n   x=z[1:];out=ctypes.create_string_buffer(len(x)-48);rc=sealopen(out,ctypes.c_char_p(x),len(x),pk,sk)\n   if rc:ok=False;break\n   ps.append(out.raw.hex())\n  if ok:R.append({'kdf':kn,'alg':'Curve25519-SealedBox','plain':ps})\nout={'candidate_source':'nucleus committed config key 1 protobuf field 2','ascii_length':len(s),'decoded_length':len(raw),'derivations':len(O),'authenticated_matches':R}\nprint('derivations',len(O),'authenticated',len(R));open(os.environ['OUT']+'/nucleus-hostkeys-auth.json','w').write(json.dumps(out,indent=2))\nPY\npython3 /tmp/nucleus_packet.py"
+  },
+  "requester": {
+    "agent": "s42120105",
+    "name": "Userkey Analyst",
+    "doing": "I will establish Q12-Q13 (contact verification database key/client email and interpreted client/private key) from unknown.data and memory artifacts; Q14 is already taken."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T11:24:08.476Z",
+  "reuse": {
+    "op": "command:cat",
+    "objects": [
+      {
+        "path": "store/jobs/j000145/out/contact/contact/instance1/hostkeys",
+        "sha256": "05c1bb92109acc5198cdd403d5ef72a166bf0965b3a8d4083e3522c18f526be5"
+      },
+      {
+        "path": "store/jobs/j000256/out/nucleus/all-rows.json",
+        "sha256": "16d20e1a5fef7e3cbb0d7454f2a2d24c142d8a6069569d849296be42cc3387dc"
+      },
+      {
+        "path": "store/jobs/j000145/out/contact/contact/instance_db/hostkeys",
+        "sha256": "7354c1f37bc0b42fb6abaa668114de19f7ec3826ad37c2230f1c3de1fbe51756"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000260-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T11:24:08.631Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000260",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 3,
+    "files": 3,
+    "bound": 0,
+    "manifest": "store/jobs/j000260/scope.1.json",
+    "manifest_sha256": "d4a8768e9661d9d3dbab1fb67edbf14b9f83df88d06544115d722434068fbcf1"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T11:24:15.806Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "12a0b2e1a02016a70285f8ea7297be889d7d9535274510f65a2deb4960c958b2",
+    "files": 1,
+    "bytes": 174,
+    "rejected": 0,
+    "path": "store/jobs/j000260/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

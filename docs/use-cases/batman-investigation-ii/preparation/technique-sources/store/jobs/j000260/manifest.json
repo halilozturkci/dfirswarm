@@ -1,0 +1,1 @@
+{"v":1,"job":"j000260","attempt":1,"sealed_at":"2026-10-02T11:24:15.829Z","files":[{"path":"nucleus-hostkeys-auth.json","path_b64":"bnVjbGV1cy1ob3N0a2V5cy1hdXRoLmpzb24=","bytes":174,"sha256":"d84f0a30f0bf5476e79cc97141cc25cac8da37331a5e270d42bc88234b372eaf","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":174}}
