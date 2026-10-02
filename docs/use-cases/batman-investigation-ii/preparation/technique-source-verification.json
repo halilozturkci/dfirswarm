@@ -1,6 +1,6 @@
 {
   "run": "s421201",
-  "at": "2026-10-02T15:59:15.321682+00:00",
+  "at": "2026-10-02T16:00:50.215673+00:00",
   "scope": "selected observer sources and staged human notes; not final complete run/Pi/custody",
   "indexed_copies_verified": 1281,
   "indexed_jobs": 132,
@@ -22,8 +22,8 @@
   "authentication_literal_scan": {
     "active_values": 13,
     "hits": 0,
-    "files": 1299,
-    "scanned_bytes_including_decompressed_text": 246492119,
+    "files": 1295,
+    "scanned_bytes_including_decompressed_text": 246219921,
     "values_emitted": false
   },
   "git_inventory_verification": {
@@ -36,7 +36,7 @@
     ],
     "indexed_staged_blobs_verified": 1281,
     "all_staged_paths_within_case": true,
-    "staged_paths_at_verification": 38,
+    "staged_paths_at_verification": 2,
     "ignored_logs_and_gzip_included": true
   },
   "analytical_success": false,

@@ -31100,5 +31100,18 @@
       "source_main": "3e33c630927391ce0474942e1f8705a616cbff38",
       "full_final_archive_complete": false
     }
+  ],
+  "observer_snapshot_aliases": [
+    {
+      "copy": "preparation/heartbeat-2026-10-02T154615Z.json",
+      "bytes": 10854,
+      "sha256": "738987a5a909c0d126c982d2b1450a116a340b85ac571f447cce2423266351e7",
+      "at": "2026-10-02T15:54:33.577906+00:00",
+      "primary": "preparation/heartbeat-2026-10-02T154616Z.json",
+      "role": "same sequential observer acquisition before adding the two pinned platform-source copies; inherited helper filename label differs from heartbeat second",
+      "independent_runtime_acquisition": false,
+      "retention": "complete generated observer snapshot preserved; no source truncation",
+      "source_count_before_addendum": 1279
+    }
   ]
 }
