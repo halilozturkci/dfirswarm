@@ -1,0 +1,27 @@
+{
+  "version": "independent Python3 structural reader; pefile 2024.8.26",
+  "go_nfunc": 2549,
+  "xor_function": {
+    "start": 10120544,
+    "end": 10120800,
+    "name": ""
+  },
+  "function_file_start": 942944,
+  "function_file_end": 943200,
+  "function_hex": "493b66100f86cc000000554889e54883ec5848895c24704889442468900f1f00e83b42faff4885ff752948895c2430488944244090488d05a4e900004889d990e8bb3bf6ff488b542440488b4c243031dbeb1e31c031db4889f94889f74883c4585dc30fb6341a83f6334088341848ffc34839d97fed4889442450488b442468488b5c2470e856a0faff488944244848895c243890488b4c2450488b7c24304889fe41b8a4010000e85345faff4885c074104889c14889df31c031db4883c4585dc3488b442448488b5c243831c931ff4883c4585dc3488944240848895c2410e8dbb7f7ff488b442408488b5c2410e90cffffffcccccccccccccccccccccccc",
+  "xor_loop_offset": 943043,
+  "loop_hex": "0fb6341a83f6334088341848ffc34839d97fed",
+  "candidate_direct_callers": [
+    {
+      "offset": 944560,
+      "va": 10122160,
+      "owner": {
+        "start": 10121760,
+        "end": 10122460,
+        "name": ""
+      },
+      "context_offset": 944536,
+      "context_hex": "39f37e5f48897424384889442470488b08488b58084889c8e8abf9ffff4885c9740c488b4c24684c8b442438ebb5488b"
+    }
+  ]
+}

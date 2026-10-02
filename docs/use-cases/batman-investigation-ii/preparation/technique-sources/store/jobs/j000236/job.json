@@ -1,0 +1,74 @@
+{
+  "id": "j000236",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "command": "cat /etc/dfirswarm/tools.md > \"$OUT/tool-inventory.txt\"; for n in llvm-objdump llvm-objdump-19 llvm-objdump-14 r2 radare2 ndisasm go; do command -v \"$n\" || true; done; python3 - <<'PY'\nimport importlib.util\nfor n in ['iced_x86','distorm3','lief']:print(n,bool(importlib.util.find_spec(n)))\nPY"
+  },
+  "requester": {
+    "agent": "s42120103",
+    "name": "Wallet history",
+    "doing": "Investigating Q7 and Q8: password-protected archive and original file hashes; avoiding peers' wallet work."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T11:03:52.268Z",
+  "reuse": {
+    "op": "command:cat",
+    "objects": []
+  },
+  "worker": "dfs-s421201-job-j000236-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T11:03:52.296Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000236",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 0,
+    "files": 0,
+    "bound": 0,
+    "manifest": "store/jobs/j000236/scope.1.json",
+    "manifest_sha256": "eb130715395c92c84f4ac9c992a8fcd8ab942de36bce3c2bb9afba301b955282"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T11:03:53.002Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "da5a44896cd17a9c6991822f790d09b3baa25c6e51fea9866cc2b07806d5e111",
+    "files": 1,
+    "bytes": 9051,
+    "rejected": 0,
+    "path": "store/jobs/j000236/out"
+  }
+}

@@ -1,0 +1,94 @@
+{
+  "id": "j000230",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000223/file.0xab0b0d34fe90.0xab0b106cf320.ImageSectionObject.services.exe.img",
+      "job:j000227/services-ascii.jsonl"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "command": "python3 - <<'PY'\nimport json, pathlib, hashlib, subprocess, os\np=pathlib.Path('store/jobs/j000223/out/file.0xab0b0d34fe90.0xab0b106cf320.ImageSectionObject.services.exe.img')\nb=p.read_bytes(); out=pathlib.Path(os.environ['OUT'])\nres={'path':str(p),'size':len(b),'sha256':hashlib.sha256(b).hexdigest(),'targets':{}}\nneedles=[b'exodus.wallet',b'172.30.145.189:6969',b'seed.seco',b'storage.seco',b'0x33']\nfor n in needles:\n offs=[]; pos=0\n while True:\n  pos=b.find(n,pos)\n  if pos<0: break\n  offs.append(pos); pos+=1\n res['targets'][n.decode()]={'file_offsets':offs}\ntry:\n import pefile\n pe=pefile.PE(data=b,fast_load=False); ib=pe.OPTIONAL_HEADER.ImageBase\n res['image_base']=ib; res['entry_rva']=pe.OPTIONAL_HEADER.AddressOfEntryPoint\n secs=[]\n for s in pe.sections: secs.append({'name':s.Name.rstrip(b'\\0').decode('ascii','replace'),'va':s.VirtualAddress,'vsize':s.Misc_VirtualSize,'raw':s.PointerToRawData,'rawsize':s.SizeOfRawData,'chars':s.Characteristics})\n res['sections']=secs\n def off2rva(o):\n  for s in pe.sections:\n   if s.PointerToRawData <= o < s.PointerToRawData+max(s.SizeOfRawData,s.Misc_VirtualSize): return s.VirtualAddress+(o-s.PointerToRawData)\n for k,v in res['targets'].items(): v['rvas']=[off2rva(o) for o in v['file_offsets']]\n try:\n  from capstone import Cs,CS_ARCH_X86,CS_MODE_64\n  from capstone.x86 import X86_OP_MEM,X86_OP_IMM,X86_REG_RIP\n  md=Cs(CS_ARCH_X86,CS_MODE_64); md.detail=True; refs=[]; ranges=[]\n  for k,v in res['targets'].items():\n   for r,o in zip(v['rvas'],v['file_offsets']):\n    if r is not None: ranges.append((ib+r,ib+r+len(k),k,o))\n  for s in pe.sections:\n   if not (s.Characteristics & 0x20000000): continue\n   raw=b[s.PointerToRawData:s.PointerToRawData+s.SizeOfRawData]; base=ib+s.VirtualAddress\n   for ins in md.disasm(raw,base):\n    vals=[]\n    for op in ins.operands:\n     if op.type==X86_OP_MEM and op.mem.base==X86_REG_RIP: vals.append(ins.address+ins.size+op.mem.disp)\n     elif op.type==X86_OP_IMM: vals.append(op.imm)\n    for val in vals:\n     for lo,hi,k,o in ranges:\n      if lo<=val<hi: refs.append({'target':k,'target_file_offset':o,'insn_va':ins.address,'insn_file_offset':s.PointerToRawData+(ins.address-base),'mnemonic':ins.mnemonic,'op_str':ins.op_str,'resolved':val})\n  res['capstone_available']=True; res['direct_xrefs']=refs\n except Exception as e: res['capstone_available']=False; res['capstone_error']=repr(e)\nexcept Exception as e: res['pefile_error']=repr(e)\nfor cmd,name in [(['file',str(p)],'file.txt'),(['objdump','-x',str(p)],'objdump-x.txt'),(['go','version','-m',str(p)],'go-version-m.txt')]:\n try:\n  q=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=60); (out/name).write_text(q.stdout); res.setdefault('commands',{})[name]={'rc':q.returncode}\n except Exception as e: (out/name).write_text(repr(e))\n(out/'static-map.json').write_text(json.dumps(res,indent=2)); print(json.dumps(res,indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120106",
+    "name": "Vault Artifact Analyst",
+    "doing": "Establishing Q3-Q4: password-manager identity/version and password, plus the deleted stored user key."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:59:31.406Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000227/out/services-ascii.jsonl",
+        "sha256": "cec9e98eb7f0cc484884775ceeee43300eaeaf085a84aa3167cd66b6e3e46227"
+      },
+      {
+        "path": "store/jobs/j000223/out/file.0xab0b0d34fe90.0xab0b106cf320.ImageSectionObject.services.exe.img",
+        "sha256": "fa77c2c1076f47055a0a37a08e29eb88238489a3ca74ccd6b5187f31218b0cea"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000230-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:59:31.490Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000230",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 2,
+    "files": 2,
+    "bound": 0,
+    "manifest": "store/jobs/j000230/scope.1.json",
+    "manifest_sha256": "9e9de498f26bbf481987d83c1e81d84bf69e1a60fe0de4c4c370612a67055d51"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:59:32.422Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "3533ddeca410df9d238e6b4598d587bf509104f5877e11a6c20d47ed25024571",
+    "files": 4,
+    "bytes": 3540,
+    "rejected": 0,
+    "path": "store/jobs/j000230/out"
+  },
+  "sensitive": {
+    "why": "derived",
+    "from": [
+      "j000223",
+      "j000227"
+    ],
+    "note": "made from the sensitive output of j000223, j000227: every output it sealed is sensitive"
+  }
+}

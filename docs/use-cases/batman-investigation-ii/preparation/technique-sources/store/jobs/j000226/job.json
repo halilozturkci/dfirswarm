@@ -1,0 +1,85 @@
+{
+  "id": "j000226",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/Carmine-Falcone.raw"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 900,
+    "network": "off",
+    "command": "python3 - <<'PY'\nimport mmap,os,struct,json,time\nfrom pathlib import Path\nsrc=Path('inputs/chall/Carmine-Falcone.raw')\nout=Path(os.environ['OUT'])\nMACH={0x14c:'i386',0x8664:'amd64',0xaa64:'arm64',0x1c0:'arm',0x1c4:'armnt'}\ngo_needle=b'\\xff Go buildinf:'\nendpoint=b'172.30.145.189:6969'\nstart=time.time(); mz_count=pe_count=bad_count=0; marker_offsets=[]; endpoint_offsets=[]; candidates=[]\nwith src.open('rb') as f:\n mm=mmap.mmap(f.fileno(),0,access=mmap.ACCESS_READ); n=len(mm)\n if hasattr(mm,'madvise') and hasattr(mmap,'MADV_SEQUENTIAL'):\n  try: mm.madvise(mmap.MADV_SEQUENTIAL)\n  except OSError: pass\n pos=0\n while True:\n  p=mm.find(b'MZ',pos)\n  if p<0: break\n  pos=p+1; mz_count+=1\n  if p+64>n: continue\n  try:\n   e=struct.unpack_from('<I',mm,p+0x3c)[0]\n   if e<64 or e>0x1000000: continue\n   q=p+e\n   if q+24>n or mm[q:q+4]!=b'PE\\0\\0': continue\n   machine,nsec,ts,ptrsym,nsyms,opt_size,chars=struct.unpack_from('<HHIIIHH',mm,q+4)\n   if not 1<=nsec<=96 or not 96<=opt_size<=4096 or q+24+opt_size+nsec*40>n: continue\n   opt=q+24; magic=struct.unpack_from('<H',mm,opt)[0]\n   if magic==0x10b:\n    imagebase=struct.unpack_from('<I',mm,opt+28)[0]\n   elif magic==0x20b:\n    imagebase=struct.unpack_from('<Q',mm,opt+24)[0]\n   else: continue\n   entry=struct.unpack_from('<I',mm,opt+16)[0]; sec_align=struct.unpack_from('<I',mm,opt+32)[0]; file_align=struct.unpack_from('<I',mm,opt+36)[0]\n   image_size=struct.unpack_from('<I',mm,opt+56)[0]; hdr_size=struct.unpack_from('<I',mm,opt+60)[0]\n   if not 0x1000<=image_size<=0x40000000 or hdr_size>image_size or hdr_size>0x100000 or sec_align==0 or file_align==0: continue\n   if image_size%sec_align!=0: continue\n   sects=[]; plausible=True; sh=opt+opt_size\n   for i in range(nsec):\n    z=sh+i*40; rawname=bytes(mm[z:z+8]).split(b'\\0',1)[0]\n    if any(c<32 or c>126 for c in rawname): plausible=False; break\n    name=rawname.decode('ascii','replace')\n    vsize,rva,rawsize,rawptr=struct.unpack_from('<IIII',mm,z+8)\n    if rva>=image_size or (vsize and vsize>image_size): plausible=False; break\n    sects.append({'name':name,'rva':rva,'virtual_size':vsize,'raw_size':rawsize})\n   if not plausible: continue\n   pe_count+=1\n   span_end=min(n,p+image_size)\n   sec_names=[x['name'] for x in sects]\n   go_secs=[x for x in sec_names if any(t in x.lower() for t in ('gopcln','gosym','go.build'))]\n   ginfo=[]; x=mm.find(go_needle,p,span_end)\n   while x>=0:\n    ginfo.append(x); x=mm.find(go_needle,x+1,span_end)\n   ehit=[]; x=mm.find(endpoint,p,span_end)\n   while x>=0:\n    ehit.append(x); x=mm.find(endpoint,x+1,span_end)\n   candidates.append({'offset':p,'pe_header_offset':q,'e_lfanew':e,'machine':MACH.get(machine,hex(machine)),'timestamp_raw':ts,'sections':sects,'optional_magic':hex(magic),'image_base':imagebase,'entry_point_rva':entry,'size_of_image':image_size,'size_of_headers':hdr_size,'section_alignment':sec_align,'file_alignment':file_align,'go_section_names':go_secs,'go_buildinfo_marker_offsets_in_physical_span':ginfo,'endpoint_literal_offsets_in_physical_span':ehit})\n  except (ValueError,struct.error,OverflowError):\n   bad_count+=1\n # Whole-source anchors, independent of PE parsing\n for needle,collection in ((go_needle,marker_offsets),(endpoint,endpoint_offsets)):\n  x=0\n  while True:\n   x=mm.find(needle,x)\n   if x<0: break\n   collection.append(x); x+=1\n summary={'source':'input:chall/Carmine-Falcone.raw','bytes':n,'seconds':round(time.time()-start,3),'mz_signatures':mz_count,'structurally_validated_pe_headers':pe_count,'malformed_errors':bad_count,'go_buildinfo_literal_offsets':marker_offsets,'endpoint_literal_offsets':endpoint_offsets,'valid_pe_candidates_with_go_marker_or_go_section':[x for x in candidates if x['go_buildinfo_marker_offsets_in_physical_span'] or x['go_section_names']],'valid_pe_candidates_with_endpoint':[x for x in candidates if x['endpoint_literal_offsets_in_physical_span']],'all_valid_pe_candidates':len(candidates)}\n (out/'pe-header-inventory.jsonl').write_text(''.join(json.dumps(x,separators=(',',':'))+'\\n' for x in candidates))\n (out/'pe-header-summary.json').write_text(json.dumps(summary,indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120107",
+    "name": "Memory triage",
+    "doing": "Examine the memory image for wallet/password-manager artifacts and claim questions 3–6 if available."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:56:08.543Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "inputs/chall/Carmine-Falcone.raw",
+        "sha256": "3e03551e1f55dd792b0bc459b5620522d61fcf2379e8f6d89ef439fef8263cac"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000226-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:56:08.603Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "general",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000226",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000226/scope.1.json",
+    "manifest_sha256": "af38fcc12e91c041e32fa53aea189408649fce45ea2729a2d5c21d74739626ae"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:56:17.715Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "1fe8ff375ce66ef9b8bb66b8a75dd1616aeafd324ba94758e6ae601e51c50a19",
+    "files": 2,
+    "bytes": 1652670,
+    "rejected": 0,
+    "path": "store/jobs/j000226/out"
+  }
+}

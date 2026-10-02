@@ -1,0 +1,1 @@
+{"v":1,"job":"j000205","attempt":1,"sealed_at":"2026-10-02T10:42:45.938Z","files":[{"path":"q8-restored-independent.json","path_b64":"cTgtcmVzdG9yZWQtaW5kZXBlbmRlbnQuanNvbg==","bytes":1502,"sha256":"b08c06c478f1b7c3e076f746dacb48dff035e9b598181b419e32eb7a0fbf6faa","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":1502}}

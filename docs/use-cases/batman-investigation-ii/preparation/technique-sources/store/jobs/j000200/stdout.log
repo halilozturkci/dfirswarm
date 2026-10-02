@@ -1,0 +1,20 @@
+[
+  {
+    "name": "seed.seco",
+    "size": 33284,
+    "magic_hex": "5345434f",
+    "payload_length": 32768,
+    "exact_length": true,
+    "sha1": "3ba6011f5e1b6941f893df6579f87f1c823e7493",
+    "checksum_valid": true
+  },
+  {
+    "name": "storage.seco",
+    "size": 2745,
+    "magic_hex": "5345434f",
+    "payload_length": 2229,
+    "exact_length": true,
+    "sha1": "5e38ffd5e6d6115a6f4bb21b5216c37392eb544f",
+    "checksum_valid": true
+  }
+]

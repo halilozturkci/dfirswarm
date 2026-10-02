@@ -1,0 +1,18 @@
+{
+  "source": "input:chall/Carmine-Falcone.raw",
+  "bytes": 4831838208,
+  "seconds": 8.06,
+  "mz_signatures": 28135,
+  "structurally_validated_pe_headers": 1965,
+  "malformed_errors": 0,
+  "go_buildinfo_literal_offsets": [
+    3487571968,
+    3729207296
+  ],
+  "endpoint_literal_offsets": [
+    320252368
+  ],
+  "valid_pe_candidates_with_go_marker_or_go_section": [],
+  "valid_pe_candidates_with_endpoint": [],
+  "all_valid_pe_candidates": 1965
+}

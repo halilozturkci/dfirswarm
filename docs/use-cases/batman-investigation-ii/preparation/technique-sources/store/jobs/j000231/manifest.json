@@ -1,0 +1,1 @@
+{"v":1,"job":"j000231","attempt":1,"sealed_at":"2026-10-02T11:01:32.333Z","files":[{"path":"availability.txt","path_b64":"YXZhaWxhYmlsaXR5LnR4dA==","bytes":521,"sha256":"0e6642d22c8755acdaa8909141fd4a2cea60d65255f994f3f325608ab87362ce","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":521}}

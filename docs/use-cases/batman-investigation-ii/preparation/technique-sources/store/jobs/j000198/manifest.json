@@ -1,0 +1,1 @@
+{"v":1,"job":"j000198","attempt":1,"sealed_at":"2026-10-02T10:39:24.431Z","files":[{"path":"seed_transform.json","path_b64":"c2VlZF90cmFuc2Zvcm0uanNvbg==","bytes":340,"sha256":"12fcf202855ab1188dbfba8313df62d159333f9684232e48f2158db7efecf94c","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":340}}

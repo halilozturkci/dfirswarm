@@ -1,0 +1,1 @@
+{"v":1,"job":"j000236","attempt":1,"sealed_at":"2026-10-02T11:03:53.014Z","files":[{"path":"tool-inventory.txt","path_b64":"dG9vbC1pbnZlbnRvcnkudHh0","bytes":9051,"sha256":"64cdb839da70a93f33a9c39568f0c78f104b3c23b22e49a230aaa31b1ce80552","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":9051}}

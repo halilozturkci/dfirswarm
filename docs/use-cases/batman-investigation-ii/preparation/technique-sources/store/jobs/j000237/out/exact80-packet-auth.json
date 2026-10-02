@@ -1,0 +1,4 @@
+{
+  "matches": [],
+  "note": "Both independent 80-byte packets required exact authenticated decryption; AES-SIV, NaCl secretbox with zero nonce, and Curve25519 sealed-box length-exact hypotheses."
+}

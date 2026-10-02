@@ -1,0 +1,105 @@
+{
+  "id": "j000222",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/Carmine-Falcone.raw",
+      "job:j000027/filescan.txt"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 900,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY' > \"$OUT/cache-cli.txt\" 2> \"$OUT/cache-stderr.txt\"\nimport os,sys,json,re\nfrom volatility3 import cli\nfrom volatility3.plugins.windows import dumpfiles\nfrom volatility3.framework import exceptions,constants\nout=os.environ['OUT']; target=[320252368,3487571968,3729207296]\nrows=[]\nfor l in open('store/jobs/j000027/out/filescan.txt'):\n m=re.match(r'(0x[0-9a-f]+)\\s+(.+)',l)\n if m and m[2].lower().endswith('.exe'):rows.append((int(m[1],16),m[2]))\ndef generator(self,procs,offsets):\n k=self.context.modules[self.config['kernel']]; seen=set(); hits=[]; results=[]\n with open(out+'/cache-progress.jsonl','w') as log:\n  for off,name in rows:\n   try:\n    f=self.context.object(k.symbol_table_name+constants.BANG+'_FILE_OBJECT',layer_name=k.layer_name,native_layer_name=k.layer_name,offset=off)\n    for member in ['DataSectionObject','ImageSectionObject']:\n     item={'file_object':hex(off),'name':name,'kind':member,'pages':0}\n     try:\n      p=getattr(f.SectionObjectPointer,member); ca=p.dereference().cast('_CONTROL_AREA');key=(int(ca.vol.offset),member)\n      item['control_area']=hex(ca.vol.offset)\n      if key in seen:item['duplicate']=True;continue\n      if not ca.is_valid():item['invalid']=True;continue\n      seen.add(key)\n      for physical,fileoffset,size in ca.get_available_pages():\n       item['pages']+=1\n       for t in target:\n        if physical<=t<physical+size:\n         hit={**item,'physical_page':int(physical),'file_offset':int(fileoffset+t-physical),'target':t};hits.append(hit);log.write(json.dumps({'hit':hit})+'\\n');log.flush()\n      results.append(item);log.write(json.dumps(item)+'\\n');log.flush()\n     except Exception as e:item['error']=str(e);results.append(item);log.write(json.dumps(item)+'\\n');log.flush()\n   except Exception as e:log.write(json.dumps({'file_object':hex(off),'name':name,'error':str(e)})+'\\n');log.flush()\n json.dump({'targets':target,'file_objects':len(rows),'unique_control_areas':len(seen),'examined':results,'hits':hits},open(out+'/cache-mapping.json','w'),indent=2)\n if False:yield(0,())\ndumpfiles.DumpFiles._generator=generator\nsys.argv=['vol','--offline','-s','/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics/vendor/symbols','-f','inputs/chall/Carmine-Falcone.raw','windows.dumpfiles.DumpFiles','--virtaddr','0xab0b10a11be0']\ncli.CommandLine().run()\nPY"
+  },
+  "requester": {
+    "agent": "s42120102",
+    "name": "Wallet trace",
+    "doing": "Examine wallet installation and wallet protection evidence for questions 5 and 9."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:53:47.855Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "inputs/chall/Carmine-Falcone.raw",
+        "sha256": "3e03551e1f55dd792b0bc459b5620522d61fcf2379e8f6d89ef439fef8263cac"
+      },
+      {
+        "path": "store/jobs/j000027/out/filescan.txt",
+        "sha256": "fc34814d15a1ce92e7701e18fd2e2cf707d384bf250cd204089a7b70ac9d1220"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000222-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:53:47.919Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "general",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000222",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 2,
+    "files": 2,
+    "bound": 0,
+    "manifest": "store/jobs/j000222/scope.1.json",
+    "manifest_sha256": "ce38638738ba2e1dc401495dc2cc5544f15dc35c099098cd09bd5ad6451b780f"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:54:04.392Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "same_as": [
+    {
+      "path": "cache-stderr.txt",
+      "sha256": "495a1d75f665f09f5d325806fae5cd45191c2410eb37a2a3e50bfc2f26ccf0f7",
+      "bytes": 489,
+      "job": "j000018",
+      "file": "notepad.stderr"
+    }
+  ],
+  "outputs": {
+    "manifest_sha256": "1ca4e91cf688e4db5980309a53d2eda6dd9b99bebe499ed11e0d1a30c837e81c",
+    "files": 4,
+    "bytes": 35292,
+    "rejected": 0,
+    "path": "store/jobs/j000222/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

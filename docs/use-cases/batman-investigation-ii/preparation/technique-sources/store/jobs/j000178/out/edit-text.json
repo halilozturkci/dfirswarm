@@ -1,0 +1,45 @@
+{
+  "wrapper_va": "0x1ea80b402b0",
+  "editstate_va": "0x1ea80b8bca0",
+  "hwnd": "0x9032e",
+  "hlocal": "0x1ea843d0008",
+  "textptr": "0x1ea80b6ec80",
+  "length_chars": 17,
+  "text_repr": "\"w&31D,%4> C6'nT  \"",
+  "utf16le_hex": "770026003300310044002c00250034003e0020004300360027006e00540020002000",
+  "md5_utf8": "3004e97c8bacd829667016c9a379c048",
+  "tests": [
+    {
+      "archive": "store/jobs/j000154/out/cache-patched.7z",
+      "password_form": "exact17",
+      "exit": 2,
+      "success": false,
+      "stdout_tail": "\n7-Zip [64] 26.02 : Copyright (c) 1999-2026 Igor Pavlov : 2026-06-25\np7zip Version 16.02 (locale=C.UTF-8,Utf16=on,HugeFiles=on,64 bits,2 CPUs arm64  (LP))\n\nScanning the drive for archives:\n1 file, 36194 bytes (36 KiB)\n\nTesting archive: store/jobs/j000154/out/cache-patched.7z\n--\nPath = store/jobs/j000154/out/cache-patched.7z\nType = 7z\nPhysical Size = 36194\nHeaders Size = 178\nMethod = LZMA2:48k 7zAES\nSolid = -\nBlocks = 1\n\n\nSub items Errors: 1\n\nArchives with Errors: 1\n\nSub items Errors: 1\n",
+      "stderr_tail": "ERROR: Data Error in encrypted file. Wrong password? : Carmine Falcone.zip\n"
+    },
+    {
+      "archive": "store/jobs/j000154/out/cache-patched.7z",
+      "password_form": "rstrip",
+      "exit": 0,
+      "success": true,
+      "stdout_tail": "\n7-Zip [64] 26.02 : Copyright (c) 1999-2026 Igor Pavlov : 2026-06-25\np7zip Version 16.02 (locale=C.UTF-8,Utf16=on,HugeFiles=on,64 bits,2 CPUs arm64  (LP))\n\nScanning the drive for archives:\n1 file, 36194 bytes (36 KiB)\n\nTesting archive: store/jobs/j000154/out/cache-patched.7z\n--\nPath = store/jobs/j000154/out/cache-patched.7z\nType = 7z\nPhysical Size = 36194\nHeaders Size = 178\nMethod = LZMA2:48k 7zAES\nSolid = -\nBlocks = 1\n\nEverything is Ok\n\nSize:       36313\nCompressed: 36194\n",
+      "stderr_tail": ""
+    },
+    {
+      "archive": "store/jobs/j000160/out/candidate_446443820.7z",
+      "password_form": "exact17",
+      "exit": 2,
+      "success": false,
+      "stdout_tail": "Zip [64] 26.02 : Copyright (c) 1999-2026 Igor Pavlov : 2026-06-25\np7zip Version 16.02 (locale=C.UTF-8,Utf16=on,HugeFiles=on,64 bits,2 CPUs arm64  (LP))\n\nScanning the drive for archives:\n1 file, 36194 bytes (36 KiB)\n\nTesting archive: store/jobs/j000160/out/candidate_446443820.7z\n--\nPath = store/jobs/j000160/out/candidate_446443820.7z\nType = 7z\nPhysical Size = 36194\nHeaders Size = 178\nMethod = LZMA2:48k 7zAES\nSolid = -\nBlocks = 1\n\n\nSub items Errors: 1\n\nArchives with Errors: 1\n\nSub items Errors: 1\n",
+      "stderr_tail": "ERROR: Data Error in encrypted file. Wrong password? : Carmine Falcone.zip\n"
+    },
+    {
+      "archive": "store/jobs/j000160/out/candidate_446443820.7z",
+      "password_form": "rstrip",
+      "exit": 2,
+      "success": false,
+      "stdout_tail": "Zip [64] 26.02 : Copyright (c) 1999-2026 Igor Pavlov : 2026-06-25\np7zip Version 16.02 (locale=C.UTF-8,Utf16=on,HugeFiles=on,64 bits,2 CPUs arm64  (LP))\n\nScanning the drive for archives:\n1 file, 36194 bytes (36 KiB)\n\nTesting archive: store/jobs/j000160/out/candidate_446443820.7z\n--\nPath = store/jobs/j000160/out/candidate_446443820.7z\nType = 7z\nPhysical Size = 36194\nHeaders Size = 178\nMethod = LZMA2:48k 7zAES\nSolid = -\nBlocks = 1\n\n\nSub items Errors: 1\n\nArchives with Errors: 1\n\nSub items Errors: 1\n",
+      "stderr_tail": "ERROR: Data Error in encrypted file. Wrong password? : Carmine Falcone.zip\n"
+    }
+  ]
+}

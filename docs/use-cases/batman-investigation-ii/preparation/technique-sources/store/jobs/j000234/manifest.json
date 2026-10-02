@@ -1,0 +1,1 @@
+{"v":1,"job":"j000234","attempt":1,"sealed_at":"2026-10-02T11:03:28.140Z","files":[{"path":"objdump-help.txt","path_b64":"b2JqZHVtcC1oZWxwLnR4dA==","bytes":7817,"sha256":"ac42de7def8a9340f8d95f91eac9254e9f0bbb44501746eb5f8faaa33ab34327","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":7817}}

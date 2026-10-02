@@ -1,0 +1,96 @@
+{
+  "id": "j000070",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000054",
+      "job:j000019/uri_passwords.json"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport os,json,hashlib,struct\nfrom cryptography.hazmat.primitives.ciphers.aead import AESGCM\nb=open('store/jobs/j000054/out/file.0xab0b138cf1c0.0xab0b0d6bf3d0.DataSectionObject.seed.seco.dat','rb').read()\npw=bytes.fromhex(json.load(open('store/jobs/j000019/out/uri_passwords.json'))[0]['password_utf8_hex'])\nn,r,p=struct.unpack('>III',b[288:300]);k=hashlib.scrypt(pw,salt=b[256:288],n=n,r=r,p=p,dklen=32)\nresults={'n':n,'r':r,'p':p,'cipher':b[300:332].rstrip(b'\\0').decode(),'metadata_key_auth':False}\ntry:\n key=AESGCM(k).decrypt(b[332:344],b[360:392]+b[344:360],None)\n results['metadata_key_auth']=True;results['decrypted_key_length']=len(key)\n length=struct.unpack('>I',b[512:516])[0];blob=b[516:516+length]\n results['blob_checksum_valid']=hashlib.sha256(b[256:512]+b[512:516]+blob).digest()==b[224:256]\n try:\n  raw=AESGCM(key).decrypt(b[392:404],blob+b[404:420],None)\n  results['blob_auth']=True;results['plaintext_bytes']=len(raw)\n except Exception as ex:results['blob_auth']=False;results['blob_error']=type(ex).__name__\nexcept Exception as ex:results['metadata_error']=type(ex).__name__\njson.dump(results,open(os.environ['OUT']+'/auth_test.json','w'),indent=2);print(json.dumps(results))\nPY"
+  },
+  "requester": {
+    "agent": "s42120102",
+    "name": "Wallet trace",
+    "doing": "Examine wallet installation and wallet protection evidence for questions 5 and 9."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:06:52.499Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000054/out",
+        "dir": true
+      },
+      {
+        "path": "store/jobs/j000019/out/uri_passwords.json",
+        "sha256": "bfea74ef44ac3d6641d72ed0cd6589dd422adbfbea0060a121a50089f42882bc"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000070-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:06:52.557Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000054/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000070",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 2,
+    "files": 1,
+    "bound": 1,
+    "manifest": "store/jobs/j000070/scope.1.json",
+    "manifest_sha256": "556e037e873b60c3f82d53ff6922ff1a1bb9d1e2d3d1e8d234e110ddbc48f92a"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:06:53.451Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "4664c3bc9ed45ffa890096b3d674d3d529835b20cfaba7c963f2e86e4475c31a",
+    "files": 1,
+    "bytes": 202,
+    "rejected": 0,
+    "path": "store/jobs/j000070/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

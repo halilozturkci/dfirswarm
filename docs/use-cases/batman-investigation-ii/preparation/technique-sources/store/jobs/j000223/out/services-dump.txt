@@ -1,0 +1,5 @@
+Volatility 3 Framework 2.28.2
+
+Cache	FileObject	FileName	Result
+
+ImageSectionObject	0xab0b0d34fe90	services.exe	file.0xab0b0d34fe90.0xab0b106cf320.ImageSectionObject.services.exe.img

@@ -1,0 +1,11 @@
+{
+  "n": 16384,
+  "r": 8,
+  "p": 1,
+  "cipher": "aes-256-gcm",
+  "metadata_key_auth": true,
+  "decrypted_key_length": 32,
+  "blob_checksum_valid": true,
+  "blob_auth": true,
+  "plaintext_bytes": 32768
+}

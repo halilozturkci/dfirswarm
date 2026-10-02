@@ -1,0 +1,112 @@
+{
+  "sources": {
+    "unknown_len": 36194,
+    "cache_len": 36864,
+    "patched_len": 36194,
+    "zip_len": 36313
+  },
+  "patched_matches_declared_reconstruction": true,
+  "reliable_region_diff_count": 111,
+  "reliable_region_diff_runs": [
+    [
+      0,
+      7
+    ],
+    [
+      70,
+      84
+    ],
+    [
+      147,
+      155
+    ],
+    [
+      156,
+      163
+    ],
+    [
+      243,
+      258
+    ],
+    [
+      706,
+      715
+    ],
+    [
+      1211,
+      1220
+    ],
+    [
+      32784,
+      32790
+    ],
+    [
+      32822,
+      32828
+    ],
+    [
+      32859,
+      32864
+    ],
+    [
+      32902,
+      32906
+    ],
+    [
+      33017,
+      33025
+    ],
+    [
+      36176,
+      36189
+    ]
+  ],
+  "middle_4096_32768_unchanged_from_unknown": true,
+  "outer_zip_sha1": "7c346128d5baa5f950b8f92c9697c303da1f1cee",
+  "outer_zip_sha256": "e9e6cc67ba01d2c441d63a1b02efef00ef536779e6d96168f1d59e8f5ca90566",
+  "zip_test_bad_member": null,
+  "members": [
+    {
+      "name": "seed.seco",
+      "size": 33284,
+      "compressed_size": 33284,
+      "method": 0,
+      "flag_bits": 8,
+      "crc_header": "7317db5e",
+      "crc_computed": "7317db5e",
+      "sha1": "d4bb484826825ccc4ba808fe4b6088388ef41995",
+      "sha256": "03a5ed38ea88c114bd72e9f18d500a53d8981adfa0819e5b132075419996a3fc",
+      "extracted_matches_zip": true,
+      "header_offset": 0,
+      "zip_date": [
+        2024,
+        1,
+        7,
+        10,
+        37,
+        30
+      ]
+    },
+    {
+      "name": "storage.seco",
+      "size": 2745,
+      "compressed_size": 2745,
+      "method": 0,
+      "flag_bits": 8,
+      "crc_header": "4f918a60",
+      "crc_computed": "4f918a60",
+      "sha1": "159b3f3125a1d29ddab2db4ef3d837e1810a2d2a",
+      "sha256": "022297f98103d1d70e0457166846531a34773257eec62b7e5298b200dcc8300d",
+      "extracted_matches_zip": true,
+      "header_offset": 33348,
+      "zip_date": [
+        2024,
+        1,
+        7,
+        10,
+        37,
+        30
+      ]
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "at": "2026-10-02T11:18:50.590760+00:00",
+  "scope": "new technique note, README, index and selected source copies; literal current Pi OAuth, VM seat-token and console-token scan; not a general secret absence proof",
+  "candidate_secret_count": 13,
+  "files_scanned": 179,
+  "bytes_scanned": 26531144,
+  "hits": [],
+  "source_copies_verified": 176,
+  "passed": true
+}

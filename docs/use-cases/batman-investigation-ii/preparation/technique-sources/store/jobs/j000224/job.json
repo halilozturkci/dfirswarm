@@ -1,0 +1,127 @@
+{
+  "id": "j000224",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000107/entries.json",
+      "input:chall/unknown.data",
+      "job:j000145/contact/contact/instance1/hostkeys",
+      "job:j000145/contact/contact/instance1/config.dbx",
+      "job:j000145/contact/contact/instance1/contacts_polaris.db",
+      "job:j000145/contact/contact/instance1/photo.dbx",
+      "job:j000145/contact/contact/instance_db/hostkeys",
+      "job:j000145/contact/contact/instance_db/instance.dbx"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "cat > /tmp/chain2.py <<'PY'\nimport os,json,hashlib,itertools,sqlite3\nfrom Crypto.Cipher import AES\nE=json.load(open('store/jobs/j000107/out/entries.json'))['entries'];kp=next(e['Password'] for e in E if 'Recycle Bin' in e.get('_groups',[])).encode();u=open('inputs/chall/unknown.data','rb').read();tok=u[243:260]\nroots=[('i1','store/jobs/j000145/out/contact/contact/instance1/hostkeys',['config.dbx','contacts_polaris.db','photo.dbx'],'store/jobs/j000145/out/contact/contact/instance1/'),('idb','store/jobs/j000145/out/contact/contact/instance_db/hostkeys',['instance.dbx'],'store/jobs/j000145/out/contact/contact/instance_db/')]\ndef uk(p):\n o=[]\n def add(n,k):\n  if len(k) in (16,24,32) and (n,k) not in o:o.append((n,k))\n add('raw16',p[:16]);add('rawpad',p.ljust(32,b'\\0')[:32])\n for a in ['md5','sha1','sha256','sha512','blake2s','blake2b']:\n  d=getattr(hashlib,a)(p).digest()\n  for n in [16,24,32]:add(a+str(n),d[:n])\n for salt in [b'',b'dropbox',b'Dropbox',b'hostkeys',b'userkey']:\n  for a in ['sha1','sha256','sha512']:\n   for it in [1,1000,10000,64000,65536,100000,256000]:add(f'pbkdf2-{a}-{salt!r}-{it}',hashlib.pbkdf2_hmac(a,p,salt,it,32))\n return o\ndef page_decrypt(dat,key,ctrmode,streammode):\n O=bytearray();hdr=b'SQLite format 3\\x00'\n for pi in range(0,len(dat),4096):\n  p=dat[pi:pi+4096];tail=p[-12:]; regions=[p[:16],p[24:-12]] if pi==0 else [p[:-12]]\n  nonce=tail\n  endian='big' if 'be' in ctrmode else 'little'; iv=int(ctrmode[-1])\n  if endian=='big':c=AES.new(key,AES.MODE_CTR,nonce=nonce,initial_value=iv)\n  else:\n   from Crypto.Util import Counter\n   # 32-bit little counter appended after 12 byte prefix\n   ctr=Counter.new(32,prefix=nonce,initial_value=iv,little_endian=True);c=AES.new(key,AES.MODE_CTR,counter=ctr)\n  out=[]\n  if streammode=='concat':out=[c.decrypt(b''.join(regions))]; plain=out[0]\n  else:\n   # full stream consumes preserved 8 on first page\n   full=p[:-12];plain=c.decrypt(full);plain=plain[:16]+p[16:24]+plain[24:] if pi==0 else plain\n  if streammode=='concat' and pi==0:plain=plain[:16]+p[16:24]+plain[16:]\n  O += plain + tail\n O[:16]=hdr\n return bytes(O)\ndef score(b):\n if b[:16]!=b'SQLite format 3\\0':return -999,{}\n # validate header and btree page headers with known page size/reserve\n s=0;d={};\n try:\n  ps=int.from_bytes(b[16:18],'big');res=b[20];pc=int.from_bytes(b[28:32],'big');d={'ps':ps,'res':res,'pc':pc}\n  if ps==4096:s+=20\n  if res==12:s+=10\n  if b[18:20]==b'\\x01\\x01':s+=4\n  # each page btree type often one of valid or freelist/overflow; first page offset100\n  valid=0\n  for i in range(len(b)//4096):\n   off=i*4096+(100 if i==0 else 0)\n   if b[off] in (2,5,10,13):valid+=1\n  s+=valid*5;d['valid_btree_headers']=valid\n except:pass\n return s,d\nres=[]\nfor pn,pw in [('keepass',kp),('unknown243',tok)]:\n for ukn,ukk in uk(pw):\n  for hostmode in ['cbc-ivfirst','cbc-ivlast','ecb-afterversion']:\n   for label,hp,dbs,root in roots:\n    h=open(hp,'rb').read()\n    try:\n     if hostmode=='cbc-ivfirst':plain=AES.new(ukk,AES.MODE_CBC,h[1:17]).decrypt(h[17:])\n     elif hostmode=='cbc-ivlast':plain=AES.new(ukk,AES.MODE_CBC,h[-16:]).decrypt(h[1:-16])\n     else:plain=AES.new(ukk,AES.MODE_ECB).decrypt(h[1:])\n    except:continue\n    # all plausible direct 16/24/32 fields of decrypted 64/80 at natural boundaries and digests\n    ks=[]\n    for n in [16,24,32]:\n     for off in range(0,len(plain)-n+1,8):ks.append((f'p{off}:{n}',plain[off:off+n]))\n    for partn,part in [('all',plain),('first32',plain[:32]),('last32',plain[-32:])]:ks.append((f'sha256-{partn}',hashlib.sha256(part).digest()))\n    for dbn in dbs:\n     dat=open(root+dbn,'rb').read()\n     for dkn,dk in ks:\n      for ctr in ['be0','be1','le0','le1']:\n       for sm in ['concat','full']:\n        out=page_decrypt(dat,dk,ctr,sm);sc,meta=score(out)\n        if sc>=20:\n         name=f'{pn}-{ukn}-{hostmode}-{label}-{dbn}-{dkn}-{ctr}-{sm}'.replace('/','_');fp=os.environ['OUT']+'/'+name+'.sqlite';open(fp,'wb').write(out)\n         q='';\n         try:\n          con=sqlite3.connect('file:'+fp+'?mode=ro&immutable=1',uri=True);q=str(con.execute('pragma integrity_check').fetchall());tables=con.execute(\"select name from sqlite_master where type='table'\").fetchall();con.close()\n         except Exception as e:q='ERR '+str(e);tables=[]\n         res.append({'candidate':pn,'ukdf':ukn,'hostmode':hostmode,'host':label,'db':dbn,'dbkey':dkn,'ctr':ctr,'stream':sm,'score':sc,'meta':meta,'integrity':q,'tables':tables,'file':name+'.sqlite'})\nopen(os.environ['OUT']+'/targeted-host-page-chain.json','w').write(json.dumps(res,indent=2));print('candidates score>=20',len(res));print(json.dumps(sorted(res,key=lambda x:-x['score'])[:20],indent=2))\nPY\npython3 /tmp/chain2.py"
+  },
+  "requester": {
+    "agent": "s42120105",
+    "name": "Userkey Analyst",
+    "doing": "I will establish Q12-Q13 (contact verification database key/client email and interpreted client/private key) from unknown.data and memory artifacts; Q14 is already taken."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:55:43.690Z",
+  "reuse": {
+    "op": "command:cat",
+    "objects": [
+      {
+        "path": "store/jobs/j000145/out/contact/contact/instance1/hostkeys",
+        "sha256": "05c1bb92109acc5198cdd403d5ef72a166bf0965b3a8d4083e3522c18f526be5"
+      },
+      {
+        "path": "store/jobs/j000145/out/contact/contact/instance1/contacts_polaris.db",
+        "sha256": "3e959879e783854c529e8a02fd066a1384ebde6782be5428fadba72bd6ec4b8b"
+      },
+      {
+        "path": "store/jobs/j000107/out/entries.json",
+        "sha256": "5e1e941774aad60e462d6af2bfd94d9f65e84e28f47030d062583d1f68da0c6b"
+      },
+      {
+        "path": "store/jobs/j000145/out/contact/contact/instance1/photo.dbx",
+        "sha256": "6b8c28fdd0bcc4f87d881bbd4021ac7052c58054bacc2acd6755b99ec94ad942"
+      },
+      {
+        "path": "store/jobs/j000145/out/contact/contact/instance_db/hostkeys",
+        "sha256": "7354c1f37bc0b42fb6abaa668114de19f7ec3826ad37c2230f1c3de1fbe51756"
+      },
+      {
+        "path": "inputs/chall/unknown.data",
+        "sha256": "87841ce462a019649f6206c72cf65ce5305a88b828ca45996ae9422e6f578f4f"
+      },
+      {
+        "path": "store/jobs/j000145/out/contact/contact/instance_db/instance.dbx",
+        "sha256": "a013b88dd638dd1155d11e2daa9c30b4396cca9594b611735294c2926cd003b4"
+      },
+      {
+        "path": "store/jobs/j000145/out/contact/contact/instance1/config.dbx",
+        "sha256": "eb348b3f0914b0e0ed211386fd8a7fa91c0b33e48a597f7b11e1c779279a9c7b"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000224-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:55:43.765Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000224",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 8,
+    "files": 8,
+    "bound": 0,
+    "manifest": "store/jobs/j000224/scope.1.json",
+    "manifest_sha256": "1869f6200e96f5581da8294d73c02d52bb01e851ee4938e02c6748506d86c8be"
+  },
+  "network": "none",
+  "exit": 124,
+  "status": "timed_out",
+  "reason": "stopped at its limit of 120s",
+  "finished_at": "2026-10-02T10:57:44.560Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "078e69bc0b90fd9a366aa2246d63d43fc3cc53c2ab6104b7c190e23889b1872a",
+    "files": 83036,
+    "bytes": 3741368320,
+    "rejected": 0,
+    "path": "store/jobs/j000224/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

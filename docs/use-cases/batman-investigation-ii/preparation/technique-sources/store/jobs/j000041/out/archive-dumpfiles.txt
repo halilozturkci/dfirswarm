@@ -1,0 +1,67 @@
+Volatility 3 Framework 2.28.2
+
+Cache	FileObject	FileName	Result
+
+DataSectionObject	0xab0b10a1ea20	StaticCache.dat	Error dumping file
+SharedCacheMap	0xab0b10a1ea20	StaticCache.dat	file.0xab0b10a1ea20.0xab0b0d5c4a20.SharedCacheMap.StaticCache.dat.vacb
+DataSectionObject	0xab0b10a27530	Carmine Falcone_2.7z	file.0xab0b10a27530.0xab0b0d8cb390.DataSectionObject.Carmine Falcone_2.7z.dat
+SharedCacheMap	0xab0b10a27530	Carmine Falcone_2.7z	file.0xab0b10a27530.0xab0b0e3fca20.SharedCacheMap.Carmine Falcone_2.7z.vacb
+DataSectionObject	0xab0b10a37d40	iconcache_32.db	file.0xab0b10a37d40.0xab0b0d5d32f0.DataSectionObject.iconcache_32.db.dat
+DataSectionObject	0xab0b0e20c9c0	iconcache_16.db	file.0xab0b0e20c9c0.0xab0b0d5d46f0.DataSectionObject.iconcache_16.db.dat
+ImageSectionObject	0xab0b11c87310	7z.dll	file.0xab0b11c87310.0xab0b104dbcd0.ImageSectionObject.7z.dll.img
+ImageSectionObject	0xab0b11c70570	7zFM.exe	file.0xab0b11c70570.0xab0b11019c80.ImageSectionObject.7zFM.exe.img
+DataSectionObject	0xab0b0e36ded0	StaticCache.dat	Error dumping file
+SharedCacheMap	0xab0b0e36ded0	StaticCache.dat	file.0xab0b0e36ded0.0xab0b0d5c4a20.SharedCacheMap.StaticCache.dat.vacb
+ImageSectionObject	0xab0b0e71d280	kernel.appcore.dll	file.0xab0b0e71d280.0xab0b0e767cc0.ImageSectionObject.kernel.appcore.dll.img
+DataSectionObject	0xab0b10cb0d10	iconcache_32.db	file.0xab0b10cb0d10.0xab0b0d5d32f0.DataSectionObject.iconcache_32.db.dat
+DataSectionObject	0xab0b10cb2610	iconcache_16.db	file.0xab0b10cb2610.0xab0b0d5d46f0.DataSectionObject.iconcache_16.db.dat
+ImageSectionObject	0xab0b0db32970	WindowsCodecs.dll	file.0xab0b0db32970.0xab0b0df5ca20.ImageSectionObject.WindowsCodecs.dll.img
+ImageSectionObject	0xab0b0dd0d960	comctl32.dll	file.0xab0b0dd0d960.0xab0b0dd3bcc0.ImageSectionObject.comctl32.dll.img
+ImageSectionObject	0xab0b0e3734c0	thumbcache.dll	file.0xab0b0e3734c0.0xab0b12122010.ImageSectionObject.thumbcache.dll.img
+ImageSectionObject	0xab0b10a22580	ExplorerFrame.dll	file.0xab0b10a22580.0xab0b14311a00.ImageSectionObject.ExplorerFrame.dll.img
+ImageSectionObject	0xab0b10a1eed0	DataExchange.dll	file.0xab0b10a1eed0.0xab0b0dd69ca0.ImageSectionObject.DataExchange.dll.img
+ImageSectionObject	0xab0b0e20ec20	TextShaping.dll	file.0xab0b0e20ec20.0xab0b072f5010.ImageSectionObject.TextShaping.dll.img
+ImageSectionObject	0xab0b0e29c700	TextInputFramework.dll	file.0xab0b0e29c700.0xab0b07260c70.ImageSectionObject.TextInputFramework.dll.img
+ImageSectionObject	0xab0b0db2d9c0	twinapi.appcore.dll	file.0xab0b0db2d9c0.0xab0b0d983d50.ImageSectionObject.twinapi.appcore.dll.img
+ImageSectionObject	0xab0b0e618090	CoreUIComponents.dll	file.0xab0b0e618090.0xab0b0e7cbb20.ImageSectionObject.CoreUIComponents.dll.img
+ImageSectionObject	0xab0b0e6a1480	propsys.dll	file.0xab0b0e6a1480.0xab0b0da1a7f0.ImageSectionObject.propsys.dll.img
+ImageSectionObject	0xab0b0db24230	policymanager.dll	file.0xab0b0db24230.0xab0b0da17830.ImageSectionObject.policymanager.dll.img
+ImageSectionObject	0xab0b0e61a160	d3d11.dll	file.0xab0b0e61a160.0xab0b0e672a20.ImageSectionObject.d3d11.dll.img
+ImageSectionObject	0xab0b0e619b20	WinTypes.dll	file.0xab0b0e619b20.0xab0b0e7878e0.ImageSectionObject.WinTypes.dll.img
+ImageSectionObject	0xab0b0e619e40	dcomp.dll	file.0xab0b0e619e40.0xab0b0e7988e0.ImageSectionObject.dcomp.dll.img
+ImageSectionObject	0xab0b0e616c40	CoreMessaging.dll	file.0xab0b0e616c40.0xab0b0e1084e0.ImageSectionObject.CoreMessaging.dll.img
+ImageSectionObject	0xab0b0e613400	uxtheme.dll	file.0xab0b0e613400.0xab0b0b31d010.ImageSectionObject.uxtheme.dll.img
+ImageSectionObject	0xab0b0d8f3bb0	kernel32.dll	file.0xab0b0d8f3bb0.0xab0b076fb2b0.ImageSectionObject.kernel32.dll.img
+ImageSectionObject	0xab0b0d8f4510	KernelBase.dll	file.0xab0b0d8f4510.0xab0b074d08a0.ImageSectionObject.KernelBase.dll.img
+ImageSectionObject	0xab0b0dc9e780	wldp.dll	file.0xab0b0dc9e780.0xab0b0dcb6a20.ImageSectionObject.wldp.dll.img
+ImageSectionObject	0xab0b0e85e780	msvcp110_win.dll	file.0xab0b0e85e780.0xab0b0e839a20.ImageSectionObject.msvcp110_win.dll.img
+ImageSectionObject	0xab0b0e8a4c50	dxgi.dll	file.0xab0b0e8a4c50.0xab0b0e8812b0.ImageSectionObject.dxgi.dll.img
+ImageSectionObject	0xab0b0e8a3990	windows.storage.dll	file.0xab0b0e8a3990.0xab0b0e880a20.ImageSectionObject.windows.storage.dll.img
+ImageSectionObject	0xab0b0e8a1730	ntmarta.dll	file.0xab0b0e8a1730.0xab0b0e8d0cd0.ImageSectionObject.ntmarta.dll.img
+ImageSectionObject	0xab0b0e85b8a0	cryptbase.dll	file.0xab0b0e85b8a0.0xab0b0dcefa20.ImageSectionObject.cryptbase.dll.img
+ImageSectionObject	0xab0b0d8f4380	gdi32full.dll	file.0xab0b0d8f4380.0xab0b0d0a9010.ImageSectionObject.gdi32full.dll.img
+ImageSectionObject	0xab0b0775f780	profapi.dll	file.0xab0b0775f780.0xab0b0e10aa20.ImageSectionObject.profapi.dll.img
+ImageSectionObject	0xab0b0d8f41f0	bcryptprimitives.dll	file.0xab0b0d8f41f0.0xab0b0d00c730.ImageSectionObject.bcryptprimitives.dll.img
+ImageSectionObject	0xab0b0d8f3700	cfgmgr32.dll	file.0xab0b0d8f3700.0xab0b074d0b40.ImageSectionObject.cfgmgr32.dll.img
+ImageSectionObject	0xab0b0d8f3570	msvcp_win.dll	file.0xab0b0d8f3570.0xab0b0745bb40.ImageSectionObject.msvcp_win.dll.img
+ImageSectionObject	0xab0b0d8f49c0	ucrtbase.dll	file.0xab0b0d8f49c0.0xab0b0d00cbf0.ImageSectionObject.ucrtbase.dll.img
+ImageSectionObject	0xab0b0d8f3d40	win32u.dll	file.0xab0b0d8f3d40.0xab0b0d00d010.ImageSectionObject.win32u.dll.img
+ImageSectionObject	0xab0b0d8f33e0	bcrypt.dll	file.0xab0b0d8f33e0.0xab0b077b08b0.ImageSectionObject.bcrypt.dll.img
+ImageSectionObject	0xab0b0d03dd40	combase.dll	file.0xab0b0d03dd40.0xab0b0b3c1920.ImageSectionObject.combase.dll.img
+ImageSectionObject	0xab0b0d03d890	oleaut32.dll	file.0xab0b0d03d890.0xab0b076f32f0.ImageSectionObject.oleaut32.dll.img
+ImageSectionObject	0xab0b0d03da20	shell32.dll	file.0xab0b0d03da20.0xab0b076f92b0.ImageSectionObject.shell32.dll.img
+ImageSectionObject	0xab0b0d8f3250	user32.dll	file.0xab0b0d8f3250.0xab0b076fb010.ImageSectionObject.user32.dll.img
+ImageSectionObject	0xab0b0d03dbb0	sechost.dll	file.0xab0b0d03dbb0.0xab0b076f9010.ImageSectionObject.sechost.dll.img
+ImageSectionObject	0xab0b0d03e1f0	rpcrt4.dll	file.0xab0b0d03e1f0.0xab0b077b7ba0.ImageSectionObject.rpcrt4.dll.img
+ImageSectionObject	0xab0b0d03d570	shlwapi.dll	file.0xab0b0d03d570.0xab0b076f3050.ImageSectionObject.shlwapi.dll.img
+ImageSectionObject	0xab0b0d03d700	msctf.dll	file.0xab0b0d03d700.0xab0b0b3c1bf0.ImageSectionObject.msctf.dll.img
+ImageSectionObject	0xab0b0d03ece0	comdlg32.dll	file.0xab0b0d03ece0.0xab0b0d13ac40.ImageSectionObject.comdlg32.dll.img
+ImageSectionObject	0xab0b0d03d250	ws2_32.dll	file.0xab0b0d03d250.0xab0b077b52e0.ImageSectionObject.ws2_32.dll.img
+ImageSectionObject	0xab0b0d03ded0	msvcrt.dll	file.0xab0b0d03ded0.0xab0b0d00d270.ImageSectionObject.msvcrt.dll.img
+ImageSectionObject	0xab0b0d03e830	SHCore.dll	file.0xab0b0d03e830.0xab0b076fac10.ImageSectionObject.SHCore.dll.img
+ImageSectionObject	0xab0b0d049250	advapi32.dll	file.0xab0b0d049250.0xab0b0d0a3010.ImageSectionObject.advapi32.dll.img
+ImageSectionObject	0xab0b0d049a20	gdi32.dll	file.0xab0b0d049a20.0xab0b0d0a32b0.ImageSectionObject.gdi32.dll.img
+ImageSectionObject	0xab0b0d03eb50	imm32.dll	file.0xab0b0d03eb50.0xab0b0d13a9a0.ImageSectionObject.imm32.dll.img
+ImageSectionObject	0xab0b0d0490c0	ole32.dll	file.0xab0b0d0490c0.0xab0b07b56a20.ImageSectionObject.ole32.dll.img
+ImageSectionObject	0xab0b0d049700	clbcatq.dll	file.0xab0b0d049700.0xab0b0d0a6910.ImageSectionObject.clbcatq.dll.img
+ImageSectionObject	0xab0b078f34c0	ntdll.dll	file.0xab0b078f34c0.0xab0b076f4ca0.ImageSectionObject.ntdll.dll.img

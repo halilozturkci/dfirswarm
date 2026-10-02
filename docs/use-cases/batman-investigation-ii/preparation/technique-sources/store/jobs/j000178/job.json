@@ -1,0 +1,101 @@
+{
+  "id": "j000178",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000018",
+      "job:j000154/cache-patched.7z",
+      "job:j000160/candidate_446443820.7z"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport hashlib,json,struct,subprocess,os\nmp={}\nfor line in open('store/jobs/j000018/out/notepad-map.txt'):\n a=line.split()\n if len(a)>=4 and a[0].startswith('0x'):\n  try: mp[int(a[0],16)]=int(a[3],16)\n  except: pass\nf=open('store/jobs/j000018/out/pid.5372.dmp','rb')\ndef readva(addr,n):\n out=b''\n while n:\n  pg=addr&~0xfff\n  if pg not in mp: raise KeyError(hex(addr))\n  k=min(n,0x1000-(addr-pg));f.seek(mp[pg]+addr-pg);x=f.read(k)\n  if len(x)!=k: raise EOFError\n  out+=x;addr+=k;n-=k\n return out\n# EDIT window desktop pointer chain, derived from captured GUI structure\nwrapper=0x1ea80b402b0\neditstate=struct.unpack('<Q',readva(wrapper,8))[0]\nstate=readva(editstate,0x40)\nhlocal=struct.unpack_from('<Q',state,0)[0]\ntextlen=struct.unpack_from('<I',state,0x10)[0]\n# A movable HLOCAL is an address of a handle-table slot containing its block pointer.\ntextptr=struct.unpack('<Q',readva(hlocal,8))[0]\nraw=readva(textptr,textlen*2)\ntext=raw.decode('utf-16le')\nres={'wrapper_va':hex(wrapper),'editstate_va':hex(editstate),'hwnd':hex(struct.unpack('<Q',readva(editstate+0x40,8))[0]),'hlocal':hex(hlocal),'textptr':hex(textptr),'length_chars':textlen,'text_repr':repr(text),'utf16le_hex':raw.hex(),'md5_utf8':hashlib.md5(text.encode()).hexdigest(),'tests':[]}\nfor arc in ['store/jobs/j000154/out/cache-patched.7z','store/jobs/j000160/out/candidate_446443820.7z']:\n for label,pw in [('exact17',text),('rstrip',text.rstrip())]:\n  p=subprocess.run(['7z','t','-p'+pw,arc],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)\n  res['tests'].append({'archive':arc,'password_form':label,'exit':p.returncode,'success':('Everything is Ok' in p.stdout),'stdout_tail':p.stdout[-500:],'stderr_tail':p.stderr[-500:]})\njson.dump(res,open(os.environ['OUT']+'/edit-text.json','w'),indent=2)\nprint(json.dumps(res,indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120106",
+    "name": "Vault Artifact Analyst",
+    "doing": "Establishing Q3-Q4: password-manager identity/version and password, plus the deleted stored user key."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:33:22.480Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000018/out",
+        "dir": true
+      },
+      {
+        "path": "store/jobs/j000154/out/cache-patched.7z",
+        "sha256": "dc964dd816be637dadf3f92d53bdf43b88ad5bbbcc7b37525b305d4ba4ea08d1"
+      },
+      {
+        "path": "store/jobs/j000160/out/candidate_446443820.7z",
+        "sha256": "efc5210e140a490197a7495b49451c719b110463168245bf7a27b823e3e34ffa"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000178-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:33:22.544Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000018/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000178",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 3,
+    "files": 2,
+    "bound": 1,
+    "manifest": "store/jobs/j000178/scope.1.json",
+    "manifest_sha256": "9c2e0c8e2399eaaf14810a02df6783da17825f00e30de3d2db6ef6550bf80f62"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:33:23.338Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "3d9e63f7fa571df45dc93caa29ca903e0cd0c69595d25d07500958ae84a4fc65",
+    "files": 1,
+    "bytes": 3450,
+    "rejected": 0,
+    "path": "store/jobs/j000178/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

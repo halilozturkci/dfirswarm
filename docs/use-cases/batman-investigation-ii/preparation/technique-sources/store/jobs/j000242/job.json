@@ -1,0 +1,126 @@
+{
+  "id": "j000242",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000107/entries.json",
+      "input:chall/unknown.data",
+      "job:j000145/contact/contact/instance1/hostkeys",
+      "job:j000145/contact/contact/instance1/config.dbx",
+      "job:j000145/contact/contact/instance1/contacts_polaris.db",
+      "job:j000145/contact/contact/instance1/photo.dbx",
+      "job:j000145/contact/contact/instance_db/hostkeys",
+      "job:j000145/contact/contact/instance_db/instance.dbx"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "cat > /tmp/target_ctr.py <<'PY'\nimport os,json,hashlib,sqlite3\nfrom Crypto.Cipher import AES\nE=json.load(open('store/jobs/j000107/out/entries.json'))['entries'];kp=next(e['Password'] for e in E if 'Recycle Bin' in e.get('_groups',[])).encode();u=open('inputs/chall/unknown.data','rb').read();tok=u[243:260]\nsets=[('i1','store/jobs/j000145/out/contact/contact/instance1/hostkeys','store/jobs/j000145/out/contact/contact/instance1/', ['config.dbx','contacts_polaris.db','photo.dbx']),('idb','store/jobs/j000145/out/contact/contact/instance_db/hostkeys','store/jobs/j000145/out/contact/contact/instance_db/',['instance.dbx'])]\n# exact evidence candidates as first16 raw plus narrowly conventional digest alternatives\nUK=[]\nfor pn,p in [('keepass',kp),('unknown243',tok)]:\n for n,k in [('first16',p[:16]),('md5',hashlib.md5(p).digest()),('sha256-16',hashlib.sha256(p).digest()[:16]),('sha256-32',hashlib.sha256(p).digest())]:UK.append((pn,n,k))\ndef hostplain(h,k,mode):\n if mode=='cbc-v-iv-ct64':return AES.new(k,AES.MODE_CBC,h[1:17]).decrypt(h[17:])\n if mode=='ecb-v-ct80':return AES.new(k,AES.MODE_ECB).decrypt(h[1:])\ndef cipher(key,iv,endian):\n from Crypto.Util import Counter\n return AES.new(key,AES.MODE_CTR,counter=Counter.new(128,initial_value=int.from_bytes(iv,endian),little_endian=False))\ndef decpage(p,key,pi,style,endian):\n tail=p[-12:];regA=p[:16];regB=p[24:-12]\n # IV exact 16-byte combinations based on stored 12-byte per-page value and page number/counter\n n=(pi+1).to_bytes(4,endian)\n iv=tail+n if style.startswith('tail-page') else n+tail if style.startswith('page-tail') else tail+b'\\0'*4 if style.startswith('tail-zero') else b'\\0'*4+tail\n if style.endswith('-concat'):\n  q=cipher(key,iv,endian).decrypt(regA+regB);return q[:16]+p[16:24]+q[16:]+tail\n if style.endswith('-separate'):\n  return cipher(key,iv,endian).decrypt(regA)+p[16:24]+cipher(key,iv,endian).decrypt(regB)+tail\n if style.endswith('-full'):\n  q=cipher(key,iv,endian).decrypt(p[:-12]);return q+tail\nstyles=[x+'-'+y for x in ['tail-page','page-tail','tail-zero','zero-tail'] for y in ['concat','separate','full']]\nR=[];attempts=0\nfor pn,ukn,ukk in UK:\n for label,hp,root,dbs in sets:\n  h=open(hp,'rb').read()\n  for hm in ['cbc-v-iv-ct64','ecb-v-ct80']:\n   try:plain=hostplain(h,ukk,hm)\n   except:continue\n   DK=[]\n   for kl in [16,24,32]:\n    for off in range(0,len(plain)-kl+1,16):DK.append((f'{off}:{kl}',plain[off:off+kl]))\n   for dbn in dbs:\n    dat=open(root+dbn,'rb').read()\n    for dkn,dk in DK:\n     for sty in styles:\n      for en in ['big','little']:\n       attempts+=1\n       try:out=b''.join(decpage(dat[i:i+4096],dk,i//4096,sty,en) for i in range(0,len(dat),4096))\n       except:continue\n       if out[:16]!=b'SQLite format 3\\0':continue\n       meta={'page_size':int.from_bytes(out[16:18],'big'),'write_read':out[18:20].hex(),'reserve':out[20],'schema_format':int.from_bytes(out[44:48],'big'),'page1_type':out[100]}\n       name=f'{pn}-{ukn}-{label}-{hm}-{dbn}-{dkn}-{sty}-{en}.sqlite';fp=os.environ['OUT']+'/'+name;open(fp,'wb').write(out)\n       try:\n        c=sqlite3.connect('file:'+fp+'?mode=ro&immutable=1',uri=True);integ=c.execute('pragma integrity_check').fetchall();tabs=c.execute(\"select name,sql from sqlite_master where type='table'\").fetchall();c.close();err=None\n       except Exception as e:integ=[];tabs=[];err=str(e)\n       R.append({'candidate':pn,'ukdf':ukn,'host':label,'hostmode':hm,'db':dbn,'dbkey':dkn,'style':sty,'endian':en,'meta':meta,'integrity':integ,'tables':tabs,'error':err,'file':name})\nprint('attempts',attempts,'exact_headers',len(R));print(json.dumps(R,indent=2));open(os.environ['OUT']+'/targeted-ctr-validation.json','w').write(json.dumps({'attempts':attempts,'exact_header_matches':R},indent=2))\nPY\npython3 /tmp/target_ctr.py"
+  },
+  "requester": {
+    "agent": "s42120105",
+    "name": "Userkey Analyst",
+    "doing": "I will establish Q12-Q13 (contact verification database key/client email and interpreted client/private key) from unknown.data and memory artifacts; Q14 is already taken."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T11:08:21.224Z",
+  "reuse": {
+    "op": "command:cat",
+    "objects": [
+      {
+        "path": "store/jobs/j000145/out/contact/contact/instance1/hostkeys",
+        "sha256": "05c1bb92109acc5198cdd403d5ef72a166bf0965b3a8d4083e3522c18f526be5"
+      },
+      {
+        "path": "store/jobs/j000145/out/contact/contact/instance1/contacts_polaris.db",
+        "sha256": "3e959879e783854c529e8a02fd066a1384ebde6782be5428fadba72bd6ec4b8b"
+      },
+      {
+        "path": "store/jobs/j000107/out/entries.json",
+        "sha256": "5e1e941774aad60e462d6af2bfd94d9f65e84e28f47030d062583d1f68da0c6b"
+      },
+      {
+        "path": "store/jobs/j000145/out/contact/contact/instance1/photo.dbx",
+        "sha256": "6b8c28fdd0bcc4f87d881bbd4021ac7052c58054bacc2acd6755b99ec94ad942"
+      },
+      {
+        "path": "store/jobs/j000145/out/contact/contact/instance_db/hostkeys",
+        "sha256": "7354c1f37bc0b42fb6abaa668114de19f7ec3826ad37c2230f1c3de1fbe51756"
+      },
+      {
+        "path": "inputs/chall/unknown.data",
+        "sha256": "87841ce462a019649f6206c72cf65ce5305a88b828ca45996ae9422e6f578f4f"
+      },
+      {
+        "path": "store/jobs/j000145/out/contact/contact/instance_db/instance.dbx",
+        "sha256": "a013b88dd638dd1155d11e2daa9c30b4396cca9594b611735294c2926cd003b4"
+      },
+      {
+        "path": "store/jobs/j000145/out/contact/contact/instance1/config.dbx",
+        "sha256": "eb348b3f0914b0e0ed211386fd8a7fa91c0b33e48a597f7b11e1c779279a9c7b"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000242-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T11:08:21.299Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000242",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 8,
+    "files": 8,
+    "bound": 0,
+    "manifest": "store/jobs/j000242/scope.1.json",
+    "manifest_sha256": "57412e2e437e08b1029e5d16d00b30f9d9e28afd8f80fa5f27477214cd5f2397"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T11:08:26.477Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "e3f415214783cf52be4fbc806e94792af8dd87ff12d5695ab5ea351ae7801d60",
+    "files": 1,
+    "bytes": 53,
+    "rejected": 0,
+    "path": "store/jobs/j000242/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

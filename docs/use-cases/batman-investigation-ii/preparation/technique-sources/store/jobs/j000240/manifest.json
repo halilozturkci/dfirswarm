@@ -1,0 +1,1 @@
+{"v":1,"job":"j000240","attempt":1,"sealed_at":"2026-10-02T11:05:26.495Z","files":[{"path":"xor-function.json","path_b64":"eG9yLWZ1bmN0aW9uLmpzb24=","bytes":1205,"sha256":"6e0de10b5bca12cb53d6d62547e01651b9890c7f37e4cf756e26851d5126a85a","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":1205}}

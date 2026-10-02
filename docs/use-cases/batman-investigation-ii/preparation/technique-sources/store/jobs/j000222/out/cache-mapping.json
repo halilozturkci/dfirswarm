@@ -1,0 +1,635 @@
+{
+  "targets": [
+    320252368,
+    3487571968,
+    3729207296
+  ],
+  "file_objects": 198,
+  "unique_control_areas": 85,
+  "examined": [
+    {
+      "file_object": "0xab0b07605ed0",
+      "name": "\\Windows\\System32\\RuntimeBroker.exe",
+      "kind": "ImageSectionObject",
+      "pages": 27,
+      "control_area": "0xab0b117e9d20"
+    },
+    {
+      "file_object": "0xab0b0760ee90",
+      "name": "\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+      "kind": "ImageSectionObject",
+      "pages": 299,
+      "control_area": "0xab0b0d9e46b0"
+    },
+    {
+      "file_object": "0xab0b07610600",
+      "name": "\\Program Files\\WindowsApps\\Microsoft.SkypeApp_14.53.77.0_x64__kzf8qxf38zg5c\\SkypeBackgroundHost.exe",
+      "kind": "ImageSectionObject",
+      "pages": 2,
+      "control_area": "0xab0b0d866730"
+    },
+    {
+      "file_object": "0xab0b0763bbc0",
+      "name": "\\Windows\\System32\\SecurityHealthSystray.exe",
+      "kind": "ImageSectionObject",
+      "pages": 9,
+      "control_area": "0xab0b0be33270"
+    },
+    {
+      "file_object": "0xab0b0763d650",
+      "name": "\\Windows\\System32\\SecurityHealthService.exe",
+      "kind": "ImageSectionObject",
+      "pages": 170,
+      "control_area": "0xab0b07673cc0"
+    },
+    {
+      "file_object": "0xab0b0775f140",
+      "name": "\\Windows\\System32\\csrss.exe",
+      "kind": "ImageSectionObject",
+      "pages": 5,
+      "control_area": "0xab0b07783540"
+    },
+    {
+      "file_object": "0xab0b07ab91c0",
+      "name": "\\Windows\\System32\\smss.exe",
+      "kind": "ImageSectionObject",
+      "pages": 5,
+      "control_area": "0xab0b079bda70"
+    },
+    {
+      "file_object": "0xab0b07bffce0",
+      "name": "\\Windows\\System32\\wininit.exe",
+      "kind": "ImageSectionObject",
+      "pages": 3,
+      "control_area": "0xab0b0e10acc0"
+    },
+    {
+      "file_object": "0xab0b0d345da0",
+      "name": "\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\InputApp\\TextInputHost.exe",
+      "kind": "ImageSectionObject",
+      "pages": 3,
+      "control_area": "0xab0b0d882730"
+    },
+    {
+      "file_object": "0xab0b0d3463e0",
+      "name": "\\Windows\\System32\\slui.exe",
+      "kind": "DataSectionObject",
+      "pages": 5,
+      "control_area": "0xab0b0d6bca90",
+      "error": "Page Fault at entry 0x0 in table page directory"
+    },
+    {
+      "file_object": "0xab0b0d3463e0",
+      "name": "\\Windows\\System32\\slui.exe",
+      "kind": "ImageSectionObject",
+      "pages": 40,
+      "control_area": "0xab0b11ce9c80"
+    },
+    {
+      "file_object": "0xab0b0d346bb0",
+      "name": "\\Program Files\\Mozilla Thunderbird\\pingsender.exe",
+      "kind": "ImageSectionObject",
+      "pages": 22,
+      "control_area": "0xab0b11442a20"
+    },
+    {
+      "file_object": "0xab0b0d34fe90",
+      "name": "\\Users\\Carmine Falcone\\Desktop\\services.exe",
+      "kind": "ImageSectionObject",
+      "pages": 269,
+      "control_area": "0xab0b106cf320"
+    },
+    {
+      "file_object": "0xab0b0d353d10",
+      "name": "\\Program Files\\Oracle\\VirtualBox Guest Additions\\VBoxDrvInst.exe",
+      "kind": "ImageSectionObject",
+      "pages": 1,
+      "control_area": "0xab0b1524d2f0"
+    },
+    {
+      "file_object": "0xab0b0d356100",
+      "name": "\\Windows\\System32\\mspaint.exe",
+      "kind": "ImageSectionObject",
+      "pages": 2,
+      "control_area": "0xab0b10c3ca70"
+    },
+    {
+      "file_object": "0xab0b0d357870",
+      "name": "\\Windows\\System32\\OpenWith.exe",
+      "kind": "ImageSectionObject",
+      "pages": 17,
+      "control_area": "0xab0b0e0233b0"
+    },
+    {
+      "file_object": "0xab0b0d35dae0",
+      "name": "\\Users\\Carmine Falcone\\AppData\\Local\\exodus\\Exodus.exe",
+      "kind": "ImageSectionObject",
+      "pages": 40,
+      "control_area": "0xab0b0d5b2dc0"
+    },
+    {
+      "file_object": "0xab0b0d363d50",
+      "name": "\\Windows\\System32\\dllhost.exe",
+      "kind": "ImageSectionObject",
+      "pages": 9,
+      "control_area": "0xab0b0d5c9c80"
+    },
+    {
+      "file_object": "0xab0b0da278c0",
+      "name": "\\Windows\\System32\\svchost.exe",
+      "kind": "ImageSectionObject",
+      "pages": 17,
+      "control_area": "0xab0b0e8827f0"
+    },
+    {
+      "file_object": "0xab0b0db275c0",
+      "name": "\\Windows\\System32\\taskhostw.exe",
+      "kind": "ImageSectionObject",
+      "pages": 21,
+      "control_area": "0xab0b0da9aa20"
+    },
+    {
+      "file_object": "0xab0b0db28a10",
+      "name": "\\Windows\\System32\\VBoxService.exe",
+      "kind": "ImageSectionObject",
+      "pages": 74,
+      "control_area": "0xab0b0dadac80"
+    },
+    {
+      "file_object": "0xab0b0db308a0",
+      "name": "\\Windows\\System32\\VBoxTray.exe",
+      "kind": "ImageSectionObject",
+      "pages": 122,
+      "control_area": "0xab0b0dbb6a20"
+    },
+    {
+      "file_object": "0xab0b0dc9c840",
+      "name": "\\Windows\\System32\\winlogon.exe",
+      "kind": "ImageSectionObject",
+      "pages": 111,
+      "control_area": "0xab0b0d9c1a20"
+    },
+    {
+      "file_object": "0xab0b0dcf88a0",
+      "name": "\\Windows\\System32\\lsass.exe",
+      "kind": "ImageSectionObject",
+      "pages": 14,
+      "control_area": "0xab0b0b39d570"
+    },
+    {
+      "file_object": "0xab0b0dcfa650",
+      "name": "\\Windows\\System32\\services.exe",
+      "kind": "ImageSectionObject",
+      "pages": 95,
+      "control_area": "0xab0b0d9c5cc0"
+    },
+    {
+      "file_object": "0xab0b0dd03870",
+      "name": "\\Program Files\\Mozilla Thunderbird\\thunderbird.exe",
+      "kind": "DataSectionObject",
+      "pages": 1,
+      "control_area": "0xab0b0d6bd990",
+      "error": "Page Fault at entry 0x0 in table page directory"
+    },
+    {
+      "file_object": "0xab0b0dd03870",
+      "name": "\\Program Files\\Mozilla Thunderbird\\thunderbird.exe",
+      "kind": "ImageSectionObject",
+      "pages": 82,
+      "control_area": "0xab0b0d19f010"
+    },
+    {
+      "file_object": "0xab0b0dd03a00",
+      "name": "\\Program Files\\7-Zip\\7zFM.exe",
+      "kind": "ImageSectionObject",
+      "pages": 122,
+      "control_area": "0xab0b11019c80"
+    },
+    {
+      "file_object": "0xab0b0e205490",
+      "name": "\\Program Files\\7-Zip\\7zG.exe",
+      "kind": "ImageSectionObject",
+      "pages": 78,
+      "control_area": "0xab0b0e692d80"
+    },
+    {
+      "file_object": "0xab0b0e210cf0",
+      "name": "\\Program Files\\KeePass Password Safe 2\\KeePass.exe",
+      "kind": "ImageSectionObject",
+      "pages": 479,
+      "control_area": "0xab0b0b383650"
+    },
+    {
+      "file_object": "0xab0b0e298a10",
+      "name": "\\Windows\\System32\\audiodg.exe",
+      "kind": "ImageSectionObject",
+      "pages": 133,
+      "control_area": "0xab0b0ddb0c20"
+    },
+    {
+      "file_object": "0xab0b0e29ee10",
+      "name": "\\Windows\\System32\\spoolsv.exe",
+      "kind": "ImageSectionObject",
+      "pages": 194,
+      "control_area": "0xab0b07277ba0"
+    },
+    {
+      "file_object": "0xab0b0e2a0260",
+      "name": "\\Windows\\System32\\sppsvc.exe",
+      "kind": "DataSectionObject",
+      "pages": 0,
+      "control_area": "0xab0b0d951c50",
+      "error": "Page Fault at entry 0xab0b0d951cd004c2 in page entry"
+    },
+    {
+      "file_object": "0xab0b0e2a0260",
+      "name": "\\Windows\\System32\\sppsvc.exe",
+      "kind": "ImageSectionObject",
+      "pages": 679,
+      "control_area": "0xab0b072639d0"
+    },
+    {
+      "file_object": "0xab0b0e341b00",
+      "name": "\\Windows\\System32\\SearchIndexer.exe",
+      "kind": "ImageSectionObject",
+      "pages": 227,
+      "control_area": "0xab0b11ee77f0"
+    },
+    {
+      "file_object": "0xab0b0e349670",
+      "name": "\\Windows\\System32\\WWAHost.exe",
+      "kind": "ImageSectionObject",
+      "pages": 61,
+      "control_area": "0xab0b117edcf0"
+    },
+    {
+      "file_object": "0xab0b0e34a2f0",
+      "name": "\\Windows\\System32\\WUDFHost.exe",
+      "kind": "ImageSectionObject",
+      "pages": 3,
+      "control_area": "0xab0b105f02b0"
+    },
+    {
+      "file_object": "0xab0b0e34b100",
+      "name": "\\Windows\\SystemApps\\Microsoft.MicrosoftEdge_8wekyb3d8bbwe\\MicrosoftEdge.exe",
+      "kind": "ImageSectionObject",
+      "pages": 373,
+      "control_area": "0xab0b1380b2b0",
+      "error": ""
+    },
+    {
+      "file_object": "0xab0b0e34bd80",
+      "name": "\\Windows\\SystemApps\\Microsoft.LockApp_cw5n1h2txyewy\\LockApp.exe",
+      "kind": "ImageSectionObject",
+      "pages": 144,
+      "control_area": "0xab0b13810010"
+    },
+    {
+      "file_object": "0xab0b0e35eb10",
+      "name": "\\ProgramData\\Microsoft\\Windows Defender\\Platform\\4.18.23110.3-0\\NisSrv.exe",
+      "kind": "ImageSectionObject",
+      "pages": 388,
+      "control_area": "0xab0b0f7e2b20"
+    },
+    {
+      "file_object": "0xab0b0e3619f0",
+      "name": "\\Windows\\System32\\sihost.exe",
+      "kind": "ImageSectionObject",
+      "pages": 23,
+      "control_area": "0xab0b0e7f69d0"
+    },
+    {
+      "file_object": "0xab0b0e446200",
+      "name": "\\Windows\\explorer.exe",
+      "kind": "ImageSectionObject",
+      "pages": 1057,
+      "control_area": "0xab0b11bf2a20"
+    },
+    {
+      "file_object": "0xab0b0e615e30",
+      "name": "\\Windows\\System32\\LogonUI.exe",
+      "kind": "ImageSectionObject",
+      "pages": 3,
+      "control_area": "0xab0b0e7a6d00"
+    },
+    {
+      "file_object": "0xab0b0e616790",
+      "name": "\\Windows\\System32\\dwm.exe",
+      "kind": "ImageSectionObject",
+      "pages": 8,
+      "control_area": "0xab0b0b395a80"
+    },
+    {
+      "file_object": "0xab0b0e89e530",
+      "name": "\\Windows\\System32\\notepad.exe",
+      "kind": "ImageSectionObject",
+      "pages": 43,
+      "control_area": "0xab0b11ee9550"
+    },
+    {
+      "file_object": "0xab0b0e8a0790",
+      "name": "\\Windows\\System32\\fontdrvhost.exe",
+      "kind": "ImageSectionObject",
+      "pages": 56,
+      "control_area": "0xab0b0e8cc730"
+    },
+    {
+      "file_object": "0xab0b0f77de80",
+      "name": "\\Windows\\System32\\conhost.exe",
+      "kind": "ImageSectionObject",
+      "pages": 104,
+      "control_area": "0xab0b1380e550"
+    },
+    {
+      "file_object": "0xab0b0f840100",
+      "name": "\\Users\\Carmine Falcone\\AppData\\Local\\exodus\\app-24.1.1\\Exodus.exe",
+      "kind": "DataSectionObject",
+      "pages": 1,
+      "control_area": "0xab0b0d8a7710",
+      "error": "Page Fault at entry 0xab0b0d8a779004c2 in page entry"
+    },
+    {
+      "file_object": "0xab0b0f840100",
+      "name": "\\Users\\Carmine Falcone\\AppData\\Local\\exodus\\app-24.1.1\\Exodus.exe",
+      "kind": "ImageSectionObject",
+      "pages": 18270,
+      "control_area": "0xab0b152b95a0"
+    },
+    {
+      "file_object": "0xab0b0f84e6b0",
+      "name": "\\Windows\\System32\\ctfmon.exe",
+      "kind": "ImageSectionObject",
+      "pages": 4,
+      "control_area": "0xab0b077d7a20"
+    },
+    {
+      "file_object": "0xab0b0fbf95b0",
+      "name": "\\Windows\\System32\\wbem\\WmiPrvSE.exe",
+      "kind": "DataSectionObject",
+      "pages": 1,
+      "control_area": "0xab0b13e41610",
+      "error": "Page Fault at entry 0x0 in table page directory"
+    },
+    {
+      "file_object": "0xab0b0fbf95b0",
+      "name": "\\Windows\\System32\\wbem\\WmiPrvSE.exe",
+      "kind": "ImageSectionObject",
+      "pages": 48,
+      "control_area": "0xab0b113ee010"
+    },
+    {
+      "file_object": "0xab0b10002b40",
+      "name": "\\Users\\Carmine Falcone\\AppData\\Local\\Microsoft\\OneDrive\\OneDrive.exe",
+      "kind": "ImageSectionObject",
+      "pages": 92,
+      "control_area": "0xab0b11eeec50"
+    },
+    {
+      "file_object": "0xab0b100dc850",
+      "name": "\\Windows\\SystemApps\\ShellExperienceHost_cw5n1h2txyewy\\ShellExperienceHost.exe",
+      "kind": "ImageSectionObject",
+      "pages": 330,
+      "control_area": "0xab0b1380b010"
+    },
+    {
+      "file_object": "0xab0b100e6300",
+      "name": "\\Windows\\System32\\SgrmBroker.exe",
+      "kind": "ImageSectionObject",
+      "pages": 78,
+      "control_area": "0xab0b11047b50"
+    },
+    {
+      "file_object": "0xab0b100efdb0",
+      "name": "\\Windows\\System32\\MoUsoCoreWorker.exe",
+      "kind": "ImageSectionObject",
+      "pages": 241,
+      "control_area": "0xab0b106d0ab0"
+    },
+    {
+      "file_object": "0xab0b101efaa0",
+      "name": "\\Windows\\System32\\browser_broker.exe",
+      "kind": "ImageSectionObject",
+      "pages": 5,
+      "control_area": "0xab0b0da3eca0"
+    },
+    {
+      "file_object": "0xab0b101f1210",
+      "name": "\\Program Files\\Common Files\\microsoft shared\\ink\\TabTip.exe",
+      "kind": "ImageSectionObject",
+      "pages": 6,
+      "control_area": "0xab0b0e7a7460"
+    },
+    {
+      "file_object": "0xab0b10842ef0",
+      "name": "\\Program Files\\WindowsApps\\Microsoft.Windows.Photos_2019.19071.12548.0_x64__8wekyb3d8bbwe\\Microsoft.Photos.exe",
+      "kind": "ImageSectionObject",
+      "pages": 1,
+      "control_area": "0xab0b075b09b0"
+    },
+    {
+      "file_object": "0xab0b10a02370",
+      "name": "\\Windows\\servicing\\TrustedInstaller.exe",
+      "kind": "ImageSectionObject",
+      "pages": 33,
+      "control_area": "0xab0b101c4510"
+    },
+    {
+      "file_object": "0xab0b10a042b0",
+      "name": "\\Program Files (x86)\\Microsoft\\EdgeUpdate\\MicrosoftEdgeUpdate.exe",
+      "kind": "ImageSectionObject",
+      "pages": 28,
+      "control_area": "0xab0b106cedc0"
+    },
+    {
+      "file_object": "0xab0b10a05570",
+      "name": "\\Windows\\System32\\SppExtComObj.Exe",
+      "kind": "ImageSectionObject",
+      "pages": 42,
+      "control_area": "0xab0b125932a0"
+    },
+    {
+      "file_object": "0xab0b10a0f1b0",
+      "name": "\\Users\\Carmine Falcone\\Downloads\\KeePass-2.53.1-Setup.exe",
+      "kind": "ImageSectionObject",
+      "pages": 5,
+      "control_area": "0xab0b10d6ecb0"
+    },
+    {
+      "file_object": "0xab0b10a0f980",
+      "name": "\\Windows\\System32\\smartscreen.exe",
+      "kind": "ImageSectionObject",
+      "pages": 252,
+      "control_area": "0xab0b0e689050"
+    },
+    {
+      "file_object": "0xab0b10a11be0",
+      "name": "\\Users\\Carmine Falcone\\Desktop\\DumpItog.exe",
+      "kind": "DataSectionObject",
+      "pages": 51,
+      "control_area": "0xab0b0d8a75d0",
+      "error": "Page Fault at entry 0x0 in table page directory"
+    },
+    {
+      "file_object": "0xab0b10a11be0",
+      "name": "\\Users\\Carmine Falcone\\Desktop\\DumpItog.exe",
+      "kind": "ImageSectionObject",
+      "pages": 38,
+      "control_area": "0xab0b0d91ddb0"
+    },
+    {
+      "file_object": "0xab0b10a16b90",
+      "name": "\\Windows\\WinSxS\\amd64_microsoft-windows-servicingstack_31bf3856ad364e35_10.0.19041.262_none_e73f0197262d9fec\\TiWorker.exe",
+      "kind": "ImageSectionObject",
+      "pages": 23,
+      "control_area": "0xab0b101cf270"
+    },
+    {
+      "file_object": "0xab0b10a19a70",
+      "name": "\\Users\\Carmine Falcone\\Downloads\\exodus-windows-x64-24.1.1.exe",
+      "kind": "ImageSectionObject",
+      "pages": 6,
+      "control_area": "0xab0b0fa70dc0"
+    },
+    {
+      "file_object": "0xab0b10a21130",
+      "name": "\\Users\\Carmine Falcone\\Downloads\\Thunderbird Setup 115.6.0.exe",
+      "kind": "ImageSectionObject",
+      "pages": 5,
+      "control_area": "0xab0b10bf9080"
+    },
+    {
+      "file_object": "0xab0b10cb7750",
+      "name": "\\Program Files\\KeePass Password Safe 2\\unins000.exe",
+      "kind": "ImageSectionObject",
+      "pages": 3,
+      "control_area": "0xab0b0e2c2ca0"
+    },
+    {
+      "file_object": "0xab0b10cc3780",
+      "name": "\\Windows\\SystemApps\\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\\StartMenuExperienceHost.exe",
+      "kind": "ImageSectionObject",
+      "pages": 63,
+      "control_area": "0xab0b07317260"
+    },
+    {
+      "file_object": "0xab0b10cca4e0",
+      "name": "\\Windows\\SystemApps\\Microsoft.Windows.Search_cw5n1h2txyewy\\SearchApp.exe",
+      "kind": "ImageSectionObject",
+      "pages": 565,
+      "control_area": "0xab0b1380b550"
+    },
+    {
+      "file_object": "0xab0b11467340",
+      "name": "\\Windows\\System32\\ApplicationFrameHost.exe",
+      "kind": "ImageSectionObject",
+      "pages": 18,
+      "control_area": "0xab0b076ecbe0"
+    },
+    {
+      "file_object": "0xab0b11492770",
+      "name": "\\ProgramData\\Microsoft\\Windows Defender\\Platform\\4.18.23110.3-0\\MsMpEng.exe",
+      "kind": "ImageSectionObject",
+      "pages": 28,
+      "control_area": "0xab0b10d40c80"
+    },
+    {
+      "file_object": "0xab0b11c73770",
+      "name": "\\Windows\\System32\\consent.exe",
+      "kind": "ImageSectionObject",
+      "pages": 29,
+      "control_area": "0xab0b11a2a920"
+    },
+    {
+      "file_object": "0xab0b1217fe00",
+      "name": "\\Windows\\System32\\SearchProtocolHost.exe",
+      "kind": "ImageSectionObject",
+      "pages": 71,
+      "control_area": "0xab0b106c6270"
+    },
+    {
+      "file_object": "0xab0b12183c80",
+      "name": "\\Windows\\System32\\SearchFilterHost.exe",
+      "kind": "ImageSectionObject",
+      "pages": 30,
+      "control_area": "0xab0b1101c010"
+    },
+    {
+      "file_object": "0xab0b138a6630",
+      "name": "\\Windows\\System32\\wermgr.exe",
+      "kind": "ImageSectionObject",
+      "pages": 3,
+      "control_area": "0xab0b106aad20"
+    },
+    {
+      "file_object": "0xab0b138c2830",
+      "name": "\\Program Files\\Windows Defender\\NisSrv.exe",
+      "kind": "ImageSectionObject",
+      "pages": 150,
+      "control_area": "0xab0b0d647cd0"
+    },
+    {
+      "file_object": "0xab0b138c6390",
+      "name": "\\Program Files\\Internet Explorer\\iexplore.exe",
+      "kind": "ImageSectionObject",
+      "pages": 8,
+      "control_area": "0xab0b1143fcb0"
+    },
+    {
+      "file_object": "0xab0b138c6520",
+      "name": "\\Program Files\\Windows Defender\\MsMpEng.exe",
+      "kind": "ImageSectionObject",
+      "pages": 2,
+      "control_area": "0xab0b0bf43d60"
+    },
+    {
+      "file_object": "0xab0b138c9720",
+      "name": "\\Program Files\\Windows NT\\Accessories\\wordpad.exe",
+      "kind": "ImageSectionObject",
+      "pages": 12,
+      "control_area": "0xab0b101d31e0"
+    },
+    {
+      "file_object": "0xab0b138ca9e0",
+      "name": "\\Program Files (x86)\\Windows Media Player\\wmplayer.exe",
+      "kind": "ImageSectionObject",
+      "pages": 6,
+      "control_area": "0xab0b0e2e5d80"
+    },
+    {
+      "file_object": "0xab0b138cb340",
+      "name": "\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      "kind": "ImageSectionObject",
+      "pages": 3,
+      "control_area": "0xab0b0d45dd70"
+    },
+    {
+      "file_object": "0xab0b138ccab0",
+      "name": "\\Windows\\System32\\backgroundTaskHost.exe",
+      "kind": "ImageSectionObject",
+      "pages": 5,
+      "control_area": "0xab0b0e11bcc0"
+    }
+  ],
+  "hits": [
+    {
+      "file_object": "0xab0b0d34fe90",
+      "name": "\\Users\\Carmine Falcone\\Desktop\\services.exe",
+      "kind": "ImageSectionObject",
+      "pages": 215,
+      "control_area": "0xab0b106cf320",
+      "physical_page": 320249856,
+      "file_offset": 1172944,
+      "target": 320252368
+    },
+    {
+      "file_object": "0xab0b0d34fe90",
+      "name": "\\Users\\Carmine Falcone\\Desktop\\services.exe",
+      "kind": "ImageSectionObject",
+      "pages": 257,
+      "control_area": "0xab0b106cf320",
+      "physical_page": 3487571968,
+      "file_offset": 2031616,
+      "target": 3487571968
+    }
+  ]
+}

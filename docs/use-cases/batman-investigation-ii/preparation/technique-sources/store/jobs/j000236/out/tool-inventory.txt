@@ -1,0 +1,55 @@
+# Programs in this VM (memory image)
+
+Packs: computer-forensics-base, memory-forensics.
+One program or library a line: its name, what it is for, its pack, the version installed.
+Find one with `grep -i <word> /etc/dfirswarm/tools.md`. Programs are on PATH; the libraries
+import in `python3` (the image's venv comes first on PATH). What this file does not name is
+not in the image.
+
+## Programs
+
+- `aeskeyfind` — Find AES-128 and AES-256 key schedules in a memory image by testing each position against the key-expansion constraints; it tolerates a few decayed bits. A candidate is a lead, and is established only by decrypting something the evidence holds with it. Debian packages it for amd64 and i386 only: this one is built from Debian's source and patches (files over 4 GB among them) on every architecture. (memory-forensics; built from source 1.0-11)
+- `avml` — Acquire memory from a live Linux host into a portable format, without building a kernel module. (memory-forensics; download 0.20.0)
+- `bdeinfo` — Read a BitLocker volume header: encryption method and every key protector, before any key is known. (computer-forensics-base; libbde-utils 20190102-2+b2)
+- `bulk_extractor` — Sweep a whole image for features at scale: addresses, URLs, card numbers, EXIF, and carved records, without a file system. (computer-forensics-base; built from source 2.2.0)
+- `ccl_indexeddb_dump` — A Chromium or Electron IndexedDB (a chat client's, a web app's) read by database, object store and record; the ccl_chromium_reader library beside it, in /opt/dfir/src/ccl_indexeddb_dump/.venv/bin/python, also reads LevelDB, Local Storage, Session Storage and the cache. (computer-forensics-base; source 0.3.18)
+- `cryptsetup` — Read a LUKS header and its key slots, and open the volume when a key is known. (computer-forensics-base; cryptsetup-bin 2:2.6.1-4~deb12u2)
+- `dislocker` — Unlock a BitLocker volume to a file once a key or a clear-key protector is in hand. Invoked as an executable. (computer-forensics-base; dislocker 0.7.3-3)
+- `ewfinfo` — Read an E01's acquisition record and its stored digests. (computer-forensics-base; libewf-dev 20140813-1+b1, ewf-tools 20140813-1+b1)
+- `fls` — List files, deleted entries and named streams in an image. Invoked as an executable: CPL and IPL cannot be combined with AGPL in one work. (computer-forensics-base; sleuthkit 4.11.1+dfsg-1+b1)
+- `fsapfsinfo` — Read an APFS container and its volumes, which the Sleuth Kit does not. Experimental libfsapfs: upstream does not support snapshots, Fusion drives or T2 encryption. (computer-forensics-base; libfsapfs-utils 20201107-1+b3)
+- `fsstat` — Volume serial, cluster size and file system type. Invoked as an executable: CPL and IPL cannot be combined with AGPL in one work. (computer-forensics-base; sleuthkit 4.11.1+dfsg-1+b1)
+- `fvdeinfo` — Read a FileVault volume's encryption metadata and its key material references. (computer-forensics-base; libfvde-utils 20190104-1.1+b4)
+- `gcc` — Compile a small C program the seat itself writes, in the job's own directory: a scanner over a memory image too large for Python to hold, a decoder for a format no library reads. The source and the build line stay in the record like any other tool. Never a program or a source tree the evidence holds: nothing from the evidence is executed. (memory-forensics; gcc 4:12.2.0-3, libc6-dev 2.36-9+deb12u14)
+- `icat` — Extract a file by inode, including a named stream. Invoked as an executable: CPL and IPL cannot be combined with AGPL in one work. (computer-forensics-base; sleuthkit 4.11.1+dfsg-1+b1)
+- `img_cat` — The raw bytes of an image, E01 included, over a range of sectors: a signature scan without converting the image first. (computer-forensics-base; sleuthkit 4.11.1+dfsg-1+b1)
+- `img_stat` — The size and format of an image as The Sleuth Kit reads it, E01 included: the bound for a scan over the whole of it. (computer-forensics-base; sleuthkit 4.11.1+dfsg-1+b1)
+- `istat` — Confirm an inode's size, timestamps and allocation before trusting an extract. Invoked as an executable: CPL and IPL cannot be combined with AGPL in one work. (computer-forensics-base; sleuthkit 4.11.1+dfsg-1+b1)
+- `log2timeline` — Build a super timeline from a whole image in one pass: every parser Plaso carries, into one storage file. Older packages install it as log2timeline.py; the tool accepts either. (computer-forensics-base; plaso 20260720)
+- `luksdeinfo` — Read a LUKS header and its key slots without unlocking the volume. (computer-forensics-base; libluksde-utils 20200205-1+b4)
+- `make` — Build a tool distributed as source, from a tree the operator or a pack supplied; never a source tree the evidence holds. (memory-forensics; make 4.3-4.1)
+- `memprocfs` — Mount a memory image as a file system: processes, handles, modules, registry and network state become files the ordinary tools read. AGPL-3.0, so its licence and this project's combine where Volatility's do not. (memory-forensics; download 5.18.11)
+- `mmls` — Partition table, and the sector offset every other command needs. Invoked as an executable: CPL and IPL cannot be combined with AGPL in one work. (computer-forensics-base; sleuthkit 4.11.1+dfsg-1+b1)
+- `pdftotext` — The text of a PDF (-layout keeps its columns); pdfinfo, pdfimages and pdftohtml come in the same package. (computer-forensics-base; poppler-utils 22.12.0-2+deb12u3)
+- `photorec` — Signature recovery over unallocated space, and a partition table a damaged disk no longer has. (computer-forensics-base; testdisk 7.1-5+nmu1)
+- `psort` — Filter, sort and export a Plaso storage file. The half of a super timeline an examiner actually reads. Older packages install it as psort.py; the tool accepts either. (computer-forensics-base; plaso 20260720)
+- `qemu-img` — Convert a VHD, VHDX, VMDK or QCOW2 disk to raw, which is what the toolkit reads. (computer-forensics-base; qemu-utils 1:7.2+dfsg-7+deb12u18+b3)
+- `steghide` — Extract data hidden in a JPEG, BMP, WAV or AU file with steghide, given a passphrase the evidence supplies (an empty one included). It cannot tell a file with nothing hidden from one hidden under another passphrase: a negative is about that passphrase, and about steghide only. (computer-forensics-base; steghide 0.5.1-15)
+- `strings` — A first pass over a region before a parser is chosen. Always search UTF-16LE as well, which strings -el does. (memory-forensics; binutils 2.40-2)
+- `target-query` — One query interface over E01, VMDK, QCOW and a triage collection, with a plugin per artefact family. AGPL-3.0, the same licence as this harness. (computer-forensics-base; dissect 3.22)
+- `tsk_recover` — Bulk recovery of deleted files from an image. Invoked as an executable. (computer-forensics-base; sleuthkit 4.11.1+dfsg-1+b1)
+- `vol` — The plugin framework most reports cite. Kept at an executable boundary rather than imported or vendored, under its own Volatility Software License 1.0. (memory-forensics; volatility3 2.28.2)
+- `yara` — Scan a whole memory image or a dumped process region with examiner-supplied rules, preserving rule names, matching strings and byte offsets. (memory-forensics; yara 4.2.3-4)
+
+## Python libraries
+
+- `cryptography` 50.0.2 — Apache-2.0 OR BSD-3-Clause. AES for aescrypt_v2_decrypt. (base image)
+- `dissect.util` 3.24 — AGPL-3.0, Fox-IT. lzxpress_huffman for compressed prefetch (mam_*). (base image)
+- `Pillow` 12.3.0 — MIT-CMU. A photo or a screenshot opened in a script: its pixels, bit planes and EXIF, and a re-saved copy to compare. (computer-forensics-base)
+- `python-evtx` 0.8.1 — Apache-2.0. Evtx: event log records (evtx_filter, evtx_query). (base image)
+- `regipy` 6.4.0 — MIT. Registry hives (amcache_apps, reg_hive_query, regkeys, regkv). (base image)
+
+## Data the programs read
+
+- `vol-isf-ntkrnlmp.pdb-D9424FC4861E47C10FAD1B35DEC6DCC8-1` — The exact symbol table of the Windows kernel ntkrnlmp.pdb D9424FC4861E47C10FAD1B35DEC6DCC8 age 1 (Windows 10 x64, build 19041 family), made from Microsoft's PDB by this image's build, so Volatility's Windows plugins read a memory image of that kernel with no network (run them with `--offline`). First listed for a public CTF memory image (DFIR-Labs) whose kernel is in neither the Foundation's bundle nor JPCERT/CC's collection. (memory-forensics; for `vol`; identity pdb ntkrnlmp.pdb guid D9424FC4861E47C10FAD1B35DEC6DCC8 age 1; at /opt/dfir/venv/lib/python3.11/site-packages/volatility3/symbols/windows/ntkrnlmp.pdb/D9424FC4861E47C10FAD1B35DEC6DCC8-1.json.xz)
+- `vol-windows-symbols` — Windows kernel symbol tables for `vol`, so a Windows plugin finds its kernel's symbols with no network (run it with `--offline`). The Volatility Foundation's `windows.zip`, a bundle of 2019 (last changed 2019-10-16): tables for the Windows builds of that time, not every one of them. A newer kernel is not in it; `vol -q isfinfo` lists the tables there are. (memory-forensics; for `vol`; at /opt/dfir/venv/lib/python3.11/site-packages/volatility3/symbols/windows.zip)

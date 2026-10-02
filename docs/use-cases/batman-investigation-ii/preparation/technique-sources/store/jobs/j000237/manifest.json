@@ -1,0 +1,1 @@
+{"v":1,"job":"j000237","attempt":1,"sealed_at":"2026-10-02T11:04:09.135Z","files":[{"path":"exact80-packet-auth.json","path_b64":"ZXhhY3Q4MC1wYWNrZXQtYXV0aC5qc29u","bytes":198,"sha256":"944e6f82387b61eb04817c4d5e74b5a50357d0bb37aa7f604ed92a6829397585","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":198}}

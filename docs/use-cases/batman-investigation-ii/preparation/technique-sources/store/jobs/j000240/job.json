@@ -1,0 +1,89 @@
+{
+  "id": "j000240",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000223/file.0xab0b0d34fe90.0xab0b106cf320.ImageSectionObject.services.exe.img"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "independent": true,
+    "command": "python3 - <<'PY'\nimport os,json,struct,pefile\nb=open('store/jobs/j000223/out/file.0xab0b0d34fe90.0xab0b106cf320.ImageSectionObject.services.exe.img','rb').read();p=pefile.PE(data=b,fast_load=True);base=p.OPTIONAL_HEADER.ImageBase;s=next(x for x in p.sections if x.Name.rstrip(b'\\0')==b'.text');g=b.find(b'\\xf1\\xff\\xff\\xff\\0\\0\\1\\10');n,files,text,fn,cu,filetab,pctab,pcln=struct.unpack_from('<8Q',b,g+8);tab=g+pcln\nfuncs=[]\nfor i in range(n):\n e,fo=struct.unpack_from('<II',b,tab+8*i);end=struct.unpack_from('<I',b,tab+8*(i+1))[0];_,nameoff=struct.unpack_from('<Ii',b,tab+fo);nameat=g+fn+nameoff;name=b[nameat:b.find(b'\\0',nameat)].decode('utf8','replace'); funcs.append({'start':text+e,'end':text+end,'name':name})\nxoroff=943047;xorva=base+s.VirtualAddress+xoroff-s.PointerToRawData;f=next(x for x in funcs if x['start']<=xorva<x['end']);file_start=f['start']-base-s.VirtualAddress+s.PointerToRawData;file_end=f['end']-base-s.VirtualAddress+s.PointerToRawData\ncallers=[]\nfor i in range(s.PointerToRawData,min(len(b)-5,s.PointerToRawData+s.SizeOfRawData)):\n if b[i]!=0xe8:continue\n va=base+s.VirtualAddress+i-s.PointerToRawData;target=va+5+struct.unpack_from('<i',b,i+1)[0]\n if target==f['start']:\n  owner=next((x for x in funcs if x['start']<=va<x['end']),None);callers.append({'offset':i,'va':va,'owner':owner,'context_offset':i-24,'context_hex':b[i-24:i+24].hex()})\nout={'version':'independent Python3 structural reader; pefile '+pefile.__version__,'go_nfunc':n,'xor_function':f,'function_file_start':file_start,'function_file_end':file_end,'function_hex':b[file_start:file_end].hex(),'xor_loop_offset':943043,'loop_hex':b[943043:943062].hex(),'candidate_direct_callers':callers}\njson.dump(out,open(os.environ['OUT']+'/xor-function.json','w'),indent=2);print(json.dumps(out,indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120103",
+    "name": "Wallet history",
+    "doing": "Investigating Q7 and Q8: password-protected archive and original file hashes; avoiding peers' wallet work."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T11:05:25.577Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000223/out/file.0xab0b0d34fe90.0xab0b106cf320.ImageSectionObject.services.exe.img",
+        "sha256": "fa77c2c1076f47055a0a37a08e29eb88238489a3ca74ccd6b5187f31218b0cea"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000240-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T11:05:25.643Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000240",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000240/scope.1.json",
+    "manifest_sha256": "e06f005a8ad4c3911f85c4288b5e3d7e6385b7bc1dcfcd9360255ad55c49dfc2"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T11:05:26.481Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "3f53db2e9d3c510b6a58d3f5b53679f964092b0eed5d33b6a56a8d46114d420e",
+    "files": 1,
+    "bytes": 1205,
+    "rejected": 0,
+    "path": "store/jobs/j000240/out"
+  },
+  "sensitive": {
+    "why": "derived",
+    "from": [
+      "j000223"
+    ],
+    "note": "made from the sensitive output of j000223: every output it sealed is sensitive"
+  }
+}

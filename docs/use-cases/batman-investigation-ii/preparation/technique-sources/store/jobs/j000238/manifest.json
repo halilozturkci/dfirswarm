@@ -1,0 +1,1 @@
+{"v":1,"job":"j000238","attempt":1,"sealed_at":"2026-10-02T11:04:22.522Z","files":[{"path":"xor-candidates.json","path_b64":"eG9yLWNhbmRpZGF0ZXMuanNvbg==","bytes":807,"sha256":"f5686a416694940ca29c161d8be218b25c6c1168ff7522b3ca31f8321e14a205","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":807}}

@@ -1,0 +1,1 @@
+{"v":1,"job":"j000242","attempt":1,"sealed_at":"2026-10-02T11:08:26.489Z","files":[{"path":"targeted-ctr-validation.json","path_b64":"dGFyZ2V0ZWQtY3RyLXZhbGlkYXRpb24uanNvbg==","bytes":53,"sha256":"27e031241a2c08b5e2ccc18f90e912211461f3039606cf3ac049f64bb86f11c3","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":53}}

@@ -1,0 +1,88 @@
+{
+  "id": "j000232",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000223/file.0xab0b0d34fe90.0xab0b106cf320.ImageSectionObject.services.exe.img"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "command": "python3 - <<'PY'\nimport pathlib,struct,json,hashlib,os,bisect\np=pathlib.Path('store/jobs/j000223/out/file.0xab0b0d34fe90.0xab0b106cf320.ImageSectionObject.services.exe.img')\nb=p.read_bytes(); out=pathlib.Path(os.environ['OUT'])\n# PE facts from headers, parse via pefile (trusted data parser)\nimport pefile\npe=pefile.PE(data=b); ib=pe.OPTIONAL_HEADER.ImageBase\ntext=next(s for s in pe.sections if s.Name.rstrip(b'\\0')==b'.text')\ntraw=text.PointerToRawData; tva=ib+text.VirtualAddress; tdat=b[traw:traw+text.SizeOfRawData]\n# Go 1.20+ pclntab header\nsig=b'\\xf1\\xff\\xff\\xff\\x00\\x00\\x01\\x08'; hits=[]; pos=0\nwhile True:\n pos=b.find(sig,pos)\n if pos<0: break\n hits.append(pos); pos+=1\nres={'sha256':hashlib.sha256(b).hexdigest(),'size':len(b),'image_base':ib,'pclntab_candidates':hits}\nif len(hits)!=1: raise SystemExit('unexpected pclntab candidates '+repr(hits))\ng=hits[0]; ptr=8\nu64=lambda o:struct.unpack_from('<Q',b,o)[0]\nnfunc=u64(g+8); nfiles=u64(g+16); textStart=u64(g+24); funcnameOff=u64(g+32); pclnOff=u64(g+64)\nres['go_header']={'offset':g,'nfunc':nfunc,'nfiles':nfiles,'textStart':textStart,'funcnameOff':funcnameOff,'pclnOff':pclnOff}\nptab=g+pclnOff\n# functab entries then _func metadata, funcoff relative to ptab\nfuncs=[]\ndef cstr(o):\n e=b.find(b'\\0',o,min(len(b),o+1000));\n if e<0: e=min(len(b),o+1000)\n return b[o:e].decode('utf-8','replace')\nfor i in range(nfunc):\n entryoff,funcoff=struct.unpack_from('<II',b,ptab+i*8)\n nextoff=struct.unpack_from('<I',b,ptab+(i+1)*8)[0]\n fo=ptab+funcoff\n if fo+8>len(b): continue\n nameoff=struct.unpack_from('<i',b,fo+4)[0]\n no=g+funcnameOff+nameoff\n name=cstr(no) if 0<=no<len(b) else '<bad>'\n funcs.append({'start':textStart+entryoff,'end':textStart+nextoff,'name':name,'entryoff':entryoff,'funcoff':funcoff})\nres['function_count_parsed']=len(funcs); res['function_name_sample']=funcs[:10]\nstarts=[f['start'] for f in funcs]\ndef owner(va):\n i=bisect.bisect_right(starts,va)-1\n return funcs[i] if i>=0 and va<funcs[i]['end'] else None\ndef va2off(va):\n rva=va-ib\n for s in pe.sections:\n  if s.VirtualAddress<=rva<s.VirtualAddress+max(s.SizeOfRawData,s.Misc_VirtualSize): return s.PointerToRawData+(rva-s.VirtualAddress)\n# target exact bytes and VA ranges\ntargets={}\nfor n in [b'exodus.wallet',b'172.30.145.189:6969']:\n o=b.find(n); rva=None\n for s in pe.sections:\n  if s.PointerToRawData<=o<s.PointerToRawData+s.SizeOfRawData: rva=s.VirtualAddress+(o-s.PointerToRawData); break\n targets[n.decode()]={'off':o,'va':ib+rva,'len':len(n)}\nres['targets']=targets\n# scan x86-64 REX+LEA RIP-rel (7 bytes); also REX+MOV RIP-rel (7 bytes)\nxrefs=[]\nfor i in range(len(tdat)-7):\n if 0x40<=tdat[i]<=0x4f and tdat[i+1] in (0x8d,0x8b) and (tdat[i+2]&0xc7)==0x05:\n  disp=struct.unpack_from('<i',tdat,i+3)[0]; iva=tva+i; dst=iva+7+disp\n  for name,t in targets.items():\n   if t['va']<=dst<t['va']+t['len']:\n    f=owner(iva); xrefs.append({'target':name,'target_delta':dst-t['va'],'instruction_va':iva,'instruction_off':traw+i,'kind':'lea' if tdat[i+1]==0x8d else 'mov','rex':tdat[i],'modrm':tdat[i+2],'disp':disp,'function':f,'context_hex':tdat[max(0,i-32):i+64].hex()})\nres['xrefs']=xrefs\n# For every owning function with xref, byte-scan relative calls that resolve exactly to a Go entry.\n# Report only calls whose target is a parsed entry; this is a candidate map, because no full instruction decoder is present.\nentrymap={f['start']:f for f in funcs}; callmaps=[]\nseen=set()\nfor x in xrefs:\n f=x['function'];\n if not f or f['start'] in seen: continue\n seen.add(f['start']); so=va2off(f['start']); eo=va2off(f['end']-1)\n if so is None: continue\n eo=(eo+1) if eo is not None else so+min(65536,f['end']-f['start'])\n dat=b[so:min(eo,len(b))]; calls=[]\n for j in range(len(dat)-5):\n  if dat[j]!=0xe8: continue\n  disp=struct.unpack_from('<i',dat,j+1)[0]; src=f['start']+j; dst=src+5+disp\n  if dst in entrymap: calls.append({'at_va':src,'at_off':so+j,'to_va':dst,'to':entrymap[dst]['name']})\n callmaps.append({'function':f,'calls_to_go_entries':calls})\nres['xref_function_calls_candidate']=callmaps\n(out/'go-pcln-xrefs.json').write_text(json.dumps(res,indent=2))\n# retain compact summary separately\nsummary={'go_header':res['go_header'],'targets':targets,'xrefs':xrefs,'xref_function_calls_candidate':callmaps}\n(out/'summary.json').write_text(json.dumps(summary,indent=2)); print(json.dumps(summary,indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120106",
+    "name": "Vault Artifact Analyst",
+    "doing": "Establishing Q3-Q4: password-manager identity/version and password, plus the deleted stored user key."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T11:03:08.861Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000223/out/file.0xab0b0d34fe90.0xab0b106cf320.ImageSectionObject.services.exe.img",
+        "sha256": "fa77c2c1076f47055a0a37a08e29eb88238489a3ca74ccd6b5187f31218b0cea"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000232-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T11:03:08.918Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000232",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000232/scope.1.json",
+    "manifest_sha256": "e068ac635288b614c0b3ed7ee6fbbd3760302935dd288b7d09d3087245ac5466"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T11:03:09.761Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "69db092d8f780fd3cb13ec0919dea7a13c7c42bb96000ebff0e67c39d4d2c4c3",
+    "files": 2,
+    "bytes": 8334,
+    "rejected": 0,
+    "path": "store/jobs/j000232/out"
+  },
+  "sensitive": {
+    "why": "derived",
+    "from": [
+      "j000223"
+    ],
+    "note": "made from the sensitive output of j000223: every output it sealed is sensitive"
+  }
+}

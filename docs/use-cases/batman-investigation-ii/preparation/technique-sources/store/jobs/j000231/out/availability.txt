@@ -1,0 +1,10 @@
+llvm-objdump	llvm-readobj	rizin	rz-bin	rz-asm	radare2	r2	ghidraRun	analyzeHeadless	go	--- python modules ---
+distorm3 NO ModuleNotFoundError("No module named 'distorm3'")
+iced_x86 NO ModuleNotFoundError("No module named 'iced_x86'")
+zydis NO ModuleNotFoundError("No module named 'zydis'")
+capstone NO ModuleNotFoundError("No module named 'capstone'")
+pefile YES 2024.8.26
+--- go tool objdump help ---
+/job/command.sh: line 12: go: command not found
+--- go tool nm help ---
+/job/command.sh: line 13: go: command not found

@@ -1,0 +1,457 @@
+{
+  "id": "j000041",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/Carmine-Falcone.raw"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "vol --offline -s /tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics/vendor/symbols -f inputs/chall/Carmine-Falcone.raw -o \"$OUT\" windows.dumpfiles --pid 6628 > \"$OUT/archive-dumpfiles.txt\" 2> \"$OUT/archive.stderr\""
+  },
+  "requester": {
+    "agent": "s42120103",
+    "name": "Wallet history",
+    "doing": "Investigating Q7 and Q8: password-protected archive and original file hashes; avoiding peers' wallet work."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:02:14.336Z",
+  "reuse": {
+    "op": "command:vol",
+    "objects": [
+      {
+        "path": "inputs/chall/Carmine-Falcone.raw",
+        "sha256": "3e03551e1f55dd792b0bc459b5620522d61fcf2379e8f6d89ef439fef8263cac"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000041-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:02:14.399Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000041",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000041/scope.1.json",
+    "manifest_sha256": "b2431138a1f128fcfb0d193847406d2d5820ca02ec0bb81bcc61dd46f3da5ec9"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:02:23.879Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "same_as": [
+    {
+      "path": "archive.stderr",
+      "sha256": "495a1d75f665f09f5d325806fae5cd45191c2410eb37a2a3e50bfc2f26ccf0f7",
+      "bytes": 489,
+      "job": "j000018",
+      "file": "notepad.stderr"
+    },
+    {
+      "path": "file.0xab0b0775f780.0xab0b0e10aa20.ImageSectionObject.profapi.dll.img",
+      "sha256": "441202de4b929964eebc7d7b5fbbea8e702c3a48b8c70ff8fd3c7ad10153e3d9",
+      "bytes": 108544,
+      "job": "j000013",
+      "file": "file.0xab0b0775f780.0xab0b0e10aa20.ImageSectionObject.profapi.dll.img"
+    },
+    {
+      "path": "file.0xab0b078f34c0.0xab0b076f4ca0.ImageSectionObject.ntdll.dll.img",
+      "sha256": "a6c60a128da1e4f7ffeacfb41bbda6807defd3369345cd49162e20ae97790cff",
+      "bytes": 1537536,
+      "job": "j000013",
+      "file": "file.0xab0b078f34c0.0xab0b076f4ca0.ImageSectionObject.ntdll.dll.img"
+    },
+    {
+      "path": "file.0xab0b0d03d250.0xab0b077b52e0.ImageSectionObject.ws2_32.dll.img",
+      "sha256": "3c22f095f0dc2c921ca7e22e464a54afaeccc903344a8891fc7882dbc4fa2aeb",
+      "bytes": 347136,
+      "job": "j000013",
+      "file": "file.0xab0b0d03d250.0xab0b077b52e0.ImageSectionObject.ws2_32.dll.img"
+    },
+    {
+      "path": "file.0xab0b0d03d570.0xab0b076f3050.ImageSectionObject.shlwapi.dll.img",
+      "sha256": "e58f68bc397eb38ac0de680c342406f826c2dd35835dbc320bd96569e9bff367",
+      "bytes": 329216,
+      "job": "j000013",
+      "file": "file.0xab0b0d03d570.0xab0b076f3050.ImageSectionObject.shlwapi.dll.img"
+    },
+    {
+      "path": "file.0xab0b0d03d700.0xab0b0b3c1bf0.ImageSectionObject.msctf.dll.img",
+      "sha256": "e90efb90e4bd1822458adc47f2047f0730db51b778f9ec5684f80ab87358cd05",
+      "bytes": 1103360,
+      "job": "j000013",
+      "file": "file.0xab0b0d03d700.0xab0b0b3c1bf0.ImageSectionObject.msctf.dll.img"
+    },
+    {
+      "path": "file.0xab0b0d03d890.0xab0b076f32f0.ImageSectionObject.oleaut32.dll.img",
+      "sha256": "5d9d62e80dc52a99bc68ccfe84d442ebea7cd5c3157dcbac16d0a8331fa9ee87",
+      "bytes": 805888,
+      "job": "j000013",
+      "file": "file.0xab0b0d03d890.0xab0b076f32f0.ImageSectionObject.oleaut32.dll.img"
+    },
+    {
+      "path": "file.0xab0b0d03da20.0xab0b076f92b0.ImageSectionObject.shell32.dll.img",
+      "sha256": "1315ca30754403dca5ae7ce814ca959ef3e43c26a4ad49922c1fe460d1de23f6",
+      "bytes": 7429632,
+      "job": "j000013",
+      "file": "file.0xab0b0d03da20.0xab0b076f92b0.ImageSectionObject.shell32.dll.img"
+    },
+    {
+      "path": "file.0xab0b0d03dbb0.0xab0b076f9010.ImageSectionObject.sechost.dll.img",
+      "sha256": "49204b70d9b425d93c9f465be35664464c9cdd69254dd56d6fb625809d3d6089",
+      "bytes": 604160,
+      "job": "j000013",
+      "file": "file.0xab0b0d03dbb0.0xab0b076f9010.ImageSectionObject.sechost.dll.img"
+    },
+    {
+      "path": "file.0xab0b0d03dd40.0xab0b0b3c1920.ImageSectionObject.combase.dll.img",
+      "sha256": "866e118ae2f2e16830205e80ebd43496812cf8a772c2b76a4331863420de095e",
+      "bytes": 3408384,
+      "job": "j000013",
+      "file": "file.0xab0b0d03dd40.0xab0b0b3c1920.ImageSectionObject.combase.dll.img"
+    },
+    {
+      "path": "file.0xab0b0d03ded0.0xab0b0d00d270.ImageSectionObject.msvcrt.dll.img",
+      "sha256": "ebc16235ef3b9f8e82804dd143a16e574b686bbaa2add4f23eb6269f201327b3",
+      "bytes": 624128,
+      "job": "j000013",
+      "file": "file.0xab0b0d03ded0.0xab0b0d00d270.ImageSectionObject.msvcrt.dll.img"
+    },
+    {
+      "path": "file.0xab0b0d03e1f0.0xab0b077b7ba0.ImageSectionObject.rpcrt4.dll.img",
+      "sha256": "8631cdfadaea1f2a907eaf47be1598e518399eb0408fa5431d072af561ff5c16",
+      "bytes": 1152000,
+      "job": "j000013",
+      "file": "file.0xab0b0d03e1f0.0xab0b077b7ba0.ImageSectionObject.rpcrt4.dll.img"
+    },
+    {
+      "path": "file.0xab0b0d03e830.0xab0b076fac10.ImageSectionObject.SHCore.dll.img",
+      "sha256": "dcb5d5f90ea809d6a1ea5b92a77f2439b1951bde1590ada89f608d9c3f7474dc",
+      "bytes": 679936,
+      "job": "j000013",
+      "file": "file.0xab0b0d03e830.0xab0b076fac10.ImageSectionObject.SHCore.dll.img"
+    },
+    {
+      "path": "file.0xab0b0d03eb50.0xab0b0d13a9a0.ImageSectionObject.imm32.dll.img",
+      "sha256": "e19bfb842ace5efeca63ec01eae72a3695ea1a01f0ee4b2a664bd18a455bda27",
+      "bytes": 158720,
+      "job": "j000013",
+      "file": "file.0xab0b0d03eb50.0xab0b0d13a9a0.ImageSectionObject.imm32.dll.img"
+    },
+    {
+      "path": "file.0xab0b0d0490c0.0xab0b07b56a20.ImageSectionObject.ole32.dll.img",
+      "sha256": "fd0548d623a5e98a95a7ffe032def157cb81903443fb96ce7e6d550002c215a4",
+      "bytes": 1186304,
+      "job": "j000013",
+      "file": "file.0xab0b0d0490c0.0xab0b07b56a20.ImageSectionObject.ole32.dll.img"
+    },
+    {
+      "path": "file.0xab0b0d049250.0xab0b0d0a3010.ImageSectionObject.advapi32.dll.img",
+      "sha256": "bfdd702955cb7e31e1d3d481ed5eb1fe65a4f2cdd55cb3489c6979766ecab261",
+      "bytes": 666624,
+      "job": "j000013",
+      "file": "file.0xab0b0d049250.0xab0b0d0a3010.ImageSectionObject.advapi32.dll.img"
+    },
+    {
+      "path": "file.0xab0b0d049700.0xab0b0d0a6910.ImageSectionObject.clbcatq.dll.img",
+      "sha256": "8fa4a9724e6397705d670d39ad466886eb2b9c2d9ed1ed5f88130c47925e521c",
+      "bytes": 646656,
+      "job": "j000013",
+      "file": "file.0xab0b0d049700.0xab0b0d0a6910.ImageSectionObject.clbcatq.dll.img"
+    },
+    {
+      "path": "file.0xab0b0d049a20.0xab0b0d0a32b0.ImageSectionObject.gdi32.dll.img",
+      "sha256": "832c458dcbbacf668f7497fe2f9bcefb258cd76dbc790ff5782dd774dd7996ed",
+      "bytes": 153088,
+      "job": "j000013",
+      "file": "file.0xab0b0d049a20.0xab0b0d0a32b0.ImageSectionObject.gdi32.dll.img"
+    },
+    {
+      "path": "file.0xab0b0d8f3250.0xab0b076fb010.ImageSectionObject.user32.dll.img",
+      "sha256": "64ee8759b4e9591bc66e92d7f5fcfe526837dee8eb1e731fef2ec2a4d2a8c0af",
+      "bytes": 1679872,
+      "job": "j000013",
+      "file": "file.0xab0b0d8f3250.0xab0b076fb010.ImageSectionObject.user32.dll.img"
+    },
+    {
+      "path": "file.0xab0b0d8f33e0.0xab0b077b08b0.ImageSectionObject.bcrypt.dll.img",
+      "sha256": "f25344d376066d4afb10110e6585ba295a090c1f21b554b3858a3c1362fd126b",
+      "bytes": 136704,
+      "job": "j000013",
+      "file": "file.0xab0b0d8f33e0.0xab0b077b08b0.ImageSectionObject.bcrypt.dll.img"
+    },
+    {
+      "path": "file.0xab0b0d8f3570.0xab0b0745bb40.ImageSectionObject.msvcp_win.dll.img",
+      "sha256": "4aca6df8d5f20cfcd00c2ae79679a638b8f0264b4826617a60ffc6b3d80f36fd",
+      "bytes": 620544,
+      "job": "j000013",
+      "file": "file.0xab0b0d8f3570.0xab0b0745bb40.ImageSectionObject.msvcp_win.dll.img"
+    },
+    {
+      "path": "file.0xab0b0d8f3700.0xab0b074d0b40.ImageSectionObject.cfgmgr32.dll.img",
+      "sha256": "85cc13a2253ea15a32b284e813d8d867fb95717ae0ece2eadd9a03036c70c95e",
+      "bytes": 294400,
+      "job": "j000013",
+      "file": "file.0xab0b0d8f3700.0xab0b074d0b40.ImageSectionObject.cfgmgr32.dll.img"
+    },
+    {
+      "path": "file.0xab0b0d8f3bb0.0xab0b076fb2b0.ImageSectionObject.kernel32.dll.img",
+      "sha256": "e94afc4ef598823c4a48785113cfef5b41cd6d7a626e5855bff70325a85d5f3d",
+      "bytes": 750592,
+      "job": "j000013",
+      "file": "file.0xab0b0d8f3bb0.0xab0b076fb2b0.ImageSectionObject.kernel32.dll.img"
+    },
+    {
+      "path": "file.0xab0b0d8f3d40.0xab0b0d00d010.ImageSectionObject.win32u.dll.img",
+      "sha256": "7933087c12a71b3c5fcbfd65a24717e01768e8104b8e4935b3e580c13160d4de",
+      "bytes": 125440,
+      "job": "j000013",
+      "file": "file.0xab0b0d8f3d40.0xab0b0d00d010.ImageSectionObject.win32u.dll.img"
+    },
+    {
+      "path": "file.0xab0b0d8f41f0.0xab0b0d00c730.ImageSectionObject.bcryptprimitives.dll.img",
+      "sha256": "17abc3e38cddec85e5725168f1850c3f6cb55fd62a0c5c5de5f38035b1011803",
+      "bytes": 506368,
+      "job": "j000013",
+      "file": "file.0xab0b0d8f41f0.0xab0b0d00c730.ImageSectionObject.bcryptprimitives.dll.img"
+    },
+    {
+      "path": "file.0xab0b0d8f4380.0xab0b0d0a9010.ImageSectionObject.gdi32full.dll.img",
+      "sha256": "d325bcdaadd1381e0978eae4f51d3250577a9dbaaeea7bc09f30170c1c715b46",
+      "bytes": 977408,
+      "job": "j000013",
+      "file": "file.0xab0b0d8f4380.0xab0b0d0a9010.ImageSectionObject.gdi32full.dll.img"
+    },
+    {
+      "path": "file.0xab0b0d8f4510.0xab0b074d08a0.ImageSectionObject.KernelBase.dll.img",
+      "sha256": "2c1e07f939a466e161978635e719ee60d3b737868f6c732ac19922e15fe293a0",
+      "bytes": 2724352,
+      "job": "j000013",
+      "file": "file.0xab0b0d8f4510.0xab0b074d08a0.ImageSectionObject.KernelBase.dll.img"
+    },
+    {
+      "path": "file.0xab0b0d8f49c0.0xab0b0d00cbf0.ImageSectionObject.ucrtbase.dll.img",
+      "sha256": "c0856b8d2b25ed800fe71678657510f6433071bc4959e2886b509927a4e0b85a",
+      "bytes": 1026560,
+      "job": "j000013",
+      "file": "file.0xab0b0d8f49c0.0xab0b0d00cbf0.ImageSectionObject.ucrtbase.dll.img"
+    },
+    {
+      "path": "file.0xab0b0db24230.0xab0b0da17830.ImageSectionObject.policymanager.dll.img",
+      "sha256": "13816853960d8ffee152b3599470a9e2f9167fb430e91becee9df135eb3af7ba",
+      "bytes": 582144,
+      "job": "j000013",
+      "file": "file.0xab0b0db24230.0xab0b0da17830.ImageSectionObject.policymanager.dll.img"
+    },
+    {
+      "path": "file.0xab0b0db2d9c0.0xab0b0d983d50.ImageSectionObject.twinapi.appcore.dll.img",
+      "sha256": "26723944f585621b5b01bec6e2bab3c1a2b8d10b606a3281e31f18031698aad3",
+      "bytes": 2105344,
+      "job": "j000013",
+      "file": "file.0xab0b0db2d9c0.0xab0b0d983d50.ImageSectionObject.twinapi.appcore.dll.img"
+    },
+    {
+      "path": "file.0xab0b0db32970.0xab0b0df5ca20.ImageSectionObject.WindowsCodecs.dll.img",
+      "sha256": "e4f3aa98c1e3d2c9a7f03ea82bd9257b1c19f8a950afa4d8ad6be668a3334cc7",
+      "bytes": 1741824,
+      "job": "j000013",
+      "file": "file.0xab0b0db32970.0xab0b0df5ca20.ImageSectionObject.WindowsCodecs.dll.img"
+    },
+    {
+      "path": "file.0xab0b0dc9e780.0xab0b0dcb6a20.ImageSectionObject.wldp.dll.img",
+      "sha256": "e30b78402cfe9b7504c9c5374d0330497a77ab295747efb71bb63941016b2462",
+      "bytes": 153600,
+      "job": "j000013",
+      "file": "file.0xab0b0dc9e780.0xab0b0dcb6a20.ImageSectionObject.wldp.dll.img"
+    },
+    {
+      "path": "file.0xab0b0dd0d960.0xab0b0dd3bcc0.ImageSectionObject.comctl32.dll.img",
+      "sha256": "e4c2161904f87f41e4e29418adda55fd0d4c6491779de4541a3a4f3b345d0c87",
+      "bytes": 2679296,
+      "job": "j000013",
+      "file": "file.0xab0b0dd0d960.0xab0b0dd3bcc0.ImageSectionObject.comctl32.dll.img"
+    },
+    {
+      "path": "file.0xab0b0e20c9c0.0xab0b0d5d46f0.DataSectionObject.iconcache_16.db.dat",
+      "sha256": "aac1204349fb49655e60ad5c28014e08a9ec1e527ed3fd8cd8c155804dd57058",
+      "bytes": 225280,
+      "job": "j000013",
+      "file": "file.0xab0b10cb2610.0xab0b0d5d46f0.DataSectionObject.iconcache_16.db.dat"
+    },
+    {
+      "path": "file.0xab0b0e29c700.0xab0b07260c70.ImageSectionObject.TextInputFramework.dll.img",
+      "sha256": "85e83bcddde5423964c1c6228e93b3eac789b30e949f8af353fc6a380b0a1609",
+      "bytes": 999936,
+      "job": "j000013",
+      "file": "file.0xab0b0e29c700.0xab0b07260c70.ImageSectionObject.TextInputFramework.dll.img"
+    },
+    {
+      "path": "file.0xab0b0e3734c0.0xab0b12122010.ImageSectionObject.thumbcache.dll.img",
+      "sha256": "570f02da1e3ce2632fa815f51e1e9b3e6d06375128d9fa7ff617fcf77f607439",
+      "bytes": 391168,
+      "job": "j000013",
+      "file": "file.0xab0b0e3734c0.0xab0b12122010.ImageSectionObject.thumbcache.dll.img"
+    },
+    {
+      "path": "file.0xab0b0e613400.0xab0b0b31d010.ImageSectionObject.uxtheme.dll.img",
+      "sha256": "2f857aed478acd1bb6bd5b7effaf37e8aa7179d269745c3b3ed39a6632192d5d",
+      "bytes": 625152,
+      "job": "j000013",
+      "file": "file.0xab0b0e613400.0xab0b0b31d010.ImageSectionObject.uxtheme.dll.img"
+    },
+    {
+      "path": "file.0xab0b0e616c40.0xab0b0e1084e0.ImageSectionObject.CoreMessaging.dll.img",
+      "sha256": "8d6893de746548c3b0e90f20bc74069e4f3b792d6222001cf51997b3f475fcee",
+      "bytes": 904192,
+      "job": "j000013",
+      "file": "file.0xab0b0e616c40.0xab0b0e1084e0.ImageSectionObject.CoreMessaging.dll.img"
+    },
+    {
+      "path": "file.0xab0b0e618090.0xab0b0e7cbb20.ImageSectionObject.CoreUIComponents.dll.img",
+      "sha256": "cb6b031a52065c50eb6dd30dc4500d0e3346bd1d4c4c7c0345b30f580985c807",
+      "bytes": 3172864,
+      "job": "j000013",
+      "file": "file.0xab0b0e618090.0xab0b0e7cbb20.ImageSectionObject.CoreUIComponents.dll.img"
+    },
+    {
+      "path": "file.0xab0b0e619b20.0xab0b0e7878e0.ImageSectionObject.WinTypes.dll.img",
+      "sha256": "b9ca4bb9c7c5acd6527f3593e5263d300c08498251a52258183e228296a1324c",
+      "bytes": 1380352,
+      "job": "j000013",
+      "file": "file.0xab0b0e619b20.0xab0b0e7878e0.ImageSectionObject.WinTypes.dll.img"
+    },
+    {
+      "path": "file.0xab0b0e619e40.0xab0b0e7988e0.ImageSectionObject.dcomp.dll.img",
+      "sha256": "5fa4d5388185596a463dd87637cab692975006e930d6a0ce1d333cee04857f38",
+      "bytes": 1887744,
+      "job": "j000013",
+      "file": "file.0xab0b0e619e40.0xab0b0e7988e0.ImageSectionObject.dcomp.dll.img"
+    },
+    {
+      "path": "file.0xab0b0e61a160.0xab0b0e672a20.ImageSectionObject.d3d11.dll.img",
+      "sha256": "cd2a44a0ffed9c35cef6bbd0c579541f9205630ae07ec246367431da317afcc6",
+      "bytes": 2386432,
+      "job": "j000013",
+      "file": "file.0xab0b0e61a160.0xab0b0e672a20.ImageSectionObject.d3d11.dll.img"
+    },
+    {
+      "path": "file.0xab0b0e6a1480.0xab0b0da1a7f0.ImageSectionObject.propsys.dll.img",
+      "sha256": "fbb5ff7061fc346cff3d60027fcc1b6ca5f48f9dc2b1ba5f7592b927aea78350",
+      "bytes": 967168,
+      "job": "j000013",
+      "file": "file.0xab0b0e6a1480.0xab0b0da1a7f0.ImageSectionObject.propsys.dll.img"
+    },
+    {
+      "path": "file.0xab0b0e71d280.0xab0b0e767cc0.ImageSectionObject.kernel.appcore.dll.img",
+      "sha256": "7dba2a9d3cc427b572b6a74497a852a6b29ed89957da09f4f362b3316d733ec4",
+      "bytes": 53760,
+      "job": "j000013",
+      "file": "file.0xab0b0e71d280.0xab0b0e767cc0.ImageSectionObject.kernel.appcore.dll.img"
+    },
+    {
+      "path": "file.0xab0b0e85b8a0.0xab0b0dcefa20.ImageSectionObject.cryptbase.dll.img",
+      "sha256": "29822b1e5afdc644da81b1b77a94b88e4dce1f7886d24549b31f78ea11199118",
+      "bytes": 27136,
+      "job": "j000013",
+      "file": "file.0xab0b0e85b8a0.0xab0b0dcefa20.ImageSectionObject.cryptbase.dll.img"
+    },
+    {
+      "path": "file.0xab0b0e85e780.0xab0b0e839a20.ImageSectionObject.msvcp110_win.dll.img",
+      "sha256": "45184b85cd49ffd52a92efff124d63e7d790f56c050b26a0e21826356e75e5eb",
+      "bytes": 546304,
+      "job": "j000013",
+      "file": "file.0xab0b0e85e780.0xab0b0e839a20.ImageSectionObject.msvcp110_win.dll.img"
+    },
+    {
+      "path": "file.0xab0b0e8a1730.0xab0b0e8d0cd0.ImageSectionObject.ntmarta.dll.img",
+      "sha256": "b4277d466729d2f9cb2c7f973519691a8cae83e4f869e6cfa4a4d231f5acfa6a",
+      "bytes": 182784,
+      "job": "j000013",
+      "file": "file.0xab0b0e8a1730.0xab0b0e8d0cd0.ImageSectionObject.ntmarta.dll.img"
+    },
+    {
+      "path": "file.0xab0b0e8a3990.0xab0b0e880a20.ImageSectionObject.windows.storage.dll.img",
+      "sha256": "4bc2aa9f8d70097854069a92b46aa3b5c04505fc802082b19decbe45c4aa89b6",
+      "bytes": 7746560,
+      "job": "j000013",
+      "file": "file.0xab0b0e8a3990.0xab0b0e880a20.ImageSectionObject.windows.storage.dll.img"
+    },
+    {
+      "path": "file.0xab0b0e8a4c50.0xab0b0e8812b0.ImageSectionObject.dxgi.dll.img",
+      "sha256": "f7e5ee9abd34ba90142ca1f8bebee5b691e8446d0113c508231b9fa82831151d",
+      "bytes": 861696,
+      "job": "j000013",
+      "file": "file.0xab0b0e8a4c50.0xab0b0e8812b0.ImageSectionObject.dxgi.dll.img"
+    },
+    {
+      "path": "file.0xab0b10a1eed0.0xab0b0dd69ca0.ImageSectionObject.DataExchange.dll.img",
+      "sha256": "8c0a010f8e7cdc749c08d8ca0650ef460db0c4d3dfe423592e81a50089211984",
+      "bytes": 237568,
+      "job": "j000013",
+      "file": "file.0xab0b10a1eed0.0xab0b0dd69ca0.ImageSectionObject.DataExchange.dll.img"
+    },
+    {
+      "path": "file.0xab0b10a22580.0xab0b14311a00.ImageSectionObject.ExplorerFrame.dll.img",
+      "sha256": "00d7ad1851b10153c162bcf30e030bdb6d321389e86cebc71af121c77ae8cf77",
+      "bytes": 2199040,
+      "job": "j000013",
+      "file": "file.0xab0b10a22580.0xab0b14311a00.ImageSectionObject.ExplorerFrame.dll.img"
+    },
+    {
+      "path": "file.0xab0b10cb2610.0xab0b0d5d46f0.DataSectionObject.iconcache_16.db.dat",
+      "sha256": "aac1204349fb49655e60ad5c28014e08a9ec1e527ed3fd8cd8c155804dd57058",
+      "bytes": 225280,
+      "job": "j000013",
+      "file": "file.0xab0b10cb2610.0xab0b0d5d46f0.DataSectionObject.iconcache_16.db.dat"
+    }
+  ],
+  "outputs": {
+    "manifest_sha256": "38d35f0058f8b0d9ca8eeb747e7df8cfa55f14ab9b53ad6dcdff4972e2357119",
+    "files": 65,
+    "bytes": 87187233,
+    "rejected": 0,
+    "path": "store/jobs/j000041/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

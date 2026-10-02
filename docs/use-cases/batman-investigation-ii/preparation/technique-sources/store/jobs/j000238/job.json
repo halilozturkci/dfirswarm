@@ -1,0 +1,88 @@
+{
+  "id": "j000238",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000223/file.0xab0b0d34fe90.0xab0b106cf320.ImageSectionObject.services.exe.img"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "command": "python3 - <<'PY'\nimport os,json,re,pefile\np='store/jobs/j000223/out/file.0xab0b0d34fe90.0xab0b106cf320.ImageSectionObject.services.exe.img';b=open(p,'rb').read();pe=pefile.PE(data=b,fast_load=True)\ns=next(s for s in pe.sections if s.Name.rstrip(b'\\0')==b'.text');lo=s.PointerToRawData;hi=min(len(b),lo+s.SizeOfRawData)\nh=[]\nfor i in range(lo,hi-2):\n # group1 XOR imm8 opcode80 or83, ModRM.reg6, value33 for register/direct simple memory\n if b[i] in (0x80,0x83) and b[i+1]&0x38==0x30 and b[i+1]&0xc0==0xc0 and b[i+2]==0x33:\n  h.append({'file_offset':i,'rva':s.VirtualAddress+i-lo,'context_offset':max(lo,i-48),'hex':b[max(lo,i-48):i+64].hex()})\nnames=[{'offset':m.start(),'text':m.group().decode('ascii')} for m in re.finditer(rb'main\\.[A-Za-z0-9_$./()\\-]{2,120}',b)]\nmagic=[{'offset':m.start(),'hex':b[m.start():m.start()+80].hex()} for m in re.finditer(b'\\xf1\\xff\\xff\\xff\\x00\\x00\\x01\\x08',b)]\nout={'pefile_version':pefile.__version__,'imagebase':pe.OPTIONAL_HEADER.ImageBase,'text_pointer':lo,'text_rva':s.VirtualAddress,'xor_register_imm33_candidates':h,'main_names':names,'pclntab_headers':magic}\njson.dump(out,open(os.environ['OUT']+'/xor-candidates.json','w'),indent=2);print(json.dumps(out,indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120103",
+    "name": "Wallet history",
+    "doing": "Investigating Q7 and Q8: password-protected archive and original file hashes; avoiding peers' wallet work."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T11:04:21.681Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000223/out/file.0xab0b0d34fe90.0xab0b106cf320.ImageSectionObject.services.exe.img",
+        "sha256": "fa77c2c1076f47055a0a37a08e29eb88238489a3ca74ccd6b5187f31218b0cea"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000238-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T11:04:21.744Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000238",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000238/scope.1.json",
+    "manifest_sha256": "5c956505c23b7a175e8d16e88983394dfd43b983e236278fc8d8e6bebc65c680"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T11:04:22.509Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "b4f345aedae914818e7a97db27f5605df93a63e7f485da8bf4590bb290be56b9",
+    "files": 1,
+    "bytes": 807,
+    "rejected": 0,
+    "path": "store/jobs/j000238/out"
+  },
+  "sensitive": {
+    "why": "derived",
+    "from": [
+      "j000223"
+    ],
+    "note": "made from the sensitive output of j000223: every output it sealed is sensitive"
+  }
+}

@@ -1,0 +1,230 @@
+{
+  "sha256": "fa77c2c1076f47055a0a37a08e29eb88238489a3ca74ccd6b5187f31218b0cea",
+  "size": 3000832,
+  "image_base": 9175040,
+  "pclntab_candidates": [
+    1371040
+  ],
+  "go_header": {
+    "offset": 1371040,
+    "nfunc": 2549,
+    "nfiles": 289,
+    "textStart": 9179136,
+    "funcnameOff": 96,
+    "pclnOff": 428832
+  },
+  "function_count_parsed": 2549,
+  "function_name_sample": [
+    {
+      "start": 9179136,
+      "end": 9179264,
+      "name": "",
+      "entryoff": 0,
+      "funcoff": 20400
+    },
+    {
+      "start": 9179264,
+      "end": 9179360,
+      "name": "",
+      "entryoff": 128,
+      "funcoff": 20448
+    },
+    {
+      "start": 9179360,
+      "end": 9179392,
+      "name": "",
+      "entryoff": 224,
+      "funcoff": 20536
+    },
+    {
+      "start": 9179392,
+      "end": 9179584,
+      "name": "",
+      "entryoff": 256,
+      "funcoff": 20624
+    },
+    {
+      "start": 9179584,
+      "end": 9179680,
+      "name": "",
+      "entryoff": 448,
+      "funcoff": 20712
+    },
+    {
+      "start": 9179680,
+      "end": 9179808,
+      "name": "",
+      "entryoff": 544,
+      "funcoff": 20800
+    },
+    {
+      "start": 9179808,
+      "end": 9180000,
+      "name": "",
+      "entryoff": 672,
+      "funcoff": 20888
+    },
+    {
+      "start": 9180000,
+      "end": 9180288,
+      "name": "",
+      "entryoff": 864,
+      "funcoff": 20976
+    },
+    {
+      "start": 9180288,
+      "end": 9181440,
+      "name": "",
+      "entryoff": 1152,
+      "funcoff": 21064
+    },
+    {
+      "start": 9181440,
+      "end": 9181600,
+      "name": "",
+      "entryoff": 2304,
+      "funcoff": 21152
+    }
+  ],
+  "targets": {
+    "exodus.wallet": {
+      "off": 1167188,
+      "va": 10347348,
+      "len": 13
+    },
+    "172.30.145.189:6969": {
+      "off": 1172944,
+      "va": 10353104,
+      "len": 19
+    }
+  },
+  "xrefs": [
+    {
+      "target": "exodus.wallet",
+      "target_delta": 0,
+      "instruction_va": 10121952,
+      "instruction_off": 944352,
+      "kind": "lea",
+      "rex": 72,
+      "modrm": 13,
+      "disp": 225389,
+      "function": {
+        "start": 10121760,
+        "end": 10122460,
+        "name": "",
+        "entryoff": 942624,
+        "funcoff": 231568
+      },
+      "context_hex": "0006000000488d0d325d030048898c24b800000048c78424d00000000d000000488d0d6d70030048898c24c8000000488d842488000000bb050000004889d990e81ba0faff48895c24284889442458488d0560600300bb080000000f1f440000"
+    },
+    {
+      "target": "172.30.145.189:6969",
+      "target_delta": 0,
+      "instruction_va": 10122362,
+      "instruction_off": 944762,
+      "kind": "lea",
+      "rex": 72,
+      "modrm": 5,
+      "disp": 230735,
+      "function": {
+        "start": 10121760,
+        "end": 10122460,
+        "name": "",
+        "entryoff": 942624,
+        "funcoff": 231568
+      },
+      "context_hex": "400f1f4400004839c27fc6488b442460488b5c2430e8ecf9ffff4889c14889df488d054f850300bb13000000e875faffff4885c07439440f117c24787404488b4008488944247848899c2480000000488b1db88c1100488d0551330600488d4c"
+    }
+  ],
+  "xref_function_calls_candidate": [
+    {
+      "function": {
+        "start": 10121760,
+        "end": 10122460,
+        "name": "",
+        "entryoff": 942624,
+        "funcoff": 231568
+      },
+      "calls_to_go_entries": [
+        {
+          "at_va": 10121798,
+          "at_off": 944198,
+          "to_va": 9740416,
+          "to": ""
+        },
+        {
+          "at_va": 10121984,
+          "at_off": 944384,
+          "to_va": 9769760,
+          "to": ""
+        },
+        {
+          "at_va": 10122016,
+          "at_off": 944416,
+          "to_va": 9740416,
+          "to": ""
+        },
+        {
+          "at_va": 10122041,
+          "at_off": 944441,
+          "to_va": 9496384,
+          "to": ""
+        },
+        {
+          "at_va": 10122066,
+          "at_off": 944466,
+          "to_va": 10118432,
+          "to": ""
+        },
+        {
+          "at_va": 10122160,
+          "at_off": 944560,
+          "to_va": 10120544,
+          "to": ""
+        },
+        {
+          "at_va": 10122213,
+          "at_off": 944613,
+          "to_va": 9585984,
+          "to": ""
+        },
+        {
+          "at_va": 10122254,
+          "at_off": 944654,
+          "to_va": 10118944,
+          "to": ""
+        },
+        {
+          "at_va": 10122304,
+          "at_off": 944704,
+          "to_va": 9748384,
+          "to": ""
+        },
+        {
+          "at_va": 10122351,
+          "at_off": 944751,
+          "to_va": 10120800,
+          "to": ""
+        },
+        {
+          "at_va": 10122374,
+          "at_off": 944774,
+          "to_va": 10120960,
+          "to": ""
+        },
+        {
+          "at_va": 10122436,
+          "at_off": 944836,
+          "to_va": 9837472,
+          "to": ""
+        },
+        {
+          "at_va": 10122450,
+          "at_off": 944850,
+          "to_va": 9578016,
+          "to": ""
+        }
+      ]
+    }
+  ]
+}

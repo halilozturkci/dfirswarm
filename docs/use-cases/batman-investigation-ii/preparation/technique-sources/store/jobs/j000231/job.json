@@ -1,0 +1,74 @@
+{
+  "id": "j000231",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "command": "set -o pipefail\n{\n  for x in llvm-objdump llvm-readobj rizin rz-bin rz-asm radare2 r2 ghidraRun analyzeHeadless go; do printf '%s\\t' \"$x\"; command -v \"$x\" || true; done\n  echo '--- python modules ---'\n  python3 - <<'PY'\nmods=['distorm3','iced_x86','zydis','capstone','pefile']\nfor m in mods:\n try:\n  x=__import__(m); print(m,'YES',getattr(x,'__version__',''))\n except Exception as e: print(m,'NO',repr(e))\nPY\n  echo '--- go tool objdump help ---'; go tool objdump -h 2>&1 || true\n  echo '--- go tool nm help ---'; go tool nm -h 2>&1 || true\n  for x in llvm-objdump llvm-readobj rizin radare2; do if command -v \"$x\" >/dev/null; then echo \"--- $x help ---\"; \"$x\" --help 2>&1 | head -80; fi; done\n} > \"$OUT/availability.txt\"\ncat \"$OUT/availability.txt\""
+  },
+  "requester": {
+    "agent": "s42120106",
+    "name": "Vault Artifact Analyst",
+    "doing": "Establishing Q3-Q4: password-manager identity/version and password, plus the deleted stored user key."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T11:01:31.568Z",
+  "reuse": {
+    "op": "command:set",
+    "objects": []
+  },
+  "worker": "dfs-s421201-job-j000231-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T11:01:31.605Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000231",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 0,
+    "files": 0,
+    "bound": 0,
+    "manifest": "store/jobs/j000231/scope.1.json",
+    "manifest_sha256": "1156637b8b0b81cac094321034f6c13bf3496bbb1b9e0be3e7e1be61a755d0a9"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T11:01:32.322Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "4bb88a53417bf1d85944202e22820fd515621a3600488d8fe593c463a0e2c91a",
+    "files": 1,
+    "bytes": 521,
+    "rejected": 0,
+    "path": "store/jobs/j000231/out"
+  }
+}

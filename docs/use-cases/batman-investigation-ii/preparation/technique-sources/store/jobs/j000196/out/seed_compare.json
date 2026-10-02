@@ -1,0 +1,18 @@
+{
+  "cache_size": 36864,
+  "archive_size": 33284,
+  "cache_seco_length": 33284,
+  "equal_relevant_bytes": false,
+  "diff_count": 33284,
+  "diff_ranges": [
+    [
+      0,
+      33284
+    ]
+  ],
+  "archive_sha1": "d4bb484826825ccc4ba808fe4b6088388ef41995",
+  "cache_relevant_sha1": "3ba6011f5e1b6941f893df6579f87f1c823e7493",
+  "metadata_equal": false,
+  "ciphertext_equal": false,
+  "checksum_equal": false
+}

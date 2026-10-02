@@ -1,0 +1,169 @@
+{
+  "path": "store/jobs/j000223/out/file.0xab0b0d34fe90.0xab0b106cf320.ImageSectionObject.services.exe.img",
+  "size": 3000832,
+  "sha256": "fa77c2c1076f47055a0a37a08e29eb88238489a3ca74ccd6b5187f31218b0cea",
+  "targets": {
+    "exodus.wallet": {
+      "file_offsets": [
+        1167188
+      ],
+      "rvas": [
+        1172308
+      ]
+    },
+    "172.30.145.189:6969": {
+      "file_offsets": [
+        1172944
+      ],
+      "rvas": [
+        1178064
+      ]
+    },
+    "seed.seco": {
+      "file_offsets": [],
+      "rvas": []
+    },
+    "storage.seco": {
+      "file_offsets": [],
+      "rvas": []
+    },
+    "0x33": {
+      "file_offsets": [],
+      "rvas": []
+    }
+  },
+  "image_base": 9175040,
+  "entry_rva": 416544,
+  "sections": [
+    {
+      "name": ".text",
+      "va": 4096,
+      "vsize": 943325,
+      "raw": 1536,
+      "rawsize": 943616,
+      "chars": 1610612768
+    },
+    {
+      "name": ".rdata",
+      "va": 950272,
+      "vsize": 1086360,
+      "raw": 945152,
+      "rawsize": 1086464,
+      "chars": 1073741888
+    },
+    {
+      "name": ".data",
+      "va": 2039808,
+      "vsize": 418480,
+      "raw": 2031616,
+      "rawsize": 57856,
+      "chars": 3221225536
+    },
+    {
+      "name": ".pdata",
+      "va": 2461696,
+      "vsize": 25812,
+      "raw": 2089472,
+      "rawsize": 26112,
+      "chars": 1073741888
+    },
+    {
+      "name": ".xdata",
+      "va": 2490368,
+      "vsize": 168,
+      "raw": 2115584,
+      "rawsize": 512,
+      "chars": 1073741888
+    },
+    {
+      "name": "/4",
+      "va": 2494464,
+      "vsize": 297,
+      "raw": 2116096,
+      "rawsize": 512,
+      "chars": 1108344896
+    },
+    {
+      "name": "/19",
+      "va": 2498560,
+      "vsize": 195145,
+      "raw": 2116608,
+      "rawsize": 195584,
+      "chars": 1108344896
+    },
+    {
+      "name": "/32",
+      "va": 2695168,
+      "vsize": 41622,
+      "raw": 2312192,
+      "rawsize": 41984,
+      "chars": 1108344896
+    },
+    {
+      "name": "/46",
+      "va": 2740224,
+      "vsize": 48,
+      "raw": 2354176,
+      "rawsize": 512,
+      "chars": 1108344896
+    },
+    {
+      "name": "/65",
+      "va": 2744320,
+      "vsize": 355764,
+      "raw": 2354688,
+      "rawsize": 355840,
+      "chars": 1108344896
+    },
+    {
+      "name": "/78",
+      "va": 3100672,
+      "vsize": 214418,
+      "raw": 2710528,
+      "rawsize": 214528,
+      "chars": 1108344896
+    },
+    {
+      "name": "/90",
+      "va": 3317760,
+      "vsize": 71302,
+      "raw": 2925056,
+      "rawsize": 71680,
+      "chars": 1108344896
+    },
+    {
+      "name": ".idata",
+      "va": 3391488,
+      "vsize": 1302,
+      "raw": 2996736,
+      "rawsize": 1536,
+      "chars": 3221225536
+    },
+    {
+      "name": ".reloc",
+      "va": 3395584,
+      "vsize": 19748,
+      "raw": 2998272,
+      "rawsize": 19968,
+      "chars": 1107296320
+    },
+    {
+      "name": ".symtab",
+      "va": 3416064,
+      "vsize": 142585,
+      "raw": 3018240,
+      "rawsize": 142848,
+      "chars": 1107296256
+    }
+  ],
+  "capstone_available": false,
+  "capstone_error": "ModuleNotFoundError(\"No module named 'capstone'\")",
+  "commands": {
+    "file.txt": {
+      "rc": 0
+    },
+    "objdump-x.txt": {
+      "rc": 1
+    }
+  }
+}

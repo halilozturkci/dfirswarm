@@ -15,6 +15,8 @@ Durum: `s421201` çalışıyor; 10 gerçek VM ve 3 modelin çağrıları doğrul
 
 [Platform geliştirme adayları](platform-improvements.md): gerçek koşu/iş kayıtlarına bağlı ara değerlendirme. Kullanıcının son talimatıyla operatör yalnız gözlem yapıyor; önceki dört müdahale ve etkileri kayıtta açıkça işaretli.
 
+[Ajanların geliştirdiği yöntemler ve blog kaynak notları](technique-notes.md): yöntem adımları, ilk başarısız denemeler, bağımsız kontroller, kaynak kimlikleri ve özgünlük sınırları. Literatürde yeni oldukları henüz araştırılmadı.
+
 [Canlı konsol](http://127.0.0.1:43174/swarms/s421201) · [İzolasyon doğrulaması](isolation-proof.json) · [Gerçek model çağrıları](model-runtime-proof.json)
 
 `live-record/` 30 saniyede bir alınan devam eden kayıttır; son paket değildir. Başarısız ilk başlatmanın 98 manifest girdisi ve trace/journal/question zincirleri doğrulandı; custody alınmadığı pakette açıkça belirtilir. Nihai aktif koşu henüz bitmediği için final custody/manifest doğrulaması bekliyor.

@@ -1,0 +1,106 @@
+{
+  "id": "j000205",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000190/inner/",
+      "job:j000200",
+      "job:j000054/file.0xab0b138cf1c0.0xab0b0d6bf3d0.DataSectionObject.seed.seco.dat"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "independent": true,
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport pathlib,hashlib,struct,json,os\nout=pathlib.Path(os.environ['OUT'])\nrows=[]\nfor name in ('seed.seco','storage.seco'):\n raw=pathlib.Path('store/jobs/j000190/out/inner',name).read_bytes()\n dec=bytes(b ^ 0x33 for b in raw)\n sealed=pathlib.Path('store/jobs/j000200/out',name).read_bytes()\n assert dec == sealed\n assert dec[:4] == b'SECO'\n plen=struct.unpack('>I',dec[512:516])[0]\n exact=(len(dec)==516+plen)\n embedded=dec[224:256]\n computed=hashlib.sha256(dec[256:512]+dec[512:516]+dec[516:516+plen]).digest()\n rows.append({'name':name,'raw_size':len(raw),'decoded_size':len(dec),'xor_unique':sorted(set(a^b for a,b in zip(raw,dec))),'magic_hex':dec[:4].hex(),'payload_length':plen,'exact_length':exact,'embedded_checksum_hex':embedded.hex(),'computed_checksum_hex':computed.hex(),'checksum_valid':embedded==computed,'sha1':hashlib.sha1(dec).hexdigest(),'sha256':hashlib.sha256(dec).hexdigest(),'matches_j000200':dec==sealed})\ncache=pathlib.Path('store/jobs/j000054/out/file.0xab0b138cf1c0.0xab0b0d6bf3d0.DataSectionObject.seed.seco.dat').read_bytes()\ncn=516+struct.unpack('>I',cache[512:516])[0]\nseed=bytes(b^0x33 for b in pathlib.Path('store/jobs/j000190/out/inner/seed.seco').read_bytes())\nsummary={'members':rows,'cached_seed_total_size':len(cache),'cached_seed_parsed_length':cn,'decoded_seed_matches_cached_relevant_bytes':seed==cache[:cn],'cached_seed_sha1_relevant':hashlib.sha1(cache[:cn]).hexdigest(),'checks_all_pass':all(r['xor_unique']==[51] and r['magic_hex']=='5345434f' and r['exact_length'] and r['checksum_valid'] and r['matches_j000200'] for r in rows) and seed==cache[:cn]}\n(out/'q8-restored-independent.json').write_text(json.dumps(summary,indent=2))\nprint(json.dumps(summary,indent=2))\nPY"
+  },
+  "requester": {
+    "agent": "s42120106",
+    "name": "Vault Artifact Analyst",
+    "doing": "Establishing Q3-Q4: password-manager identity/version and password, plus the deleted stored user key."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T10:42:44.529Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000190/out/inner",
+        "dir": true
+      },
+      {
+        "path": "store/jobs/j000200/out",
+        "dir": true
+      },
+      {
+        "path": "store/jobs/j000054/out/file.0xab0b138cf1c0.0xab0b0d6bf3d0.DataSectionObject.seed.seco.dat",
+        "sha256": "2dbd3249770ed16d5bf509ce34aa26a50de24e90afbf87b3def2ab9fd3bded5c"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000205-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T10:42:44.680Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000200/out",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000190/out/inner",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000205",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 3,
+    "files": 1,
+    "bound": 2,
+    "manifest": "store/jobs/j000205/scope.1.json",
+    "manifest_sha256": "d610039c886eeca2a4b2fc122b3f38095529330be7f3c37e2ef3cafb192cf8f8"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T10:42:45.925Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "b57fab5d567a21c61c957d6f9e5291747d406b3c01b497b79b0806557dd381e1",
+    "files": 1,
+    "bytes": 1502,
+    "rejected": 0,
+    "path": "store/jobs/j000205/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

@@ -1,0 +1,106 @@
+{
+  "id": "j000237",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000107/entries.json",
+      "input:chall/unknown.data",
+      "job:j000145/contact/contact/instance1/hostkeys",
+      "job:j000145/contact/contact/instance_db/hostkeys"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "cat > /tmp/packet_exact2.py <<'PY'\nimport os,json,hashlib,glob,ctypes\nfrom Crypto.Cipher import AES\nE=json.load(open('store/jobs/j000107/out/entries.json'))['entries'];kp=next(e['Password'] for e in E if 'Recycle Bin' in e.get('_groups',[])).encode();u=open('inputs/chall/unknown.data','rb').read();tok=u[243:260]\nH=[open('store/jobs/j000145/out/contact/contact/instance1/hostkeys','rb').read(),open('store/jobs/j000145/out/contact/contact/instance_db/hostkeys','rb').read()]\nso=ctypes.CDLL(glob.glob('/opt/dfir/venv/lib/python3.11/site-packages/pyzmq.libs/libsodium*.so*')[0]);so.sodium_init()\nsecret=so.crypto_secretbox_open_easy;secret.restype=ctypes.c_int\nsealopen=so.crypto_box_seal_open;sealopen.restype=ctypes.c_int\nscalarmult=so.crypto_scalarmult_base;scalarmult.restype=ctypes.c_int\ndef material(p):\n O=[]\n def add(n,k):\n  if k not in [x[1] for x in O]:O.append((n,k))\n add('sha256',hashlib.sha256(p).digest());add('sha384',hashlib.sha384(p).digest());add('sha512',hashlib.sha512(p).digest());add('blake2s',hashlib.blake2s(p).digest());add('blake2b',hashlib.blake2b(p).digest());add('raw-zero32',p.ljust(32,b'\\0')[:32])\n for salt in [b'',b'dropbox',b'Dropbox',b'hostkeys',b'userkey']:\n  for a in ['sha1','sha256','sha512']:\n   for it in [1,1000,10000,65536,100000,256000]: add(f'pbkdf2-{a}-{salt!r}-{it}',hashlib.pbkdf2_hmac(a,p,salt,it,64))\n return O\nR=[]\nfor pn,p in [('keepass',kp),('unknown243',tok)]:\n for kn,k in material(p):\n  for kl in [32,48,64]:\n   if len(k)<kl:continue\n   for order in ['tagfirst','taglast']:\n    for aad in [False,True]:\n     ps=[];ok=True\n     for b in H:\n      x=b[1:];tag,ct=(x[:16],x[16:]) if order=='tagfirst' else (x[-16:],x[:-16])\n      try:\n       c=AES.new(k[:kl],AES.MODE_SIV)\n       if aad:c.update(b[:1])\n       ps.append(c.decrypt_and_verify(ct,tag).hex())\n      except:ok=False;break\n     if ok and all(len(bytes.fromhex(x))==64 for x in ps):R.append({'candidate':pn,'kdf':kn,'alg':'AES-SIV','keylen':kl,'order':order,'aad_version':aad,'plain':ps})\n  if len(k)>=32:\n   key=k[:32]\n   # secretbox zero nonce: 80 -> 64\n   ps=[];ok=True\n   for b in H:\n    x=b[1:];out=ctypes.create_string_buffer(len(x)-16);rc=secret(out,ctypes.c_char_p(x),len(x),ctypes.c_char_p(b'\\0'*24),ctypes.c_char_p(key))\n    if rc:ok=False;break\n    ps.append(out.raw.hex())\n   if ok:R.append({'candidate':pn,'kdf':kn,'alg':'XSalsa20-Poly1305','nonce':'zero24','plain':ps})\n   # sealed box: 80 -> 32, private candidate key and derived public\n   sk=ctypes.create_string_buffer(key);pk=ctypes.create_string_buffer(32);scalarmult(pk,sk)\n   ps=[];ok=True\n   for b in H:\n    x=b[1:];out=ctypes.create_string_buffer(len(x)-48);rc=sealopen(out,ctypes.c_char_p(x),len(x),pk,sk)\n    if rc:ok=False;break\n    ps.append(out.raw.hex())\n   if ok:R.append({'candidate':pn,'kdf':kn,'alg':'Curve25519-SealedBox','plain':ps})\nprint('authenticated',len(R));print(json.dumps(R,indent=2));open(os.environ['OUT']+'/exact80-packet-auth.json','w').write(json.dumps({'matches':R,'note':'Both independent 80-byte packets required exact authenticated decryption; AES-SIV, NaCl secretbox with zero nonce, and Curve25519 sealed-box length-exact hypotheses.'},indent=2))\nPY\npython3 /tmp/packet_exact2.py"
+  },
+  "requester": {
+    "agent": "s42120105",
+    "name": "Userkey Analyst",
+    "doing": "I will establish Q12-Q13 (contact verification database key/client email and interpreted client/private key) from unknown.data and memory artifacts; Q14 is already taken."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T11:04:01.817Z",
+  "reuse": {
+    "op": "command:cat",
+    "objects": [
+      {
+        "path": "store/jobs/j000145/out/contact/contact/instance1/hostkeys",
+        "sha256": "05c1bb92109acc5198cdd403d5ef72a166bf0965b3a8d4083e3522c18f526be5"
+      },
+      {
+        "path": "store/jobs/j000107/out/entries.json",
+        "sha256": "5e1e941774aad60e462d6af2bfd94d9f65e84e28f47030d062583d1f68da0c6b"
+      },
+      {
+        "path": "store/jobs/j000145/out/contact/contact/instance_db/hostkeys",
+        "sha256": "7354c1f37bc0b42fb6abaa668114de19f7ec3826ad37c2230f1c3de1fbe51756"
+      },
+      {
+        "path": "inputs/chall/unknown.data",
+        "sha256": "87841ce462a019649f6206c72cf65ce5305a88b828ca45996ae9422e6f578f4f"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000237-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T11:04:01.895Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000237",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 4,
+    "files": 4,
+    "bound": 0,
+    "manifest": "store/jobs/j000237/scope.1.json",
+    "manifest_sha256": "10e665f766f8bd4805dc7710f1f98d71924358a5797ab6576f24a1fb698570b5"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T11:04:09.123Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "2e2366d17eb6954c775c24fd27bfd4f8d269b566d548f76fe67e0632caf0ad83",
+    "files": 1,
+    "bytes": 198,
+    "rejected": 0,
+    "path": "store/jobs/j000237/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

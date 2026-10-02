@@ -1,0 +1,43 @@
+{
+  "members": [
+    {
+      "name": "seed.seco",
+      "raw_size": 33284,
+      "decoded_size": 33284,
+      "xor_unique": [
+        51
+      ],
+      "magic_hex": "5345434f",
+      "payload_length": 32768,
+      "exact_length": true,
+      "embedded_checksum_hex": "4ab0d18b99f6fa6c37bcc4fbe67a5e7a8249fa6d170aeae4e0ed6e9bc51a6469",
+      "computed_checksum_hex": "4ab0d18b99f6fa6c37bcc4fbe67a5e7a8249fa6d170aeae4e0ed6e9bc51a6469",
+      "checksum_valid": true,
+      "sha1": "3ba6011f5e1b6941f893df6579f87f1c823e7493",
+      "sha256": "a3ab69f3061f2405b08966ac6242fd9332c562efd0bd59400f911af50716e32e",
+      "matches_j000200": true
+    },
+    {
+      "name": "storage.seco",
+      "raw_size": 2745,
+      "decoded_size": 2745,
+      "xor_unique": [
+        51
+      ],
+      "magic_hex": "5345434f",
+      "payload_length": 2229,
+      "exact_length": true,
+      "embedded_checksum_hex": "7cf9f23a524864c08c54008015b0ffff86bc2399e9434f819c15ea758be7898d",
+      "computed_checksum_hex": "7cf9f23a524864c08c54008015b0ffff86bc2399e9434f819c15ea758be7898d",
+      "checksum_valid": true,
+      "sha1": "5e38ffd5e6d6115a6f4bb21b5216c37392eb544f",
+      "sha256": "4bfa248576916af12ce753f6202551c6dcc88adb1e320c9c7a565795bf7d526a",
+      "matches_j000200": true
+    }
+  ],
+  "cached_seed_total_size": 36864,
+  "cached_seed_parsed_length": 33284,
+  "decoded_seed_matches_cached_relevant_bytes": true,
+  "cached_seed_sha1_relevant": "3ba6011f5e1b6941f893df6579f87f1c823e7493",
+  "checks_all_pass": true
+}
