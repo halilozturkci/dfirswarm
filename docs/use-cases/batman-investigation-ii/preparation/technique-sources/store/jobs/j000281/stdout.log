@@ -1,0 +1,3 @@
+msgpack: decode failed TypeError unpackb() got an unexpected keyword argument 'strict_types'
+gzip 18272 failed error Error -3 while decompressing data: unknown compression method
+gzip 19082 failed error Error -3 while decompressing data: unknown compression method

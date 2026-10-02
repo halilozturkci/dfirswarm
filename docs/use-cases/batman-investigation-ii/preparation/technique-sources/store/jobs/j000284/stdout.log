@@ -1,0 +1,15 @@
+msgpack version 1.2.3
+unpackb signature (packed, *, object_hook=None, list_hook=None, use_list=True, raw=False, timestamp=0, strict_map_key=True, unicode_errors=None, object_pairs_hook=None, ext_hook=<class 'msgpack.ext.ExtType'>, max_str_len=-1, max_bin_len=-1, max_array_len=-1, max_map_len=-1, max_ext_len=-1)
+unpackb(packed, *, object_hook=None, list_hook=None, bool use_list=True, bool raw=False, int timestamp=0, bool strict_map_key=True, unicode_errors=None, object_pairs_hook=None, ext_hook=ExtType, Py_ssize_t max_str_len=-1, Py_ssize_t max_bin_len=-1, Py_ssize_t max_array_len=-1, Py_ssize_t max_map_len=-1, Py_ssize_t max_ext_len=-1)
+
+Unpack packed_bytes to object. Returns an unpacked object.
+
+Raises ``ExtraData`` when *packed* contains extra bytes.
+Raises ``ValueError`` when *packed* is incomplete.
+Raises ``FormatError`` when *packed* is not valid msgpack.
+Raises ``StackError`` when *packed* contains too nested.
+Other exceptions can be raised during unpacking.
+
+See :class:`Unpacker` for options.
+
+*max_xxx_len* options are configured automatically from ``len(packed)``.

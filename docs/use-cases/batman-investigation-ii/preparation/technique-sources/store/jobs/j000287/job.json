@@ -1,0 +1,91 @@
+{
+  "id": "j000287",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/unknown.data"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport msgpack,io,json\nprint('msgpack',msgpack.__version__,'Unpacker_doc', (msgpack.Unpacker.__doc__ or '')[:3000])\nb=open('inputs/chall/unknown.data','rb').read()\ndef pair_hook(pairs): return ('__map__',pairs)\nu=msgpack.Unpacker(io.BytesIO(b),raw=False,strict_map_key=False,object_pairs_hook=pair_hook)\ndef brief(v,path='root',d=0):\n if d>12:return {'type':type(v).__name__,'depth_cap':True}\n if isinstance(v,tuple) and len(v)==2 and v[0]=='__map__':\n  return {'type':'map','n':len(v[1]),'keys':[str(k.decode('utf8','replace') if isinstance(k,bytes) else k)[:80] for k,_ in v[1][:100]],'values':[brief(val,path+'/'+str(key).lower(),d+1) for key,val in v[1][:100] for key in [key]]}\n if isinstance(v,list):return {'type':'array','n':len(v),'items':[brief(x,path+'[]',d+1) for x in v[:100]]}\n if isinstance(v,bytes):return {'type':'bytes','n':len(v)}\n if isinstance(v,str):\n  p=path.lower()\n  if any(z in p for z in ('private','secret','password','token','key','email','credential')):return {'type':'str','n':len(v),'value':'[suppressed]'}\n  if any(z in p for z in ('contact','recipient','name','person','identity','display')):return {'type':'str','n':len(v),'value':v[:100]}\n  return {'type':'str','n':len(v),'value':'[suppressed]'}\n if v is None or isinstance(v,(bool,int,float)):return {'type':type(v).__name__,'value':v}\n return {'type':type(v).__name__}\nitems=[]\ntry:\n for i,v in enumerate(u):\n  items.append({'index':i,'offset_end':u.tell(),'summary':brief(v)})\n  if i>=19:break\n print('decoded_items',len(items),'next_offset',u.tell())\n print(json.dumps(items,ensure_ascii=True))\nexcept Exception as e:\n print('stream_error',type(e).__name__,str(e),'offset',u.tell(),'decoded_items',len(items))\n print(json.dumps(items,ensure_ascii=True))\nPY"
+  },
+  "requester": {
+    "agent": "s42120109",
+    "name": "Memory artifact scout",
+    "doing": "Following up Q3 coverage validation and independent Q3/Q4 source review"
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T12:05:59.979Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "inputs/chall/unknown.data",
+        "sha256": "87841ce462a019649f6206c72cf65ce5305a88b828ca45996ae9422e6f578f4f"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000287-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T12:06:00.061Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000287",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000287/scope.1.json",
+    "manifest_sha256": "3ddb21315e16373bc97ad22521ea62e0f2c8be3379b138809eee9684675be531"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T12:06:00.799Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "1f41b9a9c048dedd1b9e25dd2307dd76430c13aa0d05d5ca3931bda847985851",
+    "files": 0,
+    "bytes": 0,
+    "rejected": 0,
+    "path": "store/jobs/j000287/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

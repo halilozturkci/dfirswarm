@@ -1,0 +1,91 @@
+{
+  "id": "j000281",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/unknown.data"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport msgpack,zlib,hashlib,collections,json,math,struct\nb=open('inputs/chall/unknown.data','rb').read()\ndef summarize(x,depth=0,seen=None):\n if seen is None: seen=collections.Counter()\n t=type(x).__name__; seen[t]+=1\n if depth>5: return {'type':t,'omitted':'depth'}\n if isinstance(x,dict):\n  out=[]\n  for k,v in x.items():\n   ks=repr(k)[:120]\n   out.append({'key_repr':ks,'value':summarize(v,depth+1,seen)})\n  return {'type':'dict','len':len(x),'items':out[:50]}\n if isinstance(x,(list,tuple)):\n  return {'type':t,'len':len(x),'items':[summarize(v,depth+1,seen) for v in x[:50]]}\n if isinstance(x,(bytes,bytearray)):\n  return {'type':t,'len':len(x),'sha256':hashlib.sha256(x).hexdigest(),'head_hex':bytes(x[:16]).hex()}\n if isinstance(x,str):\n  return {'type':'str','len':len(x),'sha256_utf8':hashlib.sha256(x.encode()).hexdigest(),'preview':x[:80]}\n return {'type':t,'repr':repr(x)[:160]}\ntry:\n x=msgpack.unpackb(b,raw=False,strict_map_key=False,strict_types=False)\n print('msgpack: valid; summary follows (sensitive output protected)')\n print(json.dumps(summarize(x),ensure_ascii=True))\nexcept Exception as e: print('msgpack: decode failed',type(e).__name__,str(e))\nfor off in (18272,19082):\n d=zlib.decompressobj(31)\n try:\n  out=d.decompress(b[off:],1000000)\n  print('gzip',off,'ok','output_len',len(out),'eof',d.eof,'unused_data_len',len(d.unused_data),'unconsumed_tail_len',len(d.unconsumed_tail),'sha256',hashlib.sha256(out).hexdigest(),'head_hex',out[:32].hex())\n  # Coarse formats only; no decoded personal strings\n  print('gzip',off,'format_signatures',{'zip':out.startswith(b'PK\\x03\\x04'),'sqlite':out.startswith(b'SQLite format 3\\0'),'json':out.lstrip().startswith((b'{',b'[')),'xml':out.lstrip().startswith(b'<?xml'),'html':b'<html' in out[:256].lower()})\n except Exception as e: print('gzip',off,'failed',type(e).__name__,str(e))\nPY"
+  },
+  "requester": {
+    "agent": "s42120109",
+    "name": "Memory artifact scout",
+    "doing": "Following up Q3 coverage validation and independent Q3/Q4 source review"
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T11:59:15.868Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "inputs/chall/unknown.data",
+        "sha256": "87841ce462a019649f6206c72cf65ce5305a88b828ca45996ae9422e6f578f4f"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000281-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T11:59:15.943Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000281",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000281/scope.1.json",
+    "manifest_sha256": "ef0677f0490983bbd5d067cc46cfdd1a4cc48b382a4469fa22eefd81379660f3"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T11:59:16.723Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "9975eb0842fb0be9f2836fe3341f2650474fc61f23a862b34c2c45110cd2b2eb",
+    "files": 0,
+    "bytes": 0,
+    "rejected": 0,
+    "path": "store/jobs/j000281/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

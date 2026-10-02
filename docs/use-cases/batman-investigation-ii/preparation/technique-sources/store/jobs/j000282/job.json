@@ -1,0 +1,91 @@
+{
+  "id": "j000282",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/unknown.data"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport msgpack,struct,zlib,json\nb=open('inputs/chall/unknown.data','rb').read()\n# Recursively expose schema and contact/name values only; suppress all other data values (especially key material).\ndef summary(v,path='root',depth=0):\n if depth>10:return {'type':type(v).__name__,'depth_cap':True}\n if isinstance(v,dict):\n  return {'type':'map','n':len(v),'entries':[{'key':str(k)[:100],'value':summary(x,path+'/'+str(k),depth+1)} for k,x in list(v.items())[:100]]}\n if isinstance(v,(list,tuple)):\n  return {'type':type(v).__name__,'n':len(v),'items':[summary(x,path+'[]',depth+1) for x in v[:100]]}\n if isinstance(v,(bytes,bytearray)):\n  return {'type':'bytes','n':len(v)}\n if isinstance(v,str):\n  low=path.lower()\n  if any(w in low for w in ('private','secret','password','token','key','email','credential')):\n   return {'type':'str','n':len(v),'value':'[suppressed]'}\n  if any(w in low for w in ('contact','name','person','display')):\n   return {'type':'str','n':len(v),'value':v[:160]}\n  return {'type':'str','n':len(v),'value':'[suppressed]'}\n if v is None or isinstance(v,(bool,int,float)):\n  return {'type':type(v).__name__,'value':v if not isinstance(v,float) or abs(v)<1e100 else '[float]'}\n return {'type':type(v).__name__}\ntry:\n x=msgpack.unpackb(b,raw=False,strict_map_key=False)\n print('msgpack_valid yes')\n print(json.dumps(summary(x),ensure_ascii=True))\nexcept Exception as e: print('msgpack_valid no',type(e).__name__,str(e))\n# Locate complete gzip headers (not only the two-byte prefix) and validate each stream.\npos=[]; at=0\nwhile True:\n at=b.find(b'\\x1f\\x8b\\x08',at)\n if at<0:break\n pos.append(at); at+=1\nprint('complete_gzip_header_offsets',pos)\nfor off in (18272,19082):\n print('two_byte_marker',off,'header_bytes',b[off:off+10].hex())\n if b[off:off+3]==b'\\x1f\\x8b\\x08':\n  try:\n   d=zlib.decompressobj(31); out=d.decompress(b[off:],1000000)\n   print('gzip_valid',off,'eof',d.eof,'uncompressed_length',len(out),'format',('sqlite' if out.startswith(b'SQLite format 3\\x00') else 'zip' if out.startswith(b'PK\\x03\\x04') else 'other'))\n  except Exception as e: print('gzip_error',off,type(e).__name__,str(e))\nPY"
+  },
+  "requester": {
+    "agent": "s42120109",
+    "name": "Memory artifact scout",
+    "doing": "Following up Q3 coverage validation and independent Q3/Q4 source review"
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T12:00:46.233Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "inputs/chall/unknown.data",
+        "sha256": "87841ce462a019649f6206c72cf65ce5305a88b828ca45996ae9422e6f578f4f"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000282-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T12:00:46.324Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000282",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000282/scope.1.json",
+    "manifest_sha256": "7c20851161fe586ef92770d14965708e7eed58d2015cabe70af2610493eb7faa"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T12:00:47.096Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "95a9f8a8e2eb58dfa381612dae007a69467085d2879c5c245c4cdd10dbe58eb1",
+    "files": 0,
+    "bytes": 0,
+    "rejected": 0,
+    "path": "store/jobs/j000282/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

@@ -1,0 +1,92 @@
+{
+  "id": "j000285",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/unknown.data"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport msgpack,json\nb=open('inputs/chall/unknown.data','rb').read()\n# Use pair-list maps so arrays are permitted as keys, avoiding unhashable-key failure.\ndef map_hook(pairs): return ('MAP',pairs)\nx=msgpack.unpackb(b,raw=False,strict_map_key=False,object_pairs_hook=map_hook)\ndef slim(v,path='root',depth=0):\n if depth>20:return {'type':type(v).__name__,'depth_cap':True}\n if isinstance(v,tuple) and len(v)==2 and v[0]=='MAP':\n  out=[]\n  for k,val in v[1][:100]:\n   key=slim(k,path+'/[key]',depth+1)\n   kl=(k.decode('utf8','replace') if isinstance(k,bytes) else k if isinstance(k,str) else repr(k))\n   kl=str(kl)[:100]\n   out.append({'key':key,'value':slim(val,path+'/'+kl,depth+1)})\n  return {'type':'map_pairs','n':len(v[1]),'items':out}\n if isinstance(v,list): return {'type':'array','n':len(v),'items':[slim(x,path+'[]',depth+1) for x in v[:100]]}\n if isinstance(v,bytes):return {'type':'bytes','n':len(v)}\n if isinstance(v,str):\n  low=path.lower()\n  if any(w in low for w in ('private','secret','password','token','key','email','credential')):\n   return {'type':'str','n':len(v),'value':'[suppressed]'}\n  if any(w in low for w in ('contact','name','person','display')):\n   return {'type':'str','n':len(v),'value':v[:160]}\n  return {'type':'str','n':len(v),'value':'[suppressed]'}\n if v is None or isinstance(v,(bool,int,float)):return {'type':type(v).__name__,'value':v}\n return {'type':type(v).__name__}\nprint('msgpack_decode_success yes')\nprint(json.dumps(slim(x),ensure_ascii=True))\nPY"
+  },
+  "requester": {
+    "agent": "s42120109",
+    "name": "Memory artifact scout",
+    "doing": "Following up Q3 coverage validation and independent Q3/Q4 source review"
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T12:03:09.982Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "inputs/chall/unknown.data",
+        "sha256": "87841ce462a019649f6206c72cf65ce5305a88b828ca45996ae9422e6f578f4f"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000285-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T12:03:10.052Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000285",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000285/scope.1.json",
+    "manifest_sha256": "ad784c07af61d0a0fd5db62e828324a6e37e031c0cdd00d19bffacd3a067653a"
+  },
+  "network": "none",
+  "exit": 1,
+  "status": "failed",
+  "reason": "exit 1",
+  "finished_at": "2026-10-02T12:03:10.733Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "39a70375e0efa5462089397acae2502353dbb56571d7cbff2387888fc9251432",
+    "files": 0,
+    "bytes": 0,
+    "rejected": 0,
+    "path": "store/jobs/j000285/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

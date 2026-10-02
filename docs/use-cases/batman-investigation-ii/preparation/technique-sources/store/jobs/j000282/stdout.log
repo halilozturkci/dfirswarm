@@ -1,0 +1,4 @@
+msgpack_valid no TypeError unhashable type: 'list'
+complete_gzip_header_offsets []
+two_byte_marker 18272 header_bytes 1f8b18e2d786af04b018
+two_byte_marker 19082 header_bytes 1f8b6a2a6977210d6491

@@ -1,0 +1,85 @@
+{
+  "id": "j000278",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/unknown.data"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "command": "python3 - <<'PY'\nimport os, hashlib, subprocess, re, binascii\np='inputs/chall/unknown.data'\nb=open(p,'rb').read()\nprint('size',len(b),'sha256',hashlib.sha256(b).hexdigest())\nprint('head_hex',b[:96].hex())\nprint('head_repr',repr(b[:96]))\nprint('file_identification:')\nfor cmd in (['file','-b',p],):\n try: print(subprocess.check_output(cmd,stderr=subprocess.STDOUT,text=True).strip())\n except Exception as e: print(type(e).__name__,e)\nfor enc in ('ascii','utf-16le'):\n print('\\nSTRINGS',enc)\n if enc=='ascii':\n  arr=re.findall(rb'[\\x20-\\x7e]{4,}',b)\n  vals=[x.decode('ascii','replace') for x in arr]\n else:\n  arr=[]\n  for m in re.finditer(rb'(?:[\\x20-\\x7e]\\x00){4,}',b): arr.append(m.group().decode('utf-16le','replace'))\n  vals=arr\n print('count',len(vals))\n for s in vals[:300]: print(repr(s[:500]))\nPY"
+  },
+  "requester": {
+    "agent": "s42120109",
+    "name": "Memory artifact scout",
+    "doing": "Following up Q3 coverage validation and independent Q3/Q4 source review"
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T11:54:24.011Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "inputs/chall/unknown.data",
+        "sha256": "87841ce462a019649f6206c72cf65ce5305a88b828ca45996ae9422e6f578f4f"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000278-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T11:54:24.077Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000278",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000278/scope.1.json",
+    "manifest_sha256": "58f11ecc13e4c98b6786a2c7265c41d66a76e3242de4f469128404617faf4904"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T11:54:24.793Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "6486b8729006e61fde78beecc8c45008c46c6fa8d44334f8848d76b4c4cce6cc",
+    "files": 0,
+    "bytes": 0,
+    "rejected": 0,
+    "path": "store/jobs/j000278/out"
+  }
+}

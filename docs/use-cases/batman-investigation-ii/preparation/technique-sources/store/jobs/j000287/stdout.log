@@ -1,0 +1,81 @@
+msgpack 1.2.3 Unpacker_doc Unpacker(file_like=None, Py_ssize_t read_size=0, *, bool use_list=True, bool raw=False, int timestamp=0, bool strict_map_key=True, object_hook=None, object_pairs_hook=None, list_hook=None, unicode_errors=None, Py_ssize_t max_buffer_size=0x6400000, ext_hook=ExtType, Py_ssize_t max_str_len=-1, Py_ssize_t max_bin_len=-1, Py_ssize_t max_array_len=-1, Py_ssize_t max_map_len=-1, Py_ssize_t max_ext_len=-1)
+
+Streaming unpacker.
+
+If an operation needs more data, resume it with the same method after
+feeding more bytes. ``unpack()`` and iteration may be used interchangeably.
+Switching between unpacking, skipping, header readers, or ``read_bytes()``
+while an object is incomplete raises ``ValueError`` in the C extension.
+
+Arguments:
+
+:param file_like:
+    File-like object having `.read(n)` method.
+    If specified, unpacker reads serialized data from it and `.feed()` is not usable.
+
+:param int read_size:
+    Used as `file_like.read(read_size)`. Must be equal to or smaller than *max_buffer_size*.
+
+:param bool use_list:
+    If true, unpack msgpack array to Python list.
+    Otherwise, unpack to Python tuple. (default: True)
+
+:param bool raw:
+    If true, unpack msgpack raw to Python bytes.
+    Otherwise, unpack to Python str by decoding with UTF-8 encoding (default).
+
+:param int timestamp:
+    Control how timestamp type is unpacked:
+
+        0 - Timestamp
+        1 - float  (Seconds from the EPOCH)
+        2 - int  (Nanoseconds from the EPOCH)
+        3 - datetime.datetime  (UTC).
+
+:param bool strict_map_key:
+    If true (default), only str or bytes are accepted for map (dict) keys.
+
+:param object_hook:
+    When specified, it should be callable.
+    Unpacker calls it with a dict argument after unpacking msgpack map.
+    (See also simplejson)
+
+:param object_pairs_hook:
+    When specified, it should be callable.
+    Unpacker calls it with a list of key-value pairs after unpacking msgpack map.
+    (See also simplejson)
+
+:param str unicode_errors:
+    The error handler for decoding unicode. (default: 'strict')
+    This option should be used only when you have msgpack data which
+    contains invalid UTF-8 string.
+
+:param int max_buffer_size:
+    Limits size of data waiting unpacked.  0 means 2**32-1.
+    The default value is 100*1024*1024 (100MiB).
+    Raises `BufferFull` exception when it is insufficient.
+    You should set this parameter when unpacking data from untrusted source.
+
+:param int max_str_len:
+    Deprecated, use *max_buffer_size* instead.
+    Limits max length of str. (default: max_buffer_size)
+
+:param int max_bin_len:
+    Deprecated, use *max_buffer_size* instead.
+    Limits max length of bin. (default: max_buffer_size)
+
+:param int max_array_len:
+    Limits max length of array.
+    (default: max_buffer_size)
+
+:param int max_map_len:
+    Limits max length of map.
+    (default: max_buffer_size//2)
+
+:param int max_ext_len:
+    Deprecated, use *max_buffer_size* instead.
+    Limits max size of ext type.  (default: max_buffer_size)
+
+Example of streaming dese
+stream_error UnicodeDecodeError 'utf-8' codec can't decode byte 0xde in position 0: invalid continuation byte offset 54 decoded_items 11
+[{"index": 0, "offset_end": 25, "summary": {"type": "map", "n": 5, "keys": ["[4.289818690650412e+237, -20340]", "0", "0", "0", "0"], "values": [{"type": "int", "value": 0}, {"type": "int", "value": 0}, {"type": "int", "value": 0}, {"type": "array", "n": 2, "items": [{"type": "int", "value": 0}, {"type": "int", "value": 0}]}, {"type": "int", "value": 0}]}}, {"index": 1, "offset_end": 26, "summary": {"type": "int", "value": 0}}, {"index": 2, "offset_end": 27, "summary": {"type": "int", "value": 0}}, {"index": 3, "offset_end": 28, "summary": {"type": "int", "value": 0}}, {"index": 4, "offset_end": 29, "summary": {"type": "int", "value": 70}}, {"index": 5, "offset_end": 30, "summary": {"type": "int", "value": 100}}, {"index": 6, "offset_end": 31, "summary": {"type": "int", "value": 39}}, {"index": 7, "offset_end": 32, "summary": {"type": "int", "value": 7}}, {"index": 8, "offset_end": 33, "summary": {"type": "int", "value": 114}}, {"index": 9, "offset_end": 34, "summary": {"type": "int", "value": 109}}, {"index": 10, "offset_end": 35, "summary": {"type": "int", "value": 65}}]

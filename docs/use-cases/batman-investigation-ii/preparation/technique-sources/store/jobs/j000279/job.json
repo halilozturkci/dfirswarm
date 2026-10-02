@@ -1,0 +1,85 @@
+{
+  "id": "j000279",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "input:chall/unknown.data"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "command": "python3 - <<'PY'\nimport importlib.util, zipfile, tarfile, gzip, zlib, lzma, hashlib, collections, math, struct, re\np='inputs/chall/unknown.data'; b=open(p,'rb').read()\nprint('sha256',hashlib.sha256(b).hexdigest(),'size',len(b))\nfor m in ('cbor2','cbor','msgpack','cryptography','asn1crypto'):\n print('module',m, bool(importlib.util.find_spec(m)))\nprint('zip_is_file',zipfile.is_zipfile(p))\nfor sig in (b'PK\\x03\\x04',b'PK\\x05\\x06',b'PK\\x07\\x08',b'SQLite format 3\\x00',b'\\x1f\\x8b',b'7z\\xbc\\xaf\\x27\\x1c',b'Rar!\\x1a\\x07',b'\\x89PNG\\r\\n\\x1a\\n'):\n print('sig',sig.hex(),[m.start() for m in re.finditer(re.escape(sig),b)])\n# byte entropy\nfreq=collections.Counter(b); H=-sum((n/len(b))*math.log2(n/len(b)) for n in freq.values())\nprint('entropy_bits_per_byte',H,'unique_bytes',len(freq))\n# count zero bytes and string occurrence offsets\nprint('zero_bytes',freq.get(0,0),'UTF16_name_positions',[m.start() for m in re.finditer('Carmine Falcone.zip'.encode('utf-16le'),b)])\ntry:\n import cbor2\n x=cbor2.loads(b)\n print('cbor2 decoded type',type(x).__name__, 'repr',repr(x)[:5000])\nexcept Exception as e: print('cbor2 decode error',type(e).__name__,str(e))\ntry:\n import msgpack\n x=msgpack.unpackb(b,raw=False)\n print('msgpack decoded type',type(x).__name__, 'repr',repr(x)[:5000])\nexcept Exception as e: print('msgpack decode error',type(e).__name__,str(e))\nPY"
+  },
+  "requester": {
+    "agent": "s42120109",
+    "name": "Memory artifact scout",
+    "doing": "Following up Q3 coverage validation and independent Q3/Q4 source review"
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T11:55:43.377Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "inputs/chall/unknown.data",
+        "sha256": "87841ce462a019649f6206c72cf65ce5305a88b828ca45996ae9422e6f578f4f"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000279-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T11:55:43.441Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000279",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000279/scope.1.json",
+    "manifest_sha256": "8df2f51d173b92a67ee15a56ddbef042c2139a5892d588865ab11dc33cbc7390"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T11:55:44.153Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "585f2c2aa919cf16a572775285b342b0dd7a8512c97855fe6dc59a688a0aed81",
+    "files": 0,
+    "bytes": 0,
+    "rejected": 0,
+    "path": "store/jobs/j000279/out"
+  }
+}

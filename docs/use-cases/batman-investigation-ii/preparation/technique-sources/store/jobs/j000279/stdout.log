@@ -1,0 +1,19 @@
+sha256 87841ce462a019649f6206c72cf65ce5305a88b828ca45996ae9422e6f578f4f size 36194
+module cbor2 False
+module cbor False
+module msgpack True
+module cryptography True
+module asn1crypto True
+zip_is_file False
+sig 504b0304 []
+sig 504b0506 []
+sig 504b0708 []
+sig 53514c69746520666f726d6174203300 []
+sig 1f8b [18272, 19082]
+sig 377abcaf271c []
+sig 526172211a07 []
+sig 89504e470d0a1a0a []
+entropy_bits_per_byte 7.99499424054873 unique_bytes 256
+zero_bytes 189 UTF16_name_positions [36128]
+cbor2 decode error ModuleNotFoundError No module named 'cbor2'
+msgpack decode error ValueError list is not allowed for map key when strict_map_key=True

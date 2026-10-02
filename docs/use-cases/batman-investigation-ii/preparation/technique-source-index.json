@@ -3392,6 +3392,528 @@
       "captured_at": "2026-10-02T12:11:50.082790+00:00",
       "byte_exact_source_copy": false,
       "selection": "three complete public compact_done/agent_error events; no private assistant reasoning; not full trace chain"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000278/job.json",
+      "copy": "preparation/technique-sources/store/jobs/j000278/job.json",
+      "bytes": 3237,
+      "sha256": "1a469e7105648d327c0c7b9d5dc33ca07e848c227070fa6303815b0aaa3e255b",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000278/manifest.json",
+      "copy": "preparation/technique-sources/store/jobs/j000278/manifest.json",
+      "bytes": 141,
+      "sha256": "6486b8729006e61fde78beecc8c45008c46c6fa8d44334f8848d76b4c4cce6cc",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000278/scope.1.json",
+      "copy": "preparation/technique-sources/store/jobs/j000278/scope.1.json",
+      "bytes": 1322,
+      "sha256": "58f11ecc13e4c98b6786a2c7265c41d66a76e3242de4f469128404617faf4904",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000278/stdout.log",
+      "copy": "preparation/technique-sources/store/jobs/j000278/stdout.log",
+      "bytes": 2966,
+      "sha256": "0ba358f1cd8dc4728d2f3847b28aa890527f083f4b63d7834932a45d5ce67fd0",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000278/stderr.log",
+      "copy": "preparation/technique-sources/store/jobs/j000278/stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000279/job.json",
+      "copy": "preparation/technique-sources/store/jobs/j000279/job.json",
+      "bytes": 3797,
+      "sha256": "afcd19cdfe7cfbf294854a63ec1e330ebcc30ce2fa08bce2e14138fbe25d2f98",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000279/manifest.json",
+      "copy": "preparation/technique-sources/store/jobs/j000279/manifest.json",
+      "bytes": 141,
+      "sha256": "585f2c2aa919cf16a572775285b342b0dd7a8512c97855fe6dc59a688a0aed81",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000279/scope.1.json",
+      "copy": "preparation/technique-sources/store/jobs/j000279/scope.1.json",
+      "bytes": 1322,
+      "sha256": "8df2f51d173b92a67ee15a56ddbef042c2139a5892d588865ab11dc33cbc7390",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000279/stdout.log",
+      "copy": "preparation/technique-sources/store/jobs/j000279/stdout.log",
+      "bytes": 634,
+      "sha256": "5930039352d2b84598ff27a683229f88db212ef8279fb0696e5431801e2a6bd4",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000279/stderr.log",
+      "copy": "preparation/technique-sources/store/jobs/j000279/stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000281/job.json",
+      "copy": "preparation/technique-sources/store/jobs/j000281/job.json",
+      "bytes": 4473,
+      "sha256": "21afd0f10fb773d402c95136993bd160d484c91fbd397db933ed6ecbc75bf28c",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000281/manifest.json",
+      "copy": "preparation/technique-sources/store/jobs/j000281/manifest.json",
+      "bytes": 141,
+      "sha256": "9975eb0842fb0be9f2836fe3341f2650474fc61f23a862b34c2c45110cd2b2eb",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000281/scope.1.json",
+      "copy": "preparation/technique-sources/store/jobs/j000281/scope.1.json",
+      "bytes": 1322,
+      "sha256": "ef0677f0490983bbd5d067cc46cfdd1a4cc48b382a4469fa22eefd81379660f3",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000281/stdout.log",
+      "copy": "preparation/technique-sources/store/jobs/j000281/stdout.log",
+      "bytes": 265,
+      "sha256": "a215dd44305e58877e03cb9c8113b12d4a3490d2661614f7fc06060996cdb05d",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000281/stderr.log",
+      "copy": "preparation/technique-sources/store/jobs/j000281/stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000282/job.json",
+      "copy": "preparation/technique-sources/store/jobs/j000282/job.json",
+      "bytes": 4764,
+      "sha256": "a07eaf64c7a7fc00f18cc87e8e0000bcac805e614e8e095fe75d37fab9111912",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000282/manifest.json",
+      "copy": "preparation/technique-sources/store/jobs/j000282/manifest.json",
+      "bytes": 141,
+      "sha256": "95a9f8a8e2eb58dfa381612dae007a69467085d2879c5c245c4cdd10dbe58eb1",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000282/scope.1.json",
+      "copy": "preparation/technique-sources/store/jobs/j000282/scope.1.json",
+      "bytes": 1322,
+      "sha256": "7c20851161fe586ef92770d14965708e7eed58d2015cabe70af2610493eb7faa",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000282/stdout.log",
+      "copy": "preparation/technique-sources/store/jobs/j000282/stdout.log",
+      "bytes": 195,
+      "sha256": "d426a760e27af1c4db9cd20aaeb2b4f8ee177d5c2918f3c449e7d687ee2abe3d",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000282/stderr.log",
+      "copy": "preparation/technique-sources/store/jobs/j000282/stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000284/job.json",
+      "copy": "preparation/technique-sources/store/jobs/j000284/job.json",
+      "bytes": 2486,
+      "sha256": "44b8c1bbd647f5ee732d900da8ec2de556dc94aac6848aaf5e03dda71132b3e2",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000284/manifest.json",
+      "copy": "preparation/technique-sources/store/jobs/j000284/manifest.json",
+      "bytes": 141,
+      "sha256": "caa6aa540b3d278ed2734f1f799c2798a370ddc77ff45e0bf87437485b47a3f3",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000284/scope.1.json",
+      "copy": "preparation/technique-sources/store/jobs/j000284/scope.1.json",
+      "bytes": 797,
+      "sha256": "7bce8b47039f524b07f9939f9824a37a255a1b0fd6dc78c1ff8aa225d4a00e8a",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000284/stdout.log",
+      "copy": "preparation/technique-sources/store/jobs/j000284/stdout.log",
+      "bytes": 1089,
+      "sha256": "a3593432028672655eecae0d6d56949ad4a888313b3631104cb2f81fd1f2eb97",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000284/stderr.log",
+      "copy": "preparation/technique-sources/store/jobs/j000284/stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000285/job.json",
+      "copy": "preparation/technique-sources/store/jobs/j000285/job.json",
+      "bytes": 4139,
+      "sha256": "77414001c792e5723bb76921583af10d5cb4ee3e14114f3a1f0e97c84782be6b",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000285/manifest.json",
+      "copy": "preparation/technique-sources/store/jobs/j000285/manifest.json",
+      "bytes": 141,
+      "sha256": "39a70375e0efa5462089397acae2502353dbb56571d7cbff2387888fc9251432",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000285/scope.1.json",
+      "copy": "preparation/technique-sources/store/jobs/j000285/scope.1.json",
+      "bytes": 1322,
+      "sha256": "ad784c07af61d0a0fd5db62e828324a6e37e031c0cdd00d19bffacd3a067653a",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000285/stdout.log",
+      "copy": "preparation/technique-sources/store/jobs/j000285/stdout.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000285/stderr.log",
+      "copy": "preparation/technique-sources/store/jobs/j000285/stderr.log",
+      "bytes": 205,
+      "sha256": "7e8f9f596149d6d50ba50192d91178f0d848f2baae8ac946814ae7514d3b1ee7",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000286/job.json",
+      "copy": "preparation/technique-sources/store/jobs/j000286/job.json",
+      "bytes": 4436,
+      "sha256": "064f0aaf4593ec01a03c7cb02649a8e936bc0d731ef370833cdb8b37bab4e5d4",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000286/manifest.json",
+      "copy": "preparation/technique-sources/store/jobs/j000286/manifest.json",
+      "bytes": 141,
+      "sha256": "89332bf8c917110b0eb2c2cdca73e303248fc99d94cef2a7c674fd07437ef2f2",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000286/scope.1.json",
+      "copy": "preparation/technique-sources/store/jobs/j000286/scope.1.json",
+      "bytes": 1322,
+      "sha256": "ebbca65d925d060947a0924a30241ca93cdfbe0c2d826cb0ce801c1dc1b30f75",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000286/stdout.log",
+      "copy": "preparation/technique-sources/store/jobs/j000286/stdout.log",
+      "bytes": 22,
+      "sha256": "c54d6a67694d5b65bb45fede13072d4a41f22b00ab11b5b6c820e2bd47c4e35f",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000286/stderr.log",
+      "copy": "preparation/technique-sources/store/jobs/j000286/stderr.log",
+      "bytes": 642,
+      "sha256": "c4c6fc7f78f739acda2998268d61f25b76b24ad1162195c9262f7138822e468d",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000287/job.json",
+      "copy": "preparation/technique-sources/store/jobs/j000287/job.json",
+      "bytes": 4367,
+      "sha256": "cc78be196e3ef1679c36051cdaa0f1690a665b98ae7c739d37861458358c3b44",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000287/manifest.json",
+      "copy": "preparation/technique-sources/store/jobs/j000287/manifest.json",
+      "bytes": 141,
+      "sha256": "1f41b9a9c048dedd1b9e25dd2307dd76430c13aa0d05d5ca3931bda847985851",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000287/scope.1.json",
+      "copy": "preparation/technique-sources/store/jobs/j000287/scope.1.json",
+      "bytes": 1322,
+      "sha256": "3ddb21315e16373bc97ad22521ea62e0f2c8be3379b138809eee9684675be531",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000287/stdout.log",
+      "copy": "preparation/technique-sources/store/jobs/j000287/stdout.log",
+      "bytes": 4254,
+      "sha256": "d4f73303bd77f717af0e631e962e756d8ebf62265326da71ba0e27b4c9d01aa7",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000287/stderr.log",
+      "copy": "preparation/technique-sources/store/jobs/j000287/stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000288/job.json",
+      "copy": "preparation/technique-sources/store/jobs/j000288/job.json",
+      "bytes": 3567,
+      "sha256": "827508ecf6bb9556bb7f874bee8bf4533a108b3889107eec13ebd682deada764",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000288/manifest.json",
+      "copy": "preparation/technique-sources/store/jobs/j000288/manifest.json",
+      "bytes": 141,
+      "sha256": "c854009c60e17c667989732340004084558bcb4cc6347168d3572b03fc50e8e5",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000288/scope.1.json",
+      "copy": "preparation/technique-sources/store/jobs/j000288/scope.1.json",
+      "bytes": 1322,
+      "sha256": "6abd96c303c1e7774ebfb3a1aa654e14c9cff3218249bde432372950b0cd3487",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000288/stdout.log",
+      "copy": "preparation/technique-sources/store/jobs/j000288/stdout.log",
+      "bytes": 1521,
+      "sha256": "11931d773018e52a935b806faa63cb25dae43d25b9880c760e77cf831f9e2dde",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000288/stderr.log",
+      "copy": "preparation/technique-sources/store/jobs/j000288/stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/ledger/entries.jsonl",
+      "copy": "preparation/technique-sources/ledger/selected-1213-entries.jsonl",
+      "bytes": 56023,
+      "sha256": "ddc416409a4d7caed3f3ea78a594e8d135e96e8095777e853d61d5bb3b98fe12",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "complete selected E287/E292/E294–E302; live prefix, not full chain"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/leads/leads.jsonl",
+      "copy": "preparation/technique-sources/leads/selected-1213-events.jsonl",
+      "bytes": 7667,
+      "sha256": "22617d15c65ded4df62d7c89101f62525440ae4a3cf85219ae792ab6ff94183d",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "complete lead records seq885–896 for L51 close, review, reopen and L55; not full chain"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000460-s42120100.md",
+      "copy": "preparation/technique-sources/threads/main/000460-s42120100.md",
+      "bytes": 711,
+      "sha256": "7f26df55bc4764769f82a42258fdae0c1e7c537505f8012a840b4722d20b2292",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000450-s42120101.md",
+      "copy": "preparation/technique-sources/threads/main/000450-s42120101.md",
+      "bytes": 650,
+      "sha256": "00e1e7d13fab9078306ad554d8a8126ddcd02708557243f3eb08f121170282a1",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000458-s42120109.md",
+      "copy": "preparation/technique-sources/threads/main/000458-s42120109.md",
+      "bytes": 572,
+      "sha256": "3b3b0853a94cd5a7a8a283dcd90c6ba0b48f4d5375080fbec6cbce8c4c6f2469",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000459-s42120108.md",
+      "copy": "preparation/technique-sources/threads/main/000459-s42120108.md",
+      "bytes": 210,
+      "sha256": "c73a1d98cdafbe9fbe4dc7078ba0270750d269fe9d1b707cfec3b6d2bfc16a88",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000452-s42120107.md",
+      "copy": "preparation/technique-sources/threads/main/000452-s42120107.md",
+      "bytes": 522,
+      "sha256": "3c9dea01ac8d61fcdf10e61710775386e5e15796c79435a4541dab63bfbfe9b4",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000456-s42120101.md",
+      "copy": "preparation/technique-sources/threads/main/000456-s42120101.md",
+      "bytes": 594,
+      "sha256": "bcb05237ae0fc13616b8c5fe789c11b6474d0a5280d5f9847a5b4d787eba3c60",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000457-s42120100.md",
+      "copy": "preparation/technique-sources/threads/main/000457-s42120100.md",
+      "bytes": 597,
+      "sha256": "696ee0e2207281fb7a3f9476c5e4f1f75db0c85f4ba83b1a5dfdc9b5e66d458c",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000465-s42120109.md",
+      "copy": "preparation/technique-sources/threads/main/000465-s42120109.md",
+      "bytes": 463,
+      "sha256": "db1bd5f12465fdc3c731919c39e8deb7fb31154004422a69351d9d0d1518dc2d",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000468-s42120106.md",
+      "copy": "preparation/technique-sources/threads/main/000468-s42120106.md",
+      "bytes": 496,
+      "sha256": "907ecb530855164d243d232b194eda7d8b81b9bba247c9d8b4c59673b4d19fea",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000449-s42120101.md",
+      "copy": "preparation/technique-sources/threads/main/000449-s42120101.md",
+      "bytes": 535,
+      "sha256": "89e619cc0caaaa3e3f713ef6d715bd09075d9e7de529e6ac245e79dfd097e4a7",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000462-s42120108.md",
+      "copy": "preparation/technique-sources/threads/main/000462-s42120108.md",
+      "bytes": 576,
+      "sha256": "75b07eb87691ab0b2460c250090a02d1bdf89e7e1aaeff7d9e38f2806a91b920",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000469-s42120100.md",
+      "copy": "preparation/technique-sources/threads/main/000469-s42120100.md",
+      "bytes": 596,
+      "sha256": "c934c7c7326e340e4bedb67f9604ee0bf0ac0bf030594ed6488f1573f39a20d1",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000461-s42120108.md",
+      "copy": "preparation/technique-sources/threads/main/000461-s42120108.md",
+      "bytes": 751,
+      "sha256": "b7b75f7e3d701e8d346880993778649847cfc9402a1e25210c720441c0973c50",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000466-s42120103.md",
+      "copy": "preparation/technique-sources/threads/main/000466-s42120103.md",
+      "bytes": 553,
+      "sha256": "9d0316c83f50885d0632e64153dd5581b253b17947096b3de871cf75905b0b19",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000467-s42120102.md",
+      "copy": "preparation/technique-sources/threads/main/000467-s42120102.md",
+      "bytes": 558,
+      "sha256": "37455de3f8ef33be57f7a7097cfa301364a2db61209a04c4b08757ea71414ec0",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000463-s42120104.md",
+      "copy": "preparation/technique-sources/threads/main/000463-s42120104.md",
+      "bytes": 697,
+      "sha256": "1b193a4515d50252caee571dd33fef9095e3a7dcc8fd2f995b477120d8b6561b",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000470-s42120100.md",
+      "copy": "preparation/technique-sources/threads/main/000470-s42120100.md",
+      "bytes": 563,
+      "sha256": "c21cd25c201fe135c3f7189a76fa8229e3fb62fc252e1d425b43e756b73a121a",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/threads/main/000464-s42120101.md",
+      "copy": "preparation/technique-sources/threads/main/000464-s42120101.md",
+      "bytes": 571,
+      "sha256": "4893b95446d9c57b3c20adb4555009c39510f6834a61186928afd0bbd4511d4d",
+      "captured_at": "2026-10-02T12:18:22.435121+00:00",
+      "byte_exact_source_copy": true
     }
   ],
   "ledger_bindings": [
@@ -4132,6 +4654,105 @@
       "hash": "9a810511df732c8914296e220b831b8dade551e3d56ae8fce5cd10a6785000f2",
       "prev": "7af79f96eba1195b25572e47d747ac77c62f45f9fa84cfc77996bfbb133ba7c8",
       "supersedes": null
+    },
+    {
+      "seq": 287,
+      "kind": "finding",
+      "by": "s42120109",
+      "at": "2026-10-02T11:56:26.780Z",
+      "hash": "0acd52627cdd5ddf674315d57c547513c6d3ae0fd7088a9cbecb9cb3cd7332b5",
+      "prev": "d72dcaafe8732dc9092c711cc1af2eaadd78f34fdd90a52103c1074967ba39ef",
+      "supersedes": null
+    },
+    {
+      "seq": 292,
+      "kind": "limitation",
+      "by": "s42120109",
+      "at": "2026-10-02T12:00:13.721Z",
+      "hash": "7af79f96eba1195b25572e47d747ac77c62f45f9fa84cfc77996bfbb133ba7c8",
+      "prev": "23f9284c63b31340b4aab6d55e5983fb9a3ecbebdb43ff94a0ea500f26dbbed2",
+      "supersedes": null
+    },
+    {
+      "seq": 294,
+      "kind": "finding",
+      "by": "s42120109",
+      "at": "2026-10-02T12:01:40.322Z",
+      "hash": "f8785d47467ef18c6e178ab2d24b1ecf2bfb9332754649eea52ac89f757a4b64",
+      "prev": "9a810511df732c8914296e220b831b8dade551e3d56ae8fce5cd10a6785000f2",
+      "supersedes": 287
+    },
+    {
+      "seq": 295,
+      "kind": "finding",
+      "by": "s42120109",
+      "at": "2026-10-02T12:02:15.414Z",
+      "hash": "30abeb18affc2b6c5eca12369197d963babf1f6fa80e8b4d508f6b0333c39052",
+      "prev": "f8785d47467ef18c6e178ab2d24b1ecf2bfb9332754649eea52ac89f757a4b64",
+      "supersedes": 294
+    },
+    {
+      "seq": 296,
+      "kind": "limitation",
+      "by": "s42120109",
+      "at": "2026-10-02T12:04:13.566Z",
+      "hash": "d59b503c1dc4f47933bab802947c3eef0ad7f2db95f96c865937f02363ce6648",
+      "prev": "30abeb18affc2b6c5eca12369197d963babf1f6fa80e8b4d508f6b0333c39052",
+      "supersedes": null
+    },
+    {
+      "seq": 297,
+      "kind": "limitation",
+      "by": "s42120109",
+      "at": "2026-10-02T12:06:30.343Z",
+      "hash": "4330686ef5450684e00d693b6ba6995932251cdb41da4bc923561855da9be5cb",
+      "prev": "d59b503c1dc4f47933bab802947c3eef0ad7f2db95f96c865937f02363ce6648",
+      "supersedes": null
+    },
+    {
+      "seq": 298,
+      "kind": "finding",
+      "by": "s42120109",
+      "at": "2026-10-02T12:07:04.548Z",
+      "hash": "8fc58bad0dd88e6446ac823a5190bc10a85d78c3624d6439e85047fb66223c0d",
+      "prev": "4330686ef5450684e00d693b6ba6995932251cdb41da4bc923561855da9be5cb",
+      "supersedes": null
+    },
+    {
+      "seq": 299,
+      "kind": "finding",
+      "by": "s42120109",
+      "at": "2026-10-02T12:08:35.122Z",
+      "hash": "c5a48b24a150ca0b7dea06ef6bd22ba6b4b5a1a786c8c3f4416cb6eee5a7e5f0",
+      "prev": "8fc58bad0dd88e6446ac823a5190bc10a85d78c3624d6439e85047fb66223c0d",
+      "supersedes": null
+    },
+    {
+      "seq": 300,
+      "kind": "limitation",
+      "by": "s42120109",
+      "at": "2026-10-02T12:11:58.241Z",
+      "hash": "fe834c8f8ae441bdc685dedc118c1728e749254503de3143a0806fb1b8373937",
+      "prev": "c5a48b24a150ca0b7dea06ef6bd22ba6b4b5a1a786c8c3f4416cb6eee5a7e5f0",
+      "supersedes": null
+    },
+    {
+      "seq": 301,
+      "kind": "answer",
+      "by": "s42120100",
+      "at": "2026-10-02T12:14:13.959Z",
+      "hash": "2e462e58a2d7852a8ec846300b02c0d03708e40082d883088c87d8902ba1993c",
+      "prev": "fe834c8f8ae441bdc685dedc118c1728e749254503de3143a0806fb1b8373937",
+      "supersedes": 151
+    },
+    {
+      "seq": 302,
+      "kind": "answer",
+      "by": "s42120100",
+      "at": "2026-10-02T12:14:44.408Z",
+      "hash": "34e145074ddc0a30f849f1bbca818ac38a31e58ff1ceb25e2f83883531654517",
+      "prev": "2e462e58a2d7852a8ec846300b02c0d03708e40082d883088c87d8902ba1993c",
+      "supersedes": 301
     }
   ],
   "jobs": [
@@ -5135,6 +5756,159 @@
         "bytes": 34269,
         "rejected": 0,
         "path": "store/jobs/j000283/out"
+      },
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7"
+    },
+    {
+      "job": "j000278",
+      "requester": "s42120109",
+      "state": "committed",
+      "status": "ok",
+      "exit": 0,
+      "started_at": "2026-10-02T11:54:24.077Z",
+      "finished_at": "2026-10-02T11:54:24.793Z",
+      "outputs": {
+        "manifest_sha256": "6486b8729006e61fde78beecc8c45008c46c6fa8d44334f8848d76b4c4cce6cc",
+        "files": 0,
+        "bytes": 0,
+        "rejected": 0,
+        "path": "store/jobs/j000278/out"
+      },
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7"
+    },
+    {
+      "job": "j000279",
+      "requester": "s42120109",
+      "state": "committed",
+      "status": "ok",
+      "exit": 0,
+      "started_at": "2026-10-02T11:55:43.441Z",
+      "finished_at": "2026-10-02T11:55:44.153Z",
+      "outputs": {
+        "manifest_sha256": "585f2c2aa919cf16a572775285b342b0dd7a8512c97855fe6dc59a688a0aed81",
+        "files": 0,
+        "bytes": 0,
+        "rejected": 0,
+        "path": "store/jobs/j000279/out"
+      },
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7"
+    },
+    {
+      "job": "j000281",
+      "requester": "s42120109",
+      "state": "committed",
+      "status": "ok",
+      "exit": 0,
+      "started_at": "2026-10-02T11:59:15.943Z",
+      "finished_at": "2026-10-02T11:59:16.723Z",
+      "outputs": {
+        "manifest_sha256": "9975eb0842fb0be9f2836fe3341f2650474fc61f23a862b34c2c45110cd2b2eb",
+        "files": 0,
+        "bytes": 0,
+        "rejected": 0,
+        "path": "store/jobs/j000281/out"
+      },
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7"
+    },
+    {
+      "job": "j000282",
+      "requester": "s42120109",
+      "state": "committed",
+      "status": "ok",
+      "exit": 0,
+      "started_at": "2026-10-02T12:00:46.324Z",
+      "finished_at": "2026-10-02T12:00:47.096Z",
+      "outputs": {
+        "manifest_sha256": "95a9f8a8e2eb58dfa381612dae007a69467085d2879c5c245c4cdd10dbe58eb1",
+        "files": 0,
+        "bytes": 0,
+        "rejected": 0,
+        "path": "store/jobs/j000282/out"
+      },
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7"
+    },
+    {
+      "job": "j000284",
+      "requester": "s42120109",
+      "state": "committed",
+      "status": "ok",
+      "exit": 0,
+      "started_at": "2026-10-02T12:02:48.609Z",
+      "finished_at": "2026-10-02T12:02:49.325Z",
+      "outputs": {
+        "manifest_sha256": "caa6aa540b3d278ed2734f1f799c2798a370ddc77ff45e0bf87437485b47a3f3",
+        "files": 0,
+        "bytes": 0,
+        "rejected": 0,
+        "path": "store/jobs/j000284/out"
+      },
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7"
+    },
+    {
+      "job": "j000285",
+      "requester": "s42120109",
+      "state": "committed",
+      "status": "failed",
+      "exit": 1,
+      "started_at": "2026-10-02T12:03:10.052Z",
+      "finished_at": "2026-10-02T12:03:10.733Z",
+      "outputs": {
+        "manifest_sha256": "39a70375e0efa5462089397acae2502353dbb56571d7cbff2387888fc9251432",
+        "files": 0,
+        "bytes": 0,
+        "rejected": 0,
+        "path": "store/jobs/j000285/out"
+      },
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7"
+    },
+    {
+      "job": "j000286",
+      "requester": "s42120109",
+      "state": "committed",
+      "status": "failed",
+      "exit": 1,
+      "started_at": "2026-10-02T12:05:30.374Z",
+      "finished_at": "2026-10-02T12:05:31.079Z",
+      "outputs": {
+        "manifest_sha256": "89332bf8c917110b0eb2c2cdca73e303248fc99d94cef2a7c674fd07437ef2f2",
+        "files": 0,
+        "bytes": 0,
+        "rejected": 0,
+        "path": "store/jobs/j000286/out"
+      },
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7"
+    },
+    {
+      "job": "j000287",
+      "requester": "s42120109",
+      "state": "committed",
+      "status": "ok",
+      "exit": 0,
+      "started_at": "2026-10-02T12:06:00.061Z",
+      "finished_at": "2026-10-02T12:06:00.799Z",
+      "outputs": {
+        "manifest_sha256": "1f41b9a9c048dedd1b9e25dd2307dd76430c13aa0d05d5ca3931bda847985851",
+        "files": 0,
+        "bytes": 0,
+        "rejected": 0,
+        "path": "store/jobs/j000287/out"
+      },
+      "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7"
+    },
+    {
+      "job": "j000288",
+      "requester": "s42120109",
+      "state": "committed",
+      "status": "ok",
+      "exit": 0,
+      "started_at": "2026-10-02T12:08:09.864Z",
+      "finished_at": "2026-10-02T12:08:10.570Z",
+      "outputs": {
+        "manifest_sha256": "c854009c60e17c667989732340004084558bcb4cc6347168d3572b03fc50e8e5",
+        "files": 0,
+        "bytes": 0,
+        "rejected": 0,
+        "path": "store/jobs/j000288/out"
       },
       "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7"
     }
@@ -10554,9 +11328,453 @@
         "j000283"
       ],
       "record_sha256": "7e4871a25b2487ac0bd397f405ec8fa8896f7236a7b78b35b07d3a8dc5a84948"
+    },
+    {
+      "agent": "s42120109",
+      "seq": 923,
+      "ts": "2026-10-02T11:54:25.112Z",
+      "tool": "job_run",
+      "jobs": [
+        "j000278"
+      ],
+      "record_sha256": "7892c368e1cdfe4112bcd9a6ccae5eab376671773a51bd4bfa8bb576f7df3cd1"
+    },
+    {
+      "agent": "s42120109",
+      "seq": 938,
+      "ts": "2026-10-02T11:55:44.434Z",
+      "tool": "job_run",
+      "jobs": [
+        "j000279"
+      ],
+      "record_sha256": "8a461ad66df358f170e74620422a71a4f7242bdc12432dcdab4f251f5c18ee47"
+    },
+    {
+      "agent": "s42120109",
+      "seq": 942,
+      "ts": "2026-10-02T11:56:14.644Z",
+      "tool": "record",
+      "jobs": [
+        "j000278",
+        "j000279"
+      ],
+      "record_sha256": "45e7d2f318c08cbb1a205b60c6b9a378da38e7de64245aae1bc773b06278bf09"
+    },
+    {
+      "agent": "s42120109",
+      "seq": 945,
+      "ts": "2026-10-02T11:56:26.873Z",
+      "tool": "record",
+      "jobs": [
+        "j000278",
+        "j000279"
+      ],
+      "record_sha256": "43c63c732bcc24879a3504e5c05ccbe8578d6776d83ee2c029599dd8e8c0d8d9"
+    },
+    {
+      "agent": "system",
+      "seq": 1060,
+      "ts": "2026-10-02T11:56:26.963Z",
+      "tool": "hub_call",
+      "jobs": [
+        "j000278",
+        "j000279"
+      ],
+      "record_sha256": "2a1e60a6b81dabd21112f6b5249ababbdf03c8cb6a629e366fe5ebf0e3f855c5"
+    },
+    {
+      "agent": "s42120109",
+      "seq": 946,
+      "ts": "2026-10-02T11:56:26.907Z",
+      "tool": "record_leads",
+      "jobs": [
+        "j000278",
+        "j000279"
+      ],
+      "record_sha256": "665c275b117c561c5370e252b716172dccbe9c1a2d4b42127db0cb269674303c"
+    },
+    {
+      "agent": "s42120109",
+      "seq": 959,
+      "ts": "2026-10-02T11:59:16.972Z",
+      "tool": "job_run",
+      "jobs": [
+        "j000281"
+      ],
+      "record_sha256": "9d6425a768d15828fb9d0b0a3d13db69648b28097c137864a8d0052f53f4772c"
+    },
+    {
+      "agent": "s42120109",
+      "seq": 962,
+      "ts": "2026-10-02T12:00:13.672Z",
+      "tool": "record",
+      "jobs": [
+        "j000281"
+      ],
+      "record_sha256": "9f7fc3b49f746ab9dc74254346ef9c5169577e55b865f5a953b9aedb5cc425b3"
+    },
+    {
+      "agent": "system",
+      "seq": 1088,
+      "ts": "2026-10-02T12:00:13.792Z",
+      "tool": "hub_call",
+      "jobs": [
+        "j000281"
+      ],
+      "record_sha256": "2539e42df0201b199af82a4964a8539a2ee6255d0784832f47da5aea5196b642"
+    },
+    {
+      "agent": "s42120109",
+      "seq": 963,
+      "ts": "2026-10-02T12:00:13.734Z",
+      "tool": "record_leads",
+      "jobs": [
+        "j000281"
+      ],
+      "record_sha256": "5e251f54d7f6f2ad7eca900c45ef8f7162d62a140765f0995a4f1f2c01b611ef"
+    },
+    {
+      "agent": "s42120109",
+      "seq": 966,
+      "ts": "2026-10-02T12:00:47.342Z",
+      "tool": "job_run",
+      "jobs": [
+        "j000282"
+      ],
+      "record_sha256": "03e390755cc3738728fedeac36ceade61c41e1e661c7381340e877463624b1c5"
+    },
+    {
+      "agent": "s42120109",
+      "seq": 969,
+      "ts": "2026-10-02T12:01:40.329Z",
+      "tool": "record",
+      "jobs": [
+        "j000278",
+        "j000279",
+        "j000282"
+      ],
+      "record_sha256": "a79a36d0904db17af506b9e0d990aa9ec37ed5744efc28370c06826fa7ea3118"
+    },
+    {
+      "agent": "system",
+      "seq": 1096,
+      "ts": "2026-10-02T12:01:40.431Z",
+      "tool": "hub_call",
+      "jobs": [
+        "j000282"
+      ],
+      "record_sha256": "bab14182653d1877ee2b8986941aec7750f419d4f6c11a2ffa1df1ec69716a64"
+    },
+    {
+      "agent": "s42120109",
+      "seq": 971,
+      "ts": "2026-10-02T12:01:40.372Z",
+      "tool": "record_leads",
+      "jobs": [
+        "j000282"
+      ],
+      "record_sha256": "b020dc873dc32a2337b8a648cd5138b9e7b1fc9e4200d87c41b1b1cd79faa501"
+    },
+    {
+      "agent": "s42120109",
+      "seq": 977,
+      "ts": "2026-10-02T12:02:15.378Z",
+      "tool": "record",
+      "jobs": [
+        "j000278",
+        "j000279",
+        "j000282"
+      ],
+      "record_sha256": "c715339d2f8d0fa5f3d3518aea11eaf2f694089f7c82f355ab866a24e3bb42d8"
+    },
+    {
+      "agent": "system",
+      "seq": 1099,
+      "ts": "2026-10-02T12:02:15.478Z",
+      "tool": "hub_call",
+      "jobs": [
+        "j000278",
+        "j000279",
+        "j000282"
+      ],
+      "record_sha256": "c5a3f1c6e4e366736d91585a56ac441001fad0afe6e7bea360737f3dd16b5d1d"
+    },
+    {
+      "agent": "s42120109",
+      "seq": 979,
+      "ts": "2026-10-02T12:02:15.419Z",
+      "tool": "record_leads",
+      "jobs": [
+        "j000278",
+        "j000279",
+        "j000282"
+      ],
+      "record_sha256": "c4a176ed01daf46635735059a9c7af7247b88a5e18ff7253c88144b0fbe6f00f"
+    },
+    {
+      "agent": "s42120109",
+      "seq": 982,
+      "ts": "2026-10-02T12:02:49.613Z",
+      "tool": "job_run",
+      "jobs": [
+        "j000284"
+      ],
+      "record_sha256": "01684d9ad20cf272419060d2654fb0b0d36b3aad2706b29ff764d85b8ada883b"
+    },
+    {
+      "agent": "s42120109",
+      "seq": 988,
+      "ts": "2026-10-02T12:03:40.920Z",
+      "tool": "read",
+      "jobs": [
+        "j000285"
+      ],
+      "record_sha256": "8a8bbf0bc2aaabf1a7345869b4c67ae3bf14e38ecb298c1e6a6301bee603dec0"
+    },
+    {
+      "agent": "s42120109",
+      "seq": 991,
+      "ts": "2026-10-02T12:03:47.079Z",
+      "tool": "read",
+      "jobs": [
+        "j000285"
+      ],
+      "record_sha256": "eda4188a83897ba28a879517e1ba97f4c5e610a628c84e7044b3c399f5fd1fee"
+    },
+    {
+      "agent": "s42120109",
+      "seq": 994,
+      "ts": "2026-10-02T12:04:13.516Z",
+      "tool": "record",
+      "jobs": [
+        "j000285"
+      ],
+      "record_sha256": "93f67c891cf7de054866863ce066f77ecc856b98ed83506109b0df184c58bb38"
+    },
+    {
+      "agent": "system",
+      "seq": 1107,
+      "ts": "2026-10-02T12:04:13.626Z",
+      "tool": "hub_call",
+      "jobs": [
+        "j000285"
+      ],
+      "record_sha256": "fdffdff55fe4ff0762726cf3e5c7b8f2df8fa637b6127959bf52363fac7639e6"
+    },
+    {
+      "agent": "s42120109",
+      "seq": 995,
+      "ts": "2026-10-02T12:04:13.566Z",
+      "tool": "record_leads",
+      "jobs": [
+        "j000285"
+      ],
+      "record_sha256": "996672ece1a274f140e2e23b4e29b4c79c64ec68f7469d10835647d555a9a2e7"
+    },
+    {
+      "agent": "s42120109",
+      "seq": 998,
+      "ts": "2026-10-02T12:04:32.131Z",
+      "tool": "record",
+      "jobs": [
+        "j000285"
+      ],
+      "record_sha256": "6e9dadfd0e384e6af2422e7199c22dce083281840ba45e68b8157df61689f4ea"
+    },
+    {
+      "agent": "s42120109",
+      "seq": 1007,
+      "ts": "2026-10-02T12:06:30.295Z",
+      "tool": "record",
+      "jobs": [
+        "j000286"
+      ],
+      "record_sha256": "e381c8a51b6fea4fc5832a093114adc827bb964fa55c6b0f833cf35fbbd03eba"
+    },
+    {
+      "agent": "system",
+      "seq": 1115,
+      "ts": "2026-10-02T12:06:30.397Z",
+      "tool": "hub_call",
+      "jobs": [
+        "j000286"
+      ],
+      "record_sha256": "fdf22e7cca5125e68b781ebc304c7b0df405dcbb3eda7faadbcf82c101330793"
+    },
+    {
+      "agent": "s42120109",
+      "seq": 1008,
+      "ts": "2026-10-02T12:06:30.336Z",
+      "tool": "record_leads",
+      "jobs": [
+        "j000286"
+      ],
+      "record_sha256": "a5ec99e665d30295d7794352dac734fc290bb69f67daa6387c08cf615ef42123"
+    },
+    {
+      "agent": "s42120104",
+      "seq": 1077,
+      "ts": "2026-10-02T12:07:00.974Z",
+      "tool": "post",
+      "jobs": [
+        "j000284",
+        "j000287"
+      ],
+      "record_sha256": "881518764d783592cd3bb5ca88368c10519137a43eba88d86a94f12fde9e7b43"
+    },
+    {
+      "agent": "s42120109",
+      "seq": 1011,
+      "ts": "2026-10-02T12:07:04.499Z",
+      "tool": "record",
+      "jobs": [
+        "j000284",
+        "j000287"
+      ],
+      "record_sha256": "e687ed649b144da89df9598dcc178de6fa82e96b6336c151225ba20dd99e9dce"
+    },
+    {
+      "agent": "system",
+      "seq": 1117,
+      "ts": "2026-10-02T12:07:04.596Z",
+      "tool": "hub_call",
+      "jobs": [
+        "j000284",
+        "j000287"
+      ],
+      "record_sha256": "f33311d7502555914067a0a9103bd7a586596ebe35d9a668b62b9d9babaf39c4"
+    },
+    {
+      "agent": "s42120109",
+      "seq": 1012,
+      "ts": "2026-10-02T12:07:04.535Z",
+      "tool": "record_leads",
+      "jobs": [
+        "j000284",
+        "j000287"
+      ],
+      "record_sha256": "73142dd7f1a5269e491cb825f076ac7ac245d39cf212689ac30823a1bedb8e53"
+    },
+    {
+      "agent": "s42120100",
+      "seq": 635,
+      "ts": "2026-10-02T12:08:00.229Z",
+      "tool": "bash",
+      "jobs": [
+        "j000278",
+        "j000279",
+        "j000282",
+        "j000284",
+        "j000285",
+        "j000286",
+        "j000287"
+      ],
+      "record_sha256": "9ec73cf390750d676300292c17f0f315096b2da25caeb2aacb9367f1572930e4"
+    },
+    {
+      "agent": "s42120109",
+      "seq": 1019,
+      "ts": "2026-10-02T12:08:35.077Z",
+      "tool": "record",
+      "jobs": [
+        "j000288"
+      ],
+      "record_sha256": "f1fb1666630d711475373c9fb83a4bc5a68f83ddfc8df39c73d73edfdc2b8bdb"
+    },
+    {
+      "agent": "system",
+      "seq": 1121,
+      "ts": "2026-10-02T12:08:35.176Z",
+      "tool": "hub_call",
+      "jobs": [
+        "j000288"
+      ],
+      "record_sha256": "a83ab6109a6811099dd02071fab2ff9106be321f96936a565fdccae5bd4524ee"
+    },
+    {
+      "agent": "s42120109",
+      "seq": 1020,
+      "ts": "2026-10-02T12:08:35.114Z",
+      "tool": "record_leads",
+      "jobs": [
+        "j000288"
+      ],
+      "record_sha256": "6e9ca37a60848179c7d1f78191e5f0bdced3a7021eb7c96d88f035bdc0019a1b"
+    },
+    {
+      "agent": "s42120109",
+      "seq": 1026,
+      "ts": "2026-10-02T12:11:47.109Z",
+      "tool": "record",
+      "jobs": [
+        "j000278",
+        "j000279",
+        "j000282",
+        "j000287",
+        "j000288"
+      ],
+      "record_sha256": "2d2f314680e4c7b586ba58617ae3108c8e4b74625fa6fe586bfed79c1331df93"
+    },
+    {
+      "agent": "s42120109",
+      "seq": 1028,
+      "ts": "2026-10-02T12:11:58.188Z",
+      "tool": "record",
+      "jobs": [
+        "j000278",
+        "j000279",
+        "j000282",
+        "j000287",
+        "j000288"
+      ],
+      "record_sha256": "4e0e6a26ab1a3cd01cbd0ce392a645cccb8084b07fa9e36eae5d7ffd844e791a"
+    },
+    {
+      "agent": "s42120103",
+      "seq": 727,
+      "ts": "2026-10-02T12:12:53.430Z",
+      "tool": "bash",
+      "jobs": [
+        "j000278",
+        "j000279",
+        "j000282",
+        "j000284",
+        "j000287",
+        "j000288"
+      ],
+      "record_sha256": "d4ac47364053a066c8ea28e6edabd27fc9bb06e8913941f33d8212bb9b3206c9"
+    },
+    {
+      "agent": "s42120100",
+      "seq": 651,
+      "ts": "2026-10-02T12:13:03.788Z",
+      "tool": "bash",
+      "jobs": [
+        "j000278",
+        "j000279",
+        "j000282",
+        "j000287",
+        "j000288"
+      ],
+      "record_sha256": "6a22c0511b3403f1d02ed4fe2657242cc2208f9061bf71df8b2e767b2a0af79a"
+    },
+    {
+      "agent": "s42120102",
+      "seq": 700,
+      "ts": "2026-10-02T12:15:29.711Z",
+      "tool": "job_run",
+      "jobs": [
+        "j000278",
+        "j000279",
+        "j000281",
+        "j000282",
+        "j000287",
+        "j000288"
+      ],
+      "record_sha256": "ab205f57c07ffe1bb0507b1c4d6390aa4246d3918758742cb557b30b2503a27f"
     }
   ],
-  "updated_at": "2026-10-02T12:11:50.082790+00:00",
+  "updated_at": "2026-10-02T12:18:22.435121+00:00",
   "attestation_bindings": [
     {
       "seq": 183,

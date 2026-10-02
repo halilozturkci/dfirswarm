@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  File "<stdin>", line 5, in <module>
+  File "msgpack/_unpacker.pyx", line 200, in msgpack._cmsgpack.unpackb
+msgpack.exceptions.ExtraData: unpack(b) received extra data.
