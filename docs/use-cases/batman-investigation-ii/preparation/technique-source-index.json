@@ -4154,6 +4154,15 @@
       "captured_at": "2026-10-02T12:41:37.340397+00:00",
       "byte_exact_source_copy": false,
       "selection": "whole public finish/prepare/done event records for unfinished checkpoint; not full trace chain; no thinking content"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/traces/events.jsonl",
+      "copy": "preparation/technique-sources/traces/selected-1229-s06-provider-error.jsonl",
+      "bytes": 383,
+      "sha256": "c6fbbb7ac403f7148e089fb05222054436c400917c9f912d4fa7ac0cf63ab987",
+      "captured_at": "2026-10-02T12:44:12.690913+00:00",
+      "byte_exact_source_copy": false,
+      "selection": "whole public s06 provider overload event; not full chain, no private reasoning"
     }
   ],
   "ledger_bindings": [
@@ -12120,7 +12129,7 @@
       "record_sha256": "a5a1e569092c055663927ac98fa47bb565afd33531ac0b7dd30437c5e4035d78"
     }
   ],
-  "updated_at": "2026-10-02T12:41:37.340397+00:00",
+  "updated_at": "2026-10-02T12:44:12.690913+00:00",
   "attestation_bindings": [
     {
       "seq": 183,

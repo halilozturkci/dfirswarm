@@ -125,7 +125,7 @@
   "solution_read": false,
   "pending_human_decision": "the prior async question has no human reply; automatic heartbeat is not an answer",
   "operator_wait_metric": "preparation/operator-wait-1223-1230/diagnostic.json",
-  "source_copies": 516,
+  "source_copies": 517,
   "controller_alive": true,
   "mirror_at": "2026-10-02T12:35:29.101948+00:00",
   "checkpoint_observed_at": "2026-10-02T12:41:37.340397+00:00",
@@ -186,5 +186,20 @@
       false
     ]
   },
-  "mirror_at_latest_observation": "2026-10-02T12:41:31.785969+00:00"
+  "mirror_at_latest_observation": "2026-10-02T12:41:31.785969+00:00",
+  "provider_error_count_last_probe": 4,
+  "latest_provider_error": {
+    "seat": "s42120106",
+    "at": "2026-10-02T12:40:51.860Z",
+    "reason": "Codex error: Our servers are currently overloaded. Please try again later.",
+    "next_assistant_metadata": [
+      {
+        "at": "2026-10-02T12:41:15.565Z",
+        "stop_reason": "toolUse",
+        "error": null
+      }
+    ],
+    "source_copy": "preparation/technique-sources/traces/selected-1229-s06-provider-error.jsonl",
+    "observed_at": "2026-10-02T12:44:12.690913+00:00"
+  }
 }
