@@ -1,0 +1,121 @@
+{
+  "run": "s421201",
+  "at": "2026-10-02T20:03:12.996871+00:00",
+  "source": "read-only official question view and current microsandbox VM inventory; preserved original traces and live mirror",
+  "recorded_established_count": 10,
+  "unresolved_questions": [
+    {
+      "id": "Q-1",
+      "seq": 352,
+      "result": "partial",
+      "stale": false
+    },
+    {
+      "id": "Q-12",
+      "seq": 358,
+      "result": "not_determinable",
+      "stale": false
+    },
+    {
+      "id": "Q-13",
+      "seq": 359,
+      "result": "not_determinable",
+      "stale": false
+    },
+    {
+      "id": "Q-14",
+      "seq": 379,
+      "result": "not_determinable",
+      "stale": false
+    }
+  ],
+  "question_chain_ok": true,
+  "all_seat_vms_stopped": true,
+  "seat_vms": [
+    {
+      "created_at": "2026-10-02T09:56:25.763697+00:00",
+      "image": "dfirswarm-memory:symbols-arm64",
+      "name": "dfs-s421201-s42120109",
+      "status": "Stopped"
+    },
+    {
+      "created_at": "2026-10-02T09:56:25.762783+00:00",
+      "image": "dfirswarm-memory:symbols-arm64",
+      "name": "dfs-s421201-s42120100",
+      "status": "Stopped"
+    },
+    {
+      "created_at": "2026-10-02T09:56:25.760228+00:00",
+      "image": "dfirswarm-memory:symbols-arm64",
+      "name": "dfs-s421201-s42120108",
+      "status": "Stopped"
+    },
+    {
+      "created_at": "2026-10-02T09:56:25.759398+00:00",
+      "image": "dfirswarm-memory:symbols-arm64",
+      "name": "dfs-s421201-s42120103",
+      "status": "Stopped"
+    },
+    {
+      "created_at": "2026-10-02T09:56:25.758588+00:00",
+      "image": "dfirswarm-memory:symbols-arm64",
+      "name": "dfs-s421201-s42120104",
+      "status": "Stopped"
+    },
+    {
+      "created_at": "2026-10-02T09:56:25.757769+00:00",
+      "image": "dfirswarm-memory:symbols-arm64",
+      "name": "dfs-s421201-s42120102",
+      "status": "Stopped"
+    },
+    {
+      "created_at": "2026-10-02T09:56:25.756030+00:00",
+      "image": "dfirswarm-memory:symbols-arm64",
+      "name": "dfs-s421201-s42120106",
+      "status": "Stopped"
+    },
+    {
+      "created_at": "2026-10-02T09:56:25.754307+00:00",
+      "image": "dfirswarm-memory:symbols-arm64",
+      "name": "dfs-s421201-s42120105",
+      "status": "Stopped"
+    },
+    {
+      "created_at": "2026-10-02T09:56:25.731557+00:00",
+      "image": "dfirswarm-memory:symbols-arm64",
+      "name": "dfs-s421201-s42120101",
+      "status": "Stopped"
+    },
+    {
+      "created_at": "2026-10-02T09:56:25.728054+00:00",
+      "image": "dfirswarm-memory:symbols-arm64",
+      "name": "dfs-s421201-s42120107",
+      "status": "Stopped"
+    }
+  ],
+  "controller_pid_93032_present": false,
+  "preparation_controller_exists": false,
+  "ui_log_exists": false,
+  "trace_last": {
+    "ts": "2026-10-02T18:59:20.319Z",
+    "recv_ts": "2026-10-02T18:59:20.402Z",
+    "agent": "s42120104",
+    "tool": "context",
+    "seq": 2387
+  },
+  "trace_sha256": "1c19b2ffe658061e519f69f0cc0edaf441f8ab717ea6a1e23a4dc81e69f4a80c",
+  "trace_bytes": 20987306,
+  "trace_last_record_sha256": "6c78d390b35863d3d855430b3afd128ee11932a464c79e512c6921b196d7e312",
+  "last_mirror_at": "2026-10-02T19:24:58.942625+00:00",
+  "final_work_files_present": {
+    "answers.json": false,
+    "report.md": false,
+    "timeline.md": false
+  },
+  "last_committed_job": "j000357",
+  "vm_stop_cause": "not determined from inspected records; latest board has fetch failed and automatic provider hold, not proof of stop cause",
+  "flag_verified": false,
+  "all14_complete": false,
+  "final_full_archive_complete": false,
+  "operator_restart_stop_or_agent_message_issued": false
+}
