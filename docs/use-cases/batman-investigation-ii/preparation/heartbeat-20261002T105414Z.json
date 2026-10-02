@@ -1,0 +1,105 @@
+{
+  "at": "2026-10-02T10:59:28.991578+00:00",
+  "heartbeat": "2026-10-02T10:54:14.984Z",
+  "run": "s421201",
+  "state": "running",
+  "done": false,
+  "summary": {
+    "n": 10,
+    "calls": 2033,
+    "tokens": 201348045,
+    "elapsed_ms": 3790887
+  },
+  "questions": {
+    "in_scope": 14,
+    "persons": 0,
+    "unanswered": 3,
+    "proposed": 0,
+    "triage": 0,
+    "clarifications": 1,
+    "chain_ok": true
+  },
+  "leads": {
+    "open": 0,
+    "active": 3,
+    "blocked": 3,
+    "closed": 26,
+    "waiting_on_operator": 1,
+    "uncovered": 0,
+    "chain_ok": true
+  },
+  "latest_question_dispositions": {
+    "Q-2": {
+      "answer": "E-44",
+      "result": "established",
+      "stale": false
+    },
+    "Q-9": {
+      "answer": "E-108",
+      "result": "established",
+      "stale": false
+    },
+    "Q-1": {
+      "answer": "E-151",
+      "result": "partial",
+      "stale": false
+    },
+    "Q-3": {
+      "answer": "E-183",
+      "result": "established",
+      "stale": false
+    },
+    "Q-4": {
+      "answer": "E-184",
+      "result": "established",
+      "stale": false
+    },
+    "Q-5": {
+      "answer": "E-95",
+      "result": "established",
+      "stale": false
+    },
+    "Q-10": {
+      "answer": "E-104",
+      "result": "established",
+      "stale": false
+    },
+    "Q-11": {
+      "answer": "E-105",
+      "result": "established",
+      "stale": false
+    },
+    "Q-7": {
+      "answer": "E-196",
+      "result": "established",
+      "stale": false
+    },
+    "Q-14": {
+      "answer": "E-216",
+      "result": "not_determinable",
+      "reviewed": false,
+      "reviewed_by": [],
+      "coverage": [
+        "E-213 partial"
+      ],
+      "stale": false
+    },
+    "Q-8": {
+      "answer": "E-205",
+      "result": "established",
+      "stale": false
+    }
+  },
+  "agent_intervention": false,
+  "solution_read": false,
+  "final_answers_present": false,
+  "final_report_present": false,
+  "observer_mode": "read-only; repository notes only",
+  "new_observations": [
+    "Q8 independent review recorded",
+    "Q14 affirmative claim retracted; must-establish remains",
+    "Q6 cached-file physical mapping advances",
+    "proposal to omit review locators vetoed and withdrawn by peers"
+  ],
+  "boundary_note": "No live bypass reproduced; no extra material supplied; provider errors absent in 10 session reads at 10:55"
+}

@@ -4,6 +4,7 @@ Durum: gözlem sürüyor; uygulama değişikliği yapılmadı. Kaynak taban `3e3
 
 | Öncelik | Somut kanıt | Platformda değişiklik adayı | Kabul ölçütü |
 | --- | --- | --- | --- |
+| P1 | E183 review'da üç doğrulanmış locator bulununca rival-area cap uygulandı; #293'te metadata'yı silme önerildi, #299 veto etti, #301 geri çekti. Kaynakta locator yokken ilgili coverage kontrolü çağrılmıyor | Kabul ölçütünün aynı iddiaya daha az doğrulama bilgisi verilince kolaylaşmasını engelleme; kaynak/claim ve eski review sebepleri üzerinden tutarlı değerlendirme | Aynı answer/source/discriminator ve değişmeyen delilde yalnız locator/derivation alanlarını silmek capped→established yapamaz. Gerçek çok-kaynaklı çıkarımlar için locator zorunluluğu konmaz; çıkarımın dayanakları ayrı doğrulanır. Önceki cap ancak nedeni çözüldüğünde veya gerekçeli farklı kanıt sınıfıyla kaldırılır |
 | P1 | s5e1edd: 10/10 `--inputs-copy` VM probunda `inputs_exec=exec`; başlangıç analizden önce durdu | Kopyalanan delil yoluna VM spec içinde ayrı RO+noexec mount; bind/copy yollarının aynı korunması | Gerçek VM'de tek/çoklu set, copy/bind: okuma başarılı, yazım EROFS, program yürütme kernel tarafından reddedilir; başlangıçta hata varsa hiçbir analitik mesaj gitmez |
 | P1 | j000041 çıkarımı dosya boyutunu koruyor, orta 7 sayfa sıfır; s03 önceki parola reddini E-123 ile düzeltti | Çıkarım adaptörlerinin dosya yanında okunan/eksik/sıfır doldurulan byte aralıklarını provenance metadata'sıyla sunabilmesi | Bilinen sparse örnekte eksik aralıklar gerçeğe uygun; gerçek sıfır sayfaları eksik sayılmaz; metadata'yı sağlayamayan adaptör `unknown` der; file hash tek başına tamlık sayılmaz |
 | P1 | Standart paket kaynakta `.pi-sessions` kopyalamıyor; aktif kayıt 10 ayrı oturum içeriyor | Tam oturum kayıtlarını opt-in paket bileşeni olarak hash ve cutoff ile taşıma; büyük metni kayıpsız sıkıştırma ve restore manifesti | Paket restore edilen her oturumun kaynak boyut/digestini tutar; final trace cutoff'u ile ilişkisi açık; Git'e girmiş dosyalar paket envanterine eşit; auth sırları pakette yok |
@@ -27,3 +28,11 @@ Durum: gözlem sürüyor; uygulama değişikliği yapılmadı. Kaynak taban `3e3
 ## Sonraki inceleme
 
 Doğal bitiş, bağımsız review, nihai soru/flag doğruluğu ve custody doğrulaması henüz bekliyor. Bu tablo ara bulgudur; canlı koşuda hiçbir madde uygulanmadı.
+
+## 10:53–10:58 UTC — inceleme metadata'sı ve kabul tutarlılığı
+
+`extensions/ledger-rules.ts:1497` rival-area coverage kontrolünü yalnız `review.reproduced_at` doluyken çağırıyor. `:1504` locator/derivation yokluğunu uyarı olarak tutuyor; `:1482`/`:1483` yalnız verilen locator/derivation hatalarına cap ekliyor. E183'ün s09 attesti üç byte locator'ı ve bağımsız derivation verdi, byte doğrulama hatası olmadan yalnız raw-memory coverage yokluğu nedeniyle best_candidate kaydedildi.
+
+s06 board #293, bu iki metadata alanını çıkarıp aynı incelemeyi established yazmayı önerdi. s01 #299 buna itiraz etti; s06 #301/#302 önerisini geri çekti ve E214/E215 ile gerçekten kapsam kaydı hazırladı. **Bu koşuda başarılı bir bypass veya silinmiş metadata ile geçirilmiş review gözlenmedi.** Kaynakta alan varlığına bağlı farklı bar bulundu; önerinin aynen uygulandığında bütün ledger/finish koşullarını geçireceğine dair canlı deneme yapılmadı. Operatör tarafından ajanlara mesaj/test girdisi verilmedi.
+
+Gerçek çıkarımlar için literal byte locator'ını zorunlu kılmak da yanlış olur. Düzeltme adayı prompt değişikliği değil: claimed value/source/kanıt sınıfına göre tutarlı bar, daha önce doğrulanmış metadata'nın saklanması, önceki cap'in nedeninin çözülmesi ve açık optional-warning/cap durumlarının operatör ekranında görünmesi.
