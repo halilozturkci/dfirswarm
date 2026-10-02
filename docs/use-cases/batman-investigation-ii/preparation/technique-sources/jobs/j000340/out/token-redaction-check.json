@@ -1,0 +1,90 @@
+{
+  "snapshot_bytes": 227900,
+  "fields": [
+    {
+      "source_label": "original",
+      "source_length": 17,
+      "representations": [
+        {
+          "representation": "raw_bytes",
+          "hit_count": 2,
+          "byte_offsets": [
+            23864,
+            203442
+          ],
+          "line_numbers": [
+            89,
+            754
+          ]
+        },
+        {
+          "representation": "hex_lower",
+          "hit_count": 0,
+          "byte_offsets": [],
+          "line_numbers": []
+        },
+        {
+          "representation": "hex_upper",
+          "hit_count": 0,
+          "byte_offsets": [],
+          "line_numbers": []
+        },
+        {
+          "representation": "base64",
+          "hit_count": 0,
+          "byte_offsets": [],
+          "line_numbers": []
+        },
+        {
+          "representation": "utf16le",
+          "hit_count": 0,
+          "byte_offsets": [],
+          "line_numbers": []
+        },
+        {
+          "representation": "json_escaped_ascii",
+          "hit_count": 2,
+          "byte_offsets": [
+            23864,
+            203442
+          ],
+          "line_numbers": [
+            89,
+            754
+          ]
+        }
+      ]
+    },
+    {
+      "source_label": "reconstructed",
+      "source_length": 17,
+      "representations": [
+        {
+          "representation": "raw_bytes",
+          "hit_count": 0,
+          "byte_offsets": [],
+          "line_numbers": []
+        },
+        {
+          "representation": "hex_lower",
+          "hit_count": 0,
+          "byte_offsets": [],
+          "line_numbers": []
+        },
+        {
+          "representation": "hex_upper",
+          "hit_count": 0,
+          "byte_offsets": [],
+          "line_numbers": []
+        },
+        {
+          "representation": "base64",
+          "hit_count": 0,
+          "byte_offsets": [],
+          "line_numbers": []
+        }
+      ]
+    }
+  ],
+  "bounds": "Exact known17-byte source-field representations only, not substring/truncated-value, all-secret or historical-publication certification; no secret values or secret hashes emitted."
+}

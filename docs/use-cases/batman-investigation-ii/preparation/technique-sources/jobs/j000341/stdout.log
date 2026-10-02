@@ -1,0 +1,16 @@
+{
+ "import": "work/s42120102/checkpoint-redaction-snapshot.md",
+ "copied_live": false,
+ "copied_from": "the snapshot the hub took at the job's start (its sha256 in the job's scope manifest)",
+ "producer_fenced": false,
+ "files": [
+  {
+   "path": "checkpoint-redaction-snapshot.md",
+   "bytes": 227900,
+   "sha256": "d32bc2c97cd694d776c5a035911d950c95f33c5d3998df7e470c49f23b082484",
+   "hashed_before_and_after": true,
+   "unchanged_while_copied": true
+  }
+ ],
+ "changed_while_copied": []
+}

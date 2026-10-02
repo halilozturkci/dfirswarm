@@ -1,0 +1,12 @@
+{
+  "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/store/jobs/j000341/out/checkpoint-redaction-snapshot.md",
+  "retained": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/sensitive-prefix-1523/jobs/j000341-checkpoint-redaction-snapshot.md",
+  "job": "j000341",
+  "bytes": 227900,
+  "sha256": "d32bc2c97cd694d776c5a035911d950c95f33c5d3998df7e470c49f23b082484",
+  "captured_at": "2026-10-02T15:26:25.182138+00:00",
+  "role": "complete sealed sensitive v3 audit snapshot imported by s02",
+  "selected_git_body_copy": false,
+  "retention": "complete byte-exact private body; no truncation/redaction",
+  "archive_status": "selected observer prefix only; final complete run/custody pending"
+}

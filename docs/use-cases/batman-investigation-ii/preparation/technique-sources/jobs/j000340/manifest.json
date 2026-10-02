@@ -1,0 +1,1 @@
+{"v":1,"job":"j000340","attempt":1,"sealed_at":"2026-10-02T15:15:05.120Z","files":[{"path":"token-redaction-check.json","path_b64":"dG9rZW4tcmVkYWN0aW9uLWNoZWNrLmpzb24=","bytes":2119,"sha256":"fceb004add602bce5de2c7a9831529a5eda3e3abae689fc7d461bec03a91228b","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":2119}}

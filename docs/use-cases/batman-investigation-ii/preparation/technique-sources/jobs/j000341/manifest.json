@@ -1,0 +1,1 @@
+{"v":1,"job":"j000341","attempt":1,"sealed_at":"2026-10-02T15:15:49.350Z","files":[{"path":"checkpoint-redaction-snapshot.md","path_b64":"Y2hlY2twb2ludC1yZWRhY3Rpb24tc25hcHNob3QubWQ=","bytes":227900,"sha256":"d32bc2c97cd694d776c5a035911d950c95f33c5d3998df7e470c49f23b082484","mode":"600"}],"dirs":[],"rejected":[],"totals":{"files":1,"bytes":227900}}

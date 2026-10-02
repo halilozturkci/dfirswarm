@@ -1,0 +1,19 @@
+{
+  "run": "s421201",
+  "at": "2026-10-02T15:30:09.947009+00:00",
+  "version": {
+    "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/work/checkpoint-report.md",
+    "retained": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/checkpoint-versions/a6950d3f59e2cac7df8119299ef184081d15ad0e946ed276360f366bce4b660b.md",
+    "bytes": 228871,
+    "sha256": "a6950d3f59e2cac7df8119299ef184081d15ad0e946ed276360f366bce4b660b",
+    "captured_at": "2026-10-02T15:30:09.947009+00:00",
+    "role": "complete checkpoint v4 prepared while sharing HOLD awaits independent known-field check",
+    "source_mutable": true,
+    "byte_exact_at_capture": true,
+    "selected_git_body_copy": false,
+    "retention": "complete immutable private version; no truncation/redaction",
+    "archive_status": "selected observer prefix only; final full run/custody pending"
+  },
+  "source": "board693-698/finishprepare112; independent redaction check pending at snapshot cutoff",
+  "scope": "Full original v4 retained privately; no complete-secret-free or all14 analytical success claim"
+}
