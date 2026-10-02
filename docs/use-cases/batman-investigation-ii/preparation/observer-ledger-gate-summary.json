@@ -1,0 +1,47 @@
+{
+  "observed_at": "2026-10-02T10:48:59.487703+00:00",
+  "run": "s421201",
+  "method": "operator-side read-only check-answers.ts; not delivered to agents; active record can change",
+  "exit": 1,
+  "analytical_or_flag_validation": false,
+  "eligible_dispositions": {
+    "question:5": "established",
+    "question:9": "established",
+    "question:10": "established",
+    "question:11": "established"
+  },
+  "candidate_only": [
+    "question:3",
+    "question:4"
+  ],
+  "question_results_as_recorded": {
+    "question:1": "partial",
+    "question:2": "established",
+    "question:3": "established",
+    "question:4": "established",
+    "question:5": "established",
+    "question:7": "established",
+    "question:9": "established",
+    "question:10": "established",
+    "question:11": "established",
+    "question:14": "established"
+  },
+  "outcomes": {
+    "question:1": "limited",
+    "question:2": "answered",
+    "question:3": "limited",
+    "question:4": "limited",
+    "question:5": "answered",
+    "question:6": "limited",
+    "question:7": "answered",
+    "question:8": "limited",
+    "question:9": "answered",
+    "question:10": "answered",
+    "question:11": "answered",
+    "question:12": "limited",
+    "question:13": "limited",
+    "question:14": "answered"
+  },
+  "operator_rule": "No new agent message, tool/evidence supply, directive or question clarification; observe only",
+  "source": "observer-ledger-gate-1046.txt"
+}
