@@ -1,0 +1,66 @@
+{
+  "run": "s421201",
+  "at": "2026-10-02T15:01:32.250251+00:00",
+  "scope": "complete flagged originals preserved privately; selected public-tool prefix excludes whole flagged records",
+  "records": [
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/traces/events.jsonl",
+      "retained": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/sensitive-prefix-1456/trace-records/s42120103-1097.jsonl",
+      "bytes": 62703,
+      "sha256": "293077f7d310611e0f4bb6d1e616bed19ed407ec31eddb7d156d1b5265232cb2",
+      "captured_at": "2026-10-02T15:01:32.250251+00:00",
+      "role": "CTF private-key fragment in a display projection; E356",
+      "selected_git_body_copy": false,
+      "retention": "complete byte-exact original body retained privately; no truncation/redaction",
+      "archive_status": "selected observer prefix only; final complete run/custody pending",
+      "agent": "s42120103",
+      "seq": 1097,
+      "ts": "2026-10-02T14:44:39.331Z",
+      "tool": "bash",
+      "record_sha256": "fc83e53dde9a41ce81998b864285b613a2ba6ba1c4bcfb0fa423d7d35a75400b"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tool-output/s42120103/20261002144439137-bash-9b4l.out.log",
+      "retained": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/sensitive-prefix-1456/tool-output/s42120103/20261002144439137-bash-9b4l.out.log",
+      "bytes": 81878,
+      "sha256": "04d78e501f2fcdcf5f715a3e828b07fbd9ff95160359a8bdbf0210487d875d14",
+      "captured_at": "2026-10-02T15:01:32.250251+00:00",
+      "role": "complete sensitive display-helper output; E356",
+      "selected_git_body_copy": false,
+      "retention": "complete byte-exact original body retained privately; no truncation/redaction",
+      "archive_status": "selected observer prefix only; final complete run/custody pending"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/traces/events.jsonl",
+      "retained": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/sensitive-prefix-1456/trace-records/s42120103-1102.jsonl",
+      "bytes": 41731,
+      "sha256": "a3590f96e7eb2ae96b7774fb6bd8e534d908af73da2c1200e09cadc81210fb72",
+      "captured_at": "2026-10-02T15:01:32.250251+00:00",
+      "role": "CTF private-key fragment in a display projection; E356",
+      "selected_git_body_copy": false,
+      "retention": "complete byte-exact original body retained privately; no truncation/redaction",
+      "archive_status": "selected observer prefix only; final complete run/custody pending",
+      "agent": "s42120103",
+      "seq": 1102,
+      "ts": "2026-10-02T14:46:05.466Z",
+      "tool": "bash",
+      "record_sha256": "12aae03da2bd8938cee605ea295ae779fbbcbe853affdaf5d1953c2e01e23101"
+    },
+    {
+      "source": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/traces/events.jsonl",
+      "retained": "/Users/halilozturkci/DFIR/Private/dfirswarm-run-observer/s421201/sensitive-prefix-1456/trace-records/s42120107-1940.jsonl",
+      "bytes": 52657,
+      "sha256": "9a768311c5595d317f0876f06bbd022d95c0d9bf645f6fdedaf9f17a2304be95",
+      "captured_at": "2026-10-02T15:01:32.250251+00:00",
+      "role": "CTF private-key fragment in a display projection; E356",
+      "selected_git_body_copy": false,
+      "retention": "complete byte-exact original body retained privately; no truncation/redaction",
+      "archive_status": "selected observer prefix only; final complete run/custody pending",
+      "agent": "s42120107",
+      "seq": 1940,
+      "ts": "2026-10-02T14:55:03.946Z",
+      "tool": "read",
+      "record_sha256": "732b073697b14d5f8668ef9e527219cdbf4e833e7452515436b359a1d232640e"
+    }
+  ]
+}

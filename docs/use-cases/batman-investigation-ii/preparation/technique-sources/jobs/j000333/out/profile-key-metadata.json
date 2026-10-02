@@ -1,0 +1,94 @@
+{
+  "python": "3.11.2",
+  "rows": [
+    {
+      "field": "fiatAuthKeyPair",
+      "metadata": {
+        "keyType": "ed25519"
+      },
+      "key_fields": {
+        "privateKey": {
+          "type": "dict",
+          "type_label": "Buffer",
+          "encoded_length": 95,
+          "encoding": "base64",
+          "decoded_bytes": 64
+        },
+        "publicKey": {
+          "type": "dict",
+          "type_label": "Buffer",
+          "encoded_length": 51,
+          "encoding": "base64",
+          "decoded_bytes": 32
+        }
+      }
+    },
+    {
+      "field": "abTestingKeyPair",
+      "metadata": {
+        "keyType": "ed25519"
+      },
+      "key_fields": {
+        "privateKey": {
+          "type": "dict",
+          "type_label": "Buffer",
+          "encoded_length": 95,
+          "encoding": "base64",
+          "decoded_bytes": 64
+        },
+        "publicKey": {
+          "type": "dict",
+          "type_label": "Buffer",
+          "encoded_length": 51,
+          "encoding": "base64",
+          "decoded_bytes": 32
+        }
+      }
+    },
+    {
+      "field": "exodusSharesEncryptionKeyPair",
+      "metadata": {
+        "curve": "x25519"
+      },
+      "key_fields": {
+        "privateKey": {
+          "type": "dict",
+          "type_label": "Buffer",
+          "encoded_length": 51,
+          "encoding": "base64",
+          "decoded_bytes": 32
+        },
+        "publicKey": {
+          "type": "dict",
+          "type_label": "Buffer",
+          "encoded_length": 51,
+          "encoding": "base64",
+          "decoded_bytes": 32
+        }
+      }
+    },
+    {
+      "field": "exodusSharesKeyPair",
+      "metadata": {
+        "keyType": "ed25519"
+      },
+      "key_fields": {
+        "privateKey": {
+          "type": "dict",
+          "type_label": "Buffer",
+          "encoded_length": 95,
+          "encoding": "base64",
+          "decoded_bytes": 64
+        },
+        "publicKey": {
+          "type": "dict",
+          "type_label": "Buffer",
+          "encoded_length": 51,
+          "encoding": "base64",
+          "decoded_bytes": 32
+        }
+      }
+    }
+  ],
+  "secret_values_or_hashes_emitted": false
+}

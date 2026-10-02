@@ -1,0 +1,87 @@
+{
+  "id": "j000333",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000322/gzip-utf-8-parsed.json"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport json,base64,os,sys\nfrom pathlib import Path\nobj=json.loads(Path('store/jobs/j000322/out/gzip-utf-8-parsed.json').read_text());p=obj['!fusion!cachedProfile']['private'];rows=[];allowed={'ed25519','x25519','curve25519','secp256k1','buffer'}\nfor name,text in p.items():\n d=json.loads(text);r={'field':name,'metadata':{},'key_fields':{}}\n for meta in ['keyType','curve']:\n  if meta in d:\n   v=d[meta];r['metadata'][meta]=v if isinstance(v,str) and v.casefold() in allowed else {'type':type(v).__name__,'recognized_allowlist':False}\n for field in ['privateKey','publicKey']:\n  v=d.get(field);item={'type':type(v).__name__}\n  if isinstance(v,dict):\n   typ=v.get('type');item['type_label']=typ if isinstance(typ,str) and typ.casefold() in allowed else {'recognized_allowlist':False}\n   data=v.get('data');item['encoded_length']=len(data) if isinstance(data,str) else None\n   if isinstance(data,str) and data.startswith('base64:'):\n    item['encoding']='base64';item['decoded_bytes']=len(base64.b64decode(data[7:],validate=True))\n  r['key_fields'][field]=item\n rows.append(r)\nout=Path(os.environ['OUT']);(out/'profile-key-metadata.json').write_text(json.dumps({'python':sys.version.split()[0],'rows':rows,'secret_values_or_hashes_emitted':False},indent=2));print(json.dumps({'rows':len(rows),'metadata_retained':True,'secret_values_or_hashes_emitted':False}))\nPY"
+  },
+  "requester": {
+    "agent": "s42120103",
+    "name": "Wallet history",
+    "doing": "Investigating Q7 and Q8: password-protected archive and original file hashes; avoiding peers' wallet work."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T14:42:59.569Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000322/out/gzip-utf-8-parsed.json",
+        "sha256": "7d2d26963af4eb2719198f4a316a5be56c4989f119d8e52113959b9e3eae919f"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000333-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T14:42:59.781Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000333",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 1,
+    "files": 1,
+    "bound": 0,
+    "manifest": "store/jobs/j000333/scope.1.json",
+    "manifest_sha256": "ea869e31049f0865c275d610529186541740f06b3ef7ad7c909d66ed01c6370a"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T14:43:01.397Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "265165a36cf00109e682d6a14aa2ce439acfd5657baa75a8239a163345b332ca",
+    "files": 1,
+    "bytes": 2144,
+    "rejected": 0,
+    "path": "store/jobs/j000333/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

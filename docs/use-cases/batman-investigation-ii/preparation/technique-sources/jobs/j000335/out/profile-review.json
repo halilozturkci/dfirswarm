@@ -1,0 +1,156 @@
+{
+  "python": "3.11.2",
+  "outer_nodes": 419,
+  "target_label_count": 0,
+  "pairs": [
+    {
+      "field": "fiatAuthKeyPair",
+      "metadata": {
+        "keyType": "ed25519"
+      },
+      "keys": {
+        "privateKey": {
+          "encoded_length": 95,
+          "decoded_bytes": 64
+        },
+        "publicKey": {
+          "encoded_length": 51,
+          "decoded_bytes": 32
+        }
+      }
+    },
+    {
+      "field": "abTestingKeyPair",
+      "metadata": {
+        "keyType": "ed25519"
+      },
+      "keys": {
+        "privateKey": {
+          "encoded_length": 95,
+          "decoded_bytes": 64
+        },
+        "publicKey": {
+          "encoded_length": 51,
+          "decoded_bytes": 32
+        }
+      }
+    },
+    {
+      "field": "exodusSharesEncryptionKeyPair",
+      "metadata": {
+        "curve": "x25519"
+      },
+      "keys": {
+        "privateKey": {
+          "encoded_length": 51,
+          "decoded_bytes": 32
+        },
+        "publicKey": {
+          "encoded_length": 51,
+          "decoded_bytes": 32
+        }
+      }
+    },
+    {
+      "field": "exodusSharesKeyPair",
+      "metadata": {
+        "keyType": "ed25519"
+      },
+      "keys": {
+        "privateKey": {
+          "encoded_length": 95,
+          "decoded_bytes": 64
+        },
+        "publicKey": {
+          "encoded_length": 51,
+          "decoded_bytes": 32
+        }
+      }
+    }
+  ],
+  "peer_metadata_sizes_equal": true,
+  "nested_schema_summary": {
+    "python": "3.11.2",
+    "profile_root_fields": 11,
+    "nodes": 52,
+    "decoded_structured_string_count": 4,
+    "secret_scalar_values_emitted": false
+  },
+  "inventory_read": true,
+  "prior_review_read_not_repeated": true,
+  "namespace_anchor_count": 293,
+  "all_raw_namespace_anchors_match": true,
+  "selected_marker_presence": [
+    {
+      "physical_offset": 483156133,
+      "overlapping_contexts": 1,
+      "markers": [
+        "fiatOnramp",
+        "exodusShares"
+      ]
+    },
+    {
+      "physical_offset": 891013463,
+      "overlapping_contexts": 9,
+      "markers": [
+        "fiatOnramp",
+        "abTesting",
+        "private.fiatAuthKeyPair",
+        "private.abTestingKeyPair",
+        "exodusShares"
+      ]
+    },
+    {
+      "physical_offset": 2273951653,
+      "overlapping_contexts": 1,
+      "markers": [
+        "abTesting"
+      ]
+    },
+    {
+      "physical_offset": 2469478954,
+      "overlapping_contexts": 2,
+      "markers": [
+        "abTesting",
+        "private.abTestingKeyPair"
+      ]
+    },
+    {
+      "physical_offset": 2266747093,
+      "overlapping_contexts": 1,
+      "markers": [
+        "makeSign",
+        "KeyPairProvider",
+        "exodusShares"
+      ]
+    },
+    {
+      "physical_offset": 2874516863,
+      "overlapping_contexts": 1,
+      "markers": [
+        "genBoxKeyPair",
+        "randomBytes",
+        "exodusShares"
+      ]
+    },
+    {
+      "physical_offset": 2923265597,
+      "overlapping_contexts": 1,
+      "markers": [
+        "genSignKeyPair",
+        "randomBytes",
+        "makeSign",
+        "exodusShares"
+      ]
+    },
+    {
+      "physical_offset": 4598584647,
+      "overlapping_contexts": 3,
+      "markers": [
+        "exodusShares"
+      ]
+    }
+  ],
+  "secret_values_or_hashes_emitted": false,
+  "bounds": "No scalar-secret value search, key-pair consistency, derivation or DBX codec test. Marker presence is not runtime use or exhaustive source-role analysis. No global store sweep."
+}

@@ -1,0 +1,107 @@
+{
+  "id": "j000336",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000208/page-structure.json",
+      "job:j000211/codec-contexts.jsonl",
+      "job:j000291/review-checks.json",
+      "input:chall/Carmine-Falcone.raw"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "independent": true,
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport json,os,collections,sys\nfrom pathlib import Path\npages=json.loads(Path('store/jobs/j000208/out/page-structure.json').read_text()); prior=json.loads(Path('store/jobs/j000291/out/review-checks.json').read_text());count=[len(x['pages']) for x in pages]; assert count==prior['page_counts']\nassert all(p['length']==4096 for x in pages for p in x['pages'])\nassert all(x['header16_24']=='100001010c402020' for x in pages)\ncontexts=[json.loads(x) for x in Path('store/jobs/j000211/out/codec-contexts.jsonl').read_text().splitlines() if x.strip()]\nrows=[]\nwith Path('inputs/chall/Carmine-Falcone.raw').open('rb') as f:\n for r in contexts:\n  needle=r['needle'].encode('ascii');f.seek(r['offset']);b=f.read(80); assert b.startswith(needle)\n  if b.startswith(b'sqlite3_keyword_'): cls='SQLite keyword API prefix false-positive for sqlite3_key'\n  elif 'tls_aes_128_ccm' in r['context']: cls='TLS/Node cipher symbol context'\n  elif 'EVP_aes_128_ccm' in r['context']: cls='OpenSSL EVP symbol context'\n  else: cls='not_classified'\n  rows.append({'offset':r['offset'],'needle':r['needle'],'classification':cls,'raw_anchor_match':True})\nresult={'python':sys.version.split()[0],'files':len(pages),'page_counts':count,'total_pages':sum(count),'all_pages_4096':True,'all_preserved_header_patterns_match':True,'prior_independent_structure_agrees':True,'literal_context_count':len(rows),'literal_classes':dict(collections.Counter(r['classification'] for r in rows)),'contexts':rows,'bounds':'Classification of retained specific-query hits only; no code execution, all-module/binary codec survey, global store sweep, package availability test or supported cryptographic transform implemented.'}\nPath(os.environ['OUT'],'codec-bound-review.json').write_text(json.dumps(result,indent=2));print(json.dumps(result))\nPY"
+  },
+  "requester": {
+    "agent": "s42120102",
+    "name": "Wallet trace",
+    "doing": "Examine wallet installation and wallet protection evidence for questions 5 and 9."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T15:00:15.980Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "inputs/chall/Carmine-Falcone.raw",
+        "sha256": "3e03551e1f55dd792b0bc459b5620522d61fcf2379e8f6d89ef439fef8263cac"
+      },
+      {
+        "path": "store/jobs/j000291/out/review-checks.json",
+        "sha256": "65cb1d7bc9154b50c18c3ad0bc3f2ee3871768efb7e1a336952f8b7d3e712324"
+      },
+      {
+        "path": "store/jobs/j000211/out/codec-contexts.jsonl",
+        "sha256": "e1d3b7ff688257a40285c6908a111d7b905e3dd1986619da9e676bb6ff37cc9e"
+      },
+      {
+        "path": "store/jobs/j000208/out/page-structure.json",
+        "sha256": "ec136fa50832b7b7d6d90b8c850e229587c6cb32a902ebec24cb2a1f9f0e885b"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000336-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T15:00:16.078Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000336",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 4,
+    "files": 4,
+    "bound": 0,
+    "manifest": "store/jobs/j000336/scope.1.json",
+    "manifest_sha256": "6ee18d18a1f06062d2f1e0040dc54aae369792148d34ab2d0be8c4b6bc66bde4"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T15:00:16.841Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "e6e9458c87ff9572de41b33cd2aa781eac5ea9f0c956298a8054ab4969267894",
+    "files": 1,
+    "bytes": 2986,
+    "rejected": 0,
+    "path": "store/jobs/j000336/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}

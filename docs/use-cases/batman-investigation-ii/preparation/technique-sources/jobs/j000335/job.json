@@ -1,0 +1,122 @@
+{
+  "id": "j000335",
+  "attempt": 1,
+  "spec": {
+    "kind": "command",
+    "inputs": [
+      "job:j000322/gzip-utf-8-parsed.json",
+      "job:j000328/storage-field-inventory.json",
+      "job:j000329/nested-profile-schema.json",
+      "job:j000333/profile-key-metadata.json",
+      "job:j000332/profile-key-namespace-contexts.jsonl",
+      "job:j000291/review-checks.json",
+      "input:chall/Carmine-Falcone.raw"
+    ],
+    "scope": "declared",
+    "timeout_seconds": 120,
+    "network": "off",
+    "independent": true,
+    "secret_output": true,
+    "command": "python3 - <<'PY'\nimport json,base64,os,sys\nfrom pathlib import Path\nout=Path(os.environ['OUT']); o=json.loads(Path('store/jobs/j000322/out/gzip-utf-8-parsed.json').read_text()); rows=[]\nfor name,text in o['!fusion!cachedProfile']['private'].items():\n d=json.loads(text); meta={k:v for k,v in d.items() if k in ('keyType','curve') and v in ('ed25519','x25519')}; r={'field':name,'metadata':meta,'keys':{}}\n for k in ('privateKey','publicKey'):\n  data=d[k]['data'];assert data.startswith('base64:');r['keys'][k]={'encoded_length':len(data),'decoded_bytes':len(base64.b64decode(data[7:],validate=True))}\n rows.append(r)\npeer=json.loads(Path('store/jobs/j000333/out/profile-key-metadata.json').read_text()); assert len(rows)==len(peer['rows'])==4\nfor r in rows:\n q=next(x for x in peer['rows'] if x['field']==r['field']); assert q['metadata']==r['metadata']\n for k in ('privateKey','publicKey'): assert q['key_fields'][k]['decoded_bytes']==r['keys'][k]['decoded_bytes']\nnodes=0;label_count=0\ndef walk(x):\n global nodes,label_count\n nodes+=1\n if isinstance(x,dict):\n  for k,v in x.items():\n   label_count+=int(any(t in k.casefold() for t in ('dbx','userkey','user_key','dbkey','client_email')));walk(v)\n elif isinstance(x,list):\n  for v in x: walk(v)\nwalk(o)\ninventory=json.loads(Path('store/jobs/j000328/out/storage-field-inventory.json').read_text());schema=json.loads(Path('store/jobs/j000329/out/nested-profile-schema.json').read_text());old=json.loads(Path('store/jobs/j000291/out/review-checks.json').read_text())\ncontexts=[json.loads(line) for line in Path('store/jobs/j000332/out/profile-key-namespace-contexts.jsonl').open()];checks=[]\nwith Path('inputs/chall/Carmine-Falcone.raw').open('rb') as f:\n for r in contexts:\n  b=r['needle'].encode('ascii');f.seek(r['offset']);checks.append(f.read(len(b))==b)\nassert all(checks)\nselected=[]\nfor off in [483156133,891013463,2273951653,2469478954,2266747093,2874516863,2923265597,4598584647]:\n rs=[r for r in contexts if r['context_start']<=off<r['context_start']+len(r['context'])]\n selected.append({'physical_offset':off,'overlapping_contexts':len(rs),'markers':[s for s in ('fiatOnramp','abTesting','private.fiatAuthKeyPair','private.abTestingKeyPair','genBoxKeyPair','genSignKeyPair','randomBytes','makeSign','KeyPairProvider','exodusShares') if any(s in r['context'] for r in rs)]})\nresult={'python':sys.version.split()[0],'outer_nodes':nodes,'target_label_count':label_count,'pairs':rows,'peer_metadata_sizes_equal':True,'nested_schema_summary':schema['summary'],'inventory_read':True,'prior_review_read_not_repeated':True,'namespace_anchor_count':len(contexts),'all_raw_namespace_anchors_match':True,'selected_marker_presence':selected,'secret_values_or_hashes_emitted':False,'bounds':'No scalar-secret value search, key-pair consistency, derivation or DBX codec test. Marker presence is not runtime use or exhaustive source-role analysis. No global store sweep.'}\n(out/'profile-review.json').write_text(json.dumps(result,indent=2));print(json.dumps(result))\nPY"
+  },
+  "requester": {
+    "agent": "s42120102",
+    "name": "Wallet trace",
+    "doing": "Examine wallet installation and wallet protection evidence for questions 5 and 9."
+  },
+  "state": "committed",
+  "accepted_at": "2026-10-02T14:54:58.364Z",
+  "reuse": {
+    "op": "command:python3",
+    "objects": [
+      {
+        "path": "store/jobs/j000328/out/storage-field-inventory.json",
+        "sha256": "278df5f9283e9425bcd2783eb052075c4d591c2e1b345267b36e579fd96612df"
+      },
+      {
+        "path": "inputs/chall/Carmine-Falcone.raw",
+        "sha256": "3e03551e1f55dd792b0bc459b5620522d61fcf2379e8f6d89ef439fef8263cac"
+      },
+      {
+        "path": "store/jobs/j000291/out/review-checks.json",
+        "sha256": "65cb1d7bc9154b50c18c3ad0bc3f2ee3871768efb7e1a336952f8b7d3e712324"
+      },
+      {
+        "path": "store/jobs/j000322/out/gzip-utf-8-parsed.json",
+        "sha256": "7d2d26963af4eb2719198f4a316a5be56c4989f119d8e52113959b9e3eae919f"
+      },
+      {
+        "path": "store/jobs/j000333/out/profile-key-metadata.json",
+        "sha256": "93c405b558067bfc96bb819e448975cebdb8d96045b7e2f8b438b744726148dc"
+      },
+      {
+        "path": "store/jobs/j000332/out/profile-key-namespace-contexts.jsonl",
+        "sha256": "ba8b9984f9eb8fc8f47da073edd25ecf15f327aa5cd563f6b2a7456c87442ac2"
+      },
+      {
+        "path": "store/jobs/j000329/out/nested-profile-schema.json",
+        "sha256": "e76fcd231e8ed645d9e0807e9481bd064e783dd5f57c1a72ee6c9a701a498532"
+      }
+    ]
+  },
+  "worker": "dfs-s421201-job-j000335-1",
+  "worker_size": "2 vCPU, 6144 MiB",
+  "started_at": "2026-10-02T14:54:58.453Z",
+  "image": "dfirswarm-memory:symbols-arm64",
+  "lane": "short",
+  "accessible": [
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201",
+      "access": "read-only; this job's view: only what it declared"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/inputs",
+      "access": "read-only, no-exec"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/tools",
+      "access": "read-only; the run's tools: code, each sealed by its manifest's sha256"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/computer-forensics-base",
+      "access": "read-only"
+    },
+    {
+      "path": "/tmp/dfirswarm-batman-ii-preparation/home/packs/memory-forensics",
+      "access": "read-only"
+    },
+    {
+      "path": "/Users/halilozturkci/DFIR/SwarmRuns-vm/s421201/.jobs/j000335",
+      "access": "read-write, no-exec"
+    },
+    {
+      "path": "/job",
+      "access": "read-write, no-exec"
+    }
+  ],
+  "scope": {
+    "kind": "declared",
+    "objects": 7,
+    "files": 7,
+    "bound": 0,
+    "manifest": "store/jobs/j000335/scope.1.json",
+    "manifest_sha256": "195711308a784610265790fa568790948eb5b3c495067eea3cc3d7275870af3d"
+  },
+  "network": "none",
+  "exit": 0,
+  "status": "ok",
+  "finished_at": "2026-10-02T14:54:59.235Z",
+  "image_digest": "sha256:d0f618ec45c24c57184dbab45a8f04bf2d2ac362bd2e44fb5f65d6b74a97ffa7",
+  "outputs": {
+    "manifest_sha256": "e50f88db806fea25f845a87690595b41517fa576857ee0979317dcf25d4f5c39",
+    "files": 1,
+    "bytes": 3425,
+    "rejected": 0,
+    "path": "store/jobs/j000335/out"
+  },
+  "sensitive": {
+    "why": "secret_output",
+    "from": [],
+    "note": "run with secret_output: every output it sealed is sensitive"
+  }
+}
