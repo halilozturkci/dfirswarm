@@ -27,7 +27,7 @@
       "tools/manifest_db/run.py": "6e4d397ae717ea68650b91f162244ba62edf04a70409e00a2e0e09ecbf1830e1",
       "tools/protobuf_peek/manifest.json": "4af8054b97921f57d26905e90ddb1746d99edc75160ee3823021a5cd55c1f817",
       "tools/protobuf_peek/run.py": "e2aac56511fe8fbb30fa1b5e87fd7d2d1d373b5848a4248fee6569369ef881b8",
-      "goals/phone-examination.md": "22fd015cc0ae3e2a4bbd9fe198bd2d8e117618e5ec91046d3b4a994594872534",
+      "goals/phone-examination.md": "13ba3df011cd1166ca5df1c89ecd7213afd24a19be5a982c2b08e0c30b01f8b3",
       "tests/cases.json": "073cde529d3deab7c45c6f60310ae362765ba36e127aadd5980a977d5bd0c038",
       "tests/pack.test.sh": "abdb93ae746a729d2e0bf2c10fadceb5bd863c8c5683707e949c6bf080fa5f5b",
       "recipes/android-aleapp/recipe.json": "f6e4a1d8a5384610fde7d8f1cef0a2835fa060a4a3ebf688cbf956b480c59373",
