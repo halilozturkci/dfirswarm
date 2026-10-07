@@ -14,13 +14,16 @@ establishes.
 2. Initial access: how the operator first reached this host, with the artefact
    that shows it and the time in UTC.
 3. Accounts and keys: any account added, any UID 0 that is not root, any sudoers
-   entry, any key added to an authorized_keys file, and when.
-4. Execution: what was run, from the shell histories, sudo lines, the audit log
-   and the journal, with at least two sources agreeing where you can get them.
+   entry, and any key present in an authorized_keys file, with what the evidence does
+   and does not say about when each appeared.
+4. Execution: what was run, from the shell histories, sudo lines, the journal and
+   any audit records the host retained, with at least two sources agreeing where you
+   can get them, and which of these the host was configured to write.
 5. Persistence: every scheduled job, unit, timer, profile script or preload that
    was added or changed, or the evidence that nothing was.
-6. Integrity: which packaged binaries no longer match the distribution's hashes,
-   and whether the package database itself was touched.
+6. Integrity: which packaged files differ from the package database's recorded
+   hashes (and what baseline that is), and whether the package database itself was
+   touched.
 7. Containers, if the host ran any: what was inside, what the writable layer
    holds, and whether any container could reach the host.
 8. The timeline in UTC, and what you could not establish.

@@ -1,8 +1,8 @@
 {
   "id": "linux-forensics",
   "name": "Linux Forensics Pack",
-  "version": "1.2.0",
-  "description": "Artefact-by-artefact method and tooling for a Linux host: the system profile, the authentication and journal logs, accounts and keys, persistence across systemd and cron, ext4's own timestamps, containers, and the package database that says which binary was changed.",
+  "version": "1.3.0",
+  "description": "Artefact-by-artefact method and tooling for a Linux host: the system profile and its clocks, authentication and journal records, accounts and authorization, scheduling and systemd candidates, ext metadata and storage layers, container evidence locations, and package verification against local and independently trusted baselines. Each tool says what it read, what it did not, and where the whole result is kept.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
     "DFIR Swarm"
@@ -15,10 +15,16 @@
     "python": "requires/python.txt"
   },
   "secrets": [],
+  "unreferenced_ok": [
+    {
+      "name": "ausearch",
+      "why": "declared for reading the kernel audit log; the skill that names it (logs/auditd) is planned for a later change to this pack"
+    }
+  ],
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "ad77ca479573db2d1964334babffbdaa44456c302374b4a03957337babc23573",
+      "README.md": "e32c07e4c0936fa407d9dcd6cf766d798d864054e62388ee82db4456ce833555",
       "tools/linux_triage/manifest.json": "c7b44707b0d80bb4663d35656e27485ad53aa6f34fcaa6e41b261d60a4c36f04",
       "tools/linux_triage/run.py": "50ef413f07050a584a0aa3294bcca5416b20165b46fea9627f393fdd75d2483c",
       "tools/auth_log/manifest.json": "192547013d9d5cde8e3b927b4b1bda3bac1e42c43ded737d433ce89090374aeb",
@@ -31,23 +37,23 @@
       "tools/shell_history/run.py": "ed5b93d0bb8b1be1531dcd970aacada01a9670d9fa0579b94ea9e315bed7ea6a",
       "tools/cron_dump/manifest.json": "a1991e17fa8860cf4ff35266dc949ebc1757b9850e608ff8a99c5e808ec6fc43",
       "tools/cron_dump/run.py": "c4abcbc56cca52bd9a9e0eb7db8fa7ee71ad998337c8185ac270588d73081569",
-      "goals/server-compromise.md": "cc9782ee7c8e8e0115acf3a571373f620b11f6cca2fe8862f2318b391eb66f7d",
-      "goals/what-was-scheduled.md": "a5904e0003c4e91615f371b8027c3f699c2d1b1f9816d2b9a1688b3077852d30",
+      "goals/server-compromise.md": "ac807f0216f04172abdc78ff484ac00bc7bd897a7b98b5a97bf1c055933a5d07",
+      "goals/what-was-scheduled.md": "641daac4089056c209b493700820b13fdbe2894fc1b3f8fe2c54f0dfb7a820dc",
       "recipes/linux-target/recipe.json": "e1a1073c86a46eeef4ad9d6b6f3d9f7ce4b575beb8e5168a331e51fe12a88e92",
       "recipes/linux-target/run.py": "f7b041d8ac4f9213325c8627c88eab8b12563187a6e14f38ab63b66863f47e68",
-      "skills/triage/system-profile.md": "1b9764fb7529bc857dddef19619df3d75c0db321a7b648d0272bdd70530d3d8e",
-      "skills/filesystem/ext.md": "2e729ee93eae9b6414540d5d74bc665829d2ae4509bacd9b4b08a2af25fbef50",
-      "skills/filesystem/storage.md": "db9c541824b88e1785ab5c588f012c6d9c14fa769de68a115453bcd9229dda9a",
-      "skills/logs/auth.md": "e8868f847d7808605f1aab75e8f5d097021c0d1be4e2ca67f3329fe0dd5e45c0",
-      "skills/logs/journal.md": "1aba93388ed9ad7bd000e74ea63ea7cc10f195ead88723cd4dc3729945db0806",
-      "skills/accounts/users.md": "f6499abad11dea13e38b026a878ce486ede81b59c339e000695b87d41353d8c7",
-      "skills/persistence/mechanisms.md": "4bee548b38258b05c7ed5872d238cc82c038f577d1dd84c9578d6c03f6543fc2",
-      "skills/packages/integrity.md": "652e9b6c1016611cc23e103b42b0ce16cebb7aa1e57811b3db6be527c0afa058",
-      "skills/containers/docker.md": "c941de3acbefac65b3d2e5d4948239126f252752a396bddaf83894717bf3df8e",
-      "skills/timeline/linux.md": "f77febbea0f74938e253a5883449fe31cdbc9aa57d0ace50e794753574eac9a1",
-      "requires/host.json": "db78d392b8aca886b5ce9ea86f5dec33ba78f004bbb8248937e97dc3ddf2220b",
+      "skills/triage/system-profile.md": "1de8e491e296afc0dc32efe6ad043b0d55d40867f478e946458edd0be79c7136",
+      "skills/filesystem/ext.md": "6bfe7ff1dfcc296b0f855dbbde1df82c5e3a66929d8a4b2128b842e4efafbabc",
+      "skills/filesystem/storage.md": "9ebac5f75ebed0ab5f276703efc75d09d2f96f27c1f255cd8ef204890b1c757d",
+      "skills/logs/auth.md": "f069159fa820bedb4778333726f42b732826fb2ad98322fe9aea2ccb9113d67c",
+      "skills/logs/journal.md": "e5a128f4e6cdf5dd680ea61a2f110d9468b6e53419c8ed05ac8ef883c2d9bd0a",
+      "skills/accounts/users.md": "96aa0a78b87db8c8a50432ab8f7eab647e38e00972e7c14725f5c6218f3be413",
+      "skills/persistence/mechanisms.md": "0e8cdf7da4258f6356034541d75ca1ab1c741ce85583884dce73d4e18acb74a8",
+      "skills/packages/integrity.md": "4b61f09c010d76c0343f4aace2407e9ca4f327d6fc594959188d17fec31bd443",
+      "skills/containers/docker.md": "a8c6dc82e4f3c9fff542b6603fcceff4aabe9db7e6d801461839d4b3e119bbe0",
+      "skills/timeline/linux.md": "941460d59e63e8b87d108cef2610874c3916cafdd65c9f5e208f4445bd86b894",
+      "requires/host.json": "905748b5a76dba334bbe03c671286fbf5a892911195517557a1327780eaf5674",
       "requires/python.txt": "2a8f433b1779c884ea3307bd9d0dbf04fa2d9f909e19d0ab32c4b81a14ddb22f",
-      "skills/INDEX.md": "e12bb30e085dc2f107404ae9692290a493cd7ad9ebc2760abd83e4a7fffae1c1"
+      "skills/INDEX.md": "e18276c36cc843a85dafb1c0c687967a347aeb29400609fbd6010da83360a387"
     }
   },
   "tools": [
