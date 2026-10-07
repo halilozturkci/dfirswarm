@@ -17,3 +17,4 @@ Use when a conclusion rests on a timestamp of a delivered file. Not for decoding
 
 Shows: which clock a time belongs to. Does not show: that a time is original, that it was or was not preserved, or when a file was really written.
 Record: layer, raw value, zone and its basis, what was compared, and the fields affected by any limitation.
+Sensitive output: `collection_index` prints paths; run it as a job with `secret_output: true` and cite a time by its row, never with a credential-shaped path.

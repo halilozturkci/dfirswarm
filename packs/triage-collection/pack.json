@@ -17,28 +17,28 @@
   "secrets": [],
   "checksums": {
     "sha256": {
-      "LICENCE": "aa3176499b8197cca0aae53138fdd720ed0cdbcbeded06615892a5582cdb0c4c",
+      "LICENCE": "c271b022edf4f543b6fc7c4e6fc0b138c57648f0dffe25a4e34c7e9f1c178d8a",
       "README.md": "5fec1b92e071fbf6be2436b1f5efe681187e1a32fc3197979ba1bf016c91a036",
       "tools/collection_index/manifest.json": "a5d22fb112f484c8be4eea38288f8a3dc1c1ce4c3c70d59d6745f9a64cb44053",
       "tools/collection_index/run.py": "aaf1a7b23f7fa0e19fcfaf026a66ccf3da3a8aff993277fdd8521aaa1d37185e",
       "tools/collection_id/manifest.json": "3b281c4df087a72dcbd373f0130efa3277abfa1cf5f20e8a4deb6ae1f5361e3c",
       "tools/collection_id/run.py": "649ab504d418a14210568bc08475e6ab315ff1fc687073f7f7f13cc1978c34a0",
-      "goals/collection-intake.md": "07ed2369cc6e60a90ac7d57fe317011ba71e1b90c1b7301e43e4d557df728f28",
-      "skills/identify/acquisition-mode.md": "a70766db4a9eae145746ff83d01483ef082892e6e5aa9a33f96d4875fe52f570",
-      "skills/identify/collector-clues.md": "97c98ba994166f7be3e9fe160e1aac166f8382cb64929db056f45ab3ebd16b23",
-      "skills/identify/collector.md": "d157d6f2616b7e273052c1abb3e3572bb7e20f7b21fbcb9366168c1831ad3e6c",
-      "skills/verify/manifests.md": "38d502b34f6aa4b0a98d170086b16e6dc70549bcd966f7aca89c6bb28675c043",
-      "skills/verify/target-outcomes.md": "22778443f88349a1e525f3a79e5f0b0ed2991f2161d479048e7646e1c3aea85b",
-      "skills/verify/time-layers.md": "68dd6f44faf963a4cd9f9642359302baafc055a0fe64bf668935d4fefa9114a0",
-      "skills/gaps/coverage-statement.md": "7f5e62400c77f51fa16df024a72acfa04f63d755596b3fd71be22440607202a9",
-      "skills/gaps/what-is-missing.md": "73b9273ccbff772c4a7b09c5fd12312248aa7859bed3c77c19ed48ea08530ca4",
-      "skills/plan/sources-linux.md": "5031ce291e5d21bc610223cd1f45b0124e95043e07a9c4a90335c329a822a67d",
-      "skills/plan/sources-windows.md": "0f3dd450919c31987a1db40a20c94fba73a7f65f2e04a9805abf3f3be51ee557",
-      "skills/plan/what-to-collect.md": "47200c32a12ac72b2f22d931d079c7f0319e47d3d41b8682829b63cc6a7c28c4",
-      "skills/normalise/inventory.md": "27d3737adcd9a443ede27b516e501cc5efc930524bce4574f40d7f86d321e667",
-      "skills/normalise/layout.md": "916fb135e636078d74129fbc91aca8755c4e6c11b523d1b6061e85b581becb47",
-      "skills/normalise/parsers.md": "c3de68e6e1a199730d0f43f302a4cd9b706620900dbfb10ce2a481c26a9ec7c5",
-      "requires/host.json": "da154a04db355a9d26025b56fb799476ba0477ee455b99e308eb1c915b9f24a8",
+      "goals/collection-intake.md": "5b5eca3aefc18a4fcebd0f0311e017bd79528dd0eafe5ec13d83d8b1657d8f8b",
+      "skills/identify/acquisition-mode.md": "759d307cd7f986e16a93a7f6fd9ea8b6f0f332f600e85b74415db8064ff6f067",
+      "skills/identify/collector-clues.md": "664201d0c78ee72c1ad5629bfa512b99acb4d540995f7ab2e623bc68e827b6bb",
+      "skills/identify/collector.md": "f2332fea31e137a030e5e541c7788a88ce950ddf77028e60f012729db59663c3",
+      "skills/verify/manifests.md": "fd8ad2fe48e37d3c9a93eb35c2b9a0db40dec85f682d196779252d429c0d7f9b",
+      "skills/verify/target-outcomes.md": "b95bdef1d6c8c567b185367fb6fd7f3ab6f5041b5eb5e0cd57da0b61ee03f81d",
+      "skills/verify/time-layers.md": "1c5ae12396541f66581eb5ede022671d3bfd076ff004dc57b84de0e51a5f72eb",
+      "skills/gaps/coverage-statement.md": "e91e657ab7156e2738c94fe6625fa1782207a80e7b7ed65de9f68621cf020e79",
+      "skills/gaps/what-is-missing.md": "12d48f23c9300456318fe522b0694eb5bdcbc31fa8821c7596e84a7eeda1325d",
+      "skills/plan/sources-linux.md": "d1d05a364bd011282cace85a232475f4624f3635d26c5b2b456e25bd60ef33fa",
+      "skills/plan/sources-windows.md": "8b4491f285b16f045932f3adedacd18f80f8a015560e2057b85145d11f054d12",
+      "skills/plan/what-to-collect.md": "e8d194dfbd569bfc8d92aae4c227fd1fafd907740edcfa8d381d8122a753dece",
+      "skills/normalise/inventory.md": "4a79f7978049fa18f2bf21d877a211bd3fbbca40fe661eae6edf0e0ee0d9e038",
+      "skills/normalise/layout.md": "3b013ce49870281bb4438501cdb4644714a30af61d9315fd6e24e13ee5ab2a3d",
+      "skills/normalise/parsers.md": "b87f648ddb7354276ef59549a1c5fcb749ad1b546a7aeb40c4122795f83ed851",
+      "requires/host.json": "008bd045bd90478209bfe3f69557859e28b9945ea2162f3a197f07f7f1f83d64",
       "requires/python.txt": "4f753bdd539922ce6d87e00b3c099f7c18af8cf5d04139588668f957d7d3eddd",
       "skills/INDEX.md": "f9b285dea1fb112e7c29ecf1df0f470567786b6e007e72d221afd2296db1bb22"
     }
@@ -51,11 +51,11 @@
   "unreferenced_ok": [
     {
       "name": "uac",
-      "why": "declared as operator preparation: UAC is a live-collection tool the harness never runs, and no skill commands it; it is kept so an operator can prepare a collection, and as a candidate reader of its own output"
+      "why": "declared for operator preparation only: UAC is a shell collector an operator runs on the host to be collected; the harness never runs it, no skill commands it, and its delivered output is read as files"
     },
     {
       "name": "velociraptor",
-      "why": "declared as operator preparation and as a candidate offline reader of its own containers; no skill commands it and the harness never collects live"
+      "why": "declared for operator preparation and as a candidate offline reader of its own containers (unverified, used by no skill); the harness never collects live"
     }
   ]
 }

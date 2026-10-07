@@ -5,11 +5,12 @@
  * collector: the harness examines supplied evidence and never performs live collection.
  */
 import assert from "node:assert/strict";
+import { writeFileSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { ROOT } from "./tool-library-harness.ts";
-import { TOOLS, TRIAGE } from "./pack-triage-harness.ts";
+import { ID, INDEX, KAPE_COPY_HEADER, LIME_MAGIC, TRIAGE, asJob, kapeCopyRow, put, uac3, veloResultRow, veloUploadsRow, withCwd } from "./pack-triage-harness.ts";
 
 const SKILLS = join(TRIAGE, "skills");
 const BASE_SKILLS = join(ROOT, "packs", "computer-forensics-base", "skills");
@@ -102,35 +103,97 @@ test("every second-level leaf is pointed to by one decision leaf that says when 
   }
 });
 
-// Fields a skill names, each of which a tool must write: tool -> [skill, names].
-const TAUGHT: Array<[string, string, string[]]> = [
-  ["collection_id", "identify/collector", ["collector_candidates", "objects", "failed_target_count", "mixed", "partial", "unsupported"]],
-  ["collection_id", "identify/collector-clues", ["layout_clues"]],
-  ["collection_id", "gaps/what-is-missing", ["not_observed", "objects"]],
-  ["collection_id", "gaps/coverage-statement", ["failed_targets"]],
-  ["collection_id", "verify/target-outcomes", ["failed_targets", "skipped", "partial", "unsupported", "locator"]],
-  ["collection_index", "normalise/layout", ["source_path_hypothesis", "source_path_observed", "unresolved_components", "alternatives", "confidence", "ambiguous", "possible_renamed_streams"]],
-  ["collection_index", "normalise/inventory", ["complete_index", "matches_filter", "not_attempted", "may_hold_secrets", "object_class", "out_file", "contains", "census"]],
-  ["collection_index", "verify/time-layers", ["mtime_distribution_anomaly", "modified_epoch_ns", "recorded_modified_utc_raw", "modified"]],
-  ["collection_index", "verify/manifests", ["check_inputs"]],
-];
+// Fields a skill names, each of which a tool must write: skill -> names. They are looked for in the answers of both tools on a fixture
+// that holds every collector, an image, a memory capture, a credential-store name, a copy log and a ready-made census (not in the tools' source).
+const TAUGHT: Record<string, string[]> = {
+  "identify/collector": ["collector_candidates", "objects", "failed_target_count", "failed_targets_seen", "mixed", "unsupported", "unlabelled_examples", "basis"],
+  "identify/collector-clues": ["layout_clues"],
+  "gaps/what-is-missing": ["not_observed", "not_observed_caveats", "objects"],
+  "gaps/coverage-statement": ["failed_targets"],
+  "verify/target-outcomes": ["failed_targets", "failed_targets_seen", "skipped", "locator", "not_found"],
+  "normalise/layout": ["source_path_hypothesis", "source_path_observed", "unresolved_components", "alternatives", "confidence", "ambiguous", "possible_renamed_streams", "recorded_modified_utc_raw", "recorded_file_size_raw"],
+  "normalise/inventory": ["complete_index", "matches_filter", "not_attempted", "may_hold_secrets", "object_class", "census", "modified_epoch_ns"],
+  "verify/time-layers": ["mtime_distribution_anomaly", "modified_epoch_ns", "recorded_modified_utc_raw", "modified"],
+};
 
-test("the tool fields a skill names are fields its tool writes", async () => {
+function collect(value: unknown, keys: Set<string>, strings: string[]): void {
+  if (typeof value === "string") strings.push(value);
+  else if (Array.isArray(value)) for (const v of value) collect(v, keys, strings);
+  else if (value && typeof value === "object") for (const [k, v] of Object.entries(value)) (keys.add(k), collect(v, keys, strings));
+}
+
+test("the tool fields a skill names are fields the tools write: the fixture is run, and the keys and values of its answers are read", async () => {
   const skills = await load(SKILLS);
-  for (const [tool, skillId, names] of TAUGHT) {
-    const script = await readFile(join(TOOLS, tool, "run.py"), "utf8");
+  const keys = new Set<string>();
+  const strings: string[] = [];
+  await withCwd(async (cwd) => {
+    await put(cwd, "inputs/f/C/Users/a/NTUSER.DAT", "hive");
+    await put(cwd, "inputs/f/C/Windows/System32/config/SAM", "hive");
+    await put(cwd, "inputs/f/memory.raw", Buffer.concat([LIME_MAGIC, Buffer.alloc(64)]));
+    await put(cwd, "inputs/f/doc.txt_Zone.Identifier", "z");
+    await put(cwd, "inputs/f/r_CopyLog.csv", `${KAPE_COPY_HEADER}\n${kapeCopyRow("C:\\Users\\a\\NTUSER.DAT", "D:\\o\\C\\Users\\a\\NTUSER.DAT")}\n`);
+    await put(cwd, "inputs/f/r_SkipLog.csv", "SourceFile,Reason\nC:\\x,locked\n");
+    await put(cwd, "inputs/f/b/B_SkipLog.csv", Buffer.from([0x53, 0x6f, 0x00, 0x75, 0x00]));              // NUL bytes: a log that is not read as text
+    await put(cwd, "inputs/f/uac.log", [uac3("INF", "Starting"), "cannot say what this is"].join("\n") + "\n");
+    await put(cwd, "inputs/f/v/uploads.json", veloUploadsRow("/C:/a") + "\n");
+    await put(cwd, "inputs/f/v/results/A.json", veloResultRow("/C:/a") + "\n");
+    for (let i = 0; i < 22; i++) await put(cwd, `inputs/f/many/f${i}`, "x");
+    for (const run of [await asJob(ID, cwd, { root: "inputs/f" }, {}, "out", "j000800"), await asJob(INDEX, cwd, { root: "inputs/f" }, {}, "out", "j000801")]) {
+      assert.equal(run.code, 0, run.stderr);
+      collect(JSON.parse(run.stdout), keys, strings);
+    }
+  });
+  for (const [skillId, names] of Object.entries(TAUGHT)) {
     const body = skills.get(skillId)?.body ?? "";
     for (const name of names) {
       assert.ok(body.includes(name), `${skillId} names ${name}`);
-      if (name !== "check_inputs") assert.ok(script.includes(name), `${tool} has ${name}, which ${skillId} teaches`);
+      assert.ok(keys.has(name) || strings.some((s) => s.includes(name)), `the tools' answers carry ${name}, which ${skillId} teaches`);
     }
   }
 });
 
-test("the old claims are gone, no skill states a version fact or tells the agent to run a collector, and secret handling is stated where a tool can reach one", async () => {
+const BASE_VERIFY_AT_103 = 3472;   // bytes of base evidence/verify once the base pack's review lands (818 tokens): the chain must still fit
+
+test("the needs chain fits 2,000 tokens even when the base evidence/verify has grown to what the base review makes it", async () => {
+  const all = new Map([...(await load(BASE_SKILLS)), ...(await load(SKILLS))]);
+  const grown = all.get("evidence/verify")!;
+  all.set("evidence/verify", { ...grown, text: grown.text + "x".repeat(Math.max(0, BASE_VERIFY_AT_103 - Buffer.byteLength(grown.text))) });
+  for (const [id, s] of (await load(SKILLS)).entries()) {
+    const ids = new Set<string>([id]);
+    const walk = (x: string): void => { for (const n of ((all.get(x)?.meta.needs as string[]) ?? [])) { ids.add(n); walk(n); } };
+    walk(id);
+    const tokens = [...ids].reduce((n, i) => n + TOKENS(all.get(i)?.text ?? ""), 0);
+    assert.ok(tokens <= 2000, `${s.id} chain is ${Math.round(tokens)} tokens`);
+  }
+});
+
+test("the old claims are gone, whatever their wording; no skill states a version fact or tells the agent to run a collector; secret handling is stated wherever a tool is named", async () => {
   const skills = await load(SKILLS);
-  const all = [...skills.values()].map((s) => s.body).join("\n");
-  assert.doesNotMatch(all, /cannot be answered no matter|There is no unallocated space|There is no file slack|There is no volume|is irrelevant; cite by path|work unchanged|parses exactly as it would|recognises the shape each collector leaves|value per megabyte|memory first if|were in use at the time|all four were|probably dropped|every timestamp-based conclusion|CyLR or a plain copy/i);
+  const flat = (s: string) => s.replace(/\s+/g, " ");
+  const all = flat([...skills.values()].map((s) => s.body).join("\n"));
+  // the claims, not the sentences they were first written in
+  const claims: Array<[RegExp, string]> = [
+    [/\bcannot be answered\b/i, "a question outside the profile cannot be answered"],
+    [/\bno (?:unallocated|slack|inode|volume)\b(?![^.]*\bunless\b)(?![^.]*\bdelivered\b)/i, "there is no unallocated space, slack, inode or volume"],
+    [/\bnothing can be carved\b|\bno carving\b(?!\s+was possible only)/i, "nothing can be carved"],
+    [/\b(?:offset|-o)\b[^.]{0,60}\b(?:irrelevant|do not apply|does not apply)\b/i, "offset commands are irrelevant"],
+    [/\bmemory first\b/i, "memory first as an order"],
+    [/\b(?:work|apply|run|parse)s? (?:unchanged|without change)\b|\bunchanged:/i, "the platform packs work unchanged"],
+    [/\bparses exactly as it would\b/i, "a copied $MFT parses as from an image"],
+    [/\b(?:every|all) timestamp[- ]based conclusion\b|\bis about the copy\b|\babout the copy rather than\b/i, "every timestamp conclusion is about the copy"],
+    [/\brecognises the shape each collector leaves\b/i, "collection_id recognises the collector"],
+    [/\bvalue per megabyte\b/i, "a fixed value-per-megabyte list"],
+    [/\bin use at the time\b|\ball four were\b/i, "an invented cause of a failed copy"],
+    [/\bCyLR or a plain copy\b/i, "CyLR or a plain copy"],
+  ];
+  for (const [rx, what] of claims) assert.doesNotMatch(all, rx, what);
+  // the same claims, paraphrased, are what the patterns are for: they must fire on these
+  for (const sample of [
+    "A logical collection has no unallocated space, no slack and no inode, so the offset commands do not apply and nothing can be carved.",
+    "Always capture memory first while the machine is running.", "The platform packs apply without change: a copied $MFT parses as it would from an image.",
+    "When most files share the collection date, every timestamp conclusion is about the copy, not the machine.",
+    "A question outside the profile cannot be answered from this delivery however carefully you look.",
+  ]) assert.ok(claims.some(([rx]) => rx.test(flat(sample))), `the patterns catch: ${sample}`);
   assert.doesNotMatch(all, /\b\d+\.\d+\.\d+(\.\d+)?\b|as of (20|19)\d\d|since (version )?\d/i, "no version fact");
   assert.doesNotMatch(all, /(?:run|launch|start|execute|invoke|use) (?:the )?(?:uac|velociraptor|KAPE|CyLR)\b(?! \w+ (?:never|does not|is not))/i);
   assert.match(skills.get("plan/what-to-collect")!.body, /never performs live collection/);
@@ -138,21 +201,61 @@ test("the old claims are gone, no skill states a version fact or tells the agent
   assert.match(skills.get("plan/what-to-collect")!.meta.title as string, /through the operator/);
   assert.equal(skills.get("plan/what-to-collect")!.meta.requires_host.length, 0);
   assert.match(skills.get("gaps/what-is-missing")!.meta.title as string, /can and cannot establish/);
-  for (const id of ["identify/collector", "verify/manifests", "normalise/layout", "normalise/inventory"]) {
-    assert.match(skills.get(id)!.body, /Sensitive output:[^\n]*secret_output: true/, `${id} says the job runs with secret_output: true`);
+  // the rule of the request skill is not turned round: the census says what is held, the failed targets and the unseen kinds are the gaps
+  assert.doesNotMatch(skills.get("plan/what-to-collect")!.body, /Ask only for what neither lists/);
+  assert.match(skills.get("plan/what-to-collect")!.body, /do not ask for what it holds/);
+  assert.doesNotMatch(skills.get("verify/target-outcomes")!.body, /no row anywhere is not delivered/i);
+  assert.match(skills.get("verify/target-outcomes")!.body, /unknown outcome/);
+  // every leaf that names a tool says how its output is held
+  for (const s of skills.values()) {
+    if (((s.meta.tools as string[]) ?? []).length === 0) continue;
+    assert.match(s.body, /Sensitive output:[^\n]*secret_output: true/, `${s.id} names a tool and says the job runs with secret_output: true`);
   }
-  assert.match(skills.get("plan/what-to-collect")!.body, /secret_output: true/);
-  assert.match(skills.get("plan/sources-linux")!.body, /secret_output: true/);
   assert.match(skills.get("verify/manifests")!.body, /does not open a container/);
+  assert.doesNotMatch(all, /archive_extract/, "an extractor that no pack ships is not advertised");
+  assert.match(skills.get("identify/collector")!.body, /\bnot determined, never zero\b/);
+  assert.match(skills.get("identify/collector")!.body, /more than one kind of object/);
+  assert.doesNotMatch(skills.get("identify/collector")!.body, /copied files sit beside an image/);
+  assert.match(skills.get("gaps/coverage-statement")!.body, /looked_for or looked_for_none_why/);
+  assert.match(skills.get("gaps/what-is-missing")!.body, /once, plainly and early/);
+  assert.match(skills.get("plan/sources-linux")!.body, /\/root/);
+  assert.match(skills.get("plan/sources-linux")!.body, /\/var\/log\/journal/);
+  assert.match(skills.get("plan/sources-windows")!.body, /ConsoleHost_history\.txt/);
+  assert.match(skills.get("normalise/layout")!.body, /drop named streams altogether/);
 });
 
-test("the goal template asks the new questions, keeps its acceptance checks, and binds the unallocated check to the answer's own section", async () => {
+test("the goal template asks the new questions, keeps its acceptance checks, and binds the unallocated check to the answer's own section without a pipe that can fail", async () => {
   const goal = await readFile(join(TRIAGE, "goals", "collection-intake.md"), "utf8");
   assert.match(goal, /5\. The delivered-object inventory/);
   assert.match(goal, /6\. Integrity and time provenance/);
   assert.match(goal, /source-filesystem, embedded-record, archive-member and analysis-filesystem/);
   assert.doesNotMatch(goal, /whether\s+the timestamps are original|cannot\s+contain/);
-  assert.match(goal, /sed -n '\/\^## 4\\\.\/,\/\^## 5\\\.\/p' work\/report\.md \| grep -qiE 'unallocated\|logical acquisition'/);
   // nothing else an agent had to satisfy was loosened
   for (const check of ["test -f work/report.md", "check-answers.ts", "inputs_check", '"tool":"skill"', '"kind":"event"']) assert.ok(goal.includes(check), check);
+  const checks = [...goal.matchAll(/^- `(.+)`$/gm)].map((m) => m[1]);
+  const unallocated = checks.find((c) => c.includes("unallocated"));
+  assert.ok(unallocated, "the unallocated check is there");
+  assert.match(unallocated!, /^awk '\/\^## \[0-9\]\+\\\.\/\{s=\/\^## 4\\\.\/\} s && tolower\(\$0\) ~ \/unallocated\|logical acquisition\/\{f=1\} END\{exit !f\}' work\/report\.md$/);
+  for (const c of checks.filter((x) => x.includes("work/report.md"))) assert.doesNotMatch(c, /\|\s*grep -q/, `${c.slice(0, 60)} ends a pipe in grep -q: grep exits at the first match, the writer of a large report gets SIGPIPE, and pipefail fails the check`);
+  // run the check the way the harness does (set -euo pipefail, eval), on reports of three sizes and on the cases it must tell apart
+  const { spawnSync } = await import("node:child_process");
+  const { mkdtemp, writeFile, mkdir, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const dir = await mkdtemp(join(tmpdir(), "goal-check-"));
+  try {
+    await mkdir(join(dir, "work"), { recursive: true });
+    const run = (report: string): number | null => {
+      writeFileSync(join(dir, "work", "report.md"), report);
+      return spawnSync("bash", ["-c", `set -euo pipefail; ${unallocated}`], { cwd: dir, stdio: ["ignore", "pipe", "pipe"] }).status;
+    };
+    const filler = "A line of the report that says nothing about the word.\n";
+    const section4 = (size: number) => `## 1. a\nx\n## 4. What this delivery can establish\nNo unallocated space was delivered.\n${filler.repeat(size)}## 5. next\ny\n`;
+    for (const lines of [10, 1000, 6000]) for (let i = 0; i < 5; i++) assert.equal(run(section4(lines)), 0, `a report with ${lines} filler lines in section 4 passes`);
+    assert.equal(run(`## 4. x\n${filler}## 5. Unallocated inventory\n${filler}`), 1, "the word in the next section's heading is not the answer to question 4");
+    assert.equal(run(`## 4. x\n${filler}## 5. y\nunallocated here only\n`), 1, "the word only in section 5 fails");
+    assert.equal(run(`## 4. Unallocated space\n${filler}## 5. y\n`), 0, "the word in section 4's own heading passes");
+    assert.equal(run(`## 4. x\nThe acquisition was a logical acquisition.\n## 5. y\n`), 0);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

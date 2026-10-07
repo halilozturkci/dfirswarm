@@ -55,7 +55,7 @@ limitation, and the critic, who wrote none of them, has recorded `attest` or
 
 - `test -f work/report.md`
 - `for n in 1 2 3 4 5 6 7; do grep -q "^## $n\." work/report.md || exit 1; done`
-- `sed -n '/^## 4\./,/^## 5\./p' work/report.md | grep -qiE 'unallocated|logical acquisition'`
+- `awk '/^## [0-9]+\./{s=/^## 4\./} s && tolower($0) ~ /unallocated|logical acquisition/{f=1} END{exit !f}' work/report.md`
 - `test "$(grep -c '"kind":"event"' ledger/entries.jsonl)" -ge 3`
 - `node --experimental-strip-types --no-warnings "$SWARM_HARNESS/scripts/check-answers.ts" --sections 1,2,3,4,5,6,7,summary,narrative`
 - `grep '"tool":"inputs_check"' traces/events.jsonl | tail -1 | grep -q '"content_ok":true'`

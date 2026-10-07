@@ -18,3 +18,4 @@ Use when you choose a parser for a delivered file. Not for deciding what the del
 
 Shows: which parser fits a delivered form, and what must accompany it. Does not show: that a parse is complete, or that a companion that was not delivered would have changed the answer.
 Record: parser and version, the object and its companions with hashes, any derived copy and how it was made, and what the parse did not cover.
+Sensitive output: a hive, a database or a browser store can hold credentials; run the parser as a job with `secret_output: true`, cite locators, and never copy a hash of a secret.
