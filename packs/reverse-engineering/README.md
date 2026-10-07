@@ -34,7 +34,7 @@ what a file is from its bytes and says when the extension disagrees.
 writes the whole profile to a file; it reports a measurement and does not
 identify packing. `pe_info` reads PE, ELF and Mach-O structure (sections with
 their entropy and permissions, imports with their function names, the compile
-timestamp as the header's raw value, the dynamic array of an ELF through its
+timestamp as the header's raw value and as a Unix time, the dynamic array of an ELF through its
 program headers, every slice of a universal binary) and says for each answer what
 it read and what it did not; it verifies no signature. `fuzzy_hash` computes
 SHA-256, ssdeep and TLSH together, and can give the TLSH distance between two

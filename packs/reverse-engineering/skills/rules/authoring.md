@@ -10,6 +10,7 @@ requires_host: [yara]
 Use when you write a rule from a sample or test one. Not for publishing without authorisation.
 
 - Decide what the rule claims: one specimen, a structural trait, a suspected family. Pick features the inspected evidence supports and combine them for that purpose. Mutexes, paths, user agents, resource data, certificate fields, Rich-header values and section layouts can be shared, absent or changed: none is stable or family-specific by itself. State which variants you tested; do not promise a rule survives rebuilds or repacking.
+- Prefer features tied to what the code does (constant tables, distinctive instruction sequences) over values that differ between builds (file names, header timestamps, absolute addresses, library strings). A hit on the specimen a rule was written from is not corroboration.
 - Validate with `yara` against intended positives, held-out related samples where you have them, and representative benign software that shares the compiler, libraries, packer or document structure (system DLLs alone are too narrow). Record corpus provenance, exact hits, misses, scan failures and performance limits.
 - Keep the rule with its rationale, sample references and authorship metadata. A rule built from sample A that matches sample B shows shared matching features, not family identity.
 - Publish only with authorised disclosure. Keep credentials, private keys, victim-specific secrets and any hash of them out of rule strings, metadata and matched excerpts.

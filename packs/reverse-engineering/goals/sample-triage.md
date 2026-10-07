@@ -18,7 +18,9 @@ its behaviour on any machine.
 4. What its code can do: capability hypotheses mapped from the code, each with
    the locator behind it and the limits of the analysis.
 5. Strings that matter, including the obfuscated ones, each with the function
-   that references it — or a plain statement that nothing references it.
+   that references it — or which analysis recovered no reference to it (a
+   bounded negative: function discovery, indirect addressing and decoding limit
+   it).
 6. Indicators another examiner could search for: hashes, mutexes, domains,
    paths, and a rule if you wrote one, with what it was built from.
 7. What you could not establish, and what would be needed to establish it.
@@ -42,11 +44,13 @@ own. The sign-off is these acts, not a post. Nothing else is assigned.
 
 `work/report.md` exists and answers questions 1 to 7 under the headings `## 1.`
 through `## 7.`. The report states that the sample was not executed. Every
-capability claim carries an address or an import. The ledger holds one `answer`
-entry per question (`question:1` to `question:7`) and one each for `summary`
-and `narrative`, with every defect the answers check names fixed or named by a
-limitation, and the critic, who wrote none of them, has recorded `attest` or
-`dispute` on each answer, saying what they verified. `inputs/` is unchanged.
+material capability inference cites inspected code or structured feature
+evidence with its locator and limitations; an import alone supports only a
+dependency observation. The ledger holds one `answer` entry per question
+(`question:1` to `question:7`) and one each for `summary` and `narrative`, with
+every defect the answers check names fixed or named by a limitation, and the
+critic, who wrote none of them, has recorded `attest` or `dispute` on each
+answer, saying what they verified. `inputs/` is unchanged.
 
 ## Checks
 
