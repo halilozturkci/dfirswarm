@@ -588,34 +588,6 @@ test("a prompt that already carries the section (the kickoff's APPEND_SYSTEM.md)
   }
 });
 
-test("scripts/skills-section.ts writes the kickoff's file, leaves none for packs with no skills, and reports what is over", async () => {
-  const root = await mkdtemp(join(tmpdir(), "skills-cli-"));
-  try {
-    const { a, b } = await twoPacks(root);
-    const out = join(root, "APPEND_SYSTEM.md");
-    const run = (...dirs: string[]) => JSON.parse(execFileSync("node", ["--experimental-strip-types", "--no-warnings", join(REPO, "scripts", "skills-section.ts"), out, ...dirs], { encoding: "utf8" })) as Record<string, unknown> & { packs: Array<{ id: string }> };
-    const report = run(a, b);
-    assert.equal(report.written, true);
-    assert.deepEqual(report.packs.map((p) => p.id), ["pack-a", "pack-b"]);
-    const { text } = renderSkillsSection(await Promise.all([a, b].map((d) => readPackIndex(d))));
-    assert.equal(await readFile(out, "utf8"), `${text}\n`, "the file is the section the extension would render");
-    // Packs with no skills: no file, and a stale one is removed.
-    const tools = join(root, "tools-only");
-    await mkdir(join(tools, "tools"), { recursive: true });
-    assert.equal(run(tools).written, false);
-    await assert.rejects(() => access(out), "a stale file is removed");
-    // A pack whose index cannot be read is reported and the rest are written.
-    const broken = join(root, "broken");
-    await mkdir(join(broken, "skills"), { recursive: true });
-    const partial = run(a, broken);
-    assert.equal(partial.written, true);
-    assert.deepEqual((partial.unreadable as Array<{ pack: string }>).map((u) => u.pack), ["broken"]);
-    assert.throws(() => execFileSync("node", ["--experimental-strip-types", "--no-warnings", join(REPO, "scripts", "skills-section.ts")], { stdio: "pipe" }), /usage/);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
 test("a run with no pack has no skill tools and no section; a pack whose index cannot be read is a fault on the trace and the board", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "skills-packs-"));
   try {
@@ -934,14 +906,35 @@ test("the harness's own skill events are reserved against forged tools", () => {
   for (const name of ["skill", "skill_done", "skills_index"]) assert.ok(TOOL_RESERVED_NAMES.has(name), `${name} is reserved`);
 });
 
-test("every place the kickoff starts Pi passes --no-skills, and the allowlist names both skill tools", async () => {
+test("every place the kickoff starts Pi passes --no-skills and the seat's prompt files, in that order, and the allowlist names both skill tools", async () => {
   const sh = await readFile(join(REPO, "scripts", "swarm.sh"), "utf8");
   const lines = sh.split("\n");
   const launches = lines.map((l, i) => ({ l, i })).filter(({ l }) => /--session-dir "\$sandbox\/\.pi-sessions\//.test(l));
   assert.equal(launches.length, 3, "a seat's Pi is started in three places: the host panes, the probe, a VM's launch script");
   for (const { i } of launches) {
-    const around = lines.slice(Math.max(0, i - 3), i + 1).join("\n");
+    const around = lines.slice(Math.max(0, i - 6), i + 1).join("\n");
     assert.ok(around.includes("--no-skills"), `the Pi launch at swarm.sh:${i + 1} does not pass --no-skills:\n${around}`);
+    // The prompt files come from one function, called for this seat just before, and sit between --no-skills/--name and --session-dir.
+    assert.match(around, /seat_prompt_args "\$sandbox" "[^"]+"/, `the Pi launch at swarm.sh:${i + 1} does not build the seat's prompt arguments:\n${around}`);
+    assert.ok(around.indexOf("--no-skills") < around.indexOf('"${SEAT_PROMPT_ARGS[@]}"') && around.indexOf('"${SEAT_PROMPT_ARGS[@]}"') < around.indexOf("--session-dir"), `the Pi launch at swarm.sh:${i + 1} passes the prompt files in another place:\n${around}`);
   }
   assert.match(sh, /\[\[ -n "\$pack_dirs" \]\] && PI_TOOLS\+=",skill,skill_done"/);
+});
+
+test("seat_prompt_args: the run's file and then the seat's, as explicit sources; the run's file left out when it is empty; paths with spaces, quotes and $ kept whole", async () => {
+  const sh = await readFile(join(REPO, "scripts", "swarm.sh"), "utf8");
+  const fn = /^seat_prompt_args\(\) \{[\s\S]*?^\}/m.exec(sh)![0];
+  const root = await mkdtemp(join(tmpdir(), "seat args "));
+  try {
+    const sandbox = join(root, "My Cases", "çase $HOME 'q' [x]");
+    await mkdir(join(sandbox, ".pi"), { recursive: true });
+    const args = (id: string) => execFileSync("bash", ["-c", `${fn}\nseat_prompt_args "$1" "$2"\nprintf '%s\\0' "\${SEAT_PROMPT_ARGS[@]}"`, "_", sandbox, id], { encoding: "utf8" }).split("\0").slice(0, -1);
+    // Empty run file (nothing applies): only the seat's own file is given, and that alone replaces Pi's discovery of a global one.
+    await writeFile(join(sandbox, ".pi", "APPEND_SYSTEM.md"), "");
+    assert.deepEqual(args("s1234500"), ["--append-system-prompt", join(sandbox, ".pi", "seat-s1234500.md")]);
+    await writeFile(join(sandbox, ".pi", "APPEND_SYSTEM.md"), "Self-compaction is on.\n");
+    assert.deepEqual(args("s1234501"), ["--append-system-prompt", join(sandbox, ".pi", "APPEND_SYSTEM.md"), "--append-system-prompt", join(sandbox, ".pi", "seat-s1234501.md")]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

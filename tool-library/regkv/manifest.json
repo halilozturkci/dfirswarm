@@ -1,6 +1,43 @@
 {
   "name": "regkv",
-  "description": "Read a Windows registry hive with regipy and dump a key's values plus subkeys with their last-modified (FILETIME->ISO) timestamps; optional recursive listing up to a depth. Returns JSON.",
+  "description": "Read a Windows registry hive with regipy: a key's values (each with its registry type and length, read whole: regipy's default cut to 256 characters is not taken), its subkeys with their last-written times (raw FILETIME and ISO 8601 UTC with seven fractional digits), and a bounded recursive listing. A reader, not a decoder: a binary value comes back as hex and nothing more, so UserAssist, ShimCache, BAM, SAM and ShellBag values are not decoded here. Completeness is said: unreadable keys and values are under problems, branches the walk did not enter (depth or node limit, or an error) under stopped_branches, and the whole recursive listing is kept in a file the answer names past the inline page; status is complete or partial (partial when a problem was named, a branch was not entered or the inline listing was cut). Every key listed is also in a file the answer names (all_subkeys) when the inline list of 2,000 is not the whole of it. depth is 0 to 128; a key whose subkey list was already reached (a cycle, or a list two keys share) is named and not entered again; a key that declares more values than were read is a problem; a hive that is not a regular file (a named pipe) is not opened. hive_dirty (the two sequence numbers differ) and the transaction logs beside the hive are reported; the logs are NOT replayed, so a dirty hive's newest state may be missing. SENSITIVE: values whose name says password, secret, token or credential (a DWORD or QWORD excepted), every value under Policy\\Secrets, PolEKList and PolSecretEncryptionKey of a SECURITY hive, the cached logons (NL$) and the V value of each SAM user are replaced by a marker holding only their length and listed under sensitive_values_withheld; the type of a value never lets one through, and the place is judged by the key names the hive holds, not by the spelling asked for. No flag brings one back. A secret inside a value that does not look like one (a command line with a password in it, an ImagePath) is NOT recognised and comes back whole. The key path is read from the hive's root, a leading backslash or not.",
+  "params": {
+    "hive": {
+      "type": "string",
+      "description": "Path to the registry hive file on disk (a copy; transaction logs beside it are named, not applied)",
+      "required": true
+    },
+    "key": {
+      "type": "string",
+      "description": "Registry key path, backslash form e.g. \\Microsoft\\Windows\\CurrentVersion",
+      "required": true
+    },
+    "recurse": {
+      "type": "boolean",
+      "description": "Recursively list subkeys",
+      "required": false
+    },
+    "depth": {
+      "type": "integer",
+      "description": "Levels below the key to open when recurse=true (default 2); a branch left closed is listed under stopped_branches",
+      "required": false
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Recursive nodes shown inline (default 500, an inline page size); the whole listing is in the file named by all_nodes"
+    },
+    "max_nodes": {
+      "type": "integer",
+      "description": "Upper bound on the nodes a recursive walk visits (default 1000000); branches left past it are listed under stopped_branches"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 30,
+  "by": "s9f2005",
+  "at": "2026-10-07T12:00:00.000Z",
+  "version": 3,
+  "sha256": "ed3924c2bb4f1265c9409458a7589e8f8fa03f316db4ecf29f0c005b3e884740",
   "use": {
     "extensions": [
       ".hve"
@@ -17,36 +54,11 @@
       "SAM",
       "SYSTEM",
       "SOFTWARE",
-      "SECURITY"
+      "SECURITY",
+      "Amcache.hve",
+      "DEFAULT",
+      "COMPONENTS"
     ]
   },
-  "params": {
-    "hive": {
-      "type": "string",
-      "description": "Path to the registry hive file on disk",
-      "required": true
-    },
-    "key": {
-      "type": "string",
-      "description": "Registry key path, backslash form e.g. \\Microsoft\\Windows\\CurrentVersion",
-      "required": true
-    },
-    "recurse": {
-      "type": "boolean",
-      "description": "Recursively list subkeys",
-      "required": false
-    },
-    "depth": {
-      "type": "integer",
-      "description": "Max recursion depth when recurse=true (default 2)",
-      "required": false
-    }
-  },
-  "runtime": "python3",
-  "entry": "run.py",
-  "timeout_seconds": 30,
-  "by": "s9f2005",
-  "at": "2026-09-18T12:43:16.852Z",
-  "version": 3,
-  "sha256": "5ec28333d1907e206a9d8cc87f2b6a3494be753e401098daca9f5f74c18e1174"
+  "requires": []
 }

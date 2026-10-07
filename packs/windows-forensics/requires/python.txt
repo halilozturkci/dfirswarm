@@ -1,11 +1,18 @@
-# The Windows pack's tools import these. Install with:
+# The Windows pack's tools import python-evtx, regipy, dissect.util and olefile; nothing else here is
+# imported by a bundled script. Install with:
 #   python3 -m pip install -r requires/python.txt
-# Nothing here is redistributed inside the pack; each is fetched from PyPI, so
-# its own licence stays with its own package.
-python-evtx>=0.8.0     # Apache-2.0. Evtx: Windows event log records.
-regipy>=5.0.0          # MIT. Registry hives, Amcache and ShimCache, without Windows.
-dissect.util>=3.5      # Apache-2.0 (from 3.5; AGPL-3.0 before), Fox-IT. lzxpress_huffman, for compressed prefetch.
-olefile>=0.46          # BSD-2-Clause. The compound file a jump list is stored in.
-libfwsi-python         # LGPL-3.0-or-later. pyfwsi: a shell item read from its documented layout. A library, no program.
+# Nothing here is redistributed inside the pack; each is fetched from PyPI, so its own licence stays with its
+# own package. The four the tools import are pinned to an exact release. python-evtx, regipy and
+# dissect.util are the releases the regression suite ran against (where the suite has the real library; its other
+# cases use stand-ins that follow what each tool calls). olefile's pin is the release current when this was
+# written and is not exercised: every jump list case uses a stand-in. The pins carry no hashes, which need PyPI
+# to produce (pip-compile --generate-hashes), and the transitive dependencies (construct, inflection and pytz
+# for regipy; hexdump for python-evtx) float.
+python-evtx==0.8.1     # Apache-2.0 (its package metadata: License-Expression). Evtx: Windows event log records.
+regipy==6.3.0          # MIT (its package metadata). Registry hives, Amcache and ShimCache, without Windows.
+dissect.util==3.24     # Apache-2.0 (its package metadata: License-Expression), Fox-IT. lzxpress_huffman, for compressed prefetch; prefetch_mam and mam_scan run it behind an output bound.
+olefile==0.46          # BSD-2-Clause (the label declared here; not read from package metadata, olefile was not installed where this was written). The compound file a jump list is stored in.
+# Capability only: no bundled script imports the three below.
+libfwsi-python         # Unpinned. LGPL-3.0-or-later is the label as the maintainer knows it, not read from package metadata. pyfwsi: a shell item read from its documented layout. A library, no program.
 impacket               # Apache-2.0 (modified). DPAPI, the Credential Manager, Windows Vault and SAM/LSA secrets read offline; its dpapi.py and secretsdump.py are in the venv.
 dpapick3               # MIT. DPAPI master keys and blobs decrypted offline, from a user's password or SHA-1, or the domain backup key.

@@ -28,7 +28,7 @@ of them never need, and spends it again on every turn for the whole run.
 So a pack's skills are small files, and an agent loads one when it needs it:
 
 - The index is small and sits in every agent's system prompt, in a section the
-  kickoff renders from the loaded packs' `skills/INDEX.md` (`scripts/skills-section.ts`)
+  kickoff renders from the loaded packs' `skills/INDEX.md` (`scripts/seat-prompt.ts`)
   into `.pi/APPEND_SYSTEM.md`, which Pi appends to its own prompt sections:
   one line per skill, its id, a title and one line saying when to reach for it.
   Pi keeps those sections across a compaction, and for the run a hand-off starts,
@@ -538,7 +538,7 @@ checksummed, and installs and verifies in the test suite.
 | `network-forensics` | 8 | 6 | 1 | captures, sessions, DNS and TLS metadata, beacons, exfiltration |
 | `reverse-engineering` | 7 | 4 | 1 | static triage of a binary or a document, under quarantine |
 | `encrypted-containers` | 5 | 3 | 1 | which scheme, which protectors, and where the key already is |
-| `cloud-forensics` | 6 | 3 | 1 | Microsoft 365, Entra, AWS, Workspace, and the tokens behind them |
+| `cloud-forensics` | 9 | 3 | 1 | Microsoft 365, Entra, AWS, Workspace, and the tokens behind them |
 | `ransomware-response` | 7 | 2 | 1 | scoping, recovery impairment, family candidates and recovery validation, each with its limits |
 | `triage-collection` | 5 | 2 | 1 | a collector's output, which is how most cases arrive |
 

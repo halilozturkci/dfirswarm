@@ -1,11 +1,6 @@
 {
   "name": "recyclebin_i",
-  "description": "Parse $Recycle.Bin $I metadata: original path, original size and deletion time, for one file or every $I under a directory.",
-  "use": {
-    "names": [
-      "$I*"
-    ]
-  },
+  "description": "Parse $Recycle.Bin $I metadata (version 1 and 2 records, unsigned fields): the original path, original size and deletion time (raw FILETIME and ISO 8601 UTC with seven fractional digits), for one file or every $I under a directory in sorted order. Every length is checked against the bytes the file has: a record shorter than its layout needs is reported truncated with the bytes it has and the path decoded from them as far as it goes, never as a complete one; a longer one carries trailing_bytes; a file over 1 MiB is not read (it is not a $I); an unknown header is not guessed at. Every candidate is checked as it is found and opened without blocking and without following a link: a $I that is a link, a FIFO, a device, a socket or a directory is not opened and is counted in not_attempted (each with its entry and the reason, status partial), a directory that cannot be listed is an entry too, and a link to a directory is not followed (a path that is itself a link to a directory is refused). Nothing here can hang on a FIFO or lose the rest of the bin. The whole record is read, not a fixed 4096 bytes. Each entry names its $R counterpart where present and the SID of the bin directory it sits in. The bin's SID is the account whose bin received the item; it does not say who deleted the file or from where.",
   "params": {
     "path": {
       "type": "string",
@@ -13,7 +8,7 @@
     },
     "limit": {
       "type": "integer",
-      "description": "Maximum files to parse (default 500)"
+      "description": "Entries shown inline (default 500, an inline page size); every entry is kept, and when there are more the whole list is written as JSON Lines and named in all_results"
     }
   },
   "runtime": "python3",
@@ -21,7 +16,13 @@
   "timeout_seconds": 60,
   "example": "{\"path\": \"work/extracted/$Recycle.Bin\"}",
   "by": "maintainer",
-  "at": "2026-09-20T12:00:00.000Z",
-  "version": 1,
-  "sha256": "2c1847cdea157a5530c54671977a2846bc5f2923bf457ff85b4cd536301e09ea"
+  "at": "2026-10-07T12:00:00.000Z",
+  "version": 3,
+  "sha256": "822c73b2b5e9ae538155be7d7c1eef9c5c5ab8c4b22e4c3c516d7cc2248bf20a",
+  "use": {
+    "names": [
+      "$I*"
+    ]
+  },
+  "requires": []
 }

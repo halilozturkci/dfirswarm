@@ -1,49 +1,24 @@
 ---
 id: identity/tokens
-title: Tokens, consents, and why a password reset did not help
-when: The account was recovered but the access continued.
-needs: [entra/signins]
+title: Tokens, grants and evidence of containment
+when: Assessing whether account or application access could continue after a containment action.
+needs: [logs/what-exists]
 tools: [ual_parse, signin_analyse]
 requires_host: []
 ---
 
-This is the single most common failure in cloud incident response. The account
-is compromised, the password is reset, multi-factor is enforced — and the
-attacker is still in, because none of those revoke what they actually hold.
+Use when a case asks whether access could continue after a containment step, and what the supplied evidence shows about it. Not for the first sign-in (`entra/signins`) or for what a consent or mailbox rule grants (`identity/grants`).
 
-**A password reset is not a complete token-revocation procedure.** Entra's
-published revocation table differs by how the token was obtained and where the
-password was reset: some password-based tokens are revoked, while some
-non-password-based cookies/tokens and confidential-client tokens can remain.
-Google automatically revokes OAuth tokens for some products on password change,
-with documented exceptions. Do not infer either survival or revocation from the
-reset alone: record the reset method, explicit session/token revocation, grant
-removal, and subsequent non-interactive use. Entra non-interactive sign-ins are
-a separate export, so an examiner looking only at interactive sign-ins can miss
-continued access.
+**Boundary.** Work offline from supplied exports, never from the tenant. Do not authenticate with, replay, refresh or submit a recovered token, cookie, key or client secret. Decode a token's claims only as data: decoding does not validate a signature, prove who issued it, or show a resource accepted it. A missing grant inventory, revocation record or resource log is an acquisition limit, not permission to query the tenant.
 
-**An application consent is separate durable state.** "Consent to application"
-in the unified audit log, or a Token audit entry in Workspace, means a user or
-administrator granted an application scopes. Revoking a session does not remove
-the grant. Whether an existing token survives a password change is provider- and
-token-specific, but a remaining grant or domain-wide delegation can permit new
-tokens. Record both token revocation and grant removal.
+**Containment actions are different things.** A password reset, an MFA requirement, a session or token revocation, the removal of an application grant and a resource-side control each affect different mechanisms; none is a certificate that access ended. Record, for each: the identity, the method, the target, the result and the time actually evidenced (`ual_parse` for Microsoft 365 audit records, `signin_analyse` for later sign-ins; an Entra directory-audit export has no reader here: read it in a recorded job).
 
-**A mailbox rule survives too**, and it is quieter than either. A rule that
-forwards to an external address, or moves anything matching "invoice" to a
-folder and marks it read, keeps working with no session at all.
+**Evaluate by provider, principal, client and token class.** Access tokens, refresh tokens, browser or application sessions and application credentials behave differently, and so do providers; do not state a rule about which ones a reset ends. A successful revocation request does not show the last moment every resource accepted an existing token: expiry and resource enforcement matter. Look for later sign-in and resource activity, and state the observation window and where logs stop. If the evidence does not settle effectiveness, record it as unknown, neither "tokens survived" nor "everything revoked".
 
-So the questions a cloud report must answer, in this order:
+**Build the timeline with four separate times:** the action time, the effective time if the evidence gives one, the last observed use, and the end of reliable coverage. The interval between a password reset and a later revocation is a potential exposure interval, not proof an attacker held or used access through it. Do not claim a complete session inventory or tenant state the acquisition does not support; keep partial and unknown outcomes as they are.
 
-1. What sessions and refresh tokens existed, and were they revoked? When?
-2. What applications hold a consent, with which scopes, granted by whom and when?
-3. What mailbox rules, filters and forwarding addresses exist, and when was each
-   created?
-4. What delegations and mailbox permissions were added?
-5. What did the attacker do that survives their access entirely — a shared
-   Drive link, a downloaded archive, a created account?
+**Durable state outlives sessions** (consent, application credentials, delegation, mailbox rules): `identity/grants`, only if the case holds such evidence.
 
-And the timeline must say when each was **revoked**, not only when it was
-created. "The password was reset at 14:02 and refresh tokens were revoked at
-18:40" describes a four-hour window in which the attacker still had access, and
-that window is usually where the rest of the incident happened.
+**Does not show:** that a token was valid, used or stolen; that a person acted; that nothing else survived.
+
+**Sensitive output:** run any job that may expose a credential value with `secret_output: true`. Describe an artefact by where it sits, its type, its length and what it grants, with key ids in full; never its value or a hash of a secret, and of a random secret at most its first and last 4 characters, of a password or a short secret none (the worker rules).

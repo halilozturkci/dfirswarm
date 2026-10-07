@@ -1,46 +1,96 @@
 {
   "name": "ual_parse",
-  "description": "Read a Microsoft 365 unified audit log export and explode the AuditData column, which is JSON and is where almost everything lives. Normalises each row, summarises by operation, user and address, and flags the operations that matter: inbox rules, forwarding, consents, anonymous links and mailbox reads.",
+  "description": "Read a Microsoft 365 unified audit log export offline (portal or PowerShell CSV with an AuditData column, JSON with that wrapper, native audit events as an array, JSON Lines or a value envelope, a Graph audit log record) and open the payload: `audit_data` is the whole AuditData as written (Name/Value, NewValue/OldValue and duplicate parameter names kept), beside the lifted fields (operation, user, address, workload, record type, result, record id, MailAccessType, OperationCount, items listed) and each record's file, record and line. `status` and `status_basis` say whether every row was read; a row that is not an audit record, a payload that is not JSON (kept with its outer columns), a file that is not an audit export, a CSV line past the field limit, an archive (.zip, tar: named, not read), a next-page marker, an export whose own ResultCount says more records matched than it holds, and files not reached before the time limit are counted separately, located and listed. Time: AuditData's CreationTime, else the outer column; no zone is not UTC unless assume_utc says so (a native CreationTime with no zone included, and a row left undated says so in time_zone), a day/month/year string needs a date_order or unambiguous rows that prove one (reported), and a declared date_order that a row contradicts leaves that row undecoded, named; raw and decoded times are kept; since/until exclude rows whose time could not be read and count them (status is then partial). record_type matches the payload's RecordType and the outer column, by number or by name as the export wrote them (the export's own pairing is shown in record_types_all_rows; no number-to-name table is built in), and a filter value that matched no row is reported. Summary tables describe the matched records; operations_all_rows and record_types_all_rows are every row, withheld the same way. `user` is a regex (at most 200 characters) matched against the user as printed, never against a withheld original; a pattern that can take exponential time is refused, and one test that takes more than a quarter of a second fails the call, named. An argument the tool does not have is refused. `notable` names an operation, not its meaning: MailItemsAccessed is not a statement that content was read. NOT measured: whether the audit configuration or licence captured every operation (aggregation and duplicate suppression can apply: check the schema the export carries), or who a record's user is. SENSITIVE: parameters and properties can hold secrets; a field named or shaped like a credential is withheld and its original written only with write_values, in a job, to a mode 0600 file under $OUT; run as a job with secret_output: true. An out_file is never replaced by a smaller result; a read that ended early publishes it as <name>.partial<ext> and names it partial_records, never complete_records, and SIGTERM leaves no temporary file.",
   "params": {
     "path": {
       "type": "string",
-      "description": "A CSV or JSON export, or a directory of them"
+      "description": "An export (CSV, JSON, JSON Lines; the format is read from the content) or a directory of them",
+      "required": true
     },
     "operations": {
       "type": "array",
-      "description": "Keep only these operations"
+      "description": "Keep only these operations (compared without case, as printed; a value that matched nothing is reported as given)"
     },
     "user": {
       "type": "string",
-      "description": "Case-insensitive regex over the user"
+      "description": "Case-insensitive regex (at most 200 characters) over the user as printed; a pattern that can take exponential time is refused"
     },
     "since": {
       "type": "string",
-      "description": "ISO 8601 UTC lower bound"
+      "description": "ISO 8601 lower bound (a bound with no zone is UTC); a row whose time could not be read is excluded and counted"
     },
     "until": {
       "type": "string",
-      "description": "ISO 8601 UTC upper bound"
+      "description": "ISO 8601 upper bound (a bound with no zone is UTC)"
+    },
+    "record_type": {
+      "type": "array",
+      "description": "Keep only these record types: the number or the name, matched against the payload's RecordType and the outer column as the export wrote them, without case or white space and a number without leading zeros (no built-in table pairs a number with a name; a value that matched nothing is reported as given)"
     },
     "notable_only": {
       "type": "boolean",
-      "description": "Only the operations this tool flags as worth a look"
+      "description": "Only the operations this tool lists for a second look"
     },
-    "limit": {
+    "assume_utc": {
+      "type": "boolean",
+      "description": "Read a time that carries no zone as UTC. Say so only on the export's own documentation or collection record; each record's time_status says it was assumed"
+    },
+    "date_order": {
+      "type": "string",
+      "description": "mdy or dmy, for day/month/year strings whose two leading fields are both 12 or less"
+    },
+    "format": {
+      "type": "string",
+      "description": "auto (default: from the content), csv or json"
+    },
+    "delimiter": {
+      "type": "string",
+      "description": "CSV delimiter, one character (default a comma)"
+    },
+    "max_field_bytes": {
       "type": "integer",
-      "description": "Maximum records returned inline when out_file is set (default 500); the complete match set is written to out_file"
+      "description": "Longest CSV line read (default 64 MiB); a longer one stops the file, named, with what was read kept"
     },
     "out_file": {
       "type": "string",
-      "description": "Optional JSONL path for every matching normalised record; when absent every match is returned inline"
+      "description": "Optional JSONL path for every matching record, under the run directory (in a job, under $OUT: name it work/<your agent id>/..., which becomes $OUT). Never replaces a file already there: that one is kept and this one is named beside it"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Rows of each list returned inline (default 500, an inline page size); past it the whole list is in a file the answer names (under $OUT/tool-output in a job, work/<agent>/tool-output otherwise)"
+    },
+    "max_expanded_bytes": {
+      "type": "integer",
+      "description": "Most bytes read from one file after decompression (default 4 GiB); a file that reaches it is partial and says so"
+    },
+    "max_record_bytes": {
+      "type": "integer",
+      "description": "Most text held while one record is read (default 16 MiB); a larger record is rejected, located and listed, never cut"
+    },
+    "time_limit_seconds": {
+      "type": "number",
+      "description": "Stop reading after this many seconds (default 540, at most 580); what was read is kept, the answer is partial and names the files not read"
+    },
+    "write_values": {
+      "type": "boolean",
+      "description": "Write the originals of the values withheld from the answer to a mode 0600 file under $OUT. Honoured only when the tool runs as a job (run it with secret_output: true); outside a job it is refused and nothing is written"
     }
   },
   "runtime": "python3",
   "entry": "run.py",
-  "timeout_seconds": 300,
-  "example": "{\"path\": \"inputs/ual.csv\", \"notable_only\": true, \"out_file\": \"work/ual.jsonl\"}",
+  "timeout_seconds": 600,
+  "example": "{\"path\": \"inputs/ual.csv\", \"notable_only\": true}",
   "by": "maintainer",
-  "at": "2026-09-22T22:00:00.000Z",
-  "version": 2,
-  "sha256": "3cccb1673993bdb18fb90b27cbdba1e0642c44f0e16624d4c47da8f8e895ff5d"
+  "at": "2026-10-07T12:00:00.000Z",
+  "version": 4,
+  "sha256": "c2c57b644e5e13c75ac7c81abbfe7244937489871e818a749d9eb6b0a406f1b1",
+  "use": {
+    "names": [
+      "AuditLog*.csv",
+      "*unifiedaudit*",
+      "*unified-audit*",
+      "*unified_audit*",
+      "*Search-UnifiedAuditLog*"
+    ]
+  }
 }

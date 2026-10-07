@@ -1,43 +1,23 @@
 ---
 id: logs/hunting
-title: Hunting with rules, and what a detection is worth
-when: The first pass found nothing, or the logs are too large to read by event id.
-needs: [logs/security]
-tools: [sigma_hunt, evtx_query]
-requires_host: [zircolite]
+title: Rule-based event review with sigma_hunt
+when: You search collected logs with a ruleset and must interpret detections and a clean result.
+needs: []
+tools: [sigma_hunt, evtx_query, evtx_carve]
+requires_host: [zircolite, hayabusa]
 ---
 
-Querying by event id answers a question you already knew to ask. A ruleset
-answers the ones you did not: several thousand community rules, each one a
-pattern somebody saw in a real intrusion, run over every record in the channel.
+Use when a first pass found nothing or the logs are too large to read by id. Not for logs that were cleared (`logs/recovery`).
 
-    sigma_hunt  path=work/extracted/winevt  min_level=high  out_dir=work/hunt
+`sigma_hunt` runs one engine, `zircolite` or `hayabusa`; either is enough, and `engine_version` is the one that ran (check the version the image carries). With neither on the host it says so, and the report line is that no rule-based sweep was performed, not that nothing was found.
 
-**A detection is a hypothesis with a name, not a finding.** The rule says "this
-record looks like technique X". The evidence is the record: take its record id
-and channel to `evtx_query`, read it whole, and cite that. A report that quotes
-a rule title instead of a record has cited the tool's opinion.
+- **Repeatably.** Name `engine`, `path`, `rules` and an `out_dir` of the form `work/<your id>/hunt` (in a job it lands in `$OUT`); any other place is refused, naming the places that work. Each call writes its own `hunt-<UTC time>-<id>` directory (`run_dir`): a result is never an earlier run's and nothing is replaced.
+- **The ruleset.** `ruleset` carries its sha256 (a directory by its sorted paths and digests). With no `rules` the engine's bundled rules run and their content is not recorded, so the sweep cannot be repeated from the record. Rulesets are engine-specific.
+- **Keep** `result_file`, the engine's stdout, stderr and logs, `command`, `exit_code` and `all_detections`. The engine's own output says how many rules it loaded and records it read; the tool does not count them.
+- **Status.** `interrupted` (a stop by signal) is no result. `partial` is a non-zero exit, a stop at `timeout_seconds` or an unreadable result line (`malformed_lines`, kept whole in a file), and bounds every negative. `min_level` filters `detections.jsonl`; what it removed is `below_min_level`, and a level the tool does not know is kept, shown first and counted in `unknown_levels`.
+- **A detection is a hypothesis with a name.** Take its computer, channel and record id to `evtx_query` (`start_record` and `end_record` the same id, on the file the channel lives in), read the whole record and cite that, with its own time rather than the engine's field. Severity is not confidence, and community rules are written for live estates: for each detection that matters, write the benign explanation you tested.
+- **A clean result** has several explanations; say which you excluded: no matching activity; the channel off or not supplied (`logs/coverage`); no rule maps to this log's fields; the engine could not read a file or record (compare its count with `records_examined`); filtering; a failed run.
+- **Carved records** (`evtx_carve`) are JSON, not an `.evtx`, and no adapter feeds them to an engine: read the carved XML (`logs/carving`). A whole `.evtx` recovered from a snapshot or a deleted file can be hunted like any log.
 
-**Community rules are tuned for live estates and this is a forensic image.** An
-administrator doing their job trips a dozen. Expect false positives, say how
-many you dismissed and why, and never present a count of detections as a measure
-of anything.
-
-**Start at high and critical, then widen.** Medium and below is where the noise
-lives. If high and critical are empty on a machine you believe was compromised,
-that is worth a sentence: either the technique is not in the ruleset, or the
-channel that would have caught it was off. Check which with `logs/security`.
-
-**Absence of rules is not absence of logs.** The engines only see the channels
-you give them. Sysmon, PowerShell/Operational and the TerminalServices channels
-carry most of what modern rules look for, and a machine without Sysmon will
-never fire a Sysmon rule no matter what happened on it. Say which channels you
-swept.
-
-Neither engine ships with this pack; both are invoked as executables. When the
-host has neither, `sigma_hunt` says so, and the honest report line is that no
-rule-based sweep was performed — not that nothing was found.
-
-The other half of this is `logs/recovery`: rules can only match records that
-still exist. On a machine where the log was cleared, carve the chunks first and
-hunt afterwards.
+Shows: that no loaded rule matched in what was read, or which did. Does not show: that the technique was absent, happened or succeeded, or who did it. Record: engine and version, `ruleset`, files and interval, `min_level`, status, `malformed_lines`, `unknown_levels`.
+Sensitive output: every detection carries the whole matched record, which can hold command lines and script text; run `sigma_hunt` as a job with `secret_output: true` when the logs may.

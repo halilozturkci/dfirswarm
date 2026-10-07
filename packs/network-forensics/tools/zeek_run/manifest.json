@@ -1,26 +1,34 @@
 {
   "name": "zeek_run",
-  "description": "Run Zeek over a capture and return its structured logs: connections, DNS, HTTP, TLS, files and notices, as records rather than as a directory of TSV. The form every later question about a capture wants.",
+  "description": "Run the installed Zeek over a capture and read its logs back as records, with what ran recorded: the Zeek version as printed, the command, whether checksums were validated (-C is passed unless checksum_validation is true), and a policy script the tool writes into out_dir (by default one that loads policy/frameworks/files/hash-all-files; `policies` changes the list, an empty list loads nothing; a policy is a name Zeek resolves, never a path or a script from the evidence) with its path and SHA-256. Whether the installed build has a policy by that name, and which hash functions it computes, is not assumed: hashes_produced says whether any files.log record carries a hash value (hash_fields only names the columns, which a real install can have whether or not they were filled). The reader follows each log's own header (#separator, #set_separator, #empty_field, #unset_field, #fields, #types), \\xNN escapes, sets and vectors as lists, typed numbers, and every time as raw text with a decoded `_utc` beside it; JSON logs are read too. A record that does not fit (a wrong column count, a value that is not its type, bad JSON, no header) is counted with its line and byte offset and kept whole in malformed-<log>.jsonl, and ok is false. Requested logs Zeek did not write are listed apart from logs written with no records; reporter, weird and capture_loss are always summarised (capture_loss exists only if its policy is loaded, so its absence is not a finding). conn.log rows are Zeek connections as Zeek defines them, not application data delivered. Every log stays whole in out_dir, named, and inline records are bounded by limit. SENSITIVE: logs can carry credentials, cookies and request URIs. The directory is private (0700/0600); inline records withhold secret-named fields and the hash of an object under 128 bytes, redact URLs, and scrub every other string except identifiers, hashes, fingerprints, addresses and times (by shape: a short secret in free text is not recognised); run it as a job with secret_output: true. Zeek runs in the tool's own process group (the harness ending the tool ends Zeek; SIGTERM, SIGINT and SIGHUP kill it), and timeout_seconds is held under the manifest's limit. A failing `zeek --version` makes the run not ok.",
   "params": {
     "path": {
       "type": "string",
-      "description": "A .pcap or .pcapng file"
+      "description": "A pcap or pcapng file"
     },
     "out_dir": {
       "type": "string",
-      "description": "Where Zeek's logs land, under work/"
+      "description": "An empty directory under work/ (in a job, under $OUT; work/<your agent id>/name is mapped to $OUT/name) where Zeek runs and its logs land. It is private (0700, files 0600)"
     },
     "logs": {
       "type": "array",
-      "description": "Which logs to return, e.g. [\"conn\",\"dns\",\"ssl\"] (default: all that were written)"
+      "description": "Which logs to return inline, e.g. [\"conn\",\"dns\",\"ssl\"] (default: every log written). A name Zeek did not write is listed in logs_requested_not_written; reporter, weird and capture_loss are summarised regardless"
     },
     "limit": {
       "type": "integer",
-      "description": "Maximum records per log (default 200)"
+      "description": "Maximum records per log returned inline (default 200); the whole log is the file named in its entry, and omitted says how many were not returned"
     },
     "timeout_seconds": {
       "type": "integer",
-      "description": "Give up after this long (default 900)"
+      "description": "Kill Zeek, and everything it started, after this long (10 to 1100 seconds, default 900), so that this tool stops Zeek before the 1200-second limit does"
+    },
+    "policies": {
+      "type": "array",
+      "description": "Zeek policy names to load through the script the tool writes (default [\"policy/frameworks/files/hash-all-files\"]; [] loads none). Names only: a path, a name that climbs out of Zeek's script path or one under inputs/ is refused"
+    },
+    "checksum_validation": {
+      "type": "boolean",
+      "description": "Leave Zeek's checksum validation on (default false: -C is passed, and the answer says checksums were not validated)"
     }
   },
   "requires": [
@@ -29,9 +37,38 @@
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 1200,
-  "example": "{\"path\": \"inputs/capture.pcap\", \"out_dir\": \"work/zeek\", \"logs\": [\"conn\", \"dns\", \"ssl\"]}",
+  "example": "{\"path\": \"inputs/capture.pcap\", \"out_dir\": \"work/zeek\", \"logs\": [\"conn\", \"dns\", \"ssl\", \"files\"]}",
   "by": "maintainer",
-  "at": "2026-09-22T19:00:00.000Z",
-  "version": 2,
-  "sha256": "a78be7707271e84768a757b4e3938681927f103b22e750482193f2570868666a"
+  "at": "2026-10-07T18:00:00.000Z",
+  "version": 4,
+  "sha256": "19dd5e2f62128ec01cc320e788bdebf30b9f79afaaeeb8aab65f6f57a55f1a4d",
+  "use": {
+    "extensions": [
+      ".pcap",
+      ".pcapng",
+      ".cap"
+    ],
+    "magic": [
+      {
+        "offset": 0,
+        "hex": "d4c3b2a1"
+      },
+      {
+        "offset": 0,
+        "hex": "a1b2c3d4"
+      },
+      {
+        "offset": 0,
+        "hex": "4d3cb2a1"
+      },
+      {
+        "offset": 0,
+        "hex": "a1b23c4d"
+      },
+      {
+        "offset": 0,
+        "hex": "0a0d0d0a"
+      }
+    ]
+  }
 }

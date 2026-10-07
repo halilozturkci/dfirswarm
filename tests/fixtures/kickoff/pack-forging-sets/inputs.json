@@ -1,0 +1,65 @@
+{
+  "source": "<EVIDENCE>, <EVIDENCE2>",
+  "sets": [
+    {
+      "name": "evidence",
+      "path": "inputs/evidence",
+      "source": "<EVIDENCE>",
+      "files": 2,
+      "bytes": 76
+    },
+    {
+      "name": "more-evidence",
+      "path": "inputs/more-evidence",
+      "source": "<EVIDENCE2>",
+      "files": 1,
+      "bytes": 29
+    }
+  ],
+  "copied_at": "<TIME>",
+  "files": [
+    {
+      "path": "inputs/evidence/disk.img",
+      "bytes": 17,
+      "sha256": "c9e86bda27cf48f8a5e28710e7eeaeba55bd8f903408fa16783bb7f9acdeee07",
+      "sha1": "9e317fb9fe42df821e7eac096e8bb78302ee9369",
+      "md5": "c83b70491c70c60946e0f91bef7c5b96",
+      "mtime_ms": <MS>,
+      "ctime_ms": <MS>
+    },
+    {
+      "path": "inputs/evidence/logs/auth.log",
+      "bytes": 59,
+      "sha256": "569ea8b69556deccda6e55ada9ecb7627bf1710a1a4696be756f78685092d952",
+      "sha1": "6c1e692d7ae912e9b1e8e888eaf19eda4345c01c",
+      "md5": "1f7043ac7b382bf287c60635284aa133",
+      "mtime_ms": <MS>,
+      "ctime_ms": <MS>
+    },
+    {
+      "path": "inputs/more-evidence/mem.raw",
+      "bytes": 29,
+      "sha256": "f95e16a377e88d04262990151e9fe97778f5e0849e5cca00869e92aba77ee43d",
+      "sha1": "5350c5f529f54761217f3a3d0c12de0d5a08c4c9",
+      "md5": "2c56437e73fd6cff34a772a9a8fc94ff",
+      "mtime_ms": <MS>,
+      "ctime_ms": <MS>
+    }
+  ],
+  "bytes": 105,
+  "enforce": "<HOST>",
+  "guard": "<HOST>",
+  "digests": [
+    "sha256",
+    "sha1",
+    "md5"
+  ],
+  "quarantine": false,
+  "source_checked": {
+    "by": "content",
+    "files": 3,
+    "mismatches": 0,
+    "seconds": <S>
+  },
+  "held": "copy"
+}

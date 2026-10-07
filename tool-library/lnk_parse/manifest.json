@@ -1,17 +1,6 @@
 {
   "name": "lnk_parse",
-  "description": "Parse a Windows LNK (or a dump slice) and return flags, FILETIME timestamps, local/common paths, arguments, and UTF-16 strings.",
-  "use": {
-    "extensions": [
-      ".lnk"
-    ],
-    "magic": [
-      {
-        "offset": 0,
-        "hex": "4c0000000114020000000000c000000000000046"
-      }
-    ]
-  },
+  "description": "Parse a Windows shell link (.lnk), or every link structure found in a slice of a dump, by the MS-SHLLINK layout. Decoded: the flags; the three FILETIMEs (raw decimal and ISO 8601 UTC with seven fractional digits, integer arithmetic); LinkInfo (VolumeID: drive type, serial number as eight hex digits, label; local base path and common path suffix, ANSI and Unicode; CommonNetworkRelativeLink: share, device name, provider type); the string data; the extra blocks it recognises; `linkinfo_target` joins them as the specification defines. Heuristic, not a decode: `idlist_ascii`, `idlist_paths` and the UTF-16 string scan are printable runs searched for in the bytes, not the shell item list. ANSI strings are in a code page the file does not record and are shown as Latin-1. A read that ends inside the structure says so under `problems` and `structure_complete`. A scan carves by the 20-byte header signature: a hit is a candidate. It executes nothing and resolves no target. SENSITIVE, and withheld: a link's arguments and the UTF-16 string scan can hold a command line with a secret in it, so the answer carries neither. For the arguments it gives arguments_present, arguments_chars and arguments_first_token (only a switch name, a program or a script; otherwise null with arguments_first_token_withheld). The string scan answers `utf16_strings`, offsets and lengths with a finding_id, and utf16_string_count; the text is not in the answer. A path-like field (the description, relative path, working directory, icon location, LinkInfo paths and labels, share and device names, the shell item list, an environment or tracker block) is printed unless it has the shape of a secret (a password, token or key assignment, a URL with a password, a token), when a marker holding only its length stands in its place and sensitive_fields_withheld lists the field, its length and the finding_id. The text of all of these goes only to $OUT/lnk-strings.jsonl (mode 0600, one row per finding_id, a long string in pieces) when write_strings is true and the tool runs as a job (run it with secret_output: true); it is refused anywhere else, and a second run in the same job writes lnk-strings-2.jsonl and never replaces the first. An extra block this reader does not know shows its first 128 characters and its length (ascii_inline_cut), the whole of it hex in the values file. A file that is not a link answers its size and nothing of its bytes. The string scan reads a window of the file at a time, so a file of zeros or of one repeated byte costs a pass, not memory.",
   "params": {
     "path": {
       "type": "string",
@@ -27,7 +16,7 @@
     },
     "size": {
       "type": "integer",
-      "description": "Bytes to read (default 4096); structure_complete says whether the link ended inside them"
+      "description": "Bytes to read (default 4096, at most 268435456); structure_complete and problems say whether the link ended inside them"
     },
     "scan": {
       "type": "boolean",
@@ -39,15 +28,35 @@
     },
     "max": {
       "type": "integer",
-      "description": "LNKs shown inline when scanning (default 50); every one found is kept, and when there are more the whole list is written as JSON Lines and named in all_results"
+      "description": "LNKs shown inline when scanning (default 50, an inline page size); every one found is kept, and when there are more the whole list is written as JSON Lines and named in all_results"
+    },
+    "write_strings": {
+      "type": "boolean",
+      "description": "Write the withheld text (arguments, the UTF-16 strings, a secret-shaped field) to $OUT/lnk-strings.jsonl (default false). Refused unless the tool runs as a job, which must be run with secret_output: true; the answer never carries a value"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "UTF-16 string locators shown inline (default 50, an inline page size); every one is kept, and when there are more the whole list is written as JSON Lines and named in utf16_strings_page.all_results"
     }
   },
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 30,
-  "example": "{\"dump\": \"inputs/[UNALLOCATED]\", \"offset\": 313125516, \"size\": 2048}",
+  "example": "{\"dump\": \"work/extracted/unallocated.bin\", \"offset\": 313125516, \"size\": 2048}",
   "by": "s183902",
-  "at": "2026-09-18T22:18:47.468Z",
-  "version": 2,
-  "sha256": "c55d9528dd4140eedb849c7082c182d90f6bff0592a1f4fdff9648b338c6e655"
+  "at": "2026-10-07T12:00:00.000Z",
+  "version": 4,
+  "sha256": "4b5500c574afbb9ba03a36d88aede481e38a5d83c9de8f32f064b52ce1c6f12c",
+  "use": {
+    "extensions": [
+      ".lnk"
+    ],
+    "magic": [
+      {
+        "offset": 0,
+        "hex": "4c0000000114020000000000c000000000000046"
+      }
+    ]
+  },
+  "requires": []
 }

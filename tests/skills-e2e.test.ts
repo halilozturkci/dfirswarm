@@ -23,7 +23,7 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { copyFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -62,8 +62,12 @@ async function makeSandbox(name: string): Promise<Dir> {
   return { root, sessionDir, logFile: join(root, "rpc.log"), traceFile: join(root, "fake-trace.jsonl") };
 }
 
-function args(d: Dir, { noSkills = true, extra = [] as string[] } = {}): string[] {
-  return ["--no-extensions", ...(noSkills ? ["--no-skills"] : []), "--no-prompt-templates", "--no-context-files", "-a", "-e", EXTENSION, "-e", FAKE, "--model", "fake/scripted", "--session-dir", d.sessionDir, "--tools", TOOLS, ...extra];
+/** The Pi arguments of a seat as the kickoff starts it: the run's file and the seat's own, when the kickoff wrote them. */
+function args(d: Dir, { noSkills = true, extra = [] as string[], forging = false } = {}): string[] {
+  // As seat_prompt_args does: the run's file when it has anything in it, then the seat's own.
+  const run = join(d.root, ".pi", "APPEND_SYSTEM.md");
+  const files = existsSync(join(d.root, ".pi", "seat-agent00.md")) ? [...(existsSync(run) && statSync(run).size > 0 ? ["--append-system-prompt", run] : []), "--append-system-prompt", join(d.root, ".pi", "seat-agent00.md")] : [];
+  return ["--no-extensions", ...(noSkills ? ["--no-skills"] : []), "--no-prompt-templates", "--no-context-files", "-a", ...files, "-e", EXTENSION, "-e", FAKE, "--model", "fake/scripted", "--session-dir", d.sessionDir, ...(forging ? [] : ["--tools", TOOLS]), ...extra];
 }
 
 const ENV = {
@@ -101,29 +105,34 @@ async function cleanup(d: Dir): Promise<void> {
   await rm(d.root, { recursive: true, force: true }).catch(() => undefined);
 }
 
-/** The kickoff's own files: the worker prompt as .pi/SYSTEM.md and, with packs, the index as .pi/APPEND_SYSTEM.md written by scripts/skills-section.ts. */
-function kickoffFiles(d: Dir, packDirs: string[], { append = true } = {}): string {
+/**
+ * The kickoff's own files, from the kickoff's own script: the worker prompt as .pi/SYSTEM.md, the run's lines (and the packs'
+ * index) as .pi/APPEND_SYSTEM.md, the seat's id as .pi/seat-agent00.md, over an inputs manifest like a run with evidence has.
+ */
+function kickoffFiles(d: Dir, packDirs: string[], { files = true, forging = false, bare = false } = {}): string {
   copyFileSync(join(REPO, "prompts", "worker-system.md"), join(d.root, ".pi", "SYSTEM.md"));
-  if (!append) return "";
-  const out = execFileSync("node", ["--experimental-strip-types", "--no-warnings", join(REPO, "scripts", "skills-section.ts"), join(d.root, ".pi", "APPEND_SYSTEM.md"), ...packDirs], { encoding: "utf8" });
-  assert.equal(JSON.parse(out).written, true, out);
+  if (!files) return "";
+  if (!bare) writeFileSync(join(d.root, "inputs.json"), JSON.stringify({ source: "/cases/evidence", copied_at: "2026-10-07T00:00:00.000Z", files: [{ path: "inputs/a.txt", bytes: 5, sha256: "0".repeat(64) }], bytes: 5, enforce: "auto", guard: "none" }));
+  const out = execFileSync("node", ["--experimental-strip-types", "--no-warnings", join(REPO, "scripts", "seat-prompt.ts"), "--sandbox", d.root, ...(bare ? [] : ["--self-compact"]), ...(forging ? ["--forging"] : []), "--seat", "agent00", ...packDirs.flatMap((p) => ["--pack-dir", p])], { encoding: "utf8" });
+  assert.equal(JSON.parse(out).written, packDirs.length > 0, out);
   return out;
 }
 
 type Cycle = { turns: FakeTurn[]; resumedAt: number; events: RpcEvent[]; handoff: RpcEvent; rows: ReturnType<typeof trace> };
 
 /** One seat, scripted: three skill calls, the climb to the compact line, the hand-off, one more skill call, the result. */
-async function runCycle(d: Dir, packDirs: string[]): Promise<Cycle> {
+async function runCycle(d: Dir, packDirs: string[], { env = {} as Record<string, string>, forging = false, forge = false } = {}): Promise<Cycle> {
   const pre = [
+    ...(forge ? [{ name: "make_tool", arguments: { name: "count_lines", description: "Count lines", runtime: "python3", script: "print(1)\n", params: {} } }] : []),
     { name: "skill", arguments: { id: "evidence/one" } },
     { name: "skill", arguments: { id: "evidence/one" } },
     { name: "skill", arguments: { id: "pack-b:shared/dup" } },
   ];
   const after = [{ name: "skill", arguments: { id: "evidence/one" } }];
   const client = new RpcClient({
-    args: args(d),
+    args: args(d, { forging }),
     cwd: d.root,
-    env: { ...ENV, SWARM_PACK_DIRS: packDirs.join(":"), SC_FAKE_TRACE: d.traceFile, SC_FAKE_PRE_STEPS: JSON.stringify(pre), SC_FAKE_AFTER_STEPS: JSON.stringify(after) },
+    env: { ...ENV, ...(forging ? { SWARM_TOOL_FORGING: "1", SWARM_TOOLS: TOOLS } : {}), ...env, SWARM_PACK_DIRS: packDirs.join(":"), SC_FAKE_TRACE: d.traceFile, SC_FAKE_PRE_STEPS: JSON.stringify(pre), SC_FAKE_AFTER_STEPS: JSON.stringify(after) },
     logFile: d.logFile,
   });
   try {
@@ -150,7 +159,9 @@ test("the kickoff's index is in the first prompt and in every prompt after a com
   const { a, b } = await twoPacks(packsRoot);
   try {
     kickoffFiles(d, [a, b]);
-    const { turns, resumedAt, events, handoff, rows } = await runCycle(d, [a, b]);
+    mkdirSync(join(d.root, "operator-agent"), { recursive: true });
+    writeFileSync(join(d.root, "operator-agent", "APPEND_SYSTEM.md"), "OPERATOR-GLOBAL-APPEND: be brief, call me Boss.\n");
+    const { turns, resumedAt, events, handoff, rows } = await runCycle(d, [a, b], { env: { PI_CODING_AGENT_DIR: join(d.root, "operator-agent") } });
 
     // 1. Every request the seat made carried the section: the first prompt, and each one after the compaction.
     assert.ok(turns.length >= 8, `the scripted seat made ${turns.length} requests`);
@@ -167,8 +178,19 @@ test("the kickoff's index is in the first prompt and in every prompt after a com
     assert.ok((turns[resumedAt]!.messages ?? 0) < biggest, "the history really was compacted: the section did not survive by the messages surviving");
     assert.ok(turns[resumedAt]!.systemPrompt!.includes("You are one worker in a local swarm."));
     assert.equal(turns[resumedAt]!.systemPrompt!.split(SKILLS_SECTION_TITLE).length - 1, 1);
-    // What Pi sent for the hand-off's run is not the forced prompt: the harness's per-run lines are in the first run's prompt only.
-    t.diagnostic(`forced lines in the first prompt: ${/Your assigned id is agent00/.test(first.systemPrompt!)}; in the first request after the hand-off: ${/Your assigned id is agent00/.test(turns[resumedAt]!.systemPrompt!)}`);
+    // The run a hand-off starts is not the forced prompt's: what holds for the whole run is in Pi's own prompt, in every request, once.
+    const SEAT = "Your assigned id is agent00. Use it on every post and claim. If done/SWARM_DONE exists on this turn, call done and stop.";
+    const INPUTS = "Read-only inputs: 1 file(s), 1 KB under inputs/ (from /cases/evidence).";
+    const COMPACT = "Self-compaction is on. Your context has a ceiling for this model";
+    for (const [name, line] of [["the seat's id and the stop rule", SEAT], ["the read-only inputs rule", INPUTS], ["the self-compaction mechanics", COMPACT]] as const) {
+      const counts = turns.map((tn) => tn.systemPrompt!.split(line).length - 1);
+      assert.deepEqual(counts.filter((n) => n !== 1), [], `${name}: in every request exactly once (the forced prompt did not say it again, and the hand-off's run kept it): ${counts.join(",")}`);
+    }
+    // What changes stays in the forced prompt: this pane's measured guard is said to the first run, not to the hand-off's.
+    assert.match(first.systemPrompt!, /This pane has no kernel guard on inputs\/ \(measured when it started\)/);
+    assert.ok(!/measured when it started/.test(turns[resumedAt]!.systemPrompt!), "a measurement is a fact about the first run: it is not repeated into a run it may no longer hold for");
+    // An operator's own global APPEND_SYSTEM.md is not what a seat gets: the kickoff's flags replace Pi's discovery.
+    assert.ok(turns.every((tn) => !tn.systemPrompt!.includes("OPERATOR-GLOBAL-APPEND")), "the decoy in the operator's agent directory never reached a request");
 
     // 2. The tool through Pi: plain Markdown, then "already", then another pack's copy, then the body again after the compaction.
     const results = skillResults(events);
@@ -221,9 +243,9 @@ test("two skill calls in one assistant message: Pi runs them at the same time, a
   const packsRoot = await mkdtemp(join(tmpdir(), "skills-e2e-packs-"));
   const { a, b } = await twoPacks(packsRoot);
   const batch = [[{ name: "skill", arguments: { id: "evidence/one" } }, { name: "skill", arguments: { id: "evidence/one" } }, { name: "skill", arguments: { id: "evidence/two" } }]];
+  kickoffFiles(d, [a, b]);
   const client = new RpcClient({ args: args(d), cwd: d.root, env: { ...ENV, SWARM_PACK_DIRS: `${a}:${b}`, SC_FAKE_TRACE: d.traceFile, SC_FAKE_PRE_STEPS: JSON.stringify(batch) }, logFile: d.logFile });
   try {
-    kickoffFiles(d, [a, b]);
     await client.request({ type: "prompt", message: "Start the scripted work." });
     const results = await skillResultsAfter(client, 3);
     assert.equal(results.length, 3, results.join("\n---\n"));
@@ -281,6 +303,116 @@ test("a restart on the same session knows the body the session holds, and counts
   }
 });
 
+test("tool forging: the rule is in every request once, what has been forged so far is in the hand-off header", async (t) => {
+  if (!haveCli()) {
+    t.skip("pi is not on PATH");
+    return;
+  }
+  const d = await makeSandbox("forging");
+  const packsRoot = await mkdtemp(join(tmpdir(), "skills-e2e-packs-"));
+  const { a, b } = await twoPacks(packsRoot);
+  try {
+    kickoffFiles(d, [a, b], { forging: true });
+    const { turns, resumedAt, handoff } = await runCycle(d, [a, b], { forging: true, forge: true });
+    const FORGE = "Tool forging is on for this swarm. If the goal needs a tool nobody has";
+    assert.ok(resumedAt > 0);
+    assert.deepEqual(turns.map((tn) => tn.systemPrompt!.split(FORGE).length - 1).filter((n) => n !== 1), [], "the forging rule is in every request exactly once, the hand-off's run included");
+    assert.match(turns[0]!.systemPrompt!, /Nothing has been forged yet\./, "the first run is told what has been forged so far");
+    // The inventory changes, so the prompt of the run a hand-off starts cannot carry it: the header does.
+    assert.match(messageText(handoff.message), /Tool forging is on\. Forged so far: count_lines \(by agent00, v1\)\. Call `tools` to see them\./);
+  } finally {
+    await cleanup(d);
+    await rm(packsRoot, { recursive: true, force: true });
+  }
+});
+
+/** The run's budget with its cap already passed (a token cap: the scripted model reports tokens, not dollars), under a stop policy. */
+function passCap(d: Dir, policy: "cap-pause" | "cap-stop"): void {
+  const file = join(d.root, "budget.json");
+  const budget = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+  writeFileSync(file, JSON.stringify({ ...budget, stop_policy: policy, cap_usd: 0, cap_tokens: 1 }));
+}
+
+test("a cap that was hit reaches the run a hand-off starts in the words of the run's stop policy: under cap-pause the seat is not told to call done", async (t) => {
+  if (!haveCli()) {
+    t.skip("pi is not on PATH");
+    return;
+  }
+  const d = await makeSandbox("cap-pause");
+  const packsRoot = await mkdtemp(join(tmpdir(), "skills-e2e-packs-"));
+  const { a, b } = await twoPacks(packsRoot);
+  try {
+    kickoffFiles(d, [a, b]);
+    passCap(d, "cap-pause");
+    const { events, handoff } = await runCycle(d, [a, b]);
+    const header = messageText(handoff.message);
+    // The steer the seat was given by the harness when the cap was reached, and the header: the same words.
+    const steer = eventsOfType(events, "message_start").map((e) => messageText(e.message)).find((m) => /^The run's token cap \(.* of 1\) is reached: it pauses in 2 minutes/.test(m));
+    assert.ok(steer, "the harness steered the seat for the cap it passed (cap-pause)");
+    // The same words; the figure in the parentheses is the one when each was said.
+    const words = (m: string) => m.replace(/\(.*? of 1\)/, "(N of 1)");
+    const said = /The run's token cap \(.*? of 1\) is reached:[^\n]*/.exec(header)?.[0];
+    assert.ok(said, `the hand-off header carries the cap rule:\n${header}`);
+    assert.equal(words(said!), words(steer!), "the hand-off header says what the steer said");
+    assert.match(header, /do not call done unless the finish line is met/);
+    assert.ok(!header.includes("Call done with reason cannot_complete") && !header.includes("cannot_complete"), "no order to call done");
+    assert.match(header, /do not end your turn\. Work on until SWARM\.md's definition of done is met/, "the seat works on while the run waits for its operator");
+  } finally {
+    await cleanup(d);
+    await rm(packsRoot, { recursive: true, force: true });
+  }
+});
+
+test("under cap-stop the header orders the stop and does not also say to work on", async (t) => {
+  if (!haveCli()) {
+    t.skip("pi is not on PATH");
+    return;
+  }
+  const d = await makeSandbox("cap-stop");
+  const packsRoot = await mkdtemp(join(tmpdir(), "skills-e2e-packs-"));
+  const { a, b } = await twoPacks(packsRoot);
+  try {
+    kickoffFiles(d, [a, b]);
+    passCap(d, "cap-stop");
+    const { handoff } = await runCycle(d, [a, b]);
+    const header = messageText(handoff.message);
+    assert.ok(header.includes("Swarm token cap hit. Call done with reason cannot_complete and stop. Do not start new work."), header);
+    assert.ok(!header.includes("spent_usd="), "no dollar figures for a token cap");
+    assert.match(header, /The swarm is ending, as the lines above say: do what they say and start nothing new\./);
+    assert.ok(!header.includes("Work on until") && !header.includes("do not end your turn"));
+  } finally {
+    await cleanup(d);
+    await rm(packsRoot, { recursive: true, force: true });
+  }
+});
+
+test("when nothing applies the run's file is empty and not passed: the prompt carries the seat's line and no blank lines before it", async (t) => {
+  if (!haveCli()) {
+    t.skip("pi is not on PATH");
+    return;
+  }
+  const d = await makeSandbox("bare");
+  const agentDir = await mkdtemp(join(tmpdir(), "skills-e2e-agentdir-"));
+  writeFileSync(join(agentDir, "APPEND_SYSTEM.md"), "OPERATOR-GLOBAL-APPEND: be brief.\n");
+  try {
+    kickoffFiles(d, [], { bare: true });
+    assert.equal(statSync(join(d.root, ".pi", "APPEND_SYSTEM.md")).size, 0, "the run's file is there and empty");
+    const client = new RpcClient({ args: args(d), cwd: d.root, env: { ...ENV, SWARM_SELF_COMPACT: "", PI_CODING_AGENT_DIR: agentDir, SC_FAKE_TRACE: d.traceFile }, logFile: d.logFile });
+    try {
+      await client.request({ type: "prompt", message: "Start the scripted work." });
+      for (let i = 0; i < 100 && fakeTurns(d).length === 0; i++) await new Promise((r) => setTimeout(r, 100));
+      const prompt = fakeTurns(d)[0]?.systemPrompt ?? "";
+      assert.ok(prompt.includes("<addendum>\nYour assigned id is agent00."), `the addendum opens with the seat's line:\n${prompt.slice(prompt.indexOf("<addendum>"), prompt.indexOf("<addendum>") + 200)}`);
+      assert.ok(!prompt.includes("OPERATOR-GLOBAL-APPEND"), "and the operator's global file, which an explicit source replaces, is not in it");
+    } finally {
+      await client.close();
+    }
+  } finally {
+    await cleanup(d);
+    await rm(agentDir, { recursive: true, force: true });
+  }
+});
+
 test("without the kickoff's file the extension gives the first run the index; the run a hand-off starts is Pi's own prompt", async (t) => {
   if (!haveCli()) {
     t.skip("pi is not on PATH");
@@ -290,7 +422,7 @@ test("without the kickoff's file the extension gives the first run the index; th
   const packsRoot = await mkdtemp(join(tmpdir(), "skills-e2e-packs-"));
   const { a, b } = await twoPacks(packsRoot);
   try {
-    kickoffFiles(d, [a, b], { append: false });
+    kickoffFiles(d, [a, b], { files: false });
     const { turns, resumedAt, rows } = await runCycle(d, [a, b]);
     assert.ok(turns[0]!.systemPrompt!.includes(SKILLS_SECTION_TITLE), "the fallback put the index in the forced prompt of the first run");
     assert.equal(rows.find((r) => r.tool === "skills_index")!.result.source, "extension");
