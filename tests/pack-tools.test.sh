@@ -476,7 +476,7 @@ with zipfile.ZipFile(sys.argv[1], "w") as z:
 EOF
 docp() { (cd "$OUT/run" && printf '{"path":"work/macro.docm","extract_to":"%s"}' "$1" | "$PY" "$ROOT/packs/reverse-engineering/tools/doc_probe/run.py"); }
 docp work/doc > "$OUT/doc.json" || fail "doc_probe did not extract into work/: $(cat "$OUT/doc.json")"
-[[ "$(jq -r '.parts[] | select(.carries_code) | .extracted_to' "$OUT/doc.json")" == work/doc/000001-word_vbaProject.bin && -s "$OUT/run/work/doc/000001-word_vbaProject.bin" ]] \
+[[ "$(jq -r '.parts[] | select(.name_matches_code_part) | .extracted_to' "$OUT/doc.json")" == work/doc/000001-word_vbaProject.bin && -s "$OUT/run/work/doc/000001-word_vbaProject.bin" ]] \
   || fail "doc_probe should extract the macro project under extract_to: $(cat "$OUT/doc.json")"
 mkdir -p "$OUT/run/work/doc2"; ln -s ../../inputs/planted-part "$OUT/run/work/doc2/000001-word_vbaProject.bin"
 docp work/doc2 > "$OUT/doc2.json" 2>&1 && fail "doc_probe wrote through a link in extract_to: $(cat "$OUT/doc2.json")"
