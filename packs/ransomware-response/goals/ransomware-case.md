@@ -1,28 +1,38 @@
 # A ransomware incident
 
-Establish what happened, in the order the organisation needs it: scope, then
-what left, then how they got in, then what the encryptor did.
+Establish what happened. Scope, possible exfiltration, entry and spread, the
+encryptor and recovery impairment can be worked in parallel, in the order set by
+ongoing harm and by how fast the evidence goes; the questions below are not a
+sequence.
 
-Read the skill index with `skill()` first. `scope/first-hour` sets the order and
-explains why exfiltration is question three and not question seven.
+Read the skill index with `skill()` first. `scope/first-hour` sets the initial
+preservation and scoping method; pursue the questions below according to
+evidence volatility and incident impact.
 
 ## Questions
 
-1. Scope: which machines, what proportion of each is encrypted, and the window
-   the modification times bracket on each one.
-2. Exfiltration: what left, by what route, how much, and when — stated as one of
-   three positions: evidenced; not evidenced with the logging present; not
-   evidenced with the logging absent.
-3. Entry and dwell: how the operator first got in, and the earliest artefact you
-   can tie to them. The encryption is the last event, not the first.
-4. Spread: how the encryptor reached each machine, and from which one.
-5. Destruction: shadow copies, backups, catalogues, boot recovery and stopped
-   services — what was destroyed deliberately, as distinct from encrypted.
-6. Identification: the family and affiliate, with the note, the file marker and
-   the binary agreeing, or a statement of which of them you have.
-7. Recovery: what was never encrypted, what survives elsewhere, what is only
-   partially encrypted, and what is genuinely gone.
-8. Whether the operator may still have access, as a position with reasons.
+1. Scope: identify the affected assets and services, distinguish confirmed
+   effects from candidates, and state the population examined and the timing
+   uncertainty.
+2. Exfiltration: establish what the evidence supports about access, staging,
+   transfer, content, route, volume and timing; state an established, partial,
+   bounded-negative or not-determinable conclusion with its coverage and
+   detection limits.
+3. Entry and dwell: how the adversary first got in, if the evidence shows it, and
+   the earliest artefact you can tie to that activity. The earliest observed
+   artefact is not the start, and encryption need not be the last event.
+4. Spread: how the encryptor reached each machine and from which one, as far as
+   the evidence shows.
+5. Recovery impairment: shadow copies, backups, catalogues, boot recovery and
+   stopped services: what was altered, attempted, reported successful and
+   independently verified lost, as distinct from what was encrypted.
+6. Identification: state the supported family or variant classification, the
+   conflicting evidence and the attribution limits; an affiliate may remain
+   undetermined.
+7. Recovery: distinguish plausible routes, tested recovery results and
+   operationally validated restoration, naming the unavailable evidence and what
+   could change the assessment.
+8. Whether the adversary may still have access, as a position with reasons.
 9. The timeline in UTC, and what evidence was lost to the response itself.
 
 ## How to divide the work
@@ -43,9 +53,13 @@ own. The sign-off is these acts, not a post. Nothing else is assigned.
 ## Definition of done
 
 `work/report.md` exists and answers questions 1 to 9 under the headings `## 1.`
-through `## 9.`. Answer 2 states which of the three exfiltration positions
-applies. Answer 8 is a position, not a shrug. No credential, wallet address or
-victim identifier appears in the body; identifiers go in an appendix. The
+through `## 9.`. Answer 2 gives its conclusion on a line of its own, in the form
+`Exfiltration conclusion: <outcome>`, the outcome one of established, partial,
+bounded negative or not determinable, and states the coverage and the detection
+limits it rests on. Answer 8 is a position, not a shrug. No credential, key,
+wallet address, victim identifier or hash of a secret appears in the report: it
+cites where each is (the note id and offset, and the sealed job output that holds
+it), and quotes a value only where a question asks for that value by name. The
 ledger holds one `answer` entry per question (`question:1` to `question:9`) and
 one each for `summary` and `narrative`, with every defect the answers check
 names fixed or named by a limitation, and the critic, who wrote none of them,
@@ -57,7 +71,7 @@ has recorded `attest` or `dispute` on each answer, saying what they verified.
 - `test -f work/report.md`
 - `for n in 1 2 3 4 5 6 7 8 9; do grep -q "^## $n\." work/report.md || exit 1; done`
 - `grep -qiE 'UTC' work/report.md`
-- `grep -qiE 'not evidenced|evidenced' work/report.md`
+- `awk '/^## 2\./,/^## 3\./' work/report.md | grep -qiE 'exfiltration conclusion:[*_ ]*(established|partial|bounded[ -]negative|not[ -]determinable)'`
 - `test "$(grep -c '"kind":"event"' ledger/entries.jsonl)" -ge 8`
 - `node --experimental-strip-types --no-warnings "$SWARM_HARNESS/scripts/check-answers.ts" --sections 1,2,3,4,5,6,7,8,9,summary,narrative`
 - `grep '"tool":"inputs_check"' traces/events.jsonl | tail -1 | grep -q '"content_ok":true'`

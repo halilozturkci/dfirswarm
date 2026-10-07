@@ -1,14 +1,22 @@
 {
   "name": "recovery_key_scan",
-  "description": "Sweep a directory tree or a blob for key material a case can use: BitLocker 48-digit recovery passwords, BitLocker key files, LUKS and SSH private keys, keychain and key database files, and the file names people save a recovery key under.",
+  "description": "Locate key material a case can use and say where it is, not what it is: BitLocker 48-digit recovery passwords (ASCII and UTF-16LE text) by file, offset, length and a structure check; private-key headers by type and offset; and the names key files and credential stores are saved under (a name is a lead, not a read of the file). No value, fragment, masked shape or digest of a value is ever in the answer or in the files it names, and a path component shaped like a recovery password (a file named after the key) is withheld from every printed path. A heuristic locator, not a verdict: a value is found unless it is glued to more digits (\"key_<value>\" is found, \"<value>7\" is not); passes_structure_check means eight groups divisible by 11 (a plausible transcription), not that the value opens any volume; a file is read up to max_bytes_per_file (default 8 MiB, streamed) and coverage lists every file that failed, was skipped (links, special files, a top-level proc, sys or dev) or was read only in part, with the bytes not read. It is not OCR, does not unpack archives or containers and does not read key stores. SENSITIVE: it reaches secret material, so run it as a job with secret_output: true. write_values: true (refused outside a job) creates $OUT/recovery-passwords.jsonl, mode 0600, before it scans (a file or link already there is refused by name) and writes the values, and the real paths, to it and nowhere else; with nothing found it stays empty and the answer says written: 0.",
   "params": {
     "path": {
       "type": "string",
-      "description": "A directory to walk, or a single blob to sweep"
+      "description": "A directory to walk, or a single file to sweep. Links and special files inside it are not followed or read, and are listed"
     },
     "max_bytes_per_file": {
       "type": "integer",
-      "description": "How much of each file to read (default 8388608)"
+      "description": "How much of each file to read (default 8388608, at least 1024); reading is streamed, so a larger value costs time, not memory. A file larger than this is listed as partial with the bytes not read"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Findings, name hints and coverage exceptions shown inline (default 200 each); all of them are counted, and when there are more the whole list is written as JSON Lines and named in pages.<list>.all_results"
+    },
+    "write_values": {
+      "type": "boolean",
+      "description": "Write each recovery password found to $OUT/recovery-passwords.jsonl (default false). Refused unless the tool runs as a job, which must be run with secret_output: true; the file is created first and a file or link already there is refused; the answer never carries a value"
     }
   },
   "runtime": "python3",
@@ -16,7 +24,16 @@
   "timeout_seconds": 600,
   "example": "{\"path\": \"work/extracted/Users\"}",
   "by": "maintainer",
-  "at": "2026-09-22T21:00:00.000Z",
-  "version": 1,
-  "sha256": "408042b611991da37e7a1fd65571a5d8980fd3c1ee2da9bd4b7f642205bb4925"
+  "at": "2026-10-07T12:00:00.000Z",
+  "version": 2,
+  "sha256": "2c6b6d0567efa945b70a88e3982f611cf6c2089869118616f848f3305c0c147c",
+  "use": {
+    "extensions": [
+      ".bek"
+    ],
+    "names": [
+      "*recovery*key*",
+      "BitLocker Recovery Key*"
+    ]
+  }
 }

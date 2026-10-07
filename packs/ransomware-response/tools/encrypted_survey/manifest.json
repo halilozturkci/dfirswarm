@@ -1,22 +1,34 @@
 {
   "name": "encrypted_survey",
-  "description": "Walk a tree and measure what was actually encrypted: which files, by what proportion, with the appended extension, the entropy at the head and across the file, the trailing bytes that often identify the family, and the clustering of modification times that brackets when the encryption ran.",
+  "description": "Survey an extracted directory tree for ransomware candidates and say what was and was not read. A file is a CANDIDATE when its name ends in an extension that is not a known one after a known one, with anything between them (report.docx.locked, report.docx.id[AB12CD34].locked), or its first 64 KiB reads at 7.5 bits per byte or more; a compressed archive reads the same way, so a candidate is a lead and each row says why. The first `sample` candidates of more than 4096 bytes, in sorted traversal order, are profiled: entropy of three 64 KiB windows (head, middle, end, with their offsets and lengths; they overlap in a small file and intermittent encryption can fall between them) and the last `tail_bytes` bytes. It does NOT measure how much of any file was encrypted, whether a file is whole, which family wrote it or when anything ran: `noncandidate` means only that neither heuristic matched, a file of 4096 bytes or less is `unmeasured` (it has no entropy measurement; one whose name already makes it a candidate stays a candidate, with entropy_unmeasured), a file it could not read is `read_failed`, and a file not read because the read budget was spent is `unmeasured`; each has its own count and bytes, and `complete` says `partial` with the reasons when anything was left out. Modification times are counted by hour twice (each table's overflow past its cap is counted on its own), for every regular file and for the candidates, as the filesystem's mtime as collected (an extraction or copy changes it), never as an execution time. Bytes shared by the sampled tails are an observation pending a reference match, not a family marker. The name of a file named like a note (the pattern ransom_note_scan uses; listed in note_name_candidates when under 100000 bytes) that holds an identifier-shaped token (eight or more letters and digits, both kinds) is withheld from every row and counted in paths_withheld, as ransom_note_scan withholds it; every other name, an encrypted file's included, is printed as it is. It reads only regular files, follows no link, walks in name order and skips a top-level proc, sys or dev (exclude_top_level_dirs) saying so; every exclusion, link, special file and failure is listed. The census (one row per entry, ending in a receipt row), every candidate and every table longer than `limit` are written whole as JSON Lines under tool-output and named in pages. It takes a directory tree, so it has no `use` triggers. Exit 0 means the survey ran; completeness is `complete`.",
   "params": {
     "root": {
       "type": "string",
-      "description": "A directory to survey"
+      "description": "A directory to survey (an extracted tree, not an image)"
     },
     "sample": {
       "type": "integer",
-      "description": "How many files to read in full for the entropy profile (default 200)"
+      "description": "Maximum number of candidate files of more than 4096 bytes to profile (head, middle and end windows, and a trailing-byte sample); default 200, at most 10000. Files are not read in full, and the selection is not random: the first candidates in sorted traversal order. Candidates beyond it are listed as not profiled (sample_limit)"
     },
     "tail_bytes": {
       "type": "integer",
-      "description": "Trailing bytes to report per sampled file (default 32)"
+      "description": "Trailing bytes to report per profiled candidate (default 32, 0 to 1024). They are raw bytes of the file"
     },
     "limit": {
       "type": "integer",
-      "description": "Preview rows returned inline when the job OUT directory can hold the complete encrypted-files.jsonl (default 200); ignored when no lossless output directory exists"
+      "description": "Rows shown inline per table (default 200); every row is counted, and a table with more is written whole as JSON Lines and named in pages.<table>.all_results"
+    },
+    "read_budget_bytes": {
+      "type": "integer",
+      "description": "The most this survey reads in all, head windows and profiles together (default 4294967296, at least 4096). When it is spent the remaining files are `unmeasured` (read_budget_spent) and the survey is partial; raise it for a larger tree"
+    },
+    "exclude_top_level_dirs": {
+      "type": "array",
+      "description": "Directory names skipped at the top of the root only (default [\"proc\", \"sys\", \"dev\"]: the pseudo-filesystems of a Linux root). Each is listed as an exclusion; [] excludes nothing, and a directory of that name deeper in the tree is always read"
+    },
+    "census": {
+      "type": "boolean",
+      "description": "Write a row for every file visited (default true). false keeps rows for candidates, unmeasured and unreadable files and every entry skipped, excluded or not read, and counts the files that matched nothing"
     }
   },
   "runtime": "python3",
@@ -24,7 +36,7 @@
   "timeout_seconds": 900,
   "example": "{\"root\": \"work/extracted/Users\"}",
   "by": "maintainer",
-  "at": "2026-09-22T23:00:00.000Z",
-  "version": 1,
-  "sha256": "6b927ef96707f6c6f21535fee50fb125e8ac47d8574ffa134477447069de5fe3"
+  "at": "2026-10-07T12:00:00.000Z",
+  "version": 2,
+  "sha256": "ca59b84f8ae361438c805739914ed1a72e7be15360858b721ad00caf0cb3d327"
 }
