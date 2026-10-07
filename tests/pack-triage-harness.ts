@@ -103,6 +103,41 @@ export function kapeCopyRow(source: string, destination: string, size = 1): stri
   ].join(",");
 }
 
+/** The whole of a table an answer names (a path as the answer shows it: under work/<agent>/tool-output, or store/jobs/<job>/out/...). */
+export async function tableRows(cwd: string, info: Json, outName = "out"): Promise<Json[]> {
+  assert.ok(info.all_results, "the answer names the file that holds the whole table");
+  const shown: string = info.all_results;
+  const path = shown.startsWith("store/jobs/") ? join(cwd, outName, shown.split("/out/")[1]) : join(cwd, shown);
+  return readRows(path);
+}
+
+/** True when a file name differing only in case is the same file here (APFS, as the macOS host mode runs). */
+export async function caseInsensitiveVolume(dir: string): Promise<boolean> {
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, "case-probe-a"), "x");
+  return exists(join(dir, "CASE-PROBE-A"));
+}
+
+/** Fail when any 6-character window of a secret is in the text: the secret is not there, whole or in part. */
+export function assertAbsent(text: string, secrets: Record<string, string>, where: string): void {
+  for (const [name, secret] of Object.entries(secrets)) {
+    for (let i = 0; i + 6 <= secret.length; i++) assert.ok(!text.includes(secret.slice(i, i + 6)), `${where}: ${name} shows ${JSON.stringify(secret.slice(i, i + 6))}`);
+  }
+}
+
+// A UAC log line as UAC 3.4.0 writes it (lib/log_msg.sh: date, "%Y-%m-%d %H:%M:%S %z", level, message) and as 2.9.1 writes it.
+export const uac3 = (level: "DBG" | "INF" | "ERR" | "CMD", message: string, second = 0): string => `2026-02-14 09:12:${String(second).padStart(2, "0")} +0000 ${level} ${message}`;
+export const uac2 = (level: "DEBUG" | "INFO" | "WARNING" | "ERROR" | "COMMAND", message: string, second = 0): string => `2026-02-14 09:12:${String(second).padStart(2, "0")} +0000 ${level} ${message}`;
+
+/** Velociraptor 0.77.2 container files as its source writes them (reporting/container.go: uploads.json rows have Timestamp, started,
+ *  vfs_path, _Components, file_size, uploaded_size and Type, and a failed upload is not in the file; vql/tools/collector/fixtures: a
+ *  result row holds the upload record, with Error on a failure; log.json rows have _ts, client_time, level and message). */
+export const veloUploadsRow = (path: string, size = 11, stored = 11): string =>
+  JSON.stringify({ Timestamp: 1602103388, started: "2020-10-07 20:03:08 +0000 UTC", vfs_path: path, _Components: path.split("/").filter(Boolean), file_size: size, uploaded_size: stored, Type: "" });
+export const veloResultRow = (path: string, error?: string): string =>
+  JSON.stringify({ Upload: { Path: path, Size: 11, UploadId: 0, StoredSize: error ? 3 : 11, StoredName: `/uploads/auto/${path}`, Components: ["uploads", "auto", ...path.split("/").filter(Boolean)], ...(error ? { Error: error } : { sha256: "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9" }) } });
+export const veloLogRow = (level: string, message: string): string => JSON.stringify({ _ts: 1602103388, client_time: 1602103388, level, message: message + "\n" });
+
 export async function readRows(path: string): Promise<Json[]> {
   const text = await readFile(path, "utf8");
   return text.trimEnd() === "" ? [] : text.trimEnd().split("\n").map((l) => JSON.parse(l));

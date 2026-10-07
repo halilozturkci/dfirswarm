@@ -46,17 +46,44 @@ t = ns["Table"]("t", 1, always=True)
 t.add({"p": bad})
 t.add({"p": "plain"})
 out["table"] = t.finish()
+first = scrub("tok ghp_Zq7Svb9Kt00123456789abcdefghijKLMNOP end")
+out["same_id"] = scrub("tok ghp_Zq7Svb9Kt00123456789abcdefghijKLMNOP end") == first
+out["keyed"] = ns["scrub_all"]({"ghp_Zq7Svb9Kt00123456789abcdefghijKLMNOP": "v"})
 print(json.dumps(out))
 `;
 
-const SHAPED = [
-  "recovery 123456-234567-345678-456789-567890-678901-789012-890123 key",          // eight groups of six digits
-  `${"AKIA"}IOSFODNN7EXAMPLE used`,                                                  // the example access key id AWS documents
-  "ghp_" + "a".repeat(36),                                                           // a GitHub personal access token: ghp_ and 36 characters
-  "xoxb-1234567890-abcdefghij",                                                      // a Slack bot token prefix
-  "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVP",                    // a JSON web token: two base64url JSON parts and a signature
-  "-----BEGIN OPENSSH PRIVATE KEY-----",
-  "fetch http://alice:Pa55w0rd@files.example.test/x",
+// Each shape written from the format it names, never from a tool's output. The last element of a pair is the part that must not survive.
+const PEM_BODY = "MIIEowIBAAKCAQEAq7ZkP3rT9vLmN2xWc5YhB8dF1gJ4sUo6aEi0";
+const SHAPED: Array<[string, string]> = [
+  ["recovery 123456-234567-345678-456789-567890-678901-789012-890123 key", "234567-345678"],               // eight groups of six digits
+  ["recovery 123456 234567 345678 456789 567890 678901 789012 890123", "234567 345678"],
+  ["recovery 123456234567345678456789567890678901789012890123 key", "234567345678"],                         // no separator
+  ["AKIAIOSFODNN7EXAMPLE used", "IOSFODNN7"],                                                             // the example access key id AWS documents
+  ["ghp_" + "Zq7Svb9Kt00123456789abcdefghijKLMNOP", "Zq7Svb9Kt0"],                                            // a GitHub personal access token: ghp_ and 36 characters
+  ["backup_ghp_" + "Zq7Svb9Kt00123456789abcdefghijKLMNOP", "Zq7Svb9Kt0"],                                     // a token after an underscore
+  ["my_sk-" + "Zq7Svb9Kt00123456789abcdef", "Zq7Svb9Kt0"],
+  ["xoxb-1234567890-abcdefghij", "1234567890"],                                                           // a Slack bot token prefix
+  ["https://hooks.slack.com/services/T0000000/B0000000/XXXXXXXXXXXXXXXX", "XXXXXXXXXX"],
+  ["eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVP", "dBjftJeZ4C"],                         // a JSON web token
+  ["eyJhbGciOiJSQS1PQUVQIiwiZW5jIjoiQTI1NkdDTSJ9.OKOawDo13gRp2ojaHV7LFpZcgV7T6DVZKTyKOMTYUm.48V1_ALb6US04U3b.5eym8TW_c8SuK0ltJ3rpYIzOeDQz7TALvtu6UG9oMo4.XFBoMYUZodetZdvTiFvSkQ", "OKOawDo13g"],   // a JWE: five parts
+  [`-----BEGIN OPENSSH PRIVATE KEY-----\n${PEM_BODY}\n-----END OPENSSH PRIVATE KEY-----`, PEM_BODY.slice(0, 20)],  // the body and the END line go with the header
+  [`-----BEGIN RSA PRIVATE KEY----- ${PEM_BODY} and no end line`, PEM_BODY.slice(0, 20)],                   // no END: to the end of the field
+  ["-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQOYBF" + "abcdefghijklmnop", "lQOYBFabcd"],
+  ["PuTTY-User-Key-File-3: ssh-ed25519\nEncryption: none\nPrivate-Lines: 1\nAAAAIFxxPuttyBodyxx\nPrivate-MAC: 0123456789abcdef", "AAAAIFxxPu"],
+  ["fetch http://alice:Pa55w0rd@files.example.test/x", "Pa55w0rd"],
+  ["connect ftp://svc:Wint3r@Synth77@10.0.0.1/drop", "Synth77"],                                              // a password that holds an @
+  ["get https://admin:Pa/ss9Word@files.example.test/x", "ss9Word"],                                        // a password that holds a /
+  ["get https://user:p?w#d@host.example.test/x", "w#d@"],                                                    // a ? and a #
+  ["get //user:hunter22@host.example.test/x", "hunter22"],                                                  // no scheme
+  ["ssh admin:hunter22@10.0.0.5 'ls'", "hunter22"],                                                         // no slashes at all
+  ["Authorization: Basic dXNlcjpTZWNyZXRQYXNzd29yZDEy", "dXNlcjpTZWNy"],
+  ["proxy-authorization=Bearer abcdefghijklmnop.qrstuv", "abcdefghij"],
+  ["aws_secret_access_key=wJalrXUtnFEMI/K7MDENG/bPxRfiCYQ7vT2mZ9nB4c", "wJalrXUtnF"],
+  ["aws_session_token: FQoGZXIvYXdzEBYaDOutOfBandSessionToken", "FQoGZXIvYX"],
+  ["login password=Zebra7Quartz refused", "Zebra7Quartz"],
+  ["https://x.example.test/blob?sv=2024&sig=abcdefghijklmnopqrstuvwx%3D&se=1", "abcdefghij"],
+  ["mysql -u root -pS3cretPw db", "S3cretPw"],
+  ["sshpass -p S3cretPw ssh host", "S3cretPw"],
 ];
 const NOT_SHAPED = [
   "{3F2504E0-4F89-11D3-9A0C-0305E82C3301}",                                          // a GUID
@@ -70,24 +97,38 @@ const NOT_SHAPED = [
   "1234567-234567-345678-456789-567890-678901-789012-890123",                         // a group of seven digits
   "disk-image-for-the-quarterly-review-of-the-finance-share.vhdx",                   // contains sk- inside a word
   "http://files.example.test/path/no-user-info",
+  "https://example.com:8443/users/@alice",                                           // a port, and an @ in the path
+  "https://host/path?email=a@b.com",
+  "C:\\Users\\a\\Library\\icon@2x.png",                                              // a file name with an @
+  "Library/Caches/com.foo:bar@2x.png",
+  "foo@example.com wrote to bar@example.org",
+  "token: expired; password: required",                                              // the words alone, no value after =
+  "-----BEGIN CERTIFICATE-----\nMIIDdzCCAl+gAwIBAgIE\n-----END CERTIFICATE-----",    // a certificate is public
 ];
 
-test("the withholding replaces the shapes it names, leaves names that merely look random alone, and never raises on a lone surrogate", async () => {
-  const run = await runPySnippet(CODE, [], { block: await block(ID), text: [...SHAPED, ...NOT_SHAPED] });
+test("the withholding replaces the shapes it names, whole, leaves names that merely look random alone, and never raises on a lone surrogate", async () => {
+  const run = await runPySnippet(CODE, [], { block: await block(ID), text: [...SHAPED.map(([text]) => text), ...NOT_SHAPED] });
   assert.equal(run.code, 0, run.stderr);
   const got: Json = JSON.parse(run.stdout);
-  for (const text of SHAPED) {
-    assert.match(got.scrub[text], /<[A-Za-z -]+ withheld, \d+ characters>/, `${text} is withheld`);
-    assert.notEqual(got.scrub[text], text);
+  for (const [text, secret] of SHAPED) {
+    assert.match(got.scrub[text], /<[A-Za-z -]+ withheld, \d+ characters, W\d{6}>/, `${text.slice(0, 50)} is withheld`);
+    assert.ok(!got.scrub[text].includes(secret), `${JSON.stringify(secret)} does not survive in ${JSON.stringify(got.scrub[text])}`);
   }
-  assert.equal(got.scrub[SHAPED[0]], "recovery <recovery-password-shaped text withheld, 55 characters> key");
-  assert.equal(got.scrub[SHAPED[1]], "<access-key-shaped text withheld, 20 characters> used");
-  assert.equal(got.scrub[SHAPED[6]], "fetch http://<user-info of a URL withheld, 14 characters>@files.example.test/x");
-  for (const text of NOT_SHAPED) assert.equal(got.scrub[text], text, `${text} is a name, not a secret`);
+  const plain = (s: string) => s.replace(/W\d{6}/g, "W");
+  assert.equal(plain(got.scrub[SHAPED[0][0]]), "recovery <recovery-password-shaped text withheld, 55 characters, W> key");
+  assert.equal(plain(got.scrub[SHAPED[3][0]]), "<access-key-shaped text withheld, 20 characters, W> used");
+  assert.equal(plain(got.scrub["connect ftp://svc:Wint3r@Synth77@10.0.0.1/drop"]), "connect ftp://<user-info of a URL withheld, 18 characters, W>@10.0.0.1/drop");
+  assert.equal(plain(got.scrub["Authorization: Basic dXNlcjpTZWNyZXRQYXNzd29yZDEy"]), "Authorization: Basic <credential after a header withheld, 28 characters, W>");
+  assert.equal(plain(got.scrub["mysql -u root -pS3cretPw db"]), "mysql -u root -p<password option withheld, 8 characters, W> db");
+  for (const text of NOT_SHAPED) assert.equal(got.scrub[text], text, `${JSON.stringify(text)} is a name or a public thing, not a secret`);
   assert.equal(got.count, SHAPED.length);
   assert.equal(got.surrogate_scrub, ascii("name\udcffend"));
   assert.equal(got.table.matched, 2);
   assert.equal(got.table.truncated, true);
+  // the same text always gets the same finding id, and a key of a dictionary is scrubbed like a value
+  assert.equal(got.same_id, true);
+  assert.equal(Object.keys(got.keyed).length, 1);
+  assert.ok(Object.keys(got.keyed).every((k) => !k.includes("Zq7Svb9Kt0")));
 });
 
 function ascii(text: string): string {
@@ -97,10 +138,10 @@ function ascii(text: string): string {
 const NAMES = ["collection_id", "collection_index"];
 
 test("every manifest has a use, a raised version, the sha256 of its script and a description that says what is and is not measured", async () => {
-  const versions: Record<string, number> = { collection_id: 2, collection_index: 3 };
+  const versions: Record<string, number> = { collection_id: 3, collection_index: 4 };
   for (const name of NAMES) {
     const manifest: Json = JSON.parse(await readFile(join(TOOLS, name, "manifest.json"), "utf8"));
-    assert.ok(manifest.use?.names?.length >= 3, `${name} says what it reads`);
+    assert.ok(manifest.use?.names?.length >= (name === "collection_id" ? 5 : 1), `${name} says what it reads`);
     assert.equal(manifest.version, versions[name]);
     assert.equal(manifest.sha256, createHash("sha256").update(await readFile(join(TOOLS, name, "run.py"))).digest("hex"), `${name} sha256`);
     assert.ok(manifest.timeout_seconds >= 3600 && manifest.params.time_limit_seconds, `${name}: a deadline that ends before the kill`);
@@ -110,7 +151,7 @@ test("every manifest has a use, a raised version, the sha256 of its script and a
   }
   const id: Json = JSON.parse(await readFile(join(TOOLS, "collection_id", "manifest.json"), "utf8"));
   assert.doesNotMatch(id.description, /what a logical acquisition of this shape cannot contain/);
-  assert.match(id.description, /not a physical image/);
+  assert.match(id.description, /never a\s+physical image/);
   const index: Json = JSON.parse(await readFile(join(TOOLS, "collection_index", "manifest.json"), "utf8"));
   assert.match(index.description, /never called the original path/);
 });
@@ -129,7 +170,7 @@ test("the parameters a manifest names are the parameters its script reads", asyn
   }
 });
 
-test("the tools carry no hard-coded claim about what a delivery cannot contain, and the old wording is gone from the scripts", async () => {
+test("the tools carry no hard-coded claim about what a delivery cannot contain, and the old text is gone from the scripts", async () => {
   for (const name of NAMES) {
     const script = await readFile(join(TOOLS, name, "run.py"), "utf8");
     assert.doesNotMatch(script, /unallocated space, so no carving|no inode and no -o offset|cannot_contain|physical image"|probably dropped|original_path/);

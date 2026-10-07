@@ -4,38 +4,44 @@
 This is a survey of names, a few first bytes and the collectors' own logs. It is a hypothesis about the delivery, not an
 audit of it. What it measures:
 
-  - every object it walks, classified one by one (the delivery is `mixed` when copied files sit beside a disk container, a
-    memory capture, an archive or a file named like one): a signature in the first bytes where there is one, the extension
+  - every object it walks, classified one by one: a signature in the first bytes where there is one, the extension
     otherwise, and each says which. A name that says image or raw with no signature is `unknown`, not a physical image: a
-    raw memory capture has no signature either. Nothing is opened but the first 4 KiB of the objects named in
-    `reads_first_bytes_of`; an archive or a container is not opened and its members are not listed;
+    raw memory capture has no signature either. The delivery is `mixed` when more than one kind of object is present (copied
+    files below the top level count as one kind; a note or a log beside an image does not). Nothing is opened but the first
+    4 KiB of the objects named in `reads_first_bytes_of`; an archive or a container is not opened and its members are not
+    listed;
   - the collector markers found, by their paths (more than one collector may have left records in one delivery, and one
     collector may have run more than once): KAPE `*_CopyLog.csv`, `*_SkipLog.csv` and `*_ConsoleLog.txt`, UAC `uac.log`
-    and the `[root]`, `[bodyfile]`, `[live_response]` directories, Velociraptor `uploads.json`. A top-level directory named
-    C, C$ or Windows is a layout clue only: KAPE targets, CyLR output and a hand copy all look like it, and nothing here
-    names CyLR;
-  - what each recognised log records, read whole and streamed: the columns and row counts of a KAPE copy or skip log, the
-    lines of a UAC log that start with a date, a time and an upper-case level word (INFO, WARNING, ERROR, COMMAND, DEBUG,
-    CRITICAL: UAC's own format is not verified here, so a line that matches nothing is counted and kept unlabelled), the
-    rows of a Velociraptor `uploads.json` (JSON Lines) and any non-empty Error field. A log whose columns or lines are not
-    recognised is `partial` or `unsupported`, and then there is no failure count at all, never a zero.
+    and a `[root]` directory, Velociraptor `uploads.json` or `collection_context.json`. A top-level directory named C, C$ or
+    Windows is a layout clue only: KAPE targets, CyLR output and a hand copy all look like it, and nothing here names CyLR.
+    A log found inside collected data (below `[root]` or `uploads`) belongs to the source host and is not read;
+  - what each recognised log records, read whole and streamed. KAPE: the columns and rows of a copy or skip log, and the
+    levelled lines of a console log. UAC: the lines that start with a date, a time and a level word, in both forms the
+    sources of UAC 3.4.0 (DBG, INF, ERR, CMD) and 2.9.1 (DEBUG, INFO, WARNING, ERROR, COMMAND) write; a line that matches
+    nothing is counted and kept unlabelled. Velociraptor (checked against the source of 0.77.2): the rows of `uploads.json`,
+    and, because that version never writes a failed upload to `uploads.json`, the rows of `results/*.json` whose upload record
+    carries an Error and the ERROR lines of `log.json`. A log whose columns or lines are not recognised, or that is binary or
+    UTF-16, is `partial` or `unsupported`.
 
-What it does not measure: that the collector finished, what it was asked to copy (the profile, targets and artefacts are not
-read), whether a recorded failure matters, whether a digest in a log matches the delivered file, the original path of a file
-(collection_index), the collector's version (reported only where a log states it, with its line), or what a log omits. A
-skip-log row is a recorded skip with the collector's own words; whether it is a failure is the collector's meaning, not this
-tool's. "No failure recorded" is a statement about the rows read, not about the acquisition.
+The failure count is `null`, never 0, unless every failure-source log was read whole (`parsed`), the walk was complete, and no
+archive went unopened; `failed_targets_seen` is how many rows were read all the same. What it does not measure: that the
+collector finished, what it was asked to copy (the profile, targets and artefacts are not read), whether a recorded failure
+matters, whether a digest in a log matches the delivered file, the original path of a file (collection_index), the
+collector's version, or what a log omits. A skip-log row is a recorded skip with the collector's own words; whether it is a
+failure is the collector's meaning, not this tool's. "No failure recorded" is a statement about the rows read, not about the
+acquisition.
 
 SECRET-SAFE OUTPUT (docs/packs.md, "Secrets and sensitive output"). Paths and log text are printed through the shared
-withholding block: a string shaped like a recovery password, an access key, a token, a private-key header or the user-info of
-a URL is replaced by its kind and length, in every channel (a path, a log line, an error). The shapes are few and exact, so a
-secret of no recognisable shape can still appear in a collector's log: the skill says to run this as a job with
-`secret_output: true`. `write_values: true` (a job only) writes the real strings to `$OUT/collection-id-values.jsonl`, mode
-0600, created before anything is read.
+withholding block: a string shaped like a recovery password, an access key, a token, a private-key block, the user-info of a
+URL, or the value after a credential header, key name or password option is replaced by its kind, its length and a finding
+id, in every channel (a path, a log line, a dictionary key, an error). The shapes are few and exact, so a secret of no
+recognisable shape can still appear in a collector's log: the skill says to run this as a job with `secret_output: true`.
+`write_values: true` (a job only) writes the real strings to `$OUT/collection-id-values.jsonl`, mode 0600, created before
+anything is read.
 """
 # ---- BEGIN SHARED BLOCK ----------------------------------------------------------------------------------------------
 # Identical in collection_id and collection_index. A tool is standalone, so what the two share is copied, as LosslessPage
-# is in every pack tool, and tests/pack-triage-collection.test.ts holds the two copies equal. Edit it in both, never in
+# is in every pack tool, and tests/pack-triage-shared.test.ts holds the two copies equal. Edit it in both, never in
 # one. It holds: the error form, typed arguments, where an output may be written and published without replacing another,
 # the lossless table, the secret-safe values file (the SecretValues of recovery_key_scan), the withholding of strings
 # shaped like a credential, the head-of-file classifier for what a delivery may hold besides copied files, and a deadline.
@@ -45,6 +51,7 @@ import json
 import os
 import re
 import secrets
+import signal
 import stat
 import sys
 import tempfile
@@ -52,8 +59,8 @@ import time
 from pathlib import Path
 
 DEFAULT_LIMIT = 200
-FIRST_PROBLEMS = 25               # how many problems an answer names inline; every one is in the file the table names
-INLINE_BUDGET = 256 << 10         # bytes of rows an answer carries inline; the rest of a table is in its file
+FIRST_PROBLEMS = 25               # how many problems of a kind an answer names inline; every one is a row of the problems table
+INLINE_BUDGET = 32 << 10          # bytes of rows an inline page carries (the model reads the first 64 KiB of an answer); the rest is in the table's file
 CHUNK = 1 << 20
 HEAD_BYTES = 4096
 MIN_RAW_BYTES = 1 << 20           # a file smaller than this is not read for a volume signature ($Boot is a boot sector, not a disk)
@@ -76,13 +83,32 @@ def fail(message, **extra):
 
 
 def scrub_all(value):
+    """Every string of a structure through scrub, keys included (a key can be the credential)."""
     if isinstance(value, str):
         return scrub(value)
     if isinstance(value, dict):
-        return {k: scrub_all(v) for k, v in value.items()}
+        return {scrub(k) if isinstance(k, str) else k: scrub_all(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [scrub_all(v) for v in value]
     return value
+
+
+def _stopped_by_signal(signum, frame):
+    """A kill leaves no half-written file (atexit runs on SystemExit) and no empty answer."""
+    print(json.dumps({"error": "the tool was stopped by signal %d before it finished; nothing it was writing was published" % signum,
+                      "status": "failed"}))
+    raise SystemExit(128 + signum)
+
+
+def install_signal_handlers():
+    for name in ("SIGTERM", "SIGHUP"):
+        if hasattr(signal, name):
+            signal.signal(getattr(signal, name), _stopped_by_signal)
+
+
+def ignored_parameters(args, known):
+    """The names a caller passed that this tool does not read, so a typo is seen and not silently the default."""
+    return sorted(scrub(str(k)) for k in args if k not in known)
 
 
 def read_args():
@@ -131,26 +157,44 @@ def out_of_time():
 # ---- where an output may be written ------------------------------------------------------------------------------
 
 
+def same_file(a, b):
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
+def is_inside(path, ancestor):
+    """Whether `path` is `ancestor` or below it, decided by identity (device and inode) of the existing places, not by how the
+    names are spelled: on a case-insensitive file system work/COLL and work/coll are one directory."""
+    p = Path(path)
+    return any(same_file(candidate, ancestor) for candidate in (p, *p.parents) if os.path.lexists(candidate))
+
+
 def resolve_output(out, what="output"):
     """Where `out` really lands, as a path under the run directory; a place outside it, the run directory itself, or
-    anything under inputs/ is refused. A string check is not enough: `work/../inputs/x`, an absolute path and a symlink
-    that points out all name a place the tool must not write, so the path is resolved first and directories compared.
-    In a job the run directory is read-only and only $OUT is written, so a place outside $OUT is refused with the way to
-    name one (work/<your agent id>/..., which the harness maps to $OUT), not left to fail on a read-only file system."""
+    anything under inputs/ is refused. A string check is not enough: `work/../inputs/x`, an absolute path, a symlink that
+    points out and a case-variant spelling on a case-insensitive file system all name a place the tool must not write, so the
+    path is resolved first and places are compared by identity. In a job the run directory is read-only and only $OUT is
+    written, so a place outside $OUT is refused with the way to name one (work/<your agent id>/..., which the harness maps to
+    $OUT), not left to fail on a read-only file system."""
     root = Path.cwd().resolve()
     dest = (root / out).resolve() if not Path(out).is_absolute() else Path(out).resolve()
-    if dest == root or root not in dest.parents:
+    if same_file(dest, root) or not is_inside(dest, root):
         fail("%s must stay inside the run directory" % what, **{what: str(out)})
     inputs = root / "inputs"
-    if dest == inputs or inputs in dest.parents:
+    if is_inside(dest, inputs):
         fail("%s cannot be under inputs/" % what, **{what: str(out)})
     if in_job():
         base = Path(os.environ["OUT"]).resolve()
-        if dest == base or base not in dest.parents:
+        if same_file(dest, base) or not is_inside(dest, base):
             fail("%s is not under this job's output directory: a job writes only $OUT, and the run directory is read-only. "
                  "Name a place under work/<your agent id>/ and the harness maps it there, or leave %s out." % (what, what),
                  **{what: str(out)})
-    return str(dest.relative_to(root))
+    try:
+        return str(dest.relative_to(root))
+    except ValueError:
+        return os.path.relpath(dest, root)
 
 
 def shown_output(path):
@@ -222,6 +266,20 @@ def _drop_unpublished():
 atexit.register(_drop_unpublished)
 
 
+OWN_NAMES = set()
+OWN_PATHS = set()
+
+
+def register_own(path):
+    """A file this run creates (a table, its temporary file, the values file): a walk whose root contains it must not list it."""
+    OWN_NAMES.add(os.path.basename(str(path)))
+    OWN_PATHS.add(os.path.realpath(str(path)))
+
+
+def is_own(entry):
+    return entry.name in OWN_NAMES and os.path.realpath(entry.path) in OWN_PATHS
+
+
 class Table:
     """The rows an answer carries inline, and the whole in a JSON Lines file it names. Rows past `limit` (or past the
     inline byte budget) go to the file, so nothing is cut: under $OUT/tool-output in a job, work/<agent>/tool-output
@@ -247,6 +305,7 @@ class Table:
             else:
                 agent = re.sub(r"[^A-Za-z0-9_.-]", "_", os.environ.get("AGENT_ID") or "tool")
                 self.path = Path("work") / agent / "tool-output" / name
+        register_own(self.path)
         if dest or always:
             self._open_tmp()
 
@@ -256,6 +315,7 @@ class Table:
             fd, name = tempfile.mkstemp(dir=self.path.parent, prefix=".%s-" % self.tool)
             self._tmp = Path(name)
             _TEMPS.add(name)
+            register_own(name)
             self._out = os.fdopen(fd, "w", encoding="utf-8", errors="backslashreplace")
         except OSError as exc:
             fail("the whole result could not be written: %s cannot be created (%s)" % (shown_output(self.path.parent), describe(exc)))
@@ -334,6 +394,7 @@ class SecretValues:
                 "secret_output: true, and ask again there. Nothing was written." % tool
             )
         self.path = Path(self.out) / name
+        register_own(self.path)
         self.shown = "store/jobs/%s/out/%s" % (re.sub(r"[^A-Za-z0-9_.-]", "_", self.job), name)
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -372,35 +433,69 @@ class SecretValues:
 # A path or a line of a collector's log can carry a string that is a secret. Only shapes that name their own kind are
 # withheld (a name that merely looks random is a GUID, a hash or a cache name, and is evidence): so a secret of no
 # recognisable shape is not caught, and the skill says to run the tool as a job with secret_output: true. What is caught is
-# withheld in every channel (a path, a log line, an error), the same strings in both tools of the pack; the real string goes
-# to the values file when write_values is asked, in a job.
+# withheld in every channel (a path, a log line, an error, a dictionary key), the same strings in both tools of the pack; the
+# real string goes to the values file when write_values is asked, in a job. A shape with a `secret` group withholds that part
+# only (the header or the option name stays); the others withhold the whole match. Each withheld text carries a finding id,
+# the finding_id of its row in the values file.
 
+_NO_EXT = r"(?!(?:png|jpe?g|gif|svg|webp|ico|bmp|tiff?|heic|plist|json|txt|log|db|dat|xml|html?|css|js|py|exe|dll|lnk)\b)"
 SHAPES = [
-    ("recovery-password-shaped text", re.compile(r"(?<![0-9])[0-9]{6}(?:-[0-9]{6}){7}(?![0-9])")),
+    ("recovery-password-shaped text", re.compile(r"(?<![0-9])[0-9]{6}(?P<s>[-_. ]?)(?:[0-9]{6}(?P=s)){6}[0-9]{6}(?![0-9])")),
     ("access-key-shaped text", re.compile(r"(?<![A-Za-z0-9])(?:AKIA|ASIA|AIDA|AROA)[0-9A-Z]{16}(?![A-Za-z0-9])")),
-    ("token-shaped text", re.compile(r"(?<![A-Za-z0-9_])(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,}"
-                                     r"|xox[abprs]-[A-Za-z0-9-]{10,}|sk-[A-Za-z0-9_-]{20,}"
-                                     r"|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*)")),
-    ("private-key header", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
-    ("user-info of a URL", re.compile(r"(?<=://)[^/?#\s@]+(?=@)")),
+    ("token-shaped text", re.compile(r"(?<![A-Za-z0-9])(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,}"
+                                    r"|xox[abprs]-[A-Za-z0-9-]{10,}|sk-[A-Za-z0-9_-]{20,})")),
+    ("web-token-shaped text", re.compile(r"(?<![A-Za-z0-9])eyJ[A-Za-z0-9_=-]{8,}(?:\.[A-Za-z0-9_=-]*){2,4}")),
+    ("webhook URL", re.compile(r"https://hooks\.slack\.com/services/[A-Za-z0-9/]+")),
+    ("private-key block", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----|\Z)")),
+    ("private-key block", re.compile(r"PuTTY-User-Key-File-\d+:[\s\S]*?(?:Private-MAC:\s*[0-9A-Fa-f]+|\Z)")),
+    # user-info: up to the LAST '@' before the host, so a password that holds an '@' is withheld whole; a password that holds a
+    # '/', '?' or '#' is withheld when the user name is followed by a colon that is not a port; the bare form needs a host name
+    # that is not a file extension (icon@2x.png is a file name)
+    ("user-info of a URL", re.compile(r"(?<=//)(?:[^\s/?#'\"<>]+(?=@)|[^\s@:/?#'\"<>]+:(?!\d+(?:[/?#]|$))\S*(?=@[^\s@/?#]))")),
+    ("user-info of a URL", re.compile(r"(?<![\w@.:\\-])[A-Za-z0-9._%+-]+:[^\s/\\:'\"<>]+(?=@(?:\d{1,3}(?:\.\d{1,3}){3}"
+                                     r"|[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.(?:(?!(?:png|jpe?g|gif|svg|webp|ico|bmp|tiff?|heic|plist|json|txt|log"
+                                     r"|db|dat|xml|html?|css|js|py|exe|dll|lnk)\b)[A-Za-z]{2,}))(?![\w@-]))")),
+    ("credential after a header", re.compile(r"(?i:\b(?:proxy-)?authorization\s*[:=]\s*(?:basic|bearer|token|negotiate|digest)\s+)(?P<secret>[^\s'\",;]+)")),
+    ("credential after a key name", re.compile(r"(?i:\b(?:aws_)?(?:secret_access_key|session_token|secret_key)\s*[=:]\s*[\"']?)(?P<secret>[^\s\"',;]+)")),
+    ("credential after a key name", re.compile(r"(?i:\b(?:password|passwd|pwd|passphrase|client_secret|api[_-]?key|apikey|access_token|auth_token|secret|token)\s*=\s*[\"']?)"
+                                               r"(?P<secret>[^\s\"'&,;]+)")),
+    ("credential after a key name", re.compile(r"(?i:[?&]sig=)(?P<secret>[A-Za-z0-9%+/=]{16,})")),
+    ("password option", re.compile(r"(?i:\b(?:mysql|mysqldump|mysqladmin|mariadb)\b[^\n|;&]*?\s-p)(?P<secret>\S+)")),
+    ("password option", re.compile(r"(?i:\bsshpass\b[^\n|;&]*?\s-p\s*)(?P<secret>\S+)")),
 ]
-_ANY = re.compile("|".join("(?:%s)" % rx.pattern for _kind, rx in SHAPES))
+_ANY = re.compile("|".join("(?:%s)" % rx.pattern.replace("(?P<secret>", "(?:") for _kind, rx in SHAPES))
 WITHHELD = {"count": 0}
 VALUES = [None]
+_SEEN = {}
 
 
 def scrub(text, where=None):
-    """The text with every string of a withheld shape replaced by what it was (a kind and a length). With a values file
-    open, the original goes there once per call, named by `where`."""
+    """The text with every string of a withheld shape replaced by a marker (a kind, a length, a finding id). With a values file
+    open, the original goes there once, named by `where`. The same text always gets the same id and one row."""
     if not isinstance(text, str) or not _ANY.search(text):
         return text
+    known = _SEEN.get(text)
+    if known is not None:
+        return known
+    fid = "W%06d" % (WITHHELD["count"] + 1)
     out = text
     for kind, rx in SHAPES:
-        out = rx.sub(lambda m, k=kind: "<%s withheld, %d characters>" % (k, len(m.group())), out)
+        has_secret = "secret" in rx.groupindex
+
+        def mark(m, kind=kind, has_secret=has_secret):
+            if has_secret:
+                start = m.start()
+                s, e = m.span("secret")
+                return m.group(0)[:s - start] + "<%s withheld, %d characters, %s>" % (kind, e - s, fid) + m.group(0)[e - start:]
+            return "<%s withheld, %d characters, %s>" % (kind, len(m.group()), fid)
+
+        out = rx.sub(mark, out)
     if out != text:
         WITHHELD["count"] += 1
+        if len(_SEEN) < 100000:
+            _SEEN[text] = out
         if VALUES[0] is not None:
-            VALUES[0].add("W%06d" % WITHHELD["count"], {"where": where or "text"}, text)
+            VALUES[0].add(fid, {"where": where or "text"}, text)
     return out
 
 
@@ -450,14 +545,21 @@ RAW_SIGNATURES = [
 DISK_EXT = {".e01", ".ex01", ".dd", ".raw", ".img", ".vhd", ".vhdx", ".vmdk", ".qcow2", ".qcow", ".vdi", ".001"}
 RAW_EXT = {".dd", ".raw", ".img", ".bin", ".001", ""}
 MEMORY_EXT = {".mem", ".vmem", ".vmss", ".lime"}
-ARCHIVE_EXT = {".zip", ".tar", ".gz", ".tgz", ".7z", ".rar", ".bz2", ".xz", ".zst", ".ad1", ".l01"}
+ARCHIVE_EXT = {".zip", ".tar", ".gz", ".tgz", ".7z", ".rar", ".bz2", ".xz", ".zst", ".ad1", ".l01", ".aff4"}
+SEGMENT_EXT = re.compile(r"^\.(?:e|ex|s|l)\d\d$|^\.\d{3}$|^\.ad\d+$")      # E02, Ex02, S01, L02, .002, .ad2: a later segment of a set
+# First bytes of files that are plainly not a disk or a memory capture, whatever their name says.
+NOT_A_CONTAINER = (b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff", b"GIF8", b"SQLite format 3\x00", b"%PDF-", b"II*\x00", b"MM\x00*", b"<?xml", b"{\\rtf")
+
+
+def is_image_named(ext):
+    return ext in DISK_EXT or bool(SEGMENT_EXT.match(ext))
 
 
 def wants_head(name, size, top_level):
     """Whether a file's first bytes are read to classify it: a top-level object, a file named like an image, a memory
     capture or an archive, and any file of at least MIN_RAW_BYTES (a renamed image is large). The rest are copied files."""
     ext = os.path.splitext(name)[1].lower()
-    return top_level or ext in DISK_EXT or ext in MEMORY_EXT or ext in ARCHIVE_EXT or size >= MIN_RAW_BYTES
+    return top_level or is_image_named(ext) or ext in MEMORY_EXT or ext in ARCHIVE_EXT or size >= MIN_RAW_BYTES
 
 
 def open_regular(path, **kw):
@@ -488,13 +590,14 @@ def read_head(path):
 def classify_head(name, head, size, top_level):
     """What a file is, from its first bytes and its name, or None when it is an ordinary file. The answer says which
     (`basis`: bytes, or extension only), and what in the bytes it rests on. A raw image has no container header: its
-    volume or partition signatures are looked for only in a file of at least MIN_RAW_BYTES. A name that says image, raw or
-    memory with nothing in the bytes to confirm it is `unknown`: a raw memory capture carries no signature either. An
-    archive signature counts only on a file named like an archive, or on a top-level file with no extension (a .docx is a ZIP
-    and is a document)."""
+    volume or partition signatures are looked for in a file named like an image of at least MIN_RAW_BYTES. A name that says
+    image, raw or memory with nothing in the bytes to confirm it is `unknown` at the top of the delivery: a raw memory capture
+    carries no signature either. Below the top, a file under MIN_RAW_BYTES named like one, or whose bytes are plainly something
+    else (a PNG, a database), is a copied file. An archive signature counts only on a file named like an archive, or on a
+    top-level file with no extension (a .docx is a ZIP and is a document)."""
     ext = os.path.splitext(name)[1].lower()
     for offset, magic, kind, fmt in DISK_SIGNATURES:
-        if kind == "archive" and ext not in ARCHIVE_EXT and not (top_level and ext == ""):
+        if kind == "archive" and ext not in ARCHIVE_EXT and not SEGMENT_EXT.match(ext) and not (top_level and ext == ""):
             continue
         if head[offset:offset + len(magic)] == magic:
             return {"class": kind, "format": fmt, "basis": "bytes", "evidence": "signature at offset %d" % offset}
@@ -503,7 +606,8 @@ def classify_head(name, head, size, top_level):
         if etype == 4:
             return {"class": "memory_capture", "format": "ELF core dump (one process, or a kernel core)", "basis": "bytes",
                     "evidence": "ELF header, type core"}
-    if ext in RAW_EXT and size >= MIN_RAW_BYTES:
+    named_image = is_image_named(ext)
+    if (ext in RAW_EXT or named_image) and size >= MIN_RAW_BYTES:
         seen = [what for offset, magic, what in RAW_SIGNATURES if head[offset:offset + len(magic)] == magic]
         if len(head) >= 512 and head[510:512] == b"\x55\xaa":
             seen.append("a boot signature at offset 510 (an MBR, or a FAT or NTFS boot sector)")
@@ -512,14 +616,18 @@ def classify_head(name, head, size, top_level):
         if seen:
             return {"class": "disk_container", "format": "raw image (no container header)", "basis": "bytes",
                     "evidence": "; ".join(seen) + ". Whether it is a whole disk or one volume is not decided here"}
+    if (named_image or ext in MEMORY_EXT) and (head.startswith(NOT_A_CONTAINER) or (not top_level and size < MIN_RAW_BYTES)):
+        return None
     if ext in MEMORY_EXT:
         return {"class": "memory_capture", "format": "named like a memory capture (no signature to confirm it)",
                 "basis": "extension only", "evidence": "name ends %s" % ext}
-    if ext in DISK_EXT:
+    if named_image:
+        looked = ("and no partition table or volume signature in the first sectors" if size >= MIN_RAW_BYTES
+                  else "(the file is under %d bytes: volume signatures were not looked for)" % MIN_RAW_BYTES)
         return {"class": "unknown", "format": None, "basis": "extension only",
-                "evidence": "name ends %s but the first bytes carry no recognised container or volume signature; a raw "
-                            "memory capture and a raw disk with an unusual first sector both look like this" % ext}
-    if ext in ARCHIVE_EXT:
+                "evidence": "name ends %s but the first bytes carry no recognised container signature %s; a raw memory capture and "
+                            "a raw disk with an unusual first sector both look like this" % (ext, looked)}
+    if ext in ARCHIVE_EXT or SEGMENT_EXT.match(ext):
         return {"class": "archive", "format": "named like an archive (no signature to confirm it)", "basis": "extension only",
                 "evidence": "name ends %s" % ext}
     return None
@@ -531,12 +639,13 @@ import os
 import re
 import stat
 
-PARSER = "collection_id/2"
+PARSER = "collection_id/3"
 TOOL = "collection_id"
 VALUES_NAME = "collection-id-values.jsonl"
+KNOWN_PARAMETERS = ("root", "limit", "time_limit_seconds", "write_values")
 MAX_LINE = 1 << 20                # a log line longer than this is read in part; the whole line stays in the evidence at its locator
 MAX_CONSECUTIVE_CSV_ERRORS = 1000
-MAX_DISTINCT = 100000             # distinct artefact names counted from a Velociraptor index; beyond it they are counted, not named
+MAX_DISTINCT = 100000             # distinct names counted from a log; beyond it they are counted, not named
 
 FAMILIES = {
     "$mft": "the NTFS master file table", "$j": "the USN change journal", "$logfile": "the NTFS transaction log",
@@ -546,46 +655,57 @@ FAMILIES = {
     "auth.log": "a Linux authentication log", "secure": "a Linux authentication log",
     "wtmp": "Linux login records", "btmp": "Linux failed logins",
     "packages.xml": "the Android package list", "manifest.db": "an iOS backup manifest",
+    "hiberfil.sys": "the hibernation file (a file named like one: memory-bearing, not a capture)",
+    "pagefile.sys": "the page file (a file named like one: memory-bearing, not a capture)",
+    "swapfile.sys": "the swap file (a file named like one: memory-bearing, not a capture)",
 }
-UAC_DIRS = ("[root]", "[bodyfile]", "[live_response]")
+MEMORY_BEARING = ("hiberfil.sys", "pagefile.sys", "swapfile.sys")
+INSIDE_COLLECTED = ("[root]", "uploads")        # a directory below which the files are the source host's own
 UAC_EVENT = re.compile(r"^\s*\[?(?P<ts>\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:\s?(?:Z|[+-]\d{2}:?\d{2}))?)\]?\s*"
-                       r"(?:[-:|]\s*)?\[?(?P<level>INFO|WARNING|ERROR|COMMAND|DEBUG|CRITICAL)\]?(?:\s|:|$)")
-UAC_FAILURE_WORDS = ("error", "cannot", "permission denied", "failed")
-KAPE_VERSION = re.compile(r"KAPE version\s+(\d+(?:\.\d+)+)")
+                       r"(?:[-:|]\s*)?\[?(?P<level>INFO|INF|WARNING|WARN|ERROR|ERR|COMMAND|CMD|DEBUG|DBG)\]?(?:\s|:|$)")
+UAC_ERROR_LEVELS = ("ERROR", "ERR")
+UAC_COMMAND_LEVELS = ("COMMAND", "CMD")
+UAC_FAILURE_WORDS = ("error", "cannot", "permission denied", "failed", "no such file")
+CONSOLE_LINE = re.compile(r"^\[(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?) \| (?P<level>[A-Z]{3})\] ")
 SKIP_TARGET_COLUMNS = ("sourcefile", "source", "filename", "file", "path")
 SKIP_REASON_COLUMNS = ("reason", "message", "error", "status")
-UPLOAD_TARGET_KEYS = ("vfs_path", "Path", "path", "StoredName", "ComponentPath")
-UPLOAD_ERROR_KEYS = ("Error", "error", "_Error")
+UPLOAD_TARGET_KEYS = ("Path", "StoredName", "vfs_path")
+UPLOAD_MARKERS = ("StoredName", "UploadId", "StoredSize", "Components")
 
 
 class Survey:
-    def __init__(self, root, limit):
+    def __init__(self, root, limit, problems):
         self.root = root
+        self.prefix = root.rstrip(os.sep) + os.sep
         self.directories = self.files = 0
-        self.links = []                       # first problems only; `links_total` counts all
-        self.links_total = self.special_total = 0
-        self.special = []
-        self.errors = []
-        self.errors_total = 0
+        self.links, self.special, self.errors = [], [], []
+        self.links_total = self.special_total = self.errors_total = 0
         self.stopped = None
         self.families = {}
+        self.memory_bearing = []
         self.kape = {}                        # (directory, run id) -> {"copy": rel, "skip": rel, "console": rel}
-        self.uac_logs, self.uac_dirs, self.uploads = [], [], []
+        self.uac_logs, self.uac_dirs = [], []
+        self.velociraptor = {}                # directory -> {"uploads": rel, "context": rel}
+        self.collected_data_logs = []
         self.layout_clues = []
-        self.counts = {"logical_files": 0, "disk_container": 0, "memory_capture": 0, "archive": 0, "unknown": 0}
+        self.counts = {"disk_container": 0, "memory_capture": 0, "archive": 0, "unknown": 0, "unknown_nested": 0}
+        self.other_files = self.tree_files = 0
         self.nested_archives = 0
         self.reads_head = 0
         self.head_errors = 0
         self.objects = Table(TOOL + "-objects", limit)
+        self.problems = problems
 
-    def problem(self, path, what, exc):
-        self.errors_total += 1
-        if len(self.errors) < FIRST_PROBLEMS:
-            self.errors.append({"path": shown(path, "walk error"), "what": what, "error": describe(exc)})
+    def rel(self, path):
+        return path[len(self.prefix):] if path.startswith(self.prefix) else os.path.relpath(path, self.root)
 
-
-def rel_of(root, path):
-    return os.path.relpath(path, root)
+    def problem(self, kind, path, what, exc=None, inline=None):
+        row = {"kind": kind, "path": shown(path, kind), "what": what}
+        if exc is not None:
+            row["error"] = describe(exc)
+        self.problems.add(row)
+        if inline is not None and len(inline) < FIRST_PROBLEMS:
+            inline.append({k: v for k, v in row.items() if k != "kind"})
 
 
 def walk(survey):
@@ -601,25 +721,34 @@ def walk(survey):
             with os.scandir(directory) as it:
                 entries = sorted(it, key=lambda e: e.name)
         except OSError as exc:
-            survey.problem(directory, "the directory could not be listed", exc)
+            survey.errors_total += 1
+            survey.problem("walk_error", survey.rel(directory), "the directory could not be listed", exc, survey.errors)
             continue
         survey.directories += 1
         subdirs = []
-        for entry in entries:
+        for position, entry in enumerate(entries):
+            if out_of_time():
+                survey.stopped = {"reason": "the time limit ended the walk", "directories_not_listed": len(stack) + len(subdirs),
+                                  "entries_not_examined_in_the_current_directory": len(entries) - position}
+                return
+            if is_own(entry):
+                continue
             try:
                 st = entry.stat(follow_symlinks=False)
             except OSError as exc:
-                survey.problem(entry.path, "the entry could not be examined", exc)
+                survey.errors_total += 1
+                survey.problem("walk_error", survey.rel(entry.path), "the entry could not be examined", exc, survey.errors)
                 continue
             mode = st.st_mode
             if stat.S_ISLNK(mode):
                 survey.links_total += 1
-                if len(survey.links) < FIRST_PROBLEMS:
-                    survey.links.append(shown(rel_of(root, entry.path), "symbolic link"))
+                survey.problem("symbolic_link", survey.rel(entry.path), "a symbolic link: not followed", None, survey.links)
+                if entry.name == "[root]":
+                    survey.uac_dirs.append(survey.rel(entry.path))
             elif stat.S_ISDIR(mode):
                 subdirs.append(entry.path)
-                if entry.name in UAC_DIRS:
-                    survey.uac_dirs.append(rel_of(root, entry.path))
+                if entry.name == "[root]":
+                    survey.uac_dirs.append(survey.rel(entry.path))
                 if is_top and entry.name.lower() in ("c", "c$", "windows"):
                     survey.layout_clues.append({"path": shown(entry.name, "layout clue"), "basis": "a top-level directory name",
                                                 "compatible_with": ["a KAPE target tree", "CyLR output", "a hand-made copy"]})
@@ -628,44 +757,68 @@ def walk(survey):
                 handle_file(survey, entry, st, is_top)
             else:
                 survey.special_total += 1
-                if len(survey.special) < FIRST_PROBLEMS:
-                    survey.special.append(shown(rel_of(root, entry.path), "special file"))
+                survey.problem("special_file", survey.rel(entry.path), "not a regular file: not read", None, survey.special)
         stack.extend(reversed(subdirs))
 
 
+def inside_collected_data(rel):
+    return any(part in INSIDE_COLLECTED for part in rel.split(os.sep)[:-1])
+
+
 def handle_file(survey, entry, st, is_top):
-    name, root = entry.name, survey.root
+    name = entry.name
     lower = name.lower()
-    rel = rel_of(root, entry.path)
+    rel = survey.rel(entry.path)
     if lower in FAMILIES:
         fam = survey.families.setdefault(FAMILIES[lower], {"count": 0, "first_paths": []})
         fam["count"] += 1
         if len(fam["first_paths"]) < 3:
             fam["first_paths"].append(shown(rel, "artefact family path"))
-    directory = os.path.dirname(rel)
+        if lower in MEMORY_BEARING:
+            survey.memory_bearing.append(lower)
+    marker = None
     for suffix, key in (("_copylog.csv", "copy"), ("_skiplog.csv", "skip"), ("_consolelog.txt", "console")):
         if lower.endswith(suffix):
-            survey.kape.setdefault((directory, name[:-len(suffix)]), {})[key] = rel
+            marker = ("kape", key, name[:-len(suffix)])
     if name == "uac.log":
-        survey.uac_logs.append(rel)
-    if name == "uploads.json":
-        survey.uploads.append(rel)
+        marker = ("uac", None, None)
+    if name in ("uploads.json", "collection_context.json"):
+        marker = ("velociraptor", "uploads" if name == "uploads.json" else "context", None)
+    if marker is not None:
+        if inside_collected_data(rel):
+            survey.collected_data_logs.append(rel)
+            survey.problem("log_inside_collected_data", rel, "a collector record inside collected data: it belongs to the source host, "
+                           "not to this delivery, and is not read")
+        elif marker[0] == "kape":
+            survey.kape.setdefault((os.path.dirname(rel), marker[2]), {})[marker[1]] = rel
+        elif marker[0] == "uac":
+            survey.uac_logs.append(rel)
+        else:
+            survey.velociraptor.setdefault(os.path.dirname(rel), {})[marker[1]] = rel
     if wants_head(name, st.st_size, is_top):
         survey.reads_head += 1
         try:
             head = read_head(entry.path)
         except OSError as exc:
             survey.head_errors += 1
-            survey.problem(entry.path, "the first bytes could not be read", exc)
+            survey.errors_total += 1
+            survey.problem("walk_error", rel, "the first bytes could not be read", exc, survey.errors)
             head = None
         found = classify_head(name, head, st.st_size, is_top) if head is not None else None
         if found:
-            if found["class"] == "archive" and not is_top:
+            kind = found["class"]
+            if kind == "archive" and not is_top:
                 survey.nested_archives += 1
+                survey.other_files += 1
+                survey.tree_files += 1
                 return
-            survey.counts[found["class"]] += 1
+            survey.counts["unknown_nested" if kind == "unknown" and not is_top else kind] += 1
             survey.objects.add({"path": shown(rel, "object path"), "top_level": is_top, "bytes": st.st_size, **found,
                                 "note": "classified by this tool from the first bytes and the name; the object was not opened"})
+            return
+    survey.other_files += 1
+    if os.sep in rel:
+        survey.tree_files += 1
 
 
 # ---- the collectors' own records ---------------------------------------------------------------------------------------
@@ -679,19 +832,49 @@ def undecodable(text):
     return any("\udc80" <= c <= "\udcff" for c in text)
 
 
-def read_csv_log(root, rel, kind, failures):
+def binary_reason(path):
+    """Why a log cannot be read as UTF-8 text at all (a UTF-16 byte-order mark, or NUL bytes in its first 4 KiB), or None."""
+    try:
+        head = read_head(path)
+    except OSError:
+        return None
+    if head is None:
+        return None
+    if head[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        return "the file is UTF-16 (byte-order mark): it is not read as UTF-8 text"
+    if b"\x00" in head:
+        return "the file holds NUL bytes in its first 4 KiB: it is binary or UTF-16 without a mark, and is not read as text"
+    return None
+
+
+def new_record(survey, rel, kind, adapter):
+    return {"log": shown(rel, "log path"), "kind": kind, "adapter": adapter, "status": "parsed", "rows": 0, "problems": []}
+
+
+def note_problem(survey, record, row):
+    if len(record["problems"]) < FIRST_PROBLEMS:
+        record["problems"].append(row)
+    survey.problems.add({"kind": "log_problem", "path": record["log"], "what": "a row or line of a collector's log that was not read as recognised", **row})
+
+
+def read_csv_log(survey, rel, kind, failures, unrecognised):
     """A KAPE copy or skip log, streamed. A skip-log row is kept whole as a failure row with the collector's own words; a copy
-    log is counted. Columns that are not the ones expected make the log `partial`, and a log that cannot be read `unsupported`."""
-    path = os.path.join(root, rel)
-    record = {"log": shown(rel, "log path"), "kind": kind, "adapter": "kape_csv/1", "status": "parsed", "rows": 0,
-              "malformed_rows": 0, "rows_with_undecodable_bytes": 0, "problems": []}
+    log is counted. Columns that are not the ones expected make the log `partial` (the rows go to the unrecognised-rows table,
+    never to the failures), and a log that is binary, UTF-16 or unreadable `unsupported` or `unreadable`."""
+    path = os.path.join(survey.root, rel)
+    record = new_record(survey, rel, kind, "kape_csv/2")
+    record.update(malformed_rows=0, rows_with_undecodable_bytes=0)
+    reason = binary_reason(path)
+    if reason:
+        record.update(status="unsupported", reason=reason)
+        return record
     try:
         fh = open_text(path)
     except OSError as exc:
         record.update(status="unreadable", reason=describe(exc))
         return record
     with fh:
-        reader = csv.reader(fh)
+        reader = csv.reader(fh, strict=True)
         try:
             header = next(reader)
         except StopIteration:
@@ -705,16 +888,21 @@ def read_csv_log(root, rel, kind, failures):
         record["columns"] = [scrub(n, "csv header") for n in names]
         target_col = next((i for i, n in enumerate(lowered) if n in SKIP_TARGET_COLUMNS), None)
         reason_col = next((i for i, n in enumerate(lowered) if n in SKIP_REASON_COLUMNS), None)
+        recognised = True
         if kind == "copy_log":
             if "sourcefile" not in lowered:
+                recognised = False
                 record.update(status="partial", reason="no SourceFile column: rows are counted, nothing else is read")
         elif target_col is None and reason_col is None:
-            record.update(status="partial", reason="neither a target column nor a reason column is recognised: every row is kept whole")
+            recognised = False
+            record.update(status="partial", reason="neither a target column nor a reason column is recognised: every row is kept whole "
+                          "in the unrecognised rows, and none is a failure")
         ordinal, consecutive = 0, 0
         while True:
             if out_of_time():
                 record.update(status="partial", reason="the time limit stopped the read after row %d" % ordinal)
                 break
+            start_line = reader.line_num + 1                 # a record can span lines (a quoted newline): its locator is the line it starts on
             try:
                 row = next(reader)
             except StopIteration:
@@ -722,8 +910,7 @@ def read_csv_log(root, rel, kind, failures):
             except csv.Error as exc:
                 record["malformed_rows"] += 1
                 consecutive += 1
-                if len(record["problems"]) < FIRST_PROBLEMS:
-                    record["problems"].append({"line": reader.line_num, "error": describe(exc)})
+                note_problem(survey, record, {"locator": {"line": start_line}, "error": describe(exc)})
                 if consecutive >= MAX_CONSECUTIVE_CSV_ERRORS:
                     record.update(status="partial", reason="the read stopped after %d consecutive unreadable rows" % consecutive)
                     break
@@ -736,44 +923,80 @@ def read_csv_log(root, rel, kind, failures):
             bad = len(row) != len(names)
             if bad:
                 record["malformed_rows"] += 1
-                if len(record["problems"]) < FIRST_PROBLEMS:
-                    record["problems"].append({"line": reader.line_num, "error": "%d fields where the header has %d" % (len(row), len(names))})
+                note_problem(survey, record, {"locator": {"line": start_line}, "error": "%d fields where the header has %d" % (len(row), len(names))})
             if any(undecodable(v) for v in row):
                 record["rows_with_undecodable_bytes"] += 1
             if kind == "skip_log":
                 where = "skip log row %d" % ordinal
-                failures.add({"collector": "KAPE", "log": record["log"], "locator": {"row": ordinal, "line": reader.line_num},
-                              "outcome": "skipped",
-                              "target": scrub(row[target_col], where) if target_col is not None and target_col < len(row) else None,
-                              "reason": scrub(row[reason_col], where) if reason_col is not None and reason_col < len(row) else None,
-                              "row_values": {scrub(n, where): scrub(v, where) for n, v in zip(names, row)},
-                              "malformed": bad})
+                values = {scrub(n, where): scrub(v, where) for n, v in zip(names, row)}
+                if recognised:
+                    failures.add({"collector": "KAPE", "log": record["log"], "locator": {"row": ordinal, "line": start_line},
+                                  "outcome": "skipped",
+                                  "target": scrub(row[target_col], where) if target_col is not None and target_col < len(row) else None,
+                                  "reason": scrub(row[reason_col], where) if reason_col is not None and reason_col < len(row) else None,
+                                  "row_values": values, "malformed": bad})
+                else:
+                    unrecognised.add({"collector": "KAPE", "log": record["log"], "locator": {"row": ordinal, "line": start_line},
+                                      "row_values": values, "malformed": bad})
         if record["malformed_rows"] and record["status"] == "parsed":
             record["status"] = "partial"
             record["reason"] = "some rows are malformed (see problems): they are counted, and kept whole where they are a skip row"
     return record
 
 
-def read_console_version(root, rel):
-    path = os.path.join(root, rel)
+def read_console_log(survey, rel):
+    """A KAPE console log, streamed: its levelled lines are counted by level and the warnings and errors it records are rows of
+    the problems table with their locator. They are the collector's own words about what it did, not failures of this
+    delivery, and the log does not feed the failure count."""
+    path = os.path.join(survey.root, rel)
+    record = new_record(survey, rel, "console_log", "kape_console/1")
+    record.update(levels={}, unmatched_lines=0, lines=0)
+    reason = binary_reason(path)
+    if reason:
+        record.update(status="unsupported", reason=reason)
+        return record
     try:
-        with open_text(path) as fh:
-            for number, line in enumerate(fh, 1):
-                if number > 200:
-                    break
-                found = KAPE_VERSION.search(line)
-                if found:
-                    return {"value": found.group(1), "from": "%s line %d" % (shown(rel, "log path"), number)}
-    except OSError:
-        pass
-    return None
+        fh = open_text(path)
+    except OSError as exc:
+        record.update(status="unreadable", reason=describe(exc))
+        return record
+    with fh:
+        number = 0
+        while True:
+            if out_of_time():
+                record.update(status="partial", reason="the time limit stopped the read after line %d" % number)
+                break
+            try:
+                line = fh.readline(MAX_LINE)
+            except OSError as exc:
+                record.update(status="partial", reason="the read stopped at line %d (%s)" % (number + 1, describe(exc)))
+                break
+            if not line:
+                break
+            number += 1
+            record["lines"] = number
+            text = line.rstrip("\r\n")
+            found = CONSOLE_LINE.match(text)
+            if found:
+                level = found.group("level")
+                record["levels"][level] = record["levels"].get(level, 0) + 1
+                if level in ("WRN", "ERR"):
+                    survey.problems.add({"kind": "console_line", "path": record["log"], "locator": {"line": number}, "level": level,
+                                         "text": scrub(text, "console log line %d" % number)})
+            elif text.strip():
+                record["unmatched_lines"] += 1
+    return record
 
 
-def read_uac_log(root, rel, failures):
-    path = os.path.join(root, rel)
-    record = {"log": shown(rel, "log path"), "kind": "uac_log", "adapter": "uac_log_lines/1", "status": "parsed", "lines": 0,
-              "events": 0, "levels": {}, "unmatched_lines": 0, "unlabelled_lines_with_failure_words": 0,
-              "unlabelled_examples": [], "lines_naming_dates_or_host": [], "long_lines": 0, "problems": []}
+def read_uac_log(survey, rel, failures):
+    path = os.path.join(survey.root, rel)
+    record = new_record(survey, rel, "uac_log", "uac_log_lines/2")
+    record.update(lines=0, events=0, levels={}, unmatched_lines=0, unlabelled_lines_with_failure_words=0, unlabelled_examples=[],
+                  lines_naming_dates_or_host=[], command_stderr_lines=0, long_lines=0)
+    reason = binary_reason(path)
+    if reason:
+        record.update(status="unsupported", reason=reason)
+        return record
     try:
         fh = open_regular(path, encoding="utf-8", errors="surrogateescape", newline="")
     except OSError as exc:
@@ -793,7 +1016,8 @@ def read_uac_log(root, rel, failures):
             if not line:
                 break
             number += 1
-            if len(line) == MAX_LINE and not line.endswith("\n"):
+            long_line = len(line) == MAX_LINE and not line.endswith("\n")
+            if long_line:
                 record["long_lines"] += 1
                 while True:                  # the rest of the line is skipped, not stored: the whole line is in the evidence at this number
                     rest = fh.readline(MAX_LINE)
@@ -802,23 +1026,32 @@ def read_uac_log(root, rel, failures):
             record["lines"] = number
             text = line.rstrip("\r\n")
             low = text.lower()
-            if ("start date" in low or "end date" in low or "hostname" in low) and len(record["lines_naming_dates_or_host"]) < FIRST_PROBLEMS:
-                record["lines_naming_dates_or_host"].append({"line": number, "text": scrub(text, "UAC log line %d" % number)})
+            where = "UAC log line %d" % number
+            if "start date" in low or "end date" in low or "hostname" in low:
+                row = {"line": number, "text": scrub(text, where)}
+                survey.problems.add({"kind": "uac_line_naming_date_or_host", "path": record["log"], "locator": {"line": number}, "text": row["text"]})
+                if len(record["lines_naming_dates_or_host"]) < FIRST_PROBLEMS:
+                    record["lines_naming_dates_or_host"].append(row)
             found = UAC_EVENT.match(text)
             if found:
                 record["events"] += 1
                 level = found.group("level")
                 record["levels"][level] = record["levels"].get(level, 0) + 1
-                if level == "ERROR":
+                if level in UAC_ERROR_LEVELS:
                     failures.add({"collector": "UAC", "log": record["log"], "locator": {"line": number}, "outcome": "error",
-                                  "target": None, "reason": scrub(text, "UAC log line %d" % number),
-                                  "long_line": len(line) == MAX_LINE and not line.endswith("\n")})
+                                  "target": None, "reason": scrub(text, where), "long_line": long_line})
+                elif level in UAC_COMMAND_LEVELS and " 2> " in text:
+                    record["command_stderr_lines"] += 1
+                    survey.problems.add({"kind": "uac_command_stderr", "path": record["log"], "locator": {"line": number},
+                                         "text": scrub(text, where)})
             elif text.strip():
                 record["unmatched_lines"] += 1
                 if any(w in low for w in UAC_FAILURE_WORDS):
                     record["unlabelled_lines_with_failure_words"] += 1
+                    row = {"line": number, "text": scrub(text, where)}
+                    survey.problems.add({"kind": "uac_unlabelled_line", "path": record["log"], "locator": {"line": number}, "text": row["text"]})
                     if len(record["unlabelled_examples"]) < FIRST_PROBLEMS:
-                        record["unlabelled_examples"].append({"line": number, "text": scrub(text, "UAC log line %d" % number)})
+                        record["unlabelled_examples"].append(row)
     if record["status"] == "parsed" and record["events"] == 0:
         record["status"] = "unsupported"
         record["reason"] = "no line starts with a date, a time and a level word this adapter knows: failures are not counted from this log"
@@ -828,213 +1061,372 @@ def read_uac_log(root, rel, failures):
     return record
 
 
-def read_uploads(root, rel, failures):
-    path = os.path.join(root, rel)
-    record = {"log": shown(rel, "log path"), "kind": "uploads_json", "adapter": "velociraptor_uploads_jsonl/1", "status": "parsed",
-              "rows": 0, "objects": 0, "malformed_rows": 0, "non_object_rows": 0, "rows_with_error_field": 0,
-              "artefacts": {}, "artefacts_uncounted": 0, "problems": [], "failure_basis": "rows with a non-empty %s field" % "/".join(UPLOAD_ERROR_KEYS)}
-    try:
-        fh = open_text(path)
-    except OSError as exc:
-        record.update(status="unreadable", reason=describe(exc))
-        return record
-    with fh:
-        number = 0
-        first = True
-        while True:
-            if out_of_time():
-                record.update(status="partial", reason="the time limit stopped the read after line %d" % number)
-                break
+def jsonl_rows(fh, record, survey, label):
+    """(line number, row) for each JSON object of a JSON Lines stream; a line that is not valid JSON, not an object, or too long
+    is counted and located and the stream goes on. A JSON array is not JSON Lines: it ends the stream with `unsupported`."""
+    number = 0
+    first = True
+    while True:
+        if out_of_time():
+            record.update(status="partial", reason="the time limit stopped the read of %s after line %d" % (label, number))
+            return
+        try:
+            line = fh.readline(MAX_LINE)
+        except OSError as exc:
+            record.update(status="partial", reason="the read of %s stopped at line %d (%s)" % (label, number + 1, describe(exc)))
+            return
+        if not line:
+            return
+        number += 1
+        if len(line) == MAX_LINE and not line.endswith("\n"):
+            record["malformed_rows"] += 1
+            note_problem(survey, record, {"file": label, "locator": {"line": number}, "error": "a line longer than %d bytes: read no further" % MAX_LINE})
+            while True:
+                rest = fh.readline(MAX_LINE)
+                if not rest or rest.endswith("\n"):
+                    break
+            continue
+        if not line.strip():
+            continue
+        if first and line.lstrip().startswith("["):
+            record.update(status="unsupported", reason="%s is a JSON array, not JSON Lines: nothing was read from it" % label)
+            return
+        first = False
+        try:
+            row = json.loads(line)
+        except (ValueError, RecursionError):
+            record["malformed_rows"] += 1
+            note_problem(survey, record, {"file": label, "locator": {"line": number}, "error": "not valid JSON"})
+            continue
+        if not isinstance(row, dict):
+            record["non_object_rows"] += 1
+            note_problem(survey, record, {"file": label, "locator": {"line": number}, "error": "a JSON line that is not an object"})
+            continue
+        yield number, row
+
+
+def upload_error(value, depth=0):
+    """The first upload record under `value` that carries an Error: a dictionary with a non-empty Error and a key only an upload
+    record has (StoredName, UploadId, StoredSize, Components). Velociraptor puts an upload in a result row as a nested record."""
+    if depth > 4:
+        return None
+    if isinstance(value, dict):
+        err = value.get("Error")
+        if err not in (None, "", [], {}) and any(k in value for k in UPLOAD_MARKERS):
+            return value
+        for child in value.values():
+            found = upload_error(child, depth + 1)
+            if found is not None:
+                return found
+    elif isinstance(value, list):
+        for child in value[:1000]:
+            found = upload_error(child, depth + 1)
+            if found is not None:
+                return found
+    return None
+
+
+def sub_status(sub):
+    if sub["status"] != "parsed":
+        return sub["status"]
+    return "partial" if sub["malformed_rows"] or sub["non_object_rows"] else "parsed"
+
+
+def read_velociraptor(survey, directory, files, failures):
+    """One Velociraptor collection container (a directory holding uploads.json and/or collection_context.json). The version this
+    pack pins writes a failed upload to no row of uploads.json: it is a result row's upload record with an Error, and an ERROR
+    line of log.json. So the container is read whole only when results/*.json and log.json were read as well."""
+    base = os.path.join(survey.root, directory) if directory else survey.root
+    anchor = files.get("uploads") or files.get("context")
+    record = new_record(survey, anchor, "velociraptor_container", "velociraptor_container/1")
+    record.update(malformed_rows=0, non_object_rows=0, container=shown(directory or ".", "log path"), sources={}, objects=0,
+                  uploads_rows=0, rows_stored_smaller_than_file=0, artefacts={}, result_rows=0, rows_with_upload_error=0,
+                  log_levels={}, error_lines=0, warning_lines=0)
+    partial = []
+
+    def source(name, status, **extra):
+        record["sources"][name] = {"status": status, **extra}
+        if status != "parsed":
+            partial.append("%s is %s" % (name, status))
+
+    # uploads.json
+    if files.get("uploads"):
+        rel = files["uploads"]
+        reason = binary_reason(os.path.join(survey.root, rel))
+        if reason:
+            source("uploads.json", "unsupported", reason=reason)
+        else:
+            sub = {"log": record["log"], "status": "parsed", "malformed_rows": 0, "non_object_rows": 0, "problems": record["problems"]}
             try:
-                line = fh.readline(MAX_LINE)
+                fh = open_text(os.path.join(survey.root, rel))
             except OSError as exc:
-                record.update(status="partial", reason="the read stopped at line %d (%s)" % (number + 1, describe(exc)))
-                break
-            if not line:
-                break
-            number += 1
-            if len(line) == MAX_LINE and not line.endswith("\n"):
-                record["malformed_rows"] += 1
-                if len(record["problems"]) < FIRST_PROBLEMS:
-                    record["problems"].append({"line": number, "error": "a line longer than %d bytes: read no further" % MAX_LINE})
-                while True:
-                    rest = fh.readline(MAX_LINE)
-                    if not rest or rest.endswith("\n"):
-                        break
-                continue
-            if not line.strip():
-                continue
-            if first and line.lstrip().startswith("["):
-                record.update(status="unsupported", reason="the file is a JSON array, not JSON Lines: nothing was read from it")
-                return record
-            first = False
-            record["rows"] += 1
+                source("uploads.json", "unreadable", reason=describe(exc))
+            else:
+                with fh:
+                    for number, row in jsonl_rows(fh, sub, survey, "uploads.json"):
+                        record["uploads_rows"] += 1
+                        size, stored = row.get("file_size"), row.get("uploaded_size")
+                        if isinstance(size, int) and isinstance(stored, int) and stored < size and row.get("Type") != "idx":
+                            record["rows_stored_smaller_than_file"] += 1
+                            survey.problems.add({"kind": "upload_stored_smaller_than_file", "path": shown(rel, "log path"),
+                                                 "locator": {"line": number}, "target": scrub(str(row.get("vfs_path")), "uploads row"),
+                                                 "file_size": size, "uploaded_size": stored,
+                                                 "note": "a sparse or partial upload, or a failed one: results/*.json and log.json say which"})
+                record["malformed_rows"] += sub["malformed_rows"]
+                record["non_object_rows"] += sub["non_object_rows"]
+                source("uploads.json", sub_status(sub), **({"reason": sub["reason"]} if "reason" in sub else {}))
+
+    # results/*.json: where this version records a failed upload
+    results_dir = os.path.join(base, "results")
+    names = []
+    try:
+        names = sorted(n for n in os.listdir(results_dir) if n.endswith(".json"))
+    except OSError:
+        pass
+    if not names:
+        source("results/*.json", "not_found", reason="no results/*.json beside the container's index: a failed upload is recorded there in this version")
+    else:
+        sub = {"log": record["log"], "status": "parsed", "malformed_rows": 0, "non_object_rows": 0, "problems": record["problems"]}
+        for name in names:
+            rel = os.path.join(directory, "results", name) if directory else os.path.join("results", name)
+            artefact = scrub(name[:-len(".json")], "artefact name")
+            if len(record["artefacts"]) < MAX_DISTINCT:
+                record["artefacts"].setdefault(artefact, 0)
             try:
-                row = json.loads(line)
-            except (ValueError, RecursionError):
-                record["malformed_rows"] += 1
-                if len(record["problems"]) < FIRST_PROBLEMS:
-                    record["problems"].append({"line": number, "error": "not valid JSON"})
+                fh = open_text(os.path.join(survey.root, rel))
+            except OSError as exc:
+                survey.problems.add({"kind": "log_problem", "path": shown(rel, "log path"), "what": "a results file could not be opened", "error": describe(exc)})
+                sub["status"] = "partial"
                 continue
-            if not isinstance(row, dict):
-                record["non_object_rows"] += 1
-                continue
-            record["objects"] += 1
-            source = row.get("_Source")
-            if isinstance(source, str) and source:
-                name = scrub(source, "artefact name")
-                if name in record["artefacts"] or len(record["artefacts"]) < MAX_DISTINCT:
-                    record["artefacts"][name] = record["artefacts"].get(name, 0) + 1
-                else:
-                    record["artefacts_uncounted"] += 1
-            err = next((row[k] for k in UPLOAD_ERROR_KEYS if k in row and row[k] not in (None, "", [], {})), None)
-            if err is not None:
-                record["rows_with_error_field"] += 1
-                where = "uploads row at line %d" % number
-                target = next((row[k] for k in UPLOAD_TARGET_KEYS if isinstance(row.get(k), str) and row.get(k)), None)
-                failures.add({"collector": "Velociraptor", "log": record["log"], "locator": {"line": number}, "outcome": "error",
-                              "target": scrub(target, where) if target else None,
-                              "reason": scrub(err if isinstance(err, str) else json.dumps(err, default=str), where),
-                              "row_values": scrub_all(row)})
-    if record["status"] == "parsed" and (record["malformed_rows"] or record["non_object_rows"]):
-        record["status"] = "partial" if record["objects"] else "unsupported"
-        record["reason"] = "%d row(s) are not JSON objects or not valid JSON: counted, located in problems" % (record["malformed_rows"] + record["non_object_rows"])
-    elif record["status"] == "parsed" and record["objects"] == 0:
-        record["status"] = "unsupported"
-        record["reason"] = "no row was read"
+            with fh:
+                for number, row in jsonl_rows(fh, sub, survey, name):
+                    record["result_rows"] += 1
+                    if artefact in record["artefacts"]:
+                        record["artefacts"][artefact] += 1
+                    found = upload_error(row)
+                    if found is not None:
+                        record["rows_with_upload_error"] += 1
+                        where = "results row at line %d" % number
+                        target = next((found[k] for k in UPLOAD_TARGET_KEYS if isinstance(found.get(k), str) and found.get(k)), None)
+                        err = found.get("Error")
+                        failures.add({"collector": "Velociraptor", "log": shown(rel, "log path"), "locator": {"line": number},
+                                      "outcome": "error", "artefact": artefact,
+                                      "target": scrub(target, where) if target else None,
+                                      "reason": scrub(err if isinstance(err, str) else json.dumps(err, default=str), where),
+                                      "row_values": scrub_all(found)})
+        record["malformed_rows"] += sub["malformed_rows"]
+        record["non_object_rows"] += sub["non_object_rows"]
+        source("results/*.json", sub_status(sub), files=len(names), **({"reason": sub["reason"]} if "reason" in sub else {}))
+
+    # log.json: the collection's own log; an ERROR line is a recorded error
+    log_rel = os.path.join(directory, "log.json") if directory else "log.json"
+    if not os.path.isfile(os.path.join(base, "log.json")):
+        source("log.json", "not_found", reason="no log.json beside the container's index: the collection's own errors are recorded there")
+    else:
+        sub = {"log": record["log"], "status": "parsed", "malformed_rows": 0, "non_object_rows": 0, "problems": record["problems"]}
+        try:
+            fh = open_text(os.path.join(survey.root, log_rel))
+        except OSError as exc:
+            source("log.json", "unreadable", reason=describe(exc))
+        else:
+            with fh:
+                for number, row in jsonl_rows(fh, sub, survey, "log.json"):
+                    level = row.get("level")
+                    level = level if isinstance(level, str) else "?"
+                    record["log_levels"][level] = record["log_levels"].get(level, 0) + 1
+                    message = row.get("message")
+                    text = scrub(message if isinstance(message, str) else json.dumps(message, default=str), "log.json line %d" % number)
+                    if level.upper() == "ERROR":
+                        record["error_lines"] += 1
+                        failures.add({"collector": "Velociraptor", "log": shown(log_rel, "log path"), "locator": {"line": number},
+                                      "outcome": "error", "target": None, "reason": text})
+                    elif level.upper() in ("WARN", "WARNING"):
+                        record["warning_lines"] += 1
+                        survey.problems.add({"kind": "velociraptor_log_warning", "path": shown(log_rel, "log path"),
+                                             "locator": {"line": number}, "text": text})
+            record["malformed_rows"] += sub["malformed_rows"]
+            record["non_object_rows"] += sub["non_object_rows"]
+            source("log.json", sub_status(sub), **({"reason": sub["reason"]} if "reason" in sub else {}))
+    if partial:
+        record["status"] = "partial" if any(v["status"] == "parsed" for v in record["sources"].values()) else "unsupported"
+        record["reason"] = "; ".join(partial) + ": the failure count is not determined from this container"
     return record
 
 
 def main():
+    install_signal_handlers()
     args = read_args()
     root = want_str(args, "root", "root is required: the collection directory")
     limit = want_int(args, "limit", DEFAULT_LIMIT)
     seconds = want_int(args, "time_limit_seconds", 1500, 1, 3400)
+    csv.field_size_limit(MAX_LINE)
     try:
         VALUES[0] = SecretValues(want_bool(args, "write_values"), VALUES_NAME, TOOL)
     except SecretValuesRefused as exc:
         fail(str(exc))
     if not os.path.isdir(root):
-        fail("no such directory", root=root)
+        fail("no such directory" if not os.path.isfile(root) else
+             "root is a file: give the directory that holds it (a collector's record is read from its directory)", root=root)
     start_clock(seconds)
-    survey = Survey(root, limit)
+    problems = Table(TOOL + "-problems", FIRST_PROBLEMS)
+    survey = Survey(root, limit, problems)
     walk(survey)
 
     failures = Table(TOOL + "-failures", limit)
-    records, collectors = [], []
+    unrecognised = Table(TOOL + "-unrecognised-rows", limit)
+    runs = Table(TOOL + "-runs", limit)
+    records = []                     # every log record, for the status and the count
+    failure_sources = []             # the records the failure count rests on
+    candidates = []
+    kape_markers = []
     for (directory, run_id), logs in sorted(survey.kape.items()):
-        run = {"run_id": scrub(run_id, "KAPE run id"), "directory": shown(directory or ".", "log path"), "logs": []}
+        run = {"collector": "KAPE", "run_id": scrub(run_id, "KAPE run id"), "directory": shown(directory or ".", "log path"), "logs": []}
         if "copy" in logs:
-            rec = read_csv_log(root, logs["copy"], "copy_log", failures)
+            rec = read_csv_log(survey, logs["copy"], "copy_log", failures, unrecognised)
             run["logs"].append(rec)
             run["files_in_copy_log"] = rec["rows"] if rec["status"] in ("parsed", "partial") else None
         if "skip" in logs:
-            run["logs"].append(read_csv_log(root, logs["skip"], "skip_log", failures))
-        version = read_console_version(root, logs["console"]) if "console" in logs else None
+            rec = read_csv_log(survey, logs["skip"], "skip_log", failures, unrecognised)
+            run["logs"].append(rec)
+            failure_sources.append(rec)
         if "console" in logs:
-            run["console_log"] = shown(logs["console"], "log path")
-        run["collector_version"] = version or "unknown"
+            run["logs"].append(read_console_log(survey, logs["console"]))
+        run["collector_version"] = "unknown"
         records.extend(run["logs"])
-        collectors.append(("KAPE", run))
-    uac_runs = []
+        kape_markers += [lg["log"] for lg in run["logs"]]
+        runs.add(run)
+    uac_markers = []
     for rel in survey.uac_logs:
-        rec = read_uac_log(root, rel, failures)
+        rec = read_uac_log(survey, rel, failures)
         records.append(rec)
-        uac_runs.append({"log": rec["log"], "collector_version": "unknown", "record": rec})
-    upload_runs = []
-    for rel in survey.uploads:
-        rec = read_uploads(root, rel, failures)
+        failure_sources.append(rec)
+        uac_markers.append(rec["log"])
+        runs.add({"collector": "UAC", "log": rec["log"], "collector_version": "unknown", "record": rec})
+    velo_markers = []
+    for directory, files in sorted(survey.velociraptor.items()):
+        rec = read_velociraptor(survey, directory, files, failures)
         records.append(rec)
-        upload_runs.append({"log": rec["log"], "collector_version": "unknown", "record": rec})
+        failure_sources.append(rec)
+        velo_markers += [shown(v, "log path") for v in files.values() if v]
+        runs.add({"collector": "Velociraptor", "container": rec["container"], "collector_version": "unknown", "record": rec})
 
-    candidates = []
-    kape_runs = [run for _name, run in collectors]
-    if kape_runs:
-        markers = []
-        for run in kape_runs:
-            markers += [lg["log"] for lg in run["logs"]] + ([run["console_log"]] if "console_log" in run else [])
+    if kape_markers:
         candidates.append({"collector": "KAPE", "basis": "log files named like KAPE's copy, skip and console logs",
-                           "observed_markers": markers, "runs": kape_runs})
+                           "observed_markers": kape_markers[:FIRST_PROBLEMS], "markers_total": len(kape_markers)})
     if survey.uac_logs or survey.uac_dirs:
+        markers = uac_markers + [shown(p, "marker directory") for p in survey.uac_dirs]
         candidates.append({"collector": "UAC",
-                           "basis": "a uac.log file" if survey.uac_logs else "directory names only: [root], [bodyfile] or [live_response]",
-                           "observed_markers": [shown(p, "log path") for p in survey.uac_logs] + [shown(p, "marker directory") for p in survey.uac_dirs],
-                           "runs": uac_runs})
-    if survey.uploads:
-        candidates.append({"collector": "Velociraptor", "basis": "uploads.json file(s)",
-                           "observed_markers": [shown(p, "log path") for p in survey.uploads], "runs": upload_runs})
+                           "basis": "a uac.log file" if survey.uac_logs else "a [root] directory name only: no log was found",
+                           "observed_markers": markers[:FIRST_PROBLEMS], "markers_total": len(markers)})
+    if survey.velociraptor:
+        candidates.append({"collector": "Velociraptor", "basis": "uploads.json or collection_context.json",
+                           "observed_markers": velo_markers[:FIRST_PROBLEMS], "markers_total": len(velo_markers)})
 
-    failure_page = failures.finish()
-    objects_page = survey.objects.finish()
+    tables = {"failed_targets": failures.finish(), "unrecognised_rows": unrecognised.finish(), "runs": runs.finish(),
+              "objects": survey.objects.finish(), "problems": problems.finish()}
     values = VALUES[0]
     values.close()
 
-    statuses = [r["status"] for r in records]
-    read_whole = bool(records) and all(s == "parsed" for s in statuses)
-    counted = [r for r in records if r["status"] in ("parsed", "partial")]
-    any_failure_source = any(r["kind"] in ("skip_log", "uac_log", "uploads_json") and r["status"] in ("parsed", "partial") for r in records)
-    if any_failure_source:
-        failure_count = failure_page["matched"]
-        failure_basis = ("rows the recognised logs record as skipped (KAPE skip log), lines with an ERROR level (UAC) and rows "
-                         "with a non-empty Error field (Velociraptor); a skip is the collector's own recorded outcome, not a judgement")
+    top_archives = survey.counts["archive"]
+    walk_complete = not survey.stopped and survey.errors_total == 0
+    all_read = bool(failure_sources) and all(r["status"] == "parsed" for r in failure_sources)
+    count_known = all_read and walk_complete and top_archives == 0
+    seen = tables["failed_targets"]["matched"]
+    if count_known:
+        failure_count = seen
+        basis = ("every failure-source log was read whole: the rows the logs record as skipped (KAPE skip log), lines with an ERROR level (UAC) "
+                 "and the Velociraptor upload errors and ERROR log lines. A skip is the collector's own recorded outcome, not a judgement; "
+                 "the count says nothing about what a log omits")
     else:
         failure_count = None
-        failure_basis = ("no skip log, UAC log or Velociraptor index was read in a form this tool recognises: there is no failure "
-                         "count, which is not zero failures")
-    complete_failures = any_failure_source and read_whole and not survey.stopped and survey.errors_total == 0
+        why = []
+        if not failure_sources:
+            why.append("no skip log, UAC log or Velociraptor container was read")
+        why += ["%s is %s" % (r["log"], r["status"]) for r in failure_sources if r["status"] != "parsed"]
+        if survey.stopped:
+            why.append("the walk stopped early")
+        if survey.errors_total:
+            why.append("%d walk or read error(s)" % survey.errors_total)
+        if top_archives:
+            why.append("%d archive(s) were not opened" % top_archives)
+        basis = "not determined (%s). This is not zero failures; failed_targets_seen is how many rows were read" % "; ".join(why[:10])
 
-    total_files = survey.files
-    # an archive counts as an object of its own only at the top level (see handle_file); a nested one is a copied file
-    logical = total_files - survey.counts["disk_container"] - survey.counts["memory_capture"] - survey.counts["unknown"] - survey.counts["archive"]
-    survey.counts["logical_files"] = logical
+    total = survey.files
     parts = []
-    if logical > 0:
+    if survey.tree_files > 0:
         parts.append("logical")
-    for key in ("disk_container", "memory_capture", "unknown", "archive"):
+    for key in ("disk_container", "memory_capture", "archive", "unknown"):
         if survey.counts[key]:
             parts.append(key)
-    kind = "empty" if total_files == 0 else (parts[0] if len(parts) == 1 else "mixed")
-    not_observed = [label for key, label in (("disk_container", "disk containers"), ("memory_capture", "memory captures"))
-                    if survey.counts[key] == 0]
+    if total == 0:
+        kind = "empty"
+    elif not parts:
+        kind = "logical"
+    else:
+        kind = parts[0] if len(parts) == 1 else "mixed"
+    caveats = []
+    undetermined = survey.counts["unknown"] + survey.counts["unknown_nested"]
+    if undetermined:
+        caveats.append("%d object(s) are named like an image or a capture and have no signature: each may be a disk or a memory capture" % undetermined)
+    if top_archives:
+        caveats.append("%d top-level archive(s) were not opened" % top_archives)
+    if survey.memory_bearing:
+        caveats.append("files named like memory-bearing files are present (%s): they are not captures" % ", ".join(sorted(set(survey.memory_bearing))))
+    if survey.stopped or survey.errors_total:
+        caveats.append("the walk was incomplete")
+    not_observed = [] if undetermined else [label for key, label in (("disk_container", "disk containers"), ("memory_capture", "memory captures"))
+                                            if survey.counts[key] == 0]
 
-    problems = []
+    problem_lines = []
     if survey.stopped:
-        problems.append("the walk stopped early: %s" % survey.stopped["reason"])
+        problem_lines.append("the walk stopped early: %s" % survey.stopped["reason"])
     if survey.errors_total:
-        problems.append("%d walk or read error(s): see walk_errors" % survey.errors_total)
+        problem_lines.append("%d walk or read error(s): see walk.first_errors and the problems table" % survey.errors_total)
     for r in records:
         if r["status"] != "parsed":
-            problems.append("%s is %s" % (r["log"], r["status"]))
-    status = "complete" if not problems else "partial"
+            problem_lines.append("%s is %s" % (r["log"], r["status"]))
+    status = "complete" if not problem_lines else "partial"
+    problem_basis = "; ".join(problem_lines[:10]) + ("; and %d more (see the records)" % (len(problem_lines) - 10) if len(problem_lines) > 10 else "")
 
     out = {
         "tool": TOOL, "parser": PARSER, "root": shown(root, "root"), "status": status,
-        "status_basis": ("every directory was listed and every recognised log was read whole" if status == "complete" else "; ".join(problems[:10])),
-        "walk": {"directories": survey.directories, "files": total_files, "symbolic_links_not_followed": survey.links_total,
+        "status_basis": ("every directory was listed and every recognised log was read whole" if status == "complete" else problem_basis),
+        "ignored_parameters": ignored_parameters(args, KNOWN_PARAMETERS),
+        "delivery": {"kind": kind,
+                     "object_counts": {**survey.counts, "other_files": survey.other_files, "other_files_below_the_top_level": survey.tree_files},
+                     "nested_archives_named_like_archives": survey.nested_archives,
+                     "basis": "each classified object on its own (see objects); the files that are not classified are 'other files' (copied files, "
+                              "notes, logs, captures), and only those below the top level count as a copied tree; mixed means more than one kind "
+                              "is present",
+                     "not_observed": not_observed, "not_observed_complete": not caveats, "not_observed_caveats": caveats,
+                     "not_observed_basis": "no object of this kind was seen among the files walked, by signature or name; a limit of this "
+                                           "delivery, not a finding about the source"},
+        "failed_target_count": failure_count,
+        "failed_targets_seen": seen,
+        "failed_target_count_basis": basis,
+        "walk": {"directories": survey.directories, "files": total, "symbolic_links_not_followed": survey.links_total,
                  "special_files_not_read": survey.special_total, "errors": survey.errors_total, "first_errors": survey.errors,
                  "first_links": survey.links, "first_special_files": survey.special, "stopped": survey.stopped,
+                 "logs_inside_collected_data": survey.collected_data_logs[:FIRST_PROBLEMS],
+                 "logs_inside_collected_data_total": len(survey.collected_data_logs),
                  "reads_first_bytes_of": "%d object(s): top-level files, files named like an image, a memory capture or an archive, and files of %d bytes or more" % (survey.reads_head, MIN_RAW_BYTES),
                  "first_bytes_unreadable": survey.head_errors},
-        "delivery": {"kind": kind, "object_counts": survey.counts, "nested_archives_named_like_archives": survey.nested_archives,
-                     "basis": "each object classified on its own (see objects); mixed means more than one kind is present",
-                     "not_observed": not_observed,
-                     "not_observed_basis": "no object of this kind was seen among the files walked, by signature or name; a limit of this delivery, not a finding about the source"},
-        "objects": survey.objects.page,
-        "objects_table": objects_page,
         "collector_candidates": candidates,
         "layout_clues": survey.layout_clues,
-        "failed_targets": failures.page,
-        "failed_target_count": failure_count,
-        "failed_target_count_basis": failure_basis,
-        "failed_target_count_complete": complete_failures,
-        "failed_targets_table": failure_page,
         "artefact_families_by_name": dict(sorted(survey.families.items(), key=lambda kv: (-kv[1]["count"], kv[0]))),
         "artefact_families_basis": "a file's own name only: a file of that name may be empty, truncated or not that artefact",
+        "tables": tables,
         "withheld": {"strings_withheld": WITHHELD["count"], "values": values.summary()},
         "note": ("A hypothesis from names, first bytes and the collectors' own logs. It does not say the collector finished, what it was "
                  "asked to copy, or whether a digest matches; the logs and manifests themselves are the record. A recorded skip or error "
                  "is the collector's outcome, to be reported with its own words and not explained or judged. Source paths are not "
-                 "reconstructed here: collection_index offers hypotheses, and only a collector's own mapping observes one."),
+                 "reconstructed here: collection_index offers hypotheses, and only a collector's own mapping observes one. Every page "
+                 "below is the first rows of a table whose whole is in the file `tables` names."),
+        "objects": survey.objects.page,
+        "runs": runs.page,
+        "failed_targets": failures.page,
+        "unrecognised_rows": unrecognised.page,
+        "problems": problems.page,
     }
     print(json.dumps(out, indent=2, default=str))
 
@@ -1045,4 +1437,4 @@ if __name__ == "__main__":
     except (SystemExit, KeyboardInterrupt):
         raise
     except BaseException as exc:                  # a bug here is a JSON error that names it, not a traceback and a half-written answer
-        fail("the tool stopped on an unexpected error (%s)" % type(exc).__name__, detail=str(exc)[:300])
+        fail("the tool stopped on an unexpected error (%s)" % type(exc).__name__, detail=str(exc))
