@@ -1,372 +1,1040 @@
 #!/usr/bin/env python3
 """Read an executable's structure from its bytes, and never run it.
 
-What a binary asks the operating system for is the cheapest capability list an
-examiner gets, and it is in the headers. Three readings matter more than the
-rest:
+What a binary declares to its loader is in its headers: which libraries it asks for, how its
+file is laid out in memory, which fields name an entry point. This tool reads those fields
+for three formats and says, for each structure, whether it read it whole:
 
-    the section table   raw size far below virtual size, with high entropy, is a
-                        packer: the real code only exists once it unpacks itself
-    the imports         WININET or WS2_32 is network; CreateRemoteThread with
-                        WriteProcessMemory and VirtualAllocEx is injection; and
-                        a binary with almost no imports and one LoadLibrary is
-                        resolving them at runtime to hide exactly this
-    the timestamp       attacker-controllable, and useful for that reason: one in
-                        the future, or identical across a family, is the finding
+    PE        the DOS and COFF headers, the optional header's fields, the data directory
+              table, the section table with the entropy of each section's raw bytes, the
+              import directory (library names, function names, ordinals), the export
+              directory's image name and the certificate table's declaration
+    ELF       the header, the program headers, the section headers, and the dynamic array
+              (DT_NEEDED, DT_SONAME, DT_RPATH, DT_RUNPATH), read through PT_DYNAMIC as the
+              loader reads it, then through an SHT_DYNAMIC section when there is none
+    Mach-O    thin files of either width and byte order, and universal binaries: every
+              slice, with its load commands, linked libraries and segments
 
-Formats read here: PE (32 and 64 bit), ELF, and Mach-O far enough to list the
-libraries it links. All of it is parsing; nothing is executed, and under
---quarantine the kernel would refuse anyway.
+Everything is parsing. Nothing is executed, and nothing here verifies a signature, resolves a
+resource or lists an export symbol (the answer's `coverage.structures_not_read` names what is
+left). A field is named for what it holds: a certificate table is *declared*, not verified; a
+file with no section headers is `stripped: null`, not stripped.
+
+Every table is read through checked ranges: a field is read only from bytes the file holds
+inside the structure that contains it, a traversal is bounded, and what the tool could not read
+is in `problems` and in the answer's `status` (complete, partial, failed, unsupported). Exit 0
+means the engine ran; `status` says whether the structures it reads were read in full.
 """
 import datetime
+import errno
+import hashlib
 import json
 import math
 import mmap
 import os
+import re
 import struct
 import sys
+from collections import Counter
+from pathlib import Path
 
-MACHINES = {0x014c: "i386", 0x8664: "x86-64", 0x01c0: "ARM", 0xaa64: "ARM64", 0x0200: "IA64"}
-SUBSYSTEMS = {1: "native", 2: "GUI", 3: "console", 9: "Windows CE", 10: "EFI application",
-              12: "EFI runtime driver", 14: "Xbox"}
+TOOL = {"name": "pe_info", "version": 2}
+PARSER = "pe_info/2"
+
+NOTE = ("Static structural inventory only. Size differences, entropy and imports are triage features, not proof "
+        "of packing, intent or execution. Read `status`, `problems` and `coverage` first: they say what was read "
+        "and what was not. Corroborate any material conclusion.")
+
+# Bounds. Each is a count of what is read, never a way of cutting a result: a table longer than the
+# inline limit is kept whole in a file, and what a bound leaves unread is in `problems`.
+DEFAULT_LIMIT = 5000                    # rows of one table in the answer; the whole of a longer one is in a file
+DEFAULT_ENTROPY_BUDGET = 256 << 20      # bytes measured for entropy in one call (overlapping ranges count twice)
+CHUNK = 1 << 20
+NAME_CAP = 4096                         # bytes read for one name
+MAX_SECTIONS = 65535                    # a PE's section count is a 16-bit field
+MAX_ELF_SECTIONS = 262144
+MAX_IMPORT_DESCRIPTORS = 65536
+MAX_THUNKS_PER_LIBRARY = 1 << 20
+MAX_FUNCTIONS = 4_000_000
+MAX_DYNAMIC_ENTRIES = 65536
+MAX_NEEDED = 4096
+MAX_SLICES = 256
+MAX_LOAD_COMMANDS = 65536
+MAX_PROBLEMS = 100
+
+MACHINES = {0x014c: "i386", 0x8664: "x86-64", 0x01c0: "ARM", 0x01c4: "ARMNT", 0xaa64: "ARM64", 0x0200: "IA64",
+            0x5032: "RISC-V 32", 0x5064: "RISC-V 64", 0x0166: "MIPS R4000"}
+SUBSYSTEMS = {1: "native", 2: "GUI", 3: "console", 5: "OS/2 console", 7: "POSIX console", 9: "Windows CE",
+              10: "EFI application", 11: "EFI boot service driver", 12: "EFI runtime driver", 13: "EFI ROM",
+              14: "Xbox", 16: "Windows boot application"}
 SECTION_FLAGS = [(0x20000000, "execute"), (0x40000000, "read"), (0x80000000, "write"),
                  (0x00000020, "code"), (0x00000040, "initialised data"),
                  (0x00000080, "uninitialised data"), (0x02000000, "discardable")]
-ELF_TYPES = {1: "relocatable", 2: "executable", 3: "shared object", 4: "core"}
-ELF_MACHINES = {0x03: "i386", 0x3e: "x86-64", 0x28: "ARM", 0xb7: "AArch64", 0xf3: "RISC-V"}
-MACHO_TYPES = {1: "object", 2: "executable", 6: "dylib", 8: "bundle", 4: "core"}
+PE_DIRECTORIES = ["export", "import", "resource", "exception", "certificate", "base_relocation", "debug",
+                  "architecture", "global_ptr", "tls", "load_config", "bound_import", "iat", "delay_import",
+                  "clr_runtime_header", "reserved"]
+NOT_PE = {b"NE": "NE (16-bit New Executable)", b"LE": "LE (Linear Executable)", b"LX": "LX (OS/2 Linear Executable)"}
+WIN_CERT_TYPES = {1: "WIN_CERT_TYPE_X509", 2: "WIN_CERT_TYPE_PKCS_SIGNED_DATA", 4: "WIN_CERT_TYPE_TS_STACK_SIGNED"}
+
+ELF_TYPES = {0: "none", 1: "relocatable", 2: "executable", 3: "shared object", 4: "core"}
+ELF_MACHINES = {0x02: "SPARC", 0x03: "i386", 0x04: "Motorola 68000", 0x08: "MIPS", 0x14: "PowerPC", 0x15: "PowerPC64",
+                0x16: "S390", 0x28: "ARM", 0x2a: "SuperH", 0x2b: "SPARC V9", 0x32: "IA-64", 0x3e: "x86-64",
+                0x53: "AVR", 0xb7: "AArch64", 0xf3: "RISC-V", 0xf7: "BPF", 0x102: "LoongArch"}
+ELF_PT = {0: "PT_NULL", 1: "PT_LOAD", 2: "PT_DYNAMIC", 3: "PT_INTERP", 4: "PT_NOTE", 5: "PT_SHLIB", 6: "PT_PHDR",
+          7: "PT_TLS", 0x6474e550: "PT_GNU_EH_FRAME", 0x6474e551: "PT_GNU_STACK", 0x6474e552: "PT_GNU_RELRO",
+          0x6474e553: "PT_GNU_PROPERTY"}
+ELF_SHT = {0: "SHT_NULL", 1: "SHT_PROGBITS", 2: "SHT_SYMTAB", 3: "SHT_STRTAB", 4: "SHT_RELA", 5: "SHT_HASH",
+           6: "SHT_DYNAMIC", 7: "SHT_NOTE", 8: "SHT_NOBITS", 9: "SHT_REL", 10: "SHT_SHLIB", 11: "SHT_DYNSYM",
+           14: "SHT_INIT_ARRAY", 15: "SHT_FINI_ARRAY", 16: "SHT_PREINIT_ARRAY", 17: "SHT_GROUP",
+           18: "SHT_SYMTAB_SHNDX", 0x6ffffff6: "SHT_GNU_HASH", 0x6ffffffd: "SHT_GNU_verdef",
+           0x6ffffffe: "SHT_GNU_verneed", 0x6fffffff: "SHT_GNU_versym"}
+
+# A thin Mach-O's magic is stored in the file's own byte order; a fat header is always big-endian, so a file
+# that begins with FAT_CIGAM (be ba fe ca) stores its fat header little-endian.
+MACHO_MAGICS = {b"\xce\xfa\xed\xfe": (False, "<"), b"\xcf\xfa\xed\xfe": (True, "<"),
+                b"\xfe\xed\xfa\xce": (False, ">"), b"\xfe\xed\xfa\xcf": (True, ">")}
+FAT_MAGICS = {b"\xca\xfe\xba\xbe": (False, ">"), b"\xbe\xba\xfe\xca": (False, "<"),
+              b"\xca\xfe\xba\xbf": (True, ">"), b"\xbf\xba\xfe\xca": (True, "<")}
+MACHO_TYPES = {1: "object", 2: "executable", 3: "fixed VM library", 4: "core", 5: "preload", 6: "dylib",
+               7: "dynamic linker", 8: "bundle", 9: "dylib stub", 10: "dSYM companion", 11: "kext bundle",
+               12: "fileset"}
+MACHO_CPUS = {7: "x86", 0x01000007: "x86-64", 12: "ARM", 0x0100000c: "ARM64", 0x0200000c: "ARM64_32",
+              18: "PowerPC", 0x01000012: "PowerPC64"}
+LC_SEGMENT, LC_SEGMENT_64, LC_ID_DYLIB, LC_CODE_SIGNATURE, LC_MAIN = 0x1, 0x19, 0x0d, 0x1d, 0x80000028
+LC_LINKED = {0x0c: "LC_LOAD_DYLIB", 0x80000018: "LC_LOAD_WEAK_DYLIB", 0x8000001f: "LC_REEXPORT_DYLIB",
+             0x20: "LC_LAZY_LOAD_DYLIB", 0x80000023: "LC_LOAD_UPWARD_DYLIB"}
+LC_NAMES = {0x1: "LC_SEGMENT", 0x2: "LC_SYMTAB", 0x4: "LC_THREAD", 0x5: "LC_UNIXTHREAD", 0xb: "LC_DYSYMTAB",
+            0x0d: "LC_ID_DYLIB", 0x0e: "LC_LOAD_DYLINKER", 0x0f: "LC_ID_DYLINKER", 0x19: "LC_SEGMENT_64",
+            0x1b: "LC_UUID", 0x1d: "LC_CODE_SIGNATURE", 0x1e: "LC_SEGMENT_SPLIT_INFO", 0x21: "LC_ENCRYPTION_INFO",
+            0x22: "LC_DYLD_INFO", 0x80000022: "LC_DYLD_INFO_ONLY", 0x24: "LC_VERSION_MIN_MACOSX",
+            0x80000028: "LC_MAIN", 0x26: "LC_FUNCTION_STARTS", 0x29: "LC_DATA_IN_CODE", 0x2a: "LC_SOURCE_VERSION",
+            0x2c: "LC_ENCRYPTION_INFO_64", 0x32: "LC_BUILD_VERSION", **LC_LINKED}
+
+
+class Stop(Exception):
+    """A format that cannot be read at all: `failed` (the headers are unusable) or `unsupported` (a variant not read)."""
+
+    def __init__(self, status, message, partial=None):
+        Exception.__init__(self, message)
+        self.status, self.message, self.partial = status, message, partial or {}
+        self.extra = {}
+
+
+class Short(Exception):
+    """A read that would run past the end of the file."""
+
+
+def describe(exc):
+    code = errno.errorcode.get(exc.errno, "") if getattr(exc, "errno", None) else ""
+    return "%s%s: %s" % (type(exc).__name__, " " + code if code else "", getattr(exc, "strerror", None) or str(exc))
 
 
 def fail(message, **extra):
-    print(json.dumps({"error": message, **extra}))
+    print(json.dumps({"error": message, "status": extra.pop("status", "failed"), "tool": TOOL, **extra}))
     raise SystemExit(1)
 
 
-def entropy(block):
-    if not block:
-        return 0.0
-    counts = [0] * 256
-    for byte in block:
-        counts[byte] += 1
-    out, total = 0.0, len(block)
-    for count in counts:
-        if count:
-            p = count / total
-            out -= p * math.log2(p)
-    return round(out, 3)
+# --- lossless paging: the answer a table gets when it is long, and the whole of it in a file ------------------------
+
+class LosslessPage:
+    """The first `limit` rows of a table in the answer; when there are more, the whole table as JSON Lines in a
+    file that is never a file another call wrote (it is created exclusively, under a new name when the name is
+    taken) and is named in the answer. A table that cannot be written whole says so, and the call goes partial."""
+
+    def __init__(self, tool, key, limit):
+        self.tool = re.sub(r"[^A-Za-z0-9_.-]", "_", tool)
+        self.limit = limit
+        self.page = []
+        self.total = 0
+        self._out = None
+        self.path = None
+        self.shown = None
+        self.not_written = None
+        digest = hashlib.sha256(json.dumps(key, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:16]
+        self.stem = "%s-%s" % (self.tool, digest)
+        job, out = os.environ.get("JOB_ID"), os.environ.get("OUT")
+        if out:
+            self.dir = Path(out) / "tool-output"
+            self.prefix = ("store/jobs/%s/out/tool-output/" % re.sub(r"[^A-Za-z0-9_.-]", "_", job)) if job else str(self.dir) + "/"
+        else:
+            agent = re.sub(r"[^A-Za-z0-9_.-]", "_", os.environ.get("AGENT_ID") or "tool")
+            self.dir = Path("work") / agent / "tool-output"
+            self.prefix = str(self.dir) + "/"
+
+    def _open(self):
+        try:
+            self.dir.mkdir(parents=True, exist_ok=True)
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+            for n in range(1, 100):
+                name = "%s.jsonl" % self.stem if n == 1 else "%s-%d.jsonl" % (self.stem, n)
+                try:
+                    fd = os.open(str(self.dir / name), flags, 0o644)
+                except FileExistsError:
+                    continue
+                self.path, self.shown = self.dir / name, self.prefix + name
+                self._out = os.fdopen(fd, "w", encoding="utf-8")
+                for kept in self.page:
+                    self._write(kept)
+                return
+            self.not_written = "ninety-nine files of this name already exist in %s" % self.dir
+        except OSError as exc:
+            self.not_written = "the file could not be created in %s (%s)" % (self.dir, describe(exc))
+
+    def _write(self, row):
+        self._out.write(json.dumps(row, default=str))
+        self._out.write("\n")
+
+    def add(self, row):
+        self.total += 1
+        if len(self.page) < self.limit:
+            self.page.append(row)
+            return
+        if self._out is None and self.not_written is None:
+            self._open()
+        if self._out is not None:
+            try:
+                self._write(row)
+            except OSError as exc:
+                self.not_written = "writing the file failed (%s)" % describe(exc)
+                self._out = None
+
+    def finish(self):
+        result = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
+        if self._out is not None:
+            try:
+                self._out.flush()
+                os.fsync(self._out.fileno())
+                self._out.close()
+            except OSError as exc:
+                self.not_written = "writing the file failed (%s)" % describe(exc)
+            else:
+                result["all_results"] = self.shown
+                result["all_results_format"] = "JSON Lines, one complete row per line"
+        if self.not_written:
+            result["not_written"] = self.not_written
+        return result
 
 
-def cstring(blob, at, end=None):
-    """Read a complete C string, bounded by its file-backed container."""
-    end = len(blob) if end is None else min(len(blob), end)
-    nul = blob.find(b"\x00", at, end)
-    if nul >= 0:
-        end = nul
-    return blob[at:end].decode("utf-8", "replace")
+# --- the image, with checked access ----------------------------------------------------------------------------------
+
+class Image:
+    def __init__(self, mm):
+        self.mm = mm
+        self.size = len(mm)
+
+    def unpack(self, fmt, at):
+        n = struct.calcsize(fmt)
+        if at < 0 or at + n > self.size:
+            raise Short("%d byte(s) at offset %d run past the end of the file (%d bytes)" % (n, at, self.size))
+        return struct.unpack_from(fmt, self.mm, at)
+
+    def cstr(self, at, end=None, cap=NAME_CAP):
+        """(text, complete): the C string at `at`, read no further than `end` or `cap` bytes."""
+        end = self.size if end is None else min(end, self.size)
+        if at < 0 or at >= end:
+            return None, False
+        stop = min(end, at + cap)
+        nul = self.mm.find(b"\x00", at, stop)
+        if nul >= 0:
+            return self.mm[at:nul].decode("utf-8", "replace"), True
+        return self.mm[at:stop].decode("utf-8", "replace"), False
+
+
+class Ctx:
+    def __init__(self, key, limit, entropy_budget, with_imports):
+        self.key = key
+        self.limit = limit
+        self.with_imports = with_imports
+        self.budget = {"limit": entropy_budget, "used": 0, "refused": 0}
+        self.problems = []
+        self.problems_dropped = 0
+        self.limits = []
+        self.pages = {}
+
+    def problem(self, text):
+        if text in self.problems:
+            return
+        if len(self.problems) >= MAX_PROBLEMS:
+            self.problems_dropped += 1
+            return
+        self.problems.append(text)
+
+    def limit_hit(self, text):
+        if text not in self.limits:
+            self.limits.append(text)
+
+    def page(self, name):
+        if name not in self.pages:
+            self.pages[name] = LosslessPage("pe_info-" + name, [self.key, name], self.limit)
+        return self.pages[name]
+
+
+def entropy_of(img, start, end, ctx):
+    """(entropy to 3 decimals or None, why it is None): Shannon entropy of the file bytes in [start, end),
+    streamed in chunks, against the call's work budget."""
+    end = min(end, img.size)
+    if start < 0 or start >= end:
+        return None, "no bytes of this range are in the file"
+    want = end - start
+    if ctx.budget["used"] + want > ctx.budget["limit"]:
+        ctx.budget["refused"] += 1
+        ctx.limit_hit("entropy: the work budget of %d bytes was reached; later ranges were not measured" % ctx.budget["limit"])
+        return None, "not measured: the entropy work budget (%d bytes) was reached" % ctx.budget["limit"]
+    counts = Counter()
+    at = start
+    while at < end:
+        n = min(CHUNK, end - at)
+        counts.update(img.mm[at:at + n])
+        at += n
+    ctx.budget["used"] += want
+    value = 0.0
+    for c in counts.values():
+        p = c / want
+        value -= p * math.log2(p)
+    return round(value, 3), None
 
 
 def when(stamp):
     if not stamp:
         return None
     try:
-        return datetime.datetime.fromtimestamp(
-            stamp, datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+        return datetime.datetime.fromtimestamp(stamp, datetime.timezone.utc).isoformat().replace("+00:00", "Z")
     except (OverflowError, OSError, ValueError):
         return None
 
 
-def read_pe(blob, with_imports):
+# --- PE --------------------------------------------------------------------------------------------------------------
+
+PE_READ = ["DOS header (e_lfanew)", "COFF file header", "optional header fields listed in this answer",
+           "data directory table", "section table and the entropy of each section's raw bytes",
+           "import directory: library names, function names and ordinals", "export directory image name",
+           "certificate table declaration (offset, size and the first entry's header)"]
+PE_NOT_READ = ["resources (version information, icons, embedded files)", "export symbols (names, ordinals, forwarders)",
+               "delay-load imports and bound imports", "TLS directory and callbacks",
+               "CLR (managed code) header and metadata", "debug directory", "base relocations",
+               "load configuration directory", "the Rich header", "Authenticode: the signature is not parsed or verified",
+               "the contents of an overlay"]
+
+
+def read_pe(img, ctx):
     out = {"format": "PE"}
-    if len(blob) < 0x40:
-        return {"format": "PE", "error": "shorter than a DOS header"}
-    pe_at, = struct.unpack_from("<I", blob, 0x3C)
-    if pe_at + 24 > len(blob) or blob[pe_at:pe_at + 4] != b"PE\x00\x00":
-        return {"format": "PE", "error": "no PE signature where the DOS header points"}
-    machine, sections, stamp, _sym, _nsym, opt_size, characteristics = struct.unpack_from(
-        "<HHIIIHH", blob, pe_at + 4)
+    if img.size < 0x40:
+        raise Stop("failed", "shorter than a DOS header (64 bytes): the file is %d bytes" % img.size, out)
+    pe_at, = img.unpack("<I", 0x3C)
+    sig = bytes(img.mm[pe_at:pe_at + 4]) if pe_at <= img.size else b""
+    if sig != b"PE\x00\x00":
+        other = NOT_PE.get(sig[:2])
+        if other:
+            raise Stop("unsupported", "the DOS header points to a %s header, not a PE one" % other, out)
+        raise Stop("failed", "no PE signature where the DOS header points (offset %d of %d)" % (pe_at, img.size), out)
+    if pe_at + 24 > img.size:
+        raise Stop("failed", "the COFF header at offset %d runs past the end of the file (%d bytes)" % (pe_at + 4, img.size), out)
+    machine, nsec, stamp, _sym, _nsym, opt_size, characteristics = img.unpack("<HHIIIHH", pe_at + 4)
     out.update({
         "machine": MACHINES.get(machine, hex(machine)),
-        "sections_declared": sections,
+        "sections_declared": nsec,
         "compile_timestamp": when(stamp),
         "compile_timestamp_raw": stamp,
         "characteristics": hex(characteristics),
         "is_dll": bool(characteristics & 0x2000),
         "is_system_file": bool(characteristics & 0x1000),
+        "is_executable_image": bool(characteristics & 0x0002),
     })
+
     opt_at = pe_at + 24
-    if opt_size and opt_at + 2 <= len(blob):
-        magic, = struct.unpack_from("<H", blob, opt_at)
-        wide = magic == 0x20b
-        out["bits"] = 64 if wide else 32
-        try:
-            out["entry_point"] = hex(struct.unpack_from("<I", blob, opt_at + 16)[0])
-            out["image_base"] = hex(struct.unpack_from("<Q" if wide else "<I", blob,
-                                                       opt_at + (24 if wide else 28))[0])
-            out["subsystem"] = SUBSYSTEMS.get(struct.unpack_from("<H", blob, opt_at + 68)[0],
-                                              "unknown")
-            dll_flags = struct.unpack_from("<H", blob, opt_at + 70)[0]
-            out["aslr"] = bool(dll_flags & 0x0040)
-            out["dep"] = bool(dll_flags & 0x0100)
-            dirs_at = opt_at + (112 if wide else 96)
-            count, = struct.unpack_from("<I", blob, opt_at + (108 if wide else 92))
-            directories = []
-            for i in range(min(count, 16)):
-                rva, size = struct.unpack_from("<II", blob, dirs_at + i * 8)
-                directories.append({"index": i, "rva": rva, "size": size})
-            out["signed"] = bool(len(directories) > 4 and directories[4]["size"])
-        except struct.error:
-            directories = []
-            out["header_problem"] = "the optional header is shorter than it claims"
+    avail = max(0, min(opt_size, img.size - opt_at))
+    wide = None
+    dirs = []
+    size_of_headers = 0
+    header_problems = []
+
+    def header_problem(text):
+        header_problems.append(text)
+        ctx.problem(text)
+
+    if opt_size == 0:
+        header_problem("SizeOfOptionalHeader is 0: the file declares no optional header, which a PE image has")
     else:
-        directories = []
+        missing = []
+        if avail < opt_size:
+            header_problem("the file ends %d bytes into an optional header that declares %d bytes" % (avail, opt_size))
 
+        def opt(fmt, off, name):
+            if off + struct.calcsize(fmt) > avail:
+                missing.append(name)
+                return None
+            return struct.unpack_from(fmt, img.mm, opt_at + off)[0]
+
+        magic = opt("<H", 0, "magic")
+        if magic is None:
+            header_problem("the optional header is shorter than its magic")
+        elif magic == 0x107:
+            raise Stop("unsupported", "the optional header magic is 0x107, a ROM image: not read", out)
+        elif magic not in (0x10b, 0x20b):
+            raise Stop("failed", "the optional header magic is 0x%x, neither PE32 (0x10b) nor PE32+ (0x20b)" % magic, out)
+        else:
+            wide = magic == 0x20b
+            out["bits"] = 64 if wide else 32
+            entry = opt("<I", 16, "entry point")
+            base = opt("<Q" if wide else "<I", 24 if wide else 28, "image base")
+            salign = opt("<I", 32, "section alignment")
+            falign = opt("<I", 36, "file alignment")
+            soi = opt("<I", 56, "size of image")
+            soh = opt("<I", 60, "size of headers")
+            subsystem = opt("<H", 68, "subsystem")
+            dllflags = opt("<H", 70, "DLL characteristics")
+            count = opt("<I", 108 if wide else 92, "number of data directories")
+            if entry is not None:
+                out["entry_point"] = hex(entry)
+            if base is not None:
+                out["image_base"] = hex(base)
+            if salign is not None:
+                out["section_alignment"] = salign
+            if falign is not None:
+                out["file_alignment"] = falign
+            if soi is not None:
+                out["size_of_image"] = soi
+            if soh is not None:
+                out["size_of_headers"] = soh
+                size_of_headers = soh
+            if subsystem is not None:
+                out["subsystem"] = SUBSYSTEMS.get(subsystem, "unknown (%d)" % subsystem)
+            if dllflags is not None:
+                out["dll_characteristics"] = hex(dllflags)
+                out["aslr"] = bool(dllflags & 0x0040)
+                out["dep"] = bool(dllflags & 0x0100)
+            dirs_off = 112 if wide else 96
+            if count is not None:
+                out["data_directories_declared"] = count
+                fit = max(0, (avail - dirs_off) // 8)
+                want = min(count, 16)
+                if want > fit:
+                    header_problem("data directories: %d declared, %d fit inside the %d bytes of optional header the file declares and holds"
+                                   % (want, fit, avail))
+                for i in range(min(want, fit)):
+                    rva, size = struct.unpack_from("<II", img.mm, opt_at + dirs_off + i * 8)
+                    dirs.append({"index": i, "name": PE_DIRECTORIES[i], "rva": rva, "size": size})
+        if missing:
+            header_problem("the optional header declares %d bytes and the file holds %d of them; not read: %s"
+                           % (opt_size, avail, ", ".join(missing)))
+    if header_problems:
+        out["header_problem"] = "; ".join(header_problems)
+    declared = [d for d in dirs if d["size"]]
+    out["data_directories"] = declared
+    out["certificate_table_declared"] = None if wide is None else any(d["index"] == 4 for d in declared)
+    if wide is not None:
+        for flag, idx in (("declares_resources", 2), ("declares_tls", 9), ("declares_delay_imports", 13),
+                          ("declares_clr_runtime_header", 14)):
+            out[flag] = any(d["index"] == idx for d in declared)
+
+    # Section table: after the optional header the file declares, whatever it holds.
     table_at = opt_at + opt_size
-    parsed, rva_map = [], []
-    for i in range(sections):
+    sections = ctx.page("sections")
+    maps = []
+    read = 0
+    last_raw_end = 0
+    for i in range(min(nsec, MAX_SECTIONS)):
         at = table_at + i * 40
-        if at + 40 > len(blob):
+        if at + 40 > img.size:
+            ctx.problem("section table: %d of %d section headers are in the file" % (i, nsec))
             break
-        name = blob[at:at + 8].rstrip(b"\x00").decode("utf-8", "replace")
-        vsize, vaddr, rawsize, rawptr = struct.unpack_from("<IIII", blob, at + 8)
-        flags, = struct.unpack_from("<I", blob, at + 36)
-        body = blob[rawptr:min(len(blob), rawptr + rawsize)] if rawptr and rawsize else b""
-        entry = {"name": name, "virtual_size": vsize, "virtual_address": hex(vaddr),
-                 "raw_size": rawsize, "raw_pointer": rawptr,
-                 "entropy": entropy(body),
-                 "permissions": [n for bit, n in SECTION_FLAGS if flags & bit]}
-        if rawsize and vsize > rawsize * 4 and entry["entropy"] > 7.0:
-            entry["packed_shape"] = True
-        if "write" in entry["permissions"] and "execute" in entry["permissions"]:
-            entry["writable_and_executable"] = True
-        parsed.append(entry)
-        rva_map.append((vaddr, vsize or rawsize, rawptr, rawsize))
-    out["sections"] = parsed
+        read += 1
+        name = bytes(img.mm[at:at + 8]).rstrip(b"\x00").decode("utf-8", "replace")
+        vsize, vaddr, rawsize, rawptr = struct.unpack_from("<IIII", img.mm, at + 8)
+        flags, = struct.unpack_from("<I", img.mm, at + 36)
+        row = {"name": name, "virtual_size": vsize, "virtual_address": hex(vaddr), "raw_size": rawsize,
+               "raw_pointer": rawptr, "characteristics": hex(flags),
+               "permissions": [n for bit, n in SECTION_FLAGS if flags & bit]}
+        if rawsize:
+            if rawptr >= img.size:
+                row["raw_range_in_file"] = False
+                row["entropy"], row["entropy_note"] = None, "the raw data pointer is past the end of the file"
+                ctx.problem("section %s: its raw data starts at %d, past the end of the file" % (name or i, rawptr))
+            else:
+                row["raw_range_in_file"] = rawptr + rawsize <= img.size
+                if not row["raw_range_in_file"]:
+                    ctx.problem("section %s: its raw data runs %d byte(s) past the end of the file" % (name or i, rawptr + rawsize - img.size))
+                row["entropy"], why = entropy_of(img, rawptr, rawptr + rawsize, ctx)
+                if why:
+                    row["entropy_note"] = why
+            last_raw_end = max(last_raw_end, min(img.size, rawptr + rawsize))
+            maps.append((vaddr, min(vsize or rawsize, rawsize), rawptr, min(img.size, rawptr + rawsize)))
+        else:
+            row["entropy"], row["entropy_note"] = None, "no raw data"
+        if rawsize and vsize > rawsize * 4 and (row["entropy"] or 0) > 7.0:
+            row["size_entropy_pattern"] = True
+        if "write" in row["permissions"] and "execute" in row["permissions"]:
+            row["writable_and_executable"] = True
+        sections.add(row)
+    if nsec > MAX_SECTIONS:
+        ctx.problem("section table: %d sections are declared, and %d are read" % (nsec, MAX_SECTIONS))
+    out["sections_read"] = read
+    if size_of_headers:
+        maps.append((0, size_of_headers, 0, min(size_of_headers, img.size)))
 
-    def to_file_range(rva):
-        """Map an RVA only into bytes actually present in its section."""
-        for vaddr, vsize, rawptr, rawsize in rva_map:
+    def to_range(rva):
+        """(file offset, end of the file-backed bytes of the section or headers holding it) or None."""
+        for vaddr, span, rawptr, file_end in maps:
             delta = rva - vaddr
-            if 0 <= delta < min(max(vsize, 1), rawsize):
-                start = rawptr + delta
-                return start, min(len(blob), rawptr + rawsize)
+            if 0 <= delta < max(span, 1) and rawptr + delta < file_end:
+                return rawptr + delta, file_end
         return None
 
-    def to_offset(rva):
-        mapped = to_file_range(rva)
-        return mapped[0] if mapped else None
+    # Imports.
+    out["imports"] = []
+    if ctx.with_imports and wide is not None:
+        import_dir = next((d for d in declared if d["index"] == 1), None)
+        if import_dir is not None:
+            read_imports(img, ctx, out, import_dir, to_range, wide)
+    # Exports: the directory's image name only.
+    export_dir = next((d for d in declared if d["index"] == 0), None)
+    if export_dir is not None:
+        mapped = to_range(export_dir["rva"])
+        if mapped is None or mapped[0] + 40 > mapped[1]:
+            ctx.problem("the export directory is not backed by file bytes")
+        else:
+            name_rva, = struct.unpack_from("<I", img.mm, mapped[0] + 12)
+            name_range = to_range(name_rva)
+            if name_range is None:
+                ctx.problem("the export directory's name is not backed by file bytes")
+            else:
+                text, complete = img.cstr(name_range[0], name_range[1])
+                out["export_name"] = text
+                if not complete:
+                    ctx.problem("the export directory's image name has no terminator within its section or %d bytes" % NAME_CAP)
+    # Certificate table: a file offset and a size, declared by the header.
+    cert = next((d for d in declared if d["index"] == 4), None)
+    if cert is not None:
+        off, size = cert["rva"], cert["size"]
+        table = {"offset": off, "size": size, "within_file": off > 0 and off + size <= img.size,
+                 "note": "A declaration in the header. The table is read no further than its first entry's header, and nothing is verified."}
+        if off > 0 and size >= 8 and off + 8 <= img.size:
+            length, revision, ctype = struct.unpack_from("<IHH", img.mm, off)
+            table["first_entry"] = {"length": length, "revision": hex(revision), "certificate_type": hex(ctype),
+                                    "certificate_type_name": WIN_CERT_TYPES.get(ctype)}
+        out["certificate_table"] = table
+    if last_raw_end and img.size > last_raw_end:
+        out["overlay_offset"] = last_raw_end
+        out["overlay_bytes"] = img.size - last_raw_end
+    out["coverage"] = {"structures_read": PE_READ, "structures_not_read": PE_NOT_READ}
+    return out
 
-    imports = []
-    if with_imports and len(directories) > 1 and directories[1]["size"]:
-        at = to_offset(directories[1]["rva"])
-        max_descriptors = directories[1]["size"] // 20
-        terminated = False
-        for index in range(max_descriptors):
-            if at is None or at + index * 20 + 20 > len(blob):
-                out["import_table_problem"] = "the import directory points outside file-backed bytes"
-                break
-            fields = struct.unpack_from("<IIIII", blob, at + index * 20)
-            if not any(fields):
-                terminated = True
-                break
-            original_thunk, _t, _f, name_rva, first_thunk = fields
-            name_range = to_file_range(name_rva)
-            library = cstring(blob, name_range[0], name_range[1]) if name_range else "?"
-            names = []
-            thunk_range = to_file_range(original_thunk or first_thunk)
-            thunk_at = thunk_range[0] if thunk_range else None
-            thunk_end = thunk_range[1] if thunk_range else None
-            wide = out.get("bits") == 64
-            step = 8 if wide else 4
-            thunk_terminated = False
-            while thunk_at is not None and thunk_at + step <= thunk_end:
-                value = struct.unpack_from("<Q" if wide else "<I", blob, thunk_at)[0]
+
+def read_imports(img, ctx, out, import_dir, to_range, wide):
+    start = to_range(import_dir["rva"])
+    functions = ctx.page("imports")
+    libs = []
+    out["imports"] = libs
+    inline_left = ctx.limit
+    total = 0
+    if start is None:
+        out["import_table_problem"] = "the import directory points outside file-backed bytes"
+        ctx.problem(out["import_table_problem"])
+        return
+    first, end = start
+    declared = import_dir["size"] // 20
+    if declared == 0:
+        out["import_table_problem"] = "the import directory's size (%d) is smaller than one descriptor (20 bytes)" % import_dir["size"]
+        ctx.problem(out["import_table_problem"])
+        return
+    count = min(declared, MAX_IMPORT_DESCRIPTORS)
+    terminated = False
+    index = 0
+    while index < count:
+        at = first + index * 20
+        if at + 20 > end:
+            out["import_table_problem"] = ("the import directory runs past the file-backed bytes of its section "
+                                           "(descriptor %d of %d declared)" % (index + 1, declared))
+            ctx.problem(out["import_table_problem"])
+            break
+        original_thunk, stamp, forward, name_rva, first_thunk = struct.unpack_from("<IIIII", img.mm, at)
+        if not (original_thunk or stamp or forward or name_rva or first_thunk):
+            terminated = True
+            break
+        index += 1
+        name_range = to_range(name_rva)
+        library, name_ok = img.cstr(name_range[0], name_range[1]) if name_range else ("?", False)
+        entry = {"library": library, "descriptor_offset": at, "functions": [], "function_count": 0}
+        if name_range is None:
+            entry["name_problem"] = "the library name RVA 0x%x is not backed by file bytes" % name_rva
+            ctx.problem("import descriptor %d: %s" % (index, entry["name_problem"]))
+        elif not name_ok:
+            ctx.problem("import descriptor %d: the library name has no terminator within its section or %d bytes" % (index, NAME_CAP))
+        thunk_range = to_range(original_thunk or first_thunk)
+        step = 8 if wide else 4
+        ordinal_bit = 1 << (63 if wide else 31)
+        unresolved = 0
+        thunk_terminated = False
+        if thunk_range is not None:
+            thunk_at, thunk_end = thunk_range
+            n = 0
+            while thunk_at + step <= thunk_end:
+                if n >= MAX_THUNKS_PER_LIBRARY or total >= MAX_FUNCTIONS:
+                    ctx.limit_hit("imports: the read stopped at %d functions in one library or %d in all" % (MAX_THUNKS_PER_LIBRARY, MAX_FUNCTIONS))
+                    entry["thunk_table_problem"] = "the read of this thunk table stopped at a limit"
+                    break
+                value, = struct.unpack_from("<Q" if wide else "<I", img.mm, thunk_at)
                 if not value:
                     thunk_terminated = True
                     break
-                ordinal_bit = 1 << (63 if wide else 31)
-                if value & ordinal_bit:
-                    names.append("#%d" % (value & 0xFFFF))
-                else:
-                    hint_range = to_file_range(value)
-                    if hint_range is not None:
-                        names.append(cstring(blob, hint_range[0] + 2, hint_range[1]))
+                n += 1
                 thunk_at += step
-            entry = {"library": library, "functions": names, "function_count": len(names)}
-            if thunk_range is None:
-                entry["thunk_table_problem"] = "the thunk RVA is not backed by file bytes"
-            elif not thunk_terminated:
+                if value & ordinal_bit:
+                    name = "#%d" % (value & 0xFFFF)
+                else:
+                    hint_range = to_range(value)
+                    name, complete = img.cstr(hint_range[0] + 2, hint_range[1]) if hint_range else (None, False)
+                    if name is None:
+                        unresolved += 1
+                        continue
+                    if not complete:
+                        ctx.problem("an import name in %s has no terminator within its section or %d bytes" % (library, NAME_CAP))
+                total += 1
+                entry["function_count"] += 1
+                functions.add({"library": library, "function": name})
+                if inline_left > 0:
+                    entry["functions"].append(name)
+                    inline_left -= 1
+            if "thunk_table_problem" not in entry and not thunk_terminated:
                 entry["thunk_table_problem"] = "the thunk table has no terminator in its section"
-            imports.append(entry)
-        if max_descriptors and not terminated and len(imports) == max_descriptors:
-            out["import_table_problem"] = "the import directory has no terminating descriptor"
-        out["imports"] = imports
-        out["import_library_count"] = len(imports)
-        if len(imports) <= 2 and sum(i["function_count"] for i in imports) <= 6:
-            out["few_imports"] = ("Almost nothing is imported. A binary that resolves its imports "
-                                  "at runtime looks like this, and so does a packed one.")
-    if len(directories) > 0 and directories[0]["size"]:
-        at = to_offset(directories[0]["rva"])
-        if at is not None and at + 40 <= len(blob):
-            name_rva, = struct.unpack_from("<I", blob, at + 12)
-            name_range = to_file_range(name_rva)
-            if name_range is not None:
-                out["export_name"] = cstring(blob, name_range[0], name_range[1])
-    return out
+        else:
+            entry["thunk_table_problem"] = "the thunk RVA is not backed by file bytes"
+        if unresolved:
+            entry["unresolved_function_names"] = unresolved
+            ctx.problem("%s: %d import name(s) point outside file-backed bytes" % (library, unresolved))
+        if "thunk_table_problem" in entry:
+            ctx.problem("%s: %s" % (library, entry["thunk_table_problem"]))
+        libs.append(entry)
+    if not terminated and index == count and "import_table_problem" not in out:
+        out["import_table_problem"] = "the import directory has no terminating descriptor within its declared size"
+        ctx.problem(out["import_table_problem"])
+    out["import_library_count"] = len(libs)
+    out["import_function_count"] = total
+    if len(libs) <= 2 and total <= 6:
+        out["few_imports"] = ("Few imports are declared. That is consistent with packing, static linking, managed code or "
+                              "imports resolved at runtime; it does not by itself show any of them.")
 
 
-def read_elf(blob):
+# --- ELF -------------------------------------------------------------------------------------------------------------
+
+ELF_READ = ["ELF header (class, byte order, type, machine, entry, table locations)", "program headers",
+            "section headers and the entropy of each section's bytes",
+            "the dynamic array (DT_NEEDED, DT_SONAME, DT_RPATH, DT_RUNPATH)", "the program interpreter (PT_INTERP)"]
+ELF_NOT_READ = ["symbol tables and relocations", "notes, including the GNU build ID (readelf -n prints them)",
+                "version definitions and requirements",
+                "core-file notes and mappings (a core file is read as a header and tables only)", "debug sections"]
+
+
+def read_elf(img, ctx):
     out = {"format": "ELF"}
-    if len(blob) < 64:
-        return {"format": "ELF", "error": "shorter than an ELF header"}
-    wide = blob[4] == 2
-    little = blob[5] == 1
-    end = "<" if little else ">"
+    if img.size < 16:
+        raise Stop("failed", "shorter than the 16-byte ELF identification: the file is %d bytes" % img.size, out)
+    cls, data, version = img.mm[4], img.mm[5], img.mm[6]
+    if cls not in (1, 2):
+        raise Stop("unsupported", "EI_CLASS is %d: neither ELFCLASS32 (1) nor ELFCLASS64 (2)" % cls, out)
+    if data not in (1, 2):
+        raise Stop("unsupported", "EI_DATA is %d: neither ELFDATA2LSB (1) nor ELFDATA2MSB (2)" % data, out)
+    wide = cls == 2
+    e = ">" if data == 2 else "<"
+    hsize = 64 if wide else 52
     out["bits"] = 64 if wide else 32
-    out["endian"] = "little" if little else "big"
-    elf_type, machine = struct.unpack_from(end + "HH", blob, 16)
-    out["type"] = ELF_TYPES.get(elf_type, str(elf_type))
+    out["endian"] = "big" if data == 2 else "little"
+    if img.size < hsize:
+        raise Stop("failed", "shorter than an ELF%d header (%d bytes): the file is %d bytes" % (out["bits"], hsize, img.size), out)
+    if version != 1:
+        ctx.problem("EI_VERSION is %d, not 1" % version)
+    out["os_abi"] = img.mm[7]
+    elf_type, machine = img.unpack(e + "HH", 16)
+    out["type"] = ELF_TYPES.get(elf_type, "OS- or processor-specific (0x%x)" % elf_type)
     out["machine"] = ELF_MACHINES.get(machine, hex(machine))
     if wide:
-        entry, phoff, shoff = struct.unpack_from(end + "QQQ", blob, 24)
-        phentsize, phnum, shentsize, shnum, shstrndx = struct.unpack_from(end + "HHHHH", blob, 54)
+        entry, phoff, shoff = img.unpack(e + "QQQ", 24)
+        eflags, = img.unpack(e + "I", 48)
+        _ehsize, phentsize, phnum, shentsize, shnum, shstrndx = img.unpack(e + "HHHHHH", 52)
     else:
-        entry, phoff, shoff = struct.unpack_from(end + "III", blob, 24)
-        phentsize, phnum, shentsize, shnum, shstrndx = struct.unpack_from(end + "HHHHH", blob, 42)
+        entry, phoff, shoff = img.unpack(e + "III", 24)
+        eflags, = img.unpack(e + "I", 36)
+        _ehsize, phentsize, phnum, shentsize, shnum, shstrndx = img.unpack(e + "HHHHHH", 40)
     out["entry_point"] = hex(entry)
+    out["flags"] = hex(eflags)
+    phmin, shmin = (56, 64) if wide else (32, 40)
+
+    # Section header 0 holds the real counts when a field overflows (PN_XNUM, SHN_XINDEX, a zero e_shnum).
+    sh0 = None
+    if shoff and shentsize >= shmin and shoff + shmin <= img.size:
+        sh0 = img.unpack(e + ("IIQQQQIIQQ" if wide else "IIIIIIIIII"), shoff)
+    sh_size0, sh_link0, sh_info0 = (sh0[5], sh0[6], sh0[7]) if sh0 else (0, 0, 0)
     out["program_headers"] = phnum
-    out["section_headers"] = shnum
-    out["stripped"] = shnum == 0
-
-    segments = []
-    for i in range(phnum):
-        at = phoff + i * phentsize
-        if at + phentsize > len(blob):
-            break
-        try:
-            if wide:
-                p_type, flags, offset, vaddr, _paddr, file_size, mem_size, align = struct.unpack_from(
-                    end + "IIQQQQQQ", blob, at)
-            else:
-                p_type, offset, vaddr, _paddr, file_size, mem_size, flags, align = struct.unpack_from(
-                    end + "IIIIIIII", blob, at)
-        except struct.error:
-            break
-        body = blob[offset:min(len(blob), offset + file_size)] if file_size else b""
-        segments.append({
-            "index": i,
-            "type": p_type,
-            "offset": offset,
-            "virtual_address": hex(vaddr),
-            "file_size": file_size,
-            "memory_size": mem_size,
-            "permissions": {
-                "read": bool(flags & 0x4),
-                "write": bool(flags & 0x2),
-                "execute": bool(flags & 0x1),
-            },
-            "alignment": align,
-            "entropy": entropy(body),
-        })
-    out["segments"] = segments
-
-    sections, names_blob = [], b""
-    if shnum and shoff and shstrndx < shnum:
-        at = shoff + shstrndx * shentsize
-        if at + shentsize <= len(blob):
-            if wide:
-                str_off, str_size = struct.unpack_from(end + "QQ", blob, at + 24)
-            else:
-                str_off, str_size = struct.unpack_from(end + "II", blob, at + 16)
-            names_blob = blob[str_off:str_off + str_size]
-    for i in range(shnum):
-        at = shoff + i * shentsize
-        if at + shentsize > len(blob):
-            break
-        name_off, sh_type = struct.unpack_from(end + "II", blob, at)
-        if wide:
-            flags, addr, offset, size = struct.unpack_from(end + "QQQQ", blob, at + 8)
+    if phnum == 0xFFFF:
+        if sh0:
+            phnum = sh_info0
+            out["program_headers"] = phnum
+            out["extended_program_header_count"] = True
         else:
-            flags, addr, offset, size = struct.unpack_from(end + "IIII", blob, at + 8)
-        name = cstring(names_blob, name_off) if names_blob else str(i)
-        body = blob[offset:min(len(blob), offset + size)] if sh_type != 8 else b""
-        sections.append({"name": name, "type": sh_type, "address": hex(addr),
-                         "offset": offset, "size": size, "entropy": entropy(body),
-                         "executable": bool(flags & 0x4), "writable": bool(flags & 0x1)})
-    out["sections"] = sections
+            ctx.problem("e_phnum is 0xFFFF (PN_XNUM) and section header 0, which holds the real count, could not be read")
+    if shnum == 0 and shoff:
+        if sh0:
+            shnum = sh_size0
+            out["extended_section_count"] = True
+        else:
+            ctx.problem("e_shnum is 0 with e_shoff set, and section header 0, which holds the real count, could not be read")
+    if shstrndx == 0xFFFF and sh0:
+        shstrndx = sh_link0
+    out["section_headers"] = shnum
 
-    needed = []
-    by_name = {s["name"]: s for s in sections}
-    dynamic, dynstr = by_name.get(".dynamic"), by_name.get(".dynstr")
-    if dynamic and dynstr:
-        strings = blob[dynstr["offset"]:dynstr["offset"] + dynstr["size"]]
-        step = 16 if wide else 8
-        at = dynamic["offset"]
-        for _ in range(dynamic["size"] // step):
-            if at + step > len(blob):
-                break
+    # Program headers.
+    pages_seg = ctx.page("segments")
+    loads, pt_dynamic, pt_interp = [], None, None
+    if phnum:
+        if phentsize < phmin:
+            ctx.problem("e_phentsize is %d, smaller than the %d-byte Elf%d_Phdr: the program headers were not read" % (phentsize, phmin, out["bits"]))
+        else:
+            fit = max(0, (img.size - phoff) // phentsize) if phoff <= img.size else 0
+            if phnum > fit:
+                ctx.problem("program headers: %d declared, %d fit inside the file" % (phnum, fit))
+            for i in range(min(phnum, fit, 65535)):
+                at = phoff + i * phentsize
+                if wide:
+                    p_type, flags, offset, vaddr, _paddr, file_size, mem_size, align = struct.unpack_from(e + "IIQQQQQQ", img.mm, at)
+                else:
+                    p_type, offset, vaddr, _paddr, file_size, mem_size, flags, align = struct.unpack_from(e + "IIIIIIII", img.mm, at)
+                row = {"index": i, "type": p_type, "type_name": ELF_PT.get(p_type), "offset": offset,
+                       "virtual_address": hex(vaddr), "file_size": file_size, "memory_size": mem_size,
+                       "permissions": {"read": bool(flags & 0x4), "write": bool(flags & 0x2), "execute": bool(flags & 0x1)},
+                       "alignment": align, "file_range_in_file": offset + file_size <= img.size}
+                if file_size:
+                    row["entropy"], why = entropy_of(img, offset, offset + file_size, ctx)
+                    if why:
+                        row["entropy_note"] = why
+                else:
+                    row["entropy"] = None
+                pages_seg.add(row)
+                if p_type == 1:
+                    loads.append((vaddr, offset, file_size))
+                elif p_type == 2 and pt_dynamic is None:
+                    pt_dynamic = (offset, file_size)
+                elif p_type == 3 and pt_interp is None:
+                    pt_interp = (offset, file_size)
+
+    # Section headers.
+    pages_sec = ctx.page("sections")
+    shdrs = []
+    declared = bool(shoff and shnum)
+    if declared and shentsize < shmin:
+        ctx.problem("e_shentsize is %d, smaller than the %d-byte Elf%d_Shdr: the section headers were not read" % (shentsize, shmin, out["bits"]))
+    elif declared:
+        fit = max(0, (img.size - shoff) // shentsize) if shoff <= img.size else 0
+        count = min(shnum, fit, MAX_ELF_SECTIONS)
+        if shnum > count:
+            ctx.problem("section headers: %d declared, %d read (the rest are past the end of the file or over the limit)" % (shnum, count))
+        if min(shnum, fit) > MAX_ELF_SECTIONS:
+            ctx.limit_hit("section headers: the read stopped at %d of %d" % (MAX_ELF_SECTIONS, min(shnum, fit)))
+        for i in range(count):
+            at = shoff + i * shentsize
             if wide:
-                tag, value = struct.unpack_from(end + "qQ", blob, at)
+                name_off, sh_type, flags, addr, offset, size, link, _info, _align, _entsize = struct.unpack_from(e + "IIQQQQIIQQ", img.mm, at)
             else:
-                tag, value = struct.unpack_from(end + "iI", blob, at)
-            if tag == 0:
+                name_off, sh_type, flags, addr, offset, size, link, _info, _align, _entsize = struct.unpack_from(e + "IIIIIIIIII", img.mm, at)
+            shdrs.append((name_off, sh_type, flags, addr, offset, size, link))
+        names_at = names_end = None
+        if 0 <= shstrndx < len(shdrs):
+            _n, n_type, _f, _a, n_start, n_size, _l = shdrs[shstrndx]
+            if n_type == 3:
+                names_at, names_end = n_start, n_start + n_size
+            else:
+                ctx.problem("the section name string table index (%d) names a section that is not an SHT_STRTAB" % shstrndx)
+        else:
+            ctx.problem("the section name string table index (%d) is outside the %d section headers read" % (shstrndx, len(shdrs)))
+        for i, (name_off, sh_type, flags, addr, offset, size, _link) in enumerate(shdrs):
+            if names_at is not None:
+                name, _ok = img.cstr(names_at + name_off, names_end)
+                name = name if name is not None else ""
+            else:
+                name = str(i)
+            row = {"index": i, "name": name, "type": sh_type, "type_name": ELF_SHT.get(sh_type), "address": hex(addr),
+                   "offset": offset, "size": size, "executable": bool(flags & 0x4), "writable": bool(flags & 0x1)}
+            if sh_type != 8 and size:
+                row["entropy"], why = entropy_of(img, offset, offset + size, ctx)
+                if why:
+                    row["entropy_note"] = why
+            else:
+                row["entropy"] = None
+            pages_sec.add(row)
+    out["section_headers_absent"] = not declared
+    out["section_headers_read"] = len(shdrs)
+    if shdrs:
+        has_symtab = any(s[1] == 2 for s in shdrs)
+        out["symbol_table_section_present"] = has_symtab
+        out["stripped"] = False if has_symtab else (True if len(shdrs) == shnum else None)
+    else:
+        out["stripped"] = None
+    out["stripped_basis"] = ("an SHT_SYMTAB section is present" if out["stripped"] is False else
+                             "section headers are present and none is an SHT_SYMTAB (a stripped file still has .dynsym)" if out["stripped"] else
+                             "section headers are absent or not all read: whether symbols were removed is not determined")
+
+    if pt_interp is not None:
+        text, _ok = img.cstr(pt_interp[0], pt_interp[0] + pt_interp[1])
+        if text is not None:
+            out["interpreter"] = text
+    read_dynamic(img, ctx, out, e, wide, loads, pt_dynamic, shdrs)
+    out["coverage"] = {"structures_read": ELF_READ, "structures_not_read": ELF_NOT_READ}
+    return out
+
+
+def read_dynamic(img, ctx, out, e, wide, loads, pt_dynamic, shdrs):
+    entsz = 16 if wide else 8
+    source = file_offset = size = link = None
+    if pt_dynamic is not None:
+        source, (file_offset, size) = "PT_DYNAMIC", pt_dynamic
+    else:
+        for s in shdrs:
+            if s[1] == 6:
+                source, file_offset, size, link = "SHT_DYNAMIC section (the file has no PT_DYNAMIC program header)", s[4], s[5], s[6]
                 break
-            if tag == 1:
-                needed.append(cstring(strings, value))
-            elif tag in (15, 29):
-                out["rpath" if tag == 15 else "runpath"] = cstring(strings, value)
-            at += step
-    out["needed_libraries"] = needed
-    return out
+    out["needed_libraries"] = []
+    if source is None:
+        out["dynamic"] = {"source": None,
+                          "note": ("The file has no PT_DYNAMIC program header and no SHT_DYNAMIC section, so no dependency list was "
+                                   "read. That does not by itself show static linking.")}
+        return
+    dynamic = {"source": source, "file_offset": file_offset, "entries_read": 0, "terminated": False}
+    out["dynamic"] = dynamic
+    fit = max(0, (img.size - file_offset) // entsz) if file_offset <= img.size else 0
+    n = min(size // entsz, fit, MAX_DYNAMIC_ENTRIES)
+    if size // entsz > n:
+        ctx.problem("dynamic array: %d entries are declared, %d read (the rest are past the end of the file or over the limit)" % (size // entsz, n))
+    needed, soname, rpath, runpath = [], None, None, None
+    strtab = strsz = None
+    for i in range(n):
+        if wide:
+            tag, value = struct.unpack_from(e + "qQ", img.mm, file_offset + i * entsz)
+        else:
+            tag, value = struct.unpack_from(e + "iI", img.mm, file_offset + i * entsz)
+        dynamic["entries_read"] += 1
+        if tag == 0:
+            dynamic["terminated"] = True
+            break
+        if tag == 1:
+            if len(needed) < MAX_NEEDED:
+                needed.append(value)
+            elif len(needed) == MAX_NEEDED:
+                needed.append(None)
+                ctx.limit_hit("dynamic array: more than %d DT_NEEDED entries; the rest were not read" % MAX_NEEDED)
+        elif tag == 5:
+            strtab = value
+        elif tag == 10:
+            strsz = value
+        elif tag == 14:
+            soname = value
+        elif tag == 15:
+            rpath = value
+        elif tag == 29:
+            runpath = value
+    if not dynamic["terminated"]:
+        ctx.problem("the dynamic array has no DT_NULL terminator within the bytes it declares")
+    needed = [v for v in needed if v is not None]
+
+    start = end = None
+    via = None
+    if strtab is not None:
+        for vaddr, offset, filesz in loads:
+            if vaddr <= strtab < vaddr + filesz:
+                start, via = offset + (strtab - vaddr), "PT_LOAD segment that maps DT_STRTAB"
+                break
+        if start is None:
+            for s in shdrs:
+                if s[1] == 3 and s[3] == strtab and s[3] != 0:
+                    start, via, end = s[4], "SHT_STRTAB section whose address is DT_STRTAB", s[4] + s[5]
+                    break
+    elif link is not None and 0 <= link < len(shdrs) and shdrs[link][1] == 3:
+        start, via, end = shdrs[link][4], "sh_link of the SHT_DYNAMIC section", shdrs[link][4] + shdrs[link][5]
+    if start is None:
+        if needed or soname is not None or rpath is not None or runpath is not None:
+            ctx.problem("DT_STRTAB (%s) is not mapped by any PT_LOAD segment and names no string-table section: the names of "
+                        "DT_NEEDED, DT_SONAME, DT_RPATH and DT_RUNPATH were not read" % (hex(strtab) if strtab is not None else "absent"))
+        dynamic["string_table"] = {"resolved_via": None, "needed_entries_unread": len(needed)}
+        return
+    if strsz is not None:
+        end = start + strsz if end is None else min(end, start + strsz)
+    dynamic["string_table"] = {"resolved_via": via, "file_offset": start, "size": strsz}
+
+    def string(offset, what):
+        text, complete = img.cstr(start + offset, end)
+        if text is None:
+            ctx.problem("%s: its string offset %d is outside the string table" % (what, offset))
+            return None
+        if not complete:
+            ctx.problem("%s: the string has no terminator within the string table or %d bytes" % (what, NAME_CAP))
+        return text
+
+    for off in needed:
+        s = string(off, "DT_NEEDED")
+        if s is not None:
+            out["needed_libraries"].append(s)
+    for key, tag_name, off in (("soname", "DT_SONAME", soname), ("rpath", "DT_RPATH", rpath), ("runpath", "DT_RUNPATH", runpath)):
+        if off is not None:
+            s = string(off, tag_name)
+            if s is not None:
+                out[key] = s
 
 
-def read_macho(blob):
-    out = {"format": "Mach-O"}
-    magic = blob[:4]
-    if magic in (b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca"):
-        # A fat binary holds several architectures end to end. Read the first slice
-        # rather than stopping here, and say that is what happened.
-        try:
-            count, = struct.unpack_from(">I", blob, 4)
-            slices = []
-            for i in range(count):
-                cpu, sub, offset, size, align = struct.unpack_from(">IIIII", blob, 8 + i * 20)
-                slices.append({"cpu_type": hex(cpu), "offset": offset, "bytes": size})
-            if slices:
-                inner = read_macho(blob[slices[0]["offset"]:slices[0]["offset"] + slices[0]["bytes"]])
-                inner["format"] = "Mach-O universal binary"
-                inner["architectures"] = slices
-                inner["read_slice"] = 0
-                inner["slice_note"] = ("A fat binary holds several architectures; the first slice "
-                                       "was read. The others may differ, and a sample can carry a "
-                                       "payload in only one of them.")
-                return inner
-        except struct.error:
-            pass
-        return {"format": "Mach-O universal binary",
-                "note": "a fat binary whose architecture table could not be read"}
-    wide = magic == b"\xcf\xfa\xed\xfe"
-    out["bits"] = 64 if wide else 32
-    cputype, _sub, filetype, ncmds, _size, flags = struct.unpack_from("<IIIIII", blob, 4)
-    out["cpu_type"] = hex(cputype)
-    out["type"] = MACHO_TYPES.get(filetype, str(filetype))
-    out["load_commands"] = ncmds
-    at = 32 if wide else 28
-    libraries, segments = [], []
-    for _ in range(ncmds):
-        if at + 8 > len(blob):
+# --- Mach-O ----------------------------------------------------------------------------------------------------------
+
+MACHO_READ = ["the Mach-O header (byte order, width, CPU, file type)", "load commands, bounded by sizeofcmds and the slice",
+              "linked libraries (LC_LOAD_DYLIB, LC_LOAD_WEAK_DYLIB, LC_REEXPORT_DYLIB, LC_LAZY_LOAD_DYLIB, LC_LOAD_UPWARD_DYLIB) and the install name",
+              "segments (name, addresses, sizes, protections)", "LC_MAIN's entry offset",
+              "the presence and location of LC_CODE_SIGNATURE"]
+MACHO_NOT_READ = ["symbol tables and the dyld information", "code signature contents: nothing is parsed or verified",
+                  "sections inside segments", "the contents of any segment"]
+
+
+def read_macho_slice(img, base, end, label):
+    """The thin Mach-O at [base, end): (fields with a `status`, problems). Offsets are file offsets."""
+    problems = []
+    out = {}
+    if end - base < 4:
+        return {"status": "failed", "reason": "fewer than 4 bytes"}, problems
+    magic = bytes(img.mm[base:base + 4])
+    if magic in FAT_MAGICS:
+        return {"status": "unsupported", "reason": "a universal binary nested inside a slice: not read (nesting is one level)"}, problems
+    if magic not in MACHO_MAGICS:
+        return {"status": "unsupported", "reason": "the slice does not begin with a Mach-O magic (first bytes %s)" % magic.hex()}, problems
+    wide, e = MACHO_MAGICS[magic]
+    hsize = 32 if wide else 28
+    if end - base < hsize:
+        return {"status": "failed", "reason": "shorter than a %d-bit Mach-O header (%d bytes)" % (64 if wide else 32, hsize)}, problems
+    cputype, _sub, filetype, ncmds, sizeofcmds, flags = struct.unpack_from(e + "IIIIII", img.mm, base + 4)
+    out.update({"bits": 64 if wide else 32, "byte_order": "big" if e == ">" else "little",
+                "cpu_type": hex(cputype), "cpu_type_name": MACHO_CPUS.get(cputype), "type": MACHO_TYPES.get(filetype, str(filetype)),
+                "flags": hex(flags), "load_commands": ncmds, "sizeofcmds": sizeofcmds})
+    region_end = base + hsize + sizeofcmds
+    if region_end > end:
+        problems.append("%ssizeofcmds (%d) runs %d byte(s) past the slice" % (label, sizeofcmds, region_end - end))
+        region_end = end
+    expected = min(ncmds, (region_end - base - hsize) // 8)
+    if ncmds > expected:
+        problems.append("%sncmds is %d, more than the %d load commands the %d bytes of commands can hold: the traversal is bounded by the bytes"
+                        % (label, ncmds, expected, region_end - base - hsize))
+    libraries, kinds, segments, commands = [], [], [], []
+    out["install_name"] = None
+    at = base + hsize
+    read = 0
+    for _ in range(min(expected, MAX_LOAD_COMMANDS)):
+        if at + 8 > region_end:
+            problems.append("%sa load command starts at %d, with fewer than 8 bytes left in the commands" % (label, at))
             break
-        cmd, size = struct.unpack_from("<II", blob, at)
-        if size < 8 or at + size > len(blob):
+        cmd, size = struct.unpack_from(e + "II", img.mm, at)
+        if size < 8 or at + size > region_end:
+            problems.append("%sload command %d (0x%x) declares %d bytes at offset %d, which does not fit the commands region: the traversal stopped"
+                            % (label, read + 1, cmd, size, at))
             break
-        if cmd in (0x0c, 0x0d, 0x18, 0x1f):          # LOAD_DYLIB and friends
-            offset, = struct.unpack_from("<I", blob, at + 8)
-            libraries.append(cstring(blob, at + offset, at + size))
-        elif cmd in (0x01, 0x19):                    # SEGMENT, SEGMENT_64
-            segments.append(blob[at + 8:at + 24].rstrip(b"\x00").decode("utf-8", "replace"))
+        read += 1
+        if len(commands) < 1000:
+            commands.append({"cmd": LC_NAMES.get(cmd, hex(cmd)), "size": size, "offset": at})
+        if cmd in LC_LINKED or cmd == LC_ID_DYLIB:
+            name_off = struct.unpack_from(e + "I", img.mm, at + 8)[0] if size >= 12 else 0
+            text = img.cstr(at + name_off, at + size)[0] if 12 <= name_off < size else None
+            if text is None:
+                problems.append("%sa dylib command at offset %d has a name offset (%d) outside the command" % (label, at, name_off))
+            elif cmd == LC_ID_DYLIB:
+                out["install_name"] = text
+            else:
+                libraries.append(text)
+                kinds.append({"name": text, "command": LC_LINKED[cmd]})
+        elif cmd == LC_SEGMENT_64 and size >= 72 and wide:
+            segname = bytes(img.mm[at + 8:at + 24]).rstrip(b"\x00").decode("utf-8", "replace")
+            vmaddr, vmsize, fileoff, filesize, maxprot, initprot, nsects = struct.unpack_from(e + "QQQQiiI", img.mm, at + 24)
+            segments.append({"name": segname, "vm_address": hex(vmaddr), "vm_size": vmsize, "file_offset": fileoff, "file_size": filesize,
+                             "max_protection": maxprot, "initial_protection": initprot, "sections": nsects})
+        elif cmd == LC_SEGMENT and size >= 56 and not wide:
+            segname = bytes(img.mm[at + 8:at + 24]).rstrip(b"\x00").decode("utf-8", "replace")
+            vmaddr, vmsize, fileoff, filesize, maxprot, initprot, nsects = struct.unpack_from(e + "IIIIiiI", img.mm, at + 24)
+            segments.append({"name": segname, "vm_address": hex(vmaddr), "vm_size": vmsize, "file_offset": fileoff, "file_size": filesize,
+                             "max_protection": maxprot, "initial_protection": initprot, "sections": nsects})
+        elif cmd == LC_MAIN and size >= 24:
+            out["entry_offset"] = struct.unpack_from(e + "Q", img.mm, at + 8)[0]
+        elif cmd == LC_CODE_SIGNATURE and size >= 16:
+            dataoff, datasize = struct.unpack_from(e + "II", img.mm, at + 8)
+            out["code_signature"] = {"offset": dataoff, "size": datasize}
         at += size
+    out["load_commands_read"] = read
     out["linked_libraries"] = libraries
+    out["linked_library_commands"] = kinds
     out["segments"] = segments
+    out["commands"] = commands
+    if len(commands) < read:
+        out["commands_listed"] = len(commands)
+    out["status"] = "partial" if problems else "complete"
+    return out, problems
+
+
+def read_macho(img, ctx):
+    magic = bytes(img.mm[:4])
+    if magic in MACHO_MAGICS:
+        body, problems = read_macho_slice(img, 0, img.size, "")
+        body["format"] = "Mach-O"
+        status = body.pop("status")
+        if status in ("failed", "unsupported"):
+            raise Stop(status, body.pop("reason", "unreadable"), body)
+        for p in problems:
+            ctx.problem(p)
+        body["coverage"] = {"structures_read": MACHO_READ, "structures_not_read": MACHO_NOT_READ}
+        return body
+    wide, e = FAT_MAGICS[magic]
+    out = {"format": "Mach-O universal binary", "fat_byte_order": "big" if e == ">" else "little", "fat_arch_width": 64 if wide else 32}
+    if img.size < 8:
+        raise Stop("failed", "shorter than a fat header (8 bytes)", out)
+    nfat, = img.unpack(e + "I", 4)
+    entry = 32 if wide else 20
+    out["slices_declared"] = nfat
+    fit = max(0, (img.size - 8) // entry)
+    java = "0xCAFEBABE is also the first word of a Java class file, whose version fields are read here as a slice count"
+    if nfat == 0 or nfat > MAX_SLICES:
+        raise Stop("failed", "a file that begins with the universal-binary magic declares %d slices, which is not a plausible architecture table (%s)"
+                   % (nfat, java), out)
+    if nfat > fit:
+        ctx.problem("slices: %d declared, %d architecture entries fit inside the file" % (nfat, fit))
+    slices = []
+    out["slices"] = slices
+    for i in range(min(nfat, fit)):
+        at = 8 + i * entry
+        if wide:
+            cputype, subtype, offset, size, align, _res = struct.unpack_from(e + "IIQQII", img.mm, at)
+        else:
+            cputype, subtype, offset, size, align = struct.unpack_from(e + "IIIII", img.mm, at)
+        row = {"index": i, "cpu_type": hex(cputype), "cpu_type_name": MACHO_CPUS.get(cputype), "cpu_subtype": hex(subtype),
+               "offset": offset, "size": size, "alignment_power": align, "in_file": size > 0 and offset + size <= img.size}
+        if not row["in_file"]:
+            row["status"] = "failed"
+            row["reason"] = "the slice [%d, %d) is not inside the %d-byte file" % (offset, offset + size, img.size)
+            ctx.problem("slice %d: %s" % (i, row["reason"]))
+        else:
+            macho, problems = read_macho_slice(img, offset, offset + size, "slice %d: " % i)
+            row["status"] = macho.pop("status")
+            if "reason" in macho:
+                row["reason"] = macho.pop("reason")
+                ctx.problem("slice %d: %s" % (i, row["reason"]))
+            if macho:
+                row["macho"] = macho
+            for p in problems:
+                ctx.problem(p)
+        slices.append(row)
+    if not slices or all(s["status"] == "failed" for s in slices):
+        raise Stop("failed", "no slice of this file is a readable Mach-O (%s)" % java, out)
+    if any(s["status"] != "complete" for s in slices):
+        ctx.problem("at least one slice was not read in full: see the slices table")
+    out["coverage"] = {"structures_read": ["the fat header and its architecture table"] + MACHO_READ, "structures_not_read": MACHO_NOT_READ,
+                       "slices_read_in_full": sum(1 for s in slices if s["status"] == "complete"), "slices_declared": nfat}
     return out
+
+
+# --- the call --------------------------------------------------------------------------------------------------------
+
+def positive_int(args, key, default, minimum=1):
+    value = args.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        fail("%s must be an integer of at least %d" % (key, minimum))
+    return value
 
 
 def main():
@@ -374,40 +1042,84 @@ def main():
         args = json.load(sys.stdin)
     except ValueError as exc:
         fail("arguments are not valid JSON", reason=str(exc))
+    if not isinstance(args, dict):
+        fail("arguments must be a JSON object")
     path = args.get("path")
     if not isinstance(path, str) or not path:
         fail("path is required: a PE, ELF or Mach-O file")
+    with_imports = args.get("with_imports", True)
+    if not isinstance(with_imports, bool):
+        fail("with_imports must be true or false")
+    limit = positive_int(args, "limit", DEFAULT_LIMIT)
+    budget = positive_int(args, "max_entropy_bytes", DEFAULT_ENTROPY_BUDGET, 0)
     if not os.path.isfile(path):
         fail("no such file", path=path)
-    with_imports = args.get("with_imports", True)
 
-    with open(path, "rb") as fh:
+    ctx = Ctx(os.path.realpath(path), limit, budget, with_imports)
+    size = os.path.getsize(path)
+    try:
+        fh = open(path, "rb")
+    except OSError as exc:
+        fail("the file could not be opened: %s" % describe(exc), path=path)
+    with fh:
         try:
-            blob = mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ)
+            mm = mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ)
         except ValueError:
             fail("the file is empty", path=path)
+        except OSError as exc:
+            fail("the file could not be mapped: %s" % describe(exc), path=path)
+        img = Image(mm)
+        head = bytes(mm[:4])
+        body, stop = {}, None
         try:
-            head = blob[:4]
-            if head[:2] == b"MZ":
-                body = read_pe(blob, with_imports)
-            elif head == b"\x7fELF":
-                body = read_elf(blob)
-            elif head in (b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca"):
-                body = read_macho(blob)
-            else:
-                fail("this is not a PE, ELF or Mach-O file", path=path, head_hex=head.hex(),
-                     note="file_type will say what it is instead")
+            try:
+                if head[:2] == b"MZ":
+                    body = read_pe(img, ctx)
+                elif head == b"\x7fELF":
+                    body = read_elf(img, ctx)
+                elif head in MACHO_MAGICS or head in FAT_MAGICS:
+                    body = read_macho(img, ctx)
+                else:
+                    stop = Stop("unsupported", "this is not a PE, ELF or Mach-O file")
+                    stop.extra = {"head_hex": head.hex(), "note": "file_type will say what it is instead"}
+            except Stop as exc:
+                stop = exc
+            except Short as exc:
+                stop = Stop("failed", "a structure runs past the end of the file: %s" % exc)
         finally:
-            blob.close()
+            mm.close()
 
-    print(json.dumps({
-        "path": path, "bytes": os.path.getsize(path), **body,
-        "note": "Nothing here was executed. A section whose virtual size is far larger than its "
-                "raw size, with entropy near 8, is packed and its disassembly is meaningless until "
-                "it is unpacked. Imports are capability by declaration: pair them with capa, which "
-                "reads the code instead.",
-    }, indent=2))
+    # The tables, whole in a file when they are longer than the answer holds.
+    tables = {}
+    for name, page in ctx.pages.items():
+        tables[name] = page.finish()
+        if page.not_written:
+            ctx.problem("the whole %s table could not be written to a file: %s" % (name, page.not_written))
+    truncated = any(p["truncated"] for p in tables.values())
+    if stop is not None:
+        result = {"tool": TOOL, "parser": PARSER, "path": path, "bytes": size, **stop.partial, "status": stop.status,
+                  "status_basis": stop.message, "error": stop.message, "problems": ctx.problems, "limits_hit": ctx.limits,
+                  **stop.extra, "note": NOTE}
+        print(json.dumps(result, indent=2))
+        raise SystemExit(1)
+    for name in ("sections", "segments"):
+        if name in ctx.pages:
+            body[name] = ctx.pages[name].page
+    status = "partial" if (ctx.problems or ctx.limits or ctx.budget["refused"]) else "complete"
+    basis = ("every structure this tool reads was read in full" if status == "complete" else
+             "%d problem(s) and %d limit(s): see `problems` and `limits_hit`; what was read is in the tables" % (len(ctx.problems), len(ctx.limits)))
+    result = {"tool": TOOL, "parser": PARSER, "path": path, "bytes": size, **body, "status": status, "status_basis": basis,
+              "problems": ctx.problems, "limits_hit": ctx.limits, "tables": tables, "truncated": truncated,
+              "entropy_work": {"bytes_measured": ctx.budget["used"], "budget": ctx.budget["limit"]}, "note": NOTE}
+    if ctx.problems_dropped:
+        result["problems_not_listed"] = ctx.problems_dropped
+    print(json.dumps(result, indent=2))
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Exception as exc:  # never a traceback and never a clean answer for a failure
+        fail("unexpected failure: %s" % (describe(exc) if isinstance(exc, OSError) else "%s: %s" % (type(exc).__name__, exc)))
