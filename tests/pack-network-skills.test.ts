@@ -96,14 +96,16 @@ test("every second-level leaf is pointed to by a leaf that says when to open it"
 // Fields and names a skill teaches, each of which a tool must write or read: tool -> [skill, names].
 const TAUGHT: Array<[string, string, string[]]> = [
   ["pcap_summary", "capture/what-you-have", ["truncation", "payload_bytes_captured_total"]],
-  ["pcap_summary", "beacons/periodicity", ["with_syn_times", "syn_unique"]],
-  ["pcap_summary", "exfil/counters", ["bytes_original", "bytes_captured", "top_talkers"]],
+  ["pcap_summary", "beacons/periodicity", ["with_syn_times", "syn_unique", "syn_folded", "syn_unique_is_lower_bound", "syn_observations"]],
+  ["pcap_summary", "exfil/counters", ["bytes_original", "bytes_captured", "top_talkers", "top_ports"]],
   ["beacon_score", "beacons/periodicity", ["assume_utc", "mad_over_median", "event_density_ratio", "long_final_gap", "window_end", "sensor_coverage_confirmed"]],
-  ["zeek_run", "sessions/reconstruct", ["hashes_produced", "hash_fields"]],
+  ["zeek_run", "sessions/reconstruct", ["hashes_produced"]],
   ["zeek_run", "exfil/counters", ["engine_diagnostics"]],
   ["zeek_run", "capture/what-you-have", ["engine_diagnostics"]],
   ["suricata_run", "metadata/fingerprints", ["tls_fingerprints", "checksum_mode"]],
-  ["pcap_extract", "sessions/objects", ["receipt.json", "index.tsv", "matched_by_content", "ambiguous", "unmapped", "write_values", "pcap-extract-values.jsonl", "withheld-", "timed_out", "not_attempted"]],
+  ["pcap_extract", "sessions/objects", ["receipt.json", "index.tsv", "matched_by_content", "ambiguous", "unmapped", "write_values", "pcap-extract-values.jsonl", "withheld-names.jsonl", "withheld-", "timed_out", "not_attempted"]],
+  ["suricata_run", "metadata/fingerprints", ["home_net", "rule_load", "inputs/"]],
+  ["network_log_summary", "logs/web-proxy-firewall", ["referer"]],
   ["network_log_summary", "logs/web-proxy-firewall", ["decoding_substituted", "timestamp_raw", "timestamp_utc", "timezone_source", "unparsed", "blank", "parsed"]],
 ];
 
@@ -128,5 +130,40 @@ test("no skill states a version fact about a tool, the old claims are gone, and 
   }
   for (const id of ["capture/what-you-have", "capture/carve-from-images", "sessions/reconstruct", "sessions/objects", "metadata/dns-tls", "metadata/fingerprints", "logs/web-proxy-firewall"]) {
     assert.match(skills.get(id)!.body, /secret_output: true/, `${id} says the job runs with secret_output: true`);
+  }
+});
+
+// The fields of the Zeek logs a skill names, against the columns Zeek's log definitions give them. A skill that names a
+// column Zeek does not have, as one skill once named `conn_uids` after Zeek had replaced it with `uid` and `id` (version
+// 5.1), teaches a field no reader will find. The files.log list is a review's reading of Zeek's own files/main.zeek (the
+// 8.0.9 tag); the others are from Zeek's log documentation and are used only for the columns a skill names. The tool does
+// not parse these names; this list is the test's own.
+const ZEEK_FIELDS: Record<string, string[]> = {
+  "conn.log": ["ts", "uid", "id.orig_h", "id.orig_p", "id.resp_h", "id.resp_p", "proto", "service", "duration", "orig_bytes", "resp_bytes", "conn_state", "local_orig", "local_resp", "missed_bytes", "history", "orig_pkts", "orig_ip_bytes", "resp_pkts", "resp_ip_bytes", "tunnel_parents"],
+  "files.log": ["ts", "fuid", "uid", "id.orig_h", "id.orig_p", "id.resp_h", "id.resp_p", "source", "depth", "analyzers", "mime_type", "filename", "duration", "local_orig", "is_orig", "seen_bytes", "total_bytes", "missing_bytes", "overflow_bytes", "timedout", "parent_fuid", "md5", "sha1", "sha256", "extracted", "extracted_cutoff", "extracted_size"],
+  "reporter.log": ["ts", "level", "message", "location"],
+  "weird.log": ["ts", "uid", "name", "addl", "notice", "peer"],
+  "capture_loss.log": ["ts", "ts_delta", "peer", "gaps", "acks", "percent_lost"],
+};
+// A name that was a column of an older Zeek and is not one now.
+const GONE_FROM_ZEEK = ["conn_uids", "tx_hosts", "rx_hosts"];
+// What each skill says about which log a column belongs to: skill -> log -> columns it names for it.
+const SKILL_ZEEK: Array<[string, string, string[]]> = [
+  ["sessions/reconstruct", "files.log", ["fuid", "uid", "id.*"]],
+  ["exfil/counters", "conn.log", ["orig_bytes", "resp_bytes", "conn_state"]],
+];
+
+test("a Zeek column a skill names is a column Zeek has, and a column Zeek dropped is named by no skill", async () => {
+  const skills = await load(SKILLS);
+  for (const s of skills.values()) {
+    for (const gone of GONE_FROM_ZEEK) assert.equal(new RegExp(`\\b${gone}\\b`).test(s.body), false, `${s.id} names ${gone}, which Zeek no longer has`);
+  }
+  for (const [skillId, log, names] of SKILL_ZEEK) {
+    const body = skills.get(skillId)?.body ?? "";
+    for (const name of names) {
+      assert.ok(body.includes(name), `${skillId} names ${name}`);
+      const real = name.endsWith(".*") ? ZEEK_FIELDS[log].some((f) => f.startsWith(name.slice(0, -1))) : ZEEK_FIELDS[log].includes(name);
+      assert.ok(real, `${name} is not a column of ${log}`);
+    }
   }
 });

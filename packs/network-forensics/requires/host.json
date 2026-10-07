@@ -91,7 +91,7 @@
         "brew": "brew install tcpflow",
         "apt": "apt-get install -y tcpflow"
       },
-      "licence": "GPL-3.0-or-later",
+      "licence": "GPL-3.0-only (Homebrew's metadata; the apt package's label is not checked)",
       "redistributable": false
     },
     {
@@ -99,8 +99,8 @@
       "package": "tcpick",
       "optional": true,
       "why": "Reassemble and inspect selected TCP conversations as a second implementation where overlap or retransmission behaviour decides the answer.",
-      "install": {"brew": "brew install tcpick", "apt": "apt-get install -y tcpick"},
-      "licence": "GPL-2.0-or-later",
+      "install": {"apt": "apt-get install -y tcpick"},
+      "licence": "GPL-2.0-or-later (declared, unverified)",
       "redistributable": false
     },
     {
@@ -109,7 +109,7 @@
       "optional": true,
       "why": "Search packet payloads with a BPF scope and a byte-safe regular expression during rapid triage.",
       "install": {"brew": "brew install ngrep", "apt": "apt-get install -y ngrep"},
-      "licence": "BSD-3-Clause",
+      "licence": "ngrep's own licence (Homebrew's metadata, which does not list BSD-3-Clause as it was declared before; the apt package's label is not checked)",
       "redistributable": false
     },
     {

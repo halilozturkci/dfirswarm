@@ -16,3 +16,4 @@ Use when you must change what a capture holds to work with it. Not for judging t
 - `text2pcap` builds a capture from a hex dump with headers and times it makes up. Label the result synthetic: it shows what the dump contained, never that traffic occurred.
 
 Shows: which packets your working copy holds and how they were chosen. Does not show: that a packet you filtered out was irrelevant. Record: command, filter, hashes, counts, what each step removed.
+Sensitive output: a derivative holds the original's payload; keep it under `$OUT`, run a job that writes one with `secret_output: true`, and cite packet numbers, not content.

@@ -1,7 +1,8 @@
 # Network Forensics Pack
 
-Captures and flow logs: what the capture can contain, what survives encryption,
-how to find something that calls home, and how to tie any of it to a machine.
+Packet captures and web, proxy and firewall logs: what a capture can contain,
+what survives encryption, how to test for something that calls home, and how to
+tie any of it to a machine. No tool here reads flow records (NetFlow, IPFIX).
 
 Depends on the Computer Forensics Base Pack.
 
@@ -18,7 +19,7 @@ leaves they point to when needed: `capture/what-you-have` (and
 dependency**: it returns a census of the capture (an interface table with link
 type and snap length per interface, pcapng drop counters, the time range, packets
 truncated and how much payload survived, and tuple or endpoint aggregates with
-original and captured bytes kept apart) and SYN observations for a first
+original and captured bytes kept apart) and SYN events (a SYN sent again within 120 seconds is folded into the first) for a first
 look at repeated connections. It is not a session engine. `beacon_score`
 describes how tightly a series of event times clusters around its median
 interval; a regular series is a lead, not a detection. `zeek_run` drives Zeek where
@@ -29,11 +30,11 @@ complete EVE log. `pcap_extract` performs Wireshark object export with a receipt
 from the first moment and ties an HTTP object to a frame when its bytes equal one
 response body. `network_log_summary` reads Apache/nginx access logs, Squid native
 logs and upper-case KEY=VALUE firewall records into a table with line numbers
-and byte offsets and an explicit timestamp column. Tools that can reach request
-data withhold credentials from their answers and keep their output private: run
-them as jobs with `secret_output: true`. No tool here reads NetFlow, IPFIX or
-cloud flow records; a flow export is identified and its semantics stated, not
-parsed.
+and byte offsets and an explicit timestamp column. The four tools that reach request
+data keep their output in a private directory and withhold what looks like a
+credential from their answers (by shape: a short secret that does not look like
+a token is not recognised): run them as jobs with `secret_output: true`. A
+flow export is identified and its semantics stated, not parsed.
 
 **One catalogue recipe.** `network-capture` detects pcap and pcapng by magic,
 then writes capture metadata and complete listings of the selected fields of

@@ -2,7 +2,7 @@
   "id": "network-forensics",
   "name": "Network Forensics Pack",
   "version": "1.3.0",
-  "description": "Method and tooling for captures and flow logs: what the capture can and cannot contain, session reconstruction, DNS and TLS metadata when the payload is encrypted, beacon detection by timing, exfiltration by volume, and tying all of it back to the host timeline.",
+  "description": "Method and tooling for packet captures and web, proxy and firewall logs: what a capture can and cannot show, transaction and object reconstruction, DNS and TLS metadata when the payload is encrypted, periodicity and volume as leads to test, and tying the wire to host evidence. No flow-record reader (NetFlow, IPFIX) is bundled.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
     "DFIR Swarm"
@@ -18,7 +18,7 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "7f4b1663e033a365c2351e7371646ed675eb5c28cd2b3e69cd45958bd682c637",
+      "README.md": "cb4c2ed158e6a3380ef23e52678358eac5e4a7a89d97b8cdd4d1c4090edd8936",
       "tools/suricata_run/manifest.json": "5c9d7c94452dc5bd345a6e9f354d8c0043f8408bb060a599937b6535aec60c20",
       "tools/suricata_run/run.py": "8169d17e21004a31b777af48edabb60d01c5a7f6a5b2f1a758abd761ac3ffeeb",
       "tools/network_log_summary/manifest.json": "75c372727338dc86b973b2a84df370d94dd495e009cb62f8e12b561b3e76bee1",
@@ -36,18 +36,18 @@
       "recipes/network-capture/recipe.json": "a5eb9dd359cb66be5810cb60f28fda918f0b6a3917f58c82c66562c88a6a5269",
       "recipes/network-capture/run.py": "fa605e4090578d56357b7e9cd5444c6aefac276648cdbecb227bb789f79bd937",
       "skills/capture/carve-from-images.md": "8c463d5aff985edacb1ee6676fa5ad4a34e1d8216fa8bcbe67b5f63cd59e7673",
-      "skills/capture/derivatives.md": "4b70b70298845fef484835821eb271194899b98d4fff2bf5c8d6dea7ba7ad314",
+      "skills/capture/derivatives.md": "739ec5b87ee9a70a1b02f3c5b0a8dd073c0d05ff0c4124698300dd434ce1984b",
       "skills/capture/what-you-have.md": "2514c9ff75c4db15ac0fd32298f38d5653d123e52b50da00c9b6960f915580a6",
-      "skills/exfil/counters.md": "579e0fbf3071257ea3de03cec1a65c434991e4ddae306c2b0d63b718c88714b0",
-      "skills/exfil/volume.md": "7e8c77ccb8f34c83f0445decd25ad6889a0449b09cdfdb3fe472de1f57f5cc40",
-      "skills/sessions/objects.md": "590515e0563ebbc5d57a63f72ccf1562c0d89cf4dd2b8a8f96a003ec573ca9b7",
-      "skills/sessions/reconstruct.md": "c2c62cb78606ef3b811aad5809671acd3f7003a81408c2f568d03ef083cd0856",
-      "skills/logs/web-proxy-firewall.md": "cf2087d0e23dd7ff707fe739d8f2db7d2493ec8ac37687c27a7c863551e0c7d8",
+      "skills/exfil/counters.md": "8e2bc069dba560f51f888dc82a0ef1f08b9cb3ec7f807175a6c078569c0a4af3",
+      "skills/exfil/volume.md": "3382fc5dcc6b636694c3f3046500d19c4d3a48cd28c5fa9e185bc993ce419489",
+      "skills/sessions/objects.md": "5745ffa51e7fd7539d54e2e8a65acdd758a54ffe7dbfd466ab670425e7d22d2d",
+      "skills/sessions/reconstruct.md": "170b00b61e2973415ad2c78220ad7677c6c02ac36492a0ac66210dc1a2a233d0",
+      "skills/logs/web-proxy-firewall.md": "d007758934ec6b6fab8be4b2f58781e8dd14315018ca0ec50ca1b801acc266ae",
       "skills/correlate/host.md": "c6f402825f7772f1edc476bb4ca3d606f7ce3b8588a5204d18886e7ed17ceb16",
       "skills/metadata/dns-tls.md": "09c6bed8bc573cfc77a9ea82a84a2ebd7d48a1398588ea2be0358cfe5c4e5b67",
-      "skills/metadata/fingerprints.md": "adf66aead6bedccb08e338bab8cc536fcf173d1cf785908384a58d94af37e40c",
-      "skills/beacons/periodicity.md": "ca5122c90e84f9cd0983d9b710670d738b44cf3136e9445152313e4d18d73781",
-      "requires/host.json": "d9984938f44b379647f2b61771e7027e9036f24f56050cd6905b40e66210520b",
+      "skills/metadata/fingerprints.md": "7fc9786942def4a443011873fd2a9e7b2b9b58cee512db22af110aae51cdeda9",
+      "skills/beacons/periodicity.md": "c6cb928a28b5eff19b19c8fe4e886b72396c8b75bd713ad07d51fcac623b24e4",
+      "requires/host.json": "fd0cbce4384b7a9bd958378e086d08c55e38c5fbb5868858a0a4d939462ac48c",
       "requires/python.txt": "d5768d4bec0bea8ec8e736e2710a757309af18fa3f862dae2db201e154d45a4a",
       "skills/INDEX.md": "b8ce8ab618fb6158730c26fb1606f5d10473d61408c8a07610414363cfa01454"
     }
