@@ -19,8 +19,10 @@ whose first slice starts with a Mach-O magic (a Java class file begins with the 
 
 The recipe reads the file; it executes nothing.
 """
+import errno
 import json
 import os
+import re
 import signal
 import struct
 import subprocess
@@ -33,9 +35,12 @@ PE_INFO = os.path.join(PACK, "tools", "pe_info", "run.py")
 ENTROPY = os.path.join(PACK, "tools", "entropy_map", "run.py")
 
 BUDGET_SECONDS = 570                      # recipe.json gives this recipe 600
-PE_INFO_SECONDS = 240
+PE_INFO_SECONDS = 110                     # pe_info's and entropy_map's own clocks (max_seconds) are at most this and 280
+ENTROPY_SECONDS = 280
+GRACE_SECONDS = 10                        # a tool that outlives its own clock by this much is ended
 ENTROPY_WINDOW = 65536
 ENTROPY_NAME = "entropy-windows.tsv"
+EARLIER = re.compile(r"^(binary|entropy)(-\d+)?\.json$|^entropy-windows[^/]*\.tsv$|^(pe_info|entropy_map)(-\d+)?\.stderr$")
 MACHO_THIN = {b"\xce\xfa\xed\xfe": 28, b"\xcf\xfa\xed\xfe": 32, b"\xfe\xed\xfa\xce": 28, b"\xfe\xed\xfa\xcf": 32}
 FAT = {b"\xca\xfe\xba\xbe": (">", 20), b"\xbe\xba\xfe\xca": ("<", 20), b"\xca\xfe\xba\xbf": (">", 32), b"\xbf\xba\xfe\xca": ("<", 32)}
 MAX_JSON = 256 << 20
@@ -255,6 +260,20 @@ def run_child(script, args, stdout_path, stderr_path, env, timeout):
             ACTIVE.remove(proc)
 
 
+def new_name(out_dir, stem, ext):
+    """A name in `out_dir` that nothing has: `stem.ext`, or `stem-2.ext`, ... The file is created at once, exclusively, so that a
+    result an earlier run left in this directory is never opened for writing, let alone replaced."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    for n in range(1, 1000):
+        name = "%s%s" % (stem if n == 1 else "%s-%d" % (stem, n), ext)
+        try:
+            os.close(os.open(os.path.join(out_dir, name), flags, 0o644))
+        except FileExistsError:
+            continue
+        return name
+    raise OSError(errno.EEXIST, "a thousand files of this name already exist in %s" % out_dir)
+
+
 def read_json(path):
     try:
         if os.path.getsize(path) > MAX_JSON:
@@ -346,23 +365,36 @@ def assemble(state):
         "errors": errors,
     }
     lines = []
-    binary, entropy_path = os.path.join(out_dir, "binary.json"), os.path.join(out_dir, "entropy.json")
+    names = state["names"]
+    binary, entropy_path = os.path.join(out_dir, names.get("binary", "binary.json")), os.path.join(out_dir, names.get("entropy", "entropy.json"))
     if os.path.isfile(binary) and os.path.getsize(binary):
-        lines.append("binary.json\tpe_info/2 inventory for %s: status %s, %d problem(s); the structures it read are listed in the file, and what it did not read in coverage.json"
-                     % (fmt, pe["status"], len((pe_doc or {}).get("problems") or [])))
+        lines.append("%s\tpe_info/2 inventory for %s: status %s, %d problem(s); the structures it read are listed in the file, and what it did not read in coverage.json"
+                     % (names["binary"], fmt, pe["status"], len((pe_doc or {}).get("problems") or [])))
     if os.path.isfile(entropy_path) and os.path.getsize(entropy_path):
-        lines.append("entropy.json\tentropy_map inline summary in %d-byte windows: status %s; the profile is the file named next" % (ENTROPY_WINDOW, en["status"]))
+        lines.append("%s\tentropy_map inline summary in %d-byte windows: status %s; the profile is the file named next" % (names["entropy"], ENTROPY_WINDOW, en["status"]))
     if profile and os.path.isfile(os.path.join(out_dir, profile)):
         lines.append("%s\t%s entropy profile, %s windows of %d bytes, one row per window" % (
             profile, "complete" if en["status"] == "complete" else "partial (%s)" % en["status"], (en_doc or {}).get("windows_measured"), ENTROPY_WINDOW))
     if runs and os.path.isfile(os.path.join(out_dir, runs)):
         lines.append("%s\tevery high-entropy run, in the order found" % runs)
-    for name in ("pe_info.stderr", "entropy_map.stderr"):
-        if os.path.isfile(os.path.join(out_dir, name)) and os.path.getsize(os.path.join(out_dir, name)):
-            files[name] = "what %s said on stderr" % name.split(".")[0]
+    for key in ("pe_stderr", "en_stderr"):
+        name = names.get(key)
+        if name and os.path.isfile(os.path.join(out_dir, name)) and os.path.getsize(os.path.join(out_dir, name)):
+            files[name] = "what %s said on stderr" % ("pe_info" if key == "pe_stderr" else "entropy_map")
     for name, what in files.items():
         if not name.startswith("store/") and os.path.isfile(os.path.join(out_dir, name)):
             lines.append("%s\t%s" % (name, what))
+    # What an earlier run left in this directory is kept, and named, so that no result is orphaned by this one.
+    listed = {l.split("\t", 1)[0] for l in lines}
+    try:
+        present = sorted(os.listdir(out_dir))
+    except OSError:
+        present = []
+    for name in present:
+        if name in listed or not EARLIER.match(name) or not os.path.isfile(os.path.join(out_dir, name)) or os.path.getsize(os.path.join(out_dir, name)) == 0:
+            continue
+        lines.append("%s\tleft by an earlier run in this directory; kept, and not part of this result" % name)
+    coverage["outputs"] = {k: v for k, v in names.items()}
     return status, coverage, lines
 
 
@@ -381,14 +413,19 @@ def write_results(state):
     return status
 
 
-def run(path, out_dir, fmt):
+def run(path, out_dir, fmt, budget):
     os.makedirs(out_dir, exist_ok=True)
     started = time.monotonic()
     env = dict(os.environ)
     # The tools write where $OUT says; a recipe's files belong in its own directory, whatever job called it.
     env["OUT"] = os.path.abspath(out_dir)
     env.pop("JOB_ID", None)
-    state = {"out_dir": out_dir, "fmt": fmt, "path": path, "errors": [], "pe": pass_state("pe_info"), "en": pass_state("entropy_map")}
+    state = {"out_dir": out_dir, "fmt": fmt, "path": path, "errors": [], "pe": pass_state("pe_info"), "en": pass_state("entropy_map"), "names": {}}
+    names = state["names"]
+    names["binary"] = new_name(out_dir, "binary", ".json")
+    names["entropy"] = new_name(out_dir, "entropy", ".json")
+    names["pe_stderr"] = new_name(out_dir, "pe_info", ".stderr")
+    names["en_stderr"] = new_name(out_dir, "entropy_map", ".stderr")
 
     def last_word(signum):
         # Stopped by a signal: the running passes are ended (the handler did that); coverage and the index say where it stopped.
@@ -400,32 +437,40 @@ def run(path, out_dir, fmt):
 
     STATE["last_word"] = last_word
     install_signal_handlers()
-    # From the first moment there is a coverage.json that says the recipe has not finished: a recipe ended without a last
-    # word (SIGKILL) still leaves one.
-    state["errors"].append("the recipe was started and has not finished")
-    write_results(state)
-    state["errors"].pop()
 
-    binary = os.path.join(out_dir, "binary.json")
-    rc, timed_out = run_child(PE_INFO, {"path": path}, binary, os.path.join(out_dir, "pe_info.stderr"), env, min(PE_INFO_SECONDS, BUDGET_SECONDS))
-    doc, why = read_json(binary)
+    def unfinished():
+        # A coverage.json that says the recipe has not finished is there from the first moment and after each pass: a recipe
+        # ended without a last word (SIGKILL) still leaves one.
+        state["errors"].append("the recipe was started and has not finished")
+        write_results(state)
+        state["errors"].pop()
+
+    unfinished()
+
+    left = budget - (time.monotonic() - started)
+    seconds = max(1, min(PE_INFO_SECONDS, int(left)))
+    rc, timed_out = run_child(PE_INFO, {"path": path, "max_seconds": seconds}, os.path.join(out_dir, names["binary"]),
+                              os.path.join(out_dir, names["pe_stderr"]), env, seconds + GRACE_SECONDS)
+    doc, why = read_json(os.path.join(out_dir, names["binary"]))
     status, reason = judge("pe_info", rc, timed_out, doc, why)
     state["pe"] = {"label": "pe_info", "status": status, "reason": reason, "rc": rc, "doc": doc, "timed_out": timed_out}
-    state["errors"].append("the recipe was started and has not finished")
-    write_results(state)
-    state["errors"].pop()
+    unfinished()
 
-    remaining = BUDGET_SECONDS - (time.monotonic() - started)
-    entropy_path = os.path.join(out_dir, "entropy.json")
-    if remaining <= 0:
+    left = budget - (time.monotonic() - started)
+    entropy_path = os.path.join(out_dir, names["entropy"])
+    if left < 1:
         rc2, timed_out2 = None, True
-        open(entropy_path, "wb").close()
     else:
-        rc2, timed_out2 = run_child(ENTROPY, {"path": path, "window": ENTROPY_WINDOW, "output_name": ENTROPY_NAME}, entropy_path,
-                                    os.path.join(out_dir, "entropy_map.stderr"), env, remaining)
+        seconds = max(1, min(ENTROPY_SECONDS, int(left)))
+        rc2, timed_out2 = run_child(ENTROPY, {"path": path, "window": ENTROPY_WINDOW, "output_name": ENTROPY_NAME, "max_seconds": seconds}, entropy_path,
+                                    os.path.join(out_dir, names["en_stderr"]), env, seconds + GRACE_SECONDS)
     doc2, why2 = read_json(entropy_path)
     status2, reason2 = judge("entropy_map", rc2, timed_out2, doc2, why2)
     state["en"] = {"label": "entropy_map", "status": status2, "reason": reason2, "rc": rc2, "doc": doc2, "timed_out": timed_out2}
+    # An empty stderr is not a result: it is not left, and not named.
+    for key in ("pe_stderr", "en_stderr"):
+        if drop_if_empty(os.path.join(out_dir, names[key])):
+            names.pop(key)
     final = write_results(state)
     print(json.dumps({"ok": final == "complete", "status": final, "format": fmt}))
     return 0 if final in ("complete", "partial") else 2
@@ -433,7 +478,7 @@ def run(path, out_dir, fmt):
 
 def main(argv):
     if len(argv) < 2 or argv[1] not in ("detect", "run"):
-        print(json.dumps({"ok": False, "error": "usage: run.py detect --target T | run --target T --out DIR"}))
+        print(json.dumps({"ok": False, "error": "usage: run.py detect --target T | run --target T --out DIR [--seconds N]"}))
         return 2
     args = dict(zip(argv[2::2], argv[3::2]))
     if "--target" not in args:
@@ -460,7 +505,16 @@ def main(argv):
             json.dump({"recipe": "static-binary", "status": "unsupported", "why": why, "limits_hit": [], "errors": []}, fh, indent=2)
         print(json.dumps({"ok": False, "status": "unsupported", "why": why}))
         return 2
-    return run(path, args["--out"], fmt)
+    budget = BUDGET_SECONDS
+    if "--seconds" in args:
+        try:
+            budget = int(args["--seconds"])
+        except ValueError:
+            budget = 0
+        if not 1 <= budget <= BUDGET_SECONDS:
+            print(json.dumps({"ok": False, "error": "--seconds is a whole number from 1 to %d" % BUDGET_SECONDS}))
+            return 2
+    return run(path, args["--out"], fmt, budget)
 
 
 if __name__ == "__main__":

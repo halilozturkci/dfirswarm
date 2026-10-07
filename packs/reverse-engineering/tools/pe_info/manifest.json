@@ -1,6 +1,6 @@
 {
   "name": "pe_info",
-  "description": "Read an executable's structure from its bytes without running it. PE: the DOS, COFF and optional headers (fields read within the optional header's declared size), the data directory table, sections with the entropy of their raw bytes and their permissions, import library and function names (a list longer than the answer holds is kept whole in a file), the export directory's image-name field, the compile timestamp as the header's raw value and its UTC reading, and the certificate table's declaration (offset, size and the first entry's header: presence only, nothing is verified). ELF, 32- and 64-bit in either byte order: the header, program and section headers, and the dynamic array read through PT_DYNAMIC (DT_NEEDED, SONAME, RPATH, RUNPATH) with the interpreter; stripped is reported only when section headers show it. Mach-O: thin files in either width and byte order, and every slice of a universal binary (load commands, linked libraries, segments, entry offset, code-signature presence). Every answer carries a status (complete, partial, failed or unsupported), the problems found, the limits hit and the structures it did not read. Not read: resources, export symbols, delay-load imports, TLS, CLR metadata, the Rich header, symbol tables, notes. No signature is verified, and size, entropy and import counts are triage features, not a determination of packing, intent or execution.",
+  "description": "Read an executable's structure from its bytes without running it. PE: the DOS, COFF and optional headers (fields read within the optional header's declared size), the data directory table, sections with the entropy of their raw bytes and their permissions, import library and function names (a list longer than the answer holds is kept whole in a file), the export directory's image-name field, the COFF TimeDateStamp as its raw value and as a Unix time in UTC (a reading of a number: a reproducible build writes a hash there, not a compile time), and the certificate table's declaration (offset, size and the first entry's header: presence only, nothing is verified). ELF, 32- and 64-bit in either byte order: the header, program and section headers, and the dynamic array read through PT_DYNAMIC (DT_NEEDED, SONAME, RPATH, RUNPATH) with the interpreter; stripped is reported only when section headers show it. Mach-O: thin files in either width and byte order, and every slice of a universal binary (load commands, linked libraries, segments, entry offset, code-signature presence). Every answer, including a refusal, carries a status (complete, partial, failed or unsupported), the problems found, the limits hit and the structures read and not read. A table, segment, section or certificate range that runs past the end of the file is a problem (the file is truncated or the header is wrong), never a complete read. The tool has its own clock (max_seconds). A library path, search path or install name carrying user-info or a query value is withheld, with where it lies in the file. Not read: resources, export symbols, delay-load imports, TLS, CLR metadata, the Rich header, symbol tables, notes. No signature is verified, and size, entropy and import counts are triage features, not a determination of packing, intent or execution.",
   "use": {
     "magic": [
       {
@@ -67,11 +67,15 @@
     },
     "limit": {
       "type": "integer",
-      "description": "Rows of one table kept in the answer (default 5000); the whole of a longer table is written to a file under the tool-output directory and named"
+      "description": "Rows of one table kept in the answer (default 5000: sections, segments, load commands, import functions); the whole of a longer table is written to a file under the tool-output directory and named"
     },
     "max_entropy_bytes": {
       "type": "integer",
       "description": "Work budget for section and segment entropy, in bytes measured (default 268435456); a range left unmeasured says so"
+    },
+    "max_seconds": {
+      "type": "integer",
+      "description": "The tool's own time limit in seconds, from 1 to 110 (default 100); a read that reaches it stops, keeps what it read, and the answer is partial"
     }
   },
   "runtime": "python3",
@@ -81,5 +85,5 @@
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
   "version": 2,
-  "sha256": "8cb936f8a02150e54d52d116329460e8cb05590687bafbf688a158f57e151801"
+  "sha256": "fd4f51f5bfe7701c3f085b5dd941b732688a93cdcc83836299cbd77e8430ae96"
 }

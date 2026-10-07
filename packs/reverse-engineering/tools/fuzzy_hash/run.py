@@ -18,6 +18,7 @@ import json
 import os
 import re
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -29,8 +30,11 @@ DEFAULT_ENGINE_TIMEOUT = 120
 TOTAL_BUDGET = 270                       # seconds for the whole call: the manifest's own limit is 300
 VERSION_TIMEOUT = 10
 PARSE_BYTES = 1 << 16                    # how much of an engine's stdout is read back for parsing
-TLSH_RX = re.compile(r"^(?:T\d+)?[0-9A-Fa-f]{70,140}$")
+# TLSH's encodings have fixed lengths: a one- or three-byte checksum, a length byte, a quantile byte and 32 (128 buckets) or 64
+# (256 buckets) bytes of body, as 70, 74, 134 or 138 hexadecimal digits, after an optional version prefix.
+TLSH_RX = re.compile(r"^(?:T1)?(?:[0-9A-F]{70}|[0-9A-F]{74}|[0-9A-F]{134}|[0-9A-F]{138})$")
 SSDEEP_RX = re.compile(r"^[0-9]+:[A-Za-z0-9+/]{1,64}:[A-Za-z0-9+/]{0,64}$")
+SSDEEP_EMPTY_RX = re.compile(r"^[0-9]+::$")      # what ssdeep prints for an input too small to hash
 DISTANCE_RX = re.compile(r"^[0-9]+$")
 TLSH_SHORT = "the file is too short or has too little byte diversity for TLSH"
 
@@ -169,6 +173,21 @@ def install_signal_handlers():
 # END SHARED PROCESS
 
 
+def file_problem(path):
+    """Why `path` is not a file this tool can read, in words that fit: a missing file, a directory, a pipe, a loop."""
+    try:
+        mode = os.stat(path).st_mode
+    except FileNotFoundError:
+        return "no such file"
+    except OSError as exc:
+        return "the file could not be examined: %s" % describe(exc)
+    if stat.S_ISREG(mode):
+        return None
+    kinds = ((stat.S_ISDIR, "a directory"), (stat.S_ISFIFO, "a named pipe"), (stat.S_ISSOCK, "a socket"), (stat.S_ISBLK, "a block device"),
+             (stat.S_ISCHR, "a character device"))
+    return "not a regular file (%s)" % next((n for t, n in kinds if t(mode)), "a special file")
+
+
 def shutil_which(name):
     for directory in os.environ.get("PATH", "").split(os.pathsep):
         candidate = os.path.join(directory, name)
@@ -274,7 +293,7 @@ def run_engine(logs, argv, label, timeout):
     for stream, (fh, start) in handles.items():
         end = os.fstat(fh.fileno()).st_size
         n = min(end - start, PARSE_BYTES if stream == "stdout" else 2048)
-        text[stream] = os.pread(fh.fileno(), n, start).decode("utf-8", "replace") if n > 0 else ""
+        text[stream] = os.pread(fh.fileno(), n, start).decode("utf-8", "surrogateescape") if n > 0 else ""
         result[stream + "_bytes"] = max(0, end - start)
     for fh in temps:
         fh.close()
@@ -295,22 +314,28 @@ def first_line(text):
     return next((line.strip() for line in text.splitlines() if line.strip()), "")
 
 
-def parse_tlsh(run):
-    """(digest or None, status, reason or None) for `tlsh -f FILE`."""
+def parse_tlsh(run, path):
+    """(digest or None, status, reason or None) for `tlsh -f FILE`: one row, a digest and, when the row names a file, this file."""
     if run["status"] != "ok":
         return None, run["status"], run["reason"]
     if run["stdout_bytes"] > PARSE_BYTES:
         return None, "unrecognised_output", "the program printed %d bytes where a digest line was expected" % run["stdout_bytes"]
-    line = first_line(run["stdout"])
-    token = line.split("\t", 1)[0].strip() if line else ""
+    rows = [l.strip() for l in run["stdout"].splitlines() if l.strip()]
+    if len(rows) != 1:
+        return None, "unrecognised_output", "the program printed %d rows where one was expected" % len(rows)
+    token, _tab, name = rows[0].partition("\t")
+    token = token.strip()
     if token == "TNULL":
         return None, "insufficient_input", TLSH_SHORT
-    if TLSH_RX.match(token):
-        return token, "ok", None
-    return None, "unrecognised_output", "the program printed %r where a TLSH digest was expected" % line[:200]
+    if not TLSH_RX.match(token):
+        return None, "unrecognised_output", "the program printed %r where a TLSH digest was expected" % rows[0][:200]
+    if name.strip() and name.strip() != path:
+        return None, "unrecognised_output", "the row names another file than the one asked for (%r)" % name.strip()[:200]
+    return token, "ok", None
 
 
-def parse_ssdeep(run):
+def parse_ssdeep(run, path):
+    """The same for `ssdeep -b -- FILE`: a header line, then one row `blocksize:hash:hash,"name"` whose name, when present, is this file's."""
     if run["status"] != "ok":
         return None, run["status"], run["reason"]
     if run["stdout_bytes"] > PARSE_BYTES:
@@ -318,10 +343,17 @@ def parse_ssdeep(run):
     rows = [l.strip() for l in run["stdout"].splitlines() if l.strip() and not l.startswith("ssdeep,")]
     if not rows:
         return None, "unrecognised_output", "the program printed no digest line"
-    token = rows[-1].split(",", 1)[0]
-    if SSDEEP_RX.match(token):
-        return token, "ok", None
-    return None, "unrecognised_output", "the program printed %r where an ssdeep digest was expected" % rows[-1][:200]
+    if len(rows) != 1:
+        return None, "unrecognised_output", "the program printed %d rows where one was expected" % len(rows)
+    token, _comma, name = rows[0].partition(",")
+    name = name.strip().strip('"')
+    if SSDEEP_EMPTY_RX.match(token):
+        return None, "insufficient_input", "the input is too small for ssdeep to hash"
+    if not SSDEEP_RX.match(token):
+        return None, "unrecognised_output", "the program printed %r where an ssdeep digest was expected" % rows[0][:200]
+    if name and name != os.path.basename(path):
+        return None, "unrecognised_output", "the row names another file than the one asked for (%r)" % name[:200]
+    return token, "ok", None
 
 
 class Run:
@@ -329,6 +361,7 @@ class Run:
         self.logs = logs
         self.engine_timeout = engine_timeout
         self.deadline = time.monotonic() + TOTAL_BUDGET
+        self.partial = []                # the file entries, filled as the engines answer, for the last word of a stopped call
         self.problems = []
 
     def call(self, argv, label, cap=None):
@@ -346,9 +379,10 @@ class Run:
 def hash_one(runner, path, label):
     sha, size = sha256_of(path)
     entry = {"path": path, "bytes": size, "sha256": sha}
+    runner.partial.append(entry)
     for engine, argv, parse in (("ssdeep", ["ssdeep", "-b", "--", path], parse_ssdeep), ("tlsh", ["tlsh", "-f", path], parse_tlsh)):
         run = runner.call(argv, "%s %s" % (label, engine))
-        digest, status, reason = parse(run)
+        digest, status, reason = parse(run, path)
         entry[engine] = digest
         entry[engine + "_status"] = status
         entry[engine + "_unavailable"] = reason
@@ -386,8 +420,9 @@ def main():
     for path in paths:
         if not isinstance(path, str) or not path:
             fail("path and compare_to must be non-empty strings when supplied")
-        if not os.path.isfile(path):
-            fail("no such file", path=path)
+        why_not = file_problem(path)
+        if why_not:
+            fail(why_not, path=path)
     timeout = args.get("engine_timeout_seconds", DEFAULT_ENGINE_TIMEOUT)
     if isinstance(timeout, bool) or not isinstance(timeout, int) or not 1 <= timeout <= 600:
         fail("engine_timeout_seconds must be an integer from 1 to 600")
@@ -403,7 +438,7 @@ def main():
     def last_word(signum):
         # A stop signal ends the engines (the handler did that) and the tool says it was stopped, with what it had.
         print(json.dumps({"error": "stopped by signal %d before the engines finished" % signum, "status": "failed", "tool": TOOL,
-                          "stopped_by_signal": signum, "problems": runner.problems,
+                          "stopped_by_signal": signum, "files": runner.partial, "problems": runner.problems,
                           "logs": logs.names if logs.kept else None}))
         sys.stdout.flush()
 

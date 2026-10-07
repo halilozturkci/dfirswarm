@@ -10,10 +10,10 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, readFile, stat } from "node:fs/promises";
+import { mkdir, readFile, readdir, stat, truncate } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { CPU_X86_64, RECIPE, buildElf, buildFat, buildMacho, buildPe, exists, filesUnder, put, withCwd } from "./pack-re-harness.ts";
+import { CPU_X86_64, RECIPE, buildElf, buildFat, buildMacho, buildPe, childrenOf, exists, filesUnder, gone, put, startDetached, withCwd } from "./pack-re-harness.ts";
 import type { Json } from "./pack-re-harness.ts";
 
 function recipe(verb: "detect" | "run", target: string, extra: string[] = [], env: Record<string, string> = {}): { code: number | null; out: Json; stderr: string } {
@@ -153,5 +153,88 @@ test("an object the recipe does not apply to gets a coverage file that says unsu
     const coverage = JSON.parse(await readFile(join(dir, "coverage.json"), "utf8"));
     assert.equal(coverage.status, "unsupported");
     assert.match(coverage.why, /Java|universal|slice/i);
+  });
+});
+
+// --- review round ---------------------------------------------------------------------------------------------------------
+
+test("a second run into the same directory replaces nothing the first wrote, and the index names both results", async () => {
+  await withCwd(async (cwd) => {
+    const sample = await put(cwd, "inputs/sample.bin", buildPe({ imports: [{ dll: "KERNEL32.dll", functions: ["ExitProcess", "Sleep"] }] }).file);
+    const dir = join(cwd, "catalog");
+    const first = recipe("run", sample, ["--out", dir]);
+    assert.equal(first.code, 0);
+    const before = await readFile(join(dir, "binary.json"), "utf8");
+    const profileBefore = (await filesUnder(dir)).find((f) => f.startsWith("entropy-windows"))!;
+    const second = recipe("run", sample, ["--out", dir]);
+    assert.equal(second.code, 0);
+    assert.equal(await readFile(join(dir, "binary.json"), "utf8"), before, "the first result is as it was");
+    assert.ok(await exists(join(dir, "binary-2.json")), (await filesUnder(dir)).join(","));
+    assert.ok(await exists(join(dir, profileBefore)));
+    const index = await readFile(join(dir, "index.tsv"), "utf8");
+    assert.match(index, /^binary-2\.json\t/m);
+    assert.match(index, /^binary\.json\t.*earlier run/m, "the first result is still named");
+    const coverage = JSON.parse(await readFile(join(dir, "coverage.json"), "utf8")) as Json;
+    assert.equal(coverage.status, "complete");
+    assert.equal(coverage.outputs.binary, "binary-2.json");
+  });
+});
+
+test("a clean run leaves no empty file behind", async () => {
+  await withCwd(async (cwd) => {
+    const { dir } = await catalogue(cwd, buildPe({}).file);
+    for (const f of await filesUnder(dir)) assert.ok((await stat(join(dir, f))).size > 0, `${f} is empty`);
+  });
+});
+
+test("recipe.json offers every magic that detect accepts, so a derived file of each form is offered to it", async () => {
+  const recipeJson = JSON.parse(await readFile(join(RECIPE, "..", "recipe.json"), "utf8")) as Json;
+  const offered = recipeJson.magic.map((m: Json) => m.hex).sort();
+  assert.deepEqual(offered, ["4d5a", "7f454c46", "bebafeca", "bfbafeca", "cafebabe", "cafebabf", "cefaedfe", "cffaedfe", "feedface", "feedfacf"].sort());
+  assert.ok(recipeJson.outputs.includes("entropy-windows.tsv"));
+});
+
+test("the recipe's own budget is handed to each tool as that tool's clock: --seconds ends a long pass as a partial result, not a kill", async () => {
+  await withCwd(async (cwd) => {
+    const sample = await put(cwd, "inputs/big.exe", buildPe({}).file);
+    await truncate(sample, 2 ** 31); // a hole of 2 GiB: the entropy pass takes about a minute
+    const dir = join(cwd, "catalog");
+    const started = Date.now();
+    const run = recipe("run", sample, ["--out", dir, "--seconds", "4"]);
+    assert.ok((Date.now() - started) / 1000 < 30, "the recipe waited for the whole pass");
+    assert.equal(run.code, 0);
+    const coverage = JSON.parse(await readFile(join(dir, "coverage.json"), "utf8")) as Json;
+    assert.equal(coverage.status, "partial");
+    assert.equal(coverage.entropy_map.status, "partial", JSON.stringify(coverage.entropy_map));
+    assert.ok(coverage.entropy_map.bytes_processed > 0 && coverage.entropy_map.bytes_processed < 2 ** 31);
+    assert.ok(coverage.limits_hit.some((l: string) => /entropy/.test(l)));
+  });
+});
+
+test("a recipe killed alone leaves no tool running past its budget", { skip: process.platform === "win32" }, async () => {
+  await withCwd(async (cwd) => {
+    const sample = await put(cwd, "inputs/big.exe", buildPe({}).file);
+    await truncate(sample, 2 ** 31);
+    const dir = join(cwd, "catalog");
+    const run = startDetached(RECIPE, cwd, {}, {}, undefined, ["run", "--target", JSON.stringify({ paths: [sample] }), "--out", dir, "--seconds", "4"]);
+    // entropy_map creates its profile file as it starts: from then on it is the running child.
+    const until = Date.now() + 15000;
+    let kids: number[] = [];
+    for (;;) {
+      const files = await readdir(dir).catch(() => [] as string[]);
+      kids = childrenOf(run.pid);
+      if (files.some((f) => f.startsWith("entropy-windows")) && kids.length) break;
+      if (Date.now() > until) throw new Error(`the recipe did not reach its entropy pass: ${files.join(",")}`);
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    assert.ok(kids.length, "the recipe started a tool");
+    process.kill(run.pid, "SIGKILL"); // the recipe alone, as the catalogue does at its limit: not its group
+    await run.closed;
+    try {
+      // Linux ends the child with its parent; elsewhere the child ends at its own clock, which the recipe set from its budget.
+      for (const pid of kids) assert.equal(await gone(pid, 9000), true, `the tool ${pid} outlived the recipe's budget`);
+    } finally {
+      for (const pid of kids) try { process.kill(pid, "SIGKILL"); } catch { /* gone */ }
+    }
   });
 });

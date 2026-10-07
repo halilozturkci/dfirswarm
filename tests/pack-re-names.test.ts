@@ -26,9 +26,10 @@ async function put(cwd: string, data: Buffer): Promise<string | null> {
   return `work/${BAD}`;
 }
 
-test("pe_info, doc_probe and entropy_map answer for a file whose name is not UTF-8, in JSON and without a traceback", async () => {
+test("pe_info, doc_probe and entropy_map answer for a file whose name is not UTF-8, in JSON and without a traceback", async (t) => {
   await withCwd(async (cwd) => {
     const pe = await put(cwd, buildPe({ imports: [{ dll: "A.dll", functions: ["f"] }] }).file);
+    if (!pe) t.skip("this file system refuses a name that is not UTF-8 (macOS): the branch runs on Linux; the error path below does run");
     if (pe) {
       for (const [script, expected] of [[PE_INFO, "complete"], [ENTROPY, "complete"]] as const) {
         const out = await tool(script, cwd, { path: pe, limit: 1 });
@@ -50,9 +51,9 @@ test("pe_info, doc_probe and entropy_map answer for a file whose name is not UTF
   });
 });
 
-test("fuzzy_hash and the static-binary recipe do the same", async () => {
+test("fuzzy_hash and the static-binary recipe do the same", async (t) => {
   await withCwd(async (cwd, bin) => {
-    await stub(bin, "ssdeep", `echo 'ssdeep,1.1--blocksize:hash:hash,filename'\necho '3:abc:def,"x"'`);
+    await stub(bin, "ssdeep", `echo 'ssdeep,1.1--blocksize:hash:hash,filename'\necho "3:abc:def,\\"$(basename "$3")\\""`);
     await stub(bin, "tlsh", `printf 'T1${"AB".repeat(35)}\\t%s\\n' "$2"`);
     const sample = await put(cwd, buildPe({}).file);
     const missing = `work/gone\udcfe.bin`;
@@ -65,7 +66,10 @@ test("fuzzy_hash and the static-binary recipe do the same", async () => {
     const gone = spawnSync("python3", [RECIPE, "detect", "--target", JSON.stringify({ paths: [missing] })], { cwd, encoding: "utf8" });
     assert.doesNotMatch(gone.stderr, /Traceback/);
     assert.equal((JSON.parse(gone.stdout) as Json).ok, false);
-    if (!sample) return;
+    if (!sample) {
+      t.skip("this file system refuses a name that is not UTF-8 (macOS): the branch runs on Linux; the error path above does run");
+      return;
+    }
     const out = await tool(FUZZY, cwd, { path: sample }, {}, bin);
     assert.equal(out.code, 0, out.stderr + out.stdout);
     assert.doesNotMatch(out.stderr, /Traceback/);

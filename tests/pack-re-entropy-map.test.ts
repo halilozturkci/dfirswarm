@@ -9,7 +9,7 @@
  * processed and whether it finished.
  */
 import assert from "node:assert/strict";
-import { chmod, readFile, stat } from "node:fs/promises";
+import { chmod, mkdir, readFile, stat, truncate } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { ENTROPY, asJob, body, exists, filesUnder, put, refused, tool, withCwd } from "./pack-re-harness.ts";
@@ -188,5 +188,43 @@ test("the note says what entropy is and does not call a high value packing", asy
     assert.doesNotMatch(out.note, /is packed|A section at/);
     assert.match(out.note, /measurement|feature/i);
     assert.ok((await stat(join(cwd, "work", "s1", "tool-output", out.profile_file))).size > 0);
+  });
+});
+
+// --- review round ---------------------------------------------------------------------------------------------------------
+
+test("a file that cannot be read is a failure that creates no profile file", { skip: process.getuid?.() === 0 }, async () => {
+  await withCwd(async (cwd) => {
+    await put(cwd, "work/secret.bin", Buffer.alloc(8192, 1), 0o000);
+    const out = refused(await tool(ENTROPY, cwd, { path: "work/secret.bin" }));
+    assert.equal(out.status, "failed");
+    assert.match(out.error, /could not be opened|Permission/i);
+    assert.deepEqual(await filesUnder(join(cwd, "work", "s1")), [], "no header-only profile was left behind");
+  });
+});
+
+test("the tool has its own clock: max_seconds ends a pass over a file too big for it, and the answer says how far it got", async () => {
+  await withCwd(async (cwd) => {
+    const path = await put(cwd, "work/big.bin", Buffer.alloc(16));
+    await truncate(path, 4 * 2 ** 30); // 4 GiB, a hole: the pass takes minutes
+    const started = Date.now();
+    const out = body(await tool(ENTROPY, cwd, { path: "work/big.bin", max_seconds: 1 }));
+    assert.ok((Date.now() - started) / 1000 < 30);
+    assert.equal(out.status, "partial");
+    assert.equal(out.profile_complete, false);
+    assert.ok(out.bytes_processed > 0 && out.bytes_processed < out.bytes, `${out.bytes_processed} of ${out.bytes}`);
+    assert.ok(out.problems.some((p: string) => /max_seconds|time/i.test(p)), JSON.stringify(out.problems));
+    assert.equal(out.bytes_processed % 4096, 0);
+    const rowsInFile = rows(await readFile(join(cwd, "work", "s1", "tool-output", out.profile_file), "utf8")).length;
+    assert.equal(rowsInFile, out.windows_measured, "the profile holds every window measured before the stop");
+    for (const bad of [0, 281, 1.5, "9"]) assert.match(refused(await tool(ENTROPY, cwd, { path: "work/big.bin", max_seconds: bad })).error, /max_seconds/);
+  });
+});
+
+test("a directory or a pipe is not 'no such file'", async () => {
+  await withCwd(async (cwd) => {
+    await mkdir(join(cwd, "work", "d"), { recursive: true });
+    assert.match(refused(await tool(ENTROPY, cwd, { path: "work/d" })).error, /not a regular file \(a directory\)/);
+    assert.match(refused(await tool(ENTROPY, cwd, { path: "work/none" })).error, /no such file/);
   });
 });

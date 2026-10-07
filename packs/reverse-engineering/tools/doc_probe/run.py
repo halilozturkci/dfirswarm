@@ -19,22 +19,29 @@ structure, whether it read it whole. Four containers:
                   encryption verdict.
 
 Decompression is bounded: a member is read only under a per-member budget, a total budget and an
-expansion-ratio limit, and one that exceeds them is counted, not cut. Relationship parts are parsed
+expansion-ratio limit, and one that exceeds them is counted, not cut. Only stored and deflated members are
+read (OOXML uses no other method): the standard library decompresses a bzip2 or LZMA chunk whole, with no
+limit on its output, so such a member is counted as unsupported and never opened. The ZIP reader is given
+the archive up to the end record this tool chose; a file with more than one end record is a problem, because
+readers that choose differently list different directories. The tool has its own clock (max_seconds). Relationship parts are parsed
 by an XML parser that refuses a DOCTYPE, so nothing is expanded. A member that cannot be read
 (encrypted, corrupt, an unsupported method) is counted, never skipped. What a URL or a name can hold
-(a credential, a token) is withheld from the answer; the whole target goes to a sealed file only
-when `write_values` is asked for in a job.
+(a credential, a token) is withheld from the answer, in the caller's path and in part names too, component
+by component; the whole target goes to a sealed file only when `write_values` is asked for in a job, and the
+real name behind a withheld name is kept in a private file.
 
 Nothing here executes a document, a macro or a script, and nothing is fetched.
 """
 import errno
 import hashlib
+import io
 import json
 import mmap
 import os
 import re
 import struct
 import sys
+import time
 import xml.parsers.expat
 import zipfile
 from pathlib import Path
@@ -76,6 +83,15 @@ MAX_RELATIONSHIPS = 1_000_000
 PAGE = 1 << 16
 MARKER_OFFSETS = 20
 MAX_PROBLEMS = 100
+DEFAULT_SECONDS = 100              # the tool's own clock: below the manifest's 120 s, so a slow file is a partial answer, not a kill
+MAX_SECONDS = 110
+OFFSETS_CAP = 100_000              # marker offsets written to the file; the count goes on past it
+MAX_CLASSES = 500
+METHODS_READ = (0, 8)              # stored and deflate: the only methods whose decompressor is asked for a bounded output
+MIN_ENTRY = 46                     # the shortest central directory entry, so a directory of N bytes holds at most N / 46
+# A name in a PDF that hides what follows it from a byte search: the stream behind it is not decoded here.
+PDF_FILTER = re.compile(rb"/(?:FlateDecode|LZWDecode|ASCII85Decode|ASCIIHexDecode|RunLengthDecode|Crypt)(?![^\s()<>\[\]{}/%])")
+HEAD_BYTES = 1024
 
 ZIP_READ = ["the ZIP central directory: member names, sizes, DOS times, flags",
             "every part named *.rels, parsed as XML: relationships, and the External targets among them",
@@ -265,9 +281,35 @@ def in_job():
     return bool(os.environ.get("JOB_ID") and os.environ.get("OUT"))
 
 
+VALUES = [None]    # the values file of this call, once it exists: an answer that fails after it was created names it
+
+
+def shown_path(text):
+    """A path as it may be printed: each component with anything token-shaped, or with user-info, withheld. A path is
+    tested component by component, as an OPC part name or a file name is a path and not one token."""
+    if not isinstance(text, str):
+        return text
+    return "/".join(scrub(part, "names") for part in text.split("/"))
+
+
+def shown_deep(value, key=""):
+    if key in ("head_hex", "tool"):
+        return value
+    if isinstance(value, str):
+        return shown_path(value)
+    if isinstance(value, list):
+        return [shown_deep(v) for v in value]
+    if isinstance(value, dict):
+        return {k: shown_deep(v, k) for k, v in value.items()}
+    return value
+
+
 def fail(message, **extra):
     status = extra.pop("status", "failed")
-    print(json.dumps({"error": scrub(message), "status": status, "tool": TOOL, **extra}))
+    answer = {"error": scrub(message), "status": status, "tool": TOOL, **shown_deep(extra)}
+    if VALUES[0] is not None:
+        answer["secret_values"] = VALUES[0].summary()
+    print(json.dumps(answer))
     raise SystemExit(1)
 
 
@@ -445,17 +487,92 @@ class SecretValues:
         }
 
 
+class Names:
+    """The real name behind every name withheld from the answer: a private file (mode 0600, created exclusively, in the
+    tool-output directory) written at the moment a name is withheld, whether or not write_values was given, so that no name
+    is lost; with write_values the values file holds them as well. The answer names the file."""
+
+    NAME = "doc-probe-withheld-names"
+
+    def __init__(self, values):
+        self.values = values
+        self.count = 0
+        self._fh = None
+        self.shown = None
+        self.error = None
+        job, out = os.environ.get("JOB_ID"), os.environ.get("OUT")
+        if out:
+            self.dir = Path(out) / "tool-output"
+            self.prefix = ("store/jobs/%s/out/tool-output/" % re.sub(r"[^A-Za-z0-9_.-]", "_", job)) if job else str(self.dir) + "/"
+        else:
+            agent = re.sub(r"[^A-Za-z0-9_.-]", "_", os.environ.get("AGENT_ID") or "tool")
+            self.dir = Path("work") / agent / "tool-output"
+            self.prefix = str(self.dir) + "/"
+
+    def add(self, real, shown, kind="part_name"):
+        self.count += 1
+        finding_id = "N%06d" % self.count
+        self.values.add(finding_id, {"kind": kind}, real)
+        if self._fh is None and self.error is None:
+            try:
+                self.dir.mkdir(parents=True, exist_ok=True)
+                for n in range(1, 100):
+                    name = "%s.jsonl" % self.NAME if n == 1 else "%s-%d.jsonl" % (self.NAME, n)
+                    try:
+                        fd = os.open(str(self.dir / name), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+                    except FileExistsError:
+                        continue
+                    self._fh = os.fdopen(fd, "w", encoding="utf-8")
+                    self.shown = self.prefix + name
+                    break
+                else:
+                    self.error = "ninety-nine files of this name already exist"
+            except OSError as exc:
+                self.error = "the file could not be created in %s (%s)" % (self.dir, describe(exc))
+        if self._fh is not None:
+            self._fh.write(json.dumps({"finding_id": finding_id, "kind": kind, "name": real, "shown": shown}) + "\n")
+            self._fh.flush()
+        return finding_id
+
+    def close(self):
+        if self._fh is not None:
+            try:
+                self._fh.flush()
+                os.fsync(self._fh.fileno())
+                self._fh.close()
+            except OSError:
+                pass
+            self._fh = None
+
+
+def member_name(name, ctx):
+    """A part name as it may be printed: tested one component at a time. The real name behind a withheld one is kept."""
+    shown = shown_path(name)
+    if shown != name:
+        ctx.names.add(name, shown)
+    return shown
+
+
 # --- the call's bookkeeping ----------------------------------------------------------------------------------------------
 
 class Ctx:
-    def __init__(self, key, limit, values):
+    def __init__(self, key, limit, values, seconds):
         self.key = key
         self.limit = limit
         self.values = values
+        self.deadline = time.monotonic() + seconds
+        self.seconds = seconds
         self.problems = []
         self.problems_dropped = 0
         self.limits = []
         self.pages = {}
+        self.names = Names(values)
+
+    def expired(self, where):
+        if time.monotonic() <= self.deadline:
+            return False
+        self.limit_hit("time: %s stopped at max_seconds (%d); what was read is reported, and the counts are lower bounds" % (where, self.seconds))
+        return True
 
     def problem(self, text):
         text = scrub(text)
@@ -495,20 +612,24 @@ class ZipProblem(Exception):
 
 
 def zip_directory(fh, size):
-    """(entries, directory size, directory offset, end-record offset), read from the end record and, when it holds
-    the zip64 sentinels, from the zip64 record. Nothing here depends on the standard library's validators."""
+    """The end record the tool chooses, and what it names: {total, cd_size, cd_off, eocd_at, others}. The choice is the last end
+    record in the last 64 KiB whose comment fits the file; `others` lists every other signature there, because a reader that
+    chooses differently lists another directory. The zip64 record is read when the end record holds its sentinels. Nothing here
+    depends on the standard library's validators."""
     tail_len = min(size, 65557)
     fh.seek(size - tail_len)
     tail = fh.read(tail_len)
-    pos = tail.rfind(b"PK\x05\x06")
+    found, pos = [], tail.find(b"PK\x05\x06")
     while pos >= 0:
-        if pos + 22 <= len(tail) and pos + 22 + struct.unpack_from("<H", tail, pos + 20)[0] <= len(tail):
-            break
-        pos = tail.rfind(b"PK\x05\x06", 0, pos)
-    if pos < 0:
+        found.append(pos)
+        pos = tail.find(b"PK\x05\x06", pos + 1)
+    plausible = [p for p in found if p + 22 <= len(tail) and p + 22 + struct.unpack_from("<H", tail, p + 20)[0] <= len(tail)]
+    if not plausible:
         raise ZipProblem("no end of central directory record in the last %d bytes of the file" % tail_len)
+    pos = plausible[-1]
     _sig, _disk, _cd_disk, _n_disk, total, cd_size, cd_off, _clen = struct.unpack_from("<IHHHHIIH", tail, pos)
     eocd_at = size - tail_len + pos
+    others = [size - tail_len + p for p in found if p != pos]
     if total == 0xFFFF or cd_size == 0xFFFFFFFF or cd_off == 0xFFFFFFFF:
         if eocd_at < 20:
             raise ZipProblem("the end record holds zip64 values and there is no room for the zip64 locator")
@@ -524,7 +645,42 @@ def zip_directory(fh, size):
         total, cd_size, cd_off = struct.unpack_from("<QQQ", record, 32)
     if cd_off + cd_size > size:
         raise ZipProblem("the central directory (offset %d, %d bytes) lies outside the %d-byte file" % (cd_off, cd_size, size))
-    return total, cd_size, cd_off, eocd_at
+    return {"total": total, "cd_size": cd_size, "cd_off": cd_off, "eocd_at": eocd_at, "others": others}
+
+
+class Window(io.RawIOBase):
+    """The first `limit` bytes of a file, with the end record's comment length read as 0: the ZIP reader sees the archive up to
+    the end record the tool chose, so that it lists the directory the tool counted and not one hidden in a comment."""
+
+    def __init__(self, fh, limit, zero_at):
+        self._fh, self._limit, self._zero_at, self._pos = fh, limit, zero_at, 0
+
+    def readable(self):
+        return True
+
+    def seekable(self):
+        return True
+
+    def tell(self):
+        return self._pos
+
+    def seek(self, offset, whence=0):
+        base = {0: 0, 1: self._pos, 2: self._limit}[whence]
+        self._pos = max(0, base + offset)
+        return self._pos
+
+    def readinto(self, buffer):
+        n = max(0, min(len(buffer), self._limit - self._pos))
+        if not n:
+            return 0
+        self._fh.seek(self._pos)
+        data = bytearray(self._fh.read(n))
+        for at in (self._zero_at, self._zero_at + 1):
+            if self._pos <= at < self._pos + len(data):
+                data[at - self._pos] = 0
+        buffer[:len(data)] = data
+        self._pos += len(data)
+        return len(data)
 
 
 def stream_member(archive, info, budget):
@@ -532,8 +688,9 @@ def stream_member(archive, info, budget):
     failed, over_budget, not_attempted) and never returns a truncated member as a whole one."""
     if info.flag_bits & 0x1 or info.compress_type == 99:
         raise Unreadable("encrypted", "the member is marked encrypted (general purpose flag bit 0%s)" % (" or AES method 99" if info.compress_type == 99 else ""))
-    if info.compress_type not in (0, 8, 12, 14):
-        raise Unreadable("unsupported", "compression method %d is not one this reader decodes" % info.compress_type)
+    if info.compress_type not in METHODS_READ:
+        raise Unreadable("unsupported", ("compression method %d is not read: OOXML parts are stored (0) or deflated (8), and the standard library "
+                                         "decompresses any other method whole, with no limit on its output, so it cannot be held to a budget") % info.compress_type)
     declared = info.file_size
     if declared > budget.member:
         raise Unreadable("over_budget", "the member declares %d bytes, over max_member_bytes (%d)" % (declared, budget.member))
@@ -548,7 +705,7 @@ def stream_member(archive, info, budget):
     except RuntimeError as exc:
         raise Unreadable("encrypted", "the member needs a password (%s)" % type(exc).__name__)
     except NotImplementedError:
-        raise Unreadable("unsupported", "compression method %d is not one this reader decodes" % info.compress_type)
+        raise Unreadable("unsupported", "compression method %d is not read" % info.compress_type)
     except Exception as exc:
         raise Unreadable("failed", "the member could not be opened (%s)" % type(exc).__name__)
     read = 0
@@ -610,12 +767,14 @@ def sanitize(name):
     return re.sub(r"[^A-Za-z0-9._-]", "_", name)[:120]
 
 
-def extraction_target(extract_to, index, name):
-    """A new, exclusively created file for a part: its own name unless the name is shaped like a token."""
-    if token_shaped(name):
-        ext = re.sub(r"[^A-Za-z0-9.]", "", os.path.splitext(name)[1])[:16]
+def extraction_target(extract_to, index, name, withheld):
+    """A new, exclusively created file for a part: its own name, unless the name is withheld from the answer. A withheld name
+    gives nothing of itself, not even its tail: an extension is kept only if it is short, plain and not token-shaped."""
+    if withheld:
+        ext = os.path.splitext(name)[1]
+        if not (re.fullmatch(r"\.[A-Za-z0-9]{1,8}", ext) and not token_shaped(ext[1:]) and scrub(ext[1:], "names") == ext[1:]):
+            ext = ""
         base = "%06d-withheld%s" % (index, ext)
-        COUNTS["names"] += 1
     else:
         base = "%06d-%s" % (index, sanitize(name))
     for n in range(1, 100):
@@ -630,11 +789,12 @@ def extraction_target(extract_to, index, name):
 
 
 def probe_zip(path, size, ctx, args):
-    out = {"container": "OOXML or ZIP", "timestamps_note": "ZIP member times are DOS local times with no zone recorded: they are claims, not UTC."}
-    members = {"declared": 0, "listed": 0, "read": 0, "encrypted": 0, "unsupported": 0, "failed": 0, "over_budget": 0, "not_attempted": 0}
+    out = {"container": "OOXML or ZIP", "timestamps_note": "ZIP member times are DOS local times with no zone recorded and a resolution of two seconds: they are claims, not UTC."}
+    members = {"declared": 0, "listed": 0, "read": 0, "encrypted": 0, "flagged_encrypted": 0, "unsupported": 0, "failed": 0, "over_budget": 0, "not_attempted": 0}
     out["members"] = members
     budget = Budget(args["max_member_bytes"], args["max_total_bytes"], args["max_ratio"])
-    out["budgets"] = {"max_member_bytes": budget.member, "max_total_bytes": budget.total, "max_members": args["max_members"], "max_ratio": budget.ratio}
+    out["budgets"] = {"max_member_bytes": budget.member, "max_total_bytes": budget.total, "max_members": args["max_members"], "max_ratio": budget.ratio,
+                      "max_seconds": ctx.seconds}
     parts = ctx.page("parts")
     targets = ctx.page("external_targets", args["external_limit"])
     out["code_related_parts"] = []
@@ -643,56 +803,74 @@ def probe_zip(path, size, ctx, args):
     out["relationship_parts"] = relationship_parts
     with open(path, "rb") as fh:
         try:
-            total, cd_size, _cd_off, _eocd = zip_directory(fh, size)
+            end = zip_directory(fh, size)
         except ZipProblem as exc:
             raise Stop("the archive's directory cannot be read: %s" % exc, out)
-    members["declared"] = total
-    if total > MAX_DIRECTORY_ENTRIES or cd_size > MAX_DIRECTORY_BYTES:
-        ctx.limit_hit("the central directory declares %d members in %d bytes: over the %d-member and %d-byte limits for opening it; no member was listed or read"
-                      % (total, cd_size, MAX_DIRECTORY_ENTRIES, MAX_DIRECTORY_BYTES))
-        members["not_attempted"] = total
-        out["coverage"] = {"structures_read": ["the end of central directory record"], "structures_not_read": ZIP_READ + ZIP_NOT_READ}
-        return out
-    try:
-        archive = zipfile.ZipFile(path)
-    except Exception as exc:
-        raise Stop("the archive will not open (%s: %s)" % (type(exc).__name__, scrub(str(exc))), out)
-    names = set()
-    extract_to = args["extract_to"]
-    if extract_to is not None:
+        total, cd_size = end["total"], end["cd_size"]
+        members["declared"] = total
+        if end["others"]:
+            ctx.problem("the last 64 KiB of the file hold more than one end of central directory signature (at offsets %s besides the one chosen, at %d): "
+                        "a reader that chooses another lists another directory. This tool lists the directory of the chosen one"
+                        % (", ".join(str(o) for o in end["others"][:5]), end["eocd_at"]))
+        if total > MAX_DIRECTORY_ENTRIES or cd_size > MAX_DIRECTORY_BYTES or cd_size // MIN_ENTRY > MAX_DIRECTORY_ENTRIES:
+            ctx.limit_hit("the central directory declares %d members in %d bytes (it can hold up to %d): over the %d-member and %d-byte limits for opening it; "
+                          "no member was listed or read" % (total, cd_size, cd_size // MIN_ENTRY, MAX_DIRECTORY_ENTRIES, MAX_DIRECTORY_BYTES))
+            members["not_attempted"] = total
+            out["coverage"] = {"structures_read": ["the end of central directory record"], "structures_not_read": ZIP_READ + ZIP_NOT_READ}
+            return out
+        window = Window(fh, end["eocd_at"] + 22, end["eocd_at"] + 20)
         try:
-            os.makedirs(extract_to, exist_ok=True)
-        except OSError as exc:
-            fail("extract_to could not be created: %s" % describe(exc), status="failed")
-    with archive:
-        infos = archive.infolist()
-        if len(infos) < total:
-            ctx.problem("the central directory declares %d members and the reader found %d" % (total, len(infos)))
-        for index, info in enumerate(infos):
-            if index >= args["max_members"]:
-                members["not_attempted"] = len(infos) - index
-                ctx.limit_hit("%d members are past max_members (%d): not listed, not read" % (len(infos) - index, args["max_members"]))
-                break
-            members["listed"] += 1
-            name = info.filename
-            lowered = name.lower()
-            names.add(lowered)
-            shown = scrub(name, "names")
-            row = {"name": shown, "bytes": info.file_size, "compressed": info.compress_size, "method": info.compress_type,
-                   "modified": "%04d-%02d-%02dT%02d:%02d:%02d" % info.date_time}
-            if shown != name:
-                row["name_withheld"] = True
-            if info.flag_bits & 0x1:
-                row["encrypted"] = True
-            code_related = any(part in lowered for part in CODE_PARTS)
-            if code_related:
-                row["name_matches_code_part"] = True
-                out["code_related_parts"].append(shown)
-            if code_related and extract_to is not None:
-                extract_member(archive, info, index, extract_to, budget, members, ctx, row)
-            if lowered.endswith(".rels"):
-                read_relationships(archive, info, shown, name, budget, members, relationship_parts, targets, out, ctx)
-            parts.add(row)
+            archive = zipfile.ZipFile(io.BufferedReader(window))
+        except Exception as exc:
+            raise Stop("the archive will not open (%s: %s)" % (type(exc).__name__, scrub(str(exc))), out)
+        names, seen = set(), {}
+        extract_to = args["extract_to"]
+        if extract_to is not None:
+            try:
+                os.makedirs(extract_to, exist_ok=True)
+            except OSError as exc:
+                fail("extract_to could not be created: %s" % describe(exc), status="failed")
+        with archive:
+            infos = archive.infolist()
+            if len(infos) != total:
+                ctx.problem("the end record declares %d member%s and the central directory holds %d" % (total, "" if total == 1 else "s", len(infos)))
+            for index, info in enumerate(infos):
+                if index >= args["max_members"]:
+                    members["not_attempted"] = len(infos) - index
+                    ctx.limit_hit("%d members are past max_members (%d): not listed, not read" % (len(infos) - index, args["max_members"]))
+                    break
+                if ctx.expired("the member loop"):
+                    members["not_attempted"] = len(infos) - index
+                    break
+                members["listed"] += 1
+                name = info.filename
+                lowered = name.lower()
+                names.add(lowered)
+                seen[name] = seen.get(name, 0) + 1
+                shown = member_name(name, ctx)
+                row = {"name": shown, "bytes": info.file_size, "compressed": info.compress_size, "method": info.compress_type,
+                       "modified": "%04d-%02d-%02dT%02d:%02d:%02d" % info.date_time}
+                if shown != name:
+                    row["name_withheld"] = True
+                if info.flag_bits & 0x1:
+                    row["encrypted"] = True
+                    members["flagged_encrypted"] += 1
+                code_related = any(part in lowered for part in CODE_PARTS)
+                if code_related:
+                    row["name_matches_code_part"] = True
+                    out["code_related_parts"].append(shown)
+                if code_related and extract_to is not None:
+                    extract_member(archive, info, index, extract_to, budget, members, ctx, row, shown != name)
+                if lowered.endswith(".rels"):
+                    read_relationships(archive, info, shown, name, budget, members, relationship_parts, targets, out, ctx, row)
+                parts.add(row)
+    for name, count in seen.items():
+        if count > 1:
+            ctx.problem("the member name %s appears %d times: an OPC package has one part of each name, and readers resolve a repeated one differently" % (shown_path(name), count))
+    if members["flagged_encrypted"]:
+        ctx.problem("%d member%s marked encrypted in the directory: %s contents %s not examined" % (
+            members["flagged_encrypted"], " is" if members["flagged_encrypted"] == 1 else "s are", "its" if members["flagged_encrypted"] == 1 else "their",
+            "is" if members["flagged_encrypted"] == 1 else "are"))
     if "word/document.xml" in names:
         out["kind"] = "Word"
     elif any(n.startswith("xl/") for n in names):
@@ -718,11 +896,11 @@ def count_unreadable(members, ctx, kind, shown, reason):
         ctx.problem("%s: %s" % (shown, reason))
 
 
-def extract_member(archive, info, index, extract_to, budget, members, ctx, row):
+def extract_member(archive, info, index, extract_to, budget, members, ctx, row, withheld):
     shown = row["name"]
     target = fd = None
     try:
-        target, fd = extraction_target(extract_to, index, info.filename)
+        target, fd = extraction_target(extract_to, index, info.filename, withheld)
     except OSError as exc:
         ctx.problem("%s: the part could not be created in extract_to (%s)" % (shown, describe(exc)))
         members["failed"] += 1
@@ -751,21 +929,21 @@ def extract_member(archive, info, index, extract_to, budget, members, ctx, row):
                 pass
     if kept:
         members["read"] += 1
-        row["extracted_to"] = target
+        row["extracted_to"] = shown_path(target)
 
 
-def read_relationships(archive, info, shown, name, budget, members, relationship_parts, targets, out, ctx):
+def read_relationships(archive, info, shown, name, budget, members, relationship_parts, targets, out, ctx, row):
     def handle(rel):
         mode = rel.get("TargetMode")
         if mode == "External":
             serial = targets.total + 1
             finding_id = "T%06d" % serial
             raw = rel.get("Target", "")
-            row = {"finding_id": finding_id, "part": shown, "relationship_id": scrub(rel.get("Id", ""), "names"),
-                   "type": scrub(rel.get("Type", "").rsplit("/", 1)[-1], "names"), "target": redact_url(raw), "target_length": len(raw)}
-            targets.add(row)
+            trow = {"finding_id": finding_id, "part": shown, "relationship_id": scrub(rel.get("Id", ""), "names"),
+                    "type": scrub(rel.get("Type", "").rsplit("/", 1)[-1], "names"), "target": redact_url(raw), "target_length": len(raw)}
+            targets.add(trow)
             if len(out["external_targets"]) < ctx.limit:
-                out["external_targets"].append(row)
+                out["external_targets"].append(trow)
             ctx.values.add(finding_id, {"part": name, "relationship_id": rel.get("Id", ""), "type": rel.get("Type", "")}, raw)
         elif mode not in (None, "Internal"):
             ctx.problem("%s: relationship %s has a TargetMode of %s, neither Internal nor External: not counted as external"
@@ -778,19 +956,23 @@ def read_relationships(archive, info, shown, name, budget, members, relationship
     except Unreadable as exc:
         count_unreadable(members, ctx, exc.kind, shown, exc.reason)
         relationship_parts["failed"] += 1
+        row["relationships"] = exc.kind
         return
     except DoctypeRefused:
         ctx.problem("%s: the part contains a DOCTYPE, which is refused: it was not parsed" % shown)
         relationship_parts["failed"] += 1
         members["failed"] += 1
+        row["relationships"] = "doctype_refused"
         return
     except xml.parsers.expat.ExpatError as exc:
         ctx.problem("%s: the part is not well-formed XML (%s): the relationships before the error are listed" % (shown, xml.parsers.expat.ErrorString(exc.code)))
         relationship_parts["failed"] += 1
         members["failed"] += 1
+        row["relationships"] = "not_well_formed"
         return
     members["read"] += 1
     relationship_parts["read"] += 1
+    row["relationships"] = "read"
     if notes["other_namespace"]:
         ctx.problem("%s: %d Relationship element(s) are not in the package-relationships namespace and were not read" % (shown, notes["other_namespace"]))
     if notes["over_cap"]:
@@ -807,28 +989,51 @@ class Stop(Exception):
 
 def probe_pdf(blob, ctx):
     out = {"container": "PDF"}
-    head = blob[:1024]
+    head = blob[:HEAD_BYTES]
     m = re.search(rb"%PDF-(\d\.\d)", head)
     if m:
         out["pdf_header"] = {"version": m.group(1).decode("ascii"), "offset": m.start()}
     else:
-        ctx.problem("no %PDF- header line in the first 1024 bytes")
+        ctx.problem("no %%PDF- header line in the first %d bytes" % HEAD_BYTES)
     offsets = ctx.page("pdf_marker_offsets", 500)
     markers = []
     present = {}
+    capped = False
+    stopped = False
     for kw, rx, what in PDF_RX:
         count, first = 0, []
+        if stopped:
+            present[kw] = 0
+            continue
         for hit in rx.finditer(blob):
             count += 1
             if len(first) < MARKER_OFFSETS:
                 first.append(hit.start())
-            offsets.add({"keyword": kw.decode("ascii"), "offset": hit.start()})
+            if offsets.total < OFFSETS_CAP:
+                offsets.add({"keyword": kw.decode("ascii"), "offset": hit.start()})
+            elif not capped:
+                capped = True
+                ctx.limit_hit("marker offsets: the file lists the first %d offsets; the counts go on past them" % OFFSETS_CAP)
+            if count % 4096 == 0 and ctx.expired("the marker scan"):
+                stopped = True
+                break
         present[kw] = count
         if count:
             markers.append({"keyword": kw.decode("ascii"), "count": count, "first_offsets": first, "what": what})
+    # Names of filters that hide the stream behind them from a byte search: markers inside such a stream are not seen here.
+    filtered = 0
+    if not stopped:
+        for _hit in PDF_FILTER.finditer(blob):
+            filtered += 1
+            if filtered % 65536 == 0 and ctx.expired("the filter count"):
+                break
     out["markers"] = markers
     out["encrypt_marker_present"] = present[b"/Encrypt"] > 0
     out["object_stream_markers"] = present[b"/ObjStm"]
+    out["filtered_streams"] = filtered
+    if filtered or present[b"/ObjStm"]:
+        ctx.problem("%d filter name(s) that hide a stream's content (FlateDecode, LZW, ASCII85, ASCIIHex, RunLength, Crypt) and %d object-stream marker(s): "
+                    "the streams were not decoded, so a marker inside one is not in this answer" % (filtered, present[b"/ObjStm"]))
     out["coverage"] = {"structures_read": PDF_READ, "structures_not_read": PDF_NOT_READ}
     out["marker_note"] = ("Markers are byte-pattern observations with the offsets of the first occurrences. Keywords inside compressed "
                           "object streams, names written with #-escapes and other encodings are not found: a zero count is not an absence.")
@@ -839,14 +1044,33 @@ def probe_rtf(blob, ctx):
     out = {"container": "RTF"}
     offsets = ctx.page("rtf_objdata_offsets")
     count = 0
+    capped = False
     for hit in RTF_OBJDATA.finditer(blob):
         count += 1
-        offsets.add(hit.start())
-    classes = sorted({scrub(m.group(1).decode("ascii"), "names") for m in RTF_OBJCLASS.finditer(blob)})
+        if offsets.total < OFFSETS_CAP:
+            offsets.add(hit.start())
+        elif not capped:
+            capped = True
+            ctx.limit_hit("object offsets: the file lists the first %d offsets; the count goes on past them" % OFFSETS_CAP)
+        if count % 4096 == 0 and ctx.expired("the object scan"):
+            break
+    classes, seen, markers = [], set(), 0
+    for m in RTF_OBJCLASS.finditer(blob):
+        markers += 1
+        name = scrub(m.group(1).decode("ascii"), "names")
+        if name not in seen:
+            if len(seen) >= MAX_CLASSES:
+                continue
+            seen.add(name)
+            classes.append(name)
+        if markers % 4096 == 0 and ctx.expired("the class scan"):
+            break
+    if len(seen) >= MAX_CLASSES:
+        ctx.limit_hit("classes: the first %d distinct class names are listed" % MAX_CLASSES)
     out["objdata_markers"] = count
     out["object_offsets"] = offsets.page
-    out["objclass_markers"] = sum(1 for _ in RTF_OBJCLASS.finditer(blob))
-    out["classes"] = classes
+    out["objclass_markers"] = markers
+    out["classes"] = sorted(classes)
     out["coverage"] = {"structures_read": RTF_READ, "structures_not_read": RTF_NOT_READ}
     out["marker_note"] = ("RTF has no container: object data is hex-encoded inline, which a plain strings search does not decode. "
                           "Each offset is the start of one \\objdata control word; the data itself is not read.")
@@ -875,6 +1099,21 @@ def positive_int(args, key, default, maximum=None):
     return value
 
 
+def file_problem(path):
+    """Why `path` is not a file this tool can read, in words that fit: a missing file, a directory, a device, a loop."""
+    try:
+        mode = os.stat(path).st_mode
+    except FileNotFoundError:
+        return "no such file"
+    except OSError as exc:
+        return "the file could not be examined: %s" % describe(exc)
+    import stat as _stat
+    if _stat.S_ISREG(mode):
+        return None
+    kinds = ((_stat.S_ISDIR, "a directory"), (_stat.S_ISFIFO, "a named pipe"), (_stat.S_ISSOCK, "a socket"), (_stat.S_ISBLK, "a block device"), (_stat.S_ISCHR, "a character device"))
+    return "not a regular file (%s)" % next((n for t, n in kinds if t(mode)), "a special file")
+
+
 def main():
     try:
         args = json.load(sys.stdin)
@@ -885,8 +1124,9 @@ def main():
     path = args.get("path")
     if not isinstance(path, str) or not path:
         fail("path is required: a document to look inside")
-    if not os.path.isfile(path):
-        fail("no such file", path=path)
+    why_not = file_problem(path)
+    if why_not:
+        fail(why_not, path=path)
     extract_to = args.get("extract_to")
     if extract_to is not None and (not isinstance(extract_to, str) or not extract_to):
         fail("extract_to must be a non-empty path when supplied")
@@ -903,19 +1143,27 @@ def main():
         "max_ratio": positive_int(args, "max_ratio", DEFAULT_RATIO),
         "external_limit": positive_int(args, "limit", DEFAULT_LIMIT),
     }
+    seconds = positive_int(args, "max_seconds", DEFAULT_SECONDS, MAX_SECONDS)
     try:
         values = SecretValues(write_values)
     except SecretValuesRefused as exc:
         fail(str(exc), write_values="refused", written=False)
+    VALUES[0] = values
 
     size = os.path.getsize(path)
-    ctx = Ctx(os.path.realpath(path), cfg["external_limit"], values)
+    ctx = Ctx(os.path.realpath(path), cfg["external_limit"], values, seconds)
+    shown = shown_path(path)
+    if shown != path:
+        ctx.names.add(path, shown, "input_path")
     try:
         with open(path, "rb") as fh:
-            head = fh.read(8)
+            head = fh.read(HEAD_BYTES)
     except OSError as exc:
         values.close()
-        fail("the file could not be opened: %s" % describe(exc))
+        fail("the file could not be opened: %s" % describe(exc), path=path)
+    if not head:
+        values.close()
+        fail("the file is empty", path=path)
     body, stop = {}, None
     try:
         if head[:4] in (b"PK\x03\x04", b"PK\x05\x06"):
@@ -925,32 +1173,32 @@ def main():
                 stop = exc
         else:
             with open(path, "rb") as fh:
+                blob = mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ)
                 try:
-                    blob = mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ)
-                except ValueError:
-                    values.close()
-                    fail("the file is empty", path=path)
-                try:
-                    if head[:5] == b"%PDF-":
-                        body = probe_pdf(blob, ctx)
-                    elif head[:5] == b"{\\rtf":
-                        body = probe_rtf(blob, ctx)
-                    elif head == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
+                    if head[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
                         body = probe_ole(blob, ctx)
+                    elif b"%PDF-" in head:
+                        body = probe_pdf(blob, ctx)
+                    elif b"{\\rtf" in head:
+                        body = probe_rtf(blob, ctx)
+                        body["rtf_header_offset"] = head.find(b"{\\rtf")
                     else:
                         values.close()
-                        fail("this is not a container this tool reads", status="unsupported", path=path, head_hex=head.hex(),
+                        fail("this is not a container this tool reads", status="unsupported", path=path, head_hex=head[:8].hex(),
                              reads=["OOXML or ZIP", "PDF", "RTF", "OLE compound file"])
                 finally:
                     blob.close()
     finally:
         values.close()
+        ctx.names.close()
 
     tables = {}
     for name, page in ctx.pages.items():
         tables[name] = page.finish()
         if page.not_written:
             ctx.problem("the whole %s table could not be written to a file: %s" % (name, page.not_written))
+    if ctx.names.error:
+        ctx.problem("the real names behind the withheld ones could not be kept: %s" % ctx.names.error)
     if "parts" in ctx.pages:
         body["parts"] = ctx.pages["parts"].page
     extension = os.path.splitext(path)[1].lower().lstrip(".")
@@ -962,7 +1210,7 @@ def main():
     truncated = any(p["truncated"] for p in tables.values())
     members = body.get("members")
     unread = bool(members and (members["encrypted"] or members["unsupported"] or members["failed"] or members["over_budget"] or members["not_attempted"]))
-    head_out = {"tool": TOOL, "parser": PARSER, "path": path, "bytes": size, "extension": extension or None}
+    head_out = {"tool": TOOL, "parser": PARSER, "path": shown, "bytes": size, "extension": scrub(extension, "names") or None}
     if stop is not None:
         print(json.dumps({**head_out, **stop.partial, "status": "failed", "status_basis": stop.message, "error": stop.message,
                           "problems": ctx.problems, "limits_hit": ctx.limits, "withheld": COUNTS, "secret_values": values.summary(), "note": NOTE}, indent=2))
@@ -975,6 +1223,10 @@ def main():
     result = {**head_out, **body, "extension_content_disagreement": disagreement, "status": status, "status_basis": basis,
               "problems": ctx.problems, "limits_hit": ctx.limits, "tables": tables, "truncated": truncated,
               "withheld": COUNTS, "secret_values": values.summary(), "note": NOTE + (" " + marker_note if marker_note else "")}
+    if ctx.names.shown:
+        result["withheld_names_file"] = ctx.names.shown
+        result["withheld_names_note"] = ("The real name behind every name withheld here is in this file (mode 0600, always written when a name is withheld): "
+                                         "run the job with secret_output: true.")
     if ctx.problems_dropped:
         result["problems_not_listed"] = ctx.problems_dropped
     if values.enabled or COUNTS["urls"] or COUNTS["names"] or COUNTS["text"]:

@@ -10,7 +10,8 @@
  * header declares; and a table that does not fit its section says so.
  */
 import assert from "node:assert/strict";
-import { chmod, readFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { chmod, mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import {
@@ -32,6 +33,7 @@ import {
   put,
   refused,
   tool,
+  u32,
   withCwd,
 } from "./pack-re-harness.ts";
 import type { Json } from "./pack-re-harness.ts";
@@ -45,31 +47,36 @@ async function pe(cwd: string, buf: Buffer, args: Record<string, unknown> = {}, 
 
 test("a well-formed PE32 is read whole, and its certificate directory is declared, not verified", async () => {
   await withCwd(async (cwd) => {
-    const built = buildPe({
+    const options = {
       imports: [
         { dll: "KERNEL32.dll", functions: ["ExitProcess", "GetLastError"] },
         { dll: "WS2_32.dll", functions: ["#115", "connect"] },
       ],
       exportName: "sample.dll",
-      certificate: { offset: 0x1000, size: 0x40 },
       stamp: 0x5f000000,
-    });
+      trailing: Buffer.alloc(0x40, 7),
+    };
+    // The certificate table is the 64 bytes after the last section: its offset is where the layout without it ends.
+    const at = buildPe(options).file.length - 0x40;
+    const built = buildPe({ ...options, certificate: { offset: at, size: 0x40 } });
     const out = await pe(cwd, built.file);
     assert.equal(out.format, "PE");
     assert.equal(out.bits, 32);
     assert.equal(out.machine, "i386");
     assert.equal(out.status, "complete", JSON.stringify(out.problems));
-    assert.equal(out.compile_timestamp_raw, 0x5f000000);
-    assert.equal(out.compile_timestamp, "2020-07-04T04:05:20Z");
+    assert.equal(out.header_timestamp_raw, 0x5f000000);
+    assert.equal(out.header_timestamp_utc, "2020-07-04T04:05:20Z");
+    assert.ok(!("compile_timestamp" in out) && !("compile_timestamp_raw" in out), "a header field is not named for what a linker may not have written");
+    assert.match(out.header_timestamp_note, /1970-01-01.*not a time/s);
     assert.deepEqual(out.imports.map((i: Json) => i.library), ["KERNEL32.dll", "WS2_32.dll"]);
     assert.deepEqual(out.imports[0].functions, ["ExitProcess", "GetLastError"]);
     assert.deepEqual(out.imports[1].functions, ["#115", "connect"]);
     assert.equal(out.export_name, "sample.dll");
     // The data directory 4 entry is a file offset and a size: its presence, not a signature.
     assert.equal(out.certificate_table_declared, true);
-    assert.equal(out.certificate_table.offset, 0x1000);
+    assert.equal(out.certificate_table.offset, at);
     assert.equal(out.certificate_table.size, 0x40);
-    assert.equal(out.certificate_table.within_file, false, "offset 0x1000 is past the end of this small file");
+    assert.equal(out.certificate_table.within_file, true);
     assert.ok(!("signed" in out), "pe_info.signed named a nonzero directory size a signature");
     assert.ok(Array.isArray(out.coverage.structures_not_read));
     assert.ok(out.coverage.structures_not_read.some((s: string) => /resource/i.test(s)));
@@ -148,9 +155,12 @@ test("a certificate directory with garbage in it is only declared: offset, size,
     // The first entry's header is read from the spec's WIN_CERTIFICATE layout: dwLength, wRevision, wCertificateType.
     assert.ok("first_entry" in out.certificate_table);
     assert.match(out.note, /not|only/i);
-    // The bytes after the last section are an overlay, located but not read.
+    // The bytes after the last section are an overlay, located but not read: here they are exactly the certificate table, and
+    // the answer says so, so that a signed file's table is not read as appended content.
     assert.equal(out.overlay_offset, at);
     assert.equal(out.overlay_bytes, trailing.length);
+    assert.equal(out.overlay_is_certificate_table, true);
+    assert.equal(out.overlay_bytes_outside_certificate_table, 0);
   });
 });
 
@@ -407,7 +417,7 @@ const LC_REEXPORT_DYLIB = 0x8000001f;
 
 function thin(libs: [number, string][], extra = {}): Buffer {
   return buildMacho({
-    commands: [{ segment: "__TEXT" }, ...libs.map(([cmd, dylib]) => ({ dylib, cmd })), { main: 0x3f00 }, { signature: { offset: 0x8000, size: 0x100 } }],
+    commands: [{ segment: "__TEXT" }, ...libs.map(([cmd, dylib]) => ({ dylib, cmd })), { main: 0x3f00 }, { signature: { offset: 16, size: 8 } }],
     ...extra,
   });
 }
@@ -424,7 +434,7 @@ function checkSlices(out: Json): void {
   assert.deepEqual(b.macho.linked_libraries, ["/usr/lib/libSystem.B.dylib", "/usr/lib/libweak.dylib", "/usr/lib/libre.dylib"]);
   assert.equal(b.macho.install_name, "/usr/lib/libself.dylib");
   assert.equal(b.macho.entry_offset, 0x3f00);
-  assert.deepEqual(b.macho.code_signature, { offset: 0x8000, size: 0x100 });
+  assert.deepEqual(b.macho.code_signature, { offset: 16, size: 8 });
   assert.equal(out.status, "complete", JSON.stringify(out.problems));
 }
 
@@ -481,15 +491,20 @@ test("a thin Mach-O in each byte order and width: the byte order is read from th
   });
 });
 
-test("a Java class file shares the universal magic: it is not read as a Mach-O, and no slice is invented", async () => {
+test("a Java class file shares the universal magic: it is not read as a Mach-O, whatever its version makes of the slice count", async () => {
   await withCwd(async (cwd) => {
-    // CAFEBABE, minor_version 0, major_version 61 (Java 17), then constant-pool-like bytes.
-    const klass = Buffer.concat([Buffer.from([0xca, 0xfe, 0xba, 0xbe, 0, 0, 0, 61]), Buffer.alloc(120, 7)]);
-    await put(cwd, "work/sample.bin", klass);
-    const out = refused(await tool(PE_INFO, cwd, { path: "work/sample.bin" }));
-    assert.equal(out.status, "failed");
-    assert.ok(!out.slices || out.slices.every((s: Json) => s.status !== "complete"));
-    assert.match(out.error, /Java|slice|Mach-O/i);
+    // CAFEBABE, minor_version 0, major_version 61 (Java 17), then constant-pool-like bytes: read as a fat header this declares
+    // 61 slices. Class file major versions 45 and up (JDK 1.1) read as plausible slice counts.
+    for (const major of [45, 52, 61, 69]) {
+      const klass = Buffer.concat([Buffer.from([0xca, 0xfe, 0xba, 0xbe, 0, 0, 0, major]), Buffer.alloc(2000, 7)]);
+      await put(cwd, "work/sample.bin", klass);
+      const out = refused(await tool(PE_INFO, cwd, { path: "work/sample.bin" }));
+      assert.equal(out.status, "unsupported", `major ${major}`);
+      assert.equal(out.format, "Java class file");
+      assert.ok(!out.slices, `major ${major}: no slice is invented`);
+      assert.deepEqual(out.class_file_version, { major, minor: 0 });
+      assert.match(out.error, /Java class file/);
+    }
   });
 });
 
@@ -571,4 +586,231 @@ test("the builders lay the structures at the offsets the specifications give", (
   assert.equal(f.readUInt32BE(8), CPU_X86_64);
   assert.equal(f.readUInt32BE(16), 0x4000, "fat_arch.offset");
   assert.equal(SCN_INIT | SCN_READ, 0x40000040);
+});
+
+// --- review round: ranges beyond the end of the file, time, limits, names ------------------------------------------------
+
+/** The offset of the n-th section header of a built ELF, and the sizes of its entries. */
+function shdrAt(elf: Buffer, n: number): { at: number; wide: boolean } {
+  const wide = elf[4] === 2;
+  const shoff = wide ? Number(elf.readBigUInt64LE(40)) : elf.readUInt32LE(32);
+  return { at: shoff + n * (wide ? 64 : 40), wide };
+}
+
+test("an ELF section whose bytes run past the end of the file is a problem, and its entropy says over how many bytes it was measured", async () => {
+  await withCwd(async (cwd) => {
+    const elf = buildElf({ cls: 32, sections: [{ name: ".text", type: 1, flags: 6, data: Buffer.from("code".repeat(40)) }, { name: ".symtab", type: 2, data: Buffer.alloc(64, 3) }] });
+    const sec = shdrAt(elf, 2); // .symtab
+    elf.writeUInt32LE(1408, sec.at + 20); // sh_size of an Elf32_Shdr: far more than the file holds
+    const out = await pe(cwd, elf);
+    assert.equal(out.status, "partial", JSON.stringify(out.problems));
+    assert.ok(out.problems.some((p: string) => /section 2 .*past the end of the \d+-byte file/.test(p)), JSON.stringify(out.problems));
+    const row = out.sections[2];
+    assert.equal(row.file_range_in_file, false);
+    assert.match(row.entropy_note, /measured over \d+ of 1408 bytes/);
+    // An SHT_NOBITS section has no bytes in the file: its size past the end is not a problem.
+    const bss = buildElf({ cls: 64, sections: [{ name: ".bss", type: 8, flags: 3 }] });
+    bss.writeBigUInt64LE(1n << 30n, shdrAt(bss, 1).at + 32);
+    const clean = await pe(cwd, bss);
+    assert.equal(clean.status, "complete", JSON.stringify(clean.problems));
+  });
+});
+
+test("an ELF segment whose bytes run past the end of the file is a problem", async () => {
+  await withCwd(async (cwd) => {
+    const elf = buildElf({ cls: 32, needed: ["libc.so.6"] });
+    elf.writeUInt32LE(2 << 20, 52 + 16); // p_filesz of the first Elf32_Phdr
+    const out = await pe(cwd, elf);
+    assert.equal(out.status, "partial");
+    assert.ok(out.problems.some((p: string) => /segment 0 .*past the end of the \d+-byte file/.test(p)), JSON.stringify(out.problems));
+    assert.match(out.segments[0].entropy_note, /measured over \d+ of 2097152 bytes/);
+  });
+});
+
+test("a PE whose certificate table lies past the end of the file is partial: the first entry's header was not read", async () => {
+  await withCwd(async (cwd) => {
+    const out = await pe(cwd, buildPe({ certificate: { offset: 0x7fffffff, size: 0x1000 } }).file);
+    assert.equal(out.certificate_table.within_file, false);
+    assert.equal(out.status, "partial");
+    assert.ok(out.problems.some((p: string) => /certificate table .*not inside the .*-byte file/.test(p)), JSON.stringify(out.problems));
+    // A file cut inside its certificate table is the same finding.
+    const trailing = Buffer.alloc(300, 9);
+    const base = buildPe({ trailing });
+    const at = base.file.length - trailing.length;
+    const whole = buildPe({ trailing, certificate: { offset: at, size: 300 } }).file;
+    const cut = await pe(cwd, whole.subarray(0, whole.length - 100));
+    assert.equal(cut.status, "partial");
+  });
+});
+
+test("a Mach-O segment or code signature beyond the end of its slice is a problem", async () => {
+  await withCwd(async (cwd) => {
+    const outside = buildMacho({ commands: [{ segment: "__TEXT", fileoff: 0x4000, filesize: 0x1000 }, { signature: { offset: 0x8000, size: 0x100 } }] });
+    const out = await pe(cwd, outside);
+    assert.equal(out.status, "partial");
+    assert.ok(out.problems.some((p: string) => /segment __TEXT.*past the end/.test(p)), JSON.stringify(out.problems));
+    assert.ok(out.problems.some((p: string) => /code signature .*past the end/.test(p)), JSON.stringify(out.problems));
+    // A slice of a universal binary is judged against the slice, not the file.
+    const fat = buildFat([{ cputype: CPU_X86_64, data: buildMacho({ commands: [{ segment: "__TEXT", fileoff: 0, filesize: 0x3000 }] }) }, { cputype: CPU_ARM64, data: Buffer.alloc(0x6000) }]);
+    const sliced = await pe(cwd, fat);
+    assert.equal(sliced.status, "partial", "0x3000 bytes of segment in a slice of fewer than 0x3000");
+  });
+});
+
+test("the run time of pe_info does not grow with sections times thunks: sixty-five thousand sections and three thousand thunks", async () => {
+  await withCwd(async (cwd) => {
+    const sections = Array.from({ length: 65_534 }, (_, i) => ({ name: `s${i % 1000}`, data: Buffer.from([i & 0xff]), flags: SCN_INIT | SCN_READ }));
+    const built = buildPe({ sections, imports: [{ dll: "A.dll", functions: ["f"], repeat: 3000 }] });
+    await put(cwd, "work/many.bin", built.file);
+    const started = Date.now();
+    const out = body(await tool(PE_INFO, cwd, { path: "work/many.bin" }));
+    const seconds = (Date.now() - started) / 1000;
+    assert.equal(out.import_function_count, 3000);
+    assert.equal(out.sections_read, 65_535);
+    assert.ok(seconds < 8, `${seconds} s for 65,535 sections and 3,000 thunks`);
+  });
+});
+
+test("the tool has its own clock: max_seconds ends a read that would take longer, keeps what it read and says so", async () => {
+  await withCwd(async (cwd) => {
+    const built = buildPe({ imports: [{ dll: "A.dll", functions: ["f"], repeat: 4_000_000 }] });
+    await put(cwd, "work/slow.bin", built.file);
+    const started = Date.now();
+    const out = body(await tool(PE_INFO, cwd, { path: "work/slow.bin", max_seconds: 1 }));
+    assert.ok((Date.now() - started) / 1000 < 20);
+    assert.equal(out.status, "partial");
+    assert.ok(out.limits_hit.some((l: string) => /time|max_seconds/i.test(l)), JSON.stringify(out.limits_hit));
+    assert.ok(out.import_function_count > 0 && out.import_function_count < 4_000_000);
+    const bad = refused(await tool(PE_INFO, cwd, { path: "work/slow.bin", max_seconds: 0 }));
+    assert.match(bad.error, /max_seconds/);
+  });
+});
+
+function macho(ncmds: number, command: (i: number) => Buffer): Buffer {
+  const body = Buffer.concat(Array.from({ length: ncmds }, (_, i) => command(i)));
+  const header = Buffer.alloc(32);
+  Buffer.from([0xcf, 0xfa, 0xed, 0xfe]).copy(header, 0);
+  header.writeUInt32LE(CPU_X86_64, 4);
+  header.writeUInt32LE(2, 12);
+  header.writeUInt32LE(ncmds, 16);
+  header.writeUInt32LE(body.length, 20);
+  return Buffer.concat([header, body]);
+}
+
+test("more load commands than the limit is a limit hit and a partial slice, not a complete read", async () => {
+  await withCwd(async (cwd) => {
+    const filler = macho(70_000, () => Buffer.concat([u32(0x7f), u32(8)]));
+    const out = await pe(cwd, filler);
+    assert.equal(out.status, "partial");
+    assert.equal(out.load_commands_read, 65_536);
+    assert.ok(out.limits_hit.some((l: string) => /load commands/.test(l)), JSON.stringify(out.limits_hit));
+  });
+});
+
+test("the load commands are a table kept whole in a file when they are more than the answer holds", async () => {
+  await withCwd(async (cwd) => {
+    const dylib = (i: number) => {
+      const name = Buffer.from(`/usr/lib/lib${i}.dylib\0`.padEnd(40, "\0"));
+      return Buffer.concat([u32(0x0c), u32(24 + name.length), u32(24), u32(2), u32(0x10000), u32(0x10000), name]);
+    };
+    const out = await pe(cwd, macho(2000, dylib), { limit: 100 });
+    assert.equal(out.linked_libraries.length, 2000);
+    assert.equal(out.commands.length, 100);
+    assert.equal(out.tables.load_commands.matched, 2000);
+    assert.equal(out.tables.load_commands.truncated, true);
+    const rows = (await readFile(join(cwd, out.tables.load_commands.all_results), "utf8")).trim().split("\n");
+    assert.equal(rows.length, 2000);
+  });
+});
+
+test("a Mach-O command whose size is not aligned, a library name with no terminator, and slices that overlap are problems", async () => {
+  await withCwd(async (cwd) => {
+    const odd = await pe(cwd, macho(1, () => Buffer.concat([u32(0x0c), u32(27), u32(24), u32(2), u32(0x10000), u32(0x10000), Buffer.from("abc")])));
+    assert.equal(odd.status, "partial");
+    assert.ok(odd.problems.some((p: string) => /not a multiple of 8/.test(p)), JSON.stringify(odd.problems));
+    const name = Buffer.from("/usr/lib/libx.dylib"); // no NUL inside the command
+    const unterminated = await pe(cwd, macho(1, () => Buffer.concat([u32(0x0c), u32(24 + name.length + 5), u32(24), u32(2), u32(0x10000), u32(0x10000), name, Buffer.alloc(5, 0x41)])));
+    assert.ok(unterminated.problems.some((p: string) => /terminator/.test(p)), JSON.stringify(unterminated.problems));
+    const fat = buildFat([{ cputype: CPU_X86_64, data: SLICE_A() }, { cputype: CPU_ARM64, data: SLICE_B() }]);
+    fat.writeUInt32BE(fat.readUInt32BE(8 + 8), 8 + 20 + 8); // the second slice starts where the first does
+    const overlap = await pe(cwd, fat);
+    assert.equal(overlap.status, "partial");
+    assert.ok(overlap.problems.some((p: string) => /slices 0 and 1 overlap/.test(p)), JSON.stringify(overlap.problems));
+  });
+});
+
+test("more than 65,535 program headers is a limit hit, not a silent cut", async () => {
+  await withCwd(async (cwd) => {
+    const phnum = 70_000;
+    const hdr = Buffer.alloc(64);
+    hdr.write("\x7fELF", 0, "latin1");
+    hdr[4] = 2;
+    hdr[5] = 1;
+    hdr[6] = 1;
+    hdr.writeUInt16LE(2, 16);
+    hdr.writeUInt16LE(0x3e, 18);
+    hdr.writeBigUInt64LE(64n, 32); // e_phoff
+    const shoff = 64 + phnum * 56;
+    hdr.writeBigUInt64LE(BigInt(shoff), 40); // e_shoff
+    hdr.writeUInt16LE(64, 52);
+    hdr.writeUInt16LE(56, 54);
+    hdr.writeUInt16LE(0xffff, 56); // e_phnum: PN_XNUM, the real count is section header 0's sh_info
+    hdr.writeUInt16LE(64, 58);
+    hdr.writeUInt16LE(1, 60);
+    const sh0 = Buffer.alloc(64);
+    sh0.writeUInt32LE(phnum, 44); // sh_info
+    const out = await pe(cwd, Buffer.concat([hdr, Buffer.alloc(phnum * 56), sh0]));
+    assert.equal(out.program_headers, phnum);
+    assert.equal(out.status, "partial");
+    assert.ok(out.limits_hit.some((l: string) => /program headers/.test(l)), JSON.stringify(out.limits_hit));
+  });
+});
+
+test("with_imports false says the import directory was not read, and does not list an empty import table", async () => {
+  await withCwd(async (cwd) => {
+    const out = await pe(cwd, buildPe({ imports: [{ dll: "A.dll", functions: ["f"] }] }).file, { with_imports: false });
+    assert.equal(out.imports, null);
+    assert.ok(!out.coverage.structures_read.some((x: string) => /import directory/.test(x)));
+    assert.ok(out.coverage.structures_not_read.some((x: string) => /import directory.*not requested/.test(x)));
+  });
+});
+
+test("every answer carries problems, limits and coverage; a directory, a pipe and a missing file are not all 'no such file'", async () => {
+  await withCwd(async (cwd) => {
+    await mkdir(join(cwd, "work", "d"), { recursive: true });
+    spawnSync("mkfifo", [join(cwd, "work", "pipe")]);
+    const dir = refused(await tool(PE_INFO, cwd, { path: "work/d" }));
+    assert.match(dir.error, /not a regular file \(a directory\)/);
+    const pipe = refused(await tool(PE_INFO, cwd, { path: "work/pipe" }));
+    assert.match(pipe.error, /not a regular file \(a named pipe\)/);
+    const none = refused(await tool(PE_INFO, cwd, { path: "work/none" }));
+    assert.match(none.error, /no such file/);
+    for (const answer of [dir, pipe, none, refused(await tool(PE_INFO, cwd, { path: "work/none", limit: 0 }))]) {
+      assert.ok(Array.isArray(answer.problems) && Array.isArray(answer.limits_hit), JSON.stringify(answer));
+      assert.ok(Array.isArray(answer.coverage.structures_not_read) && answer.coverage.structures_not_read.length > 0);
+    }
+    await put(cwd, "work/dos.bin", "MZ" + "\0".repeat(100));
+    const failed = refused(await tool(PE_INFO, cwd, { path: "work/dos.bin" }));
+    assert.equal(failed.status, "failed");
+    assert.ok(Array.isArray(failed.coverage.structures_not_read));
+  });
+});
+
+test("a dynamic string that carries user-info or a query value is withheld, with where it lies in the file", async () => {
+  await withCwd(async (cwd) => {
+    const runpath = "/opt/lib:https://svc:hunter2pw@pkg.example/lib?sig=Zk3pQ9x7LmN2vB8dTrYw5uHc1aEf";
+    const elf = buildElf({ cls: 64, needed: ["libc.so.6"], runpath, interp: "/lib64/ld-linux-x86-64.so.2" });
+    const out = await pe(cwd, elf);
+    const text = JSON.stringify(out);
+    for (const secret of ["hunter2pw", "Zk3pQ9x7LmN2vB8dTrYw5uHc1aEf", "svc:"]) assert.ok(!text.includes(secret), `${secret} is in the answer`);
+    assert.deepEqual(out.needed_libraries, ["libc.so.6"]);
+    assert.equal(out.interpreter, "/lib64/ld-linux-x86-64.so.2");
+    const field = out.withheld_fields.find((f: Json) => f.field === "runpath");
+    assert.ok(field && typeof field.file_offset === "number" && field.length === runpath.length, JSON.stringify(out.withheld_fields));
+    assert.equal(elf.subarray(field.file_offset, field.file_offset + field.length).toString(), runpath, "the offset names the string in the sample");
+    // Ordinary library names and paths are untouched.
+    const plain = await pe(cwd, buildElf({ cls: 64, needed: ["libstdc++.so.6"], runpath: "$ORIGIN/../lib" }));
+    assert.deepEqual(plain.withheld_fields ?? [], []);
+    assert.equal(plain.runpath, "$ORIGIN/../lib");
+  });
 });

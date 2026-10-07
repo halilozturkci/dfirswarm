@@ -188,7 +188,7 @@ function cstr(text: string): Buffer {
 // --- PE (Microsoft PE/COFF specification) -----------------------------------------------------------------------
 
 export type PeSection = { name: string; data: Buffer; flags: number; vsize?: number; rawSizeOverride?: number };
-export type PeImport = { dll: string; functions: string[] };
+export type PeImport = { dll: string; functions: string[]; repeat?: number };   // `repeat`: the thunk table is this long, cycling through `functions`
 export type PeOptions = {
   plus?: boolean;                       // PE32+ (0x20b) instead of PE32 (0x10b)
   machine?: number;
@@ -251,9 +251,9 @@ export function buildPe(o: PeOptions = {}): BuiltPe {
     let cursor = descriptors;
     const lib = o.imports.map((imp) => {
       const iltAt = cursor;
-      cursor += (imp.functions.length + 1) * word;
+      cursor += ((imp.repeat ?? imp.functions.length) + 1) * word;
       const iatAt = cursor;
-      cursor += (imp.functions.length + 1) * word;
+      cursor += ((imp.repeat ?? imp.functions.length) + 1) * word;
       return { imp, iltAt, iatAt };
     });
     const thunkEnd = cursor;
@@ -291,7 +291,8 @@ export function buildPe(o: PeOptions = {}): BuiltPe {
     parts.push(table);
     const thunks = Buffer.alloc(thunkEnd - descriptors);
     for (const { imp, iltAt, iatAt } of lib) {
-      imp.functions.forEach((fn, k) => {
+      for (let k = 0; k < (imp.repeat ?? imp.functions.length); k++) {
+        const fn = imp.functions[k % imp.functions.length]!;
         let value: bigint;
         if (fn.startsWith("#")) value = (plus ? 1n << 63n : 1n << 31n) | BigInt(Number(fn.slice(1)));
         else value = BigInt(nameRva.get(`fn:${imp.dll}:${fn}`)!);
@@ -299,7 +300,7 @@ export function buildPe(o: PeOptions = {}): BuiltPe {
           if (plus) thunks.writeBigUInt64LE(value, at - descriptors + k * 8);
           else thunks.writeUInt32LE(Number(value), at - descriptors + k * 4);
         }
-      });
+      }
     }
     parts.push(thunks);
     // names region
@@ -585,9 +586,9 @@ export function buildMacho(o: MachOptions = {}): Buffer {
       const name = Buffer.alloc(16);
       name.write(c.segment, 0, "latin1");
       if (wide) {
-        return Buffer.concat([U32(0x19), U32(72), name, U64(c.vmaddr ?? 0), U64(c.vmsize ?? 0x1000), U64(c.fileoff ?? 0), U64(c.filesize ?? 0x1000), U32(7), U32(5), U32(0), U32(0)]);
+        return Buffer.concat([U32(0x19), U32(72), name, U64(c.vmaddr ?? 0), U64(c.vmsize ?? 0x1000), U64(c.fileoff ?? 0), U64(c.filesize ?? 0), U32(7), U32(5), U32(0), U32(0)]);
       }
-      return Buffer.concat([U32(0x1), U32(56), name, U32(c.vmaddr ?? 0), U32(c.vmsize ?? 0x1000), U32(c.fileoff ?? 0), U32(c.filesize ?? 0x1000), U32(7), U32(5), U32(0), U32(0)]);
+      return Buffer.concat([U32(0x1), U32(56), name, U32(c.vmaddr ?? 0), U32(c.vmsize ?? 0x1000), U32(c.fileoff ?? 0), U32(c.filesize ?? 0), U32(7), U32(5), U32(0), U32(0)]);
     }
     if ("main" in c) return Buffer.concat([U32(0x80000028), U32(24), U64(c.main), U64(0)]);
     if ("signature" in c) return Buffer.concat([U32(0x1d), U32(16), U32(c.signature.offset), U32(c.signature.size)]);
@@ -661,14 +662,14 @@ export function crc32(buf: Buffer): number {
 export type ZipEntry = {
   name: string;
   data: Buffer;
-  method?: 0 | 8;               // stored or deflate
+  method?: 0 | 8 | 12 | 14;     // stored, deflate, bzip2 or LZMA (the last two with `compressed` given)
   flags?: number;               // general purpose bit flag (bit 0: encrypted)
   compressed?: Buffer;          // precomputed compressed bytes (overrides compressing `data`)
   declaredSize?: number;        // the uncompressed size the headers say
 };
 
 /** A ZIP archive: local headers and data, the central directory, the end of central directory record. */
-export function buildZip(entries: ZipEntry[], o: { comment?: string; zip64?: boolean } = {}): Buffer {
+export function buildZip(entries: ZipEntry[], o: { comment?: string; commentBytes?: Buffer; zip64?: boolean } = {}): Buffer {
   const locals: Buffer[] = [];
   const central: Buffer[] = [];
   let offset = 0;
@@ -722,7 +723,7 @@ export function buildZip(entries: ZipEntry[], o: { comment?: string; zip64?: boo
     offset += local.length;
   }
   const dir = Buffer.concat(central);
-  const comment = Buffer.from(o.comment ?? "", "utf8");
+  const comment = o.commentBytes ?? Buffer.from(o.comment ?? "", "utf8");
   if (o.zip64) {
     // APPNOTE 4.3.14-4.3.16: the zip64 end of central directory record and its locator precede an end record that
     // holds the sentinel values (0xFFFF entries, 0xFFFFFFFF size and offset).
@@ -731,7 +732,8 @@ export function buildZip(entries: ZipEntry[], o: { comment?: string; zip64?: boo
     const eocd64 = Buffer.concat([u32(0x06054b50), u16(0), u16(0), u16(0xffff), u16(0xffff), u32(0xffffffff), u32(0xffffffff), u16(comment.length), comment]);
     return Buffer.concat([...locals, dir, record, locator, eocd64]);
   }
-  const eocd = Buffer.concat([u32(0x06054b50), u16(0), u16(0), u16(entries.length), u16(entries.length), u32(dir.length), u32(offset), u16(comment.length), comment]);
+  const count = Math.min(entries.length, 0xffff);
+  const eocd = Buffer.concat([u32(0x06054b50), u16(0), u16(0), u16(count), u16(count), u32(dir.length), u32(offset), u16(comment.length), comment]);
   return Buffer.concat([...locals, dir, eocd]);
 }
 
@@ -750,6 +752,13 @@ export function rels(items: { id: string; type: string; target: string; mode?: s
       .join("") +
     "</Relationships>"
   );
+}
+
+/** Bytes a short Python program prints, for a fixture Node cannot build (bzip2, LZMA): the program is written here, from the format. */
+export function pyBytes(code: string): Buffer {
+  const r = spawnSync("python3", ["-c", code], { maxBuffer: 1 << 28 });
+  assert.equal(r.status, 0, String(r.stderr));
+  return r.stdout;
 }
 
 export async function assertNoTraceback(out: Run): Promise<void> {
