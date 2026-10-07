@@ -184,6 +184,8 @@ hyp = {e["in_collection"]: e["source_path_hypothesis"] for e in got.get("entries
 check("collection_index reads a path by convention as a labelled hypothesis and spots a renamed stream",
       len(streams) == 1 and streams[0]["possible_original"] == "report.txt:Zone.Identifier"
       and hyp.get(os.path.join("C", "Users", "a", "holiday_photos.jpg"), {}).get("path") == r"C:\Users\a\holiday_photos.jpg"
+      and hyp.get(os.path.join("C", "Users", "a", "holiday_photos.jpg"), {}).get("confidence") == "low"
+      and "single letter" in hyp.get(os.path.join("C", "Users", "a", "holiday_photos.jpg"), {}).get("method", "")
       and all(e.get("source_path_observed") is None and "original_path" not in e for e in got.get("entries", [])),
       json.dumps(streams))
 
