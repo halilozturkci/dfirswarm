@@ -22,9 +22,9 @@ WORK = tempfile.mkdtemp()
 failures = []
 
 
-def tool(pack_tool, args):
+def tool(pack_tool, args, cwd=None):
     out = subprocess.run([sys.executable, os.path.join(PACKS, pack_tool, "run.py")],
-                         input=json.dumps(args), capture_output=True, text=True)
+                         input=json.dumps(args), capture_output=True, text=True, cwd=cwd)
     try:
         return json.loads(out.stdout)
     except ValueError:
@@ -140,15 +140,16 @@ with open(cap, "wb") as fh:
             fh.write(struct.pack("<IIII", int(when), int((when % 1) * 1e6), len(body), len(body)))
             fh.write(body)
 got = tool("network-forensics/tools/pcap_summary",
-           {"path": cap, "group": "endpoint", "with_starts": True})
-conversation = (got.get("conversations") or [{}])[0]
+           {"path": cap, "group": "endpoint", "with_syn_times": True})
+conversation = (got.get("endpoint_aggregates") or [{}])[0]
 check("pcap_summary reads a classic pcap and groups a service endpoint",
       got.get("packets") == 12 and conversation.get("service_port") == 443
-      and conversation.get("connection_starts") == 6, got.get("error", ""))
+      and conversation.get("syn_observations") == 6 and conversation.get("syn_unique") == 6,
+      got.get("error", ""))
 got2 = tool("network-forensics/tools/beacon_score",
-            {"timestamps": conversation.get("starts", []), "label": "t"})
-check("beacon_score calls a fixed sixty-second interval a fixed timer",
-      got2.get("median_interval_seconds") == 60.0 and got2.get("shape") == "fixed timer",
+            {"timestamps": conversation.get("syn_times", []), "label": "t"})
+check("beacon_score calls a fixed sixty-second interval a tight cluster, not a verdict",
+      got2.get("median_interval_seconds") == 60.0 and got2.get("shape") == "tight_cluster",
       json.dumps({k: got2.get(k) for k in ("median_interval_seconds", "shape", "error")}))
 
 # --- encrypted-containers/crypto_id: a LUKS1 header with three enabled slots ---
@@ -174,17 +175,21 @@ check("crypto_id reads a LUKS1 key slot table with no key",
       and [s["iterations"] for s in got.get("key_slots", [])] == [1000 + i for i in range(8)],
       got.get("error", json.dumps(got.get("key_slots", [])[:2])))
 
-# --- ransomware-response/encrypted_survey: the shared family marker ------------
+# --- ransomware-response/encrypted_survey: the bytes every sampled tail ends with ---
+# An observation pending a reference match (basis "observation"), not a family marker;
+# tests/pack-encrypted-survey.test.ts and tests/pack-ransom-note-scan.test.ts hold the rest of the
+# pack's tools' contract.
 random.seed(11)
 share = os.path.join(WORK, "share"); os.makedirs(share, exist_ok=True)
 for i in range(6):
     open(os.path.join(share, "f%d.xlsx.LOCKD" % i), "wb").write(
         bytes(random.getrandbits(8) for _ in range(120000)) + b"\xde\xad\xbe\xefKEYBLOB1")
-got = tool("ransomware-response/tools/encrypted_survey", {"root": share})
-suffix = (got.get("shared_file_suffix") or {}).get("suffix_hex")
-check("encrypted_survey finds the bytes every encrypted file ends with",
-      suffix == b"\xde\xad\xbe\xefKEYBLOB1".hex()
-      and got.get("appended_extensions", [{}])[0].get("extension") == ".lockd", str(suffix))
+# The survey writes its census under work/<agent>/tool-output of its working directory.
+got = tool("ransomware-response/tools/encrypted_survey", {"root": share}, cwd=WORK)
+shared = got.get("shared_tail_suffix") or {}
+check("encrypted_survey reports the bytes every sampled file ends with, as an observation",
+      shared.get("suffix_hex") == b"\xde\xad\xbe\xefKEYBLOB1".hex() and shared.get("basis") == "observation"
+      and got.get("appended_extension_observations", [{}])[0].get("extension") == ".lockd", str(shared))
 
 # --- triage-collection/collection_index: the stream a collector renamed --------
 coll = os.path.join(WORK, "kape", "C", "Users", "a"); os.makedirs(coll, exist_ok=True)
@@ -193,10 +198,13 @@ for name in ("report.txt_Zone.Identifier", "holiday_photos.jpg"):
 got = tool("triage-collection/tools/collection_index",
            {"root": os.path.join(WORK, "kape")})
 streams = got.get("possible_renamed_streams") or []
-paths = {e["in_collection"]: e["original_path"] for e in got.get("entries", [])}
-check("collection_index maps a path back and spots a renamed stream",
+hyp = {e["in_collection"]: e["source_path_hypothesis"] for e in got.get("entries", [])}
+check("collection_index reads a path by convention as a labelled hypothesis and spots a renamed stream",
       len(streams) == 1 and streams[0]["possible_original"] == "report.txt:Zone.Identifier"
-      and paths.get(os.path.join("C", "Users", "a", "holiday_photos.jpg")) == r"C:\Users\a\holiday_photos.jpg",
+      and hyp.get(os.path.join("C", "Users", "a", "holiday_photos.jpg"), {}).get("path") == r"C:\Users\a\holiday_photos.jpg"
+      and hyp.get(os.path.join("C", "Users", "a", "holiday_photos.jpg"), {}).get("confidence") == "low"
+      and "single letter" in hyp.get(os.path.join("C", "Users", "a", "holiday_photos.jpg"), {}).get("method", "")
+      and all(e.get("source_path_observed") is None and "original_path" not in e for e in got.get("entries", [])),
       json.dumps(streams))
 
 # --- summary tables are whole: nothing past a top 10, 20 or 30 ------------------

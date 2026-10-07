@@ -94,7 +94,7 @@ When the evidence cannot answer something a reference service can (a domain's re
 | `network-forensics` | 8 | 6 | 1 |
 | `reverse-engineering` | 7 | 4 | 1 |
 | `encrypted-containers` | 5 | 3 | 1 |
-| `cloud-forensics` | 6 | 3 | 1 |
+| `cloud-forensics` | 9 | 3 | 1 |
 | `ransomware-response` | 7 | 2 | 1 |
 | `triage-collection` | 5 | 2 | 1 |
 
@@ -107,12 +107,18 @@ engineering, encrypted containers, cloud, ransomware and triage collections,
 all on one base pack.
 
 Skills are a tree of small files rather than a wall of text in the system
-prompt: the agent sees a one-line index once and fetches a body only when it
-reaches that artefact family, so a pack the size of a textbook costs a few
-hundred tokens until it is used. Every fetch is an event on the trace, and the
-console's **Packs** tab says which skills a run read, which it carried and never
-opened, which tools came from which pack, and which agent did each. Packs are
-optional: `--pack` names them, and a run without it behaves exactly as before.
+prompt: the kickoff puts a one-line-per-skill index of the run's packs into
+every agent's prompt (within a budget of 2,500 tokens for the whole run, and a
+pack's router alone above it), and the agent loads a body, as plain Markdown,
+only when it reaches that artefact family, so a pack the size of a textbook
+costs a few hundred tokens until it is used. A body already in an agent's
+context is not sent twice, and after a compaction the agent is told which
+bodies the compaction took out. Every load is an event on the trace with the file's checksum and
+its token cost, and the console's **Packs** tab says which skills a run read,
+which it carried and never opened, what each agent loaded and whether anything
+shows it was used, which tools came from which pack, and which agent did each.
+Packs are optional: `--pack` names them, and a run without it behaves exactly
+as before.
 
 [docs/packs.md](docs/packs.md) is the format, the secrets rule and the licence
 position; `packs/*/README.md` is what each one carries.

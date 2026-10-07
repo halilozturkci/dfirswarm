@@ -1,8 +1,8 @@
 {
   "id": "ransomware-response",
   "name": "Ransomware Response Pack",
-  "version": "1.0.3",
-  "description": "The order a ransomware case has to be worked in: scope before anything else, the exfiltration that came before the encryption, what the encryptor itself left, the destroyed shadow copies, identifying the family from the note and the file marker, what recovery is actually possible, and the report a regulator and a negotiator will both ask for.",
+  "version": "1.1.0",
+  "description": "Evidence-led ransomware examination: preserve and scope the incident, reconstruct its phases, assess possible exfiltration and recovery impairment, identify supported family candidates, validate recovery options, and prepare qualified findings for notification and response decisions.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
     "DFIR Swarm"
@@ -18,22 +18,22 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "e50d856172181353278440618e05a2feaae86c1b3c057995ab4c41a328f5c496",
-      "tools/ransom_note_scan/manifest.json": "4b10c92b6caf562de3b3c8b19c71f9cbe753ebeb3ad96554e1ed175fadc891d1",
-      "tools/ransom_note_scan/run.py": "be2f968a03da0f32bf611dd0b13292e7b93a461ea13170167de907f99b32c660",
-      "tools/encrypted_survey/manifest.json": "131a4cfec7e2b12e8077fcfa8998cf752800a822e81b09b5daa51664b446e9a3",
-      "tools/encrypted_survey/run.py": "6b927ef96707f6c6f21535fee50fb125e8ac47d8574ffa134477447069de5fe3",
-      "goals/ransomware-case.md": "f0cd01d8c8527dfcf11485869e1fae76142549f72d073297e7b02fff285f1b32",
-      "skills/identify/family.md": "9b524e3cd1e8667760cb3a1a5220942f1876e8efe18c5f1ec5b8b1905fb91d90",
-      "skills/reporting/for-regulators.md": "3cfa5dcfe23fe91c7b4b022af4e2a2db3c4569608f92b9c752523e2134400644",
-      "skills/exfil/before-encryption.md": "938fc1e5ba71912f755f474e85667b7802f098e76d5f36b1ff6672cacac59040",
-      "skills/encryptor/destroyed-backups.md": "36d28e277cfc5b1b94e4e022db3b917c189f2ab60316a583a06a3c462d3439b5",
-      "skills/encryptor/traces.md": "90f7c142f4fbed5cc3bb671c2f0cc599a8883de1385c17f1d8876dc768144549",
-      "skills/recovery/what-is-possible.md": "1bb70aadcdbd1c8a7205c6da27131503220ab163704db908dbcb1d43328ef663",
-      "skills/scope/first-hour.md": "499b7bcee8822e5fb048f74c44fa098d2c4678b27a2cf209e07b4b3a5edddab0",
-      "requires/host.json": "59d527f2da5ee751fc2672758a2908e49dcba4f1138b345ec92bc6b873090d1e",
+      "README.md": "ebdc1231d1f22fefa7c160ffca7e068ec602411b9b82b3d0a0ac70dc64ee274c",
+      "tools/ransom_note_scan/manifest.json": "fdb727ac2fa1273e56de80ddb670ec808ceefb1adbddd27483a49f665a05e38e",
+      "tools/ransom_note_scan/run.py": "23ec5d7ee4c2e6a35a3eb39a9556ce0cfc7f2558f33880a72a2425524d634a46",
+      "tools/encrypted_survey/manifest.json": "f149c7543f41967fbb752be07e4ab61c18696babed4c5589c7e3fd684906ec6c",
+      "tools/encrypted_survey/run.py": "ca59b84f8ae361438c805739914ed1a72e7be15360858b721ad00caf0cb3d327",
+      "goals/ransomware-case.md": "ecff0f40f024c681e025e6081a611b702419f05f9bd5cb52c2009b3e749cbeb7",
+      "skills/identify/family.md": "ced4d413faddbc8dffe5611d63be4cb968c6535a97cb15b06a7e5e3d44947192",
+      "skills/reporting/for-regulators.md": "5e75b7c55938f4132dc704b7f5e364b5642143b470d2dd897a0a8904173ccdd5",
+      "skills/exfil/before-encryption.md": "e491b456277f87144dcc1a8a111c48f8def5b856b4fbf8b309f6afa9052c8b7a",
+      "skills/encryptor/destroyed-backups.md": "b6d453ada5110f474f8591e232ee4fc26b9bf29a2f1cdefd8a3b4ed4dbd6d535",
+      "skills/encryptor/traces.md": "3137b6ed9062829e314390fa523b16e338dcef0ddba413775bf4324cd2ac45ad",
+      "skills/recovery/what-is-possible.md": "3cf0cbd93c8c7577e8c4a16aa9d3a8ed155a5ce44d11ecafc219de91e1f0b3db",
+      "skills/scope/first-hour.md": "260b42878da895ae0c04e6f29fc25b5768ae89dea0ccea83d3d0921defa3f2b7",
+      "requires/host.json": "d5e732d918bec998617a63372b8e801afef1a3b20e842c233d29bdec92261d77",
       "requires/python.txt": "5a396319de276d1ea51953493ef8e4f2dd0d7cb87c67aac6fbd0e63c096d63b6",
-      "skills/INDEX.md": "46b73536f7610ef8631c20ddeefd58e7df2177b0f22c11d1b88ddf48a208cdab"
+      "skills/INDEX.md": "ccba54d7f54a69caf0f0cfa757e3ec2cd5f7e7937fcbc7941d567c964175cfd7"
     }
   },
   "tools": [

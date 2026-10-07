@@ -1,68 +1,78 @@
 ---
 id: credentials/material
-title: Credential material, and how to talk about it
-when: You must say whether credentials were exposed or taken.
-needs: [processes/injection]
+title: Credential material in memory, and how to handle and report it
+when: An examination may expose credentials, keys, tokens or cookies in memory, or you must say whether credentials were exposed or taken.
+needs: []
 tools: [mem_fs, ioc_scan]
 requires_host: [memprocfs, vol, aeskeyfind]
 ---
 
-Memory is where credentials are in the clear, and that is the point for an
-attacker and the risk for you.
+Memory may hold credential-related material. Whether it does, in what form, and
+whether anything could reach it depends on the capture, the operating system and
+build, the process and its protection settings. Read what the image shows; do not
+assume the rest.
 
-What is there, on Windows: the LSA secrets and cached domain credentials, the
-SAM hashes, Kerberos tickets, and — depending on the build and configuration —
-plaintext in `lsass.exe`. On Linux: SSH agent keys, credentials in environment
-blocks, and anything a process read from a file and kept.
+**Sensitive output.** Run as `job_run` with `secret_output: true` every job that can
+print or write a credential, a password verifier, a private key, a token, a cookie,
+a key schedule, a command line, an environment block, shell history or the bytes
+around a match. Its outputs, its stdout and its stderr are then sealed whole as
+sensitive, and so is anything made from them; an entry that cites one is recorded
+sensitive and a redacted package withholds it. That covers `mem_fs` in its text and
+export modes (the answer is a locator; the content is files under `$OUT/mem_fs`),
+`ioc_scan` (its answer carries snippets of the bytes around a hit), `aeskeyfind`,
+and the Volatility plugins and the YARA scans that print or dump memory
+(`triage/volatility`; `vol` and `memprocfs` are the engines).
 
-**The examination question is almost never "what is the password".** It is
-whether an attacker could have taken them, and the evidence for that is not the
-credential itself:
+What you write about it anywhere (a post, a thread, the ledger, the report, a file
+in `work/`) is where it sits (artefact and offset, or process and virtual range),
+its kind, its length, what it would grant, and a reference to the sealed output
+(`job:<id>/<path>`). Never the value; never a character of a password, a PIN or any
+short secret (of a random secret of 16 characters or more, at most the first 4 and
+the last 4); never a hash, digest, fingerprint or masked "shape" of a secret, since
+an unsalted hash of a weak secret is reversed in seconds. A secret found in
+evidence is an indicator, never a credential: do not try it against a service, a
+host or an artefact the question does not name. Where the question asks for the
+value itself, hand it over through the channel the operator named, not through the
+report. Put the material on the list of what to rotate.
 
-- a process that opened a handle to `lsass.exe` with read rights,
-- a minidump written to disk, or the `MiniDumpWriteDump` path in a process that
-  had no reason to call it,
-- a known tool's signature, by hash or by YARA rule,
-- the registry showing WDigest re-enabled, which puts plaintext back in memory
-  on a build that had stopped doing it.
+**Four questions, each with its own evidence.** Do not let one answer stand in for
+another.
 
-**Handle the material itself with care.** Do not copy recovered credentials into
-the report, the board, or the ledger. Cite the artefact and the offset and say
-what class of material it is. A report that quotes a live domain password has
-created a new incident; a report that says "cached credentials for three domain
-accounts were present in the region dumped at offset 0x…, hash recorded in the
-ledger" has said the same thing safely.
+- *Was material present?* A recovered artefact validated as what it is (a region,
+  a ticket cache, a hive fragment), with its location.
+- *Could something reach it?* A process handle with the access rights it was
+  granted shows a capability, not a read. A protection setting (a registry value
+  such as WDigest's) shows configuration, not that plaintext existed.
+- *Was it accessed or collected?* A dump written to disk, a call that a process
+  had no reason to make, a validated tool signature (a string or a YARA hit is a
+  lead; see `strings/discipline`), access telemetry.
+- *Did it leave?* Transfer evidence: proxy, flow or endpoint records
+  (`network/state`).
 
-Where the goal explicitly asks for a recovered secret — a container password,
-say — record the hash in the ledger and hand the value over through the channel
-the operator named, not through the report.
+Say which stage remains unestablished. What a handle or a dumped region does and
+does not show is in `processes/injection`.
 
-**Key schedules.** A cipher that is in use keeps its expanded key in memory: 176
-bytes for AES-128, 240 for AES-256, laid out so that each round key follows from
-the one before it. `aeskeyfind -q IMAGE` tests every position against that
-relation and prints the keys it finds, tolerating a few decayed bits (`-t`
-raises the tolerance and the false positives with it; `-v` adds the offset it
-was found at, `AT BYTE` in hexadecimal, and the expanded key). A hit is a lead
-and nothing more: the schedule may belong to the browser, to
-a library, or to nobody, so say which offset it was at and which tool and
-threshold found it, and call it established only when it decrypts something the
-evidence holds. Its absence is a statement about the layout the tool tests (the
-standard AES-128 and AES-256 schedules, byte for byte), not about whether a key
-was ever in memory. Two layouts it does not test are in the tool library
-(`--tools-from tool-library`): `aes_schedule_scan` also reads the schedule with
-the bytes of each 32-bit word reversed, and `aes_inverse_scan` reads one stored
-as a decryption routine keeps it (the middle round keys transformed, the rounds
-in either order). Neither prints a key: it goes to a private file in the
-tool's `out_dir`, which by default is `work/quarantine/<your id>/` (in a job,
-`$OUT/quarantine/`), and the answer gives the offset, the layout and the key's
-sha256 to record in the ledger. A key file is live material from the evidence
-and a handover package leaves `work/quarantine/` in the sandbox; a key file
-anywhere else, and a job's outputs in a package that carries outputs, travel
-with it unless the hit is recorded as a sensitive ledger entry that cites the
-file (a redacted package then withholds it) or the scan ran as a
-`secret_output` job. Record where the key was found and its hash, and hand
-the value over through the channel the operator named.
+**Key schedules.** `aeskeyfind` tests every position of an image against the
+AES-128 and AES-256 expanded-key layout and tolerates a few decayed bits. Run it as
+a `secret_output` job (`aeskeyfind -q -v IMAGE`; `-v` adds the offset in
+hexadecimal, and its help names the rest). Its stdout carries the keys: take the
+offsets and the count, not the keys; never put one on a command line or in a file
+under `work/`. A hit shows that bytes laid out like a schedule are at that offset.
+It does not show which application or artefact used it, that it is in use (a
+library may keep a schedule it no longer needs), or that it opens anything.
+Establish it only by opening something the evidence holds, with the authority the
+case gives, through a reader that takes the key from a sealed file. A negative
+covers the two standard layouts, the bytes read and the threshold used; it does
+not say no key was in memory, and AES-192, other ciphers and other layouts are not
+examined. The tool library (`--tools-from tool-library`) has two more layouts,
+`aes_schedule_scan` (the bytes of each word reversed) and `aes_inverse_scan` (as a
+decryption routine stores it). They write a key to a private file under their
+`out_dir`, and their answer still carries a digest of it: run them as
+`secret_output` jobs and copy neither the key nor that digest into a post, the
+ledger or the report. `aeskeyfind` is in the memory and full images; a host run has
+it only if the operator installed it, and without it this check was not run, and
+the report says so.
 
-`aeskeyfind` comes with the memory and `full` images. A host run has it only if
-the operator installed it (Debian packages it for amd64 and i386 only); without
-it this check was not run, and the report says so.
+**Does not show.** That a credential was used, by whom, or against what; that a
+located string is a live secret; that the absence of a hit means no secret was
+present.

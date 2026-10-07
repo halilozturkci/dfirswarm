@@ -213,9 +213,6 @@ GROUND_RULES = """### Ground rules
   programs is). There is no root: no mounting, no `sudo`.
 - If `SWARM.md` has an "Evidence catalog" section, the first pass is already
   done: read `catalog/` instead of rebuilding it.
-- If `skill` is in your tool list, this run carries packs: call it once with
-  no id for the index, and fetch the notes that match the evidence in front
-  of you.
 - Extract what you need into `work/extracted/<your id>/` (nothing there is
   run; hash everything you pull out) and analyse the extracts; copy into the
   shared `work/extracted/` only what peers must read, and claim it first.

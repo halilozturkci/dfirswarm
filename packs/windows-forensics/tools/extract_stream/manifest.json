@@ -1,26 +1,52 @@
 {
   "name": "extract_stream",
-  "description": "Extract a data stream from an NTFS E01 image using icat. Returns the raw bytes (base64-encoded); a failure comes back as JSON with icat's status, never as base64 error text.",
+  "description": "Extract one data stream of an NTFS volume by inode address to a file with icat (the Sleuth Kit). The stream is streamed straight to `output` (never held in memory and never printed). `output` is a file under work/<your id>/ (or work/extracted/<your id>/ or work/quarantine/<your id>/; run as a job, the harness gives a work/<your id>/... path to $OUT): any other place in the run, and anything under inputs/, is refused with the places named. Nothing already there is overwritten: a file at `output` refuses the call, and what a failed run keeps (<output>.partial, <output>.stderr) takes the next free name (.2, .3) so a second run never replaces what the first kept; the answer names the file it kept. The answer is what a reader cites: output path, size and sha256, image, offset in sectors, the inode address as asked and parsed (entry, attribute type, attribute id: 168 or 168-128-4 names a stream such as an alternate data stream), icat's exit status and its standard error whole in a file beside the output. A failed or timed-out icat leaves what it wrote as the .partial file and the answer says status failed (exit 1), never an extraction. The same contract as the base pack's icat_extract, without its image catalogue; read the stream with the tool that fits its type. SENSITIVE: a stream can hold a secret; the tool never prints it, and its size and sha256 are the custody record of the file. The program runs in the tool's own process group (never a session of its own), so the harness ending the tool ends it; the tool's own deadline kills it and what it started, and SIGTERM, SIGINT or SIGHUP do the same and the answer is then status interrupted.",
   "params": {
     "image": {
       "type": "string",
-      "description": "Path to E01 image"
+      "description": "Path to the disk image or volume icat can read (an E01 is read through the Sleuth Kit's libewf where it has it)"
     },
     "inode": {
       "type": "string",
-      "description": "Inode or inode-attr_id to extract, e.g. 168 or 168-128-4"
+      "description": "Inode or inode-attribute address to extract, e.g. 168 or 168-128-4"
     },
     "offset": {
       "type": "integer",
-      "description": "Sector offset (0 for logical volume without partition table)"
+      "description": "Volume offset in SECTORS (icat -o); 0 for a logical volume with no partition table"
+    },
+    "output": {
+      "type": "string",
+      "description": "The file to write the stream to: work/<your id>/<name> (or work/extracted/<your id>/..., work/quarantine/<your id>/...); refused if it exists, lies under inputs/ or anywhere else in the run",
+      "required": true
+    },
+    "timeout_seconds": {
+      "type": "integer",
+      "description": "How long to let icat run (default 240, at most 270)"
     }
   },
-  "runtime": "bash",
-  "entry": "run.sh",
-  "timeout_seconds": 30,
-  "example": "{\"image\": \"inputs/<the image>.E01\", \"inode\": \"168-128-4\", \"offset\": 0}",
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 300,
+  "example": "{\"image\": \"inputs/disk.E01\", \"inode\": \"168-128-4\", \"offset\": 2048, \"output\": \"work/<your id>/168-128-4.bin\"}",
   "by": "sfcc303",
-  "at": "2026-09-18T15:28:35.370Z",
-  "version": 2,
-  "sha256": "17e945d2adfc2b537895e85e64be8ea7c436b20d4db78c1eb8f7e1f8f0033fe4"
+  "at": "2026-10-07T12:00:00.000Z",
+  "version": 5,
+  "sha256": "32db93359c2841af18aaee7adda2852c1d6c61ab8142483ff18497407836dfb6",
+  "requires": [
+    "icat"
+  ],
+  "use": {
+    "extensions": [
+      ".e01",
+      ".raw",
+      ".dd",
+      ".img"
+    ],
+    "magic": [
+      {
+        "offset": 0,
+        "hex": "455646090d0aff00"
+      }
+    ]
+  }
 }

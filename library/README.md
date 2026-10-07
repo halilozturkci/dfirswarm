@@ -34,13 +34,15 @@ they taught about goals ([docs/improvement-plan.md](../docs/improvement-plan.md)
 ## The library and the packs
 
 A [pack](../docs/packs.md) is what the swarm knows how to do: method notes an
-agent fetches with `skill()`, tools already loaded, and the host checks the
+agent loads with `skill()`, tools already loaded, and the host checks the
 method needs. An entry here is what the case is asking. They meet at the
 kickoff, and neither needs the other: `--goal-file library/...` runs with no
 pack at all, and a pack runs behind any goal.
 
-Every entry's ground rules say so: when `skill` is in an agent's tool list the
-run carries packs, and the index is worth one call before the first command. A
+An entry does not mention the packs: when the run carries any, the harness puts
+their index into every agent's prompt and the worker prompt says how to use it,
+so a goal that also told the agents to call `skill()` would only make each of
+them read the index twice (`tests/library.test.ts` refuses the sentence). A
 pack may also ship a goal or two of its own under `packs/<id>/goals/`, written
 for that pack's method; those are the pack's, this shelf is the general one.
 
@@ -175,10 +177,6 @@ Verbatim across the cases, with the tool list adapted to the evidence:
   `gpg`. There is no root: no mounting, no `sudo`.
 - If `SWARM.md` has an "Evidence catalog" section, the first pass is already
   done: read `catalog/` instead of rebuilding it.
-- If `skill` is in your tool list, this run carries packs: call it once with
-  no id for the index, and fetch the notes that match the evidence in front of
-  you. A pack's method was written for this kind of case, its tools are already
-  loaded, and every fetch is on the trace for the report to cite.
 - Extract what you need into `work/extracted/<your id>/` (nothing there is
   run; it is no-exec only under `--quarantine`; hash everything you pull
   out) and analyse the extracts; copy into the shared `work/extracted/` only

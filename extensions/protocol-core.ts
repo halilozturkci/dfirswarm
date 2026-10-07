@@ -6156,7 +6156,7 @@ export const TOOL_RESERVED_NAMES = new Set([
   "compact_note", "compact_start", "compact_done", "compact_failed", "compact_stalled", "compact_config", "compact_held",
   // microVM runs: the tool that writes a shared file, the hub's own lines,
   // and what an agent's extension says about the hub (tests/reserved-names)
-  "publish_file", "publish_needed", "skill", "finish_line", "hub_call", "hub_link", "hub_prompt",
+  "publish_file", "publish_needed", "skill", "skill_done", "skills_index", "skills_compacted", "finish_line", "hub_call", "hub_link", "hub_prompt",
   "hub_lost", "hub_lost_stop", "hub_restarted", "hub_clear_up", "vm_finish", "custody", "record_violation",
   // The keeper restarting the collector, an operator's own command or
   // console action, and the console opening an artifact with its scripts.

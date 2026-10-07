@@ -105,10 +105,6 @@ path on the board, and grep that file instead of listing again.
 - If `SWARM.md` has an "Evidence catalog" section, read `catalog/` for the
   partition table instead of rebuilding it; for an archive, the listing
   above replaces it.
-- If `skill` is in your tool list, this run carries packs: call it once with
-  no id for the index, and fetch the notes that match the evidence in front of
-  you. A pack's method was written for this kind of case, its tools are already
-  loaded, and every fetch is on the trace for the report to cite.
 - Extract what you need into `work/extracted/<your id>/` (nothing there is
   run; it is no-exec only under `--quarantine`; hash everything you pull
   out) and analyse the extracts. Copy a SQLite database together with its

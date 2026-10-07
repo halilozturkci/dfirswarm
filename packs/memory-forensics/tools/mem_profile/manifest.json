@@ -1,6 +1,6 @@
 {
   "name": "mem_profile",
-  "description": "Say what a memory container actually is before anything is run against it: crash dump, hibernation file, LiME or AVML capture, ELF core, or flat physical memory — with the header fields, the physical memory runs where the format lists them, and what the bytes suggest about the operating system.",
+  "description": "A first pass over a memory file's header and a sample of its bytes, before anything is run against it. Names the container only when the header says so (Windows crash dump with its physical-memory run list, checked for order, overlap and payload size; LiME with every range it frames; hibernation file; ELF core with its byte order from e_ident; AVML by its first four bytes), and says \"unrecognised\" for anything else, which is what a flat capture looks like and also what a file that is not memory looks like. It is not validation: it does not decode hibernation or AVML framing, does not enumerate an ELF core's segments, and does not establish the architecture, the captured ranges or the completeness of a capture. Operating-system and structure hints are signature counts in a sample of the head, middle and tail (sampled_ranges lists the bytes actually read, each range scanned on its own), not counts for the file. file_pages_4k_estimate is the file length over 4096, not a count of captured pages. A crash dump's SystemTime is given raw (system_time_filetime, 100 ns ticks since 1601-01-01 UTC) beside the ISO 8601 time with its seven fractional digits, and a value that is not a time (past the year 9999) is named in problems with its raw value, not turned into null.",
   "params": {
     "path": {
       "type": "string",
@@ -8,7 +8,7 @@
     },
     "scan_mb": {
       "type": "integer",
-      "description": "How many megabytes to sample for operating-system hints (default 64)"
+      "description": "How many megabytes to sample for operating-system and structure hints (default 64, at most 4096); the answer lists the ranges actually read"
     }
   },
   "runtime": "python3",
@@ -16,7 +16,41 @@
   "timeout_seconds": 300,
   "example": "{\"path\": \"inputs/memory.raw\"}",
   "by": "maintainer",
-  "at": "2026-09-22T17:00:00.000Z",
-  "version": 1,
-  "sha256": "9903dd4b596b9dd930a02de8be0d4f0e5ee6a08759b591faeef569daedbc763d"
+  "at": "2026-10-07T12:00:00.000Z",
+  "version": 3,
+  "sha256": "7cc77438b15ae40aad6631d593d81d70418cb23f8cc6fad93eeb84736af8a683",
+  "use": {
+    "extensions": [
+      ".vmem",
+      ".lime",
+      ".raw",
+      ".mem",
+      ".dmp"
+    ],
+    "names": [
+      "hiberfil.sys"
+    ],
+    "magic": [
+      {
+        "offset": 0,
+        "hex": "5041474544554d50"
+      },
+      {
+        "offset": 0,
+        "hex": "5041474544553634"
+      },
+      {
+        "offset": 0,
+        "hex": "454d694c"
+      },
+      {
+        "offset": 0,
+        "hex": "48494252"
+      },
+      {
+        "offset": 0,
+        "hex": "57414b45"
+      }
+    ]
+  }
 }

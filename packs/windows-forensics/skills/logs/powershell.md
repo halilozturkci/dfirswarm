@@ -1,52 +1,31 @@
 ---
 id: logs/powershell
-title: PowerShell, and what survives an operator who tried to leave nothing
-when: A command line, a downloader, a disabled defence, or anything an interactive attacker did.
-needs: [logs/security]
-tools: [evtx_query, mft_records]
-requires_host: [icat]
+title: PowerShell logs and script blocks
+when: You are about to read PowerShell event-log records or quote a script block.
+needs: []
+tools: [evtx_query, regkv]
+requires_host: []
+mentions: [pwsh]
 ---
 
-Almost every modern intrusion runs through PowerShell at some point, and it
-leaves four independent traces. They are enabled independently, so read all four
-before concluding a machine has nothing.
+Use when the evidence holds PowerShell event-log records. Not for the interactive history file, encoded commands or an older engine (`logs/powershell-history`, only if you meet one of them).
 
-    Microsoft-Windows-PowerShell/Operational.evtx
-        4104  script block logging: the code itself, as it was compiled
-        4103  pipeline and module logging: the command with its bound parameters
-        4105/4106  a script block started and stopped
-    Windows PowerShell.evtx
-        400/403  engine lifecycle; HostApplication carries the full command line
-        600  provider lifecycle, which also carries the command line
-    Users\<u>\AppData\Roaming\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt
-    Transcripts, where the estate turned them on
+Several kinds of record exist, enabled separately, none guaranteed: inventory what the image holds first. Keep Windows PowerShell 5.x apart from PowerShell 7 (`pwsh`): separate products with their own configuration and, in the event log, their own channel (look for `PowerShellCore/Operational`).
 
-**4104 is the prize, and it is chunked.** A long script arrives as several
-records with `MessageNumber` and `MessageTotal`. Sort by `ScriptBlockId` and
-then by `MessageNumber` and join them before you read the code, or you will
-quote a fragment that means the opposite of the whole.
+    Microsoft-Windows-PowerShell/Operational
+        4104  a script block as the engine compiled it (ScriptBlockText, ScriptBlockId, MessageNumber, MessageTotal)
+        4103  module and pipeline logging: a command with its bound parameters
+        4105/4106  a block's invocation started and stopped, where that setting was on
+    Windows PowerShell (the classic log)
+        400/403  engine state changed (HostApplication, EngineVersion, HostVersion)
+        600  provider started; 800  pipeline details, where module logging was on
+    Transcripts, in the place the session or policy named
 
-**4104 fires at warning level even when script block logging is off.** Windows
-logs blocks it considers suspicious regardless of policy. So an operational log
-that "has no script block logging" is still worth querying for 4104.
+Script block logging, module logging and transcription are policy: read it with `regkv` from the SOFTWARE hive and each NTUSER.DAT (for example `Policies\Microsoft\Windows\PowerShell`, keys `ScriptBlockLogging`, `ModuleLogging`, `Transcription`). Without it an absent 4104 is a coverage question (`logs/coverage`). Read the Operational channel for 4104 even when logging was not established: the engine may log content it considers suspicious regardless of policy, which is not to be assumed for every build or after tampering.
 
-**`ConsoleHost_history.txt` is the one that survives.** It is a plain text file
-per user, it is not an event log, so clearing the logs does not touch it, and it
-keeps what was typed interactively across sessions. It has **no timestamps**:
-it gives order, not time, and you must say so. Its own `$MFT` record's times
-bracket the session. Check it early and check it for every profile, including
-service and administrator accounts.
+- **Reassembling.** A long script arrives as several 4104 records. The pack has no assembler: group the rows of `result_file` by computer, ScriptBlockId, then MessageNumber, and compare with MessageTotal. Keep the record id and `record_offset` of every part, with duplicates and missing parts visible. A reconstruction with a part missing is partial and names the missing numbers. Do this per source log: ids from two machines or two log generations are not one sequence.
+- **A 4104 shows** that the engine compiled this text, in this host, under this account (the Security `UserID` is in the XML). It does not show that every statement ran or succeeded: a function definition, a commented block and a script that failed at line one each produce one. Its Level is the engine's classing, not a verdict. Establish an action from the launch (4688 with a command line where audited, 400's HostApplication, `execution/prefetch`), the process's other records and the effect on the system.
+- **Qualifiers of a negative:** script block logging shown on, off or not established; which profiles, transcripts and logs the case supplied.
 
-Two evasions to recognise rather than be fooled by:
-
-- **Encoded commands.** `-enc`, `-EncodedCommand`, `-e`: the argument is
-  base64 of UTF-16LE. Decode it and quote both forms, the encoded one as the
-  artefact and the decoded one as what it means.
-- **A downgrade to version 2.** `powershell -Version 2` runs an engine that
-  predates script block logging, so 4104 is silent while 400 and 600 still
-  record the launch. A version-2 launch on a modern build is itself worth
-  reporting: nothing legitimate asks for it.
-
-Defender being switched off, an exclusion path added, or AMSI tampered with
-almost always arrives this way. See `antiforensics/traces` for the rest of that
-sweep.
+Shows: engine-logged text and its host and account. Does not show: who typed it, intent, completion or effect. Record: file, channel, record id, `record_offset`, the policy evidence, the parts you hold.
+Sensitive output: command lines and script text can hold a credential; run `evtx_query` here as a job with `secret_output: true`.
