@@ -1,7 +1,7 @@
 {
   "id": "triage-collection",
   "name": "Triage and Collection Pack",
-  "version": "1.2.1",
+  "version": "1.3.1",
   "description": "What to do when the evidence is a collector's output rather than an image: surveying what was delivered and which collectors left records, reading those records without turning them into findings, keeping the source, delivered and analysis paths apart, saying what the delivery can and cannot establish, requesting more evidence through the operator, and handing files to the platform packs.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -17,26 +17,45 @@
   "secrets": [],
   "checksums": {
     "sha256": {
-      "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "b63f9e547497afa7cba961febe78ee28dd6a1a36a706cfeb42422974fd51d903",
+      "LICENCE": "c271b022edf4f543b6fc7c4e6fc0b138c57648f0dffe25a4e34c7e9f1c178d8a",
+      "README.md": "5fec1b92e071fbf6be2436b1f5efe681187e1a32fc3197979ba1bf016c91a036",
       "tools/collection_index/manifest.json": "a5d22fb112f484c8be4eea38288f8a3dc1c1ce4c3c70d59d6745f9a64cb44053",
       "tools/collection_index/run.py": "aaf1a7b23f7fa0e19fcfaf026a66ccf3da3a8aff993277fdd8521aaa1d37185e",
       "tools/collection_id/manifest.json": "3b281c4df087a72dcbd373f0130efa3277abfa1cf5f20e8a4deb6ae1f5361e3c",
       "tools/collection_id/run.py": "649ab504d418a14210568bc08475e6ab315ff1fc687073f7f7f13cc1978c34a0",
-      "goals/collection-intake.md": "67132a553a610cbf54eb5c19ca0be6b7a24228a0fe1da3d47f67310b74dc951b",
-      "skills/identify/collector.md": "798084a4989709e972ad51a1260a5b99476d91858f20299bea67bcdb84fb529f",
-      "skills/verify/manifests.md": "3648fe82711b4b53698c77d71365dbdf0b8129a066cd6632211c411550d9fbfa",
-      "skills/gaps/what-is-missing.md": "f239a91b1c549482257e4d77c187881918cea44f179684bff32a8dfdc411cc2e",
-      "skills/plan/what-to-collect.md": "43cb8f317c1e00f43a8b2db82404beaed99c0d4bb30b55e6f870de620395bdfd",
-      "skills/normalise/layout.md": "c8591dba596ef6ae7df60f859cfbfd32fd04121a00078083fa3183c99409c7fa",
-      "requires/host.json": "68c35c386b891c3b53bdc79b93a1ba0a8b4886230b598942063ac8c203eadbe0",
+      "goals/collection-intake.md": "5b5eca3aefc18a4fcebd0f0311e017bd79528dd0eafe5ec13d83d8b1657d8f8b",
+      "skills/identify/acquisition-mode.md": "759d307cd7f986e16a93a7f6fd9ea8b6f0f332f600e85b74415db8064ff6f067",
+      "skills/identify/collector-clues.md": "664201d0c78ee72c1ad5629bfa512b99acb4d540995f7ab2e623bc68e827b6bb",
+      "skills/identify/collector.md": "f2332fea31e137a030e5e541c7788a88ce950ddf77028e60f012729db59663c3",
+      "skills/verify/manifests.md": "fd8ad2fe48e37d3c9a93eb35c2b9a0db40dec85f682d196779252d429c0d7f9b",
+      "skills/verify/target-outcomes.md": "b95bdef1d6c8c567b185367fb6fd7f3ab6f5041b5eb5e0cd57da0b61ee03f81d",
+      "skills/verify/time-layers.md": "1c5ae12396541f66581eb5ede022671d3bfd076ff004dc57b84de0e51a5f72eb",
+      "skills/gaps/coverage-statement.md": "e91e657ab7156e2738c94fe6625fa1782207a80e7b7ed65de9f68621cf020e79",
+      "skills/gaps/what-is-missing.md": "12d48f23c9300456318fe522b0694eb5bdcbc31fa8821c7596e84a7eeda1325d",
+      "skills/plan/sources-linux.md": "d1d05a364bd011282cace85a232475f4624f3635d26c5b2b456e25bd60ef33fa",
+      "skills/plan/sources-windows.md": "8b4491f285b16f045932f3adedacd18f80f8a015560e2057b85145d11f054d12",
+      "skills/plan/what-to-collect.md": "e8d194dfbd569bfc8d92aae4c227fd1fafd907740edcfa8d381d8122a753dece",
+      "skills/normalise/inventory.md": "4a79f7978049fa18f2bf21d877a211bd3fbbca40fe661eae6edf0e0ee0d9e038",
+      "skills/normalise/layout.md": "3b013ce49870281bb4438501cdb4644714a30af61d9315fd6e24e13ee5ab2a3d",
+      "skills/normalise/parsers.md": "b87f648ddb7354276ef59549a1c5fcb749ad1b546a7aeb40c4122795f83ed851",
+      "requires/host.json": "008bd045bd90478209bfe3f69557859e28b9945ea2162f3a197f07f7f1f83d64",
       "requires/python.txt": "4f753bdd539922ce6d87e00b3c099f7c18af8cf5d04139588668f957d7d3eddd",
-      "skills/INDEX.md": "4811a00a11c8d2865d93c5954b3d8f23ef595210709200ed401a32a4e067b42f"
+      "skills/INDEX.md": "f9b285dea1fb112e7c29ecf1df0f470567786b6e007e72d221afd2296db1bb22"
     }
   },
   "tools": [
     "collection_id",
     "collection_index"
   ],
-  "skills": 5
+  "skills": 14,
+  "unreferenced_ok": [
+    {
+      "name": "uac",
+      "why": "declared for operator preparation only: UAC is a shell collector an operator runs on the host to be collected; the harness never runs it, no skill commands it, and its delivered output is read as files"
+    },
+    {
+      "name": "velociraptor",
+      "why": "declared for operator preparation and as a candidate offline reader of its own containers (unverified, used by no skill); the harness never collects live"
+    }
+  ]
 }

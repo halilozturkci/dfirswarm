@@ -1,42 +1,22 @@
 ---
 id: verify/manifests
-title: The collector's own record, and how to check it
-when: Taking custody of a collection.
+title: Baseline, manifest and provenance of a delivery
+when: You take custody of a collection or rely on its manifest.
 needs: [identify/collector]
-tools: [collection_index, check_inputs]
+tools: [check_inputs, collection_index]
 requires_host: []
 ---
 
-A collection arrives with its own claims about itself, and checking them is the
-custody work that an image gets from its acquisition record.
+Use when a delivery arrives with claims about itself. Not for an image's acquisition record (`evidence/verify`). Do not report a single "verified": give three results.
 
-**Hash what you were given, before you open it.** The container as delivered,
-and then every file inside it. `check_inputs` does this against the run's own
-`inputs.json`; `collection_index` produces the per-file list that goes in the
-package.
+1. **Run baseline.** `check_inputs` compares `inputs/` with the run's own `inputs.json` (size and sha256, and additions). It shows the files are as they were handed to the run. It does not open a container, so for an archive keep the delivered hash, inventory the members apart (the base `archive-members` recipe), extract only into a job's output (neither this pack nor the base ships an extractor yet: use the archive's own program in a job that writes under `$OUT`) and keep the container-to-member mapping. It says nothing about the source host or the collector's manifest.
+2. **Manifest agreement.** Read the manifest's actual schema and say which object and which algorithm each digest covers: source content, uploaded content, reconstructed sparse content and container bytes are different objects, and MD5 or SHA-1 is never compared with SHA-256. Give each entry one of matched, mismatched, missing, unreadable or unverifiable, and list delivered objects the manifest does not name. A size, a timestamp, a bodyfile row or an archive CRC is no substitute for a recorded content digest. A mismatch is an unresolved discrepancy: name the stage only where independent records support it. A match shows agreement with that manifest, not that the manifest is authentic or the acquisition complete. No tool of this pack reconciles a manifest with the files yet: `collection_index` lists what was delivered, with SHA-256 of whole files, and pairs paths with a KAPE copy log's rows.
+3. **Acquisition provenance.** Record who supplied it, when and by what route; the source host or resource; the claimed operator and execution account; collector version and binary identity where supplied; profile identity; privileges; mode; start and end with zones; any export or repackaging since. Cite each record and say which are assertions you did not check. Name the custody stages that are missing.
 
-**Compare against the collector's manifest.** KAPE's copy log carries a hash per
-file; Velociraptor's `uploads.json` carries size and a hash; UAC writes a
-bodyfile with sizes and times. Where a hash differs, say so and say when the
-difference appeared: between collection and delivery is a custody question,
-and it is a serious one.
+Then treat `inputs/` as you would an image: read-only, hashed before and after, nothing written into it.
 
-**Read the skip log, and put it in the report.** Preserve the collector's reason
-for each failure. Do not turn a lock, permission error, missing path, unsupported
-object, or collector defect into a claim about user activity without separate
-evidence.
+Only if a skip, error or result log exists: `verify/target-outcomes`. Only if file times are in play: `verify/time-layers`.
 
-**Record who collected it.** The account the collector ran as, the machine, the
-start and end times, and the version of the tool. That is the equivalent of the
-imager's own record, and a reviewer will ask for it.
-
-**Check the times the collector recorded against the files' own.** A collection
-whose files all carry the collection date rather than their original timestamps
-was made by a tool, or a copy step, that did not preserve them — and every
-timestamp-based conclusion in the case is then about the copy rather than the
-machine. This is a real and common failure, usually caused by an intermediate
-copy over a protocol that drops metadata, and finding it late invalidates a lot
-of work.
-
-Then treat `inputs/` exactly as you would an image: read-only, hashed before and
-after, and nothing written into it.
+Shows: agreement between files and the claims made about them. Does not show: that a claim is true, that the collection is complete, or who altered a file that disagrees.
+Record: each result separately, the manifest path and schema, the algorithm per digest, every unmatched entry.
+Sensitive output: `collection_index` prints digests of whole files; run it as a job with `secret_output: true`, and do not copy the digest of a file that is itself a secret (a key file, a verifier store) into a post, report or indicator list.

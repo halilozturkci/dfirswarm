@@ -1,10 +1,10 @@
 # Taking custody of a triage collection
 
-Before any examination: establish what this collection is, what it cannot
-contain, and whether it is what it claims to be.
+Before any examination: establish what this delivery is, what it can and cannot
+establish, and whether it is what it claims to be.
 
-Read the skill index with `skill()` first. `gaps/what-is-missing` is what the
-report has to say once, plainly, early.
+Read the skill index with `skill()` first. `gaps/what-is-missing` says what the
+report has to state once, plainly, early.
 
 ## Questions
 
@@ -12,13 +12,16 @@ report has to say once, plainly, early.
    it used.
 2. The collector's own record: who ran it, on what machine, as which account,
    when it started and finished, and the tool version.
-3. What failed to collect, and what each failure means for what can be asked.
-4. What this acquisition cannot contain, stated for a reader who is not an
-   examiner.
-5. The index: every file with its size, its hash, the path in the collection and
-   the path it had on the machine.
-6. Integrity: whether the files match the collector's own manifest, and whether
-   the timestamps are the originals or the collection's.
+3. What the collector's records say it skipped or failed to copy, in its own
+   words, and what each limits in what can be asked.
+4. What this delivery can and cannot establish, stated for a reader who is not
+   an examiner: name unallocated space and say whether it was delivered.
+5. The delivered-object inventory: identities, sizes, available digests,
+   supported source mappings, unresolved mappings, omitted objects and
+   enumeration failures.
+6. Integrity and time provenance: agreement with the run baseline and supplied
+   manifests, unresolved discrepancies, and the provenance and reliability of
+   each timestamp layer.
 7. What the case will need that is not here, and whether it can still be
    collected.
 
@@ -40,8 +43,9 @@ own. The sign-off is these acts, not a post. Nothing else is assigned.
 ## Definition of done
 
 `work/report.md` exists and answers questions 1 to 7 under the headings `## 1.`
-through `## 7.`. Answer 4 is written for a non-examiner. Answer 6 states
-explicitly whether the timestamps are original. The ledger holds one `answer`
+through `## 7.`. Answer 4 is written for a non-examiner. Answer 6 distinguishes
+source-filesystem, embedded-record, archive-member and analysis-filesystem
+timestamps, stating what is verified and what remains unknown. The ledger holds one `answer`
 entry per question (`question:1` to `question:7`) and one each for `summary`
 and `narrative`, with every defect the answers check names fixed or named by a
 limitation, and the critic, who wrote none of them, has recorded `attest` or
@@ -51,7 +55,7 @@ limitation, and the critic, who wrote none of them, has recorded `attest` or
 
 - `test -f work/report.md`
 - `for n in 1 2 3 4 5 6 7; do grep -q "^## $n\." work/report.md || exit 1; done`
-- `grep -qiE 'unallocated|logical acquisition' work/report.md`
+- `awk '/^## [0-9]+\./{s=/^## 4\./} s && tolower($0) ~ /unallocated|logical acquisition/{f=1} END{exit !f}' work/report.md`
 - `test "$(grep -c '"kind":"event"' ledger/entries.jsonl)" -ge 3`
 - `node --experimental-strip-types --no-warnings "$SWARM_HARNESS/scripts/check-answers.ts" --sections 1,2,3,4,5,6,7,summary,narrative`
 - `grep '"tool":"inputs_check"' traces/events.jsonl | tail -1 | grep -q '"content_ok":true'`

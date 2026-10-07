@@ -8,8 +8,12 @@ introduces the problem. This pack is the work.
 
 ## What it carries
 
-**Five skills**: `identify/collector`, `normalise/layout`,
-`gaps/what-is-missing`, `verify/manifests`, `plan/what-to-collect`.
+**Fourteen skills**: five decision-rule skills, `identify/collector`, `verify/manifests`,
+`normalise/layout`, `gaps/what-is-missing` and `plan/what-to-collect`, and nine
+second-level skills they point to when a case needs them (`identify/collector-clues`,
+`identify/acquisition-mode`, `verify/target-outcomes`, `verify/time-layers`,
+`normalise/inventory`, `normalise/parsers`, `gaps/coverage-statement`,
+`plan/sources-windows`, `plan/sources-linux`). The skills that read an artefact say what it shows, what it does not show and what to record, and none runs live collection.
 
 **Two tools.** `collection_id` surveys a delivered directory. It classifies every
 object in it (copied files, disk containers, memory captures, archives) from its first
@@ -47,14 +51,16 @@ the job was run so), and put the summary first and the long pages last.
 
 ## Why this is a pack and not a paragraph
 
-Citing a path from a collection without the mapping cites something that never
-existed. Reporting "no deleted files were recovered" from a logical acquisition
-states a limit of the evidence as a finding about the case. Both are easy, both
-are common, and both are what this pack exists to prevent.
+Citing a path from a collection without saying whether the collector recorded it
+cites a guess as a fact. Reporting "no deleted files were recovered" from a
+delivery whose limits nobody wrote down states a limit of the evidence as a
+finding about the case. Both are easy, both are common, and both are what this
+pack exists to prevent.
 
-`plan/what-to-collect` is the other direction: occasionally the examination
-happens before the collection, and then a specific list is worth more than any
-analysis.
+`plan/what-to-collect` is the other direction: when a question needs evidence the
+delivery does not hold, the harness never collects (it examines what it is given),
+and the skill writes the request an operator can act on, with a specific list of
+sources by platform.
 
 ## Install and use
 
