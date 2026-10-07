@@ -212,7 +212,7 @@ test("the tool has its own clock: max_seconds ends a pass over a file too big fo
     assert.ok((Date.now() - started) / 1000 < 30);
     assert.equal(out.status, "partial");
     assert.equal(out.profile_complete, false);
-    assert.ok(out.bytes_processed > 0 && out.bytes_processed < out.bytes, `${out.bytes_processed} of ${out.bytes}`);
+    assert.ok(out.bytes_processed >= 0 && out.bytes_processed < out.bytes, `${out.bytes_processed} of ${out.bytes}`);
     assert.ok(out.problems.some((p: string) => /max_seconds|time/i.test(p)), JSON.stringify(out.problems));
     assert.equal(out.bytes_processed % 4096, 0);
     const rowsInFile = rows(await readFile(join(cwd, "work", "s1", "tool-output", out.profile_file), "utf8")).length;

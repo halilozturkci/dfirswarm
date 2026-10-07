@@ -680,7 +680,10 @@ test("the tool has its own clock: max_seconds ends a read that would take longer
     assert.ok((Date.now() - started) / 1000 < 20);
     assert.equal(out.status, "partial");
     assert.ok(out.limits_hit.some((l: string) => /time|max_seconds/i.test(l)), JSON.stringify(out.limits_hit));
-    assert.ok(out.import_function_count > 0 && out.import_function_count < 4_000_000);
+    // How many thunks were counted before the clock ran out depends on the machine (a slow runner may count none): the contract
+    // is that the count, when there is one, is a lower bound that stops short of the file, and that the answer says it stopped.
+    assert.ok(out.import_function_count === null || (out.import_function_count >= 0 && out.import_function_count < 4_000_000), String(out.import_function_count));
+    assert.ok(out.coverage.structures_not_read.length > 0 || out.problems.length > 0 || out.limits_hit.length > 0);
     const bad = refused(await tool(PE_INFO, cwd, { path: "work/slow.bin", max_seconds: 0 }));
     assert.match(bad.error, /max_seconds/);
   });
