@@ -1,6 +1,6 @@
 {
   "name": "entropy_map",
-  "description": "Shannon entropy across a file in windows, so packed, compressed or encrypted regions show up before anything is disassembled. Returns the profile, the high-entropy runs with their offsets, and the overall figure.",
+  "description": "Shannon entropy across a file in windows. Returns a preview of the profile, the overall figure, the high-entropy runs (the whole list in a file when there are more than 1,000), the bytes processed and whether the pass finished. The complete profile is always written to a file (in a job, under $OUT) under a name that never replaces an earlier file. A window counts as high when its unrounded entropy is >= the threshold. Entropy measures how evenly byte values are spread; it does not identify packing, compression, encryption or intent.",
   "params": {
     "path": {
       "type": "string",
@@ -8,15 +8,23 @@
     },
     "window": {
       "type": "integer",
-      "description": "Window size in bytes (default 4096)"
+      "description": "Window size in bytes, from 64 to 67108864 (default 4096)"
     },
     "threshold": {
       "type": "number",
-      "description": "Bits per byte above which a window counts as high (default 7.2)"
+      "description": "Bits per byte at or above which a window counts as high (default 7.2)"
     },
     "max_windows": {
       "type": "integer",
-      "description": "Inline preview rows when OUT can hold the complete entropy-windows.tsv (default 256); ignored when no lossless output directory exists"
+      "description": "Rows of the profile kept in the answer (default 256); the complete profile is in the file"
+    },
+    "output_name": {
+      "type": "string",
+      "description": "A plain file name for the profile (default: derived from the source and the window); a name already taken gets a new one and the earlier file is named"
+    },
+    "max_seconds": {
+      "type": "integer",
+      "description": "The tool's own time limit in seconds, from 1 to 280 (default 270); a pass that reaches it stops, the profile holds the windows measured so far, and the answer is partial with bytes_processed"
     }
   },
   "runtime": "python3",
@@ -24,7 +32,7 @@
   "timeout_seconds": 300,
   "example": "{\"path\": \"work/extracted/sample.exe\"}",
   "by": "maintainer",
-  "at": "2026-09-22T18:00:00.000Z",
-  "version": 1,
-  "sha256": "85cc33f276517752e0c6dd48eb8c9e0fdbb96018350b1a2ce7bba8c466487b56"
+  "at": "2026-10-07T12:00:00.000Z",
+  "version": 2,
+  "sha256": "05f6a4d51ce7ca715d8a3100b4e616eeab8353a5d73ed334e4e9862a98c650be"
 }

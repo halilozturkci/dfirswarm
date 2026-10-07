@@ -1,7 +1,7 @@
 {
   "id": "reverse-engineering",
   "name": "Reverse Engineering Pack",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Static triage of a binary or a document under quarantine: what the file actually is, PE and ELF structure, entropy and packing, obfuscated strings, capability mapping, macros and embedded objects, and rules. Nothing from the evidence is ever executed.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -14,22 +14,32 @@
     "host": "requires/host.json",
     "python": "requires/python.txt"
   },
+  "unreferenced_ok": [
+    {
+      "name": "gcc",
+      "why": "declared for a small parser or decoder an examiner writes and builds in the job's own directory from the file format's specification; no skill walks through compiling one, and nothing from the evidence (source, build files, scripts) is ever built or run"
+    },
+    {
+      "name": "make",
+      "why": "declared for building a tool distributed as source from a tree the operator or a pack supplied; no skill names it, and nothing from the evidence is ever built or run"
+    }
+  ],
   "secrets": [],
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "0b320c82adec3f724a9578da0d3e0c459fb5a426f5890c39337bfd1875f73d35",
-      "tools/fuzzy_hash/manifest.json": "3e8af5f8e41bcd93d49a04dd0cf28ca27b3bf3fd9eead2ecd3945d7a2a9a185e",
-      "tools/fuzzy_hash/run.py": "914ec5e2b00c1b635ab9d82bd496eef94f47de3574a8ae539848bc543a547e26",
-      "tools/pe_info/manifest.json": "b475d13e1cb43293efc3d3c0152c499d3efc90c57572abcd2142dc5af74a1478",
-      "tools/pe_info/run.py": "41fa74e8ce7f1d6ab4ab23dee044ecd736f400eaeb3c6148d5dc8bc6ba278ee8",
-      "tools/doc_probe/manifest.json": "fa3730d2b41f8658d58f1b68aefb6be603ce7124a117defbc8fa064c4b517e5f",
-      "tools/doc_probe/run.py": "6ac8072bd4c2745548b070dba0103d75b0a85fcf50336290ca9113dcd5d3fd6b",
-      "tools/entropy_map/manifest.json": "5304f3e58511f67b3fd61b8830ba717d067afdb400874fbd06f4a1b0e120724d",
-      "tools/entropy_map/run.py": "85cc33f276517752e0c6dd48eb8c9e0fdbb96018350b1a2ce7bba8c466487b56",
+      "README.md": "dfb5b891eb4bbe42b5393ea6ada1cca60b279c1cbf91b445f2c160130141947f",
+      "tools/fuzzy_hash/manifest.json": "95ad584cb810bbd17112545b2faf314fe30bca784e444d9257c421b7d8cd6f60",
+      "tools/fuzzy_hash/run.py": "2819935381da66752157455de3e7bc7d02f99dd4387ef2d967ae85a073fcf93b",
+      "tools/pe_info/manifest.json": "73b34759f1c7e89407348094d9e05a5722ae0c1a8698bc8300aafb9844765607",
+      "tools/pe_info/run.py": "fd4f51f5bfe7701c3f085b5dd941b732688a93cdcc83836299cbd77e8430ae96",
+      "tools/doc_probe/manifest.json": "e254867c4845ad782dc731deaed96e210be44e260f193205bd8ad2c01ef92ed1",
+      "tools/doc_probe/run.py": "bcad4896950fde5d97a0522f822e07c65f21430cba00739de6fab4af6c8c14af",
+      "tools/entropy_map/manifest.json": "64165d141d11d1e497154f084b05e8ee4ccb4e8d4ace8a88b15de6a953a43538",
+      "tools/entropy_map/run.py": "05f6a4d51ce7ca715d8a3100b4e616eeab8353a5d73ed334e4e9862a98c650be",
       "goals/sample-triage.md": "c43160ad8009743ced3cb71d10696b5ca36ff00431326af75e49287d8641ddca",
-      "recipes/static-binary/recipe.json": "99109bc2958230ed1ec277bbf3c9580298c2eb1c869185266b01d1a1393324db",
-      "recipes/static-binary/run.py": "96ca2ee08e3107b783f7beba0a1576ea071184d170fb7c0b78f35a3de8409098",
+      "recipes/static-binary/recipe.json": "f28dbe26e06cd63d5b006d3c512842381fd2b0af5f504632fb48b3efc1e077f1",
+      "recipes/static-binary/run.py": "ae07a82fe4ba1a47be3b83b1b611c4f66503984f8120954eb37d472a9db6a898",
       "skills/pe/structure.md": "4130d07bfe0de3cdecf3486b0a3b16c7575228bde42f0b4f49b711a1351a7e86",
       "skills/strings/obfuscated.md": "ff2c48385f3b9e8d7cfc6c36773e72a6f9b99168e18a649b1c1e02066a1ee1b2",
       "skills/capabilities/mapping.md": "e80fe67b39b63f5fbd600bf2052f46c66002d42629c335308afcfad41ac8d94c",
@@ -37,7 +47,7 @@
       "skills/rules/yara.md": "45e7b3d41f6f2b148c5b68aac7917629837fadc66386ef786dcf175ba17cf3ac",
       "skills/documents/macros.md": "14252a3e3b0ccce7dd7873dc68add06d5389e029cc8567ec3ae8318f37281143",
       "skills/elf/structure.md": "36b5a7fea46ab47b1b5d790db8fccce68cc17a640f846c9cbe63313af9a32737",
-      "requires/host.json": "2f2f63f74396e7775ed8dff1917cebbc7b29dbadb454fd4e299080c0d0dd821a",
+      "requires/host.json": "c9cef9f2e1f8f4970524077eb18d2f6807ca00c51a552da1faf6c69bf953ee92",
       "requires/python.txt": "f0f18bd3e9e860703a9a7599d84f281b999764d16f1619aeef6b89a670c5566b",
       "skills/INDEX.md": "56d626f885f751c962b1eadfbed545f648b7ac60b3b82f23a41b08e3bb9333bb"
     }

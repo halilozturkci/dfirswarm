@@ -1,22 +1,93 @@
 {
   "name": "doc_probe",
-  "description": "Say what is inside a document without opening it in the application that made it: which container it is, its parts, whether it carries a macro project, external references that fetch on open, embedded objects, and for PDF the actions that run by themselves.",
+  "description": "Say what is inside a document without opening it in the application that made it. OOXML or ZIP: the central directory (member names, sizes, DOS times and flags), every part named *.rels parsed as XML for its relationships and their External targets (user-info, query values and token-shaped text are withheld from the answer, as are token-shaped components of the caller's path and of part names; the whole target goes to a sealed file only with write_values in a job, and the real name behind a withheld part name is kept in a private 0600 file the answer names), members counted when encrypted, corrupt, unsupported or over a budget, and, with extract_to, the members whose NAMES match a code-related pattern, written byte for byte. OLE compound file: byte markers only. RTF: the \\objdata and \\objclass control words with offsets. PDF: name-token markers with counts and offsets: no page count, no encryption verdict, no resolved action. Decompression is bounded per member, in total and by expansion ratio (only stored and deflated members are read: the standard library cannot bound any other method), the tool has its own time limit, and a bound is reported. Not read: the OLE directory and streams, the PDF object structure, filters and encryption dictionary, the contents of other OOXML parts, macro source or compiled VBA, embedded objects, document protection. Markers and relationships do not show that anything runs or was fetched.",
+  "use": {
+    "magic": [
+      {
+        "offset": 0,
+        "hex": "504b0304"
+      },
+      {
+        "offset": 0,
+        "hex": "504b0506"
+      },
+      {
+        "offset": 0,
+        "hex": "255044462d"
+      },
+      {
+        "offset": 0,
+        "hex": "7b5c727466"
+      },
+      {
+        "offset": 0,
+        "hex": "d0cf11e0a1b11ae1"
+      }
+    ],
+    "extensions": [
+      ".docx",
+      ".docm",
+      ".dotx",
+      ".dotm",
+      ".xlsx",
+      ".xlsm",
+      ".xltx",
+      ".xltm",
+      ".pptx",
+      ".pptm",
+      ".potx",
+      ".potm",
+      ".doc",
+      ".xls",
+      ".ppt",
+      ".pdf",
+      ".rtf"
+    ]
+  },
   "params": {
     "path": {
       "type": "string",
-      "description": "An Office document, PDF, RTF or archive"
+      "description": "An Office document, PDF, RTF or other ZIP-based package"
     },
     "extract_to": {
       "type": "string",
-      "description": "Write the parts that carry code or an object here, under work/"
+      "description": "Write the members whose names match a code-related pattern here: a directory under work/<your agent id>/ (in a job, under $OUT). Files are created exclusively, mode 0600, and can contain secrets"
+    },
+    "write_values": {
+      "type": "boolean",
+      "description": "Write each External target whole to doc-probe-values.jsonl under $OUT (default false; refused outside a job; run the job with secret_output: true)"
+    },
+    "max_member_bytes": {
+      "type": "integer",
+      "description": "Most bytes one member may expand to (default 67108864)"
+    },
+    "max_total_bytes": {
+      "type": "integer",
+      "description": "Most bytes all members may expand to together (default 268435456)"
+    },
+    "max_members": {
+      "type": "integer",
+      "description": "Most members listed and read (default 10000, at most 100000)"
+    },
+    "max_ratio": {
+      "type": "integer",
+      "description": "Most expanded bytes per compressed byte for a member (default 1000)"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Rows of one table kept in the answer (default 1000); the whole of a longer table is written to a file and named"
+    },
+    "max_seconds": {
+      "type": "integer",
+      "description": "The tool's own time limit in seconds, from 1 to 110 (default 100); a scan that reaches it stops, reports what it read and says so"
     }
   },
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 120,
-  "example": "{\"path\": \"work/extracted/invoice.docx\", \"extract_to\": \"work/docparts\"}",
+  "example": "{\"path\": \"work/extracted/invoice.docx\"}",
   "by": "maintainer",
-  "at": "2026-09-22T18:00:00.000Z",
-  "version": 2,
-  "sha256": "6ac8072bd4c2745548b070dba0103d75b0a85fcf50336290ca9113dcd5d3fd6b"
+  "at": "2026-10-07T12:00:00.000Z",
+  "version": 3,
+  "sha256": "bcad4896950fde5d97a0522f822e07c65f21430cba00739de6fab4af6c8c14af"
 }
