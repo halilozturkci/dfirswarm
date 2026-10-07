@@ -40,6 +40,22 @@
     {
       "offset": 0,
       "hex": "bebafeca"
+    },
+    {
+      "offset": 0,
+      "hex": "feedfacf"
+    },
+    {
+      "offset": 0,
+      "hex": "feedface"
+    },
+    {
+      "offset": 0,
+      "hex": "cafebabf"
+    },
+    {
+      "offset": 0,
+      "hex": "bfbafeca"
     }
   ],
   "runtime": "python3",
@@ -60,5 +76,5 @@
   ],
   "purpose": "inventory",
   "covers": "Static headers, sections or segments, imports or linked libraries, and whole-file entropy, as far as the parsers' own status says (coverage.json: status, warnings, omissions, limits_hit, errors; a zero exit code is not completeness). It does not execute, unpack, decompile, verify a signature or claim observed behaviour.",
-  "sha256": "c8177da092a0869281899049611fa9d0018685fe4acf3040d3992fa861940735"
+  "sha256": "ae07a82fe4ba1a47be3b83b1b611c4f66503984f8120954eb37d472a9db6a898"
 }

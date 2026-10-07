@@ -7,10 +7,11 @@
  * ended by SIGTERM, SIGINT and SIGHUP, after which the tool says it was stopped.
  */
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile, readdir, truncate } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { FUZZY, RE, RECIPE, TOOLS, buildPe, childrenOf, gone, pidFile, put, startDetached, stub, tool, withCwd } from "./pack-re-harness.ts";
+import { DOC_PROBE, FUZZY, PE_INFO, RE, RECIPE, TOOLS, buildPe, childrenOf, gone, pidFile, put, startDetached, stub, tool, withCwd } from "./pack-re-harness.ts";
 import type { Json } from "./pack-re-harness.ts";
 
 const TLSH_DIGEST = "T1" + "A1B2C3D4E5".repeat(7);
@@ -162,18 +163,26 @@ test("SIGINT and SIGHUP end the recipe's tool and leave a coverage.json that say
   }
 });
 
-async function processBlock(path: string): Promise<string> {
+async function block(path: string, name: string): Promise<string> {
   const text = await readFile(path, "utf8");
-  const start = text.indexOf("# BEGIN SHARED PROCESS");
-  const end = text.indexOf("# END SHARED PROCESS");
-  assert.ok(start >= 0 && end > start, `${path} carries the shared process block`);
-  return text.slice(start, end + "# END SHARED PROCESS".length);
+  const start = text.indexOf(`# BEGIN SHARED ${name}`);
+  const end = text.indexOf(`# END SHARED ${name}`);
+  assert.ok(start >= 0 && end > start, `${path} carries the shared ${name.toLowerCase()} block`);
+  return text.slice(start, end + `# END SHARED ${name}`.length);
 }
+const processBlock = (path: string): Promise<string> => block(path, "PROCESS");
+const sha = (text: string): string => createHash("sha256").update(text).digest("hex");
 
-test("the tool and the recipe that start programs carry one process block, and nothing in the pack starts a program in a session of its own", async () => {
+// The text of each block as the network pack carries it (its PR 1a, head f5ad0030): a copy here is a copy of that text, and a
+// change to either side shows as a change of this hash, to be made in both places.
+const NETWORK_PROCESS_SHA = "072a9f28f521a9bc039e717811ef0a2b4e9118169fca908bfd4467969cefddac";
+const NETWORK_WITHHOLDING_SHA = "e90959c1c374a2ce465fdd85e1c8a5e9c9f5fe1d6088192a3291baa9da0c23c2";
+
+test("the tool and the recipe that start programs carry one process block, the network pack's text, and nothing in the pack starts a program in a session or a group of its own", async () => {
   const files = [join(TOOLS, "fuzzy_hash", "run.py"), RECIPE];
   const blocks = await Promise.all(files.map(processBlock));
   assert.equal(blocks[1], blocks[0]);
+  assert.equal(sha(blocks[0]!), NETWORK_PROCESS_SHA);
   const all: string[] = [];
   const walk = async (dir: string): Promise<void> => {
     for (const e of await readdir(dir, { withFileTypes: true })) {
@@ -185,10 +194,14 @@ test("the tool and the recipe that start programs carry one process block, and n
   await walk(join(RE, "recipes"));
   for (const path of all) {
     const text = (await readFile(path, "utf8")).replace(/^\s*#.*$/gm, "").replace(/"""[\s\S]*?"""/g, "");
-    assert.doesNotMatch(text, /start_new_session|setsid|preexec_fn=os\.setsid|process_group|os\.killpg/, `${path} starts or ends a program by process group`);
+    assert.doesNotMatch(text, /start_new_session|setsid|setpgrp|setpgid|preexec_fn=os\.setsid|process_group|os\.killpg|os\.spawn|os\.popen|os\.system|os\.exec|pty\.|multiprocessing/, `${path} starts or ends a program by process group, or by a means the tool's group does not reach`);
     assert.doesNotMatch(text, /import threading/, `${path} uses a thread (preexec_fn and threads do not mix)`);
-    if (!files.includes(path)) assert.doesNotMatch(text, /subprocess|os\.system|os\.exec/, `${path} starts a program`);
+    if (!files.includes(path)) assert.doesNotMatch(text, /subprocess/, `${path} starts a program`);
   }
+});
+
+test("the withholding blocks of doc_probe and pe_info are the network pack's text", async () => {
+  for (const path of [DOC_PROBE, PE_INFO]) assert.equal(sha(await block(path, "WITHHOLDING")), NETWORK_WITHHOLDING_SHA, path);
 });
 
 test("the timeouts the pack sets itself are below the manifest's and the recipe's own limits", async () => {
@@ -196,6 +209,14 @@ test("the timeouts the pack sets itself are below the manifest's and the recipe'
   const total = Number(/^TOTAL_BUDGET = (\d+)/m.exec(fuzzy)![1]);
   const manifest = JSON.parse(await readFile(join(TOOLS, "fuzzy_hash", "manifest.json"), "utf8")) as Json;
   assert.ok(total < manifest.timeout_seconds, `fuzzy_hash budgets ${total} s of ${manifest.timeout_seconds}`);
+  for (const [tool, name] of [["doc_probe", "DEFAULT_SECONDS"], ["pe_info", "DEFAULT_SECONDS"], ["entropy_map", "DEFAULT_SECONDS"]] as const) {
+    const text = await readFile(join(TOOLS, tool, "run.py"), "utf8");
+    const own = Number(new RegExp(`^MAX_SECONDS = (\\d+)`, "m").exec(text)![1]);
+    const dflt = Number(new RegExp(`^${name} = (\\d+)`, "m").exec(text)![1]);
+    const m = JSON.parse(await readFile(join(TOOLS, tool, "manifest.json"), "utf8")) as Json;
+    assert.ok(own < m.timeout_seconds && dflt <= own, `${tool}: default ${dflt}, most ${own}, manifest ${m.timeout_seconds}`);
+    assert.ok(m.params.max_seconds, `${tool} lists max_seconds in its manifest`);
+  }
   const recipe = await readFile(RECIPE, "utf8");
   const budget = Number(/^BUDGET_SECONDS = (\d+)/m.exec(recipe)![1]);
   const rj = JSON.parse(await readFile(join(RE, "recipes", "static-binary", "recipe.json"), "utf8")) as Json;

@@ -21,6 +21,10 @@
     "output_name": {
       "type": "string",
       "description": "A plain file name for the profile (default: derived from the source and the window); a name already taken gets a new one and the earlier file is named"
+    },
+    "max_seconds": {
+      "type": "integer",
+      "description": "The tool's own time limit in seconds, from 1 to 280 (default 270); a pass that reaches it stops, the profile holds the windows measured so far, and the answer is partial with bytes_processed"
     }
   },
   "runtime": "python3",
@@ -30,5 +34,5 @@
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
   "version": 2,
-  "sha256": "d754bd5435d1417e8367f1844ed3bfcb3a6a40fedaee4123fd4036ba943f0728"
+  "sha256": "05f6a4d51ce7ca715d8a3100b4e616eeab8353a5d73ed334e4e9862a98c650be"
 }

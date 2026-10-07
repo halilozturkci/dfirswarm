@@ -22,7 +22,9 @@ import json
 import math
 import os
 import re
+import stat
 import sys
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -32,6 +34,8 @@ SCHEMA_VERSION = 2
 MAX_WINDOW = 1 << 26                    # 64 MiB: one window is held in memory at a time
 MAX_INLINE_RUNS = 1000                  # runs held in memory and in the answer; the whole list is a file past this
 MAX_PREVIEW = 1_000_000
+DEFAULT_SECONDS = 270                   # the tool's own clock, below the manifest's 300 s: a file too big for it is a partial answer, not a kill
+MAX_SECONDS = 280
 NAME_RX = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 
 
@@ -41,8 +45,23 @@ def describe(exc):
 
 
 def fail(message, **extra):
-    print(json.dumps({"error": message, "status": extra.pop("status", "failed"), "tool": TOOL, **extra}))
+    print(json.dumps({"error": message, "status": extra.pop("status", "failed"), "tool": TOOL, "problems": [], "limits_hit": [], **extra}))
     raise SystemExit(1)
+
+
+def file_problem(path):
+    """Why `path` is not a file this tool can read, in words that fit: a missing file, a directory, a pipe, a loop."""
+    try:
+        mode = os.stat(path).st_mode
+    except FileNotFoundError:
+        return "no such file"
+    except OSError as exc:
+        return "the file could not be examined: %s" % describe(exc)
+    if stat.S_ISREG(mode):
+        return None
+    kinds = ((stat.S_ISDIR, "a directory"), (stat.S_ISFIFO, "a named pipe"), (stat.S_ISSOCK, "a socket"), (stat.S_ISBLK, "a block device"),
+             (stat.S_ISCHR, "a character device"))
+    return "not a regular file (%s)" % next((n for t, n in kinds if t(mode)), "a special file")
 
 
 def entropy_of(counts, total):
@@ -91,8 +110,9 @@ def main():
     path = args.get("path")
     if not isinstance(path, str) or not path:
         fail("path is required: the file to measure")
-    if not os.path.isfile(path):
-        fail("no such file", path=path)
+    why_not = file_problem(path)
+    if why_not:
+        fail(why_not, path=path)
     window = args.get("window", 4096)
     if not isinstance(window, int) or isinstance(window, bool) or not 64 <= window <= MAX_WINDOW:
         fail("window must be an integer from 64 to %d" % MAX_WINDOW)
@@ -102,6 +122,9 @@ def main():
     max_windows = args.get("max_windows", 256)
     if not isinstance(max_windows, int) or isinstance(max_windows, bool) or not 1 <= max_windows <= MAX_PREVIEW:
         fail("max_windows must be an integer from 1 to %d" % MAX_PREVIEW)
+    seconds = args.get("max_seconds", DEFAULT_SECONDS)
+    if isinstance(seconds, bool) or not isinstance(seconds, int) or not 1 <= seconds <= MAX_SECONDS:
+        fail("max_seconds must be an integer from 1 to %d" % MAX_SECONDS)
     requested = args.get("output_name")
     if requested is not None and (not isinstance(requested, str) or not NAME_RX.match(requested)):
         fail("output_name must be a plain file name: letters, digits, '.', '_' and '-', not starting with a dot, no path")
@@ -113,12 +136,17 @@ def main():
     if not size:
         fail("the file is empty", path=path)
 
+    try:
+        source = open(path, "rb")
+    except OSError as exc:
+        fail("the file could not be opened: %s" % describe(exc), path=path)
     directory = output_dir()
     digest = hashlib.sha256(json.dumps([os.path.realpath(path), window]).encode("utf-8", "surrogatepass")).hexdigest()[:12]
     wanted = requested or "entropy-windows-%s-w%d.tsv" % (digest, window)
     try:
         profile_path, profile, profile_name = create_unique(directory, wanted)
     except OSError as exc:
+        source.close()
         fail("the complete profile could not be created in %s: %s" % (directory, describe(exc)), path=path)
     profile.write("offset\tbytes\tentropy\n")
 
@@ -155,10 +183,15 @@ def main():
         runs_file.write("%d\t%d\t%d\t%.6f\n" % (run["start"], run["end"], run["bytes"], run["peak"]))
 
     complete = True
+    deadline = time.monotonic() + seconds
     try:
-        with open(path, "rb") as fh:
+        with source as fh:
             offset = 0
             while True:
+                if time.monotonic() > deadline:
+                    problems.append("the pass stopped at max_seconds (%d) after %d of %d bytes: the profile holds the windows measured so far" % (seconds, processed, size))
+                    complete = False
+                    break
                 try:
                     block = fh.read(window)
                 except OSError as exc:
@@ -218,7 +251,7 @@ def main():
         "path": path,
         "bytes": size,
         "bytes_processed": processed,
-        "status": "complete" if complete else "partial",
+        "status": "complete" if complete else ("partial" if processed else "failed"),
         "problems": problems,
         "window": window,
         "threshold": threshold,
@@ -231,6 +264,7 @@ def main():
         "high_entropy_runs": runs,
         "profile": preview,
         "profile_complete": complete,
+        "max_seconds": seconds,
         "inline_profile_complete": len(preview) == windows,
         "profile_file": profile_name,
         "profile_written_to": str(profile_path),
@@ -248,6 +282,8 @@ def main():
     if not complete:
         result["error"] = problems[0] if problems else "the pass did not finish"
     print(json.dumps(result, indent=2))
+    if not processed:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

@@ -14,13 +14,13 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { readFile, symlink } from "node:fs/promises";
+import { mkdir, readFile, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { FUZZY, asJob, body, put, refused, stub, tool, withCwd } from "./pack-re-harness.ts";
+import { FUZZY, asJob, body, pidFile, put, refused, startDetached, stub, tool, withCwd } from "./pack-re-harness.ts";
 import type { Json } from "./pack-re-harness.ts";
 
-const TLSH_DIGEST = "T1" + "A1B2C3D4E5".repeat(7); // T1 and 70 hexadecimal digits
+const TLSH_DIGEST = "T1" + "A1B2C3D4E5".repeat(7); // T1 and 70 hexadecimal digits: the digest of 128 buckets and a one-byte checksum
 const SSDEEP_DIGEST = "96:aBcDeF0123456789+/aBcDeF0123456789+/:XyZ0123456789+/";
 
 async function engines(bin: string, opts: { tlsh?: string; ssdeep?: string } = {}): Promise<void> {
@@ -30,7 +30,7 @@ async function engines(bin: string, opts: { tlsh?: string; ssdeep?: string } = {
     opts.ssdeep ??
       `if [ "$1" = "-V" ]; then echo "2.14.1"; exit 0; fi
 echo 'ssdeep,1.1--blocksize:hash:hash,filename'
-echo '${SSDEEP_DIGEST},"sample.bin"'`,
+echo "${SSDEEP_DIGEST},\"$(basename "$3")\""`,
   );
   await stub(
     bin,
@@ -229,5 +229,82 @@ test("arguments are typed", async () => {
       assert.ok(out.error, JSON.stringify(args));
     }
     assert.match(refused(await tool(FUZZY, cwd, { path: "work/none.bin" }, {}, bin)).error, /no such file/);
+  });
+});
+
+// --- review round ---------------------------------------------------------------------------------------------------------
+
+test("a TLSH digest has one of the lengths the encodings give (70, 74, 134 or 138 hexadecimal digits, a T1 before them or not)", async () => {
+  await withCwd(async (cwd, bin) => {
+    await put(cwd, "work/sample.bin", "x".repeat(2000));
+    const cases: [string, boolean][] = [
+      ["T1" + "A".repeat(70), true], ["A".repeat(70), true], ["T1" + "B".repeat(74), true], ["T1" + "C".repeat(134), true], ["D".repeat(138), true],
+      ["T1" + "A".repeat(99), false], ["T1" + "A".repeat(71), false], ["T1" + "A".repeat(72), false], ["T999" + "A".repeat(70), false], ["T1" + "a".repeat(70), false], ["T1" + "G".repeat(70), false],
+    ];
+    for (const [digest, accepted] of cases) {
+      await engines(bin, { tlsh: `if [ "$1" = "-version" ]; then exit 1; fi\nprintf '${digest}\\t%s\\n' "$2"` });
+      const f = body(await tool(FUZZY, cwd, { path: "work/sample.bin" }, {}, bin)).files[0];
+      assert.equal(f.tlsh_status, accepted ? "ok" : "unrecognised_output", `${digest.length} characters: ${digest.slice(0, 12)}...`);
+      assert.equal(f.tlsh, accepted ? digest : null);
+    }
+  });
+});
+
+test("a row that names another file is not this file's digest, and more than one row is not read at all", async () => {
+  await withCwd(async (cwd, bin) => {
+    await put(cwd, "work/sample.bin", "x".repeat(2000));
+    await engines(bin, {
+      tlsh: `if [ "$1" = "-version" ]; then exit 1; fi\nprintf '${TLSH_DIGEST}\\twork/other.bin\\n'`,
+      ssdeep: `echo 'ssdeep,1.1--blocksize:hash:hash,filename'\necho '${SSDEEP_DIGEST},"sample.bin"'\necho '3:zzz:yyy,"another.bin"'`,
+    });
+    const f = body(await tool(FUZZY, cwd, { path: "work/sample.bin" }, {}, bin)).files[0];
+    assert.equal(f.tlsh, null);
+    assert.equal(f.tlsh_status, "unrecognised_output");
+    assert.match(f.tlsh_unavailable, /another file|names/i);
+    assert.equal(f.ssdeep, null);
+    assert.equal(f.ssdeep_status, "unrecognised_output");
+    assert.match(f.ssdeep_unavailable, /2 rows|more than one/i);
+  });
+});
+
+test("ssdeep's digest of an input too small to hash is the engine saying so, not an unrecognised line", async () => {
+  await withCwd(async (cwd, bin) => {
+    await put(cwd, "work/tiny.bin", "x");
+    await engines(bin, { ssdeep: `echo 'ssdeep,1.1--blocksize:hash:hash,filename'\necho '3::,"tiny.bin"'` });
+    const f = body(await tool(FUZZY, cwd, { path: "work/tiny.bin" }, {}, bin)).files[0];
+    assert.equal(f.ssdeep, null);
+    assert.equal(f.ssdeep_status, "insufficient_input");
+  });
+});
+
+test("a stop signal keeps the digests already computed in its last word", async () => {
+  await withCwd(async (cwd, bin) => {
+    const dir = join(cwd, "pids");
+    await put(cwd, "pids/.keep", "");
+    await put(cwd, "work/sample.bin", "x".repeat(2000));
+    await engines(bin, { tlsh: `if [ "$1" = "-version" ]; then exit 1; fi\necho $$ > "$PIDS/engine.pid"\nsleep 30` });
+    const run = startDetached(FUZZY, cwd, { path: "work/sample.bin" }, { PIDS: dir }, bin);
+    try {
+      await pidFile(join(dir, "engine.pid"));
+      run.signal("SIGTERM");
+      await run.closed;
+      const word = JSON.parse(run.stdout()) as Json;
+      assert.equal(word.status, "failed");
+      assert.equal(word.files[0].sha256, createHash("sha256").update("x".repeat(2000)).digest("hex"));
+      assert.equal(word.files[0].ssdeep, SSDEEP_DIGEST, "the ssdeep digest finished before tlsh was stopped");
+      assert.equal(word.files[0].tlsh, undefined);
+    } finally {
+      try { run.signal("SIGKILL"); } catch { /* gone */ }
+    }
+  });
+});
+
+test("a directory is not 'no such file', and the manifest says the whole call is held below its limit", async () => {
+  await withCwd(async (cwd, bin) => {
+    await engines(bin);
+    await mkdir(join(cwd, "work", "d"), { recursive: true });
+    assert.match(refused(await tool(FUZZY, cwd, { path: "work/d" }, {}, bin)).error, /not a regular file \(a directory\)/);
+    const manifest = JSON.parse(await readFile(join(FUZZY, "..", "manifest.json"), "utf8")) as Json;
+    assert.match(manifest.params.engine_timeout_seconds.description, /270/);
   });
 });

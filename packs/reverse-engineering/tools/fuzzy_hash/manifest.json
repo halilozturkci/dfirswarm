@@ -12,7 +12,7 @@
     },
     "engine_timeout_seconds": {
       "type": "integer",
-      "description": "Time limit for each engine invocation, from 1 to 600 (default 120)"
+      "description": "Time limit for each engine invocation, from 1 to 600 (default 120); the whole call is held to 270 seconds, whatever this is, and an engine not reached by then is not_attempted"
     }
   },
   "runtime": "python3",
@@ -26,5 +26,5 @@
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
   "version": 2,
-  "sha256": "64e020443f495e58adff70b16dc61451306fe4d3bd1b0ecf778c1a6a4dc5f118"
+  "sha256": "2819935381da66752157455de3e7bc7d02f99dd4387ef2d967ae85a073fcf93b"
 }
