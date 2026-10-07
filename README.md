@@ -112,8 +112,14 @@ every agent's prompt (within a budget of 2,500 tokens for the whole run, and a
 pack's router alone above it), and the agent loads a body, as plain Markdown,
 only when it reaches that artefact family, so a pack the size of a textbook
 costs a few hundred tokens until it is used. A body already in an agent's
-context is not sent twice, and after a compaction the agent is told which
-bodies the compaction took out. Every load is an event on the trace with the file's checksum and
+context is not sent twice. A body the agent has marked done is replaced in its
+context by a one-line stub when the agent hands off to itself (the session keeps
+the whole result, and `skill(id)` brings it back); `--skill-release auto` adds the
+next turn boundary on models where editing an earlier tool result is known to be
+safe, not on Claude models with thinking, whose signed thinking blocks an edit can
+invalidate or get dropped. The compaction's summary is written from note ids and
+sizes, not from the first 2,000 characters of a note, and the agent is told which
+notes it read and which it probably still needs. Every load and every release is an event on the trace with the file's checksum and
 its token cost, and the console's **Packs** tab says which skills a run read,
 which it carried and never opened, what each agent loaded and whether anything
 shows it was used, which tools came from which pack, and which agent did each.

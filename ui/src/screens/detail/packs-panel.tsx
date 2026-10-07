@@ -11,7 +11,9 @@
  * The numbers come from the whole trace (the server's `skill_use`, the same
  * code the context audit runs): a seat's prompt carried the index, how many
  * bodies it loaded and what they cost, which a later row names or uses (a
- * proxy, labelled as one), and which a compaction took out of its context.
+ * proxy, labelled as one), which a compaction took out of its context, and
+ * which the harness released (replaced by a one-line stub once the agent said
+ * it was done) and how many of those the agent then loaded again.
  */
 import { useMemo } from "react";
 import { Package } from "lucide-react";
@@ -223,7 +225,22 @@ export function PacksPanel({ view }: { view: SwarmView }) {
           without naming it, so &ldquo;no trace of use&rdquo; is not proof it was not used. A compaction takes the bodies it summarises out of an agent&rsquo;s context
           (the newest part of the history stays); &ldquo;loaded again&rdquo; counts the ones it asked for afterwards. &ldquo;Index in prompt&rdquo; means Pi&rsquo;s own
           prompt carried this run&rsquo;s index, which every run of the agent keeps; an index the extension had to add lasts for the first run only.
+          &ldquo;Released&rdquo; counts the bodies the harness replaced in the agent&rsquo;s context by a one-line stub after it marked them done (the session keeps the
+          whole result); &ldquo;loaded again after release&rdquo; counts the ones the agent asked for afterwards, which is the share of releases that was wasted.
         </p>
+        {use.totals.released > 0 || use.totals.done > 0 ? (
+          <p className="text-xs">
+            <b>{use.totals.released}</b> {use.totals.released === 1 ? "body" : "bodies"} released ({use.totals.tokens_released.toLocaleString("en-US")} tokens, {use.totals.released_at_compaction} at a
+            compaction); <b>{use.totals.reloaded_after_release}</b> loaded again
+            {use.totals.released > 0 ? ` (wasted-release rate ${Math.round((use.totals.reloaded_after_release / use.totals.released) * 100)}%)` : ""}.
+          </p>
+        ) : null}
+        {use.totals.replies_after_release + use.totals.replies_after_compaction > 0 ? (
+          <p className="text-xs">
+            Anthropic said it dropped <b>{use.totals.thinking_dropped_after_release}</b> thinking block(s) from the history in the {use.totals.replies_after_release} first repl{use.totals.replies_after_release === 1 ? "y" : "ies"} after a release,
+            and <b>{use.totals.thinking_dropped_after_compaction}</b> in the {use.totals.replies_after_compaction} after a compaction.
+          </p>
+        ) : null}
         {use.totals.loads_without_tools > 0 ? (
           <p className="text-xs text-saffron-ink">
             {use.totals.loads_without_tools} of the loads come from rows written before the harness recorded each skill&rsquo;s tools: for those only a mention of the id
@@ -246,6 +263,8 @@ export function PacksPanel({ view }: { view: SwarmView }) {
                 <th className="py-1 pr-3 font-normal">Used after load</th>
                 <th className="py-1 pr-3 font-normal">No trace of use</th>
                 <th className="py-1 pr-3 font-normal">Done</th>
+                <th className="py-1 pr-3 font-normal">Released</th>
+                <th className="py-1 pr-3 font-normal">Loaded again after release</th>
                 <th className="py-1 pr-3 font-normal">Taken out by a compaction</th>
                 <th className="py-1 pr-3 font-normal">Loaded again</th>
                 <th className="py-1 font-normal">Skills</th>
@@ -273,6 +292,14 @@ export function PacksPanel({ view }: { view: SwarmView }) {
                   <td className="py-1.5 pr-3 tabular-nums">{seat.referenced}</td>
                   <td className="py-1.5 pr-3 tabular-nums">{seat.unused}</td>
                   <td className="py-1.5 pr-3 tabular-nums">{seat.done}</td>
+                  <td
+                    className="py-1.5 pr-3 tabular-nums"
+                    title={seat.release_policy ? `${seat.release_policy.effective} (${seat.release_policy.class}, --skill-release ${seat.release_policy.mode})` : "no release policy on the trace"}
+                  >
+                    {seat.released}
+                    {seat.tokens_released ? <span className="text-muted-foreground"> · {seat.tokens_released.toLocaleString("en-US")} tokens</span> : null}
+                  </td>
+                  <td className="py-1.5 pr-3 tabular-nums">{seat.reloaded_after_release}</td>
                   <td className="py-1.5 pr-3 tabular-nums">{seat.lost_at_compaction}</td>
                   <td className="py-1.5 pr-3 tabular-nums">{seat.refetched}</td>
                   <td className="py-1.5 font-mono text-[11px] text-muted-foreground">

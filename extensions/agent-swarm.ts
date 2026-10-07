@@ -2816,6 +2816,10 @@ export default function (pi: ExtensionAPI) {
       fault: async (cwd, body) => {
         await systemPost(cwd, { tag: "veto", body });
       },
+      // --skill-release (docs/usage.md): when a body a seat has finished with leaves its context.
+      release: process.env.SWARM_SKILL_RELEASE?.trim() || undefined,
+      // A hand-off that is pending or being compacted (not one that failed and was given up): finished bodies leave with that compaction.
+      compactionPending: () => selfCompact?.handoffPending() ?? false,
     });
   }
 
@@ -4335,6 +4339,7 @@ export default function (pi: ExtensionAPI) {
       agentId: () => agentId,
       trace: (cwd, tool, args, result) => logEvent(cwd, agentId, tool, args, result),
       handoffFacts,
+      summaryInput: skills ? (history, turnPrefix) => skills!.summaryInput(history, turnPrefix) : undefined,
       promptsDir: join(dirname(fileURLToPath(import.meta.url)), "..", "prompts"),
       summaryPromptPath: process.env.SWARM_COMPACT_PROMPT?.trim() || undefined,
       summaryModel: process.env.SWARM_COMPACT_MODEL?.trim() || undefined,

@@ -197,6 +197,14 @@ export type SelfCompactDeps = {
   /** The bounds, when the operator changed them (SWARM_COMPACT_SUMMARY_SEC, SWARM_COMPACT_TIMEOUT_SEC); the constants above otherwise. */
   bounds?: { summaryAttemptMs?: number; summaryMaxChars?: number; compactionMs?: number };
   /**
+   * Shapes the conversation the summary call is given (extensions/skills.ts):
+   * every pack skill body in it becomes one line naming the note and its size,
+   * and `block` lists the notes the seat read, so the summary says what method
+   * is still needed without being written from the first 2,000 characters of a
+   * note. The session keeps the whole results. Absent when the run has no pack.
+   */
+  summaryInput?: (history: readonly unknown[], turnPrefix: readonly unknown[]) => { history: unknown[]; turnPrefix: unknown[]; block: string };
+  /**
    * The run's pause, when it is paused (the stop policy): a compaction calls
    * the provider itself, so while it stands no summary attempt, retry or
    * fallback goes out, and the compaction is cancelled until the run goes on.
@@ -241,6 +249,8 @@ export type SelfCompactHandle = {
   budgetFields(ctx: ExtensionContext): { context_ceiling: number; context_level: UsageLevel; context_locked: boolean; handoffs: number };
   /** True while a hand-off's compaction runs: Pi refuses every prompt until it ends. */
   compacting(): boolean;
+  /** True from the moment the seat saved its hand-off note until the compaction landed or failed: one is about to run, or is running. A failed one is not pending. */
+  handoffPending(): boolean;
 };
 
 /** A minimal view of the session entries the recovery reducer reads (a subset of Pi's SessionEntry). */
@@ -306,6 +316,32 @@ export function latestAssistantUsage(entries: EntryLike[]): UsageLike | undefine
     if (total > 0) return usage;
   }
   return undefined;
+}
+
+/**
+ * True when the branch holds a `context_edit` after the last assistant reply
+ * that carries a usable count: Pi then distrusts that count and estimates the
+ * whole projection at characters over four (compaction.js
+ * `estimateProjectedContextTokens`), which on 10,853 recorded replies is up to
+ * 17 % above what the provider counted (7 to 12 % at p95). The gauge is then an
+ * estimate that a skill release (or Pi's own overflow recovery) caused, and the
+ * levels and the lock must not be moved by it.
+ */
+export function editAfterLastUsage(entries: EntryLike[]): boolean {
+  let usageAt = -1;
+  let editAt = -1;
+  for (let i = entries.length - 1; i >= 0 && (usageAt < 0 || editAt < 0); i--) {
+    const entry = entries[i]!;
+    if (entry.type === "compaction") break;
+    if (editAt < 0 && entry.type === "context_edit") editAt = i;
+    if (usageAt < 0 && entry.type === "message" && entry.message?.role === "assistant") {
+      const stop = entry.message.stopReason;
+      const usage = entry.message.usage as UsageLike | undefined;
+      const total = usage ? usage.totalTokens || (usage.input ?? 0) + (usage.output ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0) : 0;
+      if (stop !== "aborted" && stop !== "error" && total > 0) usageAt = i;
+    }
+  }
+  return editAt > usageAt && usageAt >= 0;
 }
 
 /**
@@ -602,6 +638,18 @@ export function registerSelfCompact(pi: ExtensionAPI, deps: SelfCompactDeps): Se
       usage = undefined;
     }
     const window = usage?.contextWindow ?? ctx.model?.contextWindow ?? 0;
+    // After an edit Pi's count is its estimate. Until the next reply the last count the provider gave stands.
+    let distrusted = false;
+    try {
+      distrusted = R.usage.tokens !== null && editAfterLastUsage(ctx.sessionManager.getBranch() as unknown as EntryLike[]);
+    } catch {
+      distrusted = false;
+    }
+    if (distrusted) {
+      R.usage = { ...R.usage, window };
+      R.level = R.thresholds ? levelFor(R.usage.tokens, R.thresholds) : "unknown";
+      return;
+    }
     const tokens = usage?.tokens ?? null;
     const ceiling = R.thresholds?.ceiling ?? window;
     const percent = tokens !== null && ceiling > 0 ? (tokens / ceiling) * 100 : null;
@@ -1001,8 +1049,12 @@ export function registerSelfCompact(pi: ExtensionAPI, deps: SelfCompactDeps): Se
     const model = chosen.model;
     if (!model) throw new Error("no model available for the compaction summary");
     const { messagesToSummarize, turnPrefixMessages, previousSummary } = event.preparation;
-    const history = messagesToSummarize.length ? serializeConversation(convertToLlm(messagesToSummarize)) : "";
-    const prefix = turnPrefixMessages.length ? serializeConversation(convertToLlm(turnPrefixMessages)) : "";
+    // Method notes the seat read are named and sized in the input, not quoted: Pi would cut each to 2,000 characters.
+    const shaped = deps.summaryInput?.(messagesToSummarize, turnPrefixMessages);
+    const historyMessages = (shaped?.history ?? messagesToSummarize) as typeof messagesToSummarize;
+    const prefixMessages = (shaped?.turnPrefix ?? turnPrefixMessages) as typeof turnPrefixMessages;
+    const history = historyMessages.length ? serializeConversation(convertToLlm(historyMessages)) : "";
+    const prefix = prefixMessages.length ? serializeConversation(convertToLlm(prefixMessages)) : "";
     const maxTokens = Math.min(SUMMARY_MAX_TOKENS, model.maxTokens || SUMMARY_MAX_TOKENS);
     const budgetChars = Math.max(8_000, ((model.contextWindow || 128_000) - maxTokens - 4_000) * 4 - prompt.text.length - 2_000);
     let truncated = false;
@@ -1016,6 +1068,7 @@ export function registerSelfCompact(pi: ExtensionAPI, deps: SelfCompactDeps): Se
       "Summarize the supplied historical data. Do not continue the task, simulate tools, or claim actions without tool-result evidence. Keep pending actions pending.",
       history ? `<conversation>\n${fit(history, prefix ? 0.5 : 0.9)}\n</conversation>` : "",
       prefix ? `<turn-prefix>\n${fit(prefix, history ? 0.4 : 0.9)}\n</turn-prefix>` : "",
+      shaped?.block || "",
       previousSummary ? `<previous-summary>\n${previousSummary}\n</previous-summary>` : "",
       event.customInstructions ? `Additional summarization instructions from the operator: ${event.customInstructions}` : "",
     ].filter(Boolean);
@@ -1291,6 +1344,12 @@ export function registerSelfCompact(pi: ExtensionAPI, deps: SelfCompactDeps): Se
     },
     compacting() {
       return R.compactionInFlight;
+    },
+    handoffPending() {
+      // Not "failed": a hand-off given up after its retries keeps that status while the seat goes on working,
+      // and no compaction is about to run for it.
+      const h = activeHandoff();
+      return h !== undefined && (h.status === "pending" || h.status === "compacting");
     },
   };
 }
