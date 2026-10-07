@@ -339,7 +339,7 @@ checksummed, and installs and verifies in the test suite.
 | `reverse-engineering` | 7 | 4 | 1 | static triage of a binary or a document, under quarantine |
 | `encrypted-containers` | 5 | 3 | 1 | which scheme, which protectors, and where the key already is |
 | `cloud-forensics` | 6 | 3 | 1 | Microsoft 365, Entra, AWS, Workspace, and the tokens behind them |
-| `ransomware-response` | 7 | 2 | 1 | the order the case has to be worked in |
+| `ransomware-response` | 7 | 2 | 1 | scoping, recovery impairment, family candidates and recovery validation, each with its limits |
 | `triage-collection` | 5 | 2 | 1 | a collector's output, which is how most cases arrive |
 
     scripts/pack.sh install packs/computer-forensics-base
@@ -481,6 +481,43 @@ hold the parts a test can hold; the rest is for the author.
    tells the agent to say it in the report, so that the trace can be redacted
    before it is shared.
 4. **A skill that names such a tool says so**, in a "Sensitive output" line.
+
+**The pattern, concretely.** `recovery_key_scan` (encrypted-containers) is the
+reference implementation. A tool that can reach secret material copies its
+`SecretValues` class as it copies `LosslessPage` (standalone tools do not
+import each other), and holds to this:
+
+- *The answer is a locator.* Per finding: a `finding_id` (a sequence number,
+  derived from nothing), the source `file` and `offset`, the `kind`, the
+  `length` and a structure result. No value, no character of one, no masked
+  "shape", no hash, digest or fingerprint, however short or salted. "The same
+  value as F000001" (`duplicate_of`) is said by comparing in memory, not by a
+  digest.
+- *A value is produced only on an explicit flag, in a job, in a file.* The flag
+  is `write_values: true` (default false). The tool honours it only when it
+  runs as a job (`JOB_ID` and `OUT` are set) and writes only under `$OUT`:
+  JSON Lines, mode 0600, each row carrying the answer's `finding_id`, file and
+  offset beside the `value`. The file is created exclusively at the start of
+  the run, before anything is scanned: a file or link already at that name is
+  refused by name, and with nothing found it stays an empty file and the answer
+  says `written: 0`. Outside a job the request is refused, with exit 1 and
+  nothing written, because a file in `work/` is not a sealed output.
+- *A name shaped like the secret is withheld.* A path component that matches the
+  secret's own pattern (a file named after the key) is replaced in every printed
+  path, in the files the answer names and in the digest that names a paging file;
+  only the values file keeps the real path.
+- *The answer says where the values are, not what they are:*
+  `secret_values.values_file` and `contains_secret_values: true`. The skill
+  that names the tool has its "Sensitive output" line say the job runs with
+  `secret_output: true`, and that the ledger cites the finding's file and
+  offset, never the value.
+- *The manifest says SENSITIVE* and names the flag. The harness reads no
+  manifest-level flag yet, and a tool cannot see whether its job was run with
+  `secret_output`, so what keeps a value out of an ordinary run is the refusal
+  above and the skill's line; a flag the harness enforces is a follow-up.
+- *The tests assert absence:* no group of the value, no run of its digits, no
+  64-hex string and no masked shape in the answer or in any file it names, with
+  the value planted in every encoding the tool reads.
 
 ### The tool contract
 
