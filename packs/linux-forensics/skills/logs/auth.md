@@ -19,8 +19,8 @@ is ordered by name only, and a mix of schemes is reported as an order that is no
 
 **Time.** A traditional stamp has no year and no zone. `auth_log` takes the year from the file's modification
 time (on a copied tree that is the time of the copy) or from your `year`, and says which per file
-(`year_basis`); `time_raw` is the stamp as written and `time_zone` is `unknown` until the profile establishes
-one (`triage/system-profile`). A line out of order by months is flagged `reordered`, not counted as a year
+(`year_basis`); `time_raw` is the stamp as written, `time` the clock reading as written, `time_utc` is set only where the stamp carries
+its zone, and `time_zone` is `unknown` until the profile establishes one (`triage/system-profile`). A line out of order by months is flagged `reordered`, not counted as a year
 end. An RFC 3339 stamp keeps its own offset. Read `unparsed` and `read_errors` before trusting a count:
 `all_lines_parsed` says every line matched a syslog shape and every file was read through, nothing more.
 

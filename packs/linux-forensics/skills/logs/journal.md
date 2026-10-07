@@ -24,7 +24,9 @@ file is the lossless result. The answer's projection carries, for each entry: `c
 `monotonic_us` raw with the decoded UTC `time`, `boot_id`, `machine_id`, the source clocks where present, the
 identity fields (`pid`, `uid`, `comm`, `exe`, `unit`, `audit_session`, `syslog_identifier`, `transport`) and
 `native_line`; a field journalctl wrote as bytes or as null is named, not turned into text. Pass `since` and
-`until` with their zone (`UTC` suffix or `@epoch`): a bare time is read in this machine's zone and is refused.
+`until` with their zone (`UTC` suffix or `@epoch`): a bare time is read in this machine's zone and is refused. A
+journal directory that holds links is refused too, because journalctl may follow them out of the evidence: pass each
+real file. An entry over 32 MiB is counted and located (`parse_errors.oversized_lines`) and is in the native file.
 
 **Clocks.** `realtime_us` is the wall clock and can be set, stepped or corrected within a boot;
 `monotonic_us` counts from the boot and is the order inside it. A boot id names a boot and orders nothing, so
