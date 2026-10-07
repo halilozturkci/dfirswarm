@@ -45,6 +45,130 @@ def fail(message, **extra):
     raise SystemExit(1)
 
 
+# BEGIN SHARED PROCESS
+# The same text is in pcap_extract, zeek_run, suricata_run and the network-capture recipe; tests/pack-network-process.test.ts
+# holds the copies equal. A program an engine tool runs is started in THIS tool's process group, never in a session of
+# its own: the harness ends a tool that runs too long, or is aborted, by killing the tool's group (process.kill(-pid,
+# SIGKILL)), and an engine in a group of its own goes on writing into the output directory after the tool is gone. On
+# Linux the kernel is also asked to kill it if the tool dies. A deadline kills the program and what it started by
+# walking the process tree, and SIGTERM, SIGINT and SIGHUP do the same and then give the tool a last word.
+try:
+    import ctypes
+except ImportError:  # pragma: no cover
+    ctypes = None
+
+STATE = {"last_word": None}    # what to do, with the signal number, when the tool is stopped by a signal
+ACTIVE = []                    # the programs running now
+
+def _die_with_parent():  # runs in the child between fork and exec
+    try:
+        ctypes.CDLL(None).prctl(1, signal.SIGKILL)   # PR_SET_PDEATHSIG
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def spawn(argv, **kwargs):
+    kwargs.setdefault("stdin", subprocess.DEVNULL)
+    if sys.platform.startswith("linux") and ctypes is not None:
+        kwargs["preexec_fn"] = _die_with_parent
+    return subprocess.Popen(argv, **kwargs)
+
+
+def descendants(pid):
+    """Every process below `pid`, from /proc where there is one, else from ps."""
+    kids = {}
+    try:
+        if os.path.isdir("/proc/self"):
+            for entry in os.listdir("/proc"):
+                if entry.isdigit():
+                    try:
+                        with open("/proc/%s/stat" % entry, "rb") as fh:
+                            fields = fh.read().rsplit(b")", 1)[1].split()
+                        kids.setdefault(int(fields[1]), []).append(int(entry))
+                    except (OSError, IndexError, ValueError):
+                        continue
+        else:
+            out = subprocess.run(["ps", "-A", "-o", "pid=,ppid="], capture_output=True, text=True, timeout=10).stdout
+            for line in out.splitlines():
+                parts = line.split()
+                if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                    kids.setdefault(int(parts[1]), []).append(int(parts[0]))
+    except (OSError, subprocess.SubprocessError):
+        return []
+    found, stack = [], [pid]
+    while stack:
+        for child in kids.get(stack.pop(), []):
+            found.append(child)
+            stack.append(child)
+    return found
+
+
+def kill_tree(proc):
+    """Kill the program and everything it started. The children are listed first: once the parent is gone they are
+    adopted by init and can no longer be found below it."""
+    victims = descendants(proc.pid)
+    try:
+        proc.kill()
+    except OSError:
+        pass
+    for pid in victims:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+
+
+def _on_signal(signum, _frame):
+    for proc in list(ACTIVE):
+        kill_tree(proc)
+    last_word = STATE.get("last_word")
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def preflight(argv, seconds):
+    """Run a short program, bounded; (exit code or None, stdout bytes, stderr bytes, timed out)."""
+    try:
+        proc = spawn(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except OSError as exc:
+        return None, b"", describe(exc).encode("utf-8", "replace"), False
+    ACTIVE.append(proc)
+    try:
+        out, err = proc.communicate(timeout=max(1.0, seconds))
+        return proc.returncode, out, err, False
+    except subprocess.TimeoutExpired:
+        kill_tree(proc)
+        out, err = proc.communicate()
+        return None, out, err, True
+    finally:
+        ACTIVE.remove(proc)
+
+
+def run_to_files(argv, stdout_path, stderr_path, seconds, cwd=None):
+    """One program with its output in files, killed with what it started at `seconds`. (exit code, timed out)."""
+    with open(stdout_path, "wb") as stdout, open(stderr_path, "wb") as stderr:
+        proc = spawn(argv, stdout=stdout, stderr=stderr, cwd=cwd)
+        ACTIVE.append(proc)
+        try:
+            return proc.wait(timeout=max(0.1, seconds)), False
+        except subprocess.TimeoutExpired:
+            kill_tree(proc)
+            proc.wait()
+            return None, True
+        finally:
+            ACTIVE.remove(proc)
+
+
+def install_signal_handlers():
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+# END SHARED PROCESS
+
+
 def shutil_which(name):
     for directory in os.environ.get("PATH", "").split(os.pathsep):
         candidate = os.path.join(directory, name)
@@ -127,25 +251,23 @@ def run_engine(logs, argv, label, timeout):
             temps.append(fh)
             handles[stream] = (fh, 0)
     try:
-        proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=handles["stdout"][0], stderr=handles["stderr"][0], start_new_session=True)
+        proc = spawn(argv, stdout=handles["stdout"][0], stderr=handles["stderr"][0])
     except OSError as exc:
         result.update({"status": "launch_failed", "reason": "the program could not be started: %s" % describe(exc), "returncode": None,
-                       "stdout": "", "stderr": "", "seconds": round(time.monotonic() - started, 3)})
+                       "stdout": "", "stderr": "", "stdout_bytes": 0, "stderr_bytes": 0, "seconds": round(time.monotonic() - started, 3)})
+        for fh in temps:
+            fh.close()
         return result
+    ACTIVE.append(proc)
     status = "ok"
     try:
         proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         status = "timeout"
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError, OSError):
-            pass
-        try:
-            proc.kill()
-        except OSError:
-            pass
+        kill_tree(proc)
         proc.wait()
+    finally:
+        ACTIVE.remove(proc)
     result["returncode"] = proc.returncode
     result["seconds"] = round(time.monotonic() - started, 3)
     text = {}
@@ -276,6 +398,16 @@ def main():
 
     logs = Logs([os.path.realpath(p) for p in paths])
     runner = Run(logs, timeout)
+    install_signal_handlers()
+
+    def last_word(signum):
+        # A stop signal ends the engines (the handler did that) and the tool says it was stopped, with what it had.
+        print(json.dumps({"error": "stopped by signal %d before the engines finished" % signum, "status": "failed", "tool": TOOL,
+                          "stopped_by_signal": signum, "problems": runner.problems,
+                          "logs": logs.names if logs.kept else None}))
+        sys.stdout.flush()
+
+    STATE["last_word"] = last_word
     if logs.error:
         runner.problems.append(logs.error)
     try:
