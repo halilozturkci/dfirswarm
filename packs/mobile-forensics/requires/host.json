@@ -76,12 +76,12 @@
       "name": "heif-convert",
       "package": "libheif-examples",
       "optional": true,
-      "why": "Converts an iPhone's HEIC photo to JPEG or PNG, to look at it or read it with other tools; pillow-heif opens one in a script. No skill of this pack names it yet.",
+      "why": "Converts an iPhone's HEIC photo to JPEG or PNG, to look at it or read it with other tools; pillow-heif opens one in a script. No skill of this pack names it yet. The program is a libheif sample application (MIT, as libheif's README says); the libheif library it links is LGPL-3.0-or-later.",
       "install": {
         "brew": "brew install libheif",
         "apt": "apt-get install -y libheif-examples"
       },
-      "licence": "LGPL-3.0-or-later",
+      "licence": "MIT",
       "redistributable": false
     }
   ]

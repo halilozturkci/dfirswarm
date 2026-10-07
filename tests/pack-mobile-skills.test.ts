@@ -6,7 +6,9 @@
  * keep teaching a field a tool no longer has. The overclaims the review found are not in them.
  */
 import assert from "node:assert/strict";
-import { readFile, readdir } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { ROOT } from "./tool-library-harness.ts";
@@ -104,9 +106,9 @@ test("every second-level leaf is pointed to by a leaf that says when to open it"
 
 // Fields and names a skill teaches, each of which a tool or a recipe must write or read: file -> skill -> names.
 const TAUGHT: Array<[string, string, string[]]> = [
-  ["tools/sqlite_freespace/run.py", "apps/fragments", ["write_values", "sqlite-freespace-values.jsonl", "offset_verified", "block_offset", "fragments_found_before_filter", "all_results", "corrupt", "partial", "problems", "scanned"]],
+  ["tools/sqlite_freespace/run.py", "apps/fragments", ["write_values", "sqlite-freespace-values.jsonl", "offset_verified", "block_offset", "all_results", "corrupt", "partial", "problems", "scanned"]],
   ["tools/sqlite_freespace/run.py", "apps/databases", ["scanned"]],
-  ["tools/manifest_db/run.py", "extractions/backup-detail", ["epoch", "IsEncrypted", "Status.plist", "Info.plist", "not_encrypted", "unknown"]],
+  ["tools/manifest_db/run.py", "extractions/backup-detail", ["epoch", "IsEncrypted", "Status.plist", "Info.plist", "not_encrypted", "unknown", "completion", "SnapshotState", "not_finished", "consistency"]],
   ["tools/protobuf_peek/run.py", "ios/biome-segb", ["write_values"]],
   ["recipes/ios-ileapp/run.py", "ios/artifacts", ["modules.tsv", "errors_logged", "no_record", "errored", "unknown"]],
   ["recipes/android-aleapp/run.py", "android/artifacts", ["modules.tsv", "errors_logged", "no_record", "errored", "unknown"]],
@@ -121,7 +123,9 @@ test("the tool and recipe fields a skill names are fields they write", async () 
     const body = skills.get(skillId)?.body ?? "";
     for (const name of names) {
       assert.ok(body.includes(name), `${skillId} names ${name}`);
-      assert.ok(script.includes(name), `${file} has ${name}, which ${skillId} teaches`);
+      // A field is a key or a value in the code, quoted; a file or a program name is only in the text.
+      const written = /^[a-z_]+$/.test(name) ? script.includes(`"${name}"`) : script.includes(name);
+      assert.ok(written, `${file} writes ${name}, which ${skillId} teaches`);
     }
   }
 });
@@ -142,6 +146,9 @@ test("the claims the review found are not in the skills, and the front matter li
     /Permissions are the capability list/i,
     /iOS 19/i,
     /\bsay so and stop\b/i,
+    /What is encrypted is the content of the files/i,
+    /Does not show:[^\n]*when the backup was made(?! \()/i,
+    /fragments_found_before_filter/,
   ];
   for (const re of banned) assert.doesNotMatch(all, re);
   // The tools and programs a body names in code are in its front matter.
@@ -151,5 +158,55 @@ test("the claims the review found are not in the skills, and the front matter li
       const named = new RegExp("`" + name + "[ `]").test(s.body);
       if (named) assert.ok(listed.has(name), `${s.id} names ${name} but does not list it`);
     }
+  }
+});
+
+test("an example that runs a LEAPP program makes its output directory first, since the programs refuse one that does not exist", async () => {
+  const skills = await load(SKILLS);
+  assert.match(skills.get("ios/artifacts")!.body, /mkdir -p "\$OUT\/ileapp" && ileapp /);
+  assert.match(skills.get("android/artifacts")!.body, /mkdir -p "\$OUT\/aleapp" && aleapp /);
+});
+
+test("the skills say what the backup date, the completion state, KnowledgeC and plist_read's output are", async () => {
+  const skills = await load(SKILLS);
+  const detail = skills.get("extractions/backup-detail")!.body;
+  assert.match(detail, /^Shows:[^\n]*backup date its plists record/m, "the backup date is shown (Manifest.plist Date, Info.plist Last Backup Date)");
+  assert.match(detail, /`completion` is `finished`, `not_finished` or `unknown`/);
+  assert.match(detail, /31-year shift/);
+  assert.match(detail, /depends on the build that made it/);
+  const ios = skills.get("ios/artifacts")!.body;
+  assert.match(ios, /\*\*KnowledgeC\*\*[^\n]*Do not carry a macOS stream's meaning or retention to iOS/);
+  assert.match(ios, /prints a binary value as a size, a digest and a preview, and a string in clear: check what yours prints/);
+  assert.match(skills.get("ios/biome-segb")!.body, /with `path`, `offset` and `length` at the payload \(never `hex`/);
+  assert.match(skills.get("location/sources")!.body, /manifest_db/);
+});
+
+test("the goal's extraction-kind check is one awk, not a pipe: a long answer 1 cannot end a grep -q early and fail it", async () => {
+  // The harness runs a check under `set -euo pipefail`; `awk ... | grep -q` fails with SIGPIPE (141) when awk still has output to write
+  // after grep found its match, which happens for an answer 1 of some tens of kilobytes.
+  const goal = await readFile(join(PACK, "goals", "phone-examination.md"), "utf8");
+  const checks = /^## Checks\n([\s\S]*?)(?=^#{1,6} |(?![\s\S]))/m.exec(goal)![1];
+  const line = checks.split("\n").filter((l) => /^- `awk /.test(l)).map((l) => /`([^`]+)`/.exec(l)![1]);
+  assert.equal(line.length, 1);
+  assert.doesNotMatch(line[0], /report\.md\s*\||\|\s*grep/, "nothing is piped");
+  const dir = await mkdtemp(join(tmpdir(), "goal-"));
+  try {
+    await mkdir(join(dir, "work"));
+    const run = (): Promise<number | null> => new Promise((resolve) => {
+      const child = spawn("bash", ["-c", `set -euo pipefail; eval "$CHECK"`], { cwd: dir, env: { ...process.env, CHECK: line[0] }, stdio: "ignore" });
+      child.on("close", resolve);
+    });
+    const filler = "A line of the answer that names no kind of extraction at all.\n".repeat(4000);
+    // The kind is named on the first line of a 250 KB answer 1: found, however much follows.
+    await writeFile(join(dir, "work", "report.md"), `## 1. The extraction\nA full file system extraction.\n${filler}## 2. Next\n`);
+    for (let i = 0; i < 5; i++) assert.equal(await run(), 0, `try ${i}`);
+    // The kind is named only in a later answer: not found, however the words match there.
+    await writeFile(join(dir, "work", "report.md"), `## 1. The extraction\nUnknown.\n## 2. Next\nA backup, physical and logical.\n`);
+    assert.notEqual(await run(), 0);
+    // Case does not matter.
+    await writeFile(join(dir, "work", "report.md"), `## 1. The extraction\nAn APP EXPORT only.\n## 2. Next\n`);
+    assert.equal(await run(), 0);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
   }
 });

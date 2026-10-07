@@ -3,7 +3,7 @@ id: location/sources
 title: Mobile location records and uncertainty
 when: The question is where a device, media item or person was.
 needs: []
-tools: [sqlite_query, timestamp_decode]
+tools: [manifest_db, sqlite_query, timestamp_decode]
 requires_host: [exiftool]
 ---
 
@@ -21,7 +21,7 @@ Use when a question asks where a device, a media item or a person was. Not for t
 
 **For a coordinate** keep raw values, datum if known, provider, device and account, timestamp meaning, units, accuracy fields, fix age and any mock indicator. An accuracy radius is not a promise of presence. Do not invent accuracy or a zone. Convert times from the schema (`ios/containers-and-time`, `timeline/build`); `timestamp_decode` lists candidates only.
 
-**Media.** Map the `Photos.sqlite` record to the exact file, then `exiftool -json -n -- FILE`; keep the output and the file's digest. Compare GPS time, capture fields, offset fields, library times and file times, keeping conflicts. File and library times may be transfer or import. EXIF can be absent, stripped, edited or carried over from another file. A photo received in a message may carry no coordinates, or those of its capture; it does not locate its sender or recipient.
+**Media.** Map the `Photos.sqlite` record to the exact file (in a backup, `manifest_db` gives its path for the file id), then `exiftool -json -n -- FILE`; keep the output and the file's digest. Compare GPS time, capture fields, offset fields, library times and file times, keeping conflicts. File and library times may be transfer or import. EXIF can be absent, stripped, edited or carried over from another file. A photo received in a message may carry no coordinates, or those of its capture; it does not locate its sender or recipient.
 
 **Networks.** An SSID is not a place and a saved profile is not a join. A join does not locate a person without BSSID or cell identity, a time match and an independently justified infrastructure location (hotspots, moved access points and copied settings exist).
 

@@ -53,8 +53,8 @@ has recorded `attest` or `dispute` on each answer, saying what they verified.
 
 - `test -f work/report.md`
 - `for n in 1 2 3 4 5 6 7 8; do grep -q "^## $n\." work/report.md || exit 1; done`
-- `awk '/^## 1\./{f=1;next} /^## 2\./{f=0} f' work/report.md | grep -qiE 'logical|full file system|physical|backup|app export'`
-  (answer 1 states the kind of extraction: the grep reads that section only)
+- `awk 'BEGIN{r=1} /^## 1\./{f=1;next} /^## 2\./{f=0} f && tolower($0) ~ /logical|full file system|physical|backup|app export/ {r=0} END{exit r}' work/report.md`
+  (answer 1 states the kind of extraction: one awk reads that section only, and no pipe, so that a long answer cannot end a `grep -q` early and fail the check on a closed pipe)
 - `test "$(grep -c '"kind":"event"' ledger/entries.jsonl)" -ge 6`
 - `node --experimental-strip-types --no-warnings "$SWARM_HARNESS/scripts/check-answers.ts" --sections 1,2,3,4,5,6,7,8,summary,narrative`
 - `grep '"tool":"inputs_check"' traces/events.jsonl | tail -1 | grep -q '"content_ok":true'`

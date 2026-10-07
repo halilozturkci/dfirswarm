@@ -9,7 +9,7 @@ needed for much of what an iPhone stores.
 
 ## What it carries
 
-**Ten skills**, each a short decision leaf (three kilobytes at most) that points to
+**Ten skills**, each a short decision leaf (800 tokens at most) that points to
 a second-level leaf only when the case needs it: `extractions/what-you-have` (start
 here) and `extractions/backup-detail`; `apps/databases` and `apps/fragments`;
 `ios/artifacts`, `ios/containers-and-time`, `ios/biome-segb` and `ios/unified-logs`;

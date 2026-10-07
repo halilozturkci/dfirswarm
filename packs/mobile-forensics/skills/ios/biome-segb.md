@@ -15,7 +15,7 @@ Use when an activity question depends on an iOS Biome or other SEGB stream. Not 
 
 **Parse** with the stream-named `ileapp` module, after checking that the release supports the stream and format; keep its output and logs. For a material event keep stream, source file, record or payload offset where the module gives it, raw state, format version and module version. If the module gives no locator, say the record-level locator is unresolved; never invent an offset from report order.
 
-**Schema-less payload.** Run `protobuf_peek` only on a payload already cut from its frame. Its answer is wire structure: field numbers, wire types, offsets, top-level varints. It does not say field names, units, signedness or event meaning, and it withholds string and byte content (a job with `secret_output: true` and `write_values: true` writes them to a sealed file). Label every inference.
+**Schema-less payload.** Run `protobuf_peek` with `path`, `offset` and `length` at the payload (never `hex`: a call is recorded), and never aim a window inside a field its answer withheld. Its answer is wire structure: field numbers, wire types, offsets, top-level varints. It does not say field names, units, signedness or event meaning, and it withholds string and byte content (a job with `secret_output: true` and `write_values: true` writes them to a sealed file). Label every inference.
 
 **Times.** Keep the container timestamp and the payload's own times apart, with raw values and precision. Do not call a container time the event or harvest time without the stream's format saying so.
 
