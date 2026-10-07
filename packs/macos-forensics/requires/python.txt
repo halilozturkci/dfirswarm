@@ -1,2 +1,4 @@
-# The macOS pack's tools use the standard library only: plistlib and sqlite3 are
-# both in it, which is most of what this platform needs.
+# The macOS pack's own tools use the Python standard library: plistlib, sqlite3 and zlib.
+# That is enough to read a property list, a SQLite file and a gzip stream; it is not a macOS
+# examination. The wider parsing comes from the programs in host.json (mac_apt.py in its own
+# virtual environment, unifiedlog_iterator, libfsapfs), none of which this file installs.

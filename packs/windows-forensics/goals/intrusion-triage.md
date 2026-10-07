@@ -5,8 +5,8 @@ in order, with a citation for every step.
 
 Read the skill index with `skill()` before you start. `registry/system-profile`
 is the first ten minutes of this case and everything later depends on it;
-`execution/overview` says how much each execution artefact is worth before you
-quote one.
+`execution/overview` says which claim each execution source can support before
+you quote one.
 
 ## Questions
 

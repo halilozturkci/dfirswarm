@@ -9,20 +9,24 @@ rather than text.
 
 ## Questions
 
-1. The system profile: product version and build, hostname, setup date, the
-   timezone you converted every timestamp from, and which volumes of the APFS
-   container you examined.
+1. The system profile: product version and build, recorded hostname, setup-related
+   evidence and its limits, timestamp encodings and timezone assumptions, and the
+   acquired containers, volumes and snapshots examined.
 2. Initial access: how the operator first reached this machine, with the
    artefact that shows it and the time in UTC.
-3. Persistence: every launch daemon, launch agent, login item, cron entry,
-   profile or extension that does not belong, with the file's own modification
-   time — or the evidence that nothing was added.
-4. Permissions granted: what TCC records as approved for screen recording,
-   accessibility, full disk access or the microphone, and when each was granted.
-5. Activity: what a person was doing and when, from the unified log and
-   knowledgeC, and what places them at the keyboard rather than a job running.
-6. File system changes: what was created, renamed or removed, from FSEvents,
-   with the anchor you used to place the event ids in time.
+3. Persistence: acquired launch items, login and background registrations, scheduled
+   tasks, profiles and extensions relevant to the suspected compromise; distinguish
+   configuration, enabled state, execution and maliciousness, and bound any negative
+   by the coverage you examined.
+4. Privacy authorization: the states recorded in the acquired system and user TCC
+   stores, their client and service identities and any applicable policy; give
+   historical grant or use times only where further evidence supports them.
+5. Activity: retained application, device-state and session evidence, separating
+   account association, remote activity and any independently supported attribution
+   to a person.
+6. File system changes: retained FSEvents observations and their corroboration, with
+   relative order or explicitly justified time bounds; say when event times cannot be
+   established.
 7. Snapshots: using a snapshot-capable parser, whether the container holds any,
    and what a previous state shows that the live one does not — or state that
    the available parser cannot answer the question.

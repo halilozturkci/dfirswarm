@@ -1,49 +1,28 @@
 ---
 id: aws/cloudtrail
-title: CloudTrail, and the events that are not in it
-when: The tenant is AWS.
+title: CloudTrail records, coverage and session origin
+when: Supplied AWS CloudTrail exports need event interpretation or identity correlation.
 needs: [logs/what-exists]
 tools: [cloudtrail_parse]
-requires_host: [aws]
+requires_host: []
 ---
 
-CloudTrail records API calls as JSON, gzipped, one file per batch, delivered to
-a bucket. `cloudtrail_parse` reads a file, a directory or a gzipped archive of
-them and normalises the records.
+Use when you hold CloudTrail files, lookup-events pages or JSON Lines and must say which principal did what, from where, and what the export can show. Not for S3 access logs, VPC flow logs or GuardDuty findings (no reader here). Offline: never authenticate to the account.
 
-**Management events are on by default; data events are not.** So
-`CreateBucket` is recorded and `GetObject` usually is not, which means "was the
-data read" is frequently unanswerable unless somebody turned data events on
-beforehand. Establish that first and say so.
+**First, the surface.** Event History, trail files and event data store results differ in coverage and shape: establish account, region, event categories, selectors and interval. A missing `GetObject` record does not show nothing was read: check data events were captured. `cloudtrail_parse` reads Records files, arrays, JSON Lines, lookup-events pages and gzip; not tar or ZIP.
 
-The fields that carry the case:
+**Reconcile before any negative.** `status` is complete only if every record of every file was read. Read `coverage`, `file_census`, `rejected_records`, `pagination_markers` (a next page means one page of more), `digest_files` and `files_not_attempted_named`. Overlapping exports repeat events and every copy is kept: count distinct `event_id`, and cite it with the file, record and line.
 
-    eventTime, eventName, eventSource     what happened
-    userIdentity                          who: type, arn, userName, and for an
-                                          assumed role the sessionContext with
-                                          the role and when it was assumed
-    sourceIPAddress                       where from, or an AWS service name
-    userAgent                             the SDK, the CLI, or a browser
-    errorCode                             a refusal, which is often the loudest signal
-    requestParameters, responseElements   the detail
+**Fields that carry the case:** `userIdentity` (`accessKeyId`, `sourceIdentity`, `sessionContext`), `errorCode`, `requestParameters`, `responseElements`, `additionalEventData` (console `MFAUsed`), `recipientAccountId`, `sharedEventID`. The tool keeps them; `outcome` says whether an error was recorded, not whether a change took effect.
 
-**`AccessDenied` in volume is the shape of enumeration.** An identity trying a
-hundred calls and being refused ninety of them is mapping its own permissions,
-and that is usually the first hour of an intrusion.
+**Sessions.** An `AssumedRole` identity names a session, not a person. `session_origin` is a candidate: the successful AssumeRole-family call matching this session's access key id or ARN, with its `basis` and source event. `unresolved` lists the matches (to a cap) and picks none; `not_found`: no call fits (another key or a creationDate miss is listed, not chosen). A failed call is never a source. A chained caller has its own `session_origin`; a person needs identity-provider evidence and corroboration beyond these logs.
 
-**An assumed role hides the human.** `userIdentity.type` of `AssumedRole` names
-the session, not the person; the `sessionIssuer` and the earlier
-`AssumeRole` call are what connect it back to an account or a federated
-identity. `cloudtrail_parse` emits `role_assumed_by` only when it finds a
-matching role ARN and session name in the supplied records; absence of that
-field means the acquisition did not establish the human. Follow that chain
-before you attribute anything.
+**Errors.** `error_class` is by the code's name. Repeated authorisation denials are a lead: check identity, resources, timing, earlier successes and known automation. Throttling, validation and service errors are not denials.
 
-The calls worth alerting on: `ConsoleLogin` without multi-factor,
-`CreateAccessKey` and `CreateUser`, `AttachUserPolicy` with an administrator
-policy, `PutBucketPolicy` and `PutBucketAcl` making something public,
-`ModifySnapshotAttribute` sharing a volume with another account,
-`DeleteTrail` and `StopLogging`, and `GetSecretValue` in volume.
+**Flagged calls** (`notable`) name an API, not an effect: credential, identity, policy, ACL, snapshot-sharing and logging calls. Read the result, request and effective configuration before saying what changed. `StopLogging` suspends that trail's recording and delivery; it deletes no delivered record and stops no other trail or source: correlate trail scope, selectors, delivery, other trails and the inventory; an observed gap is not proof the call caused it.
 
-**`StopLogging` is the equivalent of clearing the event log.** It is recorded —
-the stop itself is a management event — and the gap that follows is the finding.
+**Integrity.** The tool validates no digest file or chain, and a file hash is not that validation: unless the case supplies a validation record, say it was not performed.
+
+**Does not show:** a person; that a call took effect; what was not logged; a complete export.
+
+**Sensitive output:** request and response fields can hold secrets. Run the tool as a job with `secret_output: true`; it withholds credential-named and credential-shaped values and writes originals only with `write_values`. Report an access key id in full, a secret never.

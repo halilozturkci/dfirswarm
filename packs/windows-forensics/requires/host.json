@@ -36,7 +36,7 @@
     {
       "name": "vshadowinfo",
       "package": "libvshadow",
-      "why": "List the volume shadow copies on an image, with each store's creation time: the volume as it was before a cleanup.",
+      "why": "List the volume shadow copies on a raw volume or image, with each store's creation time: the volume as it was before a cleanup. It lists; it mounts nothing.",
       "install": {
         "brew": "brew install libvshadow",
         "apt": "apt-get install -y libvshadow-utils"
@@ -47,7 +47,7 @@
     {
       "name": "vshadowmount",
       "package": "libvshadow",
-      "why": "Expose a shadow copy as a volume the ordinary toolkit can list and extract from. Needs FUSE on the host.",
+      "why": "Expose a shadow copy as a volume the ordinary toolkit can list and extract from. A mount lives in that VM only and is not a sealed output; it needs FUSE, which a worker may not have.",
       "install": {
         "brew": "brew install libvshadow",
         "apt": "apt-get install -y libvshadow-utils"
@@ -71,9 +71,8 @@
       "name": "fsntfsinfo",
       "package": "libfsntfs",
       "optional": true,
-      "why": "Read $MFT, named streams and the USN journal with an independent parser: a finding two parsers agree on survives review that one does not.",
+      "why": "Read $MFT, named streams and the USN journal with an independent parser: a finding two parsers agree on survives review that one does not. No macOS install route is declared (the Python binding does not put the command-line tool on PATH).",
       "install": {
-        "brew": "python3 -m pip install libfsntfs-python",
         "apt": "apt-get install -y libfsntfs-utils"
       },
       "licence": "LGPL-3.0-or-later",
@@ -83,9 +82,8 @@
       "name": "sccainfo",
       "package": "libscca",
       "optional": true,
-      "why": "An independent read of a prefetch file, compressed or not, to check prefetch_mam against.",
+      "why": "An independent read of a prefetch file, compressed or not, to check prefetch_mam against. No macOS install route is declared (the Python binding does not put the command-line tool on PATH).",
       "install": {
-        "brew": "python3 -m pip install libscca-python",
         "apt": "apt-get install -y libscca-utils"
       },
       "licence": "LGPL-3.0-or-later",
@@ -95,9 +93,8 @@
       "name": "olecfexport",
       "package": "libolecf",
       "optional": true,
-      "why": "Take a jump list apart as the compound file it is.",
+      "why": "Take a jump list apart as the compound file it is. No macOS install route is declared (the Python binding does not put the command-line tool on PATH).",
       "install": {
-        "brew": "python3 -m pip install libolecf-python",
         "apt": "apt-get install -y libolecf-utils"
       },
       "licence": "LGPL-3.0-or-later",
@@ -107,9 +104,8 @@
       "name": "lnkinfo",
       "package": "liblnk",
       "optional": true,
-      "why": "An independent read of a link file's target, volume serial and timestamps.",
+      "why": "An independent read of a link file's target, volume serial and timestamps. No macOS install route is declared (the Python binding does not put the command-line tool on PATH).",
       "install": {
-        "brew": "python3 -m pip install liblnk-python",
         "apt": "apt-get install -y liblnk-utils"
       },
       "licence": "LGPL-3.0-or-later",
@@ -119,9 +115,8 @@
       "name": "regfexport",
       "package": "libregf",
       "optional": true,
-      "why": "Export a registry hive with a parser that is not regipy.",
+      "why": "Export a registry hive with a parser that is not regipy. No macOS install route is declared (the Python binding does not put the command-line tool on PATH).",
       "install": {
-        "brew": "python3 -m pip install libregf-python",
         "apt": "apt-get install -y libregf-utils"
       },
       "licence": "LGPL-3.0-or-later",
@@ -131,9 +126,8 @@
       "name": "evtxexport",
       "package": "libevtx",
       "optional": true,
-      "why": "Export event records with a parser that is not python-evtx.",
+      "why": "Export event records with a parser that is not python-evtx. No macOS install route is declared (the Python binding does not put the command-line tool on PATH).",
       "install": {
-        "brew": "python3 -m pip install libevtx-python",
         "apt": "apt-get install -y libevtx-utils"
       },
       "licence": "LGPL-3.0-or-later",
@@ -143,9 +137,8 @@
       "name": "msiecfexport",
       "package": "libmsiecf",
       "optional": true,
-      "why": "Read an Internet Explorer index.dat cache, which no other tool here covers.",
+      "why": "Read an Internet Explorer index.dat cache, which no other tool here covers. No macOS install route is declared (the Python binding does not put the command-line tool on PATH).",
       "install": {
-        "brew": "python3 -m pip install libmsiecf-python",
         "apt": "apt-get install -y libmsiecf-utils"
       },
       "licence": "LGPL-3.0-or-later",
@@ -155,9 +148,8 @@
       "name": "pffexport",
       "package": "libpff",
       "optional": true,
-      "why": "Read a PST or OST mailbox: the mail on a Windows machine, which nothing else in this pack touches.",
+      "why": "Read a PST or OST mailbox: the mail on a Windows machine, which nothing else in this pack touches. No macOS install route is declared (the Python binding does not put the command-line tool on PATH).",
       "install": {
-        "brew": "python3 -m pip install libpff-python",
         "apt": "apt-get install -y pff-tools"
       },
       "licence": "LGPL-3.0-or-later",
@@ -197,7 +189,7 @@
       "name": "zircolite",
       "package": "Zircolite",
       "optional": true,
-      "why": "Run thousands of Sigma rules over EVTX and return the detections. The fastest of the three engines and the lightest on memory.",
+      "why": "Run thousands of Sigma rules over EVTX and return the detections. One of two engines sigma_hunt can use (the other is hayabusa); either is enough.",
       "install": {
         "brew": "https://github.com/wagga40/Zircolite/releases",
         "apt": "pinned source 4.0.0 (install.source)",
@@ -222,7 +214,7 @@
       "name": "hayabusa",
       "package": "hayabusa",
       "optional": true,
-      "why": "Sigma detections plus a forensic timeline over EVTX, in one Rust binary.",
+      "why": "Sigma detections plus a forensic timeline over EVTX, in one Rust binary. One of two engines sigma_hunt can use (the other is zircolite); either is enough.",
       "install": {
         "brew": "https://github.com/Yamato-Security/hayabusa/releases",
         "apt": "pinned download 4.1.0 (install.download)",

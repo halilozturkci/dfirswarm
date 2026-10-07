@@ -211,8 +211,14 @@ test("every entry that ships keeps the library's contract", async () => {
     // Entries wrap at 76 columns, so a phrase may break across lines.
     const flat = (s: string | null) => (s ?? "").replace(/\s+/g, " ");
     const rules = flat(section(body, /^###\s+Ground rules\s*$/));
-    for (const must of ["read-only", "work/extracted/<your id>/", "`record`", "kind=ioc", "labelled as one", "Never make a network request", "make_tool", "English", "`skill` is in your tool list", "never a credential", "never running"]) {
+    for (const must of ["read-only", "work/extracted/<your id>/", "`record`", "kind=ioc", "labelled as one", "Never make a network request", "make_tool", "English", "never a credential", "never running"]) {
       if (!rules.includes(must)) bad(id, `ground rules do not say: ${must}`);
+    }
+    // The packs' index is in every agent's prompt and the worker prompt says how to use it. A goal that tells the
+    // agents to call skill() with no id has each of them read the index again: ~30 tokens of pointer when the
+    // prompt carries it whole, the whole of it (up to ~3.4k tokens for twelve packs) when the prompt shows routers only.
+    if (/call it once with no id|`skill` is in your tool list|skill\(\) with no/.test(flat(body))) {
+      bad(id, "tells the agents to call skill() for the index: the index is already in their prompt, and the worker prompt carries the protocol");
     }
     // Volatility's windows.* plugins need an ISF; under the default netguard
     // they fail unless the kickoff allowed the symbol server by name.

@@ -1,6 +1,6 @@
 {
   "name": "evtx_query",
-  "description": "Parse an EVTX file and return filtered events with timestamp, event_id, channel, computer, record_id, and named data fields.",
+  "description": "Query an EVTX event log and return filtered events with timestamp, event id, channel, computer, provider, EventRecordID and named data fields. A run reports three counts apart: records_examined (every record the reader produced), events_matched (records that parsed and passed every filter) and parse_errors (records or chunk chains that could not be read, with their offsets); an error row is never counted as a match, and a run with any parse error, or whose chunks could not be enumerated to the end, is status partial. Every row carries record_offset, chunk_offset, the EventRecordID and record_filetime (the FILETIME in the record header, as a decimal string, with record_time_utc by integer arithmetic) beside the XML's own SystemTime. Filters: event_ids, contains (a substring of the XML), start_record and end_record, and start_time and end_time (ISO 8601: YYYY-MM-DD then optionally THH, THH:MM, THH:MM:SS or THH:MM:SS.fffffff, and from the hour on Z or an offset such as +03:00; no zone is UTC; a time names the span its precision gives, so a date is the whole day; the SystemTime of each record is converted to UTC ticks and compared as a number; a malformed time, a word such as yesterday, or a range that ends before it starts is refused; a record with no SystemTime is left out of a time range and counted in events_without_time_excluded, and the run is partial). The log is accounted for as a whole: chunks_declared (what the file header says), chunks_read (what the reader gave), bytes_expected and file_bytes; a file shorter than its header says or a reader that gave fewer chunks than declared is status partial with a problem naming both, not a log with no records. The XML of every match is kept in the result file (JSON Lines), which is created exclusively and never replaces or truncates an earlier result: when the name is taken the first free -2, -3... beside it is used and result_file_requested says so; its default name is made from the arguments without `contains`, so a needle never reaches a file name. limit is the inline page size. SENSITIVE: event data can hold command lines and text typed into one, which can hold a secret; run it as a job with secret_output: true when the log may.",
   "params": {
     "path": {
       "type": "string",
@@ -16,12 +16,12 @@
     },
     "limit": {
       "type": "integer",
-      "description": "Maximum events in the JSON summary; every matching event and its full XML is kept in result_file",
+      "description": "Events shown inline (default 200, an inline page size); every matching event and its whole XML is kept in result_file, and parse-error rows are listed under errors and kept there too",
       "required": false
     },
     "out_file": {
       "type": "string",
-      "description": "Optional JSONL result path under the run; defaults to a deterministic path under work/",
+      "description": "Optional JSONL result path under the run (in a job, under $OUT); defaults to work/<your id>/tool-output/ (in a job, $OUT). An existing file is never replaced: the first free name beside it is used and named",
       "required": false
     },
     "start_record": {
@@ -33,6 +33,14 @@
       "type": "integer",
       "description": "Optional maximum EventRecordID",
       "required": false
+    },
+    "start_time": {
+      "type": "string",
+      "description": "Optional ISO 8601 lower bound on the XML's SystemTime: the beginning of the span the text names (2026-09-01 is 00:00 that day, 2026-09-01T10:00 is 10:00:00); no zone is UTC, Z or an offset is applied"
+    },
+    "end_time": {
+      "type": "string",
+      "description": "Optional ISO 8601 upper bound on the XML's SystemTime: the end of the span the text names, so 2026-09-01 includes the whole day and 2026-09-01T10:00 that whole minute; no zone is UTC, Z or an offset is applied"
     }
   },
   "runtime": "python3",
@@ -40,7 +48,19 @@
   "timeout_seconds": 60,
   "example": "{\"path\":\"work/extracted/evtx/Security.evtx\",\"event_ids\":[4624,4672],\"limit\":5}",
   "by": "sbe1801",
-  "at": "2026-09-18T12:56:43.858Z",
-  "version": 1,
-  "sha256": "2fe13bdb99e7244fc233bdc1be45a22b92cf684f735d5a0656fc70efac7dbdc9"
+  "at": "2026-10-07T12:00:00.000Z",
+  "version": 3,
+  "sha256": "a83037006798d38668a74616f0b371d1670ebc57a5b46ce67b26ff9a6199d79e",
+  "use": {
+    "extensions": [
+      ".evtx"
+    ],
+    "magic": [
+      {
+        "offset": 0,
+        "hex": "456c6646696c6500"
+      }
+    ]
+  },
+  "requires": []
 }

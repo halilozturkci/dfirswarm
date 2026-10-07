@@ -1,8 +1,8 @@
 {
   "id": "triage-collection",
   "name": "Triage and Collection Pack",
-  "version": "1.1.2",
-  "description": "What to do when the evidence is a collector's output rather than an image: recognising which tool made it, reading its own manifest and log, normalising the paths it rewrote, saying what a logical acquisition cannot contain, and handing the result to the platform packs.",
+  "version": "1.2.1",
+  "description": "What to do when the evidence is a collector's output rather than an image: surveying what was delivered and which collectors left records, reading those records without turning them into findings, keeping the source, delivered and analysis paths apart, saying what the delivery can and cannot establish, requesting more evidence through the operator, and handing files to the platform packs.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
     "DFIR Swarm"
@@ -18,11 +18,11 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "b521bae05db4fbb064565eb045867d740a4c0f9362b3791d3d461177180a40a6",
-      "tools/collection_index/manifest.json": "c19d75ee227dcd1a1f8102b4f19d73c00576520a79aad849f8e86c663ccc5b20",
-      "tools/collection_index/run.py": "6c6d753950f582f4f0ef58f1b1df548d8bbce24ff0cc8eaa7b3695ae582a09bc",
-      "tools/collection_id/manifest.json": "a75d0ab1745f77d9585281d0958c073ceb37c615546ae4bc77c3f38cd2956281",
-      "tools/collection_id/run.py": "9efd5ef70e5a07387258797864b2055c775b8c16744394526b3e7fb4eca33e73",
+      "README.md": "b63f9e547497afa7cba961febe78ee28dd6a1a36a706cfeb42422974fd51d903",
+      "tools/collection_index/manifest.json": "a5d22fb112f484c8be4eea38288f8a3dc1c1ce4c3c70d59d6745f9a64cb44053",
+      "tools/collection_index/run.py": "aaf1a7b23f7fa0e19fcfaf026a66ccf3da3a8aff993277fdd8521aaa1d37185e",
+      "tools/collection_id/manifest.json": "3b281c4df087a72dcbd373f0130efa3277abfa1cf5f20e8a4deb6ae1f5361e3c",
+      "tools/collection_id/run.py": "649ab504d418a14210568bc08475e6ab315ff1fc687073f7f7f13cc1978c34a0",
       "goals/collection-intake.md": "67132a553a610cbf54eb5c19ca0be6b7a24228a0fe1da3d47f67310b74dc951b",
       "skills/identify/collector.md": "798084a4989709e972ad51a1260a5b99476d91858f20299bea67bcdb84fb529f",
       "skills/verify/manifests.md": "3648fe82711b4b53698c77d71365dbdf0b8129a066cd6632211c411550d9fbfa",

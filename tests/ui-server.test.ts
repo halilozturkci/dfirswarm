@@ -14,7 +14,7 @@ import { createUiApp, defaultRunsDir, type UiApp } from "../scripts/ui/app.ts";
 import { ActionRunner, allowEntryOfUrl, checkReadiness, isHostName, isLocalHost, listModels, listPacks, parseModelList, parseModelTeam, readLocalProviders, startArgv, validateStart, vmProviderHosts, vmReadiness } from "../scripts/ui/actions.ts";
 import { resolveInputSet } from "../scripts/ui/inputs.ts";
 import { ChangeBus, classifyPath, SUPPRESSED_KINDS, type BusMessage } from "../scripts/ui/watch.ts";
-import { activitySeries, deriveCallsign, derivePhase, hubsParent, listSwarmRows, queryTraces, readCustody, vmHealth } from "../scripts/ui/model.ts";
+import { activitySeries, deriveCallsign, derivePhase, hubsParent, listSwarmRows, queryTraces, readCustody, readSwarmView, vmHealth } from "../scripts/ui/model.ts";
 import { seedFixtureRuns } from "../scripts/seed-fixture.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -3614,4 +3614,36 @@ test("the Network tab: the records over the API, what waits on the operator in t
   const after = await get<Record<string, any>>("/api/swarms/s7a1c/network");
   assert.equal(after.body.items[0].closed.how, "denied");
   assert.equal(after.body.items[0].closed.why, "not this host");
+});
+
+test("the Packs tab's skill use is counted over the whole trace and for every seat, not over the view's tail", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "swarm-ui-skills-"));
+  try {
+    await seedFixtureRuns(dir);
+    const { appendEvent } = await import("../extensions/protocol.ts");
+    const sandbox = join(dir, "s7a1c");
+    const row = (agent: string, tool: string, args: Record<string, unknown>, result: Record<string, unknown>) => appendEvent(sandbox, { agent, tool, args, result });
+    await row("s7a1c00", "skills_index", {}, { ok: true, section_tokens: 700, shown_tokens: 650 });
+    await row("s7a1c00", "skill", { id: "logs/auth" }, { ok: true, pack: "linux-forensics", bytes: 2_100, sha256: "ab".repeat(32), tokens: 480, tools: [], needs: [] });
+    await row("s7a1c00", "post", { body: "per logs/auth, the failed root logins start at 03:12" }, { ok: true });
+    await row("s7a1c01", "skill", { id: "logs/auth" }, { ok: true, pack: "linux-forensics", bytes: 2_100, sha256: "ab".repeat(32), tokens: 480, tools: [], needs: [] });
+    // Enough later lines that every skill row is before the view's tail of one.
+    for (let i = 0; i < 5; i++) await row("s7a1c02", "bash", { command: `echo ${i}` }, { ok: true });
+    const view = await readSwarmView(dir, "s7a1c", 1);
+    assert.ok(view);
+    assert.equal(view.traces.length, 1, "the view's trace is a tail of one line");
+    assert.ok(!view.traces.some((e) => e.tool === "skill"));
+    const use = view.skill_use;
+    assert.equal(use.totals.loads, 2);
+    assert.equal(use.totals.tokens_loaded, 960);
+    assert.equal(use.totals.seats, view.agents.length, "every seat of the run, the ones that never opened a skill too");
+    assert.ok(use.totals.seats > 2);
+    assert.equal(use.totals.seats_with_index, 1);
+    assert.deepEqual(use.by_skill.map((r) => [r.key, r.loads, r.agents]), [["linux-forensics:logs/auth", 2, ["s7a1c00", "s7a1c01"]]]);
+    assert.deepEqual(use.seats.filter((x) => x.loads).map((x) => [x.agent, x.referenced]), [["s7a1c00", 1], ["s7a1c01", 0]]);
+  } finally {
+    // The fixture's inputs are read-only, as a real run's are.
+    execFileSync("chmod", ["-R", "u+w", dir]);
+    await rm(dir, { recursive: true, force: true });
+  }
 });

@@ -87,10 +87,6 @@ same commands again.
   The kickoff decides installs. There is no root: no mounting, no `sudo`.
 - If `SWARM.md` has an "Evidence catalog" section, the first pass is already
   done: read `catalog/` instead of rebuilding it.
-- If `skill` is in your tool list, this run carries packs: call it once with
-  no id for the index, and fetch the notes that match the evidence in front of
-  you. A pack's method was written for this kind of case, its tools are already
-  loaded, and every fetch is on the trace for the report to cite.
 - Static only: an attachment or a dropped payload is read, parsed and hashed,
   never opened in an application and never run. Extract what you need into
   `work/extracted/<your id>/` (nothing there is run; it is no-exec only

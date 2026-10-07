@@ -1,14 +1,30 @@
 {
   "name": "cron_dump",
-  "description": "Collect every scheduled job on a Linux host into one list: /etc/crontab, /etc/cron.d, the per-user spool, the hourly to monthly drop directories, and systemd timers with the unit each one triggers.",
+  "description": "Inventory the scheduling candidates of an extracted Linux root, with what it looked in, what it did not, and what it could not read: /etc/crontab, /etc/cron.d, the cron.hourly to monthly directories (with each script's mode), the per-user spools, and systemd timers in the system and user unit directories and in each account's ~/.config/systemd/user and ~/.local/share/systemd/user (the homes etc/passwd lists, and every directory under home/ and root, so an account that was deleted still has its home looked in). A cron table over 64 MiB, and a unit or passwd file over 8 MiB, is named and not read; a table is read a line at a time, and a line over 1 MiB is located and not parsed. A directory reached twice through a link in its path (merged /usr) is read once and the alias named. A cron line keeps its physical line number, the schedule, the user (a table's user field, or a spool file's name) and the command as the exact substring of the line, and the byte offset of the line; a timer keeps every assignment in the file in order with its section and line, the empty ones included (the value is shown only for the keys with scheduling semantics under [Unit], [Timer] and [Install], such as OnCalendar, Unit and WantedBy; any other key, and any other section, shows its value's length (value_bytes) and says value_withheld), plus a naive reading (first schedule, last Unit=) that says it applies no reset, drop-in or override. It is a candidate inventory and not every scheduling mechanism: at jobs, anacron, .service units' ExecStart, generator output and runtime units are not read (named in `unsupported`), systemd drop-ins are listed and not merged, links (aliases, masks, enablement) are listed and not followed, and a listed job is not evidence that it ran. Coverage (read errors, walk errors, links, pipes and devices that were never opened) is computed before `contains` filters anything, so a filtered-out error still shows; a cron line that matches no table shape is counted and located. A file's modification time is a lead to explain, not a conclusion. SENSITIVE: a cron command, an environment value and a unit's Environment= can hold a secret; the answer carries the schedule, user, locators, the command's length and the environment variables' names, and never the command, the values or the raw line; `contains` matches the command, the unit and the script path only in a job (outside one it matches the fields the answer shows). write_text: true (refused outside a job) creates $OUT/cron-text.jsonl, mode 0600; preview_text: true (refused outside a job) puts a cron command in the answer; run it as a job with secret_output: true. max_seconds (default 50, at most 50) stops the walk; what it did not reach is named. Places looked in are counted by state and shown up to a page, the rest paged. Every answer carries `status` (complete, partial or failed) and `status_basis`, the pair the recipes' coverage.json carries: the tool's own booleans stay beside it.",
   "params": {
     "root": {
       "type": "string",
-      "description": "The root of an extracted file system, or / on a live host"
+      "description": "The root of an extracted file system (a link is refused; links inside it are listed and not followed)"
     },
     "contains": {
       "type": "string",
-      "description": "Case-insensitive regex over the command or unit"
+      "description": "Case-insensitive regex over the command, the unit and the script path in a job; outside a job over the fields the answer shows (the answer says filter_touched_withheld_text). It filters what is returned, never what is counted as looked at"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Entries and unparsed lines shown inline (default 200 each); all are counted and, when there are more, the whole list is written as JSON Lines and named in pages.<list>.all_results"
+    },
+    "write_text": {
+      "type": "boolean",
+      "description": "Write the raw line, the command and the environment of each cron entry, and each timer's complete assignments, to $OUT/cron-text.jsonl (default false). Refused unless the tool runs as a job, which must be run with secret_output: true; a file already there is refused"
+    },
+    "preview_text": {
+      "type": "boolean",
+      "description": "Put each cron entry's raw line, command and environment values in the answer (default false). Refused unless the tool runs as a job, which must be run with secret_output: true"
+    },
+    "max_seconds": {
+      "type": "number",
+      "description": "The time to spend walking the root (default 50, at most 50); what is left is named and the answer is partial"
     }
   },
   "runtime": "python3",
@@ -16,7 +32,13 @@
   "timeout_seconds": 60,
   "example": "{\"root\": \"work/extracted\"}",
   "by": "maintainer",
-  "at": "2026-09-22T15:00:00.000Z",
-  "version": 4,
-  "sha256": "617b3e2a20f7370bba216b12ecff07bb07ab35815047ce0203ed6cc68d060b73"
+  "at": "2026-10-07T12:00:00.000Z",
+  "version": 5,
+  "sha256": "c4abcbc56cca52bd9a9e0eb7db8fa7ee71ad998337c8185ac270588d73081569",
+  "use": {
+    "names": [
+      "crontab",
+      "*.timer"
+    ]
+  }
 }

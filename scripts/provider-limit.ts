@@ -121,7 +121,7 @@ export type TraceRow = { agent: string; tool: string; at: number; args?: Record<
 export const SEAT_HARNESS_ROWS: ReadonlySet<string> = new Set([
   "agent_start", "agent_stop", "hub_prompt", "hub_lost", "hub_lost_stop", "context", "thinking", "tool_loaded", "toolchain",
   "inputs_guard", "budget_precall_stop", "pause_hold", "run_paused", "harness_stop", "extension_error", "watch_truncated",
-  "agent_cap_steer", "agent_cap_stop", "sentinel_nudge", "repeat_hint", "job_hint", "evidence_code", "forge_hint", "publish_needed",
+  "agent_cap_steer", "agent_cap_stop", "sentinel_nudge", "repeat_hint", "job_hint", "evidence_code", "forge_hint", "publish_needed", "skills_index", "skills_compacted",
   "self_compact", "compact_config", "compact_notice", "compact_warning", "compact_forced", "compact_hold",
   "compact_note", "compact_start", "compact_done", "compact_failed", "compact_stalled", "compact_held",
   // A ledger entry the harness authored while it made the seat's header (a person's hint as a hypothesis).

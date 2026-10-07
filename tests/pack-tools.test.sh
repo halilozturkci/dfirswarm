@@ -207,7 +207,7 @@ a, b = d["entries"]
 assert d["record_size"] == 1024, d["record_size"]
 assert a["entry"] == 40 and a["in_use"], a
 assert a["primary_name"] == "notes.txt", a["primary_name"]
-assert a["standard_information"]["modified"] == "2026-03-02T11:00:00Z", a["standard_information"]
+assert a["standard_information"]["modified"] == "2026-03-02T11:00:00.0000000Z", a["standard_information"]
 import base64
 assert base64.b64decode(a["data_streams"][0]["content_base64"]).startswith(b"a resident note"), a["data_streams"]
 assert b["entry"] == 41 and not b["in_use"], b
@@ -260,39 +260,70 @@ assert r["chunk_verified"] is True, r
   pass "evtx_carve recovers records from a lone chunk in unallocated space, checksums verified"
 fi
 
-# --- jumplist: the DestList layout, both versions ---------------------------
+# --- jumplist: the DestList layout, by version -------------------------------
+# The fixtures are written from the jump list format notes, not from the parser:
+# a 32-byte header; an entry's fixed part is 114 bytes in version 1 (path length at
+# 0x70, path from 0x72) and 130 bytes in versions 3 and 4 (path length at 0x80, path
+# from 0x82, then a 4-byte trailer); in all of them the NetBIOS name is at 0x48, the
+# entry number at 0x58, the last-access FILETIME at 0x64 and the pin state at 0x6C
+# (-1 is not pinned). The same fixtures once shared the parser's single 118-byte
+# layout, which put the path length at 0x74 for every version.
 "$PY" - "$WIN/tools/jumplist/run.py" <<'EOF' || fail "jumplist did not read a DestList"
 import struct, datetime, importlib.util, sys
 spec = importlib.util.spec_from_file_location("jl", sys.argv[1])
 jl = importlib.util.module_from_spec(spec); spec.loader.exec_module(jl)
 EPOCH = datetime.datetime(1601, 1, 1, tzinfo=datetime.timezone.utc)
-def ft(iso):
+def ft(iso, extra_ticks=0):
     dt = datetime.datetime.fromisoformat(iso).replace(tzinfo=datetime.timezone.utc)
-    return int((dt - EPOCH).total_seconds()) * 10_000_000
-def entry(number, host, count, when, path, trailer):
-    b = bytearray(118 + len(path) * 2 + trailer)
-    b[0x48:0x48+len(host)] = host.encode("ascii")
+    return int((dt - EPOCH).total_seconds()) * 10_000_000 + extra_ticks
+def entry(version, number, host, when, path, pin):
+    fixed, chars_at, trailer = (114, 0x70, 0) if version == 1 else (130, 0x80, 4)
+    b = bytearray(fixed + len(path) * 2 + trailer)
+    b[0x48:0x48 + len(host)] = host.encode("ascii")
     struct.pack_into("<I", b, 0x58, number)
-    struct.pack_into("<I", b, 0x64, count)
-    struct.pack_into("<Q", b, 0x68, ft(when))
-    struct.pack_into("<i", b, 0x70, -1)
-    struct.pack_into("<H", b, 0x74, len(path))
-    b[118:118+len(path)*2] = path.encode("utf-16-le")
+    struct.pack_into("<I", b, 0x5C, 0x11223344)            # counters the tool must not call an access count
+    struct.pack_into("<I", b, 0x60, 0x55667788)
+    struct.pack_into("<Q", b, 0x64, when)
+    struct.pack_into("<i", b, 0x6C, pin)
+    if version != 1:
+        struct.pack_into("<IIII", b, 0x70, 0xA1, 0xA2, 0xA3, 0xA4)
+    struct.pack_into("<H", b, chars_at, len(path))
+    b[fixed:fixed + len(path) * 2] = path.encode("utf-16-le")
     return bytes(b)
-for version, trailer in ((1, 0), (3, 4)):
-    e = [entry(1, "WIN-DC01", 7, "2026-02-03T08:15:00", r"\\fileserver\finance\Q4.xlsx", trailer)]
-    data = struct.pack("<IIIIIIII", version, len(e), 0, 0, 1, 0, 0, 0) + b"".join(e)
+UNC = r"\\fileserver\finance\Q4.xlsx"
+LOCAL = r"C:\case\report.txt"
+when = ft("2026-02-03T08:15:00", 1234567)
+for version in (1, 3, 4):
+    e = [entry(version, 1, "WIN-DC01", when, UNC, -1), entry(version, 10, "WIN-DC01", when + 10_000_000, LOCAL, 2)]
+    data = struct.pack("<IIIIIIII", version, len(e), 1, 0, 2, 0, 0, 0) + b"".join(e)
     got = jl.parse_destlist(data)
     assert not got["problems"], (version, got["problems"])
-    one = got["entries"][0]
-    assert one["path"].endswith("Q4.xlsx"), one
-    assert one["hostname"] == "WIN-DC01" and one["access_count"] == 7, one
-    assert one["last_access"] == "2026-02-03T08:15:00Z", one
+    assert got["destlist_version"] == version and len(got["entries"]) == 2, got
+    one, two = got["entries"]
+    assert one["path"] == UNC, (version, one)
+    assert one["hostname"] == "WIN-DC01" and one["entry_number"] == 1 and one["stream"] == "1", one
+    assert one["last_access"] == "2026-02-03T08:15:00.1234567Z", (version, one)
+    assert one["last_access_filetime"] == str(when), one
+    assert one["pinned"] is False and one["pin_status"] == -1, one
+    assert two["path"] == LOCAL and two["stream"] == "a" and two["pinned"] is True and two["pin_status"] == 2, (version, two)
+    assert two["last_access"] == "2026-02-03T08:15:01.1234567Z", two
+    assert "access_count" not in one, "no access count is claimed: its position is not established"
+    assert one["undecoded_0x5c_0x64_hex"] == "4433221188776655", one
+    if version != 1:
+        assert one["undecoded_0x70_0x80_hex"] == "a1000000a2000000a3000000a4000000", one
+# a version this parser does not read is a problem and no entries, never a guess
+odd = struct.pack("<IIIIIIII", 2, 1, 0, 0, 0, 0, 0, 0) + entry(3, 1, "H", when, LOCAL, -1)
+got = jl.parse_destlist(odd)
+assert got["entries"] == [] and got["problems"] and "version 2" in got["problems"][0], got
+# an entry whose path length runs past the stream stops the read and says so
+cut = struct.pack("<IIIIIIII", 3, 1, 0, 0, 0, 0, 0, 0) + entry(3, 1, "H", when, LOCAL, -1)[:-20]
+got = jl.parse_destlist(cut)
+assert got["entries"] == [] and any("does not fit" in p for p in got["problems"]), got
 # and the link structures inside a customDestinations-ms are found by their own header
 blob = b"\x02\x00\x00\x00" + jl.LNK_MAGIC + b"A" * 40 + jl.LNK_MAGIC + b"B" * 30
 assert [o for o, _ in jl.split_lnks(blob)] == [4, 64], jl.split_lnks(blob)
 EOF
-pass "jumplist reads a DestList in both layouts and splits a customDestinations by link header"
+pass "jumplist reads a DestList by its version's layout (1, 3 and 4), refuses another version, and splits a customDestinations by link header"
 
 # --- shellbags: shell items, and the honest fallback ------------------------
 "$PY" - "$WIN/tools/shellbags/run.py" <<'EOF' || fail "shellbags did not decode a shell item"
@@ -311,17 +342,20 @@ def dir_item(short, long_name, version):
     b += short.encode("ascii") + b"\x00"
     if len(b) % 2:
         b += b"\x00"
+    # The 0xBEEF0004 block as the libfwsi notes lay it out: size, version, signature, the FAT creation and access
+    # times, the 2-byte offset of the long name at 0x10, the fields of the version up to the name (0x14 in version 3,
+    # 0x26 in 7, 0x2A in 8, 0x2E in 9), the NUL-terminated UTF-16 long name, and the 2-byte offset of the block in the item.
+    name_at = {3: 0x14, 7: 0x26, 8: 0x2A, 9: 0x2E}[version]
     ext = bytearray(struct.pack("<HH", 0, version) + struct.pack("<I", 0xBEEF0004))
     ext += struct.pack("<I", dos(2026, 1, 3, 8, 0, 0)) + struct.pack("<I", dos(2026, 2, 14, 9, 31, 0))
-    ext += struct.pack("<H", version)
-    if version >= 7:
-        ext += struct.pack("<H", 0) + struct.pack("<Q", 42) + struct.pack("<Q", 0) + struct.pack("<H", len(long_name))
+    ext += struct.pack("<H", name_at)
+    ext += b"\x00" * (name_at - len(ext))
     ext += long_name.encode("utf-16-le") + b"\x00\x00" + struct.pack("<H", 0x14)
     struct.pack_into("<H", ext, 0, len(ext))
     b += ext
     struct.pack_into("<H", b, 0, len(b))
     return bytes(b)
-for version in (3, 7):
+for version in (3, 7, 8, 9):
     got = sb.decode_item(dir_item("HOLIDA~1", "holiday photos 2026", version))
     assert got["type"] == "directory", (version, got)
     assert got["name"] == "holiday photos 2026", (version, got)
@@ -487,6 +521,12 @@ pass "feature_scan, zeek_run, sigma_hunt, unified_log and doc_probe write under 
 # caller's naming wrote there unchecked as well: cloud, macOS, triage, network
 # and Linux. The same refusals, before anything is read or run.
 more() { # <run.py> <key> <path>
+  # The cloud tools refuse an argument they do not take (a typo would otherwise return an unfiltered answer that looks filtered),
+  # so they get only the path and the output key; the others take the one bag of every name.
+  if [[ "$1" == */cloud-forensics/* ]]; then
+    (cd "$OUT/run" && printf '{"path":"inputs/blob.bin","%s":"%s"}' "$2" "$3" | PATH="$OUT/pyonly" "$OUT/pyonly/python3" "$1")
+    return
+  fi
   (cd "$OUT/run" && printf '{"path":"inputs/blob.bin","source":"inputs/blob.bin","db":"inputs/blob.bin","rules":"inputs/blob.bin","root":"inputs","%s":"%s"}' "$2" "$3" \
     | PATH="$OUT/pyonly" "$OUT/pyonly/python3" "$1")
 }
@@ -560,13 +600,19 @@ assert "--noexternal" not in d.get("command", ""), d
 det = d["detections"][0]
 assert det["rule"] == "Bitsadmin Download" and det["record_id"] == 7 and det["level"] == "high", det
 ' "$out" || fail "sigma_hunt did not read what Zircolite matched: $out"
-# The engine writes its result inside out_dir: a link left there under the
-# result's name is followed to where it lands, and refused under inputs/.
+# Each run writes into a directory of its own inside out_dir, so a link left in
+# out_dir under the result's old name is never written through (the engine writes
+# beside it, in a name nobody could plant), and an out_dir that is itself a link
+# to a place under inputs/ is refused.
 mkdir -p "$SH/run/inputs" "$SH/run/work/hunt2"; ln -s ../../inputs/planted.json "$SH/run/work/hunt2/zircolite.json"
 out="$(cd "$SH/run" && printf '{"path": "Security.evtx", "out_dir": "work/hunt2", "engine": "zircolite"}' | PATH="$SH/bin:$PATH" "$PY" "$WIN/tools/sigma_hunt/run.py" 2>&1)" \
-  && fail "sigma_hunt let its engine write through a link in out_dir: $out"
-grep -q 'cannot be under inputs/' <<<"$out" && [[ ! -e "$SH/run/inputs/planted.json" ]] || fail "sigma_hunt should refuse a result a link sends under inputs/: $out"
-pass "sigma_hunt runs Zircolite without --noexternal, which Zircolite 3 and later refuse, and reads its detections, and never through a link out of out_dir"
+  || fail "sigma_hunt should run in a directory of its own beside a planted link: $out"
+[[ ! -e "$SH/run/inputs/planted.json" ]] || fail "sigma_hunt let its engine write through a link in out_dir: $out"
+ln -s ../inputs "$SH/run/work/hunt3"
+out="$(cd "$SH/run" && printf '{"path": "Security.evtx", "out_dir": "work/hunt3", "engine": "zircolite"}' | PATH="$SH/bin:$PATH" "$PY" "$WIN/tools/sigma_hunt/run.py" 2>&1)" \
+  && fail "sigma_hunt accepted an out_dir that is a link under inputs/: $out"
+grep -q 'cannot be under inputs/' <<<"$out" || fail "sigma_hunt should refuse an out_dir a link sends under inputs/: $out"
+pass "sigma_hunt runs Zircolite without --noexternal, which Zircolite 3 and later refuse, and reads its detections, in a directory of its own, and never through a link out of out_dir"
 
 # Nothing cut: every field of a matched record (it kept the first 12), every
 # rule that fired (it kept 25), and the engine's own stdout and stderr whole
@@ -638,8 +684,10 @@ chmod u+w "$SH/run"
 "$PY" - "$zc" "$hb" "$SH/run" <<'EOF' || fail "sigma_hunt should keep each engine's log in out_dir and name it: $zc $hb"
 import json, os, sys
 z, h, run = json.loads(sys.argv[1]), json.loads(sys.argv[2]), sys.argv[3]
-assert z["engine_logs"] == ["work/ro-z/zircolite.log"] and os.path.isfile(os.path.join(run, z["engine_logs"][0])), z
-assert h["engine_logs"] == ["work/ro-h/logs/errorlog-20260929_120000.log"], h
+# Each run has a directory of its own under out_dir, and its logs are in it.
+assert z["run_dir"].startswith("work/ro-z/hunt-"), z["run_dir"]
+assert z["engine_logs"] == [z["run_dir"] + "/zircolite.log"] and os.path.isfile(os.path.join(run, z["engine_logs"][0])), z
+assert h["engine_logs"] == [h["run_dir"] + "/logs/errorlog-20260929_120000.log"], h
 assert h["detections"][0]["rule"] == "Hayabusa rule" and h["detections"][0]["record_id"] == 9, h
 EOF
 pass "sigma_hunt keeps Zircolite's log (--logfile) and Hayabusa's error log (run in out_dir) in out_dir, and runs with the run directory read-only"
@@ -661,7 +709,7 @@ inp, out = arg("--input"), arg("--output")
 layout = sorted(os.path.relpath(os.path.join(d, f), inp) for d, _, fs in os.walk(inp) for f in fs)
 with open(out, "w") as fh:
     for i in range(3):
-        fh.write(json.dumps({"n": i, "input": inp, "layout": layout, "argv": a}) + "\n")
+        fh.write(json.dumps({"timestamp": "2026-02-14T09:30:0%d+0000" % i, "message": "m%d" % i, "n": i, "input": inp, "layout": layout, "argv": a}) + "\n")
 if os.environ.get("ULI_FAIL"):
     sys.stderr.write("thread panicked: " + "x" * 5000 + "\n")
     sys.exit(101)

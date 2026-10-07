@@ -5,8 +5,8 @@ did, by what route, and what it was.
 
 Read the skill index with `skill()` first. `registry/devices` covers removable
 media, `browser/artefacts` covers upload and webmail, `execution/srum` is the
-one artefact that gives volume, and `artifacts/shell` proves what was opened
-from where.
+one artefact that gives byte counters (and says what they do not show), and
+`artifacts/shell` says what its records show about what was opened from where.
 
 ## Questions
 

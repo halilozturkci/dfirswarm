@@ -1,26 +1,66 @@
 {
   "id": "network-capture",
-  "version": "1.0.0",
-  "description": "Parse a pcap or pcapng whole: capture metadata and one lossless packet, DNS, HTTP and TLS field listing for examiner pivots.",
+  "version": "1.2.0",
+  "description": "Catalogue a pcap or pcapng: capinfos metadata and a complete listing of the selected fields of every packet and of the DNS, HTTP and TLS packets (and of HTTP/2 and QUIC packets when the installed tshark lists their fields), for examiner pivots. A receipt from the first moment records each step, the tool versions and the truncated packets; the listings are one tshark's reading, not the capture.",
   "object": "network capture",
   "order": 40,
   "min_bytes": 24,
-  "suffixes": [".pcap", ".pcapng", ".cap"],
+  "suffixes": [
+    ".pcap",
+    ".pcapng",
+    ".cap"
+  ],
   "magic": [
-    {"offset": 0, "hex": "d4c3b2a1"},
-    {"offset": 0, "hex": "a1b2c3d4"},
-    {"offset": 0, "hex": "4d3cb2a1"},
-    {"offset": 0, "hex": "a1b23c4d"},
-    {"offset": 0, "hex": "0a0d0d0a"}
+    {
+      "offset": 0,
+      "hex": "d4c3b2a1"
+    },
+    {
+      "offset": 0,
+      "hex": "a1b2c3d4"
+    },
+    {
+      "offset": 0,
+      "hex": "4d3cb2a1"
+    },
+    {
+      "offset": 0,
+      "hex": "a1b23c4d"
+    },
+    {
+      "offset": 0,
+      "hex": "0a0d0d0a"
+    }
   ],
   "runtime": "python3",
   "entry": "run.py",
-  "auto": ["kickoff", "derived"],
-  "limits": {"seconds": 3600},
-  "outputs": ["capture.txt", "packets.tsv", "dns.tsv", "http.tsv", "tls.tsv", "index.tsv", "coverage.json"],
+  "auto": [
+    "kickoff",
+    "derived"
+  ],
+  "limits": {
+    "seconds": 3600
+  },
+  "outputs": [
+    "capture.txt",
+    "packets.tsv",
+    "dns.tsv",
+    "http.tsv",
+    "tls.tsv",
+    "http2.tsv",
+    "quic.tsv",
+    "index.tsv",
+    "coverage.json"
+  ],
   "purpose": "broad_extraction",
   "capability": "network-fields",
-  "exclusions": ["protocols other than DNS, HTTP and TLS are listed per packet, not decoded field by field", "payloads and transferred objects are not reassembled or carved", "encrypted TLS contents", "fields of packets that were truncated, malformed or of a protocol tshark does not decode"],
-  "covers": "Every packet and the DNS, HTTP and TLS fields tshark can decode, plus capture metadata. It does not assert that a missing protocol is absent when packets were truncated, encrypted, malformed or unsupported.",
-  "sha256": "32547b436c83c8ef7bd6fc5398e99ab01109c159f182de58eeef976ff33b9b3e"
+  "exclusions": [
+    "protocols other than DNS, HTTP, TLS, and HTTP/2 and QUIC where the installed tshark lists their fields, are listed per packet, not decoded field by field",
+    "payloads and transferred objects are not reassembled or carved",
+    "encrypted TLS and QUIC contents",
+    "fields of packets that were truncated, malformed or of a protocol tshark does not decode",
+    "http2.tsv and quic.tsv are not made when the installed tshark does not list the fields they need (the receipt says so)"
+  ],
+  "covers": "Capture metadata and, for every packet, the selected fields tshark can decode (packets.tsv), with DNS, HTTP and TLS listings and, only where the installed tshark lists their fields, HTTP/2 and QUIC. It does not assert that a missing protocol is absent when packets were truncated, encrypted, malformed or unsupported; coverage.json counts the truncated packets. http.tsv can hold credentials in request URIs and is marked secret-bearing in the receipt.",
+  "sha256": "fa605e4090578d56357b7e9cd5444c6aefac276648cdbecb227bb789f79bd937"
 }

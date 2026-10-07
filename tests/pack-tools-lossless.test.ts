@@ -115,9 +115,10 @@ test("archive_probe lists every ZIP entry and counts every encrypted one past th
   });
 });
 
-test("archive_probe finds a PDF's encryption dictionary in the trailer of a file past 8 MiB", async () => {
+test("archive_probe searches the whole of a PDF: a marker in the trailer of a file past 8 MiB is found, as a marker", async () => {
   // It read the first 8 MiB, and a PDF names /Encrypt in its trailer, at the
-  // end: a large encrypted PDF was reported as opening with nothing.
+  // end: a large encrypted PDF was reported as opening with nothing. It is
+  // still a byte search, so what comes back is where the marker is, not a verdict.
   await withCwd(async (cwd) => {
     const pdf = Buffer.concat([
       Buffer.from("%PDF-1.7\n"),
@@ -125,13 +126,18 @@ test("archive_probe finds a PDF's encryption dictionary in the trailer of a file
       Buffer.from("\n5 0 obj\n<< /Filter /Standard /V 5 /R 6 /P -1028 >>\nendobj\ntrailer\n<< /Encrypt 5 0 R >>\n%%EOF\n"),
     ]);
     await writeFile(join(cwd, "work", "large.pdf"), pdf);
-    const out = body<{ protected: boolean; r: number; scheme: string; permissions_flags: number }>(
-      await tool(join(ENC, "archive_probe", "run.py"), cwd, { path: "work/large.pdf" }),
-    );
-    assert.equal(out.protected, true);
-    assert.equal(out.r, 6);
-    assert.equal(out.scheme, "AES-256");
-    assert.equal(out.permissions_flags, -1028);
+    const out = body<{
+      protected: boolean | null;
+      protection: string;
+      encrypt_marker: { found: boolean; count: number; first_offsets: number[] };
+      unresolved_hints: { v: number; r: number; p: number };
+    }>(await tool(join(ENC, "archive_probe", "run.py"), cwd, { path: "work/large.pdf" }));
+    assert.equal(out.encrypt_marker.found, true);
+    assert.deepEqual(out.encrypt_marker.first_offsets, [pdf.indexOf("/Encrypt")]);
+    assert.ok(out.encrypt_marker.first_offsets[0] > 8 * 1024 * 1024);
+    assert.equal(out.protected, null);
+    assert.match(out.protection, /^heuristic/);
+    assert.deepEqual([out.unresolved_hints.v, out.unresolved_hints.r, out.unresolved_hints.p], [5, 6, -1028]);
   });
 });
 
@@ -146,10 +152,17 @@ function sevenZip(header: Buffer): Buffer {
 
 const AES_CODER = Buffer.from([0x06, 0xf1, 0x07, 0x01]);
 
-test("archive_probe reads every string of a 7-Zip header, from the header itself", async () => {
+test("archive_probe keeps every string of a 7-Zip header as a hint, from the header itself, when 7z cannot list it", async () => {
   // It read strings from the first 4 KiB, which is packed data, and kept
-  // ten of them. The header, with the names, is at the end of the file.
+  // ten of them. The header, with the names, is at the end of the file. With
+  // 7z absent these printable strings are all it has, and it calls them a hint.
   await withCwd(async (cwd) => {
+    await mkdir(join(cwd, "nosite"), { recursive: true });
+    await writeFile(
+      join(cwd, "nosite", "sitecustomize.py"),
+      'import shutil\n_w = shutil.which\nshutil.which = lambda c, *a, **k: None if str(c) in ("7z", "7zz", "7za") else _w(c, *a, **k)\n',
+    );
+    const env = { PYTHONPATH: join(cwd, "nosite") };
     const names = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => `document-${i}.docx`);
     const plain = Buffer.concat([
       Buffer.from([0x01, 0x04, 0x06]),
@@ -159,33 +172,35 @@ test("archive_probe reads every string of a 7-Zip header, from the header itself
       Buffer.from([0x00]),
     ]);
     await writeFile(join(cwd, "work", "plain.7z"), sevenZip(plain));
-    const out = body<Page & {
-      header_kind: string;
-      names_readable: boolean;
-      protected: boolean;
-      strings_in_header: string[];
-      strings_in_header_count: number;
-    }>(await tool(join(ENC, "archive_probe", "run.py"), cwd, { path: "work/plain.7z", limit: 3 }));
-    assert.equal(out.header_kind, "plain");
-    assert.equal(out.names_readable, true);
-    assert.equal(out.protected, true, "an AES coder in a plain header means the data is encrypted");
-    assert.deepEqual(out.strings_in_header, names.slice(0, 3));
-    assert.equal(out.strings_in_header_count, 8);
-    assert.deepEqual(await allRows<string>(cwd, out), names);
+    const out = body<{
+      hints: { header_kind: string; data_encryption_coder_in_header: boolean };
+      names_readable: boolean | null;
+      protected: boolean | null;
+      header_strings_hint: string[];
+      header_strings_hint_count: number;
+      header_strings_hint_page: Page;
+    }>(await tool(join(ENC, "archive_probe", "run.py"), cwd, { path: "work/plain.7z", limit: 3 }, env));
+    assert.equal(out.hints.header_kind, "plain");
+    assert.equal(out.hints.data_encryption_coder_in_header, true);
+    assert.equal(out.names_readable, null, "printable strings are no member list");
+    assert.equal(out.protected, null);
+    assert.deepEqual(out.header_strings_hint, names.slice(0, 3));
+    assert.equal(out.header_strings_hint_count, 8);
+    assert.deepEqual(await allRows<string>(cwd, out.header_strings_hint_page), names);
 
-    // An encoded header whose coder list names AES hides the names too.
+    // An encoded header whose coder list names AES is a hint that the names need the password too.
     const encoded = Buffer.concat([Buffer.from([0x17, 0x06, 0x00, 0x01, 0x09, 0x20, 0x07, 0x0b, 0x01, 0x00, 0x02, 0x24]), AES_CODER, Buffer.alloc(8)]);
     await writeFile(join(cwd, "work", "hidden.7z"), sevenZip(encoded));
-    const hidden = body<{ header_kind: string; names_readable: boolean; protected: boolean }>(
-      await tool(join(ENC, "archive_probe", "run.py"), cwd, { path: "work/hidden.7z" }),
+    const hidden = body<{ hints: { header_kind: string; header_encrypted: boolean }; names_readable: null; protected: null }>(
+      await tool(join(ENC, "archive_probe", "run.py"), cwd, { path: "work/hidden.7z" }, env),
     );
-    assert.deepEqual([hidden.header_kind, hidden.names_readable, hidden.protected], ["encoded", false, true]);
+    assert.deepEqual([hidden.hints.header_kind, hidden.hints.header_encrypted, hidden.names_readable, hidden.protected], ["encoded", true, null, null]);
 
     // A header past the end of the file is said to be missing, not guessed at.
     const whole = sevenZip(plain);
     await writeFile(join(cwd, "work", "short.7z"), whole.subarray(0, whole.length - 10));
     const short = body<{ header_problem: string; names_readable: null }>(
-      await tool(join(ENC, "archive_probe", "run.py"), cwd, { path: "work/short.7z" }),
+      await tool(join(ENC, "archive_probe", "run.py"), cwd, { path: "work/short.7z" }, env),
     );
     assert.match(short.header_problem, /past the end of the file/);
     assert.equal(short.names_readable, null);
@@ -217,7 +232,8 @@ class _Record:
 
 class ChunkHeader:
     def __init__(self, buf, offset):
-        self._first, self._count = struct.unpack_from("<II", buf, offset + 8)
+        self._first, = struct.unpack_from("<I", buf, offset + 8)
+        self._count, = struct.unpack_from("<I", buf, offset + 0x34)
 
     def verify(self):
         return True
@@ -241,9 +257,16 @@ async function carveBlob(path: string): Promise<number[]> {
     [size - 1000, 13, 2],
   ];
   for (const [at, first, count] of chunks) {
+    // The chunk header as the format has it: the first and last record numbers (u64 at 0x08 and 0x10), the header size
+    // 0x80 at 0x28, the offsets of the last record and of the free space at 0x2C and 0x30. The count the stub reads sits
+    // at 0x34, where the format keeps a checksum the stub's verify() does not look at.
     blob.write("ElfChnk\u0000", at, "latin1");
-    blob.writeUInt32LE(first, at + 8);
-    blob.writeUInt32LE(count, at + 12);
+    blob.writeBigUInt64LE(BigInt(first), at + 8);
+    blob.writeBigUInt64LE(BigInt(first + count - 1), at + 0x10);
+    blob.writeUInt32LE(0x80, at + 0x28);
+    blob.writeUInt32LE(0x200, at + 0x2c);
+    blob.writeUInt32LE(0x400, at + 0x30);
+    blob.writeUInt32LE(count, at + 0x34);
   }
   await writeFile(path, blob);
   return chunks.map(([at]) => at);
@@ -363,13 +386,15 @@ open(sys.argv[1], "wb").write(out)
 test("mft_records reads every record past the page, past a zeroed first MiB, and past a record it cannot parse", async () => {
   // It stopped at `limit`, looked for the first FILE magic in the first
   // MiB only, and a record whose attribute ran off its end raised
-  // struct.error and ended the whole run with a traceback.
+  // struct.error and ended the whole run with a traceback. Such a record
+  // is now an entry of its own, marked unreliable with what was wrong, and
+  // a problem of the run with its offset.
   await withCwd(async (cwd) => {
     await build(MFT_BUILDER, join(cwd, "work", "MFT"));
     const out = body<Page & {
       record_size: number;
       records_scanned: number;
-      entries: { entry: number; primary_name: string }[];
+      entries: { entry: number; primary_name: string; unreliable?: boolean; structural_errors?: string[] }[];
       entry_count: number;
       problems: { record: number; offset: number; why: string }[];
       problem_count: number;
@@ -377,10 +402,12 @@ test("mft_records reads every record past the page, past a zeroed first MiB, and
     assert.equal(out.record_size, 1024);
     assert.equal(out.records_scanned, 1025 + 8);
     assert.deepEqual(out.entries.map((e) => e.entry), [40, 41, 42]);
-    assert.equal(out.entry_count, 7);
-    const rows = await allRows<{ entry: number; primary_name: string }>(cwd, out);
-    assert.deepEqual(rows.map((r) => r.entry), [40, 41, 42, 43, 44, 45, 46]);
-    assert.deepEqual(rows.map((r) => r.primary_name), [40, 41, 42, 43, 44, 45, 46].map((n) => `file-${n}.txt`));
+    assert.equal(out.entry_count, 8);
+    const rows = await allRows<{ entry: number; primary_name: string; unreliable?: boolean; structural_errors?: string[] }>(cwd, out);
+    assert.deepEqual(rows.map((r) => r.entry), [40, 41, 42, 43, 44, 45, 46, 47]);
+    assert.deepEqual(rows.slice(0, 7).map((r) => r.primary_name), [40, 41, 42, 43, 44, 45, 46].map((n) => `file-${n}.txt`));
+    assert.equal(rows[7].unreliable, true, "the damaged record is kept, marked");
+    assert.match((rows[7].structural_errors ?? []).join(" | "), /non-resident \$DATA header at offset 1008 is 16 bytes/);
     assert.equal(out.problem_count, 1);
     assert.equal(out.problems[0].record, 1025 + 7);
     assert.equal(out.problems[0].offset, (1025 + 7) * 1024);
@@ -623,6 +650,8 @@ type JumpFile = Page & {
   link_count: number;
   links_truncated?: boolean;
   entries?: unknown[];
+  entry_count?: number;
+  entries_page?: Page;
   application_id?: string;
 };
 
@@ -739,18 +768,22 @@ class OleFileIO:
         pass
 `;
 
+// A version 3 DestList as the jump list format notes lay it out: a 32-byte header, then
+// per entry a 130-byte fixed part (the NetBIOS name at 0x48, the entry number at 0x58,
+// the last-access FILETIME at 0x64, the pin state at 0x6C, the path length in
+// characters at 0x80), the UTF-16LE path from 0x82 and a 4-byte trailer.
 function destList(paths: string[]): Buffer {
   const header = Buffer.alloc(32);
   header.writeUInt32LE(3, 0);
   header.writeUInt32LE(paths.length, 4);
   const entries = paths.map((p, i) => {
-    const b = Buffer.alloc(118 + p.length * 2 + 4);
+    const b = Buffer.alloc(130 + p.length * 2 + 4);
     b.write("WIN-HOST", 0x48, "latin1");
     b.writeUInt32LE(i + 1, 0x58);
-    b.writeUInt32LE(1, 0x64);
-    b.writeInt32LE(-1, 0x70);
-    b.writeUInt16LE(p.length, 0x74);
-    b.write(p, 118, "utf16le");
+    b.writeBigUInt64LE(133_443_104_000_000_000n + BigInt(i) * 10_000_000n, 0x64);
+    b.writeInt32LE(-1, 0x6c);
+    b.writeUInt16LE(p.length, 0x80);
+    b.write(p, 0x82, "utf16le");
     return b;
   });
   return Buffer.concat([header, ...entries]);
@@ -772,7 +805,12 @@ test("jumplist keeps every stream of an automaticDestinations-ms past the page",
     assert.equal(one.application_id, "1b4dd67f29cb1962");
     assert.equal(one.links.length, 2);
     assert.equal(one.link_count, 6);
-    assert.equal((one.entries as unknown[]).length, 6);
+    // The DestList entries are paged like the links: a page inline, every entry in the file.
+    assert.equal((one.entries as unknown[]).length, 2);
+    assert.equal(one.entry_count, 6);
+    const entryRows = await allRows<{ path: string; hostname: string; entry_number: number }>(cwd, one.entries_page as Page);
+    assert.deepEqual(entryRows.map((r) => r.path), paths);
+    assert.deepEqual(entryRows.map((r) => r.hostname), Array(6).fill("WIN-HOST"));
     const rows = await allRows<{ stream: string; path: string; written_to: string }>(cwd, one);
     assert.deepEqual(rows.map((r) => r.path), paths);
     assert.equal((await readdir(join(cwd, "work", "s1", "auto"))).length, 6);
@@ -807,25 +845,47 @@ open(sys.argv[2], "wb").write(junk + one + junk[:50] + lnk(name + "-2") + junk[:
 type Lnk = {
   ok: boolean;
   name: string;
-  utf16_strings: string[];
+  utf16_strings: { link_offset: number; offset: number; chars: number; finding_id: string }[];
+  utf16_string_count: number;
   structure_complete: boolean;
   bytes_read: number;
+  secret_values: { values_file: string | null; written: number };
   extra: { sig: string; hex?: string; icon_env_ascii?: string; icon_env_u16?: string }[];
 };
 
-test("lnk_parse reads every UTF-16 string whole, past the first 8 KiB, and a whole icon block", async () => {
+/** The text of every finding the values file holds, its pieces joined in order. */
+async function findings(outDir: string, file: string): Promise<Map<string, string>> {
+  const text = await readFile(join(outDir, file), "utf8");
+  const out = new Map<string, string>();
+  for (const line of text.trimEnd().split("\n")) {
+    const row = JSON.parse(line) as { finding_id: string; value: string };
+    out.set(row.finding_id, (out.get(row.finding_id) ?? "") + row.value);
+  }
+  return out;
+}
+
+test("lnk_parse reads every UTF-16 string whole, past the first 8 KiB, and a whole icon block: the text goes to the values file, in a job", async () => {
   // Strings were cut at 256 characters, the sweep stopped at 8192 bytes,
   // the character after a string's NUL was skipped, and the icon
-  // environment block was reported as its first 32 bytes.
+  // environment block was reported as its first 32 bytes. The strings are text a link
+  // carries (a command line can hold a secret), so the answer holds their places and
+  // lengths and the text is in the values file a job writes.
   await withCwd(async (cwd) => {
     await build(LNK_BUILDER, join(cwd, "work", "one.lnk"), join(cwd, "work", "dump.bin"));
     const name = "LongName-" + "abcdefghij".repeat(30);
-    const out = body<Lnk>(await tool(join(WIN, "lnk_parse", "run.py"), cwd, { path: "work/one.lnk", size: 16384 }));
+    const outDir = join(cwd, "out");
+    await mkdir(outDir, { recursive: true });
+    const run = await tool(join(WIN, "lnk_parse", "run.py"), cwd, { path: "work/one.lnk", size: 16384, write_strings: true }, { JOB_ID: "j000001", OUT: outDir });
+    const out = body<Lnk>(run);
     assert.equal(out.ok, true);
     assert.equal(out.name, name);
-    assert.ok(out.utf16_strings.some((s) => s.includes(name)), "the 309-character name is read whole");
-    assert.ok(out.utf16_strings.includes("BeyondTheFirstWindow"), "a string past 8192 bytes is found");
-    assert.ok(out.utf16_strings.includes("SecondString"), "the next string keeps its first character");
+    assert.equal(out.secret_values.values_file, "store/jobs/j000001/out/lnk-strings.jsonl");
+    const text = [...(await findings(outDir, "lnk-strings.jsonl")).values()];
+    assert.ok(text.some((s) => s.includes(name)), "the 309-character name is read whole");
+    assert.ok(text.includes("BeyondTheFirstWindow"), "a string past 8192 bytes is found");
+    assert.ok(text.includes("SecondString"), "the next string keeps its first character");
+    assert.equal(out.utf16_string_count, out.utf16_strings.length);
+    assert.equal(run.stdout.includes("BeyondTheFirstWindow"), false, "the answer carries the places of the strings, not their text");
     assert.equal(out.structure_complete, true);
     const icon = out.extra.find((e) => e.sig === "0xa0000007");
     assert.ok(icon);
@@ -846,19 +906,22 @@ test("lnk_parse scans every link whole, each up to the next header, and keeps th
   await withCwd(async (cwd) => {
     await build(LNK_BUILDER, join(cwd, "work", "one.lnk"), join(cwd, "work", "dump.bin"));
     const size = (await stat(join(cwd, "work", "dump.bin"))).size;
-    const out = body<Page & { count: number; hits: Lnk[]; bytes_read: number }>(
-      await tool(join(WIN, "lnk_parse", "run.py"), cwd, { dump: "work/dump.bin", size, scan: true, max: 2 }),
+    const outDir = join(cwd, "out");
+    await mkdir(outDir, { recursive: true });
+    const out = body<Page & { count: number; hits: Lnk[]; bytes_read: number; secret_values: { values_file: string } }>(
+      await tool(join(WIN, "lnk_parse", "run.py"), cwd, { dump: "work/dump.bin", size, scan: true, max: 2, write_strings: true }, { JOB_ID: "j000002", OUT: outDir }),
     );
     assert.equal(out.count, 3);
     assert.equal(out.hits.length, 2);
     assert.equal(out.bytes_read, size);
-    const rows = await allRows<Lnk>(cwd, out);
+    // In a job the whole result is under $OUT, named as the sealed job's output.
+    assert.equal(out.all_results?.startsWith("store/jobs/j000002/out/tool-output/"), true);
+    const rows = (await readFile(join(outDir, out.all_results!.slice("store/jobs/j000002/out/".length)), "utf8")).trimEnd().split("\n").map((l) => JSON.parse(l) as Lnk);
     assert.equal(rows.length, 3);
-    for (const row of rows) {
-      assert.equal(row.structure_complete, true);
-      assert.ok(row.utf16_strings.includes("BeyondTheFirstWindow"));
-    }
+    for (const row of rows) assert.equal(row.structure_complete, true);
     assert.deepEqual(rows.map((r) => r.name.slice(-2)), ["ij", "-2", "-3"]);
+    const text = [...(await findings(outDir, "lnk-strings.jsonl")).values()];
+    assert.equal(text.filter((s) => s === "BeyondTheFirstWindow").length, 3, "every link's far string is in the values file");
   });
 });
 
@@ -881,20 +944,21 @@ test("mem_profile reads a 64-bit crash dump's physical-memory descriptor at its 
     head.writeBigUInt64LE(0x200n, 0xa8);
     head.writeBigUInt64LE(0x80n, 0xb0);
     head.writeUInt32LE(1, 0xf98);
-    await writeFile(join(cwd, "work", "memory.dmp"), head);
+    // The runs' 0x180 pages follow the header, one run after the other.
+    await writeFile(join(cwd, "work", "memory.dmp"), Buffer.concat([head, Buffer.alloc(0x180 * 4096)]));
     const out = body<{ container: Record<string, unknown>; notes: string[] }>(
       await tool(join(MEM, "mem_profile", "run.py"), cwd, { path: "work/memory.dmp", scan_mb: 1 }),
     );
     const c = out.container;
     assert.equal(c.format, "Windows crash dump");
     assert.equal(c.bits, 64);
-    assert.equal(c.header_problem, undefined);
+    assert.equal(c.problems, undefined);
     assert.equal(c.run_count, 2);
     assert.equal(c.pages_total, 0x180);
     assert.equal(c.runs_pages_total, 0x180);
     assert.deepEqual(c.memory_runs, [
-      { start_page: 1, pages: 0x100, start_byte: 0x1000, bytes: 0x100000 },
-      { start_page: 0x200, pages: 0x80, start_byte: 0x200000, bytes: 0x80000 },
+      { start_page: 1, pages: 0x100, physical_start: 0x1000, bytes: 0x100000, file_offset: 0x2000 },
+      { start_page: 0x200, pages: 0x80, physical_start: 0x200000, bytes: 0x80000, file_offset: 0x2000 + 0x100000 },
     ]);
     assert.equal(c.contiguous, false);
     assert.ok(out.notes.some((n) => /not contiguous: 2 memory runs/.test(n)));
@@ -916,13 +980,13 @@ test("mem_carve neither double-counts nor loses a hit at its 4 MiB block boundar
     blob.write("ElfChnk\u0000", 2 * CARVE_WINDOW - 3, "latin1"); // straddles the second boundary
     await writeFile(join(cwd, "work", "memory.raw"), blob);
     const out = body<{
-      hits: { kind: string; offset: number }[];
+      hits: { kind: string; signature_offset: number }[];
       hit_count: number;
       by_kind: Record<string, number>;
       complete_results: string;
       preview_limited: boolean;
     }>(await tool(join(MEM, "mem_carve", "run.py"), cwd, { path: "work/memory.raw", results_to: "work/s1/hits.jsonl" }));
-    assert.deepEqual(out.hits.map((h) => [h.kind, h.offset]), [
+    assert.deepEqual(out.hits.map((h) => [h.kind, h.signature_offset]), [
       ["registry hive", CARVE_WINDOW - 14],
       ["MFT record", CARVE_WINDOW - 5],
       ["event log chunk", 2 * CARVE_WINDOW - 3],
@@ -933,10 +997,10 @@ test("mem_carve neither double-counts nor loses a hit at its 4 MiB block boundar
     assert.equal(lines.length, 3);
 
     // One kind alone has a shorter overlap; the split signature is still found once.
-    const one = body<{ hit_count: number; hits: { offset: number }[] }>(
+    const one = body<{ hit_count: number; hits: { signature_offset: number }[] }>(
       await tool(join(MEM, "mem_carve", "run.py"), cwd, { path: "work/memory.raw", kinds: ["event log chunk"] }),
     );
-    assert.deepEqual(one.hits.map((h) => h.offset), [2 * CARVE_WINDOW - 3]);
+    assert.deepEqual(one.hits.map((h) => h.signature_offset), [2 * CARVE_WINDOW - 3]);
     assert.equal(one.hit_count, 1);
 
     // A bounded preview keeps every hit in the file it names.
@@ -961,7 +1025,6 @@ test("mem_carve refuses an output path outside work/<id>/", async () => {
       [{ results_to: "work/hits.jsonl" }, /inside work\/<your id>\/, not work\/ itself/],
       [{ extract_to: "../carved" }, /output must stay inside the run directory/],
       [{ extract_to: "inputs/carved" }, /under your own work\/<your id>\//],
-      [{ limit: 5 }, /results_to is required/],
     ];
     for (const [extra, message] of cases) {
       const r = refused(await tool(join(MEM, "mem_carve", "run.py"), cwd, { path: "inputs/memory.raw", ...extra }));
@@ -1071,15 +1134,19 @@ test("evtx_query answers a malformed record chain with an error row and keeps th
   }
   await withCwd(async (cwd) => {
     await build(EVTX_BUILDER, join(cwd, "work", "broken.evtx"));
-    const out = body<{ count: number; events: { parse_error?: string; chunk_offset?: number; record_offset?: number }[] }>(
+    const out = body<{ status: string; count: number; parse_errors: number; events: unknown[]; errors: { parse_error?: string; chunk_offset?: number; record_offset?: number }[] }>(
       await tool(join(LIB, "evtx_query", "run.py"), cwd, { path: "work/broken.evtx" }),
     );
-    assert.equal(out.count, 3);
-    assert.equal(out.events.length, 3);
-    assert.ok(out.events.every((e) => e.parse_error), JSON.stringify(out.events));
-    assert.deepEqual(out.events.map((e) => e.record_offset ?? null), [4096 + 0x200, 4096 + 65536 + 0x200, null]);
-    assert.equal(out.events[2].chunk_offset, 4096 + 65536);
-    assert.match(out.events[2].parse_error ?? "", /record chain of this chunk broke/);
+    // The fixed tool keeps a record it could not read apart from the events that matched: an error row, never a match.
+    assert.equal(out.count, 0);
+    assert.equal(out.events.length, 0);
+    assert.equal(out.parse_errors, 3);
+    assert.equal(out.status, "partial");
+    assert.equal(out.errors.length, 3);
+    assert.ok(out.errors.every((e) => e.parse_error), JSON.stringify(out.errors));
+    assert.deepEqual(out.errors.map((e) => e.record_offset ?? null), [4096 + 0x200, 4096 + 65536 + 0x200, null]);
+    assert.equal(out.errors[2].chunk_offset, 4096 + 65536);
+    assert.match(out.errors[2].parse_error ?? "", /record chain of this chunk broke/);
   });
 });
 

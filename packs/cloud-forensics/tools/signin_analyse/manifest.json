@@ -1,34 +1,88 @@
 {
   "name": "signin_analyse",
-  "description": "Read an Entra or Google Workspace login export and surface failures before success, single-factor Entra success, unfamiliar addresses, and impossible-travel hypotheses without treating records of unknown outcome as successes.",
+  "description": "Read an Entra sign-in export (Graph signIns JSON, JSON Lines or CSV) or a Google Workspace login audit (Reports API activities, nested events one each; or CSV) offline and keep every record: id, correlation id, authentication details, applied conditional access policies, device and token context, the raw record and a locator (file, record, line, nested event). The format is read from the content. `status` and `status_basis` say whether every record was read; a malformed line, a record that is not a sign-in (a Workspace activity of another application included), a truncated gzip (every record before the break is kept), an archive (.zip, tar: named, not read) and a next-page marker are counted, located and listed. Time is not guessed: a time with no zone is refused unless assume_utc says it is UTC (recorded as an assumption), and a day/month/year string needs a date_order or unambiguous rows that prove one (a Date (UTC) column is UTC on its own say-so, but a day/month/year string in it is as ambiguous as in any other). `success` is true, false or null: a portal Status of Interrupted is null whatever the code beside it says, and a code the tool lists as a prompt in a sign-in flow (50074, 50076, 50079, 50125, 50140, 50158) is null with outcome_class interrupt, counted as `interrupts`, never in `failures` or in a burst. Accounts are told apart by their object id, else their lower-cased user name, never by a display name; `user` is a regex (at most 200 characters) matched against the user name and display name as printed, never against a withheld original; a pattern that can take exponential time is refused, and one test that takes more than a quarter of a second fails the call, named. An argument the tool does not have is refused, and a format that the content contradicts is refused. Leads, each a hypothesis bounded by the export (an empty list excludes nothing): single_factor_successes, failure_bursts_before_success (burst_min_failures or more consecutive failures within burst_window_seconds of a success, same account and application; every failure is listed, in burst_members past ten), prompts_before_success (prompt_min_count or more interrupted sign-ins in a row before a success: a lead for multi-factor prompt flooding, and what a slow user looks like), addresses_seen_once (once among this account's events in this export), impossible_travel (coordinates implying more than max_speed_kmh, successes at one recorded second far apart with no speed, or a country change within an hour without coordinates, marked coarse; the portal's `City, State, Country` string is split and its last component is the country). result is this tool's gloss; failure_reason is the provider's words. NOT measured: whether a sign-in was the account's owner, token use after sign-in, activity outside the supplied events. SENSITIVE: user names, addresses, locations and devices are in the answer; a field named or shaped like a credential is withheld and its original written only with write_values, in a job, to a mode 0600 file under $OUT: run as a job with secret_output: true when the case treats the export as sensitive. An out_file is never replaced by a smaller result; a read that ended early publishes it as <name>.partial<ext> and names it partial_records or partial_events, never complete_*, and SIGTERM leaves no temporary file.",
   "params": {
     "path": {
       "type": "string",
-      "description": "A sign-in log export, CSV or JSON"
+      "description": "One sign-in export: JSON, JSON Lines or CSV (the format is read from the content)",
+      "required": true
     },
     "user": {
       "type": "string",
-      "description": "Case-insensitive regex over the account"
+      "description": "Case-insensitive regex (at most 200 characters) over the user name and display name as printed; a pattern that can take exponential time is refused"
     },
     "max_speed_kmh": {
       "type": "number",
-      "description": "Implied speed above which a pair is flagged (default 900)"
+      "description": "Implied speed above which a pair of successes is flagged (default 900)"
     },
-    "limit": {
+    "burst_window_seconds": {
+      "type": "number",
+      "description": "Every failure of a burst must be within this many seconds of the success (default 3600)"
+    },
+    "burst_min_failures": {
       "type": "integer",
-      "description": "Maximum events returned inline when out_file is set (default 500); the complete event set is written to out_file"
+      "description": "Consecutive failures that make a burst (default 3); an interrupted sign-in is not a failure"
+    },
+    "prompt_min_count": {
+      "type": "integer",
+      "description": "Interrupted sign-ins in a row before a success, inside burst_window_seconds, that make a prompts_before_success lead (default 5)"
+    },
+    "assume_utc": {
+      "type": "boolean",
+      "description": "Read a time that carries no zone as UTC. Say so only on the export's own documentation or collection record; the answer records the assumption"
+    },
+    "date_order": {
+      "type": "string",
+      "description": "mdy or dmy, for day/month/year strings whose two leading fields are both 12 or less"
+    },
+    "format": {
+      "type": "string",
+      "description": "auto (default: from the content), csv, json or jsonl; a format the content contradicts is refused"
+    },
+    "delimiter": {
+      "type": "string",
+      "description": "CSV delimiter, one character (default a comma)"
     },
     "out_file": {
       "type": "string",
-      "description": "Optional JSONL path for every normalised event; when absent every event is returned inline"
+      "description": "Optional JSONL path for every event, under the run directory (in a job, under $OUT: name it work/<your agent id>/..., which becomes $OUT). Never replaces a file already there: that one is kept and this one is named beside it"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Rows of each list returned inline (default 500, an inline page size); past it the whole list is in a file the answer names (under $OUT/tool-output in a job, work/<agent>/tool-output otherwise)"
+    },
+    "max_expanded_bytes": {
+      "type": "integer",
+      "description": "Most bytes read from one file after decompression (default 4 GiB); a file that reaches it is partial and says so"
+    },
+    "max_record_bytes": {
+      "type": "integer",
+      "description": "Most text held while one record is read (default 16 MiB); a larger record is rejected, located and listed, never cut"
+    },
+    "time_limit_seconds": {
+      "type": "number",
+      "description": "Stop reading after this many seconds (default 540, at most 580); what was read is kept, the answer is partial and names the files not read"
+    },
+    "write_values": {
+      "type": "boolean",
+      "description": "Write the originals of the values withheld from the answer to a mode 0600 file under $OUT. Honoured only when the tool runs as a job (run it with secret_output: true); outside a job it is refused and nothing is written"
     }
   },
   "runtime": "python3",
   "entry": "run.py",
-  "timeout_seconds": 300,
-  "example": "{\"path\": \"inputs/signins.json\", \"out_file\": \"work/signins.jsonl\"}",
+  "timeout_seconds": 600,
+  "example": "{\"path\": \"inputs/signins.json\"}",
   "by": "maintainer",
-  "at": "2026-09-22T22:00:00.000Z",
-  "version": 2,
-  "sha256": "330f8b70cd231f9decc0125151d57ec75944a8b6a65865b73a8964c2d25d482d"
+  "at": "2026-10-07T12:00:00.000Z",
+  "version": 4,
+  "sha256": "4ee79ced34eab2ee337e500e4cb3b29e799fd27e22806e142836c38683904dff",
+  "use": {
+    "names": [
+      "*signin*",
+      "*sign-in*",
+      "*sign_in*",
+      "*login_audit*",
+      "*login-audit*"
+    ]
+  }
 }

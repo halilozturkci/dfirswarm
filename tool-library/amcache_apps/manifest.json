@@ -1,11 +1,6 @@
 {
   "name": "amcache_apps",
-  "description": "Program execution from Amcache.hve: path, SHA-1, publisher and link date, from whichever of the Windows 7/8 and Windows 10 layouts the hive has.",
-  "use": {
-    "names": [
-      "Amcache.hve"
-    ]
-  },
+  "description": "Application and file inventory from Amcache.hve (presence, not execution): path, hash, publisher, version and the dates the inventory holds, from both the older Root\\File layout (numbered values, named by the published mapping regipy's Amcache plugin follows) and the newer InventoryApplicationFile layout (named values), read together, every row naming its layout. An inventory: an entry is not proof that a program ran, and the absence of one is not proof that it did not. The PE linker timestamp (value f) is a 32-bit Unix-epoch value and is converted as one (raw value kept); the key's last-written time and the 11, 12 and 17 values are FILETIMEs (raw decimal and ISO 8601 UTC with seven fractional digits). A hash is returned as stored (sha1_raw) with its stripped form beside it where it has the four-zero shape; what range of the file was hashed is not established. It reports hive_dirty from the base block's sequence numbers and the transaction logs beside the hive; it replays none. status is complete or partial (rows_failed, problems).",
   "params": {
     "hive": {
       "type": "string",
@@ -13,7 +8,7 @@
     },
     "limit": {
       "type": "integer",
-      "description": "Maximum entries to return (default 500)"
+      "description": "Entries shown inline (default 500, an inline page size); every entry is kept, and when there are more the whole list is written as JSON Lines and named in all_results"
     }
   },
   "runtime": "python3",
@@ -21,7 +16,19 @@
   "timeout_seconds": 90,
   "example": "{\"hive\": \"work/extracted/Amcache.hve\", \"limit\": 200}",
   "by": "maintainer",
-  "at": "2026-09-20T12:00:00.000Z",
-  "version": 1,
-  "sha256": "3c4d2e5493e0b6edae598ed5613b57d0e81966c985db9507f8b03a8d82a50d9a"
+  "at": "2026-10-07T12:00:00.000Z",
+  "version": 2,
+  "sha256": "5b6084c391f2d26a7e7d74603852b3475b7a42b4f07dc2f731726b6ec68e4d42",
+  "use": {
+    "names": [
+      "Amcache.hve"
+    ],
+    "magic": [
+      {
+        "offset": 0,
+        "hex": "72656766"
+      }
+    ]
+  },
+  "requires": []
 }
