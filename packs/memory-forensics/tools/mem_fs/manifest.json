@@ -1,6 +1,6 @@
 {
   "name": "mem_fs",
-  "description": "Mount a memory image with MemProcFS and return what it exposes: the process list with parents and paths, and the file tree the ordinary tools can then read. Says plainly when MemProcFS is not on the host rather than implying the memory was examined.",
+  "description": "Start MemProcFS on a memory image for the length of one call, do one thing with the file tree it mounts, and stop it: the mount is gone when the call returns, so nothing later can read it; what survives is the files an export wrote and the engine's own stdout and stderr, kept as files beside the mount. SENSITIVE: memory can hold anything the machine held (command lines, environments, keys, process pages), so mode text and mode export, which write content, run only as a job and only with write_values: true, and write only to $OUT/mem_fs (mode 0600, created exclusively, never over an existing file); outside a job they are refused before MemProcFS starts. The tool cannot see whether the job was run with secret_output: true, which seals the output as sensitive: run it that way. The answer is a locator (virtual path, output file, size, status per item) with no content and no digest; sizes and sha256 are in $OUT/mem_fs/export-manifest.jsonl. mode list shows names, kinds and sizes of a directory, no content. mode export copies the named virtual files byte for byte (never as text, never inside JSON); mode text writes one file only if it is UTF-8 text with no NUL byte, and refuses anything else instead of decoding it with replacements. A file over max_bytes_per_path is not exported and is counted; an item that could not be exported says why and complete is false. One deadline (timeout_seconds) holds over startup, reads and export, and a failure names the phase (startup, read, export, cleanup); the engine is then stopped and unmounted. A virtual path that resolves outside the mount (a link) is refused for that item, and a link loop or any other failure is that item's status; the other items go on, and the counts add up to the ones requested. Whether MemProcFS contacts a symbol server is governed by the job's network policy (a job has no network unless it asks for the run's allowlist); this tool passes MemProcFS no flag about it, and the pinned binary's behaviour in that respect was not verified in this review. It needs MemProcFS, /dev/fuse the process can open and fusermount3 or fusermount, which a sandbox may not provide: the answer says which of these the host has. It mounts, exports and measures nothing else: it does not say what a file means, that a region is complete or that a page was resident, and which virtual paths exist depends on the MemProcFS version and the image (list first).",
   "params": {
     "path": {
       "type": "string",
@@ -8,15 +8,35 @@
     },
     "mount": {
       "type": "string",
-      "description": "Where to mount it: a directory under your own work/<your id>/ (the rest of work/ is read-only in a VM)"
+      "description": "Where to mount it: a directory under your own work/<your id>/ (in a job, under $OUT); it must be empty. The engine's two log files are written beside it and kept"
+    },
+    "mode": {
+      "type": "string",
+      "description": "list (default): names, kinds and sizes. text: one UTF-8 text file written to $OUT/mem_fs. export: the files in paths, byte for byte, to $OUT/mem_fs. text and export need write_values and a job"
     },
     "list": {
       "type": "string",
-      "description": "A file to read in full or directory to list in full inside the mount (default: sys/proc/proc.txt, the process list)"
+      "description": "A path inside the mount: the directory to list (default: the mount's root) or, with mode text, the one file to write out"
+    },
+    "paths": {
+      "type": "array",
+      "description": "With mode export: the virtual files to copy (at most 1000), relative paths inside the mount"
+    },
+    "write_values": {
+      "type": "boolean",
+      "description": "Write memory content to files (default false). Required by text and export, and refused unless the tool runs as a job, which must be run with secret_output: true; the answer never carries content"
+    },
+    "max_bytes_per_path": {
+      "type": "integer",
+      "description": "Do not export a file larger than this (default 4294967296); it is counted and named, not cut. Raise it to export a larger file"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Entries or items shown inline (default 200); all are counted, and when there are more the whole list is written as JSON Lines and named in complete_results"
     },
     "timeout_seconds": {
       "type": "integer",
-      "description": "Give up after this long (default 300)"
+      "description": "One deadline for startup, reads and export (default 300, at least 2); unmounting after it has its own bounded wait"
     }
   },
   "runtime": "python3",
@@ -25,9 +45,9 @@
     "memprocfs"
   ],
   "timeout_seconds": 600,
-  "example": "{\"path\": \"inputs/memory.raw\", \"mount\": \"work/<your id>/mem\"}",
+  "example": "{\"path\": \"inputs/memory.raw\", \"mount\": \"work/<your id>/mem\", \"mode\": \"export\", \"write_values\": true, \"paths\": [\"sys/proc/proc.txt\"]}",
   "by": "maintainer",
-  "at": "2026-09-22T17:00:00.000Z",
-  "version": 2,
-  "sha256": "62e8a31ca6947490160a2635fb97256752fbd6e31e4fa4ae4507d2712e64ef46"
+  "at": "2026-10-07T12:00:00.000Z",
+  "version": 4,
+  "sha256": "583be63985ec5711001e50a7754b147b6312d4385df6bce9397aadb900657e76"
 }
