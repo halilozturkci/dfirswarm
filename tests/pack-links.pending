@@ -46,13 +46,9 @@ encrypted-containers unused skills/identify/headers.md file_type
 encrypted-containers unused skills/keys/where-they-hide.md ioc_scan
 encrypted-containers unused skills/volumes/bitlocker.md crypto_id
 encrypted-containers unused skills/volumes/luks-filevault.md crypto_id
-linux-forensics unlisted skills/containers/docker.md journalctl
 linux-forensics unlisted skills/filesystem/ext.md icat
 linux-forensics unlisted skills/triage/system-profile.md fsstat
 linux-forensics unlisted skills/triage/system-profile.md utmp_parse
-linux-forensics unused skills/containers/docker.md fls
-linux-forensics unused skills/containers/docker.md icat
-linux-forensics unused skills/containers/docker.md timestamp_decode
 linux-forensics unused skills/filesystem/ext.md fls
 linux-forensics unused skills/filesystem/ext.md timestamp_decode
 linux-forensics unused skills/filesystem/storage.md target-query
