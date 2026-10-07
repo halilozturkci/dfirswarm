@@ -1,10 +1,10 @@
 {
   "id": "static-binary",
-  "version": "1.0.0",
-  "description": "Catalogue a PE, ELF or Mach-O executable without running it: the parser's uncapped structural metadata and a complete entropy profile.",
+  "version": "1.1.0",
+  "description": "Catalogue a PE, ELF or Mach-O executable without running it: pe_info's structure (long tables kept whole in files) and a complete entropy profile, with a status taken from what the parsers say they read.",
   "object": "executable file",
   "order": 40,
-  "min_bytes": 64,
+  "min_bytes": 28,
   "suffixes": [
     ".exe",
     ".dll",
@@ -17,12 +17,30 @@
     ".dylib"
   ],
   "magic": [
-    {"offset": 0, "hex": "4d5a"},
-    {"offset": 0, "hex": "7f454c46"},
-    {"offset": 0, "hex": "cffaedfe"},
-    {"offset": 0, "hex": "cefaedfe"},
-    {"offset": 0, "hex": "cafebabe"},
-    {"offset": 0, "hex": "bebafeca"}
+    {
+      "offset": 0,
+      "hex": "4d5a"
+    },
+    {
+      "offset": 0,
+      "hex": "7f454c46"
+    },
+    {
+      "offset": 0,
+      "hex": "cffaedfe"
+    },
+    {
+      "offset": 0,
+      "hex": "cefaedfe"
+    },
+    {
+      "offset": 0,
+      "hex": "cafebabe"
+    },
+    {
+      "offset": 0,
+      "hex": "bebafeca"
+    }
   ],
   "runtime": "python3",
   "entry": "run.py",
@@ -36,10 +54,11 @@
   "outputs": [
     "binary.json",
     "entropy.json",
+    "entropy-windows.tsv",
     "index.tsv",
     "coverage.json"
   ],
   "purpose": "inventory",
-  "covers": "Static headers, sections, imports or linked libraries, and whole-file entropy. It does not execute, unpack, decompile or claim observed behaviour.",
-  "sha256": "96ca2ee08e3107b783f7beba0a1576ea071184d170fb7c0b78f35a3de8409098"
+  "covers": "Static headers, sections or segments, imports or linked libraries, and whole-file entropy, as far as the parsers' own status says (coverage.json: status, warnings, omissions, limits_hit, errors; a zero exit code is not completeness). It does not execute, unpack, decompile, verify a signature or claim observed behaviour.",
+  "sha256": "a65bccd17c79836be876c237f908c43c7d84afd258b58aa017b324c013388c3e"
 }
