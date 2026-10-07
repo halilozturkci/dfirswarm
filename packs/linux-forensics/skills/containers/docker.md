@@ -45,9 +45,9 @@ decoding). `Config.Env` often carries credentials: inspect it, the mounts and th
 
 **Host exposure.** Assess privilege from user namespaces, capabilities, device access, mounted sockets, the
 security module's policy and host bindings together. `Privileged: true`, a `Binds` entry for `/` or the
-daemon's socket, or `CapAdd` of `SYS_ADMIN` each establish potential access from the container. Actual
-compromise of the host needs evidence the access was used, so look for it before calling the host
-compromised.
+daemon's socket, and `CapAdd` of `SYS_ADMIN` are settings that can give a container access to the host; whether
+one did depends on the rest of that list. Actual compromise of the host needs evidence the access was used, so
+look for it before calling the host compromised.
 
 **What is not there.** A disk image holds no process memory and no live `/proc`; those need an acquisition of
 their own. Removing a container (a `--rm` run, for one) removes its active metadata and writable layer, but

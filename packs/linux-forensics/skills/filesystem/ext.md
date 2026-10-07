@@ -14,8 +14,8 @@ and the filesystem features:
     ctime  inode changed     crtime creation: ext4 inodes large enough to hold the extra fields
 
 On ext4, creation time and the nanosecond fields exist only where the inode is large enough to carry them, so
-read the inode size first. Other filesystems keep a birth time as well, and GNU `stat` prints `Birth` when the
-kernel and the filesystem expose it; do not make that display your authority. Read the inode directly:
+read the inode size first. Other filesystems keep a birth time as well, and a file-listing utility can print it
+when the kernel and the filesystem expose it; do not make that display your authority. Read the inode directly:
 `debugfs -R "stat <inode>" <volume-copy>` (debugfs opens read-only unless given `-w`: never give it `-w` on
 evidence) and a recent `istat`, and decode a raw value with `timestamp_decode`. Keep the raw field, the
 precision and the mount options that bear on it (`relatime`, `noatime`, `lazytime`): a delayed or skipped atime

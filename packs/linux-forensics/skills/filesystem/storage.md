@@ -35,7 +35,7 @@ UUIDs, missing members and the reporting command; `--readonly` is not a substitu
   a command line or the ledger; if the encrypted-containers pack is loaded, its LUKS skill holds the detail.
 - XFS: `xfs_db -r -c sb -c p <volume-copy>` reads read-only. Record the filesystem and inode versions,
   enabled features, allocation groups and any external log or realtime device. An XFS log is recovery
-  metadata, not a record of user actions. Do not run `xfs_repair` on evidence; even `-n` is a diagnostic.
+  metadata, not a record of user actions. Do not run XFS's repair program on evidence; even its no-modify mode is a diagnostic.
 - Btrfs: `btrfs inspect-internal dump-super -f <volume-copy>` records devices and the generation. Inventory every
   supplied device, subvolume, snapshot and root id: the default subvolume is not the whole filesystem. Reflinks
   and snapshots share extents, and a generation orders changes without being a wall-clock time. Never mount
@@ -52,3 +52,7 @@ from source to output.
 
 **Does not show.** That a filesystem is intact because a superblock reads, or that a snapshot holds what a
 live tree held. Absence of a layer from the listing is not absence from the disk.
+
+**Sensitive output.** `linux_triage` keeps each family's complete output, which can hold command lines,
+authentication lines and container logs: run it as a job with `secret_output: true`, read the files by path and cite
+the file and line. Key material for an unlock stays in a protected file, never in an argument, the ledger or a hash.

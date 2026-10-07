@@ -9,7 +9,7 @@
         "brew": "not available on macOS; analyse on a Linux host",
         "apt": "apt-get install -y systemd"
       },
-      "licence": "LGPL-2.1-or-later",
+      "licence": "LGPL-2.1-or-later (declared, unverified)",
       "redistributable": false
     },
     {
@@ -21,19 +21,19 @@
         "brew": "not available on macOS",
         "apt": "apt-get install -y debsums"
       },
-      "licence": "GPL-2.0-or-later",
+      "licence": "GPL-2.0-or-later (declared, unverified)",
       "redistributable": false
     },
     {
       "name": "rpm",
       "package": "rpm",
       "optional": true,
-      "why": "Verify packaged files against an acquired RPM database on a Red Hat-family host with -V, reporting which attribute differs. Run only with --noscripts --nodeps, confirmed on the installed version against a trial database, so that no verification script from the evidence runs (packages/integrity).",
+      "why": "Verify packaged files against an acquired RPM database on a Red Hat-family host with -V, reporting which attribute differs. Run it with --noscripts --nodeps so that no verification script from the evidence runs; the examiner confirms on the installed version, against a trial database, that those options are honoured for -V before relying on them (packages/integrity).",
       "install": {
         "brew": "brew install rpm",
         "apt": "apt-get install -y rpm"
       },
-      "licence": "GPL-2.0-only",
+      "licence": "GPL-2.0-or-later AND LGPL-2.0-or-later (as Homebrew's formula metadata gives it)",
       "redistributable": false
     },
     {
@@ -45,7 +45,7 @@
         "brew": "not available on macOS",
         "apt": "apt-get install -y auditd"
       },
-      "licence": "GPL-2.0-or-later",
+      "licence": "GPL-2.0-or-later (declared, unverified)",
       "redistributable": false
     },
     {
@@ -57,7 +57,7 @@
         "brew": "brew install e2fsprogs",
         "apt": "apt-get install -y e2fsprogs"
       },
-      "licence": "GPL-2.0-only",
+      "licence": "GPL-2.0-or-later AND LGPL-2.0-or-later AND LGPL-2.0-only AND BSD-3-Clause AND MIT (e2fsprogs, as Homebrew's formula metadata gives it)",
       "redistributable": false
     },
     {
@@ -69,7 +69,7 @@
         "brew": "not available on macOS; analyse on a Linux host",
         "apt": "apt-get install -y xfsprogs"
       },
-      "licence": "GPL-2.0-only",
+      "licence": "GPL-2.0-only (declared, unverified)",
       "redistributable": false
     },
     {
@@ -81,7 +81,7 @@
         "brew": "not available on macOS; analyse on a Linux host",
         "apt": "apt-get install -y btrfs-progs"
       },
-      "licence": "GPL-2.0-only",
+      "licence": "GPL-2.0-only (declared, unverified)",
       "redistributable": false
     },
     {
@@ -93,7 +93,7 @@
         "brew": "not available on macOS; analyse on a Linux host",
         "apt": "apt-get install -y lvm2"
       },
-      "licence": "GPL-2.0-only and LGPL-2.1-only",
+      "licence": "GPL-2.0-only and LGPL-2.1-only (declared, unverified)",
       "redistributable": false
     },
     {
@@ -105,7 +105,7 @@
         "brew": "not available on macOS; analyse on a Linux host",
         "apt": "apt-get install -y lvm2"
       },
-      "licence": "GPL-2.0-only and LGPL-2.1-only",
+      "licence": "GPL-2.0-only and LGPL-2.1-only (declared, unverified)",
       "redistributable": false
     },
     {
@@ -117,7 +117,7 @@
         "brew": "not available on macOS; analyse on a Linux host",
         "apt": "apt-get install -y lvm2"
       },
-      "licence": "GPL-2.0-only and LGPL-2.1-only",
+      "licence": "GPL-2.0-only and LGPL-2.1-only (declared, unverified)",
       "redistributable": false
     },
     {
@@ -129,7 +129,7 @@
         "brew": "brew install e2fsprogs",
         "apt": "apt-get install -y e2fsprogs"
       },
-      "licence": "GPL-2.0-only",
+      "licence": "GPL-2.0-or-later AND LGPL-2.0-or-later AND LGPL-2.0-only AND BSD-3-Clause AND MIT (e2fsprogs, as Homebrew's formula metadata gives it)",
       "redistributable": false
     }
   ]

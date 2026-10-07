@@ -43,3 +43,8 @@ are all recorded.
 
 **Does not show.** That an event happened because a record names it, or that two records a second apart are
 causally linked.
+
+**Sensitive output.** `auth_log` and `linux_triage` outputs hold sudo command lines, names typed at a prompt, shell
+histories and log messages that can contain a password or a token. Run them as jobs with `secret_output: true`, cite the
+file and line, and carry no text or hash of a value into the timeline: a timeline row says what happened and where it is
+recorded.

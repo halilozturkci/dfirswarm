@@ -14,7 +14,8 @@ establishes.
 2. Initial access: how the operator first reached this host, with the artefact
    that shows it and the time in UTC.
 3. Accounts and keys: any account added, any UID 0 that is not root, any sudoers
-   entry, any key added to an authorized_keys file, and when.
+   entry, and any key present in an authorized_keys file, with what the evidence does
+   and does not say about when each appeared.
 4. Execution: what was run, from the shell histories, sudo lines, the journal and
    any audit records the host retained, with at least two sources agreeing where you
    can get them, and which of these the host was configured to write.

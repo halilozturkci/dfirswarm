@@ -24,10 +24,11 @@ modified recently, is a lead, not proof of unauthorised persistence.
 `/etc/cron.d`, the cron.hourly to monthly directories, the Debian-style and Red Hat-style user spools and
 systemd timers (system, user and each account's own directories), each with its file, line, modification time
 and mode, and it names what it did not read (`unsupported`: at jobs, anacron, `.service` ExecStart,
-generator output, drop-in merging). Check what it names as unread by hand, and validate run-parts selection and
-execute permission, which scheduler was installed, and time zone and daylight-saving behaviour. An `@reboot`
-entry, or a timer with `OnBootSec`, starts from boot rather than on a calendar. A listed job is not shown to
-have run.
+drop-in merging). It looks in the generator and runtime unit directories under `run/` too, but an acquired disk image holds them only
+where `/run` was captured, so an empty result there is not a negative. Check what it names as unread by hand, and validate run-parts
+selection and execute permission, which scheduler was installed, and time zone and daylight-saving behaviour. An `@reboot` entry is a
+trigger at the cron daemon's start, and a timer with `OnBootSec` counts from boot: neither is a calendar time, and neither shows that
+the job ran or when. A listed job is not shown to have run.
 
 **Shell and login scripts, and the quieter routes.** Read startup files by the shell and the login or
 interactive mode that applies (`/etc/profile`, `/etc/profile.d/*`, `~/.bashrc`, `~/.bash_profile`, `~/.profile`,
