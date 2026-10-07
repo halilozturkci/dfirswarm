@@ -1,4 +1,4 @@
-# What is this file, and what was it built to do
+# What is this file, and what can its code do
 
 A sample recovered from a case, and the question of what it is. Static analysis
 only: nothing here is executed, and the report must say so.
@@ -12,11 +12,11 @@ its behaviour on any machine.
 1. What the file is, from its bytes rather than its name, with its sha256 and
    whether the extension agrees.
 2. Structure: sections or segments, their sizes and permissions, the entropy
-   profile, and whether any of it is packed.
+   profile, and what the profile does and does not suggest about packing.
 3. What it declares: imports, exports, linked libraries, and the version
    information or original file name where there is one.
-4. What it can do: the capabilities mapped from the code, each with the address
-   behind it.
+4. What its code can do: capability hypotheses mapped from the code, each with
+   the locator behind it and the limits of the analysis.
 5. Strings that matter, including the obfuscated ones, each with the function
    that references it — or a plain statement that nothing references it.
 6. Indicators another examiner could search for: hashes, mutexes, domains,

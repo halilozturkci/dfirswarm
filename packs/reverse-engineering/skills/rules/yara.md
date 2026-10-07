@@ -1,43 +1,22 @@
 ---
 id: rules/yara
-title: Rules, and writing one that will still be right next month
-when: You have a sample and need to find its family, or find it again elsewhere.
-needs: [capabilities/mapping]
+title: YARA matches and what they mean
+when: You search evidence with rules or must interpret a rule hit.
+needs: [triage/quarantine]
 tools: [pe_info]
 requires_host: [yara]
 ---
 
-Two directions, and they are different jobs.
+Use when you scan evidence with rules or must say what a hit means. Not for naming a family, and not for shipping a rule: a hit is a lead.
 
-**Matching against rules you were given.** Run the set, quote the rule name and
-the offset of the match, and treat a hit as a lead. Public rule sets are broad
-and a match on a packer or a common library says nothing about the sample's
-purpose. Say how many rules were run and from where, so a reviewer can repeat
-it.
+1. Record the YARA version (`yara --version`), where the rules came from, hashes of the rule files and includes, namespaces, external variables, scan options and the target manifest. This pack ships no rules; a public set is third-party input with its own licence.
+2. Keep the whole output and the diagnostics, and whether the scan completed. Failures and skipped files are part of the result.
+3. `yara -s` prints each matched string with its offset and its bytes, and the bytes can be a credential: when the target can hold secrets run it as a job with `secret_output: true`, and cite rule, identifier and offset, not the bytes. A condition-only or module match has no string offset. A file offset is not a memory address.
+4. A hit is a lead: public sets match packers and common libraries, so a match says little of purpose. A completed no-hit scan holds only for those rules, this target and this scope.
+5. Use `pe_info` to confirm the format facts a structural condition leans on (section names, imports) before trusting it.
 
-**Writing a rule for what you found.** This is the part that goes wrong. A rule
-built from whatever `strings` printed will match one build of one sample and
-nothing else, and it will quietly stop matching when the operator recompiles.
+Only if you are writing or validating a rule, read `rules/authoring`.
 
-Anchor a rule on things the author cannot change cheaply:
+Sensitive output: see item 3.
 
-- a mutex name, a named pipe, a registry key or a user-agent the code builds,
-- a decryption routine's constant table, or an unusual sequence of instructions,
-- the Rich header, which survives a rename and most repacking,
-- a resource, an icon or a certificate serial,
-- section names and sizes in combination, where they are unusual.
-
-And avoid things that change for free: the file name, the compile timestamp,
-absolute addresses, and any string that came from a library rather than from the
-author's own code.
-
-Three habits:
-
-1. **Test for false positives before you publish it.** Run the rule over a
-   directory of ordinary system binaries. A rule that fires on `kernel32.dll` is
-   worse than no rule.
-2. **Name the condition after what it identifies**, and put the sample's hash in
-   the rule's metadata. A year later nobody will remember why the rule exists.
-3. **Say in the report what the rule was built from.** "Matched a rule written
-   from this sample" is circular; "matched a rule written from sample A, which
-   also matches sample B recovered from the second host" is evidence.
+Shows: that these rules matched these bytes. Does not show: family, intent, or that unmatched files are clean. Record: version, rule hashes and source, command, target manifest, the complete output, completion status.

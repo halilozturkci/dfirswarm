@@ -1,42 +1,23 @@
 ---
 id: documents/macros
-title: Documents, macros and embedded objects
-when: The sample is an Office document, a PDF, an archive or an email attachment.
+title: Document inventory: Office, PDF and RTF
+when: The sample is an Office document, PDF, RTF or other package.
 needs: [triage/quarantine]
 tools: [file_type, doc_probe]
 requires_host: [olevba]
 ---
 
-A document is a container, and the question is what is inside it and what runs
-on its own.
+Use when the sample is an Office document, PDF, RTF or other package. Not for opening it in an application, or for judging whether anything ran.
 
-**The two Office formats behave differently.** The old one (`.doc`, `.xls`) is
-an OLE compound file — a little file system, with the macro project in one of
-its streams. The new one (`.docx`, `.xlsm`) is a ZIP: unzip it and read the XML,
-and a macro-enabled file has a `vbaProject.bin` inside, which is an OLE compound
-file again.
+Never open a sample in Office, a browser or a PDF reader. Parse it in a job with time, memory, output and nesting limits, and keep the original and the complete inventory.
 
-**`.docx` cannot carry a macro and `.docm` can.** A file named `.docx` that
-holds a `vbaProject.bin` has been renamed, and that is itself worth reporting.
+1. `file_type` first, then `doc_probe` for the container (OOXML or ZIP, OLE, RTF, PDF). Read its `status` and `members` counts (encrypted, failed, over budget): an unread member is a gap, not an absence. An extension describes expected content, not validated contents or editing history. Code-related parts in a `.docx`, `.xlsx` or `.pptx` are a format and content discrepancy (`extension_content_disagreement`): not proof of renaming, and not proof an application would run them.
+2. `doc_probe` is a preliminary inventory, not a document parser. The OLE answer is byte markers, the PDF answer name tokens with offsets, the RTF answer control words; relationships are read from OOXML `*.rels` parts only; with `extract_to` it writes only members whose names match a code-related pattern.
+3. For VBA, `olevba` extracts source and names auto-execution entry points (`olevba -h`). An entry-point name does not show execution, and its absence does not show a click was needed: callbacks can invoke procedures. If source looks absent or inconsistent, compare it with compiled VBA using a version-aware reader and record the disagreement. Excel 4.0 macros, embedded packages, ActiveX and nested documents are separate checks that this pack has no structural reader for.
+4. Encrypted or unsupported content stays unexamined until an authorised offline reader can parse it. A clean marker scan is not proof that active content is absent.
 
-`doc_probe` says which container it is, lists the parts, and flags the ones that
-carry code or an external reference. `olevba` then extracts and deobfuscates the
-macro itself and marks which subroutines run automatically — `AutoOpen`,
-`Document_Open`, `Workbook_Open` — because a macro that does not auto-run needs
-a user to click, and that changes the story.
+Only if the question is external references, PDF actions or RTF objects, read `documents/external-and-active-content`.
 
-Beyond macros:
+Sensitive output: macro source, targets and extracted parts can hold credentials. Run these jobs with `secret_output: true`.
 
-- **External relationships.** A `.docx` can reference a remote template or an
-  OLE object by URL, so the file fetches something when opened with no macro at
-  all. The reference is in the relationship XML.
-- **Embedded objects.** A packager object holding an executable, an LNK, or a
-  script, which the user is invited to double-click.
-- **RTF** has no ZIP and no OLE container: objects are hex-encoded inline, and
-  the exploit history here is mostly equation-editor objects.
-- **PDF**: `/OpenAction` and `/AA` run on open, `/JavaScript` carries the code,
-  `/Launch` starts a program, and an embedded file stream carries a payload.
-  Object streams hide all of the above from a plain `strings`.
-
-Never open any of them in the application that made them. Everything above is a
-parse of the bytes.
+Shows: container, listed members, markers, macro source where `olevba` could read it. Does not show: execution, fetch, user interaction, or that anything is absent. Record: tool versions, status, counts, limits, each extracted object's parent part and digest.
