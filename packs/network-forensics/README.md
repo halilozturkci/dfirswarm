@@ -7,38 +7,51 @@ Depends on the Computer Forensics Base Pack.
 
 ## What it carries
 
-**Eight skills**: `capture/what-you-have`, `capture/carve-from-images`,
-`sessions/reconstruct`, `metadata/dns-tls`, `beacons/periodicity`,
-`exfil/volume`, `logs/web-proxy-firewall`, `correlate/host`.
+**Twelve skills**, as eight leaves of decision rules and four second-level
+leaves they point to when needed: `capture/what-you-have` (and
+`capture/derivatives`), `capture/carve-from-images`, `sessions/reconstruct` (and
+`sessions/objects`), `metadata/dns-tls` (and `metadata/fingerprints`),
+`beacons/periodicity`, `exfil/volume` (and `exfil/counters`),
+`logs/web-proxy-firewall`, `correlate/host`.
 
 **Six tools.** `pcap_summary` reads classic pcap and pcapng with **no external
-dependency at all** — the parser is written here, because a forensic host
-frequently has no Wireshark and the first four questions about a capture must
-not depend on one. It returns the link type, the snap length, the time range,
-conversations with bytes each way grouped per session or per endpoint, and the
-connection start times a beacon check needs. `beacon_score` takes those times
-and measures how tightly the intervals cluster around their own median, which is
-what catches a jittered implant that a "are the intervals identical" test
-misses. `zeek_run` drives Zeek where the host has it. `suricata_run` applies a
-named local rules file and keeps the complete EVE log. `pcap_extract` performs
-Wireshark object export and writes a provenance-and-hash index without placing
-binary content in model output. `network_log_summary` parses Apache/Nginx access
-logs, Squid access logs and common firewall key/value records into a complete
-normalised TSV plus an aggregate summary.
+dependency**: it returns a census of the capture (an interface table with link
+type and snap length per interface, pcapng drop counters, the time range, packets
+truncated and how much payload survived, and tuple or endpoint aggregates with
+original and captured bytes kept apart) and SYN observations for a first
+look at repeated connections. It is not a session engine. `beacon_score`
+describes how tightly a series of event times clusters around its median
+interval; a regular series is a lead, not a detection. `zeek_run` drives Zeek where
+the host has it, loads a named hashing policy through a script it writes and
+records, and reads the logs by their own headers. `suricata_run` runs a named
+local rules file under an explicit configuration it tests first, and keeps the
+complete EVE log. `pcap_extract` performs Wireshark object export with a receipt
+from the first moment and ties an HTTP object to a frame when its bytes equal one
+response body. `network_log_summary` reads Apache/nginx access logs, Squid native
+logs and upper-case KEY=VALUE firewall records into a table with line numbers
+and byte offsets and an explicit timestamp column. Tools that can reach request
+data withhold credentials from their answers and keep their output private: run
+them as jobs with `secret_output: true`. No tool here reads NetFlow, IPFIX or
+cloud flow records; a flow export is identified and its semantics stated, not
+parsed.
 
 **One catalogue recipe.** `network-capture` detects pcap and pcapng by magic,
-then writes lossless packet, DNS, HTTP and TLS listings plus capture metadata.
-It is a broad extraction of the capture (`purpose: broad_extraction`): every
-packet's fields, whole; its `exclusions` say it decodes no protocol but DNS,
-HTTP and TLS field by field, reassembles no payload and reads no encrypted TLS.
+then writes capture metadata and complete listings of the selected fields of
+every packet and of the DNS, HTTP and TLS packets (HTTP/2 and QUIC where the
+installed tshark lists their fields), with a receipt from the first moment. It
+is a broad extraction (`purpose: broad_extraction`), one tshark's reading and not
+the capture: its `exclusions` say it reassembles no payload and reads no
+encrypted TLS, and a table with no rows does not show a protocol is absent.
 
 **One goal template**: `what-left-the-network.md`.
 
 ## Two things the skills keep repeating
 
-**The snap length decides what an answer can be worth.** A capture taken at 96
-bytes holds headers and no payload, and every question about content is
-unanswerable on it. That belongs in the report early, as a fact about the
+**The snap length is a limit, not a verdict.** A capture taken at 96 bytes can
+still hold payload (Ethernet, IPv4 and TCP headers take 54), and a longer
+capture can cut it. What decides what an answer can be worth is how much of each
+packet survived, which `pcap_summary` measures per packet, together with the
+capture point, the clock and the gaps. State it early, as a fact about the
 evidence.
 
 **Periodicity is not a verdict.** Update checks, telemetry, NTP, revocation

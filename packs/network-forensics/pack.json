@@ -1,7 +1,7 @@
 {
   "id": "network-forensics",
   "name": "Network Forensics Pack",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Method and tooling for captures and flow logs: what the capture can and cannot contain, session reconstruction, DNS and TLS metadata when the payload is encrypted, beacon detection by timing, exfiltration by volume, and tying all of it back to the host timeline.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -18,7 +18,7 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "53573f3fe4773929df7688de39f57c79335d67f5158250fcc236cdf7cfe250a1",
+      "README.md": "7f4b1663e033a365c2351e7371646ed675eb5c28cd2b3e69cd45958bd682c637",
       "tools/suricata_run/manifest.json": "578ef9a40136fe25a05968757114b7b33ce5aaee96200c0d1b2f2b591367b359",
       "tools/suricata_run/run.py": "db618fd2b11c23c06b6aa2302b50a9e5870844ff5e7ed2b128fc8a7c0010dee8",
       "tools/network_log_summary/manifest.json": "5995d71f5fca3940b68b51b83f8668959294ed61b4c0bc8a4d8238df791a80eb",
@@ -35,17 +35,21 @@
       "tests/pack.test.sh": "c40dc5da33020ceadb866bca977e57a853f563e6e109a0da55b3563bf0637dc9",
       "recipes/network-capture/recipe.json": "78fb5f51442bbd6efbe2b86bc7b9d7c4cd931d2448561333ba06c5cbc7a194b0",
       "recipes/network-capture/run.py": "2a5c3390ba11eea10047b7f68b82d79cdfc393fb3f54dcff82b19b442c3268fa",
-      "skills/capture/carve-from-images.md": "76d015e7168a23807f2ddeff4176dfeb7b816cb6f623c677cbcc3715d05f7afc",
-      "skills/capture/what-you-have.md": "1b1ea28b7ed2c163e32f609d5ae0c7ef68bf8f7f11408ffd57612b7a695f105a",
-      "skills/exfil/volume.md": "e3f63f9d226e537719222d35a16d1a8d31b25b9e6c8776952ceb54ea67252722",
-      "skills/sessions/reconstruct.md": "8a64e80c4c368b3e430bf7db1c91eb65e2d40309e90398dec86975878e816415",
-      "skills/logs/web-proxy-firewall.md": "394427444a8280dff677062b3bee837163f0c226ff604e64400cbc8474884829",
-      "skills/correlate/host.md": "dd9f12201855272d2262aece9ddccad7427666cec8e3bf801e16362d07326d4d",
-      "skills/metadata/dns-tls.md": "fb518d9035477b5261a5ca7fb5f48da9072e19f79fd3e9c66f29c7fe35dfb263",
-      "skills/beacons/periodicity.md": "ff555a901d3a03c0efe70ba8ec38bccb71974eab1e06cc72fc68ccd0c9159265",
-      "requires/host.json": "7ee9d8a33f60ada6667af79b7be869f70416b75c424f0e4f32324cb67000780d",
+      "skills/capture/carve-from-images.md": "8c463d5aff985edacb1ee6676fa5ad4a34e1d8216fa8bcbe67b5f63cd59e7673",
+      "skills/capture/derivatives.md": "4b70b70298845fef484835821eb271194899b98d4fff2bf5c8d6dea7ba7ad314",
+      "skills/capture/what-you-have.md": "2514c9ff75c4db15ac0fd32298f38d5653d123e52b50da00c9b6960f915580a6",
+      "skills/exfil/counters.md": "579e0fbf3071257ea3de03cec1a65c434991e4ddae306c2b0d63b718c88714b0",
+      "skills/exfil/volume.md": "7e8c77ccb8f34c83f0445decd25ad6889a0449b09cdfdb3fe472de1f57f5cc40",
+      "skills/sessions/objects.md": "590515e0563ebbc5d57a63f72ccf1562c0d89cf4dd2b8a8f96a003ec573ca9b7",
+      "skills/sessions/reconstruct.md": "c2c62cb78606ef3b811aad5809671acd3f7003a81408c2f568d03ef083cd0856",
+      "skills/logs/web-proxy-firewall.md": "cf2087d0e23dd7ff707fe739d8f2db7d2493ec8ac37687c27a7c863551e0c7d8",
+      "skills/correlate/host.md": "c6f402825f7772f1edc476bb4ca3d606f7ce3b8588a5204d18886e7ed17ceb16",
+      "skills/metadata/dns-tls.md": "09c6bed8bc573cfc77a9ea82a84a2ebd7d48a1398588ea2be0358cfe5c4e5b67",
+      "skills/metadata/fingerprints.md": "adf66aead6bedccb08e338bab8cc536fcf173d1cf785908384a58d94af37e40c",
+      "skills/beacons/periodicity.md": "ca5122c90e84f9cd0983d9b710670d738b44cf3136e9445152313e4d18d73781",
+      "requires/host.json": "d9984938f44b379647f2b61771e7027e9036f24f56050cd6905b40e66210520b",
       "requires/python.txt": "d5768d4bec0bea8ec8e736e2710a757309af18fa3f862dae2db201e154d45a4a",
-      "skills/INDEX.md": "6b917e254b4ddc3e43b302290c444aeb13404a57cd5adcdecbf88bb559bd4162"
+      "skills/INDEX.md": "b8ce8ab618fb6158730c26fb1606f5d10473d61408c8a07610414363cfa01454"
     }
   },
   "tools": [
@@ -59,5 +63,5 @@
   "recipes": [
     "network-forensics/network-capture"
   ],
-  "skills": 8
+  "skills": 12
 }

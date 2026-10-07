@@ -41,7 +41,7 @@
       "name": "capinfos",
       "package": "tshark",
       "optional": true,
-      "why": "Report capture format, packet count, time range, snap length, encapsulation and integrity before analysis.",
+      "why": "Report capture format, packet count, time range, snap length and encapsulation before analysis. A report of the file, not an integrity check.",
       "install": {"brew": "brew install wireshark", "apt": "apt-get install -y tshark"},
       "licence": "GPL-2.0-or-later",
       "redistributable": false
@@ -50,7 +50,7 @@
       "name": "editcap",
       "package": "tshark",
       "optional": true,
-      "why": "Deduplicate, split and convert captures while preserving the original evidence.",
+      "why": "Deduplicate, split and convert captures into derivatives; the original stays untouched and each step is recorded.",
       "install": {"brew": "brew install wireshark", "apt": "apt-get install -y tshark"},
       "licence": "GPL-2.0-or-later",
       "redistributable": false
@@ -68,7 +68,7 @@
       "name": "text2pcap",
       "package": "tshark",
       "optional": true,
-      "why": "Turn a byte-oriented hex dump into a capture for protocol dissection without altering the source.",
+      "why": "Turn a hex dump into a synthetic capture with made-up headers and times; the result is a labelled derivative, never evidence that traffic occurred.",
       "install": {"brew": "brew install wireshark", "apt": "apt-get install -y tshark"},
       "licence": "GPL-2.0-or-later",
       "redistributable": false
@@ -77,7 +77,7 @@
       "name": "tcpdump",
       "package": "tcpdump",
       "optional": true,
-      "why": "Apply BPF filters, inspect capture headers and make lossless filtered working captures with the standard examiner CLI.",
+      "why": "Read a capture offline with a recorded BPF filter and write a filtered derivative; a filter drops packets, so the derivative is not the capture.",
       "install": {"brew": "brew install tcpdump", "apt": "apt-get install -y tcpdump"},
       "licence": "BSD-3-Clause",
       "redistributable": false
@@ -86,7 +86,7 @@
       "name": "tcpflow",
       "package": "tcpflow",
       "optional": true,
-      "why": "Reassemble each TCP session into its own file, which is how a transferred object is recovered from a capture.",
+      "why": "Reassemble each TCP stream into its own file. A stream file is one implementation's reassembly, not by itself a complete transferred object.",
       "install": {
         "brew": "brew install tcpflow",
         "apt": "apt-get install -y tcpflow"
@@ -98,7 +98,7 @@
       "name": "tcpick",
       "package": "tcpick",
       "optional": true,
-      "why": "Reassemble and inspect selected TCP conversations from a capture as a second implementation for overlap and evasion checks.",
+      "why": "Reassemble and inspect selected TCP conversations as a second implementation where overlap or retransmission behaviour decides the answer.",
       "install": {"brew": "brew install tcpick", "apt": "apt-get install -y tcpick"},
       "licence": "GPL-2.0-or-later",
       "redistributable": false
