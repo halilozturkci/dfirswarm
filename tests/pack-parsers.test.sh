@@ -22,9 +22,9 @@ WORK = tempfile.mkdtemp()
 failures = []
 
 
-def tool(pack_tool, args):
+def tool(pack_tool, args, cwd=None):
     out = subprocess.run([sys.executable, os.path.join(PACKS, pack_tool, "run.py")],
-                         input=json.dumps(args), capture_output=True, text=True)
+                         input=json.dumps(args), capture_output=True, text=True, cwd=cwd)
     try:
         return json.loads(out.stdout)
     except ValueError:
@@ -172,17 +172,21 @@ check("crypto_id reads a LUKS1 key slot table with no key",
       and [s["iterations"] for s in got.get("key_slots", [])] == [1000 + i for i in range(8)],
       got.get("error", json.dumps(got.get("key_slots", [])[:2])))
 
-# --- ransomware-response/encrypted_survey: the shared family marker ------------
+# --- ransomware-response/encrypted_survey: the bytes every sampled tail ends with ---
+# An observation pending a reference match (basis "observation"), not a family marker;
+# tests/pack-encrypted-survey.test.ts and tests/pack-ransom-note-scan.test.ts hold the rest of the
+# pack's tools' contract.
 random.seed(11)
 share = os.path.join(WORK, "share"); os.makedirs(share, exist_ok=True)
 for i in range(6):
     open(os.path.join(share, "f%d.xlsx.LOCKD" % i), "wb").write(
         bytes(random.getrandbits(8) for _ in range(120000)) + b"\xde\xad\xbe\xefKEYBLOB1")
-got = tool("ransomware-response/tools/encrypted_survey", {"root": share})
-suffix = (got.get("shared_file_suffix") or {}).get("suffix_hex")
-check("encrypted_survey finds the bytes every encrypted file ends with",
-      suffix == b"\xde\xad\xbe\xefKEYBLOB1".hex()
-      and got.get("appended_extensions", [{}])[0].get("extension") == ".lockd", str(suffix))
+# The survey writes its census under work/<agent>/tool-output of its working directory.
+got = tool("ransomware-response/tools/encrypted_survey", {"root": share}, cwd=WORK)
+shared = got.get("shared_tail_suffix") or {}
+check("encrypted_survey reports the bytes every sampled file ends with, as an observation",
+      shared.get("suffix_hex") == b"\xde\xad\xbe\xefKEYBLOB1".hex() and shared.get("basis") == "observation"
+      and got.get("appended_extension_observations", [{}])[0].get("extension") == ".lockd", str(shared))
 
 # --- triage-collection/collection_index: the stream a collector renamed --------
 coll = os.path.join(WORK, "kape", "C", "Users", "a"); os.makedirs(coll, exist_ok=True)

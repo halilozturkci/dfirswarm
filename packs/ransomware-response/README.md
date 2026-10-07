@@ -1,11 +1,12 @@
 # Ransomware Response Pack
 
-The order a ransomware case has to be worked in, and the two questions that
-decide everything else.
+Evidence-led ransomware examination. Its two tools return candidates; what a
+candidate shows has to be validated before anyone acts on it.
 
 Depends on the Computer Forensics Base Pack. It does not repeat the intrusion
 work: the Windows, Linux, network and memory packs do that, and this one says
-where in the sequence each belongs.
+where in the work each belongs. Where a skill names a tool of another pack, it
+says "if that pack is loaded" and asks you to check the run's tool inventory.
 
 ## What it carries
 
@@ -13,28 +14,39 @@ where in the sequence each belongs.
 `encryptor/traces`, `encryptor/destroyed-backups`, `identify/family`,
 `recovery/what-is-possible`, `reporting/for-regulators`.
 
-**Two tools.** `encrypted_survey` walks a tree and measures what was *actually*
-encrypted — campaigns skip by extension, directory and size, and the skipped set
-is routinely larger than anyone assumes. It reads every eligible file's head,
-then the middle, end and tail of encrypted-looking samples, so a large database encrypted only at the front shows up as
-recoverable rather than lost; it clusters modification times, which brackets
-when the run happened; and it finds the bytes every encrypted file ends with,
-which identifies the family better than the extension an affiliate can change.
-`ransom_note_scan` finds the notes and pulls out the onion address, the victim
-identifier a negotiator cannot proceed without, the contacts and the wallets.
+**Two tools.** `encrypted_survey` identifies candidate files using extension and
+entropy heuristics, samples selected windows and tails of the first candidates,
+and groups filesystem modification times by hour. These results guide the
+examination; they do not establish how much was encrypted, whether a file is
+recoverable, an encryption window or a family. Files it did not match, could not
+measure or could not read have buckets of their own, and a census of every entry
+is written whole. `ransom_note_scan` finds files whose names look like ransom
+notes and locates what is in them (identifier-like strings, addresses, wallets) by
+byte offset without printing them: it is a candidate inventory, a name match is not
+a confirmed note, and its values go only to a sealed job file
+(`write_values: true` in a job run with `secret_output: true`).
 
-**One goal template**: `ransomware-case.md`, whose checks will not pass without
-an answer about exfiltration and a position on whether the operator still has
-access.
+**One goal template**: `ransomware-case.md`. Its checks require every question to
+be answered under its heading, a timeline in UTC, an `Exfiltration conclusion:` line
+in answer 2 (established, partial, bounded negative or not determinable) and the
+harness's answer checks. Whether a conclusion is supported, and whether the position
+on adversary access has reasons, is for the critic's `attest` or `dispute`, not for
+a pattern match.
 
-## The order, and why it matters
+## How the work goes
 
-Scope, then **exfiltration**, then entry and spread, then the encryptor. The
-exfiltration question decides the regulatory clock and the negotiation, it is
-answered from the evidence that ages fastest, and it is the one most often
-started last.
+Containment, preservation, impact assessment and notification assessment proceed in
+parallel, according to ongoing harm and how fast the evidence goes. Reconstruct
+initial access, staging, possible exfiltration, recovery impairment, encryption and
+impact without assuming that every phase occurred or that their order was fixed.
 
-And preserve before you restore. Every hour of restoration destroys evidence.
+And preserve before you restore. Every hour of restoration changes the sources.
+
+## Not in this pack
+
+No family rules or reference data ship with it, no public-decryptor catalogue, and
+no examination method for hypervisors or network storage yet. `yara` is declared for
+rules the case supplies.
 
 ## Install and use
 

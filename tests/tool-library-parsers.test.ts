@@ -6,10 +6,30 @@
  * tool at all.
  */
 import assert from "node:assert/strict";
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { LIB, runPy, runPySnippet, withCwd } from "./tool-library-harness.ts";
+
+test("every tool of the Windows pack that has a copy in the library is byte-identical to it, manifest included", async () => {
+  // A run started with `--tools-from tool-library` installs the library's copy; one that had drifted from the pack's fixed tool
+  // would hand a run the defect the pack fixed (a credential printed, a stream cut, a count missing).
+  const packTools = join(LIB, "..", "packs", "windows-forensics", "tools");
+  const shared: string[] = [];
+  for (const entry of await readdir(packTools)) {
+    const copy = join(LIB, entry);
+    if (!(await stat(copy).then((s) => s.isDirectory(), () => false))) continue;
+    shared.push(entry);
+    assert.deepEqual(await readFile(join(copy, "run.py")), await readFile(join(packTools, entry, "run.py")), `${entry}: run.py has drifted from the pack's`);
+    assert.deepEqual(
+      JSON.parse(await readFile(join(copy, "manifest.json"), "utf8")),
+      JSON.parse(await readFile(join(packTools, entry, "manifest.json"), "utf8")),
+      `${entry}: manifest.json has drifted from the pack's`,
+    );
+    assert.equal(await stat(join(copy, "run.sh")).then(() => true, () => false), false, `${entry}: a run.sh beside run.py would be what a run executes`);
+  }
+  assert.ok(shared.length >= 13, `the Windows pack's shared tools: ${shared.join(", ")}`);
+});
 
 test("recyclebin_i parses $I metadata and refuses to guess at an unknown header", async () => {
   await withCwd(async (cwd) => {
@@ -40,7 +60,7 @@ test("recyclebin_i parses $I metadata and refuses to guess at an unknown header"
     const good = body.entries.find((e) => String(e.file).includes("ABCDEF"))!;
     assert.equal(good.original_path, path);
     assert.equal(good.original_size, 439);
-    assert.equal(good.deleted_at, "2019-02-15T05:03:25Z");
+    assert.equal(good.deleted_at, "2019-02-15T05:03:25.0000000Z");
     const unknown = body.entries.find((e) => String(e.file).includes("BADHDR"))!;
     assert.match(String(unknown.error), /unknown header version 9/);
     assert.equal(unknown.original_path, undefined, "an unknown layout must not produce a path");
@@ -87,7 +107,7 @@ test("usn_journal skips the sparse front and decodes the reason bits", async () 
     assert.equal(r.usn, 4471);
     assert.deepEqual(r.reason.sort(), ["DATA_EXTEND", "FILE_CREATE"]);
     assert.deepEqual(r.attributes, ["ARCHIVE"]);
-    assert.equal(r.timestamp, "2026-02-11T02:57:52Z");
+    assert.equal(r.timestamp, "2026-02-11T02:57:52.0000000Z");
     assert.equal(r.file_reference, 33194);
     assert.equal(r.file_sequence, 1);
 
@@ -169,7 +189,7 @@ test("usn_journal reads v2, v3 and v4 records behind megabytes of zeros, and a f
     await writeFile(join(cwd, "work", "UsnJrnl_J"), journal);
 
     type Row = { version: number; name: string | null; usn: number; file_reference: number | null; file_sequence: number | null; file_id?: string; reason: string[]; extents?: Array<{ offset: number; length: number }>; offset: number };
-    type Body = { first_record_offset: number; zero_bytes_skipped: number; records_read: number; records_by_version: Record<string, number>; record_count: number; malformed_skipped: number; records: Row[]; note?: string; error?: string };
+    type Body = { first_record_offset: number; zero_bytes_skipped: number; records_read: number; records_by_version: Record<string, number>; record_count: number; unrecognised_bytes: number; unrecognised_ranges: Array<{ offset: number; bytes: number }>; records: Row[]; note?: string; error?: string };
     for (const script of [pack, join(LIB, "usn_journal", "run.py")]) {
       const all = await runPy(script, cwd, { path: "work/UsnJrnl_J" });
       assert.equal(all.code, 0, all.stderr + all.stdout);
@@ -178,7 +198,8 @@ test("usn_journal reads v2, v3 and v4 records behind megabytes of zeros, and a f
       assert.ok(body.zero_bytes_skipped >= zeros, "and how many zero bytes it passed");
       assert.equal(body.records_read, 3);
       assert.deepEqual(body.records_by_version, { "2": 1, "3": 1, "4": 1 });
-      assert.equal(body.malformed_skipped, 2, "the 16 bytes that are not a record are stepped over 8 at a time and counted");
+      assert.equal(body.unrecognised_bytes, 16, "the 16 bytes that are not a record are counted as bytes, not as 8-byte steps");
+      assert.deepEqual(body.unrecognised_ranges, [{ offset: zeros + page, bytes: 16 }], "and kept as a range");
       const [a, b, c] = body.records;
       assert.deepEqual([a.version, a.name, a.usn, a.file_reference, a.file_sequence], [2, "report.docx", 9000, 33194, 3]);
       assert.deepEqual(a.reason, ["FILE_CREATE"]);
@@ -238,14 +259,16 @@ test("browser_history replays the write-ahead log instead of reading around it",
     const wal = await readFile(`${db}-wal`).catch(() => null);
     assert.ok(wal && wal.length > 0, "the fixture must leave an unplayed WAL beside the database");
 
-    const out = await runPy(join(LIB, "browser_history", "run.py"), cwd, { path: "work/History", query: "chrome_history" });
+    const out = await runPy(join(LIB, "browser_history", "run.py"), cwd, { path: "work/History", query: "chrome_url_summary" });
     assert.equal(out.code, 0, out.stderr);
     const body = JSON.parse(out.stdout) as {
       rows: Array<{ url: string; last_visit_utc: string }>;
       sidecars_copied: string[];
-      wal_replayed: boolean;
+      wal_present: boolean;
+      wal_frames_replayed: number;
     };
-    assert.equal(body.wal_replayed, true);
+    assert.equal(body.wal_present, true);
+    assert.ok(body.wal_frames_replayed > 0, "the frames SQLite found and checkpointed are counted, not claimed");
     assert.ok(body.sidecars_copied.includes("History-wal"));
     assert.deepEqual(body.rows.map((r) => r.url), [
       "http://203.0.113.24/upload.aspx",

@@ -31,6 +31,18 @@ and `mam_scan`, `amcache_apps`, `usn_journal`, `shellbags`, `jumplist`,
 `lnk_parse`, `recyclebin_i`, `vss_stores`, `browser_history`, `indx_carve`, `sigma_hunt`,
 `esedb_query`, `extract_stream`, `utf16_urls`, `yara_scan`.
 
+What a tool measures, and what it does not, is in its manifest, and a tool says
+what it did not read rather than hand back a clean answer for a run that did not
+read everything: `partial` or `failed` in a `status` where it has one, and
+otherwise its own counts (`structure_complete`, `unrecognised_bytes`,
+`records_examined` against `parse_errors`). An exit status of 0 means the engine
+ran, not that the examination is complete. Three of them can reach secret material and print none
+of it: `browser_history` replaces the credential cells of Login Data, Cookies and
+Firefox's key database by their length, `regkv` does the same for values that can
+be secrets, and `yara_scan` returns where a rule matched, never the bytes it
+matched; only `yara_scan`, in a job run with `secret_output: true`, can be asked
+(`write_matches`) to write the matched bytes to a sealed file.
+
 **Three goal templates** in `goals/`, each with its own questions, definition of
 done and checks: `intrusion-triage.md`, `data-left-the-building.md`,
 `hidden-data.md`. Pass one with `--goal-file`, or write your own beside them.

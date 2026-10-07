@@ -1,6 +1,6 @@
 {
   "name": "usn_journal",
-  "description": "Parse an NTFS change journal ($UsnJrnl:$J) into records: name, USN, timestamp, reason bits and file reference, from v2, v3 and v4 records. Skips the sparse front, says where the first record was, and says how many records it read whatever the name filter kept.",
+  "description": "Parse an NTFS change journal ($UsnJrnl:$J) into records from v2, v3 and v4 entries: name, USN, timestamp (ISO 8601 UTC with seven fractional digits, and the raw FILETIME as a decimal string), reason bits (as names and raw), the file reference and its sequence, the parent reference and its sequence, source info, security id and the attributes as names and raw. Skips the sparse front and says where the first record was and how many zero bytes it passed; says how many records it read whatever the name filter kept. What is not a record is accounted for in bytes: unrecognised_bytes after the first record (its ranges are a page, unrecognised_ranges) and prefix_unrecognised_bytes before it. A V4 record has no name: a name filter leaves V4 records out and counts them (nameless_excluded_by_filter), and include_nameless: true keeps them. Each record carries its minor_version beside version. A record of a major version this tool does not read (anything but 2, 3 and 4) that still has the shape of one (a length that is a multiple of 8, after it the end, zeros or a record that is read) is named, not only counted as unrecognised bytes: unsupported_version_records, unsupported_versions (by major version), unsupported_version_bytes and a page of them with their offset, major_version, minor_version and length (unsupported_version_list, the whole list in the file all_unsupported_version_list); their bytes are also in unrecognised_bytes. A path that is not a regular file (a FIFO, a device) is refused without being opened (not_attempted).",
   "params": {
     "path": {
       "type": "string",
@@ -8,11 +8,15 @@
     },
     "limit": {
       "type": "integer",
-      "description": "Maximum records to return (default 500)"
+      "description": "Records shown inline (default 500, at most 100000, an inline page size); every matching record is kept, and when there are more the whole list is written as JSON Lines and named in all_results"
     },
     "name": {
       "type": "string",
       "description": "Only records whose file name matches this case-insensitive regex (a|b for either); records_read still counts every record in the journal"
+    },
+    "include_nameless": {
+      "type": "boolean",
+      "description": "With a name filter, keep V4 (range-tracking) records, which have no name, instead of leaving them out and counting them"
     }
   },
   "runtime": "python3",
@@ -20,7 +24,15 @@
   "timeout_seconds": 120,
   "example": "{\"path\": \"work/extracted/UsnJrnl_J\", \"name\": \"\\\\.aspx$\", \"limit\": 200}",
   "by": "maintainer",
-  "at": "2026-09-20T12:00:00.000Z",
-  "version": 2,
-  "sha256": "43b35ab6df03114104460e2b72aaf6acd87acd6127571c73e2eff0d5b78a36e7"
+  "at": "2026-10-07T12:00:00.000Z",
+  "version": 4,
+  "sha256": "d138d453dff72dcc716997b7244c959c9265cc20dc6c76dcd9bd11927d629851",
+  "use": {
+    "names": [
+      "$J",
+      "$UsnJrnl*",
+      "*$J"
+    ]
+  },
+  "requires": []
 }

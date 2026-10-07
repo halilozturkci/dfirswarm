@@ -4,7 +4,7 @@
       "name": "yara",
       "package": "yara",
       "optional": true,
-      "why": "Match the encryptor and its loader against family rules, where a sample survived.",
+      "why": "Match a recovered sample against rules the case supplies, recording the engine version, the ruleset's source, revision and hash, and each match's location. No rules ship with this pack and none is fetched during an examination; a match is a classification lead, not proof of execution or attribution. The version installed is not pinned here: the image's inventory records it.",
       "install": {
         "brew": "brew install yara",
         "apt": "apt-get install -y yara"
