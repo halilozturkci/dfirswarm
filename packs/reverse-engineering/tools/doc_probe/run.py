@@ -101,12 +101,18 @@ OLE_NOT_READ = ["the OLE directory and streams: a marker is a byte search, not a
 # the same strings; tests/pack-network-withholding.test.ts holds the copies equal. An identifier-shaped string is
 # withheld wherever the tool would print one: a name, a path component, a URL, a message that quotes either.
 COUNTS = {"names": 0, "urls": 0, "text": 0}
-_RUN = re.compile(r"[A-Za-z0-9_+=-]{20,}")
+# A run of name characters long enough to be a token. `=` is only a padding at the end (so a key= prefix stays);
+# `/` joins pieces of a base64 token and is handled apart, below.
+_RUN = re.compile(r"[A-Za-z0-9_+%-]{20,}={0,2}|[A-Za-z0-9_+%-]{14,}={2}")
+_SLASHED = re.compile(r"[A-Za-z0-9_+/%-]{30,}={0,2}")
 _HEX = re.compile(r"[0-9a-fA-F]{32,}")
 _PREFIXED = re.compile(r"(?:AKIA|ASIA)[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}"
                        r"|xox[abeprs]-[A-Za-z0-9-]{10,}|sk-[A-Za-z0-9_-]{20,}"
-                       r"|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*")
-_USERINFO = re.compile(r"(?<=://)[^/?#\s@]+(?=@)")
+                       r"|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*"
+                       r"|(?i:basic|bearer)\s+[A-Za-z0-9+/=._~-]{8,}")
+# User-info: after `//` (a URL, or a scheme-relative one), or bare as name:password@host. A mailto: address is not one.
+_USERINFO = re.compile(r"(?<=//)[^/?#\s@]+(?=@)")
+_BARE_USERINFO = re.compile(r"(?<![\w.%+:/-])(?!mailto:)[\w.%+-]{1,64}:[^\s/@:]{1,128}(?=@[\w\[])")
 
 
 def _withheld(what, length, kind):
@@ -133,9 +139,20 @@ def _token_run(run):
     case_flips = sum(1 for a, b in zip(letters, letters[1:]) if a.islower() != b.islower())
     if len(letters) >= 20 and case_flips >= max(8, 0.4 * len(letters)):
         return True
+    if run.endswith("==") and len(run) >= 16:
+        return True
     if run.endswith("=") and len(run) >= 24:
         return True
     return len(run) >= 40 and run.isalnum() and any(c.isdigit() for c in run) and any(c.isalpha() for c in run)
+
+
+def _randomish(piece):
+    """A piece of a path that is not a plain word: digits among letters, or capitals inside a word."""
+    if len(piece) < 4 or "." in piece or re.fullmatch(r"[A-Z][a-z]+", piece):
+        return False
+    letters = [c for c in piece if c.isalpha()]
+    mixed = any(c.islower() for c in letters) and any(c.isupper() for c in letters)
+    return (any(c.isdigit() for c in piece) and bool(letters)) or mixed
 
 
 def token_spans(text):
@@ -143,9 +160,28 @@ def token_spans(text):
     for m in _RUN.finditer(text):
         if _token_run(m.group()):
             spans.append(m.span())
-    spans.sort()
-    merged = []
+    # A base64 token holds `/`: pieces too short to be one alone (an AWS-style secret has two) are caught as a whole.
+    for m in _SLASHED.finditer(text):
+        run = m.group()
+        if "/" in run and sum(1 for p in run.split("/") if _randomish(p)) >= 3 and re.search(r"[0-9+]", run):
+            spans.append(m.span())
+    # A flagged piece takes the random-looking pieces next to it across a `/`: the head of a token is not printed.
+    grown = []
     for start, end in spans:
+        while start > 1 and text[start - 1] == "/":
+            m = re.search(r"[A-Za-z0-9_+%-]+$", text[:start - 1])
+            if not m or not _randomish(m.group()):
+                break
+            start = m.start()
+        while end < len(text) - 1 and text[end] == "/":
+            m = re.match(r"[A-Za-z0-9_+%-]+={0,2}", text[end + 1:])
+            if not m or not _randomish(m.group()):
+                break
+            end = end + 1 + m.end()
+        grown.append((start, end))
+    grown.sort()
+    merged = []
+    for start, end in grown:
         if merged and start <= merged[-1][1]:
             merged[-1] = (merged[-1][0], max(merged[-1][1], end))
         else:
@@ -158,8 +194,9 @@ def token_shaped(text):
 
 
 def scrub(text, kind="text"):
-    """The text with every token-shaped run and every URL's user-info withheld."""
+    """The text with every token-shaped run and every user-info withheld."""
     text = _USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
+    text = _BARE_USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
     out, last = [], 0
     for start, end in token_spans(text):
         out.append(text[last:start])
@@ -174,13 +211,13 @@ def redact_url(url):
     rest, fragment = (url.split("#", 1) + [None])[:2]
     rest, query = (rest.split("?", 1) + [None])[:2]
     scheme = authority = ""
-    m = re.match(r"^([A-Za-z][A-Za-z0-9+.-]*://)([^/]*)(.*)$", rest, re.S)
+    m = re.match(r"^((?:[A-Za-z][A-Za-z0-9+.-]*:)?//)([^/]*)(.*)$", rest, re.S)
     if m:
         scheme, authority, rest = m.group(1), m.group(2), m.group(3)
         if "@" in authority:
             userinfo, authority = authority.rsplit("@", 1)
             authority = _withheld("userinfo", len(userinfo), "urls") + "@" + authority
-    out = scheme + authority + "/".join(scrub(s, "urls") for s in rest.split("/"))
+    out = scheme + authority + scrub(rest, "urls")
     if query is not None:
         pairs = []
         for pair in query.split("&"):
