@@ -4,7 +4,7 @@
       "name": "capa",
       "package": "capa",
       "optional": true,
-      "why": "Map a binary's behaviour to named capabilities and ATT&CK techniques from its code, not from its strings.",
+      "why": "Match a binary against capability rules over features extracted from the file (which can include imports, strings and instructions) and report named capabilities with the features and addresses they matched. A match is a rule-supported hypothesis about what the code can do, not observed behaviour; the rule set and version used are part of the result.",
       "install": {
         "brew": "python3 -m pip install flare-capa",
         "apt": "pinned download 9.4.0 (install.download): upstream standalone release, whose embedded rules make offline analysis work",
@@ -29,7 +29,7 @@
       "name": "floss",
       "package": "flare-floss",
       "optional": true,
-      "why": "Recover strings a sample deobfuscates at runtime, by emulation, without running the sample.",
+      "why": "Recover strings a sample builds or decodes at runtime by analysis and emulation of its code, without running the sample on a host. Recovery is incomplete and depends on the format, architecture and version; a recovered string is derived, not read at a file offset.",
       "install": {
         "brew": "python3 -m pip install flare-floss",
         "apt": "python3 -m pip install flare-floss"
@@ -41,7 +41,7 @@
       "name": "olevba",
       "package": "oletools",
       "optional": true,
-      "why": "Extract and deobfuscate VBA macros from an Office document, and say which of them auto-run.",
+      "why": "Extract VBA macro source from an Office document and name its auto-execution entry points. An entry-point name shows what a macro declares, not that anything ran.",
       "install": {
         "brew": "python3 -m pip install oletools",
         "apt": "python3 -m pip install oletools"
@@ -76,7 +76,7 @@
       "name": "yara",
       "package": "yara",
       "optional": true,
-      "why": "Match a sample against a rule set and report every hit with its offset.",
+      "why": "Match a sample against a rule set and report each match, with the offsets of its string matches where the rule has strings (a condition-only match has none). The pack ships no rules.",
       "install": {
         "brew": "brew install yara",
         "apt": "apt-get install -y yara"
@@ -89,6 +89,18 @@
       "package": "binutils",
       "optional": true,
       "why": "A first pass over a binary before a parser is chosen. Always search UTF-16LE as well, which strings -el does.",
+      "install": {
+        "brew": "brew install binutils",
+        "apt": "apt-get install -y binutils"
+      },
+      "licence": "GPL-3.0-or-later",
+      "redistributable": false
+    },
+    {
+      "name": "readelf",
+      "package": "binutils",
+      "optional": true,
+      "why": "Print an ELF file's headers, dynamic section, notes (including the GNU build ID) and symbol tables with GNU binutils, to cross-check pe_info's reading and to read what it does not.",
       "install": {
         "brew": "brew install binutils",
         "apt": "apt-get install -y binutils"
@@ -122,7 +134,7 @@
       "name": "upx",
       "package": "upx",
       "optional": true,
-      "why": "Test and unpack UPX-compressed executables without executing them, preserving both the original and unpacked hashes.",
+      "why": "Test and decompress UPX-compressed executables on a copy, without executing them, preserving the original and recording both hashes. A failure does not show that a file is not packed.",
       "install": {
         "brew": "brew install upx",
         "apt": "pinned download 5.2.1 (install.download): upstream static release per architecture",

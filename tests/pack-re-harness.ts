@@ -612,7 +612,7 @@ export type ZipEntry = {
 };
 
 /** A ZIP archive: local headers and data, the central directory, the end of central directory record. */
-export function buildZip(entries: ZipEntry[], o: { comment?: string } = {}): Buffer {
+export function buildZip(entries: ZipEntry[], o: { comment?: string; zip64?: boolean } = {}): Buffer {
   const locals: Buffer[] = [];
   const central: Buffer[] = [];
   let offset = 0;
@@ -667,6 +667,14 @@ export function buildZip(entries: ZipEntry[], o: { comment?: string } = {}): Buf
   }
   const dir = Buffer.concat(central);
   const comment = Buffer.from(o.comment ?? "", "utf8");
+  if (o.zip64) {
+    // APPNOTE 4.3.14-4.3.16: the zip64 end of central directory record and its locator precede an end record that
+    // holds the sentinel values (0xFFFF entries, 0xFFFFFFFF size and offset).
+    const record = Buffer.concat([u32(0x06064b50), u64(44), u16(45), u16(45), u32(0), u32(0), u64(entries.length), u64(entries.length), u64(dir.length), u64(offset)]);
+    const locator = Buffer.concat([u32(0x07064b50), u32(0), u64(offset + dir.length), u32(1)]);
+    const eocd64 = Buffer.concat([u32(0x06054b50), u16(0), u16(0), u16(0xffff), u16(0xffff), u32(0xffffffff), u32(0xffffffff), u16(comment.length), comment]);
+    return Buffer.concat([...locals, dir, record, locator, eocd64]);
+  }
   const eocd = Buffer.concat([u32(0x06054b50), u16(0), u16(0), u16(entries.length), u16(entries.length), u32(dir.length), u32(offset), u16(comment.length), comment]);
   return Buffer.concat([...locals, dir, eocd]);
 }

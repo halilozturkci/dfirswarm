@@ -289,6 +289,25 @@ test("an Office file with no disagreement says none", async () => {
   });
 });
 
+test("a zip64 archive is listed from its zip64 end record, and one whose zip64 record is missing fails with the reason", async () => {
+  await withCwd(async (cwd) => {
+    const rel = rels([{ id: "rId1", type: "hyperlink", target: "https://example.org/a", mode: "External" }]);
+    const entries: ZipEntry[] = [CONTENT_TYPES, { name: "_rels/.rels", data: Buffer.from(rel) }, DOC];
+    const out = await probe(cwd, "z64.docx", buildZip(entries, { zip64: true }));
+    assert.equal(out.members.declared, 3);
+    assert.equal(out.members.listed, 3);
+    assert.equal(out.external_targets.length, 1);
+    assert.equal(out.status, "complete", JSON.stringify(out.problems));
+    // The same archive with its zip64 locator wiped: the end record holds sentinels and nothing says where the real values are.
+    const broken = buildZip(entries, { zip64: true });
+    broken.fill(0, broken.length - 22 - 20, broken.length - 22);
+    await put(cwd, "work/broken.docx", broken);
+    const bad = refused(await tool(DOC_PROBE, cwd, { path: "work/broken.docx" }));
+    assert.equal(bad.status, "failed");
+    assert.match(bad.error, /zip64/i);
+  });
+});
+
 test("a ZIP with no end-of-central-directory record fails loudly, with the reason", async () => {
   await withCwd(async (cwd) => {
     await put(cwd, "work/t.docx", Buffer.concat([Buffer.from("PK\x03\x04"), Buffer.alloc(200, 1)]));
