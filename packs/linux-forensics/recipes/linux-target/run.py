@@ -4,11 +4,18 @@
     run.py detect --target T [--probe-out DIR]   exit 0 applies, 1 does not, 2 could not tell
     run.py run --target T --out DIR
 
-detect keeps three answers apart. Exit 0 says dissect.target named a Linux target. Exit 1 says it ran, named
-something that is not Linux, and so the route is closed. Exit 2 says it could not tell (the reader is not in
-this image, it timed out, it failed, it printed nothing, or it printed that it could not identify the system)
-and the route is NOT closed: the census records a detect step that failed, with why, rather than "does not
-apply". A reader that is not in the image, or that timed out, is a missing observation and never a negative.
+detect keeps three answers apart. Exit 0 says dissect.target's `os` function named the target `linux` (its own
+identification: nothing here checks it against files in the image). Exit 1 says it named an operating system
+this recipe knows is not Linux (windows, osx, esxi, a BSD, android, ios) and so the route is closed. Exit 2 says
+it could not tell (the reader is not in this image, it timed out, it failed, it printed nothing, it printed that
+it could not identify the system, or it printed a name this recipe does not recognise: `unix`, `debian`, or text
+with other words in it) and the route is NOT closed: the census records a detect step that failed, with why,
+rather than "does not apply". A reader that is not in the image, or that timed out, is a missing observation
+and never a negative. The name is read as one value: the `os` field if the output is a JSON object, the string
+if it is a JSON string, the whole line otherwise; a word found among other words is not a name.
+
+Every answer carries `status` (complete, partial or failed) and `status_basis`, the pair coverage.json carries.
+For detect, `complete` says the OS was identified (either way) and `failed` says it was not.
 
 run builds the linux_triage artefact files and a coverage receipt that follows what each selected function
 produced, read from the wrapper's own durable summary (which the wrapper rewrites after every function), so a
@@ -18,23 +25,39 @@ run that is killed or times out still leaves a receipt of what had been done. Th
 
 import json
 import os
-import re
 import shutil
 import signal
 import subprocess
 import sys
 import time
+import traceback
 from pathlib import Path
 
 DETECT_SECONDS = int(os.environ.get("LINUX_TARGET_DETECT_SECONDS", "300"))
 # What dissect.target prints for a system it could not identify, rather than for one it identified.
 UNIDENTIFIED = {"default", "unknown", "none", "null", "unidentified", "n/a"}
+# Operating systems this recipe knows are not what it catalogues. Anything else that is not `linux` is not a no:
+# `unix` or a distribution name may be a Linux this reader did not name so.
+NOT_LINUX = {"windows", "osx", "macos", "darwin", "esxi", "bsd", "freebsd", "openbsd", "netbsd", "dragonfly", "android", "ios"}
 NOT_COVERED = "deleted/unallocated carving, arbitrary application files, memory, encrypted content without a key"
 
 
 def answer(value, code=0):
+    if value.get("ok") is False and "status" not in value:
+        value = {**value, "status": "failed", "status_basis": value.get("error", "the recipe stopped with an error")}
     print(json.dumps(value))
     raise SystemExit(code)
+
+
+def undetermined(why, code=2):
+    answer({"applies": "unknown", "status": "failed", "status_basis": "the OS was not identified, so no route is opened or closed", "why": why}, code)
+
+
+def write_json(path, value):
+    try:
+        path.write_text(json.dumps(value, indent=2) + "\n")
+    except OSError as exc:
+        answer({"ok": False, "status": "failed", "status_basis": "the recipe's own output could not be written", "error": f"could not write {path}: {exc.strerror or exc}"}, 2)
 
 
 def target_value(raw):
@@ -50,41 +73,62 @@ def target_value(raw):
 
 
 def detect(image):
-    """Any failure to read the OS is exit 2 and `applies: unknown`: only a typed answer naming another system closes the route."""
+    """Any failure to read the OS is exit 2 and `applies: unknown`: only an answer naming a system known not to be Linux closes the route.
+    Only a reader that cannot run or answer is a failure of the probe; any other error is a defect in this recipe and is not hidden."""
     try:
         detect_os(image)
-    except SystemExit:
-        raise
-    except Exception as exc:    # an unreadable reader, an answer that is not text: not a negative
-        answer({"applies": "unknown", "why": f"the OS probe failed ({type(exc).__name__}: {exc}): the OS was not identified, "
-                                             "so this route is not closed"}, 2)
+    except (OSError, subprocess.SubprocessError, UnicodeError) as exc:    # an unreadable reader, an answer that is not text: not a negative
+        undetermined(f"the OS probe failed ({type(exc).__name__}: {exc}): the OS was not identified, so this route is not closed")
+
+
+def os_name(text):
+    """The one value `os` printed, or None: the `os` field of a JSON object, a JSON string, or the whole line. A word among other
+    words is not a name (`{"os":"windows","hostname":"linux"}` names windows, and `a linux box` names nothing)."""
+    text = text.strip()
+    if not text:
+        return None
+    try:
+        value = json.loads(text)
+    except ValueError:
+        value = text
+    if isinstance(value, dict):
+        value = value.get("os")
+    if not isinstance(value, str):
+        return None
+    value = value.strip().lower()
+    return value if value and len(value.split()) == 1 else None
 
 
 def detect_os(image):
     binary = shutil.which("target-query")
     if not binary:
-        answer({"applies": "unknown", "why": "target-query is not in this image: the OS of the target was not identified, "
-                                             "so this route is not closed"}, 2)
+        undetermined("target-query is not in this image: the OS of the target was not identified, so this route is not closed")
     try:
         proc = subprocess.run([binary, "--no-cache", "-s", "-f", "os", image],
                               capture_output=True, text=True, errors="replace", timeout=DETECT_SECONDS)
     except subprocess.TimeoutExpired:
-        answer({"applies": "unknown", "why": f"target-query did not identify the OS within {DETECT_SECONDS} seconds: "
-                                             "not known to be Linux or not, so this route is not closed"}, 2)
+        undetermined(f"target-query did not identify the OS within {DETECT_SECONDS} seconds: "
+                     "not known to be Linux or not, so this route is not closed")
     text = proc.stdout.strip()
-    tokens = re.findall(r"[A-Za-z0-9_.-]+", text.lower())
-    if proc.returncode == 0 and "linux" in tokens:
-        answer({"applies": True, "why": "dissect.target identified a Linux target"})
-    if proc.returncode == 0 and tokens and not set(tokens) <= UNIDENTIFIED:
-        answer({"applies": False, "why": f"dissect.target identified the target as {text.splitlines()[0][:80]!r}, not Linux"}, 1)
+    first = (text.splitlines() or [""])[0][:80]
+    name = os_name(text) if proc.returncode == 0 else None
+    if name == "linux":
+        answer({"applies": True, "status": "complete", "status_basis": "dissect.target's os function named the target; that is its own identification, not checked here against files in the image",
+                "why": "dissect.target's os function named the target 'linux' (unverified here against the image's files)"})
+    if name in NOT_LINUX:
+        answer({"applies": False, "status": "complete", "status_basis": "dissect.target's os function named an operating system this recipe knows is not Linux",
+                "why": f"dissect.target's os function named the target {name!r}, not Linux"}, 1)
     why = (proc.stderr or proc.stdout).strip()
     if proc.returncode == 0 and not why:
         why = "target-query exited 0 and printed nothing: the OS was not identified"
-    elif proc.returncode == 0 and tokens:
-        why = f"target-query reported that it could not identify the system ({text.splitlines()[0][:80]!r})"
+    elif proc.returncode == 0 and name in UNIDENTIFIED:
+        why = f"target-query reported that it could not identify the system ({first!r})"
+    elif proc.returncode == 0:
+        why = (f"target-query's os function printed {first!r}, which is not a single name this recipe recognises "
+               "(linux, or an operating system it knows is not Linux): it is not read as either")
     elif not why:
         why = f"target-query exited {proc.returncode} without identifying the OS"
-    answer({"applies": "unknown", "why": why[-400:] + " (the OS was not identified: this route is not closed)"}, 2)
+    undetermined(why[-400:] + " (the OS was not identified: this route is not closed)")
 
 
 FUNCTION_STATUSES = ("parsed", "empty", "unsupported", "failed", "not_attempted", "unknown")
@@ -113,13 +157,22 @@ def coverage_from(summary, proc_code, shown, state):
     wrapper = (summary or {}).get("state", "missing")
     done = wrapper == "finished" and proc_code == 0 and (summary or {}).get("execution_complete") is True
     clean = done and not any(counts[k] for k in ("unsupported", "failed", "not_attempted", "unknown"))
+    total = sum(counts.values())
+    ran = counts["parsed"] + counts["empty"] + counts["unsupported"] + counts["unknown"]
     if summary is None:
-        status = "unknown"
+        status, basis = "failed", "the wrapper left no summary of this run, so what ran is not known"
+    elif clean:
+        status, basis = "complete", f"every one of the {total} selected functions ran to exit 0 and produced records or nothing: this is not coverage of the host"
+    elif ran == 0:
+        status, basis = "failed", f"no selected function ran to an exit ({counts['failed']} failed, {counts['not_attempted']} not attempted)"
     else:
-        status = "complete" if clean else "partial"
+        short = ", ".join(f"{counts[k]} {k}" for k in ("unsupported", "failed", "not_attempted", "unknown") if counts[k])
+        status, basis = "partial", (f"{ran} of {total} selected functions ran" + (f"; {short}" if short else "")
+                                    + ("" if done else "; the wrapper did not end cleanly") + ": the errors say which")
     return {
         "recipe": "linux-target",
         "status": status,
+        "status_basis": basis,
         "covered": "the dissect.target functions selected for this recipe (counted under functions, named in artefacts/summary.json) over "
                    + shown + "; `complete` says every selected function ran and produced records or nothing, not that the artefacts exist or were all read",
         "not_covered": NOT_COVERED,
@@ -161,24 +214,30 @@ def write_index(out):
 
 
 def run(image, shown, out):
-    out.mkdir(parents=True, exist_ok=True)
+    try:
+        out.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        answer({"ok": False, "error": f"the output directory could not be made: {exc.strerror or exc}", "out": str(out)}, 2)
     tool = Path(__file__).resolve().parents[2] / "tools" / "linux_triage" / "run.py"
-    request = {"source": image, "out_dir": str(out / "artefacts")}
+    # The wrapper runs in the output directory, so that what it makes is under its own working directory whatever this
+    # process's was; the image is named by its absolute path for the same reason.
+    request = {"source": os.path.abspath(image), "out_dir": "artefacts"}
     state = {"proc": None}
     began = time.time()
 
     def receipt(proc_code, written):
         summary = read_summary(out, began)
         coverage = coverage_from(summary, proc_code, shown, written)
-        (out / "coverage.json").write_text(json.dumps(coverage, indent=2) + "\n")
+        write_json(out / "coverage.json", coverage)
         write_index(out)
         return coverage
 
     # A receipt exists before the wrapper starts, and again if this process is told to stop.
-    (out / "coverage.json").write_text(json.dumps({
-        "recipe": "linux-target", "status": "unknown", "covered": "nothing yet: the wrapper had not finished",
+    write_json(out / "coverage.json", {
+        "recipe": "linux-target", "status": "partial", "status_basis": "the wrapper had not finished: nothing is established yet",
+        "covered": "nothing yet: the wrapper had not finished",
         "not_covered": NOT_COVERED, "errors": ["the wrapper was running when this receipt was written; see artefacts/summary.json"],
-        "receipt_written": "before the wrapper started"}, indent=2) + "\n")
+        "receipt_written": "before the wrapper started"})
 
     def terminated(signum, _frame):
         child = state["proc"]
@@ -199,18 +258,26 @@ def run(image, shown, out):
         raise SystemExit(128 + signum)
 
     signal.signal(signal.SIGTERM, terminated)
-    proc = subprocess.Popen([sys.executable, str(tool)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                            start_new_session=True)
+    try:
+        proc = subprocess.Popen([sys.executable, str(tool)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                start_new_session=True, cwd=str(out))
+    except OSError as exc:
+        answer({"ok": False, "status": "failed", "status_basis": "the wrapper could not be started", "error": f"linux_triage could not be started: {exc.strerror or exc}"}, 2)
     state["proc"] = proc
     stdout, stderr = proc.communicate(json.dumps(request))
-    (out / "summary.json").write_text(stdout or json.dumps({"error": "linux_triage wrote no result"}) + "\n")
-    if stderr:
-        (out / "runner.stderr").write_text(stderr)
+    try:
+        (out / "summary.json").write_text(stdout or json.dumps({"error": "linux_triage wrote no result"}) + "\n")
+        if stderr:
+            (out / "runner.stderr").write_text(stderr)
+    except OSError as exc:
+        answer({"ok": False, "status": "failed", "status_basis": "the recipe's own output could not be written", "error": f"could not write the wrapper's answer: {exc.strerror or exc}"}, 2)
     coverage = receipt(proc.returncode, "after the wrapper finished")
     if proc.returncode != 0:
         coverage["errors"].append(f"linux_triage exited {proc.returncode}")
-        (out / "coverage.json").write_text(json.dumps(coverage, indent=2) + "\n")
-    answer({"ok": proc.returncode == 0, "status": coverage["status"], "functions": coverage["functions"]},
+        if coverage["status"] == "complete":
+            coverage["status"], coverage["status_basis"] = "partial", f"linux_triage exited {proc.returncode}"
+        write_json(out / "coverage.json", coverage)
+    answer({"ok": proc.returncode == 0, "status": coverage["status"], "status_basis": coverage["status_basis"], "functions": coverage["functions"]},
            0 if proc.returncode == 0 else 2)
 
 
@@ -241,4 +308,12 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Exception:
+        # A defect in this recipe is shown, not turned into a negative: the traceback is on stderr, and the answer is
+        # "could not tell" (exit 2), never exit 1, which says the route is closed.
+        traceback.print_exc()
+        undetermined("this recipe failed on an unexpected error (the traceback is on its stderr): the OS was not identified, so no route is closed")

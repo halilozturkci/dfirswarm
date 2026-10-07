@@ -10,10 +10,11 @@
  * and the files it names hold is checked here for a planted secret.
  */
 import assert from "node:assert/strict";
+import { spawn, spawnSync } from "node:child_process";
 import { chmod, mkdir, readFile, readdir, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { JOURNAL, asJob, body, everythingBut, exists, filesUnder, lines, refused, rowsOf, tool, withCwd } from "./linux-pack-harness.ts";
+import { IS_ROOT, JOURNAL, asJob, body, everythingBut, exists, filesUnder, lines, refused, rowsOf, tool, withCwd } from "./linux-pack-harness.ts";
 import type { Json } from "./linux-pack-harness.ts";
 
 const BOOT_A = "9d6a4f4b7a7e4b2d9b2f0a1e3f4c5d6e";
@@ -97,7 +98,8 @@ test("journal_export keeps the whole native export, with the cursor and both clo
     assert.equal((await stat(join(cwd, "out", "journal-native.jsonl"))).mode & 0o777, 0o600);
     assert.equal(out.text.written, 5);
     assert.equal(out.entry_count, 5);
-    assert.equal(out.export_status, "complete");
+    assert.equal(out.status, "complete");
+    assert.ok(out.status_basis);
     // The projection: the identity and the clocks, as raw values beside the decoded time.
     const rows = await rowsOf(cwd, out);
     assert.equal(rows.length, 5);
@@ -176,7 +178,7 @@ test("journal_export returns the paths and a partial status when journalctl does
     const env = await journalFixture(cwd, bin, nativeJournal() + "this is not json\n");
     const slow = body(await asJob(JOURNAL, cwd, { path: "work/journal", write_text: true, max_seconds: 1 }, bin, { ...env, STUB_SLEEP: "30" }));
     assert.equal(slow.timed_out, true);
-    assert.equal(slow.export_status, "partial");
+    assert.equal(slow.status, "partial");
     assert.equal(slow.entry_count, 5, "what was read before the deadline is kept");
     assert.match(slow.text.file, /journal-native\.jsonl$/);
     assert.equal(slow.parse_errors.count, 1);
@@ -219,7 +221,7 @@ test("journal_export does not stop at a boot id that is a list, and counts the l
     assert.equal(out.parse_errors.oversized_lines, 1);
     assert.equal(out.parse_errors.first[0].native_line, 3);
     assert.equal(out.entries_with_a_boot_id_that_is_not_text, 1);
-    assert.equal(out.export_status, "partial");
+    assert.equal(out.status, "partial");
     assert.equal(out.text.written, 4, "every line is in the native file, the long one included");
     assert.equal((await stat(join(cwd, "out", "journal-native.jsonl"))).size, Buffer.byteLength(native));
   });
@@ -263,5 +265,117 @@ test("journal_export rejects arguments that are not an object and a field of the
     const env = await journalFixture(cwd, bin, nativeJournal());
     for (const bad of [null, [], "x"]) assert.match(refused(await tool(JOURNAL, cwd, bad, env, bin)).error, /JSON object/);
     for (const args of [{ path: "work/journal", unit: 5 }, { path: "work/journal", grep: [] }, { path: "work/journal", since: 5 }]) refused(await tool(JOURNAL, cwd, args, env, bin));
+  });
+});
+
+test("journal_export asks journalctl to be quiet and reads its `-- No entries --` notice as an empty selection, not as a broken export", async () => {
+  await withCwd(async (cwd, bin) => {
+    // A real journalctl prints this line on stdout when nothing matches and --quiet is not given.
+    const env = await journalFixture(cwd, bin, "-- No entries --\n");
+    const out = body(await asJob(JOURNAL, cwd, { path: "work/journal", unit: "none.service" }, bin, env));
+    assert.equal(out.entry_count, 0);
+    assert.equal(out.no_entries_notices, 1);
+    assert.equal(out.parse_errors.count, 0);
+    assert.equal(out.status, "complete");
+    const argv: string[] = JSON.parse((await readFile(env.STUB_ARGV, "utf8")).trim().split("\n")[0]);
+    assert.ok(argv.includes("--quiet"), "the notice is not asked for");
+  });
+});
+
+test("journal_export ends journalctl and its children when it is told to stop", async () => {
+  await withCwd(async (cwd, bin) => {
+    const env = await journalFixture(cwd, bin, nativeJournal());
+    await writeFile(join(bin, "journalctl"), `#!/usr/bin/env python3
+import os, subprocess, time
+open(os.environ["STUB_PID"], "w").write(str(os.getpid()))
+subprocess.Popen(["sleep", "60"])
+time.sleep(60)
+`);
+    await chmod(join(bin, "journalctl"), 0o755);
+    const pidFile = join(cwd, "stub.pid");
+    await mkdir(join(cwd, "out"), { recursive: true });
+    const child = spawn("python3", [JOURNAL], { cwd, env: { ...process.env, ...env, STUB_PID: pidFile, AGENT_ID: "s1", JOB_ID: "j000050", OUT: join(cwd, "out"), PATH: `${bin}:${process.env.PATH ?? ""}` }, stdio: ["pipe", "pipe", "pipe"] });
+    child.stdin.end(JSON.stringify({ path: "work/journal" }));
+    const exited = new Promise<number | null>((resolve) => child.on("close", (code) => resolve(code)));
+    let pid = 0;
+    for (let i = 0; i < 100 && !pid; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      pid = Number(await readFile(pidFile, "utf8").catch(() => "0"));
+    }
+    assert.ok(pid > 0);
+    child.kill("SIGTERM");
+    assert.equal(await exited, 143);
+    await new Promise((r) => setTimeout(r, 300));
+    assert.throws(() => process.kill(pid, 0), "journalctl did not outlive the tool");
+    const kids = spawnSync("pgrep", ["-f", "sleep 60"], { encoding: "utf8" }).stdout.trim();
+    assert.equal(kids, "", `nor did what it started: ${kids}`);
+  });
+});
+
+test("journal_export never writes over an earlier output of the same job", async () => {
+  await withCwd(async (cwd, bin) => {
+    const env = await journalFixture(cwd, bin, nativeJournal());
+    await writeFile(join(cwd, "verify.txt"), "PASS: first\n");
+    const first = body(await asJob(JOURNAL, cwd, { path: "work/journal", mode: "verify" }, bin, { ...env, STUB_VERIFY: join(cwd, "verify.txt") }));
+    await writeFile(join(cwd, "verify.txt"), "PASS: second\n");
+    const second = body(await asJob(JOURNAL, cwd, { path: "work/journal", mode: "verify" }, bin, { ...env, STUB_VERIFY: join(cwd, "verify.txt") }));
+    assert.notEqual(first.verify.output_file, second.verify.output_file);
+    assert.match(second.verify.output_file, /journal-verify\.2\.txt$/);
+    assert.equal(await readFile(join(cwd, "out", "journal-verify.txt"), "utf8"), "PASS: first\n");
+    assert.equal(await readFile(join(cwd, "out", "journal-verify.2.txt"), "utf8"), "PASS: second\n");
+    assert.match(second.verify.stderr_file, /journalctl\.2\.stderr$/);
+    assert.equal(first.status, "complete");
+  });
+});
+
+test("journal_export refuses a path that is not a file or a directory, a path through a link, and this machine's own journal, and answers with an error where it cannot write", async () => {
+  await withCwd(async (cwd, bin) => {
+    const env = await journalFixture(cwd, bin, nativeJournal());
+    assert.equal(spawnSync("mkfifo", [join(cwd, "work", "pipe.journal")]).status, 0);
+    assert.match(refused(await tool(JOURNAL, cwd, { path: "work/pipe.journal" }, env, bin)).error, /pipe, a socket or a device/);
+    await mkdir(join(cwd, "work", "real"), { recursive: true });
+    await writeFile(join(cwd, "work", "real", "system.journal"), "x");
+    await symlink(join(cwd, "work", "real"), join(cwd, "work", "linked"));
+    const through = refused(await tool(JOURNAL, cwd, { path: "work/linked/system.journal" }, env, bin));
+    assert.match(through.error, /through a link/);
+    assert.match(refused(await tool(JOURNAL, cwd, { path: "/var/log/journal" }, env, bin)).error, /own journal|no such file/);
+    assert.equal(await exists(env.STUB_ARGV), false);
+    if (!IS_ROOT) {
+      const ro = join(cwd, "ro-out");
+      await mkdir(ro, { recursive: true });
+      await chmod(ro, 0o555);
+      try {
+        const bad = refused(await tool(JOURNAL, cwd, { path: "work/journal" }, { ...env, JOB_ID: "j000066", OUT: ro }, bin));
+        assert.equal(bad.status, "failed");
+      } finally {
+        await chmod(ro, 0o755);
+      }
+    }
+  });
+});
+
+test("journal_export refuses grep outside a job, matches the message text only in a job and says so, and shows a long previewed message cut with its length", async () => {
+  await withCwd(async (cwd, bin) => {
+    const env = await journalFixture(cwd, bin, nativeJournal());
+    assert.match(refused(await tool(JOURNAL, cwd, { path: "work/journal", grep: "hunter" }, env, bin)).error, /oracle/);
+    const inJob = body(await asJob(JOURNAL, cwd, { path: "work/journal", grep: "hunter" }, bin, env));
+    assert.equal(inJob.filter_touched_withheld_text, true);
+    const big = JSON.stringify({ __CURSOR: "s=1", __REALTIME_TIMESTAMP: "1771061400000000", __MONOTONIC_TIMESTAMP: "1", _BOOT_ID: BOOT_A, MESSAGE: "m".repeat(200_000), _CMDLINE: "c".repeat(100) });
+    await writeFile(join(cwd, "stub-lines.jsonl"), big + "\n");
+    const preview = body(await asJob(JOURNAL, cwd, { path: "work/journal", preview_text: true }, bin, env, "out-big"));
+    assert.equal(preview.records[0].message.length, 65536);
+    assert.equal(preview.records[0].preview_truncated.message, 200_000);
+    assert.equal(preview.records[0].cmdline.length, 100);
+  });
+});
+
+test("journal_export takes no NaN for a budget", async () => {
+  await withCwd(async (cwd, bin) => {
+    const env = await journalFixture(cwd, bin, nativeJournal());
+    for (const literal of ["NaN", "Infinity", "-1", "0"]) {
+      const r = spawnSync("python3", [JOURNAL], { cwd, input: `{"path":"work/journal","max_seconds":${literal}}`, encoding: "utf8", env: { ...process.env, ...env, PATH: `${bin}:${process.env.PATH ?? ""}` } });
+      assert.equal(r.status, 1, literal);
+      assert.match(JSON.parse(r.stdout).error, /max_seconds/);
+    }
   });
 });

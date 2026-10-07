@@ -36,8 +36,8 @@ not follow, a top-level directory it left out and a file it knows and does not p
 bad file never stops the sweep and never becomes an empty result.
 """
 import datetime
-import hashlib
 import json
+import math
 import os
 import re
 import secrets
@@ -54,6 +54,7 @@ FIRST_FAILURES = 20
 MAX_PIECE = 8 << 20          # a physical line longer than this is read in pieces, none dropped
 MAX_RECORD = 8 << 20         # a record longer than this is continued in the next one, none dropped
 DEFAULT_SECONDS = 100.0
+MAX_SECONDS = 105.0           # the most a caller may ask for (the manifest allows 120)
 TEXT_NAME = "shell-history-commands.jsonl"
 
 # file name -> (format, the program that writes it)
@@ -76,7 +77,8 @@ SKIP_TOP = ("proc", "sys", "dev")
 
 
 def fail(message, **extra):
-    print(json.dumps({"error": message, **extra}))
+    """An error answer: JSON, exit 1, and the same `status` every answer of this pack carries."""
+    print(json.dumps({"error": message, "status": "failed", "status_basis": "the tool stopped with an error (see error)", **extra}))
     raise SystemExit(1)
 
 
@@ -120,11 +122,29 @@ def want_str_list(args, key):
     return value
 
 
+def want_seconds(args, key, default, maximum=3600):
+    """A time budget: a finite number above zero and no more than `maximum` (NaN and Infinity are not budgets)."""
+    value = args.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0 or value > maximum:
+        fail("%s must be a number of seconds above 0 and at most %d" % (key, maximum))
+    return float(value)
+
+
+def decode(data):
+    """Bytes as text with no byte lost: an undecodable byte is a lone surrogate, which the text file writes as an escape
+    and which encodes back to the byte (`blen` counts the bytes the original had)."""
+    return data.decode("utf-8", "surrogateescape")
+
+
+def blen(text):
+    return len(text.encode("utf-8", "surrogateescape"))
+
+
 def bound(value, limit=1024):
     """(shown, bytes or None): a string longer than `limit` characters is shown cut, with its whole length. The
     whole is kept where the record's text is kept (the text file, the evidence at the record's locator)."""
     if isinstance(value, str) and len(value) > limit:
-        return value[:limit], len(value.encode("utf-8", "replace"))
+        return value[:limit], blen(value)
     return value, None
 
 
@@ -142,9 +162,26 @@ def want_limit(args):
     return limit
 
 
+def status_of(complete, failed, basis_complete, basis_partial, basis_failed):
+    """The `status` every answer of this pack carries, with the reason for it: complete (everything the request asked
+    for was read and nothing was left out), partial (some of it was, and the answer names what was not) or failed."""
+    if failed:
+        return {"status": "failed", "status_basis": basis_failed}
+    if complete:
+        return {"status": "complete", "status_basis": basis_complete}
+    return {"status": "partial", "status_basis": basis_partial}
+
+
+def touches_withheld_text(has_filter):
+    """A filter that matches the text of a record is a search over text the answer withholds: it is honoured only in a job
+    (whose output is sealed), and the answer says it was used."""
+    return bool(has_filter) and in_job()
+
+
 # Lossless paging (the same in every library tool that pages): the page an agent reads stays small, and when
 # there are more rows the whole result is written as JSON Lines under work/<agent>/tool-output (in a job,
-# $OUT/tool-output) and named. The file name is random: it is never a digest of anything asked for.
+# $OUT/tool-output) and named. The file name is random: it is never a digest of anything asked for. A write
+# that fails is an error answer naming the file, never a traceback and never a silent loss.
 class LosslessPage:
     def __init__(self, tool, key, limit):
         if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
@@ -155,8 +192,6 @@ class LosslessPage:
         self.total = 0
         self._out = None
         self._tmp = None
-        # A random token, not a digest of the request: two requests never share a file, and a search term (which can
-        # be a secret someone is looking for) is never hashed into a name.
         name = "%s-%s.jsonl" % (self.tool, secrets.token_hex(8))
         job, out = os.environ.get("JOB_ID"), os.environ.get("OUT")
         if job and out:
@@ -169,8 +204,11 @@ class LosslessPage:
             self.shown = str(self.path)
 
     def _write(self, row):
-        self._out.write(json.dumps(row, ensure_ascii=False, default=str))
-        self._out.write("\n")
+        try:
+            self._out.write(json.dumps(row, ensure_ascii=False, default=str))
+            self._out.write("\n")
+        except OSError as exc:
+            fail("the whole result could not be written to %s: %s" % (self.path, describe(exc)), paging_file=str(self.path))
 
     def add(self, row):
         self.total += 1
@@ -178,10 +216,13 @@ class LosslessPage:
             self.page.append(row)
             return
         if self._out is None:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            fd, name = tempfile.mkstemp(dir=self.path.parent, prefix=".%s-" % self.path.name)
-            self._tmp = Path(name)
-            self._out = os.fdopen(fd, "w", encoding="utf-8", errors="backslashreplace")
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                fd, name = tempfile.mkstemp(dir=self.path.parent, prefix=".%s-" % self.path.name)
+                self._tmp = Path(name)
+                self._out = os.fdopen(fd, "w", encoding="utf-8", errors="backslashreplace")
+            except OSError as exc:
+                fail("the whole result could not be written: %s cannot be created (%s)" % (self.path, describe(exc)), paging_file=str(self.path))
             for kept in self.page:
                 self._write(kept)
         self._write(row)
@@ -189,10 +230,13 @@ class LosslessPage:
     def finish(self):
         result = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
         if self._out is not None:
-            self._out.flush()
-            os.fsync(self._out.fileno())
-            self._out.close()
-            os.replace(self._tmp, self.path)
+            try:
+                self._out.flush()
+                os.fsync(self._out.fileno())
+                self._out.close()
+                os.replace(self._tmp, self.path)
+            except OSError as exc:
+                fail("the whole result could not be written to %s: %s" % (self.path, describe(exc)), paging_file=str(self.path))
             result["all_results"] = self.shown
             result["all_results_format"] = "JSON Lines, one complete result per line"
         return result
@@ -218,13 +262,15 @@ class TextFile:
     The secret-safe output pattern of recovery_key_scan's SecretValues, for rows. With `enabled` false it
     writes nothing and `summary()` says so. Enabled, it is refused outside a job; inside one the file is
     created before anything is read (mode 0600, exclusively: a file or a link already at that name is
-    refused by name) under $OUT, and the answer names it and says it may hold secrets.
+    refused by name) under $OUT, and the answer names it and says it may hold secrets. A byte that is not
+    UTF-8 is written as a JSON escape of its lone surrogate and reads back as the byte: the file keeps the whole.
     """
 
     def __init__(self, name, enabled, what, flag="write_text"):
         self.enabled = enabled
         self.written = 0
         self.what = what
+        self.flag = flag
         self._fh = None
         self.path = None
         self.shown = None
@@ -246,16 +292,22 @@ class TextFile:
             raise TextRefused("the text file could not be created: %s (%s)" % (self.path, describe(exc)))
         self._fh = os.fdopen(fd, "wb")
 
+    def _put(self, data):
+        try:
+            self._fh.write(data)
+        except OSError as exc:
+            fail("the text file could not be written: %s (%s)" % (self.path, describe(exc)), text_file=str(self.path))
+
     def add(self, row):
         if self._fh is None:
             return
-        self._fh.write(json.dumps(row, ensure_ascii=False, default=str).encode("utf-8", "backslashreplace") + b"\n")
+        self._put(json.dumps(row, ensure_ascii=False, default=str).encode("utf-8", "backslashreplace") + b"\n")
         self.written += 1
 
     def add_bytes_raw(self, data):
         """A piece of a source's own bytes, written as it came; the record it belongs to is counted by count_record."""
         if self._fh is not None:
-            self._fh.write(data)
+            self._put(data)
 
     def count_record(self):
         if self._fh is not None:
@@ -265,14 +317,17 @@ class TextFile:
         """One record exactly as its source wrote it (a native export's line, newline included)."""
         if self._fh is None:
             return
-        self._fh.write(data)
+        self._put(data)
         self.written += 1
 
     def close(self):
         if self._fh is not None:
-            self._fh.flush()
-            os.fsync(self._fh.fileno())
-            self._fh.close()
+            try:
+                self._fh.flush()
+                os.fsync(self._fh.fileno())
+                self._fh.close()
+            except OSError as exc:
+                fail("the text file could not be closed: %s (%s)" % (self.path, describe(exc)), text_file=str(self.path))
             self._fh = None
 
     def summary(self, preview=False):
@@ -280,9 +335,9 @@ class TextFile:
         shown = {"answer_contains_text_that_may_hold_secrets": bool(preview)}
         if not self.enabled:
             hint = ("No text of any record is in a file." if not preview else
-                    "The answer's records carry their text (preview_text); no file of it was written, and the paging file, if there is one, holds none.")
+                    "The answer's records carry their text (preview); no file of it was written, and the paging file, if there is one, holds none.")
             return {"requested": False, "written": 0, "file": None, "contains_text_that_may_hold_secrets": False, **shown,
-                    "hint": hint + " write_text: true, in a job run with secret_output: true, keeps the whole of each record in a private file under $OUT."}
+                    "hint": hint + " %s: true, in a job run with secret_output: true, keeps the whole of each record in a private file under $OUT." % self.flag}
         return {"requested": True, "written": self.written, "file": self.shown,
                 "contains_text_that_may_hold_secrets": self.written > 0, **shown, "format": self.what}
 
@@ -313,7 +368,7 @@ def unmetafy(data):
 
 
 def text_of(data):
-    return data.decode("utf-8", "replace")
+    return decode(data)
 
 
 def physical(path):
@@ -330,7 +385,11 @@ def physical(path):
                 return
             ended = chunk.endswith(b"\n")
             more = not ended and len(chunk) == MAX_PIECE
-            yield number, offset, (chunk.rstrip(b"\n").rstrip(b"\r") if ended else chunk), more, first
+            if ended:
+                chunk = chunk[:-1]
+                if chunk.endswith(b"\r"):
+                    chunk = chunk[:-1]
+            yield number, offset, chunk, more, first
             offset += len(chunk)
             first = ended
             if ended:
@@ -382,11 +441,17 @@ def cont(rec, number, offset, basis):
 
 def bash_records(path, counters):
     """Bash: stamped entries run to the next stamp; with no stamp, each physical line is a record."""
-    rec, blanks = None, []
+    rec, blanks = None, 0
     for number, offset, data, piece, blank in scan(path, counters):
         if blank:
             if rec is not None and rec.basis == "bash timestamp line":
-                blanks.append((number, data))      # inside a stamped entry only if a command line follows
+                blanks += 1                        # inside a stamped entry only if a command line follows
+                if blanks + rec.size() >= MAX_RECORD:
+                    # A run of blank lines as long as a record may be: the record ends here, and the run is
+                    # counted as blank lines and belongs to no record.
+                    yield rec
+                    rec, blanks = None, 0
+                    counters["blank_beyond_cap"] += 1
             continue
         if ZSH.match(data):
             counters["other_format"]["zsh extended history"] = counters["other_format"].get("zsh extended history", 0) + 1
@@ -394,7 +459,7 @@ def bash_records(path, counters):
         if found and not piece:
             if rec is not None:
                 yield rec
-            blanks = []
+            blanks = 0
             rec = Record(number, offset, "bash timestamp line")
             rec.add(data)
             stamp(rec, text_of(found.group(1)), "bash timestamp line")
@@ -404,9 +469,9 @@ def bash_records(path, counters):
             if rec.size() >= MAX_RECORD:
                 yield rec
                 rec = cont(rec, number, offset, "bash timestamp line")
-            for n, b in blanks:
-                rec.add(b)
-            blanks = []
+            rec.lines.extend([b""] * blanks)
+            rec.nbytes += blanks
+            blanks = 0
             rec.add(data)
             rec.end = number
             rec.meta = False
@@ -524,6 +589,12 @@ def command_line_count(fmt, command):
     return command.count("\n") + 1 if command else 0
 
 
+def shown_fields_text(info, rec):
+    """What `contains` may match outside a job: the fields the answer shows of a record, never its command."""
+    return " ".join(str(v) for v in (info["file"], info["program"], info["format"], info["home"], info["home_basename"], info["user"],
+                                      rec.time_raw, rec.time, rec.basis) if v is not None)
+
+
 def home_of(dirpath):
     suffix = os.sep + os.path.join(".local", "share", "fish")
     return dirpath[: -len(suffix)] if dirpath.endswith(suffix) else dirpath
@@ -558,31 +629,49 @@ def main():
         except re.error as exc:
             fail("contains is not a valid regex", reason=str(exc))
     only_user = want_str(args, "user")
-    seconds = args.get("max_seconds", DEFAULT_SECONDS)
-    if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or seconds <= 0:
-        fail("max_seconds must be a positive number")
+    seconds = want_seconds(args, "max_seconds", DEFAULT_SECONDS, MAX_SECONDS)
     deadline = time.monotonic() + seconds
+    declared_fs_root = args.get("root_is_file_system_root")
+    if declared_fs_root is not None and not isinstance(declared_fs_root, bool):
+        fail("root_is_file_system_root must be true or false")
 
-    # The evidence's own account database, when there is one to read.
-    passwd_notes, homes, passwd_path, fs_root = [], {}, None, False
+    # The evidence's own account database, when there is one to read. A root is read as a file system root (a home
+    # directory's path in it is then a home in the evidence) when it has an etc/ directory, or when the caller says so.
+    passwd_notes, homes, passwd_path, passwd_name = [], {}, None, None
     explicit = want_str(args, "passwd")
+    try:
+        fs_root = declared_fs_root if declared_fs_root is not None else os.path.isdir(os.path.join(root, "etc"))
+    except OSError:
+        fs_root = bool(declared_fs_root)
     candidate = explicit or os.path.join(root, "etc", "passwd")
-    if os.path.lexists(candidate):
-        if os.path.islink(candidate):
+    try:
+        exists_ = os.path.lexists(candidate)
+        is_link = os.path.islink(candidate)
+        is_file = os.path.isfile(candidate)
+    except OSError as exc:
+        exists_, is_link, is_file = False, False, False
+        passwd_notes.append("%s could not be examined: %s" % (candidate, describe(exc)))
+    if exists_:
+        if is_link:
             passwd_notes.append("%s is a link and was not followed" % candidate)
-        elif not os.path.isfile(candidate):
-            passwd_notes.append("%s is not a file" % candidate)
+        elif not is_file:
+            passwd_notes.append("%s is not a regular file" % candidate)
+        elif not fs_root:
+            passwd_notes.append("a passwd file exists but root is not read as a file system root (it has no etc/ directory; say "
+                                "root_is_file_system_root: true if it is one): a home directory's path in the tree cannot be mapped "
+                                "to a home in the evidence, so no owner is named")
         else:
             try:
                 homes, passwd_path = read_passwd(candidate), candidate
-                fs_root = explicit is None
+                passwd_name = explicit or "etc/passwd"
             except OSError as exc:
                 passwd_notes.append("%s could not be read: %s" % (candidate, describe(exc)))
     elif explicit is not None:
         passwd_notes.append("%s does not exist" % explicit)
-    if passwd_path and not fs_root:
-        passwd_notes.append("a passwd file was given but root is not read as a file system root: a home directory's path in the "
-                            "tree cannot be mapped to a home in it, so no owner is named")
+    elif fs_root:
+        passwd_notes.append("the root has no etc/passwd: no owner is named")
+    if passwd_path is None:
+        fs_root = False
 
     try:
         text = TextFile(TEXT_NAME, write_text, "JSON Lines, mode 0600: the record's id and locator as in the answer, "
@@ -602,7 +691,7 @@ def main():
 
     for dirpath, dirs, names in os.walk(root, onerror=on_error):
         if time.monotonic() > deadline:
-            partial_reason = "the walk stopped at max_seconds (%s); directories after %s were not visited" % (seconds, dirpath)
+            partial_reason = partial_reason or "the walk stopped at max_seconds (%s); directories after %s were not visited" % (seconds, dirpath)
             break
         for name in list(dirs):
             full = os.path.join(dirpath, name)
@@ -623,14 +712,19 @@ def main():
             if os.path.islink(full):
                 skipped_symlinks.append({"file": full, "target": os.readlink(full)})
                 continue
-            if not stat.S_ISREG(os.lstat(full).st_mode):
+            try:
+                regular = stat.S_ISREG(os.lstat(full).st_mode)
+            except OSError as exc:
+                walk_errors.append({"path": full, "error": describe(exc)})
+                continue
+            if not regular:
                 special.append({"file": full, "reason": "not a regular file (a pipe, a socket or a device): never opened"})
                 continue
             fmt, program = NAMES[name]
             home = home_of(dirpath)
             owners = homes.get("/" + os.path.relpath(home, root).replace(os.sep, "/") if home != root else "/", []) if fs_root else []
             if len(owners) == 1:
-                user, user_source = owners[0][0], "%s:%d" % ("etc/passwd" if explicit is None else explicit, owners[0][1])
+                user, user_source = owners[0][0], "%s:%d" % (passwd_name, owners[0][1])
             elif len(owners) > 1:
                 user, user_source = "ambiguous", "%d accounts have this home: %s" % (len(owners), ", ".join(o[0] for o in owners))
             else:
@@ -647,12 +741,14 @@ def main():
             info = {"file": full, "program": program, "format": fmt, "home": home, "home_basename": base, "user": user,
                     "user_source": user_source, "size": size, "last_written": last, "records": 0, "physical_lines": 0,
                     "blank_lines": 0, "with_timestamps": 0, "timestamps_out_of_order": 0, "partial": False}
-            counters = {"physical": 0, "blank": 0, "other_lines": 0, "other_format": {}}
+            counters = {"physical": 0, "blank": 0, "other_lines": 0, "other_format": {}, "blank_beyond_cap": 0}
             previous, index = None, 0
             try:
+                ticks = 0
                 for rec in READERS[fmt](full, counters):
-                    if index % 1000 == 999 and time.monotonic() > deadline:
-                        partial_reason = "the read stopped at max_seconds (%s) inside %s; later records of it and later files were not read" % (seconds, full)
+                    ticks += 1
+                    if ticks % 1024 == 0 and time.monotonic() > deadline:
+                        partial_reason = partial_reason or "the read stopped at max_seconds (%s) inside %s; later records of it and later files were not read" % (seconds, full)
                         info["partial"] = True
                         break
                     if fmt == "bash" and rec.meta:
@@ -666,13 +762,13 @@ def main():
                         if previous is not None and rec.time < previous:
                             info["timestamps_out_of_order"] += 1
                         previous = rec.time
-                    if pattern and not pattern.search(command):
+                    if pattern and not pattern.search(command if in_job() else shown_fields_text(info, rec)):
                         continue
                     seq += 1
                     matched += 1
                     if rec.time:
                         with_time += 1
-                    command_bytes = len(command.encode("utf-8", "replace"))
+                    command_bytes = blen(command)
                     row = {"id": "H%06d" % seq, "parser": PARSER, "file": full, "program": program, "format": fmt,
                            "home": home, "home_basename": base, "user": user, "index": index,
                            "line_start": rec.start, "line_end": rec.end, "byte_offset": rec.offset,
@@ -709,12 +805,21 @@ def main():
     text.close()
     pages = {"records": page.finish()}
     all_read = not read_failures and not walk_errors and partial_reason is None and not special
+    outcome = status_of(
+        all_read, bool(files) is False and bool(walk_errors or read_failures),
+        "every history file found was read through, no directory could not be opened and nothing was left unopened",
+        "%d read failure(s), %d walk error(s), %d special file(s) not opened%s: the answer names each" % (
+            len(read_failures), len(walk_errors), len(special), "; the read stopped at max_seconds" if partial_reason else ""),
+        "no history file could be read")
     print(json.dumps({
         "parser": PARSER,
+        **outcome,
         "root": root,
         "files": files,
         "file_count": len(files),
-        "passwd": {"file": passwd_path, "notes": passwd_notes},
+        "passwd": {"file": passwd_path, "read_as_file_system_root": fs_root, "notes": passwd_notes},
+        "contains_scope": None if pattern is None else ("the decoded command, in a job" if in_job() else "the fields the answer shows (outside a job a command is not matched)"),
+        "filter_touched_withheld_text": touches_withheld_text(pattern is not None),
         "records_in_files": sum(f["records"] for f in files),
         "record_count": matched,
         "with_timestamps": with_time,

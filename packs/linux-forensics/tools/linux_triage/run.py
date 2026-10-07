@@ -15,7 +15,7 @@ The status is what was observed, never a promise about the evidence:
                    dissect.target writes for which causes is not validated here, so a message that does not
                    name the function, or does not match, leaves it `unknown`)
     failed         a non-zero exit, or it ran past its deadline
-    not_attempted  the total deadline had passed or was too near to start it
+    not_attempted  the time left in the total deadline was less than this function's own timeout, so it was not started
     unknown        it exited 0 and the output or the stderr cannot be read as one of the above (a line that is
                    not JSON, a stderr that names no cause for an empty result, or a traceback beside records):
                    read the files
@@ -27,9 +27,14 @@ produced records. A family's name is not what it covers: each family says its fu
 cover. Empty output is a parser's result, not proof that the artefact is absent.
 
 Time. Each function runs for at most `timeout_seconds`, and all of them within `total_timeout_seconds`
-(default 13800, under the manifest's 14400): the tool starts no function with less than a second left,
-marks what it did not start `not_attempted`, and rewrites `summary.json` in the output directory after every
-function, so a run that is killed from outside still leaves what it had done.
+(default 13800, under the manifest's 14400): a function is started only if the time left covers its own
+timeout, so a function that is cut off by the total deadline never exists; what was not started is marked
+`not_attempted`, and `summary.json` in the output directory is rewritten after every function, so a run that
+is killed from outside still leaves what it had done.
+
+Every answer carries `status` (complete, partial or failed) and `status_basis`, the same pair the recipes'
+coverage.json carries. `complete` says every selected function ran and produced records or nothing; it is not
+coverage of the host.
 """
 import hashlib
 import json
@@ -46,6 +51,7 @@ TOOL = "linux_triage"
 PARSER = "linux_triage/3"
 DEFAULT_FUNCTION_SECONDS = 1800
 DEFAULT_TOTAL_SECONDS = 13800
+SUMMARY_NAME = "summary.json"
 FIRST_FAILURES = 20
 
 # family -> its dissect.target functions, what it covers and what it does not
@@ -88,8 +94,14 @@ UNSUPPORTED_STDERR = re.compile(
     r"(unsupported|not\s+(?:available|supported|applicable|implemented)|no\s+such\s+(?:function|plugin)|"
     r"unknown\s+(?:function|plugin)|unrecogni[sz]ed\s+(?:function|plugin)|failed\s+to\s+find\s+(?:function|plugin))", re.I)
 
+
+def names_function(function):
+    """A pattern that finds this function's own name in a line: the whole dotted name, as a word. `os` is not found inside
+    `hostos` or `os.hostname`, and `ips` is not found inside `ships`."""
+    return re.compile(r"(?<![\w.])" + re.escape(function) + r"(?!\w|\.\w)")
+
 def fail(message, **extra):
-    print(json.dumps({"error": message, **extra}))
+    print(json.dumps({"error": message, "status": "failed", "status_basis": "the tool stopped with an error (see error)", **extra}))
     raise SystemExit(1)
 
 
@@ -111,6 +123,13 @@ def resolve_output(out, what="output"):
     inputs = root / "inputs"
     if dest == inputs or inputs in dest.parents:
         fail("%s cannot be under inputs/" % what, **{what: str(out)})
+    job_out = os.environ.get("OUT") or ""
+    if os.environ.get("JOB_ID") and job_out:
+        # In a job work/ is read-only and only $OUT is writable: a directory made anywhere else cannot be made.
+        place = Path(job_out).resolve()
+        if dest == place or place not in dest.parents:
+            fail("in a job %s must be a new directory under work/<your agent id>/, which the job maps to its output directory: "
+                 "%s is not under it" % (what, out), **{what: str(out)})
     return str(dest.relative_to(root))
 
 
@@ -154,7 +173,7 @@ def scan_stderr(path, function):
     it is not available, whether any line says the plugin or function is unavailable without naming one, and whether a
     traceback is in it. Only a sample of it is kept in memory."""
     seen = {"bytes": 0, "text": False, "unsupported_named": False, "unsupported_unattributed": False, "traceback": False, "sample": ""}
-    names = {function, function.split(".")[-1]} if "." in function else {function}
+    named = names_function(function)
     with path.open("rb") as fh:
         while True:
             piece = fh.readline(1 << 16)
@@ -169,7 +188,7 @@ def scan_stderr(path, function):
             if "Traceback (most recent call last)" in line:
                 seen["traceback"] = True
             if UNSUPPORTED_STDERR.search(line):
-                if any(n in line for n in names):
+                if named.search(line):
                     seen["unsupported_named"] = True
                 else:
                     seen["unsupported_unattributed"] = True
@@ -217,10 +236,33 @@ def coverage_of(groups):
     return counts
 
 
+def status_of(groups, finished):
+    """(status, basis) for the run: complete only if the run ended and every selected function ran and produced records or
+    nothing; failed if no function ran to an exit (all failed or none started); partial otherwise."""
+    counts = {}
+    for g in groups:
+        for f in g["functions"]:
+            counts[f["status"]] = counts.get(f["status"], 0) + 1
+    total = sum(counts.values())
+    ran = total - counts.get("failed", 0) - counts.get("not_attempted", 0) - counts.get("pending", 0) - counts.get("running", 0)
+    if not finished:
+        return "partial", "the run has not ended: %d of %d selected functions have an outcome" % (total - counts.get("pending", 0) - counts.get("running", 0), total)
+    if ran == 0:
+        return "failed", "no selected function ran to an exit: %d failed, %d not attempted" % (counts.get("failed", 0), counts.get("not_attempted", 0))
+    clean = all(counts.get(k, 0) == 0 for k in ("unsupported", "failed", "not_attempted", "unknown", "pending", "running"))
+    if clean:
+        return "complete", "every one of the %d selected functions ran to exit 0 and produced records or nothing: this is not coverage of the host" % total
+    parts = ["%d %s" % (counts[k], k) for k in ("unsupported", "failed", "not_attempted", "unknown") if counts.get(k)]
+    return "partial", "%d of %d selected functions ran; %s: the files and the per-function statuses say which" % (ran, total, ", ".join(parts))
+
+
 def write_summary(out, state):
     tmp = out / ".summary.json.tmp"
-    tmp.write_text(json.dumps(state, indent=2) + "\n")
-    os.replace(tmp, out / "summary.json")
+    try:
+        tmp.write_text(json.dumps(state, indent=2) + "\n")
+        os.replace(tmp, out / SUMMARY_NAME)
+    except OSError as exc:
+        fail("the summary could not be written: %s" % (exc.strerror or exc), out_dir=str(out))
 
 
 CURRENT = {"proc": None, "entry": None, "out": None, "state": None}
@@ -287,15 +329,20 @@ def main():
         if not isinstance(value, int) or isinstance(value, bool) or value < 1:
             fail("%s must be a positive integer" % name)
 
-    out.mkdir(parents=True)
+    try:
+        out.mkdir(parents=True)
+    except OSError as exc:
+        fail("out_dir could not be created: %s" % (exc.strerror or exc), out_dir=str(out))
     started_at = time.time()
     deadline = time.monotonic() + total
     groups = [{"group": g, "functions": [{"name": f, "status": "pending"} for f in GROUPS[g]["functions"]],
                "covers": GROUPS[g]["covers"], "does_not_cover": GROUPS[g]["does_not_cover"], "status": "pending"} for g in selected]
 
     def state(kind):
-        return {"state": kind, "parser": PARSER, "source": source, "out_dir": str(out), "started": started_at, "updated": time.time(),
-                "total_timeout_seconds": total, "timeout_seconds": per_function, "groups": groups, "coverage": coverage_of(groups)}
+        status, basis = status_of(groups, kind == "finished")
+        return {"state": kind, "status": status, "status_basis": basis, "parser": PARSER, "source": source, "out_dir": str(out),
+                "started": started_at, "updated": time.time(), "total_timeout_seconds": total, "timeout_seconds": per_function,
+                "groups": groups, "coverage": coverage_of(groups)}
 
     CURRENT["out"], CURRENT["state"] = out, state
     signal.signal(signal.SIGTERM, on_term)
@@ -305,18 +352,22 @@ def main():
         spec = GROUPS[group["group"]]
         result_path = out / (group["group"] + (".txt" if spec.get("strings") else ".jsonl"))
         group["file"] = str(result_path)
-        with result_path.open("wb") as stdout:
+        try:
+            stdout = result_path.open("wb")
+        except OSError as exc:
+            fail("a result file could not be created: %s (%s)" % (result_path, exc.strerror or exc), out_dir=str(out))
+        with stdout:
             for entry in group["functions"]:
                 name = entry["name"]
                 remaining = deadline - time.monotonic()
-                if stop or remaining < 1:
-                    entry.update({"status": "not_attempted", "reason": "the total deadline (%d s) had passed or was too near to start it" % total})
+                if stop or remaining < per_function:
+                    entry.update({"status": "not_attempted", "reason": "%.0f s of the total deadline (%d s) were left, less than this function's own timeout (%d s): it was not started" % (max(remaining, 0), total, per_function)})
                     stop = True
                     write_summary(out, state("running"))
                     continue
                 entry["status"] = "running"
                 write_summary(out, state("running"))
-                limit = min(per_function, remaining)
+                limit = per_function
                 err_path = out / ("%s.%s.stderr" % (group["group"], re.sub(r"[^A-Za-z0-9_.-]", "_", name)))
                 argv = [binary, "--no-cache", "-f", name] + (["-s"] if spec.get("strings") else ["-j"]) + [source]
                 begin = stdout.tell()
@@ -355,9 +406,7 @@ def main():
                 if unterminated:
                     entry["last_line_unterminated"] = True
                 if timed_out:
-                    entry["deadline"] = "total" if limit < per_function else "function"
-                    if entry["deadline"] == "total":
-                        stop = True
+                    entry["deadline"] = "function"
                 if first_bad:
                     entry["first_invalid_line_numbers"] = first_bad      # lines of this function's own output
                 if scan["unsupported_unattributed"] and not scan["unsupported_named"]:

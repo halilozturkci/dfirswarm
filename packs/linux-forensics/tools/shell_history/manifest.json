@@ -1,6 +1,6 @@
 {
   "name": "shell_history",
-  "description": "Read shell and client history files under a tree, one record per entry in the order the program wrote them, and say how each record's boundaries were found: bash (a `#<epoch>` stamp line then the entry up to the next stamp, so a multi-line command is one record; with no stamps one record per physical line, a trailing backslash flagged), zsh extended history (`: epoch:elapsed;command`, a trailing backslash read as zsh's newline escape, Meta-encoded bytes decoded), fish (`- cmd:`/`when:`, the escapes \\n and \\\\ decoded) and plain client histories (python, mysql, psql, redis-cli, node, sh, ash and .history: one entry per line, no time). Each record has its file, physical line range, byte offset, raw time next to the UTC time, the program, the length of the command and its line count; each file has its record, line and timestamp counts, timestamps out of order, and a flag where its content looks like another shell's format. The owner is `unknown` unless the evidence's etc/passwd says exactly one account has that home (the directory's name is home_basename and no account). A pipe or device named like a history file is never opened and is listed; a record over 8 MiB, and a line over 8 MiB, continue in the next record, flagged split_at_cap; the walk and each file stop at max_seconds, named as partial. A walk error, a directory it could not open, a link, a top-level proc/sys/dev it left out (deeper ones are read) and a known file it does not parse (.lesshst, less's state file) are each named. It is a reader of history files and not a record of what ran: a killed session may never have been written, HISTCONTROL drops entries, and a file's mtime is when it last changed. SENSITIVE: a command line can hold a password or a token; the answer never carries a command. write_commands: true (refused outside a job) creates $OUT/shell-history-commands.jsonl, mode 0600, with every record's command and exact lines; preview_commands: true (refused outside a job) puts the command in the answer; run it as a job with secret_output: true.",
+  "description": "Read shell and client history files under a tree, one record per entry in the order the program wrote them, and say how each record's boundaries were found: bash (a `#<epoch>` stamp line then the entry up to the next stamp, so a multi-line command is one record; with no stamps one record per physical line, a trailing backslash flagged), zsh extended history (`: epoch:elapsed;command`, a trailing backslash read as zsh's newline escape, Meta-encoded bytes decoded), fish (`- cmd:`/`when:`, the escapes \\n and \\\\ decoded) and plain client histories (python, mysql, psql, redis-cli, node, sh, ash and .history: one entry per line, no time). Each record has its file, physical line range, byte offset, raw time next to the UTC time, the program, the length of the command and its line count; each file has its record, line and timestamp counts, timestamps out of order, and a flag where its content looks like another shell's format. The owner is `unknown` unless the evidence's etc/passwd says exactly one account has that home (the directory's name is home_basename and no account). A pipe or device named like a history file is never opened and is listed; a record over 8 MiB, and a line over 8 MiB, continue in the next record, flagged split_at_cap; the walk and each file stop at max_seconds (default 100, at most 105), named as partial; a run of blank lines inside a stamped entry as long as a record ends it and is counted (blank_beyond_cap), not held. A walk error, a directory it could not open, a link, a top-level proc/sys/dev it left out (deeper ones are read) and a known file it does not parse (.lesshst, less's state file) are each named. It is a reader of history files and not a record of what ran: a killed session may never have been written, HISTCONTROL drops entries, and a file's mtime is when it last changed. SENSITIVE: a command line can hold a password or a token; the answer never carries a command, and `contains` matches the text of a command only in a job (outside one it matches only what the answer shows, so it is no oracle on a withheld command). write_commands: true (refused outside a job) creates $OUT/shell-history-commands.jsonl, mode 0600, with every record's command and exact lines (a byte that is not UTF-8 is written as an escape that reads back as the byte, so the file keeps the whole); preview_commands: true (refused outside a job) puts the command in the answer; run it as a job with secret_output: true. Every answer carries `status` (complete, partial or failed) and `status_basis`, the pair the recipes' coverage.json carries: all_files_read stays beside it. A failure to write the text or paging file is reported as that, never as a read error of the evidence file.",
   "params": {
     "root": {
       "type": "string",
@@ -8,7 +8,7 @@
     },
     "contains": {
       "type": "string",
-      "description": "Case-insensitive regex over the decoded command; it filters what is returned, never what is counted"
+      "description": "Case-insensitive regex over the decoded command in a job; outside a job over the fields the answer shows (the answer says filter_touched_withheld_text). It filters what is returned, never what is counted"
     },
     "user": {
       "type": "string",
@@ -24,7 +24,7 @@
     },
     "max_seconds": {
       "type": "number",
-      "description": "The time to spend walking the tree (default 100); what is left is named as partial"
+      "description": "The time to spend walking the tree (default 100, at most 105); stamp-only and blank lines count; what is left is named as partial"
     },
     "write_commands": {
       "type": "boolean",
@@ -33,6 +33,10 @@
     "preview_commands": {
       "type": "boolean",
       "description": "Put each shown record's command in the answer (default false). Refused unless the tool runs as a job, which must be run with secret_output: true"
+    },
+    "root_is_file_system_root": {
+      "type": "boolean",
+      "description": "Say that root is the root of a file system (so a home directory's path in it is a home in the evidence) when it has no etc/ directory to show it; by default root is read as one when it has an etc/ directory"
     }
   },
   "runtime": "python3",
@@ -42,7 +46,7 @@
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
   "version": 4,
-  "sha256": "f4c7b3dca074abeee119a31f972232a8856c99b294f94367fff2325414183941",
+  "sha256": "ed5b93d0bb8b1be1531dcd970aacada01a9670d9fa0579b94ea9e315bed7ea6a",
   "use": {
     "names": [
       ".bash_history",

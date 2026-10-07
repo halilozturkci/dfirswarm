@@ -6,12 +6,13 @@
  * Every fixture is built by the test from the format's own layout, never from a tool's output.
  */
 import assert from "node:assert/strict";
-import { mkdir, truncate, writeFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { chmod, mkdir, readFile, stat, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { UTMP, asJob, body, refused, rowsOf, tool, withCwd } from "./linux-pack-harness.ts";
+import { IS_ROOT, UTMP, asJob, body, refused, rowsOf, tool, withCwd } from "./linux-pack-harness.ts";
 
-type Utmp = { type: number; pid?: number; line?: string; id?: string; user?: string; host?: string; session?: number; sec?: number; usec?: number; addr?: number[] };
+type Utmp = { type: number; pid?: number; line?: string; id?: string; user?: string; host?: string; session?: number; exitTermination?: number; exitStatus?: number; sec?: number; usec?: number; addr?: number[] };
 
 /** glibc struct utmp, 384 bytes, from its field offsets (see the header). */
 function utmp(o: Utmp, big = false): Buffer {
@@ -25,6 +26,8 @@ function utmp(o: Utmp, big = false): Buffer {
   b.write(o.user ?? "", 0x2c, 32, "latin1");
   b.write(o.host ?? "", 0x4c, 256, "latin1");
   i32(o.session ?? 0, 0x150);
+  i16(o.exitTermination ?? 0, 0x14c);
+  i16(o.exitStatus ?? 0, 0x14e);
   i32(o.sec ?? 0, 0x154);
   i32(o.usec ?? 0, 0x158);
   (o.addr ?? []).forEach((byte, k) => b.writeUInt8(byte, 0x15c + k));
@@ -225,5 +228,190 @@ test("utmp_parse counts the non-empty slots it read whatever the user filter kee
     assert.notEqual(first.pages.records.all_results, second.pages.records.all_results);
     assert.equal((await rowsOf(cwd, first)).length, 2, "the first answer's file still holds the first answer");
     assert.equal((await rowsOf(cwd, second)).length, 3);
+  });
+});
+
+test("utmp_parse keeps a name typed at a login prompt (btmp) out of the answer and the paging file, and in the job's text file", async () => {
+  // btmp holds what was typed: no account, or a password typed into the user field.
+  await withCwd(async (cwd) => {
+    const secret = "BTMPtypedPW9x";
+    const file = Buffer.concat([
+      utmp({ type: 6, pid: 5, line: "ssh:notty", user: secret, host: "203.0.113.4", sec: T0 }),
+      utmp({ type: 6, pid: 6, line: "ssh:notty", user: "root", host: "203.0.113.4", sec: T0 + 1 }),
+    ]);
+    await writeFile(join(cwd, "work", "btmp"), file);
+    await writeFile(join(cwd, "work", "wtmp"), utmp({ type: 7, pid: 7, line: "pts/0", user: "alice", sec: T0 }));
+    for (const run of [await tool(UTMP, cwd, { path: "work/btmp", limit: 1 }), await asJob(UTMP, cwd, { path: "work/btmp", limit: 1 })]) {
+      const out = body(run);
+      assert.ok(!run.stdout.includes(secret), "the typed name is in the answer");
+      const rows = await rowsOf(cwd, out);
+      assert.deepEqual(rows.map((r) => r.user_bytes), [secret.length, 4]);
+      assert.ok(!JSON.stringify(rows).includes(secret), "the typed name is in the paging file");
+      assert.equal(out.user_is_typed, true);
+    }
+    // Outside a job the text is refused, and a user filter matches nothing it cannot show.
+    assert.match(refused(await tool(UTMP, cwd, { path: "work/btmp", write_text: true })).error, /outside a job/);
+    assert.match(refused(await tool(UTMP, cwd, { path: "work/btmp", preview_text: true })).error, /outside a job/);
+    const probe = body(await tool(UTMP, cwd, { path: "work/btmp", user: "^BTMP" }));
+    assert.equal(probe.record_count, 0, "a filter on text the answer withholds is an oracle on it");
+    assert.equal(probe.filter_touched_withheld_text, false);
+    const inJob = body(await asJob(UTMP, cwd, { path: "work/btmp", user: "^BTMP", write_text: true }, undefined, {}, "out-btmp"));
+    assert.equal(inJob.record_count, 1);
+    assert.equal(inJob.filter_touched_withheld_text, true);
+    const text = JSON.parse((await readFile(join(cwd, "out-btmp", "utmp-text.jsonl"), "utf8")).trim());
+    assert.equal(text.user, secret);
+    assert.equal(((await stat(join(cwd, "out-btmp", "utmp-text.jsonl"))).mode & 0o777), 0o600);
+    const preview = body(await asJob(UTMP, cwd, { path: "work/btmp", preview_text: true }, undefined, {}, "out-btmp2"));
+    assert.equal(preview.records[0].user, secret);
+    // wtmp holds accounts that logged in: the name stays in the answer, and a caller can say it is typed.
+    const w = body(await tool(UTMP, cwd, { path: "work/wtmp" }));
+    assert.equal((await rowsOf(cwd, w))[0].user, "alice");
+    assert.equal(w.user_is_typed, false);
+    const forced = body(await tool(UTMP, cwd, { path: "work/wtmp", user_is_typed: "true" }));
+    assert.equal((await rowsOf(cwd, forced))[0].user_bytes, 5);
+    assert.equal((await rowsOf(cwd, forced))[0].user, undefined);
+  });
+});
+
+test("utmp_parse does not read 392-byte records as 384-byte ones, and says how much of the file reads as utmp when it is made to", async () => {
+  await withCwd(async (cwd) => {
+    // Another C library's records: the same fields, 8 bytes longer (a 64-bit time at the end). Read at 384-byte steps the
+    // fields fall out of place: most records then carry no ut_type of 1 to 9.
+    const records: Buffer[] = [];
+    for (let i = 0; i < 40; i += 1) {
+      const r = Buffer.concat([utmp({ type: 7, pid: 100 + i, line: "pts/" + i, user: "u" + i, sec: T0 + i }), Buffer.alloc(8)]);
+      records.push(r);
+    }
+    await writeFile(join(cwd, "work", "wtmp"), Buffer.concat(records));
+    const out = refused(await tool(UTMP, cwd, { path: "work/wtmp" }));
+    assert.equal(out.layout_doubt, true);
+    assert.match(out.error, /384/);
+    assert.equal(out.status, "failed");
+    // Said by the caller, it is read, and the answer does not call the read whole.
+    const forced = body(await tool(UTMP, cwd, { path: "work/wtmp", layout: "utmp-384" }));
+    assert.equal(forced.layout.basis, "argument");
+    assert.equal(forced.layout.type_check.doubt, true);
+    assert.equal(forced.all_records_read, false);
+    assert.equal(forced.status, "partial");
+    // A damaged record or two in a good file is not a doubt about the layout.
+    const good = Array.from({ length: 30 }, (_, i) => utmp({ type: 7, pid: i + 1, user: "a", line: "pts/0", sec: T0 + i }));
+    good[3] = Buffer.alloc(384, 0x41);
+    await writeFile(join(cwd, "work", "ok"), Buffer.concat(good));
+    const ok = body(await tool(UTMP, cwd, { path: "work/ok" }));
+    assert.equal(ok.layout.type_check.doubt, false);
+  });
+});
+
+test("utmp_parse reads a lastlog.1, names where the accounts came from, and says what it skipped as holes", async () => {
+  await withCwd(async (cwd) => {
+    const slots = Array.from({ length: 50 }, (_, i) => (i === 3 ? lastlog(292, T0, "pts/0", "198.51.100.5") : Buffer.alloc(292)));
+    await writeFile(join(cwd, "work", "lastlog.1"), Buffer.concat(slots));
+    await writeFile(join(cwd, "work", "passwd"), "root:x:0:0::/root:/bin/sh\nbob:x:3:3::/home/bob:/bin/sh\n");
+    const out = body(await tool(UTMP, cwd, { path: "work/lastlog.1", layout: "lastlog-292", passwd: "work/passwd" }));
+    assert.equal(out.layout.name, "lastlog-292", "a name that starts with lastlog is a lastlog file");
+    const rows = await rowsOf(cwd, out);
+    assert.deepEqual([rows[0].uid, rows[0].user], [3, "bob"]);
+    assert.deepEqual(out.passwd, { file: "work/passwd", uids_mapped: 2 });
+    assert.ok("holes_skipped" in out, "what was skipped as a hole is printed");
+    const none = body(await tool(UTMP, cwd, { path: "work/lastlog.1", layout: "lastlog-292" }));
+    assert.equal(none.passwd.file, null);
+    // The record is exactly 292 bytes: with no layout the size decides, without a name the file is still a lastlog.
+    assert.equal(body(await tool(UTMP, cwd, { path: "work/lastlog.1" })).layout.name, "lastlog-292");
+  });
+});
+
+test("utmp_parse refuses what a file of the other kind would silently ignore", async () => {
+  await withCwd(async (cwd) => {
+    await writeFile(join(cwd, "work", "wtmp"), utmp({ type: 7, user: "alice", sec: T0 }));
+    await writeFile(join(cwd, "work", "lastlog"), Buffer.concat([lastlog(292, T0, "pts/0", "h"), lastlog(292, T0, "pts/1", "h")]));
+    await writeFile(join(cwd, "work", "passwd"), "a:x:0:0::/h:/bin/sh\n");
+    for (const key of [{ uids: [1] }, { start_uid: 0 }, { max_slots: 5 }, { passwd: "work/passwd" }]) {
+      const out = refused(await tool(UTMP, cwd, { path: "work/wtmp", ...key }));
+      assert.match(out.error, /lastlog file only/, JSON.stringify(key));
+    }
+    for (const key of [{ start_record: 1 }, { user_is_typed: "true" }]) {
+      assert.match(refused(await tool(UTMP, cwd, { path: "work/lastlog", layout: "lastlog-292", ...key })).error, /utmp, wtmp or btmp/, JSON.stringify(key));
+    }
+    refused(await tool(UTMP, cwd, { path: "work/wtmp", user_is_typed: "maybe" }));
+    refused(await tool(UTMP, cwd, { path: "work/wtmp", start_record: -1 }));
+  });
+});
+
+test("utmp_parse keeps ut_exit, and resumes at a record the caller names", async () => {
+  await withCwd(async (cwd) => {
+    const file = Buffer.concat([
+      utmp({ type: 8, pid: 40, line: "pts/0", id: "ts/0", exitTermination: 11, exitStatus: 139, sec: T0 }),
+      utmp({ type: 7, pid: 41, line: "pts/1", user: "bob", sec: T0 + 5 }),
+      utmp({ type: 7, pid: 42, line: "pts/2", user: "eve", sec: T0 + 9 }),
+    ]);
+    await writeFile(join(cwd, "work", "wtmp"), file);
+    const out = body(await tool(UTMP, cwd, { path: "work/wtmp" }));
+    const [dead] = await rowsOf(cwd, out);
+    assert.equal(dead.type, "DEAD_PROCESS");
+    assert.deepEqual([dead.exit_termination, dead.exit_status], [11, 139]);
+    const later = body(await tool(UTMP, cwd, { path: "work/wtmp", start_record: 2 }));
+    assert.deepEqual((await rowsOf(cwd, later)).map((r) => [r.record_index, r.byte_offset, r.user]), [[2, 768, "eve"]]);
+    assert.equal(later.all_records_read, false, "a read that starts at record 2 did not read the file");
+    assert.equal(later.start_record, 2);
+  });
+});
+
+test("utmp_parse answers in JSON where a file cannot be opened, a passwd is a pipe, or a time budget runs out", async () => {
+  await withCwd(async (cwd) => {
+    await writeFile(join(cwd, "work", "lastlog"), Buffer.concat([lastlog(292, T0, "pts/0", "h"), lastlog(292, T0, "pts/1", "h")]));
+    // A pipe named as passwd is not opened: opening one would wait for a writer.
+    const fifo = join(cwd, "work", "passwd");
+    assert.equal(spawnSync("mkfifo", [fifo]).status, 0);
+    const started = Date.now();
+    const piped = refused(await tool(UTMP, cwd, { path: "work/lastlog", layout: "lastlog-292", passwd: "work/passwd" }));
+    assert.ok(Date.now() - started < 15_000, "the pipe was opened");
+    assert.match(piped.error, /regular file/);
+    assert.equal(piped.status, "failed");
+    // The same for the evidence file itself.
+    const named = join(cwd, "work", "wtmp");
+    assert.equal(spawnSync("mkfifo", [named]).status, 0);
+    assert.match(refused(await tool(UTMP, cwd, { path: "work/wtmp" })).error, /regular file/);
+    if (!IS_ROOT) {
+      await writeFile(join(cwd, "work", "wtmp2"), utmp({ type: 7, user: "alice", sec: T0 }));
+      await chmod(join(cwd, "work", "wtmp2"), 0o000);
+      assert.match(refused(await tool(UTMP, cwd, { path: "work/wtmp2" })).error, /cannot be read/);
+      await chmod(join(cwd, "work", "wtmp2"), 0o644);
+      await writeFile(join(cwd, "work", "bt"), utmp({ type: 6, user: "x", sec: T0 }));
+      await mkdir(join(cwd, "ro"), { recursive: true });
+      await chmod(join(cwd, "ro"), 0o555);
+      const run = await tool(UTMP, cwd, { path: "work/bt", write_text: true }, { JOB_ID: "j9", OUT: join(cwd, "ro", "sub") });
+      assert.doesNotMatch(run.stderr, /Traceback/);
+      assert.notEqual(run.code, 0);
+      await chmod(join(cwd, "ro"), 0o755);
+    }
+    // NaN and a negative budget are no budget.
+    for (const bad of ["NaN", 0, -1, "x"]) refused(await tool(UTMP, cwd, { path: "work/lastlog", layout: "lastlog-292", max_seconds: bad }));
+    // A very large wtmp is read within max_seconds, and the answer says where it stopped.
+    const big = join(cwd, "work", "big");
+    await writeFile(big, Buffer.alloc(0));
+    const { open } = await import("node:fs/promises");
+    const fh = await open(big, "r+");
+    const rec = utmp({ type: 7, pid: 1, line: "pts/0", user: "u", sec: T0 });
+    for (let i = 0; i < 2000; i += 1) await fh.write(rec, 0, 384, i * 384);
+    await fh.close();
+    await truncate(big, 384 * 3_000_000);
+    const late = body(await tool(UTMP, cwd, { path: "work/big", max_seconds: 1 }));
+    assert.equal(late.all_records_read, false);
+    assert.equal(late.status, "partial");
+    assert.ok(late.stopped_at_record > 0 && late.stopped_at_record < 3_000_000);
+  });
+});
+
+test("utmp_parse gives every answer a status and says on what it rests", async () => {
+  await withCwd(async (cwd) => {
+    await writeFile(join(cwd, "work", "wtmp"), utmp({ type: 7, user: "alice", sec: T0 }));
+    const whole = body(await tool(UTMP, cwd, { path: "work/wtmp" }));
+    assert.equal(whole.status, "complete");
+    assert.match(whole.status_basis, /every record/);
+    await writeFile(join(cwd, "work", "tail"), Buffer.concat([utmp({ type: 7, user: "alice", sec: T0 }), Buffer.alloc(7, 1)]));
+    const tail = body(await tool(UTMP, cwd, { path: "work/tail" }));
+    assert.equal(tail.status, "partial");
+    assert.equal(tail.all_records_read, false);
+    assert.equal(refused(await tool(UTMP, cwd, { path: "work/none" })).status, "failed");
   });
 });

@@ -9,7 +9,7 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, readFile, stat, truncate } from "node:fs/promises";
+import { chmod, mkdir, readFile, stat, symlink, truncate } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { CRON, IS_ROOT, SHELL, asJob, body, everythingBut, filesUnder, lines, put, refused, rowsOf, tool, withCwd } from "./linux-pack-harness.ts";
@@ -40,7 +40,7 @@ test("cron_dump computes its coverage before it filters, so a filtered-out error
     const root = join(cwd, "work", "root");
     await put(root, "etc/cron.d/keep", "*/5 * * * * root /usr/bin/true\n");
     await put(root, "etc/systemd/system/locked.timer", "[Timer]\nOnBootSec=1min\n", 0o000);
-    const out = body(await tool(CRON, cwd, { root: "work/root", contains: "usr/bin/true" }));
+    const out = body(await tool(CRON, cwd, { root: "work/root", contains: "cron.d/keep" }));
     assert.equal(out.entries_matched, 1);
     assert.equal(out.entries_total, 1, "an unreadable file is a read error, not an entry");
     assert.equal(out.all_checked_locations_read, false);
@@ -217,5 +217,122 @@ test("cron_dump rejects arguments that are not an object and a field of the wron
     for (const bad of [null, [], "x"]) assert.match(refused(await tool(CRON, cwd, bad)).error, /JSON object/);
     await mkdir(join(cwd, "work", "root"), { recursive: true });
     refused(await tool(CRON, cwd, { root: "work/root", contains: 5 }));
+  });
+});
+
+test("cron_dump shows the value of a timer key only where the key is one a timer is scheduled by", async () => {
+  await withCwd(async (cwd) => {
+    const root = join(cwd, "work", "root");
+    await put(root, "etc/systemd/system/v.timer", "[Unit]\nDescription=SECRETDESCRIPTION token\n[Timer]\nOnCalendar=daily\nEnvironment=API_TOKEN=SECRETENVVALUE\nPersistent=true\n[Install]\nWantedBy=timers.target\nAlias=SECRETALIAS.timer\n");
+    const run = await tool(CRON, cwd, { root: "work/root" });
+    const [timer] = (await rowsOf(cwd, body(run), "entries")).filter((e) => e.source === "systemd");
+    const byKey = Object.fromEntries(timer.assignments.map((a: Json) => [a.key, a]));
+    assert.equal(byKey.OnCalendar.value, "daily");
+    assert.equal(byKey.Persistent.value, "true");
+    assert.equal(byKey.WantedBy.value, "timers.target");
+    assert.equal(byKey.Description.value_withheld, true);
+    assert.equal(byKey.Description.value_bytes, "SECRETDESCRIPTION token".length);
+    assert.equal(byKey.Environment.value_withheld, true);
+    assert.ok(!run.stdout.includes("SECRETDESCRIPTION") && !run.stdout.includes("SECRETENVVALUE"));
+    assert.equal(byKey.Alias.value, "SECRETALIAS.timer", "Alias= is an install key and is shown");
+  });
+});
+
+test("cron_dump reads a directory that two paths reach once, and names the alias", async () => {
+  await withCwd(async (cwd) => {
+    const root = join(cwd, "work", "root");
+    await put(root, "usr/lib/systemd/system/vendor.timer", "[Timer]\nOnCalendar=weekly\n");
+    await symlink("usr/lib", join(root, "lib"));
+    const out = body(await tool(CRON, cwd, { root: "work/root" }));
+    assert.equal(out.entries_total, 1, "the same timer is not counted twice");
+    assert.ok(out.locations.some((l: Json) => l.path === "lib/systemd/system" && /alias of usr\/lib\/systemd\/system/.test(l.state)), JSON.stringify(out.locations.filter((l: Json) => /systemd\/system$/.test(l.path))));
+  });
+});
+
+test("cron_dump's contains matches the fields the answer shows outside a job and the command only in a job, and says which", async () => {
+  await withCwd(async (cwd) => {
+    const root = join(cwd, "work", "root");
+    await put(root, "etc/crontab", "*/5 * * * * root /usr/bin/curl --token=h\n*/6 * * * * root /bin/true\n");
+    const outside = body(await tool(CRON, cwd, { root: "work/root", contains: "--token=h" }));
+    assert.equal(outside.entries_matched, 0);
+    assert.equal(outside.pages.entries.matched, 0, "no count of matches on the text of a command");
+    assert.equal(outside.filter_touched_withheld_text, false);
+    assert.equal(body(await tool(CRON, cwd, { root: "work/root", contains: "root" })).entries_matched, 2);
+    const inJob = body(await asJob(CRON, cwd, { root: "work/root", contains: "--token=h" }));
+    assert.equal(inJob.entries_matched, 1);
+    assert.equal(inJob.filter_touched_withheld_text, true);
+  });
+});
+
+test("cron_dump stops at max_seconds, takes no NaN for a budget, and answers with an error where it cannot write", async () => {
+  await withCwd(async (cwd) => {
+    const root = join(cwd, "work", "root");
+    await put(root, "etc/crontab", Array.from({ length: 400_000 }, (_, i) => `* * * * * root /bin/job${i}\n`).join(""));
+    const slow = body(await tool(CRON, cwd, { root: "work/root", max_seconds: 0.3 }));
+    assert.equal(slow.status, "partial");
+    assert.match(String(slow.partial_reason), /max_seconds/);
+    assert.equal(slow.all_checked_locations_read, false);
+    for (const literal of ["NaN", "Infinity", "-1", "0"]) {
+      const r = spawnSync("python3", [CRON], { cwd, input: `{"root":"work/root","max_seconds":${literal}}`, encoding: "utf8" });
+      assert.equal(r.status, 1, literal);
+    }
+    if (!IS_ROOT) {
+      const ro = join(cwd, "ro-out");
+      await mkdir(ro, { recursive: true });
+      await chmod(ro, 0o555);
+      try {
+        const bad = refused(await tool(CRON, cwd, { root: "work/root", write_text: true }, { JOB_ID: "j000077", OUT: ro }));
+        assert.equal(bad.status, "failed");
+      } finally {
+        await chmod(ro, 0o755);
+      }
+    }
+  });
+});
+
+test("cron_dump reads a table of three hundred thousand jobs line by line, with a byte offset on each", async () => {
+  await withCwd(async (cwd) => {
+    const root = join(cwd, "work", "root");
+    const head = "X=1\n";
+    const lines_ = Array.from({ length: 300_000 }, (_, i) => `* * * * * root /bin/job${i}\n`);
+    await put(root, "etc/crontab", head + lines_.join(""));
+    const run = await asJob(CRON, cwd, { root: "work/root", write_text: true, max_seconds: 40 });
+    const out = body(run);
+    assert.equal(out.entries_total, 300_000);
+    const rows = await rowsOf(cwd, out, "entries");
+    const expected = Buffer.byteLength(head + lines_.slice(0, 299_999).join(""));
+    assert.equal(rows.at(-1).byte_offset, expected);
+    assert.equal(rows.at(-1).line, 300_000 + 1);
+    assert.ok(run.stdout.length < 100_000);
+  });
+});
+
+test("cron_dump counts a unit line that is no assignment, reads a timer that starts with a byte order mark, and ignores a home path that leaves the root", async () => {
+  await withCwd(async (cwd) => {
+    const root = join(cwd, "work", "root");
+    await put(root, "etc/systemd/system/bom.timer", "\ufeff[Timer]\nOnCalendar=daily\nthis line has no equals sign\n");
+    await put(root, "etc/passwd", "evil:x:1:1::/../../etc:/bin/sh\ndot:x:2:2::/home/./x:/bin/sh\nok:x:3:3::/home/ok:/bin/sh\n");
+    const out = body(await tool(CRON, cwd, { root: "work/root" }));
+    const [timer] = (await rowsOf(cwd, out, "entries")).filter((e) => e.source === "systemd");
+    assert.equal(timer.assignments[0].section, "Timer", "a byte order mark does not hide the section header");
+    assert.equal(timer.lines_without_assignment, 1);
+    assert.deepEqual(out.homes_ignored, ["/../../etc", "/home/./x"]);
+    assert.ok(out.locations.some((l: Json) => l.path === "home/ok/.config/systemd/user"));
+  });
+});
+
+test("cron_dump pages its census and names the run-parts files it does not enter", async () => {
+  await withCwd(async (cwd) => {
+    const root = join(cwd, "work", "root");
+    await put(root, "etc/cron.daily/top", "#!/bin/sh\n", 0o755);
+    await put(root, "etc/cron.daily/sub/nested", "#!/bin/sh\n", 0o755);
+    const accounts = Array.from({ length: 450 }, (_, i) => `u${i}:x:${1000 + i}:${1000 + i}::/home/u${i}:/bin/sh`).join("\n") + "\n";
+    await put(root, "etc/passwd", accounts);
+    const out = body(await asJob(CRON, cwd, { root: "work/root" }));
+    assert.equal(out.run_parts_files_in_subdirectories_not_listed, 1);
+    assert.equal(out.locations.length, 200);
+    assert.ok(out.pages.locations.matched > 800 && out.pages.locations.truncated);
+    assert.ok(out.pages.locations.all_results);
+    assert.equal(out.entries.filter((e: Json) => e.source === "run-parts").length, 1);
   });
 });

@@ -5,11 +5,11 @@
  */
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { chmod, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { test } from "node:test";
-import { AGENT, RECIPE, TRIAGE, body, exists, lines, refused, tool, withCwd } from "./linux-pack-harness.ts";
+import { AGENT, IS_ROOT, RECIPE, TRIAGE, asJob, body, exists, lines, refused, tool, withCwd } from "./linux-pack-harness.ts";
 import type { Json } from "./linux-pack-harness.ts";
 
 async function targetQueryStub(bin: string): Promise<void> {
@@ -88,23 +88,31 @@ test("linux_triage reads an empty `groups` as a mistake, a repeated one as a mis
   });
 });
 
-test("linux_triage stops at its total deadline, names the functions it never started, and has written its summary by then", async () => {
+test("linux_triage starts a function only if the time left covers its own timeout, and names the ones it did not start as not attempted, not failed", async () => {
   await withCwd(async (cwd, bin) => {
+    // 7 s in all, 3 s for a function: users takes 2 s (5 s left), bashhistory is started and cut off at its own 3 s (2 s left),
+    // and the 2 s left do not cover the 3 s a function may take, so webserver.logs is not started.
     const env = await triageFixture(cwd, bin, { users: { sleep: 2 }, bashhistory: { sleep: 30 } });
     const started = Date.now();
-    const out = body(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/triage", groups: ["users", "history", "web"], total_timeout_seconds: 4 }, env, bin));
+    const out = body(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/triage", groups: ["users", "history", "web"], timeout_seconds: 3, total_timeout_seconds: 7 }, env, bin));
     assert.ok(Date.now() - started < 20_000, "the deadline held");
     const fn = (name: string): Json => out.groups.flatMap((g: Json) => g.functions).find((f: Json) => f.name === name);
     assert.equal(fn("users").status, "parsed");
     assert.equal(fn("bashhistory").status, "failed");
     assert.equal(fn("bashhistory").timed_out, true);
-    assert.equal(fn("bashhistory").deadline, "total");
+    assert.equal(fn("bashhistory").deadline, "function", "a function is never cut by the total deadline: it is not started when that would be");
     assert.equal(fn("webserver.logs").status, "not_attempted");
+    assert.match(fn("webserver.logs").reason, /less than this function's own timeout/);
     assert.equal(out.execution_complete, false);
     assert.equal(out.coverage.not_attempted, 1);
+    assert.equal(out.coverage.failed, 1);
+    assert.equal(out.status, "partial");
+    assert.match(out.status_basis, /1 failed, 1 not_attempted/);
+    assert.equal((await readFile(env.STUB_LOG, "utf8")).includes("webserver.logs"), false, "it was never started");
     const summary = JSON.parse(await readFile(join(cwd, "work", "triage", "summary.json"), "utf8"));
     assert.equal(summary.state, "finished");
     assert.equal(summary.coverage.not_attempted, 1);
+    assert.equal(summary.status, "partial");
   });
 });
 
@@ -160,9 +168,28 @@ test("the linux-target recipe says it could not tell, with exit 2, where it did 
     r = recipe(cwd, bin, {}, "detect", "--target", join(cwd, "target.json"));
     assert.equal(r.status, 1, "a typed answer naming another system is a no");
     assert.equal(answer(r).applies, false);
-    await stub('print("android-linux-ish-nonsense")');
+    // A name this recipe does not know is not a no: it could be a Linux the reader did not call by that name.
+    for (const text of ["android-linux-ish-nonsense", "unix", "debian", "a linux box", "Ubuntu 22.04 linux"]) {
+      await stub(`print(${JSON.stringify(text)})`);
+      r = recipe(cwd, bin, {}, "detect", "--target", join(cwd, "target.json"));
+      assert.equal(r.status, 2, text);
+      assert.equal(answer(r).applies, "unknown", text);
+      assert.equal(answer(r).status, "failed", text);
+    }
+    // The name is read as a value, not as a word among others: a hostname called linux is not the OS.
+    await stub(`import json\nprint(json.dumps({"os": "windows", "hostname": "linux"}))`);
     r = recipe(cwd, bin, {}, "detect", "--target", join(cwd, "target.json"));
     assert.equal(r.status, 1);
+    assert.equal(answer(r).applies, false);
+    await stub(`import json\nprint(json.dumps({"os": "Linux"}))`);
+    r = recipe(cwd, bin, {}, "detect", "--target", join(cwd, "target.json"));
+    assert.equal(r.status, 0);
+    assert.equal(answer(r).status, "complete");
+    assert.match(answer(r).why, /unverified/);
+    await stub(`import json\nprint(json.dumps({"hostname": "linux"}))`);
+    assert.equal(recipe(cwd, bin, {}, "detect", "--target", join(cwd, "target.json")).status, 2, "no os field names no OS");
+    await stub('print("freebsd")');
+    assert.equal(recipe(cwd, bin, {}, "detect", "--target", join(cwd, "target.json")).status, 1);
     await stub("");
     r = recipe(cwd, bin, {}, "detect", "--target", join(cwd, "target.json"));
     assert.equal(r.status, 2, "an empty answer identifies nothing");
@@ -224,7 +251,8 @@ test("the linux-target recipe leaves a receipt before the wrapper starts and rew
     }
     assert.ok(seen, "the wrapper's summary shows the first function done while the second runs");
     const before = JSON.parse(await readFile(join(cwd, "recipe-out", "coverage.json"), "utf8"));
-    assert.equal(before.status, "unknown", "a receipt exists, saying nothing is established, before the wrapper has ended");
+    assert.equal(before.status, "partial", "a receipt exists, saying nothing is established, before the wrapper has ended");
+    assert.match(before.status_basis, /had not finished/);
     process.kill(-(child.pid as number), "SIGTERM");
     await exited;
     const after = JSON.parse(await readFile(join(cwd, "recipe-out", "coverage.json"), "utf8"));
@@ -328,7 +356,108 @@ test("the linux-target recipe says could-not-tell for a target or an answer it c
     const again = recipe(cwd, bin, env, "run", "--target", join(cwd, "target.json"), "--out", out);
     assert.notEqual(again.status, 0);
     const coverage = JSON.parse(await readFile(join(out, "coverage.json"), "utf8"));
-    assert.equal(coverage.status, "unknown", "no summary of this run exists");
+    assert.equal(coverage.status, "failed", "no summary of this run exists");
+    assert.match(coverage.status_basis, /no summary of this run/);
     assert.ok(coverage.errors.some((e: string) => /linux_triage exited/.test(e)));
+  });
+});
+
+test("linux_triage finds a function's name in a line as a word, not inside another word or another function's name", async () => {
+  await withCwd(async (cwd, bin) => {
+    const say = (what: string): { records: number; stderr: string } => ({ records: 0, stderr: `WARNING | ${what}: plugin not available for this target` });
+    const env = await triageFixture(cwd, bin, {
+      os: say("hostos"),                       // `os` inside another word
+      ips: say("ships"),                       // `ips` inside another word
+      hostname: say("os.hostname"),            // another function's name, with `os` before the dot
+      version: say("version"),                 // the name itself, as a word
+      "dpkg.status": say("dpkg.status"),       // the whole dotted name
+      "ssh.known_hosts": say("known_hosts"),   // the last part of a dotted name alone is not the function
+    });
+    const out = body(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/triage", groups: ["identity", "packages", "ssh"] }, env, bin));
+    const st = (name: string): Json => out.groups.flatMap((g: Json) => g.functions).find((f: Json) => f.name === name);
+    assert.equal(st("os").status, "unknown");
+    assert.equal(st("ips").status, "unknown");
+    assert.equal(st("hostname").status, "unknown");
+    assert.equal(st("version").status, "unsupported");
+    assert.equal(st("dpkg.status").status, "unsupported");
+    assert.equal(st("ssh.known_hosts").status, "unknown");
+  });
+});
+
+test("linux_triage answers in JSON where it cannot make its directory, and in a job writes only under the job's output", async () => {
+  await withCwd(async (cwd, bin) => {
+    const env = await triageFixture(cwd, bin, {});
+    if (!IS_ROOT) {
+      await mkdir(join(cwd, "ro"), { recursive: true });
+      await chmod(join(cwd, "ro"), 0o555);
+      const run = await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "ro/triage", groups: ["users"] }, env, bin);
+      assert.doesNotMatch(run.stderr, /Traceback/);
+      assert.match(refused(run).error, /could not be created/);
+      await chmod(join(cwd, "ro"), 0o755);
+    }
+    // In a job only $OUT is writable: a directory elsewhere is refused before anything runs, and the example's place is accepted.
+    const elsewhere = refused(await asJob(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/linux-triage", groups: ["users"] }, bin, env));
+    assert.match(elsewhere.error, /work\/<your agent id>/);
+    assert.equal(await exists(join(cwd, "work", "linux-triage")), false);
+    assert.equal(await exists(env.STUB_LOG), false, "nothing ran");
+    const ok = body(await asJob(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "out/linux-triage", groups: ["users"] }, bin, env));
+    assert.equal(ok.status, "complete");
+    assert.equal(await exists(join(cwd, "out", "linux-triage", "summary.json")), true);
+  });
+});
+
+test("linux_triage and the recipe give every answer a status and say on what it rests", async () => {
+  await withCwd(async (cwd, bin) => {
+    const env = await triageFixture(cwd, bin, { users: { exit: 1 }, bashhistory: { exit: 1 }, "webserver.logs": { exit: 1 } });
+    const failed = body(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/f", groups: ["users", "history", "web"] }, env, bin));
+    assert.equal(failed.status, "failed");
+    assert.match(failed.status_basis, /no selected function ran to an exit/);
+    await writeFile(join(cwd, "stub-conf.json"), JSON.stringify({}));
+    const whole = body(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/c", groups: ["users"] }, env, bin));
+    assert.equal(whole.status, "complete");
+    assert.match(whole.status_basis, /not coverage of the host/);
+    assert.equal(refused(await tool(TRIAGE, cwd, { source: "inputs/none.E01", out_dir: "work/e" }, env, bin)).status, "failed");
+    // The recipe's receipt and its answer carry the same pair.
+    await writeFile(join(cwd, "stub-conf.json"), JSON.stringify({ users: { exit: 1 }, bashhistory: { exit: 1 }, "webserver.logs": { exit: 1 }, ...Object.fromEntries(ALL_FUNCTIONS.map((f) => [f, { exit: 1 }])) }));
+    await writeFile(join(cwd, "target.json"), JSON.stringify({ paths: [join(cwd, "inputs", "server.E01")], name: "server" }));
+    const r = recipe(cwd, bin, env, "run", "--target", join(cwd, "target.json"), "--out", join(cwd, "recipe-out"));
+    const coverage = JSON.parse(await readFile(join(cwd, "recipe-out", "coverage.json"), "utf8"));
+    assert.equal(coverage.status, "failed");
+    assert.match(coverage.status_basis, /no selected function ran/);
+    assert.equal(JSON.parse(String(r.stdout).trim()).status_basis, coverage.status_basis);
+  });
+});
+
+test("the linux-target recipe makes what it makes under its own output directory, whatever directory it was started in", async () => {
+  await withCwd(async (cwd, bin) => {
+    const env = await triageFixture(cwd, bin, Object.fromEntries(ALL_FUNCTIONS.map((f) => [f, { records: 1 }])));
+    // The census starts a recipe in the host's working directory, which is not the output directory's parent.
+    const elsewhere = join(cwd, "elsewhere");
+    await mkdir(elsewhere, { recursive: true });
+    await writeFile(join(cwd, "target.json"), JSON.stringify({ paths: [join(cwd, "inputs", "server.E01")], name: "server" }));
+    const out = join(cwd, "deep", "census", "linux");
+    const r = spawnSync("python3", [RECIPE, "run", "--target", join(cwd, "target.json"), "--out", out], { cwd: elsewhere, env: { ...process.env, ...env, PATH: `${bin}:${process.env.PATH ?? ""}` }, encoding: "utf8" });
+    assert.equal(r.status, 0, String(r.stdout) + String(r.stderr));
+    assert.equal(JSON.parse(String(r.stdout).trim()).status, "complete");
+    assert.equal(await exists(join(out, "artefacts", "summary.json")), true);
+    assert.equal(await exists(join(elsewhere, "artefacts")), false, "nothing was made in the directory it started in");
+    // A relative image path is read relative to where the recipe was started, and the wrapper gets it whole.
+    await writeFile(join(elsewhere, "image.E01"), "bytes");
+    await writeFile(join(cwd, "target2.json"), JSON.stringify({ paths: ["image.E01"], name: "rel" }));
+    const rel = spawnSync("python3", [RECIPE, "run", "--target", join(cwd, "target2.json"), "--out", join(cwd, "out2")], { cwd: elsewhere, env: { ...process.env, ...env, PATH: `${bin}:${process.env.PATH ?? ""}` }, encoding: "utf8" });
+    assert.equal(rel.status, 0, String(rel.stdout) + String(rel.stderr));
+    const log = (await readFile(env.STUB_LOG, "utf8")).trim().split("\n").map((l) => JSON.parse(l) as string[]);
+    const absolute = join(await realpath(elsewhere), "image.E01");
+    assert.ok(log.some((a) => a[a.length - 1] === absolute), "the wrapper was given the image by its absolute path");
+    // An output directory that cannot be made is an answer, not a traceback.
+    if (!IS_ROOT) {
+      await mkdir(join(cwd, "ro"), { recursive: true });
+      await chmod(join(cwd, "ro"), 0o555);
+      const bad = spawnSync("python3", [RECIPE, "run", "--target", join(cwd, "target.json"), "--out", join(cwd, "ro", "x")], { cwd, env: { ...process.env, ...env, PATH: `${bin}:${process.env.PATH ?? ""}` }, encoding: "utf8" });
+      assert.doesNotMatch(String(bad.stderr), /Traceback/);
+      assert.equal(bad.status, 2);
+      assert.equal(JSON.parse(String(bad.stdout).trim()).status, "failed");
+      await chmod(join(cwd, "ro"), 0o755);
+    }
   });
 });

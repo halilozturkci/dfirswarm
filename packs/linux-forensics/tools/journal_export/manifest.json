@@ -1,6 +1,6 @@
 {
   "name": "journal_export",
-  "description": "Read a systemd journal from an evidence file or directory with journalctl (--file or --directory, never this machine's own journal) and keep every field of every entry. The complete native export (`journalctl -o json --all`) is written exactly as journalctl produced it, one entry per line, to $OUT/journal-native.jsonl when write_text is true in a job; the answer carries a projection of each entry as well: the cursor, both clocks raw (realtime and monotonic microseconds, and the source clocks) with the decoded UTC time and its fraction, the boot and machine ids, the identity fields (pid, uid, comm, exe, unit, session, identifier, priority, transport, hostname) and the line in the native file; a field journalctl wrote as bytes or null is named as such. Per boot it gives the entry count and the first and last cursor and clock values. The argv is recorded as an array, time bounds must carry their own zone (a UTC suffix or @epoch: journalctl reads a bare time in this machine's zone), the stderr is kept whole in a file, a deadline (max_seconds) returns what was read as partial, and a line that is not JSON, or longer than 32 MiB, is located and counted (its bytes are in the native file); a journal directory that holds links is refused, since journalctl may follow them out of the evidence; a journalctl that failed and wrote nothing is an error. mode: verify runs journalctl --verify alone, keeps its whole output and exit code, and claims only a structural check: not that nothing is missing or removed, that the host kept a persistent journal, or that an unsealed journal is authentic. A boot id names a boot and orders nothing; within a boot the order is monotonic, because the wall clock can step. SENSITIVE: a journal holds command lines and application messages that can hold a secret; the answer carries their length, not their text. write_text (refused outside a job) writes the native entries to a private file, preview_text (refused outside a job) adds message and cmdline to the projection; run it as a job with secret_output: true.",
+  "description": "Read a systemd journal from an evidence file or directory with journalctl (--file or --directory, never this machine's own journal) and keep every field of every entry. The complete native export (`journalctl -o json --all`) is written exactly as journalctl produced it, one entry per line, to $OUT/journal-native.jsonl when write_text is true in a job; the answer carries a projection of each entry as well: the cursor, both clocks raw (realtime and monotonic microseconds, and the source clocks) with the decoded UTC time and its fraction, the boot and machine ids, the identity fields (pid, uid, comm, exe, unit, session, identifier, priority, transport, hostname) and the line in the native file; a field journalctl wrote as bytes or null is named as such. Per boot it gives the entry count and the first and last cursor and clock values. The argv is recorded as an array, time bounds must carry their own zone (a UTC suffix or @epoch: journalctl reads a bare time in this machine's zone), the stderr is kept whole in a file, a deadline (max_seconds) returns what was read as partial, and a line that is not JSON, or longer than 32 MiB, is located and counted (its bytes are in the native file); a journal directory that holds links is refused, since journalctl may follow them out of the evidence; a journalctl that failed and wrote nothing is an error, and its `-- No entries --` notice (it runs with --quiet) is counted as no entries and not as a record. The path must be a regular file or a directory (a pipe is never passed to journalctl), no component of it under the working directory may be a link, and this machine's own /var/log/journal and /run/log/journal are refused. An earlier output of the same job (the stderr file, the verify output) is never written over: the next one is numbered. mode: verify runs journalctl --verify alone, keeps its whole output and exit code, and claims only a structural check: not that nothing is missing or removed, that the host kept a persistent journal, or that an unsealed journal is authentic. A boot id names a boot and orders nothing; within a boot the order is monotonic, because the wall clock can step. SENSITIVE: a journal holds command lines and application messages that can hold a secret; the answer carries their length, not their text, and `grep` (a pattern over the message, which would tell a caller what the message holds) is refused outside a job; in a job the answer says filter_touched_withheld_text. write_text (refused outside a job) writes the native entries to a private file, preview_text (refused outside a job) adds message and cmdline to the projection; run it as a job with secret_output: true. preview_text holds at most 64 KiB of a message per entry in the answer (preview_truncated says so; the whole is in the native file). A SIGTERM ends journalctl and what it started. Every answer carries `status` (complete, partial or failed) and `status_basis`, the pair the recipes' coverage.json carries: verify mode's answer carries it too.",
   "params": {
     "path": {
       "type": "string",
@@ -24,7 +24,7 @@
     },
     "grep": {
       "type": "string",
-      "description": "A journalctl --grep pattern over the message"
+      "description": "A journalctl --grep pattern over the message. Refused outside a job (a pattern over withheld text is an oracle on it); in a job the answer says filter_touched_withheld_text"
     },
     "priority": {
       "type": "string",
@@ -36,7 +36,7 @@
     },
     "max_seconds": {
       "type": "number",
-      "description": "How long journalctl may run (default 240); after it the read stops and the answer is partial, with the files named"
+      "description": "How long journalctl may run (default 240, at most 270); after it the read stops and the answer is partial, with the files named"
     },
     "write_text": {
       "type": "boolean",
@@ -57,7 +57,7 @@
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
   "version": 4,
-  "sha256": "b09535671e24160583205475dd4d1a364eeb09424ced46189e6b61aa13b6c3f5",
+  "sha256": "ca603aaad5d0acbc712c852cb9625d843fb8284c8b3e39036c33dd39850046de",
   "use": {
     "extensions": [
       ".journal",

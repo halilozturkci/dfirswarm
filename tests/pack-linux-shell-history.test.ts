@@ -12,7 +12,7 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmod, mkdir, readFile, stat } from "node:fs/promises";
+import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { IS_ROOT, SHELL, asJob, body, everythingBut, filesUnder, lines, put, refused, rowsOf, tool, withCwd } from "./linux-pack-harness.ts";
@@ -229,5 +229,107 @@ test("shell_history rejects arguments that are not an object and a field of the 
     for (const bad of [null, [], "x"]) assert.match(refused(await tool(SHELL, cwd, bad)).error, /JSON object/);
     await mkdir(join(cwd, "work", "ev"), { recursive: true });
     for (const args of [{ root: "work/ev", contains: 5 }, { root: "work/ev", user: 5 }, { root: "work/ev", passwd: 5 }, { root: 5 }]) refused(await tool(SHELL, cwd, args));
+  });
+});
+
+test("shell_history's contains matches the fields the answer shows outside a job and the command only in a job, and says which", async () => {
+  await withCwd(async (cwd) => {
+    const root = join(cwd, "work", "ev");
+    await put(root, "home/alice/.bash_history", lines("curl --token=h https://example.invalid/", "ls"));
+    const outside = body(await tool(SHELL, cwd, { root: "work/ev", contains: "--token=h" }));
+    assert.equal(outside.record_count, 0, "no oracle on the text of a command outside a job");
+    assert.equal(outside.filter_touched_withheld_text, false);
+    assert.match(outside.contains_scope, /fields the answer shows/);
+    assert.equal(body(await tool(SHELL, cwd, { root: "work/ev", contains: "alice" })).record_count, 2, "a shown field is matched");
+    const inJob = body(await asJob(SHELL, cwd, { root: "work/ev", contains: "--token=h" }));
+    assert.equal(inJob.record_count, 1);
+    assert.equal(inJob.filter_touched_withheld_text, true);
+    assert.equal(inJob.pages.records.matched, 1);
+  });
+});
+
+test("shell_history keeps a password that is not UTF-8 whole in the sealed file, and counts its bytes, and one CR of two", async () => {
+  await withCwd(async (cwd) => {
+    const root = join(cwd, "work", "ev");
+    await put(root, "home/alice/.bash_history", Buffer.concat([Buffer.from("mysql -uroot -pcaf"), Buffer.from([0xe9, 0xff]), Buffer.from("x\r\r\nls\n")]));
+    const out = body(await asJob(SHELL, cwd, { root: "work/ev", write_commands: true }));
+    const raw = await readFile(join(cwd, "out", "shell-history-commands.jsonl"), "utf8");
+    assert.ok(raw.includes("\\udce9\\udcff"), "the bytes that are not UTF-8 are in the file as escapes that read back as them");
+    const [first] = raw.trimEnd().split("\n").map((l) => JSON.parse(l));
+    assert.equal(first.command, "mysql -uroot -pcaf\udce9\udcffx\r");
+    assert.equal(out.records[0].command_bytes, "mysql -uroot -pcaf".length + 2 + "x\r".length);
+    assert.match(body(await asJob(SHELL, cwd, { root: "work/ev" }, undefined, {}, "out-hint")).text.hint, /write_commands/);
+  });
+});
+
+test("shell_history reads twenty million-less blank lines inside a stamped entry without holding them, and stops at max_seconds on lines that are only stamps", async () => {
+  await withCwd(async (cwd) => {
+    const root = join(cwd, "work", "ev");
+    await put(root, "home/alice/.bash_history", `#1700000000\nid\n${"\n".repeat(4_000_000)}#1700000001\npwd\n`);
+    const started = Date.now();
+    const out = body(await asJob(SHELL, cwd, { root: "work/ev" }));
+    assert.ok(Date.now() - started < 30_000, `took ${Date.now() - started} ms`);
+    assert.equal(out.files[0].blank_lines, 4_000_000);
+    assert.equal(out.files[0].records, 2);
+    await put(root, "home/alice/.bash_history", "#1700000000\n".repeat(3_000_000));
+    const slow = body(await asJob(SHELL, cwd, { root: "work/ev", max_seconds: 0.3 }, undefined, {}, "out-slow"));
+    assert.equal(slow.status, "partial");
+    assert.match(String(slow.partial_reason), /max_seconds/);
+  });
+});
+
+test("shell_history answers with an error, not a traceback, where its output cannot be written or a directory cannot be searched, and takes no NaN for a budget", async () => {
+  await withCwd(async (cwd) => {
+    const root = join(cwd, "work", "ev");
+    await put(root, "home/alice/.bash_history", lines("id"));
+    if (!IS_ROOT) {
+      const ro = join(cwd, "ro-out");
+      await mkdir(ro, { recursive: true });
+      await chmod(ro, 0o555);
+      try {
+        const bad = refused(await tool(SHELL, cwd, { root: "work/ev", write_commands: true }, { JOB_ID: "j000088", OUT: ro }));
+        assert.equal(bad.status, "failed");
+        assert.match(bad.error, /text file could not be created/);
+        const bad2 = refused(await tool(SHELL, cwd, { root: "work/ev", limit: 1 }, { JOB_ID: "j000089", OUT: ro }).then(async (r) => (r.code === 0 ? tool(SHELL, cwd, { root: "work/ev", limit: 0 }, { JOB_ID: "j000089", OUT: ro }) : r)));
+        assert.ok(bad2.error);
+      } finally {
+        await chmod(ro, 0o755);
+      }
+      await put(root, "home/closed/.bash_history", lines("id"));
+      await chmod(join(root, "home", "closed"), 0o444);
+      try {
+        const out = body(await asJob(SHELL, cwd, { root: "work/ev" }, undefined, {}, "out-closed"));
+        assert.ok(out.walk_errors.some((e: Json) => String(e.path).endsWith("closed/.bash_history")), JSON.stringify(out.walk_errors));
+        assert.equal(out.status, "partial");
+      } finally {
+        await chmod(join(root, "home", "closed"), 0o755);
+      }
+    }
+    for (const literal of ["NaN", "Infinity", "-1", "0", "100000"]) {
+      const r = spawnSync("python3", [SHELL], { cwd, input: `{"root":"work/ev","max_seconds":${literal}}`, encoding: "utf8" });
+      assert.equal(r.status, 1, `max_seconds ${literal}: ${r.stdout}`);
+      assert.match(JSON.parse(r.stdout).error, /max_seconds/);
+    }
+  });
+});
+
+test("shell_history names owners from a passwd file the caller gives when the root is a file system root, and says where it read it", async () => {
+  await withCwd(async (cwd) => {
+    const root = join(cwd, "work", "ev");
+    await put(root, "etc/hostname", "x\n");
+    await put(root, "home/alice/.bash_history", lines("id"));
+    await writeFile(join(cwd, "work", "other-passwd"), "root:x:0:0::/root:/bin/sh\nalice:x:1000:1000::/home/alice:/bin/sh\n");
+    const out = body(await asJob(SHELL, cwd, { root: "work/ev", passwd: "work/other-passwd" }));
+    assert.equal(out.records[0].user, "alice");
+    assert.match(out.records[0].user_source, /other-passwd:2$/);
+    assert.equal(out.passwd.read_as_file_system_root, true);
+    // A tree with no etc/ is not a file system root unless the caller says so.
+    const home = join(cwd, "work", "homes");
+    await put(home, "alice/.bash_history", lines("id"));
+    const bare = body(await asJob(SHELL, cwd, { root: "work/homes", passwd: "work/other-passwd" }, undefined, {}, "out-bare"));
+    assert.equal(bare.records[0].user, "unknown");
+    assert.match(bare.passwd.notes.join(" "), /root_is_file_system_root/);
+    const said = body(await asJob(SHELL, cwd, { root: "work/homes", passwd: "work/other-passwd", root_is_file_system_root: true }, undefined, {}, "out-said"));
+    assert.equal(said.records[0].user, "unknown", "a home directory's path /alice is not the account's /home/alice");
   });
 });

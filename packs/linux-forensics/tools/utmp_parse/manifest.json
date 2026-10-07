@@ -1,6 +1,6 @@
 {
   "name": "utmp_parse",
-  "description": "Parse the binary login records wtmp, btmp, utmp and lastlog, in the layouts it names: glibc `struct utmp` (384-byte records) and `struct lastlog` (292 or 296 bytes, indexed by UID). Each record has its type, user, line, source host and address (raw bytes beside it), PID, session and time, and where it sits in the file: record index and byte offset, or UID slot. The answer names the layout and byte order it used and how it chose: a utmp byte order from the records' structure (every non-empty ut_type is 0-9 in one order only; `undetermined` where every record is empty, refused as ambiguous where both orders fit), a lastlog layout from the file size where only one width divides it or, where both do, from whether every non-empty slot's line and host are NUL-padded strings (refused as ambiguous where nothing tells them apart: pass layout; byte_order for lastlog is the little-endian default, said to be untested). Raw seconds and microseconds are kept, a tv_usec outside 0..999999 gives no time and says so, and nothing is reduced to look plausible; a short tail is named with its offset and size. A sparse lastlog is read skipping holes within max_slots and max_seconds, with next_uid to resume and uids to read only named slots. It does not read wtmpdb or lastlog2 (SQLite: refused, pointing at sqlite_query), another C library's record sizes or a 64-bit utmp time field, or a record nobody wrote: a missing record is not a login that did not happen, and a USER_PROCESS without a later DEAD_PROCESS is not shown to be open.",
+  "description": "Parse the binary login records wtmp, btmp, utmp and lastlog, in the layouts it names: glibc `struct utmp` (384-byte records) and `struct lastlog` (292 or 296 bytes, indexed by UID). Each record has its type, user, line, source host and address (raw bytes beside it), PID, session, ut_exit (exit_termination, exit_status) and time, and where it sits in the file: record index and byte offset, or UID slot. The answer names the layout and byte order it used and how it chose: a utmp byte order from the records' ut_type (the order in which more non-empty records have a type of 1-9, over a sample; `undetermined` where every record is empty, refused as ambiguous where both orders fit), and the file refused as not 384-byte records where fewer than 80% of its non-empty records have such a type (another C library's record size reads that way; layout: utmp-384 or a byte_order reads it anyway, and the answer then says all_records_read is false), a lastlog layout from the file size where only one width divides it or, where both do, from whether every non-empty slot's line and host are NUL-padded strings (refused as ambiguous where nothing tells them apart: pass layout; byte_order for lastlog is the little-endian default, said to be untested). Raw seconds and microseconds are kept, a tv_usec outside 0..999999 gives no time and says so, and nothing is reduced to look plausible; a short tail is named with its offset and size. A file whose name starts with `lastlog` (lastlog.1 too) is read as lastlog. A sparse lastlog is read skipping holes (holes_skipped says whether they were) within max_slots and max_seconds, with next_uid to resume and uids to read only named slots; a utmp file is read within max_seconds, with stopped_at_record and start_record to resume. passwd (lastlog only) names the accounts and the answer says which file it read and how many UIDs it mapped; without it no account is named. The arguments of the other kind (uids, start_uid, max_slots, passwd for utmp; start_record, user_is_typed for lastlog) are refused, not ignored. It does not read wtmpdb or lastlog2 (SQLite: refused, pointing at sqlite_query), another C library's record sizes or a 64-bit utmp time field (refused by the type check above, not read as 384-byte records), or a record nobody wrote: a missing record is not a login that did not happen, and a USER_PROCESS without a later DEAD_PROCESS is not shown to be open. SENSITIVE: btmp holds failed logins, and its user field is what was typed, which can be a password typed into the wrong field: in a file named btmp (or with user_is_typed: true) the answer carries only the name's length (user_bytes), and a `user` filter matches only in a job. write_text: true (refused outside a job) writes it to $OUT/utmp-text.jsonl, mode 0600; preview_text: true (refused outside a job) puts it in the answer; run it as a job with secret_output: true. wtmp and utmp name accounts that logged in, and their user stays in the answer. Every answer carries `status` (complete, partial or failed) and `status_basis`, the pair the recipes' coverage.json carries: all_records_read stays beside it.",
   "params": {
     "path": {
       "type": "string",
@@ -12,11 +12,11 @@
     },
     "user": {
       "type": "string",
-      "description": "Case-insensitive regex over the user name (a lastlog slot: the name from passwd, or the UID)"
+      "description": "Case-insensitive regex over the user name (a lastlog slot: the name from passwd). Over a typed name (btmp, or user_is_typed) it matches only in a job, and the answer says filter_touched_withheld_text"
     },
     "format": {
       "type": "string",
-      "description": "Force utmp or lastlog; otherwise lastlog is chosen by the file name 'lastlog'"
+      "description": "Force utmp or lastlog; otherwise lastlog is chosen by a file name that starts with 'lastlog'"
     },
     "layout": {
       "type": "string",
@@ -28,7 +28,7 @@
     },
     "passwd": {
       "type": "string",
-      "description": "Optional passwd file of the evidence, used to map lastlog UID slots to account names"
+      "description": "lastlog only: a passwd file of the evidence (a regular file), used to map UID slots to account names; the answer names it and how many UIDs it mapped"
     },
     "uids": {
       "type": "array",
@@ -44,11 +44,27 @@
     },
     "max_seconds": {
       "type": "number",
-      "description": "lastlog only: the time to spend walking slots (default 40); what is left is named, not dropped"
+      "description": "The time to spend (default 30, at most 45): a utmp file is read record by record and a lastlog walked slot by slot; what is left is named (stopped_at_record, next_uid) and the answer is partial"
     },
     "limit": {
       "type": "integer",
       "description": "Records shown inline (default 200); all are counted and, when there are more, the whole list is written as JSON Lines and named in pages.records.all_results"
+    },
+    "start_record": {
+      "type": "integer",
+      "description": "utmp only: the first record to read (default 0); stopped_at_record in an earlier answer resumes it"
+    },
+    "user_is_typed": {
+      "type": "string",
+      "description": "utmp only: auto (default: a file named btmp holds typed names), true or false. A typed name is withheld from the answer"
+    },
+    "write_text": {
+      "type": "boolean",
+      "description": "Write each record's user (a typed name) beside its locator to $OUT/utmp-text.jsonl (default false). Refused unless the tool runs as a job, which must be run with secret_output: true; a file already there is refused"
+    },
+    "preview_text": {
+      "type": "boolean",
+      "description": "Put a typed name in the answer's records (default false). Refused unless the tool runs as a job, which must be run with secret_output: true"
     }
   },
   "runtime": "python3",
@@ -58,7 +74,7 @@
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
   "version": 4,
-  "sha256": "a88cd2b511da0236141c75e15bb6db4352608b5c0a97fc310ab8042298e8e04d",
+  "sha256": "698a866238bb5144bad03903360263c5117dd7547d5acb273bd189bf2bb081ed",
   "use": {
     "names": [
       "utmp",
@@ -66,7 +82,8 @@
       "btmp",
       "lastlog",
       "wtmp.*",
-      "btmp.*"
+      "btmp.*",
+      "lastlog.*"
     ]
   }
 }

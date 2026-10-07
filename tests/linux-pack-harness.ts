@@ -67,11 +67,15 @@ export async function filesUnder(dir: string): Promise<string[]> {
   return out.sort();
 }
 
-/** The rows of a list an answer pages: the inline page, or the whole in the file the page names. */
-export async function rowsOf(cwd: string, out: Json, key = "records"): Promise<Json[]> {
+/**
+ * The rows of a list an answer pages: the inline page, or the whole in the file the page names. A job's paging file is
+ * named store/jobs/<id>/out/..., which a test run finds under `outDir`.
+ */
+export async function rowsOf(cwd: string, out: Json, key = "records", outDir = "out"): Promise<Json[]> {
   const page: Page | undefined = out.pages?.[key];
   if (page?.all_results) {
-    const text = await readFile(join(cwd, page.all_results), "utf8");
+    const real = page.all_results.replace(/^store\/jobs\/[^/]+\/out\//, `${outDir}/`);
+    const text = await readFile(join(cwd, real), "utf8");
     return text.trimEnd().split("\n").filter(Boolean).map((l) => JSON.parse(l));
   }
   return out[key] ?? [];

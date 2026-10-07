@@ -491,6 +491,10 @@ Every tool a pack bundles holds to this.
    result. It reports counts (parsed, empty, unsupported, failed, not attempted)
    and names the first failures. Exit code 0 means the engine ran, not that the
    examination is complete: completeness is judged from artefact coverage.
+   Every answer also carries `status` (`complete`, `partial` or `failed`) and
+   `status_basis` (one sentence on what the status rests on), the pair a recipe's
+   coverage.json carries; a tool's own booleans (`all_lines_parsed`,
+   `all_files_read`) stay beside them.
 2. **Bound resources, and say so.** Stream. Cap what expands (archives,
    containers, compressed streams, recursion, regular-expression time). A
    result that is cut says `truncated: true`, the cap, and where the whole is

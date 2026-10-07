@@ -10,11 +10,11 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { gzipSync } from "node:zlib";
-import { AUTH, asJob, body, everythingBut, exists, filesUnder, lines, refused, rowsOf, tool, withCwd } from "./linux-pack-harness.ts";
+import { AUTH, IS_ROOT, asJob, body, everythingBut, exists, filesUnder, lines, refused, rowsOf, tool, withCwd } from "./linux-pack-harness.ts";
 import type { Json } from "./linux-pack-harness.ts";
 
 const FP_ED = "SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8";
@@ -65,8 +65,11 @@ test("auth_log keeps the key type and fingerprint of an ordinary `ssh2:` accepta
     assert.equal(by("carol").ca_fingerprint, FP_CA);
     assert.equal(by("dave").method, "password");
     assert.equal(by("dave").fingerprint, undefined);
-    assert.equal(by("eve").kind, "ssh_failed");
-    assert.equal(by("eve").invalid_user, true);
+    const eve = rows.find((r) => r.invalid_user === true);
+    assert.equal(eve.kind, "ssh_failed");
+    assert.equal(eve.user, undefined, "a name the log says is no account is typed text: withheld");
+    assert.equal(eve.user_withheld, true);
+    assert.equal(eve.user_bytes, 3);
   });
 });
 
@@ -88,10 +91,11 @@ test("auth_log reads a PAM failure as key=value pairs: user and source survive, 
     const rows = await rowsOf(cwd, out);
     assert.equal(rows.length, 5);
     assert.equal(rows[0].kind, "auth_failure");
-    assert.equal(rows[0].user, "alice");
+    assert.equal(rows[0].user, undefined, "a PAM user= is what was typed: withheld");
+    assert.equal(rows[0].user_bytes, 5);
     assert.equal(rows[0].source, "192.0.2.5");
     assert.equal(rows[0].pam_service, "sshd");
-    assert.equal(rows[1].user, "bob");
+    assert.equal(rows[1].user_bytes, 3);
     assert.equal(rows[1].ruser, "bob");
     assert.equal(rows[1].source, undefined, "rhost= is empty: no source is invented");
     assert.equal(rows[2].source, "192.0.2.6");
@@ -128,9 +132,10 @@ test("auth_log never takes the word `user` for an address in a disconnect line, 
     assert.equal(rows[0].user, "alice");
     assert.equal(rows[0].port, 4222);
     assert.equal(rows[1].source, "192.0.2.9");
-    assert.equal(rows[2].user, "root");
+    assert.equal(rows[2].user, "root", "an authenticating user is an account the log names");
     assert.equal(rows[3].source, "2001:db8::1");
-    assert.equal(rows[3].user, "bob");
+    assert.equal(rows[3].user, undefined, "an invalid user is typed text");
+    assert.equal(rows[3].user_bytes, 3);
     assert.equal(rows[4].source, "192.0.2.77");
   });
 });
@@ -366,7 +371,7 @@ test("auth_log reads a PAM line's own key=value text as text: no key but its own
     const run = await tool(AUTH, cwd, { path });
     const [row] = await rowsOf(cwd, body(run));
     assert.equal(row.kind, "auth_failure");
-    assert.equal(row.user, "zed");
+    assert.equal(row.user_bytes, 3, "the typed user= is withheld");
     assert.equal(row.source, "192.0.2.5");
     assert.equal(row.file, path + "/auth.log");
     assert.equal(row.line, 1);
@@ -512,5 +517,185 @@ test("auth_log rejects arguments that are not an object, and a field of the wron
     await mkdir(join(cwd, "work", "a"), { recursive: true });
     await writeFile(join(cwd, "work", "a", "auth.log"), "x\n");
     for (const args of [{ path: "work/a", contains: 5 }, { path: "work/a", kinds: "sudo" }, { path: 5 }]) refused(await tool(AUTH, cwd, args));
+  });
+});
+
+test("auth_log keeps every name typed at a prompt out of the answer and out of the paging file, and in the job's text file", async () => {
+  // A name the log says is no account, and a PAM user=, are what someone typed: they can be a password in the wrong field.
+  await withCwd(async (cwd) => {
+    const path = await authDir(cwd, "typed", {
+      "auth.log": lines(
+        "Feb 14 09:30:00 web01 sshd[1]: Invalid user INVALIDUSERpw6 from 203.0.113.4 port 5",
+        "Feb 14 09:30:01 web01 sshd[2]: Failed password for invalid user INVFAILEDpw7 from 203.0.113.4 port 6 ssh2",
+        "Feb 14 09:30:02 web01 sshd[3]: pam_unix(sshd:auth): authentication failure; logname= uid=0 euid=0 tty=ssh ruser= rhost=203.0.113.4  user=PAMTYPEDpw8",
+        "Feb 14 09:30:03 web01 sshd[4]: Disconnected from invalid user INVDISCpw9 203.0.113.4 port 7 [preauth]",
+        "Feb 14 09:30:04 web01 sshd[5]: Accepted password for realuser from 192.0.2.4 port 22 ssh2",
+      ),
+    });
+    const secrets = ["INVALIDUSERpw6", "INVFAILEDpw7", "PAMTYPEDpw8", "INVDISCpw9"];
+    for (const run of [await tool(AUTH, cwd, { path, limit: 1 }), await asJob(AUTH, cwd, { path, limit: 1 })]) {
+      const out = body(run);
+      const all = await everythingBut(cwd, run.stdout, []);
+      for (const secret of secrets) assert.ok(!all.includes(secret), `${secret} is in the answer or a file it names`);
+      assert.equal(out.pages.records.matched, 5);
+    }
+    const all = body(await tool(AUTH, cwd, { path }));
+    const rows = await rowsOf(cwd, all);
+    assert.deepEqual(rows.slice(0, 4).map((r) => r.user_bytes), [14, 12, 11, 10]);
+    assert.equal(rows[4].user, "realuser", "an account the log names stays in the answer");
+    const job = body(await asJob(AUTH, cwd, { path, write_text: true }, undefined, {}, "out-text"));
+    const text = (await readFile(join(cwd, "out-text", "auth-text.jsonl"), "utf8")).trimEnd().split("\n").map((l) => JSON.parse(l));
+    assert.deepEqual(text.slice(0, 4).map((t: Json) => t.user), ["INVALIDUSERpw6", "INVFAILEDpw7", "PAMTYPEDpw8", "INVDISCpw9"]);
+    assert.equal(job.text.written, 5);
+    const preview = body(await asJob(AUTH, cwd, { path, preview_text: true }, undefined, {}, "out-preview2"));
+    assert.equal(preview.records[0].user, "INVALIDUSERpw6");
+  });
+});
+
+test("auth_log dates a file from the lines that agree, not from a stray one, and not from a gap in the log", async () => {
+  await withCwd(async (cwd) => {
+    // January with one March line in it, the file last written on January 20th: the March line is the stray.
+    const stray = await authDir(cwd, "stray", {
+      "auth.log": lines(
+        "Jan  2 10:00:00 h sshd[1]: Failed password for root from 192.0.2.1 port 1 ssh2",
+        "Jan  3 10:00:00 h sshd[2]: Failed password for root from 192.0.2.1 port 2 ssh2",
+        "Mar 15 10:00:00 h sshd[3]: Failed password for root from 192.0.2.1 port 3 ssh2",
+        "Jan  4 10:00:00 h sshd[4]: Failed password for root from 192.0.2.1 port 4 ssh2",
+      ),
+    }, { "auth.log": new Date(Date.UTC(2026, 0, 20, 12, 0, 0)) });
+    const a = body(await tool(AUTH, cwd, { path: stray }));
+    const rowsA = await rowsOf(cwd, a);
+    assert.deepEqual(rowsA.map((r) => String(r.time).slice(0, 10)), ["2026-01-02", "2026-01-03", "2026-03-15", "2026-01-04"]);
+    assert.deepEqual(rowsA.map((r) => Boolean(r.reordered)), [false, false, true, false], "the stray line is the one marked");
+    assert.equal(a.files[0].rollovers, 0);
+    // A machine that was off for eight months: January, then September, and the file last written in September.
+    const gap = await authDir(cwd, "gap", {
+      "auth.log": lines(
+        "Jan  5 10:00:00 h sshd[1]: Failed password for root from 192.0.2.1 port 1 ssh2",
+        "Jan  6 10:00:00 h sshd[2]: Failed password for root from 192.0.2.1 port 2 ssh2",
+        "Sep 20 10:00:00 h sshd[3]: Failed password for root from 192.0.2.1 port 3 ssh2",
+        "Sep 21 10:00:00 h sshd[4]: Failed password for root from 192.0.2.1 port 4 ssh2",
+      ),
+    }, { "auth.log": new Date(Date.UTC(2026, 8, 22, 12, 0, 0)) });
+    const b = body(await tool(AUTH, cwd, { path: gap }));
+    assert.deepEqual((await rowsOf(cwd, b)).map((r) => String(r.time).slice(0, 10)), ["2026-01-05", "2026-01-06", "2026-09-20", "2026-09-21"]);
+    assert.equal(b.files[0].reordered_lines, 0);
+    assert.equal(b.files[0].rollovers, 0);
+    // A year end is still found, and named by the line it was read at.
+    const wrap = await authDir(cwd, "wrap2", {
+      "auth.log": lines(
+        "Dec 30 10:00:00 h sshd[1]: Failed password for root from 192.0.2.1 port 1 ssh2",
+        "Jan  2 10:00:00 h sshd[2]: Failed password for root from 192.0.2.1 port 2 ssh2",
+      ),
+    }, { "auth.log": new Date(Date.UTC(2026, 0, 5, 12, 0, 0)) });
+    const c = body(await tool(AUTH, cwd, { path: wrap }));
+    assert.deepEqual(c.files[0].rollover_lines, [2]);
+    assert.deepEqual((await rowsOf(cwd, c)).map((r) => String(r.time).slice(0, 10)), ["2025-12-30", "2026-01-02"]);
+  });
+});
+
+test("auth_log reads the key=value tokens of a PAM line in linear time", async () => {
+  await withCwd(async (cwd) => {
+    const filler = "a".repeat(60_000);
+    const path = await authDir(cwd, "pamslow", {
+      "auth.log": lines(...Array.from({ length: 7 }, (_, i) => `Feb 14 09:30:0${i} web01 sshd[${i}]: pam_unix(sshd:auth): authentication failure; ${filler} rhost=192.0.2.5`)),
+    });
+    const started = Date.now();
+    const out = body(await tool(AUTH, cwd, { path }));
+    assert.ok(Date.now() - started < 5000, `took ${Date.now() - started} ms`);
+    assert.equal((await rowsOf(cwd, out))[0].source, "192.0.2.5");
+  });
+});
+
+test("auth_log keeps the rejected key of a failed publickey, a leap second, and the digits of a long fraction", async () => {
+  await withCwd(async (cwd) => {
+    const path = await authDir(cwd, "failedkey", {
+      "auth.log": lines(
+        `Feb 14 09:30:00 web01 sshd[1]: Failed publickey for root from 192.0.2.4 port 22 ssh2: RSA ${FP_RSA}`,
+        "2026-06-30T23:59:60Z web01 sshd[2]: Failed password for root from 192.0.2.4 port 22 ssh2",
+        "2026-02-14T09:30:00.1234567Z web01 sshd[3]: Failed password for root from 192.0.2.4 port 22 ssh2",
+      ),
+    });
+    const rows = await rowsOf(cwd, body(await tool(AUTH, cwd, { path })));
+    assert.equal(rows[0].keytype, "RSA");
+    assert.equal(rows[0].fingerprint, FP_RSA);
+    assert.equal(rows[1].time_error, undefined, "second 60 is a leap second, not an error");
+    assert.match(rows[1].time_note, /leap second/);
+    assert.equal(rows[2].time_utc, "2026-02-14T09:30:00.123456Z");
+    assert.match(rows[2].time_note, /7 digits/);
+  });
+});
+
+test("auth_log stops at max_seconds and names what it did not read", async () => {
+  await withCwd(async (cwd) => {
+    const line = "Feb 14 09:30:00 web01 sshd[1]: Failed password for root from 192.0.2.1 port 1 ssh2\n";
+    const path = await authDir(cwd, "slow", { "auth.log": line.repeat(600_000), "auth.log.1": line });
+    const out = body(await tool(AUTH, cwd, { path, max_seconds: 0.2 }));
+    assert.equal(out.status, "partial");
+    assert.match(out.read_errors[0].error, /max_seconds/);
+    assert.equal(out.files_not_reached.length + out.files.filter((f: Json) => f.partial).length >= 1, true);
+    assert.equal(out.all_lines_parsed, false);
+    for (const bad of [0, -1, "5", Infinity, null].filter((v) => v !== null)) refused(await tool(AUTH, cwd, { path, max_seconds: bad as number }));
+    assert.match(refused(await tool(AUTH, cwd, { path, max_seconds: 1e999 })).error, /max_seconds/);
+  });
+});
+
+test("auth_log's contains matches the fields the answer shows outside a job, and the whole line only in a job, and says which", async () => {
+  await withCwd(async (cwd) => {
+    const path = await authDir(cwd, "oracle", {
+      "auth.log": lines(
+        "Feb 14 09:30:00 web01 sudo:   deploy : TTY=pts/0 ; PWD=/srv ; USER=root ; COMMAND=/usr/bin/curl --token=h",
+        "Feb 14 09:30:01 web01 sshd[2]: Accepted password for deploy from 192.0.2.4 port 22 ssh2",
+      ),
+    });
+    const outside = body(await tool(AUTH, cwd, { path, contains: "--token=h" }));
+    assert.equal(outside.record_count, 0, "no oracle on the text of a command outside a job");
+    assert.equal(outside.filter_touched_withheld_text, false);
+    assert.match(outside.contains_scope, /fields the answer shows/);
+    assert.equal(body(await tool(AUTH, cwd, { path, contains: "192.0.2.4" })).record_count, 1, "a shown field is matched");
+    const inJob = body(await asJob(AUTH, cwd, { path, contains: "--token=h" }));
+    assert.equal(inJob.record_count, 1);
+    assert.equal(inJob.filter_touched_withheld_text, true);
+  });
+});
+
+test("auth_log answers with an error, not a traceback, where it cannot write its paging file, and says status on every answer", async () => {
+  await withCwd(async (cwd) => {
+    const line = "Feb 14 09:30:00 web01 sshd[1]: Failed password for root from 192.0.2.1 port 1 ssh2\n";
+    const path = await authDir(cwd, "status", { "auth.log": line.repeat(3) });
+    const ok = body(await tool(AUTH, cwd, { path }));
+    assert.equal(ok.status, "complete");
+    assert.ok(ok.status_basis);
+    await writeFile(join(cwd, "work", "status", "auth.log.1"), "this is no syslog line\n");
+    assert.equal(body(await tool(AUTH, cwd, { path })).status, "partial");
+    assert.equal(refused(await tool(AUTH, cwd, { path: "work/nothing-here" })).status, "failed");
+    if (!IS_ROOT) {
+      const ro = join(cwd, "ro-out");
+      await mkdir(ro, { recursive: true });
+      await chmod(ro, 0o555);
+      try {
+        const run = await tool(AUTH, cwd, { path, limit: 1 }, { JOB_ID: "j000099", OUT: ro });
+        const bad = refused(run);
+        assert.match(bad.error, /could not be written/);
+        assert.equal(bad.status, "failed");
+      } finally {
+        await chmod(ro, 0o755);
+      }
+    }
+  });
+});
+
+test("auth_log writes a byte that is not UTF-8 to the text file as an escape that reads back as the byte, and a lone CR stays", async () => {
+  await withCwd(async (cwd) => {
+    const bytes = Buffer.concat([Buffer.from("Feb 14 09:30:00 web01 sudo:   a : TTY=pts/0 ; PWD=/ ; USER=root ; COMMAND=/bin/echo pw-"), Buffer.from([0xe9, 0xff]), Buffer.from("-end\r\r\n")]);
+    const path = await authDir(cwd, "latin1", { "auth.log": bytes });
+    const out = body(await asJob(AUTH, cwd, { path, write_text: true }));
+    assert.equal(out.lines_with_invalid_utf8, 1);
+    const raw = await readFile(join(cwd, "out", "auth-text.jsonl"), "utf8");
+    assert.ok(raw.includes("\\udce9\\udcff"), "the two bytes are in the file as escapes");
+    const [row] = raw.trimEnd().split("\n").map((l) => JSON.parse(l));
+    assert.equal(Buffer.from(row.command, "utf8").length >= 0, true);
+    assert.equal(row.command.endsWith("-end\r"), true, "one CR of the two is the line ending's, the other is the line's");
+    assert.equal(out.records[0].command_bytes, "/bin/echo pw-".length + 2 + "-end\r".length);
   });
 });
