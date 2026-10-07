@@ -1,6 +1,6 @@
 {
   "name": "fuzzy_hash",
-  "description": "SHA-256 of a file (computed here: identity) and its ssdeep and TLSH digests (computed by the installed programs: byte similarity only), or a comparison of two files by TLSH distance. A digest is accepted only when it has the shape of that engine's digest. Each engine runs under a time limit with its whole output kept in a log file; an engine that fails, times out or prints something unrecognised is a per-engine status and the answer is partial; a comparison that cannot be made names the input that prevented it. Records each program's argv and what it reports as its version. Requires ssdeep and tlsh. A similarity score is a lead: it does not establish a family.",
+  "description": "SHA-256 of a file (computed here: identity) and its ssdeep and TLSH digests (computed by the installed programs: byte similarity only), or a comparison of two files by TLSH distance. A digest is accepted only when it has the shape of that engine's digest. Each engine runs under a time limit with its whole output kept in a log file; an engine that fails, times out or prints something unrecognised is a per-engine status and the answer is partial; a comparison that cannot be made names the input that prevented it. Records each program's argv and what its version command printed. Requires ssdeep and tlsh. A similarity score is a lead: it does not establish a family.",
   "params": {
     "path": {
       "type": "string",
@@ -26,5 +26,5 @@
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
   "version": 2,
-  "sha256": "65ff617e5fd3dbab9115bd032eaf955a8acb1508395e3c0072cad66478a4250d"
+  "sha256": "fc6e9b5789e5f64fcf87a9651a071691132131d3ca6c419c3394ce128d925730"
 }

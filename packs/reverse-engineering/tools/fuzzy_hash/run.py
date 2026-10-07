@@ -9,8 +9,8 @@ Each engine runs on its own, under a time limit, with its whole output kept in a
 directory (in a job, under $OUT) and none of it held in memory. A digest is accepted only when it has the shape
 of that engine's digest: any other text is a diagnostic, never a digest. An engine that times out, fails, or
 prints something unrecognised is a structured per-engine result and the answer is partial; the other engine's
-result stands. A comparison that cannot be made names the input that prevented it. What each program reports as
-its version is recorded as the program printed it.
+result stands. A comparison that cannot be made names the input that prevented it. What each program printed for its
+version command is recorded as printed.
 """
 import errno
 import hashlib
@@ -240,10 +240,10 @@ def engine_info(runner, name, version_argv, package):
     run = runner.call(version_argv, name + " version", VERSION_TIMEOUT)
     line = first_line(run["stdout"]) or first_line(run["stderr"])
     if run["status"] == "ok" and line:
-        info["version_output"] = line[:200]
+        info["version_command_output"] = line[:200]
     else:
-        info["version_output"] = None
-        info["version_note"] = "the program did not report a version for %s (%s)" % (" ".join(version_argv), run.get("reason") or "no output")
+        info["version_command_output"] = None
+        info["version_note"] = "the version command %s produced no usable output (%s)" % (" ".join(version_argv), run.get("reason") or "no output")
     if shutil_which("dpkg-query"):
         pkg = runner.call(["dpkg-query", "-W", "-f=${Version}", package], name + " package version", VERSION_TIMEOUT)
         if pkg["status"] == "ok" and first_line(pkg["stdout"]):

@@ -62,8 +62,8 @@ test("valid digests are accepted, SHA-256 is computed from the bytes, and each e
     assert.equal(out.status, "complete", JSON.stringify(out.problems));
     assert.deepEqual(out.engines.ssdeep.argv_per_file, ["ssdeep", "-b", "--", "<file>"]);
     assert.deepEqual(out.engines.tlsh.argv_per_file, ["tlsh", "-f", "<file>"]);
-    assert.equal(out.engines.ssdeep.version_output, "2.14.1");
-    assert.equal(out.engines.tlsh.version_output, "tlsh 4.12.0");
+    assert.equal(out.engines.ssdeep.version_command_output, "2.14.1");
+    assert.equal(out.engines.tlsh.version_command_output, "tlsh 4.12.0");
     assert.match(out.note, /identity|similarity/);
   });
 });
