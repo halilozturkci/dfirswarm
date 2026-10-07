@@ -4,7 +4,7 @@
       "name": "memprocfs",
       "package": "MemProcFS",
       "optional": true,
-      "why": "Mount a memory image as a file system: processes, handles, modules, registry and network state become files the ordinary tools read. AGPL-3.0, so its licence and this project's combine where Volatility's do not.",
+      "why": "Mount a memory image as a file system: processes, handles, modules, registry and network state become files. The mem_fs tool starts it for one call, lists or exports chosen files into the job's output and stops it. AGPL-3.0, so its licence and this project's combine where Volatility's do not. libfuse2 is the library only: a usable mount also needs a /dev/fuse the worker may open and a fusermount3 or fusermount helper, and whether a worker has them is a fact of the image and the harness; mem_fs reports which of them the host has when a mount fails.",
       "install": {
         "brew": "https://github.com/ufrisk/MemProcFS/releases",
         "apt": "pinned download 5.18.11 (install.download)",
@@ -82,7 +82,7 @@
       "name": "avml",
       "package": "AVML",
       "optional": true,
-      "why": "Acquire memory from a live Linux host into a portable format, without building a kernel module.",
+      "why": "Acquire memory from a live Linux host into a portable format, without building a kernel module. It is declared so the operator has the pinned binary and checksum to take to the source host; run in an analysis VM it captures that VM, not the subject.",
       "install": {
         "brew": "https://github.com/microsoft/avml/releases",
         "apt": "pinned download 0.20.0 (install.download)",
@@ -117,7 +117,7 @@
       "name": "yara",
       "package": "yara",
       "optional": true,
-      "why": "Scan a whole memory image or a dumped process region with examiner-supplied rules, preserving rule names, matching strings and byte offsets.",
+      "why": "Scan a whole memory image or a dumped process region with examiner-supplied rules, preserving rule names, matching strings and byte offsets (match bytes can be secret: run the job with secret_output: true). This is the standalone scanner: Volatility's YARA plugins need a Python binding that no requirement of this pack installs.",
       "install": {
         "brew": "brew install yara",
         "apt": "apt-get install -y yara"

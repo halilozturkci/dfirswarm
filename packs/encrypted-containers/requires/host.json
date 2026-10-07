@@ -4,9 +4,8 @@
       "name": "bdeinfo",
       "package": "libbde",
       "optional": true,
-      "why": "Read a BitLocker volume header and every key protector on it, before any key is known.",
+      "why": "Read a BitLocker volume header and the key protectors it can interpret, before any key is known. What it lists is what the installed build parsed for that metadata version; say which. No macOS install route is declared.",
       "install": {
-        "brew": "python3 -m pip install libbde-python",
         "apt": "apt-get install -y libbde-utils"
       },
       "licence": "LGPL-3.0-or-later",
@@ -16,9 +15,8 @@
       "name": "bdemount",
       "package": "libbde",
       "optional": true,
-      "why": "Expose an unlocked BitLocker volume as a file the toolkit can read.",
+      "why": "Expose an unlocked BitLocker volume as a FUSE view. A mount lives in that VM only and is not a sealed output; materialise the volume or the scoped files under $OUT. FUSE may be unavailable in a worker, and no macOS install route is declared.",
       "install": {
-        "brew": "python3 -m pip install libbde-python",
         "apt": "apt-get install -y libbde-utils"
       },
       "licence": "LGPL-3.0-or-later",
@@ -28,7 +26,7 @@
       "name": "dislocker",
       "package": "dislocker",
       "optional": true,
-      "why": "Unlock a BitLocker volume to a file with a recovery password, a key file, or no secret at all where a clear key is present.",
+      "why": "Present a BitLocker volume through FUSE once a recovery password, a key file or a clear key is supplied. A mount lives in that VM only and is not a sealed output; FUSE may be unavailable in a worker. The recovery password is a command-line option: say so in the report, so the trace can be redacted.",
       "install": {
         "brew": "brew install dislocker",
         "apt": "apt-get install -y dislocker"
@@ -40,9 +38,8 @@
       "name": "cryptsetup",
       "package": "cryptsetup",
       "optional": true,
-      "why": "Dump a LUKS header, list its key slots, and open the volume when a key is known.",
+      "why": "Read a LUKS header (luksDump: version, UUID, data offset, cipher, keyslots) and, where a key is supplied, open the volume. Reading metadata and opening through the device mapper are different runtime capabilities; opening needs facilities a worker may not have. No macOS install route is declared.",
       "install": {
-        "brew": "brew install cryptsetup",
         "apt": "apt-get install -y cryptsetup-bin"
       },
       "licence": "GPL-2.0-or-later with an OpenSSL exception",
@@ -52,9 +49,8 @@
       "name": "fvdeinfo",
       "package": "libfvde",
       "optional": true,
-      "why": "Read a FileVault volume's encryption metadata and its key material references.",
+      "why": "Read the encryption metadata of a Core Storage (legacy FileVault 2) volume and its key material references. Whether the installed build reads an APFS volume is not established; no macOS install route is declared.",
       "install": {
-        "brew": "python3 -m pip install libfvde-python",
         "apt": "apt-get install -y libfvde-utils"
       },
       "licence": "LGPL-3.0-or-later",
@@ -64,7 +60,7 @@
       "name": "john",
       "package": "john-the-ripper",
       "optional": true,
-      "why": "Turn a header into a hash a password attempt can be made against, with the *2john helpers. Only where the operator has authorised it.",
+      "why": "Turn a header into a hash a password attempt can be made against, with the *2john helpers. Only where the operator has authorised it; no skill instructs its use. Whether a governed recovery capability exists is the owner's decision; apt's john and brew's john-jumbo are not shown to be the same feature set, and the *2john helpers are not checked here.",
       "install": {
         "brew": "brew install john-jumbo",
         "apt": "apt-get install -y john"
@@ -76,7 +72,7 @@
       "name": "gpg",
       "package": "gnupg",
       "optional": true,
-      "why": "Read an OpenPGP message's packets (recipients, algorithms, the key it wants) with --list-packets before any key is known, import a private key found on the evidence, and decrypt once its passphrase is.",
+      "why": "Read an OpenPGP message's packets (recipients, algorithms, the key it wants) with --list-packets before any key is known; use a key the case supplies, offline, in an isolated GNUPGHOME under $OUT with no keyring of the host and no secret on a command line.",
       "install": {
         "brew": "brew install gnupg",
         "apt": "apt-get install -y gnupg"
