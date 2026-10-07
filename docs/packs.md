@@ -340,7 +340,7 @@ checksummed, and installs and verifies in the test suite.
 | `encrypted-containers` | 5 | 3 | 1 | which scheme, which protectors, and where the key already is |
 | `cloud-forensics` | 6 | 3 | 1 | Microsoft 365, Entra, AWS, Workspace, and the tokens behind them |
 | `ransomware-response` | 7 | 2 | 1 | the order the case has to be worked in |
-| `triage-collection` | 5 | 2 | 1 | a collector's output, which is how most cases arrive |
+| `triage-collection` | 14 | 2 | 1 | a collector's output, which is how most cases arrive |
 
     scripts/pack.sh install packs/computer-forensics-base
     scripts/pack.sh install packs/windows-forensics
