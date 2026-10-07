@@ -43,7 +43,7 @@ So a pack's skills are small files, and an agent loads one when it needs it:
   carries the protocol: look in the index before working an artefact class,
   load the matching note, say in one line what rules you will apply, hold at
   most three at once, `skill_done` when the topic is finished, and load again
-  after a compaction what is still needed.
+  after a compaction (or a release) what is still needed.
 - A body arrives only when an agent calls `skill("<id>")`, as plain Markdown:
   the front matter is left off and there is no JSON around it. The id is as the
   index lists it (`area/topic`), or `pack:id` (`pack-name:area/topic`)
@@ -65,14 +65,91 @@ So a pack's skills are small files, and an agent loads one when it needs it:
   each costs in tokens, and loads none: the agent loads the ones the case needs.
 - `skill_done(id, note)` says the agent is finished with a body: the event is on
   the trace, and the body is marked releasable (a seat that holds three bodies
-  it has not finished is reminded to finish one before it loads a fourth).
+  it has not finished is reminded to finish one before it loads a fourth). What
+  releasing does is the next bullet.
+- A body the agent has finished with leaves its context, and a one-line stub
+  stays: `<id> released (N tokens). Re-load with skill('<id>').` The harness does
+  it with a `context_edit` draft that the swarm extension returns from Pi's
+  `turn_end` (Pi 0.87.1, `dist/core/agent-session.js`: the drafts of a turn
+  boundary are appended to the session before the next request is built from
+  its projection), so the very next model call is sent the stub. The session
+  keeps the raw tool result and the edit beside it, as an append-only line: what
+  custody hashes, what the replay and cost readers parse and what the console
+  shows are the entries they always saw; only what the model is sent changes.
+  `skill(id)` after a release delivers the body again, the trace row says
+  `reload_after_release`, and `skill_done` on a released note says that it was.
+  `--skill-release auto|compaction|off` (`SWARM_SKILL_RELEASE` in the seat) says
+  when:
+
+  | Model class (from the catalogue entry Pi has for the seat's model) | `auto` (default) | `compaction` | `off` |
+  | --- | --- | --- | --- |
+  | **open**: an API that does not sign what it replays (OpenAI Responses and Codex, chat-completions servers, local models), a model the catalogue does not mark as reasoning, or a thinking model with thinking off | at the next turn boundary after `skill_done` | at a compaction | never |
+  | **signed-thinking**: the catalogue marks the model as reasoning, its api is `anthropic-messages` (or Bedrock's converse), and thinking is on: Claude Fable 5.1, Opus 5.5, Sonnet 5 and every other reasoning Claude entry in Pi 0.87.1's catalogue | at a compaction | at a compaction | never |
+  | **unknown**: the session names no model | at a compaction | at a compaction | never |
+
+  The class is read from `api`, `reasoning` and the session's thinking level,
+  not from the model's name (`releaseClassOf`; a test walks Pi's whole
+  catalogue). The reason for the Claude row is Anthropic's own: "client-side
+  edits to earlier turns can invalidate the thinking blocks in every later
+  assistant turn" on those models, and the same guide recommends replacing the
+  whole history with a summary instead. Nobody has checked against a real
+  Claude session whether an edit of one earlier tool result trips that, so
+  until someone does, those seats release only at a compaction, where the
+  history is replaced anyway. "At a compaction" means: when a seat has saved its
+  hand-off note, the finished bodies are replaced in the same boundary, just
+  before the compaction rewrites the prefix; and the summary is written from ids
+  and sizes, never from a note's first 2,000 characters (below).
+
+  What is released, and what is not:
+
+  - Only a body the agent marked done. A body it has not finished with is never
+    touched, however many it holds: the notes it is working from stay. (The harness
+    reminds at a fourth, it does not take one away.)
+  - Not a body the model has not had a turn with: one loaded and marked done in the
+    same assistant message waits for the next boundary.
+  - All the finished bodies of a boundary go in one return, so the history is
+    rewritten once, not once per body.
+  - Never toggle: a body released once between two compactions is not released
+    again when the agent loads it again and marks it done; it stays until the
+    compaction. At a compaction the rewrite costs nothing extra.
+  - A model change or a thinking-level change is picked up at the next boundary; the
+    trace says what the policy came to (`skill_release_policy`).
+
+  The cost, so nobody has to find it out on a bill. Editing an earlier tool
+  result makes a provider's prompt cache write everything after it again once
+  (about 1.25 times the input price) and then saves about a tenth of the body's
+  tokens on every later request: a 500-token body with 5,000 tokens after it pays
+  back after roughly 115 requests, and with 50,000 after it, not before the next
+  compaction. On cache-priced providers a mid-run release is therefore not a
+  saving; it is bought for the model's attention, because the measured waste is
+  large (in 67 recorded runs, 71 % of 82 fetched bodies were never named or used
+  again; 114 of the 120 fetches a compaction followed were summarised away, and
+  none of the 120 was loaded again), and the `skill_unload` row carries
+  `suffix_tokens`, an estimate of what followed the body, so a run can say what
+  its releases cost. The `context` row of the turn after an edit is Pi's
+  characters-over-four estimate of the whole context, not the provider's count,
+  until the next reply.
+- A compaction is written from ids and sizes. Pi cuts each tool result to 2,000
+  characters when it serialises the history for the summary, so a note was
+  summarised from its opening lines. The summary call is now given every skill
+  body as one line that names the note and its size (a released one is already a
+  stub), and a `<skills-read>` block: the notes read, their sizes, which the agent
+  marked done, and which were not (probably still needed). The summary prompt
+  asks for those under Critical Context. The hand-off header carries the same
+  account, without a note's text: what the compaction took out, what was released
+  earlier, what stayed in the newest part of the history, and which notes are
+  probably still needed. The session keeps the whole results; only the summary's
+  input is shaped. `--skill-release off` leaves it as Pi serialises it.
 - Every load is an event on the trace, with the sha256 of the file as the pack
   shipped it (the value `pack.json`'s checksums carry) and its token count. Which
   method a swarm consulted, which version of it, and when, becomes part of the
-  record the report can cite. `scripts/swarm.sh context <id>` and the console's
-  Packs tab count, per agent, the bodies loaded and what they cost, how many a
-  later row names or uses (a proxy), how many a compaction took out of the
-  context, and how many were loaded again.
+  record the report can cite. Every release is an event too (`skill_unload`: the
+  note, its sha256 and tokens, the tool call whose result was replaced, the
+  reason, the turn). `scripts/swarm.sh context <id>` and the console's Packs tab
+  count, per agent, the bodies loaded and what they cost, how many a later row
+  names or uses (a proxy), how many a compaction took out of the context, how many
+  were loaded again, how many the harness released and the tokens that took out,
+  and how many of those the agent loaded again (the wasted-release rate).
 - The kickoff passes Pi `--no-skills`, which keeps Pi's skill directories
   (`~/.pi/agent/skills`, `~/.agents/skills`, a project's `.pi/skills`, a `skills`
   setting) out of an agent's prompt. It does not keep out everything an operator

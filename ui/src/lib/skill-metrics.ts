@@ -1,10 +1,13 @@
 /**
  * How a run used its skills, from the trace alone.
  *
- * Three rows carry it (extensions/skills.ts): `skills_index` when a seat's
+ * Five rows carry it (extensions/skills.ts): `skills_index` when a seat's
  * prompt was built, `skill` for every call of the tool (a body, the index, a
- * miss, an answer that the body is already in context) and `skill_done` when a
- * seat said it was finished with one. `compact_done` marks a compaction. This
+ * miss, an answer that the body is already in context), `skill_done` when a
+ * seat said it was finished with one, `skill_unload` when the harness replaced
+ * a finished body in the seat's context by a stub, and `skill_release_policy`
+ * when it said what it would release on that seat's model. `compact_done`
+ * marks a compaction. This
  * module is pure and has no DOM, so the context audit (scripts/context-audit.ts),
  * the console server (scripts/ui/model.ts) and the Packs tab share it.
  *
@@ -31,7 +34,14 @@ export type SkillLoadUse = {
   refetched: boolean;
   /** The seat marked it done. */
   done: boolean;
+  /** The harness replaced the body in the seat's context by a stub (`skill_unload`). */
+  released: boolean;
+  /** The seat loaded the note again after that: the release was wasted. */
+  reloaded_after_release: boolean;
 };
+
+/** What the harness said it would release on a seat's model (the latest `skill_release_policy` row). */
+export type SeatReleasePolicy = { mode: string; effective: string; class: string; model: string | null; thinking_level: string | null };
 
 export type SeatSkills = {
   agent: string;
@@ -57,6 +67,13 @@ export type SeatSkills = {
   failed: number;
   tokens_loaded: number;
   done: number;
+  /** Bodies the harness replaced by a stub, the tokens that took out of the context, and how many of them the seat loaded again. */
+  released: number;
+  released_at_compaction: number;
+  tokens_released: number;
+  reloaded_after_release: number;
+  /** What the seat's release policy came to (null on a trace from before the unloader). */
+  release_policy: SeatReleasePolicy | null;
   referenced: number;
   /** Loads with no trace of use afterwards. */
   unused: number;
@@ -97,6 +114,10 @@ export type RunSkills = {
     loads: number;
     tokens_loaded: number;
     done: number;
+    released: number;
+    released_at_compaction: number;
+    tokens_released: number;
+    reloaded_after_release: number;
     referenced: number;
     unused: number;
     lost_at_compaction: number;
@@ -131,9 +152,9 @@ function escapeRegExp(s: string): string {
 }
 
 /** Rows that only describe the skill machinery or the gauge: a mention there is not use. */
-const NOT_USE = new Set(["skill", "skill_done", "skills_index", "skills_compacted", "context"]);
+const NOT_USE = new Set(["skill", "skill_done", "skill_unload", "skill_release_policy", "skills_index", "skills_compacted", "context"]);
 
-type Load = SkillLoadUse & { at: number; tools: string[]; toolsKnown: boolean; turn: number | null; reload: boolean };
+type Load = SkillLoadUse & { at: number; tools: string[]; toolsKnown: boolean; turn: number | null; reload: boolean; call: string | null; reloadFlag: boolean };
 
 export function emptySeat(agent: string): SeatSkills {
   return {
@@ -148,6 +169,11 @@ export function emptySeat(agent: string): SeatSkills {
     failed: 0,
     tokens_loaded: 0,
     done: 0,
+    released: 0,
+    released_at_compaction: 0,
+    tokens_released: 0,
+    reloaded_after_release: 0,
+    release_policy: null,
     referenced: 0,
     unused: 0,
     lost_at_compaction: 0,
@@ -176,7 +202,7 @@ export function skillUse(rows: readonly SkillTraceRow[], seatIds?: readonly stri
 
   const seats: SeatSkills[] = [];
   const rollup = new Map<string, SkillRollup & { agentSet: Set<string> }>();
-  const isSeatRow = (r: SkillTraceRow) => r.tool === "agent_start" || r.tool === "context" || r.tool === "skills_index" || r.tool === "skill" || r.tool === "skill_done";
+  const isSeatRow = (r: SkillTraceRow) => r.tool === "agent_start" || r.tool === "context" || r.tool === "skills_index" || r.tool === "skill" || r.tool === "skill_done" || r.tool === "skill_unload" || r.tool === "skill_release_policy";
   const ids = seatIds ? [...new Set(seatIds)] : [...perAgent].filter(([, list]) => list.some(({ row }) => isSeatRow(row))).map(([agent]) => agent);
 
   for (const agent of ids) {
@@ -186,6 +212,8 @@ export function skillUse(rows: readonly SkillTraceRow[], seatIds?: readonly stri
     const compactionAts: number[] = [];
     // The harness's own account of each compaction: which bodies it took out (`pack:id|turn`).
     const compacted: { at: number; lost: Set<string> }[] = [];
+    // The harness's own account of each release: the body it replaced by a stub (`pack|id|call`).
+    const unloads: { at: number; pack: string | null; id: string; call: string | null; tokens: number; reason: string | null }[] = [];
 
     for (const { at, row } of mine) {
       const a = obj(row.args);
@@ -215,11 +243,15 @@ export function skillUse(rows: readonly SkillTraceRow[], seatIds?: readonly stri
             lost_at_compaction: false,
             refetched: false,
             done: false,
+            released: false,
+            reloaded_after_release: false,
             at,
             tools: strings(r.tools),
             toolsKnown: Array.isArray(r.tools),
             turn: num(r.turn),
             reload: r.reload_after_compaction === true,
+            call: str(r.call),
+            reloadFlag: r.reload_after_release === true,
           });
         }
       } else if (row.tool === "skill_done") {
@@ -229,6 +261,10 @@ export function skillUse(rows: readonly SkillTraceRow[], seatIds?: readonly stri
           const open = [...loads].reverse().find((l) => l.id === id && !l.done);
           if (open) open.done = true;
         }
+      } else if (row.tool === "skill_unload") {
+        if (r.ok !== false) unloads.push({ at, pack: str(r.pack), id: str(a.id) ?? "", call: str(r.call), tokens: num(r.tokens) ?? 0, reason: str(r.reason) });
+      } else if (row.tool === "skill_release_policy") {
+        seat.release_policy = { mode: str(r.mode) ?? "", effective: str(r.effective) ?? "", class: str(r.class) ?? "", model: str(r.model), thinking_level: str(r.thinking_level) };
       } else if (row.tool === "compact_done") {
         compactionAts.push(at);
       } else if (row.tool === "skills_compacted") {
@@ -246,6 +282,17 @@ export function skillUse(rows: readonly SkillTraceRow[], seatIds?: readonly stri
       if (when === undefined) continue;
       l.lost_at_compaction = true;
       l.refetched = loads.some((o) => keyOf(o) === keyOf(l) && o.at > when);
+    }
+
+    // Releases: each `skill_unload` row names the tool call whose result it replaced; a trace that does not says which note by id.
+    for (const u of unloads) {
+      const hit = [...loads].reverse().find((l) => !l.released && l.at < u.at && (u.call !== null ? l.call === u.call : l.id === u.id && (u.pack === null || l.pack === u.pack)));
+      if (hit) hit.released = true;
+    }
+    // A load after a release of the same note is a wasted release: the harness flags it on the row (`reload_after_release`, which a compaction in between clears),
+    // and for a release row that names no tool call the order of the rows says it.
+    for (const l of loads) {
+      l.reloaded_after_release = l.reloadFlag || unloads.some((u) => u.call === null && u.at < l.at && u.id === l.id && (u.pack === null || l.pack === null || u.pack === l.pack));
     }
 
     // The proxy: later rows of this seat that name the skill or call one of its tools.
@@ -286,10 +333,14 @@ export function skillUse(rows: readonly SkillTraceRow[], seatIds?: readonly stri
     // A load that came after a compaction took the same note out: the harness says so on the row
     // (`reload_after_compaction`), and the order of the rows says it for a trace that predates the flag.
     seat.refetched = loads.filter((l, i) => l.reload || loads.slice(0, i).some((o) => keyOf(o) === keyOf(l) && (exact ? compacted.some((c) => c.at > o.at && c.at < l.at && c.lost.has(`${keyOf(o)}|${o.turn ?? ""}`)) : compactionAts.some((c) => c > o.at && c < l.at)))).length;
+    seat.released = unloads.length;
+    seat.released_at_compaction = unloads.filter((u) => u.reason === "compaction").length;
+    seat.tokens_released = unloads.reduce((n, u) => n + u.tokens, 0);
+    seat.reloaded_after_release = loads.filter((l) => l.reloaded_after_release).length;
     seat.compactions = compactionAts.length;
     seat.lost_basis = exact ? "skills_compacted" : compactionAts.length ? "compact_done" : "none";
     seat.loads_without_tools = loads.filter((l) => !l.toolsKnown).length;
-    seat.detail = loads.map(({ at: _at, tools: _tools, toolsKnown: _known, turn: _turn, reload: _reload, ...rest }) => rest);
+    seat.detail = loads.map(({ at: _at, tools: _tools, toolsKnown: _known, turn: _turn, reload: _reload, call: _call, reloadFlag: _flag, ...rest }) => rest);
     seats.push(seat);
 
     for (const l of loads) {
@@ -318,6 +369,10 @@ export function skillUse(rows: readonly SkillTraceRow[], seatIds?: readonly stri
       loads: sum((s) => s.loads),
       tokens_loaded: sum((s) => s.tokens_loaded),
       done: sum((s) => s.done),
+      released: sum((s) => s.released),
+      released_at_compaction: sum((s) => s.released_at_compaction),
+      tokens_released: sum((s) => s.tokens_released),
+      reloaded_after_release: sum((s) => s.reloaded_after_release),
       referenced: sum((s) => s.referenced),
       unused: sum((s) => s.unused),
       lost_at_compaction: sum((s) => s.lost_at_compaction),

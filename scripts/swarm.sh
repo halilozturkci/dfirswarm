@@ -172,7 +172,7 @@ swarm.sh start — prepare a sandbox, write the contract, launch the agents.
       [--notify CMD] [--ledger-from RUN] [--no-verify-copy] [--allow-root] [--model-gateway] [--check]
       [--cap-per-agent USD] [--cap-per-agent-tokens N] [--cap-tokens N] [--token-alert N[,M...]] [--idle-nudge-sec N] [--allow-tool-forging]
       [--no-self-compact] [--compact-at SPEC] [--compact-warn-at SPEC] [--compact-notice-at SPEC]
-      [--compact-prompt-file FILE] [--compact-model P/ID] [--inbox-page-chars N]
+      [--compact-prompt-file FILE] [--compact-model P/ID] [--inbox-page-chars N] [--skill-release auto|compaction|off]
       [--allow-install] [--no-pypi] [--no-read DIR]... [--accept-signer-exposure]
       [--tools-from DIR] [--inputs DIR]... [--inputs-enforce auto|on|off]
       [--inputs-max-mb N] [--inputs-max-files N] [--catalog] [--allow-missing-symbols] [--toolbox SETS|auto|off] [--toolbox-required]
@@ -368,6 +368,18 @@ Limits
                       (default 40000). Whole posts only: a post is never cut,
                       and what did not fit stays unread for the next call,
                       which wait answers at once. 0 removes the bound.
+  --skill-release auto|compaction|off
+                      When a skill body an agent has marked done leaves its
+                      context (a one-line stub stays; the session keeps the
+                      whole result; skill(id) brings it back). auto, the
+                      default: at the next turn boundary on a model whose
+                      history may be edited, and only at a compaction on a
+                      Claude model with thinking (its signed thinking blocks
+                      can be invalidated by an edit of an earlier turn). compaction:
+                      only at a compaction, on every model. off: never, and the
+                      summary input is not shaped. Recorded as skill_release in
+                      the registry; skill_release_policy and skill_unload on
+                      the trace. Needs --pack.
 
 Evidence
   --inputs DIR        A read-only copy of DIR under inputs/. Agents read and grep
@@ -3473,6 +3485,8 @@ cmd_start() {
   # How much post text one inbox/wait delivery carries (whole posts; the rest
   # stays unread for the next call). Empty means the extension's default.
   local inbox_page_chars=""
+  # When a skill body an agent has marked done leaves its context: auto, compaction or off. Empty means auto.
+  local skill_release=""
   local extra_env=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -3596,6 +3610,7 @@ cmd_start() {
       --compact-prompt-file) compact_prompt="$2"; shift 2 ;;
       --compact-model) compact_model="$2"; shift 2 ;;
       --inbox-page-chars) inbox_page_chars="$2"; shift 2 ;;
+      --skill-release) skill_release="$2"; shift 2 ;;
       --case-id) case_id="$2"; shift 2 ;;
       --examiner) examiner="$2"; shift 2 ;;
       --operator) operator_id="${2:-}"; shift 2 ;;
@@ -4384,6 +4399,15 @@ sys.exit(0 if t(sys.argv[1]) < t(sys.argv[2]) else 1)' "$_have" "$_ship" 2>/dev/
   if [[ -n "$compact_model" && "$self_compact" -ne 1 ]]; then
     echo "BLOCKER: --compact-model names the summary model of self-compaction; drop --no-self-compact." >&2
     exit 2
+  fi
+  if [[ -n "$skill_release" && "$skill_release" != "auto" && "$skill_release" != "compaction" && "$skill_release" != "off" ]]; then
+    echo "BLOCKER: --skill-release is auto, compaction or off, got $skill_release." >&2
+    exit 2
+  fi
+  if [[ -n "$skill_release" && -z "$pack_dirs" ]]; then
+    echo "WARN: --skill-release $skill_release does nothing: this run carries no pack, so no skill body is ever loaded." >&2
+  elif [[ "$skill_release" == "compaction" && "$self_compact" -ne 1 ]]; then
+    echo "WARN: --skill-release compaction releases a body when a seat hands off to itself, and --no-self-compact leaves no hand-off: no body is released." >&2
   fi
   if [[ -n "$inbox_page_chars" ]] && ! [[ "$inbox_page_chars" =~ ^[0-9]{1,9}$ ]]; then
     echo "BLOCKER: --inbox-page-chars is a whole number of characters of post text per delivery (0 for no bound), got $inbox_page_chars." >&2
@@ -5773,6 +5797,7 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
     --arg compact_prompt "$compact_prompt" \
     --arg compact_model "$compact_model" \
     --arg inbox_page_chars "${inbox_page_chars:-40000}" \
+    --arg skill_release "${skill_release:-auto}" \
     --argjson metered "$metered" \
     --arg cap_tokens "$cap_tokens" \
     --arg token_alerts "$token_alerts" \
@@ -5865,6 +5890,7 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
         model: (if $compact_model == "" then null else $compact_model end)
       },
       inbox_page_chars: ($inbox_page_chars | tonumber),
+      skill_release: $skill_release,
       metered: ($metered == 1),
       cap_tokens: (if $cap_tokens == "" then null else ($cap_tokens | tonumber) end),
       token_alerts: (if $token_alerts == "" then null else ($token_alerts | split(",") | map(tonumber)) end),
@@ -5980,6 +6006,15 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
     echo "Compaction:   self (notice ${compact_notice_at:-40%$compact_fit} · warning ${compact_warn_at:-50%$compact_fit} · compact ${compact_at:-60%$compact_fit} of each model's ceiling${compact_model:+ · summaries by $compact_model})"
   else
     echo "Compaction:   Pi's own only (self-compaction off)"
+  fi
+  if [[ -n "$pack_dirs" ]]; then
+    local skill_release_says
+    case "${skill_release:-auto}" in
+      compaction) skill_release_says="at a compaction only" ;;
+      off) skill_release_says="never" ;;
+      *) skill_release_says="at the next turn boundary; at a compaction only on a Claude model with thinking" ;;
+    esac
+    echo "Skill release: a body an agent marks done leaves its context ${skill_release_says} (--skill-release ${skill_release:-auto})"
   fi
   if [[ -n "$models_spec" ]]; then
     echo "Models:       $MODEL_SUMMARY"
@@ -6234,6 +6269,9 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
   fi
   if [[ -n "$inbox_page_chars" ]]; then
     provider_env+=(--env "SWARM_INBOX_PAGE_CHARS=$inbox_page_chars")
+  fi
+  if [[ -n "$skill_release" ]]; then
+    provider_env+=(--env "SWARM_SKILL_RELEASE=$skill_release")
   fi
   # A case can turn on a library the host does not have. The answer is not
   # root — nothing here needs it, and the read-only guard over inputs/ is the
@@ -8691,6 +8729,7 @@ vm_build_spec() { # <hub dir> <out file>
     [[ -n "$compact_model" ]] && add_env SWARM_COMPACT_MODEL "$compact_model"
   fi
   [[ -n "$inbox_page_chars" ]] && add_env SWARM_INBOX_PAGE_CHARS "$inbox_page_chars"
+  [[ -n "${skill_release:-}" ]] && add_env SWARM_SKILL_RELEASE "$skill_release"
   # The hub refuses a part larger than its own size: a size set for this run
   # reaches the guests too, so both ends cut the same parts.
   [[ -n "${SWARM_TRANSFER_PART_BYTES:-}" ]] && add_env SWARM_TRANSFER_PART_BYTES "$SWARM_TRANSFER_PART_BYTES"

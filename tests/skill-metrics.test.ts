@@ -93,6 +93,10 @@ test("per seat: loads, tokens, used after load, no trace of use, done, lost at a
     loads: 5,
     tokens_loaded: 2_700,
     done: 1,
+    released: 0,
+    released_at_compaction: 0,
+    tokens_released: 0,
+    reloaded_after_release: 0,
     referenced: 2,
     unused: 3,
     lost_at_compaction: 3,
@@ -163,9 +167,9 @@ test("the context audit carries the skills: a table, findings that name the seat
   assert.match(f, /1 skill call named no skill the packs carry\./);
   const md = renderMarkdown(run);
   assert.match(md, /## Skills\n\n\| Agent \| Index in prompt \| Loads \|/);
-  assert.match(md, /\| s0 \| yes \(900 tokens\) \| 4 \| 3 \| 2,200 \| 2 \| 2 \| 1 \| 3 \| 1 \| 0 \|/);
+  assert.match(md, /\| s0 \| yes \(900 tokens\) \| 4 \| 3 \| 2,200 \| 2 \| 2 \| 1 \| 0 \| 0 \| 0 \| 3 \| 1 \| 0 \|/);
   assert.match(md, /Taken out by a compaction/);
-  assert.match(md, /\| s1 \| yes \(900 tokens\) \| 1 \| 1 \| 500 \| 0 \| 1 \| 0 \| 0 \| 0 \| 1 \|/);
+  assert.match(md, /\| s1 \| yes \(900 tokens\) \| 1 \| 1 \| 500 \| 0 \| 1 \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \| 1 \|/);
   // A run with no skill row says nothing about skills.
   const quiet = audit(readRows(file).rows.filter((r) => !r.tool.startsWith("skill")), file);
   assert.deepEqual(skillFindings(quiet.skills), []);
@@ -241,4 +245,96 @@ test("loads from rows that carry no tools list are counted and said: the proxy c
   assert.equal(use.totals.loads_without_tools, 1);
   const findings = audit(rows.map((r) => ({ ts: r.ts, agent: r.agent, tool: r.tool, args: (r.args ?? {}) as Record<string, unknown>, result: (r.result ?? {}) as Record<string, unknown> })), "x").findings.join("\n");
   assert.match(findings, /1 of the loads come from rows that carry no tools list \(a trace from before the harness wrote it\)/);
+});
+
+// ---------------------------------------------------------------------------
+// The unloader's rows: what was released, what it took out, what was wasted
+// ---------------------------------------------------------------------------
+
+const unload = (agent: string, id: string, call: string | null, extra: Record<string, unknown> = {}) =>
+  row(agent, "skill_unload", { id }, { ok: true, pack: "pack-a", sha256: `sha-${id}`, tokens: 500, ...(call !== null ? { call } : {}), reason: "done", turn: 12, ...extra });
+const policy = (agent: string, extra: Record<string, unknown> = {}) =>
+  row(agent, "skill_release_policy", {}, { ok: true, mode: "auto", effective: "boundary", class: "open", model: "openai-codex/gpt-6-sol", thinking_level: "medium", ...extra });
+
+function releaseTrace(): SkillTraceRow[] {
+  clock = 0;
+  return [
+    row("r0", "skills_index", {}, { ok: true, source: "prompt", matches_packs: true, section_tokens: 900 }),
+    policy("r0"),
+    // The first is released after done and never needed again; the second is released and loaded again (a wasted release); the third is released at a compaction.
+    load("r0", "execution/prefetch", { turn: 2, call: "k1" }),
+    load("r0", "registry/devices", { turn: 3, call: "k2" }),
+    load("r0", "logs/security", { turn: 4, call: "k3" }),
+    row("r0", "skill_done", { id: "execution/prefetch" }, { ok: true, turn: 6 }),
+    unload("r0", "execution/prefetch", "k1", { turn: 6 }),
+    row("r0", "skill_done", { id: "registry/devices" }, { ok: true, turn: 7 }),
+    unload("r0", "registry/devices", "k2", { turn: 7, tokens: 400 }),
+    load("r0", "registry/devices", { turn: 9, call: "k4", reload_after_release: true, released_turn: 7 }),
+    row("r0", "skill_done", { id: "logs/security" }, { ok: true, turn: 10 }),
+    unload("r0", "logs/security", "k3", { turn: 11, tokens: 700, reason: "compaction" }),
+    // s1: a Claude seat, which releases at a compaction only, and an unload that failed.
+    row("r1", "skills_index", {}, { ok: true, source: "prompt", matches_packs: true, section_tokens: 900 }),
+    policy("r1", { effective: "compaction", class: "signed-thinking", model: "anthropic/claude-fable-5-1" }),
+    load("r1", "execution/prefetch", { turn: 2, call: "m1" }),
+    row("r1", "skill_unload", { id: "execution/prefetch" }, { ok: false, error: "not in the context", call: "m1", reason: "done", turn: 5 }),
+  ];
+}
+
+test("per seat: the bodies the harness released, the tokens that took out of the context, and the loads that came after a release", () => {
+  const use = skillUse(releaseTrace(), ["r0", "r1"]);
+  const r0 = use.seats.find((s) => s.agent === "r0")!;
+  assert.deepEqual([r0.released, r0.released_at_compaction, r0.tokens_released, r0.reloaded_after_release], [3, 1, 500 + 400 + 700, 1]);
+  assert.deepEqual(r0.release_policy, { mode: "auto", effective: "boundary", class: "open", model: "openai-codex/gpt-6-sol", thinking_level: "medium" });
+  // Each unload row is matched to the load whose result it replaced, by the tool call; the reload is the one flagged.
+  assert.deepEqual(r0.detail.map((d) => [d.id, d.released, d.reloaded_after_release]), [
+    ["execution/prefetch", true, false],
+    ["registry/devices", true, false],
+    ["logs/security", true, false],
+    ["registry/devices", false, true],
+  ]);
+  const r1 = use.seats.find((s) => s.agent === "r1")!;
+  assert.deepEqual([r1.released, r1.tokens_released, r1.detail[0]!.released], [0, 0, false], "a release that did not happen is not counted");
+  assert.deepEqual(r1.release_policy && [r1.release_policy.effective, r1.release_policy.class], ["compaction", "signed-thinking"]);
+  assert.deepEqual([use.totals.released, use.totals.released_at_compaction, use.totals.tokens_released, use.totals.reloaded_after_release], [3, 1, 1600, 1]);
+});
+
+test("a mention of a note in the harness's own release rows is not a use of it", () => {
+  clock = 0;
+  const rows = [load("a", "execution/prefetch", { call: "k1" }), unload("a", "execution/prefetch", "k1"), policy("a")];
+  assert.equal(skillUse(rows, ["a"]).seats[0]!.referenced, 0);
+});
+
+test("a release row from a trace that names no tool call is matched by the note, and a load after it counts as loaded again", () => {
+  clock = 0;
+  const rows = [load("o", "execution/prefetch", { turn: 1 }), unload("o", "execution/prefetch", null), load("o", "execution/prefetch", { turn: 4 })];
+  const seat = skillUse(rows, ["o"]).seats[0]!;
+  assert.deepEqual(seat.detail.map((d) => [d.released, d.reloaded_after_release]), [[true, false], [false, true]]);
+  assert.equal(seat.reloaded_after_release, 1);
+});
+
+test("the context audit says what was released, at which trigger, and the share the seats loaded again", () => {
+  const dir = mkdtempSync(join(tmpdir(), "skill-audit-"));
+  const file = join(dir, "events.jsonl");
+  const seat = (agent: string): SkillTraceRow[] => [
+    row(agent, "compact_config", { defaults: true }, { ok: true, model: "x/m", window: 200_000, ceiling: 200_000, notice: 80_000, warning: 100_000, compact: 120_000 }),
+    row(agent, "context", {}, { ok: true, tokens: 20_000, ceiling: 200_000 }),
+  ];
+  const rows = [...releaseTrace(), ...seat("r0"), ...seat("r1")];
+  writeFileSync(file, rows.map((r) => JSON.stringify(r)).join("\n"));
+  const read = readRows(file);
+  const run = audit(read.rows, file, read.bad);
+  const f = run.findings.join("\n");
+  assert.match(f, /Skill release: boundary \(open, --skill-release auto\); compaction \(signed-thinking, --skill-release auto\)\./);
+  assert.match(f, /3 loaded bodies were released from the seat's context \(1,600 tokens; 1 at a compaction, 2 at a turn boundary after skill_done\); 1 was loaded again afterwards \(wasted-release rate 33%\)\./);
+  assert.equal(run.skills.totals.released, 3);
+  const md = renderMarkdown(run);
+  assert.match(md, /\| Done \| Released \| Tokens released \| Loaded again after release \| Taken out by a compaction \|/);
+  assert.match(md, /\| r0 \| yes \(900 tokens\) \| 4 \| 3 \| 2,000 \| 0 \| 4 \| 3 \| 3 \| 1,600 \| 1 \| 0 \| 0 \| 0 \|/);
+  // The JSON carries the numbers too.
+  assert.deepEqual(run.agents.find((a) => a.agent === "r0")!.skills.released, 3);
+  // A run that released nothing says nothing of rates.
+  clock = 0;
+  const plain = audit([load("p", "a/b"), row("p", "skill_done", { id: "a/b" }, { ok: true })].map((r) => ({ ts: r.ts, agent: r.agent, tool: r.tool, args: (r.args ?? {}) as Record<string, unknown>, result: (r.result ?? {}) as Record<string, unknown> })), "x").findings.join("\n");
+  assert.match(plain, /0 loaded bodies were released from the seat's context \(0 tokens; 0 at a compaction, 0 at a turn boundary after skill_done\); 0 were loaded again afterwards\./);
+  assert.ok(!/wasted-release rate/.test(plain));
 });
