@@ -1,6 +1,6 @@
 {
   "name": "doc_probe",
-  "description": "Say what is inside a document without opening it in the application that made it. OOXML or ZIP: the central directory (member names, sizes, DOS times and flags), every part named *.rels parsed as XML for its relationships and their External targets (user-info, query values and token-shaped text are withheld from the answer; the whole target goes to a sealed file only with write_values in a job), members counted when encrypted, corrupt, unsupported or over a budget, and, with extract_to, the members whose NAMES match a code-related pattern, written byte for byte. OLE compound file: byte markers only. RTF: the \\objdata and \\objclass control words with offsets. PDF: name-token markers with counts and offsets: no page count, no encryption verdict, no resolved action. Decompression is bounded per member, in total and by expansion ratio, and a bound is reported. Not read: the OLE directory and streams, the PDF object structure, filters and encryption dictionary, the contents of other OOXML parts, macro source or compiled VBA, embedded objects, document protection. Markers and relationships do not show that anything runs or was fetched.",
+  "description": "Say what is inside a document without opening it in the application that made it. OOXML or ZIP: the central directory (member names, sizes, DOS times and flags), every part named *.rels parsed as XML for its relationships and their External targets (user-info, query values and token-shaped text are withheld from the answer, as are token-shaped components of the caller's path and of part names; the whole target goes to a sealed file only with write_values in a job, and the real name behind a withheld part name is kept in a private 0600 file the answer names), members counted when encrypted, corrupt, unsupported or over a budget, and, with extract_to, the members whose NAMES match a code-related pattern, written byte for byte. OLE compound file: byte markers only. RTF: the \\objdata and \\objclass control words with offsets. PDF: name-token markers with counts and offsets: no page count, no encryption verdict, no resolved action. Decompression is bounded per member, in total and by expansion ratio (only stored and deflated members are read: the standard library cannot bound any other method), the tool has its own time limit, and a bound is reported. Not read: the OLE directory and streams, the PDF object structure, filters and encryption dictionary, the contents of other OOXML parts, macro source or compiled VBA, embedded objects, document protection. Markers and relationships do not show that anything runs or was fetched.",
   "use": {
     "magic": [
       {
@@ -76,6 +76,10 @@
     "limit": {
       "type": "integer",
       "description": "Rows of one table kept in the answer (default 1000); the whole of a longer table is written to a file and named"
+    },
+    "max_seconds": {
+      "type": "integer",
+      "description": "The tool's own time limit in seconds, from 1 to 110 (default 100); a scan that reaches it stops, reports what it read and says so"
     }
   },
   "runtime": "python3",
@@ -85,5 +89,5 @@
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
   "version": 3,
-  "sha256": "05261586f6a8bc2ed868d9b60da8912afcd5b0935fd0b593c672cfb40cc03cd5"
+  "sha256": "bcad4896950fde5d97a0522f822e07c65f21430cba00739de6fab4af6c8c14af"
 }

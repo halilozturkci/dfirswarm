@@ -16,7 +16,8 @@ import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { deflateRawSync } from "node:zlib";
-import { DOC_PROBE, REL_NS, asJob, body, buildZip, exists, filesUnder, put, refused, rels, tool, withCwd } from "./pack-re-harness.ts";
+import { spawnSync } from "node:child_process";
+import { DOC_PROBE, REL_NS, asJob, body, buildZip, exists, filesUnder, put, pyBytes, refused, rels, tool, withCwd } from "./pack-re-harness.ts";
 import type { Json, ZipEntry } from "./pack-re-harness.ts";
 
 async function probe(cwd: string, name: string, data: Buffer | string, args: Record<string, unknown> = {}, env: Record<string, string> = {}): Promise<Json> {
@@ -216,7 +217,7 @@ test("write_values puts the whole target in a sealed job file: refused outside a
     assert.deepEqual(await filesUnder(join(cwd, "work")), ["s.docx"]);
 
     const first = body(await asJob(DOC_PROBE, cwd, { path: "work/s.docx", write_values: true }));
-    assert.equal(first.secret_values.written, 1);
+    assert.equal(first.secret_values.written, 2, "the target, and the real name of the part that was withheld");
     assert.equal(first.secret_values.contains_secret_values, true);
     const file = join(cwd, "out", "doc-probe-values.jsonl");
     const rows = (await readFile(file, "utf8")).trim().split("\n").map((l) => JSON.parse(l));
@@ -228,7 +229,7 @@ test("write_values puts the whole target in a sealed job file: refused outside a
 
     const second = refused(await asJob(DOC_PROBE, cwd, { path: "work/s.docx", write_values: true }));
     assert.match(second.error, /already exists/);
-    assert.equal((await readFile(file, "utf8")).trim().split("\n").length, 1, "the earlier file was not touched");
+    assert.equal((await readFile(file, "utf8")).trim().split("\n").length, 2, "the earlier file was not touched");
   });
 });
 
@@ -341,6 +342,217 @@ test("a central directory that lies outside the file is a failure that names it,
     const out = refused(await tool(DOC_PROBE, cwd, { path: "work/t.docx" }));
     assert.equal(out.status, "failed");
     assert.match(out.error, /central directory/i);
+  });
+});
+
+
+// --- review round: methods the standard library cannot bound, two end records, names and paths ---------------------------
+
+const BZIP2_ZEROS = (mib: number): Buffer => pyBytes(`import bz2, sys; sys.stdout.buffer.write(bz2.compress(b"\\0" * (${mib} << 20)))`);
+const LZMA_ZEROS = (mib: number): Buffer =>
+  pyBytes(`import lzma, struct, sys
+f = [{"id": lzma.FILTER_LZMA1, "dict_size": 1 << 20}]
+c = lzma.LZMACompressor(lzma.FORMAT_RAW, filters=f)
+props = lzma._encode_filter_properties(f[0])
+sys.stdout.buffer.write(struct.pack("<BBH", 9, 4, len(props)) + props + c.compress(b"\\0" * (${mib} << 20)) + c.flush())`);
+
+/** The tool under a cap on its address space (Linux only: elsewhere the cap is not enforced and only the answer is held). */
+function underCap(cwd: string, args: unknown, mib: number): { status: number | null; stdout: string } {
+  const r = spawnSync("sh", ["-c", `ulimit -v ${mib * 1024} 2>/dev/null; exec python3 "${DOC_PROBE}"`], { cwd, input: JSON.stringify(args), encoding: "utf8", env: { ...process.env, AGENT_ID: "s1" } });
+  return { status: r.status, stdout: r.stdout };
+}
+
+for (const [label, method, make] of [["bzip2", 12, BZIP2_ZEROS], ["LZMA", 14, (_mib: number) => LZMA_ZEROS(96)]] as const) {
+  test(`a ${label} member with a forged size is not decompressed: the reader cannot bound it, so it is unsupported`, async () => {
+    await withCwd(async (cwd) => {
+      // 256 MiB of zeros in a few hundred bytes, the directory saying the member is 1,000 bytes long. zipfile decompresses a
+      // bzip2 or LZMA chunk whole, with no limit on its output, so a budget checked after the read is checked too late.
+      const bomb = make(256);
+      assert.ok(bomb.length < 65536, `the fixture is small on disk (${bomb.length})`);
+      const zip = buildZip([CONTENT_TYPES, { name: "word/_rels/document.xml.rels", data: Buffer.alloc(1000), compressed: bomb, method, declaredSize: 1000 }]);
+      await put(cwd, "work/forged.docx", zip);
+      if (process.platform === "linux") {
+        const capped = underCap(cwd, { path: "work/forged.docx" }, 512);
+        assert.equal(capped.status, 0, `the tool died under a 512 MiB cap: ${capped.stdout.slice(0, 200)}`);
+        assert.equal((JSON.parse(capped.stdout) as Json).members.unsupported, 1);
+      }
+      const out = await probe(cwd, "forged2.docx", zip);
+      assert.equal(out.status, "partial");
+      assert.equal(out.members.unsupported, 1, JSON.stringify(out.members));
+      assert.equal(out.members.failed, 0, "it was not even tried");
+      assert.ok(out.problems.some((p: string) => new RegExp(`method ${method}`).test(p)), JSON.stringify(out.problems));
+    });
+  });
+}
+
+function twoEndRecords(): Buffer {
+  // Archive A: a package relationship to a.example. Archive B, inside A's end record's comment: a relationship to b.example,
+  // with an end record that declares a comment too long to fit, so a reader that checks the comment length passes it over and
+  // one that takes the last signature in the file reads it.
+  const a = rels([{ id: "rA", type: "hyperlink", target: "https://shown-by-a.example/x", mode: "External" }]);
+  const b = rels([{ id: "rB", type: "hyperlink", target: "https://only-in-b.example/y", mode: "External" }]);
+  const innerB = buildZip([CONTENT_TYPES, { name: "_rels/.rels", data: Buffer.from(b) }]);
+  innerB.writeUInt16LE(0xffff, innerB.length - 2);
+  return buildZip([CONTENT_TYPES, { name: "_rels/.rels", data: Buffer.from(a) }], { commentBytes: innerB });
+}
+
+test("two end records are two directories: the tool lists the one it chose, says another exists, and is partial", async () => {
+  await withCwd(async (cwd) => {
+    const out = await probe(cwd, "two.docx", twoEndRecords());
+    assert.equal(out.status, "partial", JSON.stringify(out.problems));
+    assert.ok(out.problems.some((p: string) => /end of central directory/i.test(p) && /more than one|another|differ/i.test(p)), JSON.stringify(out.problems));
+    const hosts = out.external_targets.map((t: Json) => t.target);
+    assert.ok(hosts.some((t: string) => t.includes("shown-by-a.example")), `the directory the tool chose is the one listed: ${JSON.stringify(hosts)}`);
+    assert.ok(!hosts.some((t: string) => t.includes("only-in-b.example")), "a directory hidden in a comment is not listed in its place");
+  });
+});
+
+test("a directory that holds more or fewer members than the end record declares is a problem, both ways", async () => {
+  await withCwd(async (cwd) => {
+    const zip = buildZip([CONTENT_TYPES, { name: "word/a.xml", data: Buffer.from("<a/>") }, { name: "word/b.xml", data: Buffer.from("<b/>") }]);
+    zip.writeUInt16LE(1, zip.length - 22 + 10); // total entries: 1, the directory holds 3
+    const out = await probe(cwd, "count.docx", zip);
+    assert.equal(out.status, "partial");
+    assert.ok(out.problems.some((p: string) => /declares 1 member/.test(p)), JSON.stringify(out.problems));
+  });
+});
+
+test("a directory too big for its end record's count is not opened: the entry count is bounded by the directory's size", async () => {
+  await withCwd(async (cwd) => {
+    // 100,001 empty members behind an end record that says 2: the zip reader would load every entry before any limit applied.
+    const entries: ZipEntry[] = Array.from({ length: 100_001 }, (_, i) => ({ name: `p${String(i).padStart(7, "0")}`, data: Buffer.alloc(0), method: 0 }));
+    const zip = buildZip(entries);
+    zip.writeUInt16LE(2, zip.length - 22 + 10);
+    const out = await probe(cwd, "huge-dir.docx", zip);
+    assert.equal(out.status, "partial");
+    assert.equal(out.members.listed, 0, "nothing was listed from a directory the end record understates");
+    assert.ok(out.limits_hit.some((l: string) => /central directory/i.test(l)), JSON.stringify(out.limits_hit));
+  });
+});
+
+test("duplicate member names and members marked encrypted in the directory are problems, not a complete read", async () => {
+  await withCwd(async (cwd) => {
+    const dup = rels([{ id: "r1", type: "hyperlink", target: "https://one.example/", mode: "External" }]);
+    const zip = buildZip([CONTENT_TYPES, { name: "_rels/.rels", data: Buffer.from(dup) }, { name: "_rels/.rels", data: Buffer.from(dup.replace("one", "two")) }, { name: "word/document.xml", data: Buffer.from("x"), flags: 1, compressed: Buffer.from("not-read"), method: 0 }]);
+    const out = await probe(cwd, "dup.docx", zip);
+    assert.equal(out.status, "partial");
+    assert.ok(out.problems.some((p: string) => /appears 2 times|duplicate/i.test(p)), JSON.stringify(out.problems));
+    assert.equal(out.members.flagged_encrypted, 1);
+    assert.ok(out.problems.some((p: string) => /marked encrypted/i.test(p)), JSON.stringify(out.problems));
+  });
+});
+
+const EXT_TOKEN = "Qx7Lm2VbN9pTkR4sYw6Zc1HgDf8J";
+
+test("the head of a token is not in a file name: an extension that is token-shaped is not kept, and a name with user-info is not printed", async () => {
+  await withCwd(async (cwd) => {
+    const zip = buildZip([
+      CONTENT_TYPES,
+      { name: `word/vbaProject.bin.${EXT_TOKEN}`, data: PROJECT },
+      { name: "word/activeX/x//bob:p4ssw0rd-x@h.bin", data: PROJECT },
+    ]);
+    const out = await probe(cwd, "ext.docx", zip, { extract_to: "work/s1/parts" });
+    const files = await filesUnder(join(cwd, "work", "s1", "parts"));
+    assert.equal(files.length, 2);
+    const printed = JSON.stringify(out) + files.join("\n");
+    for (const piece of [EXT_TOKEN.slice(0, 5), "p4ssw0rd", "bob:"]) assert.ok(!printed.includes(piece), `${piece} is in the answer or in a file name`);
+    for (const f of files) assert.match(f, /^\d{6}-withheld(\.[A-Za-z0-9]{1,8})?$/, f);
+  });
+});
+
+test("the caller's path is printed with token-shaped components withheld, on every output channel", async () => {
+  await withCwd(async (cwd) => {
+    const dir = `work/${EXT_TOKEN}`;
+    await put(cwd, `${dir}/a.docx`, buildZip([CONTENT_TYPES, DOC]));
+    const ok = await tool(DOC_PROBE, cwd, { path: `${dir}/a.docx` });
+    assert.equal(ok.code, 0);
+    assert.ok(!ok.stdout.includes(EXT_TOKEN), "the answer prints the caller's path whole");
+    await put(cwd, `${dir}/x.bin`, "plain text");
+    const unsupported = await tool(DOC_PROBE, cwd, { path: `${dir}/x.bin` });
+    assert.ok(!unsupported.stdout.includes(EXT_TOKEN), "an error prints the caller's path whole");
+    const missing = await tool(DOC_PROBE, cwd, { path: `${dir}/none.docx` });
+    assert.ok(!missing.stdout.includes(EXT_TOKEN));
+    const badOut = await tool(DOC_PROBE, cwd, { path: `${dir}/a.docx`, extract_to: `/tmp/${EXT_TOKEN}` });
+    assert.ok(!badOut.stdout.includes(EXT_TOKEN), "a refused extract_to prints the caller's path whole");
+    const inv = await put(cwd, `work/inv_${EXT_TOKEN}.docx`, buildZip([CONTENT_TYPES, DOC]));
+    const second = await tool(DOC_PROBE, cwd, { path: `work/inv_${EXT_TOKEN}.docx` });
+    assert.ok(!second.stdout.includes(EXT_TOKEN) && inv);
+  });
+});
+
+test("ordinary OOXML part names are not token-shaped: a theme package keeps its names, and a real token keeps its name on disk", async () => {
+  await withCwd(async (cwd) => {
+    const names = [
+      "themeVariants/variant1/theme/slideLayouts/slideLayout1.xml",
+      "themeVariants/variant2/theme/slideMasters/slideMaster1.xml",
+      "ppt/slideLayouts/_rels/slideLayout11.xml.rels",
+      "customXml/itemProps1.xml",
+      "docProps/thumbnail.jpeg",
+    ];
+    const out = await probe(cwd, "theme.thmx", buildZip([CONTENT_TYPES, ...names.map((name) => ({ name, data: Buffer.from("<x/>") }))]));
+    assert.deepEqual(out.parts.map((p: Json) => p.name).slice(1), names, "no ordinary name was withheld");
+    assert.equal(out.withheld.names, 0);
+    // A token-named part is withheld in the answer; its real name is kept in a private file the answer names, always.
+    const tokenName = `word/embeddings/${EXT_TOKEN}.bin`;
+    const withheld = await probe(cwd, "tok.docx", buildZip([CONTENT_TYPES, { name: tokenName, data: Buffer.from("x") }]));
+    assert.equal(withheld.withheld.names, 1);
+    assert.ok(!JSON.stringify(withheld).includes(EXT_TOKEN));
+    const file = join(cwd, withheld.withheld_names_file);
+    const rows = (await readFile(file, "utf8")).trim().split("\n").map((l) => JSON.parse(l) as Json);
+    assert.equal(rows[0].name, tokenName);
+    assert.equal((await stat(file)).mode & 0o777, 0o600);
+  });
+});
+
+test("with write_values the real names behind the withheld ones are in the values file too", async () => {
+  await withCwd(async (cwd) => {
+    const tokenName = `word/embeddings/${EXT_TOKEN}.bin`;
+    await put(cwd, "work/tok.docx", buildZip([CONTENT_TYPES, { name: tokenName, data: Buffer.from("x") }]));
+    const out = body(await asJob(DOC_PROBE, cwd, { path: "work/tok.docx", write_values: true }));
+    assert.equal(out.secret_values.written, 1);
+    const rows = (await readFile(join(cwd, "out", "doc-probe-values.jsonl"), "utf8")).trim().split("\n").map((l) => JSON.parse(l) as Json);
+    assert.equal(rows[0].value, tokenName);
+  });
+});
+
+test("a PDF that declares filtered streams is partial: the markers inside them were not searched", async () => {
+  await withCwd(async (cwd) => {
+    const pdf = "%PDF-1.5\n1 0 obj\n<< /Length 9 /Filter /FlateDecode >>\nstream\n..........\nendstream\nendobj\n2 0 obj\n<< /Type /ObjStm /N 1 >>\nendobj\n%%EOF\n";
+    const out = await probe(cwd, "f.pdf", pdf);
+    assert.equal(out.status, "partial");
+    assert.ok(out.problems.some((p: string) => /filter|compressed|not (decoded|searched)/i.test(p)), JSON.stringify(out.problems));
+    assert.equal(out.filtered_streams, 1);
+  });
+});
+
+test("a PDF with bytes before its header is still a PDF, with the header's offset", async () => {
+  await withCwd(async (cwd) => {
+    const out = await probe(cwd, "lead.pdf", "\r\n\r\njunk  %PDF-1.4\n/OpenAction 1 0 R\n%%EOF\n");
+    assert.equal(out.container, "PDF");
+    assert.equal(out.pdf_header.offset, 10);
+  });
+});
+
+test("marker offsets are capped in the file and the count goes on; a time budget ends a scan and says so", async () => {
+  await withCwd(async (cwd) => {
+    const many = "%PDF-1.4\n" + "/JS ".repeat(120_000) + "\n%%EOF\n";
+    const out = await probe(cwd, "many.pdf", many);
+    const js = out.markers.find((m: Json) => m.keyword === "/JS");
+    assert.equal(js.count, 120_000);
+    assert.equal(out.tables.pdf_marker_offsets.matched, 100_000);
+    assert.ok(out.limits_hit.some((l: string) => /offsets/.test(l)), JSON.stringify(out.limits_hit));
+    const huge = "%PDF-1.4\n" + "/JS ".repeat(20_000_000) + "\n%%EOF\n";
+    await put(cwd, "work/huge.pdf", huge);
+    const capped = body(await tool(DOC_PROBE, cwd, { path: "work/huge.pdf", max_seconds: 1 }));
+    assert.equal(capped.status, "partial");
+    assert.ok(capped.limits_hit.some((l: string) => /time/i.test(l)), JSON.stringify(capped.limits_hit));
+  });
+});
+
+test("an RTF with bytes before its header is read, and its class names are bounded", async () => {
+  await withCwd(async (cwd) => {
+    const out = await probe(cwd, "lead.rtf", "  \n{\\rtf1{\\*\\objclass A.B}{\\*\\objdata 00}}");
+    assert.equal(out.container, "RTF");
   });
 });
 
