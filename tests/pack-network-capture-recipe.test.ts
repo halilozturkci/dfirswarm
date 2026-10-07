@@ -13,7 +13,7 @@ import { spawn } from "node:child_process";
 import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { RECIPE, drop, exists, frameTcp4, pcapClassic, stub, TCP, withCwd } from "./pack-network-harness.ts";
+import { RECIPE, drop, exists, frameTcp4, gone, pcapClassic, pidFile, startDetached, stub, TCP, withCwd } from "./pack-network-harness.ts";
 import type { Json } from "./pack-network-harness.ts";
 
 const TSHARK = `#!/bin/sh
@@ -27,7 +27,7 @@ while [ $# -gt 0 ]; do
   case "$1" in -Y) filter="$2"; shift;; esac
   shift
 done
-if [ -f "$STUB_DIR/sleep-$filter" ]; then sleep 60 & echo $! > "$STUB_DIR/child-$filter.pid"; echo started > "$STUB_DIR/started-$filter"; wait; fi
+if [ -f "$STUB_DIR/sleep-$filter" ]; then echo $$ > "$STUB_DIR/engine-$filter.pid"; sleep 60 & echo $! > "$STUB_DIR/child-$filter.pid"; echo started > "$STUB_DIR/started-$filter"; wait; fi
 if [ -f "$STUB_DIR/exit-$filter" ]; then echo "tshark: stand-in failing on request" >&2; exit "$(cat "$STUB_DIR/exit-$filter")"; fi
 [ -f "$STUB_DIR/out-$filter.tsv" ] && cat "$STUB_DIR/out-$filter.tsv"
 exit 0
@@ -80,6 +80,7 @@ function recipe(cwd: string, bin: string, args: string[], env: Record<string, st
 }
 
 const target = (p: string): string => JSON.stringify({ paths: [p], name: p });
+const env = (cwd: string) => ({ STUB_DIR: join(cwd, "stub"), STUB_LOG: join(cwd, "tshark-calls.txt") });
 
 async function capture(cwd: string): Promise<string> {
   return drop(cwd, "inputs/c.pcap", pcapClassic([{ sec: 1, frame: frameTcp4({ src: "10.0.0.5", dst: "203.0.113.7", sport: 50000, dport: 80, flags: TCP.SYN }) }]));
@@ -203,30 +204,70 @@ test("a step that outlives the shared deadline is killed with what it started; t
   });
 });
 
-test("a run killed from outside after the first table still leaves a receipt that says it is partial and unfinished", async () => {
+test("a run killed by its process group (as the harness ends a tool) leaves a receipt that is partial and unfinished, and tshark and what it started die with it", async () => {
   await withCwd(async (cwd, bin) => {
     const dir = await stage(cwd, bin, { sleeps: ["dns"], tables: { packets: PACKETS } });
-    const child = spawn("python3", [RECIPE, "run", "--target", target(await capture(cwd)), "--out", "work/cat"], {
-      cwd, env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, STUB_DIR: dir, STUB_LOG: join(cwd, "tshark-calls.txt") },
+    const run = startDetached(RECIPE, cwd, null, env(cwd), bin, ["run", "--target", target(await capture(cwd)), "--out", "work/cat"]);
+    let engine = 0, child = 0;
+    try {
+      engine = await pidFile(join(dir, "engine-dns.pid"));
+      child = await pidFile(join(dir, "child-dns.pid"));
+      run.killGroup();
+      await run.closed;
+      assert.equal(await gone(engine), true, "tshark survived the group kill");
+      assert.equal(await gone(child), true, "what tshark started survived");
+      const c = await coverage(cwd, "work/cat");
+      assert.equal(c.status, "partial");
+      assert.equal(c.finished, false);
+      const steps = Object.fromEntries(c.steps.map((s: Json) => [s.step, s]));
+      assert.equal(steps["packets.tsv"].status, "ok");
+      assert.equal(steps["packets.tsv"].rows, 4);
+      assert.equal(steps["dns.tsv"].status, "running", "a SIGKILL gives no last word: the receipt still says where it was");
+      assert.equal(steps["http.tsv"].status, "not_attempted");
+      assert.ok((await readFile(join(cwd, "work/cat/index.tsv"), "utf8")).includes("packets.tsv"));
+    } finally {
+      for (const pid of [engine, child]) try { process.kill(pid, "SIGKILL"); } catch { /* gone */ }
+    }
+  });
+});
+
+test("SIGTERM, SIGINT and SIGHUP kill the running step and what it started, and the receipt says which step was interrupted", async () => {
+  for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
+    await withCwd(async (cwd, bin) => {
+      const dir = await stage(cwd, bin, { sleeps: ["dns"], tables: { packets: PACKETS } });
+      const run = startDetached(RECIPE, cwd, null, env(cwd), bin, ["run", "--target", target(await capture(cwd)), "--out", "work/cat"]);
+      let engine = 0, child = 0;
+      try {
+        engine = await pidFile(join(dir, "engine-dns.pid"));
+        child = await pidFile(join(dir, "child-dns.pid"));
+        run.signal(sig);
+        await run.closed;
+        assert.equal(await gone(engine), true, `${sig}: tshark survived`);
+        assert.equal(await gone(child), true, `${sig}: its child survived`);
+        const c = await coverage(cwd, "work/cat");
+        const steps = Object.fromEntries(c.steps.map((s: Json) => [s.step, s]));
+        assert.equal(steps["dns.tsv"].status, "interrupted", sig);
+        assert.match(c.errors.join(" "), /stopped by signal/);
+        assert.equal(c.finished, false);
+      } finally {
+        for (const pid of [engine, child]) try { process.kill(pid, "SIGKILL"); } catch { /* gone */ }
+      }
     });
-    const closed = new Promise<void>((resolve) => child.on("close", () => resolve()));
-    for (let i = 0; i < 200 && !(await exists(join(dir, "started-dns"))); i++) await new Promise((r) => setTimeout(r, 50));
-    assert.ok(await exists(join(dir, "started-dns")), "the second table was under way");
-    child.kill("SIGKILL");
-    await closed;
-    const c = await coverage(cwd, "work/cat");
-    assert.equal(c.status, "partial");
-    assert.equal(c.finished, false);
-    const steps = Object.fromEntries(c.steps.map((s: Json) => [s.step, s]));
-    assert.equal(steps["packets.tsv"].status, "ok");
-    assert.equal(steps["packets.tsv"].rows, 4);
-    assert.equal(steps["dns.tsv"].status, "running");
-    assert.equal(steps["http.tsv"].status, "not_attempted");
-    assert.ok(await exists(join(cwd, "work/cat/index.tsv")));
-    assert.ok((await readFile(join(cwd, "work/cat/index.tsv"), "utf8")).includes("packets.tsv"));
-    // Clean up the sleeper the killed recipe left, as a harness kill of the group would.
-    const pid = Number((await readFile(join(dir, "child-dns.pid"), "utf8")).trim());
-    try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+  }
+});
+
+test("an output place that cannot be created is a JSON error, and dns.tsv lists the destination too", async () => {
+  await withCwd(async (cwd, bin) => {
+    await stage(cwd, bin, { tables: { packets: PACKETS, dns: TABLE(["frame.number"], 1), http: TABLE(["frame.number"], 0), tls: TABLE(["frame.number"], 0) } });
+    await writeFile(join(cwd, "work/afile"), "x");
+    const blocked = await recipe(cwd, bin, ["run", "--target", target(await capture(cwd)), "--out", "work/afile/sub"]);
+    assert.equal(blocked.code, 2);
+    assert.doesNotMatch(blocked.stderr, /Traceback/);
+    assert.match(JSON.parse(blocked.stdout).error, /could not be created/);
+    assert.equal((await recipe(cwd, bin, ["run", "--target", target(await capture(cwd)), "--out", "work/cat"])).code, 0);
+    const call = (await readFile(join(cwd, "tshark-calls.txt"), "utf8")).split("\n").find((l) => l.includes("-Y dns ")) ?? "";
+    assert.match(call, /-e ip\.dst/);
+    assert.match(call, /-e ipv6\.dst/);
   });
 });
 

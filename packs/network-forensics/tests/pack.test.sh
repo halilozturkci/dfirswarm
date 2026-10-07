@@ -63,7 +63,7 @@ PY
 
 summary="$PACK/tools/pcap_summary/run.py"
 for capture in one.pcap little.pcapng big.pcapng; do
-  out="$(printf '{"path":"%s/%s","with_starts":true}' "$TMP" "$capture" | python3 "$summary")"
+  out="$(printf '{"path":"%s/%s","with_syn_times":true}' "$TMP" "$capture" | python3 "$summary")"
   jq -e '.packets == 1 and .tuple_conversation_count == 1 and .tuple_conversations[0].syn_observations == 1' <<<"$out" >/dev/null \
     || fail "$capture was not parsed as one TCP SYN: $out"
 done

@@ -10,20 +10,32 @@ What is recorded, so that the run can be repeated and its coverage judged:
     own default, not your distribution's suricata.yaml: pass `config` (a local file, never one from inputs/) to use
     a configuration of your own. Whether a build accepts the keys written here is decided by the engine, not
     assumed: the configuration is tested with `suricata -T` BEFORE the run, and when that fails nothing is run and
-    the diagnostic is returned whole.
+    the diagnostic is returned whole. The file also sets the variables rules are written against (HOME_NET from the
+    `home_net` argument or the private ranges, and the other address and port groups under their usual names): a rule
+    naming a variable the file does not define does not load. Those values are this tool's assumptions and are said in
+    the answer; a rule using another variable needs `config`. A `config` or a `rules` file from inputs/ is refused:
+    both can name scripts and files the engine reads, and would be code the evidence supplied.
   * The rules: path, SHA-256, size and the number of rule lines in the file (a count of lines, not of rules the
     engine loaded). The numbers Suricata itself prints about loading rules ("N rules successfully loaded, M rules
-    failed") are read from its own output when they are there, and a failure to load is a failure of the run.
+    failed") are read from its own output when they are there: a rule that failed to load, or none loaded from a file
+    that has rule lines, fails the run, and when the engine printed nothing of the kind rule_load.known is false and
+    nothing here shows that a rule loaded.
   * The checksum mode (-k) and the command.
 
 TLS fingerprints are three different facts and are kept apart: ja3_enabled and ja4_enabled are what the written
-configuration asks for (not read from a configuration you supply); tls_events is the TLS events the engine logged
-(the traffic that could carry a fingerprint); tls_with_ja3 and tls_with_ja4 are the events that do. An event with no
+configuration asks for (not read from a configuration you supply); tls_events is the TLS events the engine logged (an
+event from a stream picked up after its ClientHello cannot carry one); tls_with_ja3 and tls_with_ja4 are the events
+that do, and other_events_with_a_fingerprint counts those found in events of another type. An event with no
 fingerprint is not evidence that the build lacks the feature, and a build may ignore a key it does not know. No
 default and no version fact about Suricata is stated here: read the version the evidence was run with.
 
 EVE is read line by line. A line that is not JSON, or is JSON but not an object, is counted with its line number
-(the line itself stays in eve.json), and an object with no event_type is counted apart. eve.json is the whole result.
+(the line itself stays in eve.json), and an object with no event_type is counted and located the same way, and each
+makes the run not ok. eve.json is the whole result.
+
+The engine runs in this tool's own process group, not a session of its own: the harness ends a tool by killing its
+group, and an engine outside it would go on writing into the output directory. SIGTERM, SIGINT and SIGHUP kill it and
+what it started, and timeout_seconds is held under the manifest's limit (at most 1000).
 
 SENSITIVE OUTPUT. EVE can carry URLs, host names, SNI, DNS names, file names and payload excerpts. The directory is
 private (mode 0700, every file 0600, including what Suricata writes) and the answer says to run the tool as a job
@@ -32,6 +44,7 @@ with secret_output: true. Inline alerts carry addresses, ports and the rule's si
 import collections
 import errno
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -41,9 +54,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-TOOL = {"name": "suricata_run", "version": 3}
-PARSER = "suricata_run/3"
+TOOL = {"name": "suricata_run", "version": 4}
+PARSER = "suricata_run/4"
 TEST_SECONDS = 120
+MAX_TIMEOUT = 1000            # the manifest's limit is 1200: --build-info (30 s) and the configuration test (120 s) come first
+DEFAULT_HOME_NET = ["192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12"]
 PREFLIGHT_SECONDS = 30
 MAX_LINE = 16 << 20
 MAX_SIGNATURES = 10_000
@@ -54,12 +69,18 @@ LOADED = re.compile(r"(\d+) rules? successfully loaded, (\d+) rules? failed")
 # the same strings; tests/pack-network-withholding.test.ts holds the copies equal. An identifier-shaped string is
 # withheld wherever the tool would print one: a name, a path component, a URL, a message that quotes either.
 COUNTS = {"names": 0, "urls": 0, "text": 0}
-_RUN = re.compile(r"[A-Za-z0-9_+=-]{20,}")
+# A run of name characters long enough to be a token. `=` is only a padding at the end (so a key= prefix stays);
+# `/` joins pieces of a base64 token and is handled apart, below.
+_RUN = re.compile(r"[A-Za-z0-9_+%-]{20,}={0,2}|[A-Za-z0-9_+%-]{14,}={2}")
+_SLASHED = re.compile(r"[A-Za-z0-9_+/%-]{30,}={0,2}")
 _HEX = re.compile(r"[0-9a-fA-F]{32,}")
 _PREFIXED = re.compile(r"(?:AKIA|ASIA)[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}"
                        r"|xox[abeprs]-[A-Za-z0-9-]{10,}|sk-[A-Za-z0-9_-]{20,}"
-                       r"|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*")
-_USERINFO = re.compile(r"(?<=://)[^/?#\s@]+(?=@)")
+                       r"|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*"
+                       r"|(?i:basic|bearer)\s+[A-Za-z0-9+/=._~-]{8,}")
+# User-info: after `//` (a URL, or a scheme-relative one), or bare as name:password@host. A mailto: address is not one.
+_USERINFO = re.compile(r"(?<=//)[^/?#\s@]+(?=@)")
+_BARE_USERINFO = re.compile(r"(?<![\w.%+:/-])(?!mailto:)[\w.%+-]{1,64}:[^\s/@:]{1,128}(?=@[\w\[])")
 
 
 def _withheld(what, length, kind):
@@ -86,9 +107,20 @@ def _token_run(run):
     case_flips = sum(1 for a, b in zip(letters, letters[1:]) if a.islower() != b.islower())
     if len(letters) >= 20 and case_flips >= max(8, 0.4 * len(letters)):
         return True
+    if run.endswith("==") and len(run) >= 16:
+        return True
     if run.endswith("=") and len(run) >= 24:
         return True
     return len(run) >= 40 and run.isalnum() and any(c.isdigit() for c in run) and any(c.isalpha() for c in run)
+
+
+def _randomish(piece):
+    """A piece of a path that is not a plain word: digits among letters, or capitals inside a word."""
+    if len(piece) < 4 or "." in piece or re.fullmatch(r"[A-Z][a-z]+", piece):
+        return False
+    letters = [c for c in piece if c.isalpha()]
+    mixed = any(c.islower() for c in letters) and any(c.isupper() for c in letters)
+    return (any(c.isdigit() for c in piece) and bool(letters)) or mixed
 
 
 def token_spans(text):
@@ -96,9 +128,28 @@ def token_spans(text):
     for m in _RUN.finditer(text):
         if _token_run(m.group()):
             spans.append(m.span())
-    spans.sort()
-    merged = []
+    # A base64 token holds `/`: pieces too short to be one alone (an AWS-style secret has two) are caught as a whole.
+    for m in _SLASHED.finditer(text):
+        run = m.group()
+        if "/" in run and sum(1 for p in run.split("/") if _randomish(p)) >= 3 and re.search(r"[0-9+]", run):
+            spans.append(m.span())
+    # A flagged piece takes the random-looking pieces next to it across a `/`: the head of a token is not printed.
+    grown = []
     for start, end in spans:
+        while start > 1 and text[start - 1] == "/":
+            m = re.search(r"[A-Za-z0-9_+%-]+$", text[:start - 1])
+            if not m or not _randomish(m.group()):
+                break
+            start = m.start()
+        while end < len(text) - 1 and text[end] == "/":
+            m = re.match(r"[A-Za-z0-9_+%-]+={0,2}", text[end + 1:])
+            if not m or not _randomish(m.group()):
+                break
+            end = end + 1 + m.end()
+        grown.append((start, end))
+    grown.sort()
+    merged = []
+    for start, end in grown:
         if merged and start <= merged[-1][1]:
             merged[-1] = (merged[-1][0], max(merged[-1][1], end))
         else:
@@ -111,8 +162,9 @@ def token_shaped(text):
 
 
 def scrub(text, kind="text"):
-    """The text with every token-shaped run and every URL's user-info withheld."""
+    """The text with every token-shaped run and every user-info withheld."""
     text = _USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
+    text = _BARE_USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
     out, last = [], 0
     for start, end in token_spans(text):
         out.append(text[last:start])
@@ -127,13 +179,13 @@ def redact_url(url):
     rest, fragment = (url.split("#", 1) + [None])[:2]
     rest, query = (rest.split("?", 1) + [None])[:2]
     scheme = authority = ""
-    m = re.match(r"^([A-Za-z][A-Za-z0-9+.-]*://)([^/]*)(.*)$", rest, re.S)
+    m = re.match(r"^((?:[A-Za-z][A-Za-z0-9+.-]*:)?//)([^/]*)(.*)$", rest, re.S)
     if m:
         scheme, authority, rest = m.group(1), m.group(2), m.group(3)
         if "@" in authority:
             userinfo, authority = authority.rsplit("@", 1)
             authority = _withheld("userinfo", len(userinfo), "urls") + "@" + authority
-    out = scheme + authority + "/".join(scrub(s, "urls") for s in rest.split("/"))
+    out = scheme + authority + scrub(rest, "urls")
     if query is not None:
         pairs = []
         for pair in query.split("&"):
@@ -209,58 +261,128 @@ def resolve_output(out, what="output"):
     return str(dest.relative_to(root))
 
 
-ACTIVE = []
+# BEGIN SHARED PROCESS
+# The same text is in pcap_extract, zeek_run, suricata_run and the network-capture recipe; tests/pack-network-process.test.ts
+# holds the copies equal. A program an engine tool runs is started in THIS tool's process group, never in a session of
+# its own: the harness ends a tool that runs too long, or is aborted, by killing the tool's group (process.kill(-pid,
+# SIGKILL)), and an engine in a group of its own goes on writing into the output directory after the tool is gone. On
+# Linux the kernel is also asked to kill it if the tool dies. A deadline kills the program and what it started by
+# walking the process tree, and SIGTERM, SIGINT and SIGHUP do the same and then give the tool a last word.
+try:
+    import ctypes
+except ImportError:  # pragma: no cover
+    ctypes = None
 
+STATE = {"last_word": None}    # what to do, with the signal number, when the tool is stopped by a signal
+ACTIVE = []                    # the programs running now
 
-def kill_group(proc):
-    """Kill the process and everything it started."""
+def _die_with_parent():  # runs in the child between fork and exec
     try:
-        os.killpg(proc.pid, signal.SIGKILL)
-    except (ProcessLookupError, PermissionError, OSError):
+        ctypes.CDLL(None).prctl(1, signal.SIGKILL)   # PR_SET_PDEATHSIG
+    except Exception:  # noqa: BLE001
         pass
+
+
+def spawn(argv, **kwargs):
+    kwargs.setdefault("stdin", subprocess.DEVNULL)
+    if sys.platform.startswith("linux") and ctypes is not None:
+        kwargs["preexec_fn"] = _die_with_parent
+    return subprocess.Popen(argv, **kwargs)
+
+
+def descendants(pid):
+    """Every process below `pid`, from /proc where there is one, else from ps."""
+    kids = {}
+    try:
+        if os.path.isdir("/proc/self"):
+            for entry in os.listdir("/proc"):
+                if entry.isdigit():
+                    try:
+                        with open("/proc/%s/stat" % entry, "rb") as fh:
+                            fields = fh.read().rsplit(b")", 1)[1].split()
+                        kids.setdefault(int(fields[1]), []).append(int(entry))
+                    except (OSError, IndexError, ValueError):
+                        continue
+        else:
+            out = subprocess.run(["ps", "-A", "-o", "pid=,ppid="], capture_output=True, text=True, timeout=10).stdout
+            for line in out.splitlines():
+                parts = line.split()
+                if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                    kids.setdefault(int(parts[1]), []).append(int(parts[0]))
+    except (OSError, subprocess.SubprocessError):
+        return []
+    found, stack = [], [pid]
+    while stack:
+        for child in kids.get(stack.pop(), []):
+            found.append(child)
+            stack.append(child)
+    return found
+
+
+def kill_tree(proc):
+    """Kill the program and everything it started. The children are listed first: once the parent is gone they are
+    adopted by init and can no longer be found below it."""
+    victims = descendants(proc.pid)
     try:
         proc.kill()
     except OSError:
         pass
+    for pid in victims:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
 
 
-def _on_term(signum, _frame):
+def _on_signal(signum, _frame):
     for proc in list(ACTIVE):
-        kill_group(proc)
+        kill_tree(proc)
+    last_word = STATE.get("last_word")
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
     os._exit(128 + signum)
 
 
 def preflight(argv, seconds):
-    """Run a short program, bounded; (exit code or None, stdout bytes, stderr bytes)."""
+    """Run a short program, bounded; (exit code or None, stdout bytes, stderr bytes, timed out)."""
     try:
-        proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+        proc = spawn(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except OSError as exc:
-        return None, b"", describe(exc).encode("utf-8", "replace")
+        return None, b"", describe(exc).encode("utf-8", "replace"), False
     ACTIVE.append(proc)
     try:
-        out, err = proc.communicate(timeout=seconds)
-        return proc.returncode, out, err
+        out, err = proc.communicate(timeout=max(1.0, seconds))
+        return proc.returncode, out, err, False
     except subprocess.TimeoutExpired:
-        kill_group(proc)
+        kill_tree(proc)
         out, err = proc.communicate()
-        return None, out, err
+        return None, out, err, True
     finally:
         ACTIVE.remove(proc)
 
 
-def run_to_files(argv, stdout_path, stderr_path, seconds):
-    """(exit code, timed out): the program in its own process group, its output in files, killed at `seconds`."""
+def run_to_files(argv, stdout_path, stderr_path, seconds, cwd=None):
+    """One program with its output in files, killed with what it started at `seconds`. (exit code, timed out)."""
     with open(stdout_path, "wb") as stdout, open(stderr_path, "wb") as stderr:
-        proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr, start_new_session=True)
+        proc = spawn(argv, stdout=stdout, stderr=stderr, cwd=cwd)
         ACTIVE.append(proc)
         try:
-            return proc.wait(timeout=seconds), False
+            return proc.wait(timeout=max(0.1, seconds)), False
         except subprocess.TimeoutExpired:
-            kill_group(proc)
+            kill_tree(proc)
             proc.wait()
             return None, True
         finally:
             ACTIVE.remove(proc)
+
+
+def install_signal_handlers():
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+# END SHARED PROCESS
 
 
 def file_sha256(path):
@@ -286,12 +408,48 @@ def rule_load_counts(*paths):
     return found
 
 
-def configuration(out_dir):
-    """The explicit configuration the tool writes: every setting by key, none by position."""
+VARS = (
+    "vars:\n"
+    "  address-groups:\n"
+    "    HOME_NET: %s\n"
+    "    EXTERNAL_NET: \"!$HOME_NET\"\n"
+    "    HTTP_SERVERS: \"$HOME_NET\"\n"
+    "    SMTP_SERVERS: \"$HOME_NET\"\n"
+    "    SQL_SERVERS: \"$HOME_NET\"\n"
+    "    DNS_SERVERS: \"$HOME_NET\"\n"
+    "    TELNET_SERVERS: \"$HOME_NET\"\n"
+    "    AIM_SERVERS: \"$EXTERNAL_NET\"\n"
+    "    DC_SERVERS: \"$HOME_NET\"\n"
+    "    DNP3_SERVER: \"$HOME_NET\"\n"
+    "    DNP3_CLIENT: \"$HOME_NET\"\n"
+    "    MODBUS_CLIENT: \"$HOME_NET\"\n"
+    "    MODBUS_SERVER: \"$HOME_NET\"\n"
+    "    ENIP_CLIENT: \"$HOME_NET\"\n"
+    "    ENIP_SERVER: \"$HOME_NET\"\n"
+    "  port-groups:\n"
+    "    HTTP_PORTS: \"80\"\n"
+    "    SHELLCODE_PORTS: \"!80\"\n"
+    "    ORACLE_PORTS: 1521\n"
+    "    SSH_PORTS: 22\n"
+    "    DNP3_PORTS: 20000\n"
+    "    MODBUS_PORTS: 502\n"
+    "    FILE_DATA_PORTS: \"[$HTTP_PORTS,110,143]\"\n"
+    "    FTP_PORTS: 21\n"
+    "    GENEVE_PORTS: 6081\n"
+    "    VXLAN_PORTS: 4789\n"
+    "    TEREDO_PORTS: 3544\n"
+)
+
+
+def configuration(out_dir, home_net):
+    """The explicit configuration the tool writes: every setting by key, none by position. The variables rules are written
+    against (HOME_NET and the other groups) are set here, because a rule that names a variable the file does not define
+    does not load; the values are this tool's assumptions, stated in the answer, not a copy of any distribution's file."""
     return (
         "%YAML 1.1\n---\n"
         "# Written by suricata_run (network-forensics pack). Settings not named here are the engine's own defaults.\n"
         "default-log-dir: " + json.dumps(os.path.abspath(out_dir)) + "\n"
+        + VARS % json.dumps("[" + ",".join(home_net) + "]") +
         "outputs:\n"
         "  - eve-log:\n"
         "      enabled: yes\n"
@@ -316,6 +474,7 @@ def configuration(out_dir):
 
 
 def main():
+    install_signal_handlers()
     try:
         args = json.load(sys.stdin)
     except ValueError as exc:
@@ -338,8 +497,17 @@ def main():
     if not isinstance(limit, int) or isinstance(limit, bool) or limit < 0:
         fail("return_alerts must be a non-negative integer")
     timeout = args.get("timeout_seconds", 900)
-    if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout < 10:
-        fail("timeout_seconds must be an integer of at least 10")
+    if not isinstance(timeout, int) or isinstance(timeout, bool) or not 10 <= timeout <= MAX_TIMEOUT:
+        fail("timeout_seconds must be an integer from 10 to %d: kept under the 1200-second limit, after the build information and the "
+             "configuration test, so that this tool stops Suricata itself and the limit never has to" % MAX_TIMEOUT)
+    home_net = args.get("home_net", DEFAULT_HOME_NET)
+    if (not isinstance(home_net, list) or not home_net or len(home_net) > 64 or any(not isinstance(n, str) for n in home_net)):
+        fail("home_net must be a non-empty list of addresses or networks, such as [\"10.0.0.0/8\"]")
+    for n in home_net:
+        try:
+            ipaddress.ip_network(n, strict=False)
+        except ValueError:
+            fail("home_net names something that is not an address or a network", home_net_entry=scrub(n)[:80])
     checksum_mode = str(args.get("checksum_mode") or "none").lower()
     if checksum_mode not in ("none", "all"):
         fail("checksum_mode must be none or all", checksum_mode=checksum_mode)
@@ -351,6 +519,11 @@ def main():
         inputs = Path.cwd().resolve() / "inputs"
         if resolved == inputs or inputs in resolved.parents:
             fail("a configuration from inputs/ is refused: a configuration can load scripts and rule files, and this one would be code the evidence supplied", config=config_arg)
+    rules_resolved = Path(rules).resolve()
+    evidence = Path.cwd().resolve() / "inputs"
+    if rules_resolved == evidence or evidence in rules_resolved.parents:
+        fail("a rules file from inputs/ is refused: a rule can name Lua scripts and dataset files the engine reads and writes, and this one "
+             "would be code the evidence supplied; copy the rules you mean to apply out of the evidence, read them, and say so", rules=rules)
     binary = shutil.which("suricata")
     if not binary:
         fail("suricata is not on PATH")
@@ -361,9 +534,8 @@ def main():
         os.chmod(out_dir, 0o700)
     except OSError as exc:
         fail("the output directory could not be created (%s)" % describe(exc), out_dir=out_dir)
-    signal.signal(signal.SIGTERM, _on_term)
 
-    build_code, build_out, build_err = preflight([binary, "--build-info"], PREFLIGHT_SECONDS)
+    build_code, build_out, build_err, _ = preflight([binary, "--build-info"], PREFLIGHT_SECONDS)
     build_path = os.path.join(out_dir, "suricata-build-info.txt")
     try:
         fd = os.open(build_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -383,7 +555,7 @@ def main():
         try:
             fd = os.open(config_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                fh.write(configuration(out_dir))
+                fh.write(configuration(out_dir, home_net))
         except OSError as exc:
             fail("the configuration could not be written (%s)" % describe(exc), out_dir=out_dir)
     try:
@@ -426,6 +598,7 @@ def main():
     alerts, bad_lines, not_objects, no_type, too_long = [], [], 0, 0, []
     invalid = 0
     tls_events = tls_ja3 = tls_ja4 = 0
+    other_with_fingerprint = 0
     signature_overflow = 0
     lines = 0
     with open(eve, "rb") as fh:
@@ -460,6 +633,8 @@ def main():
             if not isinstance(kind, str) or not kind:
                 no_type += 1
                 kind = "no_event_type"
+                if len(bad_lines) < 10:
+                    bad_lines.append({"line": lines, "why": "an object with no event_type"})
             event_types[kind] += 1
             if kind == "alert":
                 alert = event.get("alert") if isinstance(event.get("alert"), dict) else {}
@@ -478,16 +653,23 @@ def main():
                 tls_events += 1
                 tls_ja3 += int(bool(tls.get("ja3")))
                 tls_ja4 += int(bool(tls.get("ja4")))
+            if kind != "tls" and isinstance(event.get("tls"), dict) and (event["tls"].get("ja3") or event["tls"].get("ja4")):
+                other_with_fingerprint += 1
 
     loads = {"configuration_test": rule_load_counts(test_out, test_err), "run": rule_load_counts(stdout_path, stderr_path)}
     load_failed = any(v and v["failed"] for v in loads.values())
     problems = []
     if code != 0:
         problems.append("suricata exited with code %s" % code)
+    if version_line is None:
+        problems.append("`suricata --build-info` %s, so the version of the engine that ran is not recorded" % ("exited %s" % build_code if build_code is not None else "did not run"))
     if load_failed:
         problems.append("Suricata reported rules that failed to load")
-    if invalid or not_objects or too_long:
-        problems.append("%d EVE lines were not read as events" % (invalid + not_objects + len(too_long)))
+    known = [v for v in loads.values() if v]
+    if known and rule_lines and not any(v["loaded"] for v in known):
+        problems.append("Suricata reported 0 rules loaded though the rules file has %d rule lines: an empty detection run is not a run with no alerts" % rule_lines)
+    if invalid or not_objects or too_long or no_type:
+        problems.append("%d EVE lines were not read as events" % (invalid + not_objects + len(too_long) + no_type))
     ok = not problems
     print(json.dumps({
         "tool": TOOL, "parser": PARSER,
@@ -497,10 +679,14 @@ def main():
         "configuration": {"path": config_path, "sha256": config_sha, "generated_by_this_tool": generated,
                           "tested_with": "suricata -T", "test_exit_code": test_code, "test_stdout": test_out, "test_stderr": test_err,
                           "note": ("written by this tool: only the keys it names are set, the rest are the engine's own defaults" if generated else
-                                   "supplied by the caller and not read by this tool")},
+                                   "supplied by the caller and not read by this tool"),
+                          "vars": ({"HOME_NET": home_net, "note": "HOME_NET is the home_net argument, or the private ranges when it was not given; the other address "
+                                    "groups and the port groups are set to the usual names rulesets use. They are this tool's assumptions, not read from your "
+                                    "environment: a rule that uses another variable does not load, and then config is the way"} if generated else None)},
         "rules": {"path": rules, "sha256": rules_sha, "bytes": rules_bytes, "rule_lines": rule_lines,
                   "rule_lines_note": "lines that are neither empty nor comments; not the number of rules the engine loaded"},
-        "rule_load": {**loads, "note": "read from Suricata's own output when it printed the numbers, and None when it did not: None is not a count of zero"},
+        "rule_load": {**loads, "known": bool(known), "note": "read from Suricata's own output when it printed the numbers, and None when it did not: None is not a count "
+                                                             "of zero, and with known false nothing here shows that any rule loaded: read suricata.stderr"},
         "checksum_mode": checksum_mode,
         "exit_code": code,
         "event_types": dict(event_types),
@@ -511,8 +697,11 @@ def main():
             "ja3_enabled": "yes (asked of the engine in the written configuration)" if generated else "not read: the configuration is the caller's",
             "ja4_enabled": "yes (asked of the engine in the written configuration)" if generated else "not read: the configuration is the caller's",
             "tls_events": tls_events, "tls_with_ja3": tls_ja3, "tls_with_ja4": tls_ja4,
-            "note": "enabled is what the configuration asks for, tls_events is the traffic that could carry a fingerprint, the other two are what was produced. "
-                    "An event with none does not show the build lacks the feature, and a build may ignore a key it does not know.",
+            "other_events_with_a_fingerprint": other_with_fingerprint,
+            "note": "enabled is what the configuration asks for, tls_events is the TLS events the engine logged (an event from a stream picked up after its "
+                    "ClientHello cannot carry a fingerprint, so it is not a count of those that could), the next two are what was produced in them, and "
+                    "other_events_with_a_fingerprint counts fingerprints found in events of another type (an alert, QUIC). An event with none does not show "
+                    "the build lacks the feature, and a build may ignore a key it does not know.",
         },
         "tls_with_ja3": tls_ja3, "tls_with_ja4": tls_ja4,
         "eve_lines": lines, "invalid_eve_lines": invalid, "eve_lines_not_objects": not_objects, "events_without_event_type": no_type,

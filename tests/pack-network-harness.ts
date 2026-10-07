@@ -9,6 +9,7 @@
  * a real tshark, Zeek or Suricata, and the suites say so where it matters.
  */
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { chmod, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ROOT, runPy } from "./tool-library-harness.ts";
@@ -52,6 +53,52 @@ export function refused(out: Run): Json {
   assert.notEqual(out.code, 0, out.stdout);
   assert.doesNotMatch(out.stderr, /Traceback/);
   return JSON.parse(out.stdout);
+}
+
+/**
+ * A tool started the way the harness starts one (extensions/protocol-core.ts, runForgedTool): in a process group
+ * of its own (`detached`), ended by killing that group with SIGKILL. A program the tool started in a session of
+ * its own is not in that group and outlives it; one started in the tool's own group is ended with it.
+ */
+export function startDetached(script: string, cwd: string, args: unknown, env: Record<string, string> = {}, bin?: string, argv: string[] = []): { pid: number; closed: Promise<number | null>; stdout: () => string; killGroup: () => void; signal: (s: NodeJS.Signals) => void } {
+  const child = spawn("python3", [script, ...argv], { cwd, env: { ...process.env, ...(bin ? { PATH: `${bin}:${process.env.PATH ?? ""}` } : {}), ...AGENT, ...env }, detached: true, stdio: ["pipe", "pipe", "pipe"] });
+  const chunks: Buffer[] = [];
+  child.stdout.on("data", (c: Buffer) => chunks.push(c));
+  child.stderr.on("data", () => undefined);
+  child.stdin.end(JSON.stringify(args));
+  const closed = new Promise<number | null>((resolve) => child.on("close", (code) => resolve(code)));
+  return {
+    pid: child.pid as number,
+    closed,
+    stdout: () => Buffer.concat(chunks).toString("utf8"),
+    killGroup: () => process.kill(-(child.pid as number), "SIGKILL"),
+    signal: (sig) => process.kill(child.pid as number, sig),
+  };
+}
+
+/** Whether a process is gone, giving it a moment (a killed process is reaped by its parent or by init). */
+export async function gone(pid: number, waitMs = 1500): Promise<boolean> {
+  const until = Date.now() + waitMs;
+  for (;;) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+    if (Date.now() > until) return false;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
+
+/** Read a pid a stand-in wrote, waiting for it. */
+export async function pidFile(path: string, waitMs = 5000): Promise<number> {
+  const until = Date.now() + waitMs;
+  for (;;) {
+    const text = await readFile(path, "utf8").catch(() => "");
+    if (text.trim()) return Number(text.trim());
+    if (Date.now() > until) throw new Error(`no pid in ${path}`);
+    await new Promise((r) => setTimeout(r, 50));
+  }
 }
 
 export async function exists(path: string): Promise<boolean> {

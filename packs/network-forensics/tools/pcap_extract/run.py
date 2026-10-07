@@ -8,8 +8,12 @@ What it does, and what it does not:
     the default list is cut to the supported ones and the rest is named (protocols_skipped_unsupported). If the
     list cannot be read the passes still run, each failing loudly on its own, and the answer says
     exporters_discovered: false.
-  * One deadline covers every pass (timeout_seconds, default 3000, under the manifest's outer 3600). A pass that
-    uses it up is killed with everything it started; the passes after it are not_attempted and are listed.
+  * One deadline, counted from the start of the tool and covering the preflight and every pass (timeout_seconds,
+    default 3000, at most 3300 so that this tool stops its passes before the manifest's 3600 seconds do), is kept. A
+    pass that uses it up is killed with everything it started; the passes after it are not_attempted and are listed.
+    tshark runs in the tool's own process group, not a session of its own: the harness ends a tool by killing its
+    group, and an engine outside it would go on writing into the output directory (on Linux the kernel also kills it
+    if the tool dies). SIGTERM, SIGINT and SIGHUP kill the pass, leave the receipt as "interrupted" and end the tool.
   * index.tsv and receipt.json exist from the first moment and are replaced (written under a temporary name and
     moved into place) after every pass, so an outer timeout leaves what was done. receipt.json says "running"
     until the last step; a receipt that still says running was cut off.
@@ -33,8 +37,11 @@ can their names and the request URIs. The tool follows the secret-safe output pa
   * The directory is private: mode 0700, every file 0600, including what tshark itself writes (the tool runs
     with umask 077 and sets the modes again after each pass). The answer says out_dir_contains_secret_values and
     names the advice: run the tool as a job with secret_output: true.
-  * An object name shaped like a token is moved to disk as withheld-NNNNNN<ext> and its name is never printed.
-    A request URI loses its user-info, every token-shaped path segment and every query value. The digest of an
+  * An object name shaped like a token, or carrying a query string (Wireshark names an HTTP object after the last
+    part of its request target, so `login.php%3fuser=bob&pw=x` is a name), is moved to disk as withheld-NNNNNN<ext>
+    (never onto a name that is there) and is never printed; the real name is written, at the moment of the rename,
+    to withheld-names.jsonl in the output directory (0600) whether or not write_values was given, so that no name
+    is lost. A request URI loses its user-info, its token-shaped path text and every query value. The digest of an
     object shorter than 128 bytes is not written (the digest of a short value can be reversed), though it is
     used in memory to match the object to its frame.
   * write_values: true (refused outside a job; created exclusively, mode 0600, before anything runs) writes the
@@ -52,18 +59,25 @@ import hashlib
 import json
 import os
 import re
+import select
 import shutil
 import signal
+import stat
 import subprocess
 import sys
-import threading
 import time
 from pathlib import Path
 
-TOOL = {"name": "pcap_extract", "version": 3}
-PARSER = "pcap_extract/3"
+try:
+    import ctypes
+except ImportError:  # pragma: no cover
+    ctypes = None
+
+TOOL = {"name": "pcap_extract", "version": 4}
+PARSER = "pcap_extract/4"
 DEFAULT_PROTOCOLS = ["http", "smb", "smb2", "tftp", "imf"]
 DEFAULT_DEADLINE = 3000
+MAX_DEADLINE = 3300           # the manifest's outer limit is 3600: the tool stops its own passes first, so nothing is left running
 PREFLIGHT_SECONDS = 30
 SHORT_OBJECT = 128            # an object shorter than this has no digest written
 MAX_OBJECTS = 200_000         # rows held for the index; files past it stay on disk, are counted, and the run is partial
@@ -82,12 +96,18 @@ COLUMNS = ["protocol", "name", "path", "bytes", "sha256", "sha256_withheld", "as
 # the same strings; tests/pack-network-withholding.test.ts holds the copies equal. An identifier-shaped string is
 # withheld wherever the tool would print one: a name, a path component, a URL, a message that quotes either.
 COUNTS = {"names": 0, "urls": 0, "text": 0}
-_RUN = re.compile(r"[A-Za-z0-9_+=-]{20,}")
+# A run of name characters long enough to be a token. `=` is only a padding at the end (so a key= prefix stays);
+# `/` joins pieces of a base64 token and is handled apart, below.
+_RUN = re.compile(r"[A-Za-z0-9_+%-]{20,}={0,2}|[A-Za-z0-9_+%-]{14,}={2}")
+_SLASHED = re.compile(r"[A-Za-z0-9_+/%-]{30,}={0,2}")
 _HEX = re.compile(r"[0-9a-fA-F]{32,}")
 _PREFIXED = re.compile(r"(?:AKIA|ASIA)[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}"
                        r"|xox[abeprs]-[A-Za-z0-9-]{10,}|sk-[A-Za-z0-9_-]{20,}"
-                       r"|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*")
-_USERINFO = re.compile(r"(?<=://)[^/?#\s@]+(?=@)")
+                       r"|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*"
+                       r"|(?i:basic|bearer)\s+[A-Za-z0-9+/=._~-]{8,}")
+# User-info: after `//` (a URL, or a scheme-relative one), or bare as name:password@host. A mailto: address is not one.
+_USERINFO = re.compile(r"(?<=//)[^/?#\s@]+(?=@)")
+_BARE_USERINFO = re.compile(r"(?<![\w.%+:/-])(?!mailto:)[\w.%+-]{1,64}:[^\s/@:]{1,128}(?=@[\w\[])")
 
 
 def _withheld(what, length, kind):
@@ -114,9 +134,20 @@ def _token_run(run):
     case_flips = sum(1 for a, b in zip(letters, letters[1:]) if a.islower() != b.islower())
     if len(letters) >= 20 and case_flips >= max(8, 0.4 * len(letters)):
         return True
+    if run.endswith("==") and len(run) >= 16:
+        return True
     if run.endswith("=") and len(run) >= 24:
         return True
     return len(run) >= 40 and run.isalnum() and any(c.isdigit() for c in run) and any(c.isalpha() for c in run)
+
+
+def _randomish(piece):
+    """A piece of a path that is not a plain word: digits among letters, or capitals inside a word."""
+    if len(piece) < 4 or "." in piece or re.fullmatch(r"[A-Z][a-z]+", piece):
+        return False
+    letters = [c for c in piece if c.isalpha()]
+    mixed = any(c.islower() for c in letters) and any(c.isupper() for c in letters)
+    return (any(c.isdigit() for c in piece) and bool(letters)) or mixed
 
 
 def token_spans(text):
@@ -124,9 +155,28 @@ def token_spans(text):
     for m in _RUN.finditer(text):
         if _token_run(m.group()):
             spans.append(m.span())
-    spans.sort()
-    merged = []
+    # A base64 token holds `/`: pieces too short to be one alone (an AWS-style secret has two) are caught as a whole.
+    for m in _SLASHED.finditer(text):
+        run = m.group()
+        if "/" in run and sum(1 for p in run.split("/") if _randomish(p)) >= 3 and re.search(r"[0-9+]", run):
+            spans.append(m.span())
+    # A flagged piece takes the random-looking pieces next to it across a `/`: the head of a token is not printed.
+    grown = []
     for start, end in spans:
+        while start > 1 and text[start - 1] == "/":
+            m = re.search(r"[A-Za-z0-9_+%-]+$", text[:start - 1])
+            if not m or not _randomish(m.group()):
+                break
+            start = m.start()
+        while end < len(text) - 1 and text[end] == "/":
+            m = re.match(r"[A-Za-z0-9_+%-]+={0,2}", text[end + 1:])
+            if not m or not _randomish(m.group()):
+                break
+            end = end + 1 + m.end()
+        grown.append((start, end))
+    grown.sort()
+    merged = []
+    for start, end in grown:
         if merged and start <= merged[-1][1]:
             merged[-1] = (merged[-1][0], max(merged[-1][1], end))
         else:
@@ -139,8 +189,9 @@ def token_shaped(text):
 
 
 def scrub(text, kind="text"):
-    """The text with every token-shaped run and every URL's user-info withheld."""
+    """The text with every token-shaped run and every user-info withheld."""
     text = _USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
+    text = _BARE_USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
     out, last = [], 0
     for start, end in token_spans(text):
         out.append(text[last:start])
@@ -155,13 +206,13 @@ def redact_url(url):
     rest, fragment = (url.split("#", 1) + [None])[:2]
     rest, query = (rest.split("?", 1) + [None])[:2]
     scheme = authority = ""
-    m = re.match(r"^([A-Za-z][A-Za-z0-9+.-]*://)([^/]*)(.*)$", rest, re.S)
+    m = re.match(r"^((?:[A-Za-z][A-Za-z0-9+.-]*:)?//)([^/]*)(.*)$", rest, re.S)
     if m:
         scheme, authority, rest = m.group(1), m.group(2), m.group(3)
         if "@" in authority:
             userinfo, authority = authority.rsplit("@", 1)
             authority = _withheld("userinfo", len(userinfo), "urls") + "@" + authority
-    out = scheme + authority + "/".join(scrub(s, "urls") for s in rest.split("/"))
+    out = scheme + authority + scrub(rest, "urls")
     if query is not None:
         pairs = []
         for pair in query.split("&"):
@@ -209,9 +260,6 @@ def in_job():
     return bool(os.environ.get("JOB_ID") and os.environ.get("OUT"))
 
 
-STATE = {"last_word": None}    # set once the output directory exists: what to do if the run is stopped by a signal
-
-
 def fail(message, **extra):
     print(json.dumps({"error": scrub(message), "tool": TOOL, **extra}))
     raise SystemExit(1)
@@ -241,7 +289,9 @@ def resolve_output(out, what="output"):
 
 
 class SecretValuesRefused(Exception):
-    pass
+    def __init__(self, message, path=None):
+        super().__init__(message)
+        self.path = str(path) if path else None
 
 
 class SecretValues:
@@ -279,9 +329,9 @@ class SecretValues:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             fd = os.open(str(self.path), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
         except FileExistsError:
-            raise SecretValuesRefused("the values file already exists: %s" % self.path)
+            raise SecretValuesRefused("the values file already exists", self.path)
         except OSError as exc:
-            raise SecretValuesRefused("the values file could not be created: %s (%s)" % (self.path, describe(exc)))
+            raise SecretValuesRefused("the values file could not be created (%s)" % describe(exc), self.path)
         self._fh = os.fdopen(fd, "w", encoding="utf-8")
 
     def add(self, finding_id, locator, value):
@@ -298,6 +348,15 @@ class SecretValues:
             self._fh.close()
             self._fh = None
 
+    def discard(self):
+        """A run that stopped before it wrote a value gives the job its one values file back."""
+        if self.enabled and self.written == 0 and self.path is not None:
+            self.close()
+            try:
+                os.unlink(str(self.path))
+            except OSError:
+                pass
+
     def summary(self):
         return {
             "requested": self.enabled,
@@ -309,27 +368,82 @@ class SecretValues:
         }
 
 
-# --- running tshark ------------------------------------------------------------------------------------------
+# BEGIN SHARED PROCESS
+# The same text is in pcap_extract, zeek_run, suricata_run and the network-capture recipe; tests/pack-network-process.test.ts
+# holds the copies equal. A program an engine tool runs is started in THIS tool's process group, never in a session of
+# its own: the harness ends a tool that runs too long, or is aborted, by killing the tool's group (process.kill(-pid,
+# SIGKILL)), and an engine in a group of its own goes on writing into the output directory after the tool is gone. On
+# Linux the kernel is also asked to kill it if the tool dies. A deadline kills the program and what it started by
+# walking the process tree, and SIGTERM, SIGINT and SIGHUP do the same and then give the tool a last word.
+try:
+    import ctypes
+except ImportError:  # pragma: no cover
+    ctypes = None
 
-def kill_group(proc):
-    """Kill the process and everything it started: tshark may have children, and a timeout that kills only the
-    parent leaves them writing into the output directory."""
+STATE = {"last_word": None}    # what to do, with the signal number, when the tool is stopped by a signal
+ACTIVE = []                    # the programs running now
+
+def _die_with_parent():  # runs in the child between fork and exec
     try:
-        os.killpg(proc.pid, signal.SIGKILL)
-    except (ProcessLookupError, PermissionError, OSError):
+        ctypes.CDLL(None).prctl(1, signal.SIGKILL)   # PR_SET_PDEATHSIG
+    except Exception:  # noqa: BLE001
         pass
+
+
+def spawn(argv, **kwargs):
+    kwargs.setdefault("stdin", subprocess.DEVNULL)
+    if sys.platform.startswith("linux") and ctypes is not None:
+        kwargs["preexec_fn"] = _die_with_parent
+    return subprocess.Popen(argv, **kwargs)
+
+
+def descendants(pid):
+    """Every process below `pid`, from /proc where there is one, else from ps."""
+    kids = {}
+    try:
+        if os.path.isdir("/proc/self"):
+            for entry in os.listdir("/proc"):
+                if entry.isdigit():
+                    try:
+                        with open("/proc/%s/stat" % entry, "rb") as fh:
+                            fields = fh.read().rsplit(b")", 1)[1].split()
+                        kids.setdefault(int(fields[1]), []).append(int(entry))
+                    except (OSError, IndexError, ValueError):
+                        continue
+        else:
+            out = subprocess.run(["ps", "-A", "-o", "pid=,ppid="], capture_output=True, text=True, timeout=10).stdout
+            for line in out.splitlines():
+                parts = line.split()
+                if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                    kids.setdefault(int(parts[1]), []).append(int(parts[0]))
+    except (OSError, subprocess.SubprocessError):
+        return []
+    found, stack = [], [pid]
+    while stack:
+        for child in kids.get(stack.pop(), []):
+            found.append(child)
+            stack.append(child)
+    return found
+
+
+def kill_tree(proc):
+    """Kill the program and everything it started. The children are listed first: once the parent is gone they are
+    adopted by init and can no longer be found below it."""
+    victims = descendants(proc.pid)
     try:
         proc.kill()
     except OSError:
         pass
+    for pid in victims:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
 
 
-ACTIVE = []
-
-
-def _on_term(signum, _frame):
+def _on_signal(signum, _frame):
     for proc in list(ACTIVE):
-        kill_group(proc)
+        kill_tree(proc)
     last_word = STATE.get("last_word")
     if last_word:
         try:
@@ -342,34 +456,40 @@ def _on_term(signum, _frame):
 def preflight(argv, seconds):
     """Run a short program, bounded; (exit code or None, stdout bytes, stderr bytes, timed out)."""
     try:
-        proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+        proc = spawn(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except OSError as exc:
         return None, b"", describe(exc).encode("utf-8", "replace"), False
     ACTIVE.append(proc)
     try:
-        out, err = proc.communicate(timeout=seconds)
+        out, err = proc.communicate(timeout=max(1.0, seconds))
         return proc.returncode, out, err, False
     except subprocess.TimeoutExpired:
-        kill_group(proc)
+        kill_tree(proc)
         out, err = proc.communicate()
         return None, out, err, True
     finally:
         ACTIVE.remove(proc)
 
 
-def run_pass(argv, stdout_path, stderr_path, seconds):
-    """One export pass: its own process group, its output in files, killed at `seconds`. (exit code, timed out)."""
+def run_to_files(argv, stdout_path, stderr_path, seconds, cwd=None):
+    """One program with its output in files, killed with what it started at `seconds`. (exit code, timed out)."""
     with open(stdout_path, "wb") as stdout, open(stderr_path, "wb") as stderr:
-        proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr, start_new_session=True)
+        proc = spawn(argv, stdout=stdout, stderr=stderr, cwd=cwd)
         ACTIVE.append(proc)
         try:
-            return proc.wait(timeout=seconds), False
+            return proc.wait(timeout=max(0.1, seconds)), False
         except subprocess.TimeoutExpired:
-            kill_group(proc)
+            kill_tree(proc)
             proc.wait()
             return None, True
         finally:
             ACTIVE.remove(proc)
+
+
+def install_signal_handlers():
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+# END SHARED PROCESS
 
 
 def parse_exporters(*texts):
@@ -411,12 +531,11 @@ class Listing:
         self._bad = False
         self._header = None
 
-    def consume(self, fh):
-        while True:
-            chunk = fh.read(1 << 20)
-            if not chunk:
-                break
-            self._feed(chunk)
+    def feed(self, chunk):
+        self._feed(chunk)
+
+    def finish(self):
+        """The end of the listing: a last line with no line end is still a line."""
         if self._mode == "body":
             self._finish_line()
         elif self._mode == "prefix" and self._pre:
@@ -568,12 +687,74 @@ def extension_of(name):
     return ext if re.fullmatch(r"\.[A-Za-z0-9]{1,8}", ext) else ""
 
 
+def name_withheld(name):
+    """A name to keep off the page: shaped like a token, or carrying a query string. Wireshark names an HTTP object
+    after the last part of its request target and escapes only a few characters, so `login.php%3fuser=bob&pw=x` is a
+    name that holds a query."""
+    return token_shaped(name) or "=" in name or re.search(r"%3f", name, re.I) is not None
+
+
+class Mapping:
+    """withheld-names.jsonl: the real name behind every name moved aside, kept in the private output directory and
+    written (and flushed) at the moment of the rename, so that nothing is lost whether or not write_values was given."""
+
+    NAME = "withheld-names.jsonl"
+
+    def __init__(self, out_dir):
+        self.path = os.path.join(out_dir, self.NAME)
+        fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        self.fh = os.fdopen(fd, "w", encoding="utf-8")
+        self.count = 0
+
+    def add(self, protocol, shown_path, real_path):
+        self.count += 1
+        self.fh.write(json.dumps({"finding_id": "N%06d" % self.count, "protocol": protocol, "path": shown_path, "real_path": real_path}) + "\n")
+        self.fh.flush()
+        os.fsync(self.fh.fileno())
+
+    def close(self):
+        if self.fh is not None:
+            self.fh.close()
+            self.fh = None
+
+
+class LongCells:
+    """A cell over CELL_LIMIT characters is cut in index.tsv and kept whole in index-long-cells.jsonl (named by id)."""
+
+    NAME = "index-long-cells.jsonl"
+
+    def __init__(self, out_dir):
+        self.path = os.path.join(out_dir, self.NAME)
+        self.ids = {}
+        self.fh = None
+
+    def cell(self, key, text):
+        if len(text) <= CELL_LIMIT:
+            return text
+        ident = self.ids.get(key)
+        if ident is None:
+            if self.fh is None:
+                fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+                self.fh = os.fdopen(fd, "w", encoding="utf-8")
+            ident = self.ids[key] = "L%06d" % (len(self.ids) + 1)
+            self.fh.write(json.dumps({"id": ident, "row": key[0], "column": key[1], "value": text}) + "\n")
+            self.fh.flush()
+        return text[:CELL_LIMIT] + " ...(%d characters not shown; the whole is %s in %s)" % (len(text) - CELL_LIMIT, ident, self.NAME)
+
+    def close(self):
+        if self.fh is not None:
+            self.fh.close()
+            self.fh = None
+
+
 class Objects:
     """The rows of the index, and the work of keeping an exported tree private and free of names that are secrets."""
 
     def __init__(self, out_dir):
         self.out_dir = out_dir
         self.rows = []
+        self.mapping = None
+        self.long_cells = None
         self.seq = 0                  # withheld-NNNNNN names
         self.names_withheld = 0
         self.not_indexed = 0
@@ -608,13 +789,21 @@ class Objects:
             for entry in entries:
                 name, kept = entry.name, entry.name
                 is_dir = entry.is_dir(follow_symlinks=False)
-                if token_shaped(name):
-                    self.seq += 1
+                if name_withheld(name):
+                    ext = "" if is_dir else extension_of(name)
+                    while True:
+                        # never onto a name that is there: a capture can name an object withheld-000001.bin on purpose
+                        self.seq += 1
+                        kept = "withheld-%06d%s" % (self.seq, ext)
+                        if not os.path.lexists(os.path.join(directory, kept)):
+                            break
                     self.names_withheld += 1
                     COUNTS["names"] += 1
-                    kept = "withheld-%06d%s" % (self.seq, "" if is_dir else extension_of(name))
                     os.rename(os.path.join(directory, name), os.path.join(directory, kept))
-                    label = "<name withheld: token-shaped, %d characters>" % len(name)
+                    label = "<name withheld: token-shaped or query-shaped, %d characters>" % len(name)
+                    if self.mapping is not None:
+                        self.mapping.add(protocol, "%s/%s" % (protocol, (shown + "/" if shown else "") + kept),
+                                         "%s/%s" % (protocol, (real + "/" if real else "") + name))
                 else:
                     label = name
                 rel = (shown + "/" if shown else "") + kept
@@ -639,6 +828,9 @@ class Objects:
         if full is None:
             return row
         try:
+            if not stat.S_ISREG(os.lstat(full).st_mode):
+                row["association_reason"] = "not a regular file (a named pipe, a device or a socket): not read"
+                return row
             size = os.path.getsize(full)
             digest = file_digest(full)
         except OSError as exc:
@@ -660,19 +852,13 @@ def frame_list(frames):
     return shown + (",+%d more" % (len(frames) - LISTED_FRAMES) if len(frames) > LISTED_FRAMES else "")
 
 
-def trimmed(text):
-    if len(text) <= CELL_LIMIT:
-        return text
-    return text[:CELL_LIMIT] + " ...(%d characters not shown)" % (len(text) - CELL_LIMIT)
-
-
-def write_index(path, rows):
+def write_index(path, rows, long_cells=None):
     tmp = path + ".tmp"
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o600)
     with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
         fh.write("\t".join(COLUMNS) + "\n")
-        for row in rows:
-            fh.write("\t".join(cell(trimmed(str(row.get(c, "")))) for c in COLUMNS) + "\n")
+        for number, row in enumerate(rows, 1):
+            fh.write("\t".join(cell(long_cells.cell((number, c), str(row.get(c, ""))) if long_cells else str(row.get(c, ""))) for c in COLUMNS) + "\n")
         fh.flush()
         os.fsync(fh.fileno())
     os.replace(tmp, path)
@@ -744,37 +930,44 @@ def associate(rows, listing, status, why, candidates_path):
 
 
 def stream_listing(argv, stderr_path, seconds, listing):
-    """Run the listing pass with its output on a pipe read as it comes; (exit code, killed at the deadline, read error)."""
+    """Run the listing pass with its output on a pipe read as it comes; (exit code, killed at the deadline, read error).
+    The pipe is read with select, so the deadline is kept without a second thread."""
     with open(stderr_path, "wb") as stderr:
         try:
-            proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=stderr, start_new_session=True)
+            proc = spawn(argv, stdout=subprocess.PIPE, stderr=stderr)
         except OSError as exc:
             return None, False, describe(exc)
         ACTIVE.append(proc)
-        fired = threading.Event()
-
-        def stop():
-            fired.set()
-            kill_group(proc)
-
-        timer = threading.Timer(seconds, stop)
-        timer.daemon = True
-        timer.start()
-        read_error = None
+        stop_at = time.monotonic() + seconds
+        killed, read_error = False, None
         try:
-            listing.consume(proc.stdout)
+            fd = proc.stdout.fileno()
+            while True:
+                left = stop_at - time.monotonic()
+                if left <= 0:
+                    killed = True
+                    kill_tree(proc)
+                    break
+                ready, _, _ = select.select([fd], [], [], min(1.0, left))
+                if not ready:
+                    continue
+                chunk = os.read(fd, 1 << 20)
+                if not chunk:
+                    break
+                listing.feed(chunk)
+            if not killed:
+                listing.finish()
         except OSError as exc:
             read_error = describe(exc)
-            kill_group(proc)
+            kill_tree(proc)
         finally:
-            timer.cancel()
             try:
                 proc.stdout.close()
             except OSError:
                 pass
             code = proc.wait()
             ACTIVE.remove(proc)
-        return (None if fired.is_set() else code), fired.is_set(), read_error
+        return (None if killed else code), killed, read_error
 
 
 def run_everything(binary, path, out_dir, protocols, display_filter, deadline, objects, runs, errors, state, index_path, receipt, log_dir):
@@ -789,6 +982,11 @@ def run_everything(binary, path, out_dir, protocols, display_filter, deadline, o
             continue
         destination = os.path.join(out_dir, protocol)
         os.makedirs(destination, mode=0o700, exist_ok=True)
+        if os.path.dirname(os.path.realpath(destination)) != os.path.realpath(out_dir):
+            runs.append({"protocol": protocol, "status": "failed", "reason": "the export directory is not directly under out_dir: refused"})
+            errors.append({"protocol": protocol, "error": "the export directory is not directly under out_dir: refused"})
+            receipt("running")
+            continue
         argv = [binary, "-n", "-q", "-r", capture]
         if display_filter:
             argv += ["-Y", display_filter]
@@ -796,7 +994,7 @@ def run_everything(binary, path, out_dir, protocols, display_filter, deadline, o
         stdout_path = os.path.join(log_dir, protocol + ".stdout")
         stderr_path = os.path.join(log_dir, protocol + ".stderr")
         began = time.monotonic()
-        code, timed_out = run_pass(argv, stdout_path, stderr_path, remaining)
+        code, timed_out = run_to_files(argv, stdout_path, stderr_path, remaining)
         for p in (stdout_path, stderr_path):
             try:
                 os.chmod(p, 0o600)
@@ -819,7 +1017,7 @@ def run_everything(binary, path, out_dir, protocols, display_filter, deadline, o
             if "association" not in row:
                 row["association"] = "not_attempted"
                 row["association_reason"] = row.get("association_reason") or "the association pass has not run yet"
-        write_index(index_path, objects.rows)
+        write_index(index_path, objects.rows, objects.long_cells)
         receipt("running")
 
     candidates_path = os.path.join(out_dir, "association-candidates.jsonl")
@@ -871,11 +1069,13 @@ def run_everything(binary, path, out_dir, protocols, display_filter, deadline, o
                                                         "the index holds at most %d objects" % (objects.not_indexed, MAX_OBJECTS)})
     state["association_pass"] = pass_result
     state["association"] = counts
-    write_index(index_path, objects.rows)
+    write_index(index_path, objects.rows, objects.long_cells)
     return wrote
 
 
 def main():
+    started = time.monotonic()
+    install_signal_handlers()
     try:
         args = json.load(sys.stdin)
     except ValueError as exc:
@@ -895,11 +1095,12 @@ def main():
         fail("out_dir cannot be listed (%s)" % describe(exc), out_dir=out_dir)
     explicit = args.get("protocols")
     if explicit is not None and (not isinstance(explicit, list) or not explicit or any(
-            not isinstance(p, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,40}", p) for p in explicit)):
-        fail("protocols must be a non-empty list of Wireshark export object type names")
+            not isinstance(p, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,39}", p) for p in explicit)):
+        fail("protocols must be a non-empty list of Wireshark export object type names (letters, digits, - and _; no dot or slash)")
     timeout = args.get("timeout_seconds", DEFAULT_DEADLINE)
-    if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout < 1:
-        fail("timeout_seconds must be an integer of at least 1: one deadline shared by every pass")
+    if not isinstance(timeout, int) or isinstance(timeout, bool) or not 1 <= timeout <= MAX_DEADLINE:
+        fail("timeout_seconds must be an integer from 1 to %d: one deadline shared by every pass, kept under the 3600-second limit so "
+             "that this tool stops its own passes and the limit never has to" % MAX_DEADLINE)
     display_filter = args.get("display_filter")
     if display_filter is not None and (not isinstance(display_filter, str) or not display_filter.strip()):
         fail("display_filter must be a non-empty string")
@@ -913,14 +1114,16 @@ def main():
             except SecretValuesRefused as exc:
                 fail(str(exc), write_values="refused", written=False)
         elif os.path.lexists(os.path.join(os.environ["OUT"], SecretValues.NAME)):
-            fail("the values file already exists: %s" % os.path.join(os.environ["OUT"], SecretValues.NAME), write_values="refused", written=False)
+            fail("the values file already exists", write_values="refused", written=False,
+                 values_file=os.path.join(os.environ["OUT"], SecretValues.NAME))
 
     binary = shutil.which("tshark")
     if not binary:
         fail("tshark is not on PATH")
     os.umask(0o077)
-    version_code, version_out, version_err, _ = preflight([binary, "--version"], PREFLIGHT_SECONDS)
-    _, help_out, help_err, _ = preflight([binary, "--export-objects", "help"], PREFLIGHT_SECONDS)
+    deadline = started + timeout
+    version_code, version_out, version_err, _ = preflight([binary, "--version"], min(PREFLIGHT_SECONDS, deadline - time.monotonic()))
+    _, help_out, help_err, _ = preflight([binary, "--export-objects", "help"], min(PREFLIGHT_SECONDS, deadline - time.monotonic()))
     version_line = ""
     if version_code == 0:
         version_line = (version_out.decode("utf-8", "replace").splitlines() or [""])[0].strip()
@@ -937,6 +1140,8 @@ def main():
                 fail("this tshark build lists none of the default export object types; nothing was written", exporters_supported=supported)
     else:
         protocols = list(dict.fromkeys(explicit))
+        if len({p.lower() for p in protocols}) != len(protocols):
+            fail("protocols names one export object type twice (a case-insensitive file system would put both in one directory)")
         unknown = [p for p in protocols if discovered and p not in supported]
         if unknown:
             fail("%s %s not export object types of this tshark build; nothing was written" % (", ".join(unknown), "is" if len(unknown) == 1 else "are"),
@@ -946,13 +1151,11 @@ def main():
     try:
         values = SecretValues(write_values)
     except SecretValuesRefused as exc:
-        fail(str(exc), write_values="refused", written=False)
+        fail(str(exc), write_values="refused", written=False, values_file=exc.path)
     objects = Objects(out_dir)
     index_path = os.path.join(out_dir, "index.tsv")
     receipt_path = os.path.join(out_dir, "receipt.json")
     log_dir = os.path.join(out_dir, "_logs")
-    started = time.monotonic()
-    deadline = started + timeout
     runs, errors = [], []
     state = {
         "tool": TOOL, "parser": PARSER, "status": "running",
@@ -962,6 +1165,7 @@ def main():
         "exporters_supported": supported, "exporters_discovered": discovered,
         "protocols_requested": protocols, "protocols_skipped_unsupported": skipped,
         "deadline_seconds": timeout, "runs": runs, "errors": errors,
+        "withheld_names_file": Mapping.NAME,
     }
 
     def receipt(status, why=None):
@@ -985,6 +1189,8 @@ def main():
     def last_word(signum):
         write_values_rows()
         values.close()
+        if objects.mapping is not None:
+            objects.mapping.close()
         receipt("interrupted", "the tool was stopped by signal %d before it finished" % signum)
 
     try:
@@ -996,13 +1202,14 @@ def main():
             fd = os.open(os.path.join(log_dir, name), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(fd, "wb") as fh:
                 fh.write(data)
+        objects.mapping = Mapping(out_dir)
+        objects.long_cells = LongCells(out_dir)
         write_index(index_path, [])
         receipt("running")
     except OSError as exc:
-        values.close()
+        values.discard()
         fail("the output directory could not be created or written (%s)" % describe(exc), out_dir=out_dir)
     STATE["last_word"] = last_word
-    signal.signal(signal.SIGTERM, _on_term)
 
     try:
         wrote_candidates = run_everything(binary, path, out_dir, protocols, display_filter, deadline, objects, runs, errors,
@@ -1014,6 +1221,7 @@ def main():
         try:
             write_values_rows()
             values.close()
+            objects.mapping.close()
             receipt("failed", "unexpected failure: %s" % describe(exc))
         except Exception:  # noqa: BLE001
             pass
@@ -1022,6 +1230,8 @@ def main():
         write_values_rows()
     finally:
         values.close()
+        objects.mapping.close()
+        objects.long_cells.close()
 
     ok = not errors
     state.update({
@@ -1036,9 +1246,10 @@ def main():
         "out_dir_contains_secret_values": bool(objects.rows) or values.written > 0,
         "out_dir_note": ("The output directory holds exported protocol objects, which are evidence content and can carry credentials, "
                          "cookies and tokens, and tshark's own logs. It is private (mode 0700, files 0600). Run this tool as a job with "
-                         "secret_output: true so the job output is sealed. A name shaped like a token is withheld as withheld-NNNNNN, a "
-                         "request URI loses its user-info, token-shaped path text and query values, and the digest of an object under "
-                         "128 bytes is not written; write_values: true (jobs only) puts the real names and URIs in one 0600 file."),
+                         "secret_output: true so the job output is sealed. A name shaped like a token or carrying a query string is withheld "
+                         "as withheld-NNNNNN (the real name is in withheld-names.jsonl in this directory, mode 0600, always), a request URI "
+                         "loses its user-info, token-shaped path text and query values, and the digest of an object under 128 bytes is not "
+                         "written; write_values: true (jobs only) puts the real names and the whole URIs in one 0600 file under $OUT."),
         "note": ("No object content is returned here. index.tsv names every exported object with its size, SHA-256 (not for an object under "
                  "128 bytes) and, for HTTP objects whose bytes equal exactly one listed response body, its frame, stream, time and endpoints. "
                  "association says how far a frame is claimed: matched_by_content (equal bytes, one frame), ambiguous (the frames are "

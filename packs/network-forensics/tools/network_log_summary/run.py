@@ -46,22 +46,23 @@ import sys
 import zlib
 from pathlib import Path
 
-TOOL = {"name": "network_log_summary", "version": 3}
-PARSER = "network_log_summary/3"
+TOOL = {"name": "network_log_summary", "version": 4}
+PARSER = "network_log_summary/4"
 COLUMNS = ["line", "byte_offset", "byte_length", "format", "parse_status", "timestamp_raw", "timestamp_utc", "timezone_source",
-           "src", "dst", "src_port", "dst_port", "protocol", "method", "target", "status", "bytes", "action", "user",
+           "src", "dst", "src_port", "dst_port", "protocol", "method", "target", "referer", "status", "bytes", "action", "user",
            "user_agent", "elapsed_ms", "hierarchy", "mime", "in_if", "out_if", "nat_src", "nat_dst", "tcp_flags", "decoding"]
 UNPARSED_COLUMNS = ["line", "byte_offset", "byte_length", "parse_status", "reason", "decoding"]
 DEFAULT_MAX_LINE = 1 << 20
 DEFAULT_MAX_EXPANDED = 4 << 30
 DEFAULT_MAX_DISTINCT = 200_000
+MAX_KEY = 512                  # an aggregate key is cut here (counted); the table row has the whole value
 WEB = re.compile(
     r'^(?P<src>\S+)\s+\S+\s+(?P<user>\S+)\s+\[(?P<time>[^]]+)\]\s+'
     r'"(?P<request>[^"]*)"\s+(?P<status>\S+)\s+(?P<bytes>\S+)'
     r'(?:\s+"(?P<ref>[^"]*)"\s+"(?P<ua>[^"]*)")?.*$')
 KV = re.compile(r'\b([A-Z][A-Z0-9_]*)=("[^"]*"|\S*)')
 WEB_TIME = re.compile(r"^(\d{1,2})/([A-Za-z]{3})/(\d{4}):(\d{2}):(\d{2}):(\d{2}) ([+-])(\d{2})(\d{2})$")
-ISO_PREFIX = re.compile(r"^\s*(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:?\d{2})(?=\s|$)")
+ISO_PREFIX = re.compile(r"^\s*(?:<\d{1,3}>\d\s+)?(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:?\d{2})(?=\s|$)")
 MONTHS = {m: i for i, m in enumerate(("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"), 1)}
 
 # BEGIN SHARED WITHHOLDING
@@ -69,12 +70,18 @@ MONTHS = {m: i for i, m in enumerate(("jan", "feb", "mar", "apr", "may", "jun", 
 # the same strings; tests/pack-network-withholding.test.ts holds the copies equal. An identifier-shaped string is
 # withheld wherever the tool would print one: a name, a path component, a URL, a message that quotes either.
 COUNTS = {"names": 0, "urls": 0, "text": 0}
-_RUN = re.compile(r"[A-Za-z0-9_+=-]{20,}")
+# A run of name characters long enough to be a token. `=` is only a padding at the end (so a key= prefix stays);
+# `/` joins pieces of a base64 token and is handled apart, below.
+_RUN = re.compile(r"[A-Za-z0-9_+%-]{20,}={0,2}|[A-Za-z0-9_+%-]{14,}={2}")
+_SLASHED = re.compile(r"[A-Za-z0-9_+/%-]{30,}={0,2}")
 _HEX = re.compile(r"[0-9a-fA-F]{32,}")
 _PREFIXED = re.compile(r"(?:AKIA|ASIA)[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}"
                        r"|xox[abeprs]-[A-Za-z0-9-]{10,}|sk-[A-Za-z0-9_-]{20,}"
-                       r"|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*")
-_USERINFO = re.compile(r"(?<=://)[^/?#\s@]+(?=@)")
+                       r"|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*"
+                       r"|(?i:basic|bearer)\s+[A-Za-z0-9+/=._~-]{8,}")
+# User-info: after `//` (a URL, or a scheme-relative one), or bare as name:password@host. A mailto: address is not one.
+_USERINFO = re.compile(r"(?<=//)[^/?#\s@]+(?=@)")
+_BARE_USERINFO = re.compile(r"(?<![\w.%+:/-])(?!mailto:)[\w.%+-]{1,64}:[^\s/@:]{1,128}(?=@[\w\[])")
 
 
 def _withheld(what, length, kind):
@@ -101,9 +108,20 @@ def _token_run(run):
     case_flips = sum(1 for a, b in zip(letters, letters[1:]) if a.islower() != b.islower())
     if len(letters) >= 20 and case_flips >= max(8, 0.4 * len(letters)):
         return True
+    if run.endswith("==") and len(run) >= 16:
+        return True
     if run.endswith("=") and len(run) >= 24:
         return True
     return len(run) >= 40 and run.isalnum() and any(c.isdigit() for c in run) and any(c.isalpha() for c in run)
+
+
+def _randomish(piece):
+    """A piece of a path that is not a plain word: digits among letters, or capitals inside a word."""
+    if len(piece) < 4 or "." in piece or re.fullmatch(r"[A-Z][a-z]+", piece):
+        return False
+    letters = [c for c in piece if c.isalpha()]
+    mixed = any(c.islower() for c in letters) and any(c.isupper() for c in letters)
+    return (any(c.isdigit() for c in piece) and bool(letters)) or mixed
 
 
 def token_spans(text):
@@ -111,9 +129,28 @@ def token_spans(text):
     for m in _RUN.finditer(text):
         if _token_run(m.group()):
             spans.append(m.span())
-    spans.sort()
-    merged = []
+    # A base64 token holds `/`: pieces too short to be one alone (an AWS-style secret has two) are caught as a whole.
+    for m in _SLASHED.finditer(text):
+        run = m.group()
+        if "/" in run and sum(1 for p in run.split("/") if _randomish(p)) >= 3 and re.search(r"[0-9+]", run):
+            spans.append(m.span())
+    # A flagged piece takes the random-looking pieces next to it across a `/`: the head of a token is not printed.
+    grown = []
     for start, end in spans:
+        while start > 1 and text[start - 1] == "/":
+            m = re.search(r"[A-Za-z0-9_+%-]+$", text[:start - 1])
+            if not m or not _randomish(m.group()):
+                break
+            start = m.start()
+        while end < len(text) - 1 and text[end] == "/":
+            m = re.match(r"[A-Za-z0-9_+%-]+={0,2}", text[end + 1:])
+            if not m or not _randomish(m.group()):
+                break
+            end = end + 1 + m.end()
+        grown.append((start, end))
+    grown.sort()
+    merged = []
+    for start, end in grown:
         if merged and start <= merged[-1][1]:
             merged[-1] = (merged[-1][0], max(merged[-1][1], end))
         else:
@@ -126,8 +163,9 @@ def token_shaped(text):
 
 
 def scrub(text, kind="text"):
-    """The text with every token-shaped run and every URL's user-info withheld."""
+    """The text with every token-shaped run and every user-info withheld."""
     text = _USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
+    text = _BARE_USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
     out, last = [], 0
     for start, end in token_spans(text):
         out.append(text[last:start])
@@ -142,13 +180,13 @@ def redact_url(url):
     rest, fragment = (url.split("#", 1) + [None])[:2]
     rest, query = (rest.split("?", 1) + [None])[:2]
     scheme = authority = ""
-    m = re.match(r"^([A-Za-z][A-Za-z0-9+.-]*://)([^/]*)(.*)$", rest, re.S)
+    m = re.match(r"^((?:[A-Za-z][A-Za-z0-9+.-]*:)?//)([^/]*)(.*)$", rest, re.S)
     if m:
         scheme, authority, rest = m.group(1), m.group(2), m.group(3)
         if "@" in authority:
             userinfo, authority = authority.rsplit("@", 1)
             authority = _withheld("userinfo", len(userinfo), "urls") + "@" + authority
-    out = scheme + authority + "/".join(scrub(s, "urls") for s in rest.split("/"))
+    out = scheme + authority + scrub(rest, "urls")
     if query is not None:
         pairs = []
         for pair in query.split("&"):
@@ -225,7 +263,9 @@ def resolve_output(out, what="output"):
 
 
 class SecretValuesRefused(Exception):
-    pass
+    def __init__(self, message, path=None):
+        super().__init__(message)
+        self.path = str(path) if path else None
 
 
 class SecretValues:
@@ -263,9 +303,9 @@ class SecretValues:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             fd = os.open(str(self.path), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
         except FileExistsError:
-            raise SecretValuesRefused("the values file already exists: %s" % self.path)
+            raise SecretValuesRefused("the values file already exists", self.path)
         except OSError as exc:
-            raise SecretValuesRefused("the values file could not be created: %s (%s)" % (self.path, describe(exc)))
+            raise SecretValuesRefused("the values file could not be created (%s)" % describe(exc), self.path)
         self._fh = os.fdopen(fd, "w", encoding="utf-8")
 
     def add(self, finding_id, locator, value):
@@ -282,14 +322,23 @@ class SecretValues:
             self._fh.close()
             self._fh = None
 
+    def discard(self):
+        """A run that stopped before it wrote a value gives the job its one values file back."""
+        if self.enabled and self.written == 0 and self.path is not None:
+            self.close()
+            try:
+                os.unlink(str(self.path))
+            except OSError:
+                pass
+
     def summary(self):
         return {
             "requested": self.enabled,
             "written": self.written,
             "values_file": self.shown if self.enabled else None,
             "contains_secret_values": self.written > 0,
-            "format": ("JSON Lines, mode 0600: finding_id, line, byte_offset, byte_length, status, target (the original, for a redacted "
-                       "target), value (the whole source line)") if self.enabled else None,
+            "format": ("JSON Lines, mode 0600: finding_id, line, byte_offset, byte_length, status, target and referer (the originals, for a redacted "
+                       "one), value (the whole source line, as JSON escapes)") if self.enabled else None,
         }
 
 
@@ -340,9 +389,15 @@ def web(line):
     method = request[0] if request else ""
     target = request[1] if len(request) > 1 else ""
     derived = web_time(m.group("time"))
-    return {"format": "web", "timestamp_raw": m.group("time"), "timestamp_utc": derived,
-            "timezone_source": "the offset written in the line" if derived else "an offset is written but the date did not parse",
-            "src": m.group("src"), "method": method, "target": target, "status": m.group("status"),
+    if derived:
+        source = "the offset written in the line"
+    elif re.search(r" [+-]\d{4}$", m.group("time").strip()):
+        source = "an offset is written but the date did not parse"
+    else:
+        source = "no zone offset is written in the line"
+    ref = m.group("ref")
+    return {"format": "web", "timestamp_raw": m.group("time"), "timestamp_utc": derived, "timezone_source": source,
+            "src": m.group("src"), "method": method, "target": target, "referer": "" if ref in (None, "-") else ref, "status": m.group("status"),
             "bytes": "" if m.group("bytes") == "-" else m.group("bytes"),
             "user": "" if m.group("user") == "-" else m.group("user"), "user_agent": m.group("ua") or ""}
 
@@ -375,6 +430,8 @@ def firewall(line):
     flags = [flag for flag in ("SYN", "ACK", "FIN", "RST", "PSH", "URG", "ECE", "CWR") if re.search(r"(?:^|\s)%s(?:\s|$)" % flag, line, re.I)]
     prefix = line[:first_kv].strip()
     derived, source = "", "none in the line: a syslog stamp has no year and no zone"
+    if not prefix:
+        source = "no timestamp in the line"
     m = ISO_PREFIX.match(prefix)
     if m:
         derived = iso_to_utc(m)
@@ -470,26 +527,26 @@ def main():
             except SecretValuesRefused as exc:
                 fail(str(exc), write_values="refused", written=False)
         elif os.path.lexists(os.path.join(os.environ["OUT"], SecretValues.NAME)):
-            fail("the values file already exists: %s" % os.path.join(os.environ["OUT"], SecretValues.NAME), write_values="refused", written=False)
+            fail("the values file already exists", write_values="refused", written=False, values_file=os.path.join(os.environ["OUT"], SecretValues.NAME))
 
     os.umask(0o077)
     try:
         values = SecretValues(write_values)
     except SecretValuesRefused as exc:
-        fail(str(exc), write_values="refused", written=False)
+        fail(str(exc), write_values="refused", written=False, values_file=exc.path)
     try:
         os.makedirs(out_dir, mode=0o700, exist_ok=True)
         os.chmod(out_dir, 0o700)
         source = Source(path, max_expanded)
     except (OSError, EOFError, zlib.error) as exc:
-        values.close()
+        values.discard()
         fail("the log or the output directory could not be opened (%s)" % describe(exc), out_dir=out_dir)
     normal_path, bad_path = os.path.join(out_dir, "normalized.tsv"), os.path.join(out_dir, "unparsed.tsv")
     categories = ("format", "src", "dst", "method", "status", "action")
     counts = {name: collections.Counter() for name in categories}
     over_cap = {name: 0 for name in categories}
     stats = {"lines": 0, "parsed": 0, "blank": 0, "unparsed_nonblank": 0, "over_limit": 0, "decoding_substituted": 0, "crlf_lines": 0,
-             "timestamps_derived": 0, "timestamps_not_derived": 0}
+             "timestamps_derived": 0, "timestamps_not_derived": 0, "bom_stripped": 0, "keys_cut": 0}
     zones = collections.Counter()
     unterminated = False
     read_error = None
@@ -523,6 +580,9 @@ def main():
                     terminated = raw.endswith(b"\n")
                     unterminated = not terminated
                     body = raw[:-1] if terminated else raw
+                    if number == 1 and body.startswith(b"\xef\xbb\xbf"):
+                        body = body[3:]
+                        stats["bom_stripped"] += 1
                     if body.endswith(b"\r"):
                         body = body[:-1]
                         stats["crlf_lines"] += 1
@@ -541,19 +601,22 @@ def main():
                     if row is None:
                         stats["unparsed_nonblank"] += 1
                         bad.write("\t".join(cell(v) for v in (number, start, len(raw), "unparsed", "no grammar of the requested format matched", decoding)) + "\n")
-                        values.add("L%06d" % number, {"line": number, "byte_offset": start, "byte_length": len(raw), "status": "unparsed"}, line)
+                        values.add("L%06d" % number, {"line": number, "byte_offset": start, "byte_length": len(raw), "status": "unparsed"},
+                                   body.decode("utf-8", "surrogateescape"))
                         continue
                     stats["parsed"] += 1
-                    original = row.get("target", "")
+                    original, original_referer = row.get("target", ""), row.get("referer", "")
                     row["target"] = redact_url(original) if original else ""
-                    changed = row["target"] != original
+                    row["referer"] = redact_url(original_referer) if original_referer else ""
+                    changed = row["target"] != original or row["referer"] != original_referer
                     for key in ("method", "status", "user", "user_agent", "protocol", "action", "hierarchy", "mime", "bytes", "in_if", "out_if"):
                         if row.get(key):
                             shown = scrub(row[key])
                             changed = changed or shown != row[key]
                             row[key] = shown
                     if changed:
-                        values.add("L%06d" % number, {"line": number, "byte_offset": start, "byte_length": len(raw), "status": "parsed", "target": original}, line)
+                        values.add("L%06d" % number, {"line": number, "byte_offset": start, "byte_length": len(raw), "status": "parsed",
+                                                       "target": original, "referer": original_referer}, body.decode("utf-8", "surrogateescape"))
                     if row.get("timestamp_utc"):
                         stats["timestamps_derived"] += 1
                     else:
@@ -564,6 +627,9 @@ def main():
                     for name in categories:
                         if row.get(name):
                             key = str(row[name])
+                            if len(key) > MAX_KEY:
+                                key = key[:MAX_KEY] + "...(+%d characters)" % (len(key) - MAX_KEY)
+                                stats["keys_cut"] += 1
                             if key in counts[name] or len(counts[name]) < max_distinct:
                                 counts[name][key] += 1
                             else:
@@ -579,7 +645,7 @@ def main():
             bad.flush()
             os.fsync(bad.fileno())
     except OSError as exc:
-        values.close()
+        values.discard()
         fail("a table could not be written (%s)" % describe(exc), out_dir=out_dir)
     finally:
         source.close()
@@ -593,6 +659,8 @@ def main():
     def leading(counter):
         return [{"value": value, "count": count} for value, count in counter.most_common(top)]
     complete = read_error is None
+    if not complete:
+        values.discard()
     answer = {
         "tool": TOOL, "parser": PARSER,
         "path": path, "format_requested": wanted, "compression": "gzip" if source.gzip else "none",
@@ -605,6 +673,8 @@ def main():
         "normalized_tsv": normal_path, "unparsed_tsv": bad_path,
         "aggregate": {name: leading(counter) for name, counter in counts.items()},
         "distinct_cap_reached": {name: n for name, n in over_cap.items() if n} or None,
+        "aggregate_keys_cut": stats["keys_cut"], "bom_stripped": stats["bom_stripped"],
+        "aggregate_note": "a ranking is exact only while distinct_cap_reached is null: once a category holds max_distinct_values values, a value first seen later is counted in distinct_cap_reached and never in the ranking",
         "max_distinct_values": max_distinct,
         "complete": complete, "read_error": read_error,
         "ok": complete,

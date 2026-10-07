@@ -45,7 +45,7 @@ test("the parameters a manifest names are the parameters its script reads", asyn
     const read = new Set<string>();
     for (const m of script.matchAll(/args\.get\("([a-z_]+)"/g)) read.add(m[1]);
     for (const m of script.matchAll(/optional_int\(args, "([a-z_]+)"/g)) read.add(m[1]);
-    for (const m of script.matchAll(/args\[\s*"([a-z_]+)"\s*\]/g)) read.add(m[1]);
+    for (const m of script.matchAll(/(?<![A-Za-z_])args\[\s*"([a-z_]+)"\s*\]/g)) read.add(m[1]);
     for (const alias of ALIASES[name] ?? []) read.delete(alias);
     const named = new Set(Object.keys(manifest.params));
     assert.deepEqual([...read].filter((p) => !named.has(p)).sort(), [], `${name}: parameters the script reads and the manifest does not name`);

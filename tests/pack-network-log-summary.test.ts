@@ -241,3 +241,85 @@ test("in a job out_dir must be under $OUT, a second run into the same directory 
     assert.doesNotMatch(noargs.stderr, /Traceback/);
   });
 });
+
+test("the combined-format referer is a column, redacted like the target, with the original in the values file", async () => {
+  await withCwd(async (cwd) => {
+    const TOK = "Zk9mQ2xW7vB3nL8pR4tY6wD1sFgHjK";
+    const line = (ref: string): string => `192.0.2.1 - - [14/Nov/2023:22:13:20 +0000] "GET /a HTTP/1.1" 200 12 "${ref}" "ua"`;
+    await put(cwd, "inputs/l.log", [line(`http://alice:pw1234@portal.example.test/home/${TOK}?sid=hunter2hunter2`), line("-"), line("https://example.test/plain")].join("\n") + "\n");
+    const result = await asJob(LOGS, cwd, { path: "inputs/l.log", out_dir: "out/o", write_values: true });
+    const out = body(result);
+    const rows = await table(cwd, "out/o");
+    assert.match(rows[0].referer, /^http:\/\/<userinfo withheld 12 characters>@portal\.example\.test\/home\/<token-shaped text withheld 30 characters>\?sid=<withheld 14 characters>$/);
+    assert.equal(rows[1].referer, "", "a referer of - is no referer");
+    assert.equal(rows[2].referer, "https://example.test/plain");
+    const everything = await everythingUnder(cwd, result.stdout, ["out"], ["out/network-log-values.jsonl"]);
+    for (const secret of ["pw1234", TOK, "hunter2hunter2"]) assert.equal(everything.includes(secret), false, secret);
+    const values = (await readFile(join(cwd, "out/network-log-values.jsonl"), "utf8")).trimEnd().split("\n").map((l) => JSON.parse(l));
+    assert.equal(values.length, 1);
+    assert.match(values[0].referer, /alice:pw1234@portal/);
+    assert.equal(out.secret_values.written, 1);
+  });
+});
+
+test("a time with no offset, an RFC 5424 time and a firewall line with no prefix each say what they are", async () => {
+  await withCwd(async (cwd) => {
+    const lines = [
+      '192.0.2.1 - - [14/Nov/2023:22:13:20] "GET /a HTTP/1.1" 200 12 "-" "ua"',
+      "<4>1 2023-11-14T23:13:20.123Z fw kernel - - - IN=eth0 SRC=192.0.2.4 DST=203.0.113.9 LEN=40 PROTO=UDP SPT=5353 DPT=53",
+      "SRC=192.0.2.5 DST=203.0.113.9 LEN=40 PROTO=UDP SPT=5353 DPT=53",
+      "<4>Nov 14 22:13:20 fw kernel: IN=eth0 SRC=192.0.2.6 DST=203.0.113.9 PROTO=TCP SPT=1 DPT=2",
+    ];
+    await put(cwd, "inputs/l.log", lines.join("\n") + "\n");
+    body(await tool(LOGS, cwd, { path: "inputs/l.log", out_dir: "work/o" }, {}));
+    const rows = await table(cwd, "work/o");
+    assert.equal(rows[0].timestamp_utc, "");
+    assert.equal(rows[0].timezone_source, "no zone offset is written in the line");
+    assert.equal(rows[1].timestamp_utc, "2023-11-14T23:13:20.123Z");
+    assert.match(rows[1].timezone_source, /zone written in the line/);
+    assert.equal(rows[2].timezone_source, "no timestamp in the line");
+    assert.equal(rows[2].timestamp_raw, "");
+    assert.equal(rows[3].timestamp_utc, "");
+    assert.match(rows[3].timezone_source, /no year and no zone/);
+  });
+});
+
+test("a leading byte order mark is not part of the first field, and an aggregate key is cut at a limit and counted", async () => {
+  await withCwd(async (cwd) => {
+    const longMethod = "M".repeat(2000);
+    const lines = [WEB, `192.0.2.7 - - [14/Nov/2023:22:13:20 +0000] "${longMethod} /x HTTP/1.1" 200 5 "-" "ua"`];
+    await put(cwd, "inputs/l.log", Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(lines.join("\n") + "\n")]));
+    const out = body(await tool(LOGS, cwd, { path: "inputs/l.log", out_dir: "work/o" }, {}));
+    assert.equal(out.bom_stripped, 1);
+    const rows = await table(cwd, "work/o");
+    assert.equal(rows[0].src, "192.0.2.1");
+    assert.equal(rows[0].byte_offset, "0");
+    assert.equal(Number(rows[1].byte_offset), 3 + Buffer.byteLength(WEB) + 1, "offsets still count the mark");
+    assert.equal(out.aggregate_keys_cut, 1);
+    assert.ok(out.aggregate.method.every((m: Json) => m.value.length < 600));
+    assert.equal(rows[1].method.length, 2000, "the table holds the whole value");
+    assert.match(out.aggregate_note, /exact only while distinct_cap_reached is null/);
+  });
+});
+
+test("the values file holds a line that is not UTF-8 as escapes, byte for byte, and a run that fails gives the job's one file back", async () => {
+  await withCwd(async (cwd) => {
+    const bad = Buffer.concat([Buffer.from("free text password="), Buffer.from([0xe9, 0xff]), Buffer.from("end")]);
+    await put(cwd, "inputs/l.log", Buffer.concat([Buffer.from(WEB + "\n"), bad, Buffer.from("\n")]));
+    body(await asJob(LOGS, cwd, { path: "inputs/l.log", out_dir: "out/o", write_values: true }));
+    const text = await readFile(join(cwd, "out/network-log-values.jsonl"), "utf8");
+    assert.match(text, /free text password=\\udce9\\udcffend/);
+    const row = JSON.parse(text.trimEnd());
+    assert.deepEqual(Buffer.from(row.value as string, "utf8").length > 0, true);
+    assert.equal(row.value.includes("\ufffd"), false, "no replacement character");
+  });
+  await withCwd(async (cwd) => {
+    await put(cwd, "inputs/garbage.gz", Buffer.concat([Buffer.from([0x1f, 0x8b]), Buffer.from("this is not a deflate stream at all")]));
+    await put(cwd, "inputs/ok.log", WEB + "\n");
+    const failed = await asJob(LOGS, cwd, { path: "inputs/garbage.gz", out_dir: "out/a", write_values: true });
+    assert.equal(failed.code, 1);
+    assert.equal(await exists(join(cwd, "out/network-log-values.jsonl")), false, "nothing was written, so the file was given back");
+    const again = body(await asJob(LOGS, cwd, { path: "inputs/ok.log", out_dir: "out/b", write_values: true }));
+    assert.equal(again.secret_values.requested, true);
+  });
+});

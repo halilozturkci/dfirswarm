@@ -91,7 +91,7 @@ test("duplicate times are counted apart from distinct events, and the minimum ap
     assert.equal(out.events, 9);
     assert.equal(out.distinct_events, 6);
     assert.equal(out.duplicate_timestamps, 3);
-    assert.equal(out.zero_intervals, 3);
+    assert.equal(out.zero_intervals, undefined, "a field that always equalled duplicate_timestamps is gone");
     const refusedFew = refused(await tool(BEACON, cwd, { timestamps: [T0, T0, T0, T0, T0, T0, T0 + 60, T0 + 120], min_events: 6 }));
     assert.match(refusedFew.error, /distinct/);
     assert.equal(refusedFew.distinct_events, 3);
@@ -139,5 +139,28 @@ test("a timestamps file that cannot be read, or a series given twice, is refused
     assert.match(refused(await tool(BEACON, cwd, { timestamps: [1, 2, 3, 4, 5, 6], timestamps_file: "work/x" })).error, /one of/);
     assert.match(refused(await tool(BEACON, cwd, {})).error, /timestamps/);
     assert.match(refused(await asJob(BEACON, cwd, { timestamps: step(8, 60), out_dir: "work/elsewhere" })).error, /\$OUT/);
+  });
+});
+
+test("each interval names the positions in the supplied series it comes from; a line too long to be a time is counted and not held; in a job the interval file is cited at its sealed place", async () => {
+  await withCwd(async (cwd) => {
+    // out of order on purpose: the position is the one in the input, not in the sorted series
+    const times = [T0 + 300, T0, T0 + 60, T0 + 60, T0 + 120, T0 + 180, T0 + 240];
+    const out = body(await asJob(BEACON, cwd, { timestamps: times, out_dir: "out/iv" }));
+    assert.deepEqual(out.intervals_inline.length, 5);
+    assert.match(out.intervals_tsv, /^store\/jobs\/j\d+\/out\/iv\/intervals\.tsv$/, "the page already named a sealed path; the table now does too");
+    const lines = (await readFile(join(cwd, "out/iv/intervals.tsv"), "utf8")).trimEnd().split("\n");
+    assert.equal(lines[0], "index\tfrom_utc\tto_utc\tseconds\tfrom_input_index\tto_input_index");
+    assert.deepEqual(lines[1].split("\t").slice(3), ["60.0", "1", "2"], "T0 is input 1, the first T0+60 is input 2 (the repeat, input 3, is not a second event)");
+    assert.deepEqual(lines[5].split("\t").slice(3), ["60.0", "6", "0"], "the last event in time is the first one in the input");
+    assert.match(out.input_index_note, /positions in the series you supplied/);
+    // a file with one giant line
+    const huge = "9".repeat(5_000_000);
+    await drop(cwd, "work/times.txt", [...step(6, 60), "", `# a comment`, huge].map(String).join("\n") + "\n");
+    const run = await tool(BEACON, cwd, { timestamps_file: "work/times.txt", min_events: 3 });
+    const file = JSON.parse(run.stdout);
+    assert.equal(file.lines_over_limit, 1);
+    assert.equal(file.rejected.unparseable, 1);
+    assert.equal(file.distinct_events, 6);
   });
 });

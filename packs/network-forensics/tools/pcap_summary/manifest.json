@@ -1,6 +1,6 @@
 {
   "name": "pcap_summary",
-  "description": "Read a pcap or pcapng with no external dependency and return a census of it: the format and version, an interface table (link type, snap length and time resolution per interface), the pcapng interface statistics blocks (the capturing interface's own drop counters, when the file carries them), the time range (exact to the capture's own tick, raw value beside it), tuple aggregates or endpoint aggregates with bytes_original and bytes_captured kept apart, top talkers and ports, SYN observations (syn_observations counts SYN-only packets; syn_unique removes a SYN sent again with the same sequence number), and the truncation each packet really had (captured shorter than on the wire, by protocol, and the payload bytes that survived). Not measured: TCP connections or sessions (a tuple used again later merges with its earlier use, and a SYN says nothing about a completed handshake), application data delivered, UDP/QUIC or persistent connections as events, packet loss in a classic pcap, the correctness of the capture clock. Blocks of unsupported types, malformed options and frames that are not IP are counted, never dropped silently. A capture that is cut off or corrupt is an error naming the packets read, not a short result. Aggregates spill to SQLite past max_memory_tuples, so memory does not follow the capture; the whole result is kept on disk and named when a page is shorter.",
+  "description": "Read a pcap or pcapng with no external dependency and return a census of it: the format and version, an interface table (link type, snap length and time resolution per interface), the pcapng interface statistics blocks (the capturing interface's own drop counters, when the file carries them), the time range (exact to the capture's own tick, raw value beside it; duration_ns is exact), tuple aggregates or endpoint aggregates with bytes_original and bytes_captured kept apart, top talkers and ports, SYN observations (syn_observations counts SYN-only packets; syn_unique counts SYN events: a SYN sent again with the same sequence number within 120 seconds of the first of its event is folded into it and counted in syn_folded, and a row keeps at most 10,000 events, after which syn_unique is a lower bound), and the truncation each packet really had (captured shorter than on the wire, by protocol, and the payload bytes that survived). Not measured: TCP connections or sessions (a tuple used again later merges with its earlier use, and a SYN says nothing about a completed handshake), application data delivered, UDP/QUIC or persistent connections as events, packet loss in a classic pcap, the correctness of the capture clock. Blocks of unsupported types, malformed options and frames that are not IP are counted, never dropped silently. A capture that is cut off or corrupt is an error naming the packets read, not a short result. Aggregates spill to SQLite past max_memory_tuples, so memory does not follow the capture; the whole result is kept on disk and named when a page is shorter. A host or port filter applies to the rows, the top lists, the protocol counts and the SYN counts, not to the whole-capture totals (filtered.applies_to says so). top_talkers counts an address as the SOURCE of a packet, top_ports the DESTINATION port. The link-type field's FCS bits are read apart from the type, a pcapng section's hardware, OS and application and an interface's drop counts (statistics blocks and packet-block drop counts) are reported, and stacked VLAN tags (802.1ad, 0x9100) are followed.",
   "params": {
     "path": {
       "type": "string",
@@ -20,11 +20,11 @@
     },
     "out_dir": {
       "type": "string",
-      "description": "Optional empty directory under work/ (in a job, under $OUT) for the complete tuple_conversations.tsv or endpoint_aggregates.tsv"
+      "description": "Optional empty directory under work/ (in a job, under $OUT; work/<your agent id>/name is mapped to $OUT/name) for the complete tuple_conversations.tsv or endpoint_aggregates.tsv. The temporary aggregate file is removed on every way out"
     },
     "with_syn_times": {
       "type": "boolean",
-      "description": "Include every SYN observation's time on each aggregate, for beacon_score (with_starts is accepted as an old name). They are SYN observations, not connection starts"
+      "description": "Include the time of each SYN event on each aggregate, for beacon_score (with_starts is accepted as an old name and noted in the answer). They are SYN events, not connection starts: a SYN sent again within 120 seconds of the first of its event is folded into it. Inline a row shows the first 100 times; the whole list is in syn_times_file and in the TSV"
     },
     "group": {
       "type": "string",
@@ -40,9 +40,9 @@
   "timeout_seconds": 600,
   "example": "{\"path\": \"inputs/capture.pcap\", \"top\": 20, \"out_dir\": \"work/pcap-summary\", \"group\": \"endpoint\", \"with_syn_times\": true}",
   "by": "maintainer",
-  "at": "2026-10-07T12:00:00.000Z",
-  "version": 3,
-  "sha256": "045b7819b43c93ed3a2b4bb1d6b9aa3fb7a4cd909d93e73fdabee9e261a92d01",
+  "at": "2026-10-07T18:00:00.000Z",
+  "version": 4,
+  "sha256": "ee9143a9a95d1e0ac39668c16e65c281f1cf7d0b99bf20cde2d877c876c653bb",
   "use": {
     "extensions": [
       ".pcap",

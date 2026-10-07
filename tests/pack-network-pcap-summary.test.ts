@@ -13,7 +13,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import {
-  SUMMARY, TCP, asJob, body, drop, filesUnder, frameTcp4, frameTcp6, frameUdp4, ngBlock, ngInterface, ngOption, ngPacket, ngSection, ngStats,
+  SUMMARY, TCP, asJob, body, drop, filesUnder, frameTcp4, frameTcp6, frameUdp4, ngBlock, ngEnd, ngInterface, ngOption, ngPacket, ngSection, ngStats,
   pcapClassic, refused, ticks, tool, withCwd,
 } from "./pack-network-harness.ts";
 import type { Json } from "./pack-network-harness.ts";
@@ -272,5 +272,154 @@ test("a frame that is not IP is counted by link type, not dropped", async () => 
     assert.equal(out.packets, 2);
     assert.equal(out.undissected.packets, 1);
     assert.deepEqual(out.undissected.by_link_type, { Ethernet: 1 });
+  });
+});
+
+test("identical SYNs sixty seconds apart are not one SYN: folding is limited to a retransmission window", async () => {
+  await withCwd(async (cwd) => {
+    const t = 1_771_070_000;
+    const syn = frameTcp4({ src: C, dst: S, sport: 50000, dport: 443, flags: TCP.SYN, seq: 0 });
+    const cap = pcapClassic(Array.from({ length: 200 }, (_, i) => ({ sec: t + i * 60, frame: syn })));
+    const out = body(await tool(SUMMARY, cwd, { path: await drop(cwd, "work/a.pcap", cap), with_syn_times: true }));
+    const row = out.tuple_conversations[0];
+    assert.equal(row.syn_observations, 200);
+    // an event takes the SYNs within 120 s of its first: 0, 60 and 120 are one, 180 starts the next
+    assert.equal(row.syn_unique, 67);
+    assert.equal(row.syn_folded, 200 - 67);
+    assert.equal(row.syn_times.length, 67);
+    assert.equal(row.syn_times[1], "2026-02-14T11:56:20.000000Z");
+    assert.equal(out.syn_window_seconds, 120);
+    assert.match(out.note, /within 120 seconds/);
+    // and a retransmission is still folded
+    const quick = pcapClassic([1, 3, 7, 15].map((d) => ({ sec: t + d, frame: syn })));
+    const folded = body(await tool(SUMMARY, cwd, { path: await drop(cwd, "work/b.pcap", quick), with_syn_times: true })).tuple_conversations[0];
+    assert.equal(folded.syn_unique, 1);
+    assert.equal(folded.syn_folded, 3);
+  });
+});
+
+test("a row keeps a bounded number of SYN events and shows a bounded number of times; the whole list is in a file and the answer says what it left out", async () => {
+  await withCwd(async (cwd) => {
+    const t = 1_771_070_000;
+    const cap = pcapClassic(Array.from({ length: 30_000 }, (_, i) => ({ sec: t + i * 300, frame: frameTcp4({ src: C, dst: S, sport: 50000, dport: 443, flags: TCP.SYN, seq: i + 1 }) })));
+    const result = await tool(SUMMARY, cwd, { path: await drop(cwd, "work/flood.pcap", cap), with_syn_times: true, max_memory_tuples: 1 });
+    assert.ok(result.stdout.length < 200_000, `the answer is ${result.stdout.length} bytes`);
+    const out = JSON.parse(result.stdout);
+    const row = out.tuple_conversations[0];
+    assert.equal(row.syn_observations, 30_000);
+    assert.equal(row.syn_unique, 10_000);
+    assert.equal(row.syn_events_not_kept, 20_000);
+    assert.equal(row.syn_unique_is_lower_bound, true);
+    assert.equal(row.syn_times.length, 100);
+    assert.equal(row.syn_times_omitted, 9_900);
+    assert.ok(out.syn_times_file, "the whole list has a name");
+    const lines = (await readFile(join(cwd, out.syn_times_file), "utf8")).trimEnd().split("\n");
+    assert.equal(lines.length, 1);
+    assert.equal(JSON.parse(lines[0]).syn_times.length, 10_000);
+    assert.match(out.notes.join(" "), /more than 100 SYN times/);
+  });
+});
+
+test("a refused run leaves no temporary aggregate file, and the same out_dir can be used again", async () => {
+  await withCwd(async (cwd) => {
+    const frames = Array.from({ length: 50 }, (_, i) => ({ sec: 10 + i, frame: frameTcp4({ src: C, dst: S, sport: 40000 + i, dport: 443, flags: TCP.SYN, seq: 1 }) }));
+    const good = pcapClassic(frames);
+    const cut = good.subarray(0, good.length - 9); // a capture that ends inside a packet
+    const failed = refused(await tool(SUMMARY, cwd, { path: await drop(cwd, "work/cut.pcap", cut), out_dir: "work/o", max_memory_tuples: 1 }));
+    assert.match(failed.error, /malformed or truncated/);
+    const left = await filesUnder(join(cwd, "work/o")).catch(() => [] as string[]);
+    assert.deepEqual(left, [], "no .pcap_summary-spill file stays behind");
+    const again = body(await tool(SUMMARY, cwd, { path: await drop(cwd, "work/good.pcap", good), out_dir: "work/o", max_memory_tuples: 1 }));
+    assert.equal(again.packets, 50);
+    assert.equal(again.spilled_to_disk, true);
+    assert.deepEqual((await filesUnder(join(cwd, "work/o"))).filter((f) => f.includes("spill")), []);
+  });
+  await withCwd(async (cwd) => {
+    const frames = Array.from({ length: 50 }, (_, i) => ({ sec: 10 + i, frame: frameTcp4({ src: C, dst: S, sport: 40000 + i, dport: 443, flags: TCP.SYN, seq: 1 }) }));
+    const cut = pcapClassic(frames).subarray(0, -9);
+    const failed = refused(await asJob(SUMMARY, cwd, { path: await drop(cwd, "work/cut.pcap", cut), max_memory_tuples: 1 }));
+    assert.match(failed.error, /malformed or truncated/);
+    assert.deepEqual((await filesUnder(join(cwd, "out"))).filter((f) => f.includes("spill")), [], "nothing is left at the root of $OUT");
+  });
+});
+
+test("the link-type field's FCS bits are not part of the type, a section header's options and an interface's drop counts are read, and 1 ns apart is 1 ns", async () => {
+  await withCwd(async (cwd) => {
+    const frame = frameTcp4({ src: C, dst: S, sport: 50000, dport: 443, flags: TCP.SYN, seq: 1 });
+    // the field is 0x20000001: Ethernet with a high bit set that is not a type; with bit 26 and a length of 2 words: an FCS of 4 bytes
+    const plain = body(await tool(SUMMARY, cwd, { path: await drop(cwd, "work/a.pcap", pcapClassic([{ sec: 1, frame }], { link: 0x20000001 })) }));
+    assert.equal(plain.link_type, "Ethernet");
+    assert.equal(plain.link_type_id, 1);
+    assert.equal(plain.protocols.TCP, 1, "the frames are dissected");
+    assert.equal(plain.interfaces[0].link_type_field_raw, 0x20000001);
+    const fcs = body(await tool(SUMMARY, cwd, { path: await drop(cwd, "work/b.pcap", pcapClassic([{ sec: 1, frame }], { link: 0x24000001 | (2 << 28) })) }));
+    assert.equal(fcs.interfaces[0].fcs_length_bytes, 4);
+    assert.equal(fcs.link_type, "Ethernet");
+  });
+  await withCwd(async (cwd) => {
+    const u64 = (n: bigint): Buffer => { const b = Buffer.alloc(8); b.writeBigUInt64LE(n, 0); return b; };
+    const shb = ngBlock(0x0a0d0d0a, Buffer.concat([
+      (() => { const h = Buffer.alloc(16); h.writeUInt32LE(0x1a2b3c4d, 0); h.writeUInt16LE(1, 4); h.writeUInt16LE(0, 6); h.writeBigInt64LE(-1n, 8); return h; })(),
+      ngOption(2, Buffer.from("x86_64")), ngOption(3, Buffer.from("Linux 6.1")), ngOption(4, Buffer.from("dumpcap 4.2")), Buffer.alloc(4),
+    ]));
+    const idb = ngInterface({ options: [ngOption(9, Buffer.from([9]))] }); // if_tsresol = 10^-9
+    const frame = frameTcp4({ src: C, dst: S, sport: 50000, dport: 443, flags: TCP.SYN, seq: 1 });
+    const padded = Buffer.concat([frame, Buffer.alloc((4 - (frame.length % 4)) % 4)]);
+    const epb = (t: bigint, drops?: bigint): Buffer => {
+      const head = Buffer.alloc(20);
+      head.writeUInt32LE(0, 0); head.writeUInt32LE(Number(t >> 32n), 4); head.writeUInt32LE(Number(t & 0xffffffffn), 8);
+      head.writeUInt32LE(frame.length, 12); head.writeUInt32LE(frame.length, 16);
+      return ngBlock(6, Buffer.concat([head, padded, ...(drops !== undefined ? [ngOption(4, u64(drops)), ngEnd()] : [])]));
+    };
+    const stats = (() => { const h = Buffer.alloc(12); h.writeUInt32LE(0, 0); const t = ticks(1_700_000_001, 0, 9); h.writeUInt32LE(Number(t >> 32n), 4); h.writeUInt32LE(Number(t & 0xffffffffn), 8); return ngBlock(5, Buffer.concat([h, ngOption(5, u64(7n)), ngEnd()])); })();
+    const base = ticks(1_700_000_000, 0, 9);
+    const file = Buffer.concat([shb, idb, epb(base, 5n), epb(base + 1n), stats]);
+    const out = body(await tool(SUMMARY, cwd, { path: await drop(cwd, "work/c.pcapng", file) }));
+    assert.deepEqual(out.section_options, [{ section: 0, hardware: "x86_64", os: "Linux 6.1", application: "dumpcap 4.2" }]);
+    assert.equal(out.interfaces[0].epb_dropcount_total, 5);
+    assert.equal(out.interface_statistics[0].packets_dropped_by_interface, 7);
+    assert.equal(out.interface_statistics[0].time_utc, "2023-11-14T22:13:21.000000000Z");
+    assert.equal(out.duration_ns, 1);
+    assert.equal(out.duration_seconds, 1e-9);
+  });
+});
+
+test("a frame under stacked VLAN tags (802.1ad and the legacy 0x9100) is dissected", async () => {
+  await withCwd(async (cwd) => {
+    const inner = frameTcp4({ src: C, dst: S, sport: 50000, dport: 443, flags: TCP.SYN, seq: 1 });
+    const tagged = (outer: number): Buffer => {
+      const eth = Buffer.from(inner.subarray(0, 12));
+      const tags = Buffer.alloc(10);
+      tags.writeUInt16BE(outer, 0); tags.writeUInt16BE(100, 2); // outer tag
+      tags.writeUInt16BE(0x8100, 4); tags.writeUInt16BE(200, 6); // inner tag
+      tags.writeUInt16BE(0x0800, 8);
+      return Buffer.concat([eth, tags, inner.subarray(14)]);
+    };
+    for (const outer of [0x88a8, 0x9100]) {
+      const out = body(await tool(SUMMARY, cwd, { path: await drop(cwd, `work/q${outer}.pcap`, pcapClassic([{ sec: 1, frame: tagged(outer) }])) }));
+      assert.equal(out.protocols.TCP, 1, `0x${outer.toString(16)}`);
+      assert.equal(out.undissected.packets, 0);
+    }
+  });
+});
+
+test("endpoint rows for one service are one row even when only some of its tuples show the handshake, and the answer says what the filter and the top lists count", async () => {
+  await withCwd(async (cwd) => {
+    const t = 1_771_070_000;
+    const cap = pcapClassic([
+      { sec: t, frame: frameTcp4({ src: C, dst: S, sport: 50000, dport: 443, flags: TCP.SYN, seq: 1 }) },
+      { sec: t + 1, frame: frameTcp4({ src: C, dst: S, sport: 50001, dport: 443, flags: TCP.PSH | TCP.ACK, seq: 1, payload: "abc" }) },
+      { sec: t + 2, frame: frameTcp4({ src: S, dst: C, sport: 443, dport: 50002, flags: TCP.SYN | TCP.ACK, seq: 1 }) },
+    ]);
+    const out = body(await tool(SUMMARY, cwd, { path: await drop(cwd, "work/e.pcap", cap), group: "endpoint", host: C, with_starts: true }));
+    assert.equal(out.endpoint_aggregate_count, 1, JSON.stringify(out.endpoint_aggregates.map((r: Json) => [r.service_port, r.service_port_basis])));
+    const row = out.endpoint_aggregates[0];
+    assert.equal(row.service_port_basis, "syn_destination");
+    assert.equal(row.service_port_bases.length, 3);
+    assert.equal(row.tuples, 3);
+    assert.match(out.filtered.applies_to, /NOT to packets/);
+    assert.match(out.top_talkers_basis, /SOURCE/);
+    assert.match(out.top_ports_basis, /DESTINATION/);
+    assert.match(out.notes.join(" "), /with_starts is the old name of with_syn_times/);
   });
 });

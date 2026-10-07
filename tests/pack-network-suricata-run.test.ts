@@ -12,10 +12,10 @@
  */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { SURICATA, asJob, body, exists, filesUnder, put, refused, stub, tool, withCwd } from "./pack-network-harness.ts";
+import { SURICATA, asJob, body, exists, filesUnder, gone, pidFile, put, refused, startDetached, stub, tool, withCwd } from "./pack-network-harness.ts";
 import type { Json } from "./pack-network-harness.ts";
 
 const sha = (b: Buffer | string): string => createHash("sha256").update(b).digest("hex");
@@ -25,7 +25,7 @@ printf '%s\\n' "$*" >> "$STUB_LOG"
 mode=run; conf=""; logdir=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --build-info) printf 'This is Suricata version 7.0.0-stand-in RELEASE\\nFeatures: stand-in\\n'; exit 0;;
+    --build-info) [ -f "$STUB_DIR/build-fail" ] && { echo "suricata: build info failed on request" >&2; exit 3; }; printf 'This is Suricata version 7.0.0-stand-in RELEASE\\nFeatures: stand-in\\n'; exit 0;;
     -T) mode=test;;
     -c) conf="$2"; shift;;
     -l) logdir="$2"; shift;;
@@ -38,14 +38,14 @@ if [ "$mode" = test ]; then
   if [ -f "$STUB_DIR/test-exit" ]; then echo "stand-in: configuration test failed on request" >&2; exit "$(cat "$STUB_DIR/test-exit")"; fi
   exit 0
 fi
-[ -f "$STUB_DIR/sleep" ] && { sleep 60 & echo $! > "$STUB_DIR/child.pid"; echo started > "$STUB_DIR/started"; wait; }
+[ -f "$STUB_DIR/sleep" ] && { echo $$ > "$STUB_DIR/engine.pid"; sleep 60 & echo $! > "$STUB_DIR/child.pid"; echo started > "$STUB_DIR/started"; wait; }
 [ -f "$STUB_DIR/eve.json" ] && cp "$STUB_DIR/eve.json" "$logdir/eve.json"
 [ -f "$STUB_DIR/loadline-run" ] && cat "$STUB_DIR/loadline-run" >&2
 if [ -f "$STUB_DIR/run-exit" ]; then exit "$(cat "$STUB_DIR/run-exit")"; fi
 exit 0
 `;
 
-type Opts = { eve?: string; testExit?: number; runExit?: number; loadTest?: string; loadRun?: string; sleep?: boolean };
+type Opts = { eve?: string; testExit?: number; runExit?: number; loadTest?: string; loadRun?: string; sleep?: boolean; buildFail?: boolean };
 
 async function stage(cwd: string, bin: string, o: Opts = {}): Promise<string> {
   const dir = join(cwd, "stub");
@@ -58,6 +58,7 @@ async function stage(cwd: string, bin: string, o: Opts = {}): Promise<string> {
   if (o.loadTest) await writeFile(join(dir, "loadline-test"), o.loadTest);
   if (o.loadRun) await writeFile(join(dir, "loadline-run"), o.loadRun);
   if (o.sleep) await writeFile(join(dir, "sleep"), "1");
+  if (o.buildFail) await writeFile(join(dir, "build-fail"), "1");
   await writeFile(join(cwd, "suricata-calls.txt"), "");
   return dir;
 }
@@ -161,8 +162,8 @@ test("EVE lines that are not events are counted with their line numbers, and the
     assert.equal(out.events_without_event_type, 1);
     assert.equal(out.event_types.alert, 2);
     assert.equal(out.event_types.no_event_type, 1);
-    assert.deepEqual(out.eve_line_problems, [{ line: 2, why: "not valid JSON" }, { line: 3, why: "valid JSON that is not an object" }, { line: 4, why: "valid JSON that is not an object" }]);
-    assert.match(out.problems.join(" "), /3 EVE lines were not read as events/);
+    assert.deepEqual(out.eve_line_problems, [{ line: 2, why: "not valid JSON" }, { line: 3, why: "valid JSON that is not an object" }, { line: 4, why: "valid JSON that is not an object" }, { line: 5, why: "an object with no event_type" }], "the typeless object has its line number too");
+    assert.match(out.problems.join(" "), /4 EVE lines were not read as events/);
   });
 });
 
@@ -248,4 +249,104 @@ test("the directory is private, in a job it must be under $OUT, a stop leaves no
     await new Promise((r) => setTimeout(r, 300));
     assert.throws(() => process.kill(pid, 0), /ESRCH/, "what Suricata started is gone");
   });
+});
+
+test("the generated configuration defines the variables rules are written against, from home_net or the private ranges, and says they are assumptions", async () => {
+  await withCwd(async (cwd, bin) => {
+    await stage(cwd, bin, { eve: ALERT(1) + "\n" });
+    const { path, rules } = await inputs(cwd);
+    const out = body(await tool(SURICATA, cwd, { path, rules, out_dir: "work/s" }, env(cwd), bin));
+    const config = await readFile(join(cwd, "work/s/suricata.yaml"), "utf8");
+    assert.match(config, /^vars:\n  address-groups:\n    HOME_NET: "\[192\.168\.0\.0\/16,10\.0\.0\.0\/8,172\.16\.0\.0\/12\]"$/m);
+    for (const name of ["EXTERNAL_NET", "HTTP_SERVERS", "DNS_SERVERS", "HTTP_PORTS", "SSH_PORTS", "FTP_PORTS"]) assert.match(config, new RegExp(`^    ${name}: `, "m"), name);
+    assert.deepEqual(out.configuration.vars.HOME_NET, ["192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12"]);
+    assert.match(out.configuration.vars.note, /assumptions/);
+    const mine = body(await tool(SURICATA, cwd, { path, rules, out_dir: "work/s2", home_net: ["203.0.113.0/24", "2001:db8::/32"] }, env(cwd), bin));
+    assert.deepEqual(mine.configuration.vars.HOME_NET, ["203.0.113.0/24", "2001:db8::/32"]);
+    assert.match(await readFile(join(cwd, "work/s2/suricata.yaml"), "utf8"), /HOME_NET: "\[203\.0\.113\.0\/24,2001:db8::\/32\]"/);
+    for (const bad of [[], ["not-an-address"], ["10.0.0.0/8; evil"], "10.0.0.0/8", [5]]) {
+      const err = refused(await tool(SURICATA, cwd, { path, rules, out_dir: "work/bad", home_net: bad }, env(cwd), bin));
+      assert.match(err.error, /home_net/, JSON.stringify(bad));
+    }
+    assert.equal(await exists(join(cwd, "work/bad")), false);
+  });
+});
+
+test("a rules file from the evidence is refused as a config is, also through a link; zero rules loaded from a file with rules is a problem; no load line is said, not read as zero", async () => {
+  await withCwd(async (cwd, bin) => {
+    await stage(cwd, bin, { eve: ALERT(1) + "\n" });
+    const { path } = await inputs(cwd);
+    await put(cwd, "inputs/evidence.rules", RULES);
+    await mkdir(join(cwd, "work/links"), { recursive: true });
+    await symlink(join(cwd, "inputs/evidence.rules"), join(cwd, "work/links/mine.rules"));
+    for (const rules of ["inputs/evidence.rules", "work/links/mine.rules", "work/../inputs/evidence.rules"]) {
+      const err = refused(await tool(SURICATA, cwd, { path, rules, out_dir: "work/s", config: undefined }, env(cwd), bin));
+      assert.match(err.error, /rules file from inputs\/ is refused/, rules);
+    }
+    assert.equal(await exists(join(cwd, "work/s")), false);
+    assert.equal((await readFile(join(cwd, "suricata-calls.txt"), "utf8")).includes("-S"), false, "the engine never saw it");
+  });
+  await withCwd(async (cwd, bin) => {
+    await stage(cwd, bin, { eve: ALERT(1) + "\n", loadRun: "<Info> - 1 rule files processed. 0 rules successfully loaded, 0 rules failed, 2 rules skipped\n" });
+    const { path, rules } = await inputs(cwd);
+    const result = await tool(SURICATA, cwd, { path, rules, out_dir: "work/s" }, env(cwd), bin);
+    assert.equal(result.code, 1);
+    const out = JSON.parse(result.stdout);
+    assert.equal(out.ok, false);
+    assert.match(out.problems.join(" "), /0 rules loaded though the rules file has 2 rule lines/);
+    // No sentence at all: the run is not failed on a guess, and the answer says nothing shows a rule loaded.
+    await stage(cwd, bin, { eve: ALERT(1) + "\n" });
+    const quiet = body(await tool(SURICATA, cwd, { path, rules, out_dir: "work/q" }, env(cwd), bin));
+    assert.equal(quiet.rule_load.known, false);
+    assert.match(quiet.rule_load.note, /nothing here shows that any rule loaded/);
+  });
+});
+
+test("a failing --build-info is a problem and the version stays unrecorded; a fingerprint found in an event that is not a TLS event is counted apart", async () => {
+  await withCwd(async (cwd, bin) => {
+    await stage(cwd, bin, { eve: ev({ event_type: "quic", quic: {}, tls: { ja4: "q13d0310h3_55b375c5d22e_cd85d2d88918" } }) + "\n", buildFail: true });
+    const { path, rules } = await inputs(cwd);
+    const result = await tool(SURICATA, cwd, { path, rules, out_dir: "work/s" }, env(cwd), bin);
+    assert.equal(result.code, 1);
+    const out = JSON.parse(result.stdout);
+    assert.equal(out.suricata_version, null);
+    assert.match(out.problems.join(" "), /--build-info/);
+    assert.equal(out.tls_fingerprints.tls_events, 0);
+    assert.equal(out.tls_fingerprints.other_events_with_a_fingerprint, 1);
+    assert.doesNotMatch(out.tls_fingerprints.note, /traffic that could carry a fingerprint\./);
+  });
+});
+
+test("timeout_seconds is held under the manifest's limit", async () => {
+  await withCwd(async (cwd, bin) => {
+    await stage(cwd, bin, { eve: ALERT(1) + "\n" });
+    const { path, rules } = await inputs(cwd);
+    for (const bad of [1001, 5000, 9]) {
+      const err = refused(await tool(SURICATA, cwd, { path, rules, out_dir: "work/s", timeout_seconds: bad }, env(cwd), bin));
+      assert.match(err.error, /timeout_seconds must be an integer from 10 to 1000/, String(bad));
+    }
+    assert.equal(await exists(join(cwd, "work/s")), false);
+  });
+});
+
+test("the harness ends a tool by killing its process group, and that ends Suricata and what it started; SIGINT and SIGHUP do the same", async () => {
+  for (const how of ["group", "SIGINT", "SIGHUP"] as const) {
+    await withCwd(async (cwd, bin) => {
+      const dir = await stage(cwd, bin, { sleep: true });
+      const { path, rules } = await inputs(cwd);
+      const run = startDetached(SURICATA, cwd, { path, rules, out_dir: "work/s" }, env(cwd), bin);
+      let engine = 0, child = 0;
+      try {
+        engine = await pidFile(join(dir, "engine.pid"));
+        child = await pidFile(join(dir, "child.pid"));
+        if (how === "group") run.killGroup();
+        else run.signal(how);
+        await run.closed;
+        assert.equal(await gone(engine), true, `${how}: Suricata survived`);
+        assert.equal(await gone(child), true, `${how}: what Suricata started survived`);
+      } finally {
+        for (const pid of [engine, child]) try { process.kill(pid, "SIGKILL"); } catch { /* gone */ }
+      }
+    });
+  }
 });

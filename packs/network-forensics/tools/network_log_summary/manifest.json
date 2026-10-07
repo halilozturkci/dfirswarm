@@ -1,6 +1,6 @@
 {
   "name": "network_log_summary",
-  "description": "Normalise three log grammars into one table and account for every line: web (Apache/nginx common and combined), Squid's native access.log, and upper-case KEY=VALUE firewall records. No other format is parsed; a line that fits none is unparsed and says so. Every source line is in normalized.tsv or unparsed.tsv with its line number and the byte offset and length of the line in the stream read (the decompressed stream for gzip), so a row finds its line in the evidence. Time is three columns: timestamp_raw as written, timestamp_utc only where the line gives enough to derive it (a web offset, Squid epoch seconds, an ISO 8601 firewall prefix with a zone), and timezone_source; a syslog stamp has no year or zone and is never read as UTC. The file is read as bytes: invalid UTF-8 is substituted and counted (decoding_substituted), CRLF is counted, a line over max_line_bytes is located and not read, gzip expansion is capped (max_expanded_bytes) and a cap or a corrupt stream is a structured error that keeps the rows read before it and names the offset (complete and ok false), and aggregates hold at most max_distinct_values per category with the overflow counted. Forwarded headers, NAT addresses and action labels are what the logging device wrote, not facts about the sender. SENSITIVE: the request target is redacted (user-info, token-shaped path text and every query value withheld; parameter names stay), the table has no raw line and the answer none. Redaction is by shape; run it as a job with secret_output: true. write_values: true (jobs only, refused elsewhere) writes the unparsed lines and the original targets to $OUT/network-log-values.jsonl, mode 0600, created before anything is read; a second run in the same job is refused by name.",
+  "description": "Normalise three log grammars into one table and account for every line: web (Apache/nginx common and combined), Squid's native access.log, and upper-case KEY=VALUE firewall records. No other format is parsed; a line that fits none is unparsed and says so. Every source line is in normalized.tsv or unparsed.tsv with its line number and the byte offset and length of the line in the stream read (the decompressed stream for gzip), so a row finds its line in the evidence. Time is three columns (a web line with no offset, an RFC 5424 time and a line with no timestamp each say which they are): timestamp_raw as written, timestamp_utc only where the line gives enough to derive it (a web offset, Squid epoch seconds, an ISO 8601 firewall prefix with a zone), and timezone_source; a syslog stamp has no year or zone and is never read as UTC. The file is read as bytes: invalid UTF-8 is substituted and counted (decoding_substituted), CRLF is counted, a line over max_line_bytes is located and not read, gzip expansion is capped (max_expanded_bytes) and a cap or a corrupt stream is a structured error that keeps the rows read before it and names the offset (complete and ok false), and aggregates hold at most max_distinct_values per category (a key is cut at 512 characters) with the overflow counted: a ranking is exact only while distinct_cap_reached is null. A leading byte order mark is stripped and counted. Forwarded headers, NAT addresses and action labels are what the logging device wrote, not facts about the sender. SENSITIVE: the request target and the combined-format referer (a column of its own) are redacted (user-info, token-shaped path text and every query value withheld; parameter names stay), the table has no raw line and the answer none. Redaction is by shape; run it as a job with secret_output: true. write_values: true (jobs only, refused elsewhere) writes the unparsed lines and the original targets to $OUT/network-log-values.jsonl, mode 0600, created before anything is read; a second run in the same job is refused by name.",
   "params": {
     "path": {
       "type": "string",
@@ -8,7 +8,7 @@
     },
     "out_dir": {
       "type": "string",
-      "description": "An empty directory under work/ (in a job, under $OUT) for normalized.tsv and unparsed.tsv. It is private (0700, files 0600)"
+      "description": "An empty directory under work/ (in a job, under $OUT; work/<your agent id>/name is mapped to $OUT/name) for normalized.tsv and unparsed.tsv. It is private (0700, files 0600)"
     },
     "format": {
       "type": "string",
@@ -20,7 +20,7 @@
     },
     "write_values": {
       "type": "boolean",
-      "description": "Write the text of every unparsed line and the original target of every redacted one to $OUT/network-log-values.jsonl (default false). Refused unless the tool runs as a job, which must be run with secret_output: true; a file already there is refused"
+      "description": "Write the text of every unparsed line and the original target and referer of every redacted one to $OUT/network-log-values.jsonl (default false; lines are written as JSON escapes, byte for byte). Refused unless the tool runs as a job, which must be run with secret_output: true; a file already there is refused, and a run that stops before it wrote a value gives the file back"
     },
     "max_line_bytes": {
       "type": "integer",
@@ -40,9 +40,9 @@
   "timeout_seconds": 600,
   "example": "{\"path\": \"inputs/access.log\", \"out_dir\": \"work/access-summary\", \"format\": \"auto\"}",
   "by": "maintainer",
-  "at": "2026-10-07T12:00:00.000Z",
-  "version": 3,
-  "sha256": "80cd8426984846b5faca2853da275347c54c12c98fa0e9b819d139836adfc81e",
+  "at": "2026-10-07T18:00:00.000Z",
+  "version": 4,
+  "sha256": "911bb056de4503b50350b5caf7079f758391d46985db2dbea22465cb96302461",
   "use": {
     "extensions": [
       ".log",

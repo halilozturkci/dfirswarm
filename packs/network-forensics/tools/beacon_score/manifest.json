@@ -1,6 +1,6 @@
 {
   "name": "beacon_score",
-  "description": "Measure how tightly a series of event times clusters around its median interval: the median interval, the median absolute deviation and mad_over_median, a descriptive shape (tight_cluster, clustered, loose_cluster, dispersed; the cut-offs are conventions of this tool, not properties of any implant), event_density_ratio (distinct events over the count a constant schedule at the median would give; below 1 is not evidence that events are missing), duplicate times counted apart from distinct events, and every interval kept (a bounded page inline, the whole list in a file the answer names). A regular series is not malicious (update checks, telemetry, NTP and monitoring are more regular than most malware) and an irregular one says nothing about a destination: a score is a measurement, not a verdict. long_final_gap reports a last interval over four times the median that ended in an observed event; it is not a cessation. A statement about silence after the last event is made only when window_end and sensor_coverage_confirmed are both given, and is a bounded negative about this series. A time with no zone is refused unless assume_utc is true (and each such value is counted); NaN, infinite or non-epoch-second values are counted and named, never scored. The series is what the caller supplied: this tool does not read captures or logs.",
+  "description": "Measure how tightly a series of event times clusters around its median interval: the median interval, the median absolute deviation and mad_over_median, a descriptive shape (tight_cluster, clustered, loose_cluster, dispersed; the cut-offs are conventions of this tool, not properties of any implant), event_density_ratio (distinct events over the count a constant schedule at the median would give; below 1 is not evidence that events are missing), duplicate times counted apart from distinct events, and every interval kept (a bounded page inline, the whole list in a file the answer names, each interval with the positions in the supplied series of the two events it joins). A regular series is not malicious (update checks, telemetry, NTP and monitoring are more regular than most malware) and an irregular one says nothing about a destination: a score is a measurement, not a verdict. long_final_gap reports a last interval over four times the median that ended in an observed event; it is not a cessation. A statement about silence after the last event is made only when window_end and sensor_coverage_confirmed are both given, and is a bounded negative about this series. A time with no zone is refused unless assume_utc is true (and each such value is counted); NaN, infinite or non-epoch-second values are counted and named, never scored. The series is what the caller supplied: this tool does not read captures or logs.",
   "params": {
     "timestamps": {
       "type": "array",
@@ -8,7 +8,7 @@
     },
     "timestamps_file": {
       "type": "string",
-      "description": "A file with one time per line (for a series too long to pass inline); the same value rules apply"
+      "description": "A file with one time per line (for a series too long to pass inline); the same value rules apply. A line over 4,096 characters is counted as unreadable and not held"
     },
     "label": {
       "type": "string",
@@ -36,7 +36,7 @@
     },
     "out_dir": {
       "type": "string",
-      "description": "Optional empty directory under work/ (in a job, under $OUT) for intervals.tsv, every interval with its two times"
+      "description": "Optional empty directory under work/ (in a job, under $OUT; work/<your agent id>/name is mapped to $OUT/name) for intervals.tsv, every interval with its two times and their input positions"
     }
   },
   "runtime": "python3",
@@ -44,9 +44,9 @@
   "timeout_seconds": 60,
   "example": "{\"timestamps\": [1771070000, 1771070060, 1771070121, 1771070179, 1771070240, 1771070301], \"label\": \"10.0.0.5 -> 203.0.113.7:443 (SYN observations)\"}",
   "by": "maintainer",
-  "at": "2026-10-07T12:00:00.000Z",
-  "version": 2,
-  "sha256": "3c76e4a3e02d3d803c45e6001c00a4538676939dae8e8e285b34fcb240a589b6",
+  "at": "2026-10-07T18:00:00.000Z",
+  "version": 3,
+  "sha256": "0f2509d422a7ed97acedb10fb963e8d8703690bfb6ac26ea96df45773fa54928",
   "use": {
     "names": [
       "*timestamps*.txt"

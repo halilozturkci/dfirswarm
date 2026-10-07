@@ -52,14 +52,15 @@ import json
 import os
 import re
 import secrets
+import signal
 import sqlite3
 import struct
 import sys
 import tempfile
 from pathlib import Path
 
-TOOL = {"name": "pcap_summary", "version": 3}
-PARSER = "pcap_summary/3"
+TOOL = {"name": "pcap_summary", "version": 4}
+PARSER = "pcap_summary/4"
 LINKTYPES = {0: "null", 1: "Ethernet", 9: "PPP", 101: "raw IP", 105: "802.11",
              113: "Linux cooked", 127: "802.11 radiotap", 228: "IPv4", 229: "IPv6",
              276: "Linux cooked v2"}
@@ -80,9 +81,26 @@ def describe(exc):
     return "%s: %s" % (type(exc).__name__, getattr(exc, "strerror", None) or str(exc))
 
 
+CLEANUP = []   # what to undo when the run ends early: the temporary aggregate file above all
+
+
+def cleanup():
+    while CLEANUP:
+        try:
+            CLEANUP.pop()()
+        except Exception:  # noqa: BLE001 - best effort, and never a second failure over the first
+            pass
+
+
 def fail(message, **extra):
+    cleanup()
     print(json.dumps({"error": message, "tool": TOOL, **extra}))
     raise SystemExit(1)
+
+
+def _on_signal(signum, _frame):
+    cleanup()
+    os._exit(128 + signum)
 
 
 def in_job():
@@ -122,8 +140,8 @@ def resolve_output(out, what="output"):
 # that is not UTF-8 reaches Python as lone surrogates, which a UTF-8 file cannot hold and a JSON escape can.
 class LosslessPage:
     def __init__(self, tool, limit):
-        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
-            raise ValueError("limit must be a positive integer")
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 0:
+            raise ValueError("limit must be a non-negative integer")
         self.tool = re.sub(r"[^A-Za-z0-9_.-]", "_", tool)
         self.limit = limit
         self.page = []
@@ -242,6 +260,7 @@ class Info:
         self.not_decoded = collections.Counter()
         self.unknown = collections.Counter()
         self.stats = []               # interface statistics blocks
+        self.section_options = []     # what a section header says about the capturing machine
         self.malformed_options = 0
         self.sections = 0
 
@@ -264,10 +283,18 @@ def read_classic(fh, info):
     major, minor, _zone, _sig, snaplen, network = struct.unpack(end + "HHiIII", head[4:])
     info.format = "pcap"
     info.version = "%d.%d" % (major, minor)
-    info.interfaces.append({"section": 0, "interface": 0, "link_type": LINKTYPES.get(network, str(network)),
-                            "link_type_id": network, "snap_length": snaplen or None, "ticks_per_second": tps,
-                            "digits": 6 if tps == 1_000_000 else 9, "time_offset_seconds": 0,
-                            "packets": 0, "bytes_original": 0, "bytes_captured": 0, "options_malformed": 0})
+    # The link-type field holds the type in its low 26 bits; bit 26 says the frames end in an FCS whose length (in
+    # 16-bit words) is bits 28 to 31 (the pcap savefile format, as libpcap reads it). The high bits are not a type.
+    link = network & 0x03FFFFFF
+    row = {"section": 0, "interface": 0, "link_type": LINKTYPES.get(link, str(link)),
+           "link_type_id": link, "snap_length": snaplen or None, "ticks_per_second": tps,
+           "digits": 6 if tps == 1_000_000 else 9, "time_offset_seconds": 0,
+           "packets": 0, "bytes_original": 0, "bytes_captured": 0, "options_malformed": 0}
+    if network & 0x04000000:
+        row["fcs_length_bytes"] = ((network >> 28) & 0xF) * 2
+    elif network & ~0x03FFFFFF:
+        row["link_type_field_raw"] = network
+    info.interfaces.append(row)
 
     def packets():
         scale = 1_000_000_000 // tps
@@ -343,6 +370,13 @@ def read_pcapng(fh, info):
                     raise ValueError("truncated or inconsistent pcapng section")
                 if info.version is None:
                     info.version = "%d.%d" % struct.unpack(end + "HH", rest[:4])
+                section_opts = ng_options(rest, 12, end, info)
+                section = {"section": info.sections}
+                for code, label in ((2, "hardware"), (3, "os"), (4, "application")):
+                    if section_opts.get(code):
+                        section[label] = text_of(section_opts[code][0])
+                if len(section) > 1:
+                    info.section_options.append(section)
                 info.blocks["section_header"] += 1
                 info.sections += 1
                 local = {}
@@ -389,6 +423,12 @@ def read_pcapng(fh, info):
                     raise ValueError("pcapng interface statistics block is shorter than its fixed part")
                 iface = struct.unpack(end + "I", body[:4])[0]
                 row = {"section": max(info.sections - 1, 0), "interface": iface, "options_malformed": 0}
+                high, low = struct.unpack(end + "II", body[4:12])
+                if iface in local:
+                    istats = info.interfaces[local[iface]]
+                    when = (((high << 32) | low) * 1_000_000_000 // istats["ticks_per_second"]) + istats["time_offset_seconds"] * 1_000_000_000
+                    row["time_utc"] = fmt_ns(when, istats["digits"])
+                    row["time_raw"] = {"ticks": (high << 32) | low, "ticks_per_second": istats["ticks_per_second"]}
                 opts = ng_options(body, 12, end, info, row)
                 for code, label in ((4, "packets_received"), (5, "packets_dropped_by_interface"), (6, "packets_accepted_by_filter"),
                                     (7, "packets_dropped_by_os"), (8, "packets_delivered_to_user")):
@@ -408,6 +448,10 @@ def read_pcapng(fh, info):
                 row = info.interfaces[index]
                 tps = row["ticks_per_second"]
                 ticks = (high << 32) | low
+                if name == "enhanced_packet" and len(body) > 20 + ((incl + 3) & ~3):
+                    packet_opts = ng_options(body, 20 + ((incl + 3) & ~3), end, info, row)
+                    if packet_opts.get(4) and len(packet_opts[4][0]) == 8:
+                        row["epb_dropcount_total"] = row.get("epb_dropcount_total", 0) + struct.unpack(end + "Q", packet_opts[4][0])[0]
                 yield (ticks * 1_000_000_000 // tps + row["time_offset_seconds"] * 1_000_000_000, body[20:20 + incl], orig,
                        index, (ticks, tps, row["time_offset_seconds"]))
             elif name == "simple_packet":
@@ -435,7 +479,7 @@ def dissect(body, link):
             return None
         kind = struct.unpack(">H", body[12:14])[0]
         at = 14
-        while kind in (0x8100, 0x88a8) and len(body) >= at + 4:
+        while kind in (0x8100, 0x88a8, 0x9100) and len(body) >= at + 4:
             kind = struct.unpack(">H", body[at + 2:at + 4])[0]
             at += 4
     elif link in (101, 228, 229):
@@ -634,14 +678,58 @@ class Table:
 
 
 # A tuple record: [packets, bytes_original, bytes_captured, a2b_original, b2a_original, a2b_captured, b2a_captured,
-#                  first_ns, last_ns, syn_a, syn_b, synack_a, synack_b, fin, rst, syns{key: first_ns},
-#                  first_raw, last_raw, tuples]
-P, BO, BC, ABO, BAO, ABC, BAC, FIRST, LAST, SYNA, SYNB, SAA, SAB, FIN, RST, SYNS, FRAW, LRAW, TUPLES = range(19)
-COUNTED = (P, BO, BC, ABO, BAO, ABC, BAC, SYNA, SYNB, SAA, SAB, FIN, RST, TUPLES)
+#                  first_ns, last_ns, syn_a, syn_b, synack_a, synack_b, fin, rst, syns{key: [[first, last, n], ...]},
+#                  first_raw, last_raw, tuples, syns_not_kept, syn_events, service_port_bases]
+# A SYN sent again with the same sequence number within SYN_WINDOW_NS of the FIRST one of its event is the same SYN event
+# (a retransmission) and is folded into it, with its count; after that a SYN with that number starts a new event. A row keeps at most
+# MAX_SYN_EVENTS events: SYNs past that are counted in syns_not_kept and their times are not kept.
+P, BO, BC, ABO, BAO, ABC, BAC, FIRST, LAST, SYNA, SYNB, SAA, SAB, FIN, RST, SYNS, FRAW, LRAW, TUPLES, SYNOVER, SYNEV, BASES = range(22)
+COUNTED = (P, BO, BC, ABO, BAO, ABC, BAC, SYNA, SYNB, SAA, SAB, FIN, RST, TUPLES, SYNOVER)
+SYN_WINDOW_NS = 120 * 1_000_000_000
+MAX_SYN_EVENTS = 10_000
+SYN_INLINE = 100        # SYN times shown on a row inline; the whole list is in syn_times_file (and the TSV)
 
 
 def new_record():
-    return [0, 0, 0, 0, 0, 0, 0, None, None, 0, 0, 0, 0, 0, 0, {}, None, None, 0]
+    return [0, 0, 0, 0, 0, 0, 0, None, None, 0, 0, 0, 0, 0, 0, {}, None, None, 0, 0, 0, set()]
+
+
+def fold_events(events):
+    """Events of one (sender, sequence number): sorted by time, those within the window of the one before folded together."""
+    timed = sorted((e for e in events if e[0] is not None), key=lambda e: e[0])
+    untimed = [e for e in events if e[0] is None]
+    out = []
+    for e in timed:
+        if out and max(out[-1][1], e[1]) - out[-1][0] <= SYN_WINDOW_NS:
+            out[-1] = [out[-1][0], max(out[-1][1], e[1]), out[-1][2] + e[2]]
+        else:
+            out.append(list(e))
+    if untimed:
+        out.append([None, None, sum(e[2] for e in untimed)])
+    return out
+
+
+def add_syn(rec, key, when):
+    """Count one SYN observation of `key` (sender, sequence number) at `when` (ns, or None for a packet with no time)."""
+    events = rec[SYNS].get(key)
+    if events is not None:
+        for e in reversed(events):
+            if when is None and e[0] is None:
+                e[2] += 1
+                return
+            if when is not None and e[0] is not None and max(e[1], when) - min(e[0], when) <= SYN_WINDOW_NS:
+                e[0], e[1] = min(e[0], when), max(e[1], when)
+                e[2] += 1
+                return
+    if rec[SYNEV] >= MAX_SYN_EVENTS:
+        rec[SYNOVER] += 1
+        return
+    rec[SYNS].setdefault(key, []).append([when, when, 1])
+    rec[SYNEV] += 1
+
+
+def syn_events(rec):
+    return [e for events in rec[SYNS].values() for e in events]
 
 
 def new_port():
@@ -674,20 +762,35 @@ def merge_record(dst, src):
     dst[FRAW], dst[LRAW] = earlier(dst[FRAW], src[FRAW]), later(dst[LRAW], src[LRAW])
     dst[FIRST] = dst[FRAW][0] if dst[FRAW] else None
     dst[LAST] = dst[LRAW][0] if dst[LRAW] else None
-    for k, t in src[SYNS].items():
-        have = dst[SYNS].get(k)
-        dst[SYNS][k] = t if have is None else (have if t is None else min(have, t))
+    for k, events in src[SYNS].items():
+        dst[SYNS][k] = fold_events(dst[SYNS].get(k, []) + events)
+    dst[BASES] |= src[BASES]
+    kept = sum(len(v) for v in dst[SYNS].values())
+    while kept > MAX_SYN_EVENTS:
+        # merging two halves can hold more events than a row may keep: the last ones go, counted
+        key = next(reversed(dst[SYNS]))
+        extra = kept - MAX_SYN_EVENTS
+        events = dst[SYNS][key]
+        dropped = events[len(events) - min(extra, len(events)):]
+        del events[len(events) - len(dropped):]
+        dst[SYNOVER] += sum(e[2] for e in dropped)
+        if not events:
+            del dst[SYNS][key]
+        kept -= len(dropped)
+    dst[SYNEV] = kept
 
 
 def encode_record(rec):
     out = list(rec)
-    out[SYNS] = [list(k) + [ns] for k, ns in rec[SYNS].items()]
+    out[SYNS] = [list(k) + [events] for k, events in rec[SYNS].items()]
+    out[BASES] = sorted(rec[BASES])
     return out
 
 
 def decode_record(value):
     rec = list(value)
     rec[SYNS] = {tuple(item[:-1]): item[-1] for item in value[SYNS]}
+    rec[BASES] = set(value[BASES])
     rec[FRAW] = tuple(value[FRAW]) if value[FRAW] else None
     rec[LRAW] = tuple(value[LRAW]) if value[LRAW] else None
     return rec
@@ -718,12 +821,16 @@ def service_of(key, rec):
 
 
 def counters_of(rec, digits, with_syn_times):
+    events = syn_events(rec)
     row = {"packets": rec[P], "bytes_original": rec[BO], "bytes_captured": rec[BC],
            "a_to_b_bytes_original": rec[ABO], "b_to_a_bytes_original": rec[BAO],
            "a_to_b_bytes_captured": rec[ABC], "b_to_a_bytes_captured": rec[BAC],
            "first": fmt_ns(rec[FIRST], digits), "last": fmt_ns(rec[LAST], digits),
-           "syn_observations": rec[SYNA] + rec[SYNB], "syn_unique": len(rec[SYNS]),
+           "syn_observations": rec[SYNA] + rec[SYNB], "syn_unique": len(events),
+           "syn_folded": sum(e[2] - 1 for e in events),
            "synack_observations": rec[SAA] + rec[SAB], "fin_observations": rec[FIN], "rst_observations": rec[RST]}
+    row["syn_events_not_kept"] = rec[SYNOVER]
+    row["syn_unique_is_lower_bound"] = rec[SYNOVER] > 0
     if rec[SYNA] and not rec[SYNB]:
         row["syn_sender"] = "a"
     elif rec[SYNB] and not rec[SYNA]:
@@ -733,8 +840,8 @@ def counters_of(rec, digits, with_syn_times):
     else:
         row["syn_sender"] = None
     if with_syn_times:
-        row["syn_times"] = [fmt_ns(ns, digits) for ns in sorted(t for t in rec[SYNS].values() if t is not None)]
-        row["syn_without_time"] = sum(1 for t in rec[SYNS].values() if t is None)
+        row["syn_times"] = [fmt_ns(ns, digits) for ns in sorted(e[0] for e in events if e[0] is not None)]
+        row["syn_without_time"] = sum(1 for e in events if e[0] is None)
     return row
 
 
@@ -744,10 +851,22 @@ def tuple_row(key, rec, digits, with_syn_times):
             "protocol": protocol, **counters_of(rec, digits, with_syn_times)}
 
 
+BASIS_ORDER = ("syn_destination", "synack_source", "undetermined", "smaller_port_guess", "no ports")
+
+
+def strongest_basis(bases):
+    for name in BASIS_ORDER:
+        for basis in sorted(bases):
+            if basis.startswith(name):
+                return basis
+    return sorted(bases)[0] if bases else None
+
+
 def endpoint_row(key, rec, digits, with_syn_times):
-    a, b, protocol, port, basis = key
+    a, b, protocol, port = key
     return {"a": a, "b": b, "protocol": protocol, "service_port": port if port >= 0 else None,
-            "service_port_basis": basis, "tuples": rec[TUPLES], **counters_of(rec, digits, with_syn_times)}
+            "service_port_basis": strongest_basis(rec[BASES]), "service_port_bases": sorted(rec[BASES]),
+            "tuples": rec[TUPLES], **counters_of(rec, digits, with_syn_times)}
 
 
 def endpoint_of(key, rec):
@@ -767,11 +886,13 @@ def endpoint_of(key, rec):
         out[SYNA], out[SYNB], out[SAA], out[SAB] = rec[SYNA], rec[SYNB], rec[SAA], rec[SAB]
     out[FIN], out[RST] = rec[FIN], rec[RST]
     out[FIRST], out[LAST], out[FRAW], out[LRAW] = rec[FIRST], rec[LAST], rec[FRAW], rec[LRAW]
-    for (side, seq), ns in rec[SYNS].items():
+    for (side, seq), events in rec[SYNS].items():
         sender_port = a_port if side == "a" else b_port
-        out[SYNS][("a" if (side == "a") != swap else "b", seq, sender_port)] = ns
+        out[SYNS][("a" if (side == "a") != swap else "b", seq, sender_port)] = [list(e) for e in events]
+    out[SYNEV], out[SYNOVER] = rec[SYNEV], rec[SYNOVER]
+    out[BASES] = {basis}
     out[TUPLES] = 1
-    return (lo, hi, protocol, port if port is not None else -1, basis), out
+    return (lo, hi, protocol, port if port is not None else -1), out
 
 
 def tsv_cell(value):
@@ -788,6 +909,8 @@ def raw_time(raw):
 
 
 def main():
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
     try:
         args = json.load(sys.stdin)
     except ValueError as exc:
@@ -836,8 +959,9 @@ def main():
     if isinstance(cap, bool) or not isinstance(cap, int) or cap < 1:
         fail("max_memory_tuples must be a positive integer")
 
-    spill_dir = out_dir if out_dir else (os.environ["OUT"] if in_job() else None)
+    spill_dir = out_dir if out_dir else (os.path.join(os.environ["OUT"], "tool-output") if in_job() else None)
     spill = Spill(spill_dir)
+    CLEANUP.append(spill.close)       # on every way out: a refused run, a cut-off capture, a signal
     state = {"packets": 0}
     info = Info()
     tuples = Table("tuples", cap, spill, merge_record, lambda r: r[BO], encode_record, decode_record)
@@ -934,9 +1058,7 @@ def main():
                         if flags & 0x12 == 0x02:
                             rec[SYNA if from_a else SYNB] += 1
                             if found["seq"] is not None:
-                                syn_key = ("a" if from_a else "b", found["seq"])
-                                have = rec[SYNS].get(syn_key)
-                                rec[SYNS][syn_key] = when if have is None else (have if when is None else min(have, when))
+                                add_syn(rec, ("a" if from_a else "b", found["seq"]), when)
                         elif flags & 0x12 == 0x12:
                             rec[SAA if from_a else SAB] += 1
                         if flags & 0x01:
@@ -958,6 +1080,8 @@ def main():
     rows_page = LosslessPage(conversations_name, top)
     talker_page = LosslessPage("top_talkers", top)
     port_page = LosslessPage("top_ports", top)
+    syn_page = LosslessPage("syn_times", 0)
+    syn_rows_cut = 0
     tsv_path = None
     tsv = None
     try:
@@ -983,6 +1107,13 @@ def main():
                         columns = list(row.keys())
                         tsv.write("\t".join(columns) + "\n")
                     tsv.write("\t".join(tsv_cell(row.get(c)) for c in columns) + "\n")
+                times = row.get("syn_times")
+                if times is not None and len(times) > SYN_INLINE:
+                    # the whole list of times goes to a file; the row inline shows the first SYN_INLINE and says how many it left out
+                    syn_rows_cut += 1
+                    syn_page.add({**{k: row[k] for k in ("a", "b", "a_port", "b_port", "protocol", "service_port", "service_port_basis") if k in row},
+                                  "syn_times": times})
+                    row = {**row, "syn_times": times[:SYN_INLINE], "syn_times_omitted": len(times) - SYN_INLINE}
                 rows_page.add(row)
             if tsv is not None and columns is None:
                 tsv.write("a\tb\tprotocol\n")
@@ -992,6 +1123,7 @@ def main():
                 port_page.add({"port": key[0], "packets": rec[0]})
             spilled = spilled_here() or talkers.spilled or ports.spilled
             pages = {conversations_name: rows_page.finish(), "top_talkers": talker_page.finish(), "top_ports": port_page.finish()}
+            syn_times_file = syn_page.finish().get("all_results") if syn_rows_cut else None
         finally:
             if tsv is not None:
                 tsv.close()
@@ -1022,6 +1154,13 @@ def main():
         notes.append("A classic pcap holds one interface and no drop counters: whether packets were lost before the file was written is not in it.")
     elif not info.stats:
         notes.append("No interface statistics block is in this pcapng, so the capturing interface's own drop counters are absent: that is not a count of zero.")
+    if "with_starts" in args:
+        notes.append("with_starts is the old name of with_syn_times; the times are SYN events, not connection starts.")
+    if syn_rows_cut:
+        notes.append("%d rows hold more than %d SYN times: the first %d are inline and the whole list is in syn_times_file%s."
+                     % (syn_rows_cut, SYN_INLINE, SYN_INLINE, " and in the TSV" if tsv_path else ""))
+    if any(i.get("epb_dropcount_total") for i in info.interfaces):
+        notes.append("Some packet blocks carry a drop count (epb_dropcount_total on the interface): packets the capturing interface dropped just before them.")
 
     shown_interfaces = [{k: v for k, v in row.items() if k != "digits"} for row in info.interfaces]
     agreeing = {(i["link_type_id"], i["snap_length"]) for i in info.interfaces}
@@ -1046,7 +1185,9 @@ def main():
         "last_packet": fmt_ns(last[0], digits) if last else None,
         "first_packet_raw": raw_time(first[1]) if first else None,
         "last_packet_raw": raw_time(last[1]) if last else None,
-        "duration_seconds": round((last[0] - first[0]) / 1e9, 6) if first and last else None,
+        "duration_ns": (last[0] - first[0]) if first and last else None,
+        "duration_seconds": ((last[0] - first[0]) / 1e9) if first and last else None,
+        "section_options": info.section_options,
         "bytes_original_total": totals["bo"],
         "bytes_captured_total": totals["bc"],
         "payload_bytes_captured_total": totals["payload"],
@@ -1058,7 +1199,9 @@ def main():
         "non_first_fragments": totals["nonfirst"],
         "undissected": {"packets": sum(undissected_by_link.values()), "by_link_type": dict(undissected_by_link)},
         "protocols": dict(by_protocol),
-        "filtered": ({"host": wanted_host, "port": only_port, "packets_matching": totals["matching"]}
+        "filtered": ({"host": wanted_host, "port": only_port, "packets_matching": totals["matching"],
+                      "applies_to": "the rows, top_talkers, top_ports, protocols and the SYN counts; NOT to packets, the times, bytes_*_total, the interfaces, "
+                                    "truncation, undissected or length_inconsistencies, which are for the whole capture"}
                      if wanted_host or only_port is not None else None),
         "grouping": grouping,
         "group_note": ("session is the old name for tuple: these rows are tuple aggregates, not TCP sessions"
@@ -1069,14 +1212,20 @@ def main():
         conversations_name + "_omitted": rows_page.total - len(rows_page.page),
         conversations_name + "_tsv": tsv_path,
         "top_talkers": talker_page.page,
+        "top_talkers_basis": "per address as the SOURCE of a packet: bytes_original and bytes_captured are what that address sent, not what it received",
         "top_ports": port_page.page,
+        "top_ports_basis": "per DESTINATION port of TCP and UDP packets, counted in packets",
+        "syn_times_file": syn_times_file,
+        "syn_window_seconds": SYN_WINDOW_NS // 1_000_000_000,
         "pages": pages,
         "spilled_to_disk": spilled,
         "max_memory_tuples": cap,
         "notes": notes,
         "note": "Rows are tuple aggregates (a sorted pair of address and port, plus protocol; an endpoint row is a pair of addresses and a "
                 "service port), not TCP sessions: a tuple used again later merges with its earlier use. syn_observations counts SYN-only "
-                "packets and syn_unique distinct (sender, sequence number) pairs; neither says a handshake completed. bytes_original sums "
+                "packets; syn_unique counts SYN events, a SYN sent again with the same sequence number within 120 seconds of the one before "
+                "it being folded into it (syn_folded counts those), and a row keeps at most 10,000 events (syn_events_not_kept; then "
+                "syn_unique is a lower bound); neither says a handshake completed. bytes_original sums "
                 "the original frame length each packet record declares (headers included, retransmissions included) and bytes_captured "
                 "the bytes kept; neither is application data delivered. Packet times come from the capturing machine, and nothing in the "
                 "file says whether that clock was right: an offset and its drift need several independent matched events and a stated "

@@ -23,15 +23,23 @@ What is written, and what is recorded about it:
   * Requested logs Zeek did not write (logs_requested_not_written) are kept apart from logs it wrote with no
     records (logs_empty). reporter.log, weird.log and capture_loss.log are summarised every time, whatever `logs`
     asks for: they are where an engine says it did not understand the input or lost packets.
-  * files.log: hash_fields names the hash columns the log has and hashes_produced says whether any record has a
-    value in one. An object shorter than 128 bytes has its hash left out of the inline records.
+  * files.log: hashes_produced says whether any record has a value in a hash column. hash_fields names the hash
+    columns the log has, which on a real install can exist whether or not an analyzer filled them, so it is not
+    the signal; which hash functions a policy computes is a property of the build. An object shorter than 128 bytes
+    has its hash left out of the inline records.
+  * Zeek runs in this tool's own process group, not a session of its own: the harness ends a tool by killing its
+    group, and an engine outside it would go on writing into the output directory. SIGTERM, SIGINT and SIGHUP kill
+    Zeek and what it started. timeout_seconds is held under the manifest's 1200 seconds (at most 1100) for the
+    same reason.
 
 SENSITIVE OUTPUT. Zeek logs can carry credentials, cookies, community strings and request URIs (http, ftp, smtp,
 ntlm, snmp, rdp and others, depending on the scripts loaded). The directory is private and the answer says to run
 the tool as a job with secret_output: true. In the INLINE records a field named like a secret (password, cookie,
-community, token ...) is withheld, a URL field loses its user-info, token-shaped path text and query values, a
-name field loses token-shaped text, and the argument of an FTP PASS is withheld. Zeek's own log files are kept
-whole: they are the evidence, and they are in the sealed directory.
+community, token ...) is withheld and so is the argument of an FTP PASS; a URL field loses its user-info,
+token-shaped path text and query values; and every other string, in any field and in any list, is scrubbed (a
+token-shaped run, a key, a JWT, user-info, a Basic or Bearer credential is withheld) except the fields that are
+identifiers, hashes, fingerprints, addresses or times. That is by shape: a short secret in free text is not
+recognised. Zeek's own log files are kept whole: they are the evidence, and they are in the sealed directory.
 """
 import datetime
 import errno
@@ -43,11 +51,13 @@ import shutil
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
-TOOL = {"name": "zeek_run", "version": 3}
-PARSER = "zeek_run/3"
+TOOL = {"name": "zeek_run", "version": 4}
+PARSER = "zeek_run/4"
 DEFAULT_TIMEOUT = 900
+MAX_TIMEOUT = 1100            # the manifest's outer limit is 1200
 DEFAULT_POLICIES = ["policy/frameworks/files/hash-all-files"]
 SCRIPT_NAME = "network-forensics.local.zeek"
 MAX_LINE = 16 << 20            # a log line longer than this is located, not read
@@ -56,7 +66,6 @@ DIAGNOSTIC_LOGS = ("reporter", "weird", "capture_loss")
 HASH_FIELDS = ("md5", "sha1", "sha256")
 SECRET_FIELD = re.compile(r"(?i)(^|[._])(pass(word|wd)?|pwd|secret|token|cookie|community|credentials?|authorization|api_?key|session_?id)($|[._])")
 URL_FIELD = re.compile(r"(?i)^(uri|url|full_url|referr?er|origin|post_uri)$")
-NAME_FIELD = re.compile(r"(?i)^(filename|name|fname|extracted|client_header_names|server_header_names)$")
 MAX_NAMES = 10_000
 
 # BEGIN SHARED WITHHOLDING
@@ -64,12 +73,18 @@ MAX_NAMES = 10_000
 # the same strings; tests/pack-network-withholding.test.ts holds the copies equal. An identifier-shaped string is
 # withheld wherever the tool would print one: a name, a path component, a URL, a message that quotes either.
 COUNTS = {"names": 0, "urls": 0, "text": 0}
-_RUN = re.compile(r"[A-Za-z0-9_+=-]{20,}")
+# A run of name characters long enough to be a token. `=` is only a padding at the end (so a key= prefix stays);
+# `/` joins pieces of a base64 token and is handled apart, below.
+_RUN = re.compile(r"[A-Za-z0-9_+%-]{20,}={0,2}|[A-Za-z0-9_+%-]{14,}={2}")
+_SLASHED = re.compile(r"[A-Za-z0-9_+/%-]{30,}={0,2}")
 _HEX = re.compile(r"[0-9a-fA-F]{32,}")
 _PREFIXED = re.compile(r"(?:AKIA|ASIA)[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}"
                        r"|xox[abeprs]-[A-Za-z0-9-]{10,}|sk-[A-Za-z0-9_-]{20,}"
-                       r"|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*")
-_USERINFO = re.compile(r"(?<=://)[^/?#\s@]+(?=@)")
+                       r"|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*"
+                       r"|(?i:basic|bearer)\s+[A-Za-z0-9+/=._~-]{8,}")
+# User-info: after `//` (a URL, or a scheme-relative one), or bare as name:password@host. A mailto: address is not one.
+_USERINFO = re.compile(r"(?<=//)[^/?#\s@]+(?=@)")
+_BARE_USERINFO = re.compile(r"(?<![\w.%+:/-])(?!mailto:)[\w.%+-]{1,64}:[^\s/@:]{1,128}(?=@[\w\[])")
 
 
 def _withheld(what, length, kind):
@@ -96,9 +111,20 @@ def _token_run(run):
     case_flips = sum(1 for a, b in zip(letters, letters[1:]) if a.islower() != b.islower())
     if len(letters) >= 20 and case_flips >= max(8, 0.4 * len(letters)):
         return True
+    if run.endswith("==") and len(run) >= 16:
+        return True
     if run.endswith("=") and len(run) >= 24:
         return True
     return len(run) >= 40 and run.isalnum() and any(c.isdigit() for c in run) and any(c.isalpha() for c in run)
+
+
+def _randomish(piece):
+    """A piece of a path that is not a plain word: digits among letters, or capitals inside a word."""
+    if len(piece) < 4 or "." in piece or re.fullmatch(r"[A-Z][a-z]+", piece):
+        return False
+    letters = [c for c in piece if c.isalpha()]
+    mixed = any(c.islower() for c in letters) and any(c.isupper() for c in letters)
+    return (any(c.isdigit() for c in piece) and bool(letters)) or mixed
 
 
 def token_spans(text):
@@ -106,9 +132,28 @@ def token_spans(text):
     for m in _RUN.finditer(text):
         if _token_run(m.group()):
             spans.append(m.span())
-    spans.sort()
-    merged = []
+    # A base64 token holds `/`: pieces too short to be one alone (an AWS-style secret has two) are caught as a whole.
+    for m in _SLASHED.finditer(text):
+        run = m.group()
+        if "/" in run and sum(1 for p in run.split("/") if _randomish(p)) >= 3 and re.search(r"[0-9+]", run):
+            spans.append(m.span())
+    # A flagged piece takes the random-looking pieces next to it across a `/`: the head of a token is not printed.
+    grown = []
     for start, end in spans:
+        while start > 1 and text[start - 1] == "/":
+            m = re.search(r"[A-Za-z0-9_+%-]+$", text[:start - 1])
+            if not m or not _randomish(m.group()):
+                break
+            start = m.start()
+        while end < len(text) - 1 and text[end] == "/":
+            m = re.match(r"[A-Za-z0-9_+%-]+={0,2}", text[end + 1:])
+            if not m or not _randomish(m.group()):
+                break
+            end = end + 1 + m.end()
+        grown.append((start, end))
+    grown.sort()
+    merged = []
+    for start, end in grown:
         if merged and start <= merged[-1][1]:
             merged[-1] = (merged[-1][0], max(merged[-1][1], end))
         else:
@@ -121,8 +166,9 @@ def token_shaped(text):
 
 
 def scrub(text, kind="text"):
-    """The text with every token-shaped run and every URL's user-info withheld."""
+    """The text with every token-shaped run and every user-info withheld."""
     text = _USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
+    text = _BARE_USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
     out, last = [], 0
     for start, end in token_spans(text):
         out.append(text[last:start])
@@ -137,13 +183,13 @@ def redact_url(url):
     rest, fragment = (url.split("#", 1) + [None])[:2]
     rest, query = (rest.split("?", 1) + [None])[:2]
     scheme = authority = ""
-    m = re.match(r"^([A-Za-z][A-Za-z0-9+.-]*://)([^/]*)(.*)$", rest, re.S)
+    m = re.match(r"^((?:[A-Za-z][A-Za-z0-9+.-]*:)?//)([^/]*)(.*)$", rest, re.S)
     if m:
         scheme, authority, rest = m.group(1), m.group(2), m.group(3)
         if "@" in authority:
             userinfo, authority = authority.rsplit("@", 1)
             authority = _withheld("userinfo", len(userinfo), "urls") + "@" + authority
-    out = scheme + authority + "/".join(scrub(s, "urls") for s in rest.split("/"))
+    out = scheme + authority + scrub(rest, "urls")
     if query is not None:
         pairs = []
         for pair in query.split("&"):
@@ -219,55 +265,147 @@ def resolve_output(out, what="output"):
     return str(dest.relative_to(root))
 
 
-ACTIVE = []
+# BEGIN SHARED PROCESS
+# The same text is in pcap_extract, zeek_run, suricata_run and the network-capture recipe; tests/pack-network-process.test.ts
+# holds the copies equal. A program an engine tool runs is started in THIS tool's process group, never in a session of
+# its own: the harness ends a tool that runs too long, or is aborted, by killing the tool's group (process.kill(-pid,
+# SIGKILL)), and an engine in a group of its own goes on writing into the output directory after the tool is gone. On
+# Linux the kernel is also asked to kill it if the tool dies. A deadline kills the program and what it started by
+# walking the process tree, and SIGTERM, SIGINT and SIGHUP do the same and then give the tool a last word.
+try:
+    import ctypes
+except ImportError:  # pragma: no cover
+    ctypes = None
 
+STATE = {"last_word": None}    # what to do, with the signal number, when the tool is stopped by a signal
+ACTIVE = []                    # the programs running now
 
-def kill_group(proc):
-    """Kill the process and everything it started."""
+def _die_with_parent():  # runs in the child between fork and exec
     try:
-        os.killpg(proc.pid, signal.SIGKILL)
-    except (ProcessLookupError, PermissionError, OSError):
+        ctypes.CDLL(None).prctl(1, signal.SIGKILL)   # PR_SET_PDEATHSIG
+    except Exception:  # noqa: BLE001
         pass
+
+
+def spawn(argv, **kwargs):
+    kwargs.setdefault("stdin", subprocess.DEVNULL)
+    if sys.platform.startswith("linux") and ctypes is not None:
+        kwargs["preexec_fn"] = _die_with_parent
+    return subprocess.Popen(argv, **kwargs)
+
+
+def descendants(pid):
+    """Every process below `pid`, from /proc where there is one, else from ps."""
+    kids = {}
+    try:
+        if os.path.isdir("/proc/self"):
+            for entry in os.listdir("/proc"):
+                if entry.isdigit():
+                    try:
+                        with open("/proc/%s/stat" % entry, "rb") as fh:
+                            fields = fh.read().rsplit(b")", 1)[1].split()
+                        kids.setdefault(int(fields[1]), []).append(int(entry))
+                    except (OSError, IndexError, ValueError):
+                        continue
+        else:
+            out = subprocess.run(["ps", "-A", "-o", "pid=,ppid="], capture_output=True, text=True, timeout=10).stdout
+            for line in out.splitlines():
+                parts = line.split()
+                if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                    kids.setdefault(int(parts[1]), []).append(int(parts[0]))
+    except (OSError, subprocess.SubprocessError):
+        return []
+    found, stack = [], [pid]
+    while stack:
+        for child in kids.get(stack.pop(), []):
+            found.append(child)
+            stack.append(child)
+    return found
+
+
+def kill_tree(proc):
+    """Kill the program and everything it started. The children are listed first: once the parent is gone they are
+    adopted by init and can no longer be found below it."""
+    victims = descendants(proc.pid)
     try:
         proc.kill()
     except OSError:
         pass
+    for pid in victims:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
 
 
-def _on_term(signum, _frame):
+def _on_signal(signum, _frame):
     for proc in list(ACTIVE):
-        kill_group(proc)
+        kill_tree(proc)
+    last_word = STATE.get("last_word")
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
     os._exit(128 + signum)
 
 
 def preflight(argv, seconds):
-    """Run a short program, bounded; (exit code or None, stdout bytes, stderr bytes)."""
+    """Run a short program, bounded; (exit code or None, stdout bytes, stderr bytes, timed out)."""
     try:
-        proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+        proc = spawn(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except OSError as exc:
-        return None, b"", describe(exc).encode("utf-8", "replace")
+        return None, b"", describe(exc).encode("utf-8", "replace"), False
     ACTIVE.append(proc)
     try:
-        out, err = proc.communicate(timeout=seconds)
-        return proc.returncode, out, err
+        out, err = proc.communicate(timeout=max(1.0, seconds))
+        return proc.returncode, out, err, False
     except subprocess.TimeoutExpired:
-        kill_group(proc)
+        kill_tree(proc)
         out, err = proc.communicate()
-        return None, out, err
+        return None, out, err, True
     finally:
         ACTIVE.remove(proc)
 
 
+def run_to_files(argv, stdout_path, stderr_path, seconds, cwd=None):
+    """One program with its output in files, killed with what it started at `seconds`. (exit code, timed out)."""
+    with open(stdout_path, "wb") as stdout, open(stderr_path, "wb") as stderr:
+        proc = spawn(argv, stdout=stdout, stderr=stderr, cwd=cwd)
+        ACTIVE.append(proc)
+        try:
+            return proc.wait(timeout=max(0.1, seconds)), False
+        except subprocess.TimeoutExpired:
+            kill_tree(proc)
+            proc.wait()
+            return None, True
+        finally:
+            ACTIVE.remove(proc)
+
+
+def install_signal_handlers():
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+# END SHARED PROCESS
+
+
 def epoch_to_iso(text):
-    """A Zeek time (seconds since the epoch, with a fraction of up to nine digits) as ISO 8601 UTC, the digits kept."""
-    m = re.fullmatch(r"(-?\d{1,12})(?:\.(\d{1,9}))?", text.strip())
+    """A Zeek time (seconds since the epoch, with a fraction of up to nine digits) as ISO 8601 UTC, the digits kept.
+    Done on integer nanoseconds, so a time before 1970 with a fraction is the instant it names."""
+    m = re.fullmatch(r"(-?)(\d{1,12})(?:\.(\d{1,9}))?", text.strip())
     if not m:
         return ""
+    sign, whole, frac = m.group(1), int(m.group(2)), m.group(3) or ""
+    total = whole * 1_000_000_000 + int((frac + "000000000")[:9])
+    if sign:
+        total = -total
+    seconds, rest = divmod(total, 1_000_000_000)
     try:
-        stamp = datetime.datetime.fromtimestamp(int(m.group(1)), tz=datetime.timezone.utc)
+        stamp = datetime.datetime.fromtimestamp(seconds, tz=datetime.timezone.utc)
     except (OverflowError, OSError, ValueError):
         return ""
-    return stamp.strftime("%Y-%m-%dT%H:%M:%S") + ("." + m.group(2) if m.group(2) else "") + "Z"
+    digits = ("%09d" % rest)[:len(frac)] if frac else ""
+    return stamp.strftime("%Y-%m-%dT%H:%M:%S") + ("." + digits if digits else "") + "Z"
 
 
 def unescape(text):
@@ -283,6 +421,12 @@ class BadValue(Exception):
     pass
 
 
+INTEGER = re.compile(r"-?[0-9]+")
+COUNT = re.compile(r"[0-9]+")
+DECIMAL = re.compile(r"-?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?|-?inf|nan")
+TIME = re.compile(r"-?[0-9]+(?:\.[0-9]{1,9})?")
+
+
 def convert(value, typ, set_separator, empty, unset):
     if value == unset:
         return None
@@ -294,13 +438,24 @@ def convert(value, typ, set_separator, empty, unset):
     if value == empty and typ == "string":
         return ""
     text = unescape(value)
-    try:
-        if typ in ("count", "int", "port"):
-            return int(text)
-        if typ in ("double", "interval"):
-            return float(text)
-    except ValueError:
-        raise BadValue("the value is not a %s" % typ)
+    if typ in ("count", "port"):
+        if not COUNT.fullmatch(text):
+            raise BadValue("the value is not a %s" % typ)
+        return int(text)
+    if typ == "int":
+        if not INTEGER.fullmatch(text):
+            raise BadValue("the value is not an int")
+        return int(text)
+    if typ in ("double", "interval"):
+        if not DECIMAL.fullmatch(text):
+            raise BadValue("the value is not %s %s" % ("an" if typ == "interval" else "a", typ))
+        number = float(text)
+        # NaN and infinity are not JSON numbers: they stay the text Zeek wrote
+        return number if number == number and number not in (float("inf"), float("-inf")) else text
+    if typ == "time":
+        if not TIME.fullmatch(text):
+            raise BadValue("the value is not a time")
+        return text
     if typ == "bool":
         if text not in ("T", "F"):
             raise BadValue("the value is not T or F")
@@ -322,7 +477,8 @@ class LogReader:
         self.malformed_total = 0
         self.header_problem = None
         self.lines = 0
-        self.escapes = 0
+        self.hash_keys = set()
+        self.times_not_decoded = 0
         self._bad = None
 
     def _flag(self, line_no, offset, why, raw=None):
@@ -373,10 +529,12 @@ class LogReader:
                         elif key == "#unset_field" and rest:
                             unset = unescape(rest[0])
                         elif key == "#fields":
-                            self.fields, self.types = rest, None
+                            self.fields, self.types, self.header_problem = rest, None, None
                             self.format = self.format or "tsv"
+                            self.hash_keys.update(h for h in HASH_FIELDS if h in rest)
                         elif key == "#types":
                             self.types = rest
+                            self.header_problem = None
                             if self.fields is not None and len(rest) != len(self.fields):
                                 self.header_problem = "the header has %d fields and %d types" % (len(self.fields), len(rest))
                     continue
@@ -398,8 +556,11 @@ class LogReader:
                     if not isinstance(record, dict):
                         self._flag(self.lines, start, "a JSON value that is not an object", raw=line)
                         continue
-                    if isinstance(record.get("ts"), (int, float)) and "e" not in repr(record["ts"]):
+                    self.hash_keys.update(h for h in HASH_FIELDS if h in record)
+                    if isinstance(record.get("ts"), (int, float)) and not isinstance(record.get("ts"), bool) and "e" not in repr(record["ts"]):
                         record["ts_utc"] = epoch_to_iso(repr(record["ts"]))
+                        if not record["ts_utc"]:
+                            self.times_not_decoded += 1
                 else:
                     cols = line.split(separator)
                     if self.header_problem:
@@ -415,6 +576,8 @@ class LogReader:
                             record[name] = convert(value, typ, set_separator, empty, unset)
                             if typ == "time" and value != unset:
                                 record[name + "_utc"] = epoch_to_iso(value)
+                                if not record[name + "_utc"]:
+                                    self.times_not_decoded += 1
                     except BadValue as exc:
                         self._flag(self.lines, start, "field %s: %s" % (name, exc), raw=line)
                         continue
@@ -432,8 +595,28 @@ def withheld_text(length):
     return "<withheld %d characters>" % length
 
 
+# A string that is an identifier, a hash, a fingerprint, an address or a time stays as written; every other string is
+# scrubbed, since a record's free text (a notice's msg, a weird's addl, a file name, a header) can quote anything.
+KEEP_FIELD = re.compile(r"(?i)^(ts|uid|fuid|uids|fuids|conn_uids|md5|sha1|sha256|ja3s?|ja4[a-z0-9_]*|hassh[a-z0-9_]*|community_id|proto|service|conn_state|"
+                        r"history|level|id\.(orig|resp)_[hp]|[a-z_]*_h|[a-z_]*_p|[a-z_]*_utc)$")
+
+
+def _scrub_value(value, withheld):
+    if isinstance(value, str):
+        if re.search(r"://|^//", value) or (value.startswith("/") and "?" in value):
+            shown = redact_url(value)
+            withheld["urls"] += 1 if shown != value else 0
+        else:
+            shown = scrub(value)
+            withheld["text"] += 1 if shown != value else 0
+        return shown
+    if isinstance(value, list):
+        return [_scrub_value(v, withheld) for v in value]
+    return value
+
+
 def inline_copy(stem, record, withheld):
-    """The record as it may be returned inline: secret-named fields withheld, URLs and names scrubbed."""
+    """The record as it may be returned inline: secret-named fields withheld, every other string scrubbed, URLs redacted."""
     out = {}
     pass_command = isinstance(record.get("command"), str) and record["command"].upper() == "PASS"
     short = None
@@ -452,18 +635,16 @@ def inline_copy(stem, record, withheld):
         elif URL_FIELD.match(key) and isinstance(value, str):
             out[key] = redact_url(value)
             withheld["urls"] += 1
-        elif NAME_FIELD.match(key) and isinstance(value, str):
-            shown = scrub(value)
-            withheld["names"] += 1 if shown != value else 0
-            out[key] = shown
-        elif NAME_FIELD.match(key) and isinstance(value, list):
-            out[key] = [scrub(v) if isinstance(v, str) else v for v in value]
-        else:
+        elif KEEP_FIELD.match(key):
             out[key] = value
+        else:
+            out[key] = _scrub_value(value, withheld)
     return out
 
 
 def main():
+    started = time.monotonic()
+    install_signal_handlers()
     try:
         args = json.load(sys.stdin)
     except ValueError as exc:
@@ -488,8 +669,9 @@ def main():
     if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
         fail("limit must be a positive integer")
     timeout = args.get("timeout_seconds", DEFAULT_TIMEOUT)
-    if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout < 10:
-        fail("timeout_seconds must be an integer of at least 10")
+    if not isinstance(timeout, int) or isinstance(timeout, bool) or not 10 <= timeout <= MAX_TIMEOUT:
+        fail("timeout_seconds must be an integer from 10 to %d: kept under the 1200-second limit so that this tool stops Zeek itself and the "
+             "limit never has to" % MAX_TIMEOUT)
     wanted_arg = args.get("logs")
     if wanted_arg is not None and (not isinstance(wanted_arg, list) or any(not isinstance(n, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", n) for n in wanted_arg)):
         fail("logs must be a list of log names such as [\"conn\", \"dns\"]")
@@ -515,7 +697,7 @@ def main():
              note="Without it, pcap_summary still answers the first questions about a "
                   "capture. Say in the report which route was taken.")
     os.umask(0o077)
-    version_code, version_out, version_err = preflight([binary, "--version"], 30)
+    version_code, version_out, version_err, version_timed_out = preflight([binary, "--version"], min(30, timeout))
     version_text = (version_out + version_err).decode("utf-8", "replace").strip().splitlines()
     zeek_version = version_text[0].strip() if version_code == 0 and version_text else None
 
@@ -543,23 +725,14 @@ def main():
         argv.append(os.path.abspath(script_path))
     stdout_path = os.path.join(out_dir, "zeek.stdout")
     stderr_path = os.path.join(out_dir, "zeek.stderr")
-    signal.signal(signal.SIGTERM, _on_term)
     try:
-        with open(stdout_path, "wb") as stdout, open(stderr_path, "wb") as stderr:
-            proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr, cwd=out_dir, start_new_session=True)
-            ACTIVE.append(proc)
-            try:
-                code = proc.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                kill_group(proc)
-                proc.wait()
-                partial = sorted(n[:-4] for n in os.listdir(out_dir) if n.endswith(".log"))
-                fail("zeek did not finish in time and was killed with everything it had started", after_seconds=timeout, command=argv,
-                     partial_output=out_dir, logs_written_so_far=partial, stdout=stdout_path, stderr=stderr_path)
-            finally:
-                ACTIVE.remove(proc)
+        code, timed_out = run_to_files(argv, stdout_path, stderr_path, timeout - (time.monotonic() - started), cwd=out_dir)
     except OSError as exc:
         fail("zeek could not be run (%s)" % describe(exc), command=argv)
+    if timed_out:
+        partial = sorted(n[:-4] for n in os.listdir(out_dir) if n.endswith(".log"))
+        fail("zeek did not finish in time and was killed with everything it had started", after_seconds=timeout, command=argv,
+             partial_output=out_dir, logs_written_so_far=partial, stdout=stdout_path, stderr=stderr_path)
 
     written = sorted(n for n in os.listdir(out_dir) if n.endswith(".log"))
     if not written:
@@ -570,7 +743,7 @@ def main():
         except OSError:
             pass
 
-    withheld = {"fields": 0, "urls": 0, "names": 0, "short_hashes": 0}
+    withheld = {"fields": 0, "urls": 0, "text": 0, "short_hashes": 0}
     diagnostics = {"reporter": {"records": 0, "levels": {}, "first_messages": []},
                    "weird": {"records": 0, "by_name": {}, "names_over_cap": 0},
                    "capture_loss": {"records": 0, "gaps": 0, "acks": 0, "max_percent_lost": None}}
@@ -609,6 +782,7 @@ def main():
     logs, problems, malformed, malformed_files, empty = {}, [], [], {}, []
     hash_fields = []
     total_malformed = 0
+    times_not_decoded = 0
     for name in written:
         stem = name[:-4]
         log_path = os.path.join(out_dir, name)
@@ -619,8 +793,9 @@ def main():
         except OSError as exc:
             problems.append({"log": stem, "why": describe(exc)})
             continue
-        if stem == "files" and reader.fields:
-            hash_fields = [h for h in HASH_FIELDS if h in reader.fields]
+        if stem == "files":
+            hash_fields = [h for h in HASH_FIELDS if h in reader.hash_keys]
+        times_not_decoded += reader.times_not_decoded
         total_malformed += reader.malformed_total
         if reader.malformed_total:
             malformed.extend(reader.malformed)
@@ -635,6 +810,9 @@ def main():
                           **({"header_problem": reader.header_problem} if reader.header_problem else {})}
     not_written = sorted(n for n in wanted if n + ".log" not in written)
     hashes_produced = files["records_with_a_hash"] > 0
+    if zeek_version is None:
+        problems.append({"why": "`zeek --version` %s, so the version of the engine that wrote these logs is not recorded" %
+                         ("did not finish" if version_timed_out else "exited %s" % version_code)})
     ok = code == 0 and not problems and not total_malformed
     answer = {
         "tool": TOOL, "parser": PARSER,
@@ -660,19 +838,24 @@ def main():
         "malformed_files": malformed_files,
         "hashes_produced": hashes_produced,
         "hash_fields": hash_fields,
+        "hash_note": ("hash_fields are the hash columns files.log has or its JSON records use; on a real install the columns can exist whether or not "
+                      "any analyzer filled them, so only hashes_produced (a record with a value) says a hash exists, and which hash functions the "
+                      "loaded policy computes is a property of the build"),
+        "times_not_decoded": times_not_decoded,
         "files_log": {"written": "files.log" in written, "records": files["records"], "records_with_a_hash": files["records_with_a_hash"]},
         "engine_diagnostics": {**diagnostics,
                                "capture_loss_note": None if "capture_loss.log" in written else
                                "capture_loss.log was not written: Zeek writes it only when its capture-loss policy is loaded, so its absence says nothing about loss"},
-        "withheld": {**withheld, **COUNTS},
+        "withheld": {"inline_records": withheld, "shared_block": dict(COUNTS)},
         "stdout": stdout_path,
         "stderr": stderr_path,
         "ok": ok,
         "out_dir_contains_secret_values": True,
         "out_dir_note": ("Zeek's logs can carry credentials, cookies, community strings and request URIs, depending on the scripts loaded. The "
                          "directory is private (mode 0700, files 0600). Run this tool as a job with secret_output: true so the job output is "
-                         "sealed. Inline records withhold secret-named fields, URL user-info, token-shaped text and the hash of an object under "
-                         "128 bytes; the log files themselves are whole."),
+                         "sealed. Inline records withhold secret-named fields and the hash of an object under 128 bytes, redact URLs, and scrub "
+                         "every other string except identifiers, hashes, fingerprints, addresses and times (by shape: a short secret in free "
+                         "text is not recognised); the log files themselves are whole."),
         "note": ("Each complete log is kept and named in its entry; inline records are bounded by limit, and omitted says how many were not returned. "
                  "conn.log's orig_bytes and resp_bytes count what Zeek saw each way for a connection as Zeek defines it (a connection with no "
                  "handshake, a UDP flow and a resumed one are all conn.log rows), not application data delivered. A hash in files.log exists only "

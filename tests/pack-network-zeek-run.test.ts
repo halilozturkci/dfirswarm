@@ -15,7 +15,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { ZEEK, asJob, body, everythingUnder, exists, filesUnder, put, refused, stub, tool, withCwd } from "./pack-network-harness.ts";
+import { ZEEK, asJob, body, everythingUnder, exists, filesUnder, gone, pidFile, put, refused, startDetached, stub, tool, withCwd } from "./pack-network-harness.ts";
 import type { Json } from "./pack-network-harness.ts";
 
 const sha = (b: Buffer | string): string => createHash("sha256").update(b).digest("hex");
@@ -24,17 +24,18 @@ const ZEEK_STUB = `#!/bin/sh
 printf '%s\\n' "$*" >> "$STUB_LOG"
 for a in "$@"; do
   case "$a" in
-    --version) printf 'zeek version 8.0.10-stand-in\\n'; exit 0;;
+    --version) [ -f "$STUB_DIR/version-fail" ] && { echo "zeek: version failed on request" >&2; exit 3; }; printf 'zeek version 8.0.10-stand-in\\n'; exit 0;;
   esac
 done
-[ -f "$STUB_DIR/sleep" ] && { sleep 60 & echo $! > "$STUB_DIR/child.pid"; echo started > "$STUB_DIR/started"; wait; }
+[ -f "$STUB_DIR/sleep" ] && { echo $$ > "$STUB_DIR/engine.pid"; sleep 60 & echo $! > "$STUB_DIR/child.pid"; echo started > "$STUB_DIR/started"; wait; }
+[ -f "$STUB_DIR/version-fail" ] && case "$*" in *--version*) echo "zeek: version failed on request" >&2; exit 3;; esac
 [ -d "$STUB_DIR/logs" ] && cp -R "$STUB_DIR/logs/." .
 [ -f "$STUB_DIR/stderr" ] && cat "$STUB_DIR/stderr" >&2
 if [ -f "$STUB_DIR/exit" ]; then exit "$(cat "$STUB_DIR/exit")"; fi
 exit 0
 `;
 
-async function stage(cwd: string, bin: string, logs: Record<string, string>, o: { exit?: number; sleep?: boolean; stderr?: string } = {}): Promise<string> {
+async function stage(cwd: string, bin: string, logs: Record<string, string>, o: { exit?: number; sleep?: boolean; stderr?: string; versionFail?: boolean } = {}): Promise<string> {
   const dir = join(cwd, "stub");
   await rm(dir, { recursive: true, force: true });
   await mkdir(join(dir, "logs"), { recursive: true });
@@ -42,6 +43,7 @@ async function stage(cwd: string, bin: string, logs: Record<string, string>, o: 
   for (const [name, text] of Object.entries(logs)) await writeFile(join(dir, "logs", name), text);
   if (o.exit !== undefined) await writeFile(join(dir, "exit"), String(o.exit));
   if (o.sleep) await writeFile(join(dir, "sleep"), "1");
+  if (o.versionFail) await writeFile(join(dir, "version-fail"), "1");
   if (o.stderr) await writeFile(join(dir, "stderr"), o.stderr);
   await writeFile(join(cwd, "zeek-calls.txt"), "");
   return dir;
@@ -116,7 +118,7 @@ test("files.log without a hash column is said so; with one, the hashes are count
     assert.match(second.sha256, /shorter than 128 bytes/);
     assert.match(second.md5, /shorter than 128 bytes/);
     assert.doesNotMatch(JSON.stringify(out), /6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b/);
-    assert.equal(out.withheld.short_hashes, 3);
+    assert.equal(out.withheld.inline_records.short_hashes, 3);
     // Zeek's own log is whole.
     assert.match(await readFile(join(cwd, "work/z/files.log"), "utf8"), /6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b/);
   });
@@ -291,7 +293,7 @@ test("inline records withhold secret-named fields, URL user-info and query value
     assert.equal(((await stat(join(cwd, "out/z/zeek.stderr"))).mode & 0o777).toString(8), "600");
     assert.equal(out.out_dir_contains_secret_values, true);
     assert.match(out.out_dir_note, /secret_output: true/);
-    assert.ok(out.withheld.fields >= 3);
+    assert.ok(out.withheld.inline_records.fields >= 3);
   });
 });
 
@@ -338,5 +340,126 @@ test("in a job out_dir must be under $OUT, and a second run into the same direct
     const again = refused(await asJob(ZEEK, cwd, { path: await capture(cwd), out_dir: "out/z" }, bin, env(cwd)));
     assert.match(again.error, /already holds files/);
     assert.deepEqual((await filesUnder(join(cwd, "out/z"))).filter((f) => f.endsWith(".tmp")), []);
+  });
+});
+
+test("free text in any field is scrubbed inline: a URL in a notice's msg, a token in weird's addl, a JWT in a file-name list, a user agent; identifiers, hashes and times stay", async () => {
+  await withCwd(async (cwd, bin) => {
+    const JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r";
+    const TOK = "Zk9mQ2xW7vB3nL8pR4tY6wD1sFgHjK";
+    const notice = tsvLog("notice", ["ts", "uid", "note", "msg", "sub"], ["time", "string", "string", "string", "string"], [
+      ["1700000000.1", "CYWJAH2BG8ssSd3Mpk", "HTTP::Basic_Auth", `request to http://alice:Sup3rS3cret@10.0.0.1/admin?token=${TOK}`, "-"],
+    ]);
+    const weird = tsvLog("weird", ["ts", "name", "addl"], ["time", "string", "string"], [["1700000000.2", "bad_request", `/x?session=${TOK}`]]);
+    const http = tsvLog("http", ["ts", "uid", "user_agent", "orig_filenames", "resp_filenames"], ["time", "string", "string", "vector[string]", "vector[string]"], [
+      ["1700000000.3", "C1", `agent/1.0 key=${TOK}`, `${JWT},report.pdf`, "-"],
+    ]);
+    const files = tsvLog("files", [...FILES_FIELDS, "sha256"], [...FILES_TYPES, "string"], [["1700000001.5", "FRnTpZ3Fp5vYbpNQP", "HTTP", "5000", "5000", "report.pdf", "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"]]);
+    await stage(cwd, bin, { "notice.log": notice, "weird.log": weird, "http.log": http, "files.log": files });
+    const result = await asJob(ZEEK, cwd, { path: await capture(cwd), out_dir: "out/z" }, bin, env(cwd));
+    const out = body(result);
+    for (const secret of ["Sup3rS3cret", TOK, JWT, "dBjftJeZ4CVPmB92K27uhbUJU1p1r"]) assert.equal(result.stdout.includes(secret), false, `${secret.slice(0, 12)} reached the answer`);
+    assert.match(out.logs.notice.records[0].msg, /^request to http:\/\/<userinfo withheld \d+ characters>@10\.0\.0\.1\/admin\?token=<withheld \d+ characters>$/);
+    assert.equal(out.logs.http.records[0].orig_filenames[1], "report.pdf", "an ordinary name in the same list is left alone");
+    assert.match(out.logs.http.records[0].orig_filenames[0], /^<token-shaped text withheld \d+ characters>$/);
+    assert.match(out.logs.http.records[0].user_agent, /^agent\/1\.0 key=<token-shaped text withheld 30 characters>$/);
+    // Identifiers, hashes and times are not touched.
+    assert.equal(out.logs.http.records[0].uid, "C1");
+    assert.equal(out.logs.files.records[0].sha256, "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b");
+    assert.equal(out.logs.http.records[0].ts_utc, "2023-11-14T22:13:20.3Z");
+    // The counters of the inline copy and of the shared block are not one dictionary overwriting the other.
+    assert.ok(out.withheld.inline_records.text >= 2 && out.withheld.inline_records.urls >= 2, JSON.stringify(out.withheld));
+    assert.ok(out.withheld.shared_block.text >= 2 && out.withheld.shared_block.urls >= 2, "the shared block's counters are kept apart from the inline ones");
+    // Zeek's own log is whole.
+    assert.match(await readFile(join(cwd, "out/z/notice.log"), "utf8"), /Sup3rS3cret/);
+  });
+});
+
+test("the harness ends a tool by killing its process group, and that ends Zeek and what Zeek started; SIGINT and SIGHUP do the same", async () => {
+  for (const how of ["group", "SIGINT", "SIGHUP"] as const) {
+    await withCwd(async (cwd, bin) => {
+      const dir = await stage(cwd, bin, { "conn.log": tsvLog("conn", CONN_FIELDS, CONN_TYPES, [CONN_ROW]) }, { sleep: true });
+      const run = startDetached(ZEEK, cwd, { path: await capture(cwd), out_dir: "work/z" }, env(cwd), bin);
+      let engine = 0, child = 0;
+      try {
+        engine = await pidFile(join(dir, "engine.pid"));
+        child = await pidFile(join(dir, "child.pid"));
+        if (how === "group") run.killGroup();
+        else run.signal(how);
+        await run.closed;
+        assert.equal(await gone(engine), true, `${how}: Zeek survived`);
+        assert.equal(await gone(child), true, `${how}: what Zeek started survived`);
+      } finally {
+        for (const pid of [engine, child]) try { process.kill(pid, "SIGKILL"); } catch { /* gone */ }
+      }
+    });
+  }
+});
+
+test("timeout_seconds is held under the manifest's limit", async () => {
+  await withCwd(async (cwd, bin) => {
+    await stage(cwd, bin, { "conn.log": tsvLog("conn", CONN_FIELDS, CONN_TYPES, [CONN_ROW]) });
+    for (const bad of [1101, 5000, 9]) {
+      const err = refused(await tool(ZEEK, cwd, { path: await capture(cwd), out_dir: "work/z", timeout_seconds: bad }, env(cwd), bin));
+      assert.match(err.error, /timeout_seconds must be an integer from 10 to 1100/, String(bad));
+    }
+    assert.equal(await exists(join(cwd, "work/z")), false);
+  });
+});
+
+test("the reader is strict about types: a time, a count or an interval that is not one is malformed, NaN and infinity stay text so the answer is valid JSON, and a time before 1970 is the instant it names", async () => {
+  await withCwd(async (cwd, bin) => {
+    const types = ["time", "string", "count", "interval", "int"];
+    const fields = ["ts", "uid", "n", "dur", "delta"];
+    const good = ["1700000000.123456", "C1", "7", "1.5", "-3"];
+    const rows = [
+      good,
+      ["notatime", "C2", "7", "1.5", "-3"],
+      ["1700000000.1", "C3", "1_000", "1.5", "-3"],
+      ["1700000000.1", "C4", " 7 ", "1.5", "-3"],
+      ["1700000000.1", "C5", "+7", "1.5", "-3"],
+      ["1700000000.1", "C6", "\u0667", "1.5", "-3"],
+      ["1700000000.1", "C7", "7", "1.5.2", "-3"],
+      ["1700000000.1", "C8", "7", "1.5", "+3"],
+      ["1700000000.1", "C9", "7", "nan", "-3"],
+      ["1700000000.1", "C10", "7", "inf", "-3"],
+      ["-1.500000", "C11", "7", "1.5", "-3"],
+      ["-0.25", "C12", "7", "1.5", "-3"],
+    ];
+    await stage(cwd, bin, { "x.log": tsvLog("x", fields, types, rows) });
+    const result = await tool(ZEEK, cwd, { path: await capture(cwd), out_dir: "work/z" }, env(cwd), bin);
+    assert.equal(result.code, 1);
+    const out = JSON.parse(result.stdout); // strict: NaN or Infinity would not parse
+    assert.equal(out.malformed_records, 7, JSON.stringify(out.malformed.map((m: Json) => m.why)));
+    const recs = Object.fromEntries(out.logs.x.records.map((r: Json) => [r.uid, r]));
+    assert.equal(recs.C9.dur, "nan");
+    assert.equal(recs.C10.dur, "inf");
+    assert.equal(recs.C11.ts_utc, "1969-12-31T23:59:58.500000Z");
+    assert.equal(recs.C12.ts_utc, "1969-12-31T23:59:59.75Z");
+    assert.equal(recs.C1.n, 7);
+  });
+});
+
+test("a header that was bad does not make the rows after the next good header malformed; a JSON files.log names its hash keys; a failing --version is a problem", async () => {
+  await withCwd(async (cwd, bin) => {
+    const bad = ["#separator \\x09", "#fields\tts\tuid", "#types\ttime", "1700000000.1\tC1", "#fields\tts\tuid", "#types\ttime\tstring", "1700000001.1\tC2", "1700000002.1\tC3", ""].join("\n");
+    const json = [JSON.stringify({ ts: 1700000000.5, fuid: "F1", md5: "d41d8cd98f00b204e9800998ecf8427e", total_bytes: 500, seen_bytes: 500 }), ""].join("\n");
+    await stage(cwd, bin, { "x.log": bad, "files.log": json });
+    const result = await tool(ZEEK, cwd, { path: await capture(cwd), out_dir: "work/z" }, env(cwd), bin);
+    const out = JSON.parse(result.stdout);
+    assert.equal(out.logs.x.total, 2, "the two rows under the good header were read");
+    assert.equal(out.malformed_records, 1, "only the row under the bad header is malformed");
+    assert.deepEqual(out.hash_fields, ["md5"]);
+    assert.equal(out.hashes_produced, true);
+    assert.match(out.hash_note, /only hashes_produced/);
+  });
+  await withCwd(async (cwd, bin) => {
+    await stage(cwd, bin, { "conn.log": tsvLog("conn", CONN_FIELDS, CONN_TYPES, [CONN_ROW]) }, { versionFail: true });
+    const result = await tool(ZEEK, cwd, { path: await capture(cwd), out_dir: "work/z" }, env(cwd), bin);
+    assert.equal(result.code, 1);
+    const out = JSON.parse(result.stdout);
+    assert.equal(out.zeek_version, null);
+    assert.equal(out.ok, false);
+    assert.match(JSON.stringify(out.problems), /--version/);
   });
 });

@@ -1,6 +1,6 @@
 {
   "name": "suricata_run",
-  "description": "Run a local Suricata rules file over a capture offline and record what ran: the engine's version (suricata --build-info, kept whole), the configuration with its SHA-256, the rules file's SHA-256, size and rule-line count, the checksum mode and the command. By default the tool writes an explicit suricata.yaml into out_dir (eve-log types by name with tls extended, the TLS fingerprint settings by key; nothing addressed by list position; everything it does not set is the engine's own default, not your distribution's suricata.yaml) or uses `config`, a local file of yours (never one from inputs/). The configuration is tested with `suricata -T` BEFORE the run; if that fails nothing is run and the diagnostic is returned whole. Rule-load numbers are read from Suricata's own output when it prints them (None is not zero) and a rule that failed to load fails the run. JA3/JA4 are three separate numbers: what the configuration asks for, the TLS events logged (the traffic that could carry a fingerprint) and the events that carry one; none is evidence about what the build supports. EVE lines that are not JSON, not objects or without an event_type are counted with their line numbers. eve.json is the whole result; inline alerts are bounded. An alert is a rule match, not a finding, and no ruleset ships with the pack. SENSITIVE: EVE can carry URLs, host names, SNI, DNS names and file names. The directory is private (0700/0600, Suricata's own files too); run it as a job with secret_output: true.",
+  "description": "Run a local Suricata rules file over a capture offline and record what ran: the engine's version (suricata --build-info, kept whole), the configuration with its SHA-256, the rules file's SHA-256, size and rule-line count, the checksum mode and the command. By default the tool writes an explicit suricata.yaml into out_dir (eve-log types by name with tls extended, the TLS fingerprint settings by key; nothing addressed by list position; everything it does not set is the engine's own default, not your distribution's suricata.yaml) also setting the variables rules are written against (HOME_NET from `home_net`, or the private ranges, and the usual address and port groups: this tool's assumptions, stated in the answer; a rule using another variable needs `config`), or uses `config`, a local file of yours. A config or a rules file from inputs/ is refused (both can name scripts and files the engine reads). The configuration is tested with `suricata -T` BEFORE the run; if that fails nothing is run and the diagnostic is returned whole. Rule-load numbers are read from Suricata's own output when it prints them (None is not zero, and then rule_load.known is false and nothing shows a rule loaded); a rule that failed to load, or none loaded from a file that has rule lines, fails the run. JA3/JA4 are three separate numbers: what the configuration asks for, the TLS events logged (the traffic that could carry a fingerprint) and the events that carry one; none is evidence about what the build supports. EVE lines that are not JSON, not objects or without an event_type are counted with their line numbers and make the run not ok; fingerprints found in events of another type are counted apart. A failing `suricata --build-info` makes the run not ok. The engine runs in the tool's own process group (the harness ending the tool ends Suricata; SIGTERM, SIGINT and SIGHUP kill it), and timeout_seconds is held under the manifest's limit. eve.json is the whole result; inline alerts are bounded. An alert is a rule match, not a finding, and no ruleset ships with the pack. SENSITIVE: EVE can carry URLs, host names, SNI, DNS names and file names. The directory is private (0700/0600, Suricata's own files too); run it as a job with secret_output: true.",
   "params": {
     "path": {
       "type": "string",
@@ -12,7 +12,7 @@
     },
     "out_dir": {
       "type": "string",
-      "description": "An empty directory under work/ (in a job, under $OUT) for eve.json, Suricata's logs, the configuration and the build information. It is private (0700, files 0600)"
+      "description": "An empty directory under work/ (in a job, under $OUT; work/<your agent id>/name is mapped to $OUT/name) for eve.json, Suricata's logs, the configuration and the build information. It is private (0700, files 0600)"
     },
     "config": {
       "type": "string",
@@ -28,7 +28,11 @@
     },
     "timeout_seconds": {
       "type": "integer",
-      "description": "Kill the run, and everything it started, after this long (default 900, at least 10); the configuration test has its own 120 seconds"
+      "description": "Kill the run, and everything it started, after this long (10 to 1000 seconds, default 900; the build information and the configuration test come first); the configuration test has its own 120 seconds"
+    },
+    "home_net": {
+      "type": "array",
+      "description": "Addresses or networks for HOME_NET in the configuration this tool writes (default 192.168.0.0/16, 10.0.0.0/8, 172.16.0.0/12). Not used with config"
     }
   },
   "requires": [
@@ -39,9 +43,9 @@
   "timeout_seconds": 1200,
   "example": "{\"path\": \"inputs/capture.pcap\", \"rules\": \"work/case.rules\", \"out_dir\": \"work/suricata\"}",
   "by": "maintainer",
-  "at": "2026-10-07T12:00:00.000Z",
-  "version": 3,
-  "sha256": "db618fd2b11c23c06b6aa2302b50a9e5870844ff5e7ed2b128fc8a7c0010dee8",
+  "at": "2026-10-07T18:00:00.000Z",
+  "version": 4,
+  "sha256": "8169d17e21004a31b777af48edabb60d01c5a7f6a5b2f1a758abd761ac3ffeeb",
   "use": {
     "extensions": [
       ".pcap",

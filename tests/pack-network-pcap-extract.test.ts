@@ -20,7 +20,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { chmod, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { EXTRACT, asJob, body, drop, everythingUnder, exists, filesUnder, frameTcp4, pcapClassic, refused, stub, tool, TCP, withCwd } from "./pack-network-harness.ts";
+import { EXTRACT, asJob, body, drop, everythingUnder, exists, filesUnder, frameTcp4, gone, pcapClassic, pidFile, refused, startDetached, stub, tool, TCP, withCwd } from "./pack-network-harness.ts";
 import type { Json } from "./pack-network-harness.ts";
 
 const sha = (b: Buffer | string): string => createHash("sha256").update(b).digest("hex");
@@ -36,7 +36,7 @@ printf '%s\\n' "$*" >> "$STUB_LOG"
 spec=""; fields=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --version) printf 'TShark (Wireshark) 4.2.0 (stand-in)\\n'; exit 0;;
+    --version) [ -f "$STUB_DIR/slow-version" ] && sleep 20; printf 'TShark (Wireshark) 4.2.0 (stand-in)\\n'; exit 0;;
     --export-objects) spec="$2"; shift;;
     -T) fields=yes;;
   esac
@@ -49,8 +49,9 @@ fi
 if [ -n "$spec" ]; then
   proto="\${spec%%,*}"; dest="\${spec#*,}"
   [ -f "$STUB_DIR/sleep-$proto" ] && exec sleep "$(cat "$STUB_DIR/sleep-$proto")"
-  if [ -f "$STUB_DIR/spawn-$proto" ]; then sleep 60 & echo $! > "$STUB_DIR/child.pid"; echo started > "$STUB_DIR/started"; wait; fi
+  if [ -f "$STUB_DIR/spawn-$proto" ]; then echo $$ > "$STUB_DIR/engine.pid"; sleep 60 & echo $! > "$STUB_DIR/child.pid"; echo started > "$STUB_DIR/started"; wait; fi
   [ -d "$STUB_DIR/export/$proto" ] && cp -R "$STUB_DIR/export/$proto/." "$dest/"
+  [ -f "$STUB_DIR/fifo-$proto" ] && mkfifo "$dest/pipe.bin"
   if [ -f "$STUB_DIR/exit-$proto" ]; then echo "tshark: stand-in failing on request" >&2; exit "$(cat "$STUB_DIR/exit-$proto")"; fi
   exit 0
 fi
@@ -58,7 +59,7 @@ if [ -n "$fields" ]; then cat "$STUB_DIR/assoc.tsv"; exit 0; fi
 exit 0
 `;
 
-async function stage(cwd: string, bin: string, o: { exporters?: string[]; export?: Record<string, Record<string, Buffer | string>>; assoc?: string[][]; assocRaw?: string; sleeps?: Record<string, number>; exits?: Record<string, number>; spawns?: string[] }): Promise<{ log: string; dir: string }> {
+async function stage(cwd: string, bin: string, o: { exporters?: string[]; export?: Record<string, Record<string, Buffer | string>>; assoc?: string[][]; assocRaw?: string; sleeps?: Record<string, number>; exits?: Record<string, number>; spawns?: string[]; fifo?: string[]; slowVersion?: boolean }): Promise<{ log: string; dir: string }> {
   const dir = join(cwd, "stub");
   await rm(dir, { recursive: true, force: true });
   await mkdir(dir, { recursive: true });
@@ -73,6 +74,8 @@ async function stage(cwd: string, bin: string, o: { exporters?: string[]; export
   for (const [proto, s] of Object.entries(o.sleeps ?? {})) await writeFile(join(dir, `sleep-${proto}`), String(s));
   for (const [proto, c] of Object.entries(o.exits ?? {})) await writeFile(join(dir, `exit-${proto}`), String(c));
   for (const proto of o.spawns ?? []) await writeFile(join(dir, `spawn-${proto}`), "1");
+  for (const proto of o.fifo ?? []) await writeFile(join(dir, `fifo-${proto}`), "1");
+  if (o.slowVersion) await writeFile(join(dir, "slow-version"), "1");
   const rows = o.assoc ?? [];
   await writeFile(join(dir, "assoc.tsv"), o.assocRaw ?? [FIELDS.join("\t"), ...rows.map((r) => r.join("\t"))].join("\n") + "\n");
   const log = join(cwd, "tshark-calls.txt");
@@ -216,10 +219,14 @@ test("a credential-shaped name, a URI's user-info and query values are withheld 
     });
     const result = await asJob(EXTRACT, cwd, { path: await capture(cwd), out_dir: "out/x", protocols: ["http"] }, bin, env(cwd));
     const out = body(result);
-    const everything = await everythingUnder(cwd, result.stdout, ["out"]);
+    const everything = await everythingUnder(cwd, result.stdout, ["out"], ["out/x/withheld-names.jsonl"]);
     for (const secret of [NAME_TOKEN, URI_TOKEN, "PassWord1234", sha(SHORT)]) {
       assert.equal(everything.includes(secret), false, `${secret} reached the answer or a file it names`);
     }
+    // The real name of the object moved aside is kept, in one private file of the output directory, with or without write_values.
+    const mapped = (await readFile(join(cwd, "out/x/withheld-names.jsonl"), "utf8")).trimEnd().split("\n").map((l) => JSON.parse(l));
+    assert.deepEqual(mapped.map((m: Json) => [m.path, m.real_path]), [["http/withheld-000001.bin", `http/${NAME_TOKEN}.bin`]]);
+    assert.equal(((await stat(join(cwd, "out/x/withheld-names.jsonl"))).mode & 0o777).toString(8), "600");
     // The object is still there, under a name that is no secret, and the row says so.
     const rows = await index(cwd, "out/x");
     const renamed = rows.find((r) => r.name.startsWith("<name withheld"));
@@ -374,8 +381,9 @@ test("a token-shaped directory name is moved aside too, and a pass's children di
     await stage(cwd, bin, { export: { smb: { [`${NAME_TOKEN}/inner.txt`]: BODY_B } } });
     const result = await asJob(EXTRACT, cwd, { path: await capture(cwd), out_dir: "out/x", protocols: ["smb"] }, bin, env(cwd));
     const out = body(result);
-    const everything = await everythingUnder(cwd, result.stdout, ["out"]);
+    const everything = await everythingUnder(cwd, result.stdout, ["out"], ["out/x/withheld-names.jsonl"]);
     assert.equal(everything.includes(NAME_TOKEN), false);
+    assert.match(await readFile(join(cwd, "out/x/withheld-names.jsonl"), "utf8"), new RegExp(NAME_TOKEN));
     const rows = await index(cwd, "out/x");
     assert.match(rows[0].path, /^smb\/withheld-000001\/inner\.txt$/);
     assert.equal(out.names_withheld, 1);
@@ -411,5 +419,165 @@ test("a stop signal kills the pass and leaves a receipt that says it was interru
     const pid = Number((await readFile(join(dir, "child.pid"), "utf8")).trim());
     await new Promise((r) => setTimeout(r, 300));
     assert.throws(() => process.kill(pid, 0), /ESRCH/);
+  });
+});
+
+async function reap(...pids: number[]): Promise<void> {
+  for (const pid of pids) {
+    try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+  }
+}
+
+test("the harness ends a tool by killing its process group, and that ends tshark and what tshark started (tshark is in the tool's group, not a session of its own)", async () => {
+  await withCwd(async (cwd, bin) => {
+    const dir = (await stage(cwd, bin, { spawns: ["http"] })).dir;
+    const run = startDetached(EXTRACT, cwd, { path: await capture(cwd), out_dir: "work/x", protocols: ["http"] }, env(cwd), bin);
+    let engine = 0, child = 0;
+    try {
+      engine = await pidFile(join(dir, "engine.pid"));
+      child = await pidFile(join(dir, "child.pid"));
+      run.killGroup();
+      await run.closed;
+      assert.equal(await gone(engine), true, "tshark was still running after the tool's group was killed");
+      assert.equal(await gone(child), true, "what tshark started was still running");
+    } finally {
+      await reap(engine, child);
+    }
+  });
+});
+
+test("SIGINT and SIGHUP end the pass like SIGTERM: tshark and its children are killed and the receipt says interrupted", async () => {
+  for (const sig of ["SIGINT", "SIGHUP"] as const) {
+    await withCwd(async (cwd, bin) => {
+      const dir = (await stage(cwd, bin, { spawns: ["http"] })).dir;
+      const run = startDetached(EXTRACT, cwd, { path: await capture(cwd), out_dir: "work/x", protocols: ["http"] }, env(cwd), bin);
+      let engine = 0, child = 0;
+      try {
+        engine = await pidFile(join(dir, "engine.pid"));
+        child = await pidFile(join(dir, "child.pid"));
+        run.signal(sig);
+        const code = await run.closed;
+        assert.equal(code, sig === "SIGINT" ? 130 : 129, sig);
+        assert.equal(await gone(engine), true, `${sig}: tshark survived`);
+        assert.equal(await gone(child), true, `${sig}: its child survived`);
+        const receipt = JSON.parse(await readFile(join(cwd, "work/x/receipt.json"), "utf8"));
+        assert.equal(receipt.status, "interrupted", sig);
+      } finally {
+        await reap(engine, child);
+      }
+    });
+  }
+});
+
+test("timeout_seconds is held under the manifest's limit, and the deadline counts the preflight", async () => {
+  await withCwd(async (cwd, bin) => {
+    await stage(cwd, bin, { export: { http: { "a.html": BODY_A } } });
+    for (const bad of [3301, 7200, 0]) {
+      const err = refused(await tool(EXTRACT, cwd, { path: await capture(cwd), out_dir: "work/x", protocols: ["http"], timeout_seconds: bad }, env(cwd), bin));
+      assert.match(err.error, /timeout_seconds must be an integer from 1 to 3300/, String(bad));
+    }
+    assert.equal(await exists(join(cwd, "work/x")), false);
+  });
+  await withCwd(async (cwd, bin) => {
+    await stage(cwd, bin, { slowVersion: true, export: { http: { "a.html": BODY_A } } });
+    const started = Date.now();
+    const result = await tool(EXTRACT, cwd, { path: await capture(cwd), out_dir: "work/x", protocols: ["http"], timeout_seconds: 3 }, env(cwd), bin);
+    assert.ok(Date.now() - started < 12_000, `took ${Date.now() - started} ms: the 20-second version call was not held to the deadline`);
+    assert.doesNotMatch(result.stderr, /Traceback/);
+  });
+});
+
+test("a name that carries a query string is withheld too: Wireshark names an HTTP object after the end of its request target", async () => {
+  await withCwd(async (cwd, bin) => {
+    const NAME = "login.php%3fuser=bob&pw=hunter2";
+    await stage(cwd, bin, { export: { http: { [NAME]: BODY_A, "report.pdf": BODY_B } }, assoc: [row(5, 0, "/login.php?user=bob&pw=hunter2", BODY_A)] });
+    const result = await asJob(EXTRACT, cwd, { path: await capture(cwd), out_dir: "out/x", protocols: ["http"] }, bin, env(cwd));
+    const out = body(result);
+    const everything = await everythingUnder(cwd, result.stdout, ["out"], ["out/x/withheld-names.jsonl"]);
+    assert.equal(everything.includes("hunter2"), false, "the password in the name reached the answer or a file it names");
+    assert.equal(everything.includes("user=bob"), false);
+    const rows = await index(cwd, "out/x");
+    assert.match(rows.find((r) => r.frame === "5").name, /^<name withheld/);
+    assert.equal(rows.find((r) => r.name === "report.pdf").path, "http/report.pdf", "an ordinary name is left alone");
+    assert.match(rows.find((r) => r.frame === "5").request_uri, /pw=<withheld 7 characters>/);
+    assert.equal(out.names_withheld, 1);
+    assert.match(await readFile(join(cwd, "out/x/withheld-names.jsonl"), "utf8"), /login\.php%3fuser=bob&pw=hunter2/);
+  });
+});
+
+test("a name moved aside never lands on a name that is there, and the real name of an IOC-shaped object is kept without write_values", async () => {
+  await withCwd(async (cwd, bin) => {
+    const HASHNAME = `${"ab12".repeat(16)}.exe`;
+    await stage(cwd, bin, { export: { http: { "withheld-000001.bin": BODY_A, [`${NAME_TOKEN}.bin`]: BODY_B, [HASHNAME]: BODY_B.subarray(0, 250) } } });
+    const result = await tool(EXTRACT, cwd, { path: await capture(cwd), out_dir: "work/x", protocols: ["http"] }, env(cwd), bin);
+    const out = JSON.parse(result.stdout);
+    const rows = await index(cwd, "work/x");
+    assert.equal(rows.length, 3);
+    assert.equal(new Set(rows.map((r) => r.path)).size, 3, "three objects, three different paths");
+    const benign = rows.find((r) => r.name === "withheld-000001.bin");
+    assert.equal(benign.bytes, String(BODY_A.length), "the object that was already called that is still there, whole");
+    assert.equal(await readFile(join(cwd, "work/x", benign.path), "utf8"), BODY_A.toString());
+    for (const r of rows) assert.equal((await stat(join(cwd, "work/x", r.path))).size, Number(r.bytes), r.path);
+    const mapped = (await readFile(join(cwd, "work/x/withheld-names.jsonl"), "utf8")).trimEnd().split("\n").map((l) => JSON.parse(l));
+    assert.deepEqual(mapped.map((m: Json) => m.real_path).sort(), [`http/${HASHNAME}`, `http/${NAME_TOKEN}.bin`].sort());
+    assert.equal(out.secret_values.requested, false, "this is without write_values");
+    assert.equal((await readFile(join(cwd, "work/x/index.tsv"), "utf8")).includes(HASHNAME), false);
+  });
+});
+
+test("an export type of '.' or '..' is refused, and a failed discovery never walks the directory above out_dir", async () => {
+  await withCwd(async (cwd, bin) => {
+    await stage(cwd, bin, { exporters: [], export: { http: { "a.html": BODY_A } } });
+    await drop(cwd, "work/other-agent/" + "cd34".repeat(16) + ".bin", Buffer.alloc(300, 7));
+    for (const bad of ["..", ".", "a/b", ".hidden", "-x"]) {
+      const err = refused(await tool(EXTRACT, cwd, { path: await capture(cwd), out_dir: "work/x", protocols: [bad] }, env(cwd), bin));
+      assert.match(err.error, /protocols must be a non-empty list/, bad);
+    }
+    const names = await filesUnder(join(cwd, "work/other-agent"));
+    assert.deepEqual(names, ["cd34".repeat(16) + ".bin"], "another agent's file was not renamed");
+    assert.equal(((await stat(join(cwd, "work/other-agent", names[0]))).mode & 0o777) !== 0o600, true, "nor re-moded");
+    assert.equal(await exists(join(cwd, "work/x")), false);
+  });
+});
+
+test("a named pipe in the export tree is listed and not opened; a cell over the limit is cut with the whole kept in a file", async () => {
+  await withCwd(async (cwd, bin) => {
+    const LONG = `/get?${Array.from({ length: 700 }, (_, i) => `p${i}=v`).join("&")}`;
+    await stage(cwd, bin, { fifo: ["http"], export: { http: { "a.html": BODY_A } }, assoc: [row(8, 0, LONG, BODY_A)] });
+    const started = Date.now();
+    const result = await tool(EXTRACT, cwd, { path: await capture(cwd), out_dir: "work/x", protocols: ["http"] }, env(cwd), bin);
+    assert.ok(Date.now() - started < 15_000, "it hung on the pipe");
+    const out = JSON.parse(result.stdout);
+    const rows = await index(cwd, "work/x");
+    const pipe = rows.find((r) => r.name === "pipe.bin");
+    assert.ok(pipe);
+    assert.match(pipe.association_reason, /not a regular file/);
+    assert.equal(pipe.sha256, "");
+    const a = rows.find((r) => r.name === "a.html");
+    assert.match(a.request_uri, /characters not shown; the whole is L000001 in index-long-cells\.jsonl\)$/);
+    const whole = JSON.parse((await readFile(join(cwd, "work/x/index-long-cells.jsonl"), "utf8")).trimEnd());
+    assert.equal(whole.id, "L000001");
+    assert.ok(whole.value.length > 8192 && whole.value.startsWith("/get?p0=<withheld 1 characters>"));
+    assert.equal(out.ok, true);
+  });
+});
+
+test("a run that stops before it wrote a value gives the job's one values file back", async () => {
+  await withCwd(async (cwd, bin) => {
+    await stage(cwd, bin, { export: { http: { "a.html": BODY_A } } });
+    // out/locked cannot be written to, so out/locked/x cannot be created, after the values file was.
+    await mkdir(join(cwd, "out/locked"), { recursive: true });
+    await chmod(join(cwd, "out/locked"), 0o555);
+    try {
+      if (typeof process.getuid === "function" && process.getuid() === 0) return;
+      const args = { path: await capture(cwd), protocols: ["http"], write_values: true };
+      const failed = refused(await asJob(EXTRACT, cwd, { ...args, out_dir: "out/locked/x" }, bin, env(cwd)));
+      assert.match(failed.error, /could not be created or written/);
+      assert.equal(await exists(join(cwd, "out/pcap-extract-values.jsonl")), false, "the values file was given back");
+      const again = body(await asJob(EXTRACT, cwd, { ...args, out_dir: "out/ok" }, bin, env(cwd)));
+      assert.equal(again.secret_values.requested, true);
+    } finally {
+      await chmod(join(cwd, "out/locked"), 0o755);
+    }
   });
 });

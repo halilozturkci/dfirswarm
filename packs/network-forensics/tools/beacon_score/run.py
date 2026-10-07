@@ -44,10 +44,11 @@ import sys
 import tempfile
 from pathlib import Path
 
-TOOL = {"name": "beacon_score", "version": 2}
+TOOL = {"name": "beacon_score", "version": 3}
 MAX_EPOCH = 4_102_444_800        # 2100-01-01: a number above it is not epoch seconds (milliseconds, microseconds, nanoseconds)
 MAX_EVENTS = 5_000_000
 DEFAULT_LIMIT = 40
+MAX_VALUE_CHARS = 4096          # a longer line of a timestamps_file is not a time
 
 
 def describe(exc):
@@ -172,6 +173,18 @@ def read_time(value, assume_utc):
     return number, None
 
 
+def sealed_path(path):
+    """In a job, where a file under $OUT is cited once the job is sealed; otherwise the path as it is."""
+    job, out = os.environ.get("JOB_ID"), os.environ.get("OUT")
+    if not path or not (job and out):
+        return path
+    try:
+        rel = Path(path).resolve().relative_to(Path(out).resolve())
+    except ValueError:
+        return path
+    return "store/jobs/%s/out/%s" % (re.sub(r"[^A-Za-z0-9_.-]", "_", job), rel)
+
+
 def iso(stamp):
     try:
         return datetime.datetime.fromtimestamp(stamp, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
@@ -225,13 +238,26 @@ def main():
         except OSError as exc:
             fail("out_dir cannot be listed (%s)" % describe(exc), out_dir=out_dir)
 
+    long_lines = 0
     if file_arg is not None:
         if not isinstance(file_arg, str) or not file_arg:
             fail("timestamps_file must be a path")
         try:
             with open(file_arg, "r", encoding="utf-8", errors="replace") as fh:
                 values = []
-                for line in fh:
+                while True:
+                    line = fh.readline(MAX_VALUE_CHARS + 1)
+                    if not line:
+                        break
+                    if len(line) > MAX_VALUE_CHARS and not line.endswith("\n"):
+                        # a line that long is no time: it is counted as unreadable, and the rest of it is skipped, not held
+                        while line and not line.endswith("\n"):
+                            line = fh.readline(MAX_VALUE_CHARS)
+                        values.append(None)
+                        long_lines += 1
+                        if len(values) > MAX_EVENTS:
+                            fail("the series has more than %d events: split it by destination or by window" % MAX_EVENTS, timestamps_file=file_arg)
+                        continue
                     text = line.strip()
                     if not text or text.startswith("#"):
                         continue
@@ -264,7 +290,7 @@ def main():
             if len(first_rejected) < 5:
                 first_rejected.append({"index": index, "value": str(value)[:80], "reason": reason})
             continue
-        parsed.append(round(seconds, 6))
+        parsed.append((round(seconds, 6), index))
     if naive:
         fail("%d of the times carry no time zone; a series that is not UTC cannot be read as UTC without being told to. Give the zone in each time "
              "(Z or +hh:mm), or pass assume_utc: true if the source is known to be UTC" % naive,
@@ -276,7 +302,10 @@ def main():
         if window_end is None:
             fail("window_end could not be read as a time (%s): epoch seconds or ISO 8601 with a zone" % why, window_end=str(args["window_end"])[:80])
 
-    distinct = sorted(set(parsed))
+    first_index = {}
+    for seconds, index in parsed:
+        first_index.setdefault(seconds, index)
+    distinct = sorted(first_index)
     if len(distinct) < minimum:
         fail("too few distinct usable times to score", usable=len(parsed), distinct_events=len(distinct), needed=minimum,
              rejected=rejected, first_rejected=first_rejected,
@@ -332,12 +361,12 @@ def main():
             os.makedirs(out_dir, exist_ok=True)
             tsv_path = os.path.join(out_dir, "intervals.tsv")
             tsv = open(tsv_path, "w", encoding="utf-8", newline="\n")
-            tsv.write("index\tfrom_utc\tto_utc\tseconds\n")
+            tsv.write("index\tfrom_utc\tto_utc\tseconds\tfrom_input_index\tto_input_index\n")
         for i, (a, b, gap) in enumerate(zip(distinct, distinct[1:], intervals)):
-            row = {"index": i, "from": iso(a), "to": iso(b), "seconds": gap}
+            row = {"index": i, "from": iso(a), "to": iso(b), "seconds": gap, "from_input_index": first_index[a], "to_input_index": first_index[b]}
             page.add(row)
             if tsv is not None:
-                tsv.write("%d\t%s\t%s\t%s\n" % (i, row["from"], row["to"], gap))
+                tsv.write("%d\t%s\t%s\t%s\t%d\t%d\n" % (i, row["from"], row["to"], gap, row["from_input_index"], row["to_input_index"]))
         pages = page.finish()
     except OSError as exc:
         fail("the interval list could not be written (%s)" % describe(exc), out_dir=out_dir)
@@ -351,7 +380,6 @@ def main():
         "events": len(parsed),
         "distinct_events": len(distinct),
         "duplicate_timestamps": len(parsed) - len(distinct),
-        "zero_intervals": len(parsed) - len(distinct),
         "values_supplied": len(values),
         "rejected": rejected,
         "first_rejected": first_rejected,
@@ -367,7 +395,9 @@ def main():
         "intervals": {"count": len(intervals), "min_seconds": min(intervals), "max_seconds": max(intervals)},
         "intervals_inline": [r["seconds"] for r in page.page],
         "intervals_page": pages,
-        "intervals_tsv": tsv_path,
+        "intervals_tsv": sealed_path(tsv_path),
+        "input_index_note": "from_input_index and to_input_index are positions in the series you supplied (0-based; in a timestamps_file, among its non-comment lines), the first occurrence when a time is repeated",
+        "lines_over_limit": long_lines,
         "long_final_gap": final_gap,
         "observation_window": {"declared_end": iso(window_end) if window_end is not None else None},
         "cessation": cessation,
