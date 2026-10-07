@@ -1,6 +1,6 @@
 {
   "name": "archive_probe",
-  "description": "Say whether an archive or a document is password protected, with which scheme, and — the part that decides a case — whether the file names are readable without the password.",
+  "description": "Say what an archive or a document shows about its own protection, and what it does not. ZIP: structural, from the End Of Central Directory record (empty and self-extracting archives included): per-member encryption, the WinZip AES extra field, DOS times with their raw words and no zone. 7-Zip: listed through the installed 7z (bounded, no password prompt) where there is one, giving the members, each one's encrypted flag and whether the header is encrypted; the start header is read and its checksums checked, and a byte search is kept as a hint only when 7z is absent or cannot read the file. RAR: identified, protection not determined. PDF and OLE/Office: a heuristic byte search for markers, reported with offsets, never as 'not encrypted' and never as a verdict (the structural document reader is not provided by this pack). Whether member names are readable is a finding separate from whether the data is encrypted. Nothing is extracted. What is loaded is bounded by max_metadata_bytes (a ZIP central directory, a 7-Zip header search) and a result that was not listed says so; a PDF or an OLE file is searched whole, in a linear pass bounded only by the tool's timeout (bytes_searched and search_complete say so), because a PDF's marker sits at its end.",
   "params": {
     "path": {
       "type": "string",
@@ -8,7 +8,11 @@
     },
     "limit": {
       "type": "integer",
-      "description": "Entries (or 7-Zip header strings) shown inline (default 200); all of them are counted, and when there are more the whole list is written as JSON Lines and named in all_results"
+      "description": "Members (or 7-Zip header strings) shown inline (default 200); all of them are counted, and when there are more the whole list is written as JSON Lines and named in all_results"
+    },
+    "max_metadata_bytes": {
+      "type": "integer",
+      "description": "The most container metadata to load or search: a ZIP central directory, a 7-Zip header (default 33554432, at least 4096). A ZIP whose central directory is larger is not listed and says so. It does not bound the search of a PDF or an OLE file, which is always whole"
     }
   },
   "runtime": "python3",
@@ -16,7 +20,10 @@
   "timeout_seconds": 120,
   "example": "{\"path\": \"work/extracted/archive.zip\"}",
   "by": "maintainer",
-  "at": "2026-09-22T21:00:00.000Z",
-  "version": 1,
-  "sha256": "a09c56755070563bb6e52c59b0efcfdc5774922220ff587cdff9670480013239"
+  "at": "2026-10-07T12:00:00.000Z",
+  "version": 2,
+  "sha256": "f146f0dd3f9fb879ee5206ed0f3d8a0c3c79c9b77df651a08d1580a6947c7606",
+  "requires": [
+    "7z"
+  ]
 }
