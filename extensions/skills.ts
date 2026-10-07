@@ -5,7 +5,7 @@
  * things decide whether a seat uses it, and this module is all four:
  *
  * - The index is a section of the seat's system prompt. The kickoff renders it
- *   into `.pi/APPEND_SYSTEM.md` (scripts/skills-section.ts), which Pi puts in
+ *   into `.pi/APPEND_SYSTEM.md` (scripts/seat-prompt.ts), which Pi puts in
  *   its own prompt sections for every run: a prompt section is checkpointed
  *   and replayed after a compaction, a tool result is not, and the summary of a
  *   compaction keeps 2,000 characters of one. It is not left to the forced

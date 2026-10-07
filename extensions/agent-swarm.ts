@@ -30,6 +30,7 @@ import { Type, type TSchema } from "typebox";
 import { specsFromEnv } from "./context-ceiling.ts";
 import { registerSelfCompact, type HandoffFacts, type SelfCompactHandle } from "./self-compact.ts";
 import { packDirsFromEnv, registerSkills, type SkillsHandle } from "./skills.ts";
+import { forgedHandoffLine, forgedSoFarLine, FORGE_PROMPT_LINE, inputsPromptLine, measuredInputsLine, seatPromptLine } from "./seat-prompt.ts";
 import {
   type FinishLineRun,
   type FinishOutcome,
@@ -1211,13 +1212,21 @@ export default function (pi: ExtensionAPI) {
       readInputsManifest(cwd),
       forging ? listForgedTools(cwd).catch(() => [] as ForgedToolManifest[]) : ([] as ForgedToolManifest[]),
     ]);
-    const capLine =
-      status?.over_budget
-        ? `\n\nSwarm spend cap hit (spent_usd=${status.budget.spent_usd} cap_usd=${status.budget.cap_usd}). Call done(reason=cannot_complete) now.`
-        : "";
+    const capLine = status?.over_budget ? `\n\n${capHitLine(status)}` : "";
+    // The prompt files the kickoff passes: Pi takes the path of one that is not there as the text of the prompt.
+    await reportMissingPromptFiles(cwd, event.systemPrompt);
+    // What holds for the whole run is in Pi's own prompt (the kickoff's .pi/APPEND_SYSTEM.md and .pi/seat-<id>.md),
+    // so the run a hand-off starts has it too. A line the prompt already carries is not said twice; one it lacks
+    // (a manual start, a sandbox from before the files) is added here, as it always was.
+    const carries = (line: string) => event.systemPrompt.includes(line);
+    const seatCarried = agentId !== "" && carries(seatPromptLine(agentId));
     const stop = done
-      ? `\n\n${idLine}\n\ndone/SWARM_DONE exists. Call done(reason, output_file) now and stop. Do not start new work.`
-      : `\n\n${idLine}\n\nIf done/SWARM_DONE exists on this turn, call done and stop.`;
+      ? `\n\n${seatCarried ? "" : `${idLine}\n\n`}done/SWARM_DONE exists. Call done(reason, output_file) now and stop. Do not start new work.`
+      : seatCarried
+        ? ""
+        : agentId
+          ? `\n\n${seatPromptLine(agentId)}`
+          : `\n\n${idLine}\n\nIf done/SWARM_DONE exists on this turn, call done and stop.`;
     let nameLine = "";
     if (agentId) {
       if (mine) {
@@ -1227,28 +1236,19 @@ export default function (pi: ExtensionAPI) {
           "\n\nNobody has given you a job. Read the goal, see what your peers have taken, decide what you are going to do, and call name(name, doing) to say what to call you and what you are taking on. The board is where that is agreed.";
       }
     }
+    // The rule is the run's; what this pane measured about its guard is the pane's, said to the first run.
     let inputsLine = "";
     if (inputs) {
-      const kb = Math.max(1, Math.round(inputs.bytes / 1024));
-      const consequence = inputsEnforced === "kernel" ? "refused by the kernel" : "refused, or detected and undone";
-      // Several sets, each at inputs/<name>/: every one named.
-      const where = inputs.sets?.length
-        ? `in ${inputs.sets.length} sets, ${inputs.sets.map((set) => `${set.path}/ (from ${set.source || "the operator"})`).join(", ")}`
-        : `under inputs/ (from ${inputs.source || "the operator"})`;
-      inputsLine =
-        `\n\nRead-only inputs: ${inputs.files.length} file(s), ${kb} KB ${where}. ` +
-        `Read them with read, grep or bash as much as you like. Never write, delete, move or chmod anything under inputs/: every such write is ${consequence} and announced on the board. ` +
-        `Put every result in work/ (claim first); copy an input there if you need a version you can change. Call \`inputs\` to list them.`;
+      const rule = inputsPromptLine(inputs);
+      const measured = measuredInputsLine(inputsEnforced, inputs.held);
+      inputsLine = carries(rule) ? `\n\n${measured}` : `\n\n${rule} ${measured}`;
     }
     let forgeLine = "";
     if (forging) {
-      const have = onDisk.length ? ` Forged so far: ${onDisk.map((m) => `${m.name} (by ${m.by}, v${m.version})`).join(", ")}.` : " Nothing has been forged yet.";
-      forgeLine =
-        "\n\nTool forging is on for this swarm. If the goal needs a tool nobody has — a parser, a checker, a converter — write it once with make_tool (python3, node or bash; the arguments arrive as one JSON object on stdin; print the result to stdout) and it becomes a real tool for every agent after their next inbox or wait. Call `tools` first to see what peers have forged. A forged tool runs in this directory with the same limits as bash; keep it small and free of network calls." +
-        have;
+      forgeLine = `${carries(FORGE_PROMPT_LINE) ? "" : `\n\n${FORGE_PROMPT_LINE}`}\n\n${forgedSoFarLine(onDisk)}`;
     }
     // Static, so the prompt-cache prefix stays the same from one call to the next.
-    const compactLine = selfCompact?.systemPromptLine ?? "";
+    const compactLine = selfCompact && !carries(selfCompact.systemPromptLine.trim()) ? selfCompact.systemPromptLine : "";
     // The index of the run's packs. The kickoff wrote it into .pi/APPEND_SYSTEM.md,
     // so Pi's own prompt (event.systemPrompt) carries it for every run, the ones a
     // hand-off starts too; only a prompt that does not carry it is given it here.
@@ -4256,6 +4256,41 @@ export default function (pi: ExtensionAPI) {
   }
 
   /**
+   * What the seat is told when the run's cap is reached, by the run's stop policy: the live steer's words,
+   * so the forced prompt, the steer and the hand-off header cannot disagree. Under cap-pause (the default)
+   * the run pauses for the operator to extend it and the seat is told not to call done; under cap-stop it
+   * is told to stop; a token cap is worded as one.
+   */
+  function capHitLine(status: { budget: BudgetRecord }): string {
+    return capSteerText(status.budget, budgetPressure(status.budget));
+  }
+
+  let promptFilesReported = false;
+  /**
+   * Pi takes a --append-system-prompt argument that is not a file as the text itself, so a file that is gone
+   * (a seat's relaunch after .pi/ lost one, a pane that deleted it) puts its path into the prompt and the
+   * lines out of it. The kickoff stops before it starts a seat without the files; this is the seat saying so
+   * when it finds them gone later.
+   */
+  async function reportMissingPromptFiles(cwd: string, prompt: string): Promise<void> {
+    if (promptFilesReported || !agentId) return;
+    const gone = [`/.pi/seat-${agentId}.md`, "/.pi/APPEND_SYSTEM.md"].filter((suffix) => prompt.includes(suffix));
+    if (!gone.length) return;
+    promptFilesReported = true;
+    const reason = `Pi was given ${gone.map((g) => `.pi${g.slice(4)}`).join(" and ")} as the text of the prompt: the file is not there`;
+    await logEvent(cwd, agentId, "extension_error", { where: "prompt files" }, { ok: false, reason }).catch(() => undefined);
+    await systemPost(cwd, {
+      tag: "veto",
+      body: `HARNESS FAULT: ${agentId} was started without its prompt files (${reason}). Its id, the stop rule and the rules that hold for the whole run are not in its prompt from the next hand-off on, and the path stands in the prompt as plain text. Tell the operator; do not treat the contract as optional.`,
+    }).catch(() => undefined);
+  }
+
+  /** The tools forged so far, as the hand-off header says them. */
+  async function forgedForHandoff(cwd: string): Promise<string> {
+    return forgedHandoffLine(await listForgedTools(cwd).catch(() => [] as ForgedToolManifest[]));
+  }
+
+  /**
    * What the harness knows at hand-off time, from files rather than from the
    * model's memory: the header the returned note travels under. Every read is
    * best effort; a missing fact is left out, never invented.
@@ -4286,6 +4321,11 @@ export default function (pi: ExtensionAPI) {
       capUsd: status?.budget.cap_per_agent_usd ?? undefined,
       ...(leads ? { leads: leads.text } : {}),
       ...(skills?.handoffLine() ? { skills: skills.handoffLine() } : {}),
+      // What the prompt of the run a hand-off starts cannot say, because it changes: a cap that was hit, the tools forged so far.
+      ...(status?.over_budget ? { capHit: capHitLine(status) } : {}),
+      // Told to stop: the sentinel stands, or a cap-stop run's cap was hit. The header's last paragraph says "work on" otherwise.
+      ...(sentinel || (status?.over_budget && stopPolicyOf(status.budget) === "cap-stop") ? { stopping: true } : {}),
+      ...(forging ? { forged: await forgedForHandoff(cwd) } : {}),
     };
   }
 

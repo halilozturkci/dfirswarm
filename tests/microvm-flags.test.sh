@@ -414,10 +414,11 @@ out="$(start --isolation microvm --inputs "$TMP/ev" --pack keyed-pack --allow-pa
 if [[ "$(jq -c '.pack_secrets // [] | length' "$(sandbox_of "$out")/vm-spec.json" 2>/dev/null)" == "0" ]] || grep -q -- '--local-only withholds' <<<"$out"; then :; else fail "--local-only bound a pack secret: $out"; fi
 pass "a prepared VM run's spec mounts neither the prompt's directory nor a secret, points at the run's own copy of the prompt, and binds each secret to its hosts"
 
-# --- the packs' index reaches every seat's prompt, through Pi's own prompt sections --
-# Pi appends .pi/APPEND_SYSTEM.md to its prompt sections, which the run a
-# hand-off starts keeps (the prompt before_agent_start forces does not outlive
-# the run a user prompt started: tests/skills-e2e.test.ts shows it through Pi).
+# --- what holds for the whole run reaches every seat's prompt, through Pi's own prompt sections ---
+# Pi appends .pi/APPEND_SYSTEM.md (the run's) and .pi/seat-<id>.md (the seat's) to its
+# prompt sections, which the run a hand-off starts keeps; the prompt before_agent_start
+# forces does not outlive the run a user prompt started (tests/skills-e2e.test.ts shows
+# the requests through Pi). Every seat is started with both files.
 out="$(start --isolation host --pack keyed-pack --label skills-index)"; rc=$?
 [[ $rc -eq 0 ]] || fail "a kickoff with a pack exited $rc: $out"
 si_sb="$(sandbox_of "$out")"
@@ -425,13 +426,54 @@ si_sb="$(sandbox_of "$out")"
 [[ "$(head -1 "$si_sb/.pi/APPEND_SYSTEM.md")" == "Skills carried by this run" ]] || fail "the file does not open with the Skills section's title: $(head -3 "$si_sb/.pi/APPEND_SYSTEM.md")"
 grep -qx 'keyed-pack 1.0.0 (1 skill)' "$si_sb/.pi/APPEND_SYSTEM.md" || fail "the section does not name the pack and its version: $(cat "$si_sb/.pi/APPEND_SYSTEM.md")"
 grep -qxF -- '- `alpha/first` The first skill: Whenever the suite asks for it.' "$si_sb/.pi/APPEND_SYSTEM.md" || fail "the pack's own INDEX line is not in the section: $(cat "$si_sb/.pi/APPEND_SYSTEM.md")"
+grep -q '^Self-compaction is on\.' "$si_sb/.pi/APPEND_SYSTEM.md" || fail "the self-compaction mechanics are not in the run's file (self-compaction is on by default)"
 grep -q "^Skills:       the index of 1 pack(s) is in every agent's prompt: 1 skills, [0-9]* tokens of entries" <<<"$out" || fail "the kickoff does not say the index is in the prompt: $out"
+grep -q "^Prompt:       every agent's prompt carries its id and the stop rule, the self-compaction mechanics in files Pi keeps for every run" <<<"$out" || fail "the kickoff does not say what every prompt carries: $out"
+si_id="$(basename "$si_sb")"
+[[ "$(cat "$si_sb/.pi/seat-${si_id}00.md")" == "Your assigned id is ${si_id}00. Use it on every post and claim. If done/SWARM_DONE exists on this turn, call done and stop." ]] || fail "the first seat's own file is wrong: $(cat "$si_sb/.pi/seat-${si_id}00.md")"
+[[ -f "$si_sb/.pi/seat-${si_id}01.md" ]] || fail "the second seat has no file of its own"
 cmp -s "$si_sb/.pi/SYSTEM.md" "$ROOT/prompts/worker-system.md" || fail "the worker prompt is not the repository's"
-out="$(start --isolation host --label skills-none)"; rc=$?
+# With evidence and forging, the inputs rule and the forging rule join the run's file; with neither, they are not there.
+out="$(start --isolation host --inputs "$TMP/ev" --allow-tool-forging --label skills-lines)"; rc=$?
+[[ $rc -eq 0 ]] || fail "a kickoff with inputs and forging exited $rc: $out"
+sl_sb="$(sandbox_of "$out")"
+grep -q '^Read-only inputs: [0-9]* file(s), [0-9]* KB under inputs/' "$sl_sb/.pi/APPEND_SYSTEM.md" || fail "the inputs rule is not in the run's file: $(cat "$sl_sb/.pi/APPEND_SYSTEM.md")"
+grep -q '^Tool forging is on for this swarm\.' "$sl_sb/.pi/APPEND_SYSTEM.md" || fail "the forging rule is not in the run's file"
+grep -q 'Forged so far' "$sl_sb/.pi/APPEND_SYSTEM.md" && fail "the forging inventory changes, so it is not in a file written once"
+# A run with no pack: no Skills section and no Skills line in the output, and a file all the same (it stands in the place of an operator's own).
+out="$(start --isolation host --no-self-compact --label skills-none)"; rc=$?
 [[ $rc -eq 0 ]] || fail "a kickoff with no pack exited $rc: $out"
-[[ ! -e "$(sandbox_of "$out")/.pi/APPEND_SYSTEM.md" ]] || fail "a run with no pack wrote an APPEND_SYSTEM.md"
+sn_sb="$(sandbox_of "$out")"
+[[ -f "$sn_sb/.pi/APPEND_SYSTEM.md" && ! -s "$sn_sb/.pi/APPEND_SYSTEM.md" ]] || fail "a run with no pack, no inputs and no self-compaction should have an empty .pi/APPEND_SYSTEM.md"
 grep -q '^Skills:' <<<"$out" && fail "a run with no pack talks of skills: $out"
-pass "a run with a pack writes the packs' index into .pi/APPEND_SYSTEM.md (the pack's own entry lines, under its id and version) and says so; a run with none writes no file"
+pass "every seat has its id and the stop rule in a file of its own and the run's lines in another (the packs' index, the self-compaction mechanics, the inputs rule and the forging rule where they apply); the run's file exists, empty, when nothing applies"
+
+# A link planted under .pi/ is replaced, never written through: a host pane's shell can write the sandbox, and a
+# resume (or a reused sandbox) runs the kickoff again in it. Four files the kickoff writes there, four targets outside.
+lk="$TMP/linked-sandbox"
+out="$(start --isolation host --pack keyed-pack --sandbox "$lk" --label link1)"; rc=$?
+[[ $rc -eq 0 ]] || fail "a kickoff into a new sandbox exited $rc: $out"
+lk_id="$(reg link1 '.id')"
+mkdir -p "$TMP/outside"
+for f in SYSTEM.md settings.json APPEND_SYSTEM.md "seat-${lk_id}00.md"; do
+  printf 'outside: keep me\n' > "$TMP/outside/$f"
+  rm -f "$lk/.pi/$f"; ln -s "$TMP/outside/$f" "$lk/.pi/$f"
+done
+out="$(start --isolation host --pack keyed-pack --sandbox "$lk" --label link2)"; rc=$?
+[[ $rc -eq 0 ]] || fail "a kickoff into a sandbox with links under .pi exited $rc: $out"
+lk_id2="$(reg link2 '.id')"
+for f in SYSTEM.md settings.json APPEND_SYSTEM.md "seat-${lk_id}00.md"; do
+  [[ "$(cat "$TMP/outside/$f")" == "outside: keep me" ]] || fail "the kickoff wrote through a link planted at .pi/$f: $(cat "$TMP/outside/$f")"
+done
+for f in SYSTEM.md settings.json APPEND_SYSTEM.md "seat-${lk_id2}00.md"; do
+  [[ -f "$lk/.pi/$f" && ! -L "$lk/.pi/$f" ]] || fail ".pi/$f is not a file of its own after the second kickoff"
+done
+# The BLOCKER says why when a file cannot be written (here a directory stands where the run's file goes).
+rm -f "$lk/.pi/APPEND_SYSTEM.md"; mkdir "$lk/.pi/APPEND_SYSTEM.md"
+out="$(start --isolation host --pack keyed-pack --sandbox "$lk" --label link3)"; rc=$?
+rmdir "$lk/.pi/APPEND_SYSTEM.md" 2>/dev/null || true
+[[ $rc -ne 0 ]] && grep -q "BLOCKER: the lines every agent's prompt carries could not be written (seat-prompt.ts: .*APPEND_SYSTEM.md" <<<"$out" || fail "a file the kickoff cannot write was not named: rc $rc: $out"
+pass "a link planted under .pi/ is replaced, never written through (SYSTEM.md, settings.json and both prompt files), and a file the kickoff cannot write is named in its BLOCKER"
 
 # --- a credential cannot ride in on --env; a subscription needs an explicit yes ---------
 out="$(start --isolation microvm --env FOO_API_KEY=abc --label bad-env)"; rc=$?
