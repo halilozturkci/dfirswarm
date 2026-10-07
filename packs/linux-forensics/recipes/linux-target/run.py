@@ -21,6 +21,12 @@ run builds the linux_triage artefact files and a coverage receipt that follows w
 produced, read from the wrapper's own durable summary (which the wrapper rewrites after every function), so a
 run that is killed or times out still leaves a receipt of what had been done. The receipt is written as
 `incomplete` before the wrapper starts, and again if this process is terminated.
+
+Processes. The wrapper, and every program it or detect starts, run in this process's own group, never in a session of
+its own: the harness ends a recipe that runs too long, or is aborted, by killing its group, and a program in a group
+of its own would go on writing into the output directory after the recipe is gone. SIGTERM, SIGINT and SIGHUP ask the
+wrapper to stop (so that it says `terminated` in its summary), kill what is left of its tree, and write the receipt.
+detect stops itself at LINUX_TARGET_DETECT_SECONDS (default 240, at most 280 of the harness's 300).
 """
 
 import json
@@ -33,7 +39,12 @@ import time
 import traceback
 from pathlib import Path
 
-DETECT_SECONDS = int(os.environ.get("LINUX_TARGET_DETECT_SECONDS", "300"))
+# The harness gives a detect step 300 seconds (`timeout 300`); this one stops itself earlier, whatever the environment says.
+MAX_DETECT_SECONDS = 280
+try:
+    DETECT_SECONDS = min(MAX_DETECT_SECONDS, max(1, int(os.environ.get("LINUX_TARGET_DETECT_SECONDS", "240"))))
+except ValueError:
+    DETECT_SECONDS = 240
 # What dissect.target prints for a system it could not identify, rather than for one it identified.
 UNIDENTIFIED = {"default", "unknown", "none", "null", "unidentified", "n/a"}
 # Operating systems this recipe knows are not what it catalogues. Anything else that is not `linux` is not a no:
@@ -47,6 +58,134 @@ def answer(value, code=0):
         value = {**value, "status": "failed", "status_basis": value.get("error", "the recipe stopped with an error")}
     print(json.dumps(value))
     raise SystemExit(code)
+
+
+def describe(exc):
+    return "%s: %s" % (type(exc).__name__, exc)
+
+
+# BEGIN SHARED PROCESS
+# The same text is in pcap_extract, zeek_run, suricata_run and the network-capture recipe; tests/pack-network-process.test.ts
+# holds the copies equal. A program an engine tool runs is started in THIS tool's process group, never in a session of
+# its own: the harness ends a tool that runs too long, or is aborted, by killing the tool's group (process.kill(-pid,
+# SIGKILL)), and an engine in a group of its own goes on writing into the output directory after the tool is gone. On
+# Linux the kernel is also asked to kill it if the tool dies. A deadline kills the program and what it started by
+# walking the process tree, and SIGTERM, SIGINT and SIGHUP do the same and then give the tool a last word.
+try:
+    import ctypes
+except ImportError:  # pragma: no cover
+    ctypes = None
+
+STATE = {"last_word": None}    # what to do, with the signal number, when the tool is stopped by a signal
+ACTIVE = []                    # the programs running now
+
+def _die_with_parent():  # runs in the child between fork and exec
+    try:
+        ctypes.CDLL(None).prctl(1, signal.SIGKILL)   # PR_SET_PDEATHSIG
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def spawn(argv, **kwargs):
+    kwargs.setdefault("stdin", subprocess.DEVNULL)
+    if sys.platform.startswith("linux") and ctypes is not None:
+        kwargs["preexec_fn"] = _die_with_parent
+    return subprocess.Popen(argv, **kwargs)
+
+
+def descendants(pid):
+    """Every process below `pid`, from /proc where there is one, else from ps."""
+    kids = {}
+    try:
+        if os.path.isdir("/proc/self"):
+            for entry in os.listdir("/proc"):
+                if entry.isdigit():
+                    try:
+                        with open("/proc/%s/stat" % entry, "rb") as fh:
+                            fields = fh.read().rsplit(b")", 1)[1].split()
+                        kids.setdefault(int(fields[1]), []).append(int(entry))
+                    except (OSError, IndexError, ValueError):
+                        continue
+        else:
+            out = subprocess.run(["ps", "-A", "-o", "pid=,ppid="], capture_output=True, text=True, timeout=10).stdout
+            for line in out.splitlines():
+                parts = line.split()
+                if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                    kids.setdefault(int(parts[1]), []).append(int(parts[0]))
+    except (OSError, subprocess.SubprocessError):
+        return []
+    found, stack = [], [pid]
+    while stack:
+        for child in kids.get(stack.pop(), []):
+            found.append(child)
+            stack.append(child)
+    return found
+
+
+def kill_tree(proc):
+    """Kill the program and everything it started. The children are listed first: once the parent is gone they are
+    adopted by init and can no longer be found below it."""
+    victims = descendants(proc.pid)
+    try:
+        proc.kill()
+    except OSError:
+        pass
+    for pid in victims:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+
+
+def _on_signal(signum, _frame):
+    for proc in list(ACTIVE):
+        kill_tree(proc)
+    last_word = STATE.get("last_word")
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def preflight(argv, seconds):
+    """Run a short program, bounded; (exit code or None, stdout bytes, stderr bytes, timed out)."""
+    try:
+        proc = spawn(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except OSError as exc:
+        return None, b"", describe(exc).encode("utf-8", "replace"), False
+    ACTIVE.append(proc)
+    try:
+        out, err = proc.communicate(timeout=max(1.0, seconds))
+        return proc.returncode, out, err, False
+    except subprocess.TimeoutExpired:
+        kill_tree(proc)
+        out, err = proc.communicate()
+        return None, out, err, True
+    finally:
+        ACTIVE.remove(proc)
+
+
+def run_to_files(argv, stdout_path, stderr_path, seconds, cwd=None):
+    """One program with its output in files, killed with what it started at `seconds`. (exit code, timed out)."""
+    with open(stdout_path, "wb") as stdout, open(stderr_path, "wb") as stderr:
+        proc = spawn(argv, stdout=stdout, stderr=stderr, cwd=cwd)
+        ACTIVE.append(proc)
+        try:
+            return proc.wait(timeout=max(0.1, seconds)), False
+        except subprocess.TimeoutExpired:
+            kill_tree(proc)
+            proc.wait()
+            return None, True
+        finally:
+            ACTIVE.remove(proc)
+
+
+def install_signal_handlers():
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+# END SHARED PROCESS
 
 
 def undetermined(why, code=2):
@@ -103,31 +242,33 @@ def detect_os(image):
     binary = shutil.which("target-query")
     if not binary:
         undetermined("target-query is not in this image: the OS of the target was not identified, so this route is not closed")
-    try:
-        proc = subprocess.run([binary, "--no-cache", "-s", "-f", "os", image],
-                              capture_output=True, text=True, errors="replace", timeout=DETECT_SECONDS)
-    except subprocess.TimeoutExpired:
+    install_signal_handlers()
+    code, raw_out, raw_err, timed_out = preflight([binary, "--no-cache", "-s", "-f", "os", image], DETECT_SECONDS)
+    if timed_out:
         undetermined(f"target-query did not identify the OS within {DETECT_SECONDS} seconds: "
                      "not known to be Linux or not, so this route is not closed")
-    text = proc.stdout.strip()
+    stdout, stderr = raw_out.decode("utf-8", "replace"), raw_err.decode("utf-8", "replace")
+    if code is None:
+        undetermined(f"target-query could not be started ({stderr.strip()[-300:]}): the OS was not identified, so this route is not closed")
+    text = stdout.strip()
     first = (text.splitlines() or [""])[0][:80]
-    name = os_name(text) if proc.returncode == 0 else None
+    name = os_name(text) if code == 0 else None
     if name == "linux":
         answer({"applies": True, "status": "complete", "status_basis": "dissect.target's os function named the target; that is its own identification, not checked here against files in the image",
                 "why": "dissect.target's os function named the target 'linux' (unverified here against the image's files)"})
     if name in NOT_LINUX:
         answer({"applies": False, "status": "complete", "status_basis": "dissect.target's os function named an operating system this recipe knows is not Linux",
                 "why": f"dissect.target's os function named the target {name!r}, not Linux"}, 1)
-    why = (proc.stderr or proc.stdout).strip()
-    if proc.returncode == 0 and not why:
+    why = (stderr or stdout).strip()
+    if code == 0 and not why:
         why = "target-query exited 0 and printed nothing: the OS was not identified"
-    elif proc.returncode == 0 and name in UNIDENTIFIED:
+    elif code == 0 and name in UNIDENTIFIED:
         why = f"target-query reported that it could not identify the system ({first!r})"
-    elif proc.returncode == 0:
+    elif code == 0:
         why = (f"target-query's os function printed {first!r}, which is not a single name this recipe recognises "
                "(linux, or an operating system it knows is not Linux): it is not read as either")
     elif not why:
-        why = f"target-query exited {proc.returncode} without identifying the OS"
+        why = f"target-query exited {code} without identifying the OS"
     undetermined(why[-400:] + " (the OS was not identified: this route is not closed)")
 
 
@@ -242,25 +383,31 @@ def run(image, shown, out):
     def terminated(signum, _frame):
         child = state["proc"]
         if child is not None and child.poll() is None:
-            # The wrapper runs in a session of its own, with the dissect.target it started: end the whole group.
+            # The wrapper is in this process's group, not a session of its own. It is asked to stop first, so that it ends the
+            # dissect.target it started and says `terminated` in its summary; whatever is left of its tree is then killed.
+            victims = descendants(child.pid)
             try:
-                os.killpg(child.pid, signal.SIGTERM)
-            except (OSError, ProcessLookupError):
                 child.terminate()
+            except OSError:
+                pass
             try:
                 child.wait(timeout=8)
             except subprocess.TimeoutExpired:
+                pass
+            kill_tree(child)
+            for pid in victims:
                 try:
-                    os.killpg(child.pid, signal.SIGKILL)
-                except (OSError, ProcessLookupError):
-                    child.kill()
+                    os.kill(pid, signal.SIGKILL)
+                except OSError:
+                    pass
         receipt(None, "after this process was terminated")
-        raise SystemExit(128 + signum)
+        os._exit(128 + signum)
 
-    signal.signal(signal.SIGTERM, terminated)
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, terminated)
     try:
-        proc = subprocess.Popen([sys.executable, str(tool)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                                start_new_session=True, cwd=str(out))
+        # In this process's own group, never a session of its own: the harness ends a recipe by killing its group.
+        proc = spawn([sys.executable, str(tool)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=str(out))
     except OSError as exc:
         answer({"ok": False, "status": "failed", "status_basis": "the wrapper could not be started", "error": f"linux_triage could not be started: {exc.strerror or exc}"}, 2)
     state["proc"] = proc

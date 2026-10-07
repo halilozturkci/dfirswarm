@@ -30,7 +30,13 @@ Time. Each function runs for at most `timeout_seconds`, and all of them within `
 (default 13800, under the manifest's 14400): a function is started only if the time left covers its own
 timeout, so a function that is cut off by the total deadline never exists; what was not started is marked
 `not_attempted`, and `summary.json` in the output directory is rewritten after every function, so a run that
-is killed from outside still leaves what it had done.
+is killed from outside still leaves what it had done. Neither timeout may be more than 14100 seconds, under the
+manifest's 14400.
+
+Processes. Each function runs in this tool's own process group, not a session of its own: the harness ends a tool
+that runs too long, or is aborted, by killing the tool's group, and a dissect.target in a group of its own would go
+on writing into the output directory after the tool is gone. SIGTERM, SIGINT and SIGHUP kill the function that is
+running and what it started, then say `terminated` in summary.json.
 
 Every answer carries `status` (complete, partial or failed) and `status_basis`, the same pair the recipes'
 coverage.json carries. `complete` says every selected function ran and produced records or nothing; it is not
@@ -51,6 +57,7 @@ TOOL = "linux_triage"
 PARSER = "linux_triage/3"
 DEFAULT_FUNCTION_SECONDS = 1800
 DEFAULT_TOTAL_SECONDS = 13800
+MAX_TOTAL_SECONDS = 14100       # the most a caller may ask for (the manifest allows 14400)
 SUMMARY_NAME = "summary.json"
 FIRST_FAILURES = 20
 
@@ -99,6 +106,135 @@ def names_function(function):
     """A pattern that finds this function's own name in a line: the whole dotted name, as a word. `os` is not found inside
     `hostos` or `os.hostname`, and `ips` is not found inside `ships`."""
     return re.compile(r"(?<![\w.])" + re.escape(function) + r"(?!\w|\.\w)")
+
+
+def describe(exc):
+    return "%s: %s" % (type(exc).__name__, exc)
+
+
+# BEGIN SHARED PROCESS
+# The same text is in pcap_extract, zeek_run, suricata_run and the network-capture recipe; tests/pack-network-process.test.ts
+# holds the copies equal. A program an engine tool runs is started in THIS tool's process group, never in a session of
+# its own: the harness ends a tool that runs too long, or is aborted, by killing the tool's group (process.kill(-pid,
+# SIGKILL)), and an engine in a group of its own goes on writing into the output directory after the tool is gone. On
+# Linux the kernel is also asked to kill it if the tool dies. A deadline kills the program and what it started by
+# walking the process tree, and SIGTERM, SIGINT and SIGHUP do the same and then give the tool a last word.
+try:
+    import ctypes
+except ImportError:  # pragma: no cover
+    ctypes = None
+
+STATE = {"last_word": None}    # what to do, with the signal number, when the tool is stopped by a signal
+ACTIVE = []                    # the programs running now
+
+def _die_with_parent():  # runs in the child between fork and exec
+    try:
+        ctypes.CDLL(None).prctl(1, signal.SIGKILL)   # PR_SET_PDEATHSIG
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def spawn(argv, **kwargs):
+    kwargs.setdefault("stdin", subprocess.DEVNULL)
+    if sys.platform.startswith("linux") and ctypes is not None:
+        kwargs["preexec_fn"] = _die_with_parent
+    return subprocess.Popen(argv, **kwargs)
+
+
+def descendants(pid):
+    """Every process below `pid`, from /proc where there is one, else from ps."""
+    kids = {}
+    try:
+        if os.path.isdir("/proc/self"):
+            for entry in os.listdir("/proc"):
+                if entry.isdigit():
+                    try:
+                        with open("/proc/%s/stat" % entry, "rb") as fh:
+                            fields = fh.read().rsplit(b")", 1)[1].split()
+                        kids.setdefault(int(fields[1]), []).append(int(entry))
+                    except (OSError, IndexError, ValueError):
+                        continue
+        else:
+            out = subprocess.run(["ps", "-A", "-o", "pid=,ppid="], capture_output=True, text=True, timeout=10).stdout
+            for line in out.splitlines():
+                parts = line.split()
+                if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                    kids.setdefault(int(parts[1]), []).append(int(parts[0]))
+    except (OSError, subprocess.SubprocessError):
+        return []
+    found, stack = [], [pid]
+    while stack:
+        for child in kids.get(stack.pop(), []):
+            found.append(child)
+            stack.append(child)
+    return found
+
+
+def kill_tree(proc):
+    """Kill the program and everything it started. The children are listed first: once the parent is gone they are
+    adopted by init and can no longer be found below it."""
+    victims = descendants(proc.pid)
+    try:
+        proc.kill()
+    except OSError:
+        pass
+    for pid in victims:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+
+
+def _on_signal(signum, _frame):
+    for proc in list(ACTIVE):
+        kill_tree(proc)
+    last_word = STATE.get("last_word")
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def preflight(argv, seconds):
+    """Run a short program, bounded; (exit code or None, stdout bytes, stderr bytes, timed out)."""
+    try:
+        proc = spawn(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except OSError as exc:
+        return None, b"", describe(exc).encode("utf-8", "replace"), False
+    ACTIVE.append(proc)
+    try:
+        out, err = proc.communicate(timeout=max(1.0, seconds))
+        return proc.returncode, out, err, False
+    except subprocess.TimeoutExpired:
+        kill_tree(proc)
+        out, err = proc.communicate()
+        return None, out, err, True
+    finally:
+        ACTIVE.remove(proc)
+
+
+def run_to_files(argv, stdout_path, stderr_path, seconds, cwd=None):
+    """One program with its output in files, killed with what it started at `seconds`. (exit code, timed out)."""
+    with open(stdout_path, "wb") as stdout, open(stderr_path, "wb") as stderr:
+        proc = spawn(argv, stdout=stdout, stderr=stderr, cwd=cwd)
+        ACTIVE.append(proc)
+        try:
+            return proc.wait(timeout=max(0.1, seconds)), False
+        except subprocess.TimeoutExpired:
+            kill_tree(proc)
+            proc.wait()
+            return None, True
+        finally:
+            ACTIVE.remove(proc)
+
+
+def install_signal_handlers():
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+# END SHARED PROCESS
+
 
 def fail(message, **extra):
     print(json.dumps({"error": message, "status": "failed", "status_basis": "the tool stopped with an error (see error)", **extra}))
@@ -236,24 +372,27 @@ def coverage_of(groups):
     return counts
 
 
-def status_of(groups, finished):
+def status_of(groups, kind):
     """(status, basis) for the run: complete only if the run ended and every selected function ran and produced records or
-    nothing; failed if no function ran to an exit (all failed or none started); partial otherwise."""
+    nothing; failed if no function ran to an exit (all failed or none started); partial otherwise. A run that is still going
+    (`running`) is partial; one that was stopped from outside (`terminated`) is judged on what it had done."""
     counts = {}
     for g in groups:
         for f in g["functions"]:
             counts[f["status"]] = counts.get(f["status"], 0) + 1
     total = sum(counts.values())
     ran = total - counts.get("failed", 0) - counts.get("not_attempted", 0) - counts.get("pending", 0) - counts.get("running", 0)
-    if not finished:
+    if kind == "running":
         return "partial", "the run has not ended: %d of %d selected functions have an outcome" % (total - counts.get("pending", 0) - counts.get("running", 0), total)
     if ran == 0:
-        return "failed", "no selected function ran to an exit: %d failed, %d not attempted" % (counts.get("failed", 0), counts.get("not_attempted", 0))
-    clean = all(counts.get(k, 0) == 0 for k in ("unsupported", "failed", "not_attempted", "unknown", "pending", "running"))
+        return "failed", "no selected function ran to an exit: %d failed, %d not attempted%s" % (
+            counts.get("failed", 0), counts.get("not_attempted", 0) + counts.get("pending", 0), "; the run was stopped from outside" if kind == "terminated" else "")
+    clean = kind == "finished" and all(counts.get(k, 0) == 0 for k in ("unsupported", "failed", "not_attempted", "unknown", "pending", "running"))
     if clean:
         return "complete", "every one of the %d selected functions ran to exit 0 and produced records or nothing: this is not coverage of the host" % total
-    parts = ["%d %s" % (counts[k], k) for k in ("unsupported", "failed", "not_attempted", "unknown") if counts.get(k)]
-    return "partial", "%d of %d selected functions ran; %s: the files and the per-function statuses say which" % (ran, total, ", ".join(parts))
+    parts = ["%d %s" % (counts[k], k) for k in ("unsupported", "failed", "not_attempted", "unknown", "pending", "running") if counts.get(k)]
+    return "partial", "%d of %d selected functions ran%s; %s: the files and the per-function statuses say which" % (
+        ran, total, "; the run was stopped from outside" if kind == "terminated" else "", ", ".join(parts) or "none left")
 
 
 def write_summary(out, state):
@@ -265,29 +404,16 @@ def write_summary(out, state):
         fail("the summary could not be written: %s" % (exc.strerror or exc), out_dir=str(out))
 
 
-CURRENT = {"proc": None, "entry": None, "out": None, "state": None}
+CURRENT = {"entry": None, "out": None, "state": None}
 
 
-def on_term(signum, _frame):
-    """Told to stop from outside: end the function that is running, say so in the summary, and leave."""
-    proc, entry = CURRENT["proc"], CURRENT["entry"]
-    if proc is not None and proc.poll() is None:
-        for sig in (signal.SIGTERM, signal.SIGKILL):
-            try:
-                os.killpg(proc.pid, sig)
-            except (OSError, ProcessLookupError):
-                pass
-            try:
-                proc.wait(timeout=3)
-                break
-            except subprocess.TimeoutExpired:
-                continue
+def last_word(signum):
+    """Told to stop from outside (the block above has already ended the function that was running): say so in the summary."""
+    entry = CURRENT["entry"]
     if entry is not None and entry.get("status") == "running":
         entry.update({"status": "failed", "exit_code": 128 + signum, "timed_out": False, "reason": "this process was told to stop (signal %d) while the function ran" % signum})
     if CURRENT["state"] is not None:
-        state = CURRENT["state"]("terminated")
-        write_summary(CURRENT["out"], state)
-    raise SystemExit(128 + signum)
+        write_summary(CURRENT["out"], CURRENT["state"]("terminated"))
 
 
 def main():
@@ -325,9 +451,9 @@ def main():
         selected = list(GROUPS)
     per_function = args.get("timeout_seconds", DEFAULT_FUNCTION_SECONDS)
     total = args.get("total_timeout_seconds", DEFAULT_TOTAL_SECONDS)
-    for name, value in (("timeout_seconds", per_function), ("total_timeout_seconds", total)):
-        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
-            fail("%s must be a positive integer" % name)
+    for name, value, most in (("timeout_seconds", per_function, MAX_TOTAL_SECONDS), ("total_timeout_seconds", total, MAX_TOTAL_SECONDS)):
+        if not isinstance(value, int) or isinstance(value, bool) or value < 1 or value > most:
+            fail("%s must be a whole number of seconds from 1 to %d (the manifest allows 14400 for the whole run)" % (name, most))
 
     try:
         out.mkdir(parents=True)
@@ -339,13 +465,14 @@ def main():
                "covers": GROUPS[g]["covers"], "does_not_cover": GROUPS[g]["does_not_cover"], "status": "pending"} for g in selected]
 
     def state(kind):
-        status, basis = status_of(groups, kind == "finished")
+        status, basis = status_of(groups, kind)
         return {"state": kind, "status": status, "status_basis": basis, "parser": PARSER, "source": source, "out_dir": str(out),
                 "started": started_at, "updated": time.time(), "total_timeout_seconds": total, "timeout_seconds": per_function,
                 "groups": groups, "coverage": coverage_of(groups)}
 
     CURRENT["out"], CURRENT["state"] = out, state
-    signal.signal(signal.SIGTERM, on_term)
+    STATE["last_word"] = last_word
+    install_signal_handlers()
     write_summary(out, state("running"))
     stop = False
     for group in groups:
@@ -374,18 +501,23 @@ def main():
                 began = time.monotonic()
                 timed_out = False
                 with err_path.open("wb") as stderr:
-                    proc = subprocess.Popen(argv, stdout=stdout, stderr=stderr, start_new_session=True)
-                    CURRENT["proc"], CURRENT["entry"] = proc, entry
+                    # In this tool's own process group, never a session of its own: the harness ends a tool by killing its group.
                     try:
-                        code = proc.wait(timeout=limit)
-                    except subprocess.TimeoutExpired:
-                        timed_out, code = True, 124
+                        proc = spawn(argv, stdout=stdout, stderr=stderr)
+                    except OSError as exc:
+                        proc, code = None, 127
+                        stderr.write(("the function could not be started: %s\n" % (exc.strerror or exc)).encode("utf-8", "replace"))
+                    if proc is not None:
+                        ACTIVE.append(proc)
+                        CURRENT["entry"] = entry
                         try:
-                            os.killpg(proc.pid, signal.SIGKILL)
-                        except (OSError, ProcessLookupError):
-                            proc.kill()
-                        proc.wait()
-                    CURRENT["proc"] = None
+                            code = proc.wait(timeout=limit)
+                        except subprocess.TimeoutExpired:
+                            timed_out, code = True, 124
+                            kill_tree(proc)
+                            proc.wait()
+                        finally:
+                            ACTIVE.remove(proc)
                 stdout.flush()
                 end = stdout.tell()
                 # A function that stopped in the middle of a line leaves it unterminated; the line is ended so that the next

@@ -27,9 +27,14 @@ never carries `message` or `cmdline`; `preview_text: true` (in a job) adds them 
 skill says the job runs with secret_output: true. Nothing is hashed or shortened.
 
 A tool that fails loudly: journalctl's stderr is kept whole in a file; a deadline (`max_seconds`) ends the read
-and returns what was read with `export_status: partial`; a line that is not JSON is counted and located; a
+and returns what was read with `status: partial`; a line that is not JSON is counted and located; a
 journalctl that failed and wrote nothing is an error, not an empty export. `mode: verify` runs journalctl
 --verify on its own, keeps its whole output, and claims only what that command checks.
+
+Processes. journalctl runs in this tool's own process group, not a session of its own: the harness ends a tool
+that runs too long, or is aborted, by killing the tool's group, and a journalctl in a group of its own would go on
+running after the tool is gone. The deadline (max_seconds, at most 270 of the manifest's 300) and SIGTERM, SIGINT
+and SIGHUP end journalctl and what it started.
 """
 import datetime
 import json
@@ -37,13 +42,14 @@ import math
 import os
 import re
 import secrets
+import select
 import shutil
 import signal
 import stat
 import subprocess
 import sys
 import tempfile
-import threading
+import time
 from pathlib import Path
 
 TOOL = "journal_export"
@@ -335,6 +341,130 @@ class TextFile:
                 "contains_text_that_may_hold_secrets": self.written > 0, **shown, "format": self.what}
 
 
+# BEGIN SHARED PROCESS
+# The same text is in pcap_extract, zeek_run, suricata_run and the network-capture recipe; tests/pack-network-process.test.ts
+# holds the copies equal. A program an engine tool runs is started in THIS tool's process group, never in a session of
+# its own: the harness ends a tool that runs too long, or is aborted, by killing the tool's group (process.kill(-pid,
+# SIGKILL)), and an engine in a group of its own goes on writing into the output directory after the tool is gone. On
+# Linux the kernel is also asked to kill it if the tool dies. A deadline kills the program and what it started by
+# walking the process tree, and SIGTERM, SIGINT and SIGHUP do the same and then give the tool a last word.
+try:
+    import ctypes
+except ImportError:  # pragma: no cover
+    ctypes = None
+
+STATE = {"last_word": None}    # what to do, with the signal number, when the tool is stopped by a signal
+ACTIVE = []                    # the programs running now
+
+def _die_with_parent():  # runs in the child between fork and exec
+    try:
+        ctypes.CDLL(None).prctl(1, signal.SIGKILL)   # PR_SET_PDEATHSIG
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def spawn(argv, **kwargs):
+    kwargs.setdefault("stdin", subprocess.DEVNULL)
+    if sys.platform.startswith("linux") and ctypes is not None:
+        kwargs["preexec_fn"] = _die_with_parent
+    return subprocess.Popen(argv, **kwargs)
+
+
+def descendants(pid):
+    """Every process below `pid`, from /proc where there is one, else from ps."""
+    kids = {}
+    try:
+        if os.path.isdir("/proc/self"):
+            for entry in os.listdir("/proc"):
+                if entry.isdigit():
+                    try:
+                        with open("/proc/%s/stat" % entry, "rb") as fh:
+                            fields = fh.read().rsplit(b")", 1)[1].split()
+                        kids.setdefault(int(fields[1]), []).append(int(entry))
+                    except (OSError, IndexError, ValueError):
+                        continue
+        else:
+            out = subprocess.run(["ps", "-A", "-o", "pid=,ppid="], capture_output=True, text=True, timeout=10).stdout
+            for line in out.splitlines():
+                parts = line.split()
+                if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                    kids.setdefault(int(parts[1]), []).append(int(parts[0]))
+    except (OSError, subprocess.SubprocessError):
+        return []
+    found, stack = [], [pid]
+    while stack:
+        for child in kids.get(stack.pop(), []):
+            found.append(child)
+            stack.append(child)
+    return found
+
+
+def kill_tree(proc):
+    """Kill the program and everything it started. The children are listed first: once the parent is gone they are
+    adopted by init and can no longer be found below it."""
+    victims = descendants(proc.pid)
+    try:
+        proc.kill()
+    except OSError:
+        pass
+    for pid in victims:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+
+
+def _on_signal(signum, _frame):
+    for proc in list(ACTIVE):
+        kill_tree(proc)
+    last_word = STATE.get("last_word")
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def preflight(argv, seconds):
+    """Run a short program, bounded; (exit code or None, stdout bytes, stderr bytes, timed out)."""
+    try:
+        proc = spawn(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except OSError as exc:
+        return None, b"", describe(exc).encode("utf-8", "replace"), False
+    ACTIVE.append(proc)
+    try:
+        out, err = proc.communicate(timeout=max(1.0, seconds))
+        return proc.returncode, out, err, False
+    except subprocess.TimeoutExpired:
+        kill_tree(proc)
+        out, err = proc.communicate()
+        return None, out, err, True
+    finally:
+        ACTIVE.remove(proc)
+
+
+def run_to_files(argv, stdout_path, stderr_path, seconds, cwd=None):
+    """One program with its output in files, killed with what it started at `seconds`. (exit code, timed out)."""
+    with open(stdout_path, "wb") as stdout, open(stderr_path, "wb") as stderr:
+        proc = spawn(argv, stdout=stdout, stderr=stderr, cwd=cwd)
+        ACTIVE.append(proc)
+        try:
+            return proc.wait(timeout=max(0.1, seconds)), False
+        except subprocess.TimeoutExpired:
+            kill_tree(proc)
+            proc.wait()
+            return None, True
+        finally:
+            ACTIVE.remove(proc)
+
+
+def install_signal_handlers():
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+# END SHARED PROCESS
+
+
 def decoded_time(micro):
     try:
         return (EPOCH + datetime.timedelta(microseconds=int(micro))).isoformat() + "Z", None
@@ -423,72 +553,64 @@ def output_file(name):
     fail("no free name for %s in %s" % (name, base))
 
 
-CURRENT = {"proc": None}
-
-
-def on_term(signum, _frame):
-    """Told to stop from outside: end journalctl and what it started, so nothing keeps running after the tool."""
-    proc = CURRENT["proc"]
-    if proc is not None and proc.poll() is None:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except (OSError, ProcessLookupError):
-            try:
-                proc.kill()
-            except OSError:
-                pass
-    raise SystemExit(128 + signum)
-
-
 def run_journalctl(argv, raw_sink, line_sink, oversized_sink, stderr_path, seconds):
-    """Run journalctl in a process group of its own, with a deadline that ends the whole group. Every byte of stdout
-    goes to `raw_sink` in order; each line within MAX_LINE goes whole to `line_sink`, and a longer one is counted by
-    `oversized_sink` and not held, so one huge entry costs no more memory than the cap."""
-    state = {"timed_out": False}
+    """Run journalctl in this tool's process group (spawn, below: the harness ends a tool by killing its group), with a
+    deadline that ends it and what it started. Every byte of stdout goes to `raw_sink` in order; each line within MAX_LINE
+    goes whole to `line_sink`, and a longer one is counted by `oversized_sink` and not held, so one huge entry costs no more
+    memory than the cap. The pipe is read with select, so the deadline needs no thread."""
+    timed_out = False
     with open(stderr_path, "wb") as err:
-        proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=err, start_new_session=True)
-        CURRENT["proc"] = proc
-
-        def kill():
-            state["timed_out"] = True
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except (OSError, ProcessLookupError):
-                try:
-                    proc.kill()
-                except OSError:
-                    pass
-        timer = threading.Timer(seconds, kill)
-        timer.start()
+        proc = spawn(argv, stdout=subprocess.PIPE, stderr=err)
+        ACTIVE.append(proc)
         try:
+            fd = proc.stdout.fileno()
+            end = time.monotonic() + seconds
             pending, size = [], 0
             while True:
-                piece = proc.stdout.readline(1 << 20)
-                if not piece:
+                left = end - time.monotonic()
+                if left <= 0 and not timed_out:
+                    # The deadline: end journalctl and what it started, then take what is left in the pipe.
+                    timed_out = True
+                    kill_tree(proc)
+                    end = time.monotonic() + 5.0
+                    continue
+                if left <= 0:
                     break
-                raw_sink(piece)
-                size += len(piece)
-                if pending is not None and size <= MAX_LINE:
-                    pending.append(piece)
-                else:
-                    pending = None
-                if piece.endswith(b"\n"):
-                    if pending is None:
-                        oversized_sink(size)
+                ready, _w, _x = select.select([fd], [], [], min(left, 0.5))
+                if not ready:
+                    continue
+                chunk = os.read(fd, 1 << 20)
+                if not chunk:
+                    break
+                raw_sink(chunk)
+                start = 0
+                while start < len(chunk):
+                    nl = chunk.find(b"\n", start)
+                    part = chunk[start:] if nl < 0 else chunk[start:nl + 1]
+                    start += len(part)
+                    size += len(part)
+                    if pending is not None and size <= MAX_LINE:
+                        pending.append(part)
                     else:
-                        line_sink(b"".join(pending))
-                    pending, size = [], 0
+                        pending = None
+                    if part.endswith(b"\n"):
+                        if pending is None:
+                            oversized_sink(size)
+                        else:
+                            line_sink(b"".join(pending))
+                        pending, size = [], 0
             if size:
                 if pending is None:
                     oversized_sink(size)
                 else:
                     line_sink(b"".join(pending))
         finally:
-            timer.cancel()
+            if proc.poll() is None:
+                kill_tree(proc)
             proc.stdout.close()
             proc.wait()
-            CURRENT["proc"] = None
-    return proc.returncode, state["timed_out"]
+            ACTIVE.remove(proc)
+    return proc.returncode, timed_out
 
 
 def first_lines(path, count=20):
@@ -568,9 +690,10 @@ def main():
         argv = [binary, "--verify"] + where
         out_path, out_shown = output_file(VERIFY_NAME)
         err_path, err_shown = output_file(STDERR_NAME)
-        signal.signal(signal.SIGTERM, on_term)
+        install_signal_handlers()
         try:
             with open(out_path, "wb") as sink:
+                STATE["last_word"] = lambda signum: sink.flush()
                 code, timed_out = run_journalctl(argv, sink.write, lambda raw: None, lambda size: None, err_path, seconds)
         except OSError as exc:
             fail("journalctl could not be run: %s" % describe(exc), argv=argv)
@@ -659,7 +782,8 @@ def main():
             extra = {"preview_truncated": {k: v for k, v in (("message", msg_whole), ("cmdline", cmd_whole)) if v is not None}} if (msg_whole or cmd_whole) else {}
             preview_rows.append({**row, "message": msg, "cmdline": cmd, **extra})
 
-    signal.signal(signal.SIGTERM, on_term)
+    install_signal_handlers()
+    STATE["last_word"] = lambda signum: text.close()
     try:
         code, timed_out = run_journalctl(argv, text.add_bytes_raw, sink, oversized, err_path, seconds)
     except OSError as exc:

@@ -1,7 +1,7 @@
 {
   "id": "linux-target",
   "version": "1.1.0",
-  "description": "Catalogue Linux identity, accounts, sessions, authentication, histories, persistence, packages, SSH, journals/syslog, web and container logs through dissect.target, one function at a time, with a status for each (parsed, empty, unsupported, failed, not attempted, unknown). This reads Linux roots inside LVM and common VM disk containers without mounting them. Its detect step says Linux only where dissect.target's os function printed `linux` (its own identification, unverified against the image), closes the route only for an operating system it knows is not Linux, and says could-not-tell (exit 2) for anything else, including a name it does not recognise. Its receipt and its answers carry `status` (complete, partial or failed) and `status_basis`.",
+  "description": "Catalogue Linux identity, accounts, sessions, authentication, histories, persistence, packages, SSH, journals/syslog, web and container logs through dissect.target, one function at a time, with a status for each (parsed, empty, unsupported, failed, not attempted, unknown). This reads Linux roots inside LVM and common VM disk containers without mounting them. Its detect step says Linux only where dissect.target's os function printed `linux` (its own identification, unverified against the image), closes the route only for an operating system it knows is not Linux, and says could-not-tell (exit 2) for anything else, including a name it does not recognise. Its receipt and its answers carry `status` (complete, partial or failed) and `status_basis`. The wrapper and what it starts run in the recipe's own process group, never a session of its own, so the harness ending the recipe by killing its group ends them with it; detect stops itself before the harness's 300 seconds.",
   "object": "Linux disk image or extracted root",
   "order": 15,
   "min_bytes": 65536,
@@ -69,5 +69,5 @@
     "an empty plugin result is not proof the artefact never existed"
   ],
   "covers": "Records exposed by the selected dissect.target Linux functions, each with the status it earned from its exit code, its records and its stderr. `complete` in the receipt means every selected function ran and produced records or nothing: it is not coverage of the host. It does not carve deleted/unallocated data, parse arbitrary application data, acquire memory, unlock encrypted volumes without a key, or prove that an empty parser result means the artefact never existed.",
-  "sha256": "3fed404c65492ba8f87de33677774427709adcb742b580ba0f0f1cf10210d6ee"
+  "sha256": "f7b041d8ac4f9213325c8627c88eab8b12563187a6e14f38ab63b66863f47e68"
 }

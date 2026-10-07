@@ -508,7 +508,10 @@ Every tool a pack bundles holds to this.
    zone, is written as ISO 8601 in UTC and keeps its fractions of a second.
 5. **Evidence is hostile input.** A tool executes none of it, follows no path
    out of the directory it was given, writes only to its output directory,
-   uses no network and bounds decompression.
+   uses no network and bounds decompression. A program a tool runs stays in
+   the tool's own process group (never `start_new_session`): the harness ends
+   a tool by killing its group, and a program outside it goes on writing after
+   the tool is gone.
 6. **The manifest's description says exactly what is and is not measured.** A
    survey is described as a survey and a heuristic as a heuristic. A candidate
    is named a candidate; a score is not a verdict.
