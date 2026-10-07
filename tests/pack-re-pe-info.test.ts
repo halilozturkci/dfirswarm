@@ -148,6 +148,21 @@ test("a certificate directory with garbage in it is only declared: offset, size,
     // The first entry's header is read from the spec's WIN_CERTIFICATE layout: dwLength, wRevision, wCertificateType.
     assert.ok("first_entry" in out.certificate_table);
     assert.match(out.note, /not|only/i);
+    // The bytes after the last section are an overlay, located but not read.
+    assert.equal(out.overlay_offset, at);
+    assert.equal(out.overlay_bytes, trailing.length);
+  });
+});
+
+test("the data directories that name a CLR header, a TLS directory and resources are said, not read", async () => {
+  await withCwd(async (cwd) => {
+    const built = buildPe({ extraDirectories: { 14: { rva: 0x1000, size: 72 }, 9: { rva: 0x1000, size: 24 } } });
+    const out = await pe(cwd, built.file);
+    assert.equal(out.declares_clr_runtime_header, true);
+    assert.equal(out.declares_tls, true);
+    assert.equal(out.declares_resources, false);
+    assert.deepEqual(out.data_directories.map((d: Json) => d.name), ["tls", "clr_runtime_header"]);
+    assert.ok(out.coverage.structures_not_read.some((s: string) => /CLR/.test(s)));
   });
 });
 
@@ -340,6 +355,27 @@ test("with no PT_DYNAMIC the dynamic array is found through an SHT_DYNAMIC secti
     const out = await pe(cwd, buf);
     assert.deepEqual(out.needed_libraries, ["libz.so.1"]);
     assert.match(out.dynamic.source, /SHT_DYNAMIC/);
+  });
+});
+
+test("extended counts in section header 0 (PN_XNUM, a zero e_shnum, SHN_XINDEX) are followed", async () => {
+  await withCwd(async (cwd) => {
+    const buf = buildElf({ cls: 64, needed: ["libc.so.6"], sections: [{ name: ".text", type: 1, flags: 6, data: Buffer.from("code") }], extendedCounts: true });
+    const out = await pe(cwd, buf);
+    assert.equal(out.extended_program_header_count, true);
+    assert.equal(out.extended_section_count, true);
+    assert.equal(out.program_headers, 2);
+    assert.deepEqual(out.sections.map((s: Json) => s.name), ["", ".text", ".shstrtab"], "the names come from the string table SHN_XINDEX names");
+    assert.deepEqual(out.needed_libraries, ["libc.so.6"]);
+    assert.equal(out.status, "complete", JSON.stringify(out.problems));
+  });
+});
+
+test("a DT_STRTAB no PT_LOAD maps is found through the string-table section that has its address, and the answer says so", async () => {
+  await withCwd(async (cwd) => {
+    const out = await pe(cwd, buildElf({ cls: 64, needed: ["libm.so.6"], noLoadMapping: true, dynamicInSections: true }));
+    assert.deepEqual(out.needed_libraries, ["libm.so.6"]);
+    assert.match(out.dynamic.string_table.resolved_via, /SHT_STRTAB section whose address is DT_STRTAB/);
   });
 });
 

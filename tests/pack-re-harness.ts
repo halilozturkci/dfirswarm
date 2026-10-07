@@ -340,6 +340,7 @@ export type ElfOptions = {
   dynamicInSections?: boolean;          // also describe the dynamic array by an SHT_DYNAMIC section
   noDynamicSegment?: boolean;           // keep the dynamic array but give no PT_DYNAMIC
   noLoadMapping?: boolean;              // PT_DYNAMIC present, but DT_STRTAB names an address no PT_LOAD maps
+  extendedCounts?: boolean;             // e_phnum = 0xFFFF (PN_XNUM), e_shnum = 0 and e_shstrndx = 0xFFFF (SHN_XINDEX): the real values are in section header 0
 };
 
 const ELF_BASE = 0x400000;
@@ -449,19 +450,18 @@ export function buildElf(o: ElfOptions): Buffer {
     shstrndx = list.length - 1;
     const headers = list.map((s, i) => {
       const dynIdx = list.findIndex((x) => x.name === ".dynstr");
-      const link = s.name === ".dynamic" ? dynIdx : 0;
-      return Buffer.concat([
-        U32(offsets[i]!),
-        U32(s.type),
-        UW(s.flags ?? 0),
-        UW(0),
-        UW(contentAt[i]!),
-        UW(s.data.length),
-        U32(link),
-        U32(0),
-        UW(1),
-        UW(0),
-      ]);
+      let link = s.name === ".dynamic" ? dynIdx : 0;
+      let info = 0;
+      let size = s.data.length;
+      // The address a section says it has: .dynstr names DT_STRTAB's address when the file maps it through no PT_LOAD.
+      const addr = s.name === ".dynstr" ? (o.noLoadMapping ? 0x7ff00000 : ELF_BASE + strtabAt) : 0;
+      if (i === 0 && o.extendedCounts) {
+        // Section header 0 holds the real counts: sh_size = e_shnum, sh_info = e_phnum, sh_link = e_shstrndx.
+        size = list.length;
+        info = nph;
+        link = list.length - 1;
+      }
+      return Buffer.concat([U32(offsets[i]!), U32(s.type), UW(s.flags ?? 0), UW(addr), UW(contentAt[i]!), UW(size), U32(link), U32(info), UW(1), UW(0)]);
     });
     sectionBytes = Buffer.concat([...datas, ...headers]);
   }
@@ -490,10 +490,10 @@ export function buildElf(o: ElfOptions): Buffer {
   const tail = w ? 52 : 40;
   U16(ehsize).copy(hdr, tail);
   U16(phentsize).copy(hdr, tail + 2);
-  U16(nph).copy(hdr, tail + 4);
+  U16(o.extendedCounts ? 0xffff : nph).copy(hdr, tail + 4);
   U16(shentsize).copy(hdr, tail + 6);
-  U16(shnum).copy(hdr, tail + 8);
-  U16(shstrndx).copy(hdr, tail + 10);
+  U16(o.extendedCounts ? 0 : shnum).copy(hdr, tail + 8);
+  U16(o.extendedCounts ? 0xffff : shstrndx).copy(hdr, tail + 10);
   return Buffer.concat([hdr, ...phs, body, sectionBytes]);
 }
 
