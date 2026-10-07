@@ -1,8 +1,8 @@
 ---
 id: ios/biome-segb
-title: Biome and SEGB records by format and stream
-when: Use when an activity question depends on an iOS Biome or other SEGB stream. Not for KnowledgeC or unified logs.
-needs: [ios/artifacts]
+title: Biome and SEGB records
+when: An activity question depends on an iOS Biome stream.
+needs: [extractions/what-you-have]
 tools: [protobuf_peek]
 requires_host: [ileapp]
 ---
@@ -21,6 +21,10 @@ Use when an activity question depends on an iOS Biome or other SEGB stream. Not 
 
 **Deleted state or tombstone**: record lifecycle of storage, not proof that a person deleted an event, when, or that the payload records a completed action.
 
-**Does not show**: a person acting, or the full activity of the device. Corroborate with app records, KnowledgeC where present or a diagnostic record. A negative states the streams present, the parser failures, retention gaps and duplicates checked.
+Shows: that a stream held a record in a stated state, with the payload fields a parser decoded.
 
-**Sensitive output**: Biome payloads can hold message text, URLs and identifiers: run payload readers as a job with `secret_output: true`.
+Does not show: a person acting, or the full activity of the device. Corroborate with app records, KnowledgeC where present or a diagnostic record. A negative states the streams present, the parser failures, retention gaps and duplicates checked.
+
+Record: stream, source file, record or payload offset, raw state, format version, module version, raw and converted times.
+
+Sensitive output: Biome payloads can hold message text, URLs and identifiers: run payload readers as a job with `secret_output: true`.

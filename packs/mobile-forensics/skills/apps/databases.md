@@ -1,7 +1,7 @@
 ---
 id: apps/databases
-title: App databases, transaction state and deleted fragments
-when: Use when an answer rests on an application's SQLite records or on possibly deleted content. Not for the meaning of one app's tables.
+title: App databases, transaction state, deleted fragments
+when: An answer rests on an app's SQLite records or on deleted content.
 needs: [extractions/what-you-have]
 tools: [sqlite_query, sqlite_freespace, file_type]
 requires_host: []
@@ -19,8 +19,10 @@ Use when an answer rests on an application's SQLite records or on possibly delet
 
 **Deleted fragments** (`sqlite_freespace`; fetch `apps/fragments` for how to read its answer): it reads free pages, the gap of a page and its freeblock chain in the main file only. It does not read a `-wal` or `-journal`, does not rebuild rows, and cannot tell secure deletion, reuse or vacuum from nothing having been there. A free-space hit may be obsolete, duplicated or unrelated to a user's deletion.
 
-**Does not show**: which column, table, time, sender or thread a fragment came from, or that the user deleted it. A negative covers the regions and encodings counted in `scanned` and nothing else.
+Shows: the records in the database and its companions as they stand in the copy you hold, and text left in free space.
 
-**Record**: format, schema version, each companion's presence, the query, and for a negative the source, the regions scanned and the encodings.
+Does not show: which column, table, time, sender or thread a fragment came from, or that the user deleted it. A negative covers the regions and encodings counted in `scanned` and nothing else.
 
-**Sensitive output**: `sqlite_freespace` and message tables hold private text and sometimes credentials: run them as a job with `secret_output: true`; cite a location, never a password, token or key value.
+Record: format, schema version, each companion's presence, the query, and for a negative the source, the regions scanned and the encodings.
+
+Sensitive output: `sqlite_freespace` and message tables hold private text and sometimes credentials: run them as a job with `secret_output: true`; cite a location, never a password, token or key value.

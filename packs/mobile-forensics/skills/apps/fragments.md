@@ -1,7 +1,7 @@
 ---
 id: apps/fragments
 title: Reading a sqlite_freespace answer
-when: Use only if you ran sqlite_freespace and must report what its fragments are. Not for choosing whether to run it.
+when: You ran sqlite_freespace and must report what its fragments are.
 needs: [apps/databases]
 tools: [sqlite_freespace]
 requires_host: []
@@ -19,6 +19,10 @@ Use only if you ran `sqlite_freespace` and must report what its fragments are. N
 
 **Filters.** `contains` applies after the scan: `fragments_found_before_filter` says what a filtered run discarded. Keep the unfiltered run's `all_results` file. A filter shows whether text you name is present; it does not read text you do not name.
 
-**Does not show**: a row, a time, an author, or that the page belonged to the table you suspect. Say "recovered text at page N, offset O". Corroborate with the live table, the `-wal`, an app export or another source before a conclusion.
+Shows: that text of a stated encoding sat at a stated offset of a stated page of the file.
 
-**Sensitive output**: the values file is a sealed output; what you write about it is where it sits and what it is, not what it says.
+Does not show: a row, a time, an author, or that the page belonged to the table you suspect. Say "recovered text at page N, offset O". Corroborate with the live table, the `-wal`, an app export or another source before a conclusion.
+
+Record: file and its digest, page, offset, length, encoding, the status and any `problems` that applied.
+
+Sensitive output: the values file is a sealed output; what you write about it is where it sits and what it is, not what it says.

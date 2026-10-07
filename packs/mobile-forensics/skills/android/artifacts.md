@@ -1,7 +1,7 @@
 ---
 id: android/artifacts
 title: Android artefacts by build, user and protection state
-when: Use when the evidence holds Android application or system data. Not for an adb backup's layout (extractions/backup-detail) or location questions.
+when: The evidence holds Android application or system data.
 needs: [extractions/what-you-have]
 tools: [sqlite_query, sqlite_freespace, protobuf_peek]
 requires_host: [aleapp]
@@ -23,8 +23,10 @@ Use when the evidence holds Android application or system data. Not for an adb b
 
 **Wi-Fi**: a saved configuration shows configuration, not that the phone joined it or where.
 
-**Does not show**: a person, an intent, or absence beyond the profiles, retention and parser coverage you checked.
+Shows: what package, user and app stores record, and what the parsers decoded from them.
 
-**Record**: version, user, path, parser and version, raw value beside a conversion.
+Does not show: a person, an intent, or absence beyond the profiles, retention and parser coverage you checked.
 
-**Sensitive output**: Wi-Fi, account and message stores run as a job with `secret_output: true`; record where a secret sits, never the value or a hash.
+Record: version, user, path, parser and version, raw value beside a conversion.
+
+Sensitive output: Wi-Fi, account and message stores run as a job with `secret_output: true`; record where a secret sits, never the value or a hash.

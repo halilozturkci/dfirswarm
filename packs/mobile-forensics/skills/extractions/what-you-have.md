@@ -1,7 +1,7 @@
 ---
 id: extractions/what-you-have
-title: Mobile extraction scope, protection state and authority
-when: Start here for any phone evidence. Use when the evidence is a phone, a backup or an app export and you have not yet said what it can answer. Not for parsing artefacts.
+title: Mobile extraction scope and authority
+when: Start here: a phone, backup or app export, before any question.
 needs: []
 tools: [manifest_db, file_type]
 requires_host: []
@@ -23,8 +23,10 @@ Use when the evidence is a phone, a backup or an app export and you have not yet
 
 **Recipes.** iOS tar: the `ios-filesystem` catalogue first (its `sqlite.tsv` finds databases by file name suffix, with their `-wal`, `-shm` and `-journal`; a database with another name is not listed). `ios-ileapp` and `android-aleapp` are run by the kickoff: read their `modules.tsv`. `android-backup-apps` is declared unavailable (nothing turns `apps/<package>/` into the layout ALEAPP reads): say so and read the databases the `android-backup` member list names. A finished inventory is not a finished examination.
 
-**Does not show**: that the extraction is the whole device, who used it, or that a listed path holds records.
+Shows: the acquisition method, its stated scope, the files it could read and what the record says it excluded.
 
-**Record**: kind, what it cannot hold, protection state, each source unreadable and why.
+Does not show: that the extraction is the whole device, who used it, or that a listed path holds records.
 
-**Sensitive output**: a job over a keychain, an account or a message store runs with `secret_output: true`; write where a secret sits and what it grants, never its value or a hash.
+Record: kind, what it cannot hold, protection state, each source unreadable and why.
+
+Sensitive output: a job over a keychain, an account or a message store runs with `secret_output: true`; write where a secret sits and what it grants, never its value or a hash.
