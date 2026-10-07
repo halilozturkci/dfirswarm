@@ -7,21 +7,13 @@ tools: [feature_scan, pcap_summary]
 requires_host: [bulk_extractor, capinfos, tshark]
 ---
 
-Use the base pack's `feature_scan` with `only: ["net"]` against a verified
-working copy or the read-only evidence path. The net scanner ignores the file
-system and searches raw bytes for packet records and network features. Its
-`packets.pcap`, when non-empty, is a **carved derivative**, not an original
-capture.
+Use when no capture exists and an image may hold packet buffers. Not for a real capture file (`capture/what-you-have`), and never as proof that traffic did not happen.
 
-Record the source image hash, scanner version and command. Hash
-`packets.pcap`, run `capinfos`, then run `pcap_summary`. Keep `ip.txt`,
-`tcp.txt`, `ether.txt`, the complete pcap and `report.xml`; the byte offsets in
-the feature files are the provenance back to the source image.
+1. Run the base pack's `feature_scan` with `only: ["net"]` as a scoped first pass, in a job with every output under `$OUT`. It runs `bulk_extractor`: record the version, the enabled scanners, the input representation and the exclusions, and do not assume it reads compressed or transformed content. A successful wrapper call does not show a complete scan: read its exit code, diagnostics and completion record, and qualify a partial result.
+2. Keep every scanner output and `report.xml`. Its `packets.pcap`, when non-empty, is a **carved derivative**: hash it, run `capinfos`, then `pcap_summary`, and check structure with `tshark`.
+3. A packet used in a finding needs its source byte range or forensic path and any transformation steps; a nearby feature-file offset is not that. Record where the mapping could not be made.
+4. Timestamps: say whether each came from an intact capture record, was made up by the scanner, or is zero. Even an intact one needs corroboration before it orders anything. Check lengths, protocol structure, duplicates and the surrounding bytes.
+5. A carved packet shows those bytes were in the source. It does not show the source machine sent them; keep false-positive, embedded-sample and duplicated-buffer explanations open until excluded.
 
-Carved packets usually have zero timestamps, duplicate frames and no capture
-point or dropped-packet counters. Never infer chronology, capture duration or
-absence from them. Validate protocol structure with `tshark`, and treat a
-packet as a lead until its source offset and surrounding bytes are checked.
-
-Do not scan a live malware sample on the host. Disk and memory samples stay in
-the worker VM, mounted read-only, and every derivative goes under `work/`.
+Shows: bytes that look like packets, at offsets. Does not show: capture point, duration, completeness or absence. Record: image hash, scanner version and settings, output hashes, the source range per used packet.
+Sensitive output: carved packets can hold credentials; keep them under `$OUT`, run the job with `secret_output: true`, and keep values out of summaries.
