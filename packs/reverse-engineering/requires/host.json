@@ -102,10 +102,10 @@
       "optional": true,
       "why": "Print an ELF file's headers, dynamic section, notes (including the GNU build ID) and symbol tables with GNU binutils, to cross-check pe_info's reading and to read what it does not.",
       "install": {
-        "brew": "brew install binutils",
+        "brew": "brew install binutils (keg-only: readelf is $(brew --prefix binutils)/bin/readelf and is not on PATH)",
         "apt": "apt-get install -y binutils"
       },
-      "licence": "GPL-3.0-or-later",
+      "licence": "GPL-3.0-or-later (the program; binutils as a package mixes licences)",
       "redistributable": false
     },
     {
@@ -124,7 +124,7 @@
       "package": "tlsh-tools",
       "why": "Compute and compare Trend Micro Locality Sensitive Hashes for samples with sufficient size and byte diversity.",
       "install": {
-        "brew": "brew install tlsh",
+        "brew": "not available in Homebrew (there is no tlsh formula): build the CLI from the upstream release, or run the tool in the re image, where apt provides tlsh-tools",
         "apt": "apt-get install -y tlsh-tools"
       },
       "licence": "Apache-2.0 or BSD",
