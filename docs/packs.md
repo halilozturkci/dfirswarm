@@ -25,15 +25,58 @@ It is also the wrong one. A Windows pack's method runs to tens of thousands of
 tokens. Pasting it into every agent spends the context window on material most
 of them never need, and spends it again on every turn for the whole run.
 
-So a pack's skills are small files, and an agent fetches one when it needs it:
+So a pack's skills are small files, and an agent loads one when it needs it:
 
-- The index is small and goes in front of the agent once: skill ids, each with a
-  title and one line saying when to reach for it.
-- A body arrives only when an agent calls `skill("<id>")`.
-- A body may name other skills. The agent fetches those the same way, so one
-  skill builds on another without either repeating it.
-- Every fetch is an event on the trace. Which method a swarm consulted, and
-  when, becomes part of the record the report can cite.
+- The index is small and sits in every agent's system prompt, in a section the
+  kickoff renders from the loaded packs' `skills/INDEX.md` (`scripts/seat-prompt.ts`)
+  into `.pi/APPEND_SYSTEM.md`, which Pi appends to its own prompt sections:
+  one line per skill, its id, a title and one line saying when to reach for it.
+  Pi keeps those sections across a compaction, and for the run a hand-off starts,
+  so the index is still there when the context is not. (The prompt the extension
+  forces in `before_agent_start` lasts only for the run a user prompt starts,
+  so it is not what carries the index; the extension adds the section to a
+  prompt that lacks it, and says so on the trace.) Its budget, in estimated
+  tokens (bytes / 4.245): an entry at most 40, a pack's index at most 1,000, the
+  whole run's index at most 2,500. Above the pack or the run budget the section
+  shows each pack's router only (see "Routers" below); a pack that names no
+  router is shown whole, and the trace says so. The prompt's `worker-system.md`
+  carries the protocol: look in the index before working an artefact class,
+  load the matching note, say in one line what rules you will apply, hold at
+  most three at once, `skill_done` when the topic is finished, and load again
+  after a compaction what is still needed.
+- A body arrives only when an agent calls `skill("<id>")`, as plain Markdown:
+  the front matter is left off and there is no JSON around it. The id is as the
+  index lists it (`area/topic`), or `pack:id` (`pack-name:area/topic`)
+  when more than one pack carries the same id; the index then lists it as
+  `pack:id`, and a bare id that more than one pack carries is served by the first
+  pack of the run and says which others have it. A body the agent already holds
+  is not sent again ("already in your context, loaded at turn N"). The seat's
+  ledger of what it holds is read off the session itself (`buildContextEntries()`),
+  at a compaction and when a process starts on a session that already has some, so
+  it is exact: a compaction keeps the newest part of the history (`keepRecentTokens`)
+  and the bodies in it stay held, the others are taken out, and the next call
+  delivers them again (the row says `reload_after_compaction`). The hand-off header
+  lists the bodies the compaction took out. A message's tool calls run at the same
+  time in Pi; the two tools take turns, in the order the message lists them, so
+  a second `skill(id)` of the same message is answered "already in your context".
+  `skill()` with no id lists every skill of every pack unless the kickoff's file put
+  the whole index in the prompt, in which case it points there.
+- A body may name other skills under `needs`. The result lists them with what
+  each costs in tokens, and loads none: the agent loads the ones the case needs.
+- `skill_done(id, note)` says the agent is finished with a body: the event is on
+  the trace, and the body is marked releasable (a seat that holds three bodies
+  it has not finished is reminded to finish one before it loads a fourth).
+- Every load is an event on the trace, with the sha256 of the file as the pack
+  shipped it (the value `pack.json`'s checksums carry) and its token count. Which
+  method a swarm consulted, which version of it, and when, becomes part of the
+  record the report can cite. `scripts/swarm.sh context <id>` and the console's
+  Packs tab count, per agent, the bodies loaded and what they cost, how many a
+  later row names or uses (a proxy), how many a compaction took out of the
+  context, and how many were loaded again.
+- The kickoff passes Pi `--no-skills`, which keeps Pi's skill directories
+  (`~/.pi/agent/skills`, `~/.agents/skills`, a project's `.pi/skills`, a `skills`
+  setting) out of an agent's prompt. It does not keep out everything an operator
+  can add; `docs/usage.md` says what still enters.
 
 A skill is written for an agent in the middle of a case: what to look at, in
 what order, what the answer looks like, what would disprove it, which tool to
@@ -44,13 +87,16 @@ use. It does not explain what a registry is.
 Front matter, then a short imperative body.
 
     ---
-    id: windows/execution/prefetch
+    id: execution/prefetch
     title: Prefetch, and what it proves
     when: An executable's run count, its first and last run, or the files it touched.
-    needs: [windows/execution/overview]
+    needs: [execution/overview]
     tools: [prefetch_mam, mam_scan]
     requires_host: []
     ---
+
+The `id` is the path under the pack's `skills/` without `.md`, as the index lists
+it; it carries no pack name (`pack:id` is how a caller names one pack's copy).
 
 `needs` names skills this one assumes. `tools` lists the tools the body names,
 and `requires_host` the host programs it names (the binaries its commands call):
@@ -64,6 +110,23 @@ than a refusal, because a Windows skill is expected to call the base pack's
 A reference that no pack in the resolved set carries is a bug, and
 `tests/pack-tools.test.sh` fails the build on one; `tests/pack-links.test.sh`
 holds the lists against the body, and `mentions` too.
+
+### Routers
+
+A pack may name one skill as its router, the note that says which of the pack's
+other notes answers which question. It is declared in the skill's own front
+matter, optional and at most one a pack:
+
+    router: true
+
+`pack.sh seal` refuses a value that is not `true` or `false`, and a second
+router. When there is one, the generated `skills/INDEX.md` carries a line
+``Router: `<id>` `` above the entries; a pack with no router has no such line and
+its index is byte for byte what it was. The harness reads only that line: a run
+whose index is over budget shows the router's own entry for each pack in the
+prompt, and the router names the notes under it. This is the mechanism; which
+packs have routers, and how long a router may be, are the pack standard's and
+the pack lint's to say.
 
 ### Tool help stays out of the context window
 
@@ -312,7 +375,7 @@ At kickoff:
 The last one is a run with no pack at all, exactly as before.
 
 `--pack` seeds the pack's tools into the run the way `--tools-from` does, puts
-the skill index in front of every agent, and lets `skill` fetch any body.
+the skill index into every agent's system prompt (`.pi/APPEND_SYSTEM.md`), and lets `skill` load any body.
 Under `--isolation microvm` it also picks the job images (the agents' own
 image with `--brains-with-packs`) and adds the pack's host requirements to the
 toolbox check and, where the agents boot the packs' image, to the VM's probe (§5). The run record names every pack,
@@ -338,7 +401,7 @@ checksummed, and installs and verifies in the test suite.
 | `network-forensics` | 8 | 6 | 1 | captures, sessions, DNS and TLS metadata, beacons, exfiltration |
 | `reverse-engineering` | 7 | 4 | 1 | static triage of a binary or a document, under quarantine |
 | `encrypted-containers` | 5 | 3 | 1 | which scheme, which protectors, and where the key already is |
-| `cloud-forensics` | 6 | 3 | 1 | Microsoft 365, Entra, AWS, Workspace, and the tokens behind them |
+| `cloud-forensics` | 9 | 3 | 1 | Microsoft 365, Entra, AWS, Workspace, and the tokens behind them |
 | `ransomware-response` | 7 | 2 | 1 | scoping, recovery impairment, family candidates and recovery validation, each with its limits |
 | `triage-collection` | 5 | 2 | 1 | a collector's output, which is how most cases arrive |
 
@@ -528,6 +591,10 @@ Every tool a pack bundles holds to this.
    result. It reports counts (parsed, empty, unsupported, failed, not attempted)
    and names the first failures. Exit code 0 means the engine ran, not that the
    examination is complete: completeness is judged from artefact coverage.
+   Every answer also carries `status` (`complete`, `partial` or `failed`) and
+   `status_basis` (one sentence on what the status rests on), the pair a recipe's
+   coverage.json carries; a tool's own booleans (`all_lines_parsed`,
+   `all_files_read`) stay beside them.
 2. **Bound resources, and say so.** Stream. Cap what expands (archives,
    containers, compressed streams, recursion, regular-expression time). A
    result that is cut says `truncated: true`, the cap, and where the whole is
@@ -541,7 +608,10 @@ Every tool a pack bundles holds to this.
    zone, is written as ISO 8601 in UTC and keeps its fractions of a second.
 5. **Evidence is hostile input.** A tool executes none of it, follows no path
    out of the directory it was given, writes only to its output directory,
-   uses no network and bounds decompression.
+   uses no network and bounds decompression. A program a tool runs stays in
+   the tool's own process group (never `start_new_session`): the harness ends
+   a tool by killing its group, and a program outside it goes on writing after
+   the tool is gone.
 6. **The manifest's description says exactly what is and is not measured.** A
    survey is described as a survey and a heuristic as a heuristic. A candidate
    is named a candidate; a score is not a verdict.

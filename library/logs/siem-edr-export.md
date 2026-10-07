@@ -84,10 +84,6 @@ ran the first pass; read `catalog/` before running the same commands again.
   name the fields it mapped and the ones it dropped. There is no root.
 - If `SWARM.md` has an "Evidence catalog" section, the first pass is already
   done: read `catalog/` instead of rebuilding it.
-- If `skill` is in your tool list, this run carries packs: call it once with
-  no id for the index, and fetch the notes that match the evidence in front of
-  you. A pack's method was written for this kind of case, its tools are already
-  loaded, and every fetch is on the trace for the report to cite.
 - Anything you write out of the exports goes under
   `work/extracted/<your id>/` (nothing there is run; it is no-exec only
   under `--quarantine`); a command line, a script fragment or an encoded

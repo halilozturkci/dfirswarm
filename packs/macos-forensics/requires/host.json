@@ -4,9 +4,8 @@
       "name": "fsapfsinfo",
       "package": "libfsapfs",
       "optional": true,
-      "why": "Inspect an APFS container and its volumes. This experimental libfsapfs build does not support snapshots, Fusion drives, or T2 encryption.",
+      "why": "Inspect an APFS container and its volumes. This experimental libfsapfs build does not support snapshots, Fusion drives or T2 encryption: those are limits of the build, not findings about the evidence, and what it lists is what the installed build parsed (say which). No macOS install route is declared.",
       "install": {
-        "brew": "python3 -m pip install libfsapfs-python",
         "apt": "apt-get install -y libfsapfs-utils"
       },
       "licence": "LGPL-3.0-or-later",
@@ -16,7 +15,7 @@
       "name": "log",
       "package": "macOS",
       "optional": true,
-      "why": "Apple's own reader for the unified log. Only present on macOS, and the only tool that resolves the format strings properly.",
+      "why": "Apple's own reader for the unified log, present only on macOS: a macOS-host alternative to the pinned unifiedlog_iterator, never a Linux dependency. Record the OS build when it is used.",
       "install": {
         "brew": "part of macOS",
         "apt": "not available on Linux; use the pinned unifiedlog_iterator"
@@ -29,7 +28,7 @@
       "name": "mac_apt.py",
       "package": "mac_apt",
       "optional": true,
-      "why": "Fifty-odd artefact plugins over a macOS or iOS image, and it reads UAC and Velociraptor collections as well as E01, DMG and sparse images.",
+      "why": "A plugin-based artefact parser for macOS and iOS evidence, pinned at 1.33.2 and installed in the amd64 worker image only: its statx helper stops at import on Linux arm64. The project describes its input as E01, DMG and sparse images and UAC and Velociraptor collections; none of that is tested in this repository. Its Python dependencies are installed from its requirements file without a hash lock. Whether a plugin supports the subject's macOS build is for the examiner to establish; no wrapper or skill of this pack drives it beyond naming it in triage/system-profile.",
       "install": {
         "brew": "https://github.com/ydkhatri/mac_apt",
         "apt": "pinned source 1.33.2 (install.source), amd64 only: its statx helper knows no aarch64 syscall number, so it stops at import on Linux arm64",
@@ -58,7 +57,7 @@
       "name": "unifiedlog_iterator",
       "package": "Mandiant macos-UnifiedLogs",
       "optional": true,
-      "why": "Read modern macOS and iOS unified log archives off a Mac and keep every decoded entry as JSONL.",
+      "why": "Read modern macOS and iOS unified log archives off a Mac and keep every decoded entry as JSONL. unified_log records the reader's version in each answer; whether this version decodes the logs of a given macOS build is not established here, so check the version the evidence carries.",
       "install": {
         "brew": "https://github.com/mandiant/macos-UnifiedLogs/releases/tag/v0.7.0",
         "apt": "pinned download 0.7.0 (install.download)",

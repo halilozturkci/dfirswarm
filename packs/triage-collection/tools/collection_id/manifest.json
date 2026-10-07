@@ -1,18 +1,40 @@
 {
   "name": "collection_id",
-  "description": "Recognise which collector produced a tree — KAPE, UAC, Velociraptor, CyLR or none — read its own log and manifest, and report the artefact families present, the targets that failed, and what a logical acquisition of this shape cannot contain.",
+  "description": "Survey a delivered directory: classify every object in it (copied files, disk containers, memory captures, archives) from its first bytes and its name, and say which of the two each class rests on. A name that says image or raw with no signature behind it is unknown (a raw memory capture has none either), never a physical image; an 8 KiB boot sector, or a small nested file named like an image, is a copied file. The delivery is mixed when more than one kind of object is present (copied files below the top level count as one kind; a note or a log beside an image is another file, not a kind). It reads only the first 4 KiB of an object, never opens a container or lists an archive. Collectors are named by the paths of their records, more than one may be present and one may have run more than once; a top-level C, C$ or Windows directory is a layout clue that names no collector; a record found inside collected data ([root], uploads) belongs to the source host and is not read. Logs read whole and streamed: KAPE copy, skip and console logs (per run; columns and row counts, malformed rows located, each skip row kept whole with the collector's own words; console warnings and errors as rows of the problems table, not failures), UAC uac.log (lines that start with a date, a time and a level word, in the forms the sources of UAC 3.4.0, DBG INF ERR CMD, and 2.9.1, DEBUG INFO WARNING ERROR COMMAND, write; ERR and ERROR are failures, a command's stderr is counted apart, a line that matches nothing is counted and kept unlabelled, and a summary saying 0 errors is not a failure) and Velociraptor containers (checked against the source of 0.77.2, which writes no failed upload to uploads.json: the count comes from results/*.json upload records with an Error and the ERROR lines of log.json, so a container without them is partial). A log whose columns or lines are not recognised, or that is binary or UTF-16, is partial or unsupported; the rows of a skip log with unrecognised columns are kept whole in unrecognised_rows and are no failures. failed_target_count is null, never 0, unless every failure-source log was read whole, the walk was complete and no archive went unopened; failed_targets_seen is how many rows were read all the same. A recorded skip or error is the collector's own outcome, never explained or judged. Not measured: what the collector was asked to copy, that it finished, whether a digest matches the delivered file, source paths (collection_index), the collector's version, what a log omits. delivery.not_observed lists the kinds of object not seen among the files walked and says what qualifies it (an unknown object, an unopened archive, an incomplete walk): a limit of the delivery, no finding about the source. Paths and log text shaped like a recovery password, an access key, a token, a private-key block, URL user-info, or the value after a credential header, key name or password option are withheld (other secrets in a log can still appear: run it as a job with secret_output: true; the tool cannot see whether the job was run so); write_values: true (jobs only) writes the real strings to $OUT/collection-id-values.jsonl, mode 0600, created first, a second run in the same job refused. Every list is whole in a file the answer names (the problems table holds every walk error, link and log problem); the answer starts with the summary and ends with the pages.",
   "params": {
     "root": {
       "type": "string",
-      "description": "The collection directory"
+      "description": "The collection directory (an archive is not opened: extract it into a job's output first)"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Rows of each table shown inline (default 200); a longer table is whole in the file its *_table entry names"
+    },
+    "time_limit_seconds": {
+      "type": "integer",
+      "description": "Stop the walk and the log reads after this long (default 1500, at most 3400): the answer then says it stopped, status partial, and what was not listed"
+    },
+    "write_values": {
+      "type": "boolean",
+      "description": "Write the real strings that were withheld to $OUT/collection-id-values.jsonl (default false). Refused unless the tool runs as a job, which must be run with secret_output: true; the file is created first and one already there is refused"
     }
   },
   "runtime": "python3",
   "entry": "run.py",
-  "timeout_seconds": 300,
+  "timeout_seconds": 3600,
   "example": "{\"root\": \"inputs/collection\"}",
   "by": "maintainer",
-  "at": "2026-09-22T23:30:00.000Z",
-  "version": 1,
-  "sha256": "9efd5ef70e5a07387258797864b2055c775b8c16744394526b3e7fb4eca33e73"
+  "at": "2026-10-07T12:00:00.000Z",
+  "version": 3,
+  "sha256": "649ab504d418a14210568bc08475e6ab315ff1fc687073f7f7f13cc1978c34a0",
+  "use": {
+    "names": [
+      "*_CopyLog.csv",
+      "*_SkipLog.csv",
+      "*_ConsoleLog.txt",
+      "uac.log",
+      "uploads.json",
+      "collection_context.json"
+    ]
+  }
 }

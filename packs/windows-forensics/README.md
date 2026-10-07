@@ -8,21 +8,24 @@ true of any platform.
 
 ## What it carries
 
-**Twenty-four skills**, in ten families. An agent reads the one-line index
-once and fetches a body only when it reaches that artefact family.
+**Fifty-two skills**, in ten families, each a short leaf: it opens with when to use
+it and when not, gives the decision rules, and ends with what the artefact shows,
+does not show and what to record. A topic that needs more has a second-level leaf
+that its parent opens "only if" the question calls for it. An agent reads the
+one-line index once and fetches a body only when it reaches that artefact family.
 
-| Family | Skills |
+| Family | Skills (a second-level leaf is indented after its parent) |
 | --- | --- |
-| Registry | `registry/overview`, `registry/system-profile`, `registry/devices` |
-| File system | `filesystem/mft`, `filesystem/journals`, `filesystem/ads`, `filesystem/deleted`, `filesystem/shadowcopies` |
-| Execution | `execution/overview`, `execution/prefetch`, `execution/amcache`, `execution/userassist`, `execution/srum` |
-| Logs | `logs/security`, `logs/powershell`, `logs/remote-access`, `logs/recovery`, `logs/hunting` |
-| Accounts | `accounts/logons` |
-| Persistence | `persistence/mechanisms` |
-| Shell artefacts | `artifacts/shell` |
-| Browsers | `browser/artefacts` |
-| Memory | `memory/windows` |
-| Anti-forensics | `antiforensics/traces` |
+| Registry | `registry/overview` (`registry/readers`), `registry/system-profile`, `registry/clock`, `registry/devices` (`registry/devices-dates`) |
+| File system | `filesystem/mft` (`filesystem/timestamps`, `filesystem/indx`), `filesystem/journals`, `filesystem/ads`, `filesystem/deleted` (`filesystem/recycle-bin`), `filesystem/shadowcopies` (`filesystem/shadowcopies-open`) |
+| Execution | `execution/overview`, `execution/prefetch` (`execution/prefetch-carved`), `execution/amcache`, `execution/shimcache`, `execution/userassist`, `execution/srum` (`execution/esedb`) |
+| Logs | `logs/security` (`logs/events`), `logs/coverage`, `logs/powershell` (`logs/powershell-history`), `logs/recovery` (`logs/carving`), `logs/remote-access` (`logs/lateral`), `logs/hunting` |
+| Accounts | `accounts/logons` (`accounts/sessions`) |
+| Persistence | `persistence/mechanisms` (`persistence/tasks-com-wmi`) |
+| Shell artefacts | `artifacts/shell` (`artifacts/links`, `artifacts/jumplists`, `artifacts/shellbags`) |
+| Browsers | `browser/artefacts` (`browser/downloads`, `browser/webcache`, `browser/strings`) |
+| Memory | `memory/windows` (`memory/hibernation-pagefile`) |
+| Anti-forensics | `antiforensics/traces` (`antiforensics/wiping`, `antiforensics/log-clearing`, `antiforensics/timestamps-clock`, `antiforensics/controls`) |
 
 **Twenty tools.** The parsers that carry most cases: `mft_records` (both time
 sets, resident data, every named stream), `evtx_query` and `evtx_carve` (records

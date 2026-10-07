@@ -94,10 +94,6 @@ that file instead of listing again.
   There is no root: no mounting, no `sudo`.
 - The evidence catalog does not open archives; the listing above
   replaces it.
-- If `skill` is in your tool list, this run carries packs: call it once with
-  no id for the index, and fetch the notes that match the evidence in front of
-  you. A pack's method was written for this kind of case, its tools are already
-  loaded, and every fetch is on the trace for the report to cite.
 - Extract what you need into `work/extracted/<your id>/` (nothing there is
   run; it is no-exec only under `--quarantine`; hash everything you pull
   out), batching your paths so the archive is streamed once, not once per

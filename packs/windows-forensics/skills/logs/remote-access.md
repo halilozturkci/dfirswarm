@@ -1,66 +1,33 @@
 ---
 id: logs/remote-access
-title: Remote access and lateral movement
-when: Someone reached this machine from another one, or left it for another one.
-needs: [accounts/logons]
-tools: [evtx_query, regkv, mft_records]
-requires_host: [icat]
+title: Remote Desktop records, inbound and outbound
+when: You need to say whether and from where a Remote Desktop session reached this machine, or left it.
+needs: []
+tools: [evtx_query, regkv]
+requires_host: []
 ---
 
-A logon type in `logs/security` says a session was remote. These say where it
-came from, what it did, and — the part people forget — where this machine went
-next.
+Use when the question is an RDP session. Not for SMB, WMI, WinRM or tasks, or for joining hosts (`logs/lateral`, only if the session did more than log on).
 
-**RDP, inbound.** Four channels, read in this order:
+A logon type in `logs/events` says a session was remote. Keep authentication, session creation, shell start, disconnect, reconnect and termination as separate observations; do not collapse them into "an access event".
+
+**Inbound.** Correlate three channels by computer, account, source address, session id and time, after checking the event schema for the provider and version you hold:
 
     Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational
-        1149  authentication succeeded, with the user and the SOURCE ADDRESS
+        1149  user authentication succeeded (user, source network address)
     Microsoft-Windows-TerminalServices-LocalSessionManager/Operational
-        21 session logon   22 shell started   23 logoff
-        24 disconnected    25 reconnected
-    Security   4624 type 10, then 4778 reconnect and 4779 disconnect
-               with the client name and address
+        21 session logon   22 shell start   23 logoff   24 disconnected   25 reconnected
+    Security   4624 type 10, 4625, 4778 reconnected, 4779 disconnected (client name, address)
 
-1149 without a matching 21 is an authentication that never became a session.
-Both belong in the timeline and they mean different things.
+- An 1149 alone is an authentication, not a usable session. A missing 21 can mean the connection did not become a session, or that the channel was off, rolled over or not collected: say which you excluded (`logs/coverage`).
+- A source address is the peer as this machine saw it: a gateway, NAT, VPN or pivot host shows a hop, not the origin, and an address names an interface at a time (DHCP and DNS records are other sources).
 
-**RDP, outbound — the one that is usually missed.** This machine connecting to
-another leaves no event log at all, only the user's own hive:
+**Outbound** leaves client-side traces, where present: the RDP client's channel `Microsoft-Windows-TerminalServices-RDPClient/Operational` (read its fields from the XML for the build), process records for `mstsc.exe` (4688 where audited, `execution/prefetch`), `.rdp` files and recent-item records (`artifacts/shell`), and in the user's NTUSER.DAT, read with `regkv`:
 
-    NTUSER.DAT\Software\Microsoft\Terminal Server Client\Servers\<host>
-        UsernameHint, and the key's last-write time
-    NTUSER.DAT\...\Terminal Server Client\Default    the MRU of addresses typed
+    Software\Microsoft\Terminal Server Client\Servers\<host>    UsernameHint
+    Software\Microsoft\Terminal Server Client\Default           the addresses typed
 
-Plus the bitmap cache, `AppData\Local\Microsoft\Terminal Server Client\Cache\`,
-which holds tiles of what was on the remote screen. It is the only artefact that
-shows what the operator was looking at on the far machine.
+These keys record client configuration and entries, not that a connection succeeded or when. A `Servers\<host>` key's last-write time is that key's last change, and `Default`'s the latest change to the list, not each entry (hive state and key times: `registry/overview`). The client's bitmap cache under the profile's `Terminal Server Client\Cache` may hold tiles of what the remote screen displayed; the pack does not reconstruct it, and tiles rarely give a whole screen, a time or whether anyone looked.
 
-**SMB and admin shares.**
-
-    Security  5140  a share was accessed     5145  a specific file in it
-              4648  explicit credentials, which names both accounts
-    System    7045  a service installed, the other half of a remote execution
-
-The classic remote-execution shape is a service installed with a short random
-name and an `ImagePath` under `ADMIN$` or `%SystemRoot%`, a 4624 type 3 seconds
-before it, and the service gone by the time you look. The 7045 survives the
-service.
-
-**WMI and WinRM.**
-
-    Microsoft-Windows-WinRM/Operational          91 a shell was created, 169 authenticated
-    Microsoft-Windows-WMI-Activity/Operational   5857, 5860, 5861
-
-5861 is a permanent event subscription being registered, which is persistence as
-well as movement: see `persistence/mechanisms`.
-
-**Scheduled tasks created remotely.**
-
-    Microsoft-Windows-TaskScheduler/Operational  106 registered, 200/201 ran
-    Security                                     4698 created, 4699 deleted
-
-Two habits. Always pair an inbound session with what happened during it, by time
-window and by logon id: a session with nothing in it is noise, and a session
-with a service install in it is the case. And always check the outbound
-artefacts on every machine you are given, because that is how a three-machine
-case becomes one story rather than three.
+A negative names, per host, the channels and files read and those shown disabled or not supplied. Shows: that the machine recorded an authentication, a session event or a client entry, with a peer address as it saw it. Does not show: who was at the other end, what was done in the session, or that anything was transferred; a quiet session is not noise. Record: channels, record ids, account, address, session id, times with their clock, hive state.
+Sensitive output: client names and usernames are in the XML; run `evtx_query` as a job with `secret_output: true` when the logs may hold more.

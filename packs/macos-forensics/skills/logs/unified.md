@@ -1,43 +1,75 @@
 ---
 id: logs/unified
 title: The unified log
-when: You need what happened on this machine, minute by minute, and syslog is empty.
+when: Examine retained diagnostic and operational events with their decoding and coverage limits.
 needs: [triage/system-profile]
 tools: [unified_log]
-requires_host: [unifiedlog_iterator]
+requires_host: [unifiedlog_iterator, log]
 ---
 
-macOS stopped writing text logs years ago. `/var/log/system.log` is nearly
-empty on a modern machine and the real record is the unified log: a compressed
-binary format under
+Read the unified log beside the other retained sources: text logs that are still
+written, install and update records, application logs, and any audit or endpoint
+telemetry that was collected. It is not a complete record of what ran or who
+authenticated.
 
-    /var/db/diagnostics/            .tracev3 files, the log itself
-    /var/db/diagnostics/Persist/    the persisted ring
-    /var/db/uuidtext/               the format strings the entries refer to
+    /private/var/db/diagnostics/            .tracev3 files: Persist and the other log classes
+    /private/var/db/diagnostics/timesync/   the clock relation for continuous time
+    /private/var/db/uuidtext/               the format strings entries refer to
 
-**Both directories are required.** A `.tracev3` holds references into
-`uuidtext`, not the message text, so a collection that took `diagnostics` and
-left `uuidtext` behind produces entries whose message is a placeholder. If you
-have only one, say so: it is a limit on the evidence, not on the analysis.
+Keep the whole structure as acquired and record what is missing. A trace record can
+carry its own payload as well as references, so a missing `uuidtext` does not make every
+record unusable; it can leave some messages unrendered, so say which. The answer's
+`decoded_coverage.support_files` is a census by name of what the input holds, not a
+verdict that it is enough.
 
-Reading it:
+**Time and boots.** Keep the boot identity and the timesync data that relate continuous
+time to wall time, keep source timestamps and offsets, and write down how you converted
+to UTC. Investigate a clock discontinuity. Do not join records from different boots on a
+counter.
 
-    log show --archive <path> --style ndjson --info --debug
-    unifiedlog_iterator, where the examination host is not a Mac
+**Readers.**
 
-`unified_log` wraps whichever is present. Apple's reader is invoked with
-`--info --debug`; Mandiant's reader keeps every decoded entry as JSONL and
-names that file in the result. Its warnings are kept whole beside the JSONL.
-Do not use the archived Python UnifiedLogReader for a modern image: its own
-upstream limits it to macOS 10.15/iOS 12-era data.
+    log show --archive <path> --style ndjson --info --debug     Apple's reader, on a Mac
+    unifiedlog_iterator                                         the declared reader elsewhere
 
-**Retention is finite and workload-dependent.** Establish the earliest and
-latest decoded timestamps in this acquisition before treating an absence as
-meaningful; do not substitute a generic number of days for the archive's
-observed coverage.
+`unified_log` runs whichever it finds. On Linux that is Mandiant's `unifiedlog_iterator`
+(pinned in this pack's requires; its version is recorded in `reader`); the whole decoded
+output is kept as JSONL beside its stderr. A directory holding both `diagnostics` and
+`uuidtext` is staged as one archive under the output directory (counted, bounded, and
+refused if it holds a link or a member present in both trees with different bytes).
+`predicate`, `start` and `end` are refused there: search the whole JSONL afterwards and
+keep the query. On macOS the tool runs Apple's `log` with `--archive`, which wants a
+valid `.logarchive`; the staging is Linux's, so a copied `diagnostics` tree is not the
+same input. Use the declared reader. Any other (the archived Python UnifiedLogReader
+among them) has its own supported versions: check them against the version the evidence
+carries before you rely on its output.
 
-What it is very good for: process launches with their arguments, TCC prompts and
-decisions, network interface and VPN changes, USB attachment, screen lock and
-unlock, and every `sudo` and authentication attempt. Filter by `subsystem` and
-`process` rather than grepping the whole thing, and quote the subsystem with the
-line so a reviewer can re-run the same predicate.
+`--info --debug` includes the entries retained at those levels. It does not bring back
+an entry that was never persisted, was removed by retention or was redacted:
+keep `<private>` and unresolved values as limits. Give time boundaries an explicit
+offset and note the reader's output zone.
+
+**Reading the answer.** `status` is about the run: `failed` (a reader that exits 0 and
+writes nothing is this), `empty`, `partial` (the reader failed or overran its time, or
+lines did not parse; what was written is kept and counted) or `complete`. Complete is
+not a coverage claim. Read `decoded_coverage` (lines, JSON records, entries, lines that
+are not records, records with none of an entry's fields), `problems`, `warnings` and the
+stderr file. Keep the full output before you filter it.
+
+**Using it.** Test narrow questions on process, subsystem, category and message:
+privacy-permission decisions, authentication, mounts, network changes and lock or unlock
+are candidates. Do not assume every process launch, argument, `sudo` call or
+authentication attempt is there.
+
+**Coverage statement.** Name the acquired files, the boot or session, the subsystems
+searched, the observed interval, gaps, privacy losses and parser failures, and cite the
+whole output with a record locator (file and line) and the query. The earliest and the
+latest timestamp are outer bounds, not proof that everything between them was recorded.
+Retention depends on volume and policy.
+
+**Sensitive output.** Messages can carry command lines, paths, account and host names and
+the occasional secret. The inline `entries` are a sample; run broad extraction as a job,
+and never write a secret from a message into the ledger (the worker rules).
+
+**Does not show.** That an event that is not in the log did not happen, who did it, or that
+the retained interval is the whole interval.

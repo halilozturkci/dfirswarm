@@ -1,6 +1,7 @@
 /** Wire types. Mirrors scripts/ui/model.ts + extensions/*.ts; keep in sync by hand. */
 import type { ClaimSequence } from "./claim-sequences.ts";
 import type { VmTimeline } from "./vm-timeline.ts";
+import type { RunSkills } from "./skill-metrics.ts";
 
 /**
  * `finish_failed`: the hub reached the end of a VM run and could not put its
@@ -436,6 +437,8 @@ export type SwarmView = {
   claim_sequences?: ClaimSequence[];
   /** Every reap over the whole trace; absent from an older server. */
   reaps?: SwarmEvent[];
+  /** What each seat did with the run's skills, over the whole trace; absent from an older server. */
+  skill_use?: RunSkills;
   sentinel: boolean;
   sentinel_info: SentinelInfo | null;
   traces: SwarmEvent[];

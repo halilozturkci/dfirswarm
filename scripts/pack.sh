@@ -92,6 +92,10 @@ if os.path.isdir(sdir):
             for req in ("id", "title", "when"):
                 if not meta.get(req):
                     errors.append("skills/%s: front matter needs %s" % (rel, req))
+            # `router: true` marks the one note that routes to the rest of the
+            # pack. A run whose index is over budget shows routers only.
+            if "router" in meta and meta["router"] not in ("true", "false"):
+                errors.append("skills/%s: router must be true or false, not %r" % (rel, meta["router"]))
             sid = meta.get("id", "")
             expect = rel[:-3].replace(os.sep, "/")
             if sid and sid != expect:
@@ -105,6 +109,10 @@ if os.path.isdir(sdir):
             skill_tools.update(meta.get("tools", []) or [])
             skill_needs.update(meta.get("needs", []) or [])
             skill_host.update(meta.get("requires_host", []) or [])
+
+routers = sorted(sid for sid, meta in skills.items() if meta.get("router") == "true")
+if len(routers) > 1:
+    errors.append("a pack names at most one router; these skills all say router: true: %s" % ", ".join(routers))
 
 # --- tools ------------------------------------------------------------------
 tools = {}
@@ -529,9 +537,14 @@ if mode == "seal":
                 fh.write("\n")
             digests[rel] = hashlib.sha256(open(p(rel), "rb").read()).hexdigest()
 
-    # The index is what every agent sees once; the bodies are fetched on demand.
+    # The index goes into every agent's prompt (extensions/skills.ts); the bodies are fetched on demand.
     lines = ["# Skills in this pack", "",
              "Fetch a body with `skill(\"<id>\")`. A body may name others; fetch those the same way.", ""]
+    # The pack's router, when it names one: the harness reads this line when a
+    # run's index is over budget and shows each pack's router only. A pack with
+    # no router has no such line, so its index (and its checksum) is as before.
+    if len(routers) == 1:
+        lines.extend(["Router: `%s`" % routers[0], ""])
     for sid in sorted(skills):
         meta = skills[sid]
         lines.append("- `%s` %s: %s" % (sid, meta.get("title", ""), meta.get("when", "")))

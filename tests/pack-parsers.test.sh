@@ -77,6 +77,9 @@ got = tool("linux-forensics/tools/auth_log", {"path": d})
 times = [r["time"] for r in got.get("records", [])]
 check("auth_log follows the rotation and crosses new year correctly",
       times == ["2025-12-31T23:58:01", "2026-01-01T00:02:11", "2026-01-01T00:05:44"], str(times))
+# The fixture's acceptance line carries a key; it was never asserted, and the parser lost it.
+keys = [(r.get("keytype"), r.get("fingerprint")) for r in got.get("records", []) if r.get("kind") == "ssh_accepted"]
+check("auth_log keeps the key type and fingerprint of an accepted publickey", keys == [("RSA", "SHA256:zz")], str(keys))
 
 # --- macos-forensics/fsevents_parse: a gzip page of DLS records ----------------
 def fsevent(path_, eid, flags, node):
@@ -195,10 +198,13 @@ for name in ("report.txt_Zone.Identifier", "holiday_photos.jpg"):
 got = tool("triage-collection/tools/collection_index",
            {"root": os.path.join(WORK, "kape")})
 streams = got.get("possible_renamed_streams") or []
-paths = {e["in_collection"]: e["original_path"] for e in got.get("entries", [])}
-check("collection_index maps a path back and spots a renamed stream",
+hyp = {e["in_collection"]: e["source_path_hypothesis"] for e in got.get("entries", [])}
+check("collection_index reads a path by convention as a labelled hypothesis and spots a renamed stream",
       len(streams) == 1 and streams[0]["possible_original"] == "report.txt:Zone.Identifier"
-      and paths.get(os.path.join("C", "Users", "a", "holiday_photos.jpg")) == r"C:\Users\a\holiday_photos.jpg",
+      and hyp.get(os.path.join("C", "Users", "a", "holiday_photos.jpg"), {}).get("path") == r"C:\Users\a\holiday_photos.jpg"
+      and hyp.get(os.path.join("C", "Users", "a", "holiday_photos.jpg"), {}).get("confidence") == "low"
+      and "single letter" in hyp.get(os.path.join("C", "Users", "a", "holiday_photos.jpg"), {}).get("method", "")
+      and all(e.get("source_path_observed") is None and "original_path" not in e for e in got.get("entries", [])),
       json.dumps(streams))
 
 # --- summary tables are whole: nothing past a top 10, 20 or 30 ------------------

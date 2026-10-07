@@ -1,48 +1,35 @@
 ---
 id: antiforensics/traces
-title: What hiding leaves behind
-when: The evidence looks too clean, or a first pass found nothing.
-needs: [filesystem/deleted, logs/security]
-tools: [regkv, evtx_query, prefetch_mam, evtx_carve, vss_stores, mft_records]
-requires_host: [icat]
+title: Absence and inconsistency before intent
+when: Artefacts are missing or inconsistent: separate deliberate action from ordinary causes.
+needs: []
+tools: [evtx_query, mft_records]
+requires_host: []
 ---
 
-A first investigation that found nothing is a finding. Work the absences.
+Use when artefacts are missing or inconsistent and you must decide whether anything was removed or altered. Not for recovering the content (`filesystem/deleted`, `logs/recovery`).
 
-**Secure deletion.** Orphan records with repeated-character names and
-high-entropy content, plus the tool's own prefetch entry and its Amcache hash.
-The tool is often renamed before use; match on hash, not on name.
+A first pass that found nothing, or a record that looks wrong, is an observation to explain, not yet a finding of concealment. Most absences come from what was never recorded, was kept briefly, was removed by routine maintenance, was missed by the collection or was not read by the parser. Work the explanations in that order, and move to deliberate action only on evidence that separates it from them.
 
-**Log clearing.** Security 1102 and System 104 name the account. A channel with
-zero events on a machine that was clearly in use was cleared or turned off. Say
-which you can prove — and then recover the records anyway, from a shadow copy or
-by carving the chunks: `logs/recovery`.
+State the detection opportunity for each missing artefact:
+- Was it meant to be recorded here (feature enabled, audit policy or channel configured, software installed)?
+- How long is it kept (log size and rollover, a journal or cache that wraps)?
+- Was it in the acquisition (the profile, volume, hive, channel and generation, with sidecars and logs)?
+- Did the parser read it? `status`, `parse_errors`, `problems` and `structural_errors` (`evtx_query`, `mft_records`) make a partial or failed run a coverage condition, not a negative.
+- Is there routine removal (cleanup tasks, storage management, product updates, backup or management software)?
 
-**Shadow copies deleted.** `vssadmin delete shadows /all` before an encryption or
-a wipe. `vss_stores` returning nothing on a machine that ran for months is the
-absence to work: find the command in 4688 or in PowerShell logging, and see
-`filesystem/shadowcopies`.
+Word a negative with the objects, acquisition, interval, tool, and the condition under which it would have recorded the event. Never write "cannot be recovered" from one failed route: list the routes tried.
 
-**Timestomping.** Compare `$STANDARD_INFORMATION` against `$FILE_NAME`. A
-modification time before the creation time in the first and not the second is
-the tell. See `filesystem/mft`.
+Which leaf:
+- Only if overwriting or wiping tools or repeated names appear: `antiforensics/wiping`.
+- Only if a log is cleared or empty, or snapshots are missing: `antiforensics/log-clearing`.
+- Only if timestamps disagree or a clock moved: `antiforensics/timestamps-clock`.
+- Only if a security control changed or a virtual machine was deleted: `antiforensics/controls`.
 
-**Clock rollback.** Security 4616 records a system time change with the process
-that made it. When the hypervisor's guest service did it, wall clock is useless
-for ordering and you move to `$LogFile` sequence numbers or event record ids.
+A driver, service, Prefetch entry or file made by acquisition, mounting or collection is not subject activity: check names and times against the acquisition and collection records (`evidence/collections`) before attributing one.
 
-**A deleted virtual machine.** A nested guest that ran and was then removed
-leaves its configuration, its registry entries and often a truncated disk whose
-header can be carved back out of unallocated space. Rebuild the guest's own logs
-from the carved blocks and you get its logins, which the host never saw.
+"Cleared" needs the clearing record with its subject and a coverage gap consistent with it. "Timestomped" needs the disagreement, an independent source for the true time and the ordinary explanations excluded. "Deliberate" needs an identified account performing the action and no administrative explanation. Write each as observation, inference and conclusion, with the alternatives that remain.
 
-**Defender turned off first.** An exclusion path added, or real-time monitoring
-disabled, usually through PowerShell. The command survives in
-`ConsoleHost_history.txt` in the user's `AppData\Roaming\Microsoft\Windows\PowerShell\PSReadLine\`
-even when the event log does not, and that file is not an event log, so clearing
-the logs does not touch it. `logs/powershell` has the rest, including the
-encoded-command and version-downgrade shapes.
+Shows: that something is missing or inconsistent, and what the sources can and cannot rule out. Does not show: who, why, or even that anything was removed. Record: the detection opportunity for each artefact, parser status, routes tried, the alternatives still open.
 
-**The examiner's own tools.** An imaging tool's driver dropped at the moment of
-acquisition is not attacker software. Two published runs nearly reported one.
-Check the timestamp against the acquisition record before you name anything.
+Sensitive output: `evtx_query` and `mft_records` (with `with_resident`) can return command lines and file content; run them as jobs (`secret_output: true`).

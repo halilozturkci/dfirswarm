@@ -199,10 +199,12 @@ for rj in "$ROOT"/packs/*/recipes/*/recipe.json; do
   rt="$(jq -r .runtime "$rj")"
   mkdir -p "$T/probe/$n"
   v="$("$rt" "$entry" detect --target "$(cat "$T/target.json")" --probe-out "$T/probe/$n" 2>"$T/probe/$n.err")"; rc=$?
-  [[ "$rc" -eq 0 || "$rc" -eq 1 ]] || fail "$id detect, asked as the census asks (--probe-out), should exit 0 or 1, not $rc: $v $(cat "$T/probe/$n.err")"
+  # Exit 2 is the protocol's "error", and a recipe may use it, with "applies": "unknown", for a probe that could not tell
+  # (its reader is not in the image, it timed out): that is not a "does not apply", and the route stays open.
+  [[ "$rc" -eq 0 || "$rc" -eq 1 || ( "$rc" -eq 2 && "$(jq -r '.applies' <<<"$v" 2>/dev/null)" == unknown ) ]] || fail "$id detect, asked as the census asks (--probe-out), should exit 0 or 1 (or 2 with applies unknown), not $rc: $v $(cat "$T/probe/$n.err")"
   jq -e 'has("why")' <<<"$v" >/dev/null || fail "$id detect, asked as the census asks, should say why: $v"
   v="$("$rt" "$entry" detect --target "$T/target.json" 2>"$T/probe/$n.err")"; rc=$?
-  [[ "$rc" -eq 0 || "$rc" -eq 1 ]] || fail "$id detect, asked as a detect job asks (the target in a file), should exit 0 or 1, not $rc: $v $(cat "$T/probe/$n.err")"
+  [[ "$rc" -eq 0 || "$rc" -eq 1 || ( "$rc" -eq 2 && "$(jq -r '.applies' <<<"$v" 2>/dev/null)" == unknown ) ]] || fail "$id detect, asked as a detect job asks (the target in a file), should exit 0 or 1 (or 2 with applies unknown), not $rc: $v $(cat "$T/probe/$n.err")"
   jq -e 'has("why")' <<<"$v" >/dev/null || fail "$id detect, asked as a detect job asks, should say why: $v"
   n=$((n + 1))
 done
