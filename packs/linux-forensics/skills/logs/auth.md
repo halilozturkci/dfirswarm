@@ -20,10 +20,11 @@ is ordered by name only, and a mix of schemes is reported as an order that is no
 **Time.** A traditional stamp has no year and no zone. `auth_log` takes the year from the file's modification
 time (on a copied tree that is the time of the copy) or from your `year`, and says which per file
 (`year_basis`); `time_raw` is the stamp as written, `time` the clock reading as written, `time_utc` is set only where the stamp carries
-its zone, and `time_zone` is `unknown` until the profile establishes one (`triage/system-profile`). A month that steps back by up to six
-months forward is read as a year end (`rollovers`, `rollover_lines`); a larger step back, or a line the next line contradicts, is
-flagged `reordered` and does not date the file, and the last line in order, with a day's margin for the unknown zone, does. A log that
-skips from January to September is not given a year end. An RFC 3339 stamp keeps its own offset. Read `unparsed` and `read_errors`
+its zone, and `time_zone` is `unknown` until the profile establishes one (`triage/system-profile`). A month that goes down is read as a year
+end (`rollovers`, `rollover_lines`) only where the way forward round the calendar to it is six months or fewer (December to January);
+any other step back, and a line the next line contradicts, is flagged `reordered` and does not date the file, and the last line in
+order, with a day's margin for the unknown zone, does. A month that goes up is later, whatever the gap: a log that skips from January
+to September is not given a year end. An RFC 3339 stamp keeps its own offset. Read `unparsed` and `read_errors`
 before trusting a count: `status` is `complete` only where `all_lines_parsed` is true, which says every line matched a syslog shape and
 every file was read through, nothing more (a read that ran past `max_seconds` names the files it did not reach).
 
