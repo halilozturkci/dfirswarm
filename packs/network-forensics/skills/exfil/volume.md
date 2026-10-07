@@ -1,39 +1,19 @@
 ---
 id: exfil/volume
-title: Whether data left, and how much
-when: The question is exfiltration rather than intrusion.
+title: Assessing whether data left and how much
+when: The question is whether data left the network, and how much.
 needs: [capture/what-you-have]
-tools: [pcap_summary]
-requires_host: [zeek]
+tools: [pcap_summary, zeek_run]
+requires_host: []
 ---
 
-The whole question is asymmetry. Ordinary use pulls far more than it pushes; a
-host that sent four gigabytes and received forty megabytes did something else.
+Use when the question is data leaving. Not for detection: volume and destination shape do not prove exfiltration. Backups, servers, collaboration tools and ordinary uploads look the same.
 
-    pcap_summary  gives bytes each way per conversation
-    zeek conn.log orig_bytes and resp_bytes, per session, over a whole capture
+1. Treat unauthorised transfer as a proposition to test. Define which side is internal at the capture point; an originator in Zeek or a first address in a summary is not that.
+2. Rank hosts, destinations and time windows (from `pcap_summary` rows or `zeek_run` connections) as triage views, then look for what ranking hides: small repeated transfers, long-lived channels, many destinations. One destination does not prove exfiltration; many do not prove sync or backup. Compare with the host's role, approved services and a baseline.
+3. Label every number with its layer and direction before quoting it; the definitions are in `exfil/counters` (read it before you quote or compare a byte count). Never combine counters whose definitions differ.
+4. Channels to consider: web uploads (a POST to a paste site), cloud sync, mail, file transfer (a scheduled SFTP job nobody remembers), ICMP payloads, DNS (slow, visible as query volume rather than bytes) and other permitted paths. Encrypted DNS can hide the query traits a tunnelling test needs.
+5. A staging archive: record its real size, any safely established expanded size and the evidence tying it to a transfer. Its creation does not show an upload, and neither its size nor the wire volume says how many source bytes arrived. For the staging file use the installed platform's file-examination skills; a Windows-only skill applies only if that pack is loaded (check the run's tool inventory), otherwise record the missing capability.
+6. Keep four questions apart: observed volume, evidence the transfer succeeded, identity of any recovered content, evidence it was unauthorised. Content can come from cleartext reconstruction, authorised decryption or specific endpoint or service records. With only encrypted lengths, say content and delivery are partial or undetermined.
 
-Work it in this order:
-
-1. **Rank outbound volume by internal host**, over the whole period. The top of
-   that list is where the answer is, and it is usually one machine.
-2. **Then by destination**, for that host. A single destination taking most of
-   it is a transfer; many destinations sharing it is sync software or a backup.
-3. **Then by time.** Exfiltration is usually a few sessions in a window, not a
-   steady trickle. Put those windows against the host timeline.
-
-Routes people forget: a cloud sync client, which is legitimate software with a
-legitimate certificate; webmail with attachments; an HTTPS POST to a paste site;
-DNS tunnelling, which is slow and shows as query volume rather than byte volume;
-ICMP payloads; and a scheduled upload over SFTP that the estate set up years ago
-and nobody remembers.
-
-**Compressed and encrypted first.** An archive made on the host before the
-transfer means the byte count on the wire understates what left. Look for the
-staging file on disk — see `filesystem/deleted` in the Windows pack — and quote
-its uncompressed size as well.
-
-**What a capture cannot tell you is what the data was**, unless it was in the
-clear. "4.1 GB was sent to X between 02:10 and 02:40" is a finding.
-"The customer database was exfiltrated" needs the staging file, its contents, or
-a reconstructed session — and if you do not have one, say which.
+Shows: bytes by a stated counter between named endpoints in a window. Does not show: what the data was, that it arrived, or that it was unauthorised. Record: counter, layer, direction, window, internal side and how it was decided.

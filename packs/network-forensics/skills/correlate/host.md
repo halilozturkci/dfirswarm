@@ -1,36 +1,18 @@
 ---
 id: correlate/host
-title: Tying the wire to the machine
-when: You have both a capture and a host image, which is when either becomes conclusive.
-needs: [beacons/periodicity]
-tools: [beacon_score, timestamp_decode]
+title: Correlating network and host evidence
+when: Network and host records may corroborate an endpoint, a process, a transfer or a time window.
+needs: [capture/what-you-have, timeline/build]
+tools: [timestamp_decode, zeek_run]
 requires_host: []
 ---
 
-A capture says a machine did something. A host image says which process. Neither
-alone carries a report, and joining them is the point of having both.
+Use when you hold network and host evidence about one event. Not for assuming either names the actor: a capture can show a NAT gateway, proxy or spoofed source, and a host image may hold no process-to-connection record.
 
-**Fix the clocks first.** Packet times come from the capturing machine and host
-times from the host, and the two are rarely identical. Find one event visible in
-both — a logon, a download, a service start — measure the offset, apply it, and
-state it. Every correlation after that depends on this step and it is the one
-most often skipped.
+1. A capture records traffic at one point; host evidence may tie a transaction to a process, account or file if the artefacts were kept. Together they support only what their records connect.
+2. **Clocks before joins.** Name each clock and what each time means (start, completion, logging). Keep original times and decode each with `timestamp_decode`. Use several independent anchors across the window to estimate offset, drift and uncertainty. A service start is not automatically visible on the wire. With one anchor the correction is local; with none, correlate over a stated uncertainty interval.
+3. **Build the chain:** sensor observation, address owner in the interval, any NAT, proxy or VPN translation, endpoint connection record, process identity, file or account evidence. Use full tuples and transaction ids (`zeek_run` gives per-connection records) and a process start time against PID reuse; DHCP, IPv6 changes and shared gateways change ownership. Label each link observed, inferred or unresolved.
+4. A DNS cache, browser record, Zone.Identifier stream, staging timestamp or TLS fingerprint is a pivot, not a unique join. If the memory or Windows packs are loaded (check the run's tool inventory), their network-state and usage records are pivots of the same kind.
+5. **When they disagree**, keep the discrepancy and test explanations: different observation points, a wrong endpoint, NAT or proxying, time uncertainty, parser limits, collection gaps, retention, event meaning. Cleared host logs or a missed capture is one explanation, not a conclusion from the mismatch; record what would tell them apart.
 
-**Then join on the pairs that exist:**
-
-    an address in the capture      to a connection in memory, or a DNS cache entry
-    a name resolved on the wire    to a browser history record, or a proxy log
-    a download over HTTP           to a file on disk with a Zone.Identifier stream
-    an upload window               to a staged archive's creation time
-    a beacon interval              to a scheduled task or a service start time
-    a TLS fingerprint              to the binary that produced it
-
-**Direction matters when you write it.** "The host resolved `x.example` at
-09:14:02 and a process named `svc.exe` held a connection to the answering
-address" is two observations and one inference. Say which is which.
-
-Where the two disagree, that is the finding rather than a problem to resolve. A
-connection on the wire with nothing on the host means the host evidence is
-incomplete — logs cleared, a process gone, an artefact not collected. Traffic on
-the host with nothing on the wire means the capture missed it, and the capture
-point in `capture/what-you-have` usually explains why.
+Shows: what two independent records support together. Does not show: who was at the keyboard, or intent. Record: clock evidence, uncertainty, each link and its label.

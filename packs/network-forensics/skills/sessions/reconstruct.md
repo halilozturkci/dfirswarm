@@ -1,46 +1,20 @@
 ---
 id: sessions/reconstruct
-title: Putting a session back together
+title: Reconstructing transactions and objects
 when: You need what was actually sent, not just who spoke to whom.
 needs: [capture/what-you-have]
-tools: [pcap_summary, zeek_run, pcap_extract]
+tools: [pcap_summary, zeek_run]
 requires_host: [tcpflow, tcpick, ngrep, tshark, zeek]
 ---
 
-A conversation in the summary is an address pair and a byte count. A session is
-the bytes in order, and getting there has three traps.
+Use when you need the bytes of a transaction or an object. Not for encrypted payload you hold no secrets for (`metadata/dns-tls`) and not for volume questions (`exfil/volume`).
 
-**Reassembly is not concatenation.** TCP segments arrive out of order, are
-retransmitted, and overlap. A naive join produces a stream that never existed,
-and where the overlap differs between copies — which is a deliberate evasion —
-the reassembly you choose changes what the content says. Use `tcpflow` or
-`tshark -z follow`, and say which, because two tools can legitimately disagree.
-Use `tcpick` as a second implementation when overlap or retransmission behaviour
-matters. `ngrep -I FILE -W byline PATTERN 'bpf filter'` is triage only: it
-searches packet payload and does not replace stream reassembly.
+1. **Sensitive output first.** Any command that can print payload (a follow, `tcpflow`, an object export) runs as a job with `secret_output: true`, outputs and file names under `$OUT`. A finding cites the sealed location, protocol, service and what the credential would grant, never the value or a hash of it.
+2. Pick the stream from `pcap_summary` (a tuple row is a lead, not a session) or from `conn.log` (`zeek_run` runs `zeek` for it).
+3. **Reassembly is not concatenation.** Use `tcpflow` or `tshark -n -r FILE -q -z follow,tcp,raw,STREAM` (check `tshark -h`) and say which; keep direction, sequence, gaps and retransmissions. Conflicting overlaps mean evasion, corruption or two capture views: intent needs corroboration. Use `tcpick` as a second implementation when overlap decides the answer. `ngrep` is packet triage, not reconstruction.
+4. **Encrypted content.** First ask whether the case supplies authorised session key logs. Matching secrets can permit offline decryption of supported TLS and QUIC sessions; a server private key does not open sessions whose key exchange was ephemeral (all of TLS 1.3, RFC 8446). This pack carries no decryption method yet: record the limit. A session you could not read is not evidence that no transaction occurred.
+5. Protocol traps: SMB signing is not SMB encryption (a signed SMB session still names its files); FTP has a control and a data channel; a STARTTLS upgrade ends the cleartext; HTTP/2 and HTTP/3 multiplex, so map an object to its stream id, not to the connection. Worth the effort first: plain HTTP, SMB, FTP and its data channel, plain text on an unexpected port (itself a lead), and DNS, which carries payloads more often than expected.
+6. `zeek_run`'s `files.log` lists files its enabled analyzers saw, one row per connection that carried a file (rows share a `fuid`; `uid` and `id.*` name the connection). Whether any hash exists is `hashes_produced`, nothing else; none is guaranteed, a hash covers only the bytes Zeek saw, and which functions the loaded policy computes is a property of the build (compare it with an exported object's SHA-256 only if SHA-256 is among them).
+7. Only if you export protocol objects: `sessions/objects`.
 
-**Most of it is encrypted, and that is fine.** You will not read a TLS payload.
-What you can still establish is in `metadata/dns-tls`: the name requested, the
-certificate, the sizes and the timing. Do not spend the case trying to decrypt
-what you can characterise instead.
-
-**A file carved from a stream needs its own provenance.** When you recover an
-object, record the stream it came from — both endpoints, both ports, the start
-time — and hash it. An extracted file with no session behind it is worth
-nothing in a report.
-
-What is worth reconstructing, in order: anything over plain HTTP; SMB, which
-carries file names even where the data is signed; FTP and its data channel;
-plain-text protocols on unexpected ports, which is a tell in itself; and DNS,
-which carries payloads more often than people expect.
-
-Where `zeek` is on the host, run it first. Its `files.log` already names every
-object it reassembled, with a hash, and `conn.log` gives you the session behind
-each one. That is an hour saved on every capture.
-
-For NetworkMiner-style protocol object extraction, run `pcap_extract`. It uses
-Wireshark's protocol-aware `--export-objects`, keeps every exported object on
-disk, and writes a complete TSV of path, size and SHA-256. The wrapper's JSON is
-only a summary; the TSV and extracted directory are the result. Hash and inspect
-an object in quarantine before opening it, and cite the capture hash, protocol,
-session/filter and exported-object hash in the report.
+Shows: the bytes one implementation recovered for one stream. Does not show: the same bytes under another implementation, or that the endpoint received them. Record: capture hash, stream and endpoints, time, implementation, object hash (never a credential's).
