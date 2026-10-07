@@ -4,7 +4,7 @@
       "name": "capa",
       "package": "capa",
       "optional": true,
-      "why": "Match a binary against capability rules over features extracted from the file (which can include imports, strings and instructions) and report named capabilities with the features and addresses they matched. A match is a rule-supported hypothesis about what the code can do, not observed behaviour; the rule set and version used are part of the result.",
+      "why": "Match a binary against capability rules over features extracted from the file and report named capabilities with the features and addresses each match used. A match is a rule-supported hypothesis about what the code can do, not observed behaviour; the rule set and version used are part of the result.",
       "install": {
         "brew": "python3 -m pip install flare-capa",
         "apt": "pinned download 9.4.0 (install.download): upstream standalone release, whose embedded rules make offline analysis work",
@@ -29,7 +29,7 @@
       "name": "floss",
       "package": "flare-floss",
       "optional": true,
-      "why": "Recover strings a sample builds or decodes at runtime by analysis and emulation of its code, without running the sample on a host. Recovery is incomplete and depends on the format, architecture and version; a recovered string is derived, not read at a file offset.",
+      "why": "Recover strings that plain extraction misses (strings a sample decodes or builds at runtime) by analysis and emulation of its code, without running the sample on a host. Recovery is incomplete and depends on the format, architecture and version; a recovered string is derived, not read at a file offset.",
       "install": {
         "brew": "python3 -m pip install flare-floss",
         "apt": "python3 -m pip install flare-floss"

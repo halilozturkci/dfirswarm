@@ -47,7 +47,7 @@
       "skills/rules/yara.md": "45e7b3d41f6f2b148c5b68aac7917629837fadc66386ef786dcf175ba17cf3ac",
       "skills/documents/macros.md": "14252a3e3b0ccce7dd7873dc68add06d5389e029cc8567ec3ae8318f37281143",
       "skills/elf/structure.md": "36b5a7fea46ab47b1b5d790db8fccce68cc17a640f846c9cbe63313af9a32737",
-      "requires/host.json": "31cb006f61ce7c4e42ebf62d953450cfd60782eb019ed21fdae97f96c10c5b00",
+      "requires/host.json": "64a852305e11c3e71956546ce785c4b860d8fe2d2d39e51c4444a296110e3ab9",
       "requires/python.txt": "f0f18bd3e9e860703a9a7599d84f281b999764d16f1619aeef6b89a670c5566b",
       "skills/INDEX.md": "56d626f885f751c962b1eadfbed545f648b7ac60b3b82f23a41b08e3bb9333bb"
     }
