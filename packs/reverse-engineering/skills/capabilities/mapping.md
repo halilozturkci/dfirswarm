@@ -1,40 +1,21 @@
 ---
 id: capabilities/mapping
-title: From a file to what it can do
-when: You must say what a sample is for, not just what it contains.
-needs: [pe/structure]
+title: Static capabilities and the evidence behind them
+when: You must assess what a sample could do without claiming it ran.
+needs: [triage/quarantine]
 tools: [pe_info]
 requires_host: [capa, r2]
 ---
 
-`capa` reads the code — not the strings — and reports named capabilities with
-the evidence for each: which function, which instructions, which imports. It is
-the closest thing to an automated "what is this for", and its output maps to
-ATT&CK techniques.
+Use when you must say what a sample could do. Not for what it did, who wrote it or why: a rule match is a hypothesis about code.
 
-    capa -j sample.bin        the whole report, as JSON (the image build includes the rules)
-    capa -v sample.bin        with the address behind each match
+1. capa matches rules against features it extracts from supported inputs. Which kinds of feature a rule used is in the rule and in the match explanation of the version you run: do not describe a match as code-only evidence. A match supports a capability hypothesis. ATT&CK labels organise it; they do not show the technique occurred.
+2. Run `capa -j SAMPLE > "$OUT/capa.json"` and keep the whole result. Record the program version, backend, input format and architecture, the rule-set identity, any added rules and the warnings (`capa -h` lists the modes). Do not assume another installation carries the rules a given release does. Read what `pe_info` says it did not read (managed code, delay imports) first: an unsupported input is a result, not a clean file.
+3. For each material match keep the rule namespace and the full feature explanation with its locations, then read the code (`r2`). A match may not reduce to one import or call site.
+4. Few or no matches mean the chosen rules and analysis recovered little: unsupported runtime or architecture, incomplete analysis, library-heavy code, packing, obfuscation or limited coverage. Write "no matches under this tool, rule set and scope"; neither "harmless" nor "packed" follows.
+5. Imports, strings and capa output can come from one feature or library: they are not independent evidence. A mutex name is a candidate indicator: establish how it is built and used, check for generic or shared values, and say how discriminating it is before clustering samples.
+6. Say what the inspected code supports and what stays unresolved. To say what happened on a system, link the sample to execution, memory or network artefacts in the pack that holds them.
 
-**Quote the evidence, not the label.** `capa` saying "create a process" is a
-conclusion drawn from an import and a call site. The report should carry the
-call site, because that is what a reviewer can check. A capability list pasted
-without addresses is the tool's opinion.
+Sensitive output: the explanations carry matched string features, which can be credentials. Run the job with `secret_output: true`, read rule names, namespaces and addresses, and cite those, not the matched strings.
 
-**Absence is weak.** A packed sample gives `capa` almost nothing, because there
-is no code to read until it unpacks. A short list on a high-entropy binary means
-"packed", not "harmless", and saying so is part of the answer.
-
-Pair it with two other readings before you commit:
-
-- **The import table** (`pe/structure`), which is capability by declaration
-  rather than by code.
-- **The strings** (`strings/obfuscated`), which say what the capability is
-  pointed at: a domain, a path, a registry key, a mutex name.
-
-A mutex name is worth calling out on its own. It is often unique to a family, it
-is rarely obfuscated, and it is the cheapest way to tie two samples together.
-
-Finally, the honest framing for the report: this is static analysis. It says
-what the code is able to do and what it was built to do. It does not say what it
-did on this machine — that comes from the host artefacts, and it is the Windows
-or Linux pack's job.
+Shows: rule-supported capability hypotheses with feature locations. Does not show: execution, reachability, intent or purpose. Record: version, rule set, input mode, warnings, a reference to the complete output, the code you read.

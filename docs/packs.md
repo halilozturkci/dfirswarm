@@ -399,7 +399,7 @@ checksummed, and installs and verifies in the test suite.
 | `mobile-forensics` | 7 | 3 | 1 | iOS and Android extractions, app databases, protobuf |
 | `memory-forensics` | 9 | 3 | 1 | containers, what works with no framework, injection, credentials |
 | `network-forensics` | 8 | 6 | 1 | captures, sessions, DNS and TLS metadata, beacons, exfiltration |
-| `reverse-engineering` | 7 | 4 | 1 | static triage of a binary or a document, under quarantine |
+| `reverse-engineering` | 12 | 4 | 1 | static triage of a binary or a document, under quarantine |
 | `encrypted-containers` | 5 | 3 | 1 | which scheme, which protectors, and where the key already is |
 | `cloud-forensics` | 9 | 3 | 1 | Microsoft 365, Entra, AWS, Workspace, and the tokens behind them |
 | `ransomware-response` | 7 | 2 | 1 | scoping, recovery impairment, family candidates and recovery validation, each with its limits |

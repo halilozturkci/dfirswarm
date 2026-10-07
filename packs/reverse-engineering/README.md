@@ -11,16 +11,22 @@ Depends on the Computer Forensics Base Pack.
 
 ## What it carries
 
-**Seven skills.**
+**Twelve skills**, each a short decision-rule leaf; the second-level leaves are
+opened only when the leaf above points to them.
 
 | Family | Skills |
 | --- | --- |
 | Triage | `triage/quarantine` |
-| Executables | `pe/structure`, `elf/structure` |
-| Strings | `strings/obfuscated` |
+| Executables | `pe/structure`, `pe/signature-and-resources`, `elf/structure`, `elf/packing-and-identity` |
+| Strings | `strings/obfuscated`, `strings/decoding-and-similarity` |
 | Capabilities | `capabilities/mapping` |
-| Documents | `documents/macros` |
-| Rules | `rules/yara` |
+| Documents | `documents/macros`, `documents/external-and-active-content` |
+| Rules | `rules/yara`, `rules/authoring` |
+
+Not provided yet, and the skills say so where it matters: a managed (.NET)
+metadata reader, Go, Rust and packaged-Python readers, script analysis, a
+Mach-O method, structural PDF and RTF reading, and a trust-aware Authenticode
+verifier.
 
 **Four tools of its own, and `file_type` from the base pack.** `file_type` reads
 what a file is from its bytes and says when the extension disagrees.
@@ -28,7 +34,7 @@ what a file is from its bytes and says when the extension disagrees.
 writes the whole profile to a file; it reports a measurement and does not
 identify packing. `pe_info` reads PE, ELF and Mach-O structure (sections with
 their entropy and permissions, imports with their function names, the compile
-timestamp as the header's raw value, the dynamic array of an ELF through its
+timestamp as the header's raw value and as a Unix time, the dynamic array of an ELF through its
 program headers, every slice of a universal binary) and says for each answer what
 it read and what it did not; it verifies no signature. `fuzzy_hash` computes
 SHA-256, ssdeep and TLSH together, and can give the TLSH distance between two
