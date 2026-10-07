@@ -26,6 +26,7 @@ import { chmod, mkdir, readFile, readdir, stat, symlink, writeFile } from "node:
 import { join } from "node:path";
 import { test } from "node:test";
 import { ROOT, runPy, withCwd } from "./tool-library-harness.ts";
+import { scca } from "./windows-prefetch-fixtures.ts";
 
 const MEM = join(ROOT, "packs", "memory-forensics", "tools");
 const WIN = join(ROOT, "packs", "windows-forensics", "tools");
@@ -88,18 +89,13 @@ type Carve = {
   problems: { offset: number; kind: string; problem: string }[];
 };
 
-/** A plain Prefetch file as libscca describes it: version, "SCCA", ..., file size, name. */
+/**
+ * A plain Prefetch file in the real layout: the windows pack's builder (tests/windows-prefetch-fixtures.ts) writes the
+ * version, "SCCA", the file size, the name, the file information with its metrics array offset at 0x54 (so a file
+ * information of 224 bytes and the run count at 0xD0 in version 30), the last-run FILETIMEs and the filename strings.
+ */
 function plainPrefetch(version: number, name: string, runCount: number, lastRun: bigint): Buffer {
-  const file = Buffer.alloc(0x130);
-  file.writeUInt32LE(version, 0);
-  file.write("SCCA", 4, "latin1");
-  file.writeUInt32LE(0x0f, 8);
-  file.writeUInt32LE(file.length, 0x0c);
-  file.write(name, 0x10, "utf16le");
-  file.writeUInt32LE(0xdeadbeef, 0x4c);
-  file.writeBigUInt64LE(lastRun, 0x80);
-  file.writeUInt32LE(runCount, 0xd0);
-  return file;
+  return scca({ version, exe: name, hash: 0xdeadbeef, runCount, lastRuns: [lastRun], names: [`\\VOLUME{x}\\${name}`] });
 }
 
 /** The registry hive's base block fields the tool reads: "regf", major 1 at 0x14, minor at 0x18. */
@@ -130,7 +126,7 @@ test("mem_carve cuts a plain Prefetch record from its version field, which prefe
     assert.equal(hit.object_offset, 0x3000);
     assert.equal(hit.page_aligned, true, "the structure starts on a page boundary");
     assert.equal(hit.validation, "header plausible");
-    assert.equal(hit.declared_bytes, 0x130);
+    assert.equal(hit.declared_bytes, pf.length);
     const cut = await readFile(hit.extracted_to as string);
     assert.deepEqual(cut.subarray(0, 8), pf.subarray(0, 8), "the extract begins with the version field and the signature");
     assert.deepEqual(cut.subarray(0, pf.length), pf);

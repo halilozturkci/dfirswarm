@@ -77,6 +77,9 @@ got = tool("linux-forensics/tools/auth_log", {"path": d})
 times = [r["time"] for r in got.get("records", [])]
 check("auth_log follows the rotation and crosses new year correctly",
       times == ["2025-12-31T23:58:01", "2026-01-01T00:02:11", "2026-01-01T00:05:44"], str(times))
+# The fixture's acceptance line carries a key; it was never asserted, and the parser lost it.
+keys = [(r.get("keytype"), r.get("fingerprint")) for r in got.get("records", []) if r.get("kind") == "ssh_accepted"]
+check("auth_log keeps the key type and fingerprint of an accepted publickey", keys == [("RSA", "SHA256:zz")], str(keys))
 
 # --- macos-forensics/fsevents_parse: a gzip page of DLS records ----------------
 def fsevent(path_, eid, flags, node):

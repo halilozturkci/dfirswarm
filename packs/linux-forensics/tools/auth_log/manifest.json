@@ -1,22 +1,42 @@
 {
   "name": "auth_log",
-  "description": "Parse auth.log or secure, including the rotated and gzipped files, into structured records: ssh acceptances and failures with the source address and key fingerprint, sudo commands with the working directory, su, session open and close, and account changes.",
+  "description": "Parse auth.log or secure, including the rotated and gzipped files, into one record per line with fields and locators: ssh acceptances (method, user, source, port, key type and fingerprint, and a certificate's id, serial and CA), failures (a rejected public key's type and fingerprint included), invalid users and disconnects (the source is an address or it is not a source), sudo and su lines (the working directory and target user), PAM failures read as key=value pairs, PAM sessions with the service they belong to, `Accepted key` lines (kind key_observed_authentication: sshd matched a login to an authorized_keys entry, not a key being installed), account changes. Reads the files oldest first by their rotation suffix and says which basis ordered each. A traditional syslog stamp has no year and no zone: each record keeps the stamp as written (time_raw), the year applied (from the file's modification time or your year argument, said per file) and time_zone unknown; a month that steps back is read as a year end only within six months forward, and otherwise as a reordered line; a line the next line contradicts is a stray (reordered) and does not date the file; the last line in order, with a day's margin for the unknown zone, dates it; an RFC 3339 stamp keeps its own offset and fractions (`time` is the clock reading as written, `time_utc` the same instant in UTC only where the stamp carries its zone). A line longer than 64 KiB is located and not parsed, a long free-text field is shown cut with its whole length (the whole is in the text file), only gzip is read (another compression is a named read error), and a pipe or device is never opened. Every record carries its file, physical line and byte offset; a line no rule places, a gzip cut off mid-stream and a file that could not be read are counted and located, and all_lines_parsed is true only when none happened. It is a line reader, not an account of the host's authentication events: it does not read the journal, wtmp or the audit log, and a fingerprint names a key, not a person. SENSITIVE: a sudo line is a command line, and a name the log says is no account (`Invalid user`, `invalid user`, a PAM `user=`) is what someone typed and can be a password; the answer never carries `raw`, a `command` or such a name, only their lengths (user_bytes, user_withheld). A name the log accepted, or that a session, sudo or su line names, stays in the answer. write_text: true (refused outside a job) creates $OUT/auth-text.jsonl, mode 0600, with the text of every record and unparsed line (the typed names included), and preview_text: true (refused outside a job) puts it in the answer; run it as a job with secret_output: true. max_seconds (default 100, at most 105) bounds the read: a file it did not reach is named under files_not_reached. Every answer carries `status` (complete, partial or failed) and `status_basis`, the pair the recipes' coverage.json carries: all_lines_parsed stays beside it, true only when no line went unplaced or unread.",
   "params": {
     "path": {
       "type": "string",
-      "description": "An auth.log or secure file, or a directory of them (rotated files are followed)"
+      "description": "An auth.log or secure file, or a directory of them (rotated files are found and read oldest first; links are not followed and are listed)"
     },
     "kinds": {
       "type": "array",
-      "description": "Keep only these kinds, e.g. [\"ssh_accepted\",\"sudo\"]"
+      "description": "Keep only these kinds, e.g. [\"ssh_accepted\",\"sudo\"]. Known: ssh_accepted, ssh_failed, ssh_invalid_user, ssh_disconnect, key_observed_authentication, sudo, sudo_failed, su, session_opened, session_closed, auth_failure, account_added, account_changed, other"
     },
     "contains": {
       "type": "string",
-      "description": "Case-insensitive substring over the whole line"
+      "description": "Case-insensitive substring over the fields the answer shows; in a job, over the whole line, including the text the answer withholds (the answer then says filter_touched_withheld_text). It filters what is returned, never what is counted as parsed"
     },
     "year": {
       "type": "integer",
-      "description": "The year to apply to traditional syslog lines, which carry no year"
+      "description": "The year to apply to every traditional syslog line of every file. Without it each file's year comes from its modification time and the months' own year ends; with it a file that crosses a year end says year_argument_spans_rollover"
+    },
+    "max_expanded_bytes": {
+      "type": "integer",
+      "description": "How far a gzip stream is read once decompressed (default 1073741824); past it the file ends as a read error and the answer is partial"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Records and unparsed lines shown inline (default 200 each); all of them are counted, and when there are more the whole list is written as JSON Lines and named in pages.<list>.all_results"
+    },
+    "write_text": {
+      "type": "boolean",
+      "description": "Write the text of every record (raw, a sudo command, the physical line) to $OUT/auth-text.jsonl (default false). Refused unless the tool runs as a job, which must be run with secret_output: true; a file already there is refused; the answer never carries the text"
+    },
+    "preview_text": {
+      "type": "boolean",
+      "description": "Put raw and a sudo command in the answer's records (default false). Refused unless the tool runs as a job, which must be run with secret_output: true"
+    },
+    "max_seconds": {
+      "type": "number",
+      "description": "The time to spend reading (default 100, at most 105); a file it did not reach is named and the answer is partial"
     }
   },
   "runtime": "python3",
@@ -24,7 +44,13 @@
   "timeout_seconds": 120,
   "example": "{\"path\": \"work/extracted/var/log\", \"kinds\": [\"ssh_accepted\", \"sudo\"]}",
   "by": "maintainer",
-  "at": "2026-09-22T15:00:00.000Z",
-  "version": 3,
-  "sha256": "278596ff869f86ea8b1364b563c0f5f0a74d6aa582f5de8c6b9fb73fe8157e50"
+  "at": "2026-10-07T12:00:00.000Z",
+  "version": 4,
+  "sha256": "c8370a160cf2395f7736bdebb562ed40df903d28674ffee8cc8f3034741b6283",
+  "use": {
+    "names": [
+      "auth.log*",
+      "secure*"
+    ]
+  }
 }

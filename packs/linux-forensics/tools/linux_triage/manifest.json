@@ -1,6 +1,6 @@
 {
   "name": "linux_triage",
-  "description": "Parse a Linux disk image or extracted root with dissect.target, including E01 images whose root is inside LVM. The complete JSONL from every artefact family is kept under out_dir; the inline result only names and hashes those files, so nothing is truncated.",
+  "description": "Parse a Linux disk image or extracted root with dissect.target, one function at a time, including E01 images whose root is inside LVM. The complete output of each family's functions is kept under out_dir (JSON Lines, or text for the identity family) with each function's stderr in a file of its own; the inline answer is a manifest with no evidence text in it. The family files are bulk extracts of evidence text (histories, authentication lines, journal entries, container logs) and can hold secrets: they are not sealed as sensitive unless the job ran with secret_output. Each function gets the status it earned and the evidence for it: parsed (exit 0, records), empty (exit 0, nothing, no stderr), unsupported (exit 0, nothing, and a stderr line that names the function, as a whole word and by its whole dotted name, and says it is not available: the message patterns are not validated against dissect.target, so a message that does not name the function, or does not match, leaves it `unknown`), failed (non-zero exit, or its own timeout), not_attempted (the time left in the total deadline was less than the function's own timeout, so it was not started), unknown (a line that is not JSON, a stderr that names no cause for an empty result, or a traceback beside records). execution_complete says every function was started and exited 0 within its deadline; it is not artefact coverage, and neither is `parsed`: the counts under coverage are what each function produced, not what the host held. Each family names its functions and what they do not cover (sessions: classic wtmp/btmp/lastlog only; history: bash only; packages: dpkg.status and package-manager logs, no RPM; containers: container.logs only; there is no audit family). Empty output is a parser's result, not proof the artefact is absent. timeout_seconds is per function (default 1800) and total_timeout_seconds covers the run (default 13800, under this manifest's 14400); summary.json in out_dir is rewritten after every function, and a SIGTERM, SIGINT or SIGHUP ends the function that is running and what it started and says terminated, so a run stopped from outside leaves what it had done. Each function runs in this tool's own process group, never a session of its own, so the harness ending the tool by killing its group ends dissect.target with it. Neither timeout may exceed 14100 seconds (the manifest allows 14400). groups omitted runs every family; an empty list, an unknown name or a repeated one is refused. Accepts an image (extensions and magic in `use`) or a directory holding an extracted root; whether a given function reads an extracted root is shown by its status, not assumed. Every answer carries `status` (complete, partial or failed) and `status_basis`, the pair the recipes' coverage.json carries: complete says every selected function ran to exit 0 and produced records or nothing (not coverage of the host), partial that some did not, failed that none ran to an exit; execution_complete stays beside it. In a job out_dir must be a new directory under work/<your agent id>/ (which the job maps to its output directory): another place is refused before anything runs.",
   "params": {
     "source": {
       "type": "string",
@@ -9,16 +9,20 @@
     },
     "out_dir": {
       "type": "string",
-      "description": "A new directory under work/ or the job output for the complete JSONL results",
+      "description": "A new directory under work/<your agent id>/ (in a job: mapped to the job's output directory) for the complete results; refused if it exists, or in a job if it is anywhere else",
       "required": true
     },
     "groups": {
       "type": "array",
-      "description": "Optional families: identity, users, sessions, authentication, history, persistence, packages, ssh, logs, web, containers"
+      "description": "Families to run: identity, users, sessions, authentication, history, persistence, packages, ssh, logs, web, containers. Omit it to run all of them; an empty list, an unknown family or a repeated one is refused"
     },
     "timeout_seconds": {
       "type": "integer",
-      "description": "Deadline for each family (default 1800)"
+      "description": "Deadline for each function (default 1800, at most 14100)"
+    },
+    "total_timeout_seconds": {
+      "type": "integer",
+      "description": "Deadline for the whole run (default 13800, at most 14100). A function is started only if the time left covers its own timeout; the ones that cannot be are not_attempted"
     }
   },
   "requires": [
@@ -27,9 +31,48 @@
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 14400,
-  "example": "{\"source\":\"inputs/server.E01\",\"out_dir\":\"work/linux-triage\"}",
+  "example": "{\"source\": \"inputs/server.E01\", \"out_dir\": \"work/<your id>/linux-triage\"}",
   "by": "maintainer",
-  "at": "2026-09-26T00:00:00.000Z",
-  "version": 2,
-  "sha256": "f6765c25462ef59550a455f423aedcadc3f297877672c97a34a744c9df188e1f"
+  "at": "2026-10-07T12:00:00.000Z",
+  "version": 3,
+  "sha256": "50ef413f07050a584a0aa3294bcca5416b20165b46fea9627f393fdd75d2483c",
+  "use": {
+    "extensions": [
+      ".e01",
+      ".ex01",
+      ".dd",
+      ".img",
+      ".raw",
+      ".vhd",
+      ".vhdx",
+      ".vmdk",
+      ".qcow2"
+    ],
+    "magic": [
+      {
+        "offset": 0,
+        "hex": "455646090d0aff00"
+      },
+      {
+        "offset": 0,
+        "hex": "455646320d0a8100"
+      },
+      {
+        "offset": 510,
+        "hex": "55aa"
+      },
+      {
+        "offset": 0,
+        "hex": "7668647866696c65"
+      },
+      {
+        "offset": 0,
+        "hex": "4b444d56"
+      },
+      {
+        "offset": 0,
+        "hex": "514649fb"
+      }
+    ]
+  }
 }
