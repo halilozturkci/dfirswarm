@@ -25,6 +25,7 @@ inside the structure that contains it, a traversal is bounded, and what the tool
 is in `problems` and in the answer's `status` (complete, partial, failed, unsupported). Exit 0
 means the engine ran; `status` says whether the structures it reads were read in full.
 """
+import bisect
 import datetime
 import errno
 import hashlib
@@ -33,8 +34,10 @@ import math
 import mmap
 import os
 import re
+import stat
 import struct
 import sys
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -61,6 +64,10 @@ MAX_NEEDED = 4096
 MAX_SLICES = 256
 MAX_LOAD_COMMANDS = 65536
 MAX_PROBLEMS = 100
+DEFAULT_SECONDS = 100                   # the tool's own clock: below the manifest's 120 s, so a slow file is a partial answer, not a kill
+MAX_SECONDS = 110
+MAX_PHDRS = 65535
+OVERLAP_LOOK_BACK = 64                  # sections whose address range is searched backwards from the nearest start
 
 MACHINES = {0x014c: "i386", 0x8664: "x86-64", 0x01c0: "ARM", 0x01c4: "ARMNT", 0xaa64: "ARM64", 0x0200: "IA64",
             0x5032: "RISC-V 32", 0x5064: "RISC-V 64", 0x0166: "MIPS R4000"}
@@ -129,9 +136,212 @@ def describe(exc):
     return "%s%s: %s" % (type(exc).__name__, " " + code if code else "", getattr(exc, "strerror", None) or str(exc))
 
 
+NOTHING_READ = ["every structure: the file was not read"]
+
+
+def answer_base(status, error=None, partial=None, problems=None, limits=None, coverage=None):
+    """The fields every answer carries, whether it read the file or not: a status, the problems, the limits hit and the
+    structures read and not read."""
+    return {"tool": TOOL, "parser": PARSER, "status": status, **(partial or {}),
+            **({"error": error, "status_basis": error} if error else {}),
+            "problems": list(problems or []), "limits_hit": list(limits or []),
+            "coverage": coverage or {"structures_read": [], "structures_not_read": NOTHING_READ}}
+
+
 def fail(message, **extra):
-    print(json.dumps({"error": message, "status": extra.pop("status", "failed"), "tool": TOOL, **extra}))
+    status = extra.pop("status", "failed")
+    print(json.dumps({**answer_base(status, message), **extra}))
     raise SystemExit(1)
+
+
+def file_problem(path):
+    """Why `path` is not a file this tool can read, in words that fit: a missing file, a directory, a pipe, a loop."""
+    try:
+        mode = os.stat(path).st_mode
+    except FileNotFoundError:
+        return "no such file"
+    except OSError as exc:
+        return "the file could not be examined: %s" % describe(exc)
+    if stat.S_ISREG(mode):
+        return None
+    kinds = ((stat.S_ISDIR, "a directory"), (stat.S_ISFIFO, "a named pipe"), (stat.S_ISSOCK, "a socket"), (stat.S_ISBLK, "a block device"),
+             (stat.S_ISCHR, "a character device"))
+    return "not a regular file (%s)" % next((n for t, n in kinds if t(mode)), "a special file")
+
+
+# BEGIN SHARED WITHHOLDING
+# The same text is in pcap_extract, zeek_run, suricata_run and network_log_summary, so that the four tools withhold
+# the same strings; tests/pack-network-withholding.test.ts holds the copies equal. An identifier-shaped string is
+# withheld wherever the tool would print one: a name, a path component, a URL, a message that quotes either.
+COUNTS = {"names": 0, "urls": 0, "text": 0}
+# A run of name characters long enough to be a token. `=` is only a padding at the end (so a key= prefix stays);
+# `/` joins pieces of a base64 token and is handled apart, below.
+_RUN = re.compile(r"[A-Za-z0-9_+%-]{20,}={0,2}|[A-Za-z0-9_+%-]{14,}={2}")
+_SLASHED = re.compile(r"[A-Za-z0-9_+/%-]{30,}={0,2}")
+_HEX = re.compile(r"[0-9a-fA-F]{32,}")
+_PREFIXED = re.compile(r"(?:AKIA|ASIA)[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}"
+                       r"|xox[abeprs]-[A-Za-z0-9-]{10,}|sk-[A-Za-z0-9_-]{20,}"
+                       r"|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*"
+                       r"|(?i:basic|bearer)\s+[A-Za-z0-9+/=._~-]{8,}")
+# User-info: after `//` (a URL, or a scheme-relative one), or bare as name:password@host. A mailto: address is not one.
+_USERINFO = re.compile(r"(?<=//)[^/?#\s@]+(?=@)")
+_BARE_USERINFO = re.compile(r"(?<![\w.%+:/-])(?!mailto:)[\w.%+-]{1,64}:[^\s/@:]{1,128}(?=@[\w\[])")
+
+
+def _withheld(what, length, kind):
+    COUNTS[kind] = COUNTS.get(kind, 0) + 1
+    return ("<%s withheld %d characters>" % (what, length)) if what else ("<withheld %d characters>" % length)
+
+
+def _token_run(run):
+    """Is this run of name characters shaped like a token, and not like words, dates or versions?"""
+    if _HEX.search(run):
+        return True
+    chunks = [(m.group()[0].isdigit(), m.start(), m.end()) for m in re.finditer(r"[A-Za-z]+|[0-9]+", run)]
+    # digits packed between letters ("a9b2c7"), which words, dates and versions do not do
+    packed = 0
+    for i, (is_digit, start, end) in enumerate(chunks):
+        if not is_digit or end - start > 3:
+            continue
+        before = i > 0 and not chunks[i - 1][0] and chunks[i - 1][2] == start
+        after = i + 1 < len(chunks) and not chunks[i + 1][0] and chunks[i + 1][1] == end
+        packed += 1 if before or after else 0
+    if packed >= 3:
+        return True
+    letters = [c for c in run if c.isalpha()]
+    case_flips = sum(1 for a, b in zip(letters, letters[1:]) if a.islower() != b.islower())
+    if len(letters) >= 20 and case_flips >= max(8, 0.4 * len(letters)):
+        return True
+    if run.endswith("==") and len(run) >= 16:
+        return True
+    if run.endswith("=") and len(run) >= 24:
+        return True
+    return len(run) >= 40 and run.isalnum() and any(c.isdigit() for c in run) and any(c.isalpha() for c in run)
+
+
+def _randomish(piece):
+    """A piece of a path that is not a plain word: digits among letters, or capitals inside a word."""
+    if len(piece) < 4 or "." in piece or re.fullmatch(r"[A-Z][a-z]+", piece):
+        return False
+    letters = [c for c in piece if c.isalpha()]
+    mixed = any(c.islower() for c in letters) and any(c.isupper() for c in letters)
+    return (any(c.isdigit() for c in piece) and bool(letters)) or mixed
+
+
+def token_spans(text):
+    spans = [m.span() for m in _PREFIXED.finditer(text)]
+    for m in _RUN.finditer(text):
+        if _token_run(m.group()):
+            spans.append(m.span())
+    # A base64 token holds `/`: pieces too short to be one alone (an AWS-style secret has two) are caught as a whole.
+    for m in _SLASHED.finditer(text):
+        run = m.group()
+        if "/" in run and sum(1 for p in run.split("/") if _randomish(p)) >= 3 and re.search(r"[0-9+]", run):
+            spans.append(m.span())
+    # A flagged piece takes the random-looking pieces next to it across a `/`: the head of a token is not printed.
+    grown = []
+    for start, end in spans:
+        while start > 1 and text[start - 1] == "/":
+            m = re.search(r"[A-Za-z0-9_+%-]+$", text[:start - 1])
+            if not m or not _randomish(m.group()):
+                break
+            start = m.start()
+        while end < len(text) - 1 and text[end] == "/":
+            m = re.match(r"[A-Za-z0-9_+%-]+={0,2}", text[end + 1:])
+            if not m or not _randomish(m.group()):
+                break
+            end = end + 1 + m.end()
+        grown.append((start, end))
+    grown.sort()
+    merged = []
+    for start, end in grown:
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def token_shaped(text):
+    return bool(token_spans(text))
+
+
+def scrub(text, kind="text"):
+    """The text with every token-shaped run and every user-info withheld."""
+    text = _USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
+    text = _BARE_USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
+    out, last = [], 0
+    for start, end in token_spans(text):
+        out.append(text[last:start])
+        out.append(_withheld("token-shaped text", end - start, kind))
+        last = end
+    out.append(text[last:])
+    return "".join(out)
+
+
+def redact_url(url):
+    """A URL or request target without its user-info, its token-shaped path text, its query values or its fragment."""
+    rest, fragment = (url.split("#", 1) + [None])[:2]
+    rest, query = (rest.split("?", 1) + [None])[:2]
+    scheme = authority = ""
+    m = re.match(r"^((?:[A-Za-z][A-Za-z0-9+.-]*:)?//)([^/]*)(.*)$", rest, re.S)
+    if m:
+        scheme, authority, rest = m.group(1), m.group(2), m.group(3)
+        if "@" in authority:
+            userinfo, authority = authority.rsplit("@", 1)
+            authority = _withheld("userinfo", len(userinfo), "urls") + "@" + authority
+    out = scheme + authority + scrub(rest, "urls")
+    if query is not None:
+        pairs = []
+        for pair in query.split("&"):
+            name, eq, value = pair.partition("=")
+            pairs.append(scrub(name, "urls") + (eq + _withheld("", len(value), "urls") if eq else ""))
+        out += "?" + "&".join(pairs)
+    if fragment is not None:
+        out += "#" + _withheld("", len(fragment), "urls")
+    return out
+
+
+def cell(value):
+    """Text for one tab-separated cell or one printed path: no tab or line break, and a byte that was not UTF-8
+    (a lone surrogate) written as \\xNN, so that no writer raises on it."""
+    text = value if isinstance(value, str) else str(value)
+    out = []
+    for ch in text:
+        o = ord(ch)
+        if ch == "\\":
+            out.append("\\\\")
+        elif ch == "\t":
+            out.append("\\t")
+        elif ch == "\r":
+            out.append("\\r")
+        elif ch == "\n":
+            out.append("\\n")
+        elif 0xDC80 <= o <= 0xDCFF:
+            out.append("\\x%02x" % (o - 0xDC00))
+        elif 0xD800 <= o <= 0xDFFF:
+            out.append("\\u%04x" % o)
+        elif o < 0x20 or o == 0x7F:
+            out.append("\\x%02x" % o)
+        else:
+            out.append(ch)
+    return "".join(out)
+# END SHARED WITHHOLDING
+
+
+def show(ctx, field, text, offset):
+    """A string read from the sample as it may be printed. A library path, a search path or an install name can carry
+    user-info or a query value: those are withheld, the field is listed in `withheld_fields` with where the string lies
+    in the file, and the file is the whole."""
+    if not isinstance(text, str):
+        return text
+    if "://" in text or text.startswith("//") or "?" in text:
+        shown = redact_url(text)
+    else:
+        shown = "/".join(scrub(part, "names") for part in text.split("/"))
+    if shown != text:
+        ctx.withheld_fields.append({"field": field, "file_offset": offset, "length": len(text)})
+    return shown
 
 
 # --- lossless paging: the answer a table gets when it is long, and the whole of it in a file ------------------------
@@ -241,15 +451,18 @@ class Image:
 
 
 class Ctx:
-    def __init__(self, key, limit, entropy_budget, with_imports):
+    def __init__(self, key, limit, entropy_budget, with_imports, seconds):
         self.key = key
         self.limit = limit
         self.with_imports = with_imports
+        self.seconds = seconds
+        self.deadline = time.monotonic() + seconds
         self.budget = {"limit": entropy_budget, "used": 0, "refused": 0}
         self.problems = []
         self.problems_dropped = 0
         self.limits = []
         self.pages = {}
+        self.withheld_fields = []
 
     def problem(self, text):
         if text in self.problems:
@@ -263,6 +476,12 @@ class Ctx:
         if text not in self.limits:
             self.limits.append(text)
 
+    def expired(self, where):
+        if time.monotonic() <= self.deadline:
+            return False
+        self.limit_hit("time: %s stopped at max_seconds (%d); what was read is reported" % (where, self.seconds))
+        return True
+
     def page(self, name):
         if name not in self.pages:
             self.pages[name] = LosslessPage("pe_info-" + name, [self.key, name], self.limit)
@@ -270,8 +489,10 @@ class Ctx:
 
 
 def entropy_of(img, start, end, ctx):
-    """(entropy to 3 decimals or None, why it is None): Shannon entropy of the file bytes in [start, end),
-    streamed in chunks, against the call's work budget."""
+    """(entropy to 3 decimals or None, a note or None): Shannon entropy of the file bytes in [start, end), streamed in chunks,
+    against the call's work budget. A range that runs past the end of the file is measured over the bytes the file holds,
+    and the note says over how many of how many. Pages already counted are given back to the system as the pass goes."""
+    wanted = max(0, end - start)
     end = min(end, img.size)
     if start < 0 or start >= end:
         return None, "no bytes of this range are in the file"
@@ -285,13 +506,28 @@ def entropy_of(img, start, end, ctx):
     while at < end:
         n = min(CHUNK, end - at)
         counts.update(img.mm[at:at + n])
+        release(img, at, n)
         at += n
     ctx.budget["used"] += want
     value = 0.0
     for c in counts.values():
         p = c / want
         value -= p * math.log2(p)
-    return round(value, 3), None
+    note = "measured over %d of %d bytes: the range runs past the end of the file" % (want, wanted) if want < wanted else None
+    return round(value, 3), note
+
+
+def release(img, at, n):
+    """Tell the system the pages of a measured chunk can go: a read-only file mapping is clean, and its resident size would
+    otherwise follow the bytes measured."""
+    madvise, dontneed = getattr(img.mm, "madvise", None), getattr(mmap, "MADV_DONTNEED", None)
+    if madvise is None or dontneed is None:
+        return
+    first = at - at % mmap.PAGESIZE
+    try:
+        madvise(dontneed, first, min(img.size - first, at + n - first))
+    except (OSError, ValueError):
+        pass
 
 
 def when(stamp):
@@ -333,8 +569,10 @@ def read_pe(img, ctx):
     out.update({
         "machine": MACHINES.get(machine, hex(machine)),
         "sections_declared": nsec,
-        "compile_timestamp": when(stamp),
-        "compile_timestamp_raw": stamp,
+        "header_timestamp_raw": stamp,
+        "header_timestamp_utc": when(stamp),
+        "header_timestamp_note": ("The COFF TimeDateStamp read as seconds since 1970-01-01T00:00:00Z. A linker may write a value that is not a time "
+                                  "(a reproducible build writes a hash), so a date here is a reading of a number, not a compile time."),
         "characteristics": hex(characteristics),
         "is_dll": bool(characteristics & 0x2000),
         "is_system_file": bool(characteristics & 0x1000),
@@ -458,7 +696,7 @@ def read_pe(img, ctx):
                 if why:
                     row["entropy_note"] = why
             last_raw_end = max(last_raw_end, min(img.size, rawptr + rawsize))
-            maps.append((vaddr, min(vsize or rawsize, rawsize), rawptr, min(img.size, rawptr + rawsize)))
+            maps.append((vaddr, min(vsize or rawsize, rawsize), rawptr, min(img.size, rawptr + rawsize), len(maps)))
         else:
             row["entropy"], row["entropy_note"] = None, "no raw data"
         if rawsize and vsize > rawsize * 4 and (row["entropy"] or 0) > 7.0:
@@ -470,18 +708,26 @@ def read_pe(img, ctx):
         ctx.problem("section table: %d sections are declared, and %d are read" % (nsec, MAX_SECTIONS))
     out["sections_read"] = read
     if size_of_headers:
-        maps.append((0, size_of_headers, 0, min(size_of_headers, img.size)))
+        maps.append((0, size_of_headers, 0, min(size_of_headers, img.size), len(maps)))
+    # Sorted by address once, so that finding the section behind an RVA is a search and not a pass over every section for
+    # every thunk (65,535 sections times 30,000 thunks took 170 seconds). Sections that overlap in memory are looked for a
+    # few entries back from the nearest start, and the one first in the table wins, as it did before.
+    by_start = sorted(maps)
+    starts = [m[0] for m in by_start]
 
     def to_range(rva):
         """(file offset, end of the file-backed bytes of the section or headers holding it) or None."""
-        for vaddr, span, rawptr, file_end in maps:
+        i = bisect.bisect_right(starts, rva) - 1
+        best = None
+        for j in range(i, max(-1, i - OVERLAP_LOOK_BACK), -1):
+            vaddr, span, rawptr, file_end, order = by_start[j]
             delta = rva - vaddr
-            if 0 <= delta < max(span, 1) and rawptr + delta < file_end:
-                return rawptr + delta, file_end
-        return None
+            if 0 <= delta < max(span, 1) and rawptr + delta < file_end and (best is None or order < best[4]):
+                best = (rawptr + delta, file_end, 0, 0, order)
+        return (best[0], best[1]) if best else None
 
     # Imports.
-    out["imports"] = []
+    out["imports"] = [] if ctx.with_imports else None
     if ctx.with_imports and wide is not None:
         import_dir = next((d for d in declared if d["index"] == 1), None)
         if import_dir is not None:
@@ -499,24 +745,36 @@ def read_pe(img, ctx):
                 ctx.problem("the export directory's name is not backed by file bytes")
             else:
                 text, complete = img.cstr(name_range[0], name_range[1])
-                out["export_name"] = text
+                out["export_name"] = show(ctx, "export_name", text, name_range[0])
                 if not complete:
                     ctx.problem("the export directory's image name has no terminator within its section or %d bytes" % NAME_CAP)
     # Certificate table: a file offset and a size, declared by the header.
     cert = next((d for d in declared if d["index"] == 4), None)
+    cert_range = None
     if cert is not None:
         off, size = cert["rva"], cert["size"]
-        table = {"offset": off, "size": size, "within_file": off > 0 and off + size <= img.size,
+        inside = off > 0 and off + size <= img.size
+        table = {"offset": off, "size": size, "within_file": inside,
                  "note": "A declaration in the header. The table is read no further than its first entry's header, and nothing is verified."}
+        if not inside:
+            ctx.problem("the certificate table [%d, %d) is not inside the %d-byte file: its first entry's header was not read" % (off, off + size, img.size))
         if off > 0 and size >= 8 and off + 8 <= img.size:
             length, revision, ctype = struct.unpack_from("<IHH", img.mm, off)
             table["first_entry"] = {"length": length, "revision": hex(revision), "certificate_type": hex(ctype),
                                     "certificate_type_name": WIN_CERT_TYPES.get(ctype)}
+        if inside:
+            cert_range = (off, off + size)
         out["certificate_table"] = table
     if last_raw_end and img.size > last_raw_end:
         out["overlay_offset"] = last_raw_end
         out["overlay_bytes"] = img.size - last_raw_end
-    out["coverage"] = {"structures_read": PE_READ, "structures_not_read": PE_NOT_READ}
+        if cert_range is not None:
+            covered = max(0, min(img.size, cert_range[1]) - max(last_raw_end, cert_range[0]))
+            out["overlay_bytes_outside_certificate_table"] = out["overlay_bytes"] - covered
+            out["overlay_is_certificate_table"] = covered == out["overlay_bytes"]
+    read_list = [x for x in PE_READ if ctx.with_imports or not x.startswith("import directory")]
+    not_read = PE_NOT_READ + ([] if ctx.with_imports else ["import directory: names and ordinals (not requested: with_imports is false)"])
+    out["coverage"] = {"structures_read": read_list, "structures_not_read": not_read}
     return out
 
 
@@ -541,6 +799,10 @@ def read_imports(img, ctx, out, import_dir, to_range, wide):
     terminated = False
     index = 0
     while index < count:
+        if ctx.expired("the import read"):
+            out["import_table_problem"] = "the import read stopped at the tool's own clock after %d of %d descriptors" % (index, declared)
+            ctx.problem(out["import_table_problem"])
+            break
         at = first + index * 20
         if at + 20 > end:
             out["import_table_problem"] = ("the import directory runs past the file-backed bytes of its section "
@@ -569,6 +831,9 @@ def read_imports(img, ctx, out, import_dir, to_range, wide):
             thunk_at, thunk_end = thunk_range
             n = 0
             while thunk_at + step <= thunk_end:
+                if n % 1024 == 1023 and ctx.expired("the import read"):
+                    entry["thunk_table_problem"] = "the read of this thunk table stopped at the tool's own clock"
+                    break
                 if n >= MAX_THUNKS_PER_LIBRARY or total >= MAX_FUNCTIONS:
                     ctx.limit_hit("imports: the read stopped at %d functions in one library or %d in all" % (MAX_THUNKS_PER_LIBRARY, MAX_FUNCTIONS))
                     entry["thunk_table_problem"] = "the read of this thunk table stopped at a limit"
@@ -692,7 +957,9 @@ def read_elf(img, ctx):
             fit = max(0, (img.size - phoff) // phentsize) if phoff <= img.size else 0
             if phnum > fit:
                 ctx.problem("program headers: %d declared, %d fit inside the file" % (phnum, fit))
-            for i in range(min(phnum, fit, 65535)):
+            if min(phnum, fit) > MAX_PHDRS:
+                ctx.limit_hit("program headers: the read stopped at %d of %d" % (MAX_PHDRS, min(phnum, fit)))
+            for i in range(min(phnum, fit, MAX_PHDRS)):
                 at = phoff + i * phentsize
                 if wide:
                     p_type, flags, offset, vaddr, _paddr, file_size, mem_size, align = struct.unpack_from(e + "IIQQQQQQ", img.mm, at)
@@ -703,6 +970,9 @@ def read_elf(img, ctx):
                        "permissions": {"read": bool(flags & 0x4), "write": bool(flags & 0x2), "execute": bool(flags & 0x1)},
                        "alignment": align, "file_range_in_file": offset + file_size <= img.size}
                 if file_size:
+                    if offset + file_size > img.size:
+                        ctx.problem("segment %d (%s): its file range [%d, %d) runs %d byte(s) past the end of the %d-byte file"
+                                    % (i, ELF_PT.get(p_type) or hex(p_type), offset, offset + file_size, offset + file_size - img.size, img.size))
                     row["entropy"], why = entropy_of(img, offset, offset + file_size, ctx)
                     if why:
                         row["entropy_note"] = why
@@ -753,6 +1023,11 @@ def read_elf(img, ctx):
                 name = str(i)
             row = {"index": i, "name": name, "type": sh_type, "type_name": ELF_SHT.get(sh_type), "address": hex(addr),
                    "offset": offset, "size": size, "executable": bool(flags & 0x4), "writable": bool(flags & 0x1)}
+            if sh_type not in (0, 8) and size:
+                row["file_range_in_file"] = offset + size <= img.size
+                if not row["file_range_in_file"]:
+                    ctx.problem("section %d (%s): its bytes [%d, %d) run %d byte(s) past the end of the %d-byte file"
+                                % (i, name or "unnamed", offset, offset + size, offset + size - img.size, img.size))
             if sh_type != 8 and size:
                 row["entropy"], why = entropy_of(img, offset, offset + size, ctx)
                 if why:
@@ -775,7 +1050,7 @@ def read_elf(img, ctx):
     if pt_interp is not None:
         text, _ok = img.cstr(pt_interp[0], pt_interp[0] + pt_interp[1])
         if text is not None:
-            out["interpreter"] = text
+            out["interpreter"] = show(ctx, "interpreter", text, pt_interp[0])
     read_dynamic(img, ctx, out, e, wide, loads, pt_dynamic, shdrs)
     out["coverage"] = {"structures_read": ELF_READ, "structures_not_read": ELF_NOT_READ}
     return out
@@ -858,22 +1133,22 @@ def read_dynamic(img, ctx, out, e, wide, loads, pt_dynamic, shdrs):
         end = start + strsz if end is None else min(end, start + strsz)
     dynamic["string_table"] = {"resolved_via": via, "file_offset": start, "size": strsz}
 
-    def string(offset, what):
+    def string(offset, what, field):
         text, complete = img.cstr(start + offset, end)
         if text is None:
             ctx.problem("%s: its string offset %d is outside the string table" % (what, offset))
             return None
         if not complete:
             ctx.problem("%s: the string has no terminator within the string table or %d bytes" % (what, NAME_CAP))
-        return text
+        return show(ctx, field, text, start + offset)
 
     for off in needed:
-        s = string(off, "DT_NEEDED")
+        s = string(off, "DT_NEEDED", "needed_libraries")
         if s is not None:
             out["needed_libraries"].append(s)
     for key, tag_name, off in (("soname", "DT_SONAME", soname), ("rpath", "DT_RPATH", rpath), ("runpath", "DT_RUNPATH", runpath)):
         if off is not None:
-            s = string(off, tag_name)
+            s = string(off, tag_name, key)
             if s is not None:
                 out[key] = s
 
@@ -888,8 +1163,9 @@ MACHO_NOT_READ = ["symbol tables and the dyld information", "code signature cont
                   "sections inside segments", "the contents of any segment"]
 
 
-def read_macho_slice(img, base, end, label):
-    """The thin Mach-O at [base, end): (fields with a `status`, problems). Offsets are file offsets."""
+def read_macho_slice(img, base, end, label, ctx, slice_index):
+    """The thin Mach-O at [base, end): (fields with a `status`, problems). Offsets are file offsets; the offsets a Mach-O
+    names itself (segments, the code signature) are relative to the start of the slice."""
     problems = []
     out = {}
     if end - base < 4:
@@ -903,6 +1179,7 @@ def read_macho_slice(img, base, end, label):
     hsize = 32 if wide else 28
     if end - base < hsize:
         return {"status": "failed", "reason": "shorter than a %d-bit Mach-O header (%d bytes)" % (64 if wide else 32, hsize)}, problems
+    length = end - base
     cputype, _sub, filetype, ncmds, sizeofcmds, flags = struct.unpack_from(e + "IIIIII", img.mm, base + 4)
     out.update({"bits": 64 if wide else 32, "byte_order": "big" if e == ">" else "little",
                 "cpu_type": hex(cputype), "cpu_type_name": MACHO_CPUS.get(cputype), "type": MACHO_TYPES.get(filetype, str(filetype)),
@@ -915,11 +1192,19 @@ def read_macho_slice(img, base, end, label):
     if ncmds > expected:
         problems.append("%sncmds is %d, more than the %d load commands the %d bytes of commands can hold: the traversal is bounded by the bytes"
                         % (label, ncmds, expected, region_end - base - hsize))
-    libraries, kinds, segments, commands = [], [], [], []
+    if expected > MAX_LOAD_COMMANDS:
+        ctx.limit_hit("load commands: %sthe read stopped at %d of %d" % (label, MAX_LOAD_COMMANDS, expected))
+        problems.append("%sthe slice holds %d load commands and %d were read" % (label, expected, MAX_LOAD_COMMANDS))
+    commands_table = ctx.page("load_commands")
+    libraries, kinds, segments = [], [], []
     out["install_name"] = None
+    align = 8 if wide else 4
     at = base + hsize
     read = 0
     for _ in range(min(expected, MAX_LOAD_COMMANDS)):
+        if read % 1024 == 1023 and ctx.expired("the load-command read"):
+            problems.append("%sthe load-command read stopped at the tool's own clock" % label)
+            break
         if at + 8 > region_end:
             problems.append("%sa load command starts at %d, with fewer than 8 bytes left in the commands" % (label, at))
             break
@@ -929,41 +1214,45 @@ def read_macho_slice(img, base, end, label):
                             % (label, read + 1, cmd, size, at))
             break
         read += 1
-        if len(commands) < 1000:
-            commands.append({"cmd": LC_NAMES.get(cmd, hex(cmd)), "size": size, "offset": at})
+        if size % align:
+            problems.append("%sload command %d (0x%x) declares %d bytes, which is not a multiple of %d" % (label, read, cmd, size, align))
+        commands_table.add({"slice": slice_index, "cmd": LC_NAMES.get(cmd, hex(cmd)), "size": size, "offset": at})
         if cmd in LC_LINKED or cmd == LC_ID_DYLIB:
             name_off = struct.unpack_from(e + "I", img.mm, at + 8)[0] if size >= 12 else 0
-            text = img.cstr(at + name_off, at + size)[0] if 12 <= name_off < size else None
+            text, complete = img.cstr(at + name_off, at + size) if 12 <= name_off < size else (None, False)
             if text is None:
                 problems.append("%sa dylib command at offset %d has a name offset (%d) outside the command" % (label, at, name_off))
-            elif cmd == LC_ID_DYLIB:
-                out["install_name"] = text
             else:
-                libraries.append(text)
-                kinds.append({"name": text, "command": LC_LINKED[cmd]})
-        elif cmd == LC_SEGMENT_64 and size >= 72 and wide:
+                if not complete:
+                    problems.append("%sthe library name in the command at offset %d has no terminator inside the command" % (label, at))
+                if cmd == LC_ID_DYLIB:
+                    out["install_name"] = show(ctx, "install_name", text, at + name_off)
+                else:
+                    shown = show(ctx, "linked_libraries", text, at + name_off)
+                    libraries.append(shown)
+                    kinds.append({"name": shown, "command": LC_LINKED[cmd]})
+        elif cmd == LC_SEGMENT_64 and size >= 72 and wide or cmd == LC_SEGMENT and size >= 56 and not wide:
             segname = bytes(img.mm[at + 8:at + 24]).rstrip(b"\x00").decode("utf-8", "replace")
-            vmaddr, vmsize, fileoff, filesize, maxprot, initprot, nsects = struct.unpack_from(e + "QQQQiiI", img.mm, at + 24)
+            fmt = e + ("QQQQiiI" if wide else "IIIIiiI")
+            vmaddr, vmsize, fileoff, filesize, maxprot, initprot, nsects = struct.unpack_from(fmt, img.mm, at + 24)
             segments.append({"name": segname, "vm_address": hex(vmaddr), "vm_size": vmsize, "file_offset": fileoff, "file_size": filesize,
                              "max_protection": maxprot, "initial_protection": initprot, "sections": nsects})
-        elif cmd == LC_SEGMENT and size >= 56 and not wide:
-            segname = bytes(img.mm[at + 8:at + 24]).rstrip(b"\x00").decode("utf-8", "replace")
-            vmaddr, vmsize, fileoff, filesize, maxprot, initprot, nsects = struct.unpack_from(e + "IIIIiiI", img.mm, at + 24)
-            segments.append({"name": segname, "vm_address": hex(vmaddr), "vm_size": vmsize, "file_offset": fileoff, "file_size": filesize,
-                             "max_protection": maxprot, "initial_protection": initprot, "sections": nsects})
+            if filesize and fileoff + filesize > length:
+                problems.append("%ssegment %s: its file range [%d, %d) runs %d byte(s) past the end of the %d-byte slice"
+                                % (label, segname, fileoff, fileoff + filesize, fileoff + filesize - length, length))
         elif cmd == LC_MAIN and size >= 24:
             out["entry_offset"] = struct.unpack_from(e + "Q", img.mm, at + 8)[0]
         elif cmd == LC_CODE_SIGNATURE and size >= 16:
             dataoff, datasize = struct.unpack_from(e + "II", img.mm, at + 8)
             out["code_signature"] = {"offset": dataoff, "size": datasize}
+            if datasize and dataoff + datasize > length:
+                problems.append("%sthe code signature [%d, %d) runs %d byte(s) past the end of the %d-byte slice"
+                                % (label, dataoff, dataoff + datasize, dataoff + datasize - length, length))
         at += size
     out["load_commands_read"] = read
     out["linked_libraries"] = libraries
     out["linked_library_commands"] = kinds
     out["segments"] = segments
-    out["commands"] = commands
-    if len(commands) < read:
-        out["commands_listed"] = len(commands)
     out["status"] = "partial" if problems else "complete"
     return out, problems
 
@@ -971,7 +1260,7 @@ def read_macho_slice(img, base, end, label):
 def read_macho(img, ctx):
     magic = bytes(img.mm[:4])
     if magic in MACHO_MAGICS:
-        body, problems = read_macho_slice(img, 0, img.size, "")
+        body, problems = read_macho_slice(img, 0, img.size, "", ctx, None)
         body["format"] = "Mach-O"
         status = body.pop("status")
         if status in ("failed", "unsupported"):
@@ -989,6 +1278,10 @@ def read_macho(img, ctx):
     out["slices_declared"] = nfat
     fit = max(0, (img.size - 8) // entry)
     java = "0xCAFEBABE is also the first word of a Java class file, whose version fields are read here as a slice count"
+    if magic == b"\xca\xfe\xba\xbe" and 45 <= (nfat & 0xFFFF) <= 100:
+        # A class file: minor_version, then major_version (45 is JDK 1.1). A universal binary with 45 or more slices does not exist.
+        raise Stop("unsupported", "a Java class file (version %d.%d), which begins with the universal-binary magic: not a Mach-O" % (nfat & 0xFFFF, nfat >> 16),
+                   {"format": "Java class file", "class_file_version": {"major": nfat & 0xFFFF, "minor": nfat >> 16}})
     if nfat == 0 or nfat > MAX_SLICES:
         raise Stop("failed", "a file that begins with the universal-binary magic declares %d slices, which is not a plausible architecture table (%s)"
                    % (nfat, java), out)
@@ -996,6 +1289,7 @@ def read_macho(img, ctx):
         ctx.problem("slices: %d declared, %d architecture entries fit inside the file" % (nfat, fit))
     slices = []
     out["slices"] = slices
+    spans = []
     for i in range(min(nfat, fit)):
         at = 8 + i * entry
         if wide:
@@ -1009,7 +1303,11 @@ def read_macho(img, ctx):
             row["reason"] = "the slice [%d, %d) is not inside the %d-byte file" % (offset, offset + size, img.size)
             ctx.problem("slice %d: %s" % (i, row["reason"]))
         else:
-            macho, problems = read_macho_slice(img, offset, offset + size, "slice %d: " % i)
+            for j, (o2, e2) in spans:
+                if offset < e2 and o2 < offset + size:
+                    ctx.problem("slices %d and %d overlap: [%d, %d) and [%d, %d)" % (j, i, o2, e2, offset, offset + size))
+            spans.append((i, (offset, offset + size)))
+            macho, problems = read_macho_slice(img, offset, offset + size, "slice %d: " % i, ctx, i)
             row["status"] = macho.pop("status")
             if "reason" in macho:
                 row["reason"] = macho.pop("reason")
@@ -1030,10 +1328,10 @@ def read_macho(img, ctx):
 
 # --- the call --------------------------------------------------------------------------------------------------------
 
-def positive_int(args, key, default, minimum=1):
+def positive_int(args, key, default, minimum=1, maximum=None):
     value = args.get(key, default)
-    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
-        fail("%s must be an integer of at least %d" % (key, minimum))
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum or (maximum is not None and value > maximum):
+        fail("%s must be an integer from %d%s" % (key, minimum, " to %d" % maximum if maximum is not None else ""))
     return value
 
 
@@ -1052,10 +1350,12 @@ def main():
         fail("with_imports must be true or false")
     limit = positive_int(args, "limit", DEFAULT_LIMIT)
     budget = positive_int(args, "max_entropy_bytes", DEFAULT_ENTROPY_BUDGET, 0)
-    if not os.path.isfile(path):
-        fail("no such file", path=path)
+    seconds = positive_int(args, "max_seconds", DEFAULT_SECONDS, 1, MAX_SECONDS)
+    why_not = file_problem(path)
+    if why_not:
+        fail(why_not, path=path)
 
-    ctx = Ctx(os.path.realpath(path), limit, budget, with_imports)
+    ctx = Ctx(os.path.realpath(path), limit, budget, with_imports, seconds)
     size = os.path.getsize(path)
     try:
         fh = open(path, "rb")
@@ -1097,20 +1397,26 @@ def main():
             ctx.problem("the whole %s table could not be written to a file: %s" % (name, page.not_written))
     truncated = any(p["truncated"] for p in tables.values())
     if stop is not None:
-        result = {"tool": TOOL, "parser": PARSER, "path": path, "bytes": size, **stop.partial, "status": stop.status,
-                  "status_basis": stop.message, "error": stop.message, "problems": ctx.problems, "limits_hit": ctx.limits,
+        coverage = stop.partial.pop("coverage", None)
+        result = {**answer_base(stop.status, stop.message, stop.partial, ctx.problems, ctx.limits, coverage), "path": path, "bytes": size,
                   **stop.extra, "note": NOTE}
         print(json.dumps(result, indent=2))
         raise SystemExit(1)
     for name in ("sections", "segments"):
         if name in ctx.pages:
             body[name] = ctx.pages[name].page
+    if "load_commands" in ctx.pages:
+        body["commands"] = ctx.pages["load_commands"].page
     status = "partial" if (ctx.problems or ctx.limits or ctx.budget["refused"]) else "complete"
     basis = ("every structure this tool reads was read in full" if status == "complete" else
              "%d problem(s) and %d limit(s): see `problems` and `limits_hit`; what was read is in the tables" % (len(ctx.problems), len(ctx.limits)))
     result = {"tool": TOOL, "parser": PARSER, "path": path, "bytes": size, **body, "status": status, "status_basis": basis,
               "problems": ctx.problems, "limits_hit": ctx.limits, "tables": tables, "truncated": truncated,
               "entropy_work": {"bytes_measured": ctx.budget["used"], "budget": ctx.budget["limit"]}, "note": NOTE}
+    if ctx.withheld_fields:
+        result["withheld_fields"] = ctx.withheld_fields
+        result["withheld_note"] = ("User-info, query values and token-shaped text in these strings are withheld from the answer; each entry gives "
+                                   "the field and where the string lies in the sample, which is the whole of it.")
     if ctx.problems_dropped:
         result["problems_not_listed"] = ctx.problems_dropped
     print(json.dumps(result, indent=2))

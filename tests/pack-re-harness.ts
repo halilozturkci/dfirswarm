@@ -188,7 +188,7 @@ function cstr(text: string): Buffer {
 // --- PE (Microsoft PE/COFF specification) -----------------------------------------------------------------------
 
 export type PeSection = { name: string; data: Buffer; flags: number; vsize?: number; rawSizeOverride?: number };
-export type PeImport = { dll: string; functions: string[] };
+export type PeImport = { dll: string; functions: string[]; repeat?: number };   // `repeat`: the thunk table is this long, cycling through `functions`
 export type PeOptions = {
   plus?: boolean;                       // PE32+ (0x20b) instead of PE32 (0x10b)
   machine?: number;
@@ -251,9 +251,9 @@ export function buildPe(o: PeOptions = {}): BuiltPe {
     let cursor = descriptors;
     const lib = o.imports.map((imp) => {
       const iltAt = cursor;
-      cursor += (imp.functions.length + 1) * word;
+      cursor += ((imp.repeat ?? imp.functions.length) + 1) * word;
       const iatAt = cursor;
-      cursor += (imp.functions.length + 1) * word;
+      cursor += ((imp.repeat ?? imp.functions.length) + 1) * word;
       return { imp, iltAt, iatAt };
     });
     const thunkEnd = cursor;
@@ -291,7 +291,8 @@ export function buildPe(o: PeOptions = {}): BuiltPe {
     parts.push(table);
     const thunks = Buffer.alloc(thunkEnd - descriptors);
     for (const { imp, iltAt, iatAt } of lib) {
-      imp.functions.forEach((fn, k) => {
+      for (let k = 0; k < (imp.repeat ?? imp.functions.length); k++) {
+        const fn = imp.functions[k % imp.functions.length]!;
         let value: bigint;
         if (fn.startsWith("#")) value = (plus ? 1n << 63n : 1n << 31n) | BigInt(Number(fn.slice(1)));
         else value = BigInt(nameRva.get(`fn:${imp.dll}:${fn}`)!);
@@ -299,7 +300,7 @@ export function buildPe(o: PeOptions = {}): BuiltPe {
           if (plus) thunks.writeBigUInt64LE(value, at - descriptors + k * 8);
           else thunks.writeUInt32LE(Number(value), at - descriptors + k * 4);
         }
-      });
+      }
     }
     parts.push(thunks);
     // names region
@@ -585,9 +586,9 @@ export function buildMacho(o: MachOptions = {}): Buffer {
       const name = Buffer.alloc(16);
       name.write(c.segment, 0, "latin1");
       if (wide) {
-        return Buffer.concat([U32(0x19), U32(72), name, U64(c.vmaddr ?? 0), U64(c.vmsize ?? 0x1000), U64(c.fileoff ?? 0), U64(c.filesize ?? 0x1000), U32(7), U32(5), U32(0), U32(0)]);
+        return Buffer.concat([U32(0x19), U32(72), name, U64(c.vmaddr ?? 0), U64(c.vmsize ?? 0x1000), U64(c.fileoff ?? 0), U64(c.filesize ?? 0), U32(7), U32(5), U32(0), U32(0)]);
       }
-      return Buffer.concat([U32(0x1), U32(56), name, U32(c.vmaddr ?? 0), U32(c.vmsize ?? 0x1000), U32(c.fileoff ?? 0), U32(c.filesize ?? 0x1000), U32(7), U32(5), U32(0), U32(0)]);
+      return Buffer.concat([U32(0x1), U32(56), name, U32(c.vmaddr ?? 0), U32(c.vmsize ?? 0x1000), U32(c.fileoff ?? 0), U32(c.filesize ?? 0), U32(7), U32(5), U32(0), U32(0)]);
     }
     if ("main" in c) return Buffer.concat([U32(0x80000028), U32(24), U64(c.main), U64(0)]);
     if ("signature" in c) return Buffer.concat([U32(0x1d), U32(16), U32(c.signature.offset), U32(c.signature.size)]);
