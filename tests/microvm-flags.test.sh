@@ -414,6 +414,25 @@ out="$(start --isolation microvm --inputs "$TMP/ev" --pack keyed-pack --allow-pa
 if [[ "$(jq -c '.pack_secrets // [] | length' "$(sandbox_of "$out")/vm-spec.json" 2>/dev/null)" == "0" ]] || grep -q -- '--local-only withholds' <<<"$out"; then :; else fail "--local-only bound a pack secret: $out"; fi
 pass "a prepared VM run's spec mounts neither the prompt's directory nor a secret, points at the run's own copy of the prompt, and binds each secret to its hosts"
 
+# --- the packs' index reaches every seat's prompt, through Pi's own prompt sections --
+# Pi appends .pi/APPEND_SYSTEM.md to its prompt sections, which the run a
+# hand-off starts keeps (the prompt before_agent_start forces does not outlive
+# the run a user prompt started: tests/skills-e2e.test.ts shows it through Pi).
+out="$(start --isolation host --pack keyed-pack --label skills-index)"; rc=$?
+[[ $rc -eq 0 ]] || fail "a kickoff with a pack exited $rc: $out"
+si_sb="$(sandbox_of "$out")"
+[[ -f "$si_sb/.pi/APPEND_SYSTEM.md" ]] || fail "a run with a pack wrote no .pi/APPEND_SYSTEM.md, so the packs' index never reaches a seat's prompt: $out"
+[[ "$(head -1 "$si_sb/.pi/APPEND_SYSTEM.md")" == "Skills carried by this run" ]] || fail "the file does not open with the Skills section's title: $(head -3 "$si_sb/.pi/APPEND_SYSTEM.md")"
+grep -qx 'keyed-pack 1.0.0 (1 skill)' "$si_sb/.pi/APPEND_SYSTEM.md" || fail "the section does not name the pack and its version: $(cat "$si_sb/.pi/APPEND_SYSTEM.md")"
+grep -qxF -- '- `alpha/first` The first skill: Whenever the suite asks for it.' "$si_sb/.pi/APPEND_SYSTEM.md" || fail "the pack's own INDEX line is not in the section: $(cat "$si_sb/.pi/APPEND_SYSTEM.md")"
+grep -q "^Skills:       the index of 1 pack(s) is in every agent's prompt: 1 skills, [0-9]* tokens of entries" <<<"$out" || fail "the kickoff does not say the index is in the prompt: $out"
+cmp -s "$si_sb/.pi/SYSTEM.md" "$ROOT/prompts/worker-system.md" || fail "the worker prompt is not the repository's"
+out="$(start --isolation host --label skills-none)"; rc=$?
+[[ $rc -eq 0 ]] || fail "a kickoff with no pack exited $rc: $out"
+[[ ! -e "$(sandbox_of "$out")/.pi/APPEND_SYSTEM.md" ]] || fail "a run with no pack wrote an APPEND_SYSTEM.md"
+grep -q '^Skills:' <<<"$out" && fail "a run with no pack talks of skills: $out"
+pass "a run with a pack writes the packs' index into .pi/APPEND_SYSTEM.md (the pack's own entry lines, under its id and version) and says so; a run with none writes no file"
+
 # --- a credential cannot ride in on --env; a subscription needs an explicit yes ---------
 out="$(start --isolation microvm --env FOO_API_KEY=abc --label bad-env)"; rc=$?
 [[ $rc -eq 2 ]] || fail "--env FOO_API_KEY under microvm exited $rc, wanted 2: $out"

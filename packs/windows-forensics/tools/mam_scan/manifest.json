@@ -1,6 +1,6 @@
 {
   "name": "mam_scan",
-  "description": "Scan a raw dump for MAM\\x04 prefetch, decompress LZXPRESS Huffman, return name, run count, last-run FILETIMEs, volume paths.",
+  "description": "Scan a raw dump or image region for MAM-compressed Prefetch records (the signature MAM\\x04 and a declared size from min_uncomp to max_uncomp) and read each by the SCCA layout of its version, as prefetch_mam does (the same code). A candidate is a candidate until it inflates to a Prefetch structure: every candidate is accounted for (candidates, parsed, failed with failed_by_reason and the first failures, size_out_of_range, filtered_by_name, and MAM\\x84 signatures seen and not read), and failures are counted before the name filter, so a record that could not be read is never lost to it. Each candidate is read from the file at its own offset up to its declared size plus the format's worst-case expansion and decoded until it holds the declared size (output is bounded by the declared size; the stream's end is not guessed from cut sizes), with four zero bytes after the bytes read so a stream that ends at the end of the dump, without padding, is still decoded to its last byte. Each window is read into one buffer, so a window costs about its own size in memory; a source that cannot be read, at the start or part way, is a JSON failure that says how far the scan got. The run count is read where the file information size puts it, as prefetch_mam does (hits carry file_information_size). A hit is a Prefetch structure in raw bytes and carries no file name, owner or path of the file it came from; an unsupported version is a hit with supported false and no version-dependent field.",
   "params": {
     "path": {
       "type": "string",
@@ -16,11 +16,11 @@
     },
     "max_hits": {
       "type": "integer",
-      "description": "Max MAM records"
+      "description": "MAM records shown inline (default 80, an inline page size); every hit is kept, and when there are more the whole list is written as JSON Lines and named in all_results"
     },
     "chunk": {
       "type": "integer",
-      "description": "Read chunk size"
+      "description": "Bytes read per window (default 8 MiB, from 4096 to 268435456); a record that straddles a window is found once, in the window that holds its whole header"
     },
     "parse": {
       "type": "boolean",
@@ -28,7 +28,15 @@
     },
     "name_filter": {
       "type": "string",
-      "description": "Keep hits whose name/paths contain this (case-insensitive)"
+      "description": "Keep parsed hits whose executable name or filename strings contain this (case-insensitive); the records it leaves out are counted under filtered_by_name, and failures are counted regardless"
+    },
+    "min_uncomp": {
+      "type": "integer",
+      "description": "Smallest declared uncompressed size taken for a candidate (default 1024); a signature with a declared size outside min_uncomp to max_uncomp is counted under size_out_of_range and not read"
+    },
+    "max_uncomp": {
+      "type": "integer",
+      "description": "Largest declared uncompressed size taken for a candidate (default 2000000, at most 67108864)"
     }
   },
   "runtime": "python3",
@@ -36,7 +44,21 @@
   "timeout_seconds": 120,
   "example": "{\"path\": \"work/extracted/unallocated.bin\", \"start\": 0, \"length\": 2000000, \"max_hits\": 20}",
   "by": "s183901",
-  "at": "2026-09-18T22:25:52.497Z",
-  "version": 1,
-  "sha256": "1557d15861763e673f08eb6ad59edfe15872810310084bad41601a3a970da6ba"
+  "at": "2026-10-07T12:00:00.000Z",
+  "version": 2,
+  "sha256": "42f1fe6c482a0fd24f9f2dae5e8a70b7b59d9d5529ab08319af955fe14e9e804",
+  "requires": [],
+  "use": {
+    "extensions": [
+      ".dmp",
+      ".mem",
+      ".raw",
+      ".vmem",
+      ".lime"
+    ],
+    "names": [
+      "pagefile.sys",
+      "hiberfil.sys"
+    ]
+  }
 }

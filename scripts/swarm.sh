@@ -5681,6 +5681,22 @@ console.log(r.ok ? "" : r.reason);' "$_gp" "$_gk" 2>/dev/null || echo "could not
   fi
   mkdir -p "$sandbox/.pi"
   cp "$ROOT/prompts/worker-system.md" "$sandbox/.pi/SYSTEM.md"
+  # The index of the run's packs goes into every seat's prompt: Pi appends
+  # .pi/APPEND_SYSTEM.md to its own prompt sections, which the runs a hand-off
+  # starts keep (the prompt before_agent_start forces lasts for the run a user
+  # prompt starts, and a hand-off starts another). A project file also stands in
+  # the place of an operator's own APPEND_SYSTEM.md. A run with no pack has none.
+  rm -f "$sandbox/.pi/APPEND_SYSTEM.md"
+  if [[ -n "$pack_dirs" ]]; then
+    local sk_args=() sk_d sk_out
+    while IFS= read -r sk_d; do [[ -n "$sk_d" ]] && sk_args+=("$sk_d"); done <<< "$pack_dirs"
+    if sk_out="$(node --experimental-strip-types --no-warnings "$ROOT/scripts/skills-section.ts" "$sandbox/.pi/APPEND_SYSTEM.md" ${sk_args[@]+"${sk_args[@]}"} 2>&1)"; then
+      echo "Skills:       $(jq -r 'if .written then "the index of \(.packs | length) pack(s) is in every agent'"'"'s prompt: \(.packs | map(.skills) | add) skills, \(.shown_tokens) tokens of entries" + (if .mode == "routers" then " (over budget: " + ([.packs[] | select(.shown == "router") | .id] | join(", ")) + " show their router only)" else "" end) else "the packs carry no skills" end' <<<"$sk_out")"
+      jq -r '(.unreadable | map("WARN: the skill index of pack " + .pack + " could not be read (" + .reason + "): its skills are not in the agents'"'"' prompt; skill() still reaches them") | .[]), (.over_budget | map("WARN: the skill index is over its budget: " + .) | .[]), (if (.no_router | length) > 0 then "WARN: no router to shorten the index of " + (.no_router | join(", ")) + ": shown whole" else empty end), (if (.long_entries | length) > 0 then "WARN: " + (.long_entries | length | tostring) + " index entr(ies) pass " + (.budget.entry | tostring) + " tokens (" + ([.long_entries[] | .pack + ":" + .id] | join(", ")) + "); shown whole" else empty end)' <<<"$sk_out" >&2
+    else
+      echo "WARN: the skill index could not be written into the agents' prompt ($(tail -1 <<<"$sk_out")); each agent's first run is given it by the extension, and a run a hand-off starts is not." >&2
+    fi
+  fi
   # Pi's own compaction settings, pinned per run: a pane read whatever the
   # operator's global settings said, and the self-compaction lines are
   # resolved against these two numbers (extensions/context-ceiling.ts).
@@ -6123,7 +6139,7 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
   # Pi's --tools is an allowlist by name, so a tool the extension registers is
   # invisible until it is named here. The skill tool exists only when the run
   # carries packs.
-  [[ -n "$pack_dirs" ]] && PI_TOOLS+=",skill"
+  [[ -n "$pack_dirs" ]] && PI_TOOLS+=",skill,skill_done"
   # Seeded tools by name, when forging is off: with forging on the extension
   # enforces the list itself and --tools is dropped.
   if [[ "$forging" -eq 0 && -d "$sandbox/tools" ]]; then
@@ -6408,9 +6424,14 @@ EOF
   if [[ "$forging" -eq 1 ]]; then
     tool_args=()
   fi
+  # --no-skills: Pi's own skill directories (~/.pi/agent/skills, ~/.agents/skills,
+  # .pi/skills, the `skills` setting) stay out of every seat's prompt. It does not
+  # reach a skill path an operator's extension adds, context files (AGENTS.md) or,
+  # in a run with no pack, ~/.pi/agent/APPEND_SYSTEM.md (docs/usage.md says what).
+  # The packs' skills are the harness's `skill` tool.
   for ((idx = 0; idx < n; idx++)); do
     start_agent_when_shell_ready "${agent_ids[$idx]}" "${panes[$idx]}" \
-      --approve --name "${agent_ids[$idx]}" \
+      --approve --no-skills --name "${agent_ids[$idx]}" \
       --session-dir "$sandbox/.pi-sessions/${agent_ids[$idx]}" \
       -e "$EXT" \
       ${tool_args[@]+"${tool_args[@]}"} \
@@ -6436,7 +6457,7 @@ EOF
     probe_tools="read,bash,edit,write,post,inbox,list_team,budget,done"
     echo "Probe:        $probe_id (no claim_file) on $probe_pane"
     herdr agent start "$probe_id" --kind pi --pane "$probe_pane" --timeout 120000 -- \
-      --approve --name "$probe_id" \
+      --approve --no-skills --name "$probe_id" \
       --session-dir "$sandbox/.pi-sessions/$probe_id" \
       -e "$EXT" \
       --tools "$probe_tools" \
@@ -8917,7 +8938,7 @@ launch_vm_agents() {
     launch="$hub_dir/launch-${agent_ids[$idx]}.sh"
     {
       printf '#!/bin/sh\n# %s in its microVM\nexec %q exec -t %q --' "${agent_ids[$idx]}" "$msb" "dfs-${swarm_id}-${agent_ids[$idx]}"
-      printf ' %q' /.msb/scripts/dfirswarm-pi --approve --name "${agent_ids[$idx]}" \
+      printf ' %q' /.msb/scripts/dfirswarm-pi --approve --no-skills --name "${agent_ids[$idx]}" \
         --session-dir "$sandbox/.pi-sessions/${agent_ids[$idx]}" -e "$ext" \
         ${vm_tools[@]+"${vm_tools[@]}"} --model "${AGENT_MODELS[$idx]}"
       printf '\n'

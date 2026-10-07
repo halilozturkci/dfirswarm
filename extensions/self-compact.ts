@@ -148,6 +148,12 @@ export type HandoffFacts = {
    * awaiting an interpretation. The note is prose; this is the record.
    */
   leads?: string;
+  /**
+   * The pack skills this seat had loaded before the compaction (extensions/
+   * skills.ts): a compaction summarises their bodies away, so the seat is told
+   * which to load again if it still needs them.
+   */
+  skills?: string;
 };
 
 export type SelfCompactDeps = {
@@ -385,6 +391,7 @@ export function handoffHeader(agentId: string, cycle: number, facts: HandoffFact
     `Unread posts: ${unread}`,
     `Ledger: ${facts.ledgerTotal} entries, ${facts.ledgerMine} yours. Sentinel: ${sentinel}. Spend: ${spend}.`,
     ...(facts.leads ? [`The lead register now (your leads are yours: go on with them, or release them):\n${facts.leads}`] : []),
+    ...(facts.skills ? [facts.skills] : []),
   ];
   // On run 6 all four agents answered this message, a few tool calls later,
   // with a status update to "the user" and ended their turns; three sat idle

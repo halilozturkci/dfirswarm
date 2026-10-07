@@ -4,7 +4,7 @@
       "name": "pwsh",
       "package": "PowerShell",
       "optional": true,
-      "why": "The Microsoft-Extractor-Suite and most Microsoft 365 acquisition tooling is PowerShell, and it runs on Linux and macOS.",
+      "why": "An operator's acquisition runtime: Microsoft 365 collection tooling is PowerShell, and it runs on Linux and macOS. No skill or tool of this pack runs it, installing it installs none of that tooling (the Microsoft Extractor Suite and the Exchange modules are separate, undeclared materials), and an agent never connects to a tenant with it: it examines exports that were supplied.",
       "install": {
         "brew": "brew install --cask powershell",
         "apt": "pinned download 7.6.6 (install.download)",
@@ -33,7 +33,7 @@
       "name": "aws",
       "package": "awscli",
       "optional": true,
-      "why": "Pull CloudTrail, Config and GuardDuty records from the account under investigation, where the operator has credentials.",
+      "why": "An operator's acquisition capability: pull CloudTrail, Config and GuardDuty records from the account under investigation, where the operator holds credentials. No skill or tool of this pack runs it, and an agent never passes evidence-derived credentials to it or connects to an account: it examines exports that were supplied.",
       "install": {
         "brew": "brew install awscli",
         "apt": "apt-get install -y awscli"

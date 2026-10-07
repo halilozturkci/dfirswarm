@@ -1,6 +1,6 @@
 {
   "name": "shellbags",
-  "description": "Walk BagMRU in UsrClass.dat or NTUSER.DAT and return the folders a user browsed: the reconstructed path, the key's last-write time, the shell item's own DOS timestamps, and the MRU order. Reaches folders on devices and shares that are long gone.",
+  "description": "Walk BagMRU in UsrClass.dat or NTUSER.DAT and return the folders a shell opened on this account: the reconstructed path, the key's last-write time (raw FILETIME and ISO), the shell item's own DOS timestamps (local time, to two seconds) and the MRU order. It reaches folders on devices and shares that are long gone; it does not say who opened them. Every BagMRU root the hive has is walked and named (the Shell and ShellNoRoam trees can both be populated) and each entry says which; a numbered value with no key under it is decoded and listed under values_without_subkey, not dropped; values are read whole (regipy's default cut to 128 bytes is not taken). A shell item's long name is read from its layout only for the file entry extension (0xbeef0004) versions 3, 7, 8 and 9, at the offset the libfwsi notes give for the version (0x14, 0x26, 0x2A, 0x2E), bounded by the block's declared size, and only when the block's own name offset (the 2-byte field at 0x10) agrees and what is there is a printable string that ends inside the block (long_name_from: layout, extension_layout: decoded; a localised name after it, where there is one, is localized_name); in any other case the long name is the longest string found in the block, labelled long_name_from: strings with extension_layout saying why the layout was not applied, a candidate and not a decode. A key whose subkey list was already walked (a cycle) is a problem, not walked again; a shell item that cannot be decoded is listed as undecodable. Other shell item classes are string candidates (decoded: strings). max_depth is 1 to 128; keys below it are listed under not_walked_below_max_depth, and problems are a page.",
   "params": {
     "hive": {
       "type": "string",
@@ -8,7 +8,7 @@
     },
     "key": {
       "type": "string",
-      "description": "Override the BagMRU root when the hive puts it somewhere unusual"
+      "description": "Override the BagMRU root when the hive puts it somewhere unusual (then only that root is walked)"
     },
     "contains": {
       "type": "string",
@@ -16,11 +16,11 @@
     },
     "max_depth": {
       "type": "integer",
-      "description": "How deep to walk (default 24); a key below it that has subkeys is named in not_walked_below_max_depth"
+      "description": "How deep to walk (default 24, at most 128); a key below it that has subkeys is named in not_walked_below_max_depth"
     },
     "limit": {
       "type": "integer",
-      "description": "Entries shown inline (default 500); the whole tree is walked, and when more entries match the whole list is written as JSON Lines and named in all_results"
+      "description": "Entries shown inline (default 500, an inline page size); the whole tree is walked, and when more entries match the whole list is written as JSON Lines and named in all_results"
     }
   },
   "runtime": "python3",
@@ -28,7 +28,23 @@
   "timeout_seconds": 120,
   "example": "{\"hive\": \"work/extracted/UsrClass.dat\", \"contains\": \"usb\"}",
   "by": "maintainer",
-  "at": "2026-09-22T09:00:00.000Z",
-  "version": 2,
-  "sha256": "5506509f4842905fe5bf0d7de2edd9f9cf631e40c3bd5ba273f24c05e8616aa6"
+  "at": "2026-10-07T12:00:00.000Z",
+  "version": 3,
+  "sha256": "50a0a4ff50c648faa7a66a37c9f81783a71183e969f78649f839e8e278d8703c",
+  "use": {
+    "extensions": [
+      ".dat"
+    ],
+    "names": [
+      "UsrClass.dat",
+      "NTUSER.DAT"
+    ],
+    "magic": [
+      {
+        "offset": 0,
+        "hex": "72656766"
+      }
+    ]
+  },
+  "requires": []
 }

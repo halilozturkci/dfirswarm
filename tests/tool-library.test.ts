@@ -636,45 +636,50 @@ test("icat writers refuse an output that resolves under inputs/, and do not run 
   }
 });
 
-test("extract_stream returns the bytes, and an icat failure as JSON rather than base64", async () => {
+test("extract_stream writes the stream to a named file with its size and sha256, and an icat failure is JSON that keeps what it wrote as a .partial file", async () => {
+  // It used to print the stream as base64 on stdout (a 30 second limit, no digest, no size, the stream through a pipe whose
+  // status was base64's). The library copy is the Windows pack's tool, which streams to a file under the agent's own place.
   await withCwd(async (cwd, bin) => {
-    const good = await runSh(join(LIB, "extract_stream", "run.sh"), cwd, {
-      image: "inputs/AF-Case2.E01",
-      inode: "168-128-4",
-      offset: 0,
-    }, bin);
-    assert.equal(good.code, 0, good.stderr);
-    assert.equal(Buffer.from(good.stdout.trim(), "base64").toString("utf8"), "extracted-bytes");
+    const script = join(LIB, "extract_stream", "run.py");
+    const env = { AGENT_ID: "s1" };
+    const good = await runPy(script, cwd, { image: "inputs/AF-Case2.E01", inode: "168-128-4", offset: 0, output: "work/s1/stream.bin" }, bin, env);
+    assert.equal(good.code, 0, good.stderr + good.stdout);
+    const body = JSON.parse(good.stdout) as { status: string; size: number; sha256: string; output: string; attribute_id: number };
+    assert.equal(body.status, "complete");
+    assert.equal(body.size, Buffer.byteLength("extracted-bytes"));
+    assert.equal(body.sha256, createHash("sha256").update("extracted-bytes").digest("hex"));
+    assert.equal(await readFile(join(cwd, "work", "s1", "stream.bin"), "utf8"), "extracted-bytes");
+    assert.equal(body.attribute_id, 4);
+    assert.doesNotMatch(good.stdout, /ZXh0cmFjdGVkLWJ5dGVz/, "the stream is not printed");
 
-    // It used to be `icat … 2>&1 | base64`: the error text was encoded as if
-    // it were file content, and the pipe made the status base64's, so every
-    // call exited 0. A caller decoding that got a plausible-looking blob.
+    // A failed icat is not an extraction: JSON, exit 1, what it wrote kept apart, and a second run keeps its own.
     await failingStub(bin, "icat", "Error looking up inode: 9999");
-    const bad = await runSh(join(LIB, "extract_stream", "run.sh"), cwd, {
-      image: "inputs/AF-Case2.E01",
-      inode: "9999",
-      offset: 0,
-    }, bin);
-    assert.equal(bad.code, 1, "a failed extraction must not exit 0");
-    const body = JSON.parse(bad.stdout) as { error: string; status: number; stderr: string };
-    assert.equal(body.error, "icat failed");
-    assert.equal(body.status, 1);
-    assert.match(body.stderr, /Error looking up inode/);
+    for (const [round, output] of [["first", "work/s1/bad.bin"], ["second", "work/s1/bad.bin"]] as const) {
+      const bad = await runPy(script, cwd, { image: "inputs/AF-Case2.E01", inode: "9999", offset: 0, output }, bin, env);
+      assert.equal(bad.code, 1, `${round}: a failed extraction must not exit 0`);
+      const failure = JSON.parse(bad.stdout) as { error: string; status: string; icat_exit_status: number; stderr_first_lines: string[]; partial_file: string };
+      assert.equal(failure.error, "icat failed");
+      assert.equal(failure.status, "failed");
+      assert.equal(failure.icat_exit_status, 1);
+      assert.match(failure.stderr_first_lines.join("\n"), /Error looking up inode/);
+      assert.match(failure.partial_file, /^work\/s1\/bad\.bin\.partial/, round);
+    }
   });
 });
 
-test("extract_stream refuses arguments it cannot use", async () => {
+test("extract_stream refuses arguments it cannot use and a place it may not write", async () => {
   await withCwd(async (cwd, bin) => {
-    const noImage = await runSh(join(LIB, "extract_stream", "run.sh"), cwd, { inode: "5" }, bin);
+    const script = join(LIB, "extract_stream", "run.py");
+    const env = { AGENT_ID: "s1" };
+    const noImage = await runPy(script, cwd, { inode: "5", output: "work/s1/x.bin" }, bin, env);
     assert.notEqual(noImage.code, 0);
     assert.match(noImage.stdout, /image must be a single-line path/);
-    const badOffset = await runSh(join(LIB, "extract_stream", "run.sh"), cwd, {
-      image: "inputs/AF-Case2.E01",
-      inode: "5",
-      offset: -1,
-    }, bin);
+    const badOffset = await runPy(script, cwd, { image: "inputs/AF-Case2.E01", inode: "5", offset: -1, output: "work/s1/x.bin" }, bin, env);
     assert.notEqual(badOffset.code, 0);
     assert.match(badOffset.stdout, /offset must be a non-negative sector count/);
+    const elsewhere = await runPy(script, cwd, { image: "inputs/AF-Case2.E01", inode: "5", offset: 0, output: "work/extracted/leak.bin" }, bin, env);
+    assert.notEqual(elsewhere.code, 0);
+    assert.match(elsewhere.stdout, /output must be a file inside the run directory, in work\/s1\//);
     const args = await readFile(join(cwd, "icat-args.txt"), "utf8").catch(() => null);
     assert.equal(args, null, "a refused call must not reach icat");
   });
@@ -1055,13 +1060,24 @@ test("the registry tools read a key from the hive's root, whatever form the path
   // it and said "no BagMRU root" (third CTF round), and in an NTUSER.DAT the
   // same path answered Software\...\BagMRU under the name asked for.
   const bag = "Local Settings\\Software\\Microsoft\\Windows\\Shell\\BagMRU";
-  for (const script of [
-    join(LIB, "..", "packs", "windows-forensics", "tools", "shellbags", "run.py"),
-    join(LIB, "..", "packs", "windows-forensics", "tools", "regkv", "run.py"),
-    join(LIB, "regkv", "run.py"),
-    join(LIB, "regkeys", "run.py"),
+  // regkv walks the path itself (`resolve`, which raises KeyMissing for a key that is not there); the others call rooted_key.
+  const RESOLVE_DRIVER = ROOTED_DRIVER.replace(
+    /out = \[\][\s\S]*$/,
+    [
+      "out = []",
+      "for p in json.load(sys.stdin):",
+      "    try: out.append('\\\\' + '\\\\'.join(mod.resolve(Hive(), p)[1]) if mod.resolve(Hive(), p)[1] else '')",
+      "    except mod.KeyMissing: out.append(None)",
+      "print(json.dumps(out))",
+    ].join("\n"),
+  );
+  for (const [script, driver] of [
+    [join(LIB, "..", "packs", "windows-forensics", "tools", "shellbags", "run.py"), ROOTED_DRIVER],
+    [join(LIB, "..", "packs", "windows-forensics", "tools", "regkv", "run.py"), RESOLVE_DRIVER],
+    [join(LIB, "regkv", "run.py"), RESOLVE_DRIVER],
+    [join(LIB, "regkeys", "run.py"), ROOTED_DRIVER],
   ]) {
-    const out = await runPySnippet(ROOTED_DRIVER, [script], [bag, `\\${bag}`, `S-1-5-21-1_Classes\\${bag}`, bag.replaceAll("\\", "/"), "Software\\Microsoft", "Microsoft\\Windows", ""]);
+    const out = await runPySnippet(driver, [script], [bag, `\\${bag}`, `S-1-5-21-1_Classes\\${bag}`, bag.replaceAll("\\", "/"), "Software\\Microsoft", "Microsoft\\Windows", ""]);
     assert.equal(out.code, 0, `${script}: ${out.stderr}`);
     assert.deepEqual(JSON.parse(out.stdout), [`\\${bag}`, `\\${bag}`, `\\${bag}`, `\\${bag}`, "\\Software\\Microsoft", null, ""], script);
   }
@@ -1075,13 +1091,26 @@ test("a registry key that is not there is answered with the deepest key that is,
     /out = \[\][\s\S]*$/,
     ["out = [mod.nearest_key(Hive(), p) for p in json.load(sys.stdin)]", "print(json.dumps(out))"].join("\n"),
   );
-  for (const script of [
-    join(LIB, "..", "packs", "windows-forensics", "tools", "shellbags", "run.py"),
-    join(LIB, "..", "packs", "windows-forensics", "tools", "regkv", "run.py"),
-    join(LIB, "regkv", "run.py"),
-    join(LIB, "regkeys", "run.py"),
+  // regkv answers the same three things from the KeyMissing its `resolve` raises.
+  const keyMissing = ROOTED_DRIVER.replace(
+    /out = \[\][\s\S]*$/,
+    [
+      "def near(p):",
+      "    try:",
+      "        node, names = mod.resolve(Hive(), p)",
+      "        return {'deepest_found': '\\\\' + '\\\\'.join(names), 'missing': None, 'subkeys_there': []}",
+      "    except mod.KeyMissing as gone:",
+      "        return {'deepest_found': gone.found, 'missing': gone.missing, 'subkeys_there': gone.there}",
+      "print(json.dumps([near(p) for p in json.load(sys.stdin)]))",
+    ].join("\n"),
+  );
+  for (const [script, how] of [
+    [join(LIB, "..", "packs", "windows-forensics", "tools", "shellbags", "run.py"), driver],
+    [join(LIB, "..", "packs", "windows-forensics", "tools", "regkv", "run.py"), keyMissing],
+    [join(LIB, "regkv", "run.py"), keyMissing],
+    [join(LIB, "regkeys", "run.py"), driver],
   ]) {
-    const out = await runPySnippet(driver, [script], [
+    const out = await runPySnippet(how, [script], [
       "Local Settings\\Software\\Microsoft\\Windows\\Shell\\Printers",
       "\\Software\\Nope\\Deeper",
       "S-1-5-21-1_Classes/Software/microsoft",
@@ -1397,7 +1426,14 @@ test("a paging library tool runs from a copy of its own directory, as a run seed
     if (src.includes("class LosslessPage")) pagers.push(src.slice(src.indexOf("class LosslessPage"), src.indexOf("return result", src.indexOf("class LosslessPage"))));
   }
   assert.ok(pagers.length >= 10, "the paging tools carry their pager");
-  assert.equal(new Set(pagers).size, 1, "every tool carries the same pager");
+  // Two generations exist: the original, and the one that says as JSON when the whole result cannot be written (a read-only
+  // directory, a full disk) and escapes a lone surrogate. The Windows pack's tools carry the second, and so do their library
+  // copies (tests/tool-library-parsers.test.ts holds them byte-identical); the other library tools take it when they are next
+  // changed. No third generation may appear.
+  const generations = new Map<string, string[]>();
+  for (const pager of pagers) generations.set(pager, [...(generations.get(pager) ?? []), pager]);
+  assert.ok(generations.size <= 2, "every tool carries one of the two pagers");
+  assert.ok([...generations.keys()].filter((pager) => pager.includes("_cannot_write")).length <= 1, "only one generation is the newer one");
   await withCwd(async (cwd) => {
     await mkdir(join(cwd, "tools"), { recursive: true });
     const copy = join(cwd, "tools", "catalog_grep");

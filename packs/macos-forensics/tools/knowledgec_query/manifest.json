@@ -1,10 +1,10 @@
 {
   "name": "knowledgec_query",
-  "description": "Read knowledgeC.db: which application was in the foreground and for how long, when the screen was on, when the device was locked, and what was browsed. Joins ZOBJECT to its metadata and converts every time from the Apple epoch.",
+  "description": "Read knowledgeC.db, the application and device-state records macOS keeps for its own features (not an audit log): for each ZOBJECT row its stream, typed values (value_string, value_integer, value_double, value_type_code: the lock and backlight states are integers), raw and converted start, end and creation times (Apple epoch, 2001-01-01 UTC, to ISO 8601 UTC with the raw value kept), UUID, the other non-null ZOBJECT columns and, joined on the row's own foreign keys, every non-null column of its ZSTRUCTUREDMETADATA and ZSOURCE rows under their own names. The joins are made from the schema the file has; the answer says which tables joined, lists the tables and columns and carries a fingerprint of the three tables' columns. A stream's meaning, and whether it exists, depends on the build and the device: every stream in the file is inventoried (count, first and last start) whatever the filters, and none is assumed. since and until filter by start time (a record that began earlier and overlapped the window is not selected); a filter the database has no column for is listed in filters_unapplied and the answer is partial. A write-ahead log beside the database holds committed rows the main file lacks; a rollback journal holds the old pages of a transaction that did not commit and holds no such rows. With either, the files are copied to a private directory, SQLite works on the copy (WAL frames applied are counted; a hot journal is rolled back in the copy, reported in source_used.journal and in problems because the copy's state is then not the main file's), and the copy is removed, so the evidence directory is never written to; without a sidecar the file is opened read-only and immutable. What it does not measure: Biome streams, other databases, whether a screen or focus state shows a person at the keyboard (it does not), or whether the stream was complete (retention varies). Every row carries its Z_PK and parser; rows are ordered by start then Z_PK; they are written to out_file as they are read (an existing file or link there is refused), or paged losslessly to a file the answer names. Cells are read bounded: a TEXT or BLOB value longer than 4096 characters or bytes is returned as its first 4096, its whole byte length, _truncated and where the whole is in the database (_where: table, column, rowid), and a large BLOB is not loaded at all but for its head; export_oversize: true streams each whole value to a private file under tool-output/ and names it (max_export_bytes bounds the total). The inline answer is cut at max_inline_bytes as well as at limit, and a rerun that finds fewer rows does not replace a larger earlier page file (it writes a new name and says which it kept). A schema it cannot read (a virtual table whose module is missing), a ZOBJECT with no ZSTREAMNAME and an unapplied filter are named in problems and the answer is partial.",
   "params": {
     "db": {
       "type": "string",
-      "description": "A knowledgeC.db, copied out with any -wal beside it"
+      "description": "A knowledgeC.db; any -wal, -shm or -journal beside it is used (in a private copy), so copy them out together"
     },
     "stream": {
       "type": "string",
@@ -12,27 +12,48 @@
     },
     "since": {
       "type": "string",
-      "description": "Only entries starting at or after this ISO 8601 UTC time"
+      "description": "Only entries starting at or after this ISO 8601 UTC time (needs a ZSTARTDATE column; otherwise listed in filters_unapplied)"
     },
     "until": {
       "type": "string",
-      "description": "Only entries starting at or before this ISO 8601 UTC time"
+      "description": "Only entries starting at or before this ISO 8601 UTC time (same)"
     },
     "limit": {
       "type": "integer",
-      "description": "Maximum rows returned inline when out_file is set (default 500); every matching row is written to out_file"
+      "description": "Entries shown inline (default 500). All are counted; the whole result is in out_file, or, when that is omitted, in a file under work/<your id>/tool-output/ (in a job, $OUT/tool-output/) that the answer names"
     },
     "out_file": {
       "type": "string",
-      "description": "Optional JSONL path for every matching row; when absent every row is returned inline"
+      "description": "JSONL path for every matching entry, written as each is read. The tool does not overwrite: an existing file or link at that name is refused"
+    },
+    "max_stage_bytes": {
+      "type": "integer",
+      "description": "The database and its sidecars are copied only up to this many bytes in all (default 2147483648); over it nothing is read and the answer says so"
+    },
+    "max_inline_bytes": {
+      "type": "integer",
+      "description": "The inline entries are cut at this many bytes as well as at `limit` entries (default 1048576); the whole is in out_file or the file the answer names"
+    },
+    "export_oversize": {
+      "type": "boolean",
+      "description": "Write each TEXT or BLOB value longer than 4096 characters or bytes, whole, to a private file under tool-output/knowledgec-values/ and name it in the cell (default false)"
+    },
+    "max_export_bytes": {
+      "type": "integer",
+      "description": "export_oversize writes at most this many bytes in all (default 1073741824); a value that would pass it is not written and the answer says so"
     }
   },
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 120,
-  "example": "{\"db\": \"work/extracted/knowledgeC.db\", \"stream\": \"/app/inFocus\", \"out_file\": \"work/knowledgec.jsonl\"}",
+  "example": "{\"db\": \"work/extracted/knowledgeC.db\", \"stream\": \"/app/inFocus\", \"out_file\": \"work/<your id>/knowledgec.jsonl\"}",
   "by": "maintainer",
   "at": "2026-09-22T16:00:00.000Z",
-  "version": 2,
-  "sha256": "e666132e5fccd9f8c885c1e045eae929ed7cb4aa49502d95f62d0bb319283af7"
+  "version": 3,
+  "sha256": "b4f777aa15c8acdb3d2a90427f2155a36d79804de5ee415a5ad7fd48103473fb",
+  "use": {
+    "names": [
+      "knowledgeC.db"
+    ]
+  }
 }

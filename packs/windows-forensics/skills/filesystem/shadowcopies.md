@@ -1,48 +1,23 @@
 ---
 id: filesystem/shadowcopies
-title: Volume shadow copies, and the volume as it was last week
-when: A file, a hive or a log is missing, cleaned or too recent; or before you conclude anything is gone.
-needs: [filesystem/deleted]
-tools: [vss_stores, regkv, evtx_query]
-requires_host: [vshadowinfo, vshadowmount]
+title: Listing volume shadow copies
+when: You need to know which snapshots an image holds before you say something is gone.
+needs: []
+tools: [vss_stores]
+requires_host: [vshadowinfo, vshadowmount, mmls]
 ---
 
-A shadow copy is the same volume at an earlier moment, kept by Windows itself in
-`System Volume Information`. It is the single highest-yield artefact on a
-Windows image and the one first passes skip, because it takes one more command
-to reach and none of the usual listings show it.
+Use when you ask which volume shadow copies exist. Not for reading files out of one (pointer at the end).
 
-    vss_stores                          # what snapshots exist, and when each was taken
-    vshadowmount -o <bytes> img work/vss/
-    fls -r work/vss/vss1                # then the ordinary toolkit, against the snapshot
+- A snapshot is a second observed state of the volume from the volume's own `System Volume Information`: a place to look for an earlier hive, log or file before you call one gone. It is in the acquisition only if the acquisition holds the volume's own data; a logical or targeted collection does not.
+- `vss_stores` takes a raw volume or disk image and the volume offset in bytes, runs `vshadowinfo`, and lists each store with the identifier, creation time and volume size as printed, plus the `mount_argv` that would expose it. It mounts nothing, and a listed store is not an examined one. An E01 must be exposed raw first (`evidence/imaging`); the tool adds a problem when it sees the EWF signature.
+- The offset unit changes here: `mmls` and the Sleuth Kit use sectors, `vshadowinfo` and `vshadowmount` bytes. Multiply the start sector by the logical sector size `mmls` prints, not an assumed 512, and record both numbers. A wrong unit gives "unable to open volume" on a sound image; the tool answers `failed`, never "no stores".
+- Read `status`, `exit_code`, `store_count`, `stores_claimed` and `problems` before the list; the whole `vshadowinfo` output is in `stdout_file` and `stderr_file`, and a rerun keeps its own pair (`earlier_output_files`).
+- `failed` (exit 1): no usable answer (bad offset or unit, non-raw image, timeout, unrecognised output). No statement about shadow copies follows; fix the cause and ask again.
+- `partial`: a problem was recorded, for example the stores read differ from the number claimed. Read `problems`; do not count stores from that list.
+- `complete` with zero stores: "`vshadowinfo`, at this offset, reported 0 stores". It does not show that none was made or that one was deleted: never created, deleted, aged out of a size limit and not part of the acquired data all give it. A command that removes shadow copies, a System 7036 for the service and low free space are context; attribute a deletion only where evidence establishes the operation and its outcome (`logs/security`, `logs/powershell`). Otherwise: "no stores were found at this offset and the reason is not established".
+- `interrupted` (a stop by signal) is no answer either. `complete` with stores: list each identifier and creation time.
 
-**The offset unit changes here.** `mmls` and the Sleuth Kit take **sectors**;
-`vshadowinfo` and `vshadowmount` take **bytes**. Multiply. Getting this wrong
-returns "unable to open volume" on a perfectly sound image, and more than one
-examiner has concluded from that there were no shadow copies.
+Shows: what `vshadowinfo` found in this volume's metadata at this offset. Does not show: that none ever existed, that any was deleted, or what a store contains. Record: image, offset in bytes and the sector arithmetic, `status`, both store counts, `problems`, the output files.
 
-What it answers that nothing else does:
-
-- **A registry hive as it was before it was cleaned.** A Run key or a service
-  removed by the operator is still in the snapshot's `SOFTWARE` or `SYSTEM`.
-  Extract both and diff them: the difference, with the snapshot's creation time,
-  brackets when the cleanup happened.
-- **An event log before it was cleared.** A whole intact `Security.evtx` from
-  last week, not a carved fragment. Try this before `logs/recovery`.
-- **A file before it was wiped or encrypted.** Ransomware encrypts the live
-  copy; the snapshot may hold the original.
-- **A second set of $MFT times.** The same record in two snapshots gives you
-  when a value changed, which is stronger than any single timestamp.
-
-**No stores is itself a finding.** `vssadmin delete shadows /all` is a standard
-step before encryption and before a wipe, and it needs administrator rights.
-Pair the absence with Security 4688 or PowerShell logging for the command, with
-System 7036 for the service, and with the volume's own free space. Say "the
-shadow copies were deleted at <time> by <command>" when you can prove it, and
-"no stores are present and I could not establish why" when you cannot.
-
-Two cautions. A snapshot's creation time is the time of the snapshot, not of any
-file inside it, so cite both. And a shadow copy is a differential store, not a
-full copy: a file that never changed between the snapshot and acquisition is the
-same bytes, not an older version, and claiming otherwise misreads what you are
-looking at.
+Open `filesystem/shadowcopies-open` only if you must read files, hives or logs out of a store.

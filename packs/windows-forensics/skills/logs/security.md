@@ -1,57 +1,23 @@
 ---
 id: logs/security
-title: The event logs, and the records that carry weight
-when: Logons, account changes, service installs, log clearing, or anything with a time.
-needs: [registry/system-profile]
+title: Reading an event log with evtx_query
+when: You are about to read, filter or quote records from an .evtx file.
+needs: []
 tools: [evtx_query]
-requires_host: [icat]
+requires_host: [evtxexport, EvtxECmd, dotnet, MFTECmd, RECmd]
 ---
 
-`Windows/System32/winevt/Logs/*.evtx`. Extract the channel you need, then parse
-it. `evtx_query` returns timestamp, event id, channel, computer, record id and
-the named data fields, filtered by id or by a time prefix.
+Use when you query an `.evtx` file. Not for what an id means (`logs/events`) or what a missing event shows (`logs/coverage`).
 
-The records worth knowing by number:
+Take the channel from the record, not the file name; extract files with `filesystem/extract`.
 
-    Security  4624  logon, with a type      4625  failed logon
-              4634  logoff                  4648  explicit credentials
-              4672  special privileges      4688  process created
-              4720  account created         4722  account enabled
-              4724  password reset          4728/4732/4756  added to a group
-              4697  a service was installed 4698/4699  a scheduled task, created and deleted
-              5140  a share was accessed    5145  a file in a share
-              4616  the system time changed, with the process that changed it
-              1102  the audit log was cleared
-    System    7045  a service was installed 7040  a service start type changed
-              104   an event log was cleared
-              6005/6006  the log service started or stopped
-    Defender  1000  scan started  1116  malware detected  1117  action taken
+- **What a run says.** `records_examined`, `events_matched` and `parse_errors` are separate counts; a record it cannot read is an error row, never a match. `status: partial` is a parse error, a chunk chain not enumerated to its end, or a file shorter than its header declares (`chunks_declared` against `chunks_read`, `bytes_expected` against `file_bytes`). A cut-short log is not a log with no records.
+- **Rows.** `record_offset`, `chunk_offset`, the EventRecordID, `timestamp` (the XML's SystemTime), `record_filetime` and `record_time_utc` (the header's). `data` holds EventData and UserData fields, a repeated name as a list.
+- **Filters.** `event_ids`, `contains` (case-insensitive, on the XML), `start_record`/`end_record`, `start_time`/`end_time`: ISO 8601, a date is the whole day, `Z` or an offset like `+03:00` is applied, no zone is UTC. A word, a malformed time or a reversed range is refused. A record with no SystemTime cannot be placed: under a time filter it is left out, counted in `events_without_time_excluded`, and the run is partial.
+- **Results.** `limit` is an inline page; every match with its whole XML is in `result_file` (JSON Lines). An earlier result is never replaced: a taken name gets `-2`, `-3` and `result_file_requested` says what you asked for. Cite the file named.
+- **Time.** SystemTime and the header FILETIME are UTC from the writing machine's clock, uncorrected for a clock that was wrong or changed. They agree beyond microsecond rounding (python-evtx gives six fractional digits, `record_time_utc` seven); a larger difference is reported with both values and no cause. Zone rules: `registry/clock`.
+- **Identify, then read.** Provider, channel, id and `Version` identify an event; Subject is the requester, Target the account acted on. Read `logs/events` only if you need an id's meaning or a logon type.
+- **A second reader.** For a record a finding rests on, and whenever `parse_errors` is not zero, read the file with `evtxexport` or `EvtxECmd` (its maps normalise payload differences). `dotnet` is the runtime MFTECmd, EvtxECmd and RECmd run on. All are optional: check the tool inventory, else say the cross-check was not made. A record only one reader opens is a reader limit, not a property of the log.
 
-4688 carries a command line only where the policy for it was turned on, and 4697
-is the Security channel's view of the same install System 7045 records. Take
-both when both are there: they are written by different subsystems, and an
-operator who cleared one may not have thought about the other.
-
-Logon types decide the meaning of 4624 and people quote them wrongly:
-
-    2  interactive at the console        3  network (a share, no desktop)
-    4  batch                             5  service
-    7  unlock                            8  network cleartext
-    9  new credentials (runas /netonly)  10 remote interactive (RDP)
-    11 cached interactive
-
-A surviving 4634 with type 3 does not mean the user was sitting at the machine.
-That distinction decided who the actor was in one of the published cases, and
-the report that ignored it named the wrong account.
-
-Record ids are monotonic per channel. When a clock moved, order by record id.
-
-A cleared log is itself the finding. 1102 and 104 carry the account that did it.
-Absence is evidence too: a channel with zero events on a machine that was in use
-was cleared or disabled, and you should say which you can prove. Then go and read
-it anyway: `logs/recovery`.
-
-Security and System are two channels of several hundred. For what an interactive
-operator typed, `logs/powershell`. For where a session came from and where this
-machine went next, `logs/remote-access`. When you do not know what to look for,
-`logs/hunting` runs a few thousand rules over the lot.
+Shows: that a provider wrote these fields at that time on that clock. Does not show: who was at a keyboard, that an operation completed unless the record carries its outcome, or that the file is whole and unaltered (`antiforensics/traces`). What an operator typed is `logs/powershell`; rule-based review is `logs/hunting`. Record: file, channel, record id, `record_offset`, status and counts, reader and version.
+Sensitive output: `evtx_query` returns command lines and typed text; run it as a job with `secret_output: true` when the log may hold a secret.

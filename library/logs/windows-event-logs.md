@@ -113,10 +113,6 @@ ran the first pass; read `catalog/` before running the same commands again.
   times. There is no root: no `sudo`, and no `wevtutil`.
 - If `SWARM.md` has an "Evidence catalog" section, the first pass is already
   done: read `catalog/` instead of rebuilding it.
-- If `skill` is in your tool list, this run carries packs: call it once with
-  no id for the index, and fetch the notes that match the evidence in front of
-  you. A pack's method was written for this kind of case, its tools are already
-  loaded, and every fetch is on the trace for the report to cite.
 - Anything you write out of the logs goes under `work/extracted/<your id>/`
   (nothing there is run; it is no-exec only under `--quarantine`; hash
   everything you pull out): a reassembled 4104 script block, a command line,

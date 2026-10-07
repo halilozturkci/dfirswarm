@@ -29,6 +29,7 @@ import { fileURLToPath } from "node:url";
 import { Type, type TSchema } from "typebox";
 import { specsFromEnv } from "./context-ceiling.ts";
 import { registerSelfCompact, type HandoffFacts, type SelfCompactHandle } from "./self-compact.ts";
+import { packDirsFromEnv, registerSkills, type SkillsHandle } from "./skills.ts";
 import {
   type FinishLineRun,
   type FinishOutcome,
@@ -252,6 +253,7 @@ export const SWARM_TOOLS = new Set([
   "name",
   "publish_file",
   "skill",
+  "skill_done",
   "self_compact",
   "job_run",
   "job_status",
@@ -503,6 +505,14 @@ export default function (pi: ExtensionAPI) {
    */
   const selfCompactOn = process.env.SWARM_SELF_COMPACT === "1";
   let selfCompact: SelfCompactHandle | null = null;
+  /**
+   * The pack skills (extensions/skills.ts): null on a run with no pack. The
+   * index is a section of Pi's own prompt, written by the kickoff, and given
+   * to the forced prompt below only when it is not there; `turnsDone` is the
+   * turn number the skill rows carry, counted the way the `context` rows are.
+   */
+  let skills: SkillsHandle | null = null;
+  let turnsDone = 0;
   /** name → version:sha256 of the tool this session has registered. */
   const loadedTools = new Map<string, string>();
   /** Leading word of each bash command this agent ran, counted for the forge hint. */
@@ -1239,10 +1249,15 @@ export default function (pi: ExtensionAPI) {
     }
     // Static, so the prompt-cache prefix stays the same from one call to the next.
     const compactLine = selfCompact?.systemPromptLine ?? "";
-    return { systemPrompt: `${event.systemPrompt}${stop}${capLine}${nameLine}${inputsLine}${forgeLine}${compactLine}` };
+    // The index of the run's packs. The kickoff wrote it into .pi/APPEND_SYSTEM.md,
+    // so Pi's own prompt (event.systemPrompt) carries it for every run, the ones a
+    // hand-off starts too; only a prompt that does not carry it is given it here.
+    const skillsLine = skills ? await skills.promptSection(cwd, event.systemPrompt).catch(() => "") : "";
+    return { systemPrompt: `${event.systemPrompt}${skillsLine}${stop}${capLine}${nameLine}${inputsLine}${forgeLine}${compactLine}` };
   }
 
   pi.on("turn_end", async (_event, ctx) => {
+    turnsDone += 1;
     // A tool call that is blocked, or cancelled before it runs, never reaches
     // tool_result, so its bookkeeping would sit in these maps for the life of
     // the process.
@@ -2783,63 +2798,23 @@ export default function (pi: ExtensionAPI) {
 
 
   // -------------------------------------------------------------------------
-  // Packs. The index goes in front of an agent once; a body arrives only when the
-  // agent asks for it, so a pack's method never sits in every prompt on every turn.
-  const packDirs = (process.env.SWARM_PACK_DIRS || "").split(":").filter(Boolean);
+  // Packs. The index is a section of the seat's prompt (the kickoff's
+  // .pi/APPEND_SYSTEM.md; the forced prompt above is the fallback) and a body
+  // arrives only when the agent asks for it, so a pack's method never sits in
+  // every prompt on every turn. extensions/skills.ts is the whole of it: the
+  // index section, the `skill` and `skill_done` tools, what each seat holds.
+  const packDirs = packDirsFromEnv();
   if (packDirs.length) {
-    const skillPath = (id: string): string | null => {
-      if (!/^[a-z0-9][a-z0-9_\/-]{0,127}$/.test(id) || id.includes("..")) return null;
-      return id;
-    };
-    pi.registerTool({
-      name: "skill",
-      label: "Skill",
-      description:
-        "Method from the packs this run was started with. Call it with no id for the index: every skill, what it is for, and when to reach for it. Call it with an id for that skill's body. A body may name other skills under `needs`; fetch those the same way. Reading a skill is cheaper than rediscovering the method, and every fetch is on the trace.",
-      promptSnippet: "Read a method note from an installed pack",
-      promptGuidelines: [
-        "Call skill() with no argument once, early, to see what method this run carries.",
-        "Fetch a skill before working an artefact family you have not worked in this case.",
-      ],
-      parameters: Type.Object({
-        id: Type.Optional(Type.String({ description: "Skill id, for example windows/execution/prefetch. Omit to list every skill." })),
-      }),
-      async execute(_id, params, _signal, _onUpdate, toolCtx: ToolCtx) {
-        const started = Date.now();
-        const wanted = typeof params?.id === "string" ? params.id.trim() : "";
-        if (!wanted) {
-          const parts: string[] = [];
-          for (const dir of packDirs) {
-            const idx = await readFile(join(dir, "skills", "INDEX.md"), "utf8").catch(() => "");
-            if (idx) parts.push(idx.trim());
-          }
-          const body = parts.join("\n\n");
-          await logEvent(toolCtx.cwd, agentId, "skill", { id: "INDEX" }, { ok: true, bytes: body.length }, Date.now() - started);
-          return okResult({ ok: true, index: body || "the packs carry no skills" });
-        }
-        const safe = skillPath(wanted);
-        if (!safe) {
-          await logEvent(toolCtx.cwd, agentId, "skill", { id: wanted }, { ok: false, error: "bad id" }, Date.now() - started);
-          return okResult({ ok: false, error: "A skill id is lower case, slash separated, and cannot climb out of the pack." });
-        }
-        for (const dir of packDirs) {
-          const file = join(dir, "skills", `${safe}.md`);
-          const body = await readFile(file, "utf8").catch(() => null);
-          if (body !== null) {
-            await logEvent(toolCtx.cwd, agentId, "skill", { id: safe }, { ok: true, bytes: body.length }, Date.now() - started);
-            return okResult({ ok: true, id: safe, body });
-          }
-        }
-        const known: string[] = [];
-        for (const dir of packDirs) {
-          const idx = await readFile(join(dir, "skills", "INDEX.md"), "utf8").catch(() => "");
-          for (const line of idx.split("\n")) {
-            const m = /^- `([^`]+)`/.exec(line.trim());
-            if (m) known.push(m[1]);
-          }
-        }
-        await logEvent(toolCtx.cwd, agentId, "skill", { id: safe }, { ok: false, error: "no such skill" }, Date.now() - started);
-        return okResult({ ok: false, error: `No skill ${safe}. The packs carry: ${known.join(", ") || "none"}` });
+    skills = registerSkills(pi, {
+      packDirs,
+      agentId: () => agentId,
+      trace: (cwd, tool, args, result, durationMs) => logEvent(cwd, agentId, tool, args, result, durationMs),
+      turns: () => turnsDone,
+      restoreTurns: (turns) => {
+        turnsDone = Math.max(turnsDone, turns);
+      },
+      fault: async (cwd, body) => {
+        await systemPost(cwd, { tag: "veto", body });
       },
     });
   }
@@ -4310,6 +4285,7 @@ export default function (pi: ExtensionAPI) {
       spentUsd: status?.this_agent?.spent_usd ?? 0,
       capUsd: status?.budget.cap_per_agent_usd ?? undefined,
       ...(leads ? { leads: leads.text } : {}),
+      ...(skills?.handoffLine() ? { skills: skills.handoffLine() } : {}),
     };
   }
 

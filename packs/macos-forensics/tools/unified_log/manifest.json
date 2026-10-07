@@ -1,10 +1,10 @@
 {
   "name": "unified_log",
-  "description": "Read a unified log archive with Apple's log command or Mandiant's unifiedlog_iterator. On Linux, keeps every decoded entry as JSONL and names the complete output and any parser warnings.",
+  "description": "Read a unified log archive with Apple's `log show --archive` (on macOS) or Mandiant's unifiedlog_iterator (elsewhere; a copy of /private/var/db, diagnostics and uuidtext side by side, is staged as one archive first: bounded by max_stage_files and max_stage_bytes, refusing a link, a special file or a member in both trees with different bytes, and removed afterwards). Every decoded entry is kept as a file in out_dir (the reader's own output, stderr and its sha256); entries is a preview of `limit`. The output is read once, in a stream, so the counts cover all of it: lines, JSON records, entry records, lines that are not JSON records, and JSON records with none of an entry's fields (counted apart, not as entries). status is about the run, not the archive: failed (a reader that exited 0 and wrote no file counts), empty (no entries), partial (a reader that exited non-zero or overran its time, or lines that did not parse; what was written is kept) or complete, and complete is not a coverage claim: decoded_coverage.support_files is a census of the tracev3, timesync, uuidtext and dsc files the input holds, and whether they cover the interval asked about is for the examiner. The reader's version and path are recorded. predicate, start and end are Apple log only; unifiedlog_iterator keeps the full JSONL for downstream queries. out_dir must not already hold an earlier run's output; the timeout is clamped to 1100 seconds and a reader that overruns it leaves a partial receipt. Log messages can carry command lines, paths and account names. A directory under the staged trees that cannot be read stops the staging (a tree with a part left out is not the evidence), and one under a .logarchive that cannot be read is counted in decoded_coverage.support_files.directories_unreadable and warned.",
   "params": {
     "path": {
       "type": "string",
-      "description": "A .logarchive, or a directory holding diagnostics and uuidtext"
+      "description": "A .logarchive, or a directory holding diagnostics and uuidtext (staged for unifiedlog_iterator only)"
     },
     "predicate": {
       "type": "string",
@@ -12,7 +12,7 @@
     },
     "start": {
       "type": "string",
-      "description": "Apple log only: start time, e.g. '2026-02-14 00:00:00'"
+      "description": "Apple log only: start time, e.g. '2026-02-14 00:00:00'; give an offset, the reader's zone is not this tool's to say"
     },
     "end": {
       "type": "string",
@@ -20,23 +20,45 @@
     },
     "out_dir": {
       "type": "string",
-      "description": "Where the reader's own output is kept, under work/"
+      "description": "A new directory for the reader's own output, under work/<your id>/ (as a job it is $OUT/<name>: a job writes only under $OUT, and an out_dir elsewhere is refused with the reason). It is refused if it already holds a file of this tool's from an earlier run"
     },
     "limit": {
       "type": "integer",
-      "description": "Apple log only: maximum inline entries (default 500); complete stdout is also kept under out_dir"
+      "description": "Entries previewed inline (default 500); every entry is in the output file"
     },
     "timeout_seconds": {
       "type": "integer",
-      "description": "Give up after this long (default 900)"
+      "description": "Stop the reader after this long (default 900, at most 1100: a larger value is clamped and the answer says so); what it wrote is kept and counted"
+    },
+    "max_stage_files": {
+      "type": "integer",
+      "description": "Staging a diagnostics and uuidtext copy is refused over this many files (default 1000000); nothing is staged"
+    },
+    "max_stage_bytes": {
+      "type": "integer",
+      "description": "Staging is refused over this many bytes (default 17179869184); nothing is staged"
     }
   },
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 1200,
-  "example": "{\"path\": \"work/extracted/system_logs.logarchive\", \"predicate\": \"process == \\\"sudo\\\"\", \"out_dir\": \"work/ulog\"}",
+  "example": "{\"path\": \"work/extracted/system_logs.logarchive\", \"predicate\": \"process == \\\"sudo\\\"\", \"out_dir\": \"work/<your id>/ulog\"}",
   "by": "maintainer",
   "at": "2026-09-22T16:00:00.000Z",
-  "version": 2,
-  "sha256": "a770af21ed0b69f0a42d4a703310903af68ef0833d0be07a1d7d7d5f1da6206e"
+  "version": 3,
+  "sha256": "3463ff37d4ad5e354cb3b74dd3d9a378f5e9ae16ebe2d405f6ed155e8c150b14",
+  "requires": [
+    "unifiedlog_iterator"
+  ],
+  "use": {
+    "extensions": [
+      ".tracev3",
+      ".logarchive",
+      ".timesync"
+    ],
+    "names": [
+      "uuidtext",
+      "*.logarchive"
+    ]
+  }
 }

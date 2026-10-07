@@ -1,6 +1,6 @@
 {
   "name": "mft_records",
-  "description": "Parse $MFT records: both time sets ($STANDARD_INFORMATION and $FILE_NAME) side by side, allocation, resident data, every named stream, and the parent path. Filters by name, by entry, to deleted records only, or to records whose two time sets disagree.",
+  "description": "Parse $MFT records: both time sets ($STANDARD_INFORMATION and $FILE_NAME) side by side (ISO 8601 UTC with seven fractional digits, raw FILETIMEs beside them), allocation, resident data (base64 on request) and every named stream, each name and stream carrying its attribute instance id and each name its parent entry and sequence. Every nested range is checked against the attribute that holds it and the attribute chain against the record's used size; a record with a range that does not fit (a short $STANDARD_INFORMATION, a $FILE_NAME or resident $DATA running past its attribute, a non-resident header shorter than its sizes, a chain without its end marker) keeps what was sound, is marked unreliable with structural_errors, and is also a problem of the run with its offset (status partial). The update sequence fixup is applied first: a record that fails it is still parsed, flagged fixup_failed and unreliable and counted in records_fixup_failed (it does not make the run partial); a slot with neither a FILE nor a BAAD signature is not listed as a record: an all-zero one is counted in slots_zeroed (an unused slot, ordinary at the end of an $MFT), one that holds data in slots_unrecognised (which is also a problem of the run, status partial), and slots_without_signature is their sum. A used size that is larger than the record or does not reach past the first attribute is a structural error, no longer silently corrected. The scan starts at the first record that looks like one (a FILE signature with an update sequence array of the size the record size implies), so a file that does not begin on a record boundary is read at its own alignment: alignment_offset says where (0 when aligned) and a nonzero one is a problem (status partial); a file in which no slot holds a record is also a problem, never a complete answer with zero records. A file that ends inside a record says so; fewer than 48 bytes at the end are trailing_bytes. NOT done: $ATTRIBUTE_LIST is not resolved (a record that has one says so, and its other attributes are in extension records, read as records of their own with base_record and base_sequence), and no parent path is rebuilt. The record size is the allocated size in the first record's header (the gap between FILE signatures is the second evidence), or the record_size argument; the answer says which. A flag beginning si_ is an indicator, not proof. Filters: name, entry, deleted records only, named streams only, or records whose two time sets disagree. SENSITIVE: with_resident returns the bytes of resident files, which can hold a secret; run it as a job with secret_output: true when they may.",
   "params": {
     "path": {
       "type": "string",
@@ -36,7 +36,7 @@
     },
     "limit": {
       "type": "integer",
-      "description": "Records shown inline (default 200); every record is read, and when more match the whole list is written as JSON Lines and named in all_results"
+      "description": "Records shown inline (default 200, an inline page size); every record is read, and when more match the whole list is written as JSON Lines and named in all_results"
     }
   },
   "runtime": "python3",
@@ -44,7 +44,20 @@
   "timeout_seconds": 300,
   "example": "{\"path\": \"work/extracted/$MFT\", \"name\": \"\\\\.docx$\", \"limit\": 50}",
   "by": "maintainer",
-  "at": "2026-09-22T09:00:00.000Z",
-  "version": 1,
-  "sha256": "155a4d967e3549490115f7d743a896766d89e0dde0db6d004b805f0e956535d6"
+  "at": "2026-10-07T12:00:00.000Z",
+  "version": 3,
+  "sha256": "5a613e30a11da25aaee64bb003bdf79f908ff9d41aba850fe29baa1228239f40",
+  "use": {
+    "names": [
+      "$MFT",
+      "$MFT*"
+    ],
+    "magic": [
+      {
+        "offset": 0,
+        "hex": "46494c45"
+      }
+    ]
+  },
+  "requires": []
 }

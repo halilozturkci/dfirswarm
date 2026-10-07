@@ -1,48 +1,25 @@
 ---
 id: google/workspace
-title: Google Workspace
-when: The tenant is Google.
+title: Google Workspace exported audit evidence
+when: Supplied Google Workspace logs concern account access, administration, OAuth grants, Drive or Gmail.
 needs: [logs/what-exists]
 tools: [signin_analyse]
+mentions: [cloudtrail_parse]
 requires_host: []
 ---
 
-Workspace keeps several separate audit logs and they are exported separately.
-Ask for each by name: admin, login, Drive, Gmail, Token, Groups, and Mobile.
+Use when you hold Google Workspace exports (login, admin, OAuth and token, Drive, Groups, mobile, Gmail) and must say what they show about access or activity. Not for Google Cloud audit logs (Workspace and Google Cloud keep different audit sources: no Google Cloud reader is here), and not for grants, delegation, sharing or forwarding detail (`google/workspace-access`). Offline: supplied exports only; never authenticate to the tenant.
 
-Use `signin_analyse` for the Login audit export. It understands both the
-Reports API activity shape (`actor`, `id.time`, nested `events`) and flat CSV;
-it does not pretend that a row with no outcome field was a successful login.
-The AWS-only `cloudtrail_parse` tool is not a Workspace parser.
+**Inventory each source on its own** (`logs/what-exists`, `logs/sources`): edition and privileges, filters, collection interval, pages, excluded or unsupported events, failures. Missing coverage limits a particular question; look at the other supplied sources before answering not determinable.
 
-    Login audit     every sign-in attempt, the type, the address, and whether
-                    a challenge was issued
-    Drive audit     view, download, edit, share, and change of visibility; only
-                    on the business tiers
-    Admin audit     settings changed, users created, roles granted, 2-step
-                    enforcement turned on or off
-    Token audit     OAuth grants: which application, which scopes, which user —
-                    this is the one that matters most and is checked least
-    Gmail logs      in BigQuery on the higher tiers, message-level, not content
+**The login parser.** `signin_analyse` reads Reports API login activities (nested events become one event each, with the activity id and the event's position kept) and flat login CSV. It rejects, counted and named, an activity whose `id.applicationName` is not login (admin, Drive, Token, Gmail), and a login row is not every session, token use or resource access. Check its field mapping against the original export. `cloudtrail_parse` is an AWS parser and is never used on Workspace evidence.
 
-**The Token audit is where durable delegated access is found.** A password
-change can revoke Google OAuth tokens for some products, but it does not by
-itself prove that every grant, Apps Script authorization, domain-wide delegation
-or documented exception is gone. Enumerate grants and scopes, record explicit
-revocation/removal, and look for later use. `https://mail.google.com/` is full
-mailbox access whatever the application is called.
+**One API page is not an acquisition.** A response that names a next page (`pagination_markers`) is partial. Overlapping exports and late-arriving events: compare what was supplied, and keep the original activity id and the record and line of every cited event.
 
-**Drive sharing is the exfiltration route.** Look for a change of visibility to
-"anyone with the link", a share to an address outside the domain, and a
-download burst from one account. A file shared rather than downloaded leaves
-almost nothing on any endpoint, which is why the Drive audit is not optional.
+**What each source shows, and not.** Login events show the authentication activity that source represents. Admin events show supported administrative actions. Drive events show access and changes subject to event coverage. OAuth and token events show grant and application activity, read by event name and parameters. Gmail log events, message-level exports and a BigQuery export have different schemas and different limits: say which one you hold. Verify availability and retention from the supplied collection records, not from a rule about editions.
 
-**Gmail filters and forwarding** are the mailbox-rule equivalent: a filter that
-forwards and deletes is how a conversation is read without anything appearing in
-the sent items. The setting is in the admin audit when an administrator made it
-and in the user's own settings when they did.
+**Time and zone.** Quote the time with its zone; a time with no zone fails the call unless `assume_utc` is set on the export's own documentation, and the answer records it.
 
-Two limits to state in the report: the Drive and Gmail logs exist only on
-certain tiers, and Workspace retention for most logs is six months. Where a tier
-did not include a log, that is what makes a question unanswerable, and it is a
-fact about the tenant rather than about the analysis.
+**Does not show:** a person behind a login; that a grant was used; that a sharing or forwarding setting caused a transfer or a delivery.
+
+**Sensitive output:** logins carry user names, addresses and devices; a value named or shaped like a credential is withheld, other secrets are not recognised. Run as a `secret_output: true` job when the case treats the export as sensitive. Never test or replay a recovered token or key.
