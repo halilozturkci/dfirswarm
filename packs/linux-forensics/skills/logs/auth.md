@@ -1,45 +1,52 @@
 ---
 id: logs/auth
-title: The authentication logs, and what each line actually proves
-when: Someone logged in, tried to, or raised their privileges.
+title: Authentication and privilege-use records
+when: Interpreting retained auth records, their timestamp assumptions and attribution limits.
 needs: [triage/system-profile]
 tools: [auth_log, utmp_parse]
 requires_host: []
 ---
 
-    Debian and Ubuntu   /var/log/auth.log, auth.log.1, auth.log.*.gz
-    Red Hat family      /var/log/secure
-    Either              the systemd journal, which may hold the same lines
+    Debian family       /var/log/auth.log, auth.log.1, auth.log.*.gz
+    Red Hat family      /var/log/secure and its rotations (often with a date suffix)
+    Either              the systemd journal, which may hold the same lines (`logs/journal`)
 
-`auth_log` parses both, follows the rotated and gzipped files in order, and
-returns structured records instead of text. Read the whole set: rotation is
-where an attacker's session usually falls, because the current file only covers
-the last few days.
+These are candidate destinations, not guaranteed files. Read the rsyslog, journald and logrotate
+configuration, then inventory every retained rotation and any remote copy; a missing rotation is a gap to
+name. `auth_log` reads plain and gzip text, orders the files by their rotation suffix and says which basis
+ordered each (`order_basis`, `cross_file_order`); a date-named or mixed scheme is not ordered by chronology it
+cannot establish. Every record carries its file, physical line and byte offset.
 
-The lines that carry weight:
+**Time.** A traditional stamp has no year and no zone. `auth_log` takes the year from the file's modification
+time (on a copied tree that is the time of the copy) or from your `year`, and says which per file
+(`year_basis`); `time_raw` is the stamp as written and `time_zone` is `unknown` until the profile establishes
+one (`triage/system-profile`). A line out of order by months is flagged `reordered`, not counted as a year
+end. An RFC 3339 stamp keeps its own offset. Read `unparsed` and `read_errors` before trusting a count:
+`all_lines_parsed` says every line matched a syslog shape and every file was read through, nothing more.
 
-    Accepted password|publickey for <user> from <ip> port <p> ssh2
-    Failed password for [invalid user] <user> from <ip>
-    session opened for user <u> by (uid=N)      pam_unix, the actual login
-    sudo: <user> : TTY=... ; PWD=... ; USER=root ; COMMAND=<cmd>
-    su: (to root) <user> on pts/N
-    useradd|usermod|groupadd                     account changes
-    sshd: Server listening / Received signal     the daemon restarting
+What the lines show, and what they do not:
 
-**`Accepted publickey` names the key, not the person.** The fingerprint in the
-line maps to an entry in some `~/.ssh/authorized_keys`. Find which, and say
-whose file it was in: that is the difference between "the account was used" and
-"this key was used, and it was installed on this date".
+| Line | Shows | Does not show |
+| --- | --- | --- |
+| `ssh_accepted` | sshd accepted an authentication by that method for that account from that address and port | a person; for `publickey`, only a key: `fingerprint` (and a certificate's `cert_id`, `ca_fingerprint`) must be resolved through the effective sshd policy (`accounts/users`); not when or by whom the key was installed |
+| `key_observed_authentication` | sshd matched a login to an authorized_keys entry and, where the log level wrote it, which file and line | that the key was added then; the file's mtime is not the date of the line |
+| `ssh_failed`, `ssh_invalid_user`, `auth_failure` | an attempt, with the user and source the line gives | a failed burst then one acceptance has several explanations: a stale saved credential, a legitimate mistake, unauthorised use. Compare the source with that account's history |
+| `session_opened` | a PAM session for the service in `pam_service` (sshd, sudo, cron, systemd-user and others) | a login: correlate account, host, PID, time and the later session records |
+| `sudo` | the logged authorization and invocation: user, tty, directory, target, command | the command's children or success; the line can be truncated, escaped or split by the logging path. Look for sudo I/O or subcommand logging and audit records where they were retained |
+| `su`, `account_added`, `account_changed` | the logged event | who ran it or why |
 
-**A failed-password burst followed by one acceptance is not always a successful
-brute force.** It is also what a user with a stale saved password looks like.
-Check the source address against the same account's history before you call it.
+`sudo -i` followed by no further line shows only that this log has no further line: what the shell ran is in
+other sources (histories, the journal, audit records where auditd ran), and the report names which were
+searched. A name typed at a prompt can be a password typed into the wrong field: an invalid-user name that is
+not a plausible account name is a secret, so cite the line's locator and do not copy it.
 
-**sudo lines are the best command-line evidence on a Linux box.** They carry the
-working directory and the whole command. An attacker who knows that uses `sudo
--s` once and then leaves no further trace, so a single `sudo su -` or `sudo -i`
-followed by silence is itself the finding.
+**Corroboration.** Compare the sessions that matter with wtmp and btmp (`utmp_parse`, classic format only) and
+with the journal. Differences among them can come from forwarding, filtering, retention, collection or parser
+differences as well as from alteration, and these text files are editable by root: establish what each source
+would have recorded before alleging an alteration, and report a disagreement as a question with the
+alternatives, not as a finding.
 
-Everything above is text a root user can edit. Cross-check the important
-sessions against `wtmp`/`btmp` with `utmp_parse` and against the journal with
-`logs/journal`: three sources that disagree tell you the logs were touched.
+**Sensitive output.** A sudo line is a command line. `auth_log` answers with fields and locators and no
+`raw` or `command`; `write_text: true` writes them to a private file under `$OUT`, and `preview_text: true`
+puts them in the answer, each only in a job run with `secret_output: true`. Cite the file and line, never the
+command, a typed name or a hash of either.

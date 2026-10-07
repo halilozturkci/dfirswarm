@@ -4,7 +4,7 @@
       "name": "journalctl",
       "package": "systemd",
       "optional": true,
-      "why": "Read a systemd journal from a file or directory. The journal is a binary format and nothing else reads it reliably.",
+      "why": "Read a systemd journal from a file or directory with --file or --directory (journal_export), and check its structure with --verify. The journal is a binary format that journalctl reads; this pack's dissect.target route (linux_triage) reads it as well, and the two have not been compared here.",
       "install": {
         "brew": "not available on macOS; analyse on a Linux host",
         "apt": "apt-get install -y systemd"
@@ -16,7 +16,7 @@
       "name": "debsums",
       "package": "debsums",
       "optional": true,
-      "why": "Compare every packaged file on a Debian host against the distribution's own hashes: the fastest way to find a replaced binary.",
+      "why": "Compare packaged files on a Debian-family host with the hashes the acquired package database records. That is triage against the examined machine's own database, not an independent trust anchor (packages/integrity).",
       "install": {
         "brew": "not available on macOS",
         "apt": "apt-get install -y debsums"
@@ -28,7 +28,7 @@
       "name": "rpm",
       "package": "rpm",
       "optional": true,
-      "why": "rpm -Va does the same job on a Red Hat family host, and reports which attribute changed.",
+      "why": "Verify packaged files against an acquired RPM database on a Red Hat-family host with -V, reporting which attribute differs. Run only with --noscripts --nodeps, confirmed on the installed version against a trial database, so that no verification script from the evidence runs (packages/integrity).",
       "install": {
         "brew": "brew install rpm",
         "apt": "apt-get install -y rpm"
@@ -40,7 +40,7 @@
       "name": "ausearch",
       "package": "auditd",
       "optional": true,
-      "why": "Read the kernel audit log, where the estate had auditd on: execve with arguments, and file access by rule.",
+      "why": "Read the kernel audit log, where the estate had auditd on: execve with arguments, and file access by rule. No skill of this pack names it yet; the skill that will (logs/auditd) is planned for a later change.",
       "install": {
         "brew": "not available on macOS",
         "apt": "apt-get install -y auditd"
@@ -52,7 +52,7 @@
       "name": "debugfs",
       "package": "e2fsprogs",
       "optional": true,
-      "why": "Read ext2/3/4 internals the Sleuth Kit does not surface: the inode's creation time, extent trees, and the journal.",
+      "why": "Read ext2/3/4 internals: an inode's fields, creation time included where the inode holds it, extent trees and the journal (logdump). It opens a volume read-only unless given -w, which evidence never gets.",
       "install": {
         "brew": "brew install e2fsprogs",
         "apt": "apt-get install -y e2fsprogs"
@@ -64,7 +64,7 @@
       "name": "xfs_db",
       "package": "xfsprogs",
       "optional": true,
-      "why": "Inspect XFS superblocks, allocation groups, inodes and free-space metadata in read-only mode; The Sleuth Kit does not provide complete XFS coverage.",
+      "why": "Inspect XFS superblocks, allocation groups, inodes and free-space metadata in read-only mode (-r).",
       "install": {
         "brew": "not available on macOS; analyse on a Linux host",
         "apt": "apt-get install -y xfsprogs"
@@ -88,12 +88,48 @@
       "name": "lvs",
       "package": "lvm2",
       "optional": true,
-      "why": "Enumerate Linux LVM physical volumes, volume groups and logical volumes when a disk's partition table only exposes an LVM container.",
+      "why": "Enumerate Linux LVM physical volumes, volume groups and logical volumes (lvs, with pvs and vgs from the same package) when a disk's partition table only exposes an LVM container. Prefer the dissect.target route (linux_triage), which does not activate anything.",
       "install": {
         "brew": "not available on macOS; analyse on a Linux host",
         "apt": "apt-get install -y lvm2"
       },
       "licence": "GPL-2.0-only and LGPL-2.1-only",
+      "redistributable": false
+    },
+    {
+      "name": "pvs",
+      "package": "lvm2",
+      "optional": true,
+      "why": "List LVM physical volumes of a copied volume with --readonly, before any activation (filesystem/storage).",
+      "install": {
+        "brew": "not available on macOS; analyse on a Linux host",
+        "apt": "apt-get install -y lvm2"
+      },
+      "licence": "GPL-2.0-only and LGPL-2.1-only",
+      "redistributable": false
+    },
+    {
+      "name": "vgs",
+      "package": "lvm2",
+      "optional": true,
+      "why": "List LVM volume groups of a copied volume with --readonly, before any activation (filesystem/storage).",
+      "install": {
+        "brew": "not available on macOS; analyse on a Linux host",
+        "apt": "apt-get install -y lvm2"
+      },
+      "licence": "GPL-2.0-only and LGPL-2.1-only",
+      "redistributable": false
+    },
+    {
+      "name": "dumpe2fs",
+      "package": "e2fsprogs",
+      "optional": true,
+      "why": "Print an ext2/3/4 superblock (-h): features, journal, creation time (triage/system-profile, filesystem/ext).",
+      "install": {
+        "brew": "brew install e2fsprogs",
+        "apt": "apt-get install -y e2fsprogs"
+      },
+      "licence": "GPL-2.0-only",
       "redistributable": false
     }
   ]
