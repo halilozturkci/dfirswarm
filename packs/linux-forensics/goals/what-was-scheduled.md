@@ -4,17 +4,19 @@ A focused sweep rather than a full investigation: establish everything that is
 arranged to run on this host, and which of it does not belong.
 
 Read the skill index with `skill()` first. `persistence/mechanisms` is the map;
-`packages/integrity` is the cheapest way to clear thousands of files.
+`packages/integrity` compares packaged files with a package database and says what
+that baseline is and what it covers.
 
 ## Questions
 
-1. Every scheduled job, unit and timer on the machine, with the file it is in
-   and that file's modification time.
+1. Every scheduled job, unit and timer you can find on the machine, with the file
+   it is in and that file's modification time, and what the inventory did not
+   look in.
 2. Which of them were added or changed outside the build window, and what that
    window is.
 3. Every persistence route outside cron and systemd: profile scripts, preloads,
    modules, PAM, SUID binaries, authorized_keys with a forced command.
-4. Which packaged binaries no longer match the distribution's hashes.
+4. Which packaged files differ from the package database's recorded hashes.
 5. For anything you flag: what it runs, as which user, and what it would have
    been able to reach.
 6. What you could not establish, and what evidence would settle it.

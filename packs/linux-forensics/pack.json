@@ -1,8 +1,8 @@
 {
   "id": "linux-forensics",
   "name": "Linux Forensics Pack",
-  "version": "1.2.0",
-  "description": "Artefact-by-artefact method and tooling for a Linux host: the system profile, the authentication and journal logs, accounts and keys, persistence across systemd and cron, ext4's own timestamps, containers, and the package database that says which binary was changed.",
+  "version": "1.3.0",
+  "description": "Artefact-by-artefact method and tooling for a Linux host: the system profile and its clocks, authentication and journal records, accounts and authorization, scheduling and systemd candidates, ext metadata and storage layers, container evidence locations, and package verification against local and independently trusted baselines. Each tool says what it read, what it did not, and where the whole result is kept.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
     "DFIR Swarm"
@@ -15,10 +15,16 @@
     "python": "requires/python.txt"
   },
   "secrets": [],
+  "unreferenced_ok": [
+    {
+      "name": "ausearch",
+      "why": "declared for reading the kernel audit log; the skill that names it (logs/auditd) is planned for a later change to this pack"
+    }
+  ],
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "ad77ca479573db2d1964334babffbdaa44456c302374b4a03957337babc23573",
+      "README.md": "e32c07e4c0936fa407d9dcd6cf766d798d864054e62388ee82db4456ce833555",
       "tools/linux_triage/manifest.json": "dd836f9bbb407798d6b62856ab8f69f73eee30aaba3790391716960f43b3a521",
       "tools/linux_triage/run.py": "0f6605604dea8ebef28e3852fc14b4531a63a3f234e5b5ba7443b74e76f50dd3",
       "tools/auth_log/manifest.json": "5603b37911aded2623a8c975f83cb35a46347c52895472bb68584ae7ad111c70",
@@ -31,8 +37,8 @@
       "tools/shell_history/run.py": "f4c7b3dca074abeee119a31f972232a8856c99b294f94367fff2325414183941",
       "tools/cron_dump/manifest.json": "411f94fb2c3b3b9681a013b12846bddbd3dbef84cb61343eb3ff38ac421ec0b8",
       "tools/cron_dump/run.py": "4d80473c6b2b9f2b0ff6012adb8aa20b567fb44641391d76baa64cebd822f382",
-      "goals/server-compromise.md": "cc9782ee7c8e8e0115acf3a571373f620b11f6cca2fe8862f2318b391eb66f7d",
-      "goals/what-was-scheduled.md": "a5904e0003c4e91615f371b8027c3f699c2d1b1f9816d2b9a1688b3077852d30",
+      "goals/server-compromise.md": "73dd03850ea245c341129ac63cceac03756e26fb5b515b678d660ef729b974cb",
+      "goals/what-was-scheduled.md": "641daac4089056c209b493700820b13fdbe2894fc1b3f8fe2c54f0dfb7a820dc",
       "recipes/linux-target/recipe.json": "3e9d2c0e7c351800908f409459e6f5355598e06558850b7fb2732c8700fac81b",
       "recipes/linux-target/run.py": "f735e5f3329733a0f19bb9631e9aa713e1ee86b23fa87f423850ea8fb7c00930",
       "skills/triage/system-profile.md": "8f3da885b1677a94eb290d6955e777f1a4ebb68bf767f184b89bc2425d19bfa1",
