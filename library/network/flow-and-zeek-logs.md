@@ -117,10 +117,6 @@ reads that.
   reached. There is no root.
 - The evidence catalog holds nothing for logs; the inventory posted for
   question 1 replaces it.
-- If `skill` is in your tool list, this run carries packs: call it once with
-  no id for the index, and fetch the notes that match the evidence in front of
-  you. A pack's method was written for this kind of case, its tools are already
-  loaded, and every fetch is on the trace for the report to cite.
 - Anything you write out of the logs goes under `work/extracted/<your id>/`
   (nothing there is run; it is no-exec only under `--quarantine`); Zeek's
   extracted files, if the sensor kept them, are for hashing, typing and

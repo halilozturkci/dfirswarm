@@ -1,6 +1,6 @@
 {
   "name": "crypto_id",
-  "description": "Say which encryption scheme a volume or a file uses, from its header: BitLocker and BitLocker To Go, LUKS1 and LUKS2 with their key slots, FileVault, APFS, VeraCrypt's deliberate lack of a signature, and the encrypted-archive and encrypted-document flags.",
+  "description": "Identify the encryption scheme a volume's or file's first bytes show, and say what they do not. Reads: the BitLocker and BitLocker To Go signatures (no protectors), LUKS1 header fields and its eight-slot table, the LUKS2 binary header (version, label, UUID; the keyslots, digests, segments and tokens are cryptsetup luksDump's), Apple Core Storage and APFS container signatures (whether an APFS volume is encrypted is not read), and ZIP, 7-Zip, PDF and OLE signatures (their protection is archive_probe's, which is itself partly heuristic). An unsupported LUKS version or a cut-short header is named, not guessed. VeraCrypt and TrueCrypt leave no signature: high entropy over the sample is one lead among several, never an identification, and no match is never 'not encrypted'. Every answer says the next reader and what is not determined. It does not read document encryption, and prints no raw bytes unless include_head_hex is true (the first 32 bytes of the file, which are key material if the file is a key file).",
   "params": {
     "path": {
       "type": "string",
@@ -8,11 +8,15 @@
     },
     "offset": {
       "type": "integer",
-      "description": "Byte offset of the volume within the image"
+      "description": "Byte offset of the volume within the image (bytes, not sectors)"
     },
     "entropy_sample": {
       "type": "integer",
-      "description": "Bytes to sample for the no-signature case (default 65536)"
+      "description": "Bytes to sample for the no-signature case (default 65536, from 1024 to 16777216)"
+    },
+    "include_head_hex": {
+      "type": "boolean",
+      "description": "Also print the first 32 raw bytes of the file (default false). They are key material if the file is a key or credential file; do not copy them into a report or the ledger"
     }
   },
   "runtime": "python3",
@@ -20,7 +24,7 @@
   "timeout_seconds": 120,
   "example": "{\"path\": \"inputs/disk.raw\", \"offset\": 1048576}",
   "by": "maintainer",
-  "at": "2026-09-22T21:00:00.000Z",
-  "version": 1,
-  "sha256": "fa3952a5f83112baeab2eb1e0c2e5b8883378c92e136e38fbabfc40a6583d4b2"
+  "at": "2026-10-07T12:00:00.000Z",
+  "version": 2,
+  "sha256": "9a76104010171d123a015ccc115a09c2752d61d64cc32c8c9c0cb4c2f874049e"
 }

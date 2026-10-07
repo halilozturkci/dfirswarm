@@ -4,19 +4,23 @@ A focused pass over an exhibit before the main examination, so that nobody
 spends a day on something the metadata would have answered.
 
 Read the skill index with `skill()` first. `identify/headers` is the order of
-questions, and `keys/where-they-hide` is where a case is usually solved.
+questions, and `keys/where-they-hide` is where key material the case supplies is
+located and safeguarded.
 
 ## Questions
 
-1. Every encrypted volume, file and archive in the evidence, with the scheme
-   each one uses and how you identified it.
+1. Every encrypted volume, file and archive you identified in the evidence, within
+   the coverage you state, with the scheme each one uses and how you identified
+   it. A signature survey does not prove the set is complete.
 2. For each volume: the key protectors or key slots present, and whether the
    metadata alone says it can be opened without a secret.
 3. For each archive or document: whether the file names are readable without the
    password, and what they are if so.
-4. Key material already in the evidence: where it is, what it opens, and how you
-   found it. Do not put values in the report.
-5. What was opened, with which key, and the hash of the unlocked image.
+4. Key material already in the evidence: where it is, what it was found to open
+   (if anything was tried, and by whom authorised), and how you found it, with the
+   coverage of the search. Do not put values in the report.
+5. What was opened, by which protector route (with the sealed reference of the material
+   used, never the material), and the hash of the unlocked image.
 6. What could not be opened, and exactly what would be needed to open it.
 
 ## How to divide the work
@@ -37,8 +41,10 @@ own. The sign-off is these acts, not a post. Nothing else is assigned.
 ## Definition of done
 
 `work/report.md` exists and answers questions 1 to 6 under the headings `## 1.`
-through `## 6.`. No key, password or recovery key value appears in the report;
-a hash and a location appear instead. The ledger holds one `answer` entry per
+through `## 6.`. No key, password, recovery value, password fragment or hash of a
+secret appears in the report or the ledger: record the authority, the source
+locator, a non-secret identifier, the examination result and the sealed reference
+of the sensitive output instead. The ledger holds one `answer` entry per
 question (`question:1` to `question:6`) and one each for `summary` and
 `narrative`, with every defect the answers check names fixed or named by a
 limitation, and the critic, who wrote none of them, has recorded `attest` or
@@ -49,6 +55,9 @@ limitation, and the critic, who wrote none of them, has recorded `attest` or
 - `test -f work/report.md`
 - `for n in 1 2 3 4 5 6; do grep -q "^## $n\." work/report.md || exit 1; done`
 - `! grep -qE '[0-9]{6}-[0-9]{6}-[0-9]{6}-[0-9]{6}' work/report.md`
+  (this catches one recovery-password shape in the report and nothing else: it is
+  not a check for hashes, fragments, other credentials or a command line that
+  carries a secret, and the instruction above is what holds)
 - `test "$(grep -c '"kind":"event"' ledger/entries.jsonl)" -ge 3`
 - `node --experimental-strip-types --no-warnings "$SWARM_HARNESS/scripts/check-answers.ts" --sections 1,2,3,4,5,6,summary,narrative`
 - `grep '"tool":"inputs_check"' traces/events.jsonl | tail -1 | grep -q '"content_ok":true'`

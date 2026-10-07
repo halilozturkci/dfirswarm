@@ -42,6 +42,7 @@ import { lateItems, readFinish, readiness, type LateItem } from "../../extension
 import { HUMAN_ORIGINS, originWords, premiseViews, questionViews, viewContext, type PremiseView, type QuestionView, type TriageItem } from "../../extensions/questions.ts";
 import { verifySignedActs, type SignedAct } from "../questions-cli.ts";
 import { claimSequences, type ClaimSequence } from "../../ui/src/lib/claim-sequences.ts";
+import { skillUse, type RunSkills } from "../../ui/src/lib/skill-metrics.ts";
 import { isFailureEvent } from "../../ui/src/lib/event-taxonomy.ts";
 import { vmTimeline, type VmTimeline } from "../../ui/src/lib/vm-timeline.ts";
 import { countChecks } from "./goals.ts";
@@ -553,6 +554,8 @@ export type SwarmView = Omit<SwarmDetail, "summary" | "agents" | "threads"> & {
   claim_sequences: ClaimSequence[];
   /** Every reap (reap.sh's `reap`, the harness's `reaped`) over the whole trace, for the same reason. */
   reaps: SwarmEvent[];
+  /** What each seat did with the run's skills, over the whole trace for the same reason (ui/src/lib/skill-metrics.ts). */
+  skill_use: RunSkills;
   sentinel_info: SentinelInfo | null;
   activity: ActivitySeries;
   /** Tools the agents forged, with usage from the event log. */
@@ -1263,6 +1266,7 @@ export async function readSwarmView(runsDir: string, id: string, traceLimit = 40
     violations: events.filter((e) => e.tool === "claim_violation"),
     claim_sequences: claimSequences(events),
     reaps: events.filter((e) => e.tool === "reap" || e.tool === "reaped"),
+    skill_use: skillUse(events, agents.map((a) => a.id)),
     sentinel_info: sentinelInfo,
     activity: activitySeries(events, summary.started_at || null, summary.finished_at),
     tools: await forgedToolRows(sandbox, events),

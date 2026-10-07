@@ -1,40 +1,46 @@
 #!/usr/bin/env python3
 """Read a jump list, and hand the link structures inside it to lnk_parse.
 
-A jump list outlives the Recent folder and outlives the file it points at, which
-is why it answers "what did this user open, and from where" when nothing else
-does. Two formats:
+A jump list can outlive the Recent folder and the file it points at, so it can
+still name a target that is gone. It records that an application or the shell listed
+an item, which is not by itself an opening event and does not say who. Two formats:
 
   *.automaticDestinations-ms  an OLE compound file. Each numbered stream is a
                               link structure; the DestList stream is the index,
-                              holding the entry number, the host the file was
-                              on, an access count and the last access time.
+                              holding for each entry the entry number, the
+                              NetBIOS name of the host, the last access time, the
+                              pin state and the target path.
   *.customDestinations-ms     no container at all: link structures one after
-                              another, found by their own 20-byte header.
+                              another. They are CARVED by their own 20-byte
+                              header; the container's own structure is not parsed,
+                              so a header-shaped run of bytes inside a link is cut
+                              as if it began another one.
 
-The design here is deliberate. The DestList's fixed fields have moved between
-Windows versions and a parser that guesses at them quietly returns wrong times,
-so this reads the fields that are stable, validates each entry before trusting
-it, and stops and says so when the layout stops making sense. The substance —
-target path, volume serial, the three target timestamps — comes from the link
-structures themselves, which are written out for `lnk_parse`, a parser that
-already handles them properly.
+The DestList layout depends on its version (the first word of the stream). Version 1
+has a 114-byte fixed part per entry, with the path length, in characters, at 0x70 and
+the path from 0x72. Versions 3 and 4 have a 130-byte fixed part, with the path length
+at 0x80, the path from 0x82 and a 4-byte trailer after it. In all of them the NetBIOS
+name is at 0x48 (16 bytes), the entry number at 0x58, the last-access FILETIME at
+0x64 and the pin state at 0x6C (-1 is not pinned). Any other version is refused, with
+a problem and no entries: a layout is not guessed. The counters between those fields
+differ by version, and their meaning is not established here, so they are returned
+as raw hex under `undecoded_*` and no access count is claimed.
 
-The file name's leading hex is the application id. It identifies the
-application, and published lists map the common ones; quote the id and the
-source you resolved it with rather than asserting the application from memory.
-
-Every link structure is read and, with out_dir, written out. The page of links
-returned inline for each file is `limit` long, and when there are more the whole
-list is written to a file the output names. A link file already in out_dir is
-never overwritten with different bytes: two jump lists with the same name in
-different folders both keep their links.
+The target path, the volume serial and the three target timestamps are the link
+structures', so they are written out for `lnk_parse`, which reads them. `out_dir` is a
+directory under work/<your id>/ (work/extracted/<your id>/ and work/quarantine/<your id>/
+also work); run as a job, the harness gives a work/<your id>/... path to $OUT. Any other place
+in the run is refused, naming the places that work. A file is never read whole: a stream is
+read in pieces and a customDestinations file is searched in place, so a very large one costs
+time, not memory; a FIFO, a socket or a device named by the path or found in a directory is
+not opened, and is counted under `not_attempted`.
 """
 import binascii
 import datetime
 import json
 import os
 import re
+import stat
 import struct
 import sys
 from pathlib import Path
@@ -77,10 +83,29 @@ class LosslessPage:
             self.path = Path("work") / agent / "tool-output" / name
             self.shown = str(self.path)
 
+    def _cannot_write(self, exc: BaseException) -> None:
+        """The whole result cannot be kept: say so as JSON and stop, never a traceback."""
+        import sys as _sys
+        _sys.stdout.write(json.dumps({
+            "error": "the whole result (%d rows so far) cannot be written to %s: %s. Outside a job the place is your own "
+                     "work/<your id>/ directory; in a job it is $OUT." % (self.total, self.shown, exc),
+            "status": "failed",
+        }) + "\n")
+        _sys.exit(1)
+
     def _write(self, row: object) -> None:
         assert self._out is not None
-        self._out.write(json.dumps(row, ensure_ascii=False, default=str))
-        self._out.write("\n")
+        text = json.dumps(row, ensure_ascii=False, default=str)
+        try:
+            text.encode("utf-8")
+        except UnicodeEncodeError:
+            # A lone surrogate (a file name that is not UTF-8): escape it, lose nothing.
+            text = json.dumps(row, ensure_ascii=True, default=str)
+        try:
+            self._out.write(text)
+            self._out.write("\n")
+        except OSError as exc:
+            self._cannot_write(exc)
 
     def add(self, row: object) -> None:
         self.total += 1
@@ -88,12 +113,15 @@ class LosslessPage:
             self.page.append(row)
             return
         if self._out is None:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            fd, name = tempfile.mkstemp(
-                dir=self.path.parent, prefix=f".{self.path.name}-"
-            )
-            self._tmp = Path(name)
-            self._out = os.fdopen(fd, "w", encoding="utf-8")
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                fd, name = tempfile.mkstemp(
+                    dir=self.path.parent, prefix=f".{self.path.name}-"
+                )
+                self._tmp = Path(name)
+                self._out = os.fdopen(fd, "w", encoding="utf-8")
+            except OSError as exc:
+                self._cannot_write(exc)
             for kept in self.page:
                 self._write(kept)
         self._write(row)
@@ -105,11 +133,14 @@ class LosslessPage:
             "truncated": self.total > len(self.page),
         }
         if self._out is not None:
-            self._out.flush()
-            os.fsync(self._out.fileno())
-            self._out.close()
-            assert self._tmp is not None
-            os.replace(self._tmp, self.path)
+            try:
+                self._out.flush()
+                os.fsync(self._out.fileno())
+                self._out.close()
+                assert self._tmp is not None
+                os.replace(self._tmp, self.path)
+            except OSError as exc:
+                self._cannot_write(exc)
             result["all_results"] = self.shown
             result["all_results_format"] = "JSON Lines, one complete result per line"
         return result
@@ -117,6 +148,20 @@ class LosslessPage:
 FILETIME_EPOCH = datetime.datetime(1601, 1, 1, tzinfo=datetime.timezone.utc)
 LNK_MAGIC = bytes([0x4C, 0x00, 0x00, 0x00]) + binascii.unhexlify("0114020000000000c000000000000046")
 DESTLIST_HEADER = 32
+PARSER = "jumplist/4"
+MAX_PATH_CHARS = 32767
+# A DestList stream is read whole before it is parsed; a real one is a few hundred
+# kilobytes at most, so a stream past this is refused by name instead of held in memory.
+MAX_DESTLIST_BYTES = 64 * 1024 * 1024
+# olefile holds an opened stream whole in memory; a link structure is small by nature, so a stream past this is named and not read.
+MAX_STREAM_BYTES = 32 * 1024 * 1024
+# The fixed part of an entry, the offset of its path length (a 16-bit count of UTF-16
+# characters) and the bytes after the path, by DestList version.
+LAYOUTS = {
+    1: {"fixed": 114, "chars_at": 0x70, "trailer": 0},
+    3: {"fixed": 130, "chars_at": 0x80, "trailer": 4},
+    4: {"fixed": 130, "chars_at": 0x80, "trailer": 4},
+}
 
 
 def fail(message, **extra):
@@ -125,77 +170,123 @@ def fail(message, **extra):
 
 
 def filetime(value):
+    """ISO 8601 UTC with all seven fractional digits, from integer arithmetic; None for 0
+    or a date past year 9999. The caller keeps the raw value beside it."""
     if not value:
         return None
     try:
-        return (FILETIME_EPOCH + datetime.timedelta(microseconds=value // 10)).isoformat().replace("+00:00", "Z")
-    except (OverflowError, OSError):
+        whole, ticks = divmod(value, 10_000_000)
+        moment = FILETIME_EPOCH + datetime.timedelta(seconds=whole)
+        return moment.strftime("%Y-%m-%dT%H:%M:%S") + ".%07dZ" % ticks
+    except (OverflowError, ValueError):
         return None
 
 
 def parse_destlist(data):
-    """Entry layout per Joachim Metz's jump list documentation; version aware."""
+    """The DestList stream, by the layout of its version (see the module note)."""
     out = {"entries": [], "problems": []}
     if len(data) < DESTLIST_HEADER:
-        out["problems"].append("the DestList stream is shorter than its header")
+        out["problems"].append("the DestList stream is %d bytes, shorter than its 32-byte header" % len(data))
         return out
     version, count, pinned = struct.unpack_from("<III", data, 0)
     out["destlist_version"] = version
     out["entries_claimed"] = count
     out["pinned_claimed"] = pinned
-    if version not in (1, 3, 4):
-        out["problems"].append("DestList version %d is not one this parser knows; entries are not read" % version)
+    layout = LAYOUTS.get(version)
+    if layout is None:
+        out["problems"].append(
+            "DestList version %d is not one this parser reads (1, 3 and 4 are); no entry is read, and none is guessed" % version)
         return out
-    trailer = 0 if version == 1 else 4
+    fixed, chars_at, trailer = layout["fixed"], layout["chars_at"], layout["trailer"]
     offset = DESTLIST_HEADER
-    while offset + 118 <= len(data):
-        chars = struct.unpack_from("<H", data, 0x74 + offset)[0]
-        end = offset + 118 + chars * 2 + trailer
-        if chars > 2048 or end > len(data):
+    while offset + fixed <= len(data):
+        chars = struct.unpack_from("<H", data, offset + chars_at)[0]
+        end = offset + fixed + chars * 2
+        if chars > MAX_PATH_CHARS or end + trailer > len(data):
             out["problems"].append(
-                "entry %d claims a %d-character path, which does not fit; stopped here"
-                % (len(out["entries"]) + 1, chars))
+                "entry %d at stream offset %d claims a %d-character path, which does not fit in the stream; stopped here"
+                % (len(out["entries"]) + 1, offset, chars))
             break
         host = data[offset + 0x48:offset + 0x58].split(b"\x00", 1)[0].decode("ascii", "replace")
         number, = struct.unpack_from("<I", data, offset + 0x58)
-        access_count, = struct.unpack_from("<I", data, offset + 0x64)
-        modified, = struct.unpack_from("<Q", data, offset + 0x68)
-        pin, = struct.unpack_from("<i", data, offset + 0x70)
-        path = data[offset + 118:offset + 118 + chars * 2].decode("utf-16-le", "replace")
-        out["entries"].append({
+        modified, = struct.unpack_from("<Q", data, offset + 0x64)
+        pin, = struct.unpack_from("<i", data, offset + 0x6C)
+        path = data[offset + fixed:end].decode("utf-16-le", "replace")
+        entry = {
+            "stream_offset": offset,
             "entry_number": number,
+            "entry_field_hex": data[offset + 0x58:offset + 0x60].hex(),
             "stream": "%x" % number,
             "path": path,
+            "path_chars": chars,
             "hostname": host,
-            "access_count": access_count,
             "last_access": filetime(modified),
+            "last_access_filetime": str(modified),
+            "pin_status": pin,
             "pinned": pin != -1,
-        })
-        offset = end
+            "undecoded_0x5c_0x64_hex": data[offset + 0x5C:offset + 0x64].hex(),
+        }
+        if version >= 3:
+            entry["undecoded_0x70_0x80_hex"] = data[offset + 0x70:offset + 0x80].hex()
+        out["entries"].append(entry)
+        offset = end + trailer
     if count and len(out["entries"]) != count:
         out["problems"].append(
             "the header claims %d entries and %d were read" % (count, len(out["entries"])))
+    if offset < len(data) and not out["problems"]:
+        out["problems"].append("%d byte(s) after the last entry were not read" % (len(data) - offset))
+    out["not_decoded"] = ["access or interaction counters (their position and encoding differ by version and are not decoded)",
+                          "the droid identifiers and the checksum at the start of each entry"]
     return out
+
+
+def lnk_starts(fh, size, window=1 << 20):
+    """The offset of every link header in the file `fh` (`size` bytes), read a window at a time with the header's length
+    carried over, so a header that straddles two windows is found once. Nothing but the offsets is kept."""
+    starts, carry, base = [], b"", 0          # base: the file offset of carry[0]
+    keep = len(LNK_MAGIC) - 1
+    fh.seek(0)
+    while True:
+        block = fh.read(window)
+        if not block:
+            break
+        data = carry + block
+        at = 0
+        while True:
+            hit = data.find(LNK_MAGIC, at)
+            if hit < 0:
+                break
+            starts.append(base + hit)
+            at = hit + 4
+        tail = min(keep, len(data))
+        base += len(data) - tail
+        carry = data[len(data) - tail:]
+    return starts
 
 
 def split_lnks(data):
-    """Find every link structure by its own header, wherever it sits."""
-    found, at = [], 0
-    while True:
-        hit = data.find(LNK_MAGIC, at)
-        if hit < 0:
-            break
-        found.append(hit)
-        at = hit + 4
-    out = []
-    for i, start in enumerate(found):
-        end = found[i + 1] if i + 1 < len(found) else len(data)
-        out.append((start, data[start:end]))
-    return out
+    """The link structures in `data` (bytes) as (start, length): each by its own header, running to the next header or
+    to the end. The same search `lnk_starts` makes on a file, for bytes already in hand."""
+    import io
+    starts = lnk_starts(io.BytesIO(data), len(data))
+    return [(start, (starts[i + 1] if i + 1 < len(starts) else len(data)) - start) for i, start in enumerate(starts)]
+
+
+def own_places():
+    """The places this tool may write, resolved, and how to say them. In a job only $OUT is writable (the harness
+    maps work/<id>/x to it); anywhere else the agent's own directories under work/ are, and nothing else in the run."""
+    job, out = os.environ.get("JOB_ID"), os.environ.get("OUT")
+    if job and out:
+        return [Path(out).resolve()], "$OUT (run as a job, only $OUT is writable; write the path as work/<your id>/...)"
+    agent = re.sub(r"[^A-Za-z0-9_.-]", "_", os.environ.get("AGENT_ID") or "tool")
+    root = Path.cwd().resolve()
+    places = [root / "work" / agent, root / "work" / "extracted" / agent, root / "work" / "quarantine" / agent]
+    return places, "work/%s/, work/extracted/%s/ or work/quarantine/%s/" % (agent, agent, agent)
 
 
 def resolve_output(out):
-    """Where `out` really lands, refusing anything outside the run directory.
+    """Where `out` really lands, refusing anything outside the run directory, under inputs/, or outside the places
+    the agent may write.
 
     A string check is not enough: `work/../inputs/x` and an absolute path
     both name a file the tool must not write, and neither starts with
@@ -206,23 +297,42 @@ def resolve_output(out):
     """
     root = Path.cwd().resolve()
     dest = (root / out).resolve() if not Path(out).is_absolute() else Path(out).resolve()
-    if dest == root or root not in dest.parents:
-        fail("out_dir must be a directory inside the run directory", out_dir=str(out))
+    places, said = own_places()
+    in_a_job = bool(os.environ.get("JOB_ID") and os.environ.get("OUT"))
+    if not in_a_job and (dest == root or root not in dest.parents):
+        fail("out_dir must be a directory inside the run directory, in %s" % said, out_dir=str(out))
     inputs = root / "inputs"
     if dest == inputs or inputs in dest.parents:
         fail("out_dir cannot be under inputs/", out_dir=str(out))
+    if not (dest in places or any(place in dest.parents for place in places)):
+        fail("out_dir must be a directory inside the run directory, in %s" % said, out_dir=str(out))
     return dest
 
 
-def write_stream(out_dir, name, payload):
+def same_bytes(path, chunks, length):
+    """Whether the file at `path` holds exactly these bytes (given as pieces, `length` in all), read in pieces."""
+    try:
+        if os.path.getsize(path) != length:
+            return False
+        with open(path, "rb") as fh:
+            for piece in chunks():
+                if fh.read(len(piece)) != bytes(piece):
+                    return False
+        return True
+    except OSError:
+        return False
+
+
+def write_stream(out_dir, name, chunks, length):
     """Write one link structure, and never over another one.
 
     The name is the source file's name and the stream's, whole. When that file
     already holds different bytes (a jump list of the same name from another
     folder, or two names that differ only in characters a file name cannot
-    carry) the next free numbered name is used instead.
+    carry) the next free numbered name is used instead. `chunks` is a function
+    that gives the bytes as pieces, `length` their total: the structure is never
+    held whole.
     """
-    os.makedirs(out_dir, exist_ok=True)
     safe = re.sub(r"[^A-Za-z0-9._-]", "_", name) or "stream"
     if len(safe) > 200:
         # A file system refuses a name much longer than this. The digest keeps
@@ -236,15 +346,14 @@ def write_stream(out_dir, name, payload):
     # points, inputs/ as well. Only a regular file is read to compare, and the
     # new file is created, never opened over something already there.
     while os.path.lexists(target):
-        if os.path.isfile(target) and not os.path.islink(target):
-            with open(target, "rb") as fh:
-                if fh.read() == payload:
-                    return target
+        if os.path.isfile(target) and not os.path.islink(target) and same_bytes(target, chunks, length):
+            return target
         target = os.path.join(out_dir, "%s-%d.lnk" % (safe, n))
         n += 1
     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
     with os.fdopen(fd, "wb") as fh:
-        fh.write(payload)
+        for piece in chunks():
+            fh.write(piece)
     return target
 
 
@@ -270,23 +379,53 @@ def read_automatic(path, out_dir, limit):
     try:
         names = ["/".join(p) for p in ole.listdir()]
         result["stream_names"] = names
+        by_stream = {}
         if "DestList" in names:
-            result.update(parse_destlist(ole.openstream("DestList").read()))
+            size = ole.get_size("DestList") if hasattr(ole, "get_size") else None
+            if size is not None and size > MAX_DESTLIST_BYTES:
+                result["problems"] = ["the DestList stream is %d bytes, over the %d this tool reads whole; it was not parsed" % (size, MAX_DESTLIST_BYTES)]
+            else:
+                parsed = parse_destlist(ole.openstream("DestList").read())
+                entries = LosslessPage("jumplist", [path, "entries", out_dir], limit)
+                everything = parsed.pop("entries")
+                for entry in everything:
+                    entries.add(entry)
+                by_stream = {e["stream"]: e for e in everything}
+                result.update(parsed)
+                kept = entries.finish()
+                result["entries"] = entries.page
+                result["entry_count"] = kept["matched"]
+                result["entries_page"] = kept
         else:
             result["problems"] = ["there is no DestList stream in this file"]
-        by_stream = {e["stream"]: e for e in result.get("entries", [])}
         links = LosslessPage("jumplist", [path, "links", out_dir], limit)
         for name in names:
             if name == "DestList":
                 continue
+            # olefile holds an opened stream whole in memory, so a stream is sized from its directory entry first: a link
+            # structure is small by nature, and one past MAX_STREAM_BYTES is named and left unread, never read whole.
+            length = ole.get_size(name) if hasattr(ole, "get_size") else None
+            if length is not None and length > MAX_STREAM_BYTES:
+                result.setdefault("problems", []).append(
+                    "the stream %s is %d bytes, over the %d this tool reads (olefile holds an opened stream in memory); it was not read"
+                    % (name, length, MAX_STREAM_BYTES))
+                links.add({"stream": name, "bytes": length, "is_link": None, "not_read": True})
+                continue
             payload = ole.openstream(name).read()
-            entry = {"stream": name, "bytes": len(payload), "is_link": payload[:4] == LNK_MAGIC[:4]}
+            # The whole 20-byte header: the 4-byte size and the shell link CLSID.
+            entry = {"stream": name, "bytes": len(payload), "is_link": payload[:20] == LNK_MAGIC}
             known = by_stream.get(name.lower())
             if known:
                 entry["path"] = known["path"]
                 entry["last_access"] = known["last_access"]
+                entry["last_access_filetime"] = known["last_access_filetime"]
             if out_dir and entry["is_link"]:
-                entry["written_to"] = write_stream(out_dir, os.path.basename(path) + "-" + name, payload)
+                view = memoryview(payload)
+
+                def pieces(view=view):
+                    for at in range(0, len(view), 1 << 20):
+                        yield view[at:at + (1 << 20)]
+                entry["written_to"] = shown_path(write_stream(out_dir, os.path.basename(path) + "-" + name, pieces, len(payload)))
             links.add(entry)
         page_links(result, links)
     finally:
@@ -295,19 +434,41 @@ def read_automatic(path, out_dir, limit):
 
 
 def read_custom(path, out_dir, limit):
-    with open(path, "rb") as fh:
-        data = fh.read()
-    result = {"file": path, "format": "customDestinations-ms", "links": []}
+    result = {"file": path, "format": "customDestinations-ms", "links": [],
+              "method": "carved: the file is split at every 20-byte link header; its own container structure is not parsed"}
     links = LosslessPage("jumplist", [path, "links", out_dir], limit)
-    for i, (offset, payload) in enumerate(split_lnks(data)):
-        entry = {"offset": offset, "bytes": len(payload), "is_link": True}
-        if out_dir:
-            entry["written_to"] = write_stream(out_dir, "%s-%04d" % (os.path.basename(path), i), payload)
-        links.add(entry)
+    with open(path, "rb") as fh:
+        size = os.fstat(fh.fileno()).st_size
+        # Only the offsets are kept; the file is read a window at a time, and each structure is written from its own
+        # range in pieces, so a very large file costs time, not memory.
+        starts = lnk_starts(fh, size)
+        for i, offset in enumerate(starts):
+            length = (starts[i + 1] if i + 1 < len(starts) else size) - offset
+            entry = {"offset": offset, "bytes": length, "is_link": True, "carved": True}
+            if out_dir:
+                def pieces(offset=offset, length=length):
+                    fh.seek(offset)
+                    left = length
+                    while left:
+                        piece = fh.read(min(left, 1 << 20))
+                        if not piece:
+                            return
+                        left -= len(piece)
+                        yield piece
+                entry["written_to"] = shown_path(write_stream(out_dir, "%s-%04d" % (os.path.basename(path), i), pieces, length))
+            links.add(entry)
     page_links(result, links)
     if not result["links"]:
         result["problems"] = ["no link structure header found in this file"]
     return result
+
+
+def shown_path(written):
+    """A written file as the answer names it: from the run directory when it is under it, else whole."""
+    try:
+        return str(Path(written).resolve().relative_to(Path.cwd().resolve()))
+    except ValueError:
+        return str(written)
 
 
 def main():
@@ -328,21 +489,45 @@ def main():
     if out_dir is not None and (not isinstance(out_dir, str) or not out_dir):
         fail("out_dir must be a directory path under work/")
     if out_dir is not None:
-        out_dir = str(resolve_output(out_dir).relative_to(Path.cwd().resolve()))
+        resolved = resolve_output(out_dir)
+        try:
+            resolved.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            fail("out_dir could not be created", out_dir=out_dir, reason=str(exc))
+        out_dir = shown_path(resolved)
 
     targets = []
+    not_attempted = []          # a FIFO, a socket, a device or a file that could not be examined: never opened
     if os.path.isdir(path):
         for root, dirs, names in os.walk(path):
             dirs.sort()                                   # the same order on every run
             for name in sorted(names):
                 if name.lower().endswith(("destinations-ms",)):
-                    targets.append(os.path.join(root, name))
-    elif os.path.isfile(path):
+                    full = os.path.join(root, name)
+                    try:
+                        regular = stat.S_ISREG(os.stat(full).st_mode)
+                        kind = "not a regular file"
+                    except OSError as exc:
+                        regular, kind = False, "could not be examined: %s" % exc
+                    if regular:
+                        targets.append(full)
+                    else:
+                        not_attempted.append({"file": full, "reason": kind + ": it was not opened"})
+    elif os.path.exists(path):
+        try:
+            regular = stat.S_ISREG(os.stat(path).st_mode)
+        except OSError as exc:
+            fail("the path could not be examined", path=path, reason=str(exc))
+        if not regular:
+            fail("path is not a regular file or a directory (a FIFO, a socket or a device is not opened)", path=path, not_attempted=1)
         targets = [path]
     else:
         fail("no such file or directory", path=path)
-    if not targets:
+    if not targets and not not_attempted:
         fail("no jump list files under that directory", path=path)
+    if not targets:
+        fail("no jump list file under that directory could be opened", path=path, not_attempted=len(not_attempted),
+             first_not_attempted=not_attempted[:5])
 
     files = []
     for target in targets:
@@ -357,14 +542,39 @@ def main():
         if re.fullmatch(r"[0-9a-f]{16}", app_id):
             files[-1]["application_id"] = app_id
 
+    failed = [f for f in files if f.get("error")]
+    with_problems = [f for f in files if f.get("problems")]
+    skipped = LosslessPage("jumplist", [path, "not_attempted", out_dir], limit)
+    for item in not_attempted:
+        skipped.add(item)
+    skipped_page = skipped.finish()
+    page = LosslessPage("jumplist", [path, "files", out_dir], limit)
+    for f in files:
+        page.add(f)
+    kept = page.finish()
+    status = "failed" if len(failed) == len(files) else "partial" if failed or with_problems or not_attempted else "complete"
     print(json.dumps({
-        "files": files,
+        "parser": PARSER,
+        "status": status,
+        "files": page.page,
         "file_count": len(files),
-        "note": "The DestList gives the index and the access counts; the target path, the volume "
-                "serial and the three target timestamps come from the link structures, so run "
-                "lnk_parse over what was written to out_dir before citing any of them.",
+        "files_failed": len(failed),
+        "files_with_problems": len(with_problems),
+        "first_failures": [{"file": f["file"], "error": f["error"]} for f in failed[:5]],
+        "files_page": kept,
+        "files_not_attempted": skipped_page["matched"],
+        "not_attempted": skipped.page,
+        "not_attempted_page": skipped_page,
+        "note": "The DestList gives the index: entry number, host, last access, pin state and path. The target path, the volume "
+                "serial and the three target timestamps come from the link structures, so run lnk_parse over what was written "
+                "to out_dir before citing any of them. Access counters are not decoded. A customDestinations-ms is carved, not parsed.",
     }, indent=2))
+    if status == "failed":
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except OSError as exc:
+        fail("a file operation failed: %s" % exc, reason=type(exc).__name__)

@@ -1,0 +1,40 @@
+{
+  "cap_usd": 1.0,
+  "spent_usd": 0,
+  "tokens": 0,
+  "calls": 0,
+  "wall_clock_minutes": 8,
+  "started_at": "<TIME>",
+  "source": "pi.sessionManager.getEntries",
+  "hard_kill": false,
+  "cap_steer_sent": false,
+  "metered": true,
+  "cap_tokens": 100000000,
+  "stop_policy": "cap-pause",
+  "coordination": {
+    "first_choice_stagger_sec": 20,
+    "first_choice_bound_sec": 90
+  },
+  "agents": {
+    "<RUN>00": {
+      "spent_usd": 0,
+      "tokens": 0,
+      "calls": 0,
+      "input": 0,
+      "output": 0,
+      "cache_read": 0,
+      "cache_write": 0,
+      "model": "solo/model"
+    },
+    "<RUN>01": {
+      "spent_usd": 0,
+      "tokens": 0,
+      "calls": 0,
+      "input": 0,
+      "output": 0,
+      "cache_read": 0,
+      "cache_write": 0,
+      "model": "solo/model"
+    }
+  }
+}

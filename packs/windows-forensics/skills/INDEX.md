@@ -2,27 +2,55 @@
 
 Fetch a body with `skill("<id>")`. A body may name others; fetch those the same way.
 
-- `accounts/logons` Accounts, who they are, and who was actually at the keyboard: Attributing an action to a person.
-- `antiforensics/traces` What hiding leaves behind: The evidence looks too clean, or a first pass found nothing.
-- `artifacts/shell` Link files, jump lists, shell bags and recent documents: What a user opened, from where, and whether the source was removable or a share.
-- `browser/artefacts` Browsers, and proving what a person looked at: Policy violation, phishing, download provenance, or a search that started the case.
-- `execution/amcache` Amcache and ShimCache, and what they do not prove: You need a hash for a binary that is gone, or a list of what was on the machine.
-- `execution/overview` Proving a program ran, and how much each artefact is worth: Any claim that something was executed.
-- `execution/prefetch` Prefetch, and the compressed format: You need a run count, a last run time, or what a binary loaded.
-- `execution/srum` SRUM, for what a program did on the network: You need bytes moved, or a program's activity by the hour.
-- `execution/userassist` UserAssist, BAM and DAM: You must tie an execution to a specific user.
-- `filesystem/ads` Alternate data streams, and execution from them: Something is hidden, or a listing shows a file whose size does not match its contents.
-- `filesystem/deleted` Deleted files, the recycle bin, and wiped files: Files are missing, or you must say whether they are recoverable.
-- `filesystem/journals` The change journal and the log file: Something was deleted or renamed and you need to prove it happened, and when.
-- `filesystem/mft` The master file table, and what a record proves: You need a file's true times, its size, whether it was deleted, or what a directory used to hold.
-- `filesystem/shadowcopies` Volume shadow copies, and the volume as it was last week: A file, a hive or a log is missing, cleaned or too recent; or before you conclude anything is gone.
-- `logs/hunting` Hunting with rules, and what a detection is worth: The first pass found nothing, or the logs are too large to read by event id.
-- `logs/powershell` PowerShell, and what survives an operator who tried to leave nothing: A command line, a downloader, a disabled defence, or anything an interactive attacker did.
-- `logs/recovery` Reading a log that was cleared: Security 1102 or System 104 is present, a channel is empty, or the log file is truncated.
-- `logs/remote-access` Remote access and lateral movement: Someone reached this machine from another one, or left it for another one.
-- `logs/security` The event logs, and the records that carry weight: Logons, account changes, service installs, log clearing, or anything with a time.
-- `memory/windows` A Windows memory image, with or without a framework: The evidence includes a .mem, .raw, .vmem, hiberfil.sys or a crash dump.
-- `persistence/mechanisms` Where something arranges to run again: You have a payload and need to know how it survives a reboot, or you are sweeping for one.
-- `registry/devices` USB and removable devices: Data may have left on a stick, or a device is part of the story.
-- `registry/overview` The hives, where they live, and how to read one: Any question about configuration, accounts, devices, execution or persistence.
-- `registry/system-profile` Build the system profile before anything else: The first ten minutes of any Windows case.
+- `accounts/logons` Accounts, SIDs, RIDs and groups on a machine: You build the account map, or must read a SID, a RID or a group membership.
+- `accounts/sessions` From account to logon session to person: You tie activity to an account or logon session, or someone asks who was at the keyboard.
+- `antiforensics/controls` Security-control changes and deleted VMs: An exclusion, disabled protection or deleted VM disk suggests a changed control.
+- `antiforensics/log-clearing` Cleared logs and missing snapshots: A log is empty or absent, shows a clearing record, or shadow copies are missing.
+- `antiforensics/timestamps-clock` Timestamp manipulation and clock changes: File times disagree with other records, or the system clock may have been moved.
+- `antiforensics/traces` Absence and inconsistency before intent: Artefacts are missing or inconsistent: separate deliberate action from ordinary causes.
+- `antiforensics/wiping` Overwriting and wiping leads: Files or records look overwritten, or a wiping utility appears in execution evidence.
+- `artifacts/jumplists` Reading Jump Lists: You read automaticDestinations-ms or customDestinations-ms files for recent or pinned items.
+- `artifacts/links` Reading a shell link (.lnk): You read a .lnk file, or carve link structures from a dump, for a target, volume or share.
+- `artifacts/shell` Links, Jump Lists and ShellBags: which to read: Trace a path, volume or share through what the shell kept, without claiming an action.
+- `artifacts/shellbags` Reading ShellBags and recent-document keys: You read BagMRU, RecentDocs or OpenSavePidlMRU for folders and files a shell showed.
+- `browser/artefacts` Browser profiles and visit history: Examine browser profiles and navigation records, apart from background or synchronised activity.
+- `browser/downloads` Download provenance: Establish where a downloaded file came from and whether the transfer finished.
+- `browser/strings` URL strings in raw bytes, and direct SQLite queries: URL-shaped text turns up in a pagefile, memory image, unallocated space or raw extract.
+- `browser/webcache` WebCache and legacy index.dat: The evidence holds WebCacheV01.dat or Internet Explorer index.dat files.
+- `execution/amcache` Amcache inventory and amcache_apps: You need to identify a file by path or hash from Amcache.hve, or say what an Amcache entry means.
+- `execution/esedb` Reading an ESE database with esedb_query: You export tables from SRUDB.dat, WebCacheV01.dat, spartan.edb or another ESE database.
+- `execution/overview` Assessing evidence of program execution: You are about to cite an execution artefact or must choose among them.
+- `execution/prefetch` Prefetch files and what prefetch_mam reads: You hold a .pf file, compressed or plain, and need a run count, last runs or referenced files.
+- `execution/prefetch-carved` Prefetch records carved from a raw source: No .pf file, but a memory image, pagefile or disk region may hold Prefetch records.
+- `execution/shimcache` ShimCache (AppCompatCache) and regkv: You need the compatibility cache's record of files, and the pack's only reader for it returns bytes.
+- `execution/srum` SRUM resource accounting and its limits: You need an application's byte counts, CPU or network figures from SRUDB.dat, or its limits.
+- `execution/userassist` UserAssist, BAM and DAM activity records: You need program activity tied to a profile or SID from NTUSER.DAT or the SYSTEM hive.
+- `filesystem/ads` Named NTFS data streams: You need to enumerate, extract or date alternate data streams, or assess execution from one.
+- `filesystem/deleted` Deleted content and what was recovered: Files are missing, or you must say whether their content is recoverable from what was acquired.
+- `filesystem/indx` Index slack and names a directory no longer lists: You need file names a directory index still holds after the file left it.
+- `filesystem/journals` The NTFS change journal and the transaction log: You need what changed on an NTFS volume, under which name, and the order the journal gives.
+- `filesystem/mft` Reading MFT records and their state: You need names, streams, allocation or deletion state of NTFS files from the $MFT.
+- `filesystem/recycle-bin` Recycle Bin $I records: You need the original path, size and time of items sent to the Recycle Bin.
+- `filesystem/shadowcopies` Listing volume shadow copies: You need to know which snapshots an image holds before you say something is gone.
+- `filesystem/shadowcopies-open` Reading files from a shadow copy: A store is listed and you must read an earlier hive, log or file from it.
+- `filesystem/timestamps` NTFS time sets that disagree: Two time sets of one record disagree, or you are about to quote an NTFS time.
+- `logs/carving` Running and citing an evtx_carve sweep: You run evtx_carve over a blob, or quote a record it carved.
+- `logs/coverage` What a silent or gapped event log shows: You are about to write that an event is absent, a channel empty or a record id missing.
+- `logs/events` Event ids and logon types: You are about to say what an event id or a logon type means.
+- `logs/hunting` Rule-based event review with sigma_hunt: You search collected logs with a ruleset and must interpret detections and a clean result.
+- `logs/lateral` Shares, services, WMI and tasks across hosts: A session may have moved or run something on another machine, or arrived from one.
+- `logs/powershell` PowerShell logs and script blocks: You are about to read PowerShell event-log records or quote a script block.
+- `logs/powershell-history` PowerShell history, encoded commands: You meet ConsoleHost_history.txt, an -EncodedCommand argument or an engine 2 request.
+- `logs/recovery` Recovering records of a cleared or damaged log: A log is cleared, empty, damaged or incomplete and other acquired sources may hold its records.
+- `logs/remote-access` Remote Desktop records, inbound and outbound: You need to say whether and from where a Remote Desktop session reached this machine, or left it.
+- `logs/security` Reading an event log with evtx_query: You are about to read, filter or quote records from an .evtx file.
+- `memory/hibernation-pagefile` Hibernation files and pagefiles: A hiberfil.sys, pagefile.sys or swap file is the memory source.
+- `memory/windows` Windows memory sources: what this pack's tools can say: A memory image, dump, hibernation file or pagefile needs a format, a route and its limits.
+- `persistence/mechanisms` Services, run keys, startup: configured versus fired: You sweep for ways something runs again, or must tell configuration from execution.
+- `persistence/tasks-com-wmi` Tasks, COM, WMI and replaced system binaries: Persistence may sit in a task, COM, WMI or a substituted system program.
+- `registry/clock` Windows clocks, zone rules, converting a time: You convert or compare a Windows time, or a local-time value enters a timeline.
+- `registry/devices` Removable-device identity and mounts: A storage device is in the story and you must separate attachment from transfer.
+- `registry/devices-dates` Device install, arrival and removal dates: The question turns on when a removable device was first, last or recently attached.
+- `registry/overview` Registry hives: acquire, hive state, control set: You are about to read an offline hive and must keep its state and time meaning.
+- `registry/readers` Reading a regkv answer, and a second reader: You read a key with regkv and must know what its answer covers and withholds.
+- `registry/system-profile` Windows build, names, profiles, volume identity: You need the machine's build, names and profile map before reading other artefacts.

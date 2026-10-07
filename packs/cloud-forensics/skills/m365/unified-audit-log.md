@@ -1,43 +1,24 @@
 ---
 id: m365/unified-audit-log
-title: The Microsoft 365 unified audit log
-when: The tenant is Microsoft and something happened in it.
+title: Microsoft 365 unified audit exports
+when: Supplied Purview audit records need workload-specific interpretation and source-record correlation.
 needs: [logs/what-exists]
 tools: [ual_parse]
-requires_host: [pwsh]
+requires_host: []
 ---
 
-One log for every workload — Exchange, SharePoint, OneDrive, Teams, Entra,
-Power Platform — with a row per operation. It is exported as CSV, and **the
-column that matters is a JSON blob**: `AuditData` carries almost everything,
-and a spreadsheet view of the export hides it. `ual_parse` explodes it.
+Use when you hold unified audit log exports (portal or PowerShell CSV, native JSON, Graph records) and must say what was done in a workload and by which account. Not for sign-in analysis (`entra/signins`), mailbox configuration, or message delivery (no reader here). Offline: supplied exports only; never authenticate to the tenant.
 
-The operations worth knowing by name:
+**What it is.** Purview audit gathers activity from several workloads; it does not replace each workload's own logs, and one record can summarise more than one action. Establish workload, record type, audit configuration, licence coverage and export method before interpreting a quiet period. Filter on `record_type` (number or name) and `operations` (exact names: `operations_all_rows` lists every one held; `notable_only` keeps rule, forwarding, permission, consent, role and sharing ones), not on free text; unmatched filter values are reported.
 
-    UserLoggedIn, UserLoginFailed          sign-in, with the client and address
-    MailItemsAccessed                      an item was read: the exfiltration
-                                           question, and only on premium licences
-    New-InboxRule, Set-InboxRule, UpdateInboxRules   a rule was created or changed
-    Set-Mailbox with ForwardingSmtpAddress mail being sent somewhere else
-    Add-MailboxPermission, Add-RecipientPermission   delegation
-    FileDownloaded, FileSyncDownloadedFull SharePoint and OneDrive
-    FileAccessed, FileModified, FileDeleted
-    AnonymousLinkCreated, SharingSet       a link anyone can use
-    Consent to application, Add service principal   an application was granted access
-    Add member to role                     privilege
+**Read the coverage `ual_parse` returns first.** `status` is complete only if every row was read. Failed files, rejected rows and unreadable `AuditData` payloads are separate counts (`coverage`, `file_census`, `rejected_records`). `pagination_markers` mean one page of more, or fewer rows than the export's own `ResultCount`. Overlapping searches repeat records and every copy is kept: count distinct `Id`. The summary tables describe the matched records; `operations_all_rows` is every row.
 
-**`MailItemsAccessed` is the closest thing to evidence a mailbox item was
-accessed**, but it does not prove a human read the content. Bind operations
-within a two-minute interval are aggregated; duplicate bind and sync records
-can be filtered at one-hour intervals. Check `MailAccessType`, `OperationCount`,
-`Folders` and licensing before interpreting a quiet period as absence.
+**`audit_data` is the evidence.** The tool lifts fields out of it and keeps the whole payload as written, with `Name`/`Value`, `NewValue`/`OldValue` and duplicate parameter names intact. Read the original for any decisive field. Cite the record `Id`; when the export has none, say so and cite file, record and line, never an invented id.
 
-**`ClientIP` is the address the provider saw.** For a modern client that is
-often a proxy or a mobile carrier, and for Exchange operations it may be an
-internal Microsoft address. Do not attribute on it alone; pair it with the
-sign-in log, which carries far more context.
+**Time.** `time_status` says how each time was read. A time with no zone is not UTC unless `assume_utc` was set on the export's own documentation. `03/04/2026` needs a `date_order` (or the file's unambiguous rows prove one, reported in `date_conventions`). A `since` or `until` filter excludes rows whose time could not be read, a no_zone time included, and counts them.
 
-Two habits. Filter by `RecordType` and `Operation` rather than by free text,
-because the same word appears in a dozen workloads. And quote the `Id` of the
-record you cite — every row has one, and it is what lets somebody else find it
-again in an export of half a million rows.
+**Operations name a record, not an effect.** Inspect actor, target, result and changed properties for rules, forwarding, permissions, sharing and consent records. `SharingSet` records a sharing change, not that anyone outside got access. A service principal's creation is not a consent or a permission grant. `MailItemsAccessed` does not show a person read the content, or exfiltration: read `MailAccessType`, `OperationCount` and `Folders` as written. Aggregation and duplicate suppression can apply: check the schema the export carries before treating a quiet period as absence. `ClientIP` is the address the provider saw, often a proxy or carrier; pair it with sign-in evidence.
+
+**Does not show:** a human act; completeness of auditing; what an operation changed beyond its recorded properties.
+
+**Sensitive output:** parameters and properties can hold secrets. Run the tool as a job with `secret_output: true`; it withholds credential-named and credential-shaped values and writes originals to `ual-values.jsonl` only with `write_values`.

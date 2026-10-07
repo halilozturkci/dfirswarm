@@ -1,50 +1,26 @@
 ---
 id: artifacts/shell
-title: Link files, jump lists, shell bags and recent documents
-when: What a user opened, from where, and whether the source was removable or a share.
-needs: [registry/system-profile]
-tools: [lnk_parse, jumplist, shellbags, regkv]
-requires_host: [icat]
+title: Links, Jump Lists and ShellBags: which to read
+when: Trace a path, volume or share through what the shell kept, without claiming an action.
+needs: []
+tools: [lnk_parse, jumplist, shellbags]
+requires_host: [lnkinfo, olecfexport]
 ---
 
-These four say what a person touched, and they survive the file itself.
+Use when a path, volume or share must be traced through what the shell kept. Not for execution (`execution/overview`) or a device's own records (`registry/devices`).
 
-**Link files.** `Users/<u>/AppData/Roaming/Microsoft/Windows/Recent/*.lnk`.
-`lnk_parse` returns the flags, three FILETIME timestamps of the *target*, the
-local and common paths, the volume serial and, for network targets, the UNC
-path. A link whose UNC names a share proves the document came from that share
-and not from a local disk. Four of them agreeing was the answer to one published
-case.
+These are references the shell kept, not records that something was done. They outlive the file they name, and none names a person. For each, say what it holds, which clock its times are on, and what else would have to be true for the claim you want.
 
-**Jump lists.**
-`...\Recent\AutomaticDestinations\*.automaticDestinations-ms`, one per
-application, keyed by an application id. They hold link structures for the files
-that application opened, and they outlive the recent folder. `jumplist` reads
-the DestList index — the path, the host the file was on, an access count and the
-last access time — and writes each embedded link structure out for `lnk_parse`,
-which is where the volume serial and the target's own timestamps come from. The
-`customDestinations-ms` files are the pinned and task entries, in a different
-format, and the same tool splits them.
+- Links: `Users/<u>/AppData/Roaming/Microsoft/Windows/Recent/*.lnk` and any link an application wrote elsewhere. A link's own file times are separate from the times stored inside it. Open `artifacts/links` (`lnk_parse`) only if you read a link.
+- Jump Lists: the `AutomaticDestinations` and `CustomDestinations` folders beside Recent; the file name is an application id, which this pack does not map. Open `artifacts/jumplists` (`jumplist`) only if you read one.
+- ShellBags: the BagMRU trees of `UsrClass.dat` (`Local Settings\Software\Microsoft\Windows\Shell`) and `NTUSER.DAT` (`Software\Microsoft\Windows\Shell`, `ShellNoRoam` in older hives). Open `artifacts/shellbags` (`shellbags`) only if you read BagMRU or the recent-document keys.
 
-**Shell bags.** `UsrClass.dat` under
-`Local Settings\Software\Microsoft\Windows\Shell\BagMRU`. They record folders a
-user browsed in Explorer, including folders on devices and shares that are no
-longer attached. This is the artefact that proves someone navigated to a
-directory that no longer exists. `shellbags` walks the tree and rebuilds the
-paths. Read its timestamps carefully: the key's last-write time is a kernel
-FILETIME in UTC, and the shell item's own times are DOS timestamps in the
-machine's local time, to two seconds.
+Collect the set per profile, with each hive's logs beside it (hive state: `registry/overview`). A profile that was not collected is a gap, not an empty profile.
 
-**Recent documents.**
-`NTUSER.DAT\...\Explorer\RecentDocs`, by extension, most recently used first.
-`...\Explorer\ComDlg32\OpenSavePidlMRU` covers the open and save dialogues.
+Second readers, where the image carries them: `lnkinfo` parses a link by another implementation, and `olecfexport` takes a Jump List's compound file apart (it confirms stream extraction, not DestList meaning). For a target, serial, share or long name a report line depends on, keep both outputs and any disagreement; with no second reader, say the field has one. Compare volume serials like with like (`registry/system-profile`); convert DOS times by the zone rules of their date (`registry/clock`).
 
-Cross-check the volume serial from a link against `fsstat` on the image. If they
-differ, the file came from another volume, and that is usually the point.
+A negative is bounded by the profiles collected, the hive state and the acquisition date: these records are written by components that can be disabled, limited or cleaned.
 
-Where the host carries them, `lnkinfo`, `olecfexport` and the `pyfwsi` module
-(libfwsi-python, which has no program of its own) read the same three
-artefacts with a different implementation. Use one of them on
-anything you intend to put in the report: a shell bag name this pack had to
-recover by searching, confirmed by a parser that read it from the documented
-layout, is a much stronger line in a report than either alone.
+Shows: that the shell, or an application, kept a reference to the target, with the metadata it had when the record was written. Does not show: a person, that a file was opened, read, copied or run, where content came from, when it was first or last used, or that the item still exists. Record: profile, source file and its own times, hive state, which clock each time is on, the second reader.
+
+Sensitive output: `lnk_parse` and `jumplist` run as jobs (`secret_output: true`); the two leaves say what each withholds.

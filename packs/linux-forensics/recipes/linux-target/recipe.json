@@ -1,34 +1,73 @@
 {
   "id": "linux-target",
-  "version": "1.0.0",
-  "description": "Catalogue Linux identity, accounts, sessions, authentication, histories, persistence, packages, SSH, journals/syslog, web and container logs through dissect.target. This reads Linux roots inside LVM and common VM disk containers without mounting them.",
+  "version": "1.1.0",
+  "description": "Catalogue Linux identity, accounts, sessions, authentication, histories, persistence, packages, SSH, journals/syslog, web and container logs through dissect.target, one function at a time, with a status for each (parsed, empty, unsupported, failed, not attempted, unknown). This reads Linux roots inside LVM and common VM disk containers without mounting them. Its detect step says Linux only where dissect.target's os function printed `linux` (its own identification, unverified against the image), closes the route only for an operating system it knows is not Linux, and says could-not-tell (exit 2) for anything else, including a name it does not recognise. Its receipt and its answers carry `status` (complete, partial or failed) and `status_basis`. The wrapper and what it starts run in the recipe's own process group, never a session of its own, so the harness ending the recipe by killing its group ends them with it; detect stops itself before the harness's 300 seconds.",
   "object": "Linux disk image or extracted root",
   "order": 15,
   "min_bytes": 65536,
-  "suffixes": [".e01", ".ex01", ".dd", ".img", ".raw", ".vhd", ".vhdx", ".vmdk", ".qcow2"],
+  "suffixes": [
+    ".e01",
+    ".ex01",
+    ".dd",
+    ".img",
+    ".raw",
+    ".vhd",
+    ".vhdx",
+    ".vmdk",
+    ".qcow2"
+  ],
   "magic": [
-    {"offset": 0, "hex": "455646090d0aff00"},
-    {"offset": 0, "hex": "455646320d0a8100"},
-    {"offset": 510, "hex": "55aa"},
-    {"offset": 0, "hex": "7668647866696c65"},
-    {"offset": 0, "hex": "4b444d56"},
-    {"offset": 0, "hex": "514649fb"}
+    {
+      "offset": 0,
+      "hex": "455646090d0aff00"
+    },
+    {
+      "offset": 0,
+      "hex": "455646320d0a8100"
+    },
+    {
+      "offset": 510,
+      "hex": "55aa"
+    },
+    {
+      "offset": 0,
+      "hex": "7668647866696c65"
+    },
+    {
+      "offset": 0,
+      "hex": "4b444d56"
+    },
+    {
+      "offset": 0,
+      "hex": "514649fb"
+    }
   ],
   "runtime": "python3",
   "entry": "run.py",
-  "auto": ["kickoff"],
-  "limits": {"seconds": 14400},
+  "auto": [
+    "kickoff"
+  ],
+  "limits": {
+    "seconds": 14400
+  },
   "outputs": [
     "summary.json",
     "artefacts/*.jsonl",
     "artefacts/*.txt",
     "artefacts/*.stderr",
+    "artefacts/summary.json",
     "index.tsv",
     "coverage.json"
   ],
   "purpose": "broad_extraction",
   "capability": "linux-artifacts",
-  "exclusions": ["application data no selected dissect.target plugin parses", "deleted and unallocated data: nothing is carved", "encrypted volumes without their key", "memory: a disk image holds none", "an empty plugin result is not proof the artefact never existed"],
-  "covers": "Records exposed by the selected dissect.target Linux plugins. It does not carve deleted/unallocated data, parse arbitrary application data, acquire memory, unlock encrypted volumes without a key, or prove that an empty parser result means the artefact never existed.",
-  "sha256": "ab4e47d306ed032339a373c097f58d9d8133e05ba06b706fefcf1a9b04b1cd24"
+  "exclusions": [
+    "application data no selected dissect.target plugin parses",
+    "deleted and unallocated data: nothing is carved",
+    "encrypted volumes without their key",
+    "memory: a disk image holds none",
+    "an empty plugin result is not proof the artefact never existed"
+  ],
+  "covers": "Records exposed by the selected dissect.target Linux functions, each with the status it earned from its exit code, its records and its stderr. `complete` in the receipt means every selected function ran and produced records or nothing: it is not coverage of the host. It does not carve deleted/unallocated data, parse arbitrary application data, acquire memory, unlock encrypted volumes without a key, or prove that an empty parser result means the artefact never existed.",
+  "sha256": "f7b041d8ac4f9213325c8627c88eab8b12563187a6e14f38ab63b66863f47e68"
 }

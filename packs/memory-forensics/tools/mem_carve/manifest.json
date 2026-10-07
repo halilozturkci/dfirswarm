@@ -1,6 +1,6 @@
 {
   "name": "mem_carve",
-  "description": "Sweep a memory image, page file or hibernation file for the structures that carry time and identity — registry hives, event log chunks, prefetch records, PE headers, SQLite databases, MFT and INDX records — and return each hit with its offset, optionally cutting it out for the parser that reads it.",
+  "description": "Sweep a memory image, page file or hibernation file for the byte signatures of structures that carry time and identity (registry hive, event log chunk and file, Prefetch record plain and MAM-compressed, PE header, SQLite database, MFT record, NTFS index block, zip, PDF, binary property list), and report for each hit the offset of its signature, the offset of the structure when the format puts something before the signature (a plain Prefetch record starts four bytes before SCCA; null when not established), and what the header's own fields support: header plausible, header implausible, truncated, or unknown (a signature only). A survey of signatures, not recovery: it does not parse, decompress, follow paging structures or join the pages of a fragmented structure, so a hit is a candidate and an extract is a fixed-size slice of the file from the structure's start, which can run into unrelated bytes or stop before the structure ends (declared_bytes is the header's own length where it declares one). Offsets are offsets in the file, not guest physical or process virtual addresses unless the file is a flat physical image. Hits come in offset order; the JSON preview is bounded (default 200) and every hit is kept in a JSON Lines file the answer names; max_extract takes the earliest candidates and the answer counts the rest. An extract is created exclusively: an existing file or a link is refused and counted, never written through. An extract can hold credential material (a SAM or SECURITY hive, a browser database): extracts are written mode 0600, and their sizes and sha256, and the digest of the hit-list file, are in extract-manifest.jsonl in the extract directory (named in extraction.manifest), not in the answer.",
   "params": {
     "path": {
       "type": "string",
@@ -12,27 +12,27 @@
     },
     "extract_to": {
       "type": "string",
-      "description": "Cut each hit out to this directory, under work/"
+      "description": "Cut each hit out to this directory, under work/<your id>/ (in a job, under $OUT). A name that already exists there, a file or a link, is refused and counted: use an empty directory"
     },
     "max_extract": {
       "type": "integer",
-      "description": "How many hits to cut out (default 25)"
+      "description": "How many hits to cut out, earliest first (default 25); the answer counts the ones it did not"
     },
     "start": {
       "type": "integer",
-      "description": "Byte offset to start the sweep at"
+      "description": "Byte offset to start the sweep at (default 0)"
     },
     "max_bytes": {
       "type": "integer",
-      "description": "Stop after this many bytes"
+      "description": "Stop after this many bytes from start; coverage in the answer names the range actually read"
     },
     "limit": {
       "type": "integer",
-      "description": "Maximum hits in the JSON preview; results_to is then required and keeps every hit. Omit for an unbounded complete response."
+      "description": "Hits in the JSON preview (default 200). Every hit is kept in results_to, or, when that is omitted, in a file under work/<your id>/tool-output/ (in a job, $OUT/tool-output/) that the answer names"
     },
     "results_to": {
       "type": "string",
-      "description": "JSONL file under work/ that keeps every hit when limit bounds the returned preview"
+      "description": "JSON Lines file under work/<your id>/ (in a job, under $OUT) that keeps every hit, in offset order"
     }
   },
   "runtime": "python3",
@@ -40,7 +40,21 @@
   "timeout_seconds": 900,
   "example": "{\"path\": \"inputs/memory.raw\", \"kinds\": [\"registry hive\"], \"extract_to\": \"work/<your id>/carved\", \"results_to\": \"work/<your id>/memory-hits.jsonl\"}",
   "by": "maintainer",
-  "at": "2026-09-22T17:00:00.000Z",
-  "version": 2,
-  "sha256": "3a6951a42d61550e17ac5996e4c52640b5d2da7a14951237c8dded4639a5af25"
+  "at": "2026-10-07T12:00:00.000Z",
+  "version": 4,
+  "sha256": "6d664d29366a7ef104b782ede7eaba5ed2103b514542a3a9e60317563b204613",
+  "use": {
+    "extensions": [
+      ".vmem",
+      ".lime",
+      ".raw",
+      ".mem",
+      ".dmp"
+    ],
+    "names": [
+      "hiberfil.sys",
+      "pagefile.sys",
+      "swapfile.sys"
+    ]
+  }
 }

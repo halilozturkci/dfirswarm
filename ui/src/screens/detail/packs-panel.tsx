@@ -7,6 +7,11 @@
  * The last one matters most. A pack whose skills go unread is weight in the
  * context window and a signal that the index line for that skill does not say
  * when to reach for it.
+ *
+ * The numbers come from the whole trace (the server's `skill_use`, the same
+ * code the context audit runs): a seat's prompt carried the index, how many
+ * bodies it loaded and what they cost, which a later row names or uses (a
+ * proxy, labelled as one), and which a compaction took out of its context.
  */
 import { useMemo } from "react";
 import { Package } from "lucide-react";
@@ -15,10 +20,9 @@ import { EmptyState } from "@/components/states";
 import { useAgentColours } from "@/lib/agent-colour";
 import { relTime } from "@/lib/format";
 import { useAgentNames } from "@/lib/hooks";
+import { skillUse } from "@/lib/skill-metrics";
 import type { SwarmView } from "@/lib/types";
 import { cn } from "@/lib/utils";
-
-type Fetch = { id: string; agent: string; ts: string };
 
 function AgentChips({ agents, colour, names }: {
   agents: string[];
@@ -42,35 +46,21 @@ export function PacksPanel({ view }: { view: SwarmView }) {
   const packs = view.packs ?? [];
   const secrets = (view.registry as { pack_secrets?: Record<string, { names?: string[]; mode?: string }> } | null)?.pack_secrets;
 
-  const { fetches, bySkill, indexReads, packOf } = useMemo(() => {
-    const fetches: Fetch[] = [];
-    let indexReads = 0;
-    for (const e of view.traces) {
-      if (e.tool !== "skill") continue;
-      const id = (e.args as { id?: unknown } | null)?.id;
-      // The extension logs an index read as the literal id INDEX; it is a read
-      // of the catalogue, not of a skill, and it does not belong in the table.
-      if (typeof id === "string" && id.trim() && id.trim() !== "INDEX") {
-        fetches.push({ id: id.trim(), agent: e.agent, ts: e.ts });
-      } else {
-        indexReads += 1;
-      }
-    }
-    const bySkill = new Map<string, { n: number; agents: Set<string>; first: string; last: string }>();
-    for (const f of fetches) {
-      const row = bySkill.get(f.id) ?? { n: 0, agents: new Set<string>(), first: f.ts, last: f.ts };
-      row.n += 1;
-      row.agents.add(f.agent);
-      if (f.ts < row.first) row.first = f.ts;
-      if (f.ts > row.last) row.last = f.ts;
-      bySkill.set(f.id, row);
-    }
-    // Which pack a skill id belongs to. A body is served by the first pack that
-    // has it, which is the same order the kickoff resolved.
+  // The server counts over the whole trace; an older one sends only the tail, which is counted here.
+  const use = useMemo(() => view.skill_use ?? skillUse(view.traces, view.agents.map((a) => a.id)), [view.skill_use, view.traces, view.agents]);
+  const { bySkill, packOf, readKeys } = useMemo(() => {
+    const bySkill = new Map(use.by_skill.map((row) => [row.key, row]));
+    // Which pack a skill id belongs to when the row did not say: the first pack
+    // that has it, which is the order the kickoff resolved.
     const packOf = new Map<string, string>();
     for (const p of packs) for (const s of p.skills) if (!packOf.has(s.id)) packOf.set(s.id, p.id);
-    return { fetches, bySkill, indexReads, packOf };
-  }, [view.traces, packs]);
+    // What was loaded, by `pack:id` (and by bare id for a row that carries no pack).
+    const readKeys = new Set(use.by_skill.map((row) => (row.pack ? `${row.pack}:${row.id}` : row.id)));
+    return { bySkill, packOf, readKeys };
+  }, [use, packs]);
+  const wasRead = (pack: string, id: string) => readKeys.has(`${pack}:${id}`) || readKeys.has(id);
+  const loadsTotal = use.totals.loads;
+  const indexReads = use.totals.index_reads;
 
   const packTools = useMemo(() => view.tools.filter((t) => typeof t.pack === "string" && t.pack), [view.tools]);
 
@@ -84,24 +74,24 @@ export function PacksPanel({ view }: { view: SwarmView }) {
     );
   }
 
-  const consulted = [...bySkill.entries()].sort((a, b) => b[1].n - a[1].n || a[0].localeCompare(b[0]));
+  const consulted = [...bySkill.values()];
   const carried = packs.flatMap((p) => p.skills.map((s) => ({ ...s, pack: p.id })));
-  const untouched = carried.filter((s) => !bySkill.has(s.id));
+  const untouched = carried.filter((s) => !wasRead(s.pack, s.id));
 
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <SerifH>The method this run carried</SerifH>
         <span className="text-xs text-muted-foreground">
-          {fetches.length} skill {fetches.length === 1 ? "fetch" : "fetches"} across {new Set(fetches.map((f) => f.agent)).size} agent(s)
-          {indexReads ? `, and the index read ${indexReads}×` : ""}
+          {loadsTotal} skill {loadsTotal === 1 ? "load" : "loads"} across {use.totals.seats_that_loaded} of {use.totals.seats} agent(s)
+          {indexReads ? `, and the index asked for ${indexReads}×` : ""}
         </span>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
         {packs.map((p) => {
           const mine = carried.filter((s) => s.pack === p.id);
-          const read = mine.filter((s) => bySkill.has(s.id)).length;
+          const read = mine.filter((s) => wasRead(s.pack, s.id)).length;
           const toolsUsed = packTools.filter((t) => t.pack === p.id && t.calls > 0).length;
           return (
             <div key={p.id} className="rounded-lg border p-3 space-y-2">
@@ -140,19 +130,21 @@ export function PacksPanel({ view }: { view: SwarmView }) {
                 <tr className="text-left text-xs text-muted-foreground">
                   <th className="py-1 pr-3 font-normal">Skill</th>
                   <th className="py-1 pr-3 font-normal">Pack</th>
-                  <th className="py-1 pr-3 font-normal">Fetches</th>
+                  <th className="py-1 pr-3 font-normal">Loads</th>
+                  <th className="py-1 pr-3 font-normal">Tokens</th>
                   <th className="py-1 pr-3 font-normal">Who read it</th>
                   <th className="py-1 font-normal">Last</th>
                 </tr>
               </thead>
               <tbody>
-                {consulted.map(([id, row]) => (
-                  <tr key={id} className="border-t align-top">
-                    <td className="py-1.5 pr-3 font-mono text-[12px]">{id}</td>
-                    <td className="py-1.5 pr-3 text-xs text-muted-foreground">{packOf.get(id) ?? "unknown"}</td>
-                    <td className="py-1.5 pr-3 tabular-nums">{row.n}</td>
+                {consulted.map((row) => (
+                  <tr key={row.key} className="border-t align-top">
+                    <td className="py-1.5 pr-3 font-mono text-[12px]">{row.id}</td>
+                    <td className="py-1.5 pr-3 text-xs text-muted-foreground">{row.pack ?? packOf.get(row.id) ?? "unknown"}</td>
+                    <td className="py-1.5 pr-3 tabular-nums">{row.loads}</td>
+                    <td className="py-1.5 pr-3 tabular-nums">{row.tokens.toLocaleString("en-US")}</td>
                     <td className="py-1.5 pr-3">
-                      <AgentChips agents={[...row.agents].sort()} colour={colour} names={names} />
+                      <AgentChips agents={row.agents} colour={colour} names={names} />
                     </td>
                     <td className="py-1.5 text-xs text-muted-foreground">{relTime(row.last)}</td>
                   </tr>
@@ -226,26 +218,72 @@ export function PacksPanel({ view }: { view: SwarmView }) {
 
       <div className="space-y-2">
         <PhaseHead title="By agent" />
-        <ul className="space-y-1 text-sm">
-          {view.agents.map((a) => {
-            const mine = fetches.filter((f) => f.agent === a.id);
-            if (!mine.length) return (
-              <li key={a.id} className="text-xs text-muted-foreground">
-                <span className={cn("rounded px-1.5 py-0.5 font-mono", colour(a.id))}>{names(a.id)}</span> read no skill
-              </li>
-            );
-            const distinct = [...new Set(mine.map((f) => f.id))];
-            return (
-              <li key={a.id} className="flex flex-wrap items-baseline gap-2">
-                <span className={cn("rounded px-1.5 py-0.5 text-[11px] font-mono", colour(a.id))}>{names(a.id)}</span>
-                <span className="text-xs text-muted-foreground">
-                  {mine.length} {mine.length === 1 ? "fetch" : "fetches"}, {distinct.length} distinct:
-                </span>
-                <span className="font-mono text-[11px] text-muted-foreground">{distinct.join(", ")}</span>
-              </li>
-            );
-          })}
-        </ul>
+        <p className="text-xs text-muted-foreground">
+          &ldquo;Used after load&rdquo; is a proxy: a later row of the same agent names the skill, or calls a tool the skill names. An agent can apply a note
+          without naming it, so &ldquo;no trace of use&rdquo; is not proof it was not used. A compaction takes the bodies it summarises out of an agent&rsquo;s context
+          (the newest part of the history stays); &ldquo;loaded again&rdquo; counts the ones it asked for afterwards. &ldquo;Index in prompt&rdquo; means Pi&rsquo;s own
+          prompt carried this run&rsquo;s index, which every run of the agent keeps; an index the extension had to add lasts for the first run only.
+        </p>
+        {use.totals.loads_without_tools > 0 ? (
+          <p className="text-xs text-saffron-ink">
+            {use.totals.loads_without_tools} of the loads come from rows written before the harness recorded each skill&rsquo;s tools: for those only a mention of the id
+            can show use, so &ldquo;no trace of use&rdquo; counts them as unused (an upper bound).
+          </p>
+        ) : null}
+        {use.seats.some((x) => x.loads > 0 && x.lost_basis === "compact_done") ? (
+          <p className="text-xs text-saffron-ink">
+            For some agents the trace has no row saying which bodies a compaction took out, so every compaction is counted as taking every body loaded before it: an upper bound.
+          </p>
+        ) : null}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-muted-foreground">
+                <th className="py-1 pr-3 font-normal">Agent</th>
+                <th className="py-1 pr-3 font-normal">Index in prompt</th>
+                <th className="py-1 pr-3 font-normal">Loads</th>
+                <th className="py-1 pr-3 font-normal">Tokens</th>
+                <th className="py-1 pr-3 font-normal">Used after load</th>
+                <th className="py-1 pr-3 font-normal">No trace of use</th>
+                <th className="py-1 pr-3 font-normal">Done</th>
+                <th className="py-1 pr-3 font-normal">Taken out by a compaction</th>
+                <th className="py-1 pr-3 font-normal">Loaded again</th>
+                <th className="py-1 font-normal">Skills</th>
+              </tr>
+            </thead>
+            <tbody>
+              {use.seats.map((seat) => (
+                <tr key={seat.agent} className="border-t align-top">
+                  <td className="py-1.5 pr-3">
+                    <span className={cn("rounded px-1.5 py-0.5 text-[11px] font-mono", colour(seat.agent))} title={seat.agent}>{names(seat.agent)}</span>
+                  </td>
+                  <td className="py-1.5 pr-3 text-xs">
+                    {seat.index_in_prompt
+                      ? `yes${seat.index_tokens !== null ? ` · ${seat.index_tokens.toLocaleString("en-US")} tokens` : ""}`
+                      : seat.index_source === "extension"
+                        ? "first run only (the extension added it)"
+                        : seat.index_source === "stale"
+                          ? "another pack set's"
+                          : seat.index_source === "none"
+                            ? "the packs list no skill"
+                            : "no row"}
+                  </td>
+                  <td className="py-1.5 pr-3 tabular-nums">{seat.loads}</td>
+                  <td className="py-1.5 pr-3 tabular-nums">{seat.tokens_loaded.toLocaleString("en-US")}</td>
+                  <td className="py-1.5 pr-3 tabular-nums">{seat.referenced}</td>
+                  <td className="py-1.5 pr-3 tabular-nums">{seat.unused}</td>
+                  <td className="py-1.5 pr-3 tabular-nums">{seat.done}</td>
+                  <td className="py-1.5 pr-3 tabular-nums">{seat.lost_at_compaction}</td>
+                  <td className="py-1.5 pr-3 tabular-nums">{seat.refetched}</td>
+                  <td className="py-1.5 font-mono text-[11px] text-muted-foreground">
+                    {seat.loads ? [...new Set(seat.detail.map((d) => d.id))].join(", ") : "read no skill"}
+                    {seat.failed ? ` · ${seat.failed} missed` : ""}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

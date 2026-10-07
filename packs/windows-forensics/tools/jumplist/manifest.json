@@ -1,6 +1,6 @@
 {
   "name": "jumplist",
-  "description": "Read a jump list: the DestList entries of an automaticDestinations-ms (target path, the host it was on, access count, last access, pinned), and every embedded link structure written out for lnk_parse. Also splits a customDestinations-ms into its link structures.",
+  "description": "Read a jump list. automaticDestinations-ms (an OLE compound file): the DestList entries by their version's layout (1, 3 and 4; any other version is refused with a problem and no entries): entry number, NetBIOS host name, last access (raw FILETIME and ISO 8601 UTC, seven fractional digits), pin state and target path, with the access counters returned raw as undecoded_* and no access count claimed; and every embedded link structure written to out_dir for lnk_parse (a stream is read in pieces, never whole) (the path, the volume serial and the target timestamps are the link's, not the DestList's). customDestinations-ms has no container: its link structures are CARVED by their 20-byte header, each marked carved, and the container is not parsed. Entries, links and files are paged: `limit` is the inline page size, and every row is kept in the file the page names. A FIFO, a socket or a device (named by `path` or found in a directory) is never opened: it is counted under not_attempted and the status is partial. status is complete, partial or failed; the exit status is 1 only when no file could be read. SENSITIVE: the links inside a jump list carry arguments and working directories that can hold a command line with a secret; run it as a job with secret_output: true when they may.",
   "params": {
     "path": {
       "type": "string",
@@ -8,19 +8,30 @@
     },
     "out_dir": {
       "type": "string",
-      "description": "Write each embedded link structure here, under work/, for lnk_parse to read; a path outside the run directory or under inputs/ is refused"
+      "description": "Write each embedded link structure here, for lnk_parse to read: a directory under work/<your id>/ (or work/extracted/<your id>/, work/quarantine/<your id>/; run as a job, a work/<your id>/... path is given $OUT by the harness); anything else in the run, and anything under inputs/, is refused with the places named"
     },
     "limit": {
       "type": "integer",
-      "description": "Link structures shown inline per file (default 500); every one is read and written to out_dir, and when there are more the whole list is written as JSON Lines and named in all_results"
+      "description": "Entries, link structures and files shown inline per file (default 500, an inline page size); every one is read, every link is written to out_dir, and when there are more the whole list is written as JSON Lines and named in the page's all_results"
     }
   },
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 120,
-  "example": "{\"path\": \"work/extracted/AutomaticDestinations\", \"out_dir\": \"work/extracted/jumplinks\"}",
+  "example": "{\"path\": \"work/extracted/AutomaticDestinations\", \"out_dir\": \"work/<your id>/jumplinks\"}",
   "by": "maintainer",
-  "at": "2026-09-22T09:00:00.000Z",
-  "version": 2,
-  "sha256": "fceaa8820cfbc7a327cfce608d35fcec52002482420263c431862f1a175372f7"
+  "at": "2026-10-07T12:00:00.000Z",
+  "version": 4,
+  "sha256": "0377cf283c9be09f8884517e056fa8f97a33e91e9328b5c8127560104cc080f7",
+  "use": {
+    "extensions": [
+      ".automaticdestinations-ms",
+      ".customdestinations-ms"
+    ],
+    "names": [
+      "*.automaticDestinations-ms",
+      "*.customDestinations-ms"
+    ]
+  },
+  "requires": []
 }

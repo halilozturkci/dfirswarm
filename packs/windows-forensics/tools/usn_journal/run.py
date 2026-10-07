@@ -44,12 +44,24 @@ NumberOfExtents 0x3C, ExtentSize 0x3E, then the extents (offset and length,
 8 bytes each). It has no name and no timestamp.
 
 A record's length is a multiple of 8 and records start on 8-byte boundaries.
+
+Every decoded field is kept: both file references with their sequence numbers (`file_sequence`,
+`parent_sequence`), `source_info`, `security_id`, the attributes as names and as the raw word
+(`attributes_raw`), the reason as names and raw (`reason_raw`), and the timestamp as ISO 8601 UTC
+with seven fractional digits and as the raw FILETIME (`timestamp_filetime`, a decimal string). What is not a
+record is accounted for in bytes, not in steps: `unrecognised_bytes` after the first record (its
+ranges are a page, `unrecognised_ranges`), and `prefix_unrecognised_bytes` before it, apart from the
+zero bytes the sparse front is made of.
+
+A V4 record carries no name. A `name` filter matches names, so it leaves V4 records out; they are counted
+(`nameless_excluded_by_filter`) and `include_nameless: true` keeps them.
 """
 import datetime
 import json
 import mmap
 import os
 import re
+import stat
 import struct
 import sys
 from pathlib import Path
@@ -92,10 +104,29 @@ class LosslessPage:
             self.path = Path("work") / agent / "tool-output" / name
             self.shown = str(self.path)
 
+    def _cannot_write(self, exc: BaseException) -> None:
+        """The whole result cannot be kept: say so as JSON and stop, never a traceback."""
+        import sys as _sys
+        _sys.stdout.write(json.dumps({
+            "error": "the whole result (%d rows so far) cannot be written to %s: %s. Outside a job the place is your own "
+                     "work/<your id>/ directory; in a job it is $OUT." % (self.total, self.shown, exc),
+            "status": "failed",
+        }) + "\n")
+        _sys.exit(1)
+
     def _write(self, row: object) -> None:
         assert self._out is not None
-        self._out.write(json.dumps(row, ensure_ascii=False, default=str))
-        self._out.write("\n")
+        text = json.dumps(row, ensure_ascii=False, default=str)
+        try:
+            text.encode("utf-8")
+        except UnicodeEncodeError:
+            # A lone surrogate (a file name that is not UTF-8): escape it, lose nothing.
+            text = json.dumps(row, ensure_ascii=True, default=str)
+        try:
+            self._out.write(text)
+            self._out.write("\n")
+        except OSError as exc:
+            self._cannot_write(exc)
 
     def add(self, row: object) -> None:
         self.total += 1
@@ -103,12 +134,15 @@ class LosslessPage:
             self.page.append(row)
             return
         if self._out is None:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            fd, name = tempfile.mkstemp(
-                dir=self.path.parent, prefix=f".{self.path.name}-"
-            )
-            self._tmp = Path(name)
-            self._out = os.fdopen(fd, "w", encoding="utf-8")
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                fd, name = tempfile.mkstemp(
+                    dir=self.path.parent, prefix=f".{self.path.name}-"
+                )
+                self._tmp = Path(name)
+                self._out = os.fdopen(fd, "w", encoding="utf-8")
+            except OSError as exc:
+                self._cannot_write(exc)
             for kept in self.page:
                 self._write(kept)
         self._write(row)
@@ -120,11 +154,14 @@ class LosslessPage:
             "truncated": self.total > len(self.page),
         }
         if self._out is not None:
-            self._out.flush()
-            os.fsync(self._out.fileno())
-            self._out.close()
-            assert self._tmp is not None
-            os.replace(self._tmp, self.path)
+            try:
+                self._out.flush()
+                os.fsync(self._out.fileno())
+                self._out.close()
+                assert self._tmp is not None
+                os.replace(self._tmp, self.path)
+            except OSError as exc:
+                self._cannot_write(exc)
             result["all_results"] = self.shown
             result["all_results_format"] = "JSON Lines, one complete result per line"
         return result
@@ -169,11 +206,13 @@ def flags(value, table):
 
 
 def filetime(value):
+    """ISO 8601 UTC with seven fractional digits, by integer arithmetic; None for 0 or past year 9999."""
     if value <= 0:
         return None
     try:
-        return (FILETIME_EPOCH + datetime.timedelta(microseconds=value // 10)).isoformat().replace("+00:00", "Z")
-    except OverflowError:
+        whole, ticks = divmod(value, 10_000_000)
+        return (FILETIME_EPOCH + datetime.timedelta(seconds=whole)).strftime("%Y-%m-%dT%H:%M:%S") + ".%07dZ" % ticks
+    except (OverflowError, ValueError):
         return None
 
 
@@ -209,7 +248,7 @@ def record_at(data, offset, end):
     there are not a plausible v2, v3 or v4 record."""
     if offset + 8 > end:
         return None
-    length, major = struct.unpack_from("<IH", data, offset)
+    length, major, minor = struct.unpack_from("<IHH", data, offset)
     head = HEAD.get(major)
     if head is None or not (head <= length <= MAX_RECORD) or length % 8 or offset + length > end:
         return None
@@ -221,9 +260,9 @@ def record_at(data, offset, end):
         extents = [dict(zip(("offset", "length"), struct.unpack_from("<qq", data, offset + 0x40 + i * 16)))
                    for i in range(count)]
         return {"length": length, "row": {
-            "version": 4, "usn": usn, "name": None,
+            "version": 4, "minor_version": minor, "usn": usn, "name": None,
             "file_reference": ref.get("entry"), "file_sequence": ref.get("sequence"), "file_id": ref["id"],
-            "parent_reference": parent.get("entry"), "parent_id": parent["id"],
+            "parent_reference": parent.get("entry"), "parent_sequence": parent.get("sequence"), "parent_id": parent["id"],
             "reason": flags(reason, REASONS), "reason_raw": reason, "source_info": source,
             "extents": extents, "remaining_extents": remaining, "offset": offset,
         }}
@@ -233,18 +272,33 @@ def record_at(data, offset, end):
     name = data[offset + name_off:offset + name_off + name_len].decode("utf-16-le", "replace")
     if major == 2:
         ref, parent, usn, stamp, reason, source, sec, attrs = struct.unpack_from("<QQQqIIII", data, offset + 0x08)
-        row = {"version": 2, "usn": usn, "timestamp": filetime(stamp), "name": name,
+        row = {"version": 2, "minor_version": minor, "usn": usn, "timestamp": filetime(stamp), "timestamp_filetime": str(stamp), "name": name,
                "file_reference": ref & 0x0000FFFFFFFFFFFF, "file_sequence": ref >> 48,
-               "parent_reference": parent & 0x0000FFFFFFFFFFFF}
+               "parent_reference": parent & 0x0000FFFFFFFFFFFF, "parent_sequence": parent >> 48}
     else:
         ref, parent = reference(data[offset + 0x08:offset + 0x18]), reference(data[offset + 0x18:offset + 0x28])
         usn, stamp, reason, source, sec, attrs = struct.unpack_from("<QqIIII", data, offset + 0x28)
-        row = {"version": 3, "usn": usn, "timestamp": filetime(stamp), "name": name,
+        row = {"version": 3, "minor_version": minor, "usn": usn, "timestamp": filetime(stamp), "timestamp_filetime": str(stamp), "name": name,
                "file_reference": ref.get("entry"), "file_sequence": ref.get("sequence"), "file_id": ref["id"],
-               "parent_reference": parent.get("entry"), "parent_id": parent["id"]}
-    row.update({"reason": flags(reason, REASONS), "reason_raw": reason,
-                "attributes": flags(attrs, ATTRIBUTES), "offset": offset})
+               "parent_reference": parent.get("entry"), "parent_sequence": parent.get("sequence"), "parent_id": parent["id"]}
+    row.update({"reason": flags(reason, REASONS), "reason_raw": reason, "source_info": source, "security_id": sec,
+                "attributes": flags(attrs, ATTRIBUTES), "attributes_raw": attrs, "offset": offset})
     return {"length": length, "row": row}
+
+
+def unsupported_header(data, offset, end):
+    """A record whose major version this tool does not read, when it still has the shape of one: a length that is a
+    multiple of 8 and fits, and after it the end of the journal, zeros or a record this tool reads. Returns its
+    offset, versions and length, or None (then the bytes are stepped over 8 at a time, as unrecognised)."""
+    if offset + 8 > end:
+        return None
+    length, major, minor = struct.unpack_from("<IHH", data, offset)
+    if major in HEAD or length % 8 or not (0x20 <= length <= MAX_RECORD) or offset + length > end:
+        return None
+    after = offset + length
+    if after < end and any(data[after:min(after + 8, end)]) and record_at(data, after, end) is None:
+        return None
+    return {"offset": offset, "major_version": major, "minor_version": minor, "length": length}
 
 
 def main():
@@ -252,6 +306,8 @@ def main():
         args = json.load(sys.stdin)
     except ValueError as exc:
         fail("arguments are not valid JSON", reason=str(exc))
+    if not isinstance(args, dict):
+        fail("arguments must be a JSON object")
 
     path = args.get("path")
     if not isinstance(path, str) or not path:
@@ -263,6 +319,9 @@ def main():
     name_filter = args.get("name")
     if name_filter is not None and not isinstance(name_filter, str):
         fail("name must be a string: a case-insensitive regex over the file name")
+    include_nameless = args.get("include_nameless", False)
+    if not isinstance(include_nameless, bool):
+        fail("include_nameless must be true or false")
     pattern = None
     if name_filter:
         try:
@@ -271,6 +330,8 @@ def main():
             fail("name is not a valid regex", name=name_filter, reason=str(exc))
 
     try:
+        if not stat.S_ISREG(os.stat(path).st_mode):
+            fail("not a regular file: it is not opened", path=path, not_attempted=1)
         fh = open(path, "rb")
         size = os.fstat(fh.fileno()).st_size
     except OSError as exc:
@@ -282,10 +343,16 @@ def main():
     except (OSError, ValueError) as exc:
         fail("could not map the journal", path=path, reason=str(exc))
 
-    records = LosslessPage("usn_journal", [path, name_filter], limit)
+    records = LosslessPage("usn_journal", [path, name_filter, include_nameless], limit)
+    unrecognised = LosslessPage("usn_journal-unrecognised", [path], 40)
+    unsupported = LosslessPage("usn_journal-unsupported", [path], 40)
+    unsupported_by_major = {}
+    unsupported_bytes = 0
     versions = {}
     start = None
-    read = skipped = zeros = 0
+    read = zeros = 0
+    unrecognised_bytes = prefix_unrecognised = nameless_excluded = 0
+    open_range = None
     offset = 0
     while offset < size:
         # The sparse front, and the zeros that pad the end of each page.
@@ -297,27 +364,57 @@ def main():
         found = record_at(data, offset, size)
         if found is None:
             # Before the first record this is the search for it; after it, a
-            # stretch that is not a record, counted and stepped over.
+            # stretch that is not a record, counted in bytes and kept as a range.
+            step = min(8, size - offset)
+            odd = unsupported_header(data, offset, size)
+            if odd is not None:
+                step = odd["length"]
+                unsupported.add(odd)
+                unsupported_bytes += step
+                unsupported_by_major[str(odd["major_version"])] = unsupported_by_major.get(str(odd["major_version"]), 0) + 1
             if start is not None:
-                skipped += 1
-            offset += 8
+                unrecognised_bytes += step
+                if open_range is not None and open_range[0] + open_range[1] == offset:
+                    open_range[1] += step
+                else:
+                    if open_range is not None:
+                        unrecognised.add({"offset": open_range[0], "bytes": open_range[1]})
+                    open_range = [offset, step]
+            else:
+                prefix_unrecognised += step
+            offset += step if odd is not None else 8
             continue
+        if open_range is not None:
+            unrecognised.add({"offset": open_range[0], "bytes": open_range[1]})
+            open_range = None
         if start is None:
             start = offset
         row = found["row"]
         read += 1
         versions[str(row["version"])] = versions.get(str(row["version"]), 0) + 1
-        if pattern is None or (row["name"] is not None and pattern.search(row["name"])):
+        if pattern is None:
+            records.add(row)
+        elif row["name"] is None:
+            if include_nameless:
+                records.add(row)
+            else:
+                nameless_excluded += 1
+        elif pattern.search(row["name"]):
             records.add(row)
         offset += found["length"]
+    if open_range is not None:
+        unrecognised.add({"offset": open_range[0], "bytes": open_range[1]})
     data.close()
     fh.close()
 
     if start is None:
         fail("no USN record (v2, v3 or v4) found", bytes=size, zero_bytes=zeros,
-             hint="is this the $J stream rather than $Max?")
+             unsupported_version_records=sum(unsupported_by_major.values()), unsupported_versions=unsupported_by_major,
+             hint="is this the $J stream rather than $Max? A record of another major version is listed under unsupported_versions, not read.")
 
     page = records.finish()
+    unsupported_page = unsupported.finish()
+    unrecognised_page = unrecognised.finish()
     result = {
         "path": path,
         "bytes": size,
@@ -328,9 +425,23 @@ def main():
         "name_filter": name_filter,
         "records": records.page,
         "record_count": page["matched"],
-        "malformed_skipped": skipped,
+        "unrecognised_bytes": unrecognised_bytes,
+        "unrecognised_ranges": unrecognised.page,
+        "unrecognised_range_count": unrecognised_page["matched"],
+        "prefix_unrecognised_bytes": prefix_unrecognised,
+        "nameless_excluded_by_filter": nameless_excluded,
+        "include_nameless": include_nameless,
+        "unsupported_version_records": sum(unsupported_by_major.values()),
+        "unsupported_version_bytes": unsupported_bytes,
+        "unsupported_versions": unsupported_by_major,
+        "unsupported_version_list": unsupported.page,
+        "parser": "usn_journal/4",
         **page,
     }
+    if unrecognised_page.get("all_results"):
+        result["all_unrecognised_ranges"] = unrecognised_page["all_results"]
+    if unsupported_page.get("all_results"):
+        result["all_unsupported_version_list"] = unsupported_page["all_results"]
     if pattern is not None and not page["matched"]:
         result["note"] = ("%d records were read and none has a file name matching %r "
                           "(a case-insensitive regex); the journal is not empty" % (read, name_filter))

@@ -1,6 +1,20 @@
 {
   "name": "prefetch_mam",
-  "description": "Decompresses MAM-compressed or plain Windows Prefetch files and returns header fields, last-run FILETIMEs, and extracted UTF-16 paths/strings.",
+  "description": "Read a Windows Prefetch file, MAM-compressed (MAM\\x04) or plain (SCCA), field by field by the layout of its SCCA version (17, 23, 26, 30 and 31; version 31 is read with version 30's layout, an assumption said in the answer; any other version is reported unsupported and no version-dependent field is interpreted): executable name, hash, run count, last-run FILETIMEs (raw decimal and ISO 8601 UTC with seven fractional digits), the filename strings section as the header locates it (every string whole, non-ASCII included), and the first volume entry (device path, serial, creation time); the file metrics, trace chains and later volume entries are located and counted, not decoded. In versions 26, 30 and 31 the run count is where the file information size puts it: that size is the file metrics array offset (the word at 0x54) less 0x50, 224 (run count at 0xD0) or 216 (run count at 0xC8) in the Windows 10 files this was checked on, and file_information_size is returned in every version; a size that is neither gives no run count and no last-run time, a problem naming the size, and status partial. MAM framing is checked before inflating: the method byte must be 4 (any other, a checksum-bearing variant included, is refused by name) and the declared size at most 64 MiB; the decompressor, dissect.util's, has no output bound of its own, so it is run with one (the declared size plus 64 KiB), past which the run fails, and a stream that ends short fails too (the decoder takes 32 bits of lookahead, so four zero bytes are given after the stream: one that ends without padding is not short). A file that cannot be read is a JSON failure. The decoder is the one mam_scan uses, so the two tools do not check each other. A Prefetch file does not say who ran a program, that it finished, or where it was started from.",
+  "params": {
+    "path": {
+      "type": "string",
+      "description": "Path to a Prefetch file, compressed (MAM) or plain SCCA"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 60,
+  "example": "{\"path\":\"work/extracted/prefetch/sample.pf\"}",
+  "by": "sbe1803",
+  "at": "2026-10-07T12:00:00.000Z",
+  "version": 3,
+  "sha256": "55944988734fbf3dad8e85fac1bdef92af33869aa45c86c460cf2f8d77dc5bb6",
   "use": {
     "extensions": [
       ".pf"
@@ -16,23 +30,5 @@
       }
     ]
   },
-  "params": {
-    "path": {
-      "type": "string",
-      "description": "Path to a Prefetch file, compressed (MAM) or plain SCCA"
-    },
-    "max_strings": {
-      "type": "integer",
-      "description": "Maximum UTF-16 strings to return",
-      "required": false
-    }
-  },
-  "runtime": "python3",
-  "entry": "run.py",
-  "timeout_seconds": 60,
-  "example": "{\"path\":\"work/extracted/sbe1803/WELCOME.TXT_PUTTY.EXE-A6BB0639.pf.ads\",\"max_strings\":20}",
-  "by": "sbe1803",
-  "at": "2026-09-18T12:59:41.662Z",
-  "version": 2,
-  "sha256": "db83b6b68f7a9b65e13cbe3756d6c8e9e2b8008f83f6a909aa2272200c0186f8"
+  "requires": []
 }
