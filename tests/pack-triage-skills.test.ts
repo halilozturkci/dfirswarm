@@ -167,7 +167,7 @@ test("the needs chain fits 2,000 tokens even when the base evidence/verify has g
   }
 });
 
-test("the old claims are gone, whatever their wording; no skill states a version fact or tells the agent to run a collector; secret handling is stated wherever a tool is named", async () => {
+test("the old claims are gone, in any phrasing; no skill states a version fact or tells the agent to run a collector; secret handling is stated wherever a tool is named", async () => {
   const skills = await load(SKILLS);
   const flat = (s: string) => s.replace(/\s+/g, " ");
   const all = flat([...skills.values()].map((s) => s.body).join("\n"));
