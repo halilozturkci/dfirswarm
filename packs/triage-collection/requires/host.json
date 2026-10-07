@@ -4,7 +4,7 @@
       "name": "uac",
       "package": "UAC",
       "optional": true,
-      "why": "Collect from a live Unix-like host — Linux, macOS, ESXi, BSD, Solaris — with a portable shell collector driven by YAML artefact definitions.",
+      "why": "A live-collection tool, run by an operator on the host to be collected: the harness never runs it and no skill commands it. Declared so an operator can prepare a collection and as a candidate reader of its own output (not yet used for that).",
       "install": {
         "brew": "https://github.com/tclahr/uac",
         "apt": "pinned download 3.4.0 (install.download)",
@@ -31,7 +31,7 @@
       "name": "velociraptor",
       "package": "Velociraptor",
       "optional": true,
-      "why": "Build an offline collector with a chosen artefact set baked in, and read the container it produces. AGPL-3.0, the same licence as this harness.",
+      "why": "Builds an offline collector with a chosen artefact set baked in, and reads the container it produces. Declared for operator preparation and as a candidate offline reader of its own containers; no skill commands it, the harness never collects live, and a collection's own VQL is never run. AGPL-3.0, the same licence as this harness.",
       "install": {
         "brew": "https://github.com/Velocidex/velociraptor/releases",
         "apt": "pinned download 0.77.2 (install.download)",
@@ -54,7 +54,7 @@
       "name": "CyLR",
       "package": "CyLR",
       "optional": true,
-      "why": "Pull NTFS artefacts off a live Windows host through the raw handle, including files that are locked.",
+      "why": "A collector, run by an operator on the live Windows host whose NTFS files it pulls through the raw handle, including locked ones. The delivered zip is read as files; its layout is a clue and not an attribution (identify/collector-clues).",
       "install": {
         "brew": "https://github.com/orlikoski/CyLR/releases",
         "apt": "https://github.com/orlikoski/CyLR/releases"

@@ -131,11 +131,6 @@ reverse-engineering unused skills/rules/yara.md pe_info
 reverse-engineering unused skills/rules/yara.md yara
 reverse-engineering unused skills/strings/obfuscated.md pe_info
 reverse-engineering unused skills/strings/obfuscated.md tlsh
-triage-collection unlisted skills/gaps/what-is-missing.md fsstat
-triage-collection unlisted skills/identify/collector.md CyLR
-triage-collection unused skills/identify/collector.md file_type
-triage-collection unused skills/plan/what-to-collect.md uac
-triage-collection unused skills/plan/what-to-collect.md velociraptor
 windows-forensics unlisted skills/artifacts/shell.md fsstat
 windows-forensics unlisted skills/artifacts/shell.md lnkinfo
 windows-forensics unlisted skills/artifacts/shell.md olecfexport
