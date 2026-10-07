@@ -115,9 +115,10 @@ test("archive_probe lists every ZIP entry and counts every encrypted one past th
   });
 });
 
-test("archive_probe finds a PDF's encryption dictionary in the trailer of a file past 8 MiB", async () => {
+test("archive_probe searches the whole of a PDF: a marker in the trailer of a file past 8 MiB is found, as a marker", async () => {
   // It read the first 8 MiB, and a PDF names /Encrypt in its trailer, at the
-  // end: a large encrypted PDF was reported as opening with nothing.
+  // end: a large encrypted PDF was reported as opening with nothing. It is
+  // still a byte search, so what comes back is where the marker is, not a verdict.
   await withCwd(async (cwd) => {
     const pdf = Buffer.concat([
       Buffer.from("%PDF-1.7\n"),
@@ -125,13 +126,18 @@ test("archive_probe finds a PDF's encryption dictionary in the trailer of a file
       Buffer.from("\n5 0 obj\n<< /Filter /Standard /V 5 /R 6 /P -1028 >>\nendobj\ntrailer\n<< /Encrypt 5 0 R >>\n%%EOF\n"),
     ]);
     await writeFile(join(cwd, "work", "large.pdf"), pdf);
-    const out = body<{ protected: boolean; r: number; scheme: string; permissions_flags: number }>(
-      await tool(join(ENC, "archive_probe", "run.py"), cwd, { path: "work/large.pdf" }),
-    );
-    assert.equal(out.protected, true);
-    assert.equal(out.r, 6);
-    assert.equal(out.scheme, "AES-256");
-    assert.equal(out.permissions_flags, -1028);
+    const out = body<{
+      protected: boolean | null;
+      protection: string;
+      encrypt_marker: { found: boolean; count: number; first_offsets: number[] };
+      unresolved_hints: { v: number; r: number; p: number };
+    }>(await tool(join(ENC, "archive_probe", "run.py"), cwd, { path: "work/large.pdf" }));
+    assert.equal(out.encrypt_marker.found, true);
+    assert.deepEqual(out.encrypt_marker.first_offsets, [pdf.indexOf("/Encrypt")]);
+    assert.ok(out.encrypt_marker.first_offsets[0] > 8 * 1024 * 1024);
+    assert.equal(out.protected, null);
+    assert.match(out.protection, /^heuristic/);
+    assert.deepEqual([out.unresolved_hints.v, out.unresolved_hints.r, out.unresolved_hints.p], [5, 6, -1028]);
   });
 });
 
@@ -146,10 +152,17 @@ function sevenZip(header: Buffer): Buffer {
 
 const AES_CODER = Buffer.from([0x06, 0xf1, 0x07, 0x01]);
 
-test("archive_probe reads every string of a 7-Zip header, from the header itself", async () => {
+test("archive_probe keeps every string of a 7-Zip header as a hint, from the header itself, when 7z cannot list it", async () => {
   // It read strings from the first 4 KiB, which is packed data, and kept
-  // ten of them. The header, with the names, is at the end of the file.
+  // ten of them. The header, with the names, is at the end of the file. With
+  // 7z absent these printable strings are all it has, and it calls them a hint.
   await withCwd(async (cwd) => {
+    await mkdir(join(cwd, "nosite"), { recursive: true });
+    await writeFile(
+      join(cwd, "nosite", "sitecustomize.py"),
+      'import shutil\n_w = shutil.which\nshutil.which = lambda c, *a, **k: None if str(c) in ("7z", "7zz", "7za") else _w(c, *a, **k)\n',
+    );
+    const env = { PYTHONPATH: join(cwd, "nosite") };
     const names = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => `document-${i}.docx`);
     const plain = Buffer.concat([
       Buffer.from([0x01, 0x04, 0x06]),
@@ -159,33 +172,35 @@ test("archive_probe reads every string of a 7-Zip header, from the header itself
       Buffer.from([0x00]),
     ]);
     await writeFile(join(cwd, "work", "plain.7z"), sevenZip(plain));
-    const out = body<Page & {
-      header_kind: string;
-      names_readable: boolean;
-      protected: boolean;
-      strings_in_header: string[];
-      strings_in_header_count: number;
-    }>(await tool(join(ENC, "archive_probe", "run.py"), cwd, { path: "work/plain.7z", limit: 3 }));
-    assert.equal(out.header_kind, "plain");
-    assert.equal(out.names_readable, true);
-    assert.equal(out.protected, true, "an AES coder in a plain header means the data is encrypted");
-    assert.deepEqual(out.strings_in_header, names.slice(0, 3));
-    assert.equal(out.strings_in_header_count, 8);
-    assert.deepEqual(await allRows<string>(cwd, out), names);
+    const out = body<{
+      hints: { header_kind: string; data_encryption_coder_in_header: boolean };
+      names_readable: boolean | null;
+      protected: boolean | null;
+      header_strings_hint: string[];
+      header_strings_hint_count: number;
+      header_strings_hint_page: Page;
+    }>(await tool(join(ENC, "archive_probe", "run.py"), cwd, { path: "work/plain.7z", limit: 3 }, env));
+    assert.equal(out.hints.header_kind, "plain");
+    assert.equal(out.hints.data_encryption_coder_in_header, true);
+    assert.equal(out.names_readable, null, "printable strings are no member list");
+    assert.equal(out.protected, null);
+    assert.deepEqual(out.header_strings_hint, names.slice(0, 3));
+    assert.equal(out.header_strings_hint_count, 8);
+    assert.deepEqual(await allRows<string>(cwd, out.header_strings_hint_page), names);
 
-    // An encoded header whose coder list names AES hides the names too.
+    // An encoded header whose coder list names AES is a hint that the names need the password too.
     const encoded = Buffer.concat([Buffer.from([0x17, 0x06, 0x00, 0x01, 0x09, 0x20, 0x07, 0x0b, 0x01, 0x00, 0x02, 0x24]), AES_CODER, Buffer.alloc(8)]);
     await writeFile(join(cwd, "work", "hidden.7z"), sevenZip(encoded));
-    const hidden = body<{ header_kind: string; names_readable: boolean; protected: boolean }>(
-      await tool(join(ENC, "archive_probe", "run.py"), cwd, { path: "work/hidden.7z" }),
+    const hidden = body<{ hints: { header_kind: string; header_encrypted: boolean }; names_readable: null; protected: null }>(
+      await tool(join(ENC, "archive_probe", "run.py"), cwd, { path: "work/hidden.7z" }, env),
     );
-    assert.deepEqual([hidden.header_kind, hidden.names_readable, hidden.protected], ["encoded", false, true]);
+    assert.deepEqual([hidden.hints.header_kind, hidden.hints.header_encrypted, hidden.names_readable, hidden.protected], ["encoded", true, null, null]);
 
     // A header past the end of the file is said to be missing, not guessed at.
     const whole = sevenZip(plain);
     await writeFile(join(cwd, "work", "short.7z"), whole.subarray(0, whole.length - 10));
     const short = body<{ header_problem: string; names_readable: null }>(
-      await tool(join(ENC, "archive_probe", "run.py"), cwd, { path: "work/short.7z" }),
+      await tool(join(ENC, "archive_probe", "run.py"), cwd, { path: "work/short.7z" }, env),
     );
     assert.match(short.header_problem, /past the end of the file/);
     assert.equal(short.names_readable, null);

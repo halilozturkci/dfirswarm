@@ -39,13 +39,6 @@ computer-forensics-base unused skills/timeline/build.md timeline_super
 computer-forensics-base unused skills/timeline/super.md catalog_search
 computer-forensics-base unused skills/timeline/super.md log2timeline
 computer-forensics-base unused skills/timeline/super.md psort
-encrypted-containers unlisted skills/volumes/bitlocker.md bdemount
-encrypted-containers unlisted skills/volumes/bitlocker.md fls
-encrypted-containers unused skills/archives/protected.md file_type
-encrypted-containers unused skills/identify/headers.md file_type
-encrypted-containers unused skills/keys/where-they-hide.md ioc_scan
-encrypted-containers unused skills/volumes/bitlocker.md crypto_id
-encrypted-containers unused skills/volumes/luks-filevault.md crypto_id
 linux-forensics unlisted skills/containers/docker.md journalctl
 linux-forensics unlisted skills/filesystem/ext.md icat
 linux-forensics unlisted skills/triage/system-profile.md fsstat

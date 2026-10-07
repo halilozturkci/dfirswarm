@@ -5,10 +5,11 @@
 # them and the crypto toolbox set checks for them. An image with this pack
 # (disk, full) installs them at build time: dfvfs pulls libewf-python and
 # libfvde-python, which have no wheel and are compiled then, while the build
-# still has its compiler.
+# still has its compiler. Only pyAesCrypt is pinned: the others float until their
+# versions are recorded per architecture, with the transitive graph of dfvfs.
 libbde-python        # LGPL-3.0-or-later. pybde: a BitLocker volume, unlocked in user space.
-libvhdi-python       # LGPL-3.0-or-later. pyvhdi: a VHD or VHDX virtual disk.
+libvhdi-python       # LGPL-3.0-or-later. pyvhdi: a virtual hard disk in user space (VHD; check that the build reads the VHDX you have).
 libluksde-python     # LGPL-3.0-or-later. pyluksde: a LUKS volume.
-pytsk3               # Apache-2.0, with The Sleuth Kit built in. A file system from a byte stream.
-dfvfs                # Apache-2.0. The layers (EWF, VHDX, BitLocker, LUKS, NTFS) stacked in one process.
-pyAesCrypt           # Apache-2.0. AES Crypt containers.
+pytsk3               # Apache-2.0 for the bindings, with The Sleuth Kit built in (its CPL-1.0 and IPL-1.0 parts: see fls in the base pack). A file system from a byte stream.
+dfvfs                # Apache-2.0. The layers (EWF, VHDX, BitLocker, LUKS, NTFS) stacked in one process; its libyal dependencies are not pinned here.
+pyAesCrypt==6.1.1    # Apache-2.0 (its package metadata: Apache License 2.0). AES Crypt containers.
