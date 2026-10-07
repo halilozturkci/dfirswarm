@@ -1,41 +1,21 @@
 ---
 id: normalise/layout
-title: The paths in the tree are not the paths on the machine
-when: Before you cite anything by path.
+title: Source path, delivered path and analysis path
+when: Before you cite a delivered file by path.
 needs: [identify/collector]
 tools: [collection_index]
 requires_host: []
 ---
 
-Every collector rewrites paths to be safe on the examiner's file system, and
-each does it differently. Citing the path you see, without the mapping, cites
-something that never existed.
+Use when you cite or interpret a path from a delivery. Not for deciding whether the census is complete or which parser fits.
 
-What gets rewritten, and why it matters:
+1. Keep three identities apart: the **source path** the collector recorded, the **delivered path** (container member or file in the tree you were handed) and the **analysis path** you extracted to. They may differ, and not every collector rewrites. Look for drive or volume roots, accessor prefixes, named streams, reserved names, long paths, encodings, Unicode normalisation and case collisions. A colon is handled by the naming layer and the file system the file passed through. An underscore or a dot in a name does not show a renamed stream, and a missing stream cannot be diagnosed from the extracted name.
+2. `collection_index` gives, per file, `source_path_hypothesis`: a convention's reading with its `method`, `confidence` (low, medium or none), `unresolved_components` and `alternatives`. It is a guess about a layout. `source_path_observed` is filled only from a KAPE copy log in the tree, with the log and row; two matching rows are `ambiguous`, and the other collectors' records are not read.
+3. Do not strip a leading `root`: it may be the source's `/root`, and the tool keeps it with the wrapper reading as an alternative. Do not read accessor or wrapper components (`uploads`, `auto`, a drive spelled `C%3A`) as source directories without the collector's index. Do not reverse an apparent stream rename without a mapping (`possible_renamed_streams` is a guess from name shape).
+4. Cite the delivered input or the sealed job object and its member locator or relative path. Add the source path, host, volume, snapshot or stream only where a mapping row supports it, and say which. Where it is uncertain write "source path unresolved" and keep the delivered locator. Never rename evidence in place, and never merge two entries because their displayed paths normalise alike.
 
-- **The drive letter or root.** `C:\Windows` becomes `C/Windows`, or
-  `%FileSystem%/Windows`, or a directory named after the volume's serial.
-- **A colon in a named stream.** `file.txt:payload` cannot exist on most file
-  systems, so it becomes `file.txt_payload`, or `file.txt.payload`, or the
-  stream is dropped entirely. **A dropped stream is a silent loss**, and it is
-  exactly what a Windows case may turn on: see `filesystem/ads` in the Windows
-  pack.
-- **Reserved names.** `LPT1.txt` and `COM1` cannot be created on Windows and are
-  renamed by a Windows-based collector.
-- **Long paths and unicode.** Truncated, or transliterated.
-- **Case.** A case-insensitive source collected onto a case-sensitive file
-  system, or the reverse, can collide two files into one.
+Only if you will quote a file count or say a file is not in the delivery: `normalise/inventory`. Only if a delivered file is going to a parser: `normalise/parsers`.
 
-`collection_index` builds the index the rest of the work needs: every file with
-its size, its hash, the path it has now and a cautiously reconstructed source
-path. The reconstruction is a convention-based hypothesis; confirm it against
-the collector's manifest. The tool refuses a directory containing a disk image,
-because the E01 name is a container path, not a source-machine path.
-
-**Cite both.** "`C:\Users\alice\NTUSER.DAT` (in the collection at
-`C/Users/alice/NTUSER.DAT`, sha256 …)" is a citation somebody else can follow
-in either direction. One without the other is not.
-
-Once the index exists, the platform packs work unchanged: a hive is a hive, an
-`.evtx` is an `.evtx`, and `$MFT` copied off a live volume parses exactly as it
-would from an image.
+Shows: where a file sits in what you were given, and what a convention or a collector's row says it was. Does not show: the source path of a file with no row, or that a stream was dropped or renamed.
+Record: delivered path and hash, the hypothesis with its confidence or the observed path with its log row, and what is unresolved.
+Sensitive output: `collection_index` prints paths and digests; run it as a job with `secret_output: true`, never copy a credential-shaped path or the digest of a file that is itself a secret into a finding.
