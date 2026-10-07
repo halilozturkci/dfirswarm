@@ -236,7 +236,7 @@ export type SelfCompactHandle = {
   budgetFields(ctx: ExtensionContext): { context_ceiling: number; context_level: UsageLevel; context_locked: boolean; handoffs: number };
   /** True while a hand-off's compaction runs: Pi refuses every prompt until it ends. */
   compacting(): boolean;
-  /** True from the moment the seat saved its hand-off note until the hand-off landed: a compaction is about to run, or is running. */
+  /** True from the moment the seat saved its hand-off note until the compaction landed or failed: one is about to run, or is running. A failed one is not pending. */
   handoffPending(): boolean;
 };
 
@@ -303,6 +303,32 @@ export function latestAssistantUsage(entries: EntryLike[]): UsageLike | undefine
     if (total > 0) return usage;
   }
   return undefined;
+}
+
+/**
+ * True when the branch holds a `context_edit` after the last assistant reply
+ * that carries a usable count: Pi then distrusts that count and estimates the
+ * whole projection at characters over four (compaction.js
+ * `estimateProjectedContextTokens`), which on 10,853 recorded replies is up to
+ * 17 % above what the provider counted (7 to 12 % at p95). The gauge is then an
+ * estimate that a skill release (or Pi's own overflow recovery) caused, and the
+ * levels and the lock must not be moved by it.
+ */
+export function editAfterLastUsage(entries: EntryLike[]): boolean {
+  let usageAt = -1;
+  let editAt = -1;
+  for (let i = entries.length - 1; i >= 0 && (usageAt < 0 || editAt < 0); i--) {
+    const entry = entries[i]!;
+    if (entry.type === "compaction") break;
+    if (editAt < 0 && entry.type === "context_edit") editAt = i;
+    if (usageAt < 0 && entry.type === "message" && entry.message?.role === "assistant") {
+      const stop = entry.message.stopReason;
+      const usage = entry.message.usage as UsageLike | undefined;
+      const total = usage ? usage.totalTokens || (usage.input ?? 0) + (usage.output ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0) : 0;
+      if (stop !== "aborted" && stop !== "error" && total > 0) usageAt = i;
+    }
+  }
+  return editAt > usageAt && usageAt >= 0;
 }
 
 /**
@@ -592,6 +618,18 @@ export function registerSelfCompact(pi: ExtensionAPI, deps: SelfCompactDeps): Se
       usage = undefined;
     }
     const window = usage?.contextWindow ?? ctx.model?.contextWindow ?? 0;
+    // After an edit Pi's count is its estimate. Until the next reply the last count the provider gave stands.
+    let distrusted = false;
+    try {
+      distrusted = R.usage.tokens !== null && editAfterLastUsage(ctx.sessionManager.getBranch() as unknown as EntryLike[]);
+    } catch {
+      distrusted = false;
+    }
+    if (distrusted) {
+      R.usage = { ...R.usage, window };
+      R.level = R.thresholds ? levelFor(R.usage.tokens, R.thresholds) : "unknown";
+      return;
+    }
     const tokens = usage?.tokens ?? null;
     const ceiling = R.thresholds?.ceiling ?? window;
     const percent = tokens !== null && ceiling > 0 ? (tokens / ceiling) * 100 : null;
@@ -1289,8 +1327,10 @@ export function registerSelfCompact(pi: ExtensionAPI, deps: SelfCompactDeps): Se
       return R.compactionInFlight;
     },
     handoffPending() {
+      // Not "failed": a hand-off given up after its retries keeps that status while the seat goes on working,
+      // and no compaction is about to run for it.
       const h = activeHandoff();
-      return h !== undefined && (h.status === "pending" || h.status === "compacting" || h.status === "failed");
+      return h !== undefined && (h.status === "pending" || h.status === "compacting");
     },
   };
 }

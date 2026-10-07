@@ -27,7 +27,7 @@ import {
   specsFromEnv,
   validateSpecs,
 } from "../extensions/context-ceiling.ts";
-import { handoffHeader, HANDOFF_TYPE, latestAssistantUsage, nowPrompt, recoverState, renderTemplate, STATE_TYPE } from "../extensions/self-compact.ts";
+import { editAfterLastUsage, handoffHeader, HANDOFF_TYPE, latestAssistantUsage, nowPrompt, recoverState, renderTemplate, STATE_TYPE } from "../extensions/self-compact.ts";
 import { agentDonePath, EVENTS_REL, initSandbox, SENTINEL_REL, TOOL_RESERVED_NAMES } from "../extensions/protocol.ts";
 import { normalizeShellCommand, repeatHintMinMs, repeatHintText, REPEAT_HINT_MIN_MS } from "../extensions/agent-swarm.ts";
 
@@ -212,6 +212,20 @@ test("the recovery reducer rebuilds a hand-off from the branch", () => {
   const answered = recoverState([state({ ...pending, status: "ready" }), { type: "custom_message", customType: HANDOFF_TYPE, details: { id: "h1" } }, { type: "message", message: { role: "assistant" } }]);
   assert.equal(answered.answered, true);
   assert.equal(latestAssistantUsage([{ type: "message", message: { role: "assistant", usage: { input: 10, cacheRead: 90, output: 1 } } }, { type: "compaction" }, { type: "message", message: { role: "assistant", usage: { input: 5, cacheRead: 0, output: 1 } } }])?.input, 5, "only usage after the latest compaction counts");
+});
+
+test("a context_edit after the last reply with a usable count means Pi's gauge is its estimate, not the provider's", () => {
+  const reply = (total: number, extra: Record<string, unknown> = {}) => ({ type: "message", message: { role: "assistant", usage: { totalTokens: total }, ...extra } });
+  const edit = { type: "context_edit" };
+  assert.equal(editAfterLastUsage([reply(100), { type: "message", message: { role: "toolResult" } }]), false, "no edit");
+  assert.equal(editAfterLastUsage([reply(100), edit]), true, "an edit after the reply");
+  assert.equal(editAfterLastUsage([edit, reply(100)]), false, "an edit before the reply: the count is trusted again");
+  assert.equal(editAfterLastUsage([reply(100), edit, reply(120)]), false);
+  assert.equal(editAfterLastUsage([reply(100), edit, reply(0)]), true, "a reply with no count does not restore trust");
+  assert.equal(editAfterLastUsage([reply(100), edit, reply(900, { stopReason: "error" })]), true, "nor does one that errored");
+  assert.equal(editAfterLastUsage([reply(100), edit, { type: "compaction" }]), false, "a compaction is Pi's own case: the gauge says nothing until the next reply");
+  assert.equal(editAfterLastUsage([edit]), false, "no reply at all: nothing was trusted to keep");
+  assert.equal(editAfterLastUsage([]), false);
 });
 
 test("the trace names self-compaction writes are reserved from forged tools", () => {

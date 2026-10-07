@@ -1,13 +1,16 @@
 /**
  * How a run used its skills, from the trace alone.
  *
- * Five rows carry it (extensions/skills.ts): `skills_index` when a seat's
+ * Six rows carry it (extensions/skills.ts): `skills_index` when a seat's
  * prompt was built, `skill` for every call of the tool (a body, the index, a
  * miss, an answer that the body is already in context), `skill_done` when a
  * seat said it was finished with one, `skill_unload` when the harness replaced
- * a finished body in the seat's context by a stub, and `skill_release_policy`
- * when it said what it would release on that seat's model. `compact_done`
- * marks a compaction. This
+ * a finished body in the seat's context by a stub (a later `ok:false` row
+ * naming the same tool call takes that back: the edit never landed),
+ * `skill_release_policy` when it said what it would release on that seat's
+ * model, and `skill_release_effect` for the first Anthropic reply after a
+ * release or a compaction (how many thinking blocks the service said it
+ * dropped). `compact_done` marks a compaction. This
  * module is pure and has no DOM, so the context audit (scripts/context-audit.ts),
  * the console server (scripts/ui/model.ts) and the Packs tab share it.
  *
@@ -74,6 +77,15 @@ export type SeatSkills = {
   reloaded_after_release: number;
   /** What the seat's release policy came to (null on a trace from before the unloader). */
   release_policy: SeatReleasePolicy | null;
+  /**
+   * The first Anthropic replies after a release and after a compaction, and the
+   * thinking blocks the service said it dropped from the history in them. Only
+   * Anthropic's transport reports it, so a seat on another API has none.
+   */
+  replies_after_release: number;
+  thinking_dropped_after_release: number;
+  replies_after_compaction: number;
+  thinking_dropped_after_compaction: number;
   referenced: number;
   /** Loads with no trace of use afterwards. */
   unused: number;
@@ -118,6 +130,10 @@ export type RunSkills = {
     released_at_compaction: number;
     tokens_released: number;
     reloaded_after_release: number;
+    replies_after_release: number;
+    thinking_dropped_after_release: number;
+    replies_after_compaction: number;
+    thinking_dropped_after_compaction: number;
     referenced: number;
     unused: number;
     lost_at_compaction: number;
@@ -152,7 +168,7 @@ function escapeRegExp(s: string): string {
 }
 
 /** Rows that only describe the skill machinery or the gauge: a mention there is not use. */
-const NOT_USE = new Set(["skill", "skill_done", "skill_unload", "skill_release_policy", "skills_index", "skills_compacted", "context"]);
+const NOT_USE = new Set(["skill", "skill_done", "skill_unload", "skill_release_policy", "skill_release_effect", "skills_index", "skills_compacted", "context"]);
 
 type Load = SkillLoadUse & { at: number; tools: string[]; toolsKnown: boolean; turn: number | null; reload: boolean; call: string | null; reloadFlag: boolean };
 
@@ -174,6 +190,10 @@ export function emptySeat(agent: string): SeatSkills {
     tokens_released: 0,
     reloaded_after_release: 0,
     release_policy: null,
+    replies_after_release: 0,
+    thinking_dropped_after_release: 0,
+    replies_after_compaction: 0,
+    thinking_dropped_after_compaction: 0,
     referenced: 0,
     unused: 0,
     lost_at_compaction: 0,
@@ -202,7 +222,7 @@ export function skillUse(rows: readonly SkillTraceRow[], seatIds?: readonly stri
 
   const seats: SeatSkills[] = [];
   const rollup = new Map<string, SkillRollup & { agentSet: Set<string> }>();
-  const isSeatRow = (r: SkillTraceRow) => r.tool === "agent_start" || r.tool === "context" || r.tool === "skills_index" || r.tool === "skill" || r.tool === "skill_done" || r.tool === "skill_unload" || r.tool === "skill_release_policy";
+  const isSeatRow = (r: SkillTraceRow) => r.tool === "agent_start" || r.tool === "context" || r.tool === "skills_index" || r.tool === "skill" || r.tool === "skill_done" || r.tool === "skill_unload" || r.tool === "skill_release_policy" || r.tool === "skill_release_effect";
   const ids = seatIds ? [...new Set(seatIds)] : [...perAgent].filter(([, list]) => list.some(({ row }) => isSeatRow(row))).map(([agent]) => agent);
 
   for (const agent of ids) {
@@ -263,6 +283,21 @@ export function skillUse(rows: readonly SkillTraceRow[], seatIds?: readonly stri
         }
       } else if (row.tool === "skill_unload") {
         if (r.ok !== false) unloads.push({ at, pack: str(r.pack), id: str(a.id) ?? "", call: str(r.call), tokens: num(r.tokens) ?? 0, reason: str(r.reason) });
+        else {
+          // A row that fails and names the call of an earlier release takes it back: the edit never landed.
+          const call = str(r.call);
+          const earlier = call === null ? -1 : unloads.findIndex((u) => u.call === call);
+          if (earlier >= 0) unloads.splice(earlier, 1);
+        }
+      } else if (row.tool === "skill_release_effect") {
+        const dropped = num(r.thinking_dropped) ?? 0;
+        if (r.after === "compaction") {
+          seat.replies_after_compaction += 1;
+          seat.thinking_dropped_after_compaction += dropped;
+        } else {
+          seat.replies_after_release += 1;
+          seat.thinking_dropped_after_release += dropped;
+        }
       } else if (row.tool === "skill_release_policy") {
         seat.release_policy = { mode: str(r.mode) ?? "", effective: str(r.effective) ?? "", class: str(r.class) ?? "", model: str(r.model), thinking_level: str(r.thinking_level) };
       } else if (row.tool === "compact_done") {
@@ -373,6 +408,10 @@ export function skillUse(rows: readonly SkillTraceRow[], seatIds?: readonly stri
       released_at_compaction: sum((s) => s.released_at_compaction),
       tokens_released: sum((s) => s.tokens_released),
       reloaded_after_release: sum((s) => s.reloaded_after_release),
+      replies_after_release: sum((s) => s.replies_after_release),
+      thinking_dropped_after_release: sum((s) => s.thinking_dropped_after_release),
+      replies_after_compaction: sum((s) => s.replies_after_compaction),
+      thinking_dropped_after_compaction: sum((s) => s.thinking_dropped_after_compaction),
       referenced: sum((s) => s.referenced),
       unused: sum((s) => s.unused),
       lost_at_compaction: sum((s) => s.lost_at_compaction),

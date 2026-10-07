@@ -97,6 +97,10 @@ test("per seat: loads, tokens, used after load, no trace of use, done, lost at a
     released_at_compaction: 0,
     tokens_released: 0,
     reloaded_after_release: 0,
+    replies_after_release: 0,
+    thinking_dropped_after_release: 0,
+    replies_after_compaction: 0,
+    thinking_dropped_after_compaction: 0,
     referenced: 2,
     unused: 3,
     lost_at_compaction: 3,
@@ -337,4 +341,34 @@ test("the context audit says what was released, at which trigger, and the share 
   const plain = audit([load("p", "a/b"), row("p", "skill_done", { id: "a/b" }, { ok: true })].map((r) => ({ ts: r.ts, agent: r.agent, tool: r.tool, args: (r.args ?? {}) as Record<string, unknown>, result: (r.result ?? {}) as Record<string, unknown> })), "x").findings.join("\n");
   assert.match(plain, /0 loaded bodies were released from the seat's context \(0 tokens; 0 at a compaction, 0 at a turn boundary after skill_done\); 0 were loaded again afterwards\./);
   assert.ok(!/wasted-release rate/.test(plain));
+});
+
+test("a release that was taken back is not a release: an ok:false row naming the same tool call cancels the earlier ok:true", () => {
+  clock = 0;
+  const rows = [
+    load("a", "execution/prefetch", { call: "k1", turn: 1 }),
+    unload("a", "execution/prefetch", "k1", { turn: 3 }),
+    row("a", "skill_unload", { id: "execution/prefetch" }, { ok: false, error: "the edit was not committed; the body is still in the context", pack: "pack-a", call: "k1", entry: "e1", reason: "done", turn: 3 }),
+    load("a", "logs/security", { call: "k2", turn: 2 }),
+    unload("a", "logs/security", "k2", { turn: 4, tokens: 700 }),
+    // A refusal that names a call with no release before it changes nothing.
+    row("a", "skill_unload", { id: "x/y" }, { ok: false, error: "not in the context", call: "k9", turn: 5 }),
+  ];
+  const seat = skillUse(rows, ["a"]).seats[0]!;
+  assert.deepEqual([seat.released, seat.tokens_released], [1, 700]);
+  assert.deepEqual(seat.detail.map((d) => [d.id, d.released]), [["execution/prefetch", false], ["logs/security", true]]);
+});
+
+test("the first Anthropic replies after a release and after a compaction, and the thinking blocks dropped in them, are counted apart; the rows are not a use of any note", () => {
+  clock = 0;
+  const effect = (after: string, dropped: number) => row("a", "skill_release_effect", {}, { ok: true, after, turn: 4, reply_turn: 5, thinking_dropped: dropped, model: "claude-fable-5-1" });
+  const rows = [load("a", "execution/prefetch", { call: "k1" }), effect("release", 3), effect("release", 0), effect("compaction", 1)];
+  const use = skillUse(rows, ["a"]);
+  const seat = use.seats[0]!;
+  assert.deepEqual([seat.replies_after_release, seat.thinking_dropped_after_release, seat.replies_after_compaction, seat.thinking_dropped_after_compaction], [2, 3, 1, 1]);
+  assert.deepEqual([use.totals.replies_after_release, use.totals.thinking_dropped_after_release, use.totals.replies_after_compaction, use.totals.thinking_dropped_after_compaction], [2, 3, 1, 1]);
+  assert.equal(seat.referenced, 0);
+  const text = skillFindings(use).join("\n");
+  assert.match(text, /Anthropic's replies say it dropped 3 thinking blocks from the history in the 2 first replies after a release and 1 thinking block in the 1 after a compaction/);
+  assert.deepEqual(skillFindings(skillUse([load("b", "a/b")], ["b"])).filter((l) => l.includes("Anthropic")), []);
 });

@@ -56,10 +56,12 @@ async function makeSandbox(name: string): Promise<Dir> {
 }
 
 type Call = { name: string; arguments: Record<string, unknown> };
-type Step = { calls?: Call[]; text?: string };
+type Step = { calls?: Call[]; text?: string; hold?: string };
 const skill = (id: string): Call => ({ name: "skill", arguments: { id } });
 const done = (id: string, note = "took what I needed"): Call => ({ name: "skill_done", arguments: { id, note } });
 const filler = (n: number): Call => ({ name: "bash", arguments: { command: `printf 'filler ${n} '; yes filler | head -n 300 | tr '\\n' ' '; echo` } });
+/** A result of about 10,000 tokens (42 KB, under Pi's 50 KB bound): enough of them put the whole context past a line the provider's own count stays far under. */
+const bigFiller = (n: number): Call => ({ name: "bash", arguments: { command: `printf 'big ${n} '; yes filler | head -n 6000 | tr '\\n' ' '; echo` } });
 const calls = (...c: Call[]): Step => ({ calls: c });
 const HANDOFF_NOTE = "NAME: scripted-worker\nDONE: read two notes.\nNEXT ACTION: write nothing, reply All done.";
 const handoff = (): Call => ({ name: "self_compact", arguments: { note_to_self: HANDOFF_NOTE } });
@@ -73,9 +75,26 @@ type SessionEntry = { type: string; id: string; targetId?: string; replacement?:
 
 type Run = { turns: Turn[]; summaries: Summary[]; rows: Row[]; session: SessionEntry[]; events: RpcEvent[]; calls: Awaited<ReturnType<typeof sessionCalls>> };
 
-/** One scripted seat over the two test packs, to the end of its script. */
-async function runSeat(name: string, options: { model: string; release?: string; script: Step[]; thinking?: string }): Promise<Run> {
+type Drive = {
+  client: RpcClient;
+  dir: Dir;
+  /** The trace rows so far. */
+  rows: () => Row[];
+  /** The model requests the fake has recorded so far. */
+  requests: () => number;
+  /** Waits until the fake has recorded request `i` (it may still be held). */
+  requestSeen: (i: number, ms?: number) => Promise<void>;
+  /** Waits until a trace row matches. */
+  rowSeen: (pred: (r: Row) => boolean, ms?: number) => Promise<void>;
+  /** Lets a held request go. */
+  open: (gate: string) => void;
+};
+
+/** One scripted seat over the two test packs, to the end of its script. `drive` acts on the live seat while the script runs. */
+async function runSeat(name: string, options: { model: string; release?: string; script: Step[]; thinking?: string; env?: Record<string, string>; drive?: (h: Drive) => Promise<void> }): Promise<Run> {
   const d = await makeSandbox(name);
+  const gates = join(d.root, "gates");
+  mkdirSync(gates, { recursive: true });
   const packsRoot = await mkdtemp(join(tmpdir(), "skill-unload-packs-"));
   const { a, b } = await twoPacks(packsRoot);
   const client = new RpcClient({
@@ -91,18 +110,37 @@ async function runSeat(name: string, options: { model: string; release?: string;
       ...(options.release !== undefined ? { SWARM_SKILL_RELEASE: options.release } : {}),
       SU_SCRIPT: JSON.stringify([...options.script, { text: FINAL }]),
       SU_TRACE: d.fakeTrace,
+      SU_GATE_DIR: gates,
+      ...options.env,
     },
     logFile: d.logFile,
   });
+  const readRows = () => (existsSync(join(d.root, EVENTS_REL)) ? readFileSync(join(d.root, EVENTS_REL), "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l) as Row) : []);
+  const requests = () => fakeRecords(d).filter((r) => r.kind === "turn").length;
+  const until = async (ok: () => boolean, what: string, ms = 60_000) => {
+    for (let waited = 0; !ok() && waited < ms; waited += 25) await new Promise((r) => setTimeout(r, 25));
+    assert.ok(ok(), `timed out waiting for ${what}`);
+  };
   try {
     const accepted = await client.request({ type: "prompt", message: "Start the scripted work." });
     assert.equal(accepted.success, true, JSON.stringify(accepted));
+    if (options.drive) {
+      await options.drive({
+        client,
+        dir: d,
+        rows: readRows,
+        requests,
+        requestSeen: (i, ms) => until(() => requests() > i, `request ${i}`, ms),
+        rowSeen: (pred, ms) => until(() => readRows().some(pred), "a trace row", ms),
+        open: (gate) => writeFileSync(join(gates, gate), "go"),
+      });
+    }
     await client.waitFor((e) => e.type === "message_end" && (e.message as { role?: string })?.role === "assistant" && messageText(e.message).includes(FINAL), 90_000);
     await client.waitFor((e) => e.type === "agent_settled", 30_000, { since: client.events.length - 1 }).catch(() => undefined);
   } finally {
     await client.close();
   }
-  const records = existsSync(d.fakeTrace) ? readFileSync(d.fakeTrace, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l) as Turn | Summary) : [];
+  const records = fakeRecords(d);
   const sessionFile = readdirSync(d.sessionDir).filter((f) => f.endsWith(".jsonl")).map((f) => join(d.sessionDir, f))[0]!;
   const run: Run = {
     turns: records.filter((r): r is Turn => r.kind === "turn"),
@@ -119,6 +157,10 @@ async function runSeat(name: string, options: { model: string; release?: string;
   }
   await rm(packsRoot, { recursive: true, force: true }).catch(() => undefined);
   return run;
+}
+
+function fakeRecords(d: Dir): Array<Turn | Summary> {
+  return existsSync(d.fakeTrace) ? readFileSync(d.fakeTrace, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l) as Turn | Summary) : [];
 }
 
 const rowsOf = (run: Run, tool: string) => run.rows.filter((r) => r.tool === tool);
@@ -146,6 +188,7 @@ test("a finished body is replaced by a one-line stub at the next turn boundary; 
   }
   const run = await runSeat("boundary", {
     model: "fake/scripted",
+    release: "auto",
     script: [
       calls(skill("evidence/one")), //          0
       calls(filler(1)), //                      1
@@ -227,6 +270,7 @@ test("two bodies finished in one turn leave together, in one edit of the history
   }
   const run = await runSeat("batch", {
     model: "fake/scripted",
+    release: "auto",
     script: [
       calls(skill("evidence/one")), // 0
       calls(skill("evidence/two")), // 1
@@ -253,8 +297,12 @@ test("parallel skill calls and a skill_done for an id the seat never loaded: the
     t.skip("pi is not on PATH");
     return;
   }
+  // Through agent-swarm and the real CLI, on purpose: the guard that a body finished in the turn it was loaded waits for the
+  // next boundary reads the turn counter agent-swarm.ts bumps in its own turn_end handler, which has to run before this
+  // module's. Registered the other way round, the body would wait two boundaries instead of one, and this test says so.
   const run = await runSeat("parallel", {
     model: "fake/scripted",
+    release: "auto",
     script: [
       calls(skill("evidence/one"), skill("evidence/one"), done("evidence/one"), done("no/such/note")), // 0: all four in one message
       calls(filler(1)), //                                                                              1
@@ -279,12 +327,13 @@ test("with thinking on, a Claude-shaped catalogue entry keeps its bodies until t
     t.skip("pi is not on PATH");
     return;
   }
-  const run = await runSeat("claude", { model: "fakeclaude/claude-scripted", script: TWO_NOTES_THEN_HANDOFF });
+  // No --skill-release: the default. The same under auto, which keeps this class at a compaction too.
+  const run = await runSeat("claude", { model: "fakeclaude/claude-scripted", script: TWO_NOTES_THEN_HANDOFF, env: { SU_DROPPED: "2" } });
 
   // (e) The policy: the catalogue says anthropic-messages and reasoning, thinking is on, so no draft before the compaction.
   const policy = rowsOf(run, "skill_release_policy");
   assert.equal(policy.length, 1);
-  assert.deepEqual([policy[0]!.result.effective, policy[0]!.result.class, policy[0]!.result.api, policy[0]!.result.reasoning], ["compaction", "signed-thinking", "anthropic-messages", true]);
+  assert.deepEqual([policy[0]!.result.mode, policy[0]!.result.effective, policy[0]!.result.class, policy[0]!.result.api, policy[0]!.result.reasoning], ["compaction", "compaction", "signed-thinking", "anthropic-messages", true]);
   assert.notEqual(policy[0]!.result.thinking_level, "off");
   for (const i of [4, 5, 6, 7]) assert.equal(carries(run.turns[i]!, BODY_ONE), true, `request ${i}: the finished body is still there`);
   const compactionAt = run.session.findIndex((e) => e.type === "compaction");
@@ -315,10 +364,15 @@ test("with thinking on, a Claude-shaped catalogue entry keeps its bodies until t
   // The hand-off message the seat resumed on: what it read, with sizes, and what it probably still needs.
   const resumed = run.turns[8]!;
   const header = resumed.messages.filter((m) => m.role === "user").map((m) => m.text).find((x) => x.startsWith("[self-compact · handoff]"))!;
-  assert.match(header, /Skill bodies a compaction took out of your context: pack-a:evidence\/two\. Load again/);
-  assert.match(header, /Method notes you read since your last compaction, with their size in tokens \(never their text\): pack-a:evidence\/two \d+ \(not marked done\), pack-a:evidence\/one \d+ \(marked done, released\)\./);
-  assert.match(header, /Not marked done, so probably still needed: pack-a:evidence\/two\./);
+  assert.match(header, /Method notes you read since your last compaction, with their size in tokens \(never their text\): pack-a:evidence\/two \d+ \(taken out of your context, not marked done\), pack-a:evidence\/one \d+ \(marked done, released earlier\)\.\nLoad again \(skill\(id\)\) the ones you still need; not marked done, so probably still needed: pack-a:evidence\/two\./);
+  assert.equal(header.includes("Skill bodies a compaction took out"), false, "one account, not a second sentence naming the same ids");
   assert.equal(carries(resumed, BODY_ONE) || carries(resumed, BODY_TWO), false, "after the hand-off no note text is in the request: the summary and the header carry ids and sizes");
+
+  // The first reply after the compaction: the service said it dropped two thinking blocks (the fake reports them), and the row says so.
+  const effect = rowsOf(run, "skill_release_effect");
+  assert.deepEqual(effect.map((r) => [r.result.after, r.result.thinking_dropped, r.result.model]), [["compaction", 2, "claude-scripted"]]);
+  const seat = skillUse(run.rows, ["agent00"]).seats[0]!;
+  assert.deepEqual([seat.replies_after_compaction, seat.thinking_dropped_after_compaction, seat.replies_after_release], [1, 2, 0]);
 });
 
 test("a model that does not think releases the finished body at the turn boundary, and the compaction after it is summarised without that body", async (t) => {
@@ -326,7 +380,7 @@ test("a model that does not think releases the finished body at the turn boundar
     t.skip("pi is not on PATH");
     return;
   }
-  const run = await runSeat("release-then-compact", { model: "fake/scripted", script: TWO_NOTES_THEN_HANDOFF });
+  const run = await runSeat("release-then-compact", { model: "fake/scripted", release: "auto", script: TWO_NOTES_THEN_HANDOFF });
   assert.equal(carries(run.turns[3]!, BODY_ONE), true);
   assert.equal(carries(run.turns[4]!, BODY_ONE), false, "released at the boundary of the turn that said done");
   assert.match(skillResultsIn(run.turns[4]!)[0]!, STUB_ONE);
@@ -351,18 +405,21 @@ test("a model that does not think releases the finished body at the turn boundar
   assert.deepEqual((compacted.result.released as Array<{ key: string }> | undefined)?.map((x) => x.key), ["pack-a:evidence/one"]);
 });
 
-test("--skill-release compaction: a model that may be edited at a boundary still keeps the finished body until the compaction", async (t) => {
+test("the default, and --skill-release compaction: a model that may be edited at a boundary still keeps the finished body until the seat hands off", async (t) => {
   if (!haveCli()) {
     t.skip("pi is not on PATH");
     return;
   }
-  const run = await runSeat("mode-compaction", { model: "fake/scripted", release: "compaction", script: TWO_NOTES_THEN_HANDOFF });
-  const policy = rowsOf(run, "skill_release_policy")[0]!;
-  assert.deepEqual([policy.result.mode, policy.result.effective, policy.result.class], ["compaction", "compaction", "open"]);
-  for (const i of [4, 5, 6, 7]) assert.equal(carries(run.turns[i]!, BODY_ONE), true, `request ${i}`);
-  assert.deepEqual(rowsOf(run, "skill_unload").map((r) => [r.result.ok, r.result.reason]), [[true, "compaction"]]);
-  assert.match(run.summaries[0]!.input, /evidence\/one released \(\d+ tokens\)/);
-  assert.equal(run.summaries[0]!.input.includes(BODY_ONE), false);
+  for (const release of [undefined, "compaction", "sometimes"]) {
+    const run = await runSeat(`mode-compaction-${release ?? "default"}`, { model: "fake/scripted", ...(release !== undefined ? { release } : {}), script: TWO_NOTES_THEN_HANDOFF });
+    const policy = rowsOf(run, "skill_release_policy")[0]!;
+    assert.deepEqual([policy.result.mode, policy.result.effective, policy.result.class, policy.result.ok], ["compaction", "compaction", "open", release !== "sometimes"], String(release));
+    for (const i of [4, 5, 6, 7]) assert.equal(carries(run.turns[i]!, BODY_ONE), true, `${release}: request ${i}`);
+    assert.deepEqual(rowsOf(run, "skill_unload").map((r) => [r.result.ok, r.result.reason]), [[true, "compaction"]], String(release));
+    assert.match(run.summaries[0]!.input, /evidence\/one released \(\d+ tokens\)/);
+    assert.equal(run.summaries[0]!.input.includes(BODY_ONE), false, "the summary is shaped in this mode too");
+    assert.match(run.summaries[0]!.input, /<skills-read>/);
+  }
 });
 
 test("--skill-release off: no stub, no edit, nothing shaped; the summary is written from what Pi serialises, as before the unloader", async (t) => {
@@ -382,4 +439,124 @@ test("--skill-release off: no stub, no edit, nothing shaped; the summary is writ
   const header = run.turns[8]!.messages.filter((m) => m.role === "user").map((m) => m.text).find((x) => x.startsWith("[self-compact · handoff]"))!;
   assert.match(header, /Skill bodies a compaction took out of your context: pack-a:evidence\/one, pack-a:evidence\/two\. Load again/);
   assert.equal(header.includes("Method notes you read since your last compaction"), false);
+});
+
+test("a hand-off whose compaction fails for good is not a compaction: the seat that goes on working releases nothing, and nothing toggles (a Claude-shaped seat, the default policy)", async (t) => {
+  if (!haveCli()) {
+    t.skip("pi is not on PATH");
+    return;
+  }
+  const run = await runSeat("failed-handoff", {
+    model: "fakeclaude/claude-scripted",
+    // Every summary request fails: ours twice, Pi's own after them, three times over; then the harness gives the hand-off up.
+    env: { SU_SUMMARY_FAIL: "1000" },
+    script: [
+      calls(skill("evidence/one")), //   0
+      calls(filler(1)), //               1
+      calls(done("evidence/one")), //    2
+      calls(filler(2)), //               3
+      calls(filler(3)), //               4
+      calls(filler(4)), //               5
+      calls(handoff()), //               6: the run ends here; the compaction fails, three times
+      // The seat is prompted again by hand once the harness has given the hand-off up.
+      calls(skill("evidence/two")), //   7
+      calls(filler(5)), //               8
+      calls(done("evidence/two")), //    9: finished, in a seat whose hand-off is "failed" and not pending
+      calls(filler(6)), //              10
+      calls(skill("evidence/two")), //  11: needed again
+      calls(done("evidence/two")), //   12
+      calls(filler(7)), //              13
+    ],
+    drive: async ({ client, rowSeen }) => {
+      await rowSeen((r) => r.tool === "compact_failed" && r.result.lock_released === true, 90_000);
+      const accepted = await client.request({ type: "prompt", message: "Go on." });
+      assert.equal(accepted.success, true, JSON.stringify(accepted));
+    },
+  });
+  assert.equal(run.session.filter((e) => e.type === "compaction").length, 0, "the compaction never landed");
+  const failedAt = run.rows.findIndex((r) => r.tool === "compact_failed" && r.result.lock_released === true);
+  assert.ok(failedAt > 0, "the harness gave the hand-off up");
+  // The one release is the hand-off turn's own, before the compaction was tried; none after the harness gave it up.
+  const unloads = run.rows.map((r, i) => ({ r, i })).filter(({ r }) => r.tool === "skill_unload" && r.result.ok === true);
+  assert.deepEqual(unloads.map(({ r }) => [r.args.id, r.result.reason]), [["evidence/one", "compaction"]]);
+  assert.ok(unloads.every(({ i }) => i < failedAt));
+  assert.equal(run.session.filter((e) => e.type === "context_edit").length, 1);
+  // The second note, finished and loaded again and finished again, was never touched: its body is in the last requests.
+  const last = run.turns.at(-1)!;
+  assert.equal(carries(last, BODY_TWO), true);
+  assert.equal(skillResultsIn(last).filter((x) => !STUB_ONE.test(x) && x.includes("evidence/two")).length, 2, "both copies, whole");
+});
+
+test("a model switched mid-run does not leave a signed thinking block behind an edit: a Claude-shaped seat moved to an open model keeps the body its signed replies come after", async (t) => {
+  if (!haveCli()) {
+    t.skip("pi is not on PATH");
+    return;
+  }
+  const run = await runSeat("model-switch", {
+    model: "fakeclaude/claude-scripted",
+    release: "auto",
+    script: [
+      calls(skill("evidence/one")), //                    0
+      calls(filler(1)), //                                1: a reply with a signed thinking block, after the body
+      { calls: [done("evidence/one")], hold: "switch" }, // 2: the operator switches the model while this request is out
+      calls(filler(2)), //                                3
+      calls(filler(3)), //                                4
+    ],
+    drive: async ({ client, requestSeen, open }) => {
+      await requestSeen(2);
+      const switched = await client.request({ type: "set_model", provider: "fake", modelId: "scripted" });
+      assert.equal(switched.success, true, JSON.stringify(switched));
+      open("switch");
+    },
+  });
+  const policy = rowsOf(run, "skill_release_policy");
+  assert.deepEqual(policy.map((r) => [r.result.model, r.result.class, r.result.effective]), [
+    ["fakeclaude/claude-scripted", "signed-thinking", "compaction"],
+    ["fake/scripted", "open", "boundary"],
+  ], "the policy followed the switch");
+  assert.equal(run.turns[3]!.model, "scripted", "the switch took: the requests after it went to the open model");
+  // The open model's boundary would have released the body (before the fix it did): signed blocks stand after the body.
+  assert.equal(rowsOf(run, "skill_unload").length, 0);
+  assert.equal(run.session.filter((e) => e.type === "context_edit").length, 0);
+  for (const i of [3, 4, 5]) assert.equal(carries(run.turns[i]!, BODY_ONE), true, `request ${i} still carries the body`);
+  const signed = run.session.filter((e) => e.type === "message" && e.message?.role === "assistant" && e.message.content!.some((c) => c.type === "thinking" && c.thinkingSignature));
+  assert.ok(signed.length >= 3, "the Claude-shaped replies carry signed blocks after the body");
+});
+
+test("an edit does not lock a seat: Pi's estimate of the context after a release is not what the compact line is read against", async (t) => {
+  if (!haveCli()) {
+    t.skip("pi is not on PATH");
+    return;
+  }
+  // The provider counts 1,000 tokens however much it is sent, so the count the seat is shown stays far under every line.
+  // Pi, after an edit, distrusts that count and estimates the whole context: the worker prompt alone is some 29,000 tokens
+  // and the results below add 60,000. The lines are absolute, over what the prompt alone comes to and well under that
+  // estimate: a seat that reads the estimate is locked at its compact line and has its tools refused, which a release must not cause.
+  const run = await runSeat("estimate-lock", {
+    model: "fake/scripted",
+    release: "auto",
+    env: { SU_FIXED_USAGE: "1000", SWARM_COMPACT_NOTICE_AT: "50000", SWARM_COMPACT_WARN_AT: "52000", SWARM_COMPACT_AT: "54000" },
+    script: [
+      calls(skill("evidence/one")), //   0
+      calls(bigFiller(1)), //            1
+      calls(bigFiller(2)), //            2
+      calls(bigFiller(3)), //            3
+      calls(bigFiller(4)), //            4
+      calls(bigFiller(5)), //            5
+      calls(bigFiller(6)), //            6
+      calls(done("evidence/one")), //    7: released at this boundary
+      calls(filler(7)), //               8: the request after the release
+      calls(filler(8)), //               9
+      calls(filler(9)), //              10
+    ],
+  });
+  assert.deepEqual(rowsOf(run, "skill_unload").map((r) => [r.result.ok, r.result.turn]), [[true, 8]], "the release happened");
+  assert.equal(rowsOf(run, "compact_config")[0]!.result.ok, true, "the lines were accepted");
+  assert.equal(run.rows.filter((r) => r.tool === "compact_hold").length, 0, "no tool was refused");
+  assert.equal(run.rows.filter((r) => ["compact_notice", "compact_warning", "compact_forced"].includes(r.tool)).length, 0, "no line was crossed");
+  const contexts = rowsOf(run, "context");
+  assert.ok(contexts.length >= 11);
+  assert.deepEqual([...new Set(contexts.map((r) => r.result.locked))], [false], "no turn ended locked");
+  assert.ok(contexts.every((r) => Number(r.result.tokens) < 50000), "every context row is the provider's count (1,000) and what was added since: under the notice line, the release moved none of them");
+  assert.ok(run.turns.length >= 12 && run.turns.every((tn) => !tn.messages.some((m) => m.isError)), "every scripted call ran");
 });

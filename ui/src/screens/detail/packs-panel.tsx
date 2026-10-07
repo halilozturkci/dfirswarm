@@ -235,6 +235,12 @@ export function PacksPanel({ view }: { view: SwarmView }) {
             {use.totals.released > 0 ? ` (wasted-release rate ${Math.round((use.totals.reloaded_after_release / use.totals.released) * 100)}%)` : ""}.
           </p>
         ) : null}
+        {use.totals.replies_after_release + use.totals.replies_after_compaction > 0 ? (
+          <p className="text-xs">
+            Anthropic said it dropped <b>{use.totals.thinking_dropped_after_release}</b> thinking block(s) from the history in the {use.totals.replies_after_release} first repl{use.totals.replies_after_release === 1 ? "y" : "ies"} after a release,
+            and <b>{use.totals.thinking_dropped_after_compaction}</b> in the {use.totals.replies_after_compaction} after a compaction.
+          </p>
+        ) : null}
         {use.totals.loads_without_tools > 0 ? (
           <p className="text-xs text-saffron-ink">
             {use.totals.loads_without_tools} of the loads come from rows written before the harness recorded each skill&rsquo;s tools: for those only a mention of the id

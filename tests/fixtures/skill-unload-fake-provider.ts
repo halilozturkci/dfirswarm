@@ -17,6 +17,7 @@
  *   { "calls": [{ "name": "skill", "arguments": { "id": "evidence/one" } }, ...] }
  *     one assistant message with those tool calls (Pi runs them at the same time)
  *   { "text": "..." }   an assistant message with text and no call
+ *   either may carry "hold": "name" (see SU_GATE_DIR)
  * A summary request (the compaction's, which carries no tools) is answered with
  * a fixed summary and does not take a step. The self_compact flow therefore
  * reads: a step that calls self_compact, then one step for the request the
@@ -30,17 +31,27 @@
  *   SU_SCRIPT   the steps
  *   SU_TRACE    the file every request is appended to
  *   SU_WINDOW   the context window the models declare (default 200000)
+ *   SU_GATE_DIR with a step's "hold": the request is recorded and then held until that file exists
+ *   SU_SUMMARY_FAIL   summary requests that fail before one succeeds (a large number: they all fail)
+ *   SU_FIXED_USAGE    the total tokens every reply reports, whatever was sent (default: 3000 plus 100 a reply)
+ *   SU_DROPPED        the thinking blocks the Claude-shaped model's replies say the service dropped
  */
-import { appendFileSync } from "node:fs";
+import { appendFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const WINDOW = Number(process.env.SU_WINDOW ?? "200000");
 const TRACE = process.env.SU_TRACE;
 type Call = { name: string; arguments: Record<string, unknown> };
-type Step = { calls?: Call[]; text?: string };
+type Step = { calls?: Call[]; text?: string; hold?: string };
 const SCRIPT: Step[] = JSON.parse(process.env.SU_SCRIPT ?? "[]");
+const GATE_DIR = process.env.SU_GATE_DIR;
+const SUMMARY_FAIL = Number(process.env.SU_SUMMARY_FAIL ?? "0");
+const FIXED_USAGE = Number(process.env.SU_FIXED_USAGE ?? "0");
+const DROPPED = Number(process.env.SU_DROPPED ?? "0");
 
 let request = 0;
+let summaryCalls = 0;
 
 type Msg = { role: string; content?: unknown; toolName?: string; toolCallId?: string; isError?: boolean };
 
@@ -139,12 +150,14 @@ function streamScripted(model: { api: string; provider: string; id: string; reas
     stopReason: "pending",
     timestamp: Date.now(),
   };
-  setTimeout(() => {
+  const answer = async () => {
     try {
       stream.push({ type: "start", partial: output });
       if (isSummary) {
+        summaryCalls += 1;
         const input = messages.map((m) => textOf(m.content)).join("\n");
-        record({ kind: "summary", model: model.id, input });
+        record({ kind: "summary", model: model.id, input, call: summaryCalls });
+        if (summaryCalls <= SUMMARY_FAIL) throw new Error(`scripted summary failure #${summaryCalls}`);
         const text = `FAKE-SUMMARY\n## Goal\nScripted goal.\n## Next Steps\n1. Follow the note.\nSKILLS-READ-BLOCK: ${input.includes("<skills-read>") ? "yes" : "no"}`;
         output.content.push({ type: "text", text: "" });
         stream.push({ type: "text_start", contentIndex: 0, partial: output });
@@ -163,6 +176,12 @@ function streamScripted(model: { api: string; provider: string; id: string; reas
           tools,
           messages: messages.map((m) => ({ role: m.role, toolName: m.toolName, toolCallId: m.toolCallId, isError: m.isError, text: textOf(m.content) })),
         });
+        // A step that holds the request open until the test makes the gate: the test acts on the live seat meanwhile
+        // (the operator switching the model with /model, say) and the reply comes after.
+        if (step.hold && GATE_DIR) {
+          const gate = join(GATE_DIR, step.hold);
+          for (let waited = 0; !existsSync(gate) && waited < 60_000; waited += 20) await new Promise((r) => setTimeout(r, 20));
+        }
         let at = 0;
         if (thinks) {
           // What a signed thinking block looks like on an assistant message the provider wrote.
@@ -189,8 +208,12 @@ function streamScripted(model: { api: string; provider: string; id: string; reas
           stream.push({ type: "toolcall_end", contentIndex: at, toolCall, partial: output });
           at += 1;
         }
-        output.usage = usage(3000 + 100 * index);
+        output.usage = usage(FIXED_USAGE > 0 ? FIXED_USAGE : 3000 + 100 * index);
         output.stopReason = step.calls?.length ? "toolUse" : "stop";
+        // What Anthropic's transport records when the service says it dropped thinking blocks it was sent.
+        if (DROPPED > 0 && model.api === "anthropic-messages") {
+          output.diagnostics = [{ type: "anthropic_input_transformations", timestamp: Date.now(), details: { transformations: Array.from({ length: DROPPED }, () => ({ type: "thinking_dropped" })) } }];
+        }
       }
       stream.push({ type: "done", reason: output.stopReason, message: output });
       stream.finish(output);
@@ -202,7 +225,8 @@ function streamScripted(model: { api: string; provider: string; id: string; reas
       stream.finish(output);
       stream.end();
     }
-  }, 5);
+  };
+  setTimeout(() => void answer(), 5);
   return stream;
 }
 

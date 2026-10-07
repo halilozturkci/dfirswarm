@@ -172,7 +172,7 @@ swarm.sh start — prepare a sandbox, write the contract, launch the agents.
       [--notify CMD] [--ledger-from RUN] [--no-verify-copy] [--allow-root] [--model-gateway] [--check]
       [--cap-per-agent USD] [--cap-per-agent-tokens N] [--cap-tokens N] [--token-alert N[,M...]] [--idle-nudge-sec N] [--allow-tool-forging]
       [--no-self-compact] [--compact-at SPEC] [--compact-warn-at SPEC] [--compact-notice-at SPEC]
-      [--compact-prompt-file FILE] [--compact-model P/ID] [--inbox-page-chars N] [--skill-release auto|compaction|off]
+      [--compact-prompt-file FILE] [--compact-model P/ID] [--inbox-page-chars N] [--skill-release compaction|auto|off]
       [--allow-install] [--no-pypi] [--no-read DIR]... [--accept-signer-exposure]
       [--tools-from DIR] [--inputs DIR]... [--inputs-enforce auto|on|off]
       [--inputs-max-mb N] [--inputs-max-files N] [--catalog] [--allow-missing-symbols] [--toolbox SETS|auto|off] [--toolbox-required]
@@ -368,18 +368,21 @@ Limits
                       (default 40000). Whole posts only: a post is never cut,
                       and what did not fit stays unread for the next call,
                       which wait answers at once. 0 removes the bound.
-  --skill-release auto|compaction|off
+  --skill-release compaction|auto|off
                       When a skill body an agent has marked done leaves its
                       context (a one-line stub stays; the session keeps the
-                      whole result; skill(id) brings it back). auto, the
-                      default: at the next turn boundary on a model whose
-                      history may be edited, and only at a compaction on a
-                      Claude model with thinking (its signed thinking blocks
-                      can be invalidated by an edit of an earlier turn). compaction:
-                      only at a compaction, on every model. off: never, and the
-                      summary input is not shaped. Recorded as skill_release in
-                      the registry; skill_release_policy and skill_unload on
-                      the trace. Needs --pack.
+                      whole result; skill(id) brings it back). compaction, the
+                      default: when the agent hands off to itself, just before
+                      the compaction rewrites the context anyway, on every
+                      model. auto: also at the next turn boundary, on a model
+                      whose history may be edited (the OpenAI Responses and
+                      Codex family, or one that does not reason), never while a
+                      signed thinking block comes after the body; a mid-run
+                      release does not pay back its cache write before a
+                      context is cut, so this is the experiment arm. off: never,
+                      and the summary input is not shaped. Recorded as
+                      skill_release in the registry; skill_release_policy and
+                      skill_unload on the trace. Needs --pack.
 
 Evidence
   --inputs DIR        A read-only copy of DIR under inputs/. Agents read and grep
@@ -3485,7 +3488,7 @@ cmd_start() {
   # How much post text one inbox/wait delivery carries (whole posts; the rest
   # stays unread for the next call). Empty means the extension's default.
   local inbox_page_chars=""
-  # When a skill body an agent has marked done leaves its context: auto, compaction or off. Empty means auto.
+  # When a skill body an agent has marked done leaves its context: compaction, auto or off. Empty means compaction.
   local skill_release=""
   local extra_env=()
   while [[ $# -gt 0 ]]; do
@@ -4401,7 +4404,7 @@ sys.exit(0 if t(sys.argv[1]) < t(sys.argv[2]) else 1)' "$_have" "$_ship" 2>/dev/
     exit 2
   fi
   if [[ -n "$skill_release" && "$skill_release" != "auto" && "$skill_release" != "compaction" && "$skill_release" != "off" ]]; then
-    echo "BLOCKER: --skill-release is auto, compaction or off, got $skill_release." >&2
+    echo "BLOCKER: --skill-release is compaction, auto or off, got $skill_release." >&2
     exit 2
   fi
   if [[ -n "$skill_release" && -z "$pack_dirs" ]]; then
@@ -5797,7 +5800,7 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
     --arg compact_prompt "$compact_prompt" \
     --arg compact_model "$compact_model" \
     --arg inbox_page_chars "${inbox_page_chars:-40000}" \
-    --arg skill_release "${skill_release:-auto}" \
+    --arg skill_release "${skill_release:-compaction}" \
     --argjson metered "$metered" \
     --arg cap_tokens "$cap_tokens" \
     --arg token_alerts "$token_alerts" \
@@ -6009,12 +6012,14 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
   fi
   if [[ -n "$pack_dirs" ]]; then
     local skill_release_says
-    case "${skill_release:-auto}" in
-      compaction) skill_release_says="at a compaction only" ;;
-      off) skill_release_says="never" ;;
-      *) skill_release_says="at the next turn boundary; at a compaction only on a Claude model with thinking" ;;
+    case "${skill_release:-compaction}" in
+      auto) skill_release_says="a finished body is released at the next turn boundary on a Responses-family or non-reasoning model, and when the agent hands off to itself" ;;
+      off) skill_release_says="a finished body is never released" ;;
+      *)
+        if [[ "$self_compact" -eq 1 ]]; then skill_release_says="a finished body is released when the agent hands off to itself"; else skill_release_says="--no-self-compact leaves no hand-off: no finished body is released"; fi
+        ;;
     esac
-    echo "Skill release: a body an agent marks done leaves its context ${skill_release_says} (--skill-release ${skill_release:-auto})"
+    echo "Skill release: ${skill_release:-compaction} (${skill_release_says})"
   fi
   if [[ -n "$models_spec" ]]; then
     echo "Models:       $MODEL_SUMMARY"

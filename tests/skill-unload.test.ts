@@ -19,6 +19,7 @@ import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { TOOL_RESERVED_NAMES } from "../extensions/protocol.ts";
 import {
+  countDroppedThinkingBlocks,
   DEFAULT_RELEASE_MODE,
   effectiveRelease,
   isStub,
@@ -29,13 +30,14 @@ import {
   renderHandoffReads,
   renderSkillsRead,
   shapeForSummary,
-  SIGNED_THINKING_APIS,
+  signedThinkingAfter,
   SkillLedger,
   stubText,
   suffixTokens,
   type ModelFacts,
   type SkillLoad,
 } from "../extensions/skills.ts";
+import { skillUse } from "../ui/src/lib/skill-metrics.ts";
 import { twoPacks } from "./fixtures/skill-packs.ts";
 import { directSeat, disposeSeat, MODELS } from "./harness/skill-seat.ts";
 
@@ -56,31 +58,58 @@ async function withPacks(run: (a: string, b: string) => Promise<void>): Promise<
 // The class of a model, from the catalogue and nothing else
 // ---------------------------------------------------------------------------
 
-test("the release class is read off the catalogue entry's api, reasoning and the thinking level, never its name", () => {
-  // Claude with thinking: the anthropic api signs the blocks and the catalogue marks the model as reasoning.
-  assert.deepEqual(releaseClassOf(MODELS.claude, "medium").cls, "signed-thinking");
-  assert.deepEqual(releaseClassOf(MODELS.claude, undefined).cls, "signed-thinking", "a session that does not say its thinking level is taken to think");
-  // Thinking off, or a catalogue entry that is not reasoning: no thinking block to invalidate.
-  assert.equal(releaseClassOf(MODELS.claude, "off").cls, "open");
-  assert.equal(releaseClassOf(MODELS.claudeNoThink, "high").cls, "open");
-  // The other families: nothing they replay is signed over the history.
-  assert.equal(releaseClassOf(MODELS.codex, "high").cls, "open");
-  assert.equal(releaseClassOf(MODELS.local, "high").cls, "open");
+test("the release class is read off the catalogue entry's api and reasoning, never its name or the thinking level; an api not shown safe is compaction-only", () => {
+  // The allow-list: the Responses family, and a model the catalogue does not mark as reasoning.
+  assert.equal(releaseClassOf(MODELS.codex).cls, "open");
+  assert.equal(releaseClassOf(MODELS.local).cls, "open");
+  assert.equal(releaseClassOf(MODELS.claudeNoThink).cls, "open");
+  // Claude with thinking, through the api that signs the blocks.
+  assert.equal(releaseClassOf(MODELS.claude).cls, "signed-thinking");
+  // Reasoning on any other api is not shown safe: OpenRouter's Claude entries replay Anthropic's signatures inside reasoning_details.
+  assert.equal(releaseClassOf(MODELS.openrouterClaude).cls, "unproven");
+  assert.equal(releaseClassOf(MODELS.localThinking).cls, "unproven");
   // The name decides nothing: the same fields under any id give the same class.
-  assert.equal(releaseClassOf({ ...MODELS.claude, id: "gpt-6-sol" }, "medium").cls, "signed-thinking");
-  assert.equal(releaseClassOf({ ...MODELS.codex, id: "claude-fable-5-1" }, "medium").cls, "open");
+  assert.equal(releaseClassOf({ ...MODELS.claude, id: "gpt-6-sol" }).cls, "signed-thinking");
+  assert.equal(releaseClassOf({ ...MODELS.codex, id: "claude-fable-5-1" }).cls, "open");
+  assert.equal(releaseClassOf({ ...MODELS.openrouterClaude, id: "gpt-6-sol" }).cls, "unproven");
+  // The thinking level decides nothing either: a signed block already in the history is sent back at any level (see signedThinkingAfter).
   // A session that names no model is not guessed at.
-  assert.equal(releaseClassOf(undefined, "medium").cls, "unknown");
-  // What each class comes to under each mode.
-  assert.equal(effectiveRelease("auto", "open"), "boundary");
-  assert.equal(effectiveRelease("auto", "signed-thinking"), "compaction");
-  assert.equal(effectiveRelease("auto", "unknown"), "compaction");
-  assert.equal(effectiveRelease("compaction", "open"), "compaction");
-  assert.equal(effectiveRelease("off", "open"), "off");
-  assert.equal(effectiveRelease("off", "signed-thinking"), "off");
+  assert.equal(releaseClassOf(undefined).cls, "unknown");
+  // What each class comes to under each mode: only `open` is released at a boundary, and only under auto.
+  for (const cls of ["open", "signed-thinking", "unproven", "unknown"] as const) {
+    assert.equal(effectiveRelease("auto", cls), cls === "open" ? "boundary" : "compaction", `auto, ${cls}`);
+    assert.equal(effectiveRelease("compaction", cls), "compaction", `compaction, ${cls}`);
+    assert.equal(effectiveRelease("off", cls), "off", `off, ${cls}`);
+  }
 });
 
-test("over Pi's whole model catalogue, every entry of a signing api that reasons is a signed-thinking model with thinking on, and no other entry is", () => {
+/**
+ * Real entries of Pi 0.87.1's catalogue (the file, the api it files the entry under, the id) and the class each
+ * must have. Written by hand, from what each transport does with a signature: nothing here is computed from the
+ * sets the code uses, so dropping an api from them fails a line of this table.
+ */
+const CATALOGUE_CASES: Array<[file: string, api: string, id: string, want: string]> = [
+  ["anthropic.json", "anthropic-messages", "claude-fable-5-1", "signed-thinking"],
+  ["anthropic.json", "anthropic-messages", "claude-opus-5-5", "signed-thinking"],
+  ["anthropic.json", "anthropic-messages", "claude-sonnet-5", "signed-thinking"],
+  ["anthropic.json", "anthropic-messages", "claude-haiku-4-5", "signed-thinking"],
+  ["amazon-bedrock.json", "bedrock-converse-stream", "anthropic.claude-opus-5-5", "signed-thinking"],
+  ["amazon-bedrock.json", "bedrock-converse-stream", "amazon.nova-lite-v1:0", "open"],
+  ["openrouter.json", "anthropic-messages", "anthropic/claude-fable-5.1", "signed-thinking"],
+  ["openrouter.json", "openai-completions", "anthropic/claude-fable-5.1:batch", "unproven"],
+  ["openrouter.json", "openai-completions", "~anthropic/claude-opus-latest", "unproven"],
+  ["radius.json", "pi-messages", "claude-fable-5-1", "unproven"],
+  ["google.json", "google-generative-ai", "gemini-3-flash-preview", "unproven"],
+  ["openai.json", "openai-responses", "gpt-5.5", "open"],
+  ["openai.json", "openai-responses", "gpt-6-sol", "open"],
+  ["openai.json", "openai-responses", "gpt-4o", "open"],
+  ["openai-codex.json", "openai-codex-responses", "gpt-6-sol", "open"],
+  ["openai-codex.json", "openai-codex-responses", "gpt-6-luna", "open"],
+  ["azure-openai-responses.json", "azure-openai-responses", "gpt-5", "open"],
+  ["mistral.json", "mistral-conversations", "codestral-latest", "open"],
+];
+
+test("over Pi's catalogue: named entries across providers have the class written for them, and no reasoning entry outside the Responses family is ever released at a boundary", () => {
   const candidates = [
     join(REPO, "node_modules", "@earendil-works", "pi-coding-agent", "node_modules", "@earendil-works", "pi-ai", "dist", "providers", "data"),
     join(REPO, "node_modules", "@earendil-works", "pi-ai", "dist", "providers", "data"),
@@ -89,26 +118,35 @@ test("over Pi's whole model catalogue, every entry of a signing api that reasons
   if (!dir) {
     return; // Pi's catalogue is not installed here; the class tests above still hold
   }
+  const file = (name: string) => JSON.parse(readFileSync(join(dir, name), "utf8")) as Record<string, Record<string, ModelFacts & { id: string }>>;
+  for (const [name, api, id, want] of CATALOGUE_CASES) {
+    const entry = file(name)[api]?.[id];
+    assert.ok(entry, `${name}: ${api} ${id} is in Pi's catalogue`);
+    assert.equal(releaseClassOf(entry!).cls, want, `${name}: ${id}`);
+  }
+  // The whole catalogue, with the expectation stated in the test's own terms (a literal list, not the code's set).
+  const responsesApis = ["openai-responses", "openai-codex-responses", "azure-openai-responses"];
   let entries = 0;
-  const claudeIds: string[] = [];
-  for (const file of readdirSync(dir).filter((f) => f.endsWith(".json"))) {
-    const data = JSON.parse(readFileSync(join(dir, file), "utf8")) as Record<string, Record<string, ModelFacts & { id: string }>>;
-    for (const models of Object.values(data)) {
+  let reasoningOutside = 0;
+  for (const name of readdirSync(dir).filter((f) => f.endsWith(".json"))) {
+    for (const models of Object.values(file(name))) {
       for (const model of Object.values(models)) {
         entries += 1;
-        const want = SIGNED_THINKING_APIS.has(String(model.api)) && model.reasoning === true ? "signed-thinking" : "open";
-        assert.equal(releaseClassOf(model, "medium").cls, want, `${file}: ${model.id}`);
-        assert.equal(releaseClassOf(model, "off").cls, "open", `${file}: ${model.id} with thinking off`);
-        if (file === "anthropic.json" && model.reasoning === true) claudeIds.push(model.id);
+        const cls = releaseClassOf(model).cls;
+        const releasable = effectiveRelease("auto", cls) === "boundary";
+        if (responsesApis.includes(String(model.api)) || model.reasoning !== true) assert.equal(releasable, true, `${name}: ${model.id} may be released at a boundary`);
+        else {
+          reasoningOutside += 1;
+          assert.equal(releasable, false, `${name}: ${model.id} (${model.api}, reasoning) is compaction-only`);
+        }
       }
     }
   }
-  assert.ok(entries > 100, `${entries} catalogue entries read`);
-  for (const id of ["claude-fable-5-1", "claude-opus-5-5"]) assert.ok(claudeIds.includes(id), `${id} is a reasoning entry of the anthropic catalogue`);
+  assert.ok(entries > 1000 && reasoningOutside > 500, `${entries} entries, ${reasoningOutside} reasoning entries outside the Responses family`);
 });
 
-test("the release mode is auto, compaction or off; anything else is not a mode", () => {
-  assert.equal(DEFAULT_RELEASE_MODE, "auto");
+test("the release mode is compaction (the default), auto or off; anything else is not a mode and runs as the default", () => {
+  assert.equal(DEFAULT_RELEASE_MODE, "compaction");
   assert.deepEqual(["auto", "compaction", "off", " OFF ", "Compaction"].map(parseReleaseMode), ["auto", "compaction", "off", "off", "compaction"]);
   assert.deepEqual(["", "never", "boundary", undefined, null].map(parseReleaseMode), [null, null, null, null, null]);
 });
@@ -175,6 +213,28 @@ test("never toggle: a body released once in a context is not released again at a
   assert.deepEqual(keys(plan(held, { releasedAt: seen, trigger: "compaction" }).release), ["p:a"]);
 });
 
+test("a signed thinking block after the body keeps it at a boundary, and not at a hand-off", () => {
+  const held = [load("p:a", 1, 2)];
+  const signed = () => true;
+  assert.deepEqual(plan(held, { signedAfter: signed }).release, []);
+  assert.equal(plan(held, { signedAfter: signed }).keep[0]!.why, "a signed thinking block comes after it in the context");
+  assert.deepEqual(keys(plan(held, { signedAfter: signed, trigger: "compaction" }).release), ["p:a"], "the history is replaced anyway");
+  assert.deepEqual(keys(plan(held, { signedAfter: () => false }).release), ["p:a"]);
+});
+
+test("signedThinkingAfter: a thinking block with a signature from any api but the Responses family, after the entry and not before it", () => {
+  const msg = (id: string, api: string | undefined, signature: unknown) => ({ type: "message", id, message: { role: "assistant", ...(api ? { api } : {}), content: [{ type: "thinking", thinking: "t", thinkingSignature: signature }, { type: "text", text: "x" }] } });
+  const body = { type: "message", id: "body", message: { role: "toolResult", toolName: "skill" } };
+  assert.equal(signedThinkingAfter([msg("before", "anthropic-messages", "SIG"), body, msg("after", "openai-responses", "{}")], "body"), false, "before the body does not count, and a Responses reasoning item is not signed over the history");
+  assert.equal(signedThinkingAfter([body, msg("after", "anthropic-messages", "SIG")], "body"), true);
+  assert.equal(signedThinkingAfter([body, msg("after", "openai-completions", "reasoning_details")], "body"), true, "OpenRouter replays Anthropic's signature through this api");
+  assert.equal(signedThinkingAfter([body, msg("after", undefined, "SIG")], "body"), true, "a message that names no api is not trusted");
+  assert.equal(signedThinkingAfter([body, msg("after", "anthropic-messages", "")], "body"), false, "no signature, nothing bound");
+  assert.equal(signedThinkingAfter([body, msg("after", "anthropic-messages", undefined)], "body"), false);
+  assert.equal(signedThinkingAfter([body], "missing"), false);
+  assert.equal(signedThinkingAfter([body, { type: "message", id: "u", message: { role: "user", content: "x" } }], "body"), false);
+});
+
 // ---------------------------------------------------------------------------
 // What the session says
 // ---------------------------------------------------------------------------
@@ -199,6 +259,11 @@ test("a body whose result a context_edit replaced is not in the context: it is r
   const again = loadsFromEntries([...entries, resultEntry("e4", "c4", loadDetails("evidence/one", "pack-a", 5))]);
   assert.deepEqual(again.loads.map((l) => [l.key, l.toolCallId]).sort(), [["pack-a:evidence/one", "c4"], ["pack-a:evidence/two", "c2"]]);
   assert.deepEqual(again.released.map((l) => l.toolCallId), ["c1"]);
+  // Given the branch as well, an edit says in which turn it was made: the assistant messages before it.
+  const assistantAt = (id: string) => ({ type: "message", id, message: { role: "assistant", content: [] } });
+  const branch = [assistantAt("a1"), entries[0]!, assistantAt("a2"), assistantAt("a3"), entries[3]!, assistantAt("a4")];
+  assert.deepEqual(loadsFromEntries(entries, branch).released.map((l) => l.releasedTurn), [3]);
+  assert.deepEqual(loadsFromEntries(entries).released.map((l) => l.releasedTurn), [null], "no branch: not known, not guessed");
   // An index answer that was edited out is not an index in the context.
   const index = [resultEntry("i1", "ci", { ok: true, index: true, in_prompt: false, turn: 4 })];
   assert.equal(loadsFromEntries(index).indexTurn, 4);
@@ -246,7 +311,7 @@ test("a compaction ends the epoch: released bodies that left with it are reporte
   ledger.markDone("p:a", 4, "");
   ledger.release("p:a", { turn: 4, reason: "done" });
   ledger.markDone("p:b", 5, "");
-  const stillStub = { ...load("p:a", 1), entryId: "e1" };
+  const stillStub = { ...load("p:a", 1), entryId: "e1", releasedTurn: 4 };
   const { kept, lost } = ledger.reconcile([{ ...load("p:c", 3), entryId: "e3" }], null, [stillStub]);
   assert.deepEqual(keys(kept), ["p:c"]);
   assert.deepEqual(keys(lost), ["p:b"]);
@@ -254,14 +319,19 @@ test("a compaction ends the epoch: released bodies that left with it are reporte
   assert.deepEqual(keys(account.lost), ["p:b"]);
   assert.deepEqual(keys(account.kept), ["p:c"]);
   assert.deepEqual(keys(account.released), ["p:a"]);
-  assert.equal(ledger.releasedAt("p:a"), 1, "the stub in the kept tail is still this epoch's release");
+  assert.equal(ledger.releasedAt("p:a"), 4, "the stub in the kept tail is still this epoch's release, in the turn it was made");
+  assert.equal(new SkillLedger().releasedAt("p:a"), undefined);
   assert.deepEqual(ledger.handoffIds(), ["p:b"]);
   // A process that starts on a session does not report a compaction it did not see.
   const restarted = new SkillLedger();
   restarted.restore([{ ...load("p:c", 3), entryId: "e3" }], null, [stillStub]);
   assert.deepEqual(restarted.handoffIds(), []);
   assert.deepEqual(restarted.compactionAccount().released, []);
-  assert.equal(restarted.releasedAt("p:a"), 1);
+  assert.equal(restarted.releasedAt("p:a"), 4);
+  // A stub whose release turn is not known (no branch to count in) is still a release: null, not the load's turn.
+  const unknownTurn = new SkillLedger();
+  unknownTurn.restore([], null, [{ ...load("p:a", 1), entryId: "e1" }]);
+  assert.equal(unknownTurn.releasedAt("p:a"), null);
 });
 
 // ---------------------------------------------------------------------------
@@ -270,7 +340,7 @@ test("a compaction ends the epoch: released bodies that left with it are reporte
 
 test("a finished body is replaced by a context_edit draft at the next turn boundary: the draft names the result, carries the stub, and keeps what other drafts asked for", async () => {
   await withPacks(async (a, b) => {
-    const seat = await directSeat([a, b]);
+    const seat = await directSeat([a, b], { release: "auto" });
     try {
       await seat.skill("evidence/one", "c1");
       await seat.endTurn();
@@ -308,7 +378,7 @@ test("a finished body is replaced by a context_edit draft at the next turn bound
 
 test("two bodies finished in one turn leave in one return, a note the seat still works from stays, and a body finished in the turn it was loaded waits for the next boundary", async () => {
   await withPacks(async (a, b) => {
-    const seat = await directSeat([a, b]);
+    const seat = await directSeat([a, b], { release: "auto" });
     try {
       await seat.skill("evidence/one", "c1");
       await seat.skill("evidence/two", "c2");
@@ -334,7 +404,7 @@ test("two bodies finished in one turn leave in one return, a note the seat still
 
 test("never toggle: a body loaded again after its release is held until the next compaction, however often it is marked done", async () => {
   await withPacks(async (a, b) => {
-    const seat = await directSeat([a, b]);
+    const seat = await directSeat([a, b], { release: "auto" });
     try {
       await seat.skill("evidence/one", "c1");
       await seat.endTurn();
@@ -352,21 +422,20 @@ test("never toggle: a body loaded again after its release is held until the next
   });
 });
 
-test("a model with signed thinking blocks gets no draft at a turn boundary; the finished body leaves when a hand-off compaction is about to run", async () => {
+test("a model with signed thinking blocks gets no draft at a turn boundary; the finished body leaves in the turn the seat hands off in", async () => {
   await withPacks(async (a, b) => {
-    const seat = await directSeat([a, b]);
+    const seat = await directSeat([a, b], { release: "auto" });
     try {
       await seat.skill("evidence/one", "c1");
       await seat.endTurn({ model: MODELS.claude });
       await seat.done("evidence/one", "", "c2");
-      for (let i = 0; i < 3; i++) assert.equal((await seat.endTurn({ model: MODELS.claude })).entries, undefined, "no draft before the compaction");
+      for (let i = 0; i < 3; i++) assert.equal((await seat.endTurn({ model: MODELS.claude })).entries, undefined, "no draft before the hand-off");
       assert.equal(seat.rowsOf("skill_unload").length, 0);
       const policy = seat.rowsOf("skill_release_policy");
       assert.equal(policy.length, 1, "one row for as long as the policy does not change");
       assert.deepEqual([policy[0]!.result.effective, policy[0]!.result.class, policy[0]!.result.api, policy[0]!.result.reasoning, policy[0]!.result.thinking_level, policy[0]!.result.model], ["compaction", "signed-thinking", "anthropic-messages", true, "medium", "anthropic/claude-fable-5-1"]);
-      // The seat saved its note: the compaction rewrites the prefix anyway.
-      seat.compacting.on = true;
-      const out = await seat.endTurn({ model: MODELS.claude });
+      // The seat's self_compact came back: the compaction rewrites the prefix anyway.
+      const out = await seat.endTurn({ model: MODELS.claude, handoff: true });
       assert.deepEqual(out.entries!.map((d) => d.targetId), ["e-c1"]);
       const row = seat.rowsOf("skill_unload")[0]!;
       assert.deepEqual([row.result.ok, row.result.reason, row.result.class], [true, "compaction", "signed-thinking"]);
@@ -376,16 +445,97 @@ test("a model with signed thinking blocks gets no draft at a turn boundary; the 
   });
 });
 
-test("the policy follows the model and the thinking level as they change: a row each time, and thinking turned off makes a Claude model's bodies releasable at a boundary", async () => {
+test("a hand-off that was refused, or that failed and was given up, is not a compaction: no release, and a body is not released twice by it", async () => {
   await withPacks(async (a, b) => {
-    const seat = await directSeat([a, b]);
+    // The seat's self_compact was refused ("nothing to compact yet"): that turn is an ordinary one.
+    const refused = await directSeat([a, b], { release: "compaction" });
+    try {
+      await refused.skill("evidence/one", "c1");
+      await refused.endTurn({ model: MODELS.claude });
+      await refused.done("evidence/one", "", "c2");
+      assert.equal((await refused.endTurn({ model: MODELS.claude, handoff: "refused" })).entries, undefined);
+    } finally {
+      await disposeSeat(refused);
+    }
+    // self-compact still says pending (the note is kept after the retries are spent) but no self_compact came back this turn:
+    // a seat that goes on working releases nothing, however long ago it handed off, and nothing toggles.
+    const stuck = await directSeat([a, b], { release: "compaction", compactionPending: () => true });
+    try {
+      await stuck.skill("evidence/two", "c3");
+      await stuck.endTurn({ model: MODELS.claude });
+      await stuck.done("evidence/two", "", "c4");
+      assert.equal((await stuck.endTurn({ model: MODELS.claude, handoff: true })).entries!.length, 1, "the turn the hand-off came back in");
+      await stuck.skill("evidence/two", "c5");
+      await stuck.endTurn({ model: MODELS.claude });
+      await stuck.done("evidence/two", "", "c6");
+      for (let i = 0; i < 3; i++) assert.equal((await stuck.endTurn({ model: MODELS.claude })).entries, undefined, "the compaction failed and the seat works on: no more releases");
+      assert.equal(stuck.rowsOf("skill_unload").length, 1);
+    } finally {
+      await disposeSeat(stuck);
+    }
+    // And a self_compact result with the extension saying no hand-off is pending is not trusted either.
+    const none = await directSeat([a, b], { release: "compaction", compactionPending: () => false });
+    try {
+      await none.skill("evidence/one", "c7");
+      await none.endTurn();
+      await none.done("evidence/one", "", "c8");
+      assert.equal((await none.endTurn({ handoff: true })).entries, undefined);
+    } finally {
+      await disposeSeat(none);
+    }
+  });
+});
+
+test("a signed thinking block after the body keeps it, whatever model or thinking level the seat has now: a switch mid-run does not leave the block behind an edit", async () => {
+  await withPacks(async (a, b) => {
+    const seat = await directSeat([a, b], { release: "auto" });
+    try {
+      // A Claude seat loads a note, writes a reply with a signed thinking block, and the operator switches the seat to an open model.
+      await seat.skill("evidence/one", "c1");
+      seat.assistant({ api: "anthropic-messages", signed: true });
+      await seat.endTurn({ model: MODELS.codex });
+      await seat.done("evidence/one", "", "c2");
+      seat.assistant({ api: "openai-completions" });
+      assert.equal((await seat.endTurn({ model: MODELS.codex })).entries, undefined, "the model is open now; the block that stands after the body decides");
+      assert.equal(seat.rowsOf("skill_unload").length, 0);
+      // The same reply with its thinking block from a Responses model is an item tied to its own call: not signed over the history.
+      await seat.skill("evidence/two", "c3");
+      seat.assistant({ api: "openai-codex-responses", signed: true });
+      await seat.endTurn({ model: MODELS.codex });
+      await seat.done("evidence/two", "", "c4");
+      const out = await seat.endTurn({ model: MODELS.codex });
+      assert.deepEqual(out.entries!.map((d) => d.targetId), ["e-c3"]);
+      // At the hand-off the history is replaced anyway: the held-back body goes then.
+      const handoff = await seat.endTurn({ model: MODELS.codex, handoff: true });
+      assert.deepEqual(handoff.entries!.map((d) => d.targetId), ["e-c1"]);
+      // A Claude with thinking turned off is not an open model: the class does not read the level.
+      const claudeOff = await directSeat([a, b], { release: "auto" });
+      try {
+        await claudeOff.skill("evidence/one", "d1");
+        await claudeOff.endTurn({ model: MODELS.claude, thinkingLevel: "off" });
+        await claudeOff.done("evidence/one", "", "d2");
+        assert.equal((await claudeOff.endTurn({ model: MODELS.claude, thinkingLevel: "off" })).entries, undefined);
+        assert.equal(claudeOff.rowsOf("skill_release_policy")[0]!.result.effective, "compaction");
+      } finally {
+        await disposeSeat(claudeOff);
+      }
+    } finally {
+      await disposeSeat(seat);
+    }
+  });
+});
+
+test("a model switch is picked up at the next boundary, a row each time; an OpenRouter Claude and a local reasoning model are compaction-only", async () => {
+  await withPacks(async (a, b) => {
+    const seat = await directSeat([a, b], { release: "auto" });
     try {
       await seat.skill("evidence/one", "c1");
       await seat.endTurn({ model: MODELS.claude });
       await seat.done("evidence/one", "", "c2");
-      assert.equal((await seat.endTurn({ model: MODELS.claude })).entries, undefined);
-      assert.equal((await seat.endTurn({ model: MODELS.claude, thinkingLevel: "off" })).entries!.length, 1);
-      assert.deepEqual(seat.rowsOf("skill_release_policy").map((r) => [r.result.effective, r.result.thinking_level]), [["compaction", "medium"], ["boundary", "off"]]);
+      assert.equal((await seat.endTurn({ model: MODELS.openrouterClaude })).entries, undefined);
+      assert.equal((await seat.endTurn({ model: MODELS.localThinking })).entries, undefined);
+      assert.equal((await seat.endTurn({ model: MODELS.codex })).entries!.length, 1, "no signed block stands after the body, and the model is on the allow-list");
+      assert.deepEqual(seat.rowsOf("skill_release_policy").map((r) => [r.result.class, r.result.effective]), [["signed-thinking", "compaction"], ["unproven", "compaction"], ["unproven", "compaction"], ["open", "boundary"]]);
     } finally {
       await disposeSeat(seat);
     }
@@ -394,7 +544,7 @@ test("the policy follows the model and the thinking level as they change: a row 
 
 test("a session that names no model is not guessed at: bodies wait for the compaction", async () => {
   await withPacks(async (a, b) => {
-    const seat = await directSeat([a, b]);
+    const seat = await directSeat([a, b], { release: "auto" });
     try {
       await seat.skill("evidence/one", "c1");
       await seat.endTurn({ model: undefined });
@@ -407,7 +557,7 @@ test("a session that names no model is not guessed at: bodies wait for the compa
   });
 });
 
-test("--skill-release compaction releases at a compaction on every model; off releases nothing and shapes nothing; an unknown value is auto, and the row says so", async () => {
+test("--skill-release: compaction (the default) releases when the seat hands off, on every model; auto adds the turn boundary; off releases nothing and shapes nothing; an unknown value is compaction, and the row says so", async () => {
   await withPacks(async (a, b) => {
     const scripted = async (release: string | undefined) => {
       const seat = await directSeat([a, b], release === undefined ? {} : { release });
@@ -415,22 +565,32 @@ test("--skill-release compaction releases at a compaction on every model; off re
       await seat.endTurn();
       await seat.done("evidence/one", "", "c2");
       const atBoundary = await seat.endTurn();
-      seat.compacting.on = true;
-      const atCompaction = await seat.endTurn();
-      return { seat, atBoundary, atCompaction };
+      const atHandoff = await seat.endTurn({ handoff: true });
+      return { seat, atBoundary, atHandoff };
     };
-    const compaction = await scripted("compaction");
+    for (const release of ["compaction", undefined, "sometimes"]) {
+      const run = await scripted(release);
+      try {
+        assert.equal(run.atBoundary.entries, undefined, `${release}: nothing at an ordinary boundary, an open model too`);
+        assert.deepEqual(run.atHandoff.entries!.map((d) => d.targetId), ["e-c1"], `${release}: the body leaves in the hand-off turn`);
+        const row = run.seat.rowsOf("skill_release_policy")[0]!;
+        assert.deepEqual([row.result.mode, row.result.effective], ["compaction", "compaction"]);
+        assert.deepEqual([row.result.ok, row.result.requested], release === "sometimes" ? [false, "sometimes"] : [true, undefined], "an unknown value is said on the row, and runs as the default");
+      } finally {
+        await disposeSeat(run.seat);
+      }
+    }
+    const auto = await scripted("auto");
     try {
-      assert.equal(compaction.atBoundary.entries, undefined);
-      assert.deepEqual(compaction.atCompaction.entries!.map((d) => d.targetId), ["e-c1"]);
-      assert.deepEqual([compaction.seat.rowsOf("skill_release_policy")[0]!.result.mode, compaction.seat.rowsOf("skill_release_policy")[0]!.result.effective], ["compaction", "compaction"]);
+      assert.equal(auto.atBoundary.entries!.length, 1, "auto: the open model's body leaves at the boundary");
+      assert.equal(auto.atHandoff.entries, undefined, "and the hand-off finds nothing left");
     } finally {
-      await disposeSeat(compaction.seat);
+      await disposeSeat(auto.seat);
     }
     const off = await scripted("off");
     try {
       assert.equal(off.atBoundary.entries, undefined);
-      assert.equal(off.atCompaction.entries, undefined);
+      assert.equal(off.atHandoff.entries, undefined);
       assert.equal(off.seat.rowsOf("skill_unload").length, 0);
       assert.equal(off.seat.rowsOf("skill_release_policy")[0]!.result.effective, "off");
       const input = off.seat.handle.summaryInput([{ role: "toolResult", toolName: "skill", details: loadDetails("evidence/one", "pack-a", 1), content: [{ type: "text", text: BODY_ONE }] }], []);
@@ -440,27 +600,12 @@ test("--skill-release compaction releases at a compaction on every model; off re
     } finally {
       await disposeSeat(off.seat);
     }
-    const typo = await scripted("sometimes");
-    try {
-      assert.equal(typo.atBoundary.entries!.length, 1, "an unknown value is the default");
-      const row = typo.seat.rowsOf("skill_release_policy")[0]!;
-      assert.deepEqual([row.result.ok, row.result.mode, row.result.requested], [false, "auto", "sometimes"]);
-    } finally {
-      await disposeSeat(typo.seat);
-    }
-    const unset = await scripted(undefined);
-    try {
-      assert.equal(unset.seat.rowsOf("skill_release_policy")[0]!.result.ok, true);
-      assert.equal(unset.seat.rowsOf("skill_release_policy")[0]!.result.requested, undefined);
-    } finally {
-      await disposeSeat(unset.seat);
-    }
   });
 });
 
 test("an error or an abort ends a turn without a release; a release is aimed only at a result the session shows in the context", async () => {
   await withPacks(async (a, b) => {
-    const seat = await directSeat([a, b]);
+    const seat = await directSeat([a, b], { release: "auto" });
     try {
       await seat.skill("evidence/one", "c1");
       await seat.endTurn();
@@ -482,7 +627,7 @@ test("an error or an abort ends a turn without a release; a release is aimed onl
 
 test("a release Pi did not commit is found at the next boundary: the body is held again, the trace says the edit did not land, and it is not tried again", async () => {
   await withPacks(async (a, b) => {
-    const seat = await directSeat([a, b]);
+    const seat = await directSeat([a, b], { release: "auto" });
     try {
       await seat.skill("evidence/one", "c1");
       await seat.endTurn();
@@ -505,7 +650,7 @@ test("a release Pi did not commit is found at the next boundary: the body is hel
 
 test("a note two packs carry is named pack:id in its stub, and the stub's way back reaches that one", async () => {
   await withPacks(async (a, b) => {
-    const seat = await directSeat([a, b]);
+    const seat = await directSeat([a, b], { release: "auto" });
     try {
       await seat.skill("pack-b:shared/dup", "c1");
       await seat.endTurn();
@@ -522,7 +667,7 @@ test("a note two packs carry is named pack:id in its stub, and the stub's way ba
 
 test("skill_done for a note never loaded is refused and says so; for one the harness already released it says that instead", async () => {
   await withPacks(async (a, b) => {
-    const seat = await directSeat([a, b]);
+    const seat = await directSeat([a, b], { release: "auto" });
     try {
       const unknown = await seat.done("no/such/note");
       assert.match(unknown.text, /^`no\/such\/note` is not among the notes you have loaded/);
@@ -546,7 +691,7 @@ test("skill_done for a note never loaded is refused and says so; for one the har
 
 test("a compaction rebuilds the ledger from a session that holds stubs: the released body is not counted as held or as lost, and the row names the stubs", async () => {
   await withPacks(async (a, b) => {
-    const seat = await directSeat([a, b]);
+    const seat = await directSeat([a, b], { release: "auto" });
     try {
       await seat.skill("evidence/one", "c1");
       await seat.skill("evidence/two", "c2");
@@ -572,25 +717,32 @@ test("a compaction rebuilds the ledger from a session that holds stubs: the rele
   });
 });
 
-test("a process that starts on a session with a stub in it knows the body is not held", async () => {
+test("a process that starts on a session with a stub in it knows the body is not held, and in which turn it was released", async () => {
   await withPacks(async (a, b) => {
-    const first = await directSeat([a, b]);
-    let session: Array<Record<string, unknown>> = [];
+    const first = await directSeat([a, b], { release: "auto" });
+    let session = { context: [] as Array<Record<string, unknown>>, branch: [] as Array<Record<string, unknown>> };
+    let releasedIn: unknown;
     try {
       await first.skill("evidence/one", "c1");
       await first.endTurn();
       await first.done("evidence/one", "", "c2");
       await first.endTurn();
-      session = first.session.context;
+      await first.endTurn();
+      session = first.session;
+      releasedIn = first.rowsOf("skill_unload")[0]!.result.turn;
     } finally {
       await disposeSeat(first);
     }
-    const seat = await directSeat([a, b]);
+    assert.equal(releasedIn, 2);
+    const seat = await directSeat([a, b], { release: "auto" });
     try {
-      seat.session.context = session;
+      seat.session.context = session.context;
+      seat.session.branch = session.branch;
       await seat.fire("session_start", { reason: "startup" });
       assert.match((await seat.skill("evidence/one", "c9")).text, /^Skill `evidence\/one`/, "the stub is not the body: it is delivered");
-      assert.equal(seat.rowsOf("skill").at(-1)!.result.reload_after_release, true);
+      const row = seat.rowsOf("skill").at(-1)!;
+      assert.equal(row.result.reload_after_release, true);
+      assert.equal(row.result.released_turn, 2, "the turn of the release, counted on the branch, not the turn the note was loaded in");
     } finally {
       await disposeSeat(seat);
     }
@@ -648,7 +800,7 @@ test("the summary is written from ids and sizes: a body is one line naming the n
 
 test("the seat's summary input is shaped through its handle: the history and the turn prefix both, the done mark found across them", async () => {
   await withPacks(async (a, b) => {
-    const seat = await directSeat([a, b]);
+    const seat = await directSeat([a, b], { release: "auto" });
     try {
       const history = [messageOf("c1", "evidence/one", 1, BODY_ONE)];
       const prefix = [doneMessage("evidence/one", 2), messageOf("c2", "evidence/two", 3, "Second body, short.")];
@@ -674,14 +826,14 @@ test("the hand-off header lists what the seat read: sizes, which it marked done,
   const line = renderHandoffReads(account);
   assert.equal(
     line,
-    "Method notes you read since your last compaction, with their size in tokens (never their text): pack-a:evidence/two 480 (not marked done), pack-a:evidence/three 300 (marked done), pack-a:evidence/one 520 (marked done, released), pack-b:other/x 90 (marked done; still in your context).\n" +
-      "Not marked done, so probably still needed: pack-a:evidence/two.",
+    "Method notes you read since your last compaction, with their size in tokens (never their text): pack-a:evidence/two 480 (taken out of your context, not marked done), pack-a:evidence/three 300 (taken out of your context, marked done), pack-a:evidence/one 520 (marked done, released earlier), pack-b:other/x 90 (marked done; still in your context).\n" +
+      "Load again (skill(id)) the ones you still need; not marked done, so probably still needed: pack-a:evidence/two.",
   );
   assert.equal(renderHandoffReads({ lost: [], kept: [load("p:a", 1)], released: [] }), "", "nothing was taken out or released: nothing to add");
   assert.equal(renderHandoffReads({ lost: [load("p:a", 1, 2)], kept: [], released: [] }).includes("probably still needed"), false);
 
   await withPacks(async (a, b) => {
-    const seat = await directSeat([a, b]);
+    const seat = await directSeat([a, b], { release: "auto" });
     try {
       await seat.skill("evidence/one", "c1");
       await seat.skill("evidence/two", "c2");
@@ -691,9 +843,12 @@ test("the hand-off header lists what the seat read: sizes, which it marked done,
       seat.session.context = [{ type: "compaction", id: "k", firstKeptEntryId: null }];
       await seat.fire("session_compact", {});
       const header = seat.handle.handoffLine();
-      assert.match(header, /^Skill bodies a compaction took out of your context: pack-a:evidence\/two\. Load again \(skill\(id\)\) the ones you still need\.\n/);
-      assert.match(header, /Method notes you read since your last compaction, with their size in tokens \(never their text\): pack-a:evidence\/two \d+ \(not marked done\), pack-a:evidence\/one \d+ \(marked done, released\)\.\n/);
-      assert.match(header, /Not marked done, so probably still needed: pack-a:evidence\/two\.$/);
+      assert.equal(
+        header.replace(/ \d+ \(/g, " N ("),
+        "Method notes you read since your last compaction, with their size in tokens (never their text): pack-a:evidence/two N (taken out of your context, not marked done), pack-a:evidence/one N (marked done, released earlier).\n" +
+          "Load again (skill(id)) the ones you still need; not marked done, so probably still needed: pack-a:evidence/two.",
+      );
+      assert.equal(header.split("pack-a:evidence/two").length - 1, 2, "a note is named in the account and once more as the one probably still needed, not in a third sentence");
       assert.equal(header.includes(BODY_ONE) || header.includes("Second body"), false, "ids and sizes only");
     } finally {
       await disposeSeat(seat);
@@ -702,7 +857,117 @@ test("the hand-off header lists what the seat read: sizes, which it marked done,
 });
 
 test("the harness's own release events are reserved against forged tools", () => {
-  for (const name of ["skill_unload", "skill_release_policy"]) assert.ok(TOOL_RESERVED_NAMES.has(name), `${name} is reserved`);
+  for (const name of ["skill_unload", "skill_release_policy", "skill_release_effect"]) assert.ok(TOOL_RESERVED_NAMES.has(name), `${name} is reserved`);
+});
+
+test("a batch's cost is its largest suffix, not their sum; the suffix counts the reasoning that is sent again", async () => {
+  await withPacks(async (a, b) => {
+    const seat = await directSeat([a, b], { release: "auto" });
+    try {
+      await seat.skill("evidence/one", "c1");
+      await seat.skill("evidence/two", "c2");
+      await seat.endTurn();
+      await seat.done("evidence/one", "", "c3");
+      await seat.done("evidence/two", "", "c4");
+      // The projected context as Pi hands it to the boundary: the first result, then the second, then a reply with an encrypted reasoning item.
+      const projected = [
+        { sourceEntry: { id: "e-c1" }, messages: [] },
+        { sourceEntry: { id: "e-c2" }, messages: [{ role: "toolResult", content: [{ type: "text", text: "x".repeat(400) }] }] },
+        { sourceEntry: { id: "r" }, messages: [{ role: "assistant", content: [{ type: "thinking", thinking: "", thinkingSignature: "E".repeat(800) }, { type: "text", text: "y".repeat(40) }] }] },
+      ];
+      await seat.endTurn({ contextEntries: projected });
+      const rows = seat.rowsOf("skill_unload");
+      assert.deepEqual(rows.map((r) => r.result.suffix_tokens), [Math.ceil((400 + 800 + 40) / 4), Math.ceil((800 + 40) / 4)], "the first body's suffix includes the second's result; the encrypted reasoning counts");
+      assert.deepEqual(rows.map((r) => r.result.batch_suffix_tokens), [310, 310], "both rows carry the batch's cost once: the largest suffix");
+    } finally {
+      await disposeSeat(seat);
+    }
+  });
+});
+
+test("the first Anthropic reply after a release or a compaction is read for the thinking blocks the service dropped; other transports have nothing to report", async () => {
+  await withPacks(async (a, b) => {
+    const seat = await directSeat([a, b], { release: "auto" });
+    try {
+      const reply = (api: string, dropped: number) => ({
+        message: {
+          role: "assistant",
+          api,
+          model: "claude-fable-5-1",
+          diagnostics: dropped ? [{ type: "anthropic_input_transformations", details: { transformations: Array.from({ length: dropped }, () => ({ type: "thinking_dropped" })).concat([{ type: "something_else" } as never]) } }] : [],
+        },
+      });
+      // Nothing was released yet: a reply is not watched.
+      await seat.fire("message_end", reply("anthropic-messages", 3));
+      assert.equal(seat.rowsOf("skill_release_effect").length, 0);
+      await seat.skill("evidence/one", "c1");
+      await seat.endTurn();
+      await seat.done("evidence/one", "", "c2");
+      await seat.endTurn();
+      await seat.fire("message_end", { message: { role: "user" } });
+      await seat.fire("message_end", reply("anthropic-messages", 2));
+      await seat.fire("message_end", reply("anthropic-messages", 5));
+      const rows = seat.rowsOf("skill_release_effect");
+      assert.equal(rows.length, 1, "the first reply only");
+      assert.deepEqual([rows[0]!.result.after, rows[0]!.result.thinking_dropped, rows[0]!.result.turn, rows[0]!.result.model], ["release", 2, 2, "claude-fable-5-1"]);
+      // After a compaction, the same.
+      seat.session.context = [{ type: "compaction", id: "k", firstKeptEntryId: null }];
+      await seat.fire("session_compact", {});
+      await seat.fire("message_end", reply("anthropic-messages", 0));
+      assert.deepEqual(seat.rowsOf("skill_release_effect").map((r) => [r.result.after, r.result.thinking_dropped]), [["release", 2], ["compaction", 0]]);
+      // A reply on a transport that does not report it writes nothing.
+      await seat.skill("evidence/two", "c3");
+      await seat.endTurn();
+      await seat.done("evidence/two", "", "c4");
+      await seat.endTurn();
+      await seat.fire("message_end", reply("openai-codex-responses", 0));
+      assert.equal(seat.rowsOf("skill_release_effect").length, 2);
+      assert.equal(countDroppedThinkingBlocks(reply("anthropic-messages", 4).message), 4);
+      assert.equal(countDroppedThinkingBlocks({}), 0);
+    } finally {
+      await disposeSeat(seat);
+    }
+  });
+});
+
+test("a release Pi did not commit at the hand-off boundary is taken back too: the compaction does not clear the doubt", async () => {
+  await withPacks(async (a, b) => {
+    const seat = await directSeat([a, b]);
+    try {
+      await seat.skill("evidence/one", "c1");
+      await seat.endTurn();
+      await seat.done("evidence/one", "", "c2");
+      const out = await seat.endTurn({ handoff: true, commit: false });
+      assert.equal(out.entries!.length, 1, "the draft was returned");
+      seat.session.context = [{ type: "compaction", id: "k", firstKeptEntryId: null }];
+      await seat.fire("session_compact", {});
+      const rows = seat.rowsOf("skill_unload");
+      assert.deepEqual(rows.map((r) => [r.result.ok, r.result.call]), [[true, "c1"], [false, "c1"]], "the failed row names the call of the release it takes back");
+      // The metrics read the pair as no release at all.
+      const flat = rows.map((r, i) => ({ ts: `2026-10-07T10:00:0${i}.000Z`, agent: "agent00", tool: r.tool, args: r.args, result: r.result }));
+      assert.equal(skillUse(flat, ["agent00"]).seats[0]!.released, 0);
+    } finally {
+      await disposeSeat(seat);
+    }
+  });
+});
+
+test("the summary input counts a note as done when the ledger knows it was marked in the kept tail", async () => {
+  await withPacks(async (a, b) => {
+    const seat = await directSeat([a, b]);
+    try {
+      await seat.skill("evidence/one", "c1");
+      await seat.endTurn();
+      await seat.done("evidence/one", "", "c2");
+      // The compaction cuts after the load and before the done: the done is in the kept tail, outside the part being summarised.
+      const summarised = [{ role: "toolResult", toolName: "skill", toolCallId: "c1", details: { ok: true, id: "evidence/one", pack: "pack-a", turn: 1, tokens: 41, sha256: "a".repeat(64) }, content: [{ type: "text", text: BODY_ONE }] }];
+      const shaped = seat.handle.summaryInput(summarised, []);
+      assert.match(shaped.block, /pack-a:evidence\/one: 41 tokens, read at turn 1, marked done\n/);
+      assert.equal(shaped.block.includes("probably still needed"), false);
+    } finally {
+      await disposeSeat(seat);
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

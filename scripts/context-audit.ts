@@ -404,6 +404,12 @@ export function skillFindings(skills: RunSkills): string[] {
       `${t.released} loaded bod${t.released === 1 ? "y was" : "ies were"} released from the seat's context (${fmt(t.tokens_released)} tokens; ${t.released_at_compaction} at a compaction, ${t.released - t.released_at_compaction} at a turn boundary after skill_done); ${t.reloaded_after_release} ${t.reloaded_after_release === 1 ? "was" : "were"} loaded again afterwards${rate !== null ? ` (wasted-release rate ${rate}%)` : ""}.`,
     );
   }
+  if (t.replies_after_release + t.replies_after_compaction > 0) {
+    const word = (n: number) => `${n} thinking block${n === 1 ? "" : "s"}`;
+    out.push(
+      `Anthropic's replies say it dropped ${word(t.thinking_dropped_after_release)} from the history in the ${t.replies_after_release} first repl${t.replies_after_release === 1 ? "y" : "ies"} after a release and ${word(t.thinking_dropped_after_compaction)} in the ${t.replies_after_compaction} after a compaction (a block is dropped when what comes before it was changed).`,
+    );
+  }
   if (t.already_loaded > 0) out.push(`${t.already_loaded} call${t.already_loaded === 1 ? "" : "s"} asked for a body the seat already held and was told so instead of being sent it again.`);
   if (t.failed > 0) out.push(`${t.failed} skill call${t.failed === 1 ? "" : "s"} named no skill the packs carry.`);
   return out;

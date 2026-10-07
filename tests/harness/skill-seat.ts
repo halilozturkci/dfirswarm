@@ -23,22 +23,36 @@ export const MODELS: Record<string, ModelFacts> = {
   claudeNoThink: { api: "anthropic-messages", provider: "anthropic", id: "claude-haiku-x", reasoning: false },
   codex: { api: "openai-codex-responses", provider: "openai-codex", id: "gpt-6-sol", reasoning: true },
   local: { api: "openai-completions", provider: "llama.cpp", id: "qwen", reasoning: false },
+  localThinking: { api: "openai-completions", provider: "llama.cpp", id: "qwen-thinking", reasoning: true },
+  openrouterClaude: { api: "openai-completions", provider: "openrouter", id: "anthropic/claude-fable-5.1:batch", reasoning: true },
 };
 
 export type DirectSeat = {
   root: string;
   handle: SkillsHandle;
   rows: Row[];
-  /** The entries Pi would hold, in order; `context` is what buildContextEntries() returns. */
-  session: { context: Array<Record<string, unknown>> };
+  /** The entries Pi would hold, in order: `branch` is the whole session (getBranch()), `context` what buildContextEntries() returns (a test that plays a compaction replaces it and leaves the branch). */
+  session: { context: Array<Record<string, unknown>>; branch: Array<Record<string, unknown>> };
   turn: { n: number };
-  /** Set while a hand-off compaction is about to run. */
+  /** What `compactionPending` answers, for a seat that wants it to say no (a hand-off that is over). */
   compacting: { on: boolean };
+  /** An assistant message entry in the session: the api that wrote it and whether it carries a signed thinking block. */
+  assistant: (options?: { api?: string; signed?: boolean }) => void;
   /** A skill call (its result becomes a session entry). */
   skill: (id?: string, callId?: string) => Promise<{ text: string; details: Record<string, unknown> }>;
   done: (id: string, note?: string, callId?: string) => Promise<{ text: string; details: Record<string, unknown> }>;
   /** A turn ends: the turn counter moves, the `turn_end` handlers run, and the drafts they return are committed to the session. */
-  endTurn: (options?: { model?: ModelFacts | undefined; thinkingLevel?: string; entries?: unknown[]; outcome?: string; contextEntries?: unknown[]; /** False: Pi does not commit the drafts (an older Pi, or a boundary another extension's invalid draft cancelled). */ commit?: boolean }) => Promise<{ entries: Draft[] | undefined }>;
+  endTurn: (options?: {
+    model?: ModelFacts | undefined;
+    thinkingLevel?: string;
+    entries?: unknown[];
+    outcome?: string;
+    contextEntries?: unknown[];
+    /** The turn's tool results: `self_compact` among them is the turn the seat handed off in. */
+    handoff?: boolean | "refused";
+    /** False: Pi does not commit the drafts (an older Pi, or a boundary another extension's invalid draft cancelled). */
+    commit?: boolean;
+  }) => Promise<{ entries: Draft[] | undefined }>;
   fire: (event: string, payload?: Record<string, unknown>) => Promise<unknown[]>;
   rowsOf: (tool: string) => Row[];
 };
@@ -54,8 +68,12 @@ export async function directSeat(packDirs: string[], options: { release?: string
   };
   const rows: Row[] = [];
   const turn = { n: 0 };
-  const compacting = { on: false };
-  const session = { context: [] as Array<Record<string, unknown>> };
+  const compacting = { on: true };
+  const session = { context: [] as Array<Record<string, unknown>>, branch: [] as Array<Record<string, unknown>> };
+  const append = (entry: Record<string, unknown>) => {
+    session.context.push(entry);
+    session.branch.push(entry);
+  };
   let counter = 0;
   const handle = registerSkills(fake as never, {
     packDirs,
@@ -70,10 +88,10 @@ export async function directSeat(packDirs: string[], options: { release?: string
     cwd: root,
     model,
     thinkingLevel,
-    sessionManager: { buildContextEntries: () => session.context, getBranch: () => session.context, getEntries: () => session.context },
+    sessionManager: { buildContextEntries: () => session.context, getBranch: () => session.branch, getEntries: () => session.branch },
   });
   const entry = (callId: string, toolName: string, out: { text: string; details: Record<string, unknown> }) => {
-    session.context.push({ type: "message", id: `e-${callId}`, message: { role: "toolResult", toolName, toolCallId: callId, details: out.details, content: [{ type: "text", text: out.text }] } });
+    append({ type: "message", id: `e-${callId}`, message: { role: "toolResult", toolName, toolCallId: callId, details: out.details, content: [{ type: "text", text: out.text }] } });
   };
   const call = async (name: string, params: Record<string, unknown>, callId: string) => {
     const out = await tools.get(name)!.execute(callId, params, undefined, undefined, ctxFor(undefined, undefined));
@@ -93,12 +111,23 @@ export async function directSeat(packDirs: string[], options: { release?: string
     session,
     turn,
     compacting,
+    assistant: (opts = {}) => {
+      append({
+        type: "message",
+        id: `a-${++counter}`,
+        message: { role: "assistant", api: opts.api ?? "openai-completions", content: [...(opts.signed ? [{ type: "thinking", thinking: "t", thinkingSignature: "SIG" }] : []), { type: "text", text: "ok" }] },
+      });
+    },
     skill: (id, callId) => call("skill", id === undefined ? {} : { id }, callId ?? `c${++counter}`),
     done: (id, note, callId) => call("skill_done", note === undefined ? { id } : { id, note }, callId ?? `c${++counter}`),
     endTurn: async (opts = {}) => {
       turn.n += 1;
-      const ctx = ctxFor("model" in opts ? opts.model : MODELS.codex, opts.thinkingLevel ?? "medium");
-      const event = { type: "turn_end", entries: opts.entries ?? [], outcome: opts.outcome ?? "completed", ...(opts.contextEntries ? { context: { contextEntries: opts.contextEntries } } : {}) };
+      const model = "model" in opts ? opts.model : MODELS.codex;
+      // The turn's assistant message is in the session before its turn_end (unsigned: a test that wants a signed one adds it first).
+      append({ type: "message", id: `a-${++counter}`, message: { role: "assistant", api: model?.api ?? "none", content: [{ type: "text", text: "ok" }] } });
+      const ctx = ctxFor(model, opts.thinkingLevel ?? "medium");
+      const toolResults = opts.handoff ? [{ role: "toolResult", toolName: "self_compact", isError: opts.handoff === "refused" }] : [];
+      const event = { type: "turn_end", entries: opts.entries ?? [], outcome: opts.outcome ?? "completed", toolResults, ...(opts.contextEntries ? { context: { contextEntries: opts.contextEntries } } : {}) };
       let result: { entries?: Draft[] } | undefined;
       for (const h of handlers.get("turn_end") ?? []) {
         const out = (await h(event, ctx)) as { entries?: Draft[] } | undefined;
@@ -109,7 +138,7 @@ export async function directSeat(packDirs: string[], options: { release?: string
       }
       // Pi commits the drafts before it builds the next request.
       for (const draft of opts.commit === false ? [] : (result?.entries ?? [])) {
-        if (draft.type === "context_edit") session.context.push({ type: "context_edit", id: `edit-${++counter}`, targetId: draft.targetId, replacement: draft.replacement });
+        if (draft.type === "context_edit") append({ type: "context_edit", id: `edit-${++counter}`, targetId: draft.targetId, replacement: draft.replacement });
       }
       return { entries: result?.entries };
     },

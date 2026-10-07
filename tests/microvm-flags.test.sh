@@ -434,31 +434,38 @@ grep -q '^Skills:' <<<"$out" && fail "a run with no pack talks of skills: $out"
 pass "a run with a pack writes the packs' index into .pi/APPEND_SYSTEM.md (the pack's own entry lines, under its id and version) and says so; a run with none writes no file"
 
 # --- when a finished skill body leaves a seat's context (--skill-release) -----------------
-# Recorded in the registry (auto unless said), said in the kickoff's own words,
-# validated, and handed to the seats: the VM's environment carries it.
+# Recorded in the registry (compaction unless said: a mid-run release is the experiment arm, not the default),
+# said in the kickoff's own words, validated, and handed to the seats: the VM's environment carries it.
 out="$(start --isolation host --pack keyed-pack --label skill-release-default)"; rc=$?
 [[ $rc -eq 0 ]] || fail "a kickoff with a pack exited $rc: $out"
-[[ "$(reg skill-release-default '.skill_release')" == "auto" ]] || fail "the record should say auto when nothing was asked: $(reg skill-release-default '.skill_release')"
-grep -q '^Skill release: a body an agent marks done leaves its context at the next turn boundary; at a compaction only on a Claude model with thinking (--skill-release auto)$' <<<"$out" || fail "the kickoff does not say what auto comes to: $out"
+[[ "$(reg skill-release-default '.skill_release')" == "compaction" ]] || fail "the record should say compaction when nothing was asked: $(reg skill-release-default '.skill_release')"
+grep -q '^Skill release: compaction (a finished body is released when the agent hands off to itself)$' <<<"$out" || fail "the kickoff does not say what the default comes to: $out"
+out="$(start --isolation host --pack keyed-pack --no-self-compact --label skill-release-default-nohandoff)"; rc=$?
+grep -q '^Skill release: compaction (--no-self-compact leaves no hand-off: no finished body is released)$' <<<"$out" || fail "the default without self-compaction is not said to release nothing: $out"
+grep -q 'WARN: --skill-release' <<<"$out" && fail "the default warned about a flag nobody gave: $out"
+out="$(start --isolation host --pack keyed-pack --skill-release auto --label skill-release-auto)"; rc=$?
+[[ $rc -eq 0 ]] || fail "--skill-release auto exited $rc: $out"
+[[ "$(reg skill-release-auto '.skill_release')" == "auto" ]] || fail "the record does not say auto"
+grep -q '^Skill release: auto (a finished body is released at the next turn boundary on a Responses-family or non-reasoning model, and when the agent hands off to itself)$' <<<"$out" || fail "the kickoff does not say what auto comes to: $out"
 for mode in compaction off; do
   out="$(start --isolation host --pack keyed-pack --skill-release "$mode" --label "skill-release-$mode")"; rc=$?
   [[ $rc -eq 0 ]] || fail "--skill-release $mode exited $rc: $out"
   [[ "$(reg "skill-release-$mode" '.skill_release')" == "$mode" ]] || fail "the record does not say $mode"
-  grep -q "(--skill-release $mode)\$" <<<"$out" || fail "the kickoff does not repeat $mode: $out"
+  grep -q "^Skill release: $mode (" <<<"$out" || fail "the kickoff does not repeat $mode: $out"
 done
 out="$(start --isolation host --pack keyed-pack --skill-release sometimes --label skill-release-bad)"; rc=$?
-[[ $rc -eq 2 ]] && grep -q 'BLOCKER: --skill-release is auto, compaction or off, got sometimes' <<<"$out" || fail "a wrong --skill-release was not refused (rc $rc): $out"
+[[ $rc -eq 2 ]] && grep -q 'BLOCKER: --skill-release is compaction, auto or off, got sometimes' <<<"$out" || fail "a wrong --skill-release was not refused (rc $rc): $out"
 out="$(start --isolation host --skill-release off --label skill-release-nopack)"; rc=$?
 [[ $rc -eq 0 ]] && grep -q 'WARN: --skill-release off does nothing: this run carries no pack' <<<"$out" || fail "--skill-release with no pack was not said (rc $rc): $out"
 grep -q '^Skill release:' <<<"$out" && fail "a run with no pack talks of skill release: $out"
 out="$(start --isolation host --pack keyed-pack --skill-release compaction --no-self-compact --label skill-release-nohandoff)"; rc=$?
 [[ $rc -eq 0 ]] && grep -q 'WARN: --skill-release compaction releases a body when a seat hands off to itself, and --no-self-compact leaves no hand-off' <<<"$out" || fail "compaction release without self-compaction was not said (rc $rc): $out"
-out="$(start --isolation microvm --inputs "$TMP/ev" --pack keyed-pack --allow-pack-secrets --skill-release off --label skill-release-vm)"; rc=$?
+out="$(start --isolation microvm --inputs "$TMP/ev" --pack keyed-pack --allow-pack-secrets --skill-release auto --label skill-release-vm)"; rc=$?
 [[ $rc -eq 0 ]] || fail "a VM kickoff with --skill-release exited $rc: $out"
-[[ "$(jq -r '.env.SWARM_SKILL_RELEASE // empty' "$(sandbox_of "$out")/vm-spec.json")" == "off" ]] || fail "the VMs' environment does not carry SWARM_SKILL_RELEASE: $(jq -c '.env' "$(sandbox_of "$out")/vm-spec.json")"
+[[ "$(jq -r '.env.SWARM_SKILL_RELEASE // empty' "$(sandbox_of "$out")/vm-spec.json")" == "auto" ]] || fail "the VMs' environment does not carry SWARM_SKILL_RELEASE: $(jq -c '.env' "$(sandbox_of "$out")/vm-spec.json")"
 out="$(start --isolation microvm --inputs "$TMP/ev" --pack keyed-pack --allow-pack-secrets --label skill-release-vm-default)"
-[[ -z "$(jq -r '.env.SWARM_SKILL_RELEASE // empty' "$(sandbox_of "$out")/vm-spec.json")" ]] || fail "a default run set SWARM_SKILL_RELEASE: the seats' own default (auto) is the one that applies"
-pass "--skill-release is validated, recorded (auto by default), said at kickoff, and reaches the VMs; with no pack or no hand-off it is said to do nothing"
+[[ -z "$(jq -r '.env.SWARM_SKILL_RELEASE // empty' "$(sandbox_of "$out")/vm-spec.json")" ]] || fail "a default run set SWARM_SKILL_RELEASE: the seats' own default (compaction) is the one that applies"
+pass "--skill-release is validated, recorded (compaction by default), said at kickoff, and reaches the VMs; with no pack or no hand-off it is said to do nothing"
 
 # --- a credential cannot ride in on --env; a subscription needs an explicit yes ---------
 out="$(start --isolation microvm --env FOO_API_KEY=abc --label bad-env)"; rc=$?

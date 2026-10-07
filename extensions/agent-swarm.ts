@@ -2818,7 +2818,7 @@ export default function (pi: ExtensionAPI) {
       },
       // --skill-release (docs/usage.md): when a body a seat has finished with leaves its context.
       release: process.env.SWARM_SKILL_RELEASE?.trim() || undefined,
-      // A seat that saved its hand-off note is about to compact: finished bodies leave with that compaction.
+      // A hand-off that is pending or being compacted (not one that failed and was given up): finished bodies leave with that compaction.
       compactionPending: () => selfCompact?.handoffPending() ?? false,
     });
   }
