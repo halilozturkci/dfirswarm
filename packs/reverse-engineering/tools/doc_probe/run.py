@@ -538,19 +538,21 @@ class DoctypeRefused(Exception):
     pass
 
 
-def parse_relationships(chunks):
-    """(relationships, notes): the Relationship elements of an OPC relationships part, read with an XML parser that
-    knows namespaces, refuses a DOCTYPE and never expands an entity."""
+def parse_relationships(chunks, on_relationship):
+    """Hand each Relationship element of an OPC relationships part to `on_relationship` as a dict of its attributes, read
+    with an XML parser that knows namespaces, refuses a DOCTYPE and never expands an entity. Nothing is collected: a part of
+    a million relationships costs no more memory than one. Returns counts of what was seen and what was not read."""
     parser = xml.parsers.expat.ParserCreate(namespace_separator=" ")
     parser.SetParamEntityParsing(xml.parsers.expat.XML_PARAM_ENTITY_PARSING_NEVER)
-    found, notes = [], {"other_namespace": 0, "internal": 0, "over_cap": False}
+    notes = {"seen": 0, "other_namespace": 0, "over_cap": False}
 
     def start(name, attrs):
         if name == REL_NS + " Relationship":
-            if len(found) >= MAX_RELATIONSHIPS:
+            if notes["seen"] >= MAX_RELATIONSHIPS:
                 notes["over_cap"] = True
                 return
-            found.append(dict(attrs))
+            notes["seen"] += 1
+            on_relationship(attrs)
         elif name.rsplit(" ", 1)[-1] == "Relationship":
             notes["other_namespace"] += 1
 
@@ -562,7 +564,7 @@ def parse_relationships(chunks):
     for chunk in chunks:
         parser.Parse(chunk, False)
     parser.Parse(b"", True)
-    return found, notes
+    return notes
 
 
 # --- ZIP ------------------------------------------------------------------------------------------------------------------------
@@ -716,29 +718,7 @@ def extract_member(archive, info, index, extract_to, budget, members, ctx, row):
 
 
 def read_relationships(archive, info, shown, name, budget, members, relationship_parts, targets, out, ctx):
-    try:
-        found, notes = parse_relationships(stream_member(archive, info, budget))
-    except Unreadable as exc:
-        count_unreadable(members, ctx, exc.kind, shown, exc.reason)
-        relationship_parts["failed"] += 1
-        return
-    except DoctypeRefused:
-        ctx.problem("%s: the part contains a DOCTYPE, which is refused: it was not parsed" % shown)
-        relationship_parts["failed"] += 1
-        members["failed"] += 1
-        return
-    except xml.parsers.expat.ExpatError as exc:
-        ctx.problem("%s: the part is not well-formed XML (%s)" % (shown, xml.parsers.expat.ErrorString(exc.code)))
-        relationship_parts["failed"] += 1
-        members["failed"] += 1
-        return
-    members["read"] += 1
-    relationship_parts["read"] += 1
-    if notes["other_namespace"]:
-        ctx.problem("%s: %d Relationship element(s) are not in the package-relationships namespace and were not read" % (shown, notes["other_namespace"]))
-    if notes["over_cap"]:
-        ctx.limit_hit("%s: more than %d relationships: the rest were not read" % (shown, MAX_RELATIONSHIPS))
-    for rel in found:
+    def handle(rel):
         mode = rel.get("TargetMode")
         if mode == "External":
             serial = targets.total + 1
@@ -755,6 +735,29 @@ def read_relationships(archive, info, shown, name, budget, members, relationship
                         % (shown, scrub(rel.get("Id", ""), "names"), scrub(mode, "names")))
         else:
             relationship_parts["internal_relationships"] += 1
+
+    try:
+        notes = parse_relationships(stream_member(archive, info, budget), handle)
+    except Unreadable as exc:
+        count_unreadable(members, ctx, exc.kind, shown, exc.reason)
+        relationship_parts["failed"] += 1
+        return
+    except DoctypeRefused:
+        ctx.problem("%s: the part contains a DOCTYPE, which is refused: it was not parsed" % shown)
+        relationship_parts["failed"] += 1
+        members["failed"] += 1
+        return
+    except xml.parsers.expat.ExpatError as exc:
+        ctx.problem("%s: the part is not well-formed XML (%s): the relationships before the error are listed" % (shown, xml.parsers.expat.ErrorString(exc.code)))
+        relationship_parts["failed"] += 1
+        members["failed"] += 1
+        return
+    members["read"] += 1
+    relationship_parts["read"] += 1
+    if notes["other_namespace"]:
+        ctx.problem("%s: %d Relationship element(s) are not in the package-relationships namespace and were not read" % (shown, notes["other_namespace"]))
+    if notes["over_cap"]:
+        ctx.limit_hit("%s: more than %d relationships: the rest were not read" % (shown, MAX_RELATIONSHIPS))
 
 
 class Stop(Exception):

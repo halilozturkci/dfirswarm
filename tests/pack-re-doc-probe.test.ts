@@ -146,6 +146,21 @@ test("a DOCTYPE in a relationships part is refused and not expanded", async () =
   });
 });
 
+test("a relationships part that is not well-formed keeps the relationships read before the error, and says so", async () => {
+  await withCwd(async (cwd) => {
+    const text =
+      `<Relationships xmlns="${REL_NS}">` +
+      `<Relationship Id="a" Type="x/hyperlink" Target="https://example.org/first" TargetMode="External"/>` +
+      `<Relationship Id="b" Type="x/hyperlink" Target="https://example.org/second" TargetMode="External"` + // cut off: never closed
+      ``;
+    const out = await probe(cwd, "cut.docx", buildZip([CONTENT_TYPES, { name: "_rels/.rels", data: Buffer.from(text) }]));
+    assert.equal(out.status, "partial");
+    assert.deepEqual(out.external_targets.map((t: Json) => t.relationship_id), ["a"]);
+    assert.ok(out.problems.some((p: string) => /not well-formed/.test(p)), JSON.stringify(out.problems));
+    assert.equal(out.members.failed, 1);
+  });
+});
+
 test("only relationships parts are read for relationships, and the coverage says so", async () => {
   await withCwd(async (cwd) => {
     const out = await probe(cwd, "c.docx", buildZip([CONTENT_TYPES, DOC]));
