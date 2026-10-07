@@ -1,40 +1,22 @@
 ---
 id: identify/collector
-title: Which tool made this, and what that tells you
-when: The evidence is a directory tree or an archive rather than an image.
-needs: [evidence/collections]
+title: Naming the collector and what its records say
+when: A delivery is a tree or an archive from a collector.
+needs: [evidence/verify]
 tools: [collection_id, file_type]
 requires_host: []
 ---
 
-Run `collection_id` on the tree. It recognises the shape each collector leaves
-and reads that collector's own log, which is the fastest way to learn what was
-collected and — far more importantly — what failed.
+Use when a delivery is a tree or an archive of copied files. Not for a disk image (`evidence/imaging`) or for what a delivery can establish (`gaps/what-is-missing`).
 
-    KAPE            a tree mirroring C:\, often with $MFT and $J at the root,
-                    and a *_CopyLog.csv and *_SkipLog.csv beside it
-    UAC             a .tar.gz with [root], [bodyfile], [live_response] and
-                    per-artefact directories, plus uac.log
-    Velociraptor    a container zip with uploads/ and JSON result files per
-                    artefact, and an uploads.json index
-    CyLR            a zip mirroring the source paths, NTFS files pulled through
-                    the raw handle
-    a hand-made copy   no manifest, no log, and no way to know what was left out
+1. Run `collection_id` on the directory. An archive is not opened: inventory it first (the base `archive-members` recipe) and extract it into a job's output. The answer is a hypothesis from names, first bytes and limited log parsing, not proof of the collector and not an audit. Read the original configuration, manifests, result files and logs before you accept its attribution or its failure count. `file_type` reads bytes where a class rests on the extension only.
+2. Keep three states apart. Attribution: `collector_candidates`, each with the paths it saw (more than one collector, and more than one run, can be present; a top-level `C` directory is a layout clue and names no collector). Acquisition mode: what the collector read, which no file name shows. Composition: `delivery.kind` (`mixed` means copied files sit beside an image, a memory capture or an archive, each classified in `objects`).
+3. Read each log's `status`. `parsed` means every row or line matched an adapter; `partial` and `unsupported` mean the failure count is incomplete or absent, and `failed_target_count: null` is not zero. A zero is "none in the rows read", never "it finished".
+4. **The collector's log is evidence.** Keep every recorded skip or error with its locator and its own words, and do not explain it: a lock, a permission boundary, an absent path, an unsupported object and a defect look alike. A recorded failure does not make a target suspicious. Outcome states are in `verify/target-outcomes`.
+5. **The profile is intended scope.** Record its exact version or supplied definition, parameters, exclusions, source roots, privileges and any time or size filter, and reconcile it with attempts, failures and delivered objects. A missing target can stop a direct examination without ruling out traces in other supplied sources: state the limit per question.
 
-**The collector's log is evidence.** Preserve every failed target and the
-collector's recorded reason. A failure may mean a lock, a permission boundary,
-an absent path, an unsupported object, or a collector defect; failure alone
-does not make the target suspicious. The recorded failure is a fact about the
-collection and belongs in the report.
+Only if you must describe a family's usual layout, or the tool names no collector: `identify/collector-clues`. Only if the collector read a live host, a mounted image or a snapshot and time or contamination matters: `identify/acquisition-mode`.
 
-**The artefact list is the scope of the collection**, and it is usually a
-profile somebody chose. KAPE targets, UAC profiles and Velociraptor artefact
-sets each define a different subset, and a question outside that subset cannot
-be answered no matter how carefully you look. Name the profile in the report.
-
-**A collection made on a running machine is a smear.** Files were copied over
-minutes while the system kept writing, so two artefacts can disagree without
-either being wrong. Where the log records start and end times, quote them.
-
-Then go to `normalise/layout`, because the paths in the tree are not the paths
-that were on the machine.
+Shows: which records are present, what they say they did, and what the delivery is made of. Does not show: that the collector finished, what it was asked to copy, that a log is complete, or that no manifest exists where none was found.
+Record: tool answer, each log path and status, versions only where a log states one, the profile definition you were given.
+Sensitive output: logs can hold command lines and paths; run `collection_id` as a job with `secret_output: true`, cite locators, and never copy a credential-shaped string or a hash of one into a finding.
