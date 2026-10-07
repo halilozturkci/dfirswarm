@@ -125,7 +125,7 @@ if not recovered and secure_delete:
     print("skip - sqlite_freespace: this SQLite is built with secure delete (%s), so a freed "
           "cell is zeroed and there is nothing for any parser to recover" % secure_delete)
 else:
-    check("sqlite_freespace recovers a deleted row from the page freeblock chain", recovered,
+    check("sqlite_freespace finds the text of a deleted row in the page freeblock chain (a fragment, not a row)", recovered,
           "secure_delete=%s fragments=%s"
           % (secure_delete, json.dumps(got.get("fragments", []))[:200]))
 
@@ -242,7 +242,7 @@ def varint(n):
             return bytes(out)
 
 
-inner = varint((1 << 3) | 2) + varint(len(b"com.example.beacon")) + b"com.example.beacon"
+inner = varint((1 << 3) | 2) + varint(len(b"com.example.beacon")) + b"com.example.beacon" + varint((2 << 3) | 0) + varint(7)
 blob = varint((1 << 3) | 2) + varint(len(inner)) + inner + varint((3 << 3) | 0) + varint(42)
 got, found = as_job("mobile-forensics/tools/protobuf_peek", {"hex": blob.hex()}, "protobuf")
 check("protobuf_peek unwraps a nested message without a schema",

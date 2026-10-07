@@ -1,7 +1,7 @@
 {
   "id": "android-backup",
   "version": "1.1.0",
-  "description": "Read an Android adb-backup (.ab) header and, when it is not encrypted and its version is one this recipe reads (1 to 5), inventory every member of its embedded tar without extracting it. Decompression is bounded by an output budget, and the end of the zlib stream is verified.",
+  "description": "Read an Android adb-backup (.ab) header and, when it is not encrypted and its version is one this recipe reads (1 to 5), inventory every member of its embedded tar without extracting it. Decompression is bounded by an output budget, the end of the zlib stream is verified and bytes after it are counted, the tar is followed header by header beside the tar library (its end-of-archive block must come, and the members the library lists must be the headers counted), and a run never writes over an earlier run's output.",
   "object": "Android adb backup",
   "order": 36,
   "min_bytes": 24,
@@ -30,6 +30,6 @@
     "coverage.json"
   ],
   "purpose": "inventory",
-  "covers": "The adb-backup header (version, compression, encryption scheme; the key-derivation values of an encrypted one are not printed) and every member name, type, size and tar timestamp when encryption is none and the version is supported. It extracts nothing, does not bypass app backup exclusions, and cannot list an encrypted payload: no password is read or accepted. A payload that expands past its decompression budget, a stream cut off before its end marker, a version outside 1 to 5 and an unknown scheme are each said (status partial, with the reason), and what was listed before is kept.",
-  "sha256": "3177e0064274ff5cd49559932e95cb0ec8a0c8858f0f9c1ff8eec4266840cbbe"
+  "covers": "The adb-backup header (version, compression, encryption scheme; the key-derivation values of an encrypted one are not printed) and every member name, type, size and tar timestamp when encryption is none and the version is supported. It extracts nothing, does not bypass app backup exclusions, and cannot list an encrypted payload: no password is read or accepted. A payload that expands past its decompression budget, a stream cut off before its end marker or damaged, bytes after the end of the stream (a second stream, padding), a tar that ends without its end-of-archive block, a tar header the library refuses (its offset is said, and the listing stops there), an extended header too large to read, a version outside 1 to 5 and an unknown scheme are each said (status partial, with the reason), and what was listed before is kept.",
+  "sha256": "72bf28ee33e7b199abcb8fcc9a2168820d5b3150c70558f6d0d904f0aeff663c"
 }

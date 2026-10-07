@@ -358,6 +358,17 @@ def positive(args, name, default, maximum=None):
     return value
 
 
+def seconds(args, name, default, cap):
+    """A time limit: finite, positive and at most `cap` (the tool's own limit less a margin, so that the
+    answer is written before the harness stops the tool; NaN and Infinity would switch the clock off)."""
+    value = args.get(name, default)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+        fail("%s must be a positive finite number of seconds" % name, **{name: str(value)})
+    if value > cap:
+        fail("%s is at most %s seconds (the tool's own limit less the margin it needs to write its answer)" % (name, cap), **{name: value})
+    return float(value)
+
+
 def read_args():
     try:
         args = json.load(sys.stdin)
@@ -385,6 +396,7 @@ MAGIC = b"SQLite format 3\x00"
 LOCK_BYTE_OFFSET = 1 << 30
 DEFAULT_LIMIT = 200
 DEFAULT_MAX_SECONDS = 240
+MAX_SECONDS_CAP = 270       # manifest.json timeout_seconds (300) less the time to write the answer
 INLINE_BYTES = 1 << 20
 REGEX_SECONDS = 2.0
 PROBLEMS_INLINE = 200
@@ -594,11 +606,16 @@ def main():
         except re.error as exc:
             fail("contains is not a valid regex", reason=str(exc))
     limit = positive(args, "limit", DEFAULT_LIMIT)
-    max_seconds = args.get("max_seconds", DEFAULT_MAX_SECONDS)
-    if not isinstance(max_seconds, (int, float)) or isinstance(max_seconds, bool) or max_seconds <= 0:
-        fail("max_seconds must be a positive number")
+    max_seconds = seconds(args, "max_seconds", DEFAULT_MAX_SECONDS, MAX_SECONDS_CAP)
     deadline = started + max_seconds
     values = open_values(args)
+    if pattern is not None and not values.enabled:
+        # A filter answers "does this match?" for every fragment at once, and the answer lists which fragments
+        # matched: with text you cannot see, one call is one bit of every fragment, and a few hundred calls
+        # rebuild a token. A filter is therefore only a way to narrow what is written to the sealed values file.
+        fail("contains narrows the sealed values file: it needs write_values: true, in a job run with secret_output: true. "
+             "Without them a filter would tell you, fragment by fragment, whether text you cannot see matches it. "
+             "Nothing was scanned.", contains_refused=True)
 
     file_bytes = os.path.getsize(db)
     real = shown(os.path.realpath(db), False)
@@ -709,7 +726,7 @@ def main():
         counts = {"pages_in_file": in_file, "pages_examined": 0, "pages_not_btree": 0, "pages_corrupt": 0,
                   "pages_partial": 0, "lock_byte_pages_skipped": 0, "pointer_map_pages_skipped": 0,
                   "freelist_trunk_pages": 0, "freelist_leaf_pages": 0, "freeblocks": 0, "unallocated_gaps": 0,
-                  "regions_scanned": 0, "bytes_scanned": 0, "fragments_found": 0, "fragments_matching": 0,
+                  "regions_scanned": 0, "bytes_scanned": 0, "fragments_found": 0,
                   "fragments_unverified": 0, "candidates_dropped_as_overlapping": 0, "pages_not_reached": 0,
                   "contains_timeouts": 0}
         stopped_at = None
@@ -728,22 +745,23 @@ def main():
                 text = decode(raw, encoding)
                 characters = len(text)
                 counts["fragments_found"] += 1
+                # contains only narrows what is written to the sealed values file. The answer lists every fragment whatever
+                # the expression says: a list of the fragments that matched would answer, for each fragment, whether text
+                # you cannot see matches, and a few hundred calls rebuild a token.
+                hit = True
                 if pattern is not None:
                     try:
-                        hit = timed_search(pattern, text, max(0.01, min(REGEX_SECONDS, deadline - time.monotonic())))
+                        hit = timed_search(pattern, text, max(0.01, min(REGEX_SECONDS, deadline - time.monotonic()))) is not None
                     except Timeout:
+                        hit = False
                         counts["contains_timeouts"] += 1
-                        problems.add("contains took too long", "the expression ran past its time on one fragment (page %d): that fragment is counted and not matched" % number, False, page=number)
-                        continue
-                    if not hit:
-                        continue
+                        problems.add("contains took too long", "the expression ran past its time on a fragment: that fragment is not written to the values file", False)
                 absolute = (number - 1) * page_size + base_in_page + start
                 verify.seek(absolute)
                 again = verify.read(len(raw))
                 verified = again == raw
                 serial += 1
                 finding = "F%06d" % serial
-                counts["fragments_matching"] += 1
                 if not verified:
                     counts["fragments_unverified"] += 1
                     problems.add("fragment not found at its offset", "the bytes at offset %d are not the bytes found in the page: not trusted" % absolute, False, page=number, finding_id=finding)
@@ -751,8 +769,9 @@ def main():
                        "offset": absolute, "offset_verified": verified, "bytes": len(raw),
                        "characters": characters, "parser": PARSER, **extra}
                 fragments.add(row)
-                values.add(finding, {"file": os.path.realpath(db), "page": number, "where": where, "encoding": encoding,
-                                     "offset": absolute, "bytes": len(raw), "characters": characters}, text)
+                if hit:
+                    values.add(finding, {"file": os.path.realpath(db), "page": number, "where": where, "encoding": encoding,
+                                         "offset": absolute, "bytes": len(raw), "characters": characters}, text)
 
         scan.seek(0)
         number = 0
@@ -851,12 +870,13 @@ def main():
         "problems": problems.page.page,
         "problem_kinds": problems.kinds,
         "fragments": fragments.page,
-        "fragment_count": counts["fragments_matching"],
-        "fragments_found_before_filter": counts["fragments_found"],
-        "filter": contains,
+        "fragment_count": counts["fragments_found"],
+        "filter": scrub(contains) if contains else None,
+        "filter_narrows": "the values file only (the fragments listed here are all of them, whatever the expression matched)" if contains else None,
         "pages": paging,
         "companions": companions,
-        "secret_values": values.summary(),
+        "secret_values": {**values.summary(), "written": None, "contains_secret_values": None,
+                          "count_withheld": "contains narrowed the values file: how many fragments matched is not shown"} if pattern is not None else values.summary(),
         "paths_withheld": PATHS_WITHHELD[0],
         **({"paths_note": "A path component shaped like a recovery password is withheld from every path in this answer and in "
                           "the files it names; the real path is in the values file when write_values was asked for."}
@@ -872,8 +892,9 @@ def main():
                 "this answer, and a non-empty one makes the status partial. Encodings are UTF-8 and UTF-16LE "
                 "(UTF-16BE instead of it where the header declares UTF-16BE); a negative covers only those encodings, only the regions "
                 "counted under scanned, and says nothing about a vacuumed database or one that used secure_delete. "
-                "A contains filter shows whether text you name is present; it is not a way to read what you do not "
-                "name. Status is complete (every page examined, nothing inconsistent, no companion left unread), "
+                "contains is accepted only with write_values: it narrows the sealed values file, and the list in this "
+                "answer is every fragment whatever it matched (how many matched is not shown), since a list of the "
+                "matches would answer, fragment by fragment, whether text you cannot see matches. Status is complete (every page examined, nothing inconsistent, no companion left unread), "
                 "partial (a limit, a companion not read, or pages or regions not examined) or corrupt (the file's "
                 "structure disagreed with itself where problems says; the fragments found are still reported, and "
                 "a corrupt chain means text beyond it was not reached). A fragment is a candidate to corroborate, "

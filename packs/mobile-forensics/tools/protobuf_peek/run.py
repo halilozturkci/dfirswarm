@@ -17,37 +17,41 @@ The wire format, which is all this reads (protobuf encoding, as documented by th
 
 A varint is at most ten bytes, and the tenth may hold only the top bit of a 64-bit value; a longer one,
 a field number of 0 or above 536870911, a wire type of 6 or 7 and a field that runs past its message
-are structural errors, named with the offset where they were met. A message that holds a group is
-`unsupported`: it is not parsed past the group and it is never reported as valid.
+are structural errors. A message that holds a group is `unsupported`: it is not parsed past the group
+and it is never reported as valid.
 
-A length-delimited field whose bytes are printable text is text, never a nested message (a nested
-reading of a string would show its characters as field numbers, wire types and lengths: a tag byte is a
-printable character), and any other is read as a nested message only when it parses whole and every field
-number in it is at most 300. A binary value that does parse that way shows that structure, which is derived
-from its bytes: rare for a key or a token, and not impossible.
+WHEN ROWS ARE PRINTED. What the field numbers, wire types, lengths and varints of a window show is
+derived from its bytes: aimed at the payload of a string or a token, the tool would hand the
+characters back as numbers, one call or a sliding window at a time. So rows are printed only for a
+window that is a message: it parses whole, is at least eight bytes with at least two fields, writes every varint in its shortest
+form, orders its field numbers ascending and keeps them at 300 or below (random bytes pass about once in
+3,300; real Biome messages 17,871 times in 17,872). A window that is not one, which includes any window
+aimed at the payload of a field this tool withheld, gets a status and counts, no row, no field number,
+no varint and no number in a reason; its rows are in the job's values file on request. The same rule
+decides whether a length-delimited field is read as a nested message; printable text is text, never a
+nested message (a tag byte is a printable character).
 
-THE SHAPE IS NOT THE MEANING. A length-delimited field is ambiguous by design: each is tried as a
-nested message, then as text, and `read_as` says which reading was taken and `also_reads_as` the others
-that were possible. A varint is returned raw, with its zigzag reading and, where it has the top bit
-set, its two's-complement reading; which of them is meant is the schema's to say, and so is every field
-name, unit and enum. A clean parse says the bytes are consistent with protobuf, not that they are one:
-a short or ordinary blob can parse by chance, and a corrupt message stops at the first error.
+THE SHAPE IS NOT THE MEANING. `read_as` is a guess between a nested message, text and bytes. A varint
+is returned raw, with its zigzag reading and, where it has the top bit set, its two's-complement
+reading; which of them is meant is the schema's to say, and so is every field name, unit and enum. A
+clean parse says the bytes are consistent with protobuf, not that they are one.
 
 Offsets are absolute: the byte position in the file (the `offset` given, plus the position in the
 window read), for a nested field as much as a top-level one, with the full field-number path
-(`3.1.2`). Only a bounded window is read (`length`, at most 8 MiB unless raised, never more than 64
-MiB), and what lies past it is counted and the offset to continue at is named.
+(`3.1.2`). Only a bounded window is read (`length`, 8 MiB by default, never more than 64 MiB; memory
+follows the window, not its depth), and what lies past it is counted and next_offset is named.
 
 THE SECRET-SAFE OUTPUT PATTERN. A protobuf blob can hold message text, a token or any other string.
-A top-level varint is printed (a timestamp, a counter and an enum are what it is read for). Nothing
-else that holds a value is: not the text of a string field, not the bytes of a bytes field, not a
-number under a length-delimited field (binary bytes parse as a nested message now and then, and their
-"numbers" are its content) and not a fixed-width value, which is raw bytes.
-The answer carries each one's offset, length and reading, and the value goes only to the values
-file, on `write_values: true` in a job run with `secret_output: true`. `hex` (a message passed in the call) is recorded in the trace: use it only for
-a few bytes that are not sensitive, and a file for anything else.
+In a printed window a top-level varint is printed (a timestamp, a counter and an enum are what it is
+read for). Nothing else that holds a value is: not the text of a string field, not the bytes of a
+bytes field or the payload of a nested message, not a number under a length-delimited field and not
+a fixed-width value, which is raw bytes. The answer carries each one's offset, length and reading, and
+the value goes only to the values file, on `write_values: true` in a job run with `secret_output:
+true`. `hex` (a message passed in the call) is recorded in the trace: use it only for a few bytes that
+are not sensitive, and a file for anything else.
 """
 import binascii
+import codecs
 import errno
 import hashlib
 import json
@@ -55,6 +59,7 @@ import math
 import os
 import re
 import signal
+import stat
 import struct
 import sys
 import tempfile
@@ -369,6 +374,17 @@ def positive(args, name, default, maximum=None):
     return value
 
 
+def seconds(args, name, default, cap):
+    """A time limit: finite, positive and at most `cap` (the tool's own limit less a margin, so that the
+    answer is written before the harness stops the tool; NaN and Infinity would switch the clock off)."""
+    value = args.get(name, default)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+        fail("%s must be a positive finite number of seconds" % name, **{name: str(value)})
+    if value > cap:
+        fail("%s is at most %s seconds (the tool's own limit less the margin it needs to write its answer)" % (name, cap), **{name: value})
+    return float(value)
+
+
 def read_args():
     try:
         args = json.load(sys.stdin)
@@ -402,97 +418,112 @@ DEFAULT_FIELDS, HARD_FIELDS = 100000, 500000
 DEFAULT_LIMIT = 200
 INLINE_BYTES = 1 << 20
 DEFAULT_SECONDS = 60
-# What a number field carries. A top-level varint is printed; every other number is held back (see emit).
-# A length-delimited field is read as a nested message only when its bytes are not printable text and every
-# field in it has a number up to this. Real messages use small numbers; binary bytes that happen to parse as
-# fields rarely do, and what such a reading shows (field numbers, wire types, lengths) is derived from them.
+MAX_SECONDS_CAP = 90          # manifest.json timeout_seconds (120) less the time to write the answer
+# A message is accepted (its rows are shown, or a length-delimited field is read as one) only when it parses
+# whole, has at least two fields, writes every varint in its shortest form, orders its field numbers
+# ascending and keeps them up to this. Real messages do; the bytes of a token or a string rarely do (about one
+# random 16-byte value in 3,300), and what an accepted reading shows is derived from those bytes.
 NESTED_FIELD_MAX = 300
+# A window that is aimed at a payload is accepted only from this many bytes: in four bytes a printable text is a
+# two-field message about one time in a hundred (a space and a letter are a key and a value), and in eight about
+# one in a hundred thousand.
+MIN_WINDOW_BYTES = 8
 NUMBER_KEYS = ("value", "as_bool", "zigzag_reading", "twos_complement_reading", "hex", "float_reading", "double_reading")
-
-
-class Stop(Exception):
-    """The field budget or the time limit ended the parse."""
+TEXT_FILTER = str.maketrans("", "", "\n\r\t")
 
 
 class Context:
     def __init__(self, blob, base, max_depth, max_fields, deadline):
         self.blob = blob
+        self.view = memoryview(blob)
         self.base = base
         self.max_depth = max_depth
         self.max_fields = max_fields
         self.deadline = deadline
         self.fields = 0
         self.stopped = None
+        self.stop_at = None
+        self.depth_limited = 0
 
 
 def read_varint(blob, at, end):
-    """(value, next, problem): a varint of at most ten bytes whose tenth byte is 0 or 1."""
+    """(value, next, problem, minimal): a varint of at most ten bytes whose tenth byte is 0 or 1. The reasons
+    carry no number: what a number would show is derived from the bytes."""
     value, shift, start = 0, 0, at
     while True:
         if at >= end:
-            return None, at, "a varint that starts at offset %d runs past the end of its message" % start
+            return None, at, "a varint runs past the end of its message", True
         byte = blob[at]
         at += 1
         if shift == 63 and byte > 1:
-            return None, at, "a varint that starts at offset %d is longer than a 64-bit value" % start
+            return None, at, "a varint is longer than a 64-bit value", True
         value |= (byte & 0x7F) << shift
         if not byte & 0x80:
-            return value, at, None
+            return value, at, None, not (at - start > 1 and byte == 0)
         shift += 7
         if shift > 63:
-            return None, at, "a varint that starts at offset %d is longer than ten bytes" % start
+            return None, at, "a varint is longer than ten bytes", True
 
 
-def printable(body):
+def text_characters(view):
+    """The number of characters when the bytes are printable UTF-8 text (tab and line ends allowed), else None.
+    Every character, not most of them: a real string has no control bytes, a nested message nearly always does."""
+    if not len(view):
+        return None
     try:
-        text = body.decode("utf-8")
+        text, _ = codecs.utf_8_decode(view, "strict", True)
     except UnicodeDecodeError:
         return None
-    if not text:
-        return None
-    # Every character, not most of them: a real string field has no control bytes in it, and a
-    # nested message nearly always does (its field keys are low byte values).
-    if all(c.isprintable() or c in "\n\r\t" for c in text):
-        return text
-    return None
+    return len(text) if text.translate(TEXT_FILTER).isprintable() else None
 
 
 def parse(ctx, start, end, depth, path):
-    """(rows, status, problem) for the message in blob[start:end].
+    """(rows, state, problem, shape) for the message in blob[start:end].
 
-    status is ok, invalid (a structural error, in `problem`), unsupported (a group) or stopped (the
-    budget or the clock). The rows before a problem are returned with it.
+    state is ok, invalid (a structural error, in `problem`), unsupported (a group) or stopped (the budget or the
+    clock). shape holds what the acceptance rule needs. Rows carry spans of the window for text, bytes and
+    nested payloads, never copies of them.
     """
     rows, at = [], start
+    shape = {"fields": 0, "minimal": True, "ordered": True, "small": True}
+    last = 0
     while at < end:
         ctx.fields += 1
         if ctx.fields > ctx.max_fields:
-            ctx.stopped = "max_fields (%d) reached" % ctx.max_fields
-            return rows, "stopped", {"offset": ctx.base + at, "reason": ctx.stopped}
+            ctx.stopped, ctx.stop_at = "max_fields (%d) reached" % ctx.max_fields, ctx.base + at
+            return rows, "stopped", {"offset": ctx.base + at, "reason": ctx.stopped}, shape
         if ctx.fields % 256 == 0 and time.monotonic() > ctx.deadline:
-            ctx.stopped = "max_seconds passed"
-            return rows, "stopped", {"offset": ctx.base + at, "reason": ctx.stopped}
+            ctx.stopped, ctx.stop_at = "max_seconds passed", ctx.base + at
+            return rows, "stopped", {"offset": ctx.base + at, "reason": ctx.stopped}, shape
         field_start = at
-        key, at, bad = read_varint(ctx.blob, at, end)
+        key, at, bad, minimal = read_varint(ctx.blob, at, end)
         if bad:
-            return rows, "invalid", {"offset": ctx.base + field_start, "reason": bad}
+            return rows, "invalid", {"offset": ctx.base + field_start, "reason": bad}, shape
+        shape["minimal"] = shape["minimal"] and minimal
         number, wire = key >> 3, key & 7
         if number == 0 or number > MAX_FIELD_NUMBER:
             return rows, "invalid", {"offset": ctx.base + field_start,
-                                      "reason": "field number %d is not in 1 to %d" % (number, MAX_FIELD_NUMBER)}
+                                      "reason": "a field number of 0, or above 536870911"}, shape
+        shape["fields"] += 1
+        if number < last:
+            shape["ordered"] = False
+        last = number
+        if number > NESTED_FIELD_MAX:
+            shape["small"] = False
         field_path = path + [number]
         row = {"field_path": ".".join(str(n) for n in field_path), "field": number, "wire_type": WIRE.get(wire, str(wire)),
                "depth": depth, "offset": ctx.base + field_start}
         if wire in (3, 4):
             return rows, "unsupported", {"offset": ctx.base + field_start,
-                                         "reason": "a group (wire type %d): groups are deprecated and not parsed, and nothing after this "
-                                                   "point in this message is read" % wire}
+                                         "reason": "a group (wire type 3 or 4): groups are deprecated and not parsed, and nothing after "
+                                                   "this point in this message is read"}, shape
         if wire not in (0, 1, 2, 5):
-            return rows, "invalid", {"offset": ctx.base + field_start, "reason": "wire type %d is not defined" % wire}
+            return rows, "invalid", {"offset": ctx.base + field_start, "reason": "a wire type that is not defined (6 or 7)"}, shape
         if wire == 0:
-            value, at, bad = read_varint(ctx.blob, at, end)
+            value, at, bad, minimal = read_varint(ctx.blob, at, end)
             if bad:
-                return rows, "invalid", {"offset": ctx.base + field_start, "reason": bad}
+                return rows, "invalid", {"offset": ctx.base + field_start, "reason": bad}, shape
+            shape["minimal"] = shape["minimal"] and minimal
             row["value"] = value
             if value in (0, 1):
                 row["as_bool"] = bool(value)
@@ -503,7 +534,7 @@ def parse(ctx, start, end, depth, path):
             size = 8 if wire == 1 else 4
             if at + size > end:
                 return rows, "invalid", {"offset": ctx.base + field_start,
-                                         "reason": "a %d-bit field runs past the end of its message" % (size * 8)}
+                                         "reason": "a fixed-width field runs past the end of its message"}, shape
             raw = ctx.blob[at:at + size]
             at += size
             row["value"] = int.from_bytes(raw, "little")
@@ -512,52 +543,55 @@ def parse(ctx, start, end, depth, path):
             if math.isfinite(real):
                 row["float_reading" if wire == 5 else "double_reading"] = real
         else:
-            length, at, bad = read_varint(ctx.blob, at, end)
+            length, at, bad, minimal = read_varint(ctx.blob, at, end)
             if bad:
-                return rows, "invalid", {"offset": ctx.base + field_start, "reason": bad}
+                return rows, "invalid", {"offset": ctx.base + field_start, "reason": bad}, shape
+            shape["minimal"] = shape["minimal"] and minimal
             if at + length > end:
                 return rows, "invalid", {"offset": ctx.base + field_start,
-                                         "reason": "a length-delimited field of %d bytes at offset %d runs past the end of its message"
-                                                   % (length, ctx.base + at)}
-            body = ctx.blob[at:at + length]
+                                         "reason": "a length-delimited field runs past the end of its message"}, shape
             row["payload_offset"] = ctx.base + at
             row["payload_bytes"] = length
-            nested, text, rejected = None, None, False
-            if length:
-                if depth < ctx.max_depth:
-                    inner, state, _ = parse(ctx, at, at + length, depth + 1, field_path)
-                    if ctx.stopped:
-                        return rows, "stopped", {"offset": ctx.base + field_start, "reason": ctx.stopped}
-                    if state == "ok" and inner:
-                        if all(r["field"] <= NESTED_FIELD_MAX for r in inner):
-                            nested = inner
-                        else:
-                            rejected = True
-                text = printable(body)
+            payload = ctx.view[at:at + length]
+            characters = text_characters(payload)
             # Printable text is text, never a nested message: a nested reading of a string would show its
             # characters as field numbers, wire types and lengths (a tag byte is a printable character).
-            if text is not None:
-                row["read_as"] = "text"
-                row["characters"] = len(text)
-                row["_value"] = ("text", text)
-                alternatives = ["nested message"] if (nested or rejected) else []
-            elif nested:
-                row["read_as"] = "nested message"
-                row["children"] = len(nested)
-                row["_children"] = nested
-                alternatives = []
-            elif length == 0:
+            if length == 0:
                 row["read_as"] = "empty"
-                alternatives = []
+            elif characters is not None:
+                row["read_as"] = "text"
+                row["characters"] = characters
+                row["_span"] = ("text", at, at + length)
             else:
-                row["read_as"] = "bytes"
-                row["_value"] = ("bytes", body.hex())
-                alternatives = ["nested message (a field number above %d)" % NESTED_FIELD_MAX] if rejected else []
-            if alternatives:
-                row["also_reads_as"] = alternatives
+                nested, tried_whole = None, False
+                if depth < ctx.max_depth:
+                    inner, state, _, inner_shape = parse(ctx, at, at + length, depth + 1, field_path)
+                    if ctx.stopped:
+                        return rows, "stopped", {"offset": ctx.base + field_start, "reason": ctx.stopped}, shape
+                    tried_whole = state == "ok" and bool(inner)
+                    if accepted(state, inner_shape):
+                        nested = inner
+                else:
+                    ctx.depth_limited += 1
+                if nested:
+                    row["read_as"] = "nested message"
+                    row["children"] = len(nested)
+                    row["_children"] = nested
+                    row["_span"] = ("nested", at, at + length)
+                else:
+                    row["read_as"] = "bytes"
+                    row["_span"] = ("bytes", at, at + length)
+                    if tried_whole:
+                        row["also_reads_as"] = ["a message that does not meet the acceptance rule"]
             at += length
         rows.append(row)
-    return rows, "ok", None
+    return rows, "ok", None, shape
+
+
+def accepted(state, shape):
+    """The acceptance rule, for a nested reading and for the whole window alike. A parse the budget stopped
+    is judged on what it read; one that hit an error or a group is not accepted."""
+    return (state in ("ok", "stopped") and shape["fields"] >= 2 and shape["minimal"] and shape["ordered"] and shape["small"])
 
 
 def main():
@@ -569,15 +603,15 @@ def main():
     if not isinstance(max_depth, int) or isinstance(max_depth, bool) or not 0 <= max_depth <= HARD_DEPTH:
         fail("max_depth must be an integer from 0 to %d" % HARD_DEPTH, max_depth=max_depth)
     max_fields = positive(args, "max_fields", DEFAULT_FIELDS, HARD_FIELDS)
-    max_seconds = args.get("max_seconds", DEFAULT_SECONDS)
-    if not isinstance(max_seconds, (int, float)) or isinstance(max_seconds, bool) or max_seconds <= 0:
-        fail("max_seconds must be a positive number")
+    max_seconds = seconds(args, "max_seconds", DEFAULT_SECONDS, MAX_SECONDS_CAP)
     offset = args.get("offset", 0)
     if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
         fail("offset must be a non-negative integer")
     length = args.get("length")
     if length is not None:
         length = positive(args, "length", None, HARD_WINDOW)
+    if args.get("hex") and args.get("path"):
+        fail("give path or hex, not both: hex is a message in the call (recorded in the trace), path a file")
 
     window = {}
     if args.get("hex"):
@@ -602,111 +636,146 @@ def main():
         if not isinstance(path, str) or not path:
             fail("path or hex is required: a file holding a protobuf message")
         try:
-            with open(path, "rb") as fh:
-                file_bytes = os.fstat(fh.fileno()).st_size
-                if offset > file_bytes:
-                    fail("offset is past the end of the file", offset=offset, bytes=file_bytes)
-                want = min(length or DEFAULT_WINDOW, file_bytes - offset)
-                fh.seek(offset)
-                blob = fh.read(want)
+            # O_NONBLOCK so that a named pipe cannot hold the tool: a path that is not a regular file is refused.
+            fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
         except OSError as exc:
             fail("cannot read that file", path=shown(path, False), reason=describe(exc))
+        with os.fdopen(fd, "rb") as fh:
+            info = os.fstat(fh.fileno())
+            if not stat.S_ISREG(info.st_mode):
+                fail("that path is not a regular file", path=shown(path, False))
+            file_bytes = info.st_size
+            if offset > file_bytes:
+                fail("offset is past the end of the file", offset=offset, bytes=file_bytes)
+            want = min(length or DEFAULT_WINDOW, file_bytes - offset)
+            fh.seek(offset)
+            blob = fh.read(want)
         source, source_real = shown(path), os.path.realpath(path)
         window = {"offset": offset, "bytes": len(blob), "file_bytes": file_bytes, "bytes_after_window": file_bytes - offset - len(blob)}
         if len(blob) < want:
             window["short_read"] = "the file returned %d of %d bytes asked for" % (len(blob), want)
     if window["bytes_after_window"] > 0:
         window["next_offset"] = offset + len(blob)
-        window["note"] = ("Only this window was read: the %d bytes after it are not decoded. Run again at next_offset to continue; "
-                          "a message that spans the boundary will be reported as running past its end." % window["bytes_after_window"])
+        window["note"] = ("Only this window was read: the %d bytes after it are not decoded. next_offset is where the next window of "
+                          "a message that parsed whole starts; a message that spans the boundary is reported as running past its end."
+                          % window["bytes_after_window"])
 
     ctx = Context(blob, offset, max_depth, max_fields, started + max_seconds)
-    rows, state, problem = parse(ctx, 0, len(blob), 0, [])
+    rows, state, problem, shape = parse(ctx, 0, len(blob), 0, [])
+    window_accepted = len(blob) >= MIN_WINDOW_BYTES and accepted(state, shape)
 
-    fields = LosslessPage(TOOL, [source, offset, length, max_depth], limit, INLINE_BYTES)
     counters = {"fields": 0, "varint": 0, "64-bit": 0, "32-bit": 0, "length-delimited": 0, "nested_messages": 0,
-                "text_values_withheld": 0, "bytes_values_withheld": 0, "number_values_withheld": 0, "deepest": 0}
+                "text_values_withheld": 0, "bytes_values_withheld": 0, "nested_payloads_withheld": 0,
+                "number_values_withheld": 0, "deepest": 0}
     serial = [0]
+    fields = LosslessPage(TOOL, [source, offset, length, max_depth], limit, INLINE_BYTES) if window_accepted else None
+    spans = {"text": "text", "bytes": "bytes", "nested": "nested_payload"}
+
+    def locator(row, kind, size):
+        return {"source": source_real, "field_path": row["field_path"], "offset": row["offset"],
+                "payload_offset": row.get("payload_offset"), "kind": kind, "bytes": size}
 
     def emit(items):
         for row in items:
             children = row.pop("_children", None)
-            held = row.pop("_value", None)
+            span = row.pop("_span", None)
             counters["fields"] += 1
             counters[row["wire_type"]] += 1
             counters["deepest"] = max(counters["deepest"], row["depth"])
-            row["source"] = source
-            # A number is printed only when it is a top-level varint. Under a length-delimited field it may be
-            # the content of a string or of bytes read as a nested message (a token's bytes parse as fields about
-            # one time in a few hundred), and a fixed-width value is raw bytes: those go to the values file.
-            if row["wire_type"] in ("varint", "64-bit", "32-bit") and (row["depth"] >= 1 or row["wire_type"] != "varint"):
-                numbers = {k: row.pop(k) for k in NUMBER_KEYS if k in row}
-                serial[0] += 1
-                finding = "V%06d" % serial[0]
-                row["finding_id"] = finding
-                row["value_withheld"] = ("inside a length-delimited field, so it may be the content of a string or of bytes"
-                                         if row["depth"] >= 1 else "a fixed-width value is raw bytes")
-                counters["number_values_withheld"] += 1
-                values.add(finding, {"source": source_real, "field_path": row["field_path"], "offset": row["offset"],
-                                     "payload_offset": None, "kind": "number", "bytes": None}, numbers)
-            if held:
-                serial[0] += 1
-                finding = "V%06d" % serial[0]
-                row["finding_id"] = finding
-                kind, value = held
-                counters["text_values_withheld" if kind == "text" else "bytes_values_withheld"] += 1
-                values.add(finding, {"source": source_real, "field_path": row["field_path"], "offset": row["offset"],
-                                     "payload_offset": row.get("payload_offset"), "kind": kind,
-                                     "bytes": row["payload_bytes"]}, value)
             if children:
                 counters["nested_messages"] += 1
-            fields.add(row)
+            if not window_accepted:
+                # The window is not a message under the acceptance rule: no row is printed (what its field
+                # numbers, wire types and varints show may be its bytes), and the job's values file holds them.
+                serial[0] += 1
+                finding = "V%06d" % serial[0]
+                content = None
+                if span:
+                    content = blob[span[1]:span[2]]
+                    content = codecs.utf_8_decode(content, "replace", True)[0] if span[0] == "text" else content.hex()
+                values.add(finding, locator(row, "field", row.get("payload_bytes")), {"row": row, "content": content})
+            else:
+                row["source"] = source
+                # A number is printed only when it is a top-level varint: under a length-delimited field it may be
+                # the content of a string or of bytes read as a nested message, and a fixed-width value is raw bytes.
+                if row["wire_type"] in ("varint", "64-bit", "32-bit") and (row["depth"] >= 1 or row["wire_type"] != "varint"):
+                    numbers = {k: row.pop(k) for k in NUMBER_KEYS if k in row}
+                    serial[0] += 1
+                    finding = "V%06d" % serial[0]
+                    row["finding_id"] = finding
+                    row["value_withheld"] = ("inside a length-delimited field, so it may be the content of a string or of bytes"
+                                             if row["depth"] >= 1 else "a fixed-width value is raw bytes")
+                    counters["number_values_withheld"] += 1
+                    values.add(finding, locator(row, "number", None), numbers)
+                if span:
+                    serial[0] += 1
+                    finding = "V%06d" % serial[0]
+                    row["finding_id"] = finding
+                    kind = span[0]
+                    counters[{"text": "text_values_withheld", "bytes": "bytes_values_withheld", "nested": "nested_payloads_withheld"}[kind]] += 1
+                    if values.enabled:
+                        content = blob[span[1]:span[2]]
+                        content = codecs.utf_8_decode(content, "replace", True)[0] if kind == "text" else content.hex()
+                        values.add(finding, locator(row, spans[kind], span[2] - span[1]), content)
+                fields.add(row)
             if children:
                 emit(children)
 
     emit(rows)
+    if not window_accepted and problem and values.enabled:
+        # What a withheld window failed on, with its position, for the job that asked for the values.
+        serial[0] += 1
+        values.add("V%06d" % serial[0], {"source": source_real, "field_path": None, "offset": problem["offset"], "payload_offset": None,
+                                         "kind": "diagnosis", "bytes": None}, {"state": state, "reason": problem["reason"], "offset": problem["offset"]})
     values.close()
-    page = fields.finish()
+    page = fields.finish() if fields is not None else None
     if not blob:
         structure = {"status": "empty", "reason": "the window holds no bytes"}
-    elif state == "ok":
-        structure = {"status": "valid", "reason": "every byte of the window parsed as protobuf wire format"}
-    elif state == "stopped":
-        structure = {"status": "partial", "reason": problem["reason"]}
+    elif window_accepted and state == "ok":
+        structure = {"status": "valid", "reason": "the whole window parsed as protobuf wire format and meets the acceptance rule"}
+    elif window_accepted:
+        structure = {"status": "partial", "reason": problem["reason"], "resume_offset": ctx.stop_at}
+    elif state == "unsupported":
+        structure = {"status": "unsupported", "reason": "the window holds a group (wire type 3 or 4), which is not parsed",
+                     "rows_withheld": True}
     else:
-        structure = {"status": state, "reason": problem["reason"]}
-    if problem:
-        structure["problem_offset"] = problem["offset"]
+        structure = {"status": "not_accepted",
+                     "reason": "the window does not parse whole as a message of at least %d bytes with at least two fields, shortest-form varints, "
+                               "ascending field numbers and none above %d: no row, field number or varint is printed, since "
+                               "what they show may be the bytes themselves" % (MIN_WINDOW_BYTES, NESTED_FIELD_MAX),
+                     "rows_withheld": True}
     structure["bytes_in_window"] = len(blob)
-    structure["consistent_with_protobuf_wire_format"] = bool(state == "ok" and rows)
+    structure["consistent_with_protobuf_wire_format"] = bool(window_accepted and state == "ok")
+    if ctx.depth_limited:
+        structure["fields_not_tried_as_nested_at_max_depth"] = ctx.depth_limited
     send({
         "source": source,
         "parser": PARSER,
         "window": window,
         "structure": structure,
-        "fields": fields.page,
+        "fields": fields.page if fields is not None else [],
         "field_count": counters["fields"],
         "top_level_fields": len(rows),
         "counts": counters,
         "limits": {"max_depth": max_depth, "max_fields": max_fields, "max_seconds": max_seconds, "inline_rows": limit,
                    "window_default_bytes": DEFAULT_WINDOW, "window_hard_cap_bytes": HARD_WINDOW},
-        "pages": {"fields": page},
-        "truncated": page["truncated"],
+        "pages": {"fields": page} if page is not None else {},
+        "truncated": bool(page and page["truncated"]),
         "secret_values": values.summary(),
         "paths_withheld": PATHS_WITHHELD[0],
         "note": "This is wire structure, not meaning: no field name, unit, enum or signedness is known without the .proto "
-                "file. A top-level varint is printed raw, with its zigzag reading (and, where the top bit is set, the two's-"
-                "complement reading) beside it; which one is meant is the schema's to say. Nothing else that holds a "
-                "value is printed: not the text of a string field, not the bytes of a bytes field, not a number under a "
-                "length-delimited field (it may be the content of a string that parsed as a nested message), not a "
-                "fixed-width value. Each has its offset, length and reading, and a finding id; the value is in the values "
-                "file only when write_values was asked for in a job run with secret_output: true. read_as is a guess between a nested message, text and bytes "
-                "(also_reads_as lists the others it could be): printable text is always text, and a nested reading needs every "
-                "field number in it to be at most 300. A binary value that parses as a small nested message shows that "
-                "structure (field numbers, wire types, lengths), which is derived from its bytes, and its numbers are "
-                "withheld; its payload as a whole is not in the values file. A group makes the message `unsupported`, and any "
-                "structural error names its offset: consistent_with_protobuf_wire_format means the whole window parsed, "
-                "and a short or ordinary blob can parse by chance. Offsets are absolute in the file.",
+                "file. Rows, field numbers and varints are printed only for a window that parses whole as a message "
+                "(at least eight bytes and two fields, shortest-form varints, ascending field numbers, none above 300); any other window, "
+                "which includes one aimed at the payload of a field the answer withheld, gets a status and counts, and its "
+                "rows are in the values file when write_values was asked for in a job run with secret_output: true. In a "
+                "printed window a top-level varint is printed raw, with its zigzag reading (and, where the top bit is set, "
+                "the two's-complement reading); nothing else that holds a value is: not the text of a string, not the bytes "
+                "of a bytes field or the payload of a nested message, not a number under a length-delimited field, not a "
+                "fixed-width value. Each has its offset, length and reading and a finding id. read_as is a guess between a "
+                "nested message, text and bytes: printable text is always text, and a nested reading needs the acceptance "
+                "rule; a binary value that is accepted shows that structure (field numbers, wire types, lengths), which is "
+                "derived from its bytes: rare for a key or a token (about one random 16-byte value in 3,300), and not "
+                "impossible. A group makes the window `unsupported`. Offsets are absolute in the file.",
     })
 
 

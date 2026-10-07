@@ -1,6 +1,6 @@
 {
   "name": "manifest_db",
-  "description": "List an iOS backup's map: for each file id in Manifest.db its domain, relative path, kind, the metadata of its keyed archive (size, mode, owner, protection class, inode, three times) and the state of the blob the id names (present, missing, a directory, a link never followed, not applicable, or refused). It does not rebuild a file system, open or decrypt a payload, or read a password. It reads the backup's plain files (Manifest.plist, Info.plist, Status.plist) for the encryption flag, the device, the backup's version and date and its completion state. Encryption is three-valued: encrypted, not_encrypted, or unknown (Manifest.plist missing, unreadable or without IsEncrypted: never read as unencrypted). An encrypted backup is never reported as empty: when Manifest.db opens as SQLite its rows are listed with payload_encrypted true; when it does not, the answer says the listing is not available and what the file was. No decryption is provided by this tool or this pack. SENSITIVE: key material in Manifest.plist (the key bag, the manifest key) is reported as present with its length and never printed, hashed or previewed, and a path component shaped like a recovery password is withheld from every path; the tool writes no values file. Times are NOT guessed: epoch (unix by default, or apple) is applied to every time, the raw seconds are returned beside the ISO 8601 UTC time, and the earliest and latest non-zero value read are in the answer (a zero is converted and returned, and left out of the range) so that a wrong epoch shows as a range of decades; check the epoch against a file whose time the case documents. Metadata comes from the keyed archive's root ($top.root, followed through UID references with a depth bound and a cycle check), not from the first object with a Size. A file id is validated (40 hexadecimal digits) before it is joined to a path, and the path must stay inside the backup; both the sharded layout (<xx>/<id>) and the flat one are looked for. A -wal or -journal beside Manifest.db is copied with it to a working directory under $OUT and opened there, never the original; a Manifest.db that is a symbolic link is refused, and a -wal or -journal that is one is not followed or copied (it is said). A Manifest.db that is not SQLite is described by its size and, if it has 256 bytes or more, the entropy of its first 4 KiB, never its first bytes; a TEXT cell that is not UTF-8 does not stop the listing (its bytes show as escapes); a damaged page ends the listing with read_error and what was read is kept (status partial). The answer is strict JSON: a number that is not finite is {\"_float\": text}. The whole listing is kept: the inline page is limit rows and the rest is in the file the answer names. status is complete, or partial (the listing is not available, or the time limit stopped it).",
+  "description": "List an iOS backup's map: for each file id in Manifest.db its domain, relative path, kind, the metadata of its keyed archive (size, mode, owner, protection class, inode, three times) and the state of the blob the id names (present, missing, a directory, a link never followed, not applicable, or refused). It does not rebuild a file system, open or decrypt a payload, or read a password. It reads the backup's plain files (Manifest.plist, Info.plist, Status.plist) for the encryption flag, the device, the backup's version and date and its completion state (completion: finished, not_finished or unknown, from Status.plist's SnapshotState; a backup that did not finish makes the status partial, and unknown, as when there is no Status.plist, is said and is not a failure). Encryption is three-valued: encrypted, not_encrypted, or unknown (Manifest.plist missing, unreadable or without IsEncrypted: never read as unencrypted). An encrypted backup is never reported as empty: when Manifest.db opens as SQLite its rows are listed with payload_encrypted true; when it does not, the answer says the listing is not available and what the file was. No decryption is provided by this tool or this pack. SENSITIVE: key material in Manifest.plist (the key bag, the manifest key) is reported as present with its length and never printed, hashed or previewed, and a path component shaped like a recovery password is withheld from every path; the tool writes no values file. Times are NOT guessed: epoch (unix by default, or apple) is applied to every time, the raw seconds are returned beside the ISO 8601 UTC time, and the earliest and latest non-zero value read are in the answer (a zero is converted and returned, and left out of the range); epoch.consistency counts, per field, the times that fall after the backup's own date or before 2007 under the epoch applied. The wrong epoch is a 31-year shift (Apple against Unix), not a range of decades: check the epoch against a file whose time the case documents. Metadata comes from the keyed archive's root ($top.root, followed through UID references with a depth bound and a cycle check), not from the first object with a Size. A file id is validated (40 hexadecimal digits) before it is joined to a path, and the path must stay inside the backup; both the sharded layout (<xx>/<id>) and the flat one are looked for. A -wal or -journal beside Manifest.db is copied with it to a working directory under $OUT and opened there, never the original; a Manifest.db that is a symbolic link is refused, and a -wal or -journal that is one is not followed or copied (it is said). A Manifest.db that is not SQLite is described by its size and, if it has 256 bytes or more, the entropy of its first 4 KiB, never its first bytes; a TEXT cell that is not UTF-8 does not stop the listing (its bytes show as escapes); the Files table is read in row order, never through the file-id index, so a damaged index page does not cost the listing; a damaged page ends the listing with read_error and what was read is kept (status partial); a Manifest.db cut inside its last page is said and is partial, and one with fewer pages than its header declares does not open and is refused, never listed as empty. The answer is strict JSON: a number that is not finite is {\"_float\": text}. The whole listing is kept: the inline page is limit rows and the rest is in the file the answer names. status is complete, or partial (the listing is not available, the time limit stopped it, a page is damaged or the file is cut short, contains ran out of time on a path, a companion that is a link was not applied, or the backup did not finish).",
   "params": {
     "path": {
       "type": "string",
@@ -9,7 +9,7 @@
     },
     "contains": {
       "type": "string",
-      "description": "Case-insensitive regex over the relative path (at most 1000 characters)"
+      "description": "Case-insensitive regex over the relative path (at most 1000 characters); a path on which it runs longer than 2 seconds (or past max_seconds) is counted and not matched, and the answer says partial"
     },
     "domain": {
       "type": "string",
@@ -25,7 +25,7 @@
     },
     "max_seconds": {
       "type": "number",
-      "description": "Stop reading rows after this long (default 240); the answer says partial and where it stopped"
+      "description": "Stop reading rows after this long (default 240, at most 270); the answer says partial and where it stopped. The clock is read on every row, contains included"
     }
   },
   "runtime": "python3",
@@ -35,10 +35,11 @@
   "by": "maintainer",
   "at": "2026-09-22T20:00:00.000Z",
   "version": 2,
-  "sha256": "c44d10f4767c652c1a61f5adceb837f6a2368267521170b5f77bade70a6329f2",
+  "sha256": "259992771896ccfd331e7f32c6cc2b1aa9048befa864f6e3515ff8942ad462fe",
   "use": {
     "names": [
-      "Manifest.db"
+      "Manifest.db",
+      "Manifest.plist"
     ]
   }
 }

@@ -22,7 +22,7 @@
  * To see that a test fails on the code it was written against, point MOBILE_PACK at a copy of the pack as it
  * was before the fixes:
  *
- *   git archive origin/claude/pack-standard-and-links packs/mobile-forensics | tar -x -C /tmp/old
+ *   git archive edcfe913 packs/mobile-forensics | tar -x -C /tmp/old   # the pack as it was before these fixes (1.2.0)
  *   MOBILE_PACK=/tmp/old/packs/mobile-forensics node --experimental-strip-types --test tests/pack-mobile-forensics.test.ts
  *
  * The tools follow the secret-safe output pattern of recovery_key_scan (docs/packs.md, "Secrets and
@@ -30,8 +30,9 @@
  * answer and in every file the answer names.
  */
 import assert from "node:assert/strict";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, readdir, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { ROOT, runPy, runPySnippet, withCwd } from "./tool-library-harness.ts";
@@ -78,6 +79,48 @@ async function exists(path: string): Promise<boolean> {
 async function build(code: string, ...args: string[]): Promise<void> {
   const out = await runPySnippet(code, args, null);
   assert.equal(out.code, 0, out.stderr);
+}
+
+/** The tool run under a wrapper that reports the process's peak resident memory (bytes), after the answer on stdout. */
+const MEASURE = String.raw`
+import resource, runpy, sys
+sys.argv = [sys.argv[1]]
+try:
+    runpy.run_path(sys.argv[0], run_name="__main__")
+except SystemExit:
+    pass
+usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+sys.stderr.write("MAXRSS %d\n" % (usage if sys.platform == "darwin" else usage * 1024))
+`;
+
+async function measured(script: string, cwd: string, args: unknown, env: Record<string, string> = {}): Promise<{ run: Run; maxrss: number }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("python3", ["-c", MEASURE, script], { cwd, env: { ...process.env, ...AGENT, ...env } });
+    const out: Buffer[] = [], err: Buffer[] = [];
+    child.stdout.on("data", (c: Buffer) => out.push(c));
+    child.stderr.on("data", (c: Buffer) => err.push(c));
+    child.on("error", reject);
+    child.on("close", (code) => {
+      const stderr = Buffer.concat(err).toString("utf8");
+      const m = /MAXRSS (\d+)/.exec(stderr);
+      assert.ok(m, stderr);
+      resolve({ run: { code, stdout: Buffer.concat(out).toString("utf8"), stderr: stderr.replace(/MAXRSS \d+\n/, "") }, maxrss: Number(m[1]) });
+    });
+    child.stdin.end(JSON.stringify(args));
+  });
+}
+
+/** The tool with the text of its standard input as given (JSON.stringify cannot write NaN or Infinity). */
+async function rawTool(script: string, cwd: string, stdin: string, env: Record<string, string> = {}): Promise<Run> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("python3", [script], { cwd, env: { ...process.env, ...AGENT, ...env } });
+    const out: Buffer[] = [], err: Buffer[] = [];
+    child.stdout.on("data", (c: Buffer) => out.push(c));
+    child.stderr.on("data", (c: Buffer) => err.push(c));
+    child.on("error", reject);
+    child.on("close", (code) => resolve({ code, stdout: Buffer.concat(out).toString("utf8"), stderr: Buffer.concat(err).toString("utf8") }));
+    child.stdin.end(stdin);
+  });
 }
 
 /** Every regular file under a directory (not following links), with its bytes. */
@@ -161,13 +204,13 @@ type Fragment = {
 };
 type Paged = { matched: number; returned: number; truncated: boolean; all_results?: string };
 type Free = {
-  db: string; parser: string; status: string; fragments: Fragment[]; fragment_count: number; fragments_found_before_filter: number;
+  db: string; parser: string; status: string; fragments: Fragment[]; fragment_count: number; filter: string | null; filter_narrows: string | null;
   problems: { kind: string; detail: string }[]; problem_kinds: Record<string, number>; stopped_before_page: number | null;
   database: { page_size: number; text_encoding: string; bytes: number; pages_in_file: number; journal_mode_on_disk: string };
   freelist: { declared: number; walked: number; trunk_pages: number };
   scanned: Record<string, number>; encodings_scanned: string[];
   companions: Record<string, { bytes: number; examined: boolean }>;
-  secret_values: { requested: boolean; written: number; values_file: string | null; contains_secret_values: boolean };
+  secret_values: { requested: boolean; written: number | null; values_file: string | null; contains_secret_values: boolean | null; count_withheld?: string };
   pages: { fragments: Paged; problems: Paged }; paths_withheld: number; truncated: boolean;
 };
 type Value = { finding_id: string; file: string; page: number; where: string; encoding: string; offset: number; bytes: number; characters: number; value: string };
@@ -450,7 +493,9 @@ test("sqlite_freespace withholds a path component shaped like a recovery passwor
     if (made) {
       const out = await asJob(FREESPACE, cwd, { db: odd, write_values: true, limit: 1, min_length: 4 }, "out-odd");
       const oddAnswer = body<Free>(out);
-      assert.match(oddAnswer.db, /b\\udcff\.db/);
+      // Parsed, the escape \udcff is the lone surrogate itself; the text of the answer holds the escape.
+      assert.ok(oddAnswer.db.endsWith("/b\udcff.db"), oddAnswer.db);
+      assert.match(out.stdout, /b\\udcff\.db/);
       assert.ok(oddAnswer.fragment_count >= 1);
       assert.ok(/^[\x00-\x7f]*$/.test(out.stdout), "the answer is ASCII: a lone surrogate is escaped");
     }
@@ -563,18 +608,68 @@ test("sqlite_freespace stops at max_seconds even when a filter that backtracks r
   });
 });
 
-test("sqlite_freespace filters with contains, counts what it found before the filter, and lists a -wal without reading it", async () => {
+test("sqlite_freespace's contains narrows the sealed values file, and nothing in the answer says which fragments matched", async () => {
+  // The answer listed the fragments that matched and the total before the filter: with text you cannot see, one call was one bit of every
+  // fragment, and an alternation of guesses confirmed a short PIN in a few calls. The expression now only decides what is written to the file.
   await withCwd(async (cwd) => {
     const db = join(cwd, "work", "wal.db");
     await build(FREEBLOCK_DB, db, "FILTER-MARKER-ONE", "utf-8");
     await writeFile(db + "-wal", Buffer.alloc(32));
     const all = await freespace(cwd, db, { min_length: 4 }, "all");
     const some = await freespace(cwd, db, { contains: "FILTER-MARKER", min_length: 4 }, "some");
-    assert.ok(all.answer.fragment_count > some.answer.fragment_count);
-    assert.equal(some.answer.fragments_found_before_filter, all.answer.fragment_count);
+    const none = await freespace(cwd, db, { contains: "no-such-text-anywhere", min_length: 4 }, "none");
+    const everything = await freespace(cwd, db, { contains: ".", min_length: 4 }, "everything");
+    assert.ok(all.answer.fragment_count > 1);
+    // The same fragments, the same counts, whatever the expression matched.
+    for (const other of [some, none, everything]) {
+      assert.deepEqual(other.answer.fragments.map((f) => [f.finding_id, f.offset, f.bytes]), all.answer.fragments.map((f) => [f.finding_id, f.offset, f.bytes]));
+      assert.equal(other.answer.fragment_count, all.answer.fragment_count);
+      assert.deepEqual(other.answer.scanned, all.answer.scanned);
+      assert.equal(other.answer.secret_values.written, null, "how many matched is not shown");
+      assert.equal(other.answer.secret_values.contains_secret_values, null);
+      assert.match(other.answer.secret_values.count_withheld ?? "", /how many fragments matched is not shown/);
+    }
+    assert.equal(some.answer.filter, "FILTER-MARKER");
+    assert.match(some.answer.filter_narrows ?? "", /values file only/);
+    // What is written is what matched.
+    assert.ok(some.values.length >= 1 && some.values.length < all.values.length);
     assert.ok(some.values.every((v) => /FILTER-MARKER/i.test(v.value)));
+    assert.equal(none.values.length, 0);
+    assert.equal(everything.values.length, all.values.length);
     assert.deepEqual(some.answer.companions, { "-wal": { bytes: 32, examined: false } });
     assert.match(refused(await tool(FREESPACE, cwd, { db, contains: "(" })).error, /not a valid regex/);
+    // contains with no values file to narrow is refused before anything is scanned, outside a job and in one.
+    const bare = refused(await tool(FREESPACE, cwd, { db, contains: "FILTER-MARKER" }));
+    assert.match(bare.error, /contains narrows the sealed values file: it needs write_values: true/);
+    assert.equal(bare.contains_refused, true);
+    assert.equal(bare.fragments, undefined);
+    const noValues = refused(await asJob(FREESPACE, cwd, { db, contains: ".", write_values: false }, "novalues"));
+    assert.equal(noValues.contains_refused, true);
+    assert.equal(noValues.fragment_count, undefined);
+  });
+});
+
+test("sqlite_freespace's contains cannot be used to learn which fragment is slow: a time-out is counted, not placed", async () => {
+  await withCwd(async (cwd) => {
+    const db = join(cwd, "work", "slowrx.db");
+    await build(FREELIST_DB, db, "REGEX-MARKER");
+    const { answer } = await freespace(cwd, db, { contains: "(w+)+z", max_seconds: 8, min_length: 20 }, "slow");
+    assert.ok(answer.scanned.contains_timeouts >= 0);
+    for (const problem of answer.problems) if (/contains took too long/.test(problem.kind)) assert.equal((problem as unknown as { page?: number }).page, undefined);
+  });
+});
+
+test("sqlite_freespace's time limit is finite and below the tool's own, and says so as JSON", async () => {
+  // NaN and Infinity switched the clock off, and a limit above the harness's 300 seconds ended the tool with no answer.
+  await withCwd(async (cwd) => {
+    const db = join(cwd, "work", "limit.db");
+    await build(FREELIST_DB, db, "LIMIT-MARKER");
+    for (const bad of ["NaN", "Infinity", "-Infinity", "1e308", "100000", "271", "0", "-1", "\"5\"", "true"]) {
+      const r = await rawTool(FREESPACE, cwd, `{"db":${JSON.stringify(db)},"max_seconds":${bad}}`);
+      assert.match(refused(r).error, /max_seconds/, bad);
+    }
+    const edge = await rawTool(FREESPACE, cwd, `{"db":${JSON.stringify(db)},"max_seconds":270}`);
+    assert.equal(edge.code, 0, edge.stdout + edge.stderr);
   });
 });
 
@@ -588,7 +683,7 @@ test("sqlite_freespace filters with contains, counts what it found before the fi
 const BACKUP = String.raw`
 import datetime, json, os, plistlib, shutil, sqlite3, sys
 UID = plistlib.UID
-dest, spec = sys.argv[1], json.loads(sys.argv[2])
+dest, spec = sys.argv[1], json.load(sys.stdin)
 
 def conv(v):
     return float(v["float"]) if isinstance(v, dict) and "float" in v else v
@@ -718,7 +813,9 @@ const ID_C = "bb" + "1".repeat(38);
 
 async function backup(cwd: string, name: string, spec: Record<string, unknown>): Promise<string> {
   const dir = join(cwd, "work", name);
-  await build(BACKUP, dir, JSON.stringify(spec));
+  // The spec goes in on stdin: one argv string is capped at 128 KiB on Linux, and 1,500 entries are 149 KB.
+  const out = await runPySnippet(BACKUP, [dir], spec);
+  assert.equal(out.code, 0, out.stderr);
   return dir;
 }
 
@@ -747,6 +844,120 @@ test("manifest_db converts times by the epoch it is told, never by a window that
     assert.equal(apple.modified, "2023-03-08T20:26:40Z");
     assert.equal(apple.modified_raw, 700000000);
     assert.match(refused(await tool(MANIFEST, cwd, { path: dir, epoch: "windows" })).error, /epoch must be/);
+  });
+});
+
+/** Damage a Manifest.db the way a cut or a bad sector does: zero the page that holds a b-tree, or cut bytes off its end. */
+const DAMAGE = String.raw`
+import os, sqlite3, sys
+path, what = sys.argv[1], sys.argv[2]
+if what.startswith("zero:"):
+    name = what[5:]
+    con = sqlite3.connect(path)
+    root = con.execute("SELECT rootpage FROM sqlite_master WHERE name = ?", (name,)).fetchone()[0]
+    page_size = con.execute("PRAGMA page_size").fetchone()[0]
+    con.close()
+    with open(path, "r+b") as fh:
+        fh.seek((root - 1) * page_size)
+        fh.write(b"\0" * page_size)
+elif what.startswith("cut:"):
+    size = os.path.getsize(path)
+    with open(path, "r+b") as fh:
+        fh.truncate(size - int(what[4:]))
+`;
+
+function many(count: number, make: (i: number) => Record<string, unknown> = () => ({})): Record<string, unknown>[] {
+  return Array.from({ length: count }, (_, i) => ({ id: i.toString(16).padStart(40, "0"), path: `Library/file-${String(i).padStart(4, "0")}.db`, ...make(i) }));
+}
+
+test("manifest_db lists every row when the index on the file id is damaged, and says partial when the file is cut short", async () => {
+  // count(*) and the ordered scan went through the file-id index: one bad page of it lost the whole listing, which the table itself still held.
+  // A file cut inside its last page was read with zeros for the rest of the page, and a row there came back as nothing, under `complete`.
+  await withCwd(async (cwd) => {
+    const dir = await backup(cwd, "badindex", { entries: many(60) });
+    const db = join(dir, "Manifest.db");
+    assert.equal((await runPySnippet(DAMAGE, [db, "zero:sqlite_autoindex_Files_1"], null)).code, 0);
+    const damaged = (await manifest(cwd, dir)).answer;
+    assert.equal(damaged.listing.available, true, JSON.stringify(damaged.listing));
+    assert.equal(damaged.read_error, null);
+    assert.equal(damaged.files_in_manifest, 60);
+    assert.equal(damaged.entry_count, 60);
+    assert.equal(damaged.status, "complete");
+    // Cut inside the last page, and by a whole page: both say so.
+    const bigger = await backup(cwd, "cutpage", { entries: many(400, (i) => ({ path: `Library/Deep/${"x".repeat(60)}/file-${i}.db` })) });
+    const size = (await stat(join(bigger, "Manifest.db"))).size;
+    assert.ok(size > 3 * 4096, `${size}`);
+    assert.equal((await runPySnippet(DAMAGE, [join(bigger, "Manifest.db"), "cut:100"], null)).code, 0);
+    const cut = (await manifest(cwd, bigger)).answer;
+    assert.equal(cut.status, "partial", JSON.stringify(cut.observations));
+    assert.ok(cut.observations.some((o) => /ends \d+ bytes into a page of 4096: the last page is cut short/.test(o)), cut.observations.join("\n"));
+    const whole = await backup(cwd, "cutwhole", { entries: many(400, (i) => ({ path: `Library/Deep/${"x".repeat(60)}/file-${i}.db` })) });
+    assert.equal((await runPySnippet(DAMAGE, [join(whole, "Manifest.db"), "cut:4096"], null)).code, 0);
+    // SQLite itself refuses a file with fewer pages than its header declares: nothing is listed, and it is not an empty backup.
+    const missing = refused(await tool(MANIFEST, cwd, { path: whole }));
+    assert.match(missing.error, /Manifest\.db would not open as SQLite/);
+    assert.match(String(missing.note), /not an empty backup/);
+  });
+});
+
+test("manifest_db stops at max_seconds even when contains backtracks on every path, and says which rows it could not match", async () => {
+  // The expression was bounded neither per row nor by the clock that max_seconds sets: a few paths of a runaway expression ran for minutes.
+  await withCwd(async (cwd) => {
+    const dir = await backup(cwd, "slowrx", { entries: many(60, () => ({ path: `Library/${"a".repeat(31)}b` })) });
+    const started = Date.now();
+    const { answer } = await manifest(cwd, dir, { contains: "(a|aa)+$", max_seconds: 3 });
+    assert.ok(Date.now() - started < 20000, `took ${Date.now() - started} ms`);
+    assert.equal(answer.status, "partial");
+    assert.ok(answer.observations.some((o) => /contains ran past its time on \d+ path\(s\)|time limit/.test(o)), answer.observations.join("\n"));
+    for (const bad of ["NaN", "Infinity", "1e308", "100000", "0", "-1"]) {
+      const r = await rawTool(MANIFEST, cwd, `{"path":${JSON.stringify(dir)},"max_seconds":${bad}}`);
+      assert.match(refused(r).error, /max_seconds/, bad);
+    }
+  });
+});
+
+test("manifest_db judges whether the backup finished from Status.plist, and says unknown when it cannot", async () => {
+  // Status.plist was read and never judged: a backup that stopped partway was listed under `complete`, and the pack's README said it was reported.
+  await withCwd(async (cwd) => {
+    const entries = many(3);
+    const done = (await manifest(cwd, await backup(cwd, "snap-finished", { entries, snapshot: "finished" }))).answer;
+    assert.deepEqual((done as unknown as { completion: { state: string } }).completion.state, "finished");
+    assert.equal(done.status, "complete");
+    const partway = (await manifest(cwd, await backup(cwd, "snap-new", { entries, snapshot: "uploadingFiles" }))).answer;
+    const completion = (partway as unknown as { completion: { state: string; basis: string } }).completion;
+    assert.equal(completion.state, "not_finished");
+    assert.match(completion.basis, /SnapshotState is "uploadingFiles"/);
+    assert.equal(partway.status, "partial");
+    assert.ok(partway.observations.some((o) => /completion state is not finished .*do not read the listing as a finished backup/.test(o)), partway.observations.join("\n"));
+    // No Status.plist at all (an iTunes backup has none): unknown, noted, and not by itself a failure.
+    const none = await backup(cwd, "snap-none", { entries, snapshot: "finished" });
+    await rm(join(none, "Status.plist"));
+    const unknown = (await manifest(cwd, none)).answer;
+    assert.equal((unknown as unknown as { completion: { state: string } }).completion.state, "unknown");
+    assert.equal(unknown.status, "complete");
+    assert.ok(unknown.observations.some((o) => /completion state is unknown/.test(o)));
+  });
+});
+
+test("manifest_db says when times under the epoch applied fall after the backup's date or before 2007, without choosing an epoch", async () => {
+  await withCwd(async (cwd) => {
+    const dir = await backup(cwd, "consistency", { entries: [
+      { id: ID_A, path: "Library/future.db", modified: 1900000000 },        // 2030-03-17: after the backup's date, 2025-03-01
+      { id: ID_B, path: "Library/old.db", modified: 1100000000 },           // 2004
+      { id: ID_C, path: "Library/fine.db", modified: 1700000000 },
+    ] });
+    const { answer } = await manifest(cwd, dir);
+    const epoch = answer.epoch as unknown as { applied: string; consistency: { backup_date: string | null; after_backup_date: Record<string, number>; before_2007_01_01: Record<string, number>; note: string } };
+    assert.equal(epoch.applied, "unix");
+    assert.equal(epoch.consistency.backup_date, "2025-03-01T12:00:00Z");
+    assert.deepEqual(epoch.consistency.after_backup_date, { modified: 1 });
+    assert.deepEqual(epoch.consistency.before_2007_01_01, { modified: 1 });
+    assert.match(epoch.consistency.note, /31-year shift/);
+    assert.ok(answer.observations.some((o) => /some times fall after the backup's own date or before 2007: see epoch\.consistency/.test(o)), answer.observations.join("\n"));
+    // Told the Apple epoch, the same numbers fall elsewhere (a 31-year shift); the tool does not pick between them.
+    const apple = (await manifest(cwd, dir, { epoch: "apple" })).answer.epoch as unknown as { applied: string; consistency: { after_backup_date: Record<string, number> } };
+    assert.equal(apple.applied, "apple");
+    assert.deepEqual(apple.consistency.after_backup_date, { modified: 3 }, "as seconds from 2001 all three fall in 2035..2061");
   });
 });
 
@@ -1077,7 +1288,7 @@ type Pb = {
   secret_values: { requested: boolean; written: number; values_file: string | null; contains_secret_values: boolean };
   pages: { fields: Paged }; truncated: boolean; looks_like_protobuf?: unknown; strings?: unknown; paths_withheld: number;
 };
-type PbValue = { finding_id: string; source: string; field_path: string; offset: number; payload_offset: number; kind: string; bytes: number; value: string | Record<string, unknown> };
+type PbValue = { finding_id: string; source: string; field_path: string | null; offset: number; payload_offset: number; kind: string; bytes: number | null; value: string | Record<string, unknown> };
 
 async function peek(cwd: string, args: Record<string, unknown>, name?: string): Promise<{ answer: Pb; run: Run; values: PbValue[] }> {
   const run = name ? await asJob(PROTOBUF, cwd, { write_values: true, ...args }, name) : await tool(PROTOBUF, cwd, args);
@@ -1127,8 +1338,9 @@ test("protobuf_peek reads a nested message with absolute offsets and full field 
   });
 });
 
-test("protobuf_peek reads a bounded window of a large file, and says what lies after it", async () => {
-  // It read the whole file and then sliced from the offset.
+test("protobuf_peek reads a bounded window of a large file, and says what lies after it, in a bounded amount of memory", async () => {
+  // It read the whole file and then sliced from the offset. The test measures the process: a tool that reads the file
+  // whole takes more than 200 MB for the file below, and this one stays under 64 MB.
   await withCwd(async (cwd) => {
     const big = join(cwd, "work", "big.bin");
     const message = Buffer.concat([varintField(1, 7), lenDelimited(2, "hello")]);
@@ -1137,54 +1349,117 @@ test("protobuf_peek reads a bounded window of a large file, and says what lies a
     const fd = await import("node:fs/promises").then((m) => m.open(big, "r+"));
     await fd.truncate(200 * 1024 * 1024);
     await fd.close();
-    const started = Date.now();
-    const { answer } = await peek(cwd, { path: "work/big.bin", offset: 100, length: message.length });
+    const one = await measured(PROTOBUF, cwd, { path: "work/big.bin", offset: 100, length: message.length });
+    const answer = body<Pb>(one.run);
     assert.equal(answer.structure.status, "valid");
     assert.equal(answer.window.bytes, message.length);
     assert.equal(answer.window.file_bytes, 200 * 1024 * 1024);
     assert.equal(answer.window.bytes_after_window, 200 * 1024 * 1024 - 100 - message.length);
     assert.equal(answer.window.next_offset, 100 + message.length);
-    assert.ok(Date.now() - started < 20000);
+    assert.ok(one.maxrss < 64 * 1024 * 1024, `the tool took ${one.maxrss} bytes to read ${message.length} bytes of a 200 MiB file`);
     // Without a length the window is bounded too (8 MiB), never the whole file.
-    const dflt = (await peek(cwd, { path: "work/big.bin", offset: 100 })).answer;
+    const two = await measured(PROTOBUF, cwd, { path: "work/big.bin", offset: 100 });
+    const dflt = body<Pb>(two.run);
     assert.equal(dflt.window.bytes, 8 * 1024 * 1024);
     assert.ok(dflt.window.next_offset);
+    assert.ok(two.maxrss < 64 * 1024 * 1024, `the default window took ${two.maxrss} bytes`);
     assert.match(refused(await tool(PROTOBUF, cwd, { path: "work/big.bin", length: 65 * 1024 * 1024 })).error, /at most/);
     assert.match(refused(await tool(PROTOBUF, cwd, { path: "work/big.bin", offset: 300 * 1024 * 1024 })).error, /past the end/);
   });
 });
 
-test("protobuf_peek does not call a message with a group valid, and names every structural error with its offset", async () => {
-  // Groups were noted and the parse went on: looks_like_protobuf stayed true over bytes it had not understood.
+test("protobuf_peek takes memory that follows the window, not the window times the depth", async () => {
+  // Every length-delimited payload was copied into the frame that parsed it and stayed alive while the nested parse recursed:
+  // 32 levels around 60 MiB took 2.3 GB.
+  await withCwd(async (cwd) => {
+    let inner: Buffer = Buffer.alloc(12 * 1024 * 1024, 0xff);
+    for (let i = 0; i < 32; i++) inner = lenDelimited(1, inner);
+    await writeFile(join(cwd, "work", "chain.bin"), inner);
+    const run = await measured(PROTOBUF, cwd, { path: "work/chain.bin", length: inner.length, max_depth: 32 });
+    const answer = body<Pb>(run.run);
+    assert.equal(answer.window.bytes, inner.length);
+    assert.ok(run.maxrss < 200 * 1024 * 1024, `32 levels around ${inner.length} bytes took ${run.maxrss} bytes`);
+  });
+});
+
+test("protobuf_peek withholds its rows from a window that is not a message, and names every structural error only in the job's values file", async () => {
+  // Groups were noted and the parse went on; and rows were printed for a prefix that failed, in reasons that carried numbers
+  // derived from the bytes.
   await withCwd(async (cwd) => {
     const group = Buffer.concat([varintField(1, 1), key(5, 3), varintField(1, 2), key(5, 4), varintField(2, 3)]);
-    const { answer } = await peek(cwd, { hex: group.toString("hex") });
+    const { answer, run, values } = await peek(cwd, { hex: group.toString("hex") }, "group");
     assert.equal(answer.structure.status, "unsupported");
     assert.equal(answer.structure.consistent_with_protobuf_wire_format, false);
-    assert.equal(answer.structure.problem_offset, 2, "the offset of the group's start");
     assert.match(answer.structure.reason, /group/);
+    assert.deepEqual(answer.fields, []);
+    assert.equal(answer.structure.problem_offset, undefined, "no position derived from the bytes");
     assert.equal(answer.looks_like_protobuf, undefined);
+    assert.equal(values.find((v) => v.kind === "diagnosis")?.offset, 2, "the diagnosis is in the values file");
+    assert.doesNotMatch(run.stdout, /"offset": 2\b/);
     const cases: [string, Buffer, RegExp, number][] = [
-      ["field number 0", Buffer.from([0x00, 0x01]), /field number 0/, 0],
-      ["wire type 7", Buffer.concat([varintField(1, 1), Buffer.from([(2 << 3) | 7])]), /wire type 7/, 2],
+      ["field number 0", Buffer.from([0x00, 0x01]), /field number of 0/, 0],
+      ["wire type 7", Buffer.concat([varintField(1, 1), Buffer.from([(2 << 3) | 7])]), /wire type that is not defined/, 2],
       ["a varint of eleven bytes", Buffer.concat([key(1, 0), Buffer.from([0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x01])]), /ten bytes|64-bit/, 0],
       ["a tenth byte above 1", Buffer.concat([key(1, 0), Buffer.from([0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x02])]), /64-bit/, 0],
       ["a length past the message", Buffer.concat([key(1, 2), varint(50), Buffer.from("short")]), /runs past/, 0],
-      ["a truncated fixed32", Buffer.concat([key(1, 5), Buffer.from([1, 2])]), /32-bit field runs past/, 0],
-      ["a field number above 2^29-1", varint(((1n << 29n) << 3n) | 0n), /field number/, 0],
+      ["a truncated fixed32", Buffer.concat([key(1, 5), Buffer.from([1, 2])]), /fixed-width field runs past/, 0],
+      ["a field number above 2^29-1", varint(((1n << 29n) << 3n) | 0n), /field number of 0, or above/, 0],
     ];
     for (const [name, message, why, at] of cases) {
-      const r = (await peek(cwd, { hex: message.toString("hex") })).answer;
-      assert.equal(r.structure.status, "invalid", name);
-      assert.equal(r.structure.consistent_with_protobuf_wire_format, false, name);
-      assert.match(r.structure.reason, why, name);
-      assert.equal(r.structure.problem_offset, at, name);
+      const r = await peek(cwd, { hex: message.toString("hex") }, `err-${name.replace(/\W+/g, "-")}`);
+      assert.equal(r.answer.structure.status, "not_accepted", name);
+      assert.equal(r.answer.structure.consistent_with_protobuf_wire_format, false, name);
+      assert.deepEqual(r.answer.fields, [], name);
+      const diagnosis = r.values.find((v) => v.kind === "diagnosis")?.value as { reason: string; offset: number };
+      assert.match(diagnosis.reason, why, name);
+      assert.equal(diagnosis.offset, at, name);
+      assert.doesNotMatch(JSON.stringify(r.answer), /\d{4,}/.source === "" ? /x/ : /problem_offset/, name);
     }
-    // A ten-byte varint of all ones is -1 as a two's-complement 64-bit integer.
-    const minusOne = Buffer.concat([key(1, 0), Buffer.from([0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01])]);
+    // A ten-byte varint of all ones is -1 as a two's-complement 64-bit integer, in a window that is a message.
+    const minusOne = Buffer.concat([varintField(1, 3), key(2, 0), Buffer.from([0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01])]);
     const m = (await peek(cwd, { hex: minusOne.toString("hex") })).answer;
     assert.equal(m.structure.status, "valid");
-    assert.equal(m.fields[0].twos_complement_reading, -1);
+    assert.equal(m.fields[1].twos_complement_reading, -1);
+  });
+});
+
+test("protobuf_peek does not give a withheld payload back through the offset and length its own answer names", async () => {
+  // The answer named payload_offset and payload_bytes of a withheld field; run again at them, the payload was the top level of the
+  // window and its field numbers, wire types and varints gave the characters back: one call, or a window slid over the payload.
+  await withCwd(async (cwd) => {
+    const sentence = "meet me at the north gate at nine, bring the key";
+    const token = Buffer.from("b0c26ebab7479043b7a79f83a3693f30", "hex");
+    const message = Buffer.concat([varintField(1, 150), lenDelimited(2, sentence), lenDelimited(3, token)]);
+    await writeFile(join(cwd, "work", "m.bin"), message);
+    const first = (await peek(cwd, { path: "work/m.bin" })).answer;
+    const text = first.fields.find((f) => f.field_path === "2")!;
+    const bytes = first.fields.find((f) => f.field_path === "3")!;
+    assert.equal(text.read_as, "text");
+    assert.equal(bytes.read_as, "bytes");
+    for (const [name, payload] of [["text", text], ["bytes", bytes]] as const) {
+      const from = payload.payload_offset!, size = payload.payload_bytes!;
+      let printed = 0, windows = 0;
+      const leaked = new Set<string>();
+      for (let offset = from; offset < from + size; offset++) {
+        for (const length of [size - (offset - from), Math.min(4, size - (offset - from)), Math.min(9, size - (offset - from))]) {
+          windows++;
+          const r = await tool(PROTOBUF, cwd, { path: "work/m.bin", offset, length });
+          const a = body<Pb>(r);
+          if (a.fields.length) { printed++; leaked.add(JSON.stringify(a.fields)); }
+          // Whatever the window, the answer holds no number derived from the bytes in a reason, and no row of a rejected window.
+          assert.doesNotMatch(r.stdout, /"problem_offset"/, `${name} ${offset}`);
+        }
+      }
+      // A window is a message under the acceptance rule about once in a few thousand for bytes like these: none of the windows over this
+      // sentence or this token is one, and every other window printed nothing.
+      assert.equal(printed, 0, `${name}: ${printed} of ${windows} windows printed rows: ${[...leaked].join(" ")}`);
+    }
+    // The window over the sentence as a whole: a status and counts, no row.
+    const whole = await tool(PROTOBUF, cwd, { path: "work/m.bin", offset: text.payload_offset, length: text.payload_bytes });
+    const wholeAnswer = body<Pb>(whole);
+    assert.equal(wholeAnswer.structure.status, "not_accepted");
+    assert.deepEqual(wholeAnswer.fields, []);
+    for (const word of ["meet", "gate", "bring"]) assert.equal(whole.stdout.includes(word), false);
   });
 });
 
@@ -1192,7 +1467,8 @@ test("protobuf_peek prints no text and no bytes of a string or bytes field, and 
   await withCwd(async (cwd) => {
     const text = "SECRET-TOKEN-value-9f3a";
     const blob = Buffer.from(Array.from({ length: 30 }, (_, i) => 0x80 + ((i * 7) % 100)));
-    const message = Buffer.concat([lenDelimited(1, text), lenDelimited(2, blob), varintField(3, 1710000000), lenDelimited(4, lenDelimited(1, "nested-private-text"))]);
+    const message = Buffer.concat([lenDelimited(1, text), lenDelimited(2, blob), varintField(3, 1710000000),
+      lenDelimited(4, Buffer.concat([lenDelimited(1, "nested-private-text"), varintField(2, 7)]))]);
     await writeFile(join(cwd, "work", "m.bin"), message);
     const plain = await peek(cwd, { path: "work/m.bin" });
     for (const needle of [text, "nested-private-text", blob.toString("hex")]) {
@@ -1209,13 +1485,15 @@ test("protobuf_peek prints no text and no bytes of a string or bytes field, and 
     const job = await peek(cwd, { path: "work/m.bin", limit: 2 }, "pb-job");
     assert.equal(job.answer.secret_values.values_file, "store/jobs/j-1/out/protobuf-values.jsonl");
     assert.equal((await stat(join(cwd, "pb-job", "protobuf-values.jsonl"))).mode & 0o777, 0o600);
-    const byPath = Object.fromEntries(job.values.map((v) => [v.field_path, v]));
+    const byPath = Object.fromEntries(job.values.filter((v) => v.kind !== "nested_payload").map((v) => [v.field_path, v]));
     assert.equal(byPath["1"].value, text);
     assert.equal(byPath["1"].kind, "text");
     assert.equal(byPath["2"].kind, "bytes");
     assert.equal(byPath["2"].value, blob.toString("hex"));
     assert.equal(byPath["4.1"].value, "nested-private-text");
-    for (const v of job.values) assert.equal(message.subarray(v.payload_offset, v.payload_offset + v.bytes).length, v.bytes);
+    // The payload of a nested message is in the values file whole, so that nobody needs to aim a window at it.
+    assert.equal(job.values.find((v) => v.field_path === "4" && v.kind === "nested_payload")?.value, message.subarray(job.values.find((v) => v.field_path === "4")!.payload_offset).toString("hex"));
+    for (const v of job.values) if (v.bytes !== null) assert.equal(message.subarray(v.payload_offset, v.payload_offset + v.bytes).length, v.bytes);
     await assertNowhere(text, job.run.stdout, join(cwd, "pb-job"), ["protobuf-values.jsonl"]);
     await assertNowhere(blob.toString("hex"), job.run.stdout, join(cwd, "pb-job"), ["protobuf-values.jsonl"]);
     // The whole field list is in the paging file, with no text in it either.
@@ -1233,38 +1511,38 @@ test("protobuf_peek reads printable text as text, so a string's characters are n
     const token = "5useUj3kKVJjBUD9Px9KiNx3t31cJIyXX4uDl45U6pMpIAymiDaRf7mQpBM4aT6q3dF7z4rJ";
     const english = "The quick brown fox jumps over the lazy dog while the committee reads the long minutes of the meeting aloud";
     for (const value of [token, english]) {
-      const { answer, run } = await peek(cwd, { hex: lenDelimited(1, value).toString("hex") });
-      assert.equal(answer.fields.length, 1, "no row is printed for the characters of a string");
-      assert.equal(answer.fields[0].read_as, "text");
-      assert.equal(answer.fields[0].characters, value.length);
+      const { answer, run } = await peek(cwd, { hex: Buffer.concat([varintField(1, 5), lenDelimited(2, value)]).toString("hex") });
+      assert.equal(answer.fields.length, 2, "no row is printed for the characters of a string");
+      assert.equal(answer.fields[1].read_as, "text");
+      assert.equal(answer.fields[1].characters, value.length);
       for (const form of forms(value.slice(0, 12))) assert.equal(Buffer.from(run.stdout).indexOf(form), -1);
     }
     // The value is in the values file whole, as the text, in a job.
-    const job = await peek(cwd, { hex: lenDelimited(1, token).toString("hex") }, "token");
-    assert.equal(job.values.find((v) => v.field_path === "1")?.value, token);
-    // Binary bytes that parse as a nested message with a field number above 300 are bytes, and the answer says what else they could be.
-    const big = Buffer.concat([key(1000, 0), varint(5)]);
-    const rejected = (await peek(cwd, { hex: lenDelimited(1, big).toString("hex") })).answer.fields[0];
+    const job = await peek(cwd, { hex: Buffer.concat([varintField(1, 5), lenDelimited(2, token)]).toString("hex") }, "token");
+    assert.equal(job.values.find((v) => v.field_path === "2")?.value, token);
+    // Binary bytes that parse as a message with a field number above 300 are bytes, and the answer says what else they could be.
+    const big = Buffer.concat([key(1000, 0), varint(5), key(1001, 0), varint(6)]);
+    const rejected = (await peek(cwd, { hex: Buffer.concat([varintField(1, 5), lenDelimited(2, big)]).toString("hex") })).answer.fields[1];
     assert.equal(rejected.read_as, "bytes");
-    assert.match(String(rejected.also_reads_as), /nested message \(a field number above 300\)/);
+    assert.match(String(rejected.also_reads_as), /does not meet the acceptance rule/);
   });
 });
 
 test("protobuf_peek does not print a token's bytes as the numbers of a nested message", async () => {
   // A 16-byte key that happened to parse as fields printed 12 of its bytes as 32- and 64-bit values.
   await withCwd(async (cwd) => {
-    const key = Buffer.from("a577f43bbb49a9711d5ce74ae04c88d6", "hex");
-    const message = lenDelimited(1, key);
+    const keyBytes = Buffer.from("a577f43bbb49a9711d5ce74ae04c88d6", "hex");
+    const message = Buffer.concat([varintField(1, 1), lenDelimited(2, keyBytes)]);
     const { answer, run } = await peek(cwd, { hex: message.toString("hex") });
     for (const form of ["f43bbb49", "1d5ce74ae04c88d6", "a577f43b", "49a9711d"]) assert.equal(run.stdout.includes(form), false, form);
-    assert.notEqual(answer.fields[0].read_as, "nested message", "field numbers above 300 are not a message");
+    assert.notEqual(answer.fields[1].read_as, "nested message", "a single field is not a message");
     // Bytes that do read as a small nested message: the structure is shown, the numbers in it are not.
-    const inner = Buffer.concat([varintField(1, 7), key.subarray(0, 0), key_fixed(2, 0x11223344)]);
-    const nested = (await peek(cwd, { hex: lenDelimited(1, inner).toString("hex") }, "nested-key")).answer;
-    const child = nested.fields.find((f) => f.field_path === "1.1");
+    const inner = Buffer.concat([varintField(1, 7), key_fixed(2, 0x11223344)]);
+    const nested = (await peek(cwd, { hex: Buffer.concat([varintField(1, 1), lenDelimited(2, inner)]).toString("hex") }, "nested-key")).answer;
+    const child = nested.fields.find((f) => f.field_path === "2.1");
     assert.equal(child?.value, undefined);
     assert.equal(nested.counts.number_values_withheld, 2);
-    assert.equal(nested.counts.bytes_values_withheld, 0);
+    assert.equal(nested.counts.nested_payloads_withheld, 1);
     for (const form of ["44332211", "0x11223344", String(0x11223344)]) assert.equal(JSON.stringify(nested).includes(form), false, form);
   });
 });
@@ -1283,19 +1561,42 @@ test("protobuf_peek holds to its depth, field and time budgets and says so, and 
     assert.match(cut.structure.reason, /max_fields/);
     assert.equal(cut.field_count, 20);
     assert.equal(cut.structure.consistent_with_protobuf_wire_format, false);
-    // Nesting: a message nested 10 deep is unwrapped to max_depth and read as bytes below it.
-    let nested = lenDelimited(1, "q");
-    for (let i = 0; i < 9; i++) nested = lenDelimited(1, nested);
+    assert.equal((cut.structure as unknown as { resume_offset: number }).resume_offset, varintField(1, 0).length * 0 + Buffer.concat(Array.from({ length: 20 }, (_, i) => varintField(1, i))).length,
+      "a window the budget stopped says where to resume, which is not next_offset");
+    // Nesting: a message nested 10 deep is unwrapped to max_depth and read as bytes below it, and the answer counts what it did not try.
+    let nested: Buffer = Buffer.concat([varintField(1, 1), lenDelimited(2, "qq")]);
+    for (let i = 0; i < 9; i++) nested = Buffer.concat([varintField(1, 1), lenDelimited(2, nested)]);
     const shallow = (await peek(cwd, { hex: nested.toString("hex"), max_depth: 3 })).answer;
     assert.equal(shallow.counts.deepest, 3);
+    assert.ok((shallow.structure as unknown as { fields_not_tried_as_nested_at_max_depth: number }).fields_not_tried_as_nested_at_max_depth >= 1);
     const deep = (await peek(cwd, { hex: nested.toString("hex"), max_depth: 20 })).answer;
     assert.equal(deep.counts.deepest, 9);
+    assert.equal((deep.structure as unknown as { fields_not_tried_as_nested_at_max_depth?: number }).fields_not_tried_as_nested_at_max_depth, undefined);
     assert.match(refused(await tool(PROTOBUF, cwd, { hex: "0801", max_depth: 1000 })).error, /max_depth/);
     assert.match(refused(await tool(PROTOBUF, cwd, { hex: "0801", max_fields: 99999999 })).error, /at most/);
     assert.match(refused(await tool(PROTOBUF, cwd, { hex: "00".repeat(70000) })).error, /limited to/);
     assert.match(refused(await tool(PROTOBUF, cwd, { hex: "zz" })).error, /hex/);
     assert.match(refused(await tool(PROTOBUF, cwd, {})).error, /path or hex/);
     assert.match(refused(await tool(PROTOBUF, cwd, { path: "work/nothing.bin" })).error, /cannot read/);
+    // Both a message in the call and a file: the call would win silently.
+    assert.match(refused(await tool(PROTOBUF, cwd, { hex: "0801", path: "work/nothing.bin" })).error, /path or hex, not both/);
+    // A time limit is finite and below the tool's own: NaN and Infinity switched the clock off.
+    for (const bad of ["NaN", "Infinity", "1e308", "0", "-1", "\"5\""]) {
+      const r = await rawTool(PROTOBUF, cwd, `{"hex":"0801","max_seconds":${bad}}`);
+      assert.match(refused(r).error, /max_seconds/, bad);
+    }
+  });
+});
+
+test("protobuf_peek refuses a named pipe instead of waiting on it", async () => {
+  await withCwd(async (cwd) => {
+    const fifo = join(cwd, "work", "pipe");
+    const made = spawnSync("mkfifo", [fifo]);
+    assert.equal(made.status, 0);
+    const started = Date.now();
+    const r = await tool(PROTOBUF, cwd, { path: "work/pipe" });
+    assert.ok(Date.now() - started < 10000, "the tool did not wait for a writer");
+    assert.match(refused(r).error, /not a regular file/);
   });
 });
 
@@ -1340,13 +1641,25 @@ test("protobuf_peek and the other tools give each call its own paging file, so a
   });
 });
 
-test("protobuf_peek reports an ambiguous field as what it could be, and keeps every field of a long message", async () => {
+test("protobuf_peek reads a nested message under the acceptance rule and keeps every field of a long message", async () => {
   await withCwd(async (cwd) => {
-    // "abc" is text; "\n\x03abc" is both a nested message (field 1 = "abc") and a string of 5 bytes (not printable): the nested reading.
-    const message = Buffer.concat([lenDelimited(1, "abc"), lenDelimited(2, Buffer.concat([lenDelimited(1, "xyz")]))]);
+    // Two fields, shortest-form varints, ascending, small: a message. One field, an unordered pair and a padded varint are not.
+    const message = Buffer.concat([varintField(1, 1), lenDelimited(2, Buffer.concat([lenDelimited(1, "xyz"), varintField(2, 4)]))]);
     const { answer } = await peek(cwd, { hex: message.toString("hex") });
-    const second = answer.fields.find((f) => f.field_path === "2");
-    assert.equal(second?.read_as, "nested message");
+    assert.equal(answer.fields.find((f) => f.field_path === "2")?.read_as, "nested message");
+    const rejected: [string, Buffer][] = [
+      ["one field", lenDelimited(1, "xyz")],
+      ["unordered", Buffer.concat([varintField(2, 4), lenDelimited(1, "xyz")])],
+      ["a padded varint", Buffer.concat([varintField(1, 4), Buffer.from([0x10, 0x84, 0x00])])],
+    ];
+    for (const [name, inner] of rejected) {
+      const r = (await peek(cwd, { hex: Buffer.concat([varintField(1, 1), lenDelimited(2, inner)]).toString("hex") })).answer;
+      assert.equal(r.fields.find((f) => f.field_path === "2")?.read_as, "bytes", name);
+      // And as a window of its own, the same bytes get no row.
+      const alone = (await peek(cwd, { hex: inner.toString("hex") })).answer;
+      assert.deepEqual(alone.fields, [], name);
+      assert.equal(alone.structure.status, "not_accepted", name);
+    }
     const long = Buffer.concat(Array.from({ length: 700 }, (_, i) => varintField(2, i)));
     const all = (await peek(cwd, { hex: long.toString("hex"), limit: 50 })).answer;
     assert.equal(all.field_count, 700);

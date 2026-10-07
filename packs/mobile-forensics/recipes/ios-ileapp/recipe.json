@@ -1,7 +1,7 @@
 {
   "id": "ios-ileapp",
   "version": "1.1.0",
-  "description": "A broad extraction of an iOS full file-system acquisition (a tar, plain or compressed, or a zip): iLEAPP's artefact modules run over the whole of it and write a TSV report per artefact that has records, a timeline database and an HTML report, the searchable form of what the phone holds. The run reads iLEAPP's own log for one outcome per module (modules.tsv: completed, no_record, errored or unknown) and says complete only when iLEAPP exited 0, wrote a TSV, the log was recognised and no module errored or is unknown.",
+  "description": "A broad extraction of an iOS full file-system acquisition (a tar, plain or compressed, or a zip): iLEAPP's artefact modules run over the whole of it and write a TSV report per artefact that has records, a timeline database and an HTML report, the searchable form of what the phone holds. The run reads iLEAPP's own log for one outcome per module (modules.tsv: completed, no_record, unsupported, errored, errors_logged or unknown) and says complete only when iLEAPP exited 0, wrote a TSV report, the log was recognised, says how many modules it parses and that many started, ends with its processing-completed line, no module errored, logged an error or is unknown, no line outside a module speaks of an error and stderr holds nothing the log shape does not explain.",
   "object": "iOS full file-system archive",
   "order": 37,
   "min_bytes": 1024,
@@ -48,6 +48,6 @@
     "index.tsv",
     "coverage.json"
   ],
-  "covers": "What iLEAPP's modules parse from the whole acquisition: one TSV per artefact that has records, its timeline and every file it wrote, kept under ileapp/, and modules.tsv with the outcome of each module its log names. A module that finds nothing writes no report (no_record), which does not show the artefact never existed; files no module targets are not read; a module that errored or whose end the log does not show is not covered, however many reports the others wrote. The report contains the phone's own content and is a sensitive output.",
-  "sha256": "1921fdcf2b3161b66c883a9269df8e373d2ee7ab9142381821c04b3fe3ca0ed1"
+  "covers": "What iLEAPP's modules parse from the whole acquisition: one TSV per artefact that has records, its timeline and every file it wrote, kept under ileapp/, and modules.tsv with the outcome of each module its log names. A module that finds nothing writes no report (no_record), which does not show the artefact never existed, and a module whose own gate does not take the operating-system version (unsupported) read nothing of that artefact; files no module targets are not read; a module that errored or whose end the log does not show is not covered, however many reports the others wrote. The report contains the phone's own content and is a sensitive output.",
+  "sha256": "27a79d7b4b57cdb1aa622d80aa36f9e17a5f9de8111711590a66c8ac7b7029a8"
 }

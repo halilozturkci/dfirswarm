@@ -63,6 +63,7 @@ import shutil
 import signal
 import sqlite3
 import stat
+import struct
 import sys
 import tempfile
 import time
@@ -375,6 +376,17 @@ def positive(args, name, default, maximum=None):
     return value
 
 
+def seconds(args, name, default, cap):
+    """A time limit: finite, positive and at most `cap` (the tool's own limit less a margin, so that the
+    answer is written before the harness stops the tool; NaN and Infinity would switch the clock off)."""
+    value = args.get(name, default)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+        fail("%s must be a positive finite number of seconds" % name, **{name: str(value)})
+    if value > cap:
+        fail("%s is at most %s seconds (the tool's own limit less the margin it needs to write its answer)" % (name, cap), **{name: value})
+    return float(value)
+
+
 def read_args():
     try:
         args = json.load(sys.stdin)
@@ -404,6 +416,9 @@ FILE_ID = re.compile(r"[0-9a-fA-F]{40}")
 DEFAULT_LIMIT = 200
 INLINE_BYTES = 1 << 20
 DEFAULT_MAX_SECONDS = 240
+MAX_SECONDS_CAP = 270       # manifest.json timeout_seconds (300) less the time to write the answer
+BACKUP_FILES = ("Manifest.plist", "Info.plist", "Status.plist")
+UNIX_2007 = 1167609600      # 2007-01-01T00:00:00Z: before the first iPhone
 MAX_PLIST_BYTES = 32 << 20
 MAX_REF_DEPTH = 12
 KINDS = {1: "file", 2: "directory", 4: "symlink"}
@@ -584,6 +599,12 @@ def metadata(blob, base, extra):
                 if why:
                     out[name + "_status"] = why
                 elif stamp:
+                    point = value + base
+                    checks = extra["checks"]
+                    if extra["backup_ts"] is not None and point > extra["backup_ts"]:
+                        checks["after_backup_date"][name] = checks["after_backup_date"].get(name, 0) + 1
+                    if point < UNIX_2007 and point != base:
+                        checks["before_2007"][name] = checks["before_2007"].get(name, 0) + 1
                     span = extra["times"].setdefault(name, {"values": 0, "zero": 0, "low": None, "high": None})
                     if value == 0:
                         span["zero"] += 1       # a zero is an unset time: converted and returned, left out of the range
@@ -671,12 +692,17 @@ def main():
         fail('epoch must be "unix" or "apple"', epoch=epoch)
     base = EPOCH_BASE[epoch]
     limit = positive(args, "limit", DEFAULT_LIMIT)
-    max_seconds = args.get("max_seconds", DEFAULT_MAX_SECONDS)
-    if not isinstance(max_seconds, (int, float)) or isinstance(max_seconds, bool) or max_seconds <= 0:
-        fail("max_seconds must be a positive number")
+    max_seconds = seconds(args, "max_seconds", DEFAULT_MAX_SECONDS, MAX_SECONDS_CAP)
+    deadline = started + max_seconds
 
-    root = path if os.path.isdir(path) else os.path.dirname(os.path.abspath(path))
-    db = os.path.join(path, "Manifest.db") if os.path.isdir(path) else path
+    # The backup directory, its Manifest.db, or one of its three plain files (their directory is the backup).
+    if os.path.isdir(path):
+        root, db = path, os.path.join(path, "Manifest.db")
+    elif os.path.basename(path) in BACKUP_FILES:
+        root = os.path.dirname(os.path.abspath(path))
+        db = os.path.join(root, "Manifest.db")
+    else:
+        root, db = os.path.dirname(os.path.abspath(path)), path
     if os.path.islink(db):
         fail("Manifest.db is a symbolic link: it is not followed", looked_at=shown(db, False),
              note="Read the file it points to by its own path if the case calls for it.")
@@ -716,6 +742,21 @@ def main():
     status_out = {"status": status_s, **({"reason": why_s} if why_s else {})}
     if status_s == "ok" and isinstance(snapshot, dict):
         status_out.update(pick(snapshot, STATUS_KEYS))
+    # Whether the backup finished: SnapshotState of Status.plist, judged here so that nobody has to know which value means it.
+    if status_s == "ok" and isinstance(snapshot, dict) and isinstance(snapshot.get("SnapshotState"), str):
+        snap = snapshot["SnapshotState"]
+        completion = {"state": "finished" if snap == "finished" else "not_finished",
+                      "basis": "Status.plist SnapshotState is %s" % json.dumps(scrub(snap))}
+    elif status_s == "ok":
+        completion = {"state": "unknown", "basis": "Status.plist has no SnapshotState string"}
+    else:
+        completion = {"state": "unknown", "basis": "Status.plist is %s%s" % (status_s, ": " + why_s if why_s else "")}
+    backup_date = None
+    for tree, key in ((manifest, "Date"), (info, "Last Backup Date"), (snapshot, "Date")):
+        value = tree.get(key) if isinstance(tree, dict) else None
+        if isinstance(value, datetime.datetime):
+            backup_date = value if value.tzinfo else value.replace(tzinfo=datetime.timezone.utc)
+            break
 
     # --- Manifest.db: what it is, before anything is read from it ------------------------
     db_bytes = os.path.getsize(db)
@@ -723,6 +764,23 @@ def main():
         sample = fh.read(4096)
     head = sample[:16]
     observations = []
+    if completion["state"] != "finished":
+        observations.append("the backup's completion state is %s (%s): do not read the listing as a finished backup" % (completion["state"].replace("_", " "), completion["basis"]))
+    # A file cut short: SQLite reads the missing part of the last page as zeros, and a row there comes back as nothing.
+    cut = False
+    if len(sample) >= 100 and head == SQLITE_MAGIC:
+        page_size = struct.unpack_from(">H", sample, 16)[0] or 65536
+        if page_size == 1:
+            page_size = 65536
+        declared = struct.unpack_from(">I", sample, 28)[0]
+        valid = declared != 0 and struct.unpack_from(">I", sample, 24)[0] == struct.unpack_from(">I", sample, 92)[0]
+        if page_size >= 512 and not page_size & (page_size - 1):
+            if db_bytes % page_size:
+                cut = True
+                observations.append("Manifest.db ends %d bytes into a page of %d: the last page is cut short, and a row on it may read as nothing" % (db_bytes % page_size, page_size))
+            if valid and db_bytes < declared * page_size:
+                cut = True
+                observations.append("Manifest.db holds %d pages and its header declares %d: it is cut short" % (db_bytes // page_size, declared))
     skipped_companions = 0
     # A companion that is a link is not followed: it is said, and not copied.
     companions = []
@@ -745,7 +803,9 @@ def main():
               "metadata": {}, "blobs": {}, "layouts": {}, "wrapped_file_keys": 0}
     entries = LosslessPage(TOOL, [shown(os.path.realpath(db), False), "entries", contains or "", domain_filter or "", epoch], limit, INLINE_BYTES)
     domains = {}
-    extra = {"times": {}}
+    extra = {"times": {}, "checks": {"after_backup_date": {}, "before_2007": {}},
+             "backup_ts": backup_date.timestamp() if backup_date else None}
+    contains_timeouts = 0
     stopped_at_row = None
     read_error = None
     work_dir = None
@@ -783,12 +843,16 @@ def main():
             db_file["working_copy"] = shown(work_dir)
         if "Files" not in tables:
             fail("Manifest.db has no Files table", tables=tables[:50], encryption=state)
-        counts["files_in_manifest"] = connection.execute("SELECT count(*) FROM Files").fetchone()[0]
+        # The table b-tree in row order, never through the fileID index: a damaged index page must not cost the listing.
         try:
-            cursor = connection.execute("SELECT rowid, fileID, domain, relativePath, flags, file FROM Files ORDER BY fileID")
+            counts["files_in_manifest"] = connection.execute("SELECT count(*) FROM Files NOT INDEXED").fetchone()[0]
+        except sqlite3.Error as exc:
+            observations.append("the rows of the Files table could not be counted (%s): the listing goes as far as the table can be read" % type(exc).__name__)
+        try:
+            cursor = connection.execute("SELECT rowid, fileID, domain, relativePath, flags, file FROM Files NOT INDEXED")
             with_rowid = True
         except sqlite3.OperationalError:
-            cursor = connection.execute("SELECT fileID, domain, relativePath, flags, file FROM Files ORDER BY fileID")
+            cursor = connection.execute("SELECT fileID, domain, relativePath, flags, file FROM Files NOT INDEXED")
             with_rowid = False
         listing = {"available": True, "reason": None}
         rows = iter(cursor)
@@ -801,7 +865,7 @@ def main():
                 # A damaged page: what was read is kept, and the rest is not listed.
                 read_error = "%s%s after %d rows" % (type(exc).__name__, " (" + exc.sqlite_errorname + ")" if getattr(exc, "sqlite_errorname", None) else "", counts["rows_read"])
                 break
-            if counts["rows_read"] % 500 == 0 and time.monotonic() - started > max_seconds:
+            if time.monotonic() > deadline:
                 stopped_at_row = counts["rows_read"]
                 break
             counts["rows_read"] += 1
@@ -815,10 +879,11 @@ def main():
                 continue
             if pattern is not None:
                 try:
-                    if not timed_search(pattern, relative, 2.0):
+                    if not timed_search(pattern, relative, max(0.01, min(2.0, deadline - time.monotonic()))):
                         continue
                 except Timeout:
-                    fail("contains took too long on one path: use a simpler expression", row=counts["rows_read"])
+                    contains_timeouts += 1      # that row is counted and not matched
+                    continue
             counts["rows_matching"] += 1
             valid = bool(FILE_ID.fullmatch(file_id))
             if not valid:
@@ -843,7 +908,7 @@ def main():
         connection.close()
 
     # --- the answer ------------------------------------------------------------------------
-    domain_page = LosslessPage(TOOL, [shown(os.path.realpath(db), False), "domains", domain_filter or ""], limit)
+    domain_page = LosslessPage(TOOL, [shown(os.path.realpath(db), False), "domains", domain_filter or ""], limit, INLINE_BYTES)
     for name, number in sorted(domains.items(), key=lambda kv: (-kv[1], kv[0])):
         domain_page.add({"domain": shown(name), "entries": number})
     paging = {"entries": entries.finish(), "domains": domain_page.finish()}
@@ -851,7 +916,15 @@ def main():
     for name, span in sorted(extra["times"].items()):
         time_range[name] = {"earliest": span["low"][1] if span["low"] else None, "latest": span["high"][1] if span["high"] else None,
                             "values": span["values"], "zero_values_left_out": span["zero"]}
-    complete = listing["available"] and stopped_at_row is None and read_error is None and not skipped_companions
+    if contains_timeouts:
+        observations.append("contains ran past its time on %d path(s): those rows are counted and were not matched" % contains_timeouts)
+    complete = (listing["available"] and stopped_at_row is None and read_error is None and not skipped_companions
+                and not cut and not contains_timeouts and completion["state"] != "not_finished")
+    if listing["available"] and (extra["checks"]["after_backup_date"] or extra["checks"]["before_2007"]):
+        observations.append("under epoch %s some times fall after the backup's own date or before 2007: see epoch.consistency. "
+                            "That can be a wrong epoch (a 31-year shift between the two), a phone clock, or the case; it is for the examiner to settle." % epoch)
+    if not listing["available"]:
+        counts.update(rows_read=None, rows_matching=None, metadata=None, blobs=None, layouts=None, invalid_file_ids=None, wrapped_file_keys=None)
     if state == "encrypted" and not listing["available"]:
         complete = False
     status = "complete" if complete else "partial"
@@ -875,9 +948,16 @@ def main():
         "manifest_db_file": db_file,
         "listing": listing,
         "observations": observations,
+        "completion": completion,
         "epoch": {"applied": epoch, "base": "1970-01-01T00:00:00Z" if epoch == "unix" else "2001-01-01T00:00:00Z",
                   "chosen_by": "the epoch parameter (default unix); never inferred from a value",
-                  "range_of_values_read": time_range},
+                  "range_of_values_read": time_range,
+                  "consistency": {"backup_date": None if backup_date is None else backup_date.astimezone(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
+                                  "after_backup_date": extra["checks"]["after_backup_date"],
+                                  "before_2007_01_01": extra["checks"]["before_2007"],
+                                  "note": "Counts of times, per field, that fall after the backup's own date or before 2007 under the epoch applied. "
+                                          "The wrong epoch is a 31-year shift (Apple against Unix), not a range of decades; compare the range with a "
+                                          "file whose time the case documents. Nothing here chooses an epoch."}},
         "counts": counts,
         "stopped_at_row": stopped_at_row,
         "read_error": read_error,
@@ -885,8 +965,8 @@ def main():
         "entry_count": counts["rows_matching"],
         "files_in_manifest": counts["files_in_manifest"],
         "domains": domain_page.page,
-        "domain_count": len(domains),
-        "filter": {"contains": contains, "domain": domain_filter},
+        "domain_count": len(domains) if listing["available"] else None,
+        "filter": {"contains": scrub(contains) if contains else None, "domain": scrub(domain_filter) if domain_filter else None},
         "pages": paging,
         "truncated": any(p["truncated"] for p in paging.values()),
         "paths_withheld": PATHS_WITHHELD[0],
@@ -895,15 +975,18 @@ def main():
         "note": "This lists a backup's map; it is not the phone's file system. Cite the relative path (what the phone called "
                 "the file), the domain and the file id (what was opened), and the Manifest.db row. `encryption.state` "
                 "is unknown when Manifest.plist is missing, unreadable or without IsEncrypted: do not read it as "
-                "unencrypted. An encrypted backup is not an empty one: when it is encrypted the listing is the "
-                "manifest's, if it opens as SQLite, and what is encrypted is the content of the files the ids name. "
+                "unencrypted. An encrypted backup is not an empty one: its Manifest.db is listed when it opens as "
+                "SQLite and otherwise the answer says the listing is not available; which parts of an encrypted backup are "
+                "readable depends on the build that made it, and listing.available says what this one allowed. "
                 "Key material (the key bag, the manifest key) is reported as present with its length and never printed. "
                 "Times are the raw seconds beside a conversion from the epoch you chose (check it against a file whose "
                 "time the case documents); a time in the manifest is the file's time on the device as the backup "
                 "recorded it, not when it was backed up. blob says whether the file named by an id is in the backup "
                 "(present), absent (missing), a directory, a link (never followed), not applicable (the manifest entry "
                 "is a directory or a link) or refused (an id that is not 40 hexadecimal digits). status is partial "
-                "when the listing is not available, a damaged page ended it (read_error), the time limit stopped it, or a companion that is a link was not applied.",
+                "when the listing is not available, a damaged page ended it (read_error), the file is cut short, the time limit stopped it, "
+                "contains ran out of time on a row, a companion that is a link was not applied, or Status.plist says the backup did not finish "
+                "(completion). completion is unknown, not a failure, when there is no Status.plist or it has no SnapshotState.",
     }
     send(result)
 

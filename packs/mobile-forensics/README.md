@@ -19,7 +19,7 @@ here) and `extractions/backup-detail`; `apps/databases` and `apps/fragments`;
 not, and each returns its whole result: an inline page and, when there is more,
 a file the answer names. None of them decrypts anything or reads a password.
 `sqlite_freespace` and `protobuf_peek` read no `-wal` or `-journal`; `manifest_db`
-opens a `Manifest.db`'s in a working copy.
+opens a `Manifest.db`'s `-wal` and `-journal` in a working copy, with the file.
 
 - `manifest_db` lists an iOS backup's map: for each file id its domain, relative
   path, kind, the metadata of its keyed archive, and the state of the blob the id
@@ -27,13 +27,19 @@ opens a `Manifest.db`'s in a working copy.
   id is joined to a path only when it is 40 hexadecimal digits). It reads the
   backup's plain files (`Manifest.plist`, `Info.plist`, `Status.plist`) for the
   encryption flag, the device, the backup's version and date and whether it
-  finished. The encryption state is three-valued: a flag that is missing is
+  finished (`completion`: finished, not_finished or unknown, from Status.plist's
+  `SnapshotState`; a backup that did not finish makes the status partial). The
+  encryption state is three-valued: a flag that is missing is
   `unknown`, not unencrypted. An encrypted backup is not reported as empty: its
   `Manifest.db` is listed when it opens as SQLite (with `payload_encrypted` set),
   and when it does not the answer says the listing is not available and what the
   file was. Key material (the key bag, the manifest key) is a presence and a
   length, never a value. Times are converted from the epoch you name (`unix` by
-  default, or `apple`), with the raw seconds beside them: the tool does not guess.
+  default, or `apple`), with the raw seconds beside them: the tool does not guess,
+  and `epoch.consistency` counts the times that fall after the backup's own date or
+  before 2007 under the epoch applied (the wrong epoch is a 31-year shift). The
+  Files table is read in row order, so a damaged index page does not cost the
+  listing, and a `Manifest.db` cut inside its last page is said and partial.
 - `sqlite_freespace` reads the free space of a SQLite database's main file
   (freelist pages, the unallocated gap of a page, the freeblock chain) and returns
   where each text fragment is: page, kind of region, byte offset (read back from
@@ -43,13 +49,17 @@ opens a `Manifest.db`'s in a working copy.
   seals. It reads UTF-8 and UTF-16 text (the byte order the header declares) and
   says so. A `-wal` or a `-journal` beside the file is listed and not read, so what
   only the WAL holds is absent, and the status is partial while one holds bytes.
+  `contains` only narrows the values file (it needs `write_values`): the answer
+  lists every fragment and does not say which matched.
 - `protobuf_peek` reads the wire structure of a protobuf message without its
   schema: field numbers, wire types, absolute offsets and field paths, numbers
   raw with their zigzag reading. It does not say what a field means. A group makes
   a message `unsupported`, a structural error names its offset, and a bounded
-  window is read, not a whole file. Only a top-level varint is printed: the text of
-  a string, the bytes of a bytes field, a number under a length-delimited field and
-  a fixed-width value go to the job's sealed values file on request.
+  window is read, not a whole file. Only a top-level varint is printed, and only for
+  a window that is a message (it parses whole and meets a stated rule, so that a
+  window aimed at a string or a token is not read back as numbers): the text of a
+  string, the bytes of a bytes field, a number under a length-delimited field and a
+  fixed-width value go to the job's sealed values file on request.
 
 **Five recipes**, each saying what it prepares (`purpose` in its `recipe.json`).
 Two inventories: `ios-filesystem` turns a full-file-system tar into a structural
@@ -57,16 +67,25 @@ mobile catalogue without extracting it (it parses no artefact content, keeps eve
 member name as the archive spelled it and every occurrence of a duplicated name),
 and `android-backup` reads an adb-backup header and inventories every member of an
 unencrypted payload of a version it reads (1 to 5), within a decompression budget.
+Both follow the tar header by header beside the tar library and say `complete`
+only when the end-of-archive block came and the library listed as many members as
+there are headers: a tar cut at a member boundary, or ended quietly by a header the
+library refuses, is `partial`, with where. Neither writes over an earlier run's
+output.
 Two broad extractions, run by the kickoff: `ios-ileapp` hands a whole iOS full
 file-system acquisition (a tar or a zip) to iLEAPP and keeps every report it
 writes, a TSV per artefact with records, its timeline and the HTML, under
 `ileapp/`; `android-aleapp` does the same for an Android full file-system
 acquisition with ALEAPP. Each reads the program's own log for one outcome per
-module (`modules.tsv`: completed, no_record, errored or unknown) and says
-`complete` only when the program exited 0, wrote a report, its log was recognised
-and no module errored or is unknown: a module that errored while the others wrote
-their reports leaves the run `partial`. A module with no report is `no_record`,
-which does not show the artefact is absent from the phone. Their `exclusions` say
+module (`modules.tsv`: completed, no_record, unsupported, errored, errors_logged or
+unknown) and says `complete` only when the program exited 0, wrote a report, its
+log was recognised and says how many modules it parses and that many started, it
+ends with its processing-completed line, no module errored, logged an error or is
+unknown, no line outside a module speaks of an error and stderr holds nothing the
+log shape does not explain: a module that errored while the others wrote their
+reports leaves the run `partial`. A module with no report is `no_record`, which
+does not show the artefact is absent from the phone, and an `unsupported` module
+is one whose own gate does not take the operating-system version. Their `exclusions` say
 what they do not hold, and a run stopped before its end says partial. And one
 declared and never run: `android-backup-apps`, the broad extraction an adb backup
 would need, which the image cannot do (ALEAPP reads a file-system layout, an adb
