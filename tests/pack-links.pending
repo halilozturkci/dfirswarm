@@ -90,17 +90,6 @@ memory-forensics unused skills/strings/discipline.md strings
 memory-forensics unused skills/triage/no-framework.md sig_carve
 memory-forensics unused skills/triage/no-framework.md strings
 memory-forensics unused skills/triage/volatility.md mem_profile
-mobile-forensics unlisted skills/ios/artifacts.md protobuf_peek
-mobile-forensics unlisted skills/ios/artifacts.md timestamp_decode
-mobile-forensics unlisted skills/ios/biome-segb.md protobuf_peek
-mobile-forensics unused skills/extractions/what-you-have.md file_type
-mobile-forensics unused skills/ios/artifacts.md manifest_db
-mobile-forensics unused skills/ios/artifacts.md plist_read
-mobile-forensics unused skills/ios/artifacts.md unified_log
-mobile-forensics unused skills/ios/biome-segb.md ileapp
-mobile-forensics unused skills/location/sources.md protobuf_peek
-mobile-forensics unused skills/location/sources.md sqlite_query
-mobile-forensics unused skills/location/sources.md timestamp_decode
 network-forensics unused skills/beacons/periodicity.md pcap_summary
 network-forensics unused skills/capture/carve-from-images.md bulk_extractor
 network-forensics unused skills/correlate/host.md beacon_score

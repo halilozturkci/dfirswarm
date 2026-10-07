@@ -1,51 +1,30 @@
 ---
 id: android/artifacts
-title: Android, and where each answer lives
-when: The extraction came from an Android device.
+title: Android artefacts by build, user and protection state
+when: Use when the evidence holds Android application or system data. Not for an adb backup's layout (extractions/backup-detail) or location questions.
 needs: [extractions/what-you-have]
-tools: [sqlite_freespace, protobuf_peek]
+tools: [sqlite_query, sqlite_freespace, protobuf_peek]
 requires_host: [aleapp]
 ---
 
-    /data/data/<package>/databases/       that app's own SQLite files
-    /data/data/<package>/shared_prefs/    its settings, as XML
-    /data/system/packages.xml             every package, its UID, its permissions
-    /data/system/users/0/                 accounts, and when the user was created
-    /data/system/usagestats/              what ran and for how long, by day
-    /data/misc/wifi/ or WifiConfigStore.xml   networks joined
-    /data/system_ce/0/accounts_ce.db      accounts with their types
-    /sdcard/ or /storage/emulated/0/      shared storage: photos, downloads
-    /data/log/, /data/anr/                logs and application-not-responding traces
+Use when the evidence holds Android application or system data. Not for an adb backup's layout (`extractions/backup-detail`) or for where the device was (`location/sources`).
 
-**`packages.xml` is the first file to read.** It gives the installed packages,
-their install and update times, the installer that put each one there, and the
-granted permissions. A package sideloaded rather than installed from a store has
-a different installer field, and that single value is often the finding.
+**Record** the Android version, build fingerprint, security patch level, maker, app versions and every acquired user and profile id. Do not infer coverage from user 0: look for secondary users, work profiles and, where the build supports it, a private space or vendor containers. A credential-encrypted profile that was locked or not acquired is a coverage gap, not an empty profile.
 
-Start the parser only after identifying the extraction root, and preserve its
-stdout beside the report tree:
+**Discovery candidates** (keep the extraction's own path mapping): `/data/user/<user>/<package>/` (credential-encrypted app storage), `/data/user_de/<user>/<package>/` (device-encrypted), `/data/data/<package>/` (commonly the same as user 0), `/data/system/` and per-user system directories (packages, permissions, accounts, usage; files vary by build), `/data/media/<user>/` (shared storage), Wi-Fi stores, ANR traces, tombstones. List the databases, preferences and files of each app scope.
 
-    mkdir -p work/<agent>/aleapp
-    aleapp -t fs -i /absolute/path/to/android-root -o work/<agent>/aleapp
+**Packages.** Read package metadata with each user's installed and enabled state, the requested permissions, the granted ones and any recorded use of them. Installer, initiator, origin and update owner are different things; a missing or non-store value does not show sideloading, and sideloading does not show malice. Corroborate a security finding with observed behaviour and independently attributable data.
 
-For a tar use `-t tar`. ALEAPP's HTML is a view of its generated data, not the
-custody record; keep the structured exports and the exact source paths too.
+**Broad pass.** Use the `android-aleapp` generation first and read its `modules.tsv` (`completed` is not "all parsed"; `no_record` is not "absent"; gaps are `errored`, `errors_logged`, `unknown`). Without one, in a job: `aleapp -t fs -i <android-root> -o "$OUT/aleapp"` (`-t tar` or `-t zip` for those inputs, after `aleapp -h`). Keep stdout, stderr and the report tree; check a material row against its source record.
 
-**`usagestats` is the closest Android has to an execution record.** It is
-per-day, protobuf on modern versions, and it says which package was in the
-foreground and for how long. `protobuf_peek` reads the blobs without a schema.
+**Usage data** can hold events and daily, weekly, monthly or yearly aggregates. Identify the build's format, user, event types, interval edges and token mappings before decoding. `protobuf_peek` shows wire fields, not Android meanings. Foreground time is neither a person's action nor a full execution record.
 
-**Permissions are the capability list.** An application holding
-`READ_SMS`, `ACCESS_FINE_LOCATION` and `SYSTEM_ALERT_WINDOW` together is either
-a legitimate messenger or the thing you are looking for, and the installer field
-usually decides which.
+**Messages**: SMS/MMS, RCS and each chat app can use different stores; check each (`sqlite_query` on a working copy, `sqlite_freespace` for free space: `apps/databases`). A notification or cache can corroborate content, not delivery or authorship. Databases and deletion: `apps/databases`.
 
-**Most app data is SQLite with a WAL beside it.** Copy the `-wal` and `-shm`
-with the database or you will read a state that is minutes to weeks old. The
-most recent messages are the ones in the WAL, which is exactly the set a case
-cares about.
+**Wi-Fi**: a saved configuration shows configuration, not that the phone joined it or where.
 
-Deleted bytes may survive in free pages until reuse, unless secure deletion,
-vacuuming or application-level encryption removed their evidential value.
-`sqlite_freespace` recovers readable fragments, with the same caution as
-everywhere: no reliable time, no guaranteed row boundary, and say so.
+**Does not show**: a person, an intent, or absence beyond the profiles, retention and parser coverage you checked.
+
+**Record**: version, user, path, parser and version, raw value beside a conversion.
+
+**Sensitive output**: Wi-Fi, account and message stores run as a job with `secret_output: true`; record where a secret sits, never the value or a hash.

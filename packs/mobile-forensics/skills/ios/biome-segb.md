@@ -1,29 +1,26 @@
 ---
 id: ios/biome-segb
-title: Biome and SEGB streams without false timestamps
-when: Activity, location, device-state or app events are in an iOS Biome stream.
+title: Biome and SEGB records by format and stream
+when: Use when an activity question depends on an iOS Biome or other SEGB stream. Not for KnowledgeC or unified logs.
 needs: [ios/artifacts]
-tools: []
+tools: [protobuf_peek]
 requires_host: [ileapp]
 ---
 
-Biome is a collection of named streams, commonly under
-`private/var/mobile/Library/Biome/streams/`. Its stream files are SEGB
-containers. SEGB is not itself protobuf: it frames records, records their
-state and carries its own write timestamp; a framed payload may then be a
-protobuf, plist or another stream-specific structure.
+Use when an activity question depends on an iOS Biome or other SEGB stream. Not for KnowledgeC (a SQLite store: `ios/artifacts`) or the unified log (`ios/unified-logs`).
 
-Run iLEAPP over the extraction and retain the exports for the individual Biome
-modules. Prefer a module named for the stream over a schema-less decode. Use
-`protobuf_peek` only on a payload already separated from its SEGB frame, and
-label every inferred field because field names do not exist without a schema.
+**Inventory** the Biome and SEGB sources (commonly `mobile/Library/Biome/streams/`): stream metadata, local and other acquired stream directories, tombstone files. A directory name does not say which device wrote a record.
 
-For every cited record keep four things together: stream name, source file,
-byte offset and SEGB state. `Deleted` is a record state, not proof of when the
-user deleted an event. Tombstone files describe retired stream storage and
-must not automatically be presented as user events.
+**Identify the SEGB version** from the source and the parser. Unsupported framing is a parser limit, not an empty stream. SEGB frames records and carries its own timestamp; the payload may be protobuf, plist or another structure.
 
-Do not equate the SEGB timestamp with the event time. It is generally the
-record write/harvest time; stream payloads may carry their own start, end or
-event time. A defensible timeline says which timestamp it used and preserves
-both when they differ.
+**Parse** with the stream-named `ileapp` module, after checking that the release supports the stream and format; keep its output and logs. For a material event keep stream, source file, record or payload offset where the module gives it, raw state, format version and module version. If the module gives no locator, say the record-level locator is unresolved; never invent an offset from report order.
+
+**Schema-less payload.** Run `protobuf_peek` only on a payload already cut from its frame. Its answer is wire structure: field numbers, wire types, offsets, top-level varints. It does not say field names, units, signedness or event meaning, and it withholds string and byte content (a job with `secret_output: true` and `write_values: true` writes them to a sealed file). Label every inference.
+
+**Times.** Keep the container timestamp and the payload's own times apart, with raw values and precision. Do not call a container time the event or harvest time without the stream's format saying so.
+
+**Deleted state or tombstone**: record lifecycle of storage, not proof that a person deleted an event, when, or that the payload records a completed action.
+
+**Does not show**: a person acting, or the full activity of the device. Corroborate with app records, KnowledgeC where present or a diagnostic record. A negative states the streams present, the parser failures, retention gaps and duplicates checked.
+
+**Sensitive output**: Biome payloads can hold message text, URLs and identifiers: run payload readers as a job with `secret_output: true`.
