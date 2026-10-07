@@ -75,16 +75,6 @@ mobile-forensics unused skills/ios/biome-segb.md ileapp
 mobile-forensics unused skills/location/sources.md protobuf_peek
 mobile-forensics unused skills/location/sources.md sqlite_query
 mobile-forensics unused skills/location/sources.md timestamp_decode
-network-forensics unused skills/beacons/periodicity.md pcap_summary
-network-forensics unused skills/capture/carve-from-images.md bulk_extractor
-network-forensics unused skills/correlate/host.md beacon_score
-network-forensics unused skills/correlate/host.md timestamp_decode
-network-forensics unused skills/logs/web-proxy-firewall.md timestamp_decode
-network-forensics unused skills/metadata/dns-tls.md pcap_summary
-network-forensics unused skills/metadata/dns-tls.md zeek
-network-forensics unused skills/metadata/dns-tls.md zeek_run
-network-forensics unused skills/sessions/reconstruct.md pcap_summary
-network-forensics unused skills/sessions/reconstruct.md zeek_run
 ransomware-response unused skills/encryptor/destroyed-backups.md encrypted_survey
 ransomware-response unused skills/encryptor/traces.md ransom_note_scan
 ransomware-response unused skills/encryptor/traces.md yara
