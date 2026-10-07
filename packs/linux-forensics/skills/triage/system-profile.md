@@ -8,12 +8,15 @@ requires_host: [fls, icat, fsstat, dumpe2fs, target-query]
 ---
 
 Everything later depends on what was acquired and on which clocks apply. Record, before anything else,
-whether the evidence is a disk image, an extracted root, a logical collection or a memory capture, what
-was collected when, and whether volatile paths (`/proc`, `/run`, mount and process state) were actually
-captured; a disk image holds none of them. Read the distribution release, architecture and filesystem
-features from the evidence and treat the release name as a starting point: whether `auth.log`, `secure`,
-the journal, auditd, classic wtmp or a SQLite accounting database exist on this system is read from its
-files and configuration, not assumed from its name.
+whether the evidence is a disk image, an extracted root, a logical collection or a memory capture, what was
+collected when, and whether volatile paths (`/proc`, `/run`, mount and process state) were actually
+captured; a disk image holds none of them. If the evidence is the output of a collection tool or a memory
+capture, the triage-collection and memory-forensics packs hold the method for those when they are loaded
+(check the run's tool inventory): a collected tree is a selection and not a disk, and a memory capture needs
+symbols that match its kernel. Read the distribution release, architecture and filesystem features from the
+evidence and treat the release name as a starting point: whether `auth.log`, `secure`, the journal, auditd,
+classic wtmp or a SQLite accounting database exist on this system is read from its files and configuration,
+not assumed from its name.
 
 For a disk image start with `image_layout`, then `linux_triage`. It runs `target-query` (dissect.target) one
 function at a time, reads a Linux root inside LVM without activating or mounting the evidence, and keeps

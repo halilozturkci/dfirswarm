@@ -48,6 +48,8 @@ mechanisms was identified in these sources over this period." Record the paths, 
 state, parser limits and excluded mechanisms. It does not show that persistence was absent, how access would be
 regained, or what anyone intended.
 
+**Does not show.** That a mechanism ran, that it was added during the incident, or who added it.
+
 **Sensitive output.** Cron commands, environment values, unit `Environment=` lines and history commands can
 hold secrets. `cron_dump` and `shell_history` answer without that text; the text is read from the file written
 by `write_text: true` or `write_commands: true` in a job run with `secret_output: true`. Cite file and line,

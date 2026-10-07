@@ -39,8 +39,8 @@ changes the host inode's metadata without showing when anything ran in the conta
 **Timestamps and commands.** `Created`, `StartedAt` and `FinishedAt` and the `Path` and `Args` are runtime
 metadata whose meaning depends on the stored schema and the restart history: they are not a complete execution
 history and not evidence that a command achieved its purpose. Keep each original timestamp string with its
-offset and any missing or zero value, and decode with `timestamp_decode` only a number. `Config.Env` often
-carries credentials: inspect it, the mounts and the credential configuration in a sealed job run with
+offset and any missing or zero value (`timestamp_decode` is for a raw number; an RFC 3339 string needs no
+decoding). `Config.Env` often carries credentials: inspect it, the mounts and the credential configuration in a sealed job run with
 `secret_output: true`, and report the variable names and that values exist, not the values.
 
 **Host exposure.** Assess privilege from user namespaces, capabilities, device access, mounted sockets, the

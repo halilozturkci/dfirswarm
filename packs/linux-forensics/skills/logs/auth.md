@@ -14,8 +14,8 @@ requires_host: []
 These are candidate destinations, not guaranteed files. Read the rsyslog, journald and logrotate
 configuration, then inventory every retained rotation and any remote copy; a missing rotation is a gap to
 name. `auth_log` reads plain and gzip text, orders the files by their rotation suffix and says which basis
-ordered each (`order_basis`, `cross_file_order`); a date-named or mixed scheme is not ordered by chronology it
-cannot establish. Every record carries its file, physical line and byte offset.
+ordered each (`order_basis`, `cross_file_order`): a number or a date in the name orders a file, a name with neither
+is ordered by name only, and a mix of schemes is reported as an order that is not established. Every record carries its file, physical line and byte offset.
 
 **Time.** A traditional stamp has no year and no zone. `auth_log` takes the year from the file's modification
 time (on a copied tree that is the time of the copy) or from your `year`, and says which per file
@@ -37,8 +37,8 @@ What the lines show, and what they do not:
 
 `sudo -i` followed by no further line shows only that this log has no further line: what the shell ran is in
 other sources (histories, the journal, audit records where auditd ran), and the report names which were
-searched. A name typed at a prompt can be a password typed into the wrong field: an invalid-user name that is
-not a plausible account name is a secret, so cite the line's locator and do not copy it.
+searched. A name typed at a prompt can be a password typed into the wrong field: treat an invalid-user name that
+is not a plausible account name as a secret, and cite the line's locator instead of copying it.
 
 **Corroboration.** Compare the sessions that matter with wtmp and btmp (`utmp_parse`, classic format only) and
 with the journal. Differences among them can come from forwarding, filtering, retention, collection or parser
