@@ -22,9 +22,9 @@ WORK = tempfile.mkdtemp()
 failures = []
 
 
-def tool(pack_tool, args):
+def tool(pack_tool, args, cwd=None):
     out = subprocess.run([sys.executable, os.path.join(PACKS, pack_tool, "run.py")],
-                         input=json.dumps(args), capture_output=True, text=True)
+                         input=json.dumps(args), capture_output=True, text=True, cwd=cwd)
     try:
         return json.loads(out.stdout)
     except ValueError:
@@ -149,29 +149,43 @@ check("beacon_score calls a fixed sixty-second interval a fixed timer",
       json.dumps({k: got2.get(k) for k in ("median_interval_seconds", "shape", "error")}))
 
 # --- encrypted-containers/crypto_id: a LUKS1 header with three enabled slots ---
-h = bytearray(4096)
+# Built from the LUKS1 on-disk specification, not from the parser: 208 bytes of
+# fixed fields (the UUID at 168), then eight 48-byte slots of active (4),
+# iterations (4), salt (32), key material offset (4) and stripes (4), big-endian.
+h = bytearray(592)
 h[0:6] = b"LUKS\xba\xbe"; struct.pack_into(">H", h, 6, 1)
 h[8:11] = b"aes"; h[40:51] = b"xts-plain64"; h[72:78] = b"sha256"
 struct.pack_into(">I", h, 108, 64)
+h[168:168 + 36] = b"2f4a8e0c-1b5d-4c3a-9e7f-0a1b2c3d4e5f"
 for i in range(8):
-    struct.pack_into(">IIII", h, 208 + i * 48, 0x00AC71F3 if i < 3 else 0x0000DEAD, 1000, 0, 4000)
+    struct.pack_into(">II32sII", h, 208 + i * 48, 0x00AC71F3 if i < 3 else 0x0000DEAD, 1000 + i,
+                     bytes([0xA0 + i]) * 32, 8 + i * 256, 4000)
 luks = os.path.join(WORK, "luks.img"); open(luks, "wb").write(bytes(h))
 got = tool("encrypted-containers/tools/crypto_id", {"path": luks})
 check("crypto_id reads a LUKS1 key slot table with no key",
       got.get("scheme") == "LUKS1" and got.get("enabled_slots") == 3
-      and got.get("cipher") == "aes", got.get("error", ""))
+      and got.get("cipher") == "aes"
+      and got.get("uuid") == "2f4a8e0c-1b5d-4c3a-9e7f-0a1b2c3d4e5f"
+      and [s["stripes"] for s in got.get("key_slots", [])] == [4000] * 8
+      and [s["key_material_offset_sectors"] for s in got.get("key_slots", [])] == [8 + i * 256 for i in range(8)]
+      and [s["iterations"] for s in got.get("key_slots", [])] == [1000 + i for i in range(8)],
+      got.get("error", json.dumps(got.get("key_slots", [])[:2])))
 
-# --- ransomware-response/encrypted_survey: the shared family marker ------------
+# --- ransomware-response/encrypted_survey: the bytes every sampled tail ends with ---
+# An observation pending a reference match (basis "observation"), not a family marker;
+# tests/pack-encrypted-survey.test.ts and tests/pack-ransom-note-scan.test.ts hold the rest of the
+# pack's tools' contract.
 random.seed(11)
 share = os.path.join(WORK, "share"); os.makedirs(share, exist_ok=True)
 for i in range(6):
     open(os.path.join(share, "f%d.xlsx.LOCKD" % i), "wb").write(
         bytes(random.getrandbits(8) for _ in range(120000)) + b"\xde\xad\xbe\xefKEYBLOB1")
-got = tool("ransomware-response/tools/encrypted_survey", {"root": share})
-suffix = (got.get("shared_file_suffix") or {}).get("suffix_hex")
-check("encrypted_survey finds the bytes every encrypted file ends with",
-      suffix == b"\xde\xad\xbe\xefKEYBLOB1".hex()
-      and got.get("appended_extensions", [{}])[0].get("extension") == ".lockd", str(suffix))
+# The survey writes its census under work/<agent>/tool-output of its working directory.
+got = tool("ransomware-response/tools/encrypted_survey", {"root": share}, cwd=WORK)
+shared = got.get("shared_tail_suffix") or {}
+check("encrypted_survey reports the bytes every sampled file ends with, as an observation",
+      shared.get("suffix_hex") == b"\xde\xad\xbe\xefKEYBLOB1".hex() and shared.get("basis") == "observation"
+      and got.get("appended_extension_observations", [{}])[0].get("extension") == ".lockd", str(shared))
 
 # --- triage-collection/collection_index: the stream a collector renamed --------
 coll = os.path.join(WORK, "kape", "C", "Users", "a"); os.makedirs(coll, exist_ok=True)
