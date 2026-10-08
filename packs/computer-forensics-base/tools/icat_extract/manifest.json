@@ -1,6 +1,6 @@
 {
   "name": "icat_extract",
-  "description": "Extract a file from a disk image by inode to a path under the run. Refuses an inode the catalogue lists only as a directory (icat would give its index). Returns JSON with path, size, sha256, image, offset and the file's catalogued path.",
+  "description": "Extract one Sleuth Kit address (an inode, or inode-type-id for an NTFS stream such as 168-128-4) from a disk image to a NEW file under the run, streaming icat's output through a hash so no size is held in memory; an existing output is never replaced. Refuses an inode the catalogue lists only as a directory (icat would give its index). Returns the path, size, sha256, image, volume offset in sectors, the sector size passed to icat (-b, when given), the address asked for, icat's exit code and where its stderr is kept, and the path(s) the catalogue lists for exactly that address. An output budget (max_bytes) and a time budget (max_seconds) bound it; a run that hits one or whose icat fails part way keeps its bytes as <output>.partial and reports status partial, never a truncated file under the real name. It extracts what the record's data runs hold now: for a deleted entry that may be another file's bytes, and a matching header or size is a check, not proof.",
   "params": {
     "inode": {
       "type": "string",
@@ -9,7 +9,7 @@
     },
     "output": {
       "type": "string",
-      "description": "Output file path (relative to sandbox)",
+      "description": "New output file path (relative to the sandbox); refused if it exists. In a job it must lie under $OUT: give {OUT}/<name>, or work/extracted/<your id>/<name>, which the harness maps there",
       "required": true
     },
     "image": {
@@ -19,13 +19,64 @@
     "offset": {
       "type": "integer",
       "description": "Volume offset in sectors for icat -o. Defaults to the one filesystem the catalogue lists for the image (catalog/<input>/p<start>/); several mean pass it; none is 0."
+    },
+    "sector_size": {
+      "type": "integer",
+      "description": "Sector size in bytes for icat -b (a multiple of 512), when the image's is not 512; the same value image_layout used"
+    },
+    "max_bytes": {
+      "type": "integer",
+      "description": "Output budget in bytes (default 32 GiB); past it the run stops and keeps a .partial"
+    },
+    "max_seconds": {
+      "type": "integer",
+      "description": "Time budget in seconds (default 1500, at most 1700); past it the run stops and keeps a .partial"
     }
   },
   "runtime": "python3",
   "entry": "run.py",
-  "timeout_seconds": 30,
+  "timeout_seconds": 1800,
+  "requires": [
+    "icat"
+  ],
+  "use": {
+    "extensions": [
+      ".e01",
+      ".ex01",
+      ".dd",
+      ".img",
+      ".raw",
+      ".vhd",
+      ".vhdx",
+      ".vmdk",
+      ".qcow2",
+      ".001"
+    ],
+    "magic": [
+      {
+        "offset": 0,
+        "hex": "455646090d0aff00"
+      },
+      {
+        "offset": 0,
+        "hex": "455646320d0a8100"
+      },
+      {
+        "offset": 0,
+        "hex": "7668647866696c65"
+      },
+      {
+        "offset": 0,
+        "hex": "4b444d56"
+      },
+      {
+        "offset": 0,
+        "hex": "514649fb"
+      }
+    ]
+  },
   "by": "s864a08",
   "at": "2026-09-18T16:09:29.146Z",
-  "version": 7,
-  "sha256": "de21ef8e5359ad84ddbe08478afbffa40880fa205606387e373d9a728af6f9a8"
+  "version": 8,
+  "sha256": "f149d427ef88eb974ae945e7b814bacf08bdd0cd7abc224d640262756bf778bd"
 }

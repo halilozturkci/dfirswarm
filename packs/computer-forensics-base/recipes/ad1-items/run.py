@@ -51,6 +51,7 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+MAX_ITEMS = 5_000_000
 COLUMNS = ["n", "type", "path", "path_b64", "size", "packed", "mtime", "tz", "mode", "uid", "gid", "link", "locator", "flags",
            "atime", "btime", "md5", "sha1", "sha256", "check", "class"]
 # The metadata keys as dissect.evidence names them (its MetaType); a key
@@ -115,6 +116,8 @@ AD1_SEGMENTS_MAX = 4096           # 6 TB at FTK Imager's default 1500 MB a segme
 AD1_CHUNK_MIN, AD1_CHUNK_MAX = 512, 1 << 24   # FTK Imager writes 65536
 AD1_NAME_MAX = 1 << 16
 AD1_TEXT_MAX = 1 << 20
+AD1_META_MAX = 1 << 16            # entries in one metadata chain
+AD1_META_BYTES_MAX = 64 << 20     # bytes of text in one metadata chain
 AD1_DEPTH_MAX = 1024
 AD1_OPEN_MAX = 64                 # segment files held open at once
 AD1_TABLE_BATCH = 4096            # chunk addresses read at a time
@@ -240,7 +243,7 @@ class AD1:
 
     def metadata(self, addr):
         """[(category, key, text bytes, address)] of a metadata chain."""
-        out, seen = [], set()
+        out, seen, held = [], set(), 0
         while addr:
             if addr in seen:
                 raise AD1Error("the metadata chain loops back to address %d" % addr)
@@ -248,6 +251,9 @@ class AD1:
             nxt, cat, key, length = _struct.unpack("<QIII", self.read(addr, 20))
             if length > AD1_TEXT_MAX:
                 raise AD1Error("a metadata entry at address %d says it is %d bytes" % (addr, length))
+            held += length
+            if len(out) >= AD1_META_MAX or held > AD1_META_BYTES_MAX:
+                raise AD1Error("a metadata chain holds more than %d entries or %d bytes of text: not read further" % (AD1_META_MAX, AD1_META_BYTES_MAX))
             out.append((cat, key, self.read(addr + 20, length), addr))
             addr = nxt
         return out
@@ -450,7 +456,14 @@ def row_of(img, item, w, deadline, cov, escapes):
     packed, sha256, check = "", "", ""
     ranges = True
     try:
-        packed = sum(e - s for s, e in img.chunks(item)) if item["table"] else ""
+        packed = ""
+        if item["table"]:
+            packed = 0
+            for k, (c_start, c_end) in enumerate(img.chunks(item)):
+                packed += c_end - c_start
+                if k and k % 4096 == 0 and time.monotonic() > deadline:
+                    packed = ""        # cut by the clock: not known, and the file is not inflated either
+                    break
     except AD1Error as e:
         ranges = None
         cov["errors"].append("item %d (%s, %s): %s" % (item["n"], esc(raw_path), "ad1:item=%d" % item["addr"], e))
@@ -463,19 +476,28 @@ def row_of(img, item, w, deadline, cov, escapes):
         else:
             hs = [hashlib.md5(), hashlib.sha1(), hashlib.sha256()]
             try:
+                cut = False
                 for block in img.content(item):
                     for h in hs:
                         h.update(block)
-                sha256 = hs[2].hexdigest()
-                if not md5 and not sha1:
-                    check = "no-stored-hash"
-                elif (md5 and md5 != hs[0].hexdigest()) or (sha1 and sha1 != hs[1].hexdigest()):
-                    check = "mismatch"
-                    flags.append("hash-mismatch")
-                    cov["mismatches"].append(item["n"])
+                    if time.monotonic() > deadline:
+                        cut = True     # past the limit part way through one file: it is not a checked file, and says so
+                        break
+                if cut:
+                    check = "not-read"
+                    cov["unread_at_limit"] += 1
                 else:
-                    check = "ok"
-                cov["checked"] += 1
+                    sha256 = hs[2].hexdigest()
+                    if not md5 and not sha1:
+                        check = "no-stored-hash"
+                        cov["no_stored_hash"] += 1
+                    elif (md5 and md5 != hs[0].hexdigest()) or (sha1 and sha1 != hs[1].hexdigest()):
+                        check = "mismatch"
+                        flags.append("hash-mismatch")
+                        cov["mismatches"].append(item["n"])
+                    else:
+                        check = "ok"
+                    cov["checked"] += 1
             except AD1Error as e:
                 check = "not-read"
                 cov["errors"].append("item %d (%s, %s): %s" % (item["n"], esc(raw_path), "ad1:item=%d" % item["addr"], e))
@@ -503,20 +525,31 @@ def label(key):
 
 
 def run(target, paths, out_dir):
-    deadline = time.monotonic() + limits() * 0.9
+    deadline = time.monotonic() + limits() * 0.9      # past this, no further file's content is inflated
     os.makedirs(out_dir, exist_ok=True)
     cov = {"recipe": "ad1-items", "target": paths[0], "format": "AD1", "items": 0, "files": 0, "folders": 0, "checked": 0,
-           "mismatches": [], "unread_at_limit": 0, "segments_missing": [],
+           "mismatches": [], "no_stored_hash": 0, "unread_at_limit": 0, "segments_missing": [],
            "covered": "every item of the image's tree, with its metadata, and each file's content inflated and checked against the digests the image records",
            "not_covered": "anything the imager did not put in the image (a logical image holds no unallocated space, and slack only where it was taken as an item); files inside the files; an encrypted (ADCRYPT) image",
            "limits_hit": [], "errors": []}
 
+    def write_cov():
+        with open(os.path.join(out_dir, "coverage.json"), "w") as cf:
+            json.dump(cov, cf, indent=2)
+
     def finish(status, code):
         cov["status"] = status
-        json.dump(cov, open(os.path.join(out_dir, "coverage.json"), "w"), indent=2)
+        if "integrity_status" not in cov:
+            cov["integrity_status"] = "mismatch" if cov["mismatches"] else "unverified" if cov["files"] > cov["checked"] or cov["no_stored_hash"] else "verified" if cov["files"] else "not_applicable"
+        write_cov()
         print(json.dumps({"ok": code == 0, "status": status, "format": "AD1", "items": cov["items"]}))
         return code
 
+    # Said before the first read: a run cut short leaves a coverage file that says it was, never none.
+    cov["status"] = "partial"
+    cov["why"] = "started; the run did not reach its end"
+    write_cov()
+    del cov["why"]
     img_source = b""
     try:
         img = AD1(paths[0], paths[1:])
@@ -537,6 +570,11 @@ def run(target, paths, out_dir):
             a.write("n\tcategory\tkey\tlabel\ttext\n")
             escapes = set()
             for item in img.walk():
+                if cov["items"] >= MAX_ITEMS:
+                    # The listing is not stopped by the clock (it is cheap, and every item stays listed past the
+                    # limit); it is bounded by an item budget, and says so.
+                    cov["limits_hit"].append("items: the listing stopped after %d items; every item after it in the image's order is not listed" % cov["items"])
+                    break
                 row_of(img, item, w, deadline, cov, escapes)
                 for cat, key, text, _addr in item["meta"]:
                     a.write("%d\t%d\t0x%x\t%s\t%s\n" % (item["n"], cat, key, label(key), esc(text)))

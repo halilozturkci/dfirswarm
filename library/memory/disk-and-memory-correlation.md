@@ -135,10 +135,6 @@ did) unless the operator put the tables under `inputs/`.
   such, never as a capture time.
 - If `SWARM.md` has an "Evidence catalog" section, the first pass is already
   done: read `catalog/` instead of rebuilding it.
-- If `skill` is in your tool list, this run carries packs: call it once with
-  no id for the index, and fetch the notes that match the evidence in front of
-  you. A pack's method was written for this kind of case, its tools are already
-  loaded, and every fetch is on the trace for the report to cite.
 - Extract what you need into `work/extracted/<your id>/` (nothing there is
   run; it is no-exec only under `--quarantine`; hash everything you pull
   out): the hives, the event logs, `$MFT`, the journals, Prefetch, Amcache,

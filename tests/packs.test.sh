@@ -68,6 +68,46 @@ pass "seal writes checksums and the skill index"
 [[ -f "$WORK/src/base-pack/skills/INDEX.md" ]] || fail "seal should generate skills/INDEX.md"
 grep -q 'alpha/first' "$WORK/src/base-pack/skills/INDEX.md" || fail "the index should name every skill"
 pass "the index is generated from the skills' own front matter"
+grep -q '^Router:' "$WORK/src/base-pack/skills/INDEX.md" && fail "a pack with no router has a Router line in its index (every sealed pack's index would change)"
+pass "a pack that names no router has no Router line: its index is as it was"
+
+# A pack names at most one router, in its own front matter; the index says which.
+add_skill() { # <dir> <name> <extra front matter line>
+  cat > "$1/skills/alpha/$2.md" <<EOF
+---
+id: alpha/$2
+title: Skill $2
+when: When $2 is the question.
+needs: []
+tools: []
+requires_host: []
+$3
+---
+
+Body of $2.
+EOF
+}
+mk_pack "$WORK/src" router-pack
+add_skill "$WORK/src/router-pack" start "router: true"
+add_skill "$WORK/src/router-pack" leaf "router: false"
+"$PACK" seal "$WORK/src/router-pack" >/dev/null || fail "seal should accept one router and a router: false"
+[[ "$(sed -n '/^Router:/p' "$WORK/src/router-pack/skills/INDEX.md")" == 'Router: `alpha/start`' ]] || fail "the index should name the router: $(cat "$WORK/src/router-pack/skills/INDEX.md")"
+grep -q '^- `alpha/start` ' "$WORK/src/router-pack/skills/INDEX.md" || fail "the router is still an entry of the index"
+# Installed into a home of its own: the list assertions below count on one pack.
+DFIRSWARM_HOME="$WORK/home-router" "$PACK" install "$WORK/src/router-pack" --no-secrets >/dev/null && DFIRSWARM_HOME="$WORK/home-router" "$PACK" verify router-pack >/dev/null || fail "a sealed pack with a router should install and verify"
+pass "a skill that says router: true is named by a Router line in the generated index, and is still listed"
+
+mk_pack "$WORK/src" two-routers
+add_skill "$WORK/src/two-routers" start "router: true"
+add_skill "$WORK/src/two-routers" other "router: true"
+out="$("$PACK" seal "$WORK/src/two-routers" 2>&1)"; rc=$?
+[[ $rc -ne 0 ]] || fail "two routers should be refused: $out"
+grep -q 'at most one router' <<<"$out" || fail "the refusal should say why: $out"
+mk_pack "$WORK/src" bad-router
+add_skill "$WORK/src/bad-router" start "router: yes"
+out="$("$PACK" seal "$WORK/src/bad-router" 2>&1)"; rc=$?
+[[ $rc -ne 0 ]] && grep -q 'router must be true or false' <<<"$out" || fail "router: yes should be refused, naming the rule: $out"
+pass "a second router, and a router that is not true or false, are refused at seal"
 
 "$PACK" install "$WORK/src/base-pack" --no-secrets >/dev/null || fail "install should accept a sealed pack"
 "$PACK" verify base-pack >/dev/null || fail "a freshly installed pack should verify"

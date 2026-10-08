@@ -15,17 +15,17 @@ Platform-specific artefact knowledge lives in the packs that depend on this one.
 
 | | |
 | --- | --- |
-| `evidence/verify` | prove the evidence is what you were handed, and stays that way |
-| `evidence/imaging` | the container, the partition table, and the offset every command needs |
-| `evidence/catalog` | read the catalogue before you spend a token |
-| `evidence/collections` | the evidence is a zip or a directory tree, not a disk |
-| `filesystem/extract` | get a file out of an image, and prove which file it was |
-| `filesystem/carving` | find structure where there is no file system |
-| `filesystem/encrypted` | a volume the toolkit cannot read, and which of three reasons it is |
-| `timeline/build` | a timeline a second reader can trust |
+| `evidence/verify` | establish the evidence's identity, integrity and provenance, and what a hash match does and does not show |
+| `evidence/imaging` | the container, the storage layers, the address space and the offset every command needs |
+| `evidence/catalog` | read the catalogue with its coverage and revision before you spend a token |
+| `evidence/collections` | the evidence is a zip, a directory tree or an AD1, not a disk: what it contains and what it cannot show |
+| `filesystem/extract` | get a file out of an image, and say which record it came from |
+| `filesystem/carving` | recover candidate structures where there is no file system, and say how far to trust them |
+| `filesystem/encrypted` | a volume the toolkit cannot read: encryption is one explanation among several |
+| `timeline/build` | a timeline a second reader can trust: the raw value, the zone's history and clock uncertainty kept |
 | `timeline/super` | the window an incident happened in, from evidence too large to read |
-| `reporting/citations` | every claim cites something a reviewer can re-run |
-| `reporting/disagreement` | disagreeing, vetoing, and correcting after a sign-off |
+| `reporting/citations` | every claim resolves to an inspectable observation, and a negative is bounded |
+| `reporting/disagreement` | disputing, correcting and republishing, through the ledger's own acts |
 
 **Fourteen tools**: `image_layout`, `check_inputs`, `catalog_search`,
 `icat_extract`, `sig_carve`, `file_carver`, `ioc_scan`, `chunk_needles`,
@@ -36,7 +36,15 @@ belongs here once, not in each of them. `ad1_extract` writes an AccessData
 AD1 logical image's files out, checked against the digests the image
 records; run as a job, what it writes is catalogued in turn.
 Every one takes JSON on stdin and returns JSON, and every call lands on the
-run's trace under the calling agent's name.
+run's trace under the calling agent's name. What they return is bounded and
+says so: a carve is a candidate with `boundary: validated` or `heuristic`, a
+scan returns locators and not the bytes around a hit (those go to a sealed
+file only when a job asks, with `secret_output`), a run that ended part way is
+`partial` with the exit codes of its stages, and a count never depends on how
+the file was read. A tool with a time budget of its own keeps that budget
+inside the manifest's limit, so reaching it is reported (`partial`, `not_checked`,
+`interrupted`) and is not a kill with nothing said. `sqlite_query` reads the main
+database file and reports a write-ahead log beside it without applying it.
 
 **Five recipes**, each saying what it prepares (`purpose` in its
 `recipe.json`). `disk-volumes` (the partition table, and per filesystem a body

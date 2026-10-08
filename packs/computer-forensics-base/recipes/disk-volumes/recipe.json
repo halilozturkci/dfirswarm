@@ -111,5 +111,5 @@
   ],
   "purpose": "inventory",
   "covers": "Allocated and deleted entries The Sleuth Kit lists for NTFS, FAT, exFAT, ext, HFS+ and APFS partitions. It reads no file contents, carves nothing, and does not open encrypted volumes (BitLocker, LUKS, FileVault) or volume shadow copies.",
-  "sha256": "3a39e2d55e658b36170c28adfeb3229135068e826cc753537124a84420ce4613"
+  "sha256": "4bfe04df31ff1bbea0beb223b464ce15b1eff82e3717b92b3f281d5bc59e97c7"
 }

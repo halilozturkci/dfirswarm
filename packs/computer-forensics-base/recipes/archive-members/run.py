@@ -11,8 +11,10 @@ the archive is paths[0]. Every member is one row of members.tsv:
 
 `path` and `link` are shown with control characters, tabs, newlines and
 backslashes escaped; `path_b64` is the name's exact bytes. `n` counts from 0
-in archive order and is what archive_extract takes, so two members with the
-same name are still two rows. A tar's times are UTC; a zip's DOS times carry
+in archive order, so two members with the same name are still two rows, and
+is the number a member extractor takes: the base pack ships none yet (an
+archive_extract tool is planned), so a member is read until then with the
+archive's own program (tar, unzip, 7z) run as a job. A tar's times are UTC; a zip's DOS times carry
 no zone (`tz` is `unknown`) unless the member has an extended timestamp.
 `flags` names what an examiner should know before extracting: escapes-root,
 encrypted, ratio>1000, and name-not-utf8 (macOS refuses such a name, so an
@@ -23,6 +25,8 @@ import datetime
 import json
 import lzma
 import os
+import re
+import select
 import struct
 import subprocess
 import sys
@@ -35,12 +39,20 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 def name_flags(raw):
-    """A name that is not UTF-8: APFS will not store it as it is."""
+    """What an examiner should know about a member's name before extracting it: it is not UTF-8 (APFS will not store it as it is),
+    it holds a NUL (extractors differ on what follows one, so the whole name is judged, and a name that climbs after a NUL climbs),
+    or it leaves the directory it is extracted into (an absolute path, a drive letter, or a ".." component, on either separator)."""
+    flags = []
     try:
         raw.decode("utf-8")
-        return []
     except UnicodeDecodeError:
-        return ["name-not-utf8"]
+        flags.append("name-not-utf8")
+    if b"\x00" in raw:
+        flags.append("nul-in-name")
+    plain = raw.replace(b"\x00", b"/").replace(b"\\", b"/")
+    if plain.startswith(b"/") or re.match(rb"^[A-Za-z]:", plain) or b"/../" in b"/" + plain + b"/":
+        flags.append("escapes-root")
+    return flags
 SEVEN_Z_MAGIC = b"7z\xbc\xaf\x27\x1c"
 COLUMNS = ["n", "type", "path", "path_b64", "size", "packed", "mtime", "tz", "mode", "uid", "gid", "link", "locator", "flags"]
 
@@ -117,11 +129,13 @@ def detect(path):
     # a minute), which the census pays for every input that starts so.
     compressed = head[:2] == b"\x1f\x8b" or head[:3] == b"BZh" or head[:6] == b"\xfd7zXZ\x00"
     try:
-        with tarfile.open(path, mode="r|*" if compressed else "r:") as tf:
+        with tarfile.open(path, mode="r|*" if compressed else "r:", tarinfo=BoundedInfo) as tf:
             first = tf.next()
         if first is not None:
             return "tar", "tar header"
         return None, "no tar member (zero blocks, or not a tar)"
+    except HugeHeader as e:
+        return "tar", "tar header (%s)" % e
     except Exception:
         return None, "no tar, zip or 7z structure"
 
@@ -138,6 +152,29 @@ class Writer:
 
     def close(self):
         self.fh.close()
+
+
+LINE_MAX = 16 * 1024 * 1024    # the longest line of 7z's listing read: a member name is a few hundred bytes
+META_MAX = 1024 * 1024         # a GNU long-name or pax header that declares more than this is not read: tarfile reads it whole into memory
+
+
+class BoundedInfo(tarfile.TarInfo):
+    """tarfile reads a GNU long-name/long-link ('L', 'K') or pax ('x', 'g') header's data whole, however large the header says it is:
+    one that declares a gigabyte takes a gigabyte of memory at detect and again at the listing. The size is checked first."""
+
+    def _proc_gnulong(self, tf):
+        if self.size > META_MAX:
+            raise HugeHeader("a GNU long-name or long-link header at offset %d declares %d bytes (more than %d): it is not read" % (self.offset, self.size, META_MAX))
+        return super()._proc_gnulong(tf)
+
+    def _proc_pax(self, tf):
+        if self.size > META_MAX:
+            raise HugeHeader("a pax header at offset %d declares %d bytes (more than %d): it is not read" % (self.offset, self.size, META_MAX))
+        return super()._proc_pax(tf)
+
+
+class HugeHeader(tarfile.ReadError):
+    pass
 
 
 def tar_type(m):
@@ -167,7 +204,7 @@ def list_tar(path, w, deadline, max_members, cov):
     cov["format"] = "tar" + (" (compressed)" if compressed else "")
     # A plain tar is walked header to header, seeking over the data; a
     # compressed one is read once, front to back, in stream mode.
-    tf = tarfile.open(path, mode="r|*" if compressed else "r:")
+    tf = tarfile.open(path, mode="r|*" if compressed else "r:", tarinfo=BoundedInfo)
     n = 0
     last = None
     try:
@@ -176,8 +213,6 @@ def list_tar(path, w, deadline, max_members, cov):
             link = m.linkname.encode("utf-8", "surrogateescape") if m.linkname else b""
             loc = "tar:index=%d" % n if compressed else "tar:index=%d;header=%d;data=%d" % (n, m.offset, m.offset_data)
             flags = name_flags(raw)
-            if raw.startswith(b"/") or b"/../" in b"/" + raw + b"/":
-                flags.append("escapes-root")
             w.row(n=n, type=tar_type(m), path=esc(raw), path_b64=b64(raw), size=m.size, packed="",
                   mtime=utc(m.mtime), tz="utc", mode="%o" % m.mode, uid=m.uid, gid=m.gid,
                   link=esc(link), locator=loc, flags=",".join(flags))
@@ -277,7 +312,8 @@ def list_zip(path, w, deadline, max_members, cov):
     with zipfile.ZipFile(path) as zf:
         for info in zf.infolist():
             utf8 = bool(info.flag_bits & 0x800)
-            raw = info.filename.encode("utf-8" if utf8 else "cp437", "surrogateescape")
+            # orig_filename, not filename: zipfile cuts filename at the first NUL, and the name as stored is what an extractor may act on.
+            raw = info.orig_filename.encode("utf-8" if utf8 else "cp437", "surrogateescape")
             ext = zip_ext_time(info.extra)
             if ext is not None:
                 mtime, tz = utc(ext), "utc"
@@ -294,8 +330,6 @@ def list_zip(path, w, deadline, max_members, cov):
                 flags.append("encrypted")
             if info.compress_size and info.file_size / max(info.compress_size, 1) > 1000:
                 flags.append("ratio>1000")
-            if raw.startswith(b"/") or b"/../" in b"/" + raw.replace(b"\\", b"/") + b"/":
-                flags.append("escapes-root")
             w.row(n=n, type=kind, path=esc(raw), path_b64=b64(raw), size=info.file_size, packed=info.compress_size,
                   mtime=mtime, tz=tz, mode=("%o" % mode) if mode else "", uid="", gid="", link="",
                   locator="zip:index=%d;header=%d" % (n, info.header_offset), flags=",".join(flags))
@@ -338,7 +372,33 @@ def list_7z(path, w, deadline, max_members, cov, out_dir):
               tz="utc" if mod else "", mode="", uid="", gid="", link="", locator="7z:index=%d" % n, flags=",".join(flags))
         n += 1
 
-    for line in proc.stdout:
+    def lines():
+        """7z's output a line at a time, waited for with the clock running: a 7z that stalls (a damaged archive, a stuck read) is stopped
+        at the deadline and not waited on behind a read that returns nothing. A line past LINE_MAX is an error, not a name."""
+        nonlocal stopped
+        fd, pending = proc.stdout.fileno(), b""
+        while True:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                stopped = "seconds: stopped after %d members (7z was still running)" % n
+                return
+            if not select.select([fd], [], [], min(left, 5))[0]:
+                continue
+            block = os.read(fd, 65536)
+            if not block:
+                if pending:
+                    yield pending
+                return
+            pending += block
+            while b"\n" in pending:
+                line, pending = pending.split(b"\n", 1)
+                yield line
+            if len(pending) > LINE_MAX:
+                cov["errors"].append("7z printed a line of more than %d bytes (no newline): the listing was stopped there" % LINE_MAX)
+                stopped = "line: 7z printed more than %d bytes with no newline, after %d members" % (LINE_MAX, n)
+                return
+
+    for line in lines():
         line = line.rstrip(b"\r\n")
         if not line:
             if b"Path" in fields:
@@ -354,9 +414,8 @@ def list_7z(path, w, deadline, max_members, cov, out_dir):
         if b" = " in line:
             k, v = line.split(b" = ", 1)
             fields[k.strip()] = v
-    else:
-        if b"Path" in fields and n < max_members:
-            emit()
+    if not stopped and b"Path" in fields and n < max_members:
+        emit()
     if stopped:
         proc.kill()
         cov["limits_hit"].append(stopped)
@@ -364,11 +423,12 @@ def list_7z(path, w, deadline, max_members, cov, out_dir):
     rc = proc.wait()
     err.close()
     size = os.path.getsize(err_path)
+    text = open(err_path, "rb").read(65536).decode("utf-8", "replace").strip() if size else ""
     if size == 0:
         os.remove(err_path)
-    elif rc != 0 and not stopped:
-        text = open(err_path, "rb").read(65536).decode("utf-8", "replace").strip()
-        cov["errors"].append("7z exited %d: %s%s" % (rc, text, " (the whole of it, %d bytes, is 7z.stderr)" % size if size > 65536 else ""))
+    if rc != 0 and not stopped:
+        # Any nonzero exit is an error entry, whether or not 7z said anything on stderr.
+        cov["errors"].append("7z exited %d%s%s" % (rc, ": " + text if text else " with nothing on stderr", " (the whole of it, %d bytes, is 7z.stderr)" % size if size > 65536 else ""))
     return n
 
 
@@ -384,6 +444,9 @@ def run(path, out_dir):
         cov.update(status="unsupported", why=why)
         json.dump(cov, open(os.path.join(out_dir, "coverage.json"), "w"), indent=2)
         return 2
+    # Said before the first member is read, so a run cut short at any point leaves a coverage file that says it did not finish.
+    json.dump(dict(cov, status="partial", why="started; the member list was not finished (the run stopped before its end)"),
+              open(os.path.join(out_dir, "coverage.json"), "w"), indent=2)
     w = Writer(out_dir)
     try:
         if fmt == "7z":
@@ -402,7 +465,7 @@ def run(path, out_dir):
     cov["status"] = status
     json.dump(cov, open(os.path.join(out_dir, "coverage.json"), "w"), indent=2)
     with open(os.path.join(out_dir, "index.tsv"), "w", encoding="utf-8") as fh:
-        fh.write("members.tsv\t%s member list (%d): n, type, path, path_b64, size, packed, mtime, tz, mode, uid, gid, link, locator, flags; archive_extract takes n\n"
+        fh.write("members.tsv\t%s member list (%d): n, type, path, path_b64, size, packed, mtime, tz, mode, uid, gid, link, locator, flags; n is the member's number in archive order\n"
                  % (cov.get("format") or "archive", n))
     print(json.dumps({"ok": status in ("complete", "partial"), "status": status, "format": cov["format"], "members": n}))
     return 0 if status in ("complete", "partial") else 2

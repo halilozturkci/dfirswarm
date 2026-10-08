@@ -1,6 +1,6 @@
 {
   "name": "catalog_search",
-  "description": "Search the evidence catalogue with a regex: a disk's filelist, timeline, bodyfile, fsstat or partitions, or an archive's or an AD1 image's members; or list the catalogue's generations (which=generations: what each is, over what object, complete or partial and why, its readable form). Returns the match count, one page (limit, offset) and the catalogue revision it read. When the page is not all of them, every match is kept in a file under your scratch and named (all_matches).",
+  "description": "Search the evidence catalogue with a regex: a disk's filelist, timeline, bodyfile, fsstat or partitions, or an archive's or an AD1 image's members; or list the catalogue's generations (which=generations: what each is, over what object, complete or partial and why, its readable form). Returns the match count, one page (limit, offset) and the catalogue revision it read. When the page is not all of them, every match is kept in a file (under $OUT in a job, named as the store holds it; under your work/ directory otherwise) and named (all_matches). A generation is read only when the revision lists it, however its directory is spelled; a revision whose index cannot be read is an error (revision_unavailable), not an empty list, and a listed generation whose directory is missing is an error too. The search has a time budget (max_seconds, at most 25) that interrupts a pattern that backtracks badly and says matched is then a lower bound. Searches the catalogue's text, not the evidence: a catalogue that was partial or not built shows nothing for what it did not list. earlier_answers says how many other files answer the same search.",
   "params": {
     "pattern": {
       "type": "string",
@@ -19,7 +19,7 @@
     },
     "limit": {
       "type": "integer",
-      "description": "Matching lines to return in this call (default 50); the count is always of all of them",
+      "description": "Matching lines to return in this call (default 50, at most 1000); the count is always of all of them",
       "required": false
     },
     "offset": {
@@ -46,6 +46,11 @@
       "type": "integer",
       "description": "The catalogue revision to read (catalog/revisions/<n>/, as a post announces it); default: the newest complete one",
       "required": false
+    },
+    "max_seconds": {
+      "type": "integer",
+      "description": "Stop the search after this long (default and most 25); an interrupted search returns what it found and says so",
+      "required": false
     }
   },
   "runtime": "python3",
@@ -54,6 +59,6 @@
   "example": "{\"pattern\": \"Prefetch/.*\\\\.pf$\", \"which\": \"filelist\"}",
   "by": "sd1d100",
   "at": "2026-09-18T14:14:47.839Z",
-  "version": 9,
-  "sha256": "02e7f61aa1349a1d838b511835e3884a4cbdffff4e75429cb7fccf481fd1fff2"
+  "version": 10,
+  "sha256": "ccbf547390aacad2910f362986fb6e0b102b7318795cd102cd691dbd9c2a0074"
 }

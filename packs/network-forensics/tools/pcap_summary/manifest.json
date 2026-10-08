@@ -1,42 +1,75 @@
 {
   "name": "pcap_summary",
-  "description": "Read a pcap or pcapng with no external dependency and return the shape of it: link type, snap length, time range, conversations with bytes and packets each way, grouped per session or per endpoint, top talkers, ports and protocols, and the connection start times a beacon check needs.",
+  "description": "Read a pcap or pcapng with no external dependency and return a census of it: the format and version, an interface table (link type, snap length and time resolution per interface), the pcapng interface statistics blocks (the capturing interface's own drop counters, when the file carries them), the time range (exact to the capture's own tick, raw value beside it; duration_ns is exact), tuple aggregates or endpoint aggregates with bytes_original and bytes_captured kept apart, top talkers and ports, SYN observations (syn_observations counts SYN-only packets; syn_unique counts SYN events: a SYN sent again with the same sequence number within 120 seconds of the first of its event is folded into it and counted in syn_folded, and a row keeps at most 10,000 events, after which syn_unique is a lower bound), and the truncation each packet really had (captured shorter than on the wire, by protocol, and the payload bytes that survived). Not measured: TCP connections or sessions (a tuple used again later merges with its earlier use, and a SYN says nothing about a completed handshake), application data delivered, UDP/QUIC or persistent connections as events, packet loss in a classic pcap, the correctness of the capture clock. Blocks of unsupported types, malformed options and frames that are not IP are counted, never dropped silently. A capture that is cut off or corrupt is an error naming the packets read, not a short result. Aggregates spill to SQLite past max_memory_tuples, so memory does not follow the capture; the whole result is kept on disk and named when a page is shorter. A host or port filter applies to the rows, the top lists, the protocol counts and the SYN counts, not to the whole-capture totals (filtered.applies_to says so). top_talkers counts an address as the SOURCE of a packet, top_ports the DESTINATION port. The link-type field's FCS bits are read apart from the type, a pcapng section's hardware, OS and application and an interface's drop counts (statistics blocks and packet-block drop counts) are reported, and stacked VLAN tags (802.1ad, 0x9100) are followed.",
   "params": {
     "path": {
       "type": "string",
-      "description": "A .pcap or .pcapng file"
+      "description": "A classic pcap or a pcapng file (not a pcapng compressed or packed in another container)"
     },
     "top": {
       "type": "integer",
-      "description": "How many conversations to return inline. When this omits rows, out_dir is required and keeps the complete conversations.tsv. By default every conversation is returned."
+      "description": "Rows shown inline per table (default 200). When more exist the whole table is written as JSON Lines under $OUT/tool-output (work/<agent>/tool-output outside a job) and named in pages.<table>.all_results"
     },
     "host": {
       "type": "string",
-      "description": "Only conversations involving this address"
+      "description": "Only aggregates involving this address, written in any form (IPv6 is compared as an address, not as text)"
     },
     "port": {
       "type": "integer",
-      "description": "Only conversations involving this port"
+      "description": "Only aggregates involving this port"
     },
     "out_dir": {
       "type": "string",
-      "description": "Optional empty directory under work/ for a complete conversations.tsv"
+      "description": "Optional empty directory under work/ (in a job, under $OUT; work/<your agent id>/name is mapped to $OUT/name) for the complete tuple_conversations.tsv or endpoint_aggregates.tsv. The temporary aggregate file is removed on every way out"
     },
-    "with_starts": {
+    "with_syn_times": {
       "type": "boolean",
-      "description": "Include each conversation's connection start times, for beacon_score"
+      "description": "Include the time of each SYN event on each aggregate, for beacon_score (with_starts is accepted as an old name and noted in the answer). They are SYN events, not connection starts: a SYN sent again within 120 seconds of the first of its event is folded into it. Inline a row shows the first 100 times; the whole list is in syn_times_file and in the TSV"
     },
     "group": {
       "type": "string",
-      "description": "session (default, one row per TCP session) or endpoint (one row per source, destination and service port, which is what a beacon check needs)"
+      "description": "tuple (default; session is the old name for it): one row per sorted pair of (address, port) and protocol; endpoint: one row per pair of addresses and a service port, the port taken from a SYN or a SYN/ACK, or guessed (service_port_basis says which)"
+    },
+    "max_memory_tuples": {
+      "type": "integer",
+      "description": "Aggregates kept in memory before they move to a temporary SQLite file (default 200000); the answer says spilled_to_disk"
     }
   },
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 600,
-  "example": "{\"path\": \"inputs/capture.pcap\", \"top\": 20, \"out_dir\": \"work/pcap-summary\", \"with_starts\": true}",
+  "example": "{\"path\": \"inputs/capture.pcap\", \"top\": 20, \"out_dir\": \"work/pcap-summary\", \"group\": \"endpoint\", \"with_syn_times\": true}",
   "by": "maintainer",
-  "at": "2026-09-22T19:00:00.000Z",
-  "version": 2,
-  "sha256": "e8e6a66c6fa7c5657141d117d74b8bbf2fe7d0d13afc97a4a306260c4211f49b"
+  "at": "2026-10-07T18:00:00.000Z",
+  "version": 4,
+  "sha256": "ee9143a9a95d1e0ac39668c16e65c281f1cf7d0b99bf20cde2d877c876c653bb",
+  "use": {
+    "extensions": [
+      ".pcap",
+      ".pcapng",
+      ".cap"
+    ],
+    "magic": [
+      {
+        "offset": 0,
+        "hex": "d4c3b2a1"
+      },
+      {
+        "offset": 0,
+        "hex": "a1b2c3d4"
+      },
+      {
+        "offset": 0,
+        "hex": "4d3cb2a1"
+      },
+      {
+        "offset": 0,
+        "hex": "a1b23c4d"
+      },
+      {
+        "offset": 0,
+        "hex": "0a0d0d0a"
+      }
+    ]
+  }
 }

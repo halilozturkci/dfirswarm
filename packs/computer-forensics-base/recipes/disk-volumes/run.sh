@@ -11,7 +11,15 @@
 # With none but a filesystem at sector 0 (`fsstat`): the same under p0. Each
 # step is time-boxed (RECIPE_STEP_SECONDS, default 900) and keeps what it wrote
 # to stderr whole beside its output as <file>.stderr. index.tsv lists what was
-# written (file, what) and coverage.json what was and was not covered.
+# written (file, what) and coverage.json what was and was not covered, with an
+# inventory of every allocated partition entry and what became of it: read
+# (fsstat read a file system there), failed (it was tried and fsstat or a step
+# did not finish), unsupported (a layer TSK does not read, an LVM or RAID member)
+# or structural (a container or a partition that holds no file system by
+# definition: an extended partition, swap, a Microsoft reserved or a BIOS boot
+# partition). complete means nothing was failed or unsupported. coverage.json is
+# written as partial before the first step, and the body file's times are read as
+# UTC (mactime -z UTC), which is the zone its timeline.csv says.
 set -uo pipefail
 
 have() { command -v "$1" >/dev/null 2>&1; }
@@ -37,8 +45,15 @@ mmls_start_sector() {
 }
 
 STEP_TIMEOUT="${RECIPE_STEP_SECONDS:-900}"
+PROBE_TIMEOUT="${RECIPE_PROBE_SECONDS:-120}"
 out=""
 notes=()
+inventory=()   # one "start<TAB>description<TAB>outcome<TAB>why" per allocated partition entry
+# probe <cmd...>: a detect-time call with a deadline, like every other step.
+probe() { perl -e 'alarm shift; exec @ARGV' "$PROBE_TIMEOUT" "$@"; }
+note_entry() { # note_entry <start> <description> <outcome> <why>
+  inventory+=("$(printf '%s\t%s\t%s\t%s' "$1" "$2" "$3" "$4")")
+}
 
 # Run a command with a deadline; stdout to a file, stderr whole beside it as
 # <file>.stderr when there is any. Prints "ok" or a reason naming that file.
@@ -65,6 +80,13 @@ index_row() { # index_row <file relative to out> <what>
   printf '%s\t%s\n' "$1" "$2" >> "$out/index.tsv"
 }
 
+fsstat_boxed() { perl -e 'alarm shift; exec @ARGV' "$STEP_TIMEOUT" fsstat "$@"; }
+
+# reads_a_file_system <start> <img>: does fsstat read one there (a time-boxed call, its words discarded).
+reads_a_file_system() {
+  perl -e 'alarm shift; exec @ARGV' "$STEP_TIMEOUT" fsstat -o "$1" "$2" 2>/dev/null | grep -q '^File System Type:'
+}
+
 volume() { # volume <img> <shown name> <start> <description>
   local img="$1" shown="$2" start="$3" desc="$4" pdir r
   pdir="$out/p$start"
@@ -72,11 +94,13 @@ volume() { # volume <img> <shown name> <start> <description>
   candidate_volumes=$((candidate_volumes + 1))
   if ! have fsstat; then
     notes+=("fsstat missing: cannot establish whether the candidate at sector $start is a readable filesystem")
+    note_entry "$start" "$desc" failed "fsstat is not in this image"
     return
   fi
   r="$(run_step "$pdir/fsstat.txt" fsstat -o "$start" "$img")"
   if [[ "$r" != ok ]]; then
     notes+=("candidate partition at sector $start is not a readable filesystem: $r")
+    note_entry "$start" "$desc" failed "fsstat did not read a file system there"
     index_row "p$start/fsstat.txt" "fsstat output for unreadable candidate at sector $start ($desc)"
     # Keep the historical best-effort fls probes as diagnostics. They do not
     # make the candidate a readable volume, even if they leave partial output.
@@ -91,6 +115,7 @@ volume() { # volume <img> <shown name> <start> <description>
     return
   fi
   volumes=$((volumes + 1))
+  note_entry "$start" "$desc" read "fsstat read a file system"
   index_row "p$start/fsstat.txt" "filesystem header at sector $start ($desc)"
   if have fls; then
     r="$(run_step "$pdir/bodyfile.txt" fls -m / -r -o "$start" "$img")"
@@ -102,20 +127,29 @@ volume() { # volume <img> <shown name> <start> <description>
   else
     notes+=("fls missing: no body file or path list for $shown")
   fi
-  if have mactime && [[ -s "$pdir/bodyfile.txt" ]]; then
-    r="$(run_step "$pdir/timeline.csv" mactime -b "$pdir/bodyfile.txt" -d -y)"
+  if ! have mactime; then
+    notes+=("mactime missing: no timeline.csv for the filesystem at sector $start")
+  elif [[ -s "$pdir/bodyfile.txt" ]]; then
+    # The body file's times are epoch seconds; -z UTC and TZ=UTC make the rendering the UTC the row says.
+    r="$(TZ=UTC run_step "$pdir/timeline.csv" mactime -b "$pdir/bodyfile.txt" -d -y -z UTC)"
     [[ "$r" == ok ]] || notes+=("mactime at sector $start: $r")
-    index_row "p$start/timeline.csv" "MAC timeline (mactime -d -y): date, size, MACB, mode, uid, gid, inode, name — UTC"
+    index_row "p$start/timeline.csv" "MAC timeline (mactime -d -y -z UTC): date, size, MACB, mode, uid, gid, inode, name — UTC"
   fi
 }
 
 coverage() { # coverage <status> <covered> — notes become errors
-  python3 - "$out/coverage.json" "$1" "$2" "${notes[@]+"${notes[@]}"}" <<'PY'
+  python3 - "$out/coverage.json" "$1" "$2" "${#notes[@]}" "${notes[@]+"${notes[@]}"}" "${inventory[@]+"${inventory[@]}"}" <<'PY'
 import json, sys
-path, status, covered, *notes = sys.argv[1:]
+path, status, covered, n_notes, *rest = sys.argv[1:]
+n = int(n_notes)
+notes, entries = rest[:n], rest[n:]
+inventory = []
+for e in entries:
+    start, desc, outcome, why = (e.split("\t") + ["", "", "", ""])[:4]
+    inventory.append({"start_sector": int(start) if start.isdigit() else start, "description": desc, "outcome": outcome, "why": why})
 json.dump({"recipe": "disk-volumes", "status": status, "covered": covered,
            "not_covered": "file contents, carving, encrypted volumes, volume shadow copies",
-           "limits_hit": [], "errors": notes}, open(path, "w"), indent=2)
+           "inventory": inventory, "limits_hit": [], "errors": notes}, open(path, "w"), indent=2)
 PY
 }
 
@@ -124,9 +158,11 @@ target=""
 probe_out=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --target) target="${2:-}"; shift 2 ;;
-    --out) out="${2:-}"; shift 2 ;;
-    --probe-out) probe_out="${2:-}"; shift 2 ;;
+    --target|--out|--probe-out)
+      # A flag with no value is an error, not a loop: `shift 2` with one word left shifts nothing.
+      [[ $# -ge 2 ]] || { echo "{\"ok\": false, \"error\": \"$1 needs a value\"}"; exit 2; }
+      case "$1" in --target) target="$2" ;; --out) out="$2" ;; --probe-out) probe_out="$2" ;; esac
+      shift 2 ;;
     *) echo '{"ok": false, "error": "unknown argument"}'; exit 2 ;;
   esac
 done
@@ -137,17 +173,17 @@ shown="$(target_field "$target" name)"
 
 case "$cmd" in
   detect)
-    if have mmls && mmls "$img" >/dev/null 2>&1; then
+    if have mmls && probe mmls "$img" >/dev/null 2>&1; then
       echo '{"applies": true, "why": "a partition table (mmls)"}'; exit 0
     fi
-    if have fsstat && fsstat "$img" 2>/dev/null | grep -q '^File System Type:'; then
+    if have fsstat && probe fsstat "$img" 2>/dev/null | grep -q '^File System Type:'; then
       echo '{"applies": true, "why": "a filesystem at sector 0 (fsstat)"}'; exit 0
     fi
     # A volume carved or copied out of a disk can keep the disk's offset
     # with no table before it (Ali Hadi #10's recovered Kali prefix: ext4
     # at sector 2048). The two usual starts are tried.
     for o in 63 2048; do
-      if have fsstat && fsstat -o "$o" "$img" 2>/dev/null | grep -q '^File System Type:'; then
+      if have fsstat && probe fsstat -o "$o" "$img" 2>/dev/null | grep -q '^File System Type:'; then
         echo "{\"applies\": true, \"why\": \"a filesystem at sector $o with no partition table (fsstat -o $o)\"}"; exit 0
       fi
     done
@@ -162,22 +198,55 @@ case "$cmd" in
     : > "$out/index.tsv"
     volumes=0
     candidate_volumes=0
-    if have mmls && mmls "$img" > "$out/partitions.txt" 2> "$out/partitions.txt.stderr"; then
-      [[ -s "$out/partitions.txt.stderr" ]] || rm -f "$out/partitions.txt.stderr"
+    # Said before the first step, so a run stopped anywhere leaves a coverage file that says it was.
+    coverage partial "started; no step has finished (the run stopped before its end)"
+    mmls_rc=127
+    if have mmls; then
+      mmls_rc=0
+      perl -e 'alarm shift; exec @ARGV' "$STEP_TIMEOUT" mmls "$img" > "$out/partitions.txt" 2> "$out/mmls.stderr" || mmls_rc=$?
+      [[ -s "$out/mmls.stderr" ]] || rm -f "$out/mmls.stderr"
+    fi
+    if [[ "$mmls_rc" -eq 0 ]]; then
       index_row "partitions.txt" "partition table of $shown (mmls)"
       while IFS= read -r line; do
         start="$(mmls_start_sector "$line")"
-        desc="$(printf '%s' "$line" | awk '{ $1=$2=$3=$4=$5=""; print }' | sed 's/^ *//')"
-        # An extended partition is a container of other rows, and swap holds
-        # no filesystem: neither is a candidate (`*Ext*` used to take "DOS
-        # Extended" for ext). An LVM physical volume is a layer another reader
-        # opens (target-query, lvm2); it is named, not read as a filesystem.
-        case "$desc" in *Extended*|*Swap*|*swap*) continue ;; esac
-        case "$desc" in *Logical\ Volume\ Manager*|*LVM*)
-          notes+=("an LVM physical volume at sector $start ($desc): a layer TSK does not read; its logical volumes are not covered")
-          continue ;;
+        slot="$(printf '%s' "$line" | awk '{print $2}')"
+        # A table row (Meta) or a gap (-------) is not a partition entry.
+        case "$slot" in Meta|-------) continue ;; esac
+        desc="$(printf '%s' "$line" | awk '{ $1=$2=$3=$4=$5=""; print $0 }' | sed 's/^ *//')"
+        # What holds no file system by definition is named in the inventory and not counted against coverage:
+        # an extended partition is a container of the rows after it, swap and a reserved or boot partition
+        # hold none ("DOS Extended" used to match `*Ext*`).
+        # A description is the table's word for the partition, not what is in it: an entry named for swap, a
+        # reserved area, LVM or RAID is first asked of fsstat, and only one it reads nothing in is classed by its
+        # name. (An extended partition holds the table of the rows after it, never a file system of its own.)
+        case "$desc" in
+          *Extended*) note_entry "$start" "$desc" structural "an extended partition is a container of the rows after it"; continue ;;
         esac
-        case "$desc" in *NTFS*|*FAT*|*exFAT*|*Ext[234]*|*HFS*|*APFS*|*Linux*|*Basic*data*) ;; *) continue ;; esac
+        case "$desc" in
+          *Swap*|*swap*|*Microsoft\ reserved*|*Microsoft\ Reserved*|*BIOS\ boot*|*BIOS\ Boot*|*Logical\ Volume\ Manager*|*LVM*|*RAID*|*raid*)
+            if reads_a_file_system "$start" "$img"; then
+              volume "$img" "$shown" "$start" "$desc"
+              continue
+            fi ;;
+        esac
+        case "$desc" in
+          *Swap*|*swap*) note_entry "$start" "$desc" structural "swap holds no file system (fsstat read none there)"; continue ;;
+          *Microsoft\ reserved*|*Microsoft\ Reserved*) note_entry "$start" "$desc" structural "a Microsoft reserved partition holds no file system (fsstat read none there)"; continue ;;
+          *BIOS\ boot*|*BIOS\ Boot*) note_entry "$start" "$desc" structural "a BIOS boot partition holds no file system (fsstat read none there)"; continue ;;
+        esac
+        # A layer another reader opens (target-query, lvm2, mdadm); it is named, not read as a filesystem.
+        case "$desc" in
+          *Logical\ Volume\ Manager*|*LVM*)
+            notes+=("an LVM physical volume at sector $start ($desc): fsstat read no file system there, and TSK does not read the layer; its logical volumes are not covered")
+            note_entry "$start" "$desc" unsupported "an LVM physical volume: fsstat read none, and TSK does not read the layer"
+            continue ;;
+          *RAID*|*raid*)
+            notes+=("a RAID member at sector $start ($desc): fsstat read no file system there, and TSK does not read the layer; the array's file system is not covered")
+            note_entry "$start" "$desc" unsupported "a RAID member: fsstat read none, and TSK does not read the layer"
+            continue ;;
+        esac
+        # Everything else is tried: fsstat, not a list of descriptions, says whether a file system is there.
         volume "$img" "$shown" "$start" "$desc"
       done < <(grep -E '^[0-9]+:' "$out/partitions.txt")
       if [[ "$volumes" -eq 0 ]]; then
@@ -188,8 +257,15 @@ case "$cmd" in
         coverage complete "partition table and $volumes readable filesystem(s) from $candidate_volumes candidate partition(s)"
       fi
     else
-      rm -f "$out/partitions.txt" "$out/partitions.txt.stderr"
-      if have fsstat && fsstat "$img" > "$out/.fsstat.tmp" 2>/dev/null && grep -q '^File System Type:' "$out/.fsstat.tmp"; then
+      # No table read: a raw volume has none, and mmls says so on stderr (kept as mmls.stderr). A mmls that did not
+      # finish, or is not here, is said: no table is then not established.
+      rm -f "$out/partitions.txt"
+      if [[ "$mmls_rc" -eq 127 ]]; then
+        notes+=("mmls is not in this image: whether the image has a partition table was not asked")
+      elif [[ "$mmls_rc" -ge 128 ]]; then
+        notes+=("mmls did not finish within ${STEP_TIMEOUT} seconds (exit $mmls_rc): whether the image has a partition table is not established")
+      fi
+      if have fsstat && fsstat_boxed "$img" > "$out/.fsstat.tmp" 2>/dev/null && grep -q '^File System Type:' "$out/.fsstat.tmp"; then
         fstype="$(sed -n 's/^File System Type: *//p' "$out/.fsstat.tmp" | head -1)"
         rm -f "$out/.fsstat.tmp"
         printf 'No partition table: %s is one %s volume starting at sector 0 (use the tools without -o).\n' "$shown" "$fstype" > "$out/partitions.txt"
@@ -204,7 +280,7 @@ case "$cmd" in
         rm -f "$out/.fsstat.tmp"
         at=""
         for o in 63 2048; do
-          if have fsstat && fsstat -o "$o" "$img" > "$out/.fsstat.tmp" 2>/dev/null && grep -q '^File System Type:' "$out/.fsstat.tmp"; then at="$o"; break; fi
+          if have fsstat && fsstat_boxed -o "$o" "$img" > "$out/.fsstat.tmp" 2>/dev/null && grep -q '^File System Type:' "$out/.fsstat.tmp"; then at="$o"; break; fi
         done
         if [[ -n "$at" ]]; then
           fstype="$(sed -n 's/^File System Type: *//p' "$out/.fsstat.tmp" | head -1)"

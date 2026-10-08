@@ -1,7 +1,7 @@
 {
   "id": "disk-timeline",
-  "version": "1.0.1",
-  "description": "A broad extraction of a disk image: Plaso's log2timeline over every partition and volume with every parser it carries, then psort's CSV super timeline, the searchable form of what the image's artefacts say happened when. It takes hours on a large image, so it is offered, not run by itself.",
+  "version": "1.1.0",
+  "description": "A broad extraction of a disk image: Plaso's log2timeline over every partition and volume with every parser it carries, then psort's CSV super timeline, the searchable form of what the image's artefacts say happened when. It takes hours on a large image, so it is offered, not run by itself. complete means the pipeline finished, not that every parser read every source: Plaso's own processing report (pinfo.txt, when pinfo is present) says what each parser did. An evidence timezone may be given in the target (\"timezone\") or RECIPE_TIMEZONE.",
   "object": "disk image",
   "order": 12,
   "min_bytes": 65536,
@@ -59,7 +59,7 @@
     "volume shadow copies: it runs with --vss_stores none (the windows-forensics pack's vss tools read them)",
     "encrypted volumes (BitLocker, LUKS, FileVault, encrypted APFS) without their key",
     "unallocated space and deleted file contents: Plaso parses allocated files and the metadata its parsers read, and carves nothing",
-    "formats no parser of the pinned Plaso handles, and the text inside documents"
+    "formats no parser of the installed Plaso handles, and the text inside documents"
   ],
   "limits": {
     "seconds": 14400
@@ -74,8 +74,10 @@
     "psort.stderr",
     "psort.log.gz",
     "index.tsv",
-    "coverage.json"
+    "coverage.json",
+    "pinfo.txt",
+    "pinfo.stderr"
   ],
-  "covers": "What log2timeline's parsers read from every partition and volume of the image, written by psort as one CSV timeline; the storage file is kept for psort and pinfo. A parser that finds nothing adds no row, which does not show the artefact never existed.",
-  "sha256": "eb17ffeea6c9f842cf46a0000d004fb8c887f45e921a8e7762bdee73c89d7659"
+  "covers": "What log2timeline's parsers read from every partition and volume of the image, written by psort as one CSV timeline; the storage file is kept for psort and pinfo. A parser that finds nothing adds no row, which does not show the artefact never existed. The run refuses an output directory that already holds a timeline from an earlier run. The status says the pipeline finished, not what the parsers covered.",
+  "sha256": "721837a56436c1528ee0328e4bc5eeab3185624845321085666ab16a0ff55fb5"
 }

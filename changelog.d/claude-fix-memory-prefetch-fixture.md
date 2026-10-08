@@ -1,0 +1,3 @@
+### Fixed: the memory-forensics suite's Prefetch fixture is built in the real version 30 layout (test only)
+
+`tests/pack-memory-forensics.test.ts` cut a synthetic plain Prefetch record out of an image and handed it to `prefetch_mam`, asserting a run count of 7. The record was hand-laid, with a run count at 0xD0 and a file-metrics offset at 0x54 that matches no real layout; since `prefetch_mam` takes the run count from the file information size (the word at 0x54 less 0x50: 224 gives 0xD0, 216 gives 0xC8) it returned null and the case failed. The record now comes from the Windows suite's builder (`tests/windows-prefetch-fixtures.ts`), so the intent holds: what `mem_carve` cuts is read by `prefetch_mam`, run count included. No tool, skill or pack file changes.

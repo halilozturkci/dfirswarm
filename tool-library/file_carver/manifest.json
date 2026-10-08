@@ -1,26 +1,29 @@
 {
   "name": "file_carver",
-  "description": "Carve files from a raw binary dump by header/footer signatures. Given a path, an offset, and a signature type, extracts the file (using header size fields or footer markers), computes SHA256, and returns JSON with offset, size, hash, and first 128 bytes hex.",
+  "description": "Cut ONE candidate file out of a raw dump at a known offset: from the offset to the end the format's own structure gives, with its SHA-256, optionally written to a new file (an existing file is never replaced). A candidate fragment, not a recovered file: the result says boundary: validated when a structure walk reached the format's end (PNG chunk CRCs to IEND, JPEG markers to EOI, GIF blocks to the trailer, a ZIP end record whose offsets agree, a registry hive's hive-bin chain adding up to the size its base block states, a SQLite header with a valid page count, a PDF's last startxref pointing at an xref) and boundary: heuristic when it rests on a header field or marker that was not cross-checked (a PE's section table and certificate table, with overlay_uncertain when bytes follow). It does not show the bytes are the whole original, unfragmented or unaltered. Reads the file at path as given: a container such as an E01 is not decoded. Streams; never holds the source whole.",
   "params": {
     "path": {
       "type": "string",
-      "description": "Path to the raw binary dump to carve from"
+      "description": "Path to the raw binary dump to carve from (a container such as E01 is read as its container bytes)",
+      "required": true
     },
     "offset": {
       "type": "integer",
-      "description": "Byte offset where the file signature starts"
+      "description": "Byte offset in that file where the signature starts",
+      "required": true
     },
     "sig_type": {
       "type": "string",
-      "description": "Signature type with a lossless size parser: PE, ZIP, PDF, SQLite, regf, PNG, JPEG, GIF"
+      "description": "Which format's boundary check to use: PE, ZIP, PDF, SQLite, regf, PNG, JPEG, GIF",
+      "required": true
     },
     "max_size": {
       "type": "integer",
-      "description": "Safety ceiling for a complete file (default 100MB); a larger file is refused, never cut"
+      "description": "Ceiling for the candidate (default 100 MB); a larger one is refused with its required size, never cut"
     },
     "output": {
       "type": "string",
-      "description": "Optional output file path. If omitted, returns metadata only."
+      "description": "Optional new output file under the run directory; refused if it exists. In a job it must lie under $OUT: give {OUT}/<name>, or work/extracted/<your id>/<name>, which the harness maps there. If omitted, returns metadata only."
     }
   },
   "runtime": "python3",
@@ -29,6 +32,6 @@
   "example": "{\"path\":\"inputs/[UNALLOCATED]\",\"offset\":675840,\"sig_type\":\"PE\",\"output\":\"work/s183904/carved/pe_675840.bin\"}",
   "by": "s183904",
   "at": "2026-09-18T22:20:17.004Z",
-  "version": 2,
-  "sha256": "f7a0e0f35db1d34c489d143331e813100af364c747f1efe0b8cad0a21028c485"
+  "version": 3,
+  "sha256": "f4e224e891baafffc2be436ca3cf857b4c1ee19e4415fa9a33fc0a93c2ad048e"
 }

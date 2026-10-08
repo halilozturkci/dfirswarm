@@ -1,42 +1,58 @@
 {
   "name": "timeline_super",
-  "description": "Build a super timeline with Plaso: log2timeline over the whole image, then psort to JSON lines. Returns the storage file, the event count, the first and last event, and a sample. Slow by design; give it a narrow parser list when you know what you are after.",
+  "description": "Build a machine timeline with Plaso: log2timeline over an image, a partition, a directory or a collection, then psort to JSON lines (mode full), or psort alone over a storage file that already exists (mode export, for a new filter without collecting again). What the enabled parsers produced from the sources they could read, not every timestamp on the volume: a parser not enabled, a source not opened and a record not read add no row. Returns the storage file, each stage's exit code, a status (complete: both programs exited 0, wrote their files and every line parsed; partial; failed), the versions the programs print, valid and invalid line counts (a line that is not UTF-8 is invalid, not repaired), the earliest and latest event time, a preview sample and the log and captured-output files. complete is not coverage: the storage file's own processing report (Plaso's pinfo) says what each parser did. Slow by design; give it a narrow parser list when you know what you are after. Refuses an out_dir that already holds files unless resume is true, and then never overwrites what is there. log2timeline and psort run in the tool's own process group (never a session of their own), so the harness ending the tool by its group ends them; on Linux the kernel ends them if the tool dies, the tool's own deadline ends them and what they started, and SIGTERM, SIGINT or SIGHUP do the same and leave a last word (stopped_by_signal, status failed).",
   "params": {
-    "source": {
-      "type": "string",
-      "description": "An image, a partition, a directory or a triage collection"
-    },
     "out_dir": {
       "type": "string",
-      "description": "Where the storage file and the output land, under work/"
+      "description": "Where the storage file, the output, the logs and the captured output land: a directory under work/<your id>/ (in a job under $OUT, and the default there). New or empty unless resume is true; on resume this run's files are named beside an earlier run's (timeline.2.jsonl), never over them."
+    },
+    "source": {
+      "type": "string",
+      "description": "mode full: an image, a partition, a directory or a triage collection"
+    },
+    "mode": {
+      "type": "string",
+      "description": "full (default: log2timeline then psort) or export (psort only, over storage_file)"
+    },
+    "storage_file": {
+      "type": "string",
+      "description": "mode export: the existing .plaso file psort reads"
     },
     "parsers": {
       "type": "string",
-      "description": "Plaso parser filter, e.g. 'winreg,winevtx,prefetch' — far faster than the default"
+      "description": "Plaso parser filter, e.g. 'winreg,winevtx,prefetch' — far faster than the default; the installed version's help lists the names"
     },
     "timezone": {
       "type": "string",
-      "description": "The evidence machine's timezone, e.g. 'Europe/Istanbul'. Output stays UTC."
+      "description": "The evidence machine's timezone, e.g. 'Europe/Istanbul', for the formats that store local time. Output stays UTC."
     },
     "psort_filter": {
       "type": "string",
-      "description": "A psort event filter, e.g. \"date > '2026-02-01'\""
+      "description": "A psort event filter, e.g. \"date > '2026-02-01'\"; syntax is the installed psort's"
     },
     "sample": {
       "type": "integer",
-      "description": "How many events to return inline (default 20)"
+      "description": "How many events to return inline as a preview (default 20, at most 1000)"
     },
     "timeout_seconds": {
       "type": "integer",
-      "description": "Give up after this long (default 1800)"
+      "description": "One budget for every stage together, from 30 to 3300 (default 1800); the counting of the output has the rest of the tool's own 3600 seconds"
+    },
+    "resume": {
+      "type": "boolean",
+      "description": "Allow an out_dir that already holds files; only files written after this run began count as its own"
     }
   },
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 3600,
   "example": "{\"source\": \"inputs/disk.E01\", \"out_dir\": \"work/timeline\", \"parsers\": \"winreg,winevtx,prefetch,filestat\"}",
+  "requires": [
+    "log2timeline",
+    "psort"
+  ],
   "by": "maintainer",
   "at": "2026-09-22T14:00:00.000Z",
-  "version": 3,
-  "sha256": "415f089fa75d1ae409bdc46116e72c5fefe5b4052dcca795f9ed8ee7451235b3"
+  "version": 4,
+  "sha256": "4e14d4c705286828295c399befae2c92b3009c754051a456a50ea39b41b3895f"
 }

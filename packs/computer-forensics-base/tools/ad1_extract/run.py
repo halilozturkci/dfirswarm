@@ -16,6 +16,12 @@ Args, JSON on stdin:
             ($OUT set) $OUT/<image name less .ad1>, and in a job it must be
             inside $OUT; called directly, work/<AGENT_ID>/ad1/<image name
             less .ad1>
+  max_items, max_walk, max_bytes, max_seconds
+            budgets for the whole call (items taken, items looked at, bytes
+            written, wall clock): defaults 5,000,000, 5,000,000, 256 GiB and
+            1500 s. A call that reaches one stops, keeps what it wrote, and
+            says it was partial. What is held while it walks is the depth of
+            the tree, not the number of items
 
 Run it as a job (job_run tool=ad1_extract): what it writes is then sealed
 into the store, citable as job:<id>/<path>, and the derived catalogue offers
@@ -36,14 +42,31 @@ under out_dir; `check` is ok, mismatch, no-stored-hash or not-read, as
 ad1-items says it, or not-written (this file system refused it). A file
 whose content breaks part way, or whose write fails (a full disk), is kept
 as <name>.partial, holding what was written, and says so: no truncated file
-keeps its own name. Nothing is written outside out_dir,
-under inputs/, or outside the run directory (in a job, its $OUT).
+keeps its own name, and the name it is kept under is one no other item
+of that directory holds, partial or whole. Nothing is written outside
+out_dir, under inputs/, or outside the run directory (in a job, its $OUT).
+
+Two statuses, kept apart. `processing_status` says whether every item asked
+for was written (complete), some were not (partial: a budget, an item that
+broke) or nothing was (failed). `integrity_status` says whether what was
+written matches the digests the image records: verified (every file had a
+stored digest and matched), mismatch (at least one did not), or unverified
+(some had no stored digest or were not read); `ok` is true only for a complete
+processing with no mismatch. The exit code is 0 when the tool ran and what it
+examined is whole or said not to be: processing complete (a mismatch included: the
+files were written, and the mismatch is a finding about the image's content, not a
+failure of this tool), or partial only because a budget stopped it between items
+(`stopped_by_budget` says which). An item that broke or could not be written, a
+segment that is not there or a manifest that could not be written is exit 1.
+ad1_extract.coverage.json
+is written as incomplete before the first item and again at the end.
 """
 import base64
 import hashlib
 import json
 import os
 import sys
+import time
 import unicodedata
 from pathlib import Path
 
@@ -51,6 +74,11 @@ NAME_MAX = 255
 SHOWN_ERRORS = 20
 MANIFEST = "ad1_extract.tsv"
 ERRORS = "ad1_extract.errors.txt"
+COVERAGE = "ad1_extract.coverage.json"
+ITEMS_DEFAULT, ITEMS_CEILING = 5_000_000, 100_000_000
+WALK_DEFAULT, WALK_CEILING = 5_000_000, 100_000_000       # items looked at, taken or not
+BYTES_DEFAULT, BYTES_CEILING = 256 * 1024 ** 3, 1024 ** 4
+SECONDS_DEFAULT, SECONDS_CEILING = 1500, 1700          # the ceiling is inside the manifest's own 1800-second limit
 
 
 # --- AD1 reader ---------------------------------------------------------------
@@ -95,6 +123,8 @@ AD1_SEGMENTS_MAX = 4096           # 6 TB at FTK Imager's default 1500 MB a segme
 AD1_CHUNK_MIN, AD1_CHUNK_MAX = 512, 1 << 24   # FTK Imager writes 65536
 AD1_NAME_MAX = 1 << 16
 AD1_TEXT_MAX = 1 << 20
+AD1_META_MAX = 1 << 16            # entries in one metadata chain
+AD1_META_BYTES_MAX = 64 << 20     # bytes of text in one metadata chain
 AD1_DEPTH_MAX = 1024
 AD1_OPEN_MAX = 64                 # segment files held open at once
 AD1_TABLE_BATCH = 4096            # chunk addresses read at a time
@@ -220,7 +250,7 @@ class AD1:
 
     def metadata(self, addr):
         """[(category, key, text bytes, address)] of a metadata chain."""
-        out, seen = [], set()
+        out, seen, held = [], set(), 0
         while addr:
             if addr in seen:
                 raise AD1Error("the metadata chain loops back to address %d" % addr)
@@ -228,6 +258,9 @@ class AD1:
             nxt, cat, key, length = _struct.unpack("<QIII", self.read(addr, 20))
             if length > AD1_TEXT_MAX:
                 raise AD1Error("a metadata entry at address %d says it is %d bytes" % (addr, length))
+            held += length
+            if len(out) >= AD1_META_MAX or held > AD1_META_BYTES_MAX:
+                raise AD1Error("a metadata chain holds more than %d entries or %d bytes of text: not read further" % (AD1_META_MAX, AD1_META_BYTES_MAX))
             out.append((cat, key, self.read(addr + 20, length), addr))
             addr = nxt
         return out
@@ -421,43 +454,76 @@ def parse_members(members):
     for m in members:
         if isinstance(m, int) and not isinstance(m, bool) and m >= 0:
             ns.add(m)
-        elif isinstance(m, str) and m.startswith("ad1:item=") and m[9:].isdigit():
+        elif isinstance(m, str) and m.startswith("ad1:item=") and m[9:].isascii() and m[9:].isdecimal() and len(m) <= 40:
             addrs.add(int(m[9:]))
         else:
             fail("members holds %s: an item number (n) or a locator (ad1:item=<address>) from members.tsv" % json.dumps(m))
     return ns, addrs
 
 
-def write_file(img, item, dest, notes):
+class Budget(Exception):
+    pass
+
+
+def write_file(img, item, dest, notes, used, stop):
     """Write one item's content to dest: (size, hashes, check, why, the name
-    it is kept under). A content that breaks, or a write that fails, leaves
-    what was written as <name>.partial (or nothing), and says so."""
+    it is kept under). A content that breaks, a budget that is reached, or a
+    write that fails, leaves what was written as <name>.partial (or nothing),
+    and says so; the partial's name is one no other item of its directory
+    holds, and its size and sha256 (the sixth value) are those of the bytes kept."""
     hs = [hashlib.md5(), hashlib.sha1(), hashlib.sha256()]
-    size, broke = 0, None
+    size, broke, kept_hash = 0, None, ""
     try:
         fh = open(dest, "xb")
     except OSError as e:
-        return 0, None, "not-written", "cannot be written: %s" % (e.strerror or e), ""
+        return 0, None, "not-written", "cannot be written: %s" % (e.strerror or e), "", ""
     try:
         with fh:
             for block in img.content(item):
+                reason = stop(len(block))
+                if reason:
+                    raise Budget(reason)
                 fh.write(block)
                 size += len(block)
                 for h in hs:
                     h.update(block)
+    except Budget as e:
+        broke = ("not-read", str(e))
     except AD1Error as e:
         broke = ("not-read", str(e))
     except OSError as e:
         broke = ("not-written", "the write failed: %s" % (e.strerror or e))
     if broke is None:
-        return size, hs, "", "", dest.name
-    part = dest.with_name(dest.name + ".partial")
-    if part.exists():
-        part = dest.with_name(dest.name + ".partial~n%d" % item["n"])
+        return size, hs, "", "", dest.name, ""
+    # One allocator for every name in the directory, whole or partial; and a name that is on disk is taken.
+    k, kept_name = 0, unique(used, dest.name + ".partial", item["n"])
+    part = dest.with_name(kept_name)
+    while part.exists() or part.is_symlink():
+        k += 1
+        kept_name = unique(used, dest.name + ".partial", item["n"] + k)
+        part = dest.with_name(kept_name)
     kept = part.name
     try:
-        os.replace(dest, part)
-        notes.append("partial: %d of %d bytes kept" % (size, item["size"]))
+        try:
+            os.link(dest, part)        # fails where the name is taken: never over another file
+            os.unlink(dest)
+        except FileExistsError:
+            raise
+        except OSError:
+            # A file system with no hard links (exFAT, a mounted share): a rename, once the name is seen to be free.
+            if part.exists() or part.is_symlink():
+                raise
+            os.rename(dest, part)
+        try:
+            kept_size = os.path.getsize(part)
+        except OSError:
+            kept_size = size
+        h = hashlib.sha256()
+        with open(part, "rb") as rf:
+            for chunk in iter(lambda: rf.read(1 << 20), b""):
+                h.update(chunk)
+        notes.append("partial: %d of %d bytes kept" % (kept_size, item["size"]))
+        size, kept_hash = kept_size, h.hexdigest()
     except OSError:
         try:
             os.unlink(dest)
@@ -466,7 +532,7 @@ def write_file(img, item, dest, notes):
         except OSError:
             kept = dest.name
             notes.append("partial: %d of %d bytes left under its own name (it could be neither renamed nor removed)" % (size, item["size"]))
-    return size, None, broke[0], broke[1], kept
+    return size, None, broke[0], broke[1], kept, kept_hash
 
 
 def main():
@@ -478,6 +544,14 @@ def main():
     if not isinstance(image, str) or not image:
         fail("image is required: the AD1 image's first segment (.ad1)")
     want_n, want_addr = parse_members(args.get("members"))
+    budgets = {}
+    for key, default, ceiling in (("max_items", ITEMS_DEFAULT, ITEMS_CEILING), ("max_walk", WALK_DEFAULT, WALK_CEILING), ("max_bytes", BYTES_DEFAULT, BYTES_CEILING), ("max_seconds", SECONDS_DEFAULT, SECONDS_CEILING)):
+        v = args.get(key, default)
+        if not isinstance(v, int) or isinstance(v, bool) or not 1 <= v <= ceiling:
+            fail("%s is a whole number from 1 to %d" % (key, ceiling), **{key: v})
+        budgets[key] = v
+    started = time.monotonic()
+    deadline = started + budgets["max_seconds"]
     stem = os.path.basename(image)
     if stem.lower().endswith(".ad1"):
         stem = stem[:-4]
@@ -493,16 +567,41 @@ def main():
     except OSError as e:
         fail("cannot read %s: %s" % (image, e.strerror or e))
     errors = list(img.errors)
+    soft = [0]         # errors that are only a budget's stop: the answer is valid for what was examined, and says where it stopped
     if img.missing:
         names = img.missing if len(img.missing) <= 5 else img.missing[:2] + ["...", img.missing[-1]]
         errors.append("the image has %d segments and %d of them (%s) %s not there, beside the first or in this job's view (declare every segment in inputs): what lies in them is not read"
                       % (img.segment["count"], len(img.missing), ", ".join(names), "is" if len(img.missing) == 1 else "are"))
-    children_of = {}   # item n -> where its children go under out (relative)
+    # The names and places of the directories the walk is inside, and nothing else: the walk is depth first, so when it leaves a
+    # subtree that subtree's state is dropped, and what is held is the depth of the tree, not the number of items.
+    chain = []         # [{n, selected, placed_rel, dir_of, children_dir, is_dir}], the ancestors of the item being looked at
     # The manifest's own names, at the top of out_dir, are not an item's.
-    taken = {"": {fold(MANIFEST), fold(ERRORS)}}  # directory (relative) -> folded names already used there
-    selected = {}      # item n -> whether it is taken
-    seen_n, seen_addr = set(), set()
+    taken = {"": {fold(MANIFEST), fold(ERRORS), fold(COVERAGE)}}  # directory (relative) -> folded names already used there
+    walked = 0
+    seen_n, seen_addr = set(), set()       # the wanted numbers and addresses that were met, not every item's
     counts = {"items": 0, "files": 0, "folders": 0, "bytes": 0, "renamed": 0, "mismatches": 0, "checked": 0}
+    tally = {"no_stored_hash": 0, "not_read": 0}
+    reached = [None]                      # the budget that stopped the call, if one did
+    this_file = [0]
+
+    def stop(nbytes):
+        """Why the call must stop, or None: the time budget, or the bytes budget with this block counted."""
+        this_file[0] += nbytes
+        if time.monotonic() > deadline:
+            reached[0] = reached[0] or "the time budget of %d seconds was reached" % budgets["max_seconds"]
+        elif counts["bytes"] + this_file[0] > budgets["max_bytes"]:
+            reached[0] = reached[0] or "the output budget of %d bytes was reached" % budgets["max_bytes"]
+        return reached[0]
+
+    def coverage(status, extra=None):
+        doc = {"tool": "ad1_extract", "image": image, "processing_status": status, "budgets": budgets, **counts, **tally,
+               "elapsed_seconds": round(time.monotonic() - started, 1), **(extra or {})}
+        try:
+            with open(out / COVERAGE, "w", encoding="utf-8") as cf:
+                json.dump(doc, cf, indent=2)
+                cf.write("\n")
+        except OSError:
+            pass
     try:
         out.mkdir(parents=True, exist_ok=True)
         man = open(out / MANIFEST, "x", encoding="utf-8", newline="\n")
@@ -510,27 +609,60 @@ def main():
         img.close()
         fail("cannot write in out_dir: %s" % (e.strerror or e), out_dir=str(out_arg))
     stopped = None
+    coverage("incomplete")                # said before the first item, so a run cut short leaves this file
     with man:
         man.write("n\ttype\tpath\tpath_b64\tlocator\twritten\tsize\tsha256\tcheck\tnote\n")
         try:
             for item in img.walk():
                 n = item["n"]
-                seen_n.add(n)
-                seen_addr.add(item["addr"])
-                parent_dir = children_of.get(item["parent"], "") if item["parent"] is not None else ""
+                if time.monotonic() > deadline and not reached[0]:
+                    reached[0] = "the time budget of %d seconds was reached" % budgets["max_seconds"]
+                if reached[0]:
+                    # Checked for every item, wanted or not: a long walk past the last wanted item is not free either.
+                    errors.append("stopped: %s; item %d (%s) and every item after it in the image's order were not examined" % (reached[0], n, esc(item["path"])))
+                    soft[0] += 1
+                    break
+                walked += 1
+                if walked > budgets["max_walk"]:
+                    reached[0] = "the walk budget of %d items was reached" % budgets["max_walk"]
+                    errors.append("stopped: %s; item %d (%s) and every item after it in the image's order were not examined" % (reached[0], n, esc(item["path"])))
+                    soft[0] += 1
+                    break
+                if want_n is not None and n in want_n:
+                    seen_n.add(n)
+                if want_addr is not None and item["addr"] in want_addr:
+                    seen_addr.add(item["addr"])
+                # Leaving a subtree: the chain is cut back to this item's parent, and the state of what was left goes with it.
+                while chain and chain[-1]["n"] != item["parent"]:
+                    left = chain.pop()
+                    if left["children_dir"] is not None and left["children_dir"] != "":
+                        taken.pop(left["children_dir"], None)
+                if item["parent"] is None:
+                    parent_dir, parent_selected = "", False
+                else:
+                    owner = chain[-1]
+                    if owner["children_dir"] is None:
+                        # A file's children (a stream, say) go beside it, in a directory of their own, named when the first one arrives.
+                        owner["children_dir"] = os.path.join(owner["dir_of"], unique(taken[owner["dir_of"]], owner["placed"] + ".ad1-children", owner["n"]))
+                    parent_dir, parent_selected = owner["children_dir"], owner["selected"]
                 used = taken.setdefault(parent_dir, set())
                 name, changed = safe_name(item["name"])
                 placed = unique(used, name, n)
                 changed = changed or placed != name
                 rel = os.path.join(parent_dir, placed) if parent_dir else placed
                 is_dir = item["type"] == AD1_FOLDER
-                # A file's children (a stream, say) go beside it, in a directory of their own.
-                children_of[n] = rel if is_dir else os.path.join(parent_dir, unique(used, placed + ".ad1-children", n))
-                take = (want_n is None or n in want_n or item["addr"] in want_addr
-                        or (item["parent"] is not None and selected.get(item["parent"], False)))
-                selected[n] = take
+                take = (want_n is None or n in want_n or item["addr"] in want_addr or (item["parent"] is not None and parent_selected))
+                chain.append({"n": n, "selected": take, "placed": placed, "dir_of": parent_dir, "children_dir": rel if is_dir else None})
                 if not take:
                     continue
+                if counts["items"] >= budgets["max_items"]:
+                    reached[0] = "the item budget of %d items was reached" % budgets["max_items"]
+                elif time.monotonic() > deadline:
+                    reached[0] = reached[0] or "the time budget of %d seconds was reached" % budgets["max_seconds"]
+                if reached[0]:
+                    errors.append("stopped: %s; item %d (%s) and every item after it in the image's order were not written or listed" % (reached[0], n, esc(item["path"])))
+                    soft[0] += 1
+                    break
                 raw_path = item["path"]
                 locator = "ad1:item=%d" % item["addr"]
                 notes = ["renamed"] if changed else []
@@ -557,16 +689,26 @@ def main():
                     continue
                 md5 = (ad1_text(item["meta"], 0x5001) or b"").strip().decode("ascii", "replace").lower()
                 sha1 = (ad1_text(item["meta"], 0x5002) or b"").strip().decode("ascii", "replace").lower()
-                size, hs, check, why, kept = write_file(img, item, dest, notes)
+                this_file[0] = 0
+                size, hs, check, why, kept, kept_hash = write_file(img, item, dest, notes, used, stop)
                 if hs is None:
                     errors.append("item %d (%s, %s): %s" % (n, esc(raw_path), locator, why))
+                    if reached[0] and why == reached[0]:
+                        soft[0] += 1                          # the item was cut by the budget: the budget's stop is said once more below
                     written = esc(os.path.join(os.path.dirname(rel), kept).encode()) if kept else ""
-                    man.write(head + "%s\t%d\t\t%s\t%s\n" % (written, size, check, ",".join(notes)))
+                    # The sha256 of a partial row is of the bytes kept, not of the item.
+                    man.write(head + "%s\t%d\t%s\t%s\t%s\n" % (written, size, kept_hash, check, ",".join(notes)))
                     counts["files"] += 1
                     counts["bytes"] += size
+                    tally["not_read"] += 1
+                    if reached[0]:
+                        errors.append("stopped: %s; item %d is kept as a partial, and every item after it in the image's order was not written or listed" % (reached[0], n))
+                        soft[0] += 1
+                        break
                     continue
                 if not md5 and not sha1:
                     check = "no-stored-hash"
+                    tally["no_stored_hash"] += 1
                 elif (md5 and md5 != hs[0].hexdigest()) or (sha1 and sha1 != hs[1].hexdigest()):
                     check = "mismatch"
                     counts["mismatches"] += 1
@@ -584,14 +726,39 @@ def main():
     errors += img.walk_errors
     absent = sorted(want_n - seen_n) if want_n is not None else []
     gone = sorted(want_addr - seen_addr) if want_addr is not None else []
+    # After a stop (a budget, a manifest that could not be written) the walk did not reach the end of the image: an item not
+    # seen is not an item that is not there, and is not claimed to be absent.
+    walked_all = not (reached[0] or stopped)
     if absent:
-        errors.append("no item %s in this read of the image (it listed %d items)" % (", ".join(map(str, absent)), len(seen_n)))
+        soft[0] += 0 if walked_all else 1
+        errors.append(("no item %s in this read of the image (it listed %d items)" if walked_all else
+                       "item %s was not reached before the call stopped (it had looked at %d items): it is not claimed absent") % (", ".join(map(str, absent)), walked))
     if gone:
-        errors.append("no item at %s in this read of the image" % ", ".join("ad1:item=%d" % a for a in gone))
+        soft[0] += 0 if walked_all else 1
+        errors.append(("no item at %s in this read of the image" if walked_all else
+                       "the item at %s was not reached before the call stopped: it is not claimed absent") % ", ".join("ad1:item=%d" % a for a in gone))
     if stopped:
         errors.insert(0, stopped)
-    result = {"ok": not errors, "image": image, "out_dir": str(out_arg), "manifest": os.path.join(str(out_arg), MANIFEST),
-              **counts, "segments_missing": img.missing}
+    processing = "complete" if not errors else ("partial" if counts["files"] or counts["folders"] else "failed")
+    if counts["mismatches"]:
+        integrity = "mismatch"
+    elif counts["files"] == 0:
+        integrity = "not_applicable"
+    elif tally["no_stored_hash"] or tally["not_read"]:
+        integrity = "unverified"
+    else:
+        integrity = "verified"
+    coverage(processing, {"integrity_status": integrity})
+    result = {"ok": processing == "complete" and integrity != "mismatch", "processing_status": processing, "integrity_status": integrity,
+              "image": image, "out_dir": str(out_arg), "manifest": os.path.join(str(out_arg), MANIFEST), "coverage": os.path.join(str(out_arg), COVERAGE),
+              **counts, **tally, "segments_missing": img.missing, "budgets": budgets}
+    if integrity == "mismatch":
+        result["integrity_note"] = ("%d file(s) were written whose content does not match the digests the image records (check mismatch in the manifest). "
+                                    "The files were written; the exit status is 0 for a complete extraction, so read integrity_status" % counts["mismatches"])
+    elif integrity == "unverified":
+        result["integrity_note"] = "%d file(s) have no stored digest and %d were not read: their content is not checked against the image" % (tally["no_stored_hash"], tally["not_read"])
+    if reached[0]:
+        result["stopped_by_budget"] = reached[0]
     if errors:
         result["errors"] = errors[:SHOWN_ERRORS]
         result["errors_total"] = len(errors)
@@ -605,7 +772,10 @@ def main():
     if not in_job:
         result["note"] = "written where you called it, not sealed: run it as a job (job_run tool=ad1_extract) to have the files sealed into the store, citable as job:<id>/<path>, and catalogued by the derived catalogue"
     print(json.dumps(result))
-    return 0 if not errors else 1
+    # Exit 0 means the tool ran and what it examined is whole or said not to be: complete, or partial only because a budget stopped it
+    # between items (processing_status says partial and stopped_by_budget says which). An item that broke or could not be written, a
+    # manifest that could not be written, a segment that is not there: 1.
+    return 0 if len(errors) == soft[0] else 1
 
 
 if __name__ == "__main__":

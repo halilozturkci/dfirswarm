@@ -20,12 +20,30 @@ Depends on the Computer Forensics Base Pack.
 | Pattern matching | `patterns/yara` |
 | Acquisition | `acquire/images` |
 
-**Three tools.** `mem_profile` names the container before anything is run
-against it — and prints a crash dump's memory runs, because a dump is not
-contiguous and a tool that assumes it is reads the wrong offset for everything
-after the first gap. `mem_carve` finds the structures inside the image that the
-other packs' parsers already read, and cuts them out with their offsets.
-`mem_fs` drives MemProcFS.
+**Three tools.** `mem_profile` says what a memory file's header shows before
+anything is run against it (a crash dump's physical-memory runs with their file
+offsets, checked for order, overlap and payload; a LiME file's ranges; an ELF core's
+byte order) and answers "unrecognised" for anything else, because a flat capture and
+a file that is not memory look alike. `mem_carve` finds the byte signatures of
+structures that other parsers read (a hive, an event log chunk, a Prefetch record),
+says for each where the signature is, where the structure starts and what its header
+supports, and cuts a fixed-size slice for the parser: a survey, not a recovery.
+`mem_fs` starts MemProcFS for one call, lists a directory of its file tree or copies
+chosen files byte for byte into the job's output, and stops it; the mount is gone
+when it returns.
+Whether MemProcFS contacts a symbol server is governed by the job's network policy; the tool
+passes it no flag about that, and the pinned binary's behaviour was not verified in this review.
+
+**Sensitive output.** Memory holds whatever the machine held. `mem_fs` writes file
+content only when it runs as a job, only on `write_values: true`, and only under
+`$OUT/mem_fs`; its answer carries the locator of each file, never its content or a
+digest of it (`recovery_key_scan` of the encrypted-containers pack is the reference
+implementation of that pattern). The tool cannot see whether the job was run with
+`secret_output: true`, which seals every output of the job as sensitive: the skills
+say to run it that way, and to run `aeskeyfind`, the Volatility plugins that print
+command lines, environments or shell history, and YARA and `strings` match bytes
+that way too. None of them writes a secret, a fragment of one or a hash of one into
+a post, the ledger or the report.
 
 **One goal template**: `memory-triage.md`.
 
@@ -71,10 +89,14 @@ here. The image's NOTICE has both clauses in full. So the image is for the
 machine that built it, and no workflow of ours pushes it anywhere, the private
 one included (`images/README.md`).
 
-`aeskeyfind` finds AES key schedules in a memory image (BSD-3-Clause; Debian
-packages it for amd64 and i386 only, so the image builds it from Debian's source
-and patches on every architecture), and `gcc` and `make` are there for a
-scanner a case needs that no library provides.
+`aeskeyfind` finds AES key schedules in a memory image (BSD-3-Clause, with
+Debian's patches under GPL-2.0-or-later; Debian packages it for amd64 and i386
+only, so the image builds it from Debian's source and patches on every
+architecture), and `gcc` and `make` are there for a scanner a case needs that no
+library provides. `avml` is declared so the operator has the pinned binary to take
+to the source host: run in an analysis VM it captures that VM, not the subject.
+Volatility's YARA plugins need a YARA Python binding that no requirement here
+installs; `patterns/yara` says how to check.
 
 MemProcFS is AGPL-3.0, the same licence as this harness, which is why the one
 wrapper here is for that and not for the other.

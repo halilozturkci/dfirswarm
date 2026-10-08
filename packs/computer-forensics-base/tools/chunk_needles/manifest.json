@@ -1,10 +1,10 @@
 {
   "name": "chunk_needles",
-  "description": "Scan a local file (or icat an inode from the E01) for ASCII/UTF-16 needles; return hit counts and nearby snippets",
+  "description": "Scan a local file, or one inode streamed from an image through icat, for ASCII and UTF-16LE needles; return per needle the counts and locators (id, offset in the scanned stream, encoding, context length) and a source that names the image, volume offset, inode and sector size. Every occurrence is found, overlapping ones included, whatever chunk is. Context bytes are NOT returned (they are where secrets sit): write_values: true, in a job run with secret_output: true, writes them to a 0600 file under $OUT. Needles are recorded in the trace: never put a secret in one. earlier_answers says how many other files answer the same question.",
   "params": {
     "needles": {
       "type": "string",
-      "description": "Pipe-separated strings to search (ASCII and UTF-16LE)",
+      "description": "Pipe-separated strings to search (ASCII/UTF-8 and UTF-16LE); at most 1000, each at most 4096 bytes; never a secret",
       "required": true
     },
     "path": {
@@ -13,8 +13,8 @@
       "required": false
     },
     "inode": {
-      "type": "integer",
-      "description": "If set, icat this inode from the E01",
+      "type": "string",
+      "description": "If set (and no path), icat this address from the image: a number, or number-type-id for an NTFS stream (168-128-4)",
       "required": false
     },
     "image": {
@@ -25,23 +25,39 @@
       "type": "integer",
       "description": "Volume offset in sectors for icat -o. Defaults to the one filesystem the catalogue lists for the image (catalog/<input>/p<start>/); several mean pass it; none is 0."
     },
+    "sector_size": {
+      "type": "integer",
+      "description": "Sector size in bytes for icat -b (a multiple of 512), when the image's is not 512"
+    },
     "context": {
       "type": "integer",
-      "description": "Snippet context bytes (default 60)",
+      "description": "Bytes of context each side counted in context_length, and written with write_values (0 to 65536, default 60; 0 is 0)",
       "required": false
     },
     "max_hits": {
       "type": "integer",
-      "description": "Max snippets per needle (default 20)",
+      "description": "Locators returned inline per needle (default 20, at most 1000000); every one is in all_results when there are more",
       "required": false
+    },
+    "chunk": {
+      "type": "integer",
+      "description": "Read chunk size, 16 bytes to 256 MiB (default 8 MiB); results do not depend on it",
+      "required": false
+    },
+    "write_values": {
+      "type": "boolean",
+      "description": "Write each occurrence's context to a 0600 file under $OUT. Refused outside a job; run the job with secret_output: true. Default false."
     }
   },
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 120,
   "example": "{\"path\": \"work/sd1d102/SRUDB.dat\", \"needles\": \"vmtoolsIO|SysInternals|malware430\"}",
+  "requires": [
+    "icat"
+  ],
   "by": "sd1d102",
   "at": "2026-09-18T14:26:18.665Z",
-  "version": 5,
-  "sha256": "51686d2b0b465fee39ba746d9343641bf13d9983d6dd45586264040ddc1e3ae4"
+  "version": 6,
+  "sha256": "da92d8947b7ec8426e076a3cf0ab298b354dfaa6933de1062de384f23cee010b"
 }

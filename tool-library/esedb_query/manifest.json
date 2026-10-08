@@ -1,6 +1,36 @@
 {
   "name": "esedb_query",
-  "description": "Read an ESE database (WebCacheV01.dat, SRUDB.dat, spartan.edb) as tables via esedbexport. Lists the tables, or returns the rows of one.",
+  "description": "Read an ESE database (WebCacheV01.dat, SRUDB.dat, spartan.edb) as TABLES through esedbexport: list the tables, or return the rows of one, each row numbered by its position in the exported file. It exports tables as text and decodes nothing: a SRUM table is not joined to the application or user it names, a WebCache container is not resolved, and an ESE log is not read. The export is made once per database into esedb-export/<db sha256, first 16 hex>/ under the job's $OUT (or the agent's work directory), with the exporter's whole stdout and stderr in files beside it and an export-manifest.json (database digest, exporter version, argv, exit status, every table file); a complete export is reused by later calls only when its manifest was written by this version, its exit status was 0, and every table file it lists is on disk with its recorded size and nothing else is there (otherwise it is exported again). An exporter that exits non-zero or is stopped by export_timeout_seconds leaves a PARTIAL export: status partial, complete false, the tables listed only as tables_in_partial_export, never as the database's tables. A table name that matches more than one export file is refused with the candidates. A column name that repeats is numbered, and a cell of any size is kept whole. SENSITIVE: the export directory holds every table whole, so whatever the database holds (a WebCache URL with a token, SRUM users, the password material of an Active Directory database, which NTDS.dit is): it is made mode 0700 with files 0600, is a sensitive output of the job that made it, and is cited by file and table, never by value; run it as a job with secret_output: true when the case may. The rows returned withhold, with a marker holding only the length, the cells of a column whose name says password, secret, token, encrypted, credential, a card, an IBAN or an SSN, and of the datatable attributes that carry password hashes, their history, supplemental credentials and the password encryption keys (columns_withheld lists them); the secrets of every URL in a cell are withheld the same way (url_secrets_withheld; write_url_secrets: true writes their whole text to a 0600 file under $OUT, in a job only). Binary cells are exported as hex text and are not inspected, so a WebCache header column can still hold a cookie: cite, do not copy. The program runs in the tool's own process group (never a session of its own), so the harness ending the tool ends it; the tool's own deadline kills it and what it started, and SIGTERM, SIGINT or SIGHUP do the same and the answer is then status interrupted.",
+  "params": {
+    "path": {
+      "type": "string",
+      "description": "Path to the .dat or .edb file"
+    },
+    "table": {
+      "type": "string",
+      "description": "Table to read; omit to list the tables"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Rows shown inline (default 200, at most 20000, an inline page size); every row is kept, and when there are more the whole list is written as JSON Lines and named in all_results"
+    },
+    "export_timeout_seconds": {
+      "type": "integer",
+      "description": "How long to let esedbexport run (default 240, at most 270); a run that is stopped keeps what it wrote and the answer says partial"
+    },
+    "write_url_secrets": {
+      "type": "boolean",
+      "description": "Write the whole text of every URL whose secrets were withheld, with the secret value, to a file under $OUT (mode 0600, created first, never replaced): only in a job run with secret_output: true, refused anywhere else; default false"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 300,
+  "example": "{\"path\": \"work/extracted/WebCacheV01.dat\", \"table\": \"Containers\", \"limit\": 50}",
+  "by": "maintainer",
+  "at": "2026-10-07T12:00:00.000Z",
+  "version": 6,
+  "sha256": "8dc50c988fa9eca55b36aa02fe96aa577c8445d5b3848381230bf5bd1cd4528c",
   "use": {
     "extensions": [
       ".edb"
@@ -13,32 +43,11 @@
     ],
     "names": [
       "WebCacheV01.dat",
-      "SRUDB.dat"
+      "SRUDB.dat",
+      "spartan.edb"
     ]
   },
-  "params": {
-    "path": {
-      "type": "string",
-      "description": "Path to the .dat or .edb file"
-    },
-    "table": {
-      "type": "string",
-      "description": "Table to read; omit to list the tables"
-    },
-    "limit": {
-      "type": "integer",
-      "description": "Maximum rows to return (default 200, cap 20000)"
-    }
-  },
-  "runtime": "python3",
-  "entry": "run.py",
   "requires": [
     "esedbexport"
-  ],
-  "timeout_seconds": 120,
-  "example": "{\"path\": \"work/extracted/WebCacheV01.dat\", \"table\": \"Containers\", \"limit\": 50}",
-  "by": "maintainer",
-  "at": "2026-09-20T12:00:00.000Z",
-  "version": 3,
-  "sha256": "871022378558e3a360c982cd4be19994f9e58783e49ee0fee429520e4d4fe8b1"
+  ]
 }

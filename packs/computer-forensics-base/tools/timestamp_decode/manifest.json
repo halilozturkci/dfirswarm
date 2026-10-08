@@ -1,14 +1,23 @@
 {
   "name": "timestamp_decode",
-  "description": "Take a number out of an artefact and say what date it could be under every epoch in common forensic use — Unix, FILETIME, Apple, WebKit, HFS+, DOS, OLE and more — with the plausible readings ranked. For when a field holds a number and nothing says which clock it came from.",
+  "description": "Take a number out of an artefact and list what date it could be under every epoch in common forensic use: Unix (seconds to nanoseconds), FILETIME, WebKit, Apple (seconds, nanoseconds), HFS+, OLE automation and DOS (both word orders), with plausible readings ranked first. Candidates, not a determination: the artefact's own schema decides the clock. The value is read exactly (a decimal or hexadecimal, never through a float); fractions are kept to the nanosecond and anything beyond is returned as remainder_s. DOS and OLE readings carry no zone and are given without a Z. A reading outside the years 1 to 9999, or an impossible DOS date, is listed under refused, not dropped. Plausibility is judged against an explicit range (plausible_from, plausible_to; default 1990-01-01 to 2040-01-01), never the wall clock, and by default every reading is returned.",
   "params": {
     "value": {
       "type": "string",
-      "description": "The number, in decimal or as 0x hex"
+      "description": "The number, in decimal (a fraction is kept) or as 0x hex",
+      "required": true
     },
     "plausible_only": {
       "type": "boolean",
-      "description": "Return only readings that land between 1990 and twenty years from now (default true)"
+      "description": "Return only the readings inside the reference range (default false: all readings, the plausible ones first)"
+    },
+    "plausible_from": {
+      "type": "string",
+      "description": "Start of the reference range, YYYY-MM-DD (default 1990-01-01)"
+    },
+    "plausible_to": {
+      "type": "string",
+      "description": "End of the reference range, YYYY-MM-DD (default 2040-01-01)"
     },
     "hex": {
       "type": "boolean",
@@ -21,6 +30,6 @@
   "example": "{\"value\": \"133502964000000000\"}",
   "by": "maintainer",
   "at": "2026-09-22T14:00:00.000Z",
-  "version": 1,
-  "sha256": "9b9b08bb27f2d00c020e1bfe603681d0b46763df74206a55c9b524c058e23021"
+  "version": 2,
+  "sha256": "1c8f1de9b21828bcccc0b137b39fd5fd86c114e7a3b45f20ec682c774e4a85a4"
 }

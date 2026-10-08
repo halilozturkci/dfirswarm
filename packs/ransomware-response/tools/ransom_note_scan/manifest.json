@@ -1,18 +1,26 @@
 {
   "name": "ransom_note_scan",
-  "description": "Find the ransom notes across a tree and pull out what identifies the campaign: onion addresses, contact emails and portals, the victim identifier a negotiator needs, wallet addresses, and where each copy of the note was dropped and when.",
+  "description": "Find files whose names look like ransom notes (a name match is a CANDIDATE, not a note) and locate what is in them without printing it. Each candidate is read once (up to max_size, 16 MiB at most), decoded by byte-order mark, then by the NUL pattern of UTF-16 without one, else UTF-8 (decoding errors counted; a binary file is listed and not read as text), and classified `content_resembles_note` when its content shows at least two kinds of note marker (an onion address, a wallet, a Tox id, a labelled identifier, note vocabulary) and otherwise `filename_only`; neither confirms a note. Indicator candidates are found by pattern: onion addresses, e-mail addresses, URLs, bitcoin, monero and ethereum addresses, Tox ids and the value after a label such as \"your personal ID\" (kind identifier_candidate); a bitcoin address's own checksum is checked (checksum_valid, checksum_failed) and the rest are syntactic candidates, none attributed to anyone. The answer is a locator: per note its id, size, sha256 of the whole file (withheld, with the reason, for a note shorter than 128 bytes or one that is a single token or indicator value, where it would be a digest of the value), modification time (raw nanoseconds and ISO UTC, as collected), class, encoding, decoding errors and a count per kind; per occurrence its finding id, byte offset, length and validation. No identifier, wallet, address, URL, key or note text is in the answer or in any file it names, and any path component that holds an identifier-shaped token (eight or more letters and digits, both kinds) or a value the note held is withheld from every path it prints (notes, rejected name matches, directories it could not list, exclusions, the root); a harmless name can go with it, and the directory can be listed. SENSITIVE: a note can hold access tokens, so run it as a job with secret_output: true. write_values: true (refused outside a job) creates $OUT/ransom-note-values.jsonl, mode 0600, before it scans (a file or link already there is refused by name) and writes the values, a preview of each note's first lines and the real paths to it and nowhere else. It follows no link and reads only regular files; every name match it did not read (a link, a special file, empty, over max_size, unreadable) is listed with the reason, and `complete` says `partial` when one could have held something. The earliest note time is an observation of the filesystem's mtime as collected, not the start of the run. A note named otherwise, an image of a note, an encoding it does not detect and a long unlabelled token (no label, no known shape: a 64-digit hex string after the word \"Token\") are not found, not located and not counted. Takes a directory tree, so it has no `use` triggers.",
   "params": {
     "root": {
       "type": "string",
-      "description": "A directory to sweep"
+      "description": "A directory to sweep (an extracted tree, not an image)"
     },
     "max_size": {
       "type": "integer",
-      "description": "Largest file to treat as a note (default 200000)"
+      "description": "Largest file to read as a note (default 200000, at least 16, at most 16777216); a name match above it is listed as not read, with its size"
     },
     "limit": {
       "type": "integer",
-      "description": "Preview notes returned inline when the job OUT directory can hold the complete ransom-notes.jsonl (default 100); ignored when no lossless output directory exists"
+      "description": "Rows shown inline per table (default 100); every row is counted, and a table with more is written whole as JSON Lines and named in pages.<table>.all_results"
+    },
+    "write_values": {
+      "type": "boolean",
+      "description": "Write each value found, and a preview of each note, to $OUT/ransom-note-values.jsonl (default false). Refused unless the tool runs as a job, which must be run with secret_output: true; the file is created first and a file or link already there is refused; the answer never carries a value"
+    },
+    "exclude_top_level_dirs": {
+      "type": "array",
+      "description": "Directory names skipped at the top of the root only (default [\"proc\", \"sys\", \"dev\"]); each is listed as an exclusion. [] excludes nothing; a directory of that name deeper in the tree is always read"
     }
   },
   "runtime": "python3",
@@ -20,7 +28,7 @@
   "timeout_seconds": 600,
   "example": "{\"root\": \"work/extracted\"}",
   "by": "maintainer",
-  "at": "2026-09-22T23:00:00.000Z",
-  "version": 1,
-  "sha256": "be2f968a03da0f32bf611dd0b13292e7b93a461ea13170167de907f99b32c660"
+  "at": "2026-10-07T12:00:00.000Z",
+  "version": 2,
+  "sha256": "23ec5d7ee4c2e6a35a3eb39a9556ce0cfc7f2558f33880a72a2425524d634a46"
 }

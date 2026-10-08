@@ -1,26 +1,34 @@
 {
   "name": "file_type",
-  "description": "Say what a file actually is from its first bytes, and whether that agrees with its extension. An extension is a claim by whoever named the file; on a case that matters it is often a lie.",
+  "description": "Say what a file is from its first bytes, and whether that agrees with its extension, for a file or a directory walked in sorted order. Identifies with a table of forensic signatures (PE, ELF, Mach-O universal vs Java class by their own fields, archives, registry hives, event logs, prefetch at offset 4 and compressed MAM, shortcuts, AD1 and E01, memory captures) and, for what the table does not know, the installed `file` (libmagic) when present. An identification is a reading of the first bytes, not a validation. A type nothing knows is unrecognised and its extension_matches is null, neither match nor mismatch. Hashes every regular file it opens (SHA-256; a file the time budget ends in has no digest, and its entry says how far it got); plain text is consistent with any extension that is not a binary format's; a directory that cannot be listed is an error entry; symbolic links and non-regular files are listed, never opened or followed. examined counts files actually opened; the first bytes are returned only with head_hex: true; every result is kept in all_results when the inline page (limit, mismatch_only) is not the whole, and unreadable files are reported as errors whatever mismatch_only says. earlier_answers says how many other files answer the same question.",
   "params": {
     "path": {
       "type": "string",
-      "description": "A file, or a directory to walk"
+      "description": "A file, or a directory to walk",
+      "required": true
     },
     "mismatch_only": {
       "type": "boolean",
-      "description": "Return only files whose bytes disagree with their extension"
+      "description": "Show inline only files whose bytes disagree with their extension (errors and the complete result are still reported)"
     },
     "limit": {
       "type": "integer",
-      "description": "Maximum files to return (default 500)"
+      "description": "Maximum files shown inline (default 500, at most 5000); every file looked at is in all_results when there are more"
+    },
+    "head_hex": {
+      "type": "boolean",
+      "description": "Also return each file's first 16 bytes in hex (default false): the head of a key file or a credential store is the secret, so it is opt-in"
     }
   },
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 120,
   "example": "{\"path\": \"work/extracted\", \"mismatch_only\": true}",
+  "requires": [
+    "file"
+  ],
   "by": "maintainer",
   "at": "2026-10-01T12:00:00.000Z",
-  "version": 2,
-  "sha256": "500909af160275d5d2c86e1b25f34a1f9a2938b77a481ce0aec52b27a52fa960"
+  "version": 3,
+  "sha256": "36afa1e29bc7b369189f546b6a165ee31a950f9037afe1fbfb2cb56bf1d37525"
 }

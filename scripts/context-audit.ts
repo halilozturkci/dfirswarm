@@ -16,10 +16,17 @@
  * estimate: a run without `context` rows (self-compaction off, or older than
  * the feature) says so instead of guessing.
  *
+ * The skills a seat loaded are measured too (ui/src/lib/skill-metrics.ts, the
+ * same code the console's Packs tab runs): whether its prompt carried the
+ * index, how many bodies it loaded and what they cost in tokens, which of them
+ * a later row names or uses (a proxy, labelled as one), which a compaction
+ * took out of its context and whether it loaded them again.
+ *
  * Pure on purpose: reads one file, prints Markdown (or JSON with --json).
  */
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { skillUse, type RunSkills, type SeatSkills } from "../ui/src/lib/skill-metrics.ts";
 
 type Row = { ts: string; agent: string; tool: string; args: Record<string, unknown>; result: Record<string, unknown> };
 
@@ -66,6 +73,8 @@ export type AgentAudit = {
   spilled: { calls: number; bytes: number };
   /** inbox/wait deliveries that held posts back for the next call. */
   pages_held: number;
+  /** What the seat did with the run's skills; all zeros on a run with no pack. */
+  skills: SeatSkills;
 };
 
 export type RunAudit = {
@@ -74,6 +83,8 @@ export type RunAudit = {
   bad_lines: number;
   agents: AgentAudit[];
   totals: { compactions: number; hand_offs: number; pi_fallbacks: number; summary_usd: number; summary_tokens: number; holds: number; spilled_calls: number; spilled_bytes: number; pages_held: number };
+  /** Skill use over the whole trace: per seat, per skill and in total. */
+  skills: RunSkills;
   findings: string[];
 };
 
@@ -147,6 +158,7 @@ function emptyAgent(agent: string): AgentAudit {
     failures: [],
     spilled: { calls: 0, bytes: 0 },
     pages_held: 0,
+    skills: skillUse([], [agent]).seats[0]!,
   };
 }
 
@@ -276,18 +288,22 @@ export function audit(rows: Row[], source: string, bad = 0): RunAudit {
     totals.pages_held += a.pages_held;
   }
   totals.summary_usd = Number(totals.summary_usd.toFixed(4));
-  return { source, rows: rows.length, bad_lines: bad, agents, totals, findings: findings(agents, totals) };
+  // A run with self-compaction off has no seat rows of the audit's own: the skills' seats are then read from the trace.
+  const skills = skillUse(rows, agents.length ? agents.map((a) => a.agent) : undefined);
+  for (const a of agents) a.skills = skills.seats.find((s) => s.agent === a.agent) ?? a.skills;
+  return { source, rows: rows.length, bad_lines: bad, agents, totals, skills, findings: findings(agents, totals, skills) };
 }
 
 /**
  * What the record says about the lines. Each finding is one sentence an
  * operator can act on; none is a verdict on the run.
  */
-export function findings(agents: AgentAudit[], totals: RunAudit["totals"]): string[] {
+export function findings(agents: AgentAudit[], totals: RunAudit["totals"], skills?: RunSkills): string[] {
   const out: string[] = [];
   const measured = agents.filter((a) => a.turns > 0);
   if (measured.length === 0) {
     out.push("No `context` rows: self-compaction was off for this run, or the run predates the feature; nothing here is measured.");
+    if (skills) out.push(...skillFindings(skills));
     return out;
   }
   for (const a of measured) {
@@ -336,6 +352,46 @@ export function findings(agents: AgentAudit[], totals: RunAudit["totals"]): stri
   if (totals.pages_held > 0) {
     out.push(`${totals.pages_held} inbox/wait deliver${totals.pages_held === 1 ? "y" : "ies"} held posts back for the next call; no post was cut.`);
   }
+  if (skills) out.push(...skillFindings(skills));
+  return out;
+}
+
+/** What the record says about the skills; empty for a run that carried none. */
+export function skillFindings(skills: RunSkills): string[] {
+  const t = skills.totals;
+  const out: string[] = [];
+  const touched = skills.seats.some((s) => s.index_source !== null) || t.loads > 0 || t.index_reads > 0 || t.failed > 0;
+  if (!touched) return out;
+  if (touched) {
+    const missing = skills.seats.filter((s) => !s.index_in_prompt);
+    const bySource = (source: string) => missing.filter((s) => s.index_source === source).map((s) => s.agent);
+    const none = missing.filter((s) => s.index_source === null).map((s) => s.agent);
+    if (!missing.length) out.push(`All ${t.seats} seats had the run's index in the prompt Pi keeps for every run.`);
+    else {
+      out.push(`${t.seats_with_index} of ${t.seats} seats had the run's index in the prompt Pi keeps for every run (the kickoff's .pi/APPEND_SYSTEM.md).`);
+      if (none.length) out.push(`${none.join(", ")}: no \`skills_index\` row, so nothing says the packs' index reached ${none.length === 1 ? "that seat" : "those seats"}.`);
+      if (bySource("extension").length) out.push(`${bySource("extension").join(", ")}: the prompt had no index, the extension added it to the first run's prompt, and a run a hand-off starts does not keep that.`);
+      if (bySource("stale").length) out.push(`${bySource("stale").join(", ")}: the prompt carried an index written for other packs.`);
+      if (bySource("none").length) out.push(`${bySource("none").join(", ")}: the packs listed no skill.`);
+    }
+  }
+  out.push(
+    `Skills: ${t.loads} bod${t.loads === 1 ? "y" : "ies"} loaded by ${t.seats_that_loaded} of ${t.seats} seats (${fmt(t.tokens_loaded)} tokens); ${t.seats - t.seats_that_loaded} seat${t.seats - t.seats_that_loaded === 1 ? "" : "s"} never loaded one.`,
+  );
+  if (t.loads > 0) {
+    out.push(
+      `Of those loads, ${t.referenced} show a later use (the skill named, or one of its tools called) and ${t.unused} show none (a proxy: a seat can apply a note without naming it); ${t.done} ${t.done === 1 ? "was" : "were"} marked done with skill_done.`,
+    );
+    const approximate = skills.seats.some((s) => s.loads > 0 && s.lost_basis === "compact_done");
+    out.push(
+      `${t.lost_at_compaction} loaded bod${t.lost_at_compaction === 1 ? "y" : "ies"} ${t.lost_at_compaction === 1 ? "was" : "were"} taken out of the seat's context by a compaction (the newest part of the history a compaction keeps is not counted); ${t.refetched} ${t.refetched === 1 ? "was" : "were"} loaded again.${approximate ? " For some seats the trace has no skills_compacted row, so every compaction is counted as taking every body loaded before it: an upper bound." : ""}`,
+    );
+    if (t.loads_without_tools > 0) {
+      out.push(`${t.loads_without_tools} of the loads come from rows that carry no tools list (a trace from before the harness wrote it): only a mention of the skill's id can show their use, so "no trace of use" is an upper bound there.`);
+    }
+  }
+  if (t.already_loaded > 0) out.push(`${t.already_loaded} call${t.already_loaded === 1 ? "" : "s"} asked for a body the seat already held and was told so instead of being sent it again.`);
+  if (t.failed > 0) out.push(`${t.failed} skill call${t.failed === 1 ? "" : "s"} named no skill the packs carry.`);
   return out;
 }
 
@@ -374,6 +430,18 @@ export function renderMarkdown(run: RunAudit): string {
     );
   }
   lines.push("");
+  const skillSeats = run.skills.seats.filter((s) => s.index_source !== null || s.loads > 0 || s.index_reads > 0 || s.failed > 0);
+  if (skillSeats.length) {
+    lines.push("## Skills");
+    lines.push("");
+    lines.push("| Agent | Index in prompt | Loads | Distinct | Tokens loaded | Used after load (proxy) | No trace of use | Done | Taken out by a compaction | Loaded again | Missed |");
+    lines.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |");
+    for (const s of skillSeats) {
+      const index = s.index_in_prompt ? `yes${s.index_tokens !== null ? ` (${fmt(s.index_tokens)} tokens)` : ""}` : s.index_source === "extension" ? "first run only (extension)" : s.index_source === "stale" ? "another pack set's" : s.index_source === "none" ? "no skills" : "no row";
+      lines.push(`| ${s.agent} | ${index} | ${s.loads} | ${s.distinct} | ${fmt(s.tokens_loaded)} | ${s.referenced} | ${s.unused} | ${s.done} | ${s.lost_at_compaction} | ${s.refetched} | ${s.failed} |`);
+    }
+    lines.push("");
+  }
   for (const a of run.agents) {
     if (a.crossings.length === 0 && a.compactions.length === 0 && a.failures.length === 0 && a.notes_refused.length === 0) continue;
     lines.push(`## ${a.agent}`);

@@ -1,6 +1,6 @@
 {
   "name": "evtx_carve",
-  "description": "Recover event records from a blob with no event log file: sweeps for ElfChnk chunk headers in unallocated space, a pagefile, a memory image or a truncated .evtx, verifies each chunk's checksums and parses the records inside it. This is how a cleared log is read.",
+  "description": "Recover event records from a blob that is not an event log: sweeps for ElfChnk chunk headers in unallocated space, a pagefile, a memory image or a truncated .evtx, checks that the 128 bytes after each ElfChnk signature are a chunk header (header size 0x80, the record offsets inside the 64 KiB, the first record number not past the last: python-evtx's ChunkHeader accepts garbage, so the tool checks), verifies each real chunk's own checksums and parses the records inside it. A signature that fails the header check is a problem line (a page, the whole list in a file) and counts only under candidates and signatures_rejected, never as a chunk found or parsed. Every matching record is kept with its whole XML in a file the answer names (written whenever anything was found); the inline records are the summary, without the XML unless with_xml is true. A repeated EventData name is kept as a list, not overwritten. chunk_limit (chunks parsed) and candidate_limit (places where the magic was found, built into a chunk or not) bound the work of one call, not the result: the sweep stops before the next one and resume_start is the offset to pass as start. The answer says the range asked for and the range examined, and sweep_complete means that range was swept, not that every record that ever existed was recovered. Problems are a page with the whole list in a file. A chunk whose checksums do not verify may still hold sound records, and is marked chunk_verified false. A carved record belongs to the channel it names, not to the file it was found in. SENSITIVE: carved records hold command lines, script text and arguments that can include a secret, and a pagefile or memory image can hold records of any process; run it as a job with secret_output: true when they may.",
   "params": {
     "path": {
       "type": "string",
@@ -20,7 +20,7 @@
     },
     "max_bytes": {
       "type": "integer",
-      "description": "Stop the sweep after this many bytes"
+      "description": "Stop the sweep after this many bytes from start (at least 1)"
     },
     "chunk_limit": {
       "type": "integer",
@@ -28,11 +28,15 @@
     },
     "limit": {
       "type": "integer",
-      "description": "Records shown inline (default 300); every matching record is kept, and when there are more the whole list is written as JSON Lines and named in all_results"
+      "description": "Records shown inline (default 300, an inline page size); every matching record, with its XML, is in the file named by all_results"
     },
     "with_xml": {
       "type": "boolean",
-      "description": "Include each record's full XML"
+      "description": "Include each record's full XML in the inline records too (the file always has it)"
+    },
+    "candidate_limit": {
+      "type": "integer",
+      "description": "Chunk-magic hits to examine in one call (default 20000), whether or not each builds into a chunk; the sweep stops before the next and resume_start names where to carry on"
     }
   },
   "runtime": "python3",
@@ -40,7 +44,21 @@
   "timeout_seconds": 600,
   "example": "{\"path\": \"work/unallocated.bin\", \"event_ids\": [4624, 4688, 1102]}",
   "by": "maintainer",
-  "at": "2026-09-22T09:00:00.000Z",
-  "version": 1,
-  "sha256": "7697273164fc49a9545c106e0c268cb62d3299ba5c39d0540404c2763e3d9391"
+  "at": "2026-10-07T12:00:00.000Z",
+  "version": 3,
+  "sha256": "05d80b5a654701b55f6dad5f27a5170f92eb8a817a5a1e827d681d59a83869f0",
+  "requires": [],
+  "use": {
+    "extensions": [
+      ".dmp",
+      ".mem",
+      ".raw",
+      ".vmem",
+      ".evtx"
+    ],
+    "names": [
+      "pagefile.sys",
+      "hiberfil.sys"
+    ]
+  }
 }

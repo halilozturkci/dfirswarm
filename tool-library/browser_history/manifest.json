@@ -1,14 +1,6 @@
 {
   "name": "browser_history",
-  "description": "Query a browser history database, copying it and any -wal beside it first so the write-ahead log is replayed rather than ignored. Named queries for Chrome, Edge and Firefox, or your own SELECT.",
-  "use": {
-    "names": [
-      "History",
-      "History.db",
-      "places.sqlite",
-      "WebHistory.db"
-    ]
-  },
+  "description": "Query a browser history database from a copy of it and its -wal, -shm and -journal sidecars, made under the job's $OUT or the agent's own directory and removed afterwards. Named queries: chrome_visits and firefox_visits (every visit joined to its URL: visit id, raw time and microsecond ISO time, transition or visit type with its raw value, referring visit), chrome_url_summary and firefox_url_summary (ONE ROW PER URL with a visit count and the last visit: a summary, not a visit list; chrome_history and firefox_history are their old names, answered with a note), chrome_downloads, firefox_downloads, tables; or your own SELECT, WITH or PRAGMA. Read-only twice: a statement must start with SELECT, WITH or PRAGMA, and the copy is opened with a SQLite authorizer that denies every action but reading and the pragmas that only report. It reports wal_present (a -wal was beside the database) and wal_frames_replayed (valid frames SQLite found in the copy of the log and checkpointed into the copy; 0 for a damaged or refused log), never merely that a sidecar was copied. Nothing in a WAL or a rollback journal names the database it was written for, so wal_inspection reads the log's own header, salts, checksums and committed frames and compares what the formats allow with the database (page size; text encoding and schema cookie from the last committed page 1); a log or journal that contradicts the database is not copied (wal_refused, journal_refused), the wal-index (-shm) is never copied, and wal_not_established says what cannot be told. The evidence may be read-only: the copies are made owner-only and writable. SENSITIVE: before any query, every trigger of the copy is dropped, then every cell of a credential column (logins.password_value, cookies.value and encrypted_value, moz_cookies.value, Firefox key4.db metadata and nssPrivate; any column whose name says password, secret, token, encrypted, card, cc, cvc, cvv, pin, ssn or iban, a number or real included; the text columns of a table named for cards or IBANs) and every text cell that is wholly a card number (13 to 19 digits passing the Luhn check) is replaced in the copy by a marker holding only its length, and the answer lists what was withheld and how many triggers were dropped. The secrets of every URL in a returned cell (a token or password in the query string, the fragment or the user-info) are replaced the same way and listed in url_secrets_withheld; write_url_secrets: true writes their whole text to a 0600 file under $OUT, in a job only. No flag brings a column value back, and nothing is decrypted. Usernames, URLs (secrets withheld) and dates are returned. A BLOB column is returned whole as hex; select what you need. A file that is not a SQLite database is answered with sqlite_header: false and its size, never its bytes.",
   "params": {
     "path": {
       "type": "string",
@@ -16,7 +8,7 @@
     },
     "query": {
       "type": "string",
-      "description": "chrome_history | chrome_downloads | firefox_history | firefox_downloads | tables"
+      "description": "chrome_visits | chrome_url_summary | chrome_downloads | firefox_visits | firefox_url_summary | firefox_downloads | tables (chrome_history and firefox_history still answer, as the URL summaries)"
     },
     "sql": {
       "type": "string",
@@ -24,7 +16,11 @@
     },
     "limit": {
       "type": "integer",
-      "description": "Maximum rows to return (default 200, cap 20000)"
+      "description": "Rows shown inline per statement (default 200, at most 20000, an inline page size); every row is kept, and when there are more the whole list is written as JSON Lines and named in all_results"
+    },
+    "write_url_secrets": {
+      "type": "boolean",
+      "description": "Write the whole text of every URL whose secrets were withheld, with the secret value, to a file under $OUT (mode 0600, created first, never replaced): only in a job run with secret_output: true, refused anywhere else; default false"
     }
   },
   "runtime": "python3",
@@ -32,7 +28,25 @@
   "timeout_seconds": 90,
   "example": "{\"path\": \"work/extracted/History\", \"query\": \"chrome_history\", \"limit\": 100}",
   "by": "maintainer",
-  "at": "2026-09-20T12:00:00.000Z",
-  "version": 2,
-  "sha256": "85772143e6eb48b35525b5fbe627eea450fe60081fb53253f197fc2217743e46"
+  "at": "2026-10-07T12:00:00.000Z",
+  "version": 3,
+  "sha256": "f8874d37116d9a3a99e28d06c467cc1e9485926654a1d7b9602c678d5591aae0",
+  "use": {
+    "names": [
+      "History",
+      "History.db",
+      "places.sqlite",
+      "WebHistory.db",
+      "Login Data",
+      "Cookies",
+      "Web Data"
+    ],
+    "magic": [
+      {
+        "offset": 0,
+        "hex": "53514c69746520666f726d6174203300"
+      }
+    ]
+  },
+  "requires": []
 }

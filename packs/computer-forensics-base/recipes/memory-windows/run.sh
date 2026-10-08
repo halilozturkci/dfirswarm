@@ -10,7 +10,15 @@
 # gives offline windows.info RECIPE_PROBE_SECONDS (default 30). run writes
 # windows.info.txt and one file per plugin, each step time-boxed
 # (RECIPE_STEP_SECONDS, default 900) with its stderr kept whole beside it,
-# plus index.tsv and coverage.json.
+# plus index.tsv, steps.jsonl (one record per step: the command, its exit, how
+# long it took and what it wrote) and coverage.json, which a run writes as
+# partial before its first step and again after each outcome.
+#
+# Volatility always runs with --offline: the symbol tables are the ones the
+# image holds, and nothing is fetched. An image with no table for the
+# kernel stops the run after windows.info, whose output is kept, with the
+# kernel named as missing and coverage partial; no plugin that needs symbols
+# is run.
 #
 # When the image holds no symbol table for the kernel, detect and run say so
 # with a `missing` entry naming the kernel (PDB, GUID, age, as Volatility's
@@ -57,13 +65,31 @@ PROBE_TIMEOUT="${RECIPE_PROBE_SECONDS:-30}"
 out=""
 notes=()
 
+# step_record <outfile> <exit> <seconds> <limit> <cmd...>: one line of
+# steps.jsonl per step, written whatever the step's outcome was.
+step_record() {
+  python3 - "$out" "$@" <<'PY'
+import json, os, sys
+out, file, rc, seconds, limit, *argv = sys.argv[1:]
+rel = os.path.relpath(file, out)
+rec = {"step": rel, "argv": argv, "exit": int(rc), "seconds": int(seconds), "limit_seconds": int(limit),
+       "timed_out": int(rc) == 142}
+for key, path in (("output", file), ("stderr", file + ".stderr")):
+    if os.path.isfile(path):
+        rec[key] = {"file": os.path.relpath(path, out), "bytes": os.path.getsize(path)}
+with open(os.path.join(out, "steps.jsonl"), "a", encoding="utf-8") as fh:
+    fh.write(json.dumps(rec) + "\n")
+PY
+}
+
 run_step() { # run_step <limit> <outfile> <cmd...>
   local limit="$1" file="$2"; shift 2
-  local rc=0
+  local rc=0 began="$SECONDS"
   perl -e 'alarm shift; exec @ARGV' "$limit" "$@" > "$file" 2> "$file.stderr" || rc=$?
   [[ -s "$file.stderr" ]] || rm -f "$file.stderr"
+  if [[ "$rc" -ne 0 ]]; then [[ -s "$file" ]] || rm -f "$file"; fi
+  step_record "$file" "$rc" "$((SECONDS - began))" "$limit" "$@"
   if [[ "$rc" -eq 0 ]]; then echo ok; return 0; fi
-  [[ -s "$file" ]] || rm -f "$file"
   local err=""
   if [[ -f "$file.stderr" ]]; then
     err="$(head -c 200 "$file.stderr" | tr '\n' ' ')"
@@ -83,13 +109,30 @@ kernel_missing() {
 import json, re, sys
 out, err, shown = sys.argv[1:4]
 timeout = sys.argv[4] if len(sys.argv) > 4 else ""
-text = ""
+# What Volatility's automagic asked for is in its log. A log can be large, so it
+# is read in blocks, up to a budget, with a carry so a name cut by a block's end
+# is still found; the first match ends the search.
+BUDGET = 16 * 1024 * 1024
+BLOCK = 1 << 20
+CARRY = 512
+rx = re.compile(r"/download/symbols/([A-Za-z0-9_.-]+\.pdb)/([0-9A-Fa-f]{32})([0-9A-Fa-f]{1,8})/")
+m, spent = None, 0
 for f in (err, out):
+    tail = ""
     try:
-        text += open(f, encoding="utf-8", errors="replace").read()
+        with open(f, encoding="utf-8", errors="replace") as fh:
+            while not m and spent <= BUDGET:
+                block = fh.read(BLOCK)
+                if not block:
+                    break
+                spent += len(block)
+                text = tail + block
+                m = rx.search(text)
+                tail = text[-CARRY:]
     except OSError:
         pass
-m = re.search(r"/download/symbols/([A-Za-z0-9_.-]+\.pdb)/([0-9A-Fa-f]{32})([0-9A-Fa-f]{1,8})/", text)
+    if m or spent > BUDGET:
+        break
 if timeout:
     print(json.dumps([{"kind": "symbols", "what": f"vol --offline windows.info did not answer within {timeout}s on {shown}: whether this image holds the symbol table of its kernel is unknown, so what reads it may find nothing (raise RECIPE_PROBE_SECONDS, or SWARM_CATALOG_MEMORY_PROBE_TIMEOUT)"}]))
 elif m:
@@ -97,19 +140,26 @@ elif m:
     print(json.dumps([{"kind": "symbols", "identity": {"pdb": pdb, "guid": guid, "age": age},
                        "what": f"the symbol table of the Windows kernel {pdb} {guid} age {age}, which {shown} runs: this image does not hold it, so its Windows plugins cannot read it offline (what needs no kernel table still works: strings, YARA, carving)"}]))
 else:
-    print(json.dumps([{"kind": "symbols", "what": f"the symbol table of the Windows kernel {shown} runs: this image does not hold it, and the kernel's identity was not named"}]))
+    print(json.dumps([{"kind": "symbols", "what": f"the symbol table of the Windows kernel {shown} runs: this image does not hold it, and the kernel's identity was not named" + (" (the log was read up to a budget of %d bytes)" % BUDGET if spent > BUDGET else "")}]))
 PY
 }
 
 coverage() {
   python3 - "$out/coverage.json" "$1" "$2" "${missing_json:-[]}" "${notes[@]+"${notes[@]}"}" <<'PY'
-import json, sys
+import json, os, sys
 path, status, covered, missing, *notes = sys.argv[1:]
+steps = []
+try:
+    with open(os.path.join(os.path.dirname(path), "steps.jsonl"), encoding="utf-8") as fh:
+        steps = [json.loads(line) for line in fh if line.strip()]
+except OSError:
+    pass
 json.dump({"recipe": "memory-windows", "status": status, "covered": covered,
            "not_covered": "every other Volatility plugin; YARA without supplied rules; non-Windows images; unsupported hibernation or crash-dump variants",
            "missing": json.loads(missing),
            "limits_hit": [note for note in notes if "exit 142" in note],
-           "errors": notes}, open(path, "w"), indent=2)
+           "errors": notes,
+           "steps": steps}, open(path, "w"), indent=2)
 PY
 }
 
@@ -118,9 +168,11 @@ target=""
 probe_out=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --target) target="${2:-}"; shift 2 ;;
-    --out) out="${2:-}"; shift 2 ;;
-    --probe-out) probe_out="${2:-}"; shift 2 ;;
+    --target|--out|--probe-out)
+      # A flag with no value is an error, not a loop: `shift 2` with one word left shifts nothing.
+      [[ $# -ge 2 ]] || { echo "{\"ok\": false, \"error\": \"$1 needs a value\"}"; exit 2; }
+      case "$1" in --target) target="$2" ;; --out) out="$2" ;; --probe-out) probe_out="$2" ;; esac
+      shift 2 ;;
     *) echo '{"ok": false, "error": "unknown argument"}'; exit 2 ;;
   esac
 done
@@ -167,39 +219,46 @@ case "$cmd" in
     ;;
   run)
     [[ -n "$out" ]] || { echo '{"ok": false, "error": "run needs --out DIR"}'; exit 2; }
-    mkdir -p "$out"; : > "$out/index.tsv"
-    # Symbols the image holds first. When it holds none for this kernel,
-    # Volatility asks the symbol server once, which only a job whose network
-    # allows it reaches; coverage then says the symbols were fetched, and the
-    # offline attempt's output is kept beside the online one.
+    mkdir -p "$out"; : > "$out/index.tsv"; : > "$out/steps.jsonl"
+    # Said before the first step, so a run stopped anywhere leaves a coverage
+    # file that says it did not finish.
+    coverage partial "started; no step has finished (the run stopped before its end)"
+    # Volatility reads the symbol tables the image holds, and fetches nothing:
+    # every step runs with --offline. An image with no table for its kernel stops
+    # the run after windows.info, whose output is kept, with the kernel named.
     symbols="held in the image"
     VOLNET=(--offline)
     r="$(run_step "$STEP_TIMEOUT" "$out/windows.info.txt" vol --offline -q -f "$img" windows.info)"
-    if { [[ "$r" != ok ]] || ! grep -qi "NTBuildLab\|Kernel Base\|SystemTime" "$out/windows.info.txt" 2>/dev/null; } \
-       && grep -qi "symbol" "$out/windows.info.txt" "$out/windows.info.txt.stderr" 2>/dev/null; then
-      for f in windows.info.txt windows.info.txt.stderr; do [[ -f "$out/$f" ]] && mv "$out/$f" "$out/offline.$f"; done
-      # The image lacks the table: said in coverage (missing), whatever the symbol server answers.
-      missing_json="$(kernel_missing "$out/offline.windows.info.txt" "$out/offline.windows.info.txt.stderr" "$shown")"
-      index_row "offline.windows.info.txt" "vol --offline windows.info: no symbol table for this kernel in the image"
-      index_row "offline.windows.info.txt.stderr" "what vol --offline windows.info said on stderr"
-      r="$(run_step "$STEP_TIMEOUT" "$out/windows.info.txt" vol -q -f "$img" windows.info)"
-      VOLNET=()
-      symbols="fetched from the symbol server during the job (none for this kernel in the image)"
-    fi
+    index_row "windows.info.txt" "OS, build, capture time of $shown (vol --offline windows.info)"
+    index_row "windows.info.txt.stderr" "what vol --offline windows.info said on stderr"
+    index_row "steps.jsonl" "one record per step: the command, its exit, how long it took and what it wrote"
     if [[ "$r" != ok ]] || ! grep -qi "NTBuildLab\|Kernel Base\|SystemTime" "$out/windows.info.txt" 2>/dev/null; then
-      notes+=("vol windows.info on $shown: ${r/ok/ran but named no Windows image}")
+      if grep -qi "symbol" "$out/windows.info.txt" "$out/windows.info.txt.stderr" 2>/dev/null; then
+        # The image lacks the table: said in coverage (missing), and no plugin that
+        # reads kernel structures is run, since none would find them.
+        missing_json="$(kernel_missing "$out/windows.info.txt" "$out/windows.info.txt.stderr" "$shown")"
+        notes+=("vol --offline windows.info on $shown: no symbol table for this kernel in the image; it was not fetched, and the plugins that need it were not run")
+        coverage partial "windows.info was attempted offline; no symbol table for this kernel in the image, so no Windows plugin was run"
+        python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); print(json.dumps({"ok": True, "status": c["status"], "missing": c["missing"]}))' "$out/coverage.json"
+        exit 0
+      fi
+      if [[ "$r" == ok ]]; then why="ran but named no Windows image"; else why="$r"; fi
+      notes+=("vol windows.info on $shown: $why")
       coverage failed "nothing"
       echo '{"ok": false, "status": "failed"}'
       exit 2
     fi
-    index_row "windows.info.txt" "OS, build, capture time of $shown (vol windows.info)"
+    finished=0
+    coverage partial "windows.info finished; no plugin has yet (this file is rewritten after each step, so a run stopped part way says how far it got)"
     for plugin in pslist psscan pstree cmdline netscan malfind vadinfo handles modules svcscan dlllist; do
       r="$(run_step "$STEP_TIMEOUT" "$out/$plugin.txt" vol ${VOLNET[@]+"${VOLNET[@]}"} -q -f "$img" "windows.$plugin")"
       [[ "$r" == ok ]] || notes+=("vol windows.$plugin on $shown: $r")
       index_row "$plugin.txt" "vol windows.$plugin over $shown"
+      finished=$((finished + 1))
+      coverage partial "windows.info and $finished of eleven plugins have finished; the run did not reach its end (this file is rewritten after each step)"
     done
     while IFS= read -r f; do
-      rel="${f#"$out/"}"; index_row "$rel" "what the step writing ${rel%.stderr} said on stderr"
+      rel="${f#"$out/"}"; [[ "$rel" == windows.info.txt.stderr ]] || index_row "$rel" "what the step writing ${rel%.stderr} said on stderr"
     done < <(find "$out" -type f -name '*.stderr' | sort)
     if [[ ${#notes[@]} -gt 0 ]]; then coverage partial "windows.info and the plugins that finished; symbols $symbols"; else coverage complete "windows.info and eleven plugins; symbols $symbols"; fi
     python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); print(json.dumps({"ok": True, "status": c["status"]}))' "$out/coverage.json"

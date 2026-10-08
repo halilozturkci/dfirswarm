@@ -373,7 +373,7 @@ slow="$(VOL_STUB_SLOW=1 RECIPE_PROBE_SECONDS=1 PATH="$TMP/volshim:$PATH" bash "$
   || fail "a probe that did not answer passed silently (rc $rc): $slow"
 VOL_STUB_NO_TABLE=1 PATH="$TMP/volshim:$PATH" bash "$MW" run --target "$T" --out "$TMP/mw-out" >/dev/null
 jq -e '.missing[0].identity.guid == "0123456789ABCDEF0123456789ABCDEF"' "$TMP/mw-out/coverage.json" >/dev/null || fail "the run's coverage does not say what is missing: $(cat "$TMP/mw-out/coverage.json")"
-grep -q 'OfflineException' "$TMP/mw-out/offline.windows.info.txt.stderr" || fail "Volatility's stderr is not kept whole"
+grep -q 'OfflineException' "$TMP/mw-out/windows.info.txt.stderr" || fail "Volatility's stderr is not kept whole"
 jq -e '.auto == ["kickoff", "derived"]' "$ROOT/packs/computer-forensics-base/recipes/memory-windows/recipe.json" >/dev/null || fail "memory-windows is no longer what the census and the derived catalogue ask"
 [[ ! -d "$ROOT/packs/memory-forensics/recipes" ]] || fail "a second recipe probes the same memory image again"
 pass "memory-windows names a Windows image's kernel offline when the image lacks its table, says a probe that did not answer left it unknown, and its run's coverage says what is missing: one probe and one generation per input"

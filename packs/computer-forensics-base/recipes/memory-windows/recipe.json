@@ -1,7 +1,7 @@
 {
   "id": "memory-windows",
-  "version": "1.1.0",
-  "description": "A Windows memory image's OS and capture time, live/scanned process views and tree, command lines, handles, services, network connections, suspicious executable regions, VADs, kernel modules and loaded DLLs (Volatility 3, the image's symbols first). When the image holds no symbol table for the kernel, it names the kernel (PDB, GUID, age) as missing, which stops a kickoff unless --allow-missing-symbols.",
+  "version": "1.2.0",
+  "description": "A Windows memory image's OS and capture time, live/scanned process views and tree, command lines, handles, services, network connections, suspicious executable regions, VADs, kernel modules and loaded DLLs (Volatility 3, offline, the image's own symbol tables only: nothing is fetched). When the image holds no symbol table for the kernel, it names the kernel (PDB, GUID, age) as missing, runs no plugin that needs symbols and reports coverage partial; a kickoff stops on the missing table unless --allow-missing-symbols.",
   "object": "memory image",
   "order": 20,
   "min_bytes": 67108864,
@@ -70,16 +70,17 @@
     "svcscan.txt",
     "dlllist.txt",
     "index.tsv",
-    "coverage.json"
+    "coverage.json",
+    "steps.jsonl"
   ],
   "purpose": "broad_extraction",
   "capability": "windows-memory-views",
   "exclusions": [
     "every Volatility plugin other than windows.info and the eleven listed (no registry, file, timeline or YARA scan)",
     "Linux and macOS memory images, and hibernation or crash-dump variants Volatility does not open",
-    "an image whose kernel symbols are neither in the image nor fetched from the symbol server (the network may not allow it)",
+    "an image whose kernel symbol table is not in the image: it is named as missing and no plugin that needs it is run (the recipe never fetches symbols; the operator supplies them)",
     "memory the capture did not hold: paged-out or swapped regions"
   ],
-  "covers": "What windows.info and the eleven listed Volatility plugins report with symbols already in the image. Linux and macOS images, unsupported hibernation/crash-dump variants, YARA rules and every other plugin are not covered; symbols come from the image first, and from the symbol server only when the image has none for the kernel and the job's network allows it, which coverage says.",
-  "sha256": "9d51fa8e448307e040020e3c110c0e9db65cdd6699b62ae0d79dfb702a109f7f"
+  "covers": "What windows.info and the eleven listed Volatility plugins report with the symbol tables the image already holds (Volatility runs offline at every step). Linux and macOS images, unsupported hibernation/crash-dump variants, YARA rules and every other plugin are not covered. An image with no table for its kernel is partial: windows.info's output is kept, the kernel is named as missing, and no plugin is run. Each step's command, exit status, duration and outputs are in steps.jsonl; an exit status of zero means Volatility ran, and a plugin that printed nothing does not show the artefact is absent.",
+  "sha256": "676867d6ffbd81ef40650ee4f34dbe50a0097fc463bf3ce9d0977a7c43fe09b0"
 }

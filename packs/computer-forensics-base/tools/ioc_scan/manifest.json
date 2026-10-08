@@ -1,6 +1,6 @@
 {
   "name": "ioc_scan",
-  "description": "Stream a large binary for ASCII and UTF-16LE needles; return offsets, unique strings, and context snippets.",
+  "description": "Stream a large binary for ASCII and UTF-16LE needles and return locators: for every occurrence an id, its start offset, the needle, the encoding and how many bytes of context surround it. Context bytes are NOT returned by default (they are where passwords, tokens and card numbers sit): write_values: true, only in a job run with secret_output: true, writes them to a 0600 file under $OUT, and the answer names that file and says it holds secret values. Every occurrence is kept, overlapping ones included, so counts do not depend on chunk; matching is case-sensitive; scanned_start, scanned_end and bytes_scanned are what was actually read. unique_only (default true) only hides repeats of an identical context from the inline page; all_results has every occurrence. Needles are recorded in the trace: never put a secret in one. The file is read as given (an E01 is its container bytes). earlier_answers says how many other files answer the same question.",
   "params": {
     "path": {
       "type": "string",
@@ -8,15 +8,15 @@
     },
     "needles": {
       "type": "string",
-      "description": "Pipe-separated ASCII needles"
+      "description": "Pipe-separated needles, searched as given and as UTF-16LE; never a secret. Left out, a default set runs; an empty value is refused. The answer lists the needles that ran (needles_that_ran) and where they came from"
     },
     "max_hits": {
       "type": "integer",
-      "description": "Max hit records to return"
+      "description": "Locators returned inline (default 80); every one is in all_results when there are more"
     },
     "context": {
       "type": "integer",
-      "description": "Snippet bytes after match"
+      "description": "Bytes of context after a match counted in context_length, and written with write_values (0 to 65536, default 96)"
     },
     "start": {
       "type": "integer",
@@ -28,7 +28,7 @@
     },
     "chunk": {
       "type": "integer",
-      "description": "Read chunk size"
+      "description": "Read chunk size, 16 bytes to 256 MiB (default 8 MiB); results do not depend on it"
     },
     "skip_zeros": {
       "type": "boolean",
@@ -36,7 +36,11 @@
     },
     "unique_only": {
       "type": "boolean",
-      "description": "Dedup similar snippets"
+      "description": "Hide repeats of an identical context from the inline page (default true); every occurrence stays in all_results"
+    },
+    "write_values": {
+      "type": "boolean",
+      "description": "Write each occurrence's context to a 0600 file under $OUT. Refused outside a job; run the job with secret_output: true. Default false."
     }
   },
   "runtime": "python3",
@@ -45,6 +49,6 @@
   "example": "{\"path\": \"inputs/[UNALLOCATED]\", \"needles\": \"sysinternals|psexec|http://|https://|IEUser\", \"max_hits\": 30, \"length\": 50000000}",
   "by": "s183900",
   "at": "2026-09-18T22:16:43.028Z",
-  "version": 3,
-  "sha256": "9f4f78324179f6ce6a2057cac5b65e5afe849c575b7b140e8028cc515907e4ab"
+  "version": 4,
+  "sha256": "a1c9eae213529f5d0bc9fd8fd5d345ebdd4dc434bf16f1ca0ad6a2bb08c8f680"
 }
