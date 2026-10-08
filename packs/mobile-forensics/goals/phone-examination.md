@@ -10,11 +10,13 @@ what can be asked at all, and it comes before everything else.
 1. The extraction: what kind it is, what it therefore cannot contain, the
    device it came from, and whether it is encrypted.
 2. The device profile: operating system version, identifiers, the accounts on
-   it, and the applications installed with their install times and installers.
+   it, and the applications installed with their install and update times and
+   what the package records say about installer, initiator and origin (a field
+   that is missing or not a store is not a finding by itself).
 3. Communications: messages, calls and the contacts behind them, with the
    database each came from.
-4. What was deleted and recovered: the fragment, the page it came from, and what
-   is inference rather than a row.
+4. What was deleted and recovered: the fragment, the page and offset it came
+   from, the source it was read in, and what is inference rather than a row.
 5. Location: where the device recorded being, with the accuracy of each fix and
    the source that produced it.
 6. Activity: what ran, when, and for how long.
@@ -51,7 +53,8 @@ has recorded `attest` or `dispute` on each answer, saying what they verified.
 
 - `test -f work/report.md`
 - `for n in 1 2 3 4 5 6 7 8; do grep -q "^## $n\." work/report.md || exit 1; done`
-- `grep -qiE 'logical|full file system|physical|backup' work/report.md`
+- `awk 'BEGIN{r=1} /^## 1\./{f=1;next} /^## 2\./{f=0} f && tolower($0) ~ /logical|full file system|physical|backup|app export/ {r=0} END{exit r}' work/report.md`
+  (answer 1 states the kind of extraction: one awk reads that section only, and no pipe, so that a long answer cannot end a `grep -q` early and fail the check on a closed pipe)
 - `test "$(grep -c '"kind":"event"' ledger/entries.jsonl)" -ge 6`
 - `node --experimental-strip-types --no-warnings "$SWARM_HARNESS/scripts/check-answers.ts" --sections 1,2,3,4,5,6,7,8,summary,narrative`
 - `grep '"tool":"inputs_check"' traces/events.jsonl | tail -1 | grep -q '"content_ok":true'`

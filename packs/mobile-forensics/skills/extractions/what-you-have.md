@@ -1,57 +1,32 @@
 ---
 id: extractions/what-you-have
-title: What kind of extraction you were handed
-when: The evidence is a phone, or something taken off one.
-needs: [evidence/collections]
+title: Mobile extraction scope and authority
+when: Start here: a phone, backup or app export, before any question.
+needs: []
 tools: [manifest_db, file_type]
 requires_host: []
 ---
 
-Nothing else in this pack matters until this is settled, because the answer
-decides what questions are even askable.
+Use when the evidence is a phone, a backup or an app export and you have not yet said what it can answer. Not for parsing artefacts (`ios/artifacts`, `android/artifacts`).
 
-    Full file system        every file the device has, including app sandboxes
-                            and the databases that carry deleted rows
-    Logical / backup        what the backup protocol exposes: some app data,
-                            no system logs, no unallocated space
-    Advanced logical        a backup plus what a few agent tricks add
-    Physical                a bit-for-bit image. On modern phones, rare to
-                            impossible: the storage is encrypted at rest and the
-                            keys are in hardware
-    An app export           one application's own "download my data"
+**Record first** (`evidence/verify`, `evidence/collections`): who supplied it, acquisition tool and version, device model, OS build, acquisition time and clock, container digest, the acquisition log, missing segments. A supplied extraction does not authorise another device, a cloud account or a change to the phone: unclear scope goes to the operator.
 
-**A logical extraction cannot answer a question about deletion.** There is no
-unallocated space in it, no file slack, and no journal beyond what SQLite itself
-carries inside each database. Say that once, plainly, rather than reporting that
-nothing was found.
+**Name the kind from the record and the contents** (`file_type`, the recipe catalogues), not from the label:
+- full file system: the files the method could read. Not every file, protection class or plaintext app database, and no device free space unless the record says so.
+- logical or backup: what the interface exposed under its policies; list the included and excluded classes from the record.
+- "advanced logical", "physical": vendor words; ask for the component methods. Physical bytes can be ciphertext.
+- app export: the app's own selection, often without database structure, deleted records or full attachment data.
 
-**An iOS backup is not a file tree.** It is a flat directory of files named by a
-hash, with `Manifest.db` mapping each hash to the domain and relative path it
-came from. `manifest_db` reads that map. Without it the files are unusable;
-with it they are a file system.
+**Deletion.** A logical extraction has no device free space, but a database in it can hold deleted records in its own free pages and journals (`apps/databases`). Answer a deletion question only from the sources you hold, and name the ones you do not.
 
-For an iOS full-file-system tar, inspect the `mobile-forensics/ios-filesystem`
-catalogue generation first. It lists the domain artefacts and every SQLite
-database with its `-wal`, `-shm` and rollback-journal companions without
-extracting the archive. If there is no generation, request that recipe rather
-than repeatedly listing the whole tar.
+**Protection state.** Take lock state and keys from the operator, not from a label. A locked profile, an unacquired one or an encrypted blob is a coverage gap, never an empty source. For an iOS backup or an Android `.ab`, `manifest_db` and the `android-backup` recipe read the plain parts and say what is encrypted: fetch `extractions/backup-detail`. No decryption is provided here; do not guess at a password.
 
-**An encrypted iOS backup is encrypted at the file level**, and the flag is in
-`Manifest.plist`. If it is set and nobody has the password, the extraction is
-inert: say so and stop, rather than reporting empty databases.
+**Recipes.** iOS tar: the `ios-filesystem` catalogue first (its `sqlite.tsv` finds databases by file name suffix, with their `-wal`, `-shm` and `-journal`; a database with another name is not listed). `ios-ileapp` and `android-aleapp` are run by the kickoff: read their `modules.tsv`. `android-backup-apps` is declared unavailable (nothing turns `apps/<package>/` into the layout ALEAPP reads): say so and read the databases the `android-backup` member list names. A finished inventory is not a finished examination.
 
-**Android varies by version and by vendor.** `/data/data/<package>` is the app
-sandbox, `/data/user/0` is the same thing on a multi-user device, and
-`/sdcard` is shared storage with nothing private in it. A "backup" made with
-`adb backup` is deprecated, partial, and silently excludes any app that opted
-out.
+Shows: the acquisition method, its stated scope, the files it could read and what the record says it excluded.
 
-An Android `.ab` begins with `ANDROID BACKUP`, then version, compression and
-encryption lines. Use the `mobile-forensics/android-backup` catalogue: an
-unencrypted payload is inventoried member by member; an encrypted one is
-reported as header-only until its password is supplied. A complete member list
-still does not prove completeness because application policy decided what the
-backup command was allowed to include.
+Does not show: that the extraction is the whole device, who used it, or that a listed path holds records.
 
-Record what you were given and by whom, with the hash of the container, before
-anything else. See `evidence/verify` in the base pack.
+Record: kind, what it cannot hold, protection state, each source unreadable and why.
+
+Sensitive output: a job over a keychain, an account or a message store runs with `secret_output: true`; write where a secret sits and what it grants, never its value or a hash.
