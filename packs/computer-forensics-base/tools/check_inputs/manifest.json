@@ -1,12 +1,17 @@
 {
   "name": "check_inputs",
-  "description": "Diff inputs/ against inputs.json (size and sha256). Fails if the manifest is missing or any file differs.",
-  "params": {},
+  "description": "Diff inputs/ against inputs.json (size and sha256). The manifest is validated whole first: a malformed entry, a duplicate path, a regular file with no size or no sha256 (a size-only check is not a verification) are reported, never skipped. A file that cannot be opened is unreadable, one not reached before the time budget is not_checked, and neither passes. Links are checked by their target and pipes, sockets and devices by their kind. Every file's result is written, as it is checked, to a receipts file of its own for this run. A directory under inputs/ that cannot be listed is unreadable. Returns modified, missing, added and checked as before, plus malformed, duplicates, digest_missing, unreadable, not_checked and bytes_hashed. A pass means agreement with the baseline: it does not show the evidence is authentic or complete. This is the pack tool's receipt; the harness's own inputs_check event is written by the harness at completion, not by this tool.",
+  "params": {
+    "max_seconds": {
+      "type": "integer",
+      "description": "Hashing budget in seconds (default 1500, at most 1700, inside the tool's own 1800 second limit); files not reached are reported as not_checked and the run fails"
+    }
+  },
   "runtime": "python3",
   "entry": "run.py",
-  "timeout_seconds": 30,
+  "timeout_seconds": 1800,
   "by": "sfcc304",
   "at": "2026-09-18T15:41:47.088Z",
-  "version": 2,
-  "sha256": "3717f009cdceb8b3e3dec15decf3c3512ff9ca4aaca1714b98194afce6d62e2a"
+  "version": 4,
+  "sha256": "07a8b9d0fecf9f4205346f02da169e5caa4a9c5c114918183beea67f1879d848"
 }

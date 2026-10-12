@@ -2,14 +2,14 @@
 
 Fetch a body with `skill("<id>")`. A body may name others; fetch those the same way.
 
-- `evidence/catalog` Read the catalogue before you spend a token: At the start, and whenever you are about to run a broad listing yourself.
-- `evidence/collections` A triage collection is not an image: The evidence is a zip, a directory tree of copied files or an AD1 logical image rather than a disk.
-- `evidence/imaging` What you were handed, and the offset every other command needs: Before your first listing, and any time a command says the image has no file system.
-- `evidence/verify` Prove the evidence is what you were handed, and that it stays that way: Before the first command of any case, and again before you write the report.
-- `filesystem/carving` Find structure where there is no file system: Unallocated space, a memory dump, slack, or a volume the toolkit cannot read.
-- `filesystem/encrypted` A volume the toolkit cannot read: fsstat refuses a partition, or the listing is one file you cannot open.
-- `filesystem/extract` Get a file out of an image, and prove which file it was: You need the bytes of something the listing names.
-- `reporting/citations` Every claim cites something a reviewer can re-run: Whenever you write into the report or sign one off.
-- `reporting/disagreement` Disagreeing, vetoing, and correcting after a sign-off: A peer's conclusion is wrong, or yours was.
-- `timeline/build` A timeline a second reader can trust: As soon as you have two dated facts, and continuously after that.
-- `timeline/super` The machine timeline, and what it is not: You need the window an incident happened in, or the evidence is too large to read artefact by artefact.
+- `evidence/catalog` Use the catalogue with its coverage and revision: At the start, before repeating preparation, interpreting a listing, or reporting a catalogue search.
+- `evidence/collections` Establish what a logical collection actually contains: Evidence arrives as copied files, an archive or an AD1 logical image.
+- `evidence/imaging` Identify the container, storage layers and address space: Before listing a disk or volume, converting a container, or diagnosing an unreadable source.
+- `evidence/verify` Establish evidence identity, integrity and provenance: Before substantive examination, after an integrity concern, and before reporting.
+- `filesystem/carving` Recover candidate structures and validate their limits: Relevant data is outside a readable file, or survives only as residual bytes.
+- `filesystem/encrypted` Distinguish encryption from other causes of unreadability: A supported reader cannot open a source, or validated metadata identifies encryption.
+- `filesystem/extract` Get a file out of an image, and say which record it came from: You need the bytes of something the listing names.
+- `reporting/citations` Connect each answer to inspectable evidence and its limits: Recording a material claim, reviewing an answer, or preparing the report.
+- `reporting/disagreement` Correct the evidence record and every dependent conclusion: A finding is disputed, or new evidence changes a reviewed result.
+- `timeline/build` Preserve timestamp meaning and uncertainty: Before interpreting or combining dated observations.
+- `timeline/super` Build and validate a scoped machine timeline: Broad parser output can identify relevant events or improve source coverage.

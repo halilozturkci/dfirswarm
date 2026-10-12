@@ -6,34 +6,7 @@
 # up to the standard empties that pack's lines; the last one deletes this file
 # and makes PACK_LINKS_STRICT=1 the default. PACK_LINKS_VERBOSE=1 prints each
 # finding with its reason.
-computer-forensics-base closure skills/evidence/collections.md CyLR
-computer-forensics-base closure skills/evidence/collections.md evtx_query
-computer-forensics-base closure skills/evidence/collections.md mft_records
-computer-forensics-base closure skills/evidence/collections.md regkv
-computer-forensics-base closure skills/evidence/imaging.md CyLR
-computer-forensics-base unlisted skills/evidence/collections.md target-query
-computer-forensics-base unlisted skills/evidence/imaging.md fsapfsinfo
-computer-forensics-base unlisted skills/evidence/imaging.md icat
-computer-forensics-base unlisted skills/evidence/imaging.md qemu-img
-computer-forensics-base unlisted skills/evidence/imaging.md target-query
-computer-forensics-base unlisted skills/evidence/verify.md image_layout
-computer-forensics-base unlisted skills/filesystem/carving.md bulk_extractor
-computer-forensics-base unlisted skills/filesystem/encrypted.md bdeinfo
-computer-forensics-base unlisted skills/filesystem/encrypted.md cryptsetup
-computer-forensics-base unlisted skills/filesystem/encrypted.md dislocker
-computer-forensics-base unlisted skills/filesystem/encrypted.md fls
-computer-forensics-base unlisted skills/filesystem/encrypted.md fsstat
-computer-forensics-base unused skills/evidence/catalog.md fsstat
-computer-forensics-base unused skills/evidence/catalog.md mmls
-computer-forensics-base unused skills/evidence/collections.md check_inputs
-computer-forensics-base unused skills/evidence/collections.md file_type
-computer-forensics-base unused skills/filesystem/carving.md chunk_needles
-computer-forensics-base unused skills/filesystem/extract.md icat_extract
-computer-forensics-base unused skills/filesystem/extract.md sig_carve
-computer-forensics-base unused skills/timeline/build.md timeline_super
-computer-forensics-base unused skills/timeline/super.md catalog_search
-computer-forensics-base unused skills/timeline/super.md log2timeline
-computer-forensics-base unused skills/timeline/super.md psort
+encrypted-containers unlisted skills/archives/protected.md 7z
 linux-forensics unlisted skills/containers/docker.md journalctl
 linux-forensics unlisted skills/filesystem/ext.md icat
 linux-forensics unlisted skills/triage/system-profile.md fsstat
@@ -53,9 +26,11 @@ linux-forensics unused skills/triage/system-profile.md fls
 linux-forensics unused skills/triage/system-profile.md icat
 linux-forensics unused skills/triage/system-profile.md target-query
 linux-forensics unused skills/triage/system-profile.md timestamp_decode
+mobile-forensics unlisted skills/ios/artifacts.md exiftool
 mobile-forensics unlisted skills/ios/artifacts.md protobuf_peek
 mobile-forensics unlisted skills/ios/artifacts.md timestamp_decode
 mobile-forensics unlisted skills/ios/biome-segb.md protobuf_peek
+mobile-forensics unlisted skills/location/sources.md exiftool
 mobile-forensics unused skills/extractions/what-you-have.md file_type
 mobile-forensics unused skills/ios/artifacts.md manifest_db
 mobile-forensics unused skills/ios/artifacts.md plist_read

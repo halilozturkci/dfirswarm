@@ -96,7 +96,15 @@ for tool in ileapp aleapp; do
 while [[ \$# -gt 0 ]]; do case "\$1" in -o) out="\$2"; shift 2;; -t) kind="\$2"; shift 2;; *) shift;; esac; done
 [[ -n "\${STANDIN_SLEEP:-}" ]] && sleep "\$STANDIN_SLEEP"
 d="\$out/${up}_Reports_2026-09-29"; mkdir -p "\$d/_TSV Exports" "\$d/_Timeline" "\$d/_HTML"
+echo "Artifact to parse: 2"
+echo "[1/2] Messages [messages] artifact started at 09:29:44 UTC"
 printf 'time\tfrom\n1\t2\n' > "\$d/_TSV Exports/Messages (\$kind).tsv"
+echo "Found 1 record for Messages"
+echo "Messages [messages] artifact completed in 0.0s"
+echo "[2/2] Notes [notes] artifact started at 09:29:44 UTC"
+echo "No file found"
+echo "Notes [notes] artifact completed in 0.0s"
+echo "Processes completed."
 : > "\$d/_Timeline/tl.db"; : > "\$d/_HTML/index.html"
 SH
   chmod +x "$WORK/bin/$tool"
@@ -142,8 +150,10 @@ jq -e '.status == "unsupported" and (.why | test("app tree"))' <<<"$out" >/dev/n
 jq -e '.status == "failed"' "$WORK/baa-out/coverage.json" >/dev/null
 [[ "$(jq -r .unavailable "$PACK/recipes/android-backup-apps/recipe.json")" == *"app tree"* && "$(jq -c .auto "$PACK/recipes/android-backup-apps/recipe.json")" == "[]" ]]
 
-printf '%s' "{\"path\":\"$WORK/backup\"}" | python3 "$PACK/tools/manifest_db/run.py" > "$WORK/manifest.json"
-jq -e '.encrypted == false and .entry_count == 750 and (.domains | length) == 30 and .truncated == null' "$WORK/manifest.json" >/dev/null
+(cd "$WORK" && AGENT_ID=t1 python3 "$PACK/tools/manifest_db/run.py" <<<"{\"path\":\"$WORK/backup\"}" > "$WORK/manifest.json")
+jq -e '.encrypted == false and .encryption.state == "not_encrypted" and .entry_count == 750 and (.domains | length) == 30 and .truncated == true and .pages.entries.matched == 750' "$WORK/manifest.json" >/dev/null
+# nothing is cut: the whole listing is in the file the answer names
+[[ "$(wc -l < "$WORK/$(jq -r .pages.entries.all_results "$WORK/manifest.json")")" -eq 750 ]]
 
 python3 - "$PACK" "$WORK" <<'PY'
 import json, os, subprocess, sys
@@ -158,21 +168,38 @@ def varint(value):
         if not value:
             return bytes(out)
 
+def job(tool, args, name):
+    """The tool as a job runs it: JOB_ID and OUT set, OUT inside the working directory."""
+    out = os.path.join(work, name)
+    os.makedirs(out, exist_ok=True)
+    env = dict(os.environ, JOB_ID="j-" + name, OUT=out)
+    proc = subprocess.run([sys.executable, os.path.join(pack, "tools", tool, "run.py")], input=json.dumps(args),
+                          text=True, capture_output=True, check=True, env=env, cwd=work)
+    return json.loads(proc.stdout), out
+
+def values(out, name):
+    return [json.loads(line) for line in open(os.path.join(out, name), encoding="utf-8")]
+
 text = b"z" * 3000
 field = varint(10) + varint(len(text)) + text
 blob = field + b"".join(varint(16) + varint(n) for n in range(700))
-proc = subprocess.run([sys.executable, os.path.join(pack, "tools/protobuf_peek/run.py")],
-                      input=json.dumps({"hex": blob.hex()}), text=True, capture_output=True, check=True)
-result = json.loads(proc.stdout)
-assert len(result["fields"]) == 701
-assert result["fields"][0]["text"] == text.decode()
+result, out = job("protobuf_peek", {"hex": blob.hex(), "write_values": True}, "pb")
+assert result["field_count"] == 701 and result["structure"]["status"] == "valid", result["structure"]
+# The text is in the values file, whole, and not in the answer.
+assert values(out, "protobuf-values.jsonl")[0]["value"] == text.decode()
+assert text.decode() not in json.dumps(result)
 
+result, out = job("sqlite_freespace", {"db": os.path.join(work, "free.db"), "contains": "recover-", "write_values": True}, "fs")
+found = values(out, "sqlite-freespace-values.jsonl")
+assert any(len(item["value"]) > 1000 for item in found), result
+assert result["fragment_count"] == len(found) and result["fragments"][0]["offset_verified"] is True
+assert all("text" not in item for item in result["fragments"])
+
+# Not in a job: the values are refused, and nothing is written.
 proc = subprocess.run([sys.executable, os.path.join(pack, "tools/sqlite_freespace/run.py")],
-                      input=json.dumps({"db": os.path.join(work, "free.db"), "contains": "recover-"}),
-                      text=True, capture_output=True, check=True)
-result = json.loads(proc.stdout)
-assert any(len(item["text"]) > 1000 for item in result["fragments"]), result
-assert "truncated" not in result
+                      input=json.dumps({"db": os.path.join(work, "free.db"), "write_values": True}),
+                      text=True, capture_output=True, cwd=work)
+assert proc.returncode != 0 and "outside a job" in json.loads(proc.stdout)["error"], proc.stdout
 PY
 
 echo "mobile-forensics pack tests passed"

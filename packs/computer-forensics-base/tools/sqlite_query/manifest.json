@@ -1,30 +1,48 @@
 {
   "name": "sqlite_query",
-  "description": "Run a read-only sqlite3 query against a database file and return stdout/stderr plus exit code.",
+  "description": "Run a read-only SQL query over a SQLite database file through Python's sqlite3 module and an authorizer that allows reading only (no write, ATTACH, extension or setting pragma), and return typed rows: an inline page (limit, and a byte ceiling) and, when the result is more, the whole of it as JSON Lines in rows_file. NULL is null, a BLOB is {blob_b64, length, sha256}, text that is not UTF-8 keeps its bytes. The database is opened immutable: a -wal or -shm beside it is inventoried (size, sha256, WAL frames) but NOT applied, so a row committed only in the WAL is missing from the result, which snapshot_status says; a hot rollback journal is said too. Several statements run one by one. A file that is not SQLite is reported with its first bytes and entropy: high entropy is not identified, and encryption is one explanation among others. It does not recover deleted records or read unallocated pages. earlier_answers says how many other files answer the same question (a different answer is kept as name.2.jsonl, never over the first).",
   "params": {
     "db_path": {
       "type": "string",
-      "description": "Path to the SQLite database file."
+      "description": "Path to the SQLite database file (the main file; a -wal beside it is reported, not applied).",
+      "required": true
     },
     "sql": {
       "type": "string",
-      "description": "SQL statement(s) to run."
+      "description": "One or more SQL statements: SELECT, WITH, VALUES, EXPLAIN, or a PRAGMA that only reports.",
+      "required": true
     },
     "csv": {
       "type": "boolean",
-      "description": "Emit CSV with headers via sqlite3 -csv -header when true."
+      "description": "Render stdout, the text of the inline page, as CSV with a header (default: the shell's |-separated list without one)."
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Rows in the inline page (default 100, at most 10000); the whole result is in rows_file when it is more."
+    },
+    "max_seconds": {
+      "type": "integer",
+      "description": "Stop the query after this long (default 25, at most 110); the rows before it are kept and the result says it stopped."
     },
     "readonly": {
       "type": "boolean",
-      "description": "Open the database in immutable read-only mode when true."
+      "description": "Accepted only as true: this tool never opens a database for writing."
     }
   },
   "runtime": "python3",
   "entry": "run.py",
-  "timeout_seconds": 30,
-  "example": "{\"db_path\":\"work/extracted/memory/chrome_History\",\"sql\":\"select count(*) from urls;\",\"csv\":true,\"readonly\":true}",
+  "timeout_seconds": 120,
+  "example": "{\"db_path\":\"work/extracted/memory/chrome_History\",\"sql\":\"select count(*) from urls;\",\"csv\":true}",
+  "use": {
+    "magic": [
+      {
+        "offset": 0,
+        "hex": "53514c69746520666f726d6174203300"
+      }
+    ]
+  },
   "by": "s881002",
   "at": "2026-09-18T13:31:25.586Z",
-  "version": 3,
-  "sha256": "ca4160a64010a8a7e00ca914a8cf3801a84c30ee4ef6ad54c11720042af59a7c"
+  "version": 4,
+  "sha256": "2178cc3fcb47655dab08310015d0d0399cf6e13fa3969b3136044bdf3bff6253"
 }

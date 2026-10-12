@@ -1,22 +1,31 @@
 {
   "name": "sig_carve",
-  "description": "Scan a binary file for multiple file signatures (magic bytes) and return offsets, context, and estimated sizes. Signatures defined inline.",
+  "description": "A signature scan: find where known file headers (magic bytes) occur in a binary file, in one pass over it, and count every offset: the first max_hits of each signature come back with a preview (up to 32 bytes in hex and 64 as ASCII, none when context is 0), and every hit is in all_results when there are more. It carves nothing and estimates no size: a hit is where the bytes occur, not a file, so cut a decisive hit with file_carver (or read it in place) and check it with a parser of that format. Each header is found once, at its true offset, whatever the read size; an unknown signature name is an error, not an empty result. SCCA hits name candidate_start (the hit minus 4). The answer says which file and what range were scanned; a scan that reaches its time budget (about 100 seconds) answers for the range it covered, says scanned.complete: false and scanned.stopped, and names where to go on (start), with exit 0 (the engine ran); a read error exits 1. The file is read as given: an E01 or other container is its container bytes, not the disk inside. earlier_answers says how many other files answer the same scan.",
   "params": {
     "path": {
       "type": "string",
-      "description": "Path to binary file to scan"
+      "description": "Path to the binary file to scan",
+      "required": true
     },
     "sig": {
       "type": "string",
-      "description": "Signature name (MZ,PK,regf,MAM,SCCA,EVTX,OLE,LNK,SQLite,RAR,7z,GZ,BZ2,PDF,PNG,JFIF,PCH) or 'all'"
+      "description": "Signature name (MZ,PK,regf,MAM,SCCA,EVTX,OLE,LNK,SQLite,RAR,7z,GZ,BZ2,PDF,PNG,JFIF,PCH) or 'all' (default)"
     },
     "context": {
       "type": "integer",
-      "description": "Context bytes to show (default 64)"
+      "description": "Preview bytes from each hit (0 to 4096, default 64)"
     },
     "max_hits": {
       "type": "integer",
-      "description": "Max hits per signature (default 500)"
+      "description": "Hits returned inline per signature (default 500); every hit is in all_results when there are more (a file that cannot be written is said in all_results_error, and the count stays whole)"
+    },
+    "start": {
+      "type": "integer",
+      "description": "Byte offset to scan from (default 0): the way to go on after a scan stopped at its time budget, which says where. A header that begins before it and ends after it is found once; one wholly before it is not this scan's."
+    },
+    "window_bytes": {
+      "type": "integer",
+      "description": "Read block size (16 to 256 MiB, default 8 MiB); results do not depend on it"
     }
   },
   "runtime": "python3",
@@ -25,6 +34,6 @@
   "example": "{\"path\": \"inputs/[UNALLOCATED]\", \"sig\": \"all\", \"max_hits\": 10}",
   "by": "s183906",
   "at": "2026-09-18T22:13:29.602Z",
-  "version": 1,
-  "sha256": "bfa35a1fe1c14e645ff881dcf662f8c5e72697540a71b7da7fee5ceb37925c95"
+  "version": 2,
+  "sha256": "413725448328b5afcf76b18f2a8ac10ae32d2ca9accc7517dc92e16301fcd06c"
 }
