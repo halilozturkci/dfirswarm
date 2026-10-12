@@ -20,7 +20,10 @@
  * same code the console's Packs tab runs): whether its prompt carried the
  * index, how many bodies it loaded and what they cost in tokens, which of them
  * a later row names or uses (a proxy, labelled as one), which a compaction
- * took out of its context and whether it loaded them again.
+ * took out of its context and whether it loaded them again, which the
+ * harness released (replaced by a one-line stub after skill_done), the tokens
+ * that took out of its context and how many it loaded again afterwards (the
+ * wasted-release rate).
  *
  * Pure on purpose: reads one file, prints Markdown (or JSON with --json).
  */
@@ -390,6 +393,23 @@ export function skillFindings(skills: RunSkills): string[] {
       out.push(`${t.loads_without_tools} of the loads come from rows that carry no tools list (a trace from before the harness wrote it): only a mention of the skill's id can show their use, so "no trace of use" is an upper bound there.`);
     }
   }
+  const policies = skills.seats.map((s) => s.release_policy).filter((p): p is NonNullable<typeof p> => p !== null);
+  if (policies.length) {
+    const kinds = [...new Set(policies.map((p) => `${p.effective} (${p.class}, --skill-release ${p.mode})`))];
+    out.push(`Skill release: ${kinds.join("; ")}.`);
+  }
+  if (t.released > 0 || t.done > 0) {
+    const rate = t.released > 0 ? Math.round((t.reloaded_after_release / t.released) * 100) : null;
+    out.push(
+      `${t.released} loaded bod${t.released === 1 ? "y was" : "ies were"} released from the seat's context (${fmt(t.tokens_released)} tokens; ${t.released_at_compaction} at a compaction, ${t.released - t.released_at_compaction} at a turn boundary after skill_done); ${t.reloaded_after_release} ${t.reloaded_after_release === 1 ? "was" : "were"} loaded again afterwards${rate !== null ? ` (wasted-release rate ${rate}%)` : ""}.`,
+    );
+  }
+  if (t.replies_after_release + t.replies_after_compaction > 0) {
+    const word = (n: number) => `${n} thinking block${n === 1 ? "" : "s"}`;
+    out.push(
+      `Anthropic's replies say it dropped ${word(t.thinking_dropped_after_release)} from the history in the ${t.replies_after_release} first repl${t.replies_after_release === 1 ? "y" : "ies"} after a release and ${word(t.thinking_dropped_after_compaction)} in the ${t.replies_after_compaction} after a compaction (a block is dropped when what comes before it was changed).`,
+    );
+  }
   if (t.already_loaded > 0) out.push(`${t.already_loaded} call${t.already_loaded === 1 ? "" : "s"} asked for a body the seat already held and was told so instead of being sent it again.`);
   if (t.failed > 0) out.push(`${t.failed} skill call${t.failed === 1 ? "" : "s"} named no skill the packs carry.`);
   return out;
@@ -434,11 +454,11 @@ export function renderMarkdown(run: RunAudit): string {
   if (skillSeats.length) {
     lines.push("## Skills");
     lines.push("");
-    lines.push("| Agent | Index in prompt | Loads | Distinct | Tokens loaded | Used after load (proxy) | No trace of use | Done | Taken out by a compaction | Loaded again | Missed |");
-    lines.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |");
+    lines.push("| Agent | Index in prompt | Loads | Distinct | Tokens loaded | Used after load (proxy) | No trace of use | Done | Released | Tokens released | Loaded again after release | Taken out by a compaction | Loaded again | Missed |");
+    lines.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |");
     for (const s of skillSeats) {
       const index = s.index_in_prompt ? `yes${s.index_tokens !== null ? ` (${fmt(s.index_tokens)} tokens)` : ""}` : s.index_source === "extension" ? "first run only (extension)" : s.index_source === "stale" ? "another pack set's" : s.index_source === "none" ? "no skills" : "no row";
-      lines.push(`| ${s.agent} | ${index} | ${s.loads} | ${s.distinct} | ${fmt(s.tokens_loaded)} | ${s.referenced} | ${s.unused} | ${s.done} | ${s.lost_at_compaction} | ${s.refetched} | ${s.failed} |`);
+      lines.push(`| ${s.agent} | ${index} | ${s.loads} | ${s.distinct} | ${fmt(s.tokens_loaded)} | ${s.referenced} | ${s.unused} | ${s.done} | ${s.released} | ${fmt(s.tokens_released)} | ${s.reloaded_after_release} | ${s.lost_at_compaction} | ${s.refetched} | ${s.failed} |`);
     }
     lines.push("");
   }

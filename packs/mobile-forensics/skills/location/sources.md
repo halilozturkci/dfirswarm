@@ -1,47 +1,36 @@
 ---
 id: location/sources
-title: Where a phone says it was
-when: The question is where the device was, and when.
-needs: [apps/databases]
-tools: [sqlite_query, protobuf_peek, timestamp_decode]
-requires_host: []
+title: Mobile location records and uncertainty
+when: The question is where a device, media item or person was.
+needs: []
+tools: [manifest_db, sqlite_query, timestamp_decode]
+requires_host: [exiftool]
 ---
 
-A phone carries several independent location records and they are not equally
-good. Use more than one, and say which you used.
+Use when a question asks where a device, a media item or a person was. Not for the meaning of an app's tables (`ios/artifacts`, `android/artifacts`).
 
-    iOS  Cache.sqlite in com.apple.routined      significant locations, with a
-                                                 confidence and a source
-         Photos.sqlite, and EXIF in the files    where a photo was taken
-         Health, where the user had it on        movement, not coordinates
-    Android  usagestats and cached network data  coarse, from cell and wifi
-         Photos and their EXIF                   the same as iOS
-         App-specific: maps, ride hailing, fitness
+**Three claims, three proofs.** A record holds coordinates; a device was at that place; a person was there. Each later one needs its own evidence.
 
-**Every one of these is a claim by software, not an observation.** A "location"
-is a fix the operating system computed from GPS, wifi or cell, each with a very
-different accuracy, and the record usually carries which — read that field and
-quote it. A 3-kilometre cell fix reported as a location puts somebody somewhere
-they were not.
+**Sources** (inspect table, record type, provider and coverage with `sqlite_query` on a working copy (`apps/databases`); none is ranked above another):
+- iOS routine caches, visits: not every coordinate is a significant place or a contemporaneous fix.
+- `Photos.sqlite` and media metadata: capture, import, download, sync and later edit are different times.
+- Health and workout routes can hold coordinates; find the originating device or app and whether the route was processed afterwards.
+- Android provider and app records: actual fixes, visits or routes. Usage statistics are not a location history.
+- Maps, ride, fitness apps: a search, a requested destination, a displayed map, a planned route and a recorded journey differ.
+- Wi-Fi and cellular records: saved configuration, scan, association and externally supplied infrastructure location differ.
 
-**The horizontal accuracy field is part of the finding.** "At 09:14 the device
-recorded a position at X with a horizontal accuracy of 65 metres" is a
-defensible sentence. "The device was at X" is not.
+**For a coordinate** keep raw values, datum if known, provider, device and account, timestamp meaning, units, accuracy fields, fix age and any mock indicator. An accuracy radius is not a promise of presence. Do not invent accuracy or a zone. Convert times from the schema (`ios/containers-and-time`, `timeline/build`); `timestamp_decode` lists candidates only.
 
-**Photo EXIF is the strongest of these** because it is tied to an object with
-its own timestamps and its own hash — but it is also the easiest to fake, and a
-photo received in a message carries the sender's coordinates, not the holder's.
-Check where the file came from before you use it.
+**Media.** Map the `Photos.sqlite` record to the exact file (in a backup, `manifest_db` gives its path for the file id), then `exiftool -json -n -- FILE`; keep the output and the file's digest. Compare GPS time, capture fields, offset fields, library times and file times, keeping conflicts. File and library times may be transfer or import. EXIF can be absent, stripped, edited or carried over from another file. A photo received in a message may carry no coordinates, or those of its capture; it does not locate its sender or recipient.
 
-Use `Photos.sqlite` with its WAL to map the library record to the exact media
-file, then run `exiftool -json -n -- FILE`. Compare EXIF GPS time, filesystem
-times and the Photos database record; preserve disagreements rather than
-choosing the convenient timestamp.
+**Networks.** An SSID is not a place and a saved profile is not a join. A join does not locate a person without BSSID or cell identity, a time match and an independently justified infrastructure location (hotspots, moved access points and copied settings exist).
 
-**A wifi network name is location evidence too**, and often better than a fix:
-a phone that joined a named network was within its range, and the network's
-location can be established independently.
+**Independent families**: two exports of one synced record are one source. State device and person separately.
 
-Two absences worth stating: location services can be off per app or entirely,
-and a device in airplane mode still records what its GPS sees. Neither absence
-means the phone was not there.
+Shows: that a record holds coordinates, from a stated source, with the accuracy and time it carries.
+
+Does not show: that airplane mode stopped GNSS recording (it does not by itself, and recording still depends on hardware, permissions, app activity and retention), or that no record means the device was elsewhere.
+
+Record: for a negative, the sources, period, accessible profiles, settings, parser coverage and missing data.
+
+Sensitive output: location stores and media metadata are personal data: run as a job with `secret_output: true` where the case treats them so, and cite a record, not a coordinate pasted into a post.

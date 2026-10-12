@@ -64,7 +64,7 @@
       "name": "idevicebackup2",
       "package": "libimobiledevice",
       "optional": true,
-      "why": "Read and convert an iTunes or Finder backup, including one that is encrypted where the password is known.",
+      "why": "A libimobiledevice tool that talks to a device and reads or restores its backups. It is declared and unused: no skill, recipe or tool of this pack runs it, and nothing here shows it opens an encrypted backup offline, which is not provided. Whether to keep it is the owner's decision.",
       "install": {
         "brew": "brew install libimobiledevice",
         "apt": "apt-get install -y libimobiledevice-utils"
@@ -73,44 +73,15 @@
       "redistributable": false
     },
     {
-      "name": "mac_apt.py",
-      "package": "mac_apt",
-      "optional": true,
-      "why": "ios_apt, inside mac_apt, reads a full file-system iOS extraction with the same plugin model as the macOS side.",
-      "install": {
-        "brew": "https://github.com/ydkhatri/mac_apt",
-        "apt": "pinned source 1.33.2 (install.source), amd64 only: its statx helper knows no aarch64 syscall number, so it stops at import on Linux arm64",
-        "source": {
-          "version": "1.33.2",
-          "url": "https://github.com/ydkhatri/mac_apt/archive/refs/tags/v1.33.2.tar.gz",
-          "sha256": "a2fff756df22236c03ab427424f565987749b711dece2c490184265c5a620be1",
-          "entry": "mac_apt.py",
-          "run": "python",
-          "pip": [
-            "-r",
-            "requirements.txt"
-          ],
-          "arches": [
-            "amd64"
-          ],
-          "env": {
-            "ac_cv_header_libbfio_h": "no"
-          }
-        }
-      },
-      "licence": "MIT",
-      "redistributable": false
-    },
-    {
       "name": "heif-convert",
       "package": "libheif-examples",
       "optional": true,
-      "why": "An iPhone's HEIC photo converted to JPEG or PNG, to look at it or read it with the other tools; pillow-heif opens one in a script.",
+      "why": "Converts an iPhone's HEIC photo to JPEG or PNG, to look at it or read it with other tools; pillow-heif opens one in a script. No skill of this pack names it yet. The program is a libheif sample application (MIT, as libheif's README says); the libheif library it links is LGPL-3.0-or-later.",
       "install": {
         "brew": "brew install libheif",
         "apt": "apt-get install -y libheif-examples"
       },
-      "licence": "LGPL-3.0-or-later",
+      "licence": "MIT",
       "redistributable": false
     }
   ]

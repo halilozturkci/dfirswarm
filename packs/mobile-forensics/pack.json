@@ -1,7 +1,7 @@
 {
   "id": "mobile-forensics",
   "name": "Mobile Forensics Pack",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Method and tooling for a phone: what kind of extraction you were handed and what it cannot contain, iOS backups and their manifest, Android package and user data, the app databases that carry messages and location, protobuf blobs, and what deleted means inside SQLite.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -20,14 +20,14 @@
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
       "NOTICE": "f7eaab3fffac84c598325af3dd05679ef50f5b6371b72ff8561cc8aea306bb3b",
-      "README.md": "bebd805dc1ddd43fce99a65a8156dd3e931245b0bdcc2e154bbc03178a7fc1bb",
+      "README.md": "23a0a36b566e9efe843c24f76aa704faee7665c031625aa96fef1a7efea5a479",
       "tools/sqlite_freespace/manifest.json": "730a1e07ab91af964890a1b58a01ff0023050708cfdbf00318780d72912ccd96",
       "tools/sqlite_freespace/run.py": "aa26553b2667c815c423648828596154961e7fe212f3992529a1cbef892eeb5c",
       "tools/manifest_db/manifest.json": "458be199ef1fef3a2edfd48f0c56b55f993dfa204fcaf2733654ceb3d4e544b8",
       "tools/manifest_db/run.py": "259992771896ccfd331e7f32c6cc2b1aa9048befa864f6e3515ff8942ad462fe",
       "tools/protobuf_peek/manifest.json": "20fe8806339f36567cb68e322492e00de4b668c41765df5585193271db291de4",
       "tools/protobuf_peek/run.py": "d3e789187ee3405886435dd1e0bedb2ac04f9940a6b7ffdad52919b978e5b927",
-      "goals/phone-examination.md": "6259f02e3acaa07c03c2669684466cbe9836b45c645621cf2f22a4e0797515c4",
+      "goals/phone-examination.md": "de8600ee0c6f9d62076d497ccd597868d6ab87a0dbecf4bb5806e1fa0ff025a8",
       "tests/cases.json": "073cde529d3deab7c45c6f60310ae362765ba36e127aadd5980a977d5bd0c038",
       "tests/pack.test.sh": "abdb93ae746a729d2e0bf2c10fadceb5bd863c8c5683707e949c6bf080fa5f5b",
       "recipes/android-aleapp/recipe.json": "b1d08a9d0ab09b54ddd7a7109b83f1f447ed70dea4852359fbf1b9b7e962a796",
@@ -40,16 +40,19 @@
       "recipes/android-backup-apps/run.py": "157ab570f17d98c75f7a383b704bf99788a58fce3f32c384b730d7e244a3cf86",
       "recipes/ios-ileapp/recipe.json": "376053383da9a0be95b47b866333fd284d44770a0c16179b265db76e44e84ed7",
       "recipes/ios-ileapp/run.py": "27a79d7b4b57cdb1aa622d80aa36f9e17a5f9de8111711590a66c8ac7b7029a8",
-      "skills/location/sources.md": "8f9217212e0a96a8fc70c35808bfae761ab651a6a843f719a52c45223bd63802",
-      "skills/ios/artifacts.md": "687f4331a79d88a6b2a6d39547fa848bd3c38d6ca34c8af5b5c92f5f1deb40a3",
-      "skills/ios/biome-segb.md": "c0ff1f40ab1c7157b2dab30cd69fe47662eebcec0aa03e3aa172f055207cda3e",
-      "skills/ios/unified-logs.md": "7672219e9b756c1d2475cc57b8eac7fb71a75aff43ed4304c9eecfdc4813eb08",
-      "skills/android/artifacts.md": "6880ec1ca951efa3900a07782d5f8f123aabdc72dc6d138583a5901485f5ece7",
-      "skills/extractions/what-you-have.md": "681db8e6885239f7109d525886afb5b44a9e8212150a19a480211ef9750b5bd2",
-      "skills/apps/databases.md": "22b20e9c31a9a9ffd10b2136ecf57a3d31088f610fd39ccec028ac1515fed876",
-      "requires/host.json": "82ae8cdebe580202bfd9d31bed050224a254e706aa1b6e8ebb4056fc4eb04a6d",
+      "skills/location/sources.md": "ebdb996ab9df8b23d4eb0ed946e684d8642a865ae818dab24ae4214565727afe",
+      "skills/ios/artifacts.md": "82a7a068e72c91f73d2301c452fd1a7a95d0c19908fff14798f8fb0017a551c6",
+      "skills/ios/biome-segb.md": "707fcd1e591877232be2bbde1bc879ec053b9cf85275fe4cbe8e7c63d82ba784",
+      "skills/ios/containers-and-time.md": "c277dfdce245ddc21acbebd1a83e92de20af769c1cc951be10bbdcd41d2307e9",
+      "skills/ios/unified-logs.md": "46ad3f5654f1246ec521cc5f85f69f320c343c2dd4878faf9591c34e0522a137",
+      "skills/android/artifacts.md": "1c194a7e903bf033514fc2ebd7c93e00ff3c369ead324e2a039ab1cb9dbc31a0",
+      "skills/extractions/backup-detail.md": "ea67ada3a82248d4273d0c36c36a18dd4a138496d651ccfef197abeeb020f2cc",
+      "skills/extractions/what-you-have.md": "1edd43ec1418494f46df0f537755e0260ca112cdea159c0391962988a6af8b36",
+      "skills/apps/databases.md": "e1e3ee4349e70a4d2063218bd894fffb5e7d239334fe499ae92d4d9dbd6ede72",
+      "skills/apps/fragments.md": "b6de065bccf40a44a5f17865326a077acb0c9648623d5e65ac8a24573aad0cb0",
+      "requires/host.json": "6b2ef960d53d1d660f3e413688ed2297781991c02e10a5122498cbadeb9d7496",
       "requires/python.txt": "3816ab554bef3ef99c10c0fa5b0e07c2f4425eb238a4c04d430f43b5162bdad7",
-      "skills/INDEX.md": "a9e926731b0a462b36abaa152556f6e68401fe67b4f3289dcd192e6bf8aa421e"
+      "skills/INDEX.md": "79d0361098ea5ae2c953a6422c716419f413e5c0b6f7582cf68c4e0d110674e4"
     }
   },
   "tools": [
@@ -57,12 +60,26 @@
     "protobuf_peek",
     "sqlite_freespace"
   ],
-  "skills": 7,
+  "skills": 10,
   "recipes": [
     "mobile-forensics/android-aleapp",
     "mobile-forensics/android-backup",
     "mobile-forensics/android-backup-apps",
     "mobile-forensics/ios-filesystem",
     "mobile-forensics/ios-ileapp"
+  ],
+  "unreferenced_ok": [
+    {
+      "name": "idevicebackup2",
+      "why": "declared for a device-backup route no skill, recipe or tool of the pack runs; it is not an offline decryptor, and the owner decides whether it stays"
+    },
+    {
+      "name": "heif-convert",
+      "why": "the HEIC route has no skill yet; the program is held for it"
+    },
+    {
+      "name": "pillow-heif",
+      "why": "opens HEIC in a script (the tool library's contact_sheet imports it); no skill of this pack names it yet"
+    }
   ]
 }

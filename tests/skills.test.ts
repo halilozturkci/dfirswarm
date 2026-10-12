@@ -689,7 +689,7 @@ test("the seat's hand-off line names what a compaction took, until the seat load
     // The session says nothing of either body is left in the context.
     const emptyContext = { cwd: sandbox, sessionManager: { buildContextEntries: () => [], getBranch: () => [] } };
     for (const h of handlers.get("session_compact") ?? []) await h({ type: "session_compact" }, emptyContext);
-    assert.match(handle.handoffLine(), /a compaction took out of your context: pack-a:evidence\/one, pack-b:shared\/dup\. Load again/);
+    assert.match(handle.handoffLine(), /pack-a:evidence\/one \d+ \(taken out of your context, not marked done\), pack-b:shared\/dup \d+ \(taken out of your context, not marked done\)\.\nLoad again \(skill\(id\)\) the ones you still need/);
     await tools.get("skill")!.execute("c3", { id: "evidence/one" }, undefined, undefined, { cwd: sandbox });
     assert.match(handle.handoffLine(), /pack-b:shared\/dup/);
     // The seam for an unloader: the done ones are releasable, and releasing one frees its slot.

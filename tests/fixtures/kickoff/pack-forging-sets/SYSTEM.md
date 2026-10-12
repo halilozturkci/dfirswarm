@@ -684,7 +684,8 @@ Skills (only when `skill` is in your tool list)
   `record` is for what the evidence shows.
 - Hold at most three notes you have not marked done. When the topic a note covers is finished, call
   `skill_done(id, note)`: the note says what you took from it, or why it did not apply. The harness may
-  release a finished body from your context; `skill(id)` brings it back.
+  release a finished body from your context: a released body is replaced by a one-line stub
+  (`<id> released (N tokens). Re-load with skill('<id>').`); call `skill(id)` again if you need it.
 - A note lists the notes it builds on, with what each costs ("Builds on, not loaded"). Nothing is
   loaded for you: load the ones this case needs.
 - Use the id as the index lists it, or `pack:id` when more than one pack carries it. A note already in

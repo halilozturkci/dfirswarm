@@ -202,7 +202,7 @@ test("the kickoff's index is in the first prompt and in every prompt after a com
     assert.match(results[3]!, /^Skill `evidence\/one` \(pack pack-a 1\.2\.0/, "after the compaction the same call delivers the body again");
 
     // 3. The hand-off message names what the compaction took out.
-    assert.match(messageText(handoff.message), /Skill bodies a compaction took out of your context: pack-a:evidence\/one, pack-b:shared\/dup\. Load again \(skill\(id\)\) the ones you still need\./);
+    assert.match(messageText(handoff.message), /Method notes you read since your last compaction, with their size in tokens \(never their text\): pack-a:evidence\/one \d+ \(taken out of your context, not marked done\), pack-b:shared\/dup \d+ \(taken out of your context, not marked done\)\.\nLoad again \(skill\(id\)\) the ones you still need; not marked done, so probably still needed: pack-a:evidence\/one, pack-b:shared\/dup\./);
 
     // 4. The record: one index row that says where the section came from, the loads with their hashes, the re-load flagged.
     const index = rows.filter((r) => r.tool === "skills_index");

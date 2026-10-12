@@ -1,7 +1,7 @@
 {
   "id": "reverse-engineering",
   "name": "Reverse Engineering Pack",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Static triage of a binary or a document under quarantine: what the file actually is, PE and ELF structure, entropy and packing, obfuscated strings, capability mapping, macros and embedded objects, and rules. Nothing from the evidence is ever executed.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -28,7 +28,7 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "dfb5b891eb4bbe42b5393ea6ada1cca60b279c1cbf91b445f2c160130141947f",
+      "README.md": "f5752af6af383f05b7e58929dde93d513dbe8cf6a96bb6d906041fe0b8e8dd7f",
       "tools/fuzzy_hash/manifest.json": "95ad584cb810bbd17112545b2faf314fe30bca784e444d9257c421b7d8cd6f60",
       "tools/fuzzy_hash/run.py": "2819935381da66752157455de3e7bc7d02f99dd4387ef2d967ae85a073fcf93b",
       "tools/pe_info/manifest.json": "73b34759f1c7e89407348094d9e05a5722ae0c1a8698bc8300aafb9844765607",
@@ -37,19 +37,24 @@
       "tools/doc_probe/run.py": "bcad4896950fde5d97a0522f822e07c65f21430cba00739de6fab4af6c8c14af",
       "tools/entropy_map/manifest.json": "64165d141d11d1e497154f084b05e8ee4ccb4e8d4ace8a88b15de6a953a43538",
       "tools/entropy_map/run.py": "05f6a4d51ce7ca715d8a3100b4e616eeab8353a5d73ed334e4e9862a98c650be",
-      "goals/sample-triage.md": "c43160ad8009743ced3cb71d10696b5ca36ff00431326af75e49287d8641ddca",
+      "goals/sample-triage.md": "1ba24dbe4bdb228eef2c2740a5d187408a019c96891badf9d68ee807c8868c47",
       "recipes/static-binary/recipe.json": "f28dbe26e06cd63d5b006d3c512842381fd2b0af5f504632fb48b3efc1e077f1",
       "recipes/static-binary/run.py": "ae07a82fe4ba1a47be3b83b1b611c4f66503984f8120954eb37d472a9db6a898",
-      "skills/pe/structure.md": "4130d07bfe0de3cdecf3486b0a3b16c7575228bde42f0b4f49b711a1351a7e86",
-      "skills/strings/obfuscated.md": "ff2c48385f3b9e8d7cfc6c36773e72a6f9b99168e18a649b1c1e02066a1ee1b2",
-      "skills/capabilities/mapping.md": "e80fe67b39b63f5fbd600bf2052f46c66002d42629c335308afcfad41ac8d94c",
-      "skills/triage/quarantine.md": "66b1e73f39dd72bed176977dbe040549fe132d64461a7680dc39e32aa5650f77",
-      "skills/rules/yara.md": "45e7b3d41f6f2b148c5b68aac7917629837fadc66386ef786dcf175ba17cf3ac",
-      "skills/documents/macros.md": "14252a3e3b0ccce7dd7873dc68add06d5389e029cc8567ec3ae8318f37281143",
-      "skills/elf/structure.md": "36b5a7fea46ab47b1b5d790db8fccce68cc17a640f846c9cbe63313af9a32737",
+      "skills/pe/signature-and-resources.md": "b8c19497e20353b81fe63414aaef526cedb8043c8a89c415d2aeb69ac3a008f5",
+      "skills/pe/structure.md": "bc9c0cbd76cdee317d041d783c4a98768c368514487ad594d68754dd820f8d2f",
+      "skills/strings/decoding-and-similarity.md": "8eb3df8b3a24f349e6c4a2bfa0921b501ab0522db12bcdc824c1030c70c0df5d",
+      "skills/strings/obfuscated.md": "69d7730629ba95f64099df0fa0ed8236b25ed17536a460ff95829ef26a13987d",
+      "skills/capabilities/mapping.md": "c0697ec3f253464e521dc807b4ef0bbdabf280f4e695c779b749ca9607f7392b",
+      "skills/triage/quarantine.md": "7f118f4d6a09db588b9b6ca3a8273cae35e76f471362f30bcc424c1d076036d6",
+      "skills/rules/authoring.md": "69f5cc20f032ed367ef83cab58b64de51c135c217fc6aa9f4f224db71ceb2cb1",
+      "skills/rules/yara.md": "8eadb83d84456b726ba99dff1c6e0d0547ace586aff7b47d4af58c8e2f16c3c9",
+      "skills/documents/external-and-active-content.md": "c2a53dd3c1cec4299e1b698741b2c19282dc0f8713d470b84acaf012987fcf77",
+      "skills/documents/macros.md": "78f5bd9c6ea5383afeff491f2c4ec98566d7e2360d5ee78eeb8c9ddf1913f0e9",
+      "skills/elf/packing-and-identity.md": "a4cfdebf3efb071edca2da1560ff2e7b015ed89d366777645b995aeb2336176a",
+      "skills/elf/structure.md": "913d82302d83dc52d253971d7436811be92be563b1d47bb164abef96eda4f7aa",
       "requires/host.json": "c9cef9f2e1f8f4970524077eb18d2f6807ca00c51a552da1faf6c69bf953ee92",
       "requires/python.txt": "f0f18bd3e9e860703a9a7599d84f281b999764d16f1619aeef6b89a670c5566b",
-      "skills/INDEX.md": "56d626f885f751c962b1eadfbed545f648b7ac60b3b82f23a41b08e3bb9333bb"
+      "skills/INDEX.md": "26be19ea2e8056cc5cf05d12742ccf056ce61b6e953efd750fd547c33c3a63b5"
     }
   },
   "tools": [
@@ -61,5 +66,5 @@
   "recipes": [
     "reverse-engineering/static-binary"
   ],
-  "skills": 7
+  "skills": 12
 }

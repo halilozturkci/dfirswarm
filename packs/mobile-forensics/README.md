@@ -9,9 +9,11 @@ needed for much of what an iPhone stores.
 
 ## What it carries
 
-**Seven skills**: `extractions/what-you-have`, `ios/artifacts`,
-`ios/biome-segb`, `ios/unified-logs`, `android/artifacts`, `apps/databases`,
-`location/sources`.
+**Ten skills**, each a short decision leaf (800 tokens at most) that points to
+a second-level leaf only when the case needs it: `extractions/what-you-have` (start
+here) and `extractions/backup-detail`; `apps/databases` and `apps/fragments`;
+`ios/artifacts`, `ios/containers-and-time`, `ios/biome-segb` and `ios/unified-logs`;
+`android/artifacts`; `location/sources`.
 
 **Three tools.** Each says in its manifest what it measures and what it does
 not, and each returns its whole result: an inline page and, when there is more,

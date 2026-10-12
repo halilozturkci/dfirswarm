@@ -21,9 +21,17 @@
  * - Every load is on the trace with the file's sha256 and its token count, so
  *   a report can say which version of which note a conclusion rests on.
  * - `skill_done(id, note)` says a seat is finished with a body. It marks the
- *   body releasable in the ledger below and records the event. Releasing it
- *   (replacing it in the seat's context with a stub) is the unloader's job and
- *   is not done here: `SkillLedger.releasable()` is its entry point.
+ *   body releasable in the ledger below and records the event.
+ * - The unloader replaces a finished body in the seat's context with a one-line
+ *   stub ("<id> released (N tokens). Re-load with skill('<id>')."). It is a
+ *   persisted `context_edit` draft returned from `turn_end` (Pi 0.87.1,
+ *   dist/core/agent-session.js `_dispatchTurnEndBoundary`: the drafts are
+ *   committed before the next request is built from the session's projection),
+ *   so the raw tool result stays in the session file (custody and replay see
+ *   what they always saw) and only what the model is sent changes. Which body
+ *   leaves when depends on the model (`releaseClassOf`) and on `--skill-release`
+ *   (`SWARM_SKILL_RELEASE`); `planRelease` holds the rules and docs/packs.md
+ *   section 1 says why.
  *
  * The module knows no pack and no tool by name: it reads `skills/INDEX.md` and
  * `skills/<id>.md` of whatever `SWARM_PACK_DIRS` lists, and nothing else.
@@ -31,7 +39,7 @@
 import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, SessionBoundaryDraft } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 /** The estimator the pack lint will use: bytes per token over every shipped skill (o200k_base). */
@@ -47,6 +55,33 @@ export type SkillBudget = { entry: number; pack: number; run: number };
 
 /** Bodies a seat may hold at once before the harness reminds it to finish one. */
 export const MAX_LIVE_SKILLS = 3;
+
+/**
+ * What `--skill-release` (env `SWARM_SKILL_RELEASE`) says about the bodies a
+ * seat has finished with:
+ * - `compaction`, the default: bodies leave only when a seat hands off to itself
+ *   (the turn its `self_compact` came back successfully, just before the
+ *   compaction rewrites the prefix anyway), whatever the model. The summary
+ *   input is shaped in this mode too;
+ * - `auto`: a body marked done also leaves at the next turn boundary, on a
+ *   model whose class says an edit of an earlier tool result is safe
+ *   (`releaseClassOf`: the Responses family, or a model that does not reason),
+ *   and when no signed thinking block comes after it. The experiment arm: a
+ *   mid-run release does not pay back its cache write on a cache-priced
+ *   provider before a context is cut (docs/packs.md), and nobody has measured
+ *   what it buys in attention;
+ * - `off`: nothing is released and the summary input is not shaped (the
+ *   behaviour of a seat before the unloader existed).
+ * An unknown value is `compaction`.
+ */
+export type ReleaseMode = "auto" | "compaction" | "off";
+export const RELEASE_MODES: readonly ReleaseMode[] = ["auto", "compaction", "off"];
+export const DEFAULT_RELEASE_MODE: ReleaseMode = "compaction";
+
+export function parseReleaseMode(raw: string | undefined | null): ReleaseMode | null {
+  const value = (raw ?? "").trim().toLowerCase();
+  return (RELEASE_MODES as readonly string[]).includes(value) ? (value as ReleaseMode) : null;
+}
 
 /** First line of the section in the prompt; the tests and the audit look for it. */
 export const SKILLS_SECTION_TITLE = "Skills carried by this run";
@@ -422,6 +457,10 @@ export type SkillLoad = {
   tokens: number;
   /** The tool call that delivered the body: how an unloader finds its result in the session. */
   toolCallId: string;
+  /** The session entry holding the result, when the ledger was read off the session (the unloader's edit target). */
+  entryId?: string;
+  /** For a load read off the session whose result was edited: the turn that edit was made in (assistant messages before it), when the whole branch was given. */
+  releasedTurn?: number | null;
   /** Set by `skill_done`. */
   done?: { turn: number; note: string };
 };
@@ -430,6 +469,7 @@ type SessionEntryLike = {
   type?: string;
   id?: string;
   timestamp?: string;
+  targetId?: string;
   message?: { role?: string; toolName?: string; toolCallId?: string; details?: Record<string, unknown> };
 };
 
@@ -441,24 +481,49 @@ type SessionEntryLike = {
  * `details` carry the id, pack, hash, tokens and turn; a `skill_done` result
  * marks its body. Also the turn the index was last listed in, when a
  * `skill()` index answer is still in the context.
+ *
+ * A `context_edit` entry (the unloader's stubs, Pi's own omissions after an
+ * overflow) changes what the model is sent of the entry it targets, and the
+ * entry itself stays in the session: a body whose result has been edited is
+ * not in the context any more, so it is returned in `released`, not in `loads`.
+ * The latest edit of a target wins, and an edit is only ever of an earlier entry.
+ * Given the whole branch as well, it says in which turn each edit was made (the
+ * assistant messages before it), which the context entries alone cannot: after a
+ * compaction they begin at its kept tail.
  */
-export function loadsFromEntries(entries: readonly unknown[]): { loads: SkillLoad[]; indexTurn: number | null } {
+export function loadsFromEntries(entries: readonly unknown[], branch?: readonly unknown[]): { loads: SkillLoad[]; released: SkillLoad[]; indexTurn: number | null } {
   const byKey = new Map<string, SkillLoad>();
+  const released: SkillLoad[] = [];
+  const edited = new Set<string>();
+  const editTurn = new Map<string, number>();
+  if (branch) {
+    let turns = 0;
+    for (const raw of branch) {
+      const e = raw as SessionEntryLike | null;
+      if (e?.type === "message" && e.message?.role === "assistant") turns += 1;
+      else if (e?.type === "context_edit" && typeof e.targetId === "string") editTurn.set(e.targetId, turns);
+    }
+  }
+  for (const raw of entries) {
+    const e = raw as SessionEntryLike | null;
+    if (e?.type === "context_edit" && typeof e.targetId === "string") edited.add(e.targetId);
+  }
   let indexTurn: number | null = null;
   for (const raw of entries) {
     const e = raw as SessionEntryLike | null;
     if (e?.type !== "message" || e.message?.role !== "toolResult") continue;
     const m = e.message;
     const d = m.details ?? {};
+    const gone = typeof e.id === "string" && edited.has(e.id);
     if (m.toolName === "skill") {
       if (d.ok !== true) continue;
       if (d.index === true) {
-        if (d.in_prompt !== true && typeof d.turn === "number") indexTurn = d.turn;
+        if (!gone && d.in_prompt !== true && typeof d.turn === "number") indexTurn = d.turn;
         continue;
       }
       if (d.already_loaded === true || typeof d.id !== "string" || typeof d.pack !== "string") continue;
       const key = SkillLedger.key(d.pack, d.id);
-      byKey.set(key, {
+      const load: SkillLoad = {
         key,
         pack: d.pack,
         id: d.id,
@@ -467,13 +532,16 @@ export function loadsFromEntries(entries: readonly unknown[]): { loads: SkillLoa
         sha256: typeof d.sha256 === "string" ? d.sha256 : "",
         tokens: typeof d.tokens === "number" ? d.tokens : 0,
         toolCallId: typeof m.toolCallId === "string" ? m.toolCallId : (e.id ?? ""),
-      });
+        ...(typeof e.id === "string" ? { entryId: e.id } : {}),
+      };
+      if (gone) released.push({ ...load, releasedTurn: (typeof e.id === "string" ? editTurn.get(e.id) : undefined) ?? null });
+      else byKey.set(key, load);
     } else if (m.toolName === "skill_done" && d.ok === true && typeof d.id === "string" && typeof d.pack === "string") {
       const load = byKey.get(SkillLedger.key(d.pack, d.id));
       if (load && !load.done) load.done = { turn: typeof d.turn === "number" ? d.turn : load.turn, note: typeof d.note === "string" ? d.note : "" };
     }
   }
-  return { loads: [...byKey.values()], indexTurn };
+  return { loads: [...byKey.values()], released, indexTurn };
 }
 
 /** Assistant messages on the session's path: the turns this seat has had, so a restarted process counts on from them. */
@@ -492,14 +560,24 @@ export function assistantTurns(entries: readonly unknown[]): number {
  * still in context and keeps exactly those, and `restore` does the same for a
  * process that starts on a session that already has some.
  *
- * The unloader (not built here) takes `releasable()` at a turn boundary,
- * replaces each body's tool result with a stub and calls `release(key)`; from
- * then on `skill(id)` delivers the body again.
+ * The unloader (registerSkills' `turn_end` handler) takes `releasable()` at a
+ * turn boundary, appends a stub for each body that `planRelease` lets go and
+ * calls `release(key)`; from then on `skill(id)` delivers the body again, and
+ * the ledger remembers that it was released: a body released once in a context
+ * epoch (the time between two compactions) is not released a second time, so a
+ * seat that keeps needing one does not make the harness rewrite its history
+ * over and over.
  */
+type Released = SkillLoad & { releasedTurn: number | null; reason: string };
+
 export class SkillLedger {
   private live = new Map<string, SkillLoad>();
   /** What the last compaction took out of the context, not fetched again since. */
   private lost: SkillLoad[] = [];
+  /** Bodies released by a stub in this epoch, the latest of each key (kept when the key is loaded again). */
+  private released = new Map<string, Released>();
+  /** What stood in the context when the last compaction ran: the hand-off line's account of it. */
+  private compacted: { kept: SkillLoad[]; released: Released[] } = { kept: [], released: [] };
   private indexTurn: number | null = null;
 
   static key(pack: string, id: string): string {
@@ -520,6 +598,11 @@ export class SkillLedger {
     return [...this.live.values()].filter((l) => !l.done);
   }
 
+  /** Every body held, in the order loaded. */
+  held(): SkillLoad[] {
+    return [...this.live.values()];
+  }
+
   /** Marks a held body done; null when this seat does not hold it. */
   markDone(key: string, turn: number, note: string): SkillLoad | null {
     const load = this.live.get(key);
@@ -533,22 +616,57 @@ export class SkillLedger {
     return [...this.live.values()].filter((l) => l.done);
   }
 
-  /** The unloader replaced this body in the context: it is no longer held. */
-  release(key: string): void {
+  /** The unloader replaced this body in the context: it is no longer held, and the ledger remembers when and why. */
+  release(key: string, info: { turn: number; reason: string } = { turn: 0, reason: "released" }): SkillLoad | null {
+    const load = this.live.get(key);
+    if (!load) return null;
     this.live.delete(key);
+    this.released.set(key, { ...load, releasedTurn: info.turn, reason: info.reason });
+    return load;
+  }
+
+  /** A release that never landed (the edit is not in the session): the body is still in the context and held again, with its done mark. */
+  unrelease(key: string, turn: number): SkillLoad | null {
+    const gone = this.released.get(key);
+    if (!gone || gone.releasedTurn !== turn) return null;
+    this.released.delete(key);
+    const { releasedTurn: _turn, reason: _reason, ...load } = gone;
+    this.live.set(key, load);
+    return load;
+  }
+
+  /** The ledger held a body the session no longer shows in the context: forget it, without calling it a release. */
+  drop(key: string): void {
+    this.live.delete(key);
+  }
+
+  /** The bodies released in this context epoch, the latest of each key. */
+  releasedLoads(): SkillLoad[] {
+    return [...this.released.values()];
+  }
+
+  /** The turn this key was last released in, in this context epoch; undefined when it was not (or a compaction has been since). */
+  releasedAt(key: string): number | null | undefined {
+    return this.released.get(key)?.releasedTurn;
   }
 
   /** Nothing is known to be in the context any more (the session could not be read after a compaction). */
   onCompaction(): SkillLoad[] {
     const taken = [...this.live.values()];
+    this.compacted = { kept: [], released: [...this.released.values()] };
     this.lost = taken;
     this.live.clear();
+    this.released.clear();
     this.indexTurn = null;
     return taken;
   }
 
-  /** A compaction ran, and `inContext` is what the session says is still there: the rest is lost. */
-  reconcile(inContext: readonly SkillLoad[], indexTurn: number | null): { kept: SkillLoad[]; lost: SkillLoad[] } {
+  /**
+   * A compaction ran, and `inContext` is what the session says is still there:
+   * the rest is lost. `stubs` are the bodies the context still holds as stubs
+   * (a released result in the kept tail): their release stays on the record.
+   */
+  reconcile(inContext: readonly SkillLoad[], indexTurn: number | null, stubs: readonly SkillLoad[] = []): { kept: SkillLoad[]; lost: SkillLoad[] } {
     const before = [...this.live.values()];
     const next = new Map<string, SkillLoad>();
     for (const load of inContext) {
@@ -556,16 +674,19 @@ export class SkillLedger {
       next.set(load.key, { ...load, ...(load.done ? {} : prior?.done ? { done: prior.done } : {}) });
     }
     const lost = before.filter((b) => !next.has(b.key) || next.get(b.key)!.toolCallId !== b.toolCallId);
+    this.compacted = { kept: [...next.values()], released: [...this.released.values()] };
     this.live = next;
     this.lost = lost;
     this.indexTurn = indexTurn;
+    this.released = new Map(stubs.map((s) => [s.key, { ...s, releasedTurn: s.releasedTurn ?? null, reason: "edit" }]));
     return { kept: [...next.values()], lost };
   }
 
-  /** A process started on a session that already holds some bodies. */
-  restore(inContext: readonly SkillLoad[], indexTurn: number | null): void {
-    this.reconcile(inContext, indexTurn);
+  /** A process started on a session that already holds some bodies (and some stubs). */
+  restore(inContext: readonly SkillLoad[], indexTurn: number | null, stubs: readonly SkillLoad[] = []): void {
+    this.reconcile(inContext, indexTurn, stubs);
     this.lost = [];
+    this.compacted = { kept: [], released: [] };
   }
 
   /** Skills the seat held when it last handed off, for the line under the hand-off header. */
@@ -580,6 +701,16 @@ export class SkillLedger {
     return out;
   }
 
+  /**
+   * What the last compaction left of the notes the seat had read: the ones it
+   * took out (not loaded again since), the ones the newest part of the history
+   * kept, and the ones the unloader had already replaced by a stub. Ids, sizes
+   * and whether the seat said it was done; never a body.
+   */
+  compactionAccount(): { lost: SkillLoad[]; kept: SkillLoad[]; released: Released[] } {
+    return { lost: [...this.lost], kept: this.compacted.kept.filter((k) => this.live.has(k.key)), released: this.compacted.released };
+  }
+
   indexShownAt(): number | null {
     return this.indexTurn;
   }
@@ -591,6 +722,287 @@ export class SkillLedger {
   wasLostAtCompaction(key: string): boolean {
     return this.lost.some((l) => l.key === key);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Releasing a body: which model, which policy, which bodies, what the stub says
+// ---------------------------------------------------------------------------
+
+/**
+ * The model facts the policy reads: Pi's own catalogue entry for the seat's
+ * model (`ctx.model`; `api` and `reasoning` are catalogue fields), never its
+ * name.
+ */
+export type ModelFacts = { api?: string; provider?: string; id?: string; reasoning?: boolean };
+
+/**
+ * The APIs a body may be released on at a turn boundary: Pi's own request builder,
+ * run offline to `onPayload` before and after an edit, changes only the edited
+ * `function_call_output` there and sends every reasoning item (with its
+ * `encrypted_content`) as it was (tests/skill-unload.test.ts). This is an allow-list
+ * on purpose: any other API that carries reasoning is released at a compaction only
+ * until it has been shown the same.
+ */
+export const BOUNDARY_SAFE_APIS: ReadonlySet<string> = new Set(["openai-responses", "openai-codex-responses", "azure-openai-responses"]);
+
+/**
+ * APIs whose reasoning blocks the provider signs and Pi sends back with the
+ * history (pi-ai's dist/api/anthropic-messages.js, `thinkingSignature`).
+ * Anthropic's own guide says a client-side edit of an earlier turn "can
+ * invalidate the thinking blocks in every later assistant turn" on Claude
+ * Fable 5.1, Opus 5.5 and Sonnet 5.5 (Sonnet 5 in Pi 0.87.1's catalogue), and
+ * Pi tells the managed-effort ones to drop a block whose prefix no longer
+ * matches (anthropic-messages.js `block_binding.prefix_mismatch_behavior:
+ * "drop_block"`; the drops come back as `thinking_dropped` diagnostics). The same
+ * API serves the older Claude models and Bedrock serves Claude through the other
+ * one. Used to name the reason; what is released where is `BOUNDARY_SAFE_APIS`.
+ */
+export const SIGNED_THINKING_APIS: ReadonlySet<string> = new Set(["anthropic-messages", "bedrock-converse-stream"]);
+
+/**
+ * - `open`: the API is on the allow-list (`BOUNDARY_SAFE_APIS`), or the catalogue
+ *   does not mark the model as reasoning (it writes no thinking blocks; a block
+ *   an earlier model wrote still keeps a body, see `signedThinkingAfter`).
+ * - `signed-thinking`: the catalogue marks the model as reasoning and its API
+ *   signs the thinking blocks.
+ * - `unproven`: the catalogue marks the model as reasoning, on an API that is
+ *   neither on the allow-list nor known to sign: OpenRouter's and the radius
+ *   gateway's Claude entries replay Anthropic's signatures through it, and a
+ *   local reasoning model's replay has not been looked at.
+ * - `unknown`: the session names no model.
+ * Everything but `open` releases at a compaction only.
+ */
+export type ReleaseClass = "open" | "signed-thinking" | "unproven" | "unknown";
+
+export function releaseClassOf(model: ModelFacts | undefined): { cls: ReleaseClass; why: string } {
+  if (!model) return { cls: "unknown", why: "the session reports no model" };
+  const api = typeof model.api === "string" ? model.api : "";
+  if (BOUNDARY_SAFE_APIS.has(api)) return { cls: "open", why: `api ${api} replays reasoning as items tied to their own calls; an edit of one tool result changes that result alone` };
+  if (model.reasoning !== true) return { cls: "open", why: `the catalogue does not mark this ${api || "unknown"}-api model as reasoning, so it writes no thinking blocks` };
+  if (SIGNED_THINKING_APIS.has(api)) return { cls: "signed-thinking", why: `the catalogue marks this model as reasoning and its api (${api}) signs thinking blocks bound to the history before them: a client-side edit of an earlier turn can invalidate them, whatever the thinking level now is` };
+  return { cls: "unproven", why: `the catalogue marks this model as reasoning on api ${api || "unknown"}, which is not on the allow-list for a release at a turn boundary` };
+}
+
+/** What the policy comes to for this seat right now. */
+export type EffectiveRelease = "boundary" | "compaction" | "off";
+
+export function effectiveRelease(mode: ReleaseMode, cls: ReleaseClass): EffectiveRelease {
+  if (mode === "off") return "off";
+  if (mode === "compaction") return "compaction";
+  return cls === "open" ? "boundary" : "compaction";
+}
+
+/**
+ * True when an assistant message after the entry carries a thinking block with a
+ * signature that is not an item of the allow-listed APIs: such a block is bound to
+ * the history before it and is sent back whatever model or thinking level the seat
+ * has now (pi-ai's transform-messages keeps a block's signature for the model that
+ * wrote it; convertMessages replays it at any level), so editing the entry would
+ * leave it behind an edit. A switch of model or of thinking level mid-run is how
+ * a seat on an open class ends up with one.
+ */
+export function signedThinkingAfter(entries: readonly unknown[], entryId: string): boolean {
+  const at = entries.findIndex((e) => (e as { id?: string } | null)?.id === entryId);
+  if (at < 0) return false;
+  for (const raw of entries.slice(at + 1)) {
+    const e = raw as { type?: string; message?: { role?: string; api?: string; content?: unknown } } | null;
+    if (e?.type !== "message" || e.message?.role !== "assistant" || !Array.isArray(e.message.content)) continue;
+    if (e.message.api !== undefined && BOUNDARY_SAFE_APIS.has(e.message.api)) continue;
+    for (const block of e.message.content as Array<{ type?: string; thinkingSignature?: unknown }>) {
+      if (block?.type === "thinking" && typeof block.thinkingSignature === "string" && block.thinkingSignature.trim().length > 0) return true;
+    }
+  }
+  return false;
+}
+
+/** The stub that stands in the context for a released body. One line; names the way back. */
+export function stubText(ref: string, tokens: number): string {
+  return `${ref} released (${tokens} tokens). Re-load with skill('${ref}').`;
+}
+
+const STUB_RE = /^(\S+) released \((\d+) tokens\)\. Re-load with skill\('([^']+)'\)\.$/;
+
+/** True when a tool result's text is a stub `stubText` wrote. */
+export function isStub(text: string): boolean {
+  return STUB_RE.test(text.trim());
+}
+
+/**
+ * About how many tokens follow a session entry in the model's context (Pi's
+ * own estimate, characters over four, with the reasoning items' and thinking
+ * blocks' signatures counted: they are sent again): what a provider's prompt
+ * cache has to write again when that entry is edited, at the least. Where the
+ * cache is a single trailing breakpoint with a short look-back (Anthropic's), an
+ * edit far behind it can cost the whole message part, not the suffix alone. The
+ * unloader puts it on the `skill_unload` row, so a run can say what its releases
+ * cost.
+ */
+export function suffixTokens(contextEntries: readonly unknown[], entryId: string): number | null {
+  const at = contextEntries.findIndex((e) => (e as { sourceEntry?: { id?: string } } | null)?.sourceEntry?.id === entryId);
+  if (at < 0) return null;
+  let chars = 0;
+  for (const entry of contextEntries.slice(at + 1)) {
+    for (const message of (entry as { messages?: unknown[] }).messages ?? []) {
+      const m = message as { content?: unknown };
+      if (typeof m.content === "string") chars += m.content.length;
+      else if (Array.isArray(m.content)) {
+        for (const block of m.content as Array<{ type?: string; text?: string; thinking?: string; thinkingSignature?: string; arguments?: unknown }>) {
+          if (block.type === "text") chars += (block.text ?? "").length;
+          // A reasoning item travels with its encrypted content, a thinking block with its signature: both are sent again.
+          else if (block.type === "thinking") chars += (block.thinking ?? "").length + (typeof block.thinkingSignature === "string" ? block.thinkingSignature.length : 0);
+          else if (block.type === "toolCall") chars += JSON.stringify(block.arguments ?? {}).length;
+        }
+      }
+    }
+  }
+  return Math.ceil(chars / 4);
+}
+
+export type ReleaseTrigger = "turn_end" | "compaction";
+
+export type ReleasePlan = {
+  release: SkillLoad[];
+  /** Held bodies the plan leaves alone, and the rule that left them. */
+  keep: Array<{ load: SkillLoad; why: string }>;
+};
+
+/**
+ * Which held bodies leave the context at a boundary. The rules, in the order
+ * they are asked (docs/packs.md section 1 has the reasons):
+ * - only a body the seat marked done is ever released. A body it has not
+ *   finished with is never touched, however many it holds: the three newest
+ *   (`MAX_LIVE_SKILLS`) are the ones it is working from;
+ * - not while the policy says otherwise: `off` releases nothing, and a policy
+ *   of `compaction` releases only at a compaction (`trigger: "compaction"`);
+ * - not a body the model has not had a turn with: one loaded in the turn that is
+ *   ending was never read by an assistant message, whatever was marked;
+ * - not a body with a signed thinking block after it in the context
+ *   (`signedAfter`), whatever model or thinking level the seat has now: the edit
+ *   would leave the block behind it. At a compaction the history is replaced
+ *   anyway, so that rule does not apply there;
+ * - not a second time in one context epoch (`releasedAt`): a body the seat
+ *   loaded again after a release is held until the next compaction, so history
+ *   is not rewritten back and forth for one note (never toggle). At a compaction
+ *   the prefix is rewritten anyway, so that rule does not apply there.
+ * Every body the plan releases is released in the same boundary: one edit of
+ * the history, however many bodies.
+ */
+export function planRelease(input: {
+  held: readonly SkillLoad[];
+  /** The turn that is ending: turns finished, this one included. */
+  turn: number;
+  effective: EffectiveRelease;
+  trigger: ReleaseTrigger;
+  releasedAt: (key: string) => number | null | undefined;
+  /** Whether the context holds a signed thinking block after this body's result. Absent: none does. */
+  signedAfter?: (load: SkillLoad) => boolean;
+}): ReleasePlan {
+  const plan: ReleasePlan = { release: [], keep: [] };
+  for (const load of input.held) {
+    const keep = (why: string) => plan.keep.push({ load, why });
+    if (!load.done) keep("not marked done");
+    else if (input.effective === "off") keep("release is off");
+    else if (input.trigger === "turn_end" && input.effective !== "boundary") keep("this model's bodies leave at a compaction only");
+    else if (load.turn >= input.turn) keep("no turn has read it yet");
+    else if (input.trigger === "turn_end" && input.signedAfter?.(load)) keep("a signed thinking block comes after it in the context");
+    else if (input.trigger === "turn_end" && input.releasedAt(load.key) !== undefined) keep("released once already in this context");
+    else plan.release.push(load);
+  }
+  return plan;
+}
+
+// ---------------------------------------------------------------------------
+// What a compaction's summary is told of the notes a seat read
+// ---------------------------------------------------------------------------
+
+type MessageLike = { role?: string; toolName?: string; toolCallId?: string; details?: Record<string, unknown>; content?: unknown };
+
+/** One note a seat read, as the summary input and the hand-off header list it: ids and sizes, never text. */
+export type SkillRead = { key: string; id: string; pack: string; tokens: number; turn: number; done: boolean; released: boolean; /** The tool call that delivered it. */ call: string | null };
+
+function textOfContent(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.map((b) => (b && typeof b === "object" && (b as { type?: string }).type === "text" ? String((b as { text?: string }).text ?? "") : "")).join("");
+}
+
+/**
+ * The part of a conversation a compaction is going to summarise, with every
+ * skill body in it replaced by one line that names the note and its size (a
+ * body the unloader already released is a stub and stays one), and the list of
+ * notes read. Pi serialises each tool result for the summariser cut to 2,000
+ * characters; a note's first 2,000 characters are method, not case facts, and
+ * not what the summary should be written from. The messages are not changed in
+ * place: the session keeps the whole result.
+ */
+export function shapeForSummary(messages: readonly unknown[]): { messages: unknown[]; reads: SkillRead[] } {
+  const reads = new Map<string, SkillRead>();
+  const shaped = messages.map((raw) => {
+    const m = raw as MessageLike | null;
+    if (m?.role !== "toolResult" || m.toolName !== "skill") return raw;
+    const d = m.details ?? {};
+    if (d.ok !== true) return raw;
+    if (d.index === true) {
+      const turn = typeof d.turn === "number" ? d.turn : 0;
+      return { ...m, content: [{ type: "text", text: `[the skill index was listed at turn ${turn}; it is not part of this summary input]` }] };
+    }
+    if (d.already_loaded === true || typeof d.id !== "string" || typeof d.pack !== "string") return raw;
+    const key = SkillLedger.key(d.pack, d.id);
+    const tokens = typeof d.tokens === "number" ? d.tokens : 0;
+    const turn = typeof d.turn === "number" ? d.turn : 0;
+    const released = isStub(textOfContent(m.content));
+    const call = typeof m.toolCallId === "string" ? m.toolCallId : null;
+    reads.set(call ?? `${key}@${turn}`, { key, id: d.id, pack: d.pack, tokens, turn, done: released, released, call });
+    if (released) return raw;
+    return { ...m, content: [{ type: "text", text: `[note ${key}: ${tokens} tokens, read at turn ${turn}; its text is not part of this summary input]` }] };
+  });
+  // A skill_done result marks the latest read of that note it follows.
+  const order = [...reads.values()];
+  for (const raw of messages) {
+    const m = raw as MessageLike | null;
+    if (m?.role !== "toolResult" || m.toolName !== "skill_done" || m.details?.ok !== true) continue;
+    const d = m.details;
+    if (typeof d.id !== "string" || typeof d.pack !== "string") continue;
+    const key = SkillLedger.key(d.pack, d.id);
+    const open = [...order].reverse().find((r) => r.key === key && !r.done);
+    if (open) open.done = true;
+  }
+  return { messages: shaped, reads: order };
+}
+
+/** The block the summary call is given beside the conversation. Facts only; the summary prompt says what to do with them. */
+export function renderSkillsRead(reads: readonly SkillRead[]): string {
+  if (!reads.length) return "";
+  const lines = [
+    "<skills-read>",
+    "Method notes this agent read in the conversation above. Only their ids and sizes are here, never their text:",
+  ];
+  for (const r of reads) {
+    lines.push(`- ${r.key}: ${r.tokens} tokens, read at turn ${r.turn}, ${r.released ? "marked done and released from its context" : r.done ? "marked done" : "not marked done"}`);
+  }
+  const open = reads.filter((r) => !r.done);
+  if (open.length) lines.push(`Not marked done (probably still needed after the compaction): ${[...new Set(open.map((r) => r.key))].join(", ")}.`);
+  lines.push("</skills-read>");
+  return lines.join("\n");
+}
+
+/**
+ * The hand-off header's account of the notes the seat read before a compaction,
+ * each id once: the ones it took out, the ones the unloader had replaced by a
+ * stub, the ones still in the context, each with its size and whether the seat
+ * marked it done, and which are probably still needed. Empty when the compaction
+ * took nothing a seat had read.
+ */
+export function renderHandoffReads(account: { lost: readonly SkillLoad[]; kept: readonly SkillLoad[]; released: ReadonlyArray<SkillLoad> }): string {
+  if (!account.lost.length && !account.released.length) return "";
+  const parts: string[] = [];
+  for (const l of account.lost) parts.push(`${l.key} ${l.tokens} (taken out of your context, ${l.done ? "marked done" : "not marked done"})`);
+  for (const l of account.released) parts.push(`${l.key} ${l.tokens} (marked done, released earlier)`);
+  for (const l of account.kept) parts.push(`${l.key} ${l.tokens} (${l.done ? "marked done; " : ""}still in your context)`);
+  const lines = [`Method notes you read since your last compaction, with their size in tokens (never their text): ${parts.join(", ")}.`];
+  const needed = [...new Set(account.lost.filter((l) => !l.done).map((l) => l.key))];
+  lines.push(`Load again (skill(id)) the ones you still need${needed.length ? `; not marked done, so probably still needed: ${needed.join(", ")}` : ""}.`);
+  return lines.join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -608,6 +1020,10 @@ export type SkillsDeps = {
   restoreTurns?: (turns: number) => void;
   /** A fault the operator and the peers should see (the extension posts it on the board). */
   fault: (cwd: string, message: string) => Promise<void>;
+  /** `--skill-release` as the kickoff passed it (`SWARM_SKILL_RELEASE`): compaction, auto or off. Anything else is compaction (the least aggressive release), and the policy row says so. */
+  release?: string;
+  /** True while a hand-off compaction is about to run (the seat saved its note): the prefix is rewritten anyway, so finished bodies leave with it. */
+  compactionPending?: () => boolean;
 };
 
 export type SkillsHandle = {
@@ -621,6 +1037,13 @@ export type SkillsHandle = {
   promptSection: (cwd: string, basePrompt: string) => Promise<string>;
   /** The lines the hand-off header carries: the skill bodies a compaction took out of this seat's context and, when its prompt does not carry the index, the index. Empty when none. */
   handoffLine: () => string;
+  /**
+   * The part of the conversation a compaction is going to summarise, shaped for
+   * the summary call: every skill body in it is one line naming the note and its
+   * size, and `block` lists the notes read (ids and sizes, with whether each was
+   * marked done). Unchanged, with an empty block, when the release policy is off.
+   */
+  summaryInput: (history: readonly unknown[], turnPrefix: readonly unknown[]) => { history: unknown[]; turnPrefix: unknown[]; block: string };
   ledger: SkillLedger;
 };
 
@@ -631,8 +1054,31 @@ function text(value: string, details: Record<string, unknown>) {
   return { content: [{ type: "text" as const, text: value }], details };
 }
 
+/** How many thinking blocks an assistant message's diagnostics say Anthropic dropped (Pi's own count, interactive-mode.js `countDroppedThinkingBlocks`). */
+export function countDroppedThinkingBlocks(message: { diagnostics?: unknown }): number {
+  let count = 0;
+  const diagnostics = Array.isArray(message.diagnostics) ? (message.diagnostics as Array<{ type?: string; details?: { transformations?: unknown } }>) : [];
+  for (const diagnostic of diagnostics) {
+    if (diagnostic?.type !== "anthropic_input_transformations") continue;
+    const transformations = diagnostic.details?.transformations;
+    if (!Array.isArray(transformations)) continue;
+    count += transformations.filter((t) => typeof t === "object" && t !== null && (t as { type?: string }).type === "thinking_dropped").length;
+  }
+  return count;
+}
+
 export function registerSkills(pi: ExtensionAPI, deps: SkillsDeps): SkillsHandle {
   const ledger = new SkillLedger();
+  const requestedRelease = parseReleaseMode(deps.release);
+  const releaseMode: ReleaseMode = requestedRelease ?? DEFAULT_RELEASE_MODE;
+  /** The policy row is written when this changes: the model, the thinking level, what they come to. */
+  let policyKey = "";
+  /** Releases whose edit the session has not been seen to hold yet: checked at the next boundary. */
+  let unverified: Array<{ load: SkillLoad; entryId: string; turn: number; reason: string }> = [];
+  /** Bodies whose edit did not land in this context epoch: not tried again until a compaction. */
+  const unreleasable = new Set<string>();
+  /** What the next assistant reply is to be read for: set by a release and by a compaction. */
+  let watch: { after: "release" | "compaction"; turn: number } | null = null;
   let indexes: Promise<PackIndex[]> | null = null;
   const packIndexes = () => (indexes ??= readPackIndexes(deps.packDirs));
   let section: Promise<{ text: string; report: SectionReport }> | null = null;
@@ -698,7 +1144,10 @@ export function registerSkills(pi: ExtensionAPI, deps: SkillsDeps): SkillsHandle
   function handoffLine(): string {
     const ids = ledger.handoffIds();
     const lines: string[] = [];
-    if (ids.length) lines.push(`Skill bodies a compaction took out of your context: ${ids.join(", ")}. Load again (skill(id)) the ones you still need.`);
+    // One account of the notes read, each id once. With the release policy off it is the line a seat had before the unloader.
+    const account = releaseMode === "off" ? "" : renderHandoffReads(ledger.compactionAccount());
+    if (account) lines.push(account);
+    else if (ids.length) lines.push(`Skill bodies a compaction took out of your context: ${ids.join(", ")}. Load again (skill(id)) the ones you still need.`);
     // A prompt the extension had to add the index to loses it with the run a hand-off starts: it comes back here.
     if (sectionText && (source === "extension" || source === "stale")) lines.push(`The index of this run's packs (your prompt no longer carries it):\n${sectionText}`);
     return lines.join("\n");
@@ -706,8 +1155,8 @@ export function registerSkills(pi: ExtensionAPI, deps: SkillsDeps): SkillsHandle
 
   pi.on("session_start", async (_event, ctx) => {
     try {
-      const inContext = loadsFromEntries(ctx.sessionManager.buildContextEntries());
-      ledger.restore(inContext.loads, inContext.indexTurn);
+      const inContext = loadsFromEntries(ctx.sessionManager.buildContextEntries(), ctx.sessionManager.getBranch());
+      ledger.restore(inContext.loads, inContext.indexTurn, inContext.released);
       deps.restoreTurns?.(assistantTurns(ctx.sessionManager.getBranch()));
     } catch {
       // a session that cannot be read starts with an empty ledger: a body is sent once more, nothing worse
@@ -715,16 +1164,26 @@ export function registerSkills(pi: ExtensionAPI, deps: SkillsDeps): SkillsHandle
   });
 
   pi.on("session_compact", async (_event, ctx) => {
+    // The releases of the boundary before this compaction (the hand-off's own) are checked against the branch
+    // before the ledger is rebuilt from it: a draft Pi did not commit is said, and the metrics stop counting it.
+    await verifyReleases(ctx as unknown as BoundaryCtx).catch(() => undefined);
     let result: { kept: SkillLoad[]; lost: SkillLoad[] };
     try {
-      const inContext = loadsFromEntries(ctx.sessionManager.buildContextEntries());
-      result = ledger.reconcile(inContext.loads, inContext.indexTurn);
+      const inContext = loadsFromEntries(ctx.sessionManager.buildContextEntries(), ctx.sessionManager.getBranch());
+      result = ledger.reconcile(inContext.loads, inContext.indexTurn, inContext.released);
     } catch {
       result = { kept: [], lost: ledger.onCompaction() };
     }
-    if (result.kept.length || result.lost.length) {
+    // A compaction rebuilt the ledger from the session: what was waiting to be checked is settled by it.
+    unverified = [];
+    unreleasable.clear();
+    watch = { after: "compaction", turn: deps.turns() };
+    const stubbed = ledger.compactionAccount().released;
+    if (result.kept.length || result.lost.length || stubbed.length) {
       const ref = (l: SkillLoad) => ({ key: l.key, turn: l.turn });
-      await deps.trace(ctx.cwd, "skills_compacted", {}, { ok: true, kept: result.kept.map(ref), lost: result.lost.map(ref) }).catch(() => undefined);
+      await deps
+        .trace(ctx.cwd, "skills_compacted", {}, { ok: true, kept: result.kept.map(ref), lost: result.lost.map(ref), ...(stubbed.length ? { released: stubbed.map(ref) } : {}) })
+        .catch(() => undefined);
     }
   });
 
@@ -813,6 +1272,7 @@ export function registerSkills(pi: ExtensionAPI, deps: SkillsDeps): SkillsHandle
     }
 
     const reload = ledger.wasLostAtCompaction(key);
+    const releasedTurn = ledger.releasedAt(key);
     const working = ledger.working();
     const lines: string[] = [`Skill \`${id}\` (pack ${pack.id}${pack.version ? ` ${pack.version}` : ""}, about ${fmt(file.tokens)} tokens)${file.title ? `: ${file.title}` : ""}`, "", file.body];
     const tail: string[] = [];
@@ -842,7 +1302,9 @@ export function registerSkills(pi: ExtensionAPI, deps: SkillsDeps): SkillsHandle
         needs: file.needs,
         ...(others.length ? { also_in: others.map((p) => p.id) } : {}),
         ...(reload ? { reload_after_compaction: true } : {}),
+        ...(releasedTurn !== undefined ? { reload_after_release: true, released_turn: releasedTurn } : {}),
         ...(working.length >= MAX_LIVE_SKILLS ? { holding: working.length } : {}),
+        call: toolCallId,
       },
       Date.now() - started,
     );
@@ -861,11 +1323,15 @@ export function registerSkills(pi: ExtensionAPI, deps: SkillsDeps): SkillsHandle
     const target = held.length === 1 ? held[0]! : null;
     if (!target) {
       const reason = !wanted ? "bad id" : held.length > 1 ? "ambiguous" : "not loaded";
-      await deps.trace(cwd, "skill_done", { id: raw, ...(note ? { note } : {}) }, { ok: false, error: reason, turn }, Date.now() - started);
+      // A note this seat finished with and the harness already released is not "unknown": it says so.
+      const gone = wanted && reason === "not loaded" ? ledger.releasedLoads().find((l) => l.id === wanted.id && (!wanted.pack || l.pack === wanted.pack)) : undefined;
+      await deps.trace(cwd, "skill_done", { id: raw, ...(note ? { note } : {}) }, { ok: false, error: reason, turn, ...(gone ? { released: true } : {}) }, Date.now() - started);
       const out =
         reason === "ambiguous"
           ? `More than one pack's \`${raw}\` is loaded: name it as pack:id (${held.map((l) => l.key).join(", ")}).`
-          : `\`${raw}\` is not among the notes you have loaded (none, or a compaction took it out of your context). Nothing to mark done.`;
+          : gone
+            ? `\`${raw}\` was already marked done and has been released from your context (a one-line stub stands in its place); skill("${raw}") loads it again. Nothing to mark done.`
+            : `\`${raw}\` is not among the notes you have loaded (none, a compaction took it out of your context, or it was released). Nothing to mark done.`;
       return text(out, { ok: false, error: reason });
     }
     const already = Boolean(target.done);
@@ -878,6 +1344,235 @@ export function registerSkills(pi: ExtensionAPI, deps: SkillsDeps): SkillsHandle
       Date.now() - started,
     );
     return text(already ? `\`${target.id}\` was already marked done (turn ${target.done!.turn}).` : `Recorded: \`${target.id}\` is done. Load it again with skill("${target.id}") if you need it later.`, { ok: true, id: target.id, pack: target.pack, turn, note });
+  }
+
+  // -------------------------------------------------------------------------
+  // The unloader: a finished body is replaced by a stub at a turn boundary
+  // -------------------------------------------------------------------------
+
+  type BoundaryCtx = {
+    cwd: string;
+    model?: ModelFacts;
+    thinkingLevel?: string;
+    sessionManager: { buildContextEntries: () => unknown[]; getBranch: () => unknown[] };
+  };
+  type BoundaryEvent = {
+    entries?: SessionBoundaryDraft[];
+    outcome?: string;
+    context?: { contextEntries?: readonly unknown[] };
+    toolResults?: Array<{ toolName?: string; isError?: boolean }>;
+  };
+
+  /** What the policy comes to for this seat now, and the one trace row that says so whenever it changes. */
+  async function settlePolicy(ctx: BoundaryCtx): Promise<{ effective: EffectiveRelease; cls: ReleaseClass }> {
+    let level: string | undefined;
+    try {
+      level = ctx.thinkingLevel;
+    } catch {
+      level = undefined;
+    }
+    const model = ctx.model;
+    const { cls, why } = releaseClassOf(model);
+    const effective = effectiveRelease(releaseMode, cls);
+    const name = model ? `${model.provider ?? "?"}/${model.id ?? "?"}` : null;
+    const key = [releaseMode, effective, cls, model?.api ?? "", name ?? "", level ?? ""].join("|");
+    if (key !== policyKey) {
+      policyKey = key;
+      await deps
+        .trace(
+          ctx.cwd,
+          "skill_release_policy",
+          {},
+          {
+            ok: deps.release === undefined || requestedRelease !== null,
+            mode: releaseMode,
+            ...(deps.release !== undefined && requestedRelease === null ? { requested: deps.release } : {}),
+            effective,
+            class: cls,
+            why,
+            model: name,
+            api: model?.api ?? null,
+            reasoning: model?.reasoning ?? null,
+            thinking_level: level ?? null,
+          },
+        )
+        .catch(() => undefined);
+    }
+    return { effective, cls };
+  }
+
+  /**
+   * The releases of the last boundary, checked against the session: a draft Pi
+   * did not commit (an older Pi, or a boundary another extension's invalid
+   * draft cancelled) leaves the body in the context, and the ledger and the trace
+   * must not say otherwise. The body is held again, said on the trace (the row
+   * names the same call and entry as the release it takes back, which the metrics
+   * read), and not tried again until a compaction. Read off the whole branch, so
+   * it holds at a compaction too, when the context entries no longer reach back.
+   */
+  async function verifyReleases(ctx: BoundaryCtx): Promise<void> {
+    if (!unverified.length) return;
+    const pending = unverified;
+    unverified = [];
+    let entries: unknown[];
+    try {
+      entries = ctx.sessionManager.getBranch();
+    } catch {
+      return;
+    }
+    const edited = new Set(entries.map((e) => e as { type?: string; targetId?: string }).filter((e) => e.type === "context_edit").map((e) => e.targetId));
+    for (const p of pending) {
+      if (edited.has(p.entryId)) continue;
+      if (ledger.unrelease(p.load.key, p.turn)) unreleasable.add(p.load.key);
+      await deps
+        .trace(ctx.cwd, "skill_unload", { id: p.load.id }, { ok: false, error: "the edit was not committed; the body is still in the context", pack: p.load.pack, call: p.load.toolCallId, entry: p.entryId, reason: p.reason, turn: p.turn })
+        .catch(() => undefined);
+    }
+  }
+
+  /**
+   * At the end of a turn: replace every body the seat finished with, and the
+   * policy lets go, by a stub; all of them in this one return, so the history
+   * is rewritten once however many bodies leave. The result is a `context_edit`
+   * draft per body (Pi appends them before it builds the next request); the
+   * session keeps the raw tool result. The ledger is told only for the bodies
+   * the session shows are in the context and not yet edited: it is read off the
+   * session here, as at a compaction, so a stale ledger cannot aim an edit at
+   * an entry that is gone.
+   *
+   * The trigger is `compaction` only on the turn in which the seat's
+   * `self_compact` came back successfully (the run ends with it, and the
+   * compaction that follows rewrites the prefix anyway). A hand-off that failed
+   * and was given up is not that: the seat goes on working, and its bodies are
+   * released by the turn-end rules or not at all.
+   */
+  async function releaseAtBoundary(event: BoundaryEvent, ctx: BoundaryCtx): Promise<{ entries: SessionBoundaryDraft[] } | undefined> {
+    await verifyReleases(ctx);
+    const policy = await settlePolicy(ctx);
+    if (policy.effective === "off") return undefined;
+    if (event.outcome !== undefined && event.outcome !== "completed") return undefined;
+    if (!ledger.releasable().length) return undefined;
+    const turn = deps.turns();
+    const handedOff = (event.toolResults ?? []).some((r) => r.toolName === "self_compact" && r.isError !== true) && deps.compactionPending?.() !== false;
+    const trigger: ReleaseTrigger = handedOff ? "compaction" : "turn_end";
+    if (trigger === "turn_end" && policy.effective !== "boundary") return undefined;
+
+    let entries: unknown[];
+    let inContext: ReturnType<typeof loadsFromEntries>;
+    try {
+      entries = ctx.sessionManager.buildContextEntries();
+      inContext = loadsFromEntries(entries);
+    } catch {
+      return undefined;
+    }
+    const entryOf = (load: SkillLoad) => inContext.loads.find((l) => l.key === load.key && l.toolCallId === load.toolCallId && l.entryId !== undefined)?.entryId;
+    const plan = planRelease({
+      held: ledger.held().filter((l) => !unreleasable.has(l.key)),
+      turn,
+      effective: policy.effective,
+      trigger,
+      releasedAt: (key) => ledger.releasedAt(key),
+      signedAfter: (load) => {
+        const id = entryOf(load);
+        return id !== undefined && signedThinkingAfter(entries, id);
+      },
+    });
+    if (!plan.release.length) return undefined;
+
+    const colliding = collidingIds(await packIndexes());
+    const reason = trigger === "compaction" ? "compaction" : "done";
+    const drafts: SessionBoundaryDraft[] = [];
+    const rows: Array<{ load: SkillLoad; entryId: string; stub: string; suffix: number | null }> = [];
+    for (const load of plan.release) {
+      const entryId = entryOf(load);
+      if (entryId === undefined) {
+        // The ledger holds a body the session no longer shows in the context (a compaction took it, or someone else edited it).
+        ledger.drop(load.key);
+        await deps.trace(ctx.cwd, "skill_unload", { id: load.id }, { ok: false, error: "not in the context", pack: load.pack, call: load.toolCallId, reason, turn }).catch(() => undefined);
+        continue;
+      }
+      const stub = stubText(colliding.has(load.id) ? load.key : load.id, load.tokens);
+      drafts.push({ type: "context_edit", targetId: entryId, replacement: { content: [{ type: "text", text: stub }] } });
+      rows.push({ load, entryId, stub, suffix: suffixTokens(event.context?.contextEntries ?? [], entryId) });
+    }
+    if (!drafts.length) return undefined;
+    // The cache writes once, from the earliest edit: the batch's cost is the largest suffix, not their sum.
+    const batchSuffix = rows.reduce<number | null>((max, r) => (r.suffix === null ? max : max === null ? r.suffix : Math.max(max, r.suffix)), null);
+    for (const { load, entryId, stub, suffix } of rows) {
+      ledger.release(load.key, { turn, reason });
+      unverified.push({ load, entryId, turn, reason });
+      await deps
+        .trace(
+          ctx.cwd,
+          "skill_unload",
+          { id: load.id },
+          {
+            ok: true,
+            pack: load.pack,
+            sha256: load.sha256,
+            tokens: load.tokens,
+            call: load.toolCallId,
+            entry: entryId,
+            reason,
+            turn,
+            loaded_turn: load.turn,
+            done_turn: load.done?.turn ?? null,
+            held_turns: turn - load.turn,
+            batch: rows.length,
+            stub_tokens: estimateTokens(stub),
+            suffix_tokens: suffix,
+            batch_suffix_tokens: batchSuffix,
+            policy: releaseMode,
+            class: policy.cls,
+          },
+        )
+        .catch(() => undefined);
+    }
+    // The next reply says whether the provider dropped any thinking block after this edit (Anthropic does, and tells Pi).
+    watch = { after: "release", turn };
+    return { entries: [...(event.entries ?? []), ...drafts] };
+  }
+
+  pi.on("turn_end", async (event, ctx) => {
+    try {
+      return await releaseAtBoundary(event as unknown as BoundaryEvent, ctx as unknown as BoundaryCtx);
+    } catch {
+      // a release that cannot be made leaves the body where it is: nothing worse than before the unloader
+      return undefined;
+    }
+  });
+
+  /**
+   * The first assistant reply after a release or a compaction, and how many thinking
+   * blocks the provider says it dropped from the history it was sent. Pi records
+   * that (pi-ai's anthropic-messages.js: the response's `input_transformations`
+   * become an `anthropic_input_transformations` diagnostic on the message, which
+   * Pi's own interface counts as "Anthropic dropped N thinking blocks"). Only the
+   * Anthropic transport reports it, so only its replies get a row. One Claude run
+   * answers the question the policy for those models rests on.
+   */
+  pi.on("message_end", async (event, ctx) => {
+    const message = (event as unknown as { message?: { role?: string; api?: string; model?: string; diagnostics?: unknown } }).message;
+    if (!watch || message?.role !== "assistant") return undefined;
+    const armed = watch;
+    watch = null;
+    if (message.api !== "anthropic-messages") return undefined;
+    const dropped = countDroppedThinkingBlocks(message);
+    await deps
+      .trace((ctx as unknown as { cwd: string }).cwd, "skill_release_effect", {}, { ok: true, after: armed.after, turn: armed.turn, reply_turn: deps.turns() + 1, thinking_dropped: dropped, model: message.model ?? null })
+      .catch(() => undefined);
+    return undefined;
+  });
+
+  function summaryInput(history: readonly unknown[], turnPrefix: readonly unknown[]): { history: unknown[]; turnPrefix: unknown[]; block: string } {
+    if (releaseMode === "off") return { history: [...history], turnPrefix: [...turnPrefix], block: "" };
+    const shaped = shapeForSummary([...history, ...turnPrefix]);
+    // A note read in the part being summarised and marked done after the cut (in the kept tail) is done all the same: the ledger knows.
+    for (const read of shaped.reads) {
+      const held = ledger.get(read.key);
+      if (!read.done && held?.done && held.toolCallId === read.call) read.done = true;
+    }
+    return { history: shaped.messages.slice(0, history.length), turnPrefix: shaped.messages.slice(history.length), block: renderSkillsRead(shaped.reads) };
   }
 
   pi.registerTool({
@@ -910,5 +1605,5 @@ export function registerSkills(pi: ExtensionAPI, deps: SkillsDeps): SkillsHandle
     execute: inTurn(runSkillDone),
   });
 
-  return { promptSection, handoffLine, ledger };
+  return { promptSection, handoffLine, summaryInput, ledger };
 }
