@@ -1,7 +1,7 @@
 {
   "id": "android-aleapp",
-  "version": "1.0.0",
-  "description": "A broad extraction of an Android full file-system acquisition (a tar, plain or compressed, or a zip, holding a userdata root): ALEAPP runs every artefact module over the whole of it and writes a TSV report per artefact, a timeline database and an HTML report, the searchable form of what the phone holds.",
+  "version": "1.1.0",
+  "description": "A broad extraction of an Android full file-system acquisition (a tar, plain or compressed, or a zip, holding a userdata root): ALEAPP's artefact modules run over the whole of it and write a TSV report per artefact that has records, a timeline database and an HTML report, the searchable form of what the phone holds. The run reads ALEAPP's own log for one outcome per module (modules.tsv: completed, no_record, unsupported, errored, errors_logged or unknown) and says complete only when ALEAPP exited 0, wrote a TSV report, the log was recognised, says how many modules it parses and that many started, ends with its processing-completed line, no module errored, logged an error or is unknown, no line outside a module speaks of an error and stderr holds nothing the log shape does not explain.",
   "object": "Android full file-system archive",
   "order": 38,
   "min_bytes": 1024,
@@ -34,7 +34,8 @@
     "artefacts no module of the pinned ALEAPP release parses: their files stay in the source, unread by this extraction",
     "deleted records beyond what a module reads itself (SQLite free pages, WAL): nothing is carved",
     "protected data that needs a key it does not have (file-based encryption without its keys)",
-    "archives nested inside the acquisition"
+    "archives nested inside the acquisition",
+    "a module the log does not account for as completed (errored, or started and not finished): see modules.tsv"
   ],
   "limits": {
     "seconds": 14400
@@ -43,9 +44,10 @@
     "aleapp/",
     "aleapp.stdout",
     "aleapp.stderr",
+    "modules.tsv",
     "index.tsv",
     "coverage.json"
   ],
-  "covers": "What ALEAPP's modules parse from the whole acquisition: one TSV per artefact that has records, its timeline and every file it wrote, kept under aleapp/. A module that finds nothing writes no report, which does not show the artefact never existed; files no module targets are not read.",
-  "sha256": "51f2412cd4a0b7547992b79a2780fa5c4aa937c19584e40f2db14ad16e8b091b"
+  "covers": "What ALEAPP's modules parse from the whole acquisition: one TSV per artefact that has records, its timeline and every file it wrote, kept under aleapp/, and modules.tsv with the outcome of each module its log names. A module that finds nothing writes no report (no_record), which does not show the artefact never existed, and a module whose own gate does not take the operating-system version (unsupported) read nothing of that artefact; files no module targets are not read; a module that errored or whose end the log does not show is not covered, however many reports the others wrote. The report contains the phone's own content and is a sensitive output.",
+  "sha256": "060f892ccfdda0d3f8b2cdb7504ad5df9bf712048eb26ca65f4da11b1ec2ed33"
 }

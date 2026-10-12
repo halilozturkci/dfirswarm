@@ -492,6 +492,186 @@ test("a write that fails leaves the file as .partial, the manifest says so, and 
   assert.match(man[1].note, /^partial: \d+ of 100000 bytes kept$/);
 });
 
+// --- the review's fixes: one allocator for partial names, two statuses, budgets, coverage first ---
+
+test("two items that would both be kept as a partial of the same name are kept as two distinct files, and nothing earlier is overwritten", () => {
+  // Item 0 is a whole file named like the first partial name, item 1 one named like the second; item 2 is
+  // broken, so its content is kept as a partial whose two obvious names are both taken. The old tool replaced
+  // item 1's file with the partial.
+  const cwd = dir("ad1-partial-names-");
+  mkdirSync(join(cwd, "inputs"));
+  const broken: Ad1Node = { name: "a.bin", chunks: [deflateSync(Buffer.alloc(10000))], size: 10000 };
+  writeFileSync(join(cwd, "inputs", "p.ad1"), ad1Image([{ name: "a.bin.partial", content: B("first whole file") }, { name: "a.bin.partial~n2", content: B("second whole file") }, broken], { chunkSize: 1024 }));
+  const r = spawnSync("python3", [TOOL], { cwd, input: JSON.stringify({ image: "inputs/p.ad1" }), encoding: "utf8", env: { ...process.env, AGENT_ID: "s1" } });
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  const base = join(cwd, "work", "s1", "ad1", "p");
+  assert.equal(readFileSync(join(base, "a.bin.partial"), "utf8"), "first whole file");
+  assert.equal(readFileSync(join(base, "a.bin.partial~n2"), "utf8"), "second whole file", "the second whole file was not overwritten");
+  assert.ok(!existsSync(join(base, "a.bin")), "no truncated file keeps its own name");
+  const man = tsv(join(base, "ad1_extract.tsv"));
+  const row = man.find((x) => x.n === "2")!;
+  assert.match(row.written, /^a\.bin\.partial~/);
+  assert.notEqual(row.written, "a.bin.partial");
+  assert.notEqual(row.written, "a.bin.partial~n2");
+  assert.equal(new Set(man.map((x) => x.written)).size, 3, "three items, three distinct files");
+  assert.equal(sha256(readFileSync(join(base, row.written))), row.sha256, "a partial row's sha256 is of the bytes kept");
+});
+
+test("a size recorded for a partial is the bytes kept, and its sha256 is of them", () => {
+  const cwd = dir("ad1-partial-size-");
+  mkdirSync(join(cwd, "inputs"));
+  const big = randomBytes(100000);
+  writeFileSync(join(cwd, "inputs", "big.ad1"), ad1Image([{ name: "big.bin", content: big }]));
+  const r = spawnSync("bash", ["-c", `ulimit -f 32; exec python3 '${TOOL}'`], { cwd, input: JSON.stringify({ image: "inputs/big.ad1" }), encoding: "utf8", env: { ...process.env, AGENT_ID: "s1" } });
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  const base = join(cwd, "work", "s1", "ad1", "big");
+  const kept = readFileSync(join(base, "big.bin.partial"));
+  const row = tsv(join(base, "ad1_extract.tsv"))[0];
+  assert.equal(Number(row.size), kept.length, "the size is what the file holds, not what was counted before the write failed");
+  assert.equal(row.sha256, sha256(kept));
+});
+
+test("a digest mismatch is an integrity finding of its own: ok is false, the extraction is complete, and the two statuses say so", async () => {
+  const cwd = runDir();
+  const r = await runPy(TOOL, cwd, { image: "inputs/case.ad1" }, undefined, { AGENT_ID: "s1" });
+  assert.equal(r.code, 0, "the files were written: the exit status is 0 for a complete extraction");
+  const res = JSON.parse(r.stdout);
+  assert.deepEqual([res.processing_status, res.integrity_status, res.ok, res.mismatches], ["complete", "mismatch", false, 1]);
+  assert.match(res.integrity_note, /does not match the digests the image records/);
+  const cov = JSON.parse(readFileSync(join(cwd, "work", "s1", "ad1", "case", "ad1_extract.coverage.json"), "utf8"));
+  assert.deepEqual([cov.processing_status, cov.integrity_status], ["complete", "mismatch"]);
+  // An image whose every file matches is verified, and ok.
+  writeFileSync(join(cwd, "inputs", "clean.ad1"), ad1Image([{ name: "a.txt", content: B("fine") }, { name: "b.txt", content: B("also fine") }]));
+  const ok = JSON.parse((await runPy(TOOL, cwd, { image: "inputs/clean.ad1" }, undefined, { AGENT_ID: "s1" })).stdout);
+  assert.deepEqual([ok.processing_status, ok.integrity_status, ok.ok], ["complete", "verified", true]);
+  // A file with no stored digest cannot be said to match.
+  writeFileSync(join(cwd, "inputs", "nohash.ad1"), ad1Image([{ name: "r.txt", content: B("no digests"), meta: [[2, 2, "1"]] }]));
+  const unverified = JSON.parse((await runPy(TOOL, cwd, { image: "inputs/nohash.ad1" }, undefined, { AGENT_ID: "s1" })).stdout);
+  assert.deepEqual([unverified.integrity_status, unverified.no_stored_hash], ["unverified", 1]);
+});
+
+test("the item budget and the byte budget stop ad1_extract, keep what it wrote, and say so", async () => {
+  const cwd = runDir();
+  const byItems = await runPy(TOOL, cwd, { image: "inputs/case.ad1", max_items: 3 }, undefined, { AGENT_ID: "s1" });
+  assert.equal(byItems.code, 0, "a stop at a budget is a valid answer for what was examined: the tool ran");
+  const a = JSON.parse(byItems.stdout);
+  assert.equal(a.processing_status, "partial");
+  assert.match(a.stopped_by_budget, /item budget of 3 items/);
+  assert.equal(a.items, 3);
+  assert.match(a.errors.join("\n"), /every item after it in the image's order were not written or listed/);
+  writeFileSync(join(cwd, "inputs", "two.ad1"), ad1Image([{ name: "a.bin", content: randomBytes(5000) }, { name: "b.bin", content: B("never reached") }], { chunkSize: 512 }));
+  const byBytes = await runPy(TOOL, cwd, { image: "inputs/two.ad1", max_bytes: 1000 }, undefined, { AGENT_ID: "s1" });
+  assert.equal(byBytes.code, 0, "the file the byte budget cut is kept as a partial and says so; the call itself ran");
+  assert.equal(JSON.parse(byBytes.stdout).processing_status, "partial");
+  const b = JSON.parse(byBytes.stdout);
+  assert.match(b.stopped_by_budget, /output budget of 1000 bytes/);
+  const base = join(cwd, "work", "s1", "ad1", "two");
+  assert.ok(existsSync(join(base, "a.bin.partial")) && !existsSync(join(base, "a.bin")) && !existsSync(join(base, "b.bin")));
+  assert.ok(readFileSync(join(base, "a.bin.partial")).length <= 1000 + 512, "what was kept is within a chunk of the budget");
+  for (const bad of [{ max_items: 0 }, { max_bytes: -1 }, { max_seconds: 10 ** 9 }]) {
+    const r = await runPy(TOOL, cwd, { image: "inputs/case.ad1", out_dir: `work/s1/bad${Object.keys(bad)[0]}`, ...bad }, undefined, { AGENT_ID: "s1" });
+    assert.equal(r.code, 1, JSON.stringify(bad));
+  }
+});
+
+test("an item the walk did not reach before a budget stop is not claimed absent", async () => {
+  const cwd = runDir();
+  const r = await runPy(TOOL, cwd, { image: "inputs/case.ad1", members: [3, 5, 11], max_items: 1 }, undefined, { AGENT_ID: "s1" });
+  assert.equal(r.code, 0);
+  const res = JSON.parse(r.stdout);
+  assert.match(res.stopped_by_budget, /item budget of 1 items/);
+  const text = res.errors.join("\n");
+  assert.match(text, /item 11 was not reached before the call stopped/);
+  assert.doesNotMatch(text, /no item 11 in this read of the image/, "an item after the stop is not an item that is not there");
+});
+
+test("the walk budget stops ad1_extract, and a wanted item it never reached is not called absent", async () => {
+  const cwd = runDir();
+  const r = await runPy(TOOL, cwd, { image: "inputs/case.ad1", max_walk: 5 }, undefined, { AGENT_ID: "s1" });
+  assert.equal(r.code, 0);
+  const res = JSON.parse(r.stdout);
+  assert.equal(res.processing_status, "partial");
+  assert.match(res.stopped_by_budget, /walk budget of 5 items/);
+  assert.equal(res.items, 5);
+  const some = await runPy(TOOL, cwd, { image: "inputs/case.ad1", members: [11], max_walk: 5, out_dir: "work/s1/walk2" }, undefined, { AGENT_ID: "s1" });
+  const text = JSON.parse(some.stdout).errors.join("\n");
+  assert.match(text, /item 11 was not reached before the call stopped/);
+  assert.doesNotMatch(text, /no item 11 in this read/);
+  const bad = await runPy(TOOL, cwd, { image: "inputs/case.ad1", max_walk: 0, out_dir: "work/s1/walk3" }, undefined, { AGENT_ID: "s1" });
+  assert.equal(bad.code, 1);
+});
+
+test("what ad1_extract holds while it walks is the depth of the tree, not the number of items", () => {
+  const d = dir("ad1-memory-");
+  mkdirSync(join(d, "inputs"));
+  const dirs: Ad1Node[] = [];
+  for (let k = 0; k < 100; k++) {
+    const kids: Ad1Node[] = [];
+    for (let i = 0; i < 1000; i++) kids.push({ name: `f${i}.txt`, content: Buffer.alloc(0) });
+    dirs.push({ name: `d${k}`, folder: true, children: kids });
+  }
+  writeFileSync(join(d, "inputs", "big.ad1"), ad1Image(dirs));
+  const wrapper = "import json, resource, subprocess, sys\n" +
+    "p = subprocess.run([sys.executable, sys.argv[1]], input=sys.argv[2], capture_output=True, text=True)\n" +
+    "print(json.dumps({'out': p.stdout, 'peak': resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss}))\n";
+  const r = spawnSync("python3", ["-c", wrapper, TOOL, JSON.stringify({ image: "inputs/big.ad1" })], { cwd: d, encoding: "utf8", env: { ...process.env, AGENT_ID: "s1" } });
+  const got = JSON.parse(r.stdout) as { out: string; peak: number };
+  const res = JSON.parse(got.out);
+  assert.deepEqual([res.processing_status, res.items, res.files, res.folders], ["complete", 100100, 100000, 100]);
+  const peak = got.peak * (process.platform === "darwin" ? 1 : 1024);
+  assert.ok(peak < 60 * 1024 * 1024, `the peak was ${peak} bytes for 100,100 items (the earlier code needed 100 MB)`);
+});
+
+test("a locator with a digit that is not a decimal digit is refused with a message, not a traceback", async () => {
+  const cwd = runDir();
+  for (const bad of ["ad1:item=\u00b2", "ad1:item=\u0663", "ad1:item="]) {
+    const r = await runPy(TOOL, cwd, { image: "inputs/case.ad1", members: [bad] }, undefined, { AGENT_ID: "s1" });
+    assert.equal(r.code, 1, bad);
+    assert.doesNotMatch(r.stderr, /Traceback/, bad);
+    assert.match(JSON.parse(r.stdout).error, /an item number \(n\) or a locator/, bad);
+  }
+});
+
+test("a partial is kept by a rename where the file system holds no hard links", () => {
+  const cwd = dir("ad1-nolink-");
+  mkdirSync(join(cwd, "inputs"));
+  mkdirSync(join(cwd, "shim"));
+  writeFileSync(join(cwd, "shim", "sitecustomize.py"), "import os\n\ndef _no(*a, **k):\n    raise OSError(1, 'Operation not permitted')\n\nos.link = _no\n");
+  writeFileSync(join(cwd, "inputs", "big.ad1"), ad1Image([{ name: "big.bin", content: randomBytes(100000) }]));
+  const r = spawnSync("bash", ["-c", `ulimit -f 32; exec python3 '${TOOL}'`], { cwd, input: JSON.stringify({ image: "inputs/big.ad1" }), encoding: "utf8", env: { ...process.env, AGENT_ID: "s1", PYTHONPATH: join(cwd, "shim") } });
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  const base = join(cwd, "work", "s1", "ad1", "big");
+  assert.ok(existsSync(join(base, "big.bin.partial")), "what was written is kept, not removed because link() is refused");
+  assert.ok(!existsSync(join(base, "big.bin")));
+  const row = tsv(join(base, "ad1_extract.tsv"))[0];
+  assert.equal(Number(row.size), readFileSync(join(base, "big.bin.partial")).length);
+  assert.match(row.note, /partial: \d+ of 100000 bytes kept/);
+});
+
+test("the recipe does not call an image verified when a file in it records no digest", () => {
+  const d = dir("ad1-nohash-");
+  writeFileSync(join(d, "nohash.ad1"), ad1Image([{ name: "r.txt", content: B("no digests"), meta: [[2, 2, "1"]] }, { name: "ok.txt", content: B("fine") }]));
+  const { cov } = runRecipe([join(d, "nohash.ad1")]);
+  assert.equal(cov.status, "complete");
+  assert.equal((cov as Record<string, unknown>).integrity_status, "unverified");
+  assert.equal((cov as Record<string, unknown>).no_stored_hash, 1);
+  writeFileSync(join(d, "clean.ad1"), ad1Image([{ name: "a.txt", content: B("fine") }]));
+  assert.equal((runRecipe([join(d, "clean.ad1")]).cov as Record<string, unknown>).integrity_status, "verified");
+});
+
+test("the recipe's coverage says a mismatch apart from whether every item was processed, and a metadata chain longer than the reader allows is named", () => {
+  const d = dir("ad1-integrity-");
+  writeFileSync(join(d, "case.ad1"), ad1Image(tree()));
+  const { cov } = runRecipe([join(d, "case.ad1")]);
+  assert.equal(cov.status, "complete");
+  assert.equal((cov as Record<string, unknown>).integrity_status, "mismatch");
+  // An item whose metadata chain is longer than the reader's cap (65536 entries) is not read further.
+  const many: Ad1Node = { name: "meta.bin", content: B("x"), meta: Array.from({ length: 70000 }, (_, i) => [3, 0x7000 + (i % 100), "v"] as [number, number, string]) };
+  writeFileSync(join(d, "many.ad1"), ad1Image([many]));
+  const long = runRecipe([join(d, "many.ad1")]);
+  assert.match(long.cov.errors.join("\n"), /a metadata chain holds more than 65536 entries/);
+});
+
 test("the reader is one block, the same in the recipe and the tool", () => {
   const block = (p: string) => {
     const t = readFileSync(p, "utf8");

@@ -1,18 +1,20 @@
 {
   "name": "feature_scan",
-  "description": "Sweep a whole image or blob with bulk_extractor and return what it found per feature: addresses, URLs, domains, card numbers, EXIF, telephone numbers and more, with counts, the top values and the offset each came from. Works with no file system at all.",
+  "description": "Sweep a whole image or blob with bulk_extractor and say what it wrote: every output file with its kind (feature file, histogram, run report, alerts, pcap, other), and for each feature file its line count, distinct values (a lower bound past 200,000) and the offset of the first. No feature value is returned in the answer, but the files bulk_extractor writes in out_dir are unfiltered and hold them (feature files, histogram files and alerts.txt, which can carry a whole recovery key): out_dir is made 0700 and its files 0600 when the child ends, the answer says out_dir_contains_secret_values and kinds_holding_values, and the job runs with secret_output: true; write_values: true (in a job only) also writes each feature file's most frequent values to a 0600 file under $OUT. Histogram files are counted apart from feature files. The exit code, stdout and stderr are returned and kept in files: a nonzero exit is status partial or failed, never clean, and complete means bulk_extractor exited 0, not that every scanner reached every byte. Works with no file system at all: the offset is the provenance, there is no path.",
   "params": {
     "path": {
       "type": "string",
-      "description": "An image, a partition, or any blob"
+      "description": "An image, a partition, or any blob",
+      "required": true
     },
     "out_dir": {
       "type": "string",
-      "description": "Where the feature files land, under work/. Must not already exist."
+      "description": "Where the feature files land: a directory under work/ (in a job, under $OUT, the one place a job writes). It must not already hold files.",
+      "required": true
     },
     "only": {
       "type": "array",
-      "description": "Run only these scanners, e.g. [\"email\",\"url\",\"exif\"]"
+      "description": "Run only these scanners, e.g. [\"email\",\"exif\"]; the installed bulk_extractor says which exist"
     },
     "disable": {
       "type": "array",
@@ -20,19 +22,26 @@
     },
     "top": {
       "type": "integer",
-      "description": "How many distinct values to return per feature (default 15)"
+      "description": "With write_values: how many distinct values per feature file are written (default 15)"
+    },
+    "write_values": {
+      "type": "boolean",
+      "description": "Write each feature file's top values to a 0600 file under $OUT. Refused outside a job; run the job with secret_output: true. Default false."
     },
     "timeout_seconds": {
       "type": "integer",
-      "description": "Give up after this long (default 900)"
+      "description": "Give up after this long (default 900, from 10 to 1000); what was written is then listed as partial"
     }
   },
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 1200,
-  "example": "{\"path\": \"inputs/disk.raw\", \"out_dir\": \"work/features\", \"only\": [\"email\", \"url\"]}",
+  "example": "{\"path\": \"inputs/disk.raw\", \"out_dir\": \"work/features\", \"only\": [\"email\", \"exif\"]}",
+  "requires": [
+    "bulk_extractor"
+  ],
   "by": "maintainer",
   "at": "2026-09-22T14:00:00.000Z",
-  "version": 2,
-  "sha256": "846b131be2e353ab4fb94f24fc489a38535d0165900db6a7dd24717abd3f863d"
+  "version": 3,
+  "sha256": "0b3f241f02d9c767ac268d73ec9784b8fe8614620db63b079a39704c81c096fa"
 }

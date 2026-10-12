@@ -496,6 +496,16 @@ test("the library's catalog searches read the case in front of them, not the one
   assert.deepEqual(JSON.parse(await readFile(join(lib, "manifest.json"), "utf8")), JSON.parse(await readFile(join(pack, "manifest.json"), "utf8")));
 });
 
+test("the tool-library copies of file_carver, catalog_search, sig_carve, ioc_scan and sqlite_query are the pack's, run.py and manifest", async () => {
+  // The copies are what scripts/swarm.sh install_tools_from offers a run: one that drifts offers the old tool.
+  for (const name of ["file_carver", "catalog_search", "sig_carve", "ioc_scan", "sqlite_query"]) {
+    const lib = join(LIB, name);
+    const pack = join(LIB, "..", "packs", "computer-forensics-base", "tools", name);
+    assert.equal(await readFile(join(lib, "run.py"), "utf8"), await readFile(join(pack, "run.py"), "utf8"), `the library's ${name} is the pack's`);
+    assert.deepEqual(JSON.parse(await readFile(join(lib, "manifest.json"), "utf8")), JSON.parse(await readFile(join(pack, "manifest.json"), "utf8")), `${name}'s manifest`);
+  }
+});
+
 // A broad search returned up to 70K characters a call, and an agent that
 // wanted the rest searched again with a bigger limit: the lines past the
 // limit were counted and dropped. Every match is kept now, and paged.
@@ -954,7 +964,7 @@ test("icat_extract and chunk_needles find an image by its catalogue when it has 
     assert.notEqual(r.code, 0);
     assert.match(r.stdout + r.stderr, /several filesystems in inputs\/s4a-challenge4; pass offset=/);
     assert.match(r.stdout + r.stderr, /\[2048, 409600\]/);
-    r = await runPy(join(tools, "icat_extract", "run.py"), cwd, { inode: 12, output: "work/x.bin", offset: 0 }, bin);
+    r = await runPy(join(tools, "icat_extract", "run.py"), cwd, { inode: 12, output: "work/x0.bin", offset: 0 }, bin);
     assert.equal(r.code, 0, r.stderr + r.stdout);
     assert.equal(await readFile(join(cwd, "icat-args.txt"), "utf8"), "-o\n0\ninputs/s4a-challenge4\n12\n");
   });
@@ -989,8 +999,7 @@ test("sqlite_query opens a database read-only by URI, on a read-only directory, 
     return;
   }
   for (const script of [
-    join(LIB, "..", "packs", "computer-forensics-base", "tools", "sqlite_query", "run.py"),
-    join(LIB, "sqlite_query", "run.py"),
+    join(LIB, "sqlite_query", "run.py"),      // the pack's own, held equal by the copies test below
   ]) {
     await withCwd(async (cwd) => {
       const dir = join(cwd, "work", "agent 03 #1");
@@ -1129,8 +1138,7 @@ test("sqlite_query says a file is not SQLite, and whether it looks encrypted, in
   // "file is not a database", twice, to two agents.
   const { randomBytes } = await import("node:crypto");
   for (const script of [
-    join(LIB, "..", "packs", "computer-forensics-base", "tools", "sqlite_query", "run.py"),
-    join(LIB, "sqlite_query", "run.py"),
+    join(LIB, "sqlite_query", "run.py"),      // the pack's own, held equal by the copies test below
   ]) {
     await withCwd(async (cwd) => {
       await mkdir(join(cwd, "work"), { recursive: true });
@@ -1188,8 +1196,7 @@ test("sqlite_query gives back bytes that are not UTF-8 as escapes instead of dyi
     return;
   }
   for (const script of [
-    join(LIB, "..", "packs", "computer-forensics-base", "tools", "sqlite_query", "run.py"),
-    join(LIB, "sqlite_query", "run.py"),
+    join(LIB, "sqlite_query", "run.py"),      // the pack's own, held equal by the copies test below
   ]) {
     await withCwd(async (cwd) => {
       await mkdir(join(cwd, "work"), { recursive: true });
@@ -1293,7 +1300,8 @@ test("catalog_search takes a catalogue by the name the index gives it, and bad i
 
     r = await runPy(join(tools, "ioc_scan", "run.py"), cwd, { path: "work/nothing-here.txt", needles: "x" });
     assert.notEqual(r.code, 0);
-    assert.deepEqual(JSON.parse(r.stdout), { error: "no such file", path: "work/nothing-here.txt" });
+    assert.equal(JSON.parse(r.stdout).error, "no such file");
+    assert.equal(JSON.parse(r.stdout).path, "work/nothing-here.txt");
     r = await runPy(join(tools, "ioc_scan", "run.py"), cwd, { path: "work", needles: "x" });
     assert.match(JSON.parse(r.stdout).error, /a directory, not a file/);
     for (const lnk of [join(LIB, "lnk_parse", "run.py"), join(LIB, "..", "packs", "windows-forensics", "tools", "lnk_parse", "run.py")]) {

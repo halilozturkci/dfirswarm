@@ -1,6 +1,6 @@
 {
   "name": "ad1_extract",
-  "description": "Write the files and folders of an AccessData AD1 logical image out as a tree, each file inflated, hashed (SHA-256) and checked against the MD5 and SHA-1 the image records, with a manifest (ad1_extract.tsv) of what went where. Run it as a job (job_run tool=ad1_extract) so the files are sealed into the store and the derived catalogue takes them in turn (an archive or a disk image inside). The catalogue's members.tsv for the image (recipe ad1-items) gives the item numbers.",
+  "description": "Write the files and folders of an AccessData AD1 logical image (version 4, unencrypted) out as a tree, each file inflated, hashed (SHA-256) and checked against the MD5 and SHA-1 the image records, with a manifest (ad1_extract.tsv) of what went where and ad1_extract.coverage.json (written as incomplete before the first item). Two statuses, kept apart: processing_status (complete, partial, failed: were all items written) and integrity_status (verified, mismatch, unverified, not_applicable: does what was written match the recorded digests); ok is true only for a complete extraction with no mismatch, while the exit status is 0 for a complete one and for one a budget stopped between items (the files were written and the answer says where it stopped; a mismatch is a finding about the image) and 1 when an item broke or could not be written. Budgets (max_items, max_walk, max_bytes, max_seconds) bound the call; one that is reached stops it, keeps what it wrote, and says so. A broken or cut file is kept as <name>.partial under a name no other item of its directory holds, and its row's size and sha256 are of the bytes kept. Extracted files carry the host's timestamps, not the item's recorded ones (the manifest and the catalogue's members.tsv have those, with no zone the image records). Run it as a job (job_run tool=ad1_extract) so the files are sealed into the store and the derived catalogue takes them in turn (an archive or a disk image inside). The catalogue's members.tsv for the image (recipe ad1-items) gives the item numbers.",
   "params": {
     "image": {
       "type": "string",
@@ -14,14 +14,41 @@
     "out_dir": {
       "type": "string",
       "description": "A new or empty directory for the tree. Default: in a job $OUT/<image name less .ad1> (in a job it must be inside $OUT); called directly, work/<your id>/ad1/<image name less .ad1>"
+    },
+    "max_items": {
+      "type": "integer",
+      "description": "Most items taken in this call (default 5,000,000); past it the call stops and says so"
+    },
+    "max_walk": {
+      "type": "integer",
+      "description": "Most items looked at in this call, taken or not (default 5,000,000); past it the call stops, names the item it stopped at, and does not call an item it never reached absent"
+    },
+    "max_bytes": {
+      "type": "integer",
+      "description": "Most bytes written in this call (default 256 GiB); past it the call stops, keeping the file it was in as a .partial"
+    },
+    "max_seconds": {
+      "type": "integer",
+      "description": "Wall-clock budget in seconds (default 1500, at most 1700); past it the call stops, keeping the file it was in as a .partial"
     }
   },
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 1800,
   "example": "{\"image\": \"inputs/disk.ad1\"}",
+  "use": {
+    "extensions": [
+      ".ad1"
+    ],
+    "magic": [
+      {
+        "offset": 0,
+        "hex": "41445345474d454e54454446494c4500"
+      }
+    ]
+  },
   "by": "maintainer",
   "at": "2026-10-01T12:00:00.000Z",
-  "version": 1,
-  "sha256": "56ba75fa0d7efd197f5b4c981c12794b972b7b6ff2717173e6fc28a0f0b85a71"
+  "version": 2,
+  "sha256": "d6713a9d5c6bc6195388e35eee910da6a36b952ae1b65778d8a573d64ee527b9"
 }

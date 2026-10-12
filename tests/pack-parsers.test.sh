@@ -22,13 +22,23 @@ WORK = tempfile.mkdtemp()
 failures = []
 
 
-def tool(pack_tool, args, cwd=None):
+def tool(pack_tool, args, env=None, cwd=None):
     out = subprocess.run([sys.executable, os.path.join(PACKS, pack_tool, "run.py")],
-                         input=json.dumps(args), capture_output=True, text=True, cwd=cwd)
+                         input=json.dumps(args), capture_output=True, text=True, env=env, cwd=cwd)
     try:
         return json.loads(out.stdout)
     except ValueError:
         return {"_stdout": out.stdout[:400], "_stderr": out.stderr[-400:]}
+
+
+def as_job(pack_tool, args, name):
+    """A tool that withholds what it reads, run as a job: its values file is read back. Returns (answer, values)."""
+    out = os.path.join(WORK, name)
+    os.makedirs(out, exist_ok=True)
+    answer = tool(pack_tool, dict(args, write_values=True), dict(os.environ, JOB_ID="j-" + name, OUT=out))
+    path = os.path.join(out, [f for f in os.listdir(out) if f.endswith("-values.jsonl")][0]) \
+        if any(f.endswith("-values.jsonl") for f in os.listdir(out)) else None
+    return answer, ([json.loads(line) for line in open(path, encoding="utf-8")] if path else [])
 
 
 def check(name, condition, detail=""):
@@ -111,14 +121,14 @@ con.execute("CREATE TABLE message (id INTEGER PRIMARY KEY, handle TEXT, text TEX
 con.executemany("INSERT INTO message (handle, text) VALUES (?,?)",
                 [("+1", "lunch at one"), ("+2", "burn the drive at midnight"), ("+3", "see you")])
 con.commit(); con.execute("DELETE FROM message WHERE id = 2"); con.commit(); con.close()
-got = tool("mobile-forensics/tools/sqlite_freespace", {"db": db, "contains": "burn"})
+got, found = as_job("mobile-forensics/tools/sqlite_freespace", {"db": db, "contains": "burn"}, "freespace")
 recovered = got.get("fragment_count", 0) >= 1 and \
-    "burn the drive" in (got.get("fragments") or [{}])[0].get("text", "")
+    "burn the drive" in (found or [{}])[0].get("value", "")
 if not recovered and secure_delete:
     print("skip - sqlite_freespace: this SQLite is built with secure delete (%s), so a freed "
           "cell is zeroed and there is nothing for any parser to recover" % secure_delete)
 else:
-    check("sqlite_freespace recovers a deleted row from the page freeblock chain", recovered,
+    check("sqlite_freespace finds the text of a deleted row in the page freeblock chain (a fragment, not a row)", recovered,
           "secure_delete=%s fragments=%s"
           % (secure_delete, json.dumps(got.get("fragments", []))[:200]))
 
@@ -253,13 +263,14 @@ def varint(n):
             return bytes(out)
 
 
-inner = varint((1 << 3) | 2) + varint(len(b"com.example.beacon")) + b"com.example.beacon"
+inner = varint((1 << 3) | 2) + varint(len(b"com.example.beacon")) + b"com.example.beacon" + varint((2 << 3) | 0) + varint(7)
 blob = varint((1 << 3) | 2) + varint(len(inner)) + inner + varint((3 << 3) | 0) + varint(42)
-got = tool("mobile-forensics/tools/protobuf_peek", {"hex": blob.hex()})
+got, found = as_job("mobile-forensics/tools/protobuf_peek", {"hex": blob.hex()}, "protobuf")
 check("protobuf_peek unwraps a nested message without a schema",
-      got.get("looks_like_protobuf") is True
-      and got.get("strings", [{}])[0].get("text") == "com.example.beacon",
-      json.dumps(got.get("problems", []))[:200])
+      got.get("structure", {}).get("consistent_with_protobuf_wire_format") is True
+      and [f["value"] for f in found if f["kind"] == "text"] == ["com.example.beacon"]
+      and "com.example.beacon" not in json.dumps(got),
+      json.dumps(got.get("structure", {}))[:200])
 
 # --- computer-forensics-base/timestamp_decode ---------------------------------
 got = tool("computer-forensics-base/tools/timestamp_decode", {"value": "133502964000000000"})

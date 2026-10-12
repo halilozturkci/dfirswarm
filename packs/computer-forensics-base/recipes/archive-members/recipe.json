@@ -1,6 +1,6 @@
 {
   "id": "archive-members",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "List the members of a tar (plain or compressed), zip or 7z archive without extracting any: path, type, size, time, mode, link target and where each member sits in the archive.",
   "object": "archive",
   "order": 30,
@@ -13,7 +13,6 @@
     ".tar.bz2",
     ".txz",
     ".tar.xz",
-    ".tar.zst",
     ".zip",
     ".7z"
   ],
@@ -50,6 +49,6 @@
     "coverage.json"
   ],
   "purpose": "inventory",
-  "covers": "The archive's own list of members. It opens no member, searches no contents and lists no archive inside the archive: a member is extracted with archive_extract and catalogued on its own.",
-  "sha256": "fc2f2a957135dbc2138ed9e1ad5266be9f1ed4ed9bae5c6491a6d2d8d02949f5"
+  "covers": "The archive's own list of members. It opens no member, searches no contents and lists no archive inside the archive: a member is extracted separately (the base pack ships no member extractor yet; an archive_extract tool is planned) and catalogued on its own.",
+  "sha256": "b04d22238705f631009f9f65ecb7e61eabcb76e08c5d615d633ae323d0973dfd"
 }
