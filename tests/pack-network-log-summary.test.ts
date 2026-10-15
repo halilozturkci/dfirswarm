@@ -13,7 +13,9 @@ import { gzipSync } from "node:zlib";
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { LOGS, asJob, body, everythingUnder, exists, put, refused, tool, withCwd } from "./pack-network-harness.ts";
+import { LOGS, asJob, body, everythingUnder, exists, put, refused, startDetached, tool, withCwd } from "./pack-network-harness.ts";
+import { runPySnippet } from "./tool-library-harness.ts";
+import { createRng, planted } from "./pack-network-canaries.ts";
 import type { Json } from "./pack-network-harness.ts";
 
 const WEB = '192.0.2.1 - bob [14/Nov/2023:23:13:20 +0100] "GET /a HTTP/1.1" 200 12 "-" "ua/1.0"';
@@ -170,7 +172,7 @@ test("a line over the limit is located and not read; a gzip that expands past it
     const huge = Buffer.from(many.repeat(3));
     await put(cwd, "inputs/huge.log.gz", gzipSync(huge));
     const cut = await tool(LOGS, cwd, { path: "inputs/huge.log.gz", out_dir: "work/cut", max_expanded_bytes: 1 << 20 }, {});
-    assert.equal(cut.code, 1);
+    assert.equal(cut.code, 0, "exit 0 means the engine ran; status says it stopped early");
     const answer = JSON.parse(cut.stdout);
     assert.equal(answer.complete, false);
     assert.equal(answer.ok, false);
@@ -182,7 +184,7 @@ test("a line over the limit is located and not read; a gzip that expands past it
     const whole = gzipSync(Buffer.from(many));
     await put(cwd, "inputs/cut.log.gz", whole.subarray(0, Math.floor(whole.length * 0.6)));
     const corrupt = await tool(LOGS, cwd, { path: "inputs/cut.log.gz", out_dir: "work/corrupt" }, {});
-    assert.equal(corrupt.code, 1);
+    assert.equal(corrupt.code, 0);
     assert.doesNotMatch(corrupt.stderr, /Traceback/);
     const broken = JSON.parse(corrupt.stdout);
     assert.equal(broken.complete, false);
@@ -193,7 +195,7 @@ test("a line over the limit is located and not read; a gzip that expands past it
     // A file that starts like a gzip and is not one: an error naming where it stopped, not a traceback.
     await put(cwd, "inputs/garbage.gz", Buffer.concat([Buffer.from([0x1f, 0x8b]), Buffer.from("this is not a deflate stream at all")]));
     const garbage = await tool(LOGS, cwd, { path: "inputs/garbage.gz", out_dir: "work/garbage" }, {});
-    assert.equal(garbage.code, 1);
+    assert.equal(garbage.code, 0);
     assert.doesNotMatch(garbage.stderr, /Traceback/);
     const g = JSON.parse(garbage.stdout);
     assert.equal(g.complete, false);
@@ -317,9 +319,195 @@ test("the values file holds a line that is not UTF-8 as escapes, byte for byte, 
     await put(cwd, "inputs/garbage.gz", Buffer.concat([Buffer.from([0x1f, 0x8b]), Buffer.from("this is not a deflate stream at all")]));
     await put(cwd, "inputs/ok.log", WEB + "\n");
     const failed = await asJob(LOGS, cwd, { path: "inputs/garbage.gz", out_dir: "out/a", write_values: true });
-    assert.equal(failed.code, 1);
+    assert.equal(failed.code, 0);
     assert.equal(await exists(join(cwd, "out/network-log-values.jsonl")), false, "nothing was written, so the file was given back");
     const again = body(await asJob(LOGS, cwd, { path: "inputs/ok.log", out_dir: "out/b", write_values: true }));
     assert.equal(again.secret_values.requested, true);
+  });
+});
+
+// --- D-network-F1: one rule per column, escaped quotes, left-over text, the tool's own clock -------------------------------
+
+type Slot = { name: string; line: (c: string) => string };
+const WEB_SLOTS: Slot[] = [
+  { name: "web.src", line: (c) => `${c} - - [14/Nov/2023:23:13:20 +0100] "GET /a HTTP/1.1" 200 12 "-" "ua"` },
+  { name: "web.user", line: (c) => `192.0.2.1 - ${c} [14/Nov/2023:23:13:20 +0100] "GET /a HTTP/1.1" 200 12 "-" "ua"` },
+  { name: "web.time", line: (c) => `192.0.2.1 - - [${c}] "GET /a HTTP/1.1" 200 12 "-" "ua"` },
+  { name: "web.method", line: (c) => `192.0.2.1 - - [14/Nov/2023:23:13:20 +0100] "${c} /a HTTP/1.1" 200 12 "-" "ua"` },
+  { name: "web.status", line: (c) => `192.0.2.1 - - [14/Nov/2023:23:13:20 +0100] "GET /a HTTP/1.1" ${c} 12 "-" "ua"` },
+  { name: "web.bytes", line: (c) => `192.0.2.1 - - [14/Nov/2023:23:13:20 +0100] "GET /a HTTP/1.1" 200 ${c} "-" "ua"` },
+  { name: "web.referer", line: (c) => `192.0.2.1 - - [14/Nov/2023:23:13:20 +0100] "GET /a HTTP/1.1" 200 12 "http://r/${c}" "ua"` },
+  { name: "web.referer-host", line: (c) => `192.0.2.1 - - [14/Nov/2023:23:13:20 +0100] "GET http://${c}.example.test/a HTTP/1.1" 200 12 "-" "ua"` },
+  { name: "web.ua", line: (c) => `192.0.2.1 - - [14/Nov/2023:23:13:20 +0100] "GET /a HTTP/1.1" 200 12 "-" "${c}"` },
+  { name: "web.tail", line: (c) => `192.0.2.1 - - [14/Nov/2023:23:13:20 +0100] "GET /a HTTP/1.1" 200 12 "-" "ua" ${c}` },
+];
+const SQUID_SLOTS: Slot[] = [
+  { name: "squid.elapsed", line: (c) => `1700000000.123 ${c} 192.0.2.2 TCP_MISS/200 321 GET http://example.test/a alice DIRECT/203.0.113.80 text/html` },
+  { name: "squid.client", line: (c) => `1700000000.123 30 ${c} TCP_MISS/200 321 GET http://example.test/a alice DIRECT/203.0.113.80 text/html` },
+  { name: "squid.status", line: (c) => `1700000000.123 30 192.0.2.2 TCP_MISS/${c} 321 GET http://example.test/a alice DIRECT/203.0.113.80 text/html` },
+  { name: "squid.action", line: (c) => `1700000000.123 30 192.0.2.2 ${c}/200 321 GET http://example.test/a alice DIRECT/203.0.113.80 text/html` },
+  { name: "squid.method", line: (c) => `1700000000.123 30 192.0.2.2 TCP_MISS/200 321 ${c} http://example.test/a alice DIRECT/203.0.113.80 text/html` },
+  { name: "squid.user", line: (c) => `1700000000.123 30 192.0.2.2 TCP_MISS/200 321 GET http://example.test/a ${c} DIRECT/203.0.113.80 text/html` },
+  { name: "squid.hierarchy", line: (c) => `1700000000.123 30 192.0.2.2 TCP_MISS/200 321 GET http://example.test/a alice ${c} text/html` },
+  { name: "squid.mime", line: (c) => `1700000000.123 30 192.0.2.2 TCP_MISS/200 321 GET http://example.test/a alice DIRECT/203.0.113.80 ${c}` },
+  { name: "squid.tail", line: (c) => `1700000000.123 30 192.0.2.2 TCP_MISS/200 321 GET http://example.test/a alice DIRECT/203.0.113.80 text/html ${c}` },
+];
+const FW = (over: Record<string, string>, prefix = "Nov 14 fw DROP"): string => {
+  const kv: Record<string, string> = { IN: "eth0", OUT: "eth1", SRC: "192.0.2.3", DST: "203.0.113.8", NAT_SRC: "198.51.100.7", NAT_DST: "10.0.0.8", LEN: "60", PROTO: "TCP", SPT: "51515", DPT: "443", ...over };
+  return `${prefix} ${Object.entries(kv).map(([k, v]) => `${k}=${v}`).join(" ")} SYN`;
+};
+const FW_SLOTS: Slot[] = [
+  ...["SRC", "DST", "NAT_SRC", "NAT_DST", "SPT", "DPT", "PROTO", "LEN", "IN", "OUT", "ACTION"].map((k) => ({ name: `fw.${k}`, line: (c: string) => FW({ [k]: c }) })),
+  { name: "fw.prefix", line: (c) => FW({}, `Nov 14 ${c} DROP`) },
+  { name: "fw.quoted", line: (c) => FW({ IN: `"${c}"` }) },
+];
+
+test("every printed column has a rule of its own, and a secret planted in any of them is not printed: 4 shapes x 32 slots x 12 random plants, in the table, the aggregates and the answer", async () => {
+  const rng = createRng(20261015);
+  const slots = [...WEB_SLOTS, ...SQUID_SLOTS, ...FW_SLOTS];
+  assert.equal(slots.length, 32);
+  const canaries: string[] = [];
+  const lines: string[] = [];
+  for (const slot of slots) {
+    for (const shape of ["ghp", "akia", "jwt", "xoxb"] as const) {
+      for (let i = 0; i < 12; i++) {
+        const c = planted(rng, shape);
+        canaries.push(c);
+        lines.push(slot.line(c));
+      }
+    }
+  }
+  await withCwd(async (cwd) => {
+    await put(cwd, "inputs/l.log", lines.join("\n") + "\n");
+    const result = await asJob(LOGS, cwd, { path: "inputs/l.log", out_dir: "out/o", format: "auto", top: 50 });
+    body(result);
+    const everything = await everythingUnder(cwd, result.stdout, ["out/o"]);
+    const leaked = canaries.filter((c) => everything.includes(c) || everything.includes(c.slice(Math.floor(c.length / 2) - 6, Math.floor(c.length / 2) + 6)));
+    assert.equal(leaked.length, 0, `${leaked.length} of ${canaries.length} planted secrets were printed, for example ${leaked[0]}`);
+  });
+});
+
+test("an address column holds an address and nothing else printed as it is; a port and a counter hold digits; anything else goes through the block", async () => {
+  await withCwd(async (cwd) => {
+    const token = "ghp_" + "Ab3dE6gH9jK2mN5pQ8sT1vW4yZ7bC0eF3hJ6";
+    await put(cwd, "inputs/l.log", [FW({ SRC: "2001:db8::1", DST: "198.51.100.9", SPT: "80", DPT: "443" }), FW({ SRC: `${token}.evil.test`, DST: "host.example.test", SPT: token }), WEB_SLOTS[0].line("10.1.2.3")].join("\n") + "\n");
+    const out = body(await tool(LOGS, cwd, { path: "inputs/l.log", out_dir: "work/o" }, {}));
+    const rows = await table(cwd, "work/o");
+    assert.equal(rows[0].src, "2001:db8::1");
+    assert.equal(rows[0].dst, "198.51.100.9");
+    assert.equal(rows[0].src_port, "80");
+    assert.equal(rows[1].dst, "host.example.test", "a plain name is the block's to judge, and it is plain");
+    assert.match(rows[1].src, /withheld/);
+    assert.match(rows[1].src_port, /withheld/);
+    assert.equal(JSON.stringify(out).includes(token), false);
+    assert.equal(out.aggregate.src.some((e: Json) => e.value.includes("ghp_")), false, "the aggregate keys are the shown text");
+  });
+});
+
+test("an escaped quote in the referer or the user agent does not end the field: nothing is lost, nothing is cut, and text no column holds is kept and counted", async () => {
+  await withCwd(async (cwd) => {
+    const base = '192.0.2.1 - - [14/Nov/2023:23:13:20 +0100] "GET /a HTTP/1.1" 200 12';
+    await put(cwd, "inputs/l.log", [
+      `${base} "-" "Mozilla \\"quoted\\" tail-of-the-agent"`,
+      `${base} "http://r/\\"x" "ua3"`,
+      `${base} "-" "ends with a backslash \\\\"`,
+      '192.0.2.1 - - [14/Nov/2023:23:13:20 +0100] "GET /a?q=\\"x HTTP/1.1" 200 12 "-" "ua4"',
+      `${base} "-" "ua5" 0.123 upstream-1`,
+      "1700000000.123 30 192.0.2.2 TCP_MISS/200 321 GET http://example.test/a alice DIRECT/203.0.113.80 text/html extra-field",
+    ].join("\n") + "\n");
+    const out = body(await tool(LOGS, cwd, { path: "inputs/l.log", out_dir: "work/o" }, {}));
+    const rows = await table(cwd, "work/o");
+    assert.equal(rows[0].user_agent, 'Mozilla "quoted" tail-of-the-agent');
+    assert.equal(rows[0].parse_status, "parsed");
+    assert.equal(rows[1].referer, 'http://r/"x');
+    assert.equal(rows[1].user_agent, "ua3");
+    assert.equal(rows[2].user_agent, "ends with a backslash \\\\", "the backslash is the writer's, shown as the table writes a backslash");
+    assert.match(rows[3].target, /^\/a\?q=/);
+    assert.equal(rows[3].user_agent, "ua4");
+    assert.equal(rows[4].parse_status, "partial");
+    assert.equal(rows[4].unparsed_tail, "0.123 upstream-1");
+    assert.equal(rows[5].parse_status, "partial");
+    assert.equal(rows[5].unparsed_tail, "extra-field");
+    assert.equal(out.parsed_with_text_left_over, 2);
+    assert.equal(out.status, "partial");
+    assert.match(out.status_basis, /text left over/);
+  });
+});
+
+test("every answer carries status and status_basis; a stream that is cut is partial and still exits 0; a refusal is failed", async () => {
+  await withCwd(async (cwd) => {
+    await put(cwd, "inputs/l.log", [WEB, SQUID].join("\n") + "\n");
+    const ok = body(await tool(LOGS, cwd, { path: "inputs/l.log", out_dir: "work/o" }, {}));
+    assert.equal(ok.status, "complete");
+    assert.match(ok.status_basis, /every line was read/);
+    const no = refused(await tool(LOGS, cwd, { path: "inputs/missing.log", out_dir: "work/p" }, {}));
+    assert.equal(no.status, "failed");
+    assert.match(no.status_basis, /error/);
+    await put(cwd, "inputs/garbage.gz", Buffer.concat([Buffer.from([0x1f, 0x8b]), Buffer.from("this is not a deflate stream at all")]));
+    const g = body(await tool(LOGS, cwd, { path: "inputs/garbage.gz", out_dir: "work/g" }, {}));
+    assert.equal(g.status, "failed", "no line was read at all");
+  });
+});
+
+test("the tool keeps its own clock: max_seconds ends the read, the answer is partial with the line and offset it got to, and a value above the manifest's room is refused", async () => {
+  await withCwd(async (cwd) => {
+    await put(cwd, "inputs/big.log", Array.from({ length: 400_000 }, (_, i) => `192.0.2.${i % 250} - - [14/Nov/2023:23:13:20 +0100] "GET /p${i} HTTP/1.1" 200 12 "-" "ua"`).join("\n") + "\n");
+    const began = Date.now();
+    const out = body(await tool(LOGS, cwd, { path: "inputs/big.log", out_dir: "work/o", max_seconds: 1 }, {}));
+    assert.ok(Date.now() - began < 20_000);
+    assert.equal(out.complete, false);
+    assert.equal(out.status, "partial");
+    assert.equal(out.read_error.error, "time_limit");
+    assert.ok(out.read_error.last_complete_line > 0 && out.read_error.last_complete_line < 400_000);
+    assert.equal((await table(cwd, "work/o")).length, out.parsed, "what was read before the limit is in the table");
+    const big = refused(await tool(LOGS, cwd, { path: "inputs/big.log", out_dir: "work/q", max_seconds: 601 }, {}));
+    assert.match(big.error, /max_seconds is at most 570/);
+  });
+});
+
+test("a stop signal leaves the tables as far as they got and prints partial JSON on stdout (exit 128 + signal)", async () => {
+  await withCwd(async (cwd) => {
+    await put(cwd, "inputs/big.log", Array.from({ length: 600_000 }, (_, i) => `192.0.2.${i % 250} - - [14/Nov/2023:23:13:20 +0100] "GET /p${i} HTTP/1.1" 200 12 "-" "ua"`).join("\n") + "\n");
+    for (const [sig, code] of [["SIGTERM", 143], ["SIGINT", 130], ["SIGHUP", 129]] as const) {
+      const run = startDetached(LOGS, cwd, { path: "inputs/big.log", out_dir: `work/${sig}` });
+      for (let i = 0; i < 200 && !(await exists(join(cwd, `work/${sig}/normalized.tsv`))); i++) await new Promise((r) => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 400));
+      run.signal(sig);
+      const closed = await run.closed;
+      assert.equal(closed, code, `${sig}: ${run.stdout().slice(0, 300)}`);
+      const last = JSON.parse(run.stdout());
+      assert.equal(last.status, "partial");
+      assert.equal(last.read_error.error, "interrupted");
+      assert.equal(last.interrupted_by_signal, code - 128);
+      assert.equal((await table(cwd, `work/${sig}`)).length, last.parsed, "every row read is in the table");
+      assert.ok(last.status_basis.length > 10);
+    }
+  });
+});
+
+test("the column rules cover every column of the table: none is added without a rule", async () => {
+  const code = `
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("nls", sys.argv[1])
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+ruled = set(m.ADDRESS) | set(m.NUMBER) | set(m.TEXT) | set(m.URL) | set(m.DERIVED)
+print(json.dumps({"missing": [c for c in m.COLUMNS if c not in ruled], "extra": sorted(ruled - set(m.COLUMNS))}))
+`;
+  const r = await runPySnippet(code, [LOGS], {});
+  assert.deepEqual(JSON.parse(r.stdout), { missing: [], extra: [] });
+});
+
+test("write_values is refused as JSON, before anything is opened or written, in a job whose process is not a secret job (SECRET_OUTPUT is not 1)", async () => {
+  await withCwd(async (cwd) => {
+    await put(cwd, "inputs/l.log", WEB + "\n");
+    for (const value of ["0", ""]) {
+      const err = refused(await asJob(LOGS, cwd, { path: "inputs/l.log", out_dir: "out/o", write_values: true }, undefined, { SECRET_OUTPUT: value }));
+      assert.match(err.error, /not run as secret output/);
+      assert.equal(err.written, false);
+      assert.equal(await exists(join(cwd, "out/network-log-values.jsonl")), false);
+      assert.equal(await exists(join(cwd, "out/o")), false, "nothing was created");
+    }
+    assert.equal(body(await asJob(LOGS, cwd, { path: "inputs/l.log", out_dir: "out/p", write_values: true })).secret_values.requested, true);
   });
 });

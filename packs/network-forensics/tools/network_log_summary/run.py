@@ -39,28 +39,36 @@ import collections
 import datetime
 import errno
 import gzip
+import ipaddress
 import json
 import os
 import re
+import signal
 import sys
+import time
 import zlib
 from pathlib import Path
 
-TOOL = {"name": "network_log_summary", "version": 4}
-PARSER = "network_log_summary/4"
+TOOL = {"name": "network_log_summary", "version": 5}
+PARSER = "network_log_summary/5"
 COLUMNS = ["line", "byte_offset", "byte_length", "format", "parse_status", "timestamp_raw", "timestamp_utc", "timezone_source",
            "src", "dst", "src_port", "dst_port", "protocol", "method", "target", "referer", "status", "bytes", "action", "user",
-           "user_agent", "elapsed_ms", "hierarchy", "mime", "in_if", "out_if", "nat_src", "nat_dst", "tcp_flags", "decoding"]
+           "user_agent", "elapsed_ms", "hierarchy", "mime", "in_if", "out_if", "nat_src", "nat_dst", "tcp_flags", "unparsed_tail", "decoding"]
 UNPARSED_COLUMNS = ["line", "byte_offset", "byte_length", "parse_status", "reason", "decoding"]
 DEFAULT_MAX_LINE = 1 << 20
 DEFAULT_MAX_EXPANDED = 4 << 30
 DEFAULT_MAX_DISTINCT = 200_000
+DEFAULT_SECONDS = 540          # the tool's own clock; the manifest's limit is 600, so this tool stops and answers first
+MAX_SECONDS = 570
 MAX_KEY = 512                  # an aggregate key is cut here (counted); the table row has the whole value
+# A quoted field: Apache writes a quote inside it as \" and a backslash as \\, so a quote is the end of the field only
+# when no backslash escapes it. A pattern that stopped at the first quote cut the field there and dropped the rest.
+QUOTED = r'(?:[^"\\]|\\.)*'
 WEB = re.compile(
     r'^(?P<src>\S+)\s+\S+\s+(?P<user>\S+)\s+\[(?P<time>[^]]+)\]\s+'
-    r'"(?P<request>[^"]*)"\s+(?P<status>\S+)\s+(?P<bytes>\S+)'
-    r'(?:\s+"(?P<ref>[^"]*)"\s+"(?P<ua>[^"]*)")?.*$')
-KV = re.compile(r'\b([A-Z][A-Z0-9_]*)=("[^"]*"|\S*)')
+    r'"(?P<request>' + QUOTED + r')"\s+(?P<status>\S+)\s+(?P<bytes>\S+)'
+    r'(?:\s+"(?P<ref>' + QUOTED + r')"\s+"(?P<ua>' + QUOTED + r')")?(?P<tail>.*)$')
+KV = re.compile(r'\b([A-Z][A-Z0-9_]*)=("(?:[^"\\]|\\.)*"|\S*)')
 WEB_TIME = re.compile(r"^(\d{1,2})/([A-Za-z]{3})/(\d{4}):(\d{2}):(\d{2}):(\d{2}) ([+-])(\d{2})(\d{2})$")
 ISO_PREFIX = re.compile(r"^\s*(?:<\d{1,3}>\d\s+)?(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:?\d{2})(?=\s|$)")
 MONTHS = {m: i for i, m in enumerate(("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"), 1)}
@@ -235,7 +243,7 @@ def in_job():
 
 
 def fail(message, **extra):
-    print(json.dumps({"error": scrub(message), "tool": TOOL, **extra}))
+    print(json.dumps({"error": scrub(message), "tool": TOOL, "status": "failed", "status_basis": "the tool stopped with an error (see error)", **extra}))
     raise SystemExit(1)
 
 
@@ -260,6 +268,12 @@ def resolve_output(out, what="output"):
         if dest != job_out and job_out not in dest.parents:
             fail("in a job %s is a directory under $OUT, the one place a job writes" % what, **{what: str(out), "out": str(job_out)})
     return str(dest.relative_to(root))
+
+
+REFUSED_NOT_SECRET = ("write_values is refused in a job that was not run as secret output: its files would be sealed as ordinary output. "
+                      "The harness sets SECRET_OUTPUT=1 for a secret job's process and it is not set here. Run it as job_run(tool: \"network_log_summary\", args: {...}), "
+                      "whose manifest makes every job of this tool secret output, or give a command job secret_output: true; if that is refused the "
+                      "same way, this run's harness does not set the variable and the values mode is not available in it. Nothing was written.")
 
 
 class SecretValuesRefused(Exception):
@@ -294,6 +308,8 @@ class SecretValues:
                 "file, not a sealed secret output. Run this as job_run tool=network_log_summary with "
                 "secret_output: true, and ask again there. Nothing was written."
             )
+        if os.environ.get("SECRET_OUTPUT") != "1":
+            raise SecretValuesRefused(REFUSED_NOT_SECRET)
         self.path = Path(self.out) / self.NAME
         self.shown = "store/jobs/%s/out/%s" % (re.sub(r"[^A-Za-z0-9_.-]", "_", self.job), self.NAME)
         # Created now, before anything is read: a file or a link already at that name is refused by name at once
@@ -381,11 +397,17 @@ def iso_to_utc(m):
         return ""
 
 
+def unescape(text):
+    """A quoted field as the writer meant it: \\" is a quote and \\\\ a backslash. Other backslash sequences (\\xNN, which
+    nginx writes for a quote and Apache for a control byte) are left as written."""
+    return re.sub(r'\\(["\\])', r"\1", text)
+
+
 def web(line):
     m = WEB.match(line)
     if not m:
         return None
-    request = m.group("request").split()
+    request = unescape(m.group("request")).split()
     method = request[0] if request else ""
     target = request[1] if len(request) > 1 else ""
     derived = web_time(m.group("time"))
@@ -395,11 +417,14 @@ def web(line):
         source = "an offset is written but the date did not parse"
     else:
         source = "no zone offset is written in the line"
-    ref = m.group("ref")
+    ref = unescape(m.group("ref")) if m.group("ref") is not None else None
     return {"format": "web", "timestamp_raw": m.group("time"), "timestamp_utc": derived, "timezone_source": source,
             "src": m.group("src"), "method": method, "target": target, "referer": "" if ref in (None, "-") else ref, "status": m.group("status"),
             "bytes": "" if m.group("bytes") == "-" else m.group("bytes"),
-            "user": "" if m.group("user") == "-" else m.group("user"), "user_agent": m.group("ua") or ""}
+            "user": "" if m.group("user") == "-" else m.group("user"),
+            "user_agent": unescape(m.group("ua")) if m.group("ua") is not None else "",
+            # Text after the last field the grammar names (a request time, a vhost, an upstream address ...): kept, not dropped.
+            "unparsed_tail": m.group("tail").strip()}
 
 
 def squid(line):
@@ -413,11 +438,12 @@ def squid(line):
             "timezone_source": "epoch seconds, which are UTC by definition" if derived else "epoch seconds out of range",
             "src": parts[2], "method": parts[5], "target": parts[6], "status": parts[3].split("/", 1)[1], "bytes": parts[4],
             "action": parts[3].split("/", 1)[0], "elapsed_ms": parts[1],
-            "user": "" if parts[7] == "-" else parts[7], "hierarchy": parts[8], "mime": parts[9] if len(parts) > 9 else ""}
+            "user": "" if parts[7] == "-" else parts[7], "hierarchy": parts[8], "mime": parts[9] if len(parts) > 9 else "",
+            "unparsed_tail": " ".join(parts[10:])}
 
 
 def firewall(line):
-    pairs = {k: v.strip('"') for k, v in KV.findall(line)}
+    pairs = {k: (unescape(v[1:-1]) if len(v) >= 2 and v[0] == v[-1] == '"' else v) for k, v in KV.findall(line)}
     if not pairs or not ({"SRC", "DST", "PROTO"} & set(pairs)):
         return None
     action = pairs.get("ACTION", "")
@@ -448,6 +474,56 @@ def firewall(line):
             "nat_dst": first("NATDST", "NAT_DST", "ORIGDST", "ORIG_DST", "TRANS_DST"), "tcp_flags": ",".join(flags)}
 
 
+# One rule per column, and no column without one. Nothing a log line wrote is printed as it is unless its TYPE says it cannot
+# hold a secret: an address (an IP address and nothing else), a number (digits), or text the tool derived itself. Every other
+# string goes through the block of the pack, by column. A column the grammar fills with free text (a host name in the address
+# column, a method that is not a method) is text.
+ADDRESS = ("src", "dst", "nat_src", "nat_dst")
+NUMBER = ("src_port", "dst_port", "elapsed_ms", "bytes", "status")
+TEXT = ("timestamp_raw", "method", "protocol", "action", "user", "user_agent", "hierarchy", "mime", "in_if", "out_if", "unparsed_tail")
+URL = ("target", "referer")
+DERIVED = ("line", "byte_offset", "byte_length", "format", "parse_status", "timestamp_utc", "timezone_source", "tcp_flags", "decoding")
+
+
+def shown(column, value):
+    """The value of one column as it may be printed. The rule is the column's, not the line's."""
+    if not value:
+        return value
+    if column in NUMBER:
+        return value if re.fullmatch(r"-?\d{1,12}", value) else scrub(value)
+    if column in ADDRESS:
+        return value if all(shown_host(part.strip()) == part.strip() for part in value.split(",")) else scrub(value)
+    if column in URL:
+        return redact_target(value)
+    if column in TEXT:
+        return scrub(value)
+    return value
+
+
+def shown_host(host):
+    """A host as printed: an IP address (with a port, or in brackets) as it is, any other name through the block."""
+    bare = host
+    if bare.startswith("["):
+        bare = bare[1:].split("]")[0]
+    elif bare.count(":") == 1:
+        bare = bare.split(":")[0]
+    try:
+        ipaddress.ip_address(bare)
+        return host
+    except ValueError:
+        return scrub(host)
+
+
+def redact_target(url):
+    """A request target or referer: the block's own URL rule, and the authority of an absolute one through the host rule."""
+    out = redact_url(url)
+    m = re.match(r"^((?:[A-Za-z][A-Za-z0-9+.-]*:)?//)([^/?#]*)(.*)$", out, re.S)
+    if not m:
+        return out
+    prefix, _, host = m.group(2).rpartition("@")
+    return m.group(1) + (prefix + "@" if prefix else "") + (shown_host(host) if host else host) + m.group(3)
+
+
 def parse(line, wanted):
     parsers = {"web": web, "squid": squid, "firewall": firewall}
     if wanted != "auto":
@@ -461,6 +537,23 @@ def parse(line, wanted):
 
 class ExpansionLimit(Exception):
     pass
+
+
+class TimeLimit(Exception):
+    pass
+
+
+class Stopped(BaseException):
+    """A stop signal (SIGTERM, SIGINT, SIGHUP), raised in the main thread by the handler. Raised, not handled in place: a
+    handler that wrote to the tables could be running in the middle of a write to them."""
+
+    def __init__(self, signum):
+        super().__init__(signum)
+        self.signum = signum
+
+
+def _stop(signum, _frame):
+    raise Stopped(signum)
 
 
 class Source:
@@ -517,6 +610,10 @@ def main():
     max_line = optional_int(args, "max_line_bytes", DEFAULT_MAX_LINE, 4096)
     max_expanded = optional_int(args, "max_expanded_bytes", DEFAULT_MAX_EXPANDED, 1 << 20)
     max_distinct = optional_int(args, "max_distinct_values", DEFAULT_MAX_DISTINCT, 1)
+    max_seconds = optional_int(args, "max_seconds", DEFAULT_SECONDS, 1)
+    if max_seconds > MAX_SECONDS:
+        fail("max_seconds is at most %d: the tool stops and answers before the manifest's 600-second limit" % MAX_SECONDS, max_seconds=max_seconds)
+    deadline = time.monotonic() + max_seconds
     write_values = args.get("write_values", False)
     if not isinstance(write_values, bool):
         fail("write_values must be true or false")
@@ -526,6 +623,8 @@ def main():
                 SecretValues(True)
             except SecretValuesRefused as exc:
                 fail(str(exc), write_values="refused", written=False)
+        elif os.environ.get("SECRET_OUTPUT") != "1":
+            fail(REFUSED_NOT_SECRET, write_values="refused", written=False)
         elif os.path.lexists(os.path.join(os.environ["OUT"], SecretValues.NAME)):
             fail("the values file already exists", write_values="refused", written=False, values_file=os.path.join(os.environ["OUT"], SecretValues.NAME))
 
@@ -546,21 +645,26 @@ def main():
     counts = {name: collections.Counter() for name in categories}
     over_cap = {name: 0 for name in categories}
     stats = {"lines": 0, "parsed": 0, "blank": 0, "unparsed_nonblank": 0, "over_limit": 0, "decoding_substituted": 0, "crlf_lines": 0,
-             "timestamps_derived": 0, "timestamps_not_derived": 0, "bom_stripped": 0, "keys_cut": 0}
+             "timestamps_derived": 0, "timestamps_not_derived": 0, "bom_stripped": 0, "keys_cut": 0, "partial": 0}
     zones = collections.Counter()
     unterminated = False
     read_error = None
+    stopped = None
     in_long_line = False
     offset = 0
     try:
         with open(normal_path, "x", encoding="utf-8", newline="\n") as normal, open(bad_path, "x", encoding="utf-8", newline="\n") as bad:
             normal.write("\t".join(COLUMNS) + "\n")
             bad.write("\t".join(UNPARSED_COLUMNS) + "\n")
+            for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+                signal.signal(signum, _stop)
             try:
                 while True:
                     raw = source.readline(max_line + 1)
                     if not raw:
                         break
+                    if stats["lines"] % 256 == 0 and time.monotonic() > deadline:
+                        raise TimeLimit()
                     stats["lines"] += 1
                     number, start = stats["lines"], offset
                     if len(raw) > max_line and not raw.endswith(b"\n"):
@@ -604,26 +708,26 @@ def main():
                         values.add("L%06d" % number, {"line": number, "byte_offset": start, "byte_length": len(raw), "status": "unparsed"},
                                    body.decode("utf-8", "surrogateescape"))
                         continue
-                    stats["parsed"] += 1
                     original, original_referer = row.get("target", ""), row.get("referer", "")
-                    row["target"] = redact_url(original) if original else ""
-                    row["referer"] = redact_url(original_referer) if original_referer else ""
-                    changed = row["target"] != original or row["referer"] != original_referer
-                    for key in ("method", "status", "user", "user_agent", "protocol", "action", "hierarchy", "mime", "bytes", "in_if", "out_if"):
-                        if row.get(key):
-                            shown = scrub(row[key])
-                            changed = changed or shown != row[key]
-                            row[key] = shown
+                    changed = False
+                    for column in COLUMNS:
+                        if row.get(column):
+                            printed = shown(column, str(row[column]))
+                            changed = changed or printed != row[column]
+                            row[column] = printed
+                    status_of_row = "partial" if row.get("unparsed_tail") else "parsed"
                     if changed:
-                        values.add("L%06d" % number, {"line": number, "byte_offset": start, "byte_length": len(raw), "status": "parsed",
+                        values.add("L%06d" % number, {"line": number, "byte_offset": start, "byte_length": len(raw), "status": status_of_row,
                                                        "target": original, "referer": original_referer}, body.decode("utf-8", "surrogateescape"))
                     if row.get("timestamp_utc"):
                         stats["timestamps_derived"] += 1
                     else:
                         stats["timestamps_not_derived"] += 1
                     zones[row.get("timezone_source", "")] += 1
-                    row.update(line=number, byte_offset=start, byte_length=len(raw), parse_status="parsed", decoding=decoding)
+                    row.update(line=number, byte_offset=start, byte_length=len(raw), parse_status=status_of_row, decoding=decoding)
                     normal.write("\t".join(cell(row.get(column, "")) for column in COLUMNS) + "\n")
+                    stats["parsed"] += 1
+                    stats["partial"] += status_of_row == "partial"
                     for name in categories:
                         if row.get(name):
                             key = str(row[name])
@@ -634,6 +738,13 @@ def main():
                                 counts[name][key] += 1
                             else:
                                 over_cap[name] += 1
+            except Stopped as stop:
+                stopped = stop.signum
+                read_error = {"error": "interrupted", "message": "the tool was stopped by signal %d: the tables hold the lines read before it" % stop.signum,
+                              "last_complete_line": stats["lines"] - (1 if in_long_line else 0), "stream_offset": offset}
+            except TimeLimit:
+                read_error = {"error": "time_limit", "message": "max_seconds (%d) ran out: the tool stopped reading and answers with what it read" % max_seconds,
+                              "last_complete_line": stats["lines"], "stream_offset": offset}
             except ExpansionLimit:
                 read_error = {"error": "expansion_limit", "message": "the decompressed stream passed max_expanded_bytes (%d)" % max_expanded,
                               "last_complete_line": stats["lines"] - (1 if in_long_line else 0), "stream_offset": offset}
@@ -648,6 +759,8 @@ def main():
         values.discard()
         fail("a table could not be written (%s)" % describe(exc), out_dir=out_dir)
     finally:
+        for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            signal.signal(signum, signal.SIG_DFL)
         source.close()
         values.close()
     for name in os.listdir(out_dir):
@@ -661,11 +774,23 @@ def main():
     complete = read_error is None
     if not complete:
         values.discard()
+    unparsed_count = stats["lines"] - stats["parsed"]
+    all_read = complete and not unparsed_count - stats["blank"] and not stats["over_limit"] and not stats["partial"]
+    if not complete and not stats["lines"]:
+        basis = "the read stopped before the first line (read_error): the tables are empty"
+    elif not complete:
+        basis = "the read stopped early (read_error): the tables hold the lines read before it"
+    elif all_read:
+        basis = "every line was read and every non-blank line matched a grammar completely"
+    else:
+        basis = ("the whole log was read; %d line(s) matched no grammar, %d were over max_line_bytes, %d matched with text left over (unparsed_tail), "
+                 "and each is in a table with its line number" % (stats["unparsed_nonblank"], stats["over_limit"], stats["partial"]))
     answer = {
         "tool": TOOL, "parser": PARSER,
+        "status": "complete" if all_read else ("failed" if not complete and not stats["lines"] else "partial"), "status_basis": basis,
         "path": path, "format_requested": wanted, "compression": "gzip" if source.gzip else "none",
         "offsets_are_in": "the decompressed stream" if source.gzip else "the file",
-        "lines": stats["lines"], "parsed": stats["parsed"], "unparsed": stats["lines"] - stats["parsed"], "blank": stats["blank"],
+        "lines": stats["lines"], "parsed": stats["parsed"], "parsed_with_text_left_over": stats["partial"], "unparsed": stats["lines"] - stats["parsed"], "blank": stats["blank"],
         "unparsed_not_blank": stats["unparsed_nonblank"], "lines_over_limit": stats["over_limit"], "max_line_bytes": max_line,
         "decoding_substituted": stats["decoding_substituted"], "crlf_lines": stats["crlf_lines"],
         "last_line_has_no_line_end": unterminated,
@@ -675,7 +800,7 @@ def main():
         "distinct_cap_reached": {name: n for name, n in over_cap.items() if n} or None,
         "aggregate_keys_cut": stats["keys_cut"], "bom_stripped": stats["bom_stripped"],
         "aggregate_note": "a ranking is exact only while distinct_cap_reached is null: once a category holds max_distinct_values values, a value first seen later is counted in distinct_cap_reached and never in the ranking",
-        "max_distinct_values": max_distinct,
+        "max_distinct_values": max_distinct, "max_seconds": max_seconds,
         "complete": complete, "read_error": read_error,
         "ok": complete,
         "withheld": dict(COUNTS),
@@ -692,8 +817,10 @@ def main():
     }
     if not complete:
         answer["note"] = "THE READ STOPPED EARLY (read_error): what is in the tables is what was read before it. " + answer["note"]
+    if stopped:
+        answer["interrupted_by_signal"] = stopped
     print(json.dumps(answer, indent=2))
-    return 0 if complete else 1
+    return 128 + stopped if stopped else 0
 
 
 if __name__ == "__main__":

@@ -20,7 +20,7 @@
     },
     "out_dir": {
       "type": "string",
-      "description": "Optional empty directory under work/ (in a job, under $OUT; work/<your agent id>/name is mapped to $OUT/name) for the complete tuple_conversations.tsv or endpoint_aggregates.tsv. The temporary aggregate file is removed on every way out"
+      "description": "Optional empty directory under work/ (in a job, under $OUT; work/<your id>/name is mapped to $OUT/name) for the complete tuple_conversations.tsv or endpoint_aggregates.tsv. The temporary aggregate file is removed on every way out"
     },
     "with_syn_times": {
       "type": "boolean",
@@ -38,10 +38,10 @@
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 600,
-  "example": "{\"path\": \"inputs/capture.pcap\", \"top\": 20, \"out_dir\": \"work/pcap-summary\", \"group\": \"endpoint\", \"with_syn_times\": true}",
+  "example": "{\"path\": \"inputs/capture.pcap\", \"top\": 20, \"out_dir\": \"work/<your id>/pcap-summary\", \"group\": \"endpoint\", \"with_syn_times\": true}",
   "by": "maintainer",
   "at": "2026-10-07T18:00:00.000Z",
-  "version": 4,
+  "version": 5,
   "sha256": "ee9143a9a95d1e0ac39668c16e65c281f1cf7d0b99bf20cde2d877c876c653bb",
   "use": {
     "extensions": [

@@ -12,7 +12,7 @@
     },
     "out_dir": {
       "type": "string",
-      "description": "An empty directory under work/ (in a job, under $OUT; work/<your agent id>/name is mapped to $OUT/name) for eve.json, Suricata's logs, the configuration and the build information. It is private (0700, files 0600)"
+      "description": "An empty directory under work/ (in a job, under $OUT; work/<your id>/name is mapped to $OUT/name) for eve.json, Suricata's logs, the configuration and the build information. It is private (0700, files 0600)"
     },
     "config": {
       "type": "string",
@@ -41,10 +41,10 @@
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 1200,
-  "example": "{\"path\": \"inputs/capture.pcap\", \"rules\": \"work/case.rules\", \"out_dir\": \"work/suricata\"}",
+  "example": "{\"path\": \"inputs/capture.pcap\", \"rules\": \"work/case.rules\", \"out_dir\": \"work/<your id>/suricata\"}",
   "by": "maintainer",
   "at": "2026-10-07T18:00:00.000Z",
-  "version": 4,
+  "version": 5,
   "sha256": "8169d17e21004a31b777af48edabb60d01c5a7f6a5b2f1a758abd761ac3ffeeb",
   "use": {
     "extensions": [

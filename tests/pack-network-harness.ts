@@ -39,7 +39,9 @@ let jobs = 0;
 export async function asJob(script: string, cwd: string, args: unknown, bin?: string, env: Record<string, string> = {}, outName = "out"): Promise<Run> {
   await mkdir(join(cwd, outName), { recursive: true });
   jobs += 1;
-  return tool(script, cwd, args, { JOB_ID: `j${String(jobs).padStart(6, "0")}`, OUT: join(cwd, outName), ...env }, bin);
+  // The job service puts SECRET_OUTPUT=1 in the environment of a job run as secret output (a tool whose manifest declares secret_output is one);
+  // a test of the refusal passes SECRET_OUTPUT: "0" in `env`.
+  return tool(script, cwd, args, { JOB_ID: `j${String(jobs).padStart(6, "0")}`, OUT: join(cwd, outName), SECRET_OUTPUT: "1", ...env }, bin);
 }
 
 export function body(out: Run): Json {

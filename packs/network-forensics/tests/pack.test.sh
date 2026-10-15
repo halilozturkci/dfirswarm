@@ -125,12 +125,11 @@ exit 9
 SH
 chmod +x "$TMP/fake-bin/tshark" "$TMP/fake-bin/suricata" "$TMP/fake-bin/zeek"
 mkdir "$TMP/export-fail"
-if printf '{"path":"%s/one.pcap","out_dir":"%s/export-fail","protocols":["http"]}' "$TMP" "$TMP" | \
-  (cd "$TMP" && PATH="$TMP/fake-bin:$PATH" python3 "$PACK/tools/pcap_extract/run.py") >"$TMP/export-fail.json"; then
-  fail "pcap_extract reported a failed tshark analysis as success"
-fi
-jq -e '.ok == false and .errors[0].exit_code == 7 and .errors[0].stderr' "$TMP/export-fail.json" >/dev/null \
-  || fail "pcap_extract did not name the failed analysis and its complete diagnostic"
+printf '{"path":"%s/one.pcap","out_dir":"%s/export-fail","protocols":["http"]}' "$TMP" "$TMP" | \
+  (cd "$TMP" && PATH="$TMP/fake-bin:$PATH" python3 "$PACK/tools/pcap_extract/run.py") >"$TMP/export-fail.json" \
+  || fail "pcap_extract refused instead of answering: the engine ran, so the exit is 0 and status says partial"
+jq -e '.ok == false and .status == "partial" and .errors[0].exit_code == 7 and .errors[0].stderr' "$TMP/export-fail.json" >/dev/null \
+  || fail "pcap_extract did not name the failed analysis and its complete diagnostic, or reported it as complete"
 [[ "$(wc -c < "$TMP/export-fail/_logs/http.stderr" | tr -d ' ')" -eq 4096 ]] \
   || fail "pcap_extract truncated tshark stderr"
 printf '%s\n' 'alert tcp any any -> any any (msg:"test"; sid:1; rev:1;)' >"$TMP/test.rules"

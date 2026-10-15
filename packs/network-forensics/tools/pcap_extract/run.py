@@ -18,7 +18,9 @@ What it does, and what it does not:
     moved into place) after every pass, so an outer timeout leaves what was done. receipt.json says "running"
     until the last step; a receipt that still says running was cut off.
   * HTTP objects are tied to frames by CONTENT: a second tshark pass lists the HTTP responses with the hex of
-    http.file_data, and an object whose SHA-256 equals exactly one listed body, and only one object has it, is
+    http.file_data (the fields it asks for are the ones `tshark -G fields` shows the installed build has; a field it
+    lacks is named in association_pass.fields_missing, and the host of a response is taken from its request URI when
+    http.host is empty), and an object whose SHA-256 equals exactly one listed body, and only one object has it, is
     matched_by_content (frame, stream, time, endpoints, host, request URI). A body that occurs in several frames,
     or an object that several bodies fit, is ambiguous and lists the frames (the whole list of a repeated body is
     in association-candidates.jsonl); an object that matches nothing, or whose protocol has no method here, is
@@ -56,6 +58,7 @@ import binascii
 import datetime
 import errno
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -73,9 +76,9 @@ try:
 except ImportError:  # pragma: no cover
     ctypes = None
 
-TOOL = {"name": "pcap_extract", "version": 4}
-PARSER = "pcap_extract/4"
-DEFAULT_PROTOCOLS = ["http", "smb", "smb2", "tftp", "imf"]
+TOOL = {"name": "pcap_extract", "version": 5}
+PARSER = "pcap_extract/5"
+DEFAULT_PROTOCOLS = ["http", "ftp-data", "smb", "smb2", "tftp", "imf"]
 DEFAULT_DEADLINE = 3000
 MAX_DEADLINE = 3300           # the manifest's outer limit is 3600: the tool stops its own passes first, so nothing is left running
 PREFLIGHT_SECONDS = 30
@@ -86,8 +89,15 @@ LISTED_FRAMES = 20            # frames named in one index cell; the whole list i
 CELL_LIMIT = 8192
 # Export types that have a content-to-frame method here. Every other type is indexed and marked unmapped.
 ASSOCIATED = ("http",)
-LISTING_FIELDS = ["frame.number", "frame.time_epoch", "tcp.stream", "ip.src", "ipv6.src", "ip.dst", "ipv6.dst",
-                  "http.host", "http.response_for.uri", "http.file_data"]
+# The listing asks the installed tshark which fields it has (`tshark -G fields`) and asks for those only: a field a build
+# does not list makes the whole program refuse (`Some fields aren't valid`), so none is assumed. The body field and the
+# frame number are the two the matching cannot do without; the rest are named as missing in the answer when they are.
+ESSENTIAL_FIELDS = ["frame.number", "http.file_data"]
+OPTIONAL_FIELDS = ["frame.time_epoch", "tcp.stream", "ip.src", "ipv6.src", "ip.dst", "ipv6.dst", "http.host"]
+# The request URI of a response: tshark 4.6 generates http.request.full_uri on the response frame (and no longer lists
+# http.response_for.uri); older builds list the other. The first one the build lists is used.
+URI_FIELDS = ["http.request.full_uri", "http.response_for.uri"]
+ALL_LISTING_CANDIDATES = ESSENTIAL_FIELDS + OPTIONAL_FIELDS + URI_FIELDS
 COLUMNS = ["protocol", "name", "path", "bytes", "sha256", "sha256_withheld", "association", "association_reason",
            "frame", "frames", "stream", "time_epoch", "time_utc", "src", "dst", "host", "request_uri", "pass_status"]
 
@@ -261,7 +271,7 @@ def in_job():
 
 
 def fail(message, **extra):
-    print(json.dumps({"error": scrub(message), "tool": TOOL, **extra}))
+    print(json.dumps({"error": scrub(message), "tool": TOOL, "status": "failed", "status_basis": "the tool stopped with an error (see error)", **extra}))
     raise SystemExit(1)
 
 
@@ -286,6 +296,12 @@ def resolve_output(out, what="output"):
         if dest != job_out and job_out not in dest.parents:
             fail("in a job %s is a directory under $OUT, the one place a job writes" % what, **{what: str(out), "out": str(job_out)})
     return str(dest.relative_to(root))
+
+
+REFUSED_NOT_SECRET = ("write_values is refused in a job that was not run as secret output: its files would be sealed as ordinary output. "
+                      "The harness sets SECRET_OUTPUT=1 for a secret job's process and it is not set here. Run it as job_run(tool: \"pcap_extract\", args: {...}), "
+                      "whose manifest makes every job of this tool secret output, or give a command job secret_output: true; if that is refused the "
+                      "same way, this run's harness does not set the variable and the values mode is not available in it. Nothing was written.")
 
 
 class SecretValuesRefused(Exception):
@@ -320,6 +336,8 @@ class SecretValues:
                 "file, not a sealed secret output. Run this as job_run tool=pcap_extract with "
                 "secret_output: true, and ask again there. Nothing was written."
             )
+        if os.environ.get("SECRET_OUTPUT") != "1":
+            raise SecretValuesRefused(REFUSED_NOT_SECRET)
         self.path = Path(self.out) / self.NAME
         self.shown = "store/jobs/%s/out/%s" % (re.sub(r"[^A-Za-z0-9_.-]", "_", self.job), self.NAME)
         # Created now, before anything runs: a file or a link already at that name is refused by name at once
@@ -511,15 +529,16 @@ class Listing:
     only what matching needs: the SHA-256 of the decoded hex of the last field, against the digests of the
     exported objects. A body is never held: a response of a gigabyte is hashed as it goes by."""
 
-    def __init__(self, wanted):
+    def __init__(self, wanted, fields):
         self.wanted = wanted
+        self.fields = list(fields)           # the columns asked for, the body field last
         self.lines = 0
         self.rows = 0
         self.bodies = 0
-        self.unreadable = []                 # line numbers of rows that could not be read
+        self.unreadable = array.array("Q")   # line numbers of rows that could not be read (all of them: a file names them)
         self.header_ok = None
         self.found = {}                      # digest -> [count, first info, frame numbers]
-        self._fields_needed = len(LISTING_FIELDS) - 1
+        self._fields_needed = len(self.fields) - 1
         self._reset()
 
     def _reset(self):
@@ -627,7 +646,7 @@ class Listing:
         if self._header is not None:
             tail = self._header.decode("utf-8", "replace").rstrip("\r")
             self.lines += 1
-            self.header_ok = [f.decode("utf-8", "replace") for f in self._fields] + [tail] == LISTING_FIELDS
+            self.header_ok = [f.decode("utf-8", "replace") for f in self._fields] + [tail] == self.fields
             self._reset()
             return
         self.lines += 1
@@ -638,10 +657,13 @@ class Listing:
             self._reset()
             return
         self.rows += 1
-        fields = [f.decode("utf-8", "surrogateescape") for f in self._fields]
+        cells = dict(zip(self.fields, (f.decode("utf-8", "surrogateescape") for f in self._fields)))
         many = len(self._parts) > 1
-        info = {"frame": fields[0].strip(), "time_epoch": fields[1], "stream": fields[2], "src": fields[3] or fields[4],
-                "dst": fields[5] or fields[6], "host": "" if many else fields[7], "uri": "" if many else fields[8],
+        uri = "" if many else next((cells[f] for f in URI_FIELDS if cells.get(f)), "")
+        host = "" if many else (cells.get("http.host") or host_of_uri(uri))
+        info = {"frame": cells.get("frame.number", "").strip(), "time_epoch": cells.get("frame.time_epoch", ""),
+                "stream": cells.get("tcp.stream", ""), "src": cells.get("ip.src") or cells.get("ipv6.src") or "",
+                "dst": cells.get("ip.dst") or cells.get("ipv6.dst") or "", "host": host, "uri": uri,
                 "several_responses_in_frame": many}
         for hasher, size in self._parts:
             if not size:
@@ -669,6 +691,44 @@ def epoch_to_iso(text):
     except (OverflowError, OSError, ValueError):
         return ""
     return stamp.strftime("%Y-%m-%dT%H:%M:%S") + ("." + m.group(2) if m.group(2) else "") + "Z"
+
+
+def host_of_uri(uri):
+    """The authority of an absolute URI (`http://host:port/path`), without user-info; empty for anything else.
+    tshark 4.6 leaves http.host empty on a response frame, and the request URI it generates there is absolute."""
+    m = re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://([^/?#]*)", uri)
+    return m.group(1).rsplit("@", 1)[-1] if m else ""
+
+
+def shown_host(host):
+    """A host or an address as printed: an IP address as it is, any other text through the block's own rule, so that a
+    token in a sub-domain is withheld here as it is in every other tool of the pack."""
+    if not host:
+        return ""
+    parts = host.split(",")
+    for part in parts:
+        try:
+            ipaddress.ip_address(part.strip())
+        except ValueError:
+            return scrub(host)
+    return host
+
+
+def shown_number(text):
+    """A number tshark printed (a frame, a stream, an epoch time) as it is; anything else through the block."""
+    return text if re.fullmatch(r"-?\d{1,20}(?:\.\d{1,9})?", text.strip()) else scrub(text)
+
+
+def shown_url(url):
+    """A request URI as printed: user-info, token-shaped path text, query values and fragment withheld by the block, and
+    the authority through the same host rule as the host column."""
+    out = redact_url(url)
+    m = re.match(r"^((?:[A-Za-z][A-Za-z0-9+.-]*:)?//)([^/?#]*)(.*)$", out, re.S)
+    if not m:
+        return out
+    authority = m.group(2)
+    prefix, _, host = authority.rpartition("@")
+    return m.group(1) + (prefix + "@" if prefix else "") + shown_host(host) + m.group(3)
 
 
 # --- the exported objects ---------------------------------------------------------------------------------------
@@ -759,6 +819,7 @@ class Objects:
         self.names_withheld = 0
         self.not_indexed = 0
         self.short_digests_withheld = 0
+        self._blind = {}              # path of an entry with a withheld name -> (size, digest), read once for its sort key
 
     @staticmethod
     def private(top):
@@ -771,6 +832,35 @@ class Objects:
                 except OSError:
                     pass
 
+    def _blind_key(self, entry):
+        """The sort key of an entry whose name is withheld: made of its content only (kind, size, SHA-256), never of its
+        name. The order of the rows and the numbers in withheld-NNNNNN follow this key, so neither says where the real
+        name falls among the visible ones (an order that followed the names would be a rank oracle on them)."""
+        try:
+            if entry.is_symlink():
+                return (2, 0, "")
+            if entry.is_dir(follow_symlinks=False):
+                parts = []
+                for root, _dirs, files in os.walk(entry.path):
+                    for name in files:
+                        full = os.path.join(root, name)
+                        try:
+                            if stat.S_ISREG(os.lstat(full).st_mode):
+                                parts.append("%d:%s" % (os.path.getsize(full), file_digest(full)))
+                            else:
+                                parts.append("-")
+                        except OSError:
+                            parts.append("?")
+                parts.sort()
+                return (1, len(parts), hashlib.sha256("\n".join(parts).encode("ascii")).hexdigest())
+            if not stat.S_ISREG(os.lstat(entry.path).st_mode):
+                return (3, 0, "")
+            size, digest = os.path.getsize(entry.path), file_digest(entry.path)
+            self._blind[entry.path] = (size, digest)
+            return (0, size, digest)
+        except OSError:
+            return (4, 0, "")
+
     def collect(self, protocol, status):
         """Index the files a pass left under <out_dir>/<protocol>: private modes first, names that are secrets
         moved aside, every file sized and hashed."""
@@ -781,12 +871,16 @@ class Objects:
             directory, shown, real = stack.pop()
             try:
                 with os.scandir(directory) as it:
-                    entries = sorted(it, key=lambda e: os.fsencode(e.name))
+                    entries = list(it)
             except OSError as exc:
                 self.rows.append(self._row(protocol, "<directory not listed>", shown + "/", None, status, error=describe(exc)))
                 continue
+            # Names that are not withheld come first, by name; the others follow, by content (a tie is two entries whose
+            # printed rows are identical, so which of them gets the lower number is told by the private names file only).
+            plain = sorted((e for e in entries if not name_withheld(e.name)), key=lambda e: os.fsencode(e.name))
+            secret = sorted((e for e in entries if name_withheld(e.name)), key=lambda e: (self._blind_key(e), os.fsencode(e.name)))
             subdirs = []
-            for entry in entries:
+            for entry in plain + secret:
                 name, kept = entry.name, entry.name
                 is_dir = entry.is_dir(follow_symlinks=False)
                 if name_withheld(name):
@@ -800,6 +894,8 @@ class Objects:
                     self.names_withheld += 1
                     COUNTS["names"] += 1
                     os.rename(os.path.join(directory, name), os.path.join(directory, kept))
+                    if entry.path in self._blind:
+                        self._blind[os.path.join(directory, kept)] = self._blind.pop(entry.path)
                     label = "<name withheld: token-shaped or query-shaped, %d characters>" % len(name)
                     if self.mapping is not None:
                         self.mapping.add(protocol, "%s/%s" % (protocol, (shown + "/" if shown else "") + kept),
@@ -831,8 +927,7 @@ class Objects:
             if not stat.S_ISREG(os.lstat(full).st_mode):
                 row["association_reason"] = "not a regular file (a named pipe, a device or a socket): not read"
                 return row
-            size = os.path.getsize(full)
-            digest = file_digest(full)
+            size, digest = self._blind.pop(full, None) or (os.path.getsize(full), file_digest(full))
         except OSError as exc:
             row["association_reason"] = "the object could not be read: " + describe(exc)
             return row
@@ -875,7 +970,7 @@ def write_json(path, data):
     os.replace(tmp, path)
 
 
-def associate(rows, listing, status, why, candidates_path):
+def associate(rows, listing, status, why, candidates_path, missing=()):
     """Set the association of every row. `listing` is None when the pass did not complete: then nothing is claimed.
     Returns the counts and whether the candidates file was written."""
     counts = {"matched_by_content": 0, "ambiguous": 0, "unmapped": 0, "not_attempted": 0, "failed": 0}
@@ -905,11 +1000,13 @@ def associate(rows, listing, status, why, candidates_path):
                 row["association"] = "matched_by_content"
                 row["association_reason"] = ("SHA-256 equal to exactly one listed response body, and to no other exported object"
                                              + ("; the frame holds several responses, so host and request URI are not given" if info["several_responses_in_frame"] else ""))
-                row["frame"], row["stream"] = info["frame"], info["stream"]
-                row["time_epoch"], row["time_utc"] = info["time_epoch"], epoch_to_iso(info["time_epoch"])
-                row["src"], row["dst"], row["host"] = info["src"], info["dst"], info["host"]
+                if missing:
+                    row["association_reason"] += "; this tshark build does not list: " + ", ".join(missing)
+                row["frame"], row["stream"] = shown_number(info["frame"]), shown_number(info["stream"]) if info["stream"] else ""
+                row["time_epoch"], row["time_utc"] = (shown_number(info["time_epoch"]) if info["time_epoch"] else ""), epoch_to_iso(info["time_epoch"])
+                row["src"], row["dst"], row["host"] = shown_host(info["src"]), shown_host(info["dst"]), shown_host(info["host"])
                 row["request_uri_real"] = info["uri"]
-                row["request_uri"] = redact_url(info["uri"]) if info["uri"] else ""
+                row["request_uri"] = shown_url(info["uri"]) if info["uri"] else ""
             else:
                 set_id = sets.get(row["sha"])
                 if set_id is None:
@@ -927,6 +1024,76 @@ def associate(rows, listing, status, why, candidates_path):
                                      "objects": [r["path"] for r in by_digest[digest]]}) + "\n")
         return counts, True
     return counts, False
+
+
+def discover_fields(binary, wanted, seconds):
+    """Which of `wanted` the installed tshark lists as fields (`tshark -G fields`, read as a stream so that the deadline
+    needs no second thread); (the names found, why the list could not be read or None)."""
+    found, buffer, killed = set(), b"", False
+    try:
+        proc = spawn([binary, "-G", "fields"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    except OSError as exc:
+        return found, "tshark -G fields could not be run (%s)" % describe(exc)
+    ACTIVE.append(proc)
+    stop_at = time.monotonic() + max(1.0, seconds)
+    try:
+        fd = proc.stdout.fileno()
+        while True:
+            left = stop_at - time.monotonic()
+            if left <= 0:
+                killed = True
+                kill_tree(proc)
+                break
+            ready, _, _ = select.select([fd], [], [], min(1.0, left))
+            if not ready:
+                continue
+            chunk = os.read(fd, 1 << 20)
+            if not chunk:
+                break
+            buffer += chunk
+            *lines, buffer = buffer.split(b"\n")
+            for raw in lines:
+                cells = raw.decode("utf-8", "replace").split("\t")
+                if len(cells) > 2 and cells[0] == "F" and cells[2] in wanted:
+                    found.add(cells[2])
+    except OSError as exc:
+        kill_tree(proc)
+        return found, "tshark -G fields could not be read (%s)" % describe(exc)
+    finally:
+        try:
+            proc.stdout.close()
+        except OSError:
+            pass
+        code = proc.wait()
+        ACTIVE.remove(proc)
+    if killed:
+        return found, "tshark -G fields did not finish in time"
+    if code != 0:
+        return found, "tshark -G fields exited %d" % code
+    return found, None
+
+
+def listing_fields(available, discovered):
+    """The columns of the listing for this build: (fields in order, body field last; the fields left out, with the reason).
+    With the list of fields unread nothing can be left out, and what the program does with an unknown one is told by its
+    own exit code."""
+    fields, missing = [], []
+    for name in ["frame.number"] + OPTIONAL_FIELDS:
+        if not discovered or name in available:
+            fields.append(name)
+        else:
+            missing.append(name)
+    uri = next((f for f in URI_FIELDS if f in available), URI_FIELDS[0] if not discovered else None)
+    if uri:
+        fields.append(uri)
+    else:
+        missing += URI_FIELDS
+    fields.append("http.file_data")
+    if discovered and "http.file_data" not in available:
+        missing.append("http.file_data")
+    if discovered and "frame.number" not in available:
+        missing.append("frame.number")
+    return fields, sorted(set(missing), key=missing.index)
 
 
 def stream_listing(argv, stderr_path, seconds, listing):
@@ -1031,39 +1198,64 @@ def run_everything(binary, path, out_dir, protocols, display_filter, deadline, o
             pass_result = {"status": "not_attempted", "reason": why}
             errors.append({"pass": "association", "error": "not_attempted", "reason": exhausted})
         else:
-            listing = Listing({r["sha"] for r in http_rows})
-            argv = [binary, "-n", "-r", capture, "-Y", ("(%s) && http.response" % display_filter) if display_filter else "http.response",
-                    "-T", "fields", "-E", "header=y", "-E", "separator=/t", "-E", "occurrence=a", "-E", "aggregator=,"]
-            for field in LISTING_FIELDS:
-                argv += ["-e", field]
-            stderr_path = os.path.join(log_dir, "association.stderr")
-            began = time.monotonic()
-            code, timed_out, read_error = stream_listing(argv, stderr_path, remaining, listing)
-            try:
-                os.chmod(stderr_path, 0o600)
-            except OSError:
-                pass
-            pass_result = {"status": "ok", "exit_code": code, "seconds": round(time.monotonic() - began, 3), "stderr": stderr_path,
-                           "response_rows": listing.rows, "bodies_hashed": listing.bodies,
-                           "rows_unreadable": len(listing.unreadable), "first_unreadable_lines": listing.unreadable[:10]}
-            problem = None
-            if timed_out:
-                problem, pass_result["status"] = "the listing pass was killed at the shared deadline", "timed_out"
-            elif read_error:
-                problem, pass_result["status"] = "the listing could not be read (%s)" % read_error, "failed"
-            elif code != 0:
-                problem, pass_result["status"] = "the listing pass exited with code %s" % code, "failed"
-            elif listing.header_ok is not True:
-                problem, pass_result["status"] = "the listing's header was not the fields asked for, so its columns cannot be trusted", "failed"
-            elif listing.unreadable:
-                problem, pass_result["status"] = ("%d listing rows could not be read (a body that was not hex, or a row with missing fields)"
-                                                  % len(listing.unreadable)), "incomplete"
-            if problem:
-                listing, status = None, ("not_attempted" if pass_result["status"] == "timed_out" else "failed")
-                why = problem + ": no frame is claimed for any object, because a claim from a partial listing could be wrong"
-                pass_result["reason"] = why
-                errors.append({"pass": "association", "error": pass_result["status"], "reason": why, "stderr": stderr_path})
-    counts, wrote = associate(objects.rows, listing, status, why, candidates_path)
+            available, field_problem = discover_fields(binary, set(ALL_LISTING_CANDIDATES), min(300.0, max(1.0, remaining)))
+            discovered = field_problem is None
+            fields, missing = listing_fields(available, discovered)
+            pass_result = {"status": "ok", "fields_discovered": discovered, "fields_asked_for": fields, "fields_missing": missing}
+            if field_problem:
+                pass_result["fields_note"] = field_problem + ": the fields were asked for without being checked against the build"
+            blocked = [f for f in ESSENTIAL_FIELDS if f in missing]
+            if blocked:
+                # A named reason, not a failed run: the objects stay indexed and none is tied to a frame.
+                status = "not_attempted"
+                why = ("this tshark build does not list the field%s %s, which the content matching cannot do without; no listing was made and no "
+                       "frame is claimed for any object (the objects themselves are indexed)" % ("s" if len(blocked) > 1 else "", ", ".join(blocked)))
+                pass_result.update(status="unavailable", reason=why)
+                errors.append({"pass": "association", "error": "unavailable", "reason": why})
+                listing = None
+            else:
+                listing = Listing({r["sha"] for r in http_rows}, fields)
+                # The listing's own display filter is fixed. The caller's filter is applied to the export passes only: a
+                # count of listed responses that followed it would tell the caller whether a filter over text this tool
+                # withholds (a request URI) matched.
+                argv = [binary, "-n", "-r", capture, "-Y", "http.response",
+                        "-T", "fields", "-E", "header=y", "-E", "separator=/t", "-E", "occurrence=a", "-E", "aggregator=,"]
+                for field in fields:
+                    argv += ["-e", field]
+                stderr_path = os.path.join(log_dir, "association.stderr")
+                began = time.monotonic()
+                code, timed_out, read_error = stream_listing(argv, stderr_path, remaining, listing)
+                try:
+                    os.chmod(stderr_path, 0o600)
+                except OSError:
+                    pass
+                pass_result.update(exit_code=code, seconds=round(time.monotonic() - began, 3), stderr=stderr_path,
+                                   response_rows=listing.rows, bodies_hashed=listing.bodies, rows_unreadable=len(listing.unreadable))
+                if listing.unreadable:
+                    unreadable_path = os.path.join(out_dir, "association-unreadable-lines.json")
+                    write_json(unreadable_path, {"listing_lines": list(listing.unreadable)})
+                    pass_result["unreadable_lines_file"] = os.path.basename(unreadable_path)
+                problem = None
+                if timed_out:
+                    problem, pass_result["status"] = "the listing pass was killed at the shared deadline", "timed_out"
+                elif read_error:
+                    problem, pass_result["status"] = "the listing could not be read (%s)" % read_error, "failed"
+                elif code != 0:
+                    problem, pass_result["status"] = "the listing pass exited with code %s (its stderr is named)" % code, "failed"
+                elif listing.header_ok is not True:
+                    problem, pass_result["status"] = "the listing's header was not the fields asked for, so its columns cannot be trusted", "failed"
+                elif listing.unreadable:
+                    problem, pass_result["status"] = ("%d listing rows could not be read (a body that was not hex, or a row with missing fields)"
+                                                      % len(listing.unreadable)), "incomplete"
+                if problem:
+                    listing, status = None, ("not_attempted" if pass_result["status"] == "timed_out" else "failed")
+                    why = problem + ": no frame is claimed for any object, because a claim from a partial listing could be wrong"
+                    pass_result["reason"] = why
+                    errors.append({"pass": "association", "error": pass_result["status"], "reason": why, "stderr": stderr_path})
+                elif missing:
+                    pass_result["note"] = ("fields this build does not list were left out: %s; the columns they feed are empty (a response's host "
+                                           "is taken from the request URI when http.host is empty)" % ", ".join(missing))
+    counts, wrote = associate(objects.rows, listing, status, why, candidates_path, pass_result.get("fields_missing") or ())
     if objects.not_indexed:
         errors.append({"error": "object_cap", "reason": "%d more files are on disk under the protocol directories and are not in index.tsv: "
                                                         "the index holds at most %d objects" % (objects.not_indexed, MAX_OBJECTS)})
@@ -1071,6 +1263,54 @@ def run_everything(binary, path, out_dir, protocols, display_filter, deadline, o
     state["association"] = counts
     write_index(index_path, objects.rows, objects.long_cells)
     return wrote
+
+
+def decryption_secrets(path, seconds=20.0):
+    """How many Decryption Secrets Blocks (block type 0x0000000A) a pcapng file holds, from the block headers alone:
+    (count or None when it could not be told, a sentence). tshark applies such a block to the packets it decrypts, so the
+    objects it exports and the fields it lists can be decrypted content, not what was on the wire."""
+    deadline = time.monotonic() + seconds
+    count = blocks = 0
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(12)
+            if len(head) < 12 or head[:4] != b"\x0a\x0d\x0d\x0a":
+                return 0, "not a pcapng file: it holds no Decryption Secrets Block"
+            order = "<" if head[8:12] == b"\x4d\x3c\x2b\x1a" else (">" if head[8:12] == b"\x1a\x2b\x3c\x4d" else None)
+            if order is None:
+                return None, "the pcapng byte-order mark was not read: Decryption Secrets Blocks were not counted"
+            fh.seek(0)
+            while True:
+                header = fh.read(8)
+                if len(header) < 8:
+                    break
+                kind = int.from_bytes(header[:4], "little" if order == "<" else "big")
+                total = int.from_bytes(header[4:], "little" if order == "<" else "big")
+                blocks += 1
+                if kind == 0x0A:
+                    count += 1
+                if total < 12 or total % 4:
+                    return count, "a block length was not valid after %d blocks: Decryption Secrets Blocks past that point were not counted" % blocks
+                fh.seek(total - 8, 1)
+                if blocks % 4096 == 0 and time.monotonic() > deadline:
+                    return count, "the block scan stopped after %d blocks at its own time limit: later blocks were not counted" % blocks
+    except OSError as exc:
+        return None, "the capture's blocks could not be scanned (%s)" % describe(exc)
+    if count:
+        return count, ("the capture holds %d Decryption Secrets Block(s): tshark applies them, so exported objects and listed fields can be "
+                       "decrypted content, not what was on the wire; the secrets themselves are never printed here" % count)
+    return 0, "no Decryption Secrets Block was found in the pcapng blocks scanned"
+
+
+def basis_of(status, why=None):
+    """The sentence `status` rests on. While a run is going the file says so; a finished run says what it found."""
+    if status == "running":
+        return "the receipt is written after every pass; a receipt that still says running was cut off"
+    if status == "interrupted":
+        return why or "the tool was stopped by a signal before it finished"
+    if status == "failed":
+        return why or "the tool stopped with an error (see why)"
+    return why or ""
 
 
 def main():
@@ -1113,6 +1353,8 @@ def main():
                 SecretValues(True)
             except SecretValuesRefused as exc:
                 fail(str(exc), write_values="refused", written=False)
+        elif os.environ.get("SECRET_OUTPUT") != "1":
+            fail(REFUSED_NOT_SECRET, write_values="refused", written=False)
         elif os.path.lexists(os.path.join(os.environ["OUT"], SecretValues.NAME)):
             fail("the values file already exists", write_values="refused", written=False,
                  values_file=os.path.join(os.environ["OUT"], SecretValues.NAME))
@@ -1144,7 +1386,7 @@ def main():
             fail("protocols names one export object type twice (a case-insensitive file system would put both in one directory)")
         unknown = [p for p in protocols if discovered and p not in supported]
         if unknown:
-            fail("%s %s not export object types of this tshark build; nothing was written" % (", ".join(unknown), "is" if len(unknown) == 1 else "are"),
+            fail("%s %s of this tshark build; nothing was written" % (", ".join(unknown), "is not an export object type" if len(unknown) == 1 else "are not export object types"),
                  exporters_supported=supported, tshark_version=version_line or None)
 
     # Everything that can refuse has refused. From here on the tool writes, and the values file comes first.
@@ -1161,15 +1403,16 @@ def main():
         "tool": TOOL, "parser": PARSER, "status": "running",
         "path": path, "out_dir": out_dir, "index_tsv": index_path, "receipt": receipt_path,
         "tshark_version": version_line or None,
-        "display_filter": display_filter,
+        "display_filter_given": display_filter is not None,
         "exporters_supported": supported, "exporters_discovered": discovered,
         "protocols_requested": protocols, "protocols_skipped_unsupported": skipped,
         "deadline_seconds": timeout, "runs": runs, "errors": errors,
         "withheld_names_file": Mapping.NAME,
     }
 
-    def receipt(status, why=None):
+    def receipt(status, why=None, basis=None):
         state["status"] = status
+        state["status_basis"] = basis or basis_of(status, why)
         state["elapsed_seconds"] = round(time.monotonic() - started, 3)
         state["objects"] = len(objects.rows)
         if why:
@@ -1192,6 +1435,8 @@ def main():
         if objects.mapping is not None:
             objects.mapping.close()
         receipt("interrupted", "the tool was stopped by signal %d before it finished" % signum)
+        # The same word on stdout, in the vocabulary of every answer: what is on disk is partial, and the receipt says so.
+        print(json.dumps({**state, "status": "partial", "receipt_status": "interrupted", "ok": False, "interrupted_by_signal": signum}), flush=True)
 
     try:
         os.makedirs(log_dir, mode=0o700, exist_ok=True)
@@ -1234,8 +1479,11 @@ def main():
         objects.long_cells.close()
 
     ok = not errors
+    secrets_blocks, secrets_note = decryption_secrets(path, max(1.0, min(20.0, deadline - time.monotonic())))
     state.update({
         "ok": ok,
+        "decryption_secrets_blocks": secrets_blocks,
+        "decryption_secrets_note": secrets_note,
         "bytes": sum(r["bytes"] for r in objects.rows if isinstance(r.get("bytes"), int)),
         "objects_not_indexed": objects.not_indexed,
         "association_candidates": "association-candidates.jsonl" if wrote_candidates else None,
@@ -1254,16 +1502,18 @@ def main():
                  "128 bytes) and, for HTTP objects whose bytes equal exactly one listed response body, its frame, stream, time and endpoints. "
                  "association says how far a frame is claimed: matched_by_content (equal bytes, one frame), ambiguous (the frames are "
                  "listed) or unmapped (and why: the exported bytes can differ from the field's bytes after content decoding, a partial body "
-                 "or a response the display filter left out). A frame is where tshark attributes the response, which for a reassembled "
+                 "or a response whose body tshark does not print as http.file_data). A frame is where tshark attributes the response, which for a reassembled "
                  "response is where reassembly completed, not necessarily the first packet. "
-                 "Preserve the capture's hash and this receipt with any object used in a report. Whether -Y limits what tshark exports, "
+                 "Preserve the capture's hash and this receipt with any object used in a report. Whether -Y limits what tshark exports (it is applied to the export passes only, never to the listing, and is not echoed here), "
                  "whether http.file_data holds the same bytes as the exported object after content decoding, and whether a given exporter "
                  "writes every object are properties of the tshark build named here that this tool does not establish: check an object "
                  "you rely on against the capture. Complete stdout and stderr of every pass are in _logs/."),
     })
-    receipt("complete" if ok else "partial")
+    done = "complete" if ok else "partial"
+    receipt(done, basis=("every pass ran and exited 0, every exported file is indexed, and the association pass ran or was not needed" if ok else
+                         "%d pass(es) or step(s) did not finish or did not succeed (errors names each); what was exported is indexed" % len(errors)))
     print(json.dumps(state, indent=2))
-    return 0 if ok else 1
+    return 0
 
 
 if __name__ == "__main__":

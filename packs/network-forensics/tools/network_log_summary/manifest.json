@@ -1,6 +1,6 @@
 {
   "name": "network_log_summary",
-  "description": "Normalise three log grammars into one table and account for every line: web (Apache/nginx common and combined), Squid's native access.log, and upper-case KEY=VALUE firewall records. No other format is parsed; a line that fits none is unparsed and says so. Every source line is in normalized.tsv or unparsed.tsv with its line number and the byte offset and length of the line in the stream read (the decompressed stream for gzip), so a row finds its line in the evidence. Time is three columns (a web line with no offset, an RFC 5424 time and a line with no timestamp each say which they are): timestamp_raw as written, timestamp_utc only where the line gives enough to derive it (a web offset, Squid epoch seconds, an ISO 8601 firewall prefix with a zone), and timezone_source; a syslog stamp has no year or zone and is never read as UTC. The file is read as bytes: invalid UTF-8 is substituted and counted (decoding_substituted), CRLF is counted, a line over max_line_bytes is located and not read, gzip expansion is capped (max_expanded_bytes) and a cap or a corrupt stream is a structured error that keeps the rows read before it and names the offset (complete and ok false), and aggregates hold at most max_distinct_values per category (a key is cut at 512 characters) with the overflow counted: a ranking is exact only while distinct_cap_reached is null. A leading byte order mark is stripped and counted. Forwarded headers, NAT addresses and action labels are what the logging device wrote, not facts about the sender. SENSITIVE: the request target and the combined-format referer (a column of its own) are redacted (user-info, token-shaped path text and every query value withheld; parameter names stay), the table has no raw line and the answer none. Redaction is by shape; run it as a job with secret_output: true. write_values: true (jobs only, refused elsewhere) writes the unparsed lines and the original targets to $OUT/network-log-values.jsonl, mode 0600, created before anything is read; a second run in the same job is refused by name.",
+  "description": "Normalise three log grammars into one table and account for every line: web (Apache/nginx common and combined), Squid's native access.log, and upper-case KEY=VALUE firewall records. No other format is parsed; a line that fits none is unparsed and says so. Every source line is in normalized.tsv or unparsed.tsv with its line number and the byte offset and length of the line in the stream read (the decompressed stream for gzip), so a row finds its line in the evidence. Time is three columns (a web line with no offset, an RFC 5424 time and a line with no timestamp each say which they are): timestamp_raw as written, timestamp_utc only where the line gives enough to derive it (a web offset, Squid epoch seconds, an ISO 8601 firewall prefix with a zone), and timezone_source; a syslog stamp has no year or zone and is never read as UTC. The file is read as bytes: invalid UTF-8 is substituted and counted (decoding_substituted), CRLF is counted, a line over max_line_bytes is located and not read, gzip expansion is capped (max_expanded_bytes) and a cap or a corrupt stream ends the read, keeps the rows read before it and names the offset (complete and ok false, status partial, exit 0), and aggregates hold at most max_distinct_values per category (a key is cut at 512 characters) with the overflow counted: a ranking is exact only while distinct_cap_reached is null. A leading byte order mark is stripped and counted. A quoted field is read with its escapes (\\\" is a quote, \\\\ a backslash), so an escaped quote in a referer or user agent does not end the field; text after the last field the grammar names is kept in the unparsed_tail column, the row is parse_status partial and parsed_with_text_left_over counts them. The tool keeps its own clock (max_seconds, default 540, at most 570; the manifest's limit is 600): when it runs out the read stops, the rows read are kept and the answer is partial. Every answer carries status (complete when every line was read and matched a grammar completely; partial otherwise; failed when no line was read or the request was refused) and status_basis; exit 0 means the engine ran, and a refusal is JSON and exit 1. SIGTERM, SIGINT and SIGHUP stop the read, keep the tables as far as they got, print the partial answer (read_error.error is interrupted) and exit 128 plus the signal. Forwarded headers, NAT addresses and action labels are what the logging device wrote, not facts about the sender. SENSITIVE: every printed column has a rule of its own and no column is printed as the line wrote it unless its type says it cannot hold a secret. An address column (src, dst, nat_src, nat_dst) is an IP address as it is, any other text through the withholding block (a host name is judged like any host); a port, counter, status and elapsed column is digits as they are, anything else through the block; the target and the combined-format referer lose user-info, token-shaped path text and every query value (parameter names stay) and their host goes through the block; the method, protocol, action, user, user agent, hierarchy, mime, interfaces, timestamp_raw and unparsed_tail columns go through the block; timestamp_utc, timezone_source, tcp_flags and the other derived columns are made by the tool. The aggregate keys are the printed text, never the raw. The table has no raw line and the answer none. Redaction is by shape (a short secret that does not look like a token is not recognised); run it as a job with secret_output: true. write_values: true (jobs only, refused elsewhere) writes the unparsed lines and the original targets to $OUT/network-log-values.jsonl, mode 0600, created before anything is read; a second run in the same job is refused by name. The manifest declares secret_output: \"required\", so every job of this tool is run and sealed as secret output (the answer says so, secret_output_by: tool_manifest, and the process gets SECRET_OUTPUT=1). write_values is refused as JSON, before anything is opened or written, in a job whose process does not have SECRET_OUTPUT=1 (a command job that runs the script by hand).",
   "params": {
     "path": {
       "type": "string",
@@ -8,7 +8,7 @@
     },
     "out_dir": {
       "type": "string",
-      "description": "An empty directory under work/ (in a job, under $OUT; work/<your agent id>/name is mapped to $OUT/name) for normalized.tsv and unparsed.tsv. It is private (0700, files 0600)"
+      "description": "An empty directory under work/ (in a job, under $OUT; work/<your id>/name is mapped to $OUT/name) for normalized.tsv and unparsed.tsv. It is private (0700, files 0600)"
     },
     "format": {
       "type": "string",
@@ -33,16 +33,20 @@
     "max_distinct_values": {
       "type": "integer",
       "description": "Distinct values counted per aggregate category (default 200000); occurrences of values past it are counted in distinct_cap_reached"
+    },
+    "max_seconds": {
+      "type": "integer",
+      "description": "The tool's own clock for the read, from 1 to 570 seconds (default 540). When it runs out the read stops with the rows so far and the answer is partial (read_error.error is time_limit)"
     }
   },
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 600,
-  "example": "{\"path\": \"inputs/access.log\", \"out_dir\": \"work/access-summary\", \"format\": \"auto\"}",
+  "example": "{\"path\": \"inputs/access.log\", \"out_dir\": \"work/<your id>/access-summary\", \"format\": \"auto\"}",
   "by": "maintainer",
   "at": "2026-10-07T18:00:00.000Z",
-  "version": 4,
-  "sha256": "911bb056de4503b50350b5caf7079f758391d46985db2dbea22465cb96302461",
+  "version": 5,
+  "sha256": "eb3b9e2b26530addd9ff824bde4d4dc4a5577350e2be111c26b287050820ad81",
   "use": {
     "extensions": [
       ".log",
@@ -57,5 +61,6 @@
       "iptables*.log*",
       "ufw.log*"
     ]
-  }
+  },
+  "secret_output": "required"
 }

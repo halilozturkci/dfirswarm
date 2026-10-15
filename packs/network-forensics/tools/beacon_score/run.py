@@ -33,22 +33,27 @@ What a result can and cannot say:
   - The whole interval list is kept: inline a bounded page, the rest in a file
     the answer names (and intervals.tsv in out_dir when one is given).
 """
+import array
 import datetime
 import json
 import math
 import os
 import re
 import secrets
-import statistics
+import signal
 import sys
 import tempfile
+import time
 from pathlib import Path
 
-TOOL = {"name": "beacon_score", "version": 3}
+TOOL = {"name": "beacon_score", "version": 4}
 MAX_EPOCH = 4_102_444_800        # 2100-01-01: a number above it is not epoch seconds (milliseconds, microseconds, nanoseconds)
-MAX_EVENTS = 5_000_000
+MAX_EVENTS = 3_000_000          # measured: 336 MB resident at this many events (it was 1.19 GB for the same 3 million before the series was packed)
 DEFAULT_LIMIT = 40
 MAX_VALUE_CHARS = 4096          # a longer line of a timestamps_file is not a time
+DEFAULT_SECONDS = 40            # the tool's own clock for reading; the manifest's limit is 60 seconds
+MAX_SECONDS = 45
+EXTRA_FOR_LIST = 5              # seconds past that clock the interval list may still take before it stops, leaving the answer room before 60
 
 
 def describe(exc):
@@ -56,7 +61,7 @@ def describe(exc):
 
 
 def fail(message, **extra):
-    print(json.dumps({"error": message, "tool": TOOL, **extra}))
+    print(json.dumps({"error": message, "tool": TOOL, "status": "failed", "status_basis": "the tool stopped with an error (see error)", **extra}))
     raise SystemExit(1)
 
 
@@ -133,37 +138,63 @@ class LosslessPage:
         return result
 
 
+ISO_TIME = re.compile(r"(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,9}))?)?)?[ ]?(Z|z|[+-]\d{2}(?::?\d{2})?)?")
+
+
+def iso_seconds(text):
+    """ISO 8601 text as (seconds since the epoch, has a zone) or None. Written by hand, because the standard library's
+    fromisoformat accepts different forms in different Python versions (hour 24, a bare fraction point, ...), and a series
+    must read the same on every interpreter the tool runs on. The forms: YYYY-MM-DD, with `T` or one space and HH:MM or
+    HH:MM:SS and up to nine fraction digits, then Z or +hh, +hh:mm, +hhmm. Hour 24 and second 60 are not accepted."""
+    m = ISO_TIME.fullmatch(text)
+    if not m:
+        return None
+    year, mon, day, hh, mm, ss, frac, zone = m.groups()
+    try:
+        stamp = datetime.datetime(int(year), int(mon), int(day), int(hh or 0), int(mm or 0), int(ss or 0), tzinfo=datetime.timezone.utc)
+    except ValueError:
+        return None
+    seconds = (stamp - datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)).total_seconds()
+    if frac:
+        seconds += int(frac) / 10 ** len(frac)
+    if zone and zone not in ("Z", "z"):
+        digits = zone[1:].replace(":", "")
+        offset = int(digits[:2]) * 3600 + int(digits[2:] or 0) * 60
+        if int(digits[:2]) > 23 or int(digits[2:] or 0) > 59:
+            return None
+        seconds -= offset if zone[0] == "+" else -offset
+    return seconds, zone is not None
+
+
 def read_time(value, assume_utc):
     """(seconds since the epoch, None) or (None, reason). A reason is one of unparseable, non_finite, out_of_range,
     naive: nothing is guessed, and a number is epoch seconds."""
     if isinstance(value, bool) or value is None:
         return None, "unparseable"
     if isinstance(value, (int, float)):
-        number = float(value)
+        try:
+            number = float(value)
+        except OverflowError:
+            return None, "out_of_range"      # an integer too large for a float is a number, and not epoch seconds
     elif isinstance(value, str):
         text = value.strip()
         try:
             number = float(text)
         except ValueError:
             number = None
+        except OverflowError:
+            return None, "out_of_range"
         if number is None:
-            candidate = text[:-1] + "+00:00" if text[-1:] in ("Z", "z") else text
-            try:
-                parsed = datetime.datetime.fromisoformat(candidate)
-            except ValueError:
+            read = iso_seconds(text)
+            if read is None:
                 return None, "unparseable"
-            if parsed.tzinfo is None:
+            number, has_zone = read
+            if not has_zone:
                 if not assume_utc:
                     return None, "naive"
-                parsed = parsed.replace(tzinfo=datetime.timezone.utc)
-                number = parsed.timestamp()
                 if not math.isfinite(number):
                     return None, "non_finite"
                 return number, "assumed_utc"
-            try:
-                number = parsed.timestamp()
-            except (OverflowError, OSError, ValueError):
-                return None, "out_of_range"
     else:
         return None, "unparseable"
     if not math.isfinite(number):
@@ -204,6 +235,69 @@ def shape_of(relative):
     return "dispersed"
 
 
+class Stopped(BaseException):
+    """SIGTERM, SIGINT or SIGHUP, raised in the main thread by the handler (a handler that did the work of answering could be
+    running in the middle of what it reports)."""
+
+    def __init__(self, signum):
+        super().__init__(signum)
+        self.signum = signum
+
+
+def _stop(signum, _frame):
+    raise Stopped(signum)
+
+
+PROGRESS = {"stage": "arguments", "values_read": 0}      # what the last word says
+
+
+def check_label(label):
+    """A label is a few plain words: it is printed back. Printable ASCII up to 80 characters, and no run of more than 15 letters,
+    digits, underscores, hyphens, plus signs, slashes or equals signs without a break (a space, a dot, a colon, a bracket or any
+    other mark): a token, a key or a base64 text has such a run, a description does not."""
+    if label is None:
+        return None
+    if (not isinstance(label, str) or not re.fullmatch(r"[\x20-\x7e]{1,80}", label)
+            or any(len(run) > 15 for run in re.findall(r"[A-Za-z0-9_+/=-]+", label))):
+        fail("label must be a few plain words: up to 80 printable ASCII characters with no run of more than 15 letters, digits or _ + / = - "
+             "without a break (it is printed back in the answer)")
+    return label
+
+
+def values_of(file_arg, raw, counters):
+    """The series as (input position, value) pairs, one at a time: a file is read line by line and never held. A line too long to
+    be a time is counted and yields None; a blank line and a comment are not positions."""
+    if file_arg is not None:
+        with open(file_arg, "r", encoding="utf-8", errors="replace") as fh:
+            index = 0
+            while True:
+                line = fh.readline(MAX_VALUE_CHARS + 1)
+                if not line:
+                    return
+                if len(line) > MAX_VALUE_CHARS and not line.endswith("\n"):
+                    while line and not line.endswith("\n"):
+                        line = fh.readline(MAX_VALUE_CHARS)
+                    counters["long_lines"] += 1
+                    yield index, None
+                    index += 1
+                    continue
+                text = line.strip()
+                if not text or text.startswith("#"):
+                    continue
+                yield index, text
+                index += 1
+    else:
+        yield from enumerate(raw)
+
+
+def median_of(values):
+    ordered = sorted(values)
+    n = len(ordered)
+    if n % 2:
+        return ordered[n // 2]
+    return (ordered[n // 2 - 1] + ordered[n // 2]) / 2
+
+
 def main():
     try:
         args = json.load(sys.stdin)
@@ -227,6 +321,11 @@ def main():
     for key, value in (("assume_utc", assume_utc), ("sensor_coverage_confirmed", confirmed)):
         if not isinstance(value, bool):
             fail("%s must be true or false" % key)
+    label = check_label(args.get("label"))
+    seconds_allowed = args.get("max_seconds", DEFAULT_SECONDS)
+    if isinstance(seconds_allowed, bool) or not isinstance(seconds_allowed, (int, float)) or not 1 <= seconds_allowed <= MAX_SECONDS:
+        fail("max_seconds must be a number from 1 to %d: the tool stops reading and answers with what it has before the manifest's 60-second limit" % MAX_SECONDS)
+    deadline = time.monotonic() + seconds_allowed
     out_dir = args.get("out_dir")
     if out_dir is not None:
         if not isinstance(out_dir, str) or not out_dir:
@@ -237,86 +336,97 @@ def main():
                 fail("out_dir already holds files", out_dir=out_dir)
         except OSError as exc:
             fail("out_dir cannot be listed (%s)" % describe(exc), out_dir=out_dir)
-
-    long_lines = 0
     if file_arg is not None:
         if not isinstance(file_arg, str) or not file_arg:
             fail("timestamps_file must be a path")
-        try:
-            with open(file_arg, "r", encoding="utf-8", errors="replace") as fh:
-                values = []
-                while True:
-                    line = fh.readline(MAX_VALUE_CHARS + 1)
-                    if not line:
-                        break
-                    if len(line) > MAX_VALUE_CHARS and not line.endswith("\n"):
-                        # a line that long is no time: it is counted as unreadable, and the rest of it is skipped, not held
-                        while line and not line.endswith("\n"):
-                            line = fh.readline(MAX_VALUE_CHARS)
-                        values.append(None)
-                        long_lines += 1
-                        if len(values) > MAX_EVENTS:
-                            fail("the series has more than %d events: split it by destination or by window" % MAX_EVENTS, timestamps_file=file_arg)
-                        continue
-                    text = line.strip()
-                    if not text or text.startswith("#"):
-                        continue
-                    values.append(text)
-                    if len(values) > MAX_EVENTS:
-                        fail("the series has more than %d events: split it by destination or by window" % MAX_EVENTS, timestamps_file=file_arg)
-        except OSError as exc:
-            fail("timestamps_file could not be read (%s)" % describe(exc), timestamps_file=file_arg)
     else:
         if not isinstance(raw, list) or not raw:
             fail("timestamps is required: a non-empty list of event times, epoch seconds or ISO 8601 with a zone")
         if len(raw) > MAX_EVENTS:
             fail("the series has more than %d events: split it by destination or by window" % MAX_EVENTS)
-        values = raw
 
-    parsed, rejected, first_rejected, assumed = [], {"unparseable": 0, "non_finite": 0, "out_of_range": 0}, [], 0
-    naive = 0
-    first_naive = []
-    for index, value in enumerate(values):
-        seconds, reason = read_time(value, assume_utc)
-        if reason == "naive":
-            naive += 1
-            if len(first_naive) < 5:
-                first_naive.append({"index": index, "value": str(value)[:80]})
-            continue
-        if reason == "assumed_utc":
-            assumed += 1
-        elif reason:
-            rejected[reason] += 1
-            if len(first_rejected) < 5:
-                first_rejected.append({"index": index, "value": str(value)[:80], "reason": reason})
-            continue
-        parsed.append((round(seconds, 6), index))
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _stop)
+    PROGRESS["stage"] = "reading the series"
+    counters = {"long_lines": 0}
+    # The series is parsed once, as it is read: seconds in a packed array (8 bytes an event), the position of each in the input
+    # in another (4 bytes), and whether the input is already in time order, so that the common case needs no sort at all.
+    secs, positions = array.array("d"), array.array("I")
+    rejected = {"unparseable": 0, "non_finite": 0, "out_of_range": 0}
+    # Positions, reasons and lengths of every value that was not scored: five inline, all of them in a file the answer names.
+    rejected_page, naive_page = LosslessPage("beacon_rejected", 5), LosslessPage("beacon_without_zone", 5)
+    naive, assumed = 0, 0
+    supplied, in_order, previous = 0, True, None
+    timed_out_at = None
+    try:
+        for index, value in values_of(file_arg, raw, counters):
+            supplied += 1
+            if supplied > MAX_EVENTS:
+                fail("the series has more than %d events: split it by destination or by window" % MAX_EVENTS, **({"timestamps_file": file_arg} if file_arg else {}))
+            PROGRESS["values_read"] = supplied
+            if supplied & 4095 == 0 and time.monotonic() > deadline:
+                timed_out_at = index
+                supplied -= 1
+                break
+            seconds, reason = read_time(value, assume_utc)
+            if reason == "naive":
+                naive += 1
+                naive_page.add({"index": index, "length": len(str(value))})
+                continue
+            if reason == "assumed_utc":
+                assumed += 1
+            elif reason:
+                rejected[reason] += 1
+                rejected_page.add({"index": index, "reason": reason, "length": len(str(value)) if value is not None else None})
+                continue
+            seconds = round(seconds, 6)
+            if previous is not None and seconds < previous:
+                in_order = False
+            previous = seconds
+            secs.append(seconds)
+            positions.append(index)
+    except OSError as exc:
+        fail("timestamps_file could not be read (%s)" % describe(exc), timestamps_file=file_arg)
+    except Stopped:
+        raise
     if naive:
+        shown_naive = naive_page.finish()
         fail("%d of the times carry no time zone; a series that is not UTC cannot be read as UTC without being told to. Give the zone in each time "
              "(Z or +hh:mm), or pass assume_utc: true if the source is known to be UTC" % naive,
-             timestamps_without_zone=naive, first_without_zone=first_naive)
+             timestamps_without_zone=naive, first_without_zone=naive_page.page, all_without_zone=shown_naive.get("all_results"))
 
     window_end = None
     if args.get("window_end") is not None:
         window_end, why = read_time(args["window_end"], assume_utc)
         if window_end is None:
-            fail("window_end could not be read as a time (%s): epoch seconds or ISO 8601 with a zone" % why, window_end=str(args["window_end"])[:80])
+            fail("window_end could not be read as a time (%s): epoch seconds or ISO 8601 with a zone" % why,
+                 window_end_length=len(str(args["window_end"])))
 
-    first_index = {}
-    for seconds, index in parsed:
-        first_index.setdefault(seconds, index)
-    distinct = sorted(first_index)
+    PROGRESS["stage"] = "ordering the series"
+    count = len(secs)
+    order = None if in_order else sorted(range(count), key=secs.__getitem__)
+    distinct, first_at = array.array("d"), array.array("I")        # the distinct times, and the input position of the first of each
+    for p in (range(count) if order is None else order):
+        s = secs[p]
+        if distinct and distinct[-1] == s:
+            continue
+        distinct.append(s)
+        first_at.append(positions[p])
+    del order
+    rejected_pages = rejected_page.finish()
+    first_rejected = rejected_page.page
     if len(distinct) < minimum:
-        fail("too few distinct usable times to score", usable=len(parsed), distinct_events=len(distinct), needed=minimum,
-             rejected=rejected, first_rejected=first_rejected,
+        fail("too few distinct usable times to score", usable=count, distinct_events=len(distinct), needed=minimum,
+             rejected=rejected, first_rejected=first_rejected, all_rejected=rejected_pages.get("all_results"),
              note="A handful of distinct events cannot show periodicity, and scoring them would invent a pattern. Identical times count once.")
     if window_end is not None and window_end < distinct[-1]:
         fail("window_end is earlier than the last event: the window cannot end before the series does",
              window_end=iso(window_end), last_event=iso(distinct[-1]))
 
-    intervals = [round(b - a, 6) for a, b in zip(distinct, distinct[1:])]
-    median = statistics.median(intervals)
-    mad = statistics.median([abs(i - median) for i in intervals])
+    PROGRESS["stage"] = "measuring the intervals"
+    intervals = array.array("d", (round(b - a, 6) for a, b in zip(distinct, distinct[1:])))
+    median = median_of(intervals)
+    mad = median_of(abs(i - median) for i in intervals)
     relative = (mad / median) if median else None
     span = distinct[-1] - distinct[0]
     expected = (span / median + 1) if median else None
@@ -353,36 +463,70 @@ def main():
             cessation["statement"] = ("The series has events up to %s seconds before the declared window end; no silence longer than four median "
                                       "intervals is observed at its end." % silent)
 
+    PROGRESS["stage"] = "writing the interval list"
     page = LosslessPage("beacon_intervals", limit)
     tsv = None
     tsv_path = None
+    listed, list_cut = 0, False
     try:
         if out_dir:
             os.makedirs(out_dir, exist_ok=True)
             tsv_path = os.path.join(out_dir, "intervals.tsv")
             tsv = open(tsv_path, "w", encoding="utf-8", newline="\n")
             tsv.write("index\tfrom_utc\tto_utc\tseconds\tfrom_input_index\tto_input_index\n")
-        for i, (a, b, gap) in enumerate(zip(distinct, distinct[1:], intervals)):
-            row = {"index": i, "from": iso(a), "to": iso(b), "seconds": gap, "from_input_index": first_index[a], "to_input_index": first_index[b]}
+        for i in range(len(intervals)):
+            if i & 4095 == 4095 and time.monotonic() > deadline + EXTRA_FOR_LIST:
+                list_cut = True
+                break
+            a, b, gap = distinct[i], distinct[i + 1], intervals[i]
+            row = {"index": i, "from": iso(a), "to": iso(b), "seconds": gap, "from_input_index": first_at[i], "to_input_index": first_at[i + 1]}
             page.add(row)
             if tsv is not None:
                 tsv.write("%d\t%s\t%s\t%s\t%d\t%d\n" % (i, row["from"], row["to"], gap, row["from_input_index"], row["to_input_index"]))
+            listed += 1
         pages = page.finish()
     except OSError as exc:
         fail("the interval list could not be written (%s)" % describe(exc), out_dir=out_dir)
     finally:
         if tsv is not None:
             tsv.close()
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, signal.SIG_DFL)
 
+    rejected_total = sum(rejected.values())
+    partial = timed_out_at is not None or list_cut or rejected_total > 0
+    not_scored = ("%d of the %d values supplied were not scored (%s) and are not in the measurements, which cover the other %d; each is named by "
+                  "position in first_rejected and all_rejected" % (rejected_total, supplied, ", ".join("%d %s" % (n, r.replace("_", " ")) for r, n in rejected.items() if n), count))
+    if timed_out_at is not None:
+        basis = ("the tool's own clock (max_seconds %s) ran out while the series was being read, at input position %d: the answer measures the %d values "
+                 "read before it, and nothing after them" % (seconds_allowed, timed_out_at, supplied))
+    elif list_cut:
+        basis = ("the series was measured whole, but the interval list stopped at the tool's clock after %d of %d intervals: the list in the files is "
+                 "incomplete, the measurements are not" % (listed, len(intervals)))
+    elif rejected_total:
+        basis = "the whole series was read and every interval of the scored values is in the list, but " + not_scored
+    else:
+        basis = "the whole series was read and measured; every interval is in the list"
+    if rejected_total and (timed_out_at is not None or list_cut):
+        basis += "; also " + not_scored
+    if assumed and not rejected_total:
+        basis += "; %d times carried no zone and were read as UTC because assume_utc was true" % assumed
     print(json.dumps({
         "tool": TOOL,
-        "label": args.get("label"),
-        "events": len(parsed),
+        "status": "partial" if partial else "complete", "status_basis": basis,
+        "series_complete": timed_out_at is None,
+        "stopped_reading_at_input_index": timed_out_at,
+        "interval_list_complete": not list_cut,
+        "label": label,
+        "events": count,
         "distinct_events": len(distinct),
-        "duplicate_timestamps": len(parsed) - len(distinct),
-        "values_supplied": len(values),
+        "duplicate_timestamps": count - len(distinct),
+        "values_supplied": supplied,
+        "all_values_scored": rejected_total == 0,
         "rejected": rejected,
         "first_rejected": first_rejected,
+        "all_rejected": rejected_pages.get("all_results"),
+        "first_rejected_note": "position, reason and length only: the text of a rejected value is not printed; the first five are inline and every one is in all_rejected (JSON Lines) when there are more",
         "naive_timestamps_assumed_utc": assumed,
         "first": iso(distinct[0]), "last": iso(distinct[-1]),
         "span_seconds": round(span, 3),
@@ -397,7 +541,7 @@ def main():
         "intervals_page": pages,
         "intervals_tsv": sealed_path(tsv_path),
         "input_index_note": "from_input_index and to_input_index are positions in the series you supplied (0-based; in a timestamps_file, among its non-comment lines), the first occurrence when a time is repeated",
-        "lines_over_limit": long_lines,
+        "lines_over_limit": counters["long_lines"],
         "long_final_gap": final_gap,
         "observation_window": {"declared_end": iso(window_end) if window_end is not None else None},
         "cessation": cessation,
@@ -415,5 +559,10 @@ if __name__ == "__main__":
         main()
     except SystemExit:
         raise
+    except Stopped as stop:
+        print(json.dumps({"tool": TOOL, "status": "partial", "ok": False,
+                          "status_basis": "the tool was stopped by signal %d while it was %s; no measurement had been answered yet" % (stop.signum, PROGRESS["stage"]),
+                          "interrupted_by_signal": stop.signum, "values_read": PROGRESS["values_read"]}), flush=True)
+        os._exit(128 + stop.signum)
     except Exception as exc:  # never an empty or clean answer for a failure
         fail("unexpected failure: %s" % describe(exc))

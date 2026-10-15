@@ -1,6 +1,6 @@
 {
   "name": "pcap_extract",
-  "description": "Export protocol objects from a capture with the installed tshark and index every one. It records the tshark version and the export object types that build lists (an explicitly named type the build does not list is refused by name; the default list is cut to the listed ones and the rest named), runs every pass under ONE deadline counted from the start of the tool (timeout_seconds, at most 3300, so that this tool stops its passes before the 3600-second limit does; a pass that uses it up is killed with everything it started and the rest are not_attempted), and keeps index.tsv and receipt.json from the first moment, replaced after every pass. tshark runs in the tool's own process group, so the harness ending the tool ends tshark, and SIGTERM, SIGINT and SIGHUP kill the pass and leave the receipt 'interrupted'. Each HTTP object is tied to a frame by content only: matched_by_content when its SHA-256 equals exactly one listed response body and no other exported object has it (frame, stream, time, endpoints, host, request URI), ambiguous with the frames listed, or unmapped with the reason; other protocols are indexed and unmapped. That is a statement about equal bytes, not about a session, and an unmapped object is not evidence that it was absent from the capture. If the listing pass fails or cannot be read whole, no frame is claimed. tshark is the only engine used, so agreement with the capture recipe is not independent. SENSITIVE: exported objects, their names and request URIs can carry credentials and tokens. The directory is private (0700/0600, tshark's own files too). An object name shaped like a token, or carrying a query string, is moved to withheld-NNNNNN (never onto a name that is there) and never printed; its real name is written to withheld-names.jsonl in the directory (0600) whatever write_values says, so no name is lost. A request URI loses user-info, token-shaped path text and query values; the digest of an object under 128 bytes is not written. Run it as a job with secret_output: true; write_values: true (jobs only, refused elsewhere) also writes the real names and the whole URIs to $OUT/pcap-extract-values.jsonl, mode 0600, created before anything runs and given back if the run stops before it wrote a value; a second run in the same job is refused by name.",
+  "description": "Export protocol objects from a capture with the installed tshark and index every one. It records the tshark version and the export object types that build lists (an explicitly named type the build does not list is refused by name; the default list is cut to the listed ones and the rest named), runs every pass under ONE deadline counted from the start of the tool (timeout_seconds, at most 3300, so that this tool stops its passes before the 3600-second limit does; a pass that uses it up is killed with everything it started and the rest are not_attempted), and keeps index.tsv and receipt.json from the first moment, replaced after every pass. tshark runs in the tool's own process group, so the harness ending the tool ends tshark, and SIGTERM, SIGINT and SIGHUP kill the pass and leave the receipt 'interrupted'. Each HTTP object is tied to a frame by content only (the listing pass asks the installed tshark which fields it has, `tshark -G fields`, and asks for those: the request URI from http.request.full_uri or, on a build that lists only it, http.response_for.uri, and the host from http.host or, where that is empty on a response frame, from the request URI; a field the build lacks is named in association_pass.fields_missing and is never a failed run, except http.file_data, without which the association pass is unavailable by name and every object stays indexed and unmapped): matched_by_content when its SHA-256 equals exactly one listed response body and no other exported object has it (frame, stream, time, endpoints, host, request URI), ambiguous with the frames listed, or unmapped with the reason; other protocols are indexed and unmapped. That is a statement about equal bytes, not about a session, and an unmapped object is not evidence that it was absent from the capture. If the listing pass fails or cannot be read whole, no frame is claimed; the line numbers of every unreadable listing row are in association-unreadable-lines.json. tshark is the only engine used, so agreement with the capture recipe is not independent. SENSITIVE: exported objects, their names and request URIs can carry credentials and tokens. The directory is private (0700/0600, tshark's own files too). An object name shaped like a token, or carrying a query string, is moved to withheld-NNNNNN (never onto a name that is there) and never printed; its real name is written to withheld-names.jsonl in the directory (0600) whatever write_values says, so no name is lost. A request URI loses user-info, token-shaped path text and query values; the digest of an object under 128 bytes is not written. The listing pass has a display filter of its own (http.response) and the caller's display_filter is applied to the export passes only, and is not echoed in the answer or the receipt: a count of listed responses that followed a caller's filter would tell whether a filter over a request URI (which is withheld) matched. Rows are ordered by name for the names that are printed, and the objects whose names are withheld follow them, numbered and ordered by their content (size, then SHA-256) and never by their real names, so neither the order nor a number says where a withheld name falls among the readable ones. A host in a URL or the host column goes through the same rule as every other string of the pack (a token in a sub-domain is withheld). A pcapng that holds Decryption Secrets Blocks is said (decryption_secrets_blocks): tshark applies them, so exported objects can be decrypted content, not what was on the wire. The default export types include ftp-data where the build lists it. Every answer carries status (complete, partial or failed) and status_basis; exit 0 means the engine ran, and a refusal is JSON and exit 1; SIGTERM, SIGINT and SIGHUP kill the pass, leave the receipt interrupted and print partial JSON on stdout (exit 128 plus the signal). Run it as a job with secret_output: true; write_values: true (jobs only, refused elsewhere) also writes the real names and the whole URIs to $OUT/pcap-extract-values.jsonl, mode 0600, created before anything runs and given back if the run stops before it wrote a value; a second run in the same job is refused by name. The manifest declares secret_output: \"required\", so every job of this tool is run and sealed as secret output (the answer says so, secret_output_by: tool_manifest, and the process gets SECRET_OUTPUT=1). write_values is refused as JSON, before anything is opened or written, in a job whose process does not have SECRET_OUTPUT=1 (a command job that runs the script by hand).",
   "params": {
     "path": {
       "type": "string",
@@ -8,15 +8,15 @@
     },
     "out_dir": {
       "type": "string",
-      "description": "An empty directory under work/ (in a job, under $OUT; work/<your agent id>/name is mapped to $OUT/name) for the exported objects, index.tsv, receipt.json, withheld-names.jsonl and _logs/. It is private (0700, files 0600)"
+      "description": "An empty directory under work/ (in a job, under $OUT; work/<your id>/name is mapped to $OUT/name) for the exported objects, index.tsv, receipt.json, withheld-names.jsonl and _logs/. It is private (0700, files 0600)"
     },
     "protocols": {
       "type": "array",
-      "description": "Wireshark export object types to run (letters, digits, - and _; no dot or slash). Default: http, smb, smb2, tftp, imf, cut to the types the installed tshark lists (the rest are named in protocols_skipped_unsupported). A type the build does not list is refused by name and nothing is written"
+      "description": "Wireshark export object types to run (letters, digits, - and _; no dot or slash). Default: http, ftp-data, smb, smb2, tftp, imf, cut to the types the installed tshark lists (the rest are named in protocols_skipped_unsupported). A type the build does not list is refused by name and nothing is written"
     },
     "display_filter": {
       "type": "string",
-      "description": "Optional Wireshark display filter, passed to every pass and to the HTTP listing. Whether the installed build applies it to object export is not established by this tool: check an object you rely on"
+      "description": "Optional Wireshark display filter, passed to every export pass (never to the listing pass, and not echoed in the answer or the receipt). Whether the installed build applies it to object export is not established by this tool: check an object you rely on"
     },
     "timeout_seconds": {
       "type": "integer",
@@ -33,11 +33,11 @@
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 3600,
-  "example": "{\"path\": \"inputs/capture.pcap\", \"out_dir\": \"work/exported\", \"protocols\": [\"http\", \"smb\"]}",
+  "example": "{\"path\": \"inputs/capture.pcap\", \"out_dir\": \"work/<your id>/exported\", \"protocols\": [\"http\", \"smb\"]}",
   "by": "maintainer",
   "at": "2026-10-07T18:00:00.000Z",
-  "version": 4,
-  "sha256": "3a3dcc77757402bf056b1a3fc55c0fab2fda7d6171f36a1f58a73547e2928130",
+  "version": 5,
+  "sha256": "f64aa572ee592f619def326e5f84659b804f4ab6d242245c373771d733d5e216",
   "use": {
     "extensions": [
       ".pcap",
@@ -66,5 +66,6 @@
         "hex": "0a0d0d0a"
       }
     ]
-  }
+  },
+  "secret_output": "required"
 }

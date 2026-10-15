@@ -8,7 +8,7 @@
     },
     "out_dir": {
       "type": "string",
-      "description": "An empty directory under work/ (in a job, under $OUT; work/<your agent id>/name is mapped to $OUT/name) where Zeek runs and its logs land. It is private (0700, files 0600)"
+      "description": "An empty directory under work/ (in a job, under $OUT; work/<your id>/name is mapped to $OUT/name) where Zeek runs and its logs land. It is private (0700, files 0600)"
     },
     "logs": {
       "type": "array",
@@ -37,10 +37,10 @@
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 1200,
-  "example": "{\"path\": \"inputs/capture.pcap\", \"out_dir\": \"work/zeek\", \"logs\": [\"conn\", \"dns\", \"ssl\", \"files\"]}",
+  "example": "{\"path\": \"inputs/capture.pcap\", \"out_dir\": \"work/<your id>/zeek\", \"logs\": [\"conn\", \"dns\", \"ssl\", \"files\"]}",
   "by": "maintainer",
   "at": "2026-10-07T18:00:00.000Z",
-  "version": 4,
+  "version": 5,
   "sha256": "19dd5e2f62128ec01cc320e788bdebf30b9f79afaaeeb8aab65f6f57a55f1a4d",
   "use": {
     "extensions": [
