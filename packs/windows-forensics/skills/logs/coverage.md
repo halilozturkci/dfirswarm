@@ -11,7 +11,7 @@ Use when a question turns on an event that is not there. Not for reading the fil
 
 An event exists only if the channel was enabled, the audit subcategory or provider was on, and the file's size and retention kept it; what you hold also depends on what was collected. Before a negative:
 
-1. Per file, take the first and last record time and the record count: the interval it can speak for. `evtx_query` without a filter keeps every record in file order in `result_file`; its first and last rows are the ends (`highest_record_id_read` is the top id).
+1. Per file, take the first and last record time and the record count: the interval it can speak for. `evtx_query` without a filter keeps every record in file order in `result_file`; its first and last rows are the ends (`highest_record_id_read` is the top id). The file is read to its end, not to the header's count: `chunks_in_file`, `chunks_read_beyond_declared` and `header_dirty` say what a dirty log held past it, and `chunks_not_read` names a chunk that was refused.
 2. Establish the channel's configuration (enabled, size, retention) with `regkv` in the SOFTWARE and SYSTEM hives and the policy keys, for example under `Microsoft\Windows\CurrentVersion\WINEVT\Channels` and `Policies\Microsoft\Windows\EventLog` (hive state: `registry/overview`). The pack does not decode a stored audit policy: use 4719 records, policy files the case holds, or events of the same subcategory in the logs. Such an event shows the subcategory was on then; its absence alone shows nothing.
 3. Say what else could have written the silence: another machine, a service, a forwarder, a different channel.
 

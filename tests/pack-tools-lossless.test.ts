@@ -267,6 +267,8 @@ async function carveBlob(path: string): Promise<number[]> {
     blob.writeUInt32LE(0x200, at + 0x2c);
     blob.writeUInt32LE(0x400, at + 0x30);
     blob.writeUInt32LE(count, at + 0x34);
+    // The string and template tables (0x80 to 0x200) are empty, as in a chunk that has none: noise there would be table pointers.
+    blob.fill(0, at + 0x80, at + 0x200);
   }
   await writeFile(path, blob);
   return chunks.map(([at]) => at);

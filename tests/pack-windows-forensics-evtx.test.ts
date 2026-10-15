@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { WIN, body, exists, failed, py, pythonCanImport, stub, stubModule, tool, type Run } from "./windows-pack-harness.ts";
 import { withCwd } from "./tool-library-harness.ts";
-import { CHUNK_BYTES, EVTX_CARVE_STUB, EVTX_QUERY_STUB, eventXml, evtxChunk, evtxFileHeader } from "./windows-stub-evtx.ts";
+import { CHUNK_BYTES, EVTX_CARVE_STUB, EVTX_QUERY_STUB, eventXml, evtxChunk, evtxFileHeader, type ChunkRecord } from "./windows-stub-evtx.ts";
 
 const root = process.getuid ? process.getuid() === 0 : false;
 
@@ -28,6 +28,10 @@ type EvtxSpec = {
   header?: { chunk_count?: number; next_record_number?: number };
   header_error?: string;
   unpadded?: boolean;
+  /** The header's flags word (1 = dirty, 2 = full). */
+  flags?: number;
+  /** Chunk slots written as zeros whatever the spec holds for them. */
+  corruptChunks?: number[];
   chunks: Array<{ offset: number; records: EvtxRec[]; enumeration_error?: string }>;
 };
 
@@ -59,12 +63,41 @@ type EvtxQueryOut = {
   result_file_requested?: string;
 };
 
-/** The log as the stand-in library reads it, its size made what its header declares (a JSON file may end in blanks) unless the case is a cut-short log. */
+/**
+ * The log as real bytes the stand-in library reads: the 4096-byte file header (its chunk count what the spec declares), then 64 KiB
+ * chunks, each written to the libevtx layout with its records' XML as the record body. A record `xml_error` renders as an error, a
+ * `chain_error` entry is a break in the chain where it stands, an `enumeration_error` chunk is a slot the enumeration fails at (the library
+ * is told so in <log>.inject.json). The size is made what the header declares unless the case is a cut-short log.
+ */
 async function evtxCase(cwd: string, spec: EvtxSpec, args: Record<string, unknown> = {}, env: Record<string, string> = {}): Promise<Run> {
   const stubs = await stubModule(cwd, { "Evtx/__init__.py": "", "Evtx/Evtx.py": EVTX_QUERY_STUB });
-  const text = JSON.stringify(spec);
-  const declared = 4096 + (spec.header?.chunk_count ?? spec.chunks.length) * CHUNK_BYTES;
-  await writeFile(join(cwd, "work", "Security.evtx"), spec.unpadded ? text : text + " ".repeat(Math.max(0, declared - text.length)), "utf8");
+  const declaredCount = spec.header?.chunk_count ?? spec.chunks.length;
+  const inject: Record<string, any> = {}; // eslint-disable-line @typescript-eslint/no-explicit-any
+  if (spec.header_error) inject.header_error = spec.header_error;
+  const highest = Math.max(0, ...spec.chunks.flatMap((c) => c.records.map((r) => r.number ?? 0)));
+  const parts: Buffer[] = [evtxFileHeader(declaredCount, spec.header?.next_record_number ?? 1 + highest, spec.flags ?? 0)];
+  spec.chunks.forEach((c, i) => {
+    if (c.enumeration_error) {
+      inject.enumeration_error_at = i;
+      parts.push(Buffer.alloc(CHUNK_BYTES));
+      return;
+    }
+    const records: ChunkRecord[] = [];
+    for (const r of c.records) {
+      if (r.chain_error) {
+        (inject.chain_error ??= {})[`${i}:${records.length}`] = r.chain_error;
+        continue;
+      }
+      if (r.xml_error) (inject.xml_error ??= {})[`${i}:${records.length}`] = r.xml_error;
+      records.push({ number: r.number ?? records.length + 1, xml: r.xml ?? eventXml({ eid: 1, rec: r.number ?? records.length + 1 }), filetime: r.filetime ? BigInt(r.filetime) : undefined });
+    }
+    parts.push(spec.corruptChunks?.includes(i) ? Buffer.alloc(CHUNK_BYTES) : evtxChunk(records));
+  });
+  let file = Buffer.concat(parts);
+  const declared = 4096 + declaredCount * CHUNK_BYTES;
+  if (!spec.unpadded && file.length < declared) file = Buffer.concat([file, Buffer.alloc(declared - file.length)]);
+  await writeFile(join(cwd, "work", "Security.evtx"), file);
+  await writeFile(join(cwd, "work", "Security.evtx.inject.json"), JSON.stringify(inject));
   return tool("evtx_query", cwd, { path: "work/Security.evtx", ...args }, { ...stubs, ...env });
 }
 
@@ -89,11 +122,12 @@ test("evtx_query counts what matched apart from what it could not read: a record
     assert.equal(out.parse_errors, 1);
     assert.equal(out.count, 2, "count is the events that matched");
     assert.equal(out.status, "partial");
-    assert.deepEqual(out.events.map((e) => [e.event_id, e.record_id, e.record_offset, e.chunk_offset]), [[4624, 11, 4608, 4096], [4625, 13, 5400, 4096]]);
+    assert.deepEqual(out.events.map((e) => [e.event_id, e.record_id, e.record_offset, e.chunk_offset]), [[4624, 11, 4608, 4096], [4625, 13, out.events[1].record_offset, 4096]]);
     assert.equal(out.events[0].data.TargetUserName, "alice");
     assert.match(out.errors[0].parse_error, /^BinXML template could not be expanded/);
     const rows = (await readFile(join(cwd, out.result_file), "utf8")).trimEnd().split("\n").map((l) => JSON.parse(l) as { xml?: string; record_offset: number });
-    assert.deepEqual(rows.map((r) => r.record_offset), [4608, 5000, 5400]);
+    assert.deepEqual(rows.map((r) => r.record_offset), [4608, out.errors[0].record_offset, out.events[1].record_offset]);
+    assert.ok(rows[0].record_offset < rows[1].record_offset && rows[1].record_offset < rows[2].record_offset, "the records are in file order");
     assert.ok(rows[0].xml?.includes("<EventID>4624</EventID>"));
   });
 });
@@ -153,7 +187,7 @@ test("evtx_query says a file it cannot open is an error, not a traceback", async
   await withCwd(async (cwd) => {
     const env = await stubModule(cwd, { "Evtx/__init__.py": "", "Evtx/Evtx.py": EVTX_QUERY_STUB });
     await writeFile(join(cwd, "work", "junk.evtx"), "this is not an event log");
-    assert.match(failed(await tool("evtx_query", cwd, { path: "work/junk.evtx" }, env)).error, /could not open the event log/);
+    assert.match(failed(await tool("evtx_query", cwd, { path: "work/junk.evtx" }, env)).error, /not an EVTX file/);
   });
 });
 
@@ -178,7 +212,7 @@ test("evtx_query says a log cut short is partial, with what its header declares 
     const empty = body<EvtxQueryOut>(await evtxCase(cwd, { header: { chunk_count: 2 }, chunks: [] }));
     assert.equal(empty.records_examined, 0);
     assert.equal(empty.status, "partial");
-    assert.ok(empty.problems.some((p) => /gave 0 of the 2 chunks/.test(p)));
+    assert.ok(empty.problems.some((p) => /2 chunk\(s\) the file header declares have no ElfChnk signature/.test(p)), empty.problems.join("|"));
     // A header that cannot be read says the log's extent is not known.
     const broken = body<EvtxQueryOut>(await evtxCase(cwd, { header_error: "file header magic is wrong", chunks: [{ offset: 4096, records: [goodRec(4608, 4624, 1, "2026-09-01 10:00:00.000000")] }] }));
     assert.equal(broken.status, "partial");
@@ -228,17 +262,21 @@ test("evtx_query counts a record with no SystemTime that a time range cannot pla
   });
 });
 
-test("evtx_query never replaces or truncates an earlier result: the same arguments again make a new file and name both, and a needle is not in the name", async () => {
+test("evtx_query never replaces or truncates an earlier result: the same result is named again, another takes the next name, and a needle is not in the name", async () => {
   // The name was a digest of every argument, `contains` included, and the file was opened for writing: a second run with the
   // same arguments truncated the first result in place.
   await withCwd(async (cwd) => {
     const first = body<EvtxQueryOut>(await evtxCase(cwd, DAY, { contains: "SECRET-NEEDLE-1" }));
     const before = await readFile(join(cwd, first.result_file), "utf8");
     const again = body<EvtxQueryOut>(await evtxCase(cwd, DAY, { contains: "SECRET-NEEDLE-1" }));
-    assert.notEqual(again.result_file, first.result_file);
-    assert.match(again.result_file, /-2\.jsonl$/);
-    assert.equal(again.result_file_requested, first.result_file);
+    assert.equal(again.result_file, first.result_file, "the same result keeps its name");
     assert.equal(await readFile(join(cwd, first.result_file), "utf8"), before, "the first result is as it was");
+    // A file of that name that is not this result (a larger one from an earlier run, say) is kept, and this result takes the next name.
+    await writeFile(join(cwd, first.result_file), before + JSON.stringify({ kept: true }) + "\n");
+    const third = body<EvtxQueryOut>(await evtxCase(cwd, DAY, { contains: "SECRET-NEEDLE-1" }));
+    assert.match(third.result_file, /-2\.jsonl$/);
+    assert.equal(third.result_file_requested, first.result_file);
+    assert.equal(await readFile(join(cwd, first.result_file), "utf8"), before + JSON.stringify({ kept: true }) + "\n");
     // A different needle (or none) lands in a name made of the same arguments: the needle shapes no part of it.
     const other = body<EvtxQueryOut>(await evtxCase(cwd, DAY, { contains: "another" }));
     const base = (name: string): string => name.replace(/-\d+\.jsonl$/, ".jsonl");

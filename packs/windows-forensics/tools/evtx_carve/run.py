@@ -39,6 +39,7 @@ checksums hold; a record in an unverified chunk may still be sound, and is marke
 """
 import json
 import os
+import stat
 import struct
 import sys
 import xml.etree.ElementTree as ET
@@ -143,16 +144,213 @@ class LosslessPage:
             result["all_results_format"] = "JSON Lines, one complete result per line"
         return result
 
+NS = {"e": "http://schemas.microsoft.com/win/2004/08/events/event"}
+PARSER = "evtx_carve/4"
+DEADLINE_SECONDS = 590            # the manifest allows 600
+INLINE_CHANNELS = 100
+
+
+# BEGIN SHARED PLACE
+# The same text is in every windows-forensics tool that keeps a result file (a windows-forensics test holds the copies equal).
+# A result file that is there is never replaced by another result: a file of the same bytes is named again, any other result takes the next free
+# <stem>-<n><suffix>. The name is taken first, with an exclusive create, so a result written at the same moment cannot be replaced either.
+def same_bytes(a, b):
+    """Whether two files hold the same bytes (read in blocks, never whole)."""
+    try:
+        if os.path.getsize(a) != os.path.getsize(b):
+            return False
+        with open(a, "rb") as fa, open(b, "rb") as fb:
+            while True:
+                x, y = fa.read(1 << 20), fb.read(1 << 20)
+                if x != y:
+                    return False
+                if not x:
+                    return True
+    except OSError:
+        return False
+
+
+def place_without_replacing(tmp, path):
+    """Move the finished `tmp` to `path` and never replace what is there. The name is taken first, with an exclusive create, so a
+    result written at the same moment cannot be replaced either. Returns the path that holds it."""
+    for n in range(1, 1000):
+        candidate = path if n == 1 else path.with_name("%s-%d%s" % (path.stem, n, path.suffix))
+        try:
+            fd = os.open(str(candidate), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        except FileExistsError:
+            if not os.path.islink(candidate) and same_bytes(tmp, candidate):
+                os.unlink(tmp)
+                return candidate
+            continue
+        os.close(fd)
+        os.replace(tmp, candidate)             # only replaces the empty file this call just made
+        return candidate
+    raise OSError("no free name beside %s" % path)
+# END SHARED PLACE
+
+
+# BEGIN SHARED PAGE
+# The same text is in every windows-forensics tool that pages through LosslessPage (held equal by a windows-forensics test): LosslessPage replaces a file of the
+# same name; this one places its finished file with place_without_replacing, and registers itself so that a stop can remove its temporary file.
+PAGES = []
+
+
+class NoReplacePage(LosslessPage):
+    """LosslessPage whose finished file is placed without replacing an earlier file of the same name (a rerun with other limits, or one
+    the time limit stopped, must not leave a smaller file where a larger one was)."""
+
+    def __init__(self, tool, key, limit):
+        super().__init__(tool, key, limit)
+        PAGES.append(self)
+
+    def finish(self) -> dict:
+        result = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
+        if self._out is not None:
+            try:
+                self._out.flush()
+                os.fsync(self._out.fileno())
+                self._out.close()
+                assert self._tmp is not None
+                placed = place_without_replacing(self._tmp, self.path)
+            except OSError as exc:
+                self._cannot_write(exc)
+            self._tmp = None
+            self.path = placed
+            self.shown = self.shown[: len(self.shown) - len(Path(self.shown).name)] + placed.name
+            result["all_results"] = self.shown
+            result["all_results_format"] = "JSON Lines, one complete result per line"
+        return result
+# END SHARED PAGE
+
+
+# BEGIN SHARED EVTX READ
+# The same text is in evtx_query and evtx_carve (a windows-forensics test holds the copies equal). python-evtx follows a chunk's string and
+# template tables without a bound: a table entry whose next pointer names itself never ends, and nothing in the library has a clock. So a
+# chunk is checked before the library is given it (chain_problem), whatever else it holds is read under a timer of its own (chunk_guard,
+# which raises ChunkTimeout inside the library and gives the chunk up), and the whole run has a clock below the manifest's (out_of_time).
+# SIGTERM, SIGINT and SIGHUP are cooperative: inside the library they unwind it (Interrupted), elsewhere they are noted and the next
+# check_stop() raises, so that a result file is closed between two rows and never in the middle of one.
+import signal
+import struct
+import time
+
 CHUNK_MAGIC = b"ElfChnk\x00"
 CHUNK_SIZE = 65536
-NS = {"e": "http://schemas.microsoft.com/win/2004/08/events/event"}
-PARSER = "evtx_carve/3"
 HEADER_BYTES = 0x80
+CHUNK_SECONDS = 8
+CLOCK = {"deadline": None}
+STOP = {"signal": None, "in_library": False}
 
 
-class CompletePage(LosslessPage):
-    """A page whose whole result is ALWAYS kept in a file (LosslessPage writes the file only when there are more
-    rows than the page). The rows hold the whole XML; what is shown inline is made from them afterwards."""
+class ChunkTimeout(BaseException):
+    """A chunk took longer than CHUNK_SECONDS to read. BaseException: a library that catches Exception does not swallow it."""
+
+
+class Interrupted(BaseException):
+    def __init__(self, signum):
+        super().__init__(signum)
+        self.signum = signum
+
+
+def set_deadline(seconds):
+    CLOCK["deadline"] = time.monotonic() + seconds
+
+
+def out_of_time():
+    return CLOCK["deadline"] is not None and time.monotonic() > CLOCK["deadline"]
+
+
+def _on_alarm(signum, _frame):
+    raise ChunkTimeout()
+
+
+def _on_signal(signum, _frame):
+    if STOP["in_library"]:
+        raise Interrupted(signum)
+    STOP["signal"] = signum
+
+
+def install_signal_handlers():
+    signal.signal(signal.SIGALRM, _on_alarm)
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+
+
+def check_stop():
+    if STOP["signal"] is not None:
+        raise Interrupted(STOP["signal"])
+
+
+class chunk_guard:
+    """`with chunk_guard():` the library is called under a CHUNK_SECONDS timer (and never longer than the run's clock has left); a stop
+    signal unwinds it. Not for code that writes a result: that runs outside it."""
+
+    def __enter__(self):
+        left = CLOCK["deadline"] - time.monotonic() if CLOCK["deadline"] is not None else CHUNK_SECONDS
+        check_stop()
+        STOP["in_library"] = True
+        signal.setitimer(signal.ITIMER_REAL, max(0.05, min(CHUNK_SECONDS, left)))
+        return self
+
+    def __exit__(self, *exc):
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        STOP["in_library"] = False
+        return False
+
+
+def reject_signature(head):
+    """Why the 128 bytes after an ElfChnk signature are not a chunk header, or None when they could be one. The layout is the format's (the
+    libevtx notes on the EVTX chunk header): the first and last record numbers at 0x08 and 0x10, the header size (0x80) at 0x28, the offset
+    of the last record at 0x2C and of the free space at 0x30, each inside the 64 KiB chunk. python-evtx's ChunkHeader reads whatever it is
+    given without complaint, so this check is the tool's own."""
+    if len(head) < HEADER_BYTES:
+        return "the file ends %d bytes after the signature and a chunk header is %d bytes" % (len(head), HEADER_BYTES)
+    first, last = struct.unpack_from("<QQ", head, 0x08)
+    header_size, last_offset, next_offset = struct.unpack_from("<III", head, 0x28)
+    if header_size != HEADER_BYTES:
+        return "its header size is %d, not %d" % (header_size, HEADER_BYTES)
+    if last_offset > CHUNK_SIZE or next_offset > CHUNK_SIZE:
+        return ("its record offsets (last %d, free space %d) lie outside a %d-byte chunk"
+                % (last_offset, next_offset, CHUNK_SIZE))
+    if next_offset > 0x200 and first > last:
+        return "its first record number %d is after its last, %d" % (first, last)
+    return None
+
+
+def chain_problem(raw):
+    """Why `raw` (one chunk) must not be handed to python-evtx, or None. It mirrors ChunkHeader._load_strings and _load_templates, which
+    follow 64 string chains and 32 template chains until a next pointer of 0: a pointer that names an offset already seen is a loop, one
+    outside the chunk is a read past it."""
+    if len(raw) < 0x200:
+        return "the chunk is shorter than its 0x200-byte header area"
+    for count, base, label in ((64, 0x80, "string"), (32, 0x180, "template")):
+        for i in range(count):
+            ofs = struct.unpack_from("<I", raw, base + 4 * i)[0]
+            seen = set()
+            while ofs > 0:
+                if ofs in seen:
+                    return "%s table entry %d loops back to offset 0x%x" % (label, i, ofs)
+                seen.add(ofs)
+                if label == "string":
+                    if ofs + 8 > len(raw):
+                        return "%s table entry %d points outside the chunk (0x%x)" % (label, i, ofs)
+                    ofs = struct.unpack_from("<I", raw, ofs)[0]
+                else:
+                    if ofs < 10 or ofs + 4 > len(raw):
+                        return "%s table entry %d points outside the chunk (0x%x)" % (label, i, ofs)
+                    if raw[ofs - 10] != 0x0C or struct.unpack_from("<I", raw, ofs - 4)[0] != ofs:
+                        break                       # python-evtx stops here itself (it logs "Unexpected token")
+                    ofs = struct.unpack_from("<I", raw, ofs)[0]
+                if len(seen) > 100000:
+                    return "%s table entry %d chain longer than any chunk can hold" % (label, i)
+    return None
+# END SHARED EVTX READ
+
+
+
+class CompletePage(NoReplacePage):
+    """A page whose whole result is ALWAYS kept in a file (LosslessPage writes the file only when there are more rows than the page). The
+    rows hold the whole XML; what is shown inline is made from them afterwards."""
 
     def finish(self) -> dict:
         if self._out is None and self.page:
@@ -180,28 +378,8 @@ def keep(out, name, value):
 
 
 def fail(message, **extra):
-    print(json.dumps({"error": message, **extra}))
+    print(json.dumps({"error": message, "status": "failed", "status_basis": "the tool stopped with an error (see error); nothing was swept", **extra}))
     raise SystemExit(1)
-
-
-def reject_signature(head):
-    """Why the 128 bytes after an ElfChnk signature are not a chunk header, or None when they could be one. The
-    layout is the format's (the libevtx notes on the EVTX chunk header): the first and last record numbers at 0x08 and
-    0x10, the header size (0x80) at 0x28, the offset of the last record at 0x2C and of the free space at 0x30, each
-    inside the 64 KiB chunk. python-evtx's ChunkHeader reads whatever it is given without complaint, so this check is
-    the tool's own."""
-    if len(head) < HEADER_BYTES:
-        return "the file ends %d bytes after the signature and a chunk header is %d bytes" % (len(head), HEADER_BYTES)
-    first, last = struct.unpack_from("<QQ", head, 0x08)
-    header_size, last_offset, next_offset = struct.unpack_from("<III", head, 0x28)
-    if header_size != HEADER_BYTES:
-        return "its header size is %d, not %d" % (header_size, HEADER_BYTES)
-    if last_offset > CHUNK_SIZE or next_offset > CHUNK_SIZE:
-        return ("its record offsets (last %d, free space %d) lie outside a %d-byte chunk"
-                % (last_offset, next_offset, CHUNK_SIZE))
-    if next_offset > 0x200 and first > last:
-        return "its first record number %d is after its last, %d" % (first, last)
-    return None
 
 
 def summarise(xml, offset, chunk_offset, verified):
@@ -257,6 +435,8 @@ def whole(args, name, default, low):
 
 
 def main():
+    set_deadline(DEADLINE_SECONDS)
+    install_signal_handlers()
     try:
         args = json.load(sys.stdin)
     except ValueError as exc:
@@ -267,8 +447,13 @@ def main():
     path = args.get("path")
     if not isinstance(path, str) or not path:
         fail("path is required: a blob to sweep for chunk headers")
-    if not os.path.isfile(path):
+    try:
+        mode = os.stat(path).st_mode
+    except (OSError, ValueError):
         fail("no such file", path=path)
+    if not stat.S_ISREG(mode):
+        # A named pipe or a device would be opened and waited on: it is not read.
+        fail("the path is not a regular file, so it was not opened", path=path, not_attempted=1)
 
     limit = whole(args, "limit", 300, 1)
     chunk_limit = whole(args, "chunk_limit", 200, 1)
@@ -295,145 +480,232 @@ def main():
         fail("start is past the end of the file", start=start, size=size)
     end = size if not max_bytes else min(size, start + max_bytes)
 
-    records = CompletePage(
-        "evtx_carve", [path, start, end, sorted(wanted), contains], limit)
-    problems = LosslessPage("evtx_carve-problems", [path, start, end], 40)
+    # The names of the whole results are made from what was asked about and never from `contains`: a needle can be a secret, and a name,
+    # like the answer, is not a place for it or for a digest of it (a digest is a way to confirm a guess offline). Whether a needle was
+    # given is in the name; a result file is never replaced, so another needle takes the next free name.
+    records = CompletePage("evtx_carve", [path, start, end, sorted(wanted), bool(contains), chunk_limit, candidate_limit], limit)
+    problems = NoReplacePage("evtx_carve-problems", [path, start, end, chunk_limit, candidate_limit], 40)
+    channel_page = NoReplacePage("evtx_carve-channels", [path, start, end, sorted(wanted), bool(contains), chunk_limit, candidate_limit], INLINE_CHANNELS)
     channels = set()
-    chunks_seen, chunks_parsed, chunks_verified, candidates, rejected = 0, 0, 0, 0, 0
-    problem_count = 0
+    c = {"seen": 0, "parsed": 0, "verified": 0, "candidates": 0, "rejected": 0, "tables_refused": 0, "timed_out": 0, "unverified_empty": 0,
+         "malformed": 0, "problems": 0}
     resume_start = None
+    stop = {"time": None, "signal": None}
 
     def problem(offset, why):
-        nonlocal problem_count
-        problem_count += 1
+        c["problems"] += 1
         problems.add({"offset": offset, "why": why})
 
-    # A chunk whose magic starts before `end` is found even when the magic
-    # itself runs over it.
+    def read_chunk(chunk):
+        """The records of one chunk as [(kind, offset, xml, message)] read under the chunk's timer: kind is 'record' or 'record_error'
+        (the library could not render that record), 'chain' (the record chain ended early) or 'timeout'."""
+        items = []
+        try:
+            with chunk_guard():
+                for record in chunk.records():
+                    try:
+                        items.append(("record", record.offset(), record.xml(), None))
+                    except Exception as exc:
+                        items.append(("record_error", None, None, str(exc)))
+        except ChunkTimeout:
+            c["timed_out"] += 1
+            items.append(("timeout", None, None, None))
+        except Exception as exc:
+            items.append(("chain", None, None, str(exc)))
+        return items
+
+    # A chunk whose magic starts before `end` is found even when the magic itself runs over it.
     read_end = min(size, end + len(CHUNK_MAGIC) - 1)
     position = start
+    swept_candidate = start
     try:
-        with open(path, "rb") as fh:
-            window = 1 << 22                    # read in 4 MiB steps, overlapping by a magic
-            position = start
-            tail = b""
-            tail_at = start
-            while position < read_end and resume_start is None:
-                fh.seek(position)
-                block = fh.read(min(window, read_end - position))
-                if not block:
-                    break
-                buf = tail + block
-                base = tail_at
-                search = 0
-                while True:
-                    hit = buf.find(CHUNK_MAGIC, search)
-                    if hit < 0:
+        try:
+            with open(path, "rb") as fh:
+                window = 1 << 22                    # read in 4 MiB steps, overlapping by a magic
+                position = start
+                tail = b""
+                tail_at = start
+                while position < read_end and resume_start is None:
+                    check_stop()
+                    fh.seek(position)
+                    block = fh.read(min(window, read_end - position))
+                    if not block:
                         break
-                    search = hit + 1
-                    absolute = base + hit
-                    if absolute >= end:
-                        break
-                    if chunks_parsed >= chunk_limit or candidates >= candidate_limit:
-                        # Stop before this one, and say where: nothing is skipped.
-                        resume_start = absolute
-                        break
-                    candidates += 1
-                    fh.seek(absolute)
-                    refusal = reject_signature(fh.read(HEADER_BYTES))
-                    if refusal is not None:
-                        rejected += 1
-                        problem(absolute, "an ElfChnk signature that is not a chunk: %s" % refusal)
+                    buf = tail + block
+                    base = tail_at
+                    search = 0
+                    while True:
+                        hit = buf.find(CHUNK_MAGIC, search)
+                        if hit < 0:
+                            break
+                        search = hit + 1
+                        absolute = base + hit
+                        if absolute >= end:
+                            break
+                        check_stop()
+                        if c["parsed"] >= chunk_limit or c["candidates"] >= candidate_limit:
+                            # Stop before this one, and say where: nothing is skipped.
+                            resume_start = absolute
+                            break
+                        if out_of_time():
+                            resume_start = absolute
+                            stop["time"] = "the tool's own time limit (%d seconds) was reached" % DEADLINE_SECONDS
+                            break
+                        c["candidates"] += 1
+                        swept_candidate = absolute
+                        fh.seek(absolute)
+                        refusal = reject_signature(fh.read(HEADER_BYTES))
+                        if refusal is not None:
+                            c["rejected"] += 1
+                            problem(absolute, "an ElfChnk signature that is not a chunk: %s" % refusal)
+                            fh.seek(position + len(block))
+                            continue
+                        c["seen"] += 1
+                        fh.seek(absolute)
+                        raw = fh.read(CHUNK_SIZE)
                         fh.seek(position + len(block))
-                        continue
-                    chunks_seen += 1
-                    fh.seek(absolute)
-                    raw = fh.read(CHUNK_SIZE)
-                    fh.seek(position + len(block))
-                    if len(raw) < CHUNK_SIZE:
-                        problem(absolute, "the chunk runs past the end of the file: %d of its "
-                                          "%d bytes are there, and the records in them are read"
-                                          % (len(raw), CHUNK_SIZE))
-                    try:
-                        chunk = ChunkHeader(raw, 0)
-                    except Exception as exc:                      # a false positive on the magic
-                        problem(absolute, "not a readable chunk: %s" % exc)
-                        continue
-                    try:
-                        verified = bool(chunk.verify())
-                    except Exception as exc:
-                        verified = False
-                        problem(absolute, "the checksums could not be computed: %s" % exc)
-                    chunks_parsed += 1
-                    if verified:
-                        chunks_verified += 1
-                    try:
-                        for record in chunk.records():
-                            try:
-                                xml = record.xml()
-                            except Exception as exc:
-                                problem(absolute, "a record did not parse: %s" % exc)
+                        if len(raw) < CHUNK_SIZE:
+                            problem(absolute, "the chunk runs past the end of the file: %d of its "
+                                              "%d bytes are there, and the records in them are read"
+                                              % (len(raw), CHUNK_SIZE))
+                        loop = chain_problem(raw)
+                        if loop is not None:
+                            c["tables_refused"] += 1
+                            problem(absolute, "the chunk was not read: its %s" % loop)
+                            continue
+                        try:
+                            chunk = ChunkHeader(raw, 0)
+                        except Exception as exc:                      # a false positive on the magic
+                            problem(absolute, "not a readable chunk: %s" % exc)
+                            continue
+                        try:
+                            with chunk_guard():
+                                verified = bool(chunk.verify())
+                        except ChunkTimeout:
+                            verified = False
+                            problem(absolute, "the checksums could not be computed in time")
+                        except Exception as exc:
+                            verified = False
+                            problem(absolute, "the checksums could not be computed: %s" % exc)
+                        c["parsed"] += 1
+                        if verified:
+                            c["verified"] += 1
+                        read_any = 0
+                        for kind, offset, xml, message in read_chunk(chunk):
+                            check_stop()
+                            if kind == "timeout":
+                                problem(absolute, "the chunk took more than %d seconds to read; the records after this point in it were not read" % CHUNK_SECONDS)
                                 continue
+                            if kind == "chain":
+                                problem(absolute, "the record list ended early: %s" % message)
+                                continue
+                            if kind == "record_error":
+                                problem(absolute, "a record did not parse: %s" % message)
+                                continue
+                            read_any += 1
                             if contains_l and contains_l not in xml.lower():
                                 continue
                             try:
-                                entry = summarise(xml, absolute + record.offset(), absolute, verified)
+                                entry = summarise(xml, absolute + offset, absolute, verified)
                             except ET.ParseError as exc:
-                                problem(absolute, "record XML is malformed: %s" % exc)
-                                continue
+                                # python-evtx does not escape a quote in an attribute: the record is kept, with its XML and the reason.
+                                c["malformed"] += 1
+                                problem(absolute, "record XML is malformed (kept in the result file with parse_error): %s" % exc)
+                                entry = {"chunk_offset": absolute, "record_offset": absolute + offset, "chunk_verified": verified,
+                                         "parse_error": "record XML is malformed: %s" % exc}
+                                if wanted:
+                                    continue                  # its event id cannot be read, so a filter on ids cannot place it
                             if wanted and entry.get("event_id") not in wanted:
                                 continue
                             # The whole XML goes in the result file; the page shown inline drops it unless asked.
                             entry["xml"] = xml
                             records.add(entry)
-                            if entry.get("channel"):
+                            if entry.get("channel") and entry["channel"] not in channels:
                                 channels.add(entry["channel"])
-                    except Exception as exc:
-                        problem(absolute, "the record list ended early: %s" % exc)
-                tail = buf[-(len(CHUNK_MAGIC) - 1):] if len(buf) >= len(CHUNK_MAGIC) else buf
-                tail_at = base + len(buf) - len(tail)
-                position += len(block)
+                                channel_page.add(entry["channel"])
+                        if not verified and not read_any:
+                            c["unverified_empty"] += 1
+                            problem(absolute, "the header checks passed, but the checksums do not hold and no record could be read: this is probably not a chunk")
+                    tail = buf[-(len(CHUNK_MAGIC) - 1):] if len(buf) >= len(CHUNK_MAGIC) else buf
+                    tail_at = base + len(buf) - len(tail)
+                    position += len(block)
+        except Interrupted as interrupt:
+            stop["signal"] = interrupt.signum
+            resume_start = swept_candidate if c["candidates"] else start
     except OSError as exc:
-        fail("the sweep could not read %s (or write its result): %s" % (path, exc), status="failed", candidates=candidates,
-             signatures_rejected=rejected, chunks_parsed=chunks_parsed, swept_to=position)
+        fail("the sweep could not read %s (or write its result): %s" % (path, exc), candidates=c["candidates"],
+             signatures_rejected=c["rejected"], chunks_parsed=c["parsed"], swept_to=position)
 
     swept_to = resume_start if resume_start is not None else max(start, min(end, size))
     page = records.finish()
     problem_page = problems.finish()
+    channels_result = channel_page.finish()
     inline = records.page if with_xml else [{k: v for k, v in r.items() if k != "xml"} for r in records.page]
+    if stop["signal"] is not None:
+        status, basis = "interrupted", "the tool was stopped by signal %d; what was swept before it is in the result file, and resume_start says where to go on" % stop["signal"]
+    elif resume_start is None and not c["problems"]:
+        status, basis = "complete", "the whole range asked for was swept and every chunk found was read without a problem"
+    else:
+        reasons = []
+        if resume_start is not None:
+            reasons.append("the sweep stopped at %s (resume_start)" % (stop["time"] or "chunk_limit or candidate_limit"))
+        if c["problems"]:
+            reasons.append("%d problem(s) are named under problems" % c["problems"])
+        status, basis = "partial", "; ".join(reasons)
     out = {
         "parser": PARSER,
-        "status": "complete" if resume_start is None and not problem_count else "partial",
+        "status": status,
+        "status_basis": basis,
+        "signal": stop["signal"],
         "path": path,
         "range_requested": {"start": start, "end": end, "file_bytes": size},
         "range_examined": {"start": start, "end": swept_to},
         "bytes_swept": max(0, swept_to - start),
-        "candidates": candidates,
-        "signatures_rejected": rejected,
-        "chunks_found": chunks_seen,
-        "chunks_parsed": chunks_parsed,
-        "chunks_checksum_ok": chunks_verified,
+        "candidates": c["candidates"],
+        "signatures_rejected": c["rejected"],
+        "chunks_found": c["seen"],
+        "chunks_parsed": c["parsed"],
+        "chunks_checksum_ok": c["verified"],
+        "chunks_not_read_tables": c["tables_refused"],
+        "chunks_timed_out": c["timed_out"],
+        "chunks_unverified_and_empty": c["unverified_empty"],
+        "records_malformed_kept": c["malformed"],
         "records": inline,
         "record_count": page["matched"],
-        "channels": sorted(channels),
+        "channels": channel_page.page,
+        "channel_count": channels_result["matched"],
         **page,
         "sweep_complete": resume_start is None,
         "resume_start": resume_start,
+        "walk_stopped_by_time_limit": stop["time"] is not None,
         "problems": problems.page,
-        "problem_count": problem_count,
+        "problem_count": c["problems"],
         "note": "Cite the Channel on the record, not the file this was carved from: a chunk "
                 "in a pagefile or in unallocated space no longer belongs to any file. A chunk "
                 "whose checksum does not verify may still hold sound records, but say so. "
                 "sweep_complete means the range asked for was swept, not that every log record "
-                "that ever existed was recovered."
+                "that ever existed was recovered. Records after a chunk's free-space offset (slack of a recycled chunk) are not read."
                 + ("" if resume_start is None else
-                   " The sweep stopped at chunk_limit or candidate_limit: run again with start=%d to read on "
+                   " The sweep stopped at chunk_limit, candidate_limit or the time limit: run again with start=%d to read on "
                    "from there." % resume_start),
     }
+    if channels_result.get("all_results"):
+        out["all_channels"] = channels_result["all_results"]
     if problem_page.get("all_results"):
         out["all_problems"] = problem_page["all_results"]
     print(json.dumps(out, indent=2))
+    if stop["signal"] is not None:
+        sys.exit(128 + stop["signal"])
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Interrupted as interrupt:
+        print(json.dumps({"error": "stopped by signal %d" % interrupt.signum, "status": "interrupted", "status_basis": "the tool was stopped by signal %d" % interrupt.signum, "signal": interrupt.signum}), flush=True)
+        sys.exit(128 + interrupt.signum)
+    except Exception as exc:                                  # whatever hostile input does, the answer is JSON
+        print(json.dumps({"error": "the sweep failed", "status": "failed", "status_basis": "the tool stopped with an unexpected error", "reason": "%s: %s" % (type(exc).__name__, exc)}))
+        sys.exit(1)

@@ -1,8 +1,8 @@
 /**
  * Stand-ins for python-evtx, and a builder for the EVTX structures the carve tests need.
  *
- * evtx_query is exercised through a JSON description of chunks and records (python-evtx cannot be installed on a CI host,
- * and BinXML is its business, not the tool's). evtx_carve is exercised through real bytes: a 64 KiB chunk written to the
+ * Both tools are exercised through real bytes (python-evtx cannot be installed on a CI host, and BinXML is its business, not
+ * the tools'): a file header and 64 KiB chunks written to the
  * layout libevtx documents (the EVTX notes: a chunk header of 128 bytes with the first and last record numbers at 0x08 and
  * 0x10, the header size at 0x28, the offsets of the last record and of the free space at 0x2C and 0x30, the CRC-32 of the
  * records at 0x34 and of the header at 0x7C; records from 0x200, each "**\0\0", its size, its number, its FILETIME, the
@@ -12,86 +12,6 @@
  */
 import { crc32 } from "node:zlib";
 
-/** python-evtx on a JSON description: Evtx(path), .get_file_header(), .chunks(); chunk.offset(), chunk.records(); record.offset(), .xml(), .unpack_qword(0x10). */
-export const EVTX_QUERY_STUB = String.raw`
-import json
-
-
-class _Header:
-    def __init__(self, spec):
-        self.spec = spec
-
-    def header_chunk_size(self):
-        return 4096
-
-    def chunk_count(self):
-        return self.spec["chunk_count"]
-
-    def next_record_number(self):
-        return self.spec["next_record_number"]
-
-
-class _Rec:
-    def __init__(self, spec):
-        self.spec = spec
-
-    def offset(self):
-        return self.spec["offset"]
-
-    def xml(self):
-        if "xml_error" in self.spec:
-            raise ValueError(self.spec["xml_error"])
-        return self.spec["xml"]
-
-    def unpack_qword(self, off):
-        assert off == 0x10
-        return int(self.spec["filetime"])
-
-
-class _Chunk:
-    def __init__(self, spec):
-        self.spec = spec
-
-    def offset(self):
-        return self.spec["offset"]
-
-    def records(self):
-        def gen():
-            for r in self.spec["records"]:
-                if "chain_error" in r:
-                    raise ValueError(r["chain_error"])
-                yield _Rec(r)
-        return gen()
-
-
-class Evtx:
-    def __init__(self, path):
-        with open(path, encoding="utf-8") as fh:
-            self.spec = json.load(fh)
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *a):
-        return False
-
-    def get_file_header(self):
-        if "header_error" in self.spec:
-            raise ValueError(self.spec["header_error"])
-        chunks = self.spec["chunks"]
-        declared = self.spec.get("header", {})
-        return _Header({
-            "chunk_count": declared.get("chunk_count", len(chunks)),
-            "next_record_number": declared.get("next_record_number", 1 + max([r.get("number", 0) for c in chunks for r in c["records"]] or [0])),
-        })
-
-    def chunks(self):
-        for c in self.spec["chunks"]:
-            if "enumeration_error" in c:
-                raise ValueError(c["enumeration_error"])
-            yield _Chunk(c)
-`;
-
 /**
  * python-evtx's ChunkHeader and Record over real bytes, as the library has them: ChunkHeader(buf, offset) never raises,
  * check_magic()/verify()/records(); the checksums as the library calculates them (CRC-32 of the first 0x78 bytes and of
@@ -99,6 +19,8 @@ class Evtx:
  * first thing that is not a record. A read past the end of the buffer raises struct.error, as the library's unpackers do.
  */
 export const EVTX_CARVE_STUB = String.raw`
+import json
+import os
 import struct
 import zlib
 
@@ -119,6 +41,9 @@ class Record:
     def length(self):
         return struct.unpack_from("<I", self._buf, self._offset + 4)[0]
 
+    def unpack_qword(self, off):
+        return struct.unpack_from("<Q", self._buf, self._offset + off)[0]
+
     def xml(self):
         n = self.length()
         if n < 28 or self._offset + n > len(self._buf):
@@ -132,6 +57,9 @@ class ChunkHeader:
 
     def _dword(self, at):
         return struct.unpack_from("<I", self._buf, self._offset + at)[0]
+
+    def offset(self):
+        return self._offset
 
     def check_magic(self):
         return bytes(self._buf[self._offset:self._offset + 8]) == b"ElfChnk\x00"
@@ -174,7 +102,91 @@ class ChunkHeader:
                 record = Record(self._buf, record._offset + record.length(), self)
             except (InvalidRecordException, struct.error):
                 return
+
+
+# What a test injects into the library's behaviour, from <log>.inject.json: header_error (the file header cannot be read),
+# xml_error / chain_error ({"<chunk>:<record>": message}: that record's XML cannot be rendered / the chain breaks before it),
+# enumeration_error_at (the enumeration of chunks fails when it reaches that chunk).
+def _inject(path):
+    try:
+        with open(path + ".inject.json", encoding="utf-8") as fh:
+            return json.load(fh)
+    except OSError:
+        return {}
+
+
+class _InjectedChunk(ChunkHeader):
+    def __init__(self, buf, offset, index, inject):
+        super().__init__(buf, offset)
+        self._index, self._inject = index, inject
+
+    def records(self):
+        j = 0
+        for record in super().records():
+            self._break_here(j)
+            key = "%d:%d" % (self._index, j)
+            if key in self._inject.get("xml_error", {}):
+                message = self._inject["xml_error"][key]
+                record.xml = lambda message=message: (_ for _ in ()).throw(ValueError(message))
+            yield record
+            j += 1
+        self._break_here(j)
+
+    def _break_here(self, j):
+        key = "%d:%d" % (self._index, j)
+        if key in self._inject.get("chain_error", {}):
+            raise ValueError(self._inject["chain_error"][key])
+
+
+class FileHeader:
+    def __init__(self, buf, inject):
+        self._buf, self._inject = buf, inject
+
+    def header_chunk_size(self):
+        return struct.unpack_from("<H", self._buf, 0x28)[0]
+
+    def chunk_count(self):
+        return struct.unpack_from("<H", self._buf, 0x2A)[0]
+
+    def next_record_number(self):
+        return struct.unpack_from("<Q", self._buf, 0x18)[0]
+
+    def flags(self):
+        return struct.unpack_from("<I", self._buf, 0x78)[0]
+
+    def chunks(self, include_inactive=False):
+        count = (1 << 62) if include_inactive else self.chunk_count()
+        ofs, i = self.header_chunk_size(), 0
+        while ofs + 0x10000 <= len(self._buf) and i < count:
+            if self._inject.get("enumeration_error_at") == i:
+                raise ValueError("unexpected end of file at chunk %d" % (i + 1))
+            yield _InjectedChunk(self._buf, ofs, i, self._inject)
+            ofs += 0x10000
+            i += 1
+
+
+class Evtx:
+    def __init__(self, path):
+        with open(path, "rb") as fh:
+            self._buf = fh.read()
+        if self._buf[:8] != b"ElfFile\x00":
+            raise ValueError("not an event log")
+        self._inject = _inject(path)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def get_file_header(self):
+        if "header_error" in self._inject:
+            raise ValueError(self._inject["header_error"])
+        return FileHeader(self._buf, self._inject)
 `;
+
+/** The stand-in the evtx_query tests use: the same module as the carve stub (the library has one module for both). */
+export const EVTX_QUERY_STUB = EVTX_CARVE_STUB;
 
 export const CHUNK_BYTES = 0x10000;
 
@@ -221,7 +233,7 @@ export function eventXml(o: { eid: number; rec: number; time?: string; channel?:
 }
 
 /** The 4096-byte file header (libevtx): "ElfFile\0", the oldest and current chunk numbers, the next record number, header size 128, version 3.1, header chunk size 4096, the chunk count at 0x2A, the CRC-32 of the first 0x78 bytes at 0x7C. */
-export function evtxFileHeader(chunkCount: number, nextRecordNumber = 1): Buffer {
+export function evtxFileHeader(chunkCount: number, nextRecordNumber = 1, flags = 0): Buffer {
   const h = Buffer.alloc(4096);
   h.write("ElfFile\u0000", 0, "latin1");
   h.writeBigUInt64LE(0n, 0x08);
@@ -232,6 +244,7 @@ export function evtxFileHeader(chunkCount: number, nextRecordNumber = 1): Buffer
   h.writeUInt16LE(3, 0x26);
   h.writeUInt16LE(4096, 0x28);
   h.writeUInt16LE(chunkCount, 0x2a);
+  h.writeUInt32LE(flags, 0x78);
   h.writeUInt32LE(crc32(h.subarray(0, 0x78)), 0x7c);
   return h;
 }
