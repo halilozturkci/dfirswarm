@@ -19,4 +19,4 @@ Use when you hold configuration files or inventory exports and need the VMs, the
 
 **Shows.** What the files say was configured, with file and line or element. **Does not show.** That a VM, disk or snapshot exists, ran or was removed.
 **Record.** Source ids, counts per kind, unsupported files, disks not in the set, credential-like keys (names, lines and sections, never values; a Proxmox snapshot or `special_sections` entry keeps its own copy of the settings).
-**Sensitive output.** A console password, a cloud-init secret or a key may sit in a configuration: run it as a job with `secret_output: true`, report where the secret is and what it grants, and never use it.
+**Sensitive output.** A console password, a cloud-init secret or a key may sit in a configuration: run it as a job with `secret_output: true`, report where the secret is and what it grants, and never use it. A name, path or id is shown only if plain (no `=` or `@`, no token-like run; GUIDs, VMFS and `naa.` ids stay), else `<withheld: N bytes, field F>`; a short password used as a name passes unseen.

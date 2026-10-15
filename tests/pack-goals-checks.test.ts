@@ -81,6 +81,7 @@ const PHRASES = [
   "Times are UTC.", "Retention and revocation: sessions were revoked.", "A structure at offset 0x00001000.", "The snap length (snaplen) is 262144.",
   "The sample was not executed: static analysis only.", "digest " + "ab12".repeat(16), "No unallocated space was delivered by this logical acquisition.",
   "A full file system extraction, logical, backup, physical or app export.", "Exfiltration conclusion: partial",
+  "Recovery position: restorable and tested - one object",
 ].join("\n");
 const FILLER = "A line of the answer that is only filler and names none of the things a check looks for.\n".repeat(3400); // about 300 KB
 

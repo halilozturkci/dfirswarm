@@ -14,7 +14,11 @@ and `qemu-img` and Dissect are the base pack's.
 
 ## What it carries
 
-**Three skills,** one for each tool, as decision-rule leaves: `hypervisor/inventory`, `snapshots/chain-integrity`, `backup/catalogues-and-retention`. The router, the method leaves and the recovery skills follow in the next change.
+**Eleven skills**, a router, a method leaf and nine decision-rule leaves:
+`router/start`, `evidence/boundaries`, `control-plane/chronology`,
+`hypervisor/activity`, `hypervisor/inventory`, `snapshots/chain-integrity`,
+`snapshots/markers`, `snapshots/header-markers`, `backup/catalogues-and-retention`,
+`backup/deletion-vs-loss`, `recovery/survivability`.
 
 **Three tools,** each with the standard library only and each saying what it did
 not read:
@@ -33,10 +37,12 @@ not read:
   read through a mapping the caller declares, into canonical events. Any other product is `unsupported`
   until fixtures for it exist.
 
+**One goal template**: `what-recovery-survives.md`.
+
 ## What a tool shows of a name
 
 Evidence names are attacker-controlled text, so the three tools judge every string
-by the field it fills. A VM, host, datastore, snapshot or key name, a path or file
+by the field it fills. A VM, datastore, snapshot or key name, a path or file
 name, an identifier of a known kind (GUID, VMFS volume id, `naa.`/`t10.`/`wwn-`
 device id, VMware uuid, MAC, CID) and a simple value (a version, an enum word, a
 time) is shown only when it fits a plain grammar for its kind; anything else is
