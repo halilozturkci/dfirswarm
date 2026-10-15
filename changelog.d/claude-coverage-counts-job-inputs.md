@@ -1,0 +1,8 @@
+### Fixed: the evidence coverage and grounding count the files a job was given
+
+In a run where the agents read the evidence only through jobs in worker VMs, the coverage listed an input as named by no command although a job request carried its path and declared it, and the grounding marked entries "not in the trace" whose sources were members of an image a job had extracted. Both were blind to `job_run` and `catalog_request`, which the trace reader left out with the harness's other tools.
+
+- **Coverage** (`scripts/coverage.ts`, the report, the summary and the console) now counts a job request as naming a file when its command or tool arguments carry the path, or its `inputs` list declares it (`input:<name>`), or a catalogue request targets it. `inputs: ["all"]`, a job's output reference and `job_status` name nothing, and the further segments of a split image stay unnamed when a job names its first. The report says "named by no command or job request", and that a file named, or listed as an input, was not necessarily examined.
+- **Grounding** now also reads the run's job records. An entry whose source may lie inside an input and which no call named is counted as grounded when it cites (`refs`) a job that started before it and declared an evidence input, itself or through the output of the jobs it declared. That says the job was given the input, not that it read the path: the entry says so in the report, `--json` lists those entries apart (`grounded_via_job`), and a source that is a path of the run's own (a job's output or log, the agents' work, the catalogue) is not grounded this way.
+
+`tests/coverage-jobs.test.ts` holds the cases; `tests/report.test.ts` the report and summary wording.

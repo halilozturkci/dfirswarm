@@ -97,6 +97,9 @@ import { questionCost, tokensWords, type QuestionCost } from "./question-cost.ts
 import { FINISH_LOG, readFinish, type FinishState } from "../extensions/finish.ts";
 import { evidenceCodeRun, onlyOwnOutputs, ownJobOutputs, ownWords, type EvidenceCode } from "../extensions/evidence-code.ts";
 
+/** An entry's grounding when no call named its source and a job it cites was given an evidence input (report.ts maps coverage.ts onto it). */
+export const GROUNDED_VIA_JOB = "grounded through a job";
+
 // ---------------------------------------------------------------------------
 // Options
 // ---------------------------------------------------------------------------
@@ -3106,8 +3109,9 @@ function exhibitBox(e: LedgerEntry, run: Run, memo: Map<number, EntryState>): Bl
   for (const a of s.sameContent) rows.push({ label: "Also recorded by", s: [`${a.by}, word for word, at ${a.at}: a second author, not a check`] });
   for (const d of s.disputes) rows.push({ label: "Disputed", s: [`by ${d.by} at ${d.at}: ${d.why}${d.refs?.length ? ` (from ${d.refs.join(", ")})` : ""}`] });
   for (const w of s.withdrawn) rows.push({ label: "Dispute withdrawn", s: [`${w.dispute.by} disputed it (${w.dispute.why}) and withdrew at ${w.withdrawal.at}: ${w.withdrawal.why}`] });
-  if (s.grounding === "not in the trace") rows.push({ label: "Grounding", s: ["NOT GROUNDED IN THE TRACE: no call before this entry was recorded named its source"] });
+  if (s.grounding === "not in the trace") rows.push({ label: "Grounding", s: ["NOT GROUNDED IN THE TRACE: no call before this entry was recorded named its source, and no job it cites was given an evidence input"] });
   else if (s.grounding === "grounded") rows.push({ label: "Grounding", s: ["a call before this entry named its source"] });
+  else if (s.grounding === GROUNDED_VIA_JOB) rows.push({ label: "Grounding", s: ["no call named its source; a job this entry cites was given an evidence input before it was recorded, which says the job was given the input and not that it read this path"] });
   rows.push({ label: "Examiner review", s: [reviewWords(run, s)] });
   if (e.sensitive) rows.push({ label: "Sensitive", s: ["it, or what it cites, holds a credential, a key or personal data"] });
   rows.push({ label: "Recorded by", s: [e.authors.join(", ")] });

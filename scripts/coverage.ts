@@ -8,15 +8,24 @@
  *   - Coverage: which evidence files (inputs.json, names compared as the
  *     manifest holds them, `path_b64` honoured) no command on the trace
  *     named. "Untouched" means exactly that and no more: no call's arguments
- *     named the file. A file a command named was not necessarily examined,
- *     and a file read through a directory walk, a glob or an archive is not
- *     named at all; the directories a command named are counted beside it so
- *     a reader can see that.
+ *     named the file. A job request (`job_run`, `catalog_request`) names a
+ *     file when its command or tool arguments carry the path or its `inputs`
+ *     list declares it (`input:<name>`); `inputs: ["all"]` and a job's status
+ *     call name nothing. A file a command named, or a job was given, was not
+ *     necessarily examined, and a file read through a directory walk, a glob
+ *     or an archive is not named at all (nor is a further segment of a split
+ *     image a job read from its first); the directories a command named are
+ *     counted beside it so a reader can see that.
  *   - Grounding: for each ledger entry whose `source` names a path, whether
  *     any call before the entry was recorded named that path. An entry whose
  *     source no earlier call named is "not in the trace": its source may
  *     still be right (a path inside an image the tools reached by inode), but
- *     the trace does not show the swarm reading it.
+ *     the trace does not show the swarm reading it. A path that may lie
+ *     inside an input is also grounded when the entry cites (`refs`) a job,
+ *     started before it, that declared an evidence input (itself or through
+ *     the output of the jobs it declared; `store/jobs/<id>/job.json`, scope
+ *     `declared`). That says the job was given the input, and counts apart
+ *     (`grounded_via_job`): nothing says the path was read.
  *
  * Generic on purpose: the harness knows its own tools (it leaves out the
  * board, the ledger and the other messaging calls, which name paths without
@@ -25,7 +34,8 @@
  * it: under `inputs/`, from the sandbox's absolute path or the guest's
  * `/…/inputs/…`, quoted or not, and relative to inputs/ as a bare name.
  */
-import { resolve } from "node:path";
+import { readFile, readdir } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   SYSTEM_AGENT,
@@ -41,10 +51,17 @@ import { eachInputsFile } from "./custody.ts";
 /** The harness's own tools that act on files; every other reserved name is messaging or a harness event. */
 const FILE_TOOLS = new Set(["read", "bash", "edit", "write", "grep", "find", "ls", "powershell", "playwright", "browser_check"]);
 
-/** A call an agent made to reach something: a file tool, or a tool a pack or an agent brought. */
+/**
+ * The job tools whose arguments name what a worker VM is to read: a job's
+ * command, its tool's arguments and the inputs it declares, or the target a
+ * catalogue request points at. `job_status` carries a job id and nothing else.
+ */
+const JOB_TOOLS = new Set(["job_run", "catalog_request"]);
+
+/** A call an agent made to reach something: a file tool, a job, or a tool a pack or an agent brought. */
 export function isCommand(e: SwarmEvent): boolean {
   if (!e || typeof e.tool !== "string" || e.agent === SYSTEM_AGENT) return false;
-  return FILE_TOOLS.has(e.tool) || !TOOL_RESERVED_NAMES.has(e.tool);
+  return FILE_TOOLS.has(e.tool) || JOB_TOOLS.has(e.tool) || !TOOL_RESERVED_NAMES.has(e.tool);
 }
 
 /** Every string in a call's arguments, however deep. */
@@ -100,6 +117,20 @@ export function namesUnderInputs(s: string): string[] {
   return out;
 }
 
+/**
+ * The name a job's input declaration gives (`input:<name>`, as `job_run`'s
+ * `inputs` list and `catalog_request`'s target write it), relative to
+ * `inputs/`. The whole of the string is the reference: an `input:` inside a
+ * command is prose, not a declaration. `input:` alone, or `input:inputs/`,
+ * names the directory.
+ */
+export function declaredInput(s: string): string[] {
+  const m = /^input:(.*)$/s.exec(s.trim());
+  if (!m) return [];
+  const rel = m[1].replace(/^\/+/, "").replace(/^inputs(\/|$)/, "");
+  return [rel];
+}
+
 export type CoverageReport = {
   /** Why nothing could be said: no manifest, or a trace that could not be read. */
   unavailable: string | null;
@@ -117,6 +148,8 @@ export type CoverageReport = {
   clipped_calls: number;
   /** Ledger seq → grounded · not in the trace · not a path. */
   grounding: Record<string, Grounding>;
+  /** Of the grounded entries, the seqs no call named the source of, grounded only through a job the entry cites that declared an evidence input. */
+  grounded_via_job: string[];
 };
 
 export type Grounding = "grounded" | "not in the trace" | "not a path";
@@ -166,17 +199,99 @@ export function containsName(hay: string, needle: string): boolean {
 type Call = { at: number; text: string };
 
 /**
+ * What a job's record says it was to read: when its worker started, the
+ * evidence it declared (`input:<name>` or a path under `inputs/`, as names
+ * relative to `inputs/`; only a job whose scope was enforced, `declared`,
+ * says anything of the kind) and the jobs whose output it declared
+ * (`job:<id>[/…]`). A scope of `all` or none names nothing.
+ */
+export type JobDeclaration = { at: number; inputs: string[]; from: string[] };
+
+/** The jobs of a run, by id, from `store/jobs/<id>/job.json`; a record that cannot be read is left out. */
+export async function readJobDeclarations(sandboxArg: string): Promise<Map<string, JobDeclaration>> {
+  const dir = join(resolve(sandboxArg), "store", "jobs");
+  const out = new Map<string, JobDeclaration>();
+  const ids = await readdir(dir).catch(() => [] as string[]);
+  for (let i = 0; i < ids.length; i += 32) {
+    await Promise.all(
+      ids.slice(i, i + 32).map(async (id) => {
+        const rec = await readFile(join(dir, id, "job.json"), "utf8")
+          .then((t) => JSON.parse(t) as { id?: unknown; started_at?: unknown; accepted_at?: unknown; spec?: { scope?: unknown; inputs?: unknown } })
+          .catch(() => null);
+        if (!rec || typeof rec !== "object" || !rec.spec || typeof rec.id !== "string") return;
+        const said = Array.isArray(rec.spec.inputs) ? rec.spec.inputs.filter((x): x is string => typeof x === "string") : [];
+        const declared = rec.spec.scope === "declared";
+        const inputs: string[] = [];
+        const from: string[] = [];
+        for (const ref of declared ? said : []) {
+          const t = ref.trim();
+          const job = /^job:([a-z0-9-]+)(?:\/|$)/.exec(t);
+          if (job) from.push(job[1]);
+          else if (t.startsWith("input:")) inputs.push(...declaredInput(t));
+          else if (t === "inputs" || t.startsWith("inputs/")) inputs.push(t.replace(/^inputs\/?/, ""));
+        }
+        out.set(rec.id, { at: Date.parse(String(rec.started_at ?? rec.accepted_at ?? "")), inputs, from });
+      }),
+    );
+  }
+  return out;
+}
+
+/** The ids of the jobs an entry cites: its `refs` of the form `job:<id>[/…]`. */
+function citedJobs(entry: LedgerEntry): string[] {
+  const out: string[] = [];
+  for (const ref of Array.isArray(entry.refs) ? entry.refs : []) {
+    const m = typeof ref === "string" ? /^job:([a-z0-9-]+)(?:\/|$)/.exec(ref.trim()) : null;
+    if (m) out.push(m[1]);
+  }
+  return out;
+}
+
+/**
+ * Whether a job, started by `until`, declared evidence: itself, or through
+ * the output of a job it declared (and so on, back to a job that did).
+ */
+function declaredEvidence(jobs: ReadonlyMap<string, JobDeclaration>, id: string, until: number, seen = new Set<string>()): boolean {
+  if (seen.has(id)) return false;
+  seen.add(id);
+  const j = jobs.get(id);
+  if (!j || (Number.isFinite(until) && Number.isFinite(j.at) && j.at > until)) return false;
+  return j.inputs.length > 0 || j.from.some((f) => declaredEvidence(jobs, f, until, seen));
+}
+
+/** A path token the run itself holds (a job's output or log, the agents' work, the catalogue): not a path inside an input. */
+function runsOwn(token: string): boolean {
+  return /^(\.\/)?(work|store|catalog|tool-output)\//.test(token) || /^(job|import|member):/i.test(token) || /(^|\/)j\d{6}(\/|$)/.test(token);
+}
+
+export type GroundingDetail = {
+  grounding: Record<string, Grounding>;
+  /** Ledger seq of the entries grounded only through a job the entry cites, none of the trace's calls having named the source. */
+  via_job: string[];
+};
+
+/**
  * Whether each entry's source was named by a call before the entry was
  * recorded: its full path, or its last component when that is three
  * characters or more. Case is ignored, as the file systems the evidence
  * comes from mostly ignore it.
+ *
+ * With the run's jobs (`readJobDeclarations`) there is a second way, for a
+ * path that may lie inside an input the call arguments do not name (a member
+ * of an image a tool extracted whole): the entry cites (`refs`) a job that
+ * started before it and declared an evidence input, itself or through the
+ * output of the jobs it declared. That says a job was given the input, and
+ * nothing of what it read within it. A path of the run's own (a job's
+ * output or log, the agents' work, the catalogue) is not a path inside an
+ * input and gets only the first way.
  */
-export function groundingOf(ledger: readonly LedgerEntry[], events: readonly SwarmEvent[]): Record<string, Grounding> {
+export function groundingDetail(ledger: readonly LedgerEntry[], events: readonly SwarmEvent[], jobs?: ReadonlyMap<string, JobDeclaration>): GroundingDetail {
   const calls: Call[] = events
     .filter(isCommand)
     .map((e) => ({ at: Date.parse(hostTime(e)), text: argStrings(e.args).join("\n").toLowerCase() }))
     .sort((a, b) => (Number.isFinite(a.at) ? a.at : 0) - (Number.isFinite(b.at) ? b.at : 0));
   const out: Record<string, Grounding> = {};
+  const viaJob: string[] = [];
   for (const entry of ledger) {
     const tokens = pathTokens(entry.source ?? "");
     if (!tokens.length) {
@@ -197,9 +312,18 @@ export function groundingOf(ledger: readonly LedgerEntry[], events: readonly Swa
         break;
       }
     }
+    if (!found && jobs?.size && tokens.some((t) => !runsOwn(t)) && citedJobs(entry).some((id) => declaredEvidence(jobs, id, until))) {
+      found = true;
+      viaJob.push(String(entry.seq));
+    }
     out[String(entry.seq)] = found ? "grounded" : "not in the trace";
   }
-  return out;
+  return { grounding: out, via_job: viaJob };
+}
+
+/** `groundingDetail`'s answer alone, for a caller that does not say how an entry was grounded. */
+export function groundingOf(ledger: readonly LedgerEntry[], events: readonly SwarmEvent[], jobs?: ReadonlyMap<string, JobDeclaration>): Record<string, Grounding> {
+  return groundingDetail(ledger, events, jobs).grounding;
 }
 
 /**
@@ -221,6 +345,7 @@ export async function coverageOf(
     calls_scanned: 0,
     clipped_calls: 0,
     grounding: {},
+    grounded_via_job: [],
   });
   let events = given.events;
   let traceUnreadable = given.traceUnreadable ?? null;
@@ -231,7 +356,7 @@ export async function coverageOf(
   }
   if (traceUnreadable) return empty(`the trace could not be read (${traceUnreadable})`);
   const ledger = given.ledger ?? (await readLedger(sandbox));
-  const grounding = groundingOf(ledger, events);
+  const { grounding, via_job: viaJob } = groundingDetail(ledger, events, await readJobDeclarations(sandbox));
 
   // The manifest: each name under inputs/ in the forms an argument can carry
   // it (as written, and case-folded), and every directory above a name.
@@ -255,6 +380,7 @@ export async function coverageOf(
   if ("why" in listed) {
     const report = empty(listed.why === "missing" ? "no evidence manifest (inputs.json)" : `inputs.json is ${listed.why}`);
     report.grounding = grounding;
+    report.grounded_via_job = viaJob;
     return report;
   }
   const foldedDirs = new Set([...dirs].map((d) => d.toLowerCase()));
@@ -301,6 +427,7 @@ export async function coverageOf(
       }
     };
     for (const s of strings) {
+      for (const candidate of declaredInput(s)) consider(candidate);
       for (const candidate of namesUnderInputs(s)) consider(candidate);
       // A bare name relative to inputs/, as a command run from inside it gives it.
       for (const token of s.split(/[\s"'`;|&<>()=,]+/)) {
@@ -338,6 +465,7 @@ export async function coverageOf(
     calls_scanned: scanned,
     clipped_calls: clippedCalls,
     grounding,
+    grounded_via_job: viaJob,
   };
 }
 
@@ -346,9 +474,9 @@ export function coverageLine(c: CoverageReport): string {
   if (c.unavailable) return `not computed: ${c.unavailable}`;
   if (!c.inputs) return "no evidence files listed";
   const walked = Object.keys(c.under_named_dir).length;
-  return `${c.untouched.length} of ${c.inputs} evidence file${c.inputs === 1 ? "" : "s"} named by no command on the trace (${c.calls_scanned} call${c.calls_scanned === 1 ? "" : "s"} matched)${
+  return `${c.untouched.length} of ${c.inputs} evidence file${c.inputs === 1 ? "" : "s"} named by no command or job request on the trace (${c.calls_scanned} call${c.calls_scanned === 1 ? "" : "s"} matched)${
     walked ? `; ${walked} of those ${walked === 1 ? "sits" : "sit"} under a directory a command named, which a walk may have read` : ""
-  }${c.clipped_calls ? `; ${c.clipped_calls} call${c.clipped_calls === 1 ? " was" : "s were"} kept cut short by the trace, and a name past the cut is not seen` : ""}. A file a command named was not necessarily examined.`;
+  }${c.clipped_calls ? `; ${c.clipped_calls} call${c.clipped_calls === 1 ? " was" : "s were"} kept cut short by the trace, and a name past the cut is not seen` : ""}. A file a command named, or a job request listed as an input, was not necessarily examined.`;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
@@ -365,7 +493,8 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
     process.stdout.write(`Coverage: ${coverageLine(c)}\n`);
     for (const p of c.untouched) process.stdout.write(`  untouched  ${p}${c.under_named_dir[p] ? `  (under a directory named by ${c.under_named_dir[p]} call${c.under_named_dir[p] === 1 ? "" : "s"})` : ""}\n`);
     const ungrounded = Object.entries(c.grounding).filter(([, g]) => g === "not in the trace");
-    process.stdout.write(`Grounding: ${ungrounded.length} ledger entr${ungrounded.length === 1 ? "y's" : "ies'"} source named by no earlier call${ungrounded.length ? `: ${ungrounded.map(([s]) => `E-${s}`).join(", ")}` : ""}\n`);
+    process.stdout.write(`Grounding: ${ungrounded.length} ledger entr${ungrounded.length === 1 ? "y's" : "ies'"} source named by no earlier call, nor by a job the entry cites that was given an evidence input${ungrounded.length ? `: ${ungrounded.map(([s]) => `E-${s}`).join(", ")}` : ""}\n`);
+    if (c.grounded_via_job.length) process.stdout.write(`  ${c.grounded_via_job.length} grounded only through a job the entry cites: ${c.grounded_via_job.map((s) => `E-${s}`).join(", ")}\n`);
   }
   process.exit(c.unavailable && !Object.keys(c.grounding).length ? 1 : 0);
 }

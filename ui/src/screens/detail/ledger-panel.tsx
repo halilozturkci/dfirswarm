@@ -195,7 +195,7 @@ export function LedgerPanel({ view }: { view: SwarmView }) {
           </a>,
         );
       const g = grounding[String(c.seq)];
-      if (g === "not in the trace") out.push(<span key="g" title="No call before this entry named its source: the trace does not show where the agent read it."><Chip tone="saffron">not grounded in the trace</Chip></span>);
+      if (g === "not in the trace") out.push(<span key="g" title="No call before this entry named its source, and no job it cites was given an evidence input: the trace does not show where the agent read it."><Chip tone="saffron">not grounded in the trace</Chip></span>);
       const r = review.data?.by_entry[String(c.seq)];
       if (r) {
         out.push(

@@ -505,7 +505,7 @@ test("coverage names what no command on the trace named, in any form a path is w
     // A glob names the directory it walks: said beside the file, never as touched.
     assert.deepEqual(c.under_named_dir, { "inputs/mail/b.bin": 1 });
     assert.equal(c.calls_scanned, 5, "the post and the harness's own line are not commands");
-    assert.match(coverageLine(c), /^2 of 6 evidence files named by no command on the trace \(5 calls matched\); 1 of those sits under a directory a command named, which a walk may have read\. A file a command named was not necessarily examined\.$/);
+    assert.match(coverageLine(c), /^2 of 6 evidence files named by no command or job request on the trace \(5 calls matched\); 1 of those sits under a directory a command named, which a walk may have read\. A file a command named, or a job request listed as an input, was not necessarily examined\.$/);
     assert.deepEqual(namesUnderInputs('x "inputs/a b/c.txt" inputs/d\\ e.txt inputs/f.txt;'), ["a b/c.txt", "d e.txt", "f.txt"]);
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -531,6 +531,41 @@ test("grounding says whether a call before the entry named its source, and never
       "6": "not in the trace",
     });
     assert.equal(containsName("cat samples/sam.log", "sam"), false, "a name inside a longer one is not the name");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("the report and the summary say an entry was grounded through a job it cites, as the job having been given an input and not as a read", async () => {
+  const root = await sandboxWithLedger();
+  try {
+    const a = createContext(root, "sr00100");
+    await writeFile(
+      join(root, "inputs.json"),
+      JSON.stringify({ source: "/ev", copied_at: "t", held: "copy", files: [{ path: "inputs/disk.E01", bytes: 1, sha256: "a".repeat(64) }], bytes: 1, enforce: "auto", guard: "none" }),
+    );
+    await mkdir(join(root, "store", "jobs", "j000001", "out"), { recursive: true });
+    await writeFile(join(root, "store", "jobs", "j000001", "out", "members.tsv"), "x\n");
+    await writeFile(
+      join(root, "store", "jobs", "j000001", "manifest.json"),
+      JSON.stringify({ v: 1, job: "j000001", attempt: 1, sealed_at: "2020-01-01T00:00:05Z", files: [{ path: "members.tsv", path_b64: Buffer.from("members.tsv").toString("base64"), bytes: 2, sha256: createHash("sha256").update("x\n").digest("hex"), mode: "600" }] }),
+    );
+    await writeFile(
+      join(root, "store", "jobs", "j000001", "job.json"),
+      JSON.stringify({ id: "j000001", state: "committed", started_at: "2020-01-01T00:00:00Z", spec: { kind: "tool", scope: "declared", inputs: ["input:disk.E01"], timeout_seconds: 60, network: "off" } }),
+    );
+    const r = await recordEntry(a, { kind: "ioc", value: "198.51.100.9", source: "Users/x/AppData/Local/y.db", evidence: "row 4 of a table the job extracted", confidence: "high", refs: ["job:j000001/out/members.tsv"] } as never);
+    if (!r.ok) throw new Error(r.reason);
+    const coverage = await coverageOf(root);
+    assert.equal(coverage.grounded_via_job.length, 1);
+    const seq = coverage.grounded_via_job[0];
+    const html = await renderReport(root, { runsDir: join(root, ".."), now: "2026-02-12T09:00:00.000Z" });
+    assert.match(html, new RegExp(`id="e-${seq}">[\\s\\S]*?<dt>Grounding</dt><dd>no call named its source; a job this entry cites was given an evidence input before it was recorded, which says the job was given the input and not that it read this path</dd>`));
+    assert.match(html, /\(1 of them\) a job the entry cites was given an evidence input before it/);
+    assert.match(html, /named by no call before the entry was recorded, nor by a job the entry cites that was given an evidence input/);
+    assert.equal(coverage.grounding[seq], "grounded");
+    const summary = await summarize(root, { runsDir: join(root, "..") });
+    assert.match(summary, /^Coverage: 1 of 1 evidence file named by no command or job request on the trace/m);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -682,7 +717,7 @@ test("the report shows searches that found nothing, corrections, grounding, cove
     assert.match(html, /id="e-4">[\s\S]*?NOT GROUNDED IN THE TRACE: no call before this entry was recorded named its source/);
     assert.match(html, /id="e-3">[\s\S]*?<dt>Grounding<\/dt><dd>a call before this entry named its source<\/dd>/);
     assert.match(html, /<th class="num">Named by<\/th>/);
-    assert.match(html, /Named by no command: <code>inputs\/Security\.evtx<\/code>/);
+    assert.match(html, /Named by no command or job request: <code>inputs\/Security\.evtx<\/code>/);
     assert.match(html, /checked against its source at kickoff by content: 2 files hashed again from the source, 0 mismatches \(3 s\)/);
     assert.match(html, /id="e-3">[\s\S]*?<dt>Examiner review<\/dt><dd>accepted by H\. Examiner at /);
     assert.match(html, /id="e-4">[\s\S]*?<dt>Examiner review<\/dt><dd>REJECTED by H\. Examiner at [^:]+:\d\d:[^:]+: not supported by the logon record<\/dd>/);
@@ -706,8 +741,8 @@ test("the report shows searches that found nothing, corrections, grounding, cove
     assert.match(summary, /^- Disk encryption: OFF/m);
     assert.match(summary, /1 searched and not found \(valid only for the scope each states\)/);
     assert.match(summary, /1 corrected by a later entry, kept as recorded: E-4 by E-6\./);
-    assert.match(summary, /^Grounding: \d+ entr(y's|ies') source named by no call before the entry was recorded \(.*E-4.*\)\./m);
-    assert.match(summary, /^Coverage: 1 of 2 evidence files named by no command on the trace/m);
+    assert.match(summary, /^Grounding: \d+ entr(y's|ies') source named by no call before the entry was recorded, nor by a job the entry cites that was given an evidence input \(.*E-4.*\)\./m);
+    assert.match(summary, /^Coverage: 1 of 2 evidence files named by no command or job request on the trace/m);
     // A review file edited by hand no longer verifies.
     const file = join(runs, "reviews", "sr001.jsonl");
     const text = await readFile(file, "utf8");

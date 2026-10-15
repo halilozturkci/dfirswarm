@@ -1222,7 +1222,7 @@ export type OperatorAudit = {
   trace: Array<{ at: string; tool: string; command: string; via: string; os_user: string; verified: boolean }>;
 };
 
-/** GET /api/swarms/:id/coverage: which inputs no command named; which ledger entries no call before them named the source of. */
+/** GET /api/swarms/:id/coverage: which inputs no command or job request named; which ledger entries no call before them (nor a job they cite that was given an evidence input) named the source of. */
 export type Coverage = {
   unavailable: string | null;
   inputs: number;
@@ -1232,6 +1232,8 @@ export type Coverage = {
   calls_scanned: number;
   clipped_calls: number;
   grounding: Record<string, "grounded" | "not in the trace" | "not a path">;
+  /** Of the grounded entries, those grounded only through a job the entry cites that was given an evidence input. */
+  grounded_via_job: string[];
 };
 
 /** Every act the review file holds (scripts/review.ts REVIEW_ACTIONS). */

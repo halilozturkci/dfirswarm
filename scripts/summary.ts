@@ -461,7 +461,7 @@ export async function summarize(sandboxArg: string, options: { runsDir?: string 
     );
     const ungrounded = Object.entries(coverage.grounding).filter(([, g]) => g === "not in the trace").map(([seq]) => `E-${seq}`);
     if (!coverage.unavailable || Object.keys(coverage.grounding).length) {
-      lines.push(`Grounding: ${ungrounded.length ? `${ungrounded.length} entr${ungrounded.length === 1 ? "y's" : "ies'"} source named by no call before the entry was recorded (${ungrounded.join(", ")})` : "every entry that names a path had it named by an earlier call"}.`, "");
+      lines.push(`Grounding: ${ungrounded.length ? `${ungrounded.length} entr${ungrounded.length === 1 ? "y's" : "ies'"} source named by no call before the entry was recorded, nor by a job the entry cites that was given an evidence input (${ungrounded.join(", ")})` : "every entry that names a path had it named by an earlier call or by a job it cites that was given an evidence input"}.`, "");
     }
     const timeline: LedgerEntry[] = ledger
       .filter((e) => e.kind === "event")

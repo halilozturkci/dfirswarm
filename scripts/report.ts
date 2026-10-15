@@ -49,7 +49,7 @@ import {
 } from "../extensions/protocol.ts";
 import { createHash } from "node:crypto";
 import { hashArtifacts, type ArtifactIndex } from "./artifacts.ts";
-import { humanReviewFrom, renderReportBody, type HumanReview } from "./report-body.ts";
+import { GROUNDED_VIA_JOB, humanReviewFrom, renderReportBody, type HumanReview } from "./report-body.ts";
 import { custodyAnchorPath, manifestMeta, sealedIndex, verdictAnchorLine, verdictAnchorState } from "./custody.ts";
 import { hashRegularFile, openRegular, readRegularText } from "./regular-file.ts";
 import { createInterface } from "node:readline";
@@ -1477,7 +1477,7 @@ export async function renderReport(sandboxArg: string, options: ReportOptions = 
     ? `<h3>Coverage, from the trace</h3>
 <p>${escapeHtml(coverageLine(coverage))}${withCoverage ? " The table's last column counts the calls that named each file." : ""}</p>${
         withCoverage && coverage.untouched.length
-          ? `<p>Named by no command: ${coverage.untouched.map((p) => `<code>${escapeHtml(p)}</code>`).join(", ")}.</p>`
+          ? `<p>Named by no command or job request: ${coverage.untouched.map((p) => `<code>${escapeHtml(p)}</code>`).join(", ")}.</p>`
           : ""
       }`
     : "";
@@ -1617,8 +1617,8 @@ ${artifacts.skipped.length ? `<p>Not hashed: ${artifacts.skipped.map((s) => `<co
   if (capHit) limits.push(`Spend reached the cap (${escapeHtml(usd(budget?.spent_usd ?? 0))} of ${escapeHtml(usd(run?.cap_usd ?? 0))}). Work stopped because of the budget, not because the questions were answered.`);
   if (!findings.length) limits.push("No findings were recorded, so nothing in this report is stated as a conclusion.");
   if (!inputs) limits.push("No read-only inputs were given, so no evidence hash is stated.");
-  if (withCoverage && coverage.untouched.length) limits.push(`${coverage.untouched.length} of ${coverage.inputs} evidence file${coverage.inputs === 1 ? " was" : "s were"} named by no command on the trace (§3). An artefact nobody opened is not evidence of absence.`);
-  if (ungrounded.length) limits.push(`${ungrounded.length} ledger entr${ungrounded.length === 1 ? "y's" : "ies'"} source${ungrounded.length === 1 ? " was" : "s were"} named by no call before the entry was recorded (marked on each in Appendix A).`);
+  if (withCoverage && coverage.untouched.length) limits.push(`${coverage.untouched.length} of ${coverage.inputs} evidence file${coverage.inputs === 1 ? " was" : "s were"} named by no command or job request on the trace (§3). An artefact nobody opened is not evidence of absence.`);
+  if (ungrounded.length) limits.push(`${ungrounded.length} ledger entr${ungrounded.length === 1 ? "y's" : "ies'"} source${ungrounded.length === 1 ? " was" : "s were"} named by no call before the entry was recorded, nor by a job the entry cites that was given an evidence input (marked on each in Appendix A).`);
   const refusals = events.filter((e) => e.result && typeof e.result === "object" && (e.result as { ok?: boolean }).ok === false);
   if (refusals.length) limits.push(`${refusals.length} tool call${refusals.length === 1 ? "" : "s"} failed or were refused during the run; they are in <code>trace/events.jsonl</code>.`);
   limits.push("This document reports what the swarm recorded. An artefact nobody opened is not evidence of absence, and the trace is the record of what was actually read.");
@@ -1745,7 +1745,7 @@ ${artifacts.skipped.length ? `<p>Not hashed: ${artifacts.skipped.map((s) => `<co
       "Grounding",
       coverage.unavailable
         ? `not computed: ${coverage.unavailable}`
-        : `${ledger.length - ungrounded.length - Object.values(coverage.grounding).filter((g) => g === "not a path").length} entr${ledger.length === 1 ? "y" : "ies"} with a source a call named before it was recorded; ${ungrounded.length} not grounded in the trace${ungrounded.length ? ` (${ungrounded.map((e) => `E-${e.seq}`).join(", ")})` : ""}; ${Object.values(coverage.grounding).filter((g) => g === "not a path").length} whose source names no path`,
+        : `${ledger.length - ungrounded.length - Object.values(coverage.grounding).filter((g) => g === "not a path").length} entr${ledger.length === 1 ? "y" : "ies"} with a source a call named before it was recorded${coverage.grounded_via_job.length ? `, or (${coverage.grounded_via_job.length} of them) a job the entry cites was given an evidence input before it` : ""}; ${ungrounded.length} not grounded in the trace${ungrounded.length ? ` (${ungrounded.map((e) => `E-${e.seq}`).join(", ")})` : ""}; ${Object.values(coverage.grounding).filter((g) => g === "not a path").length} whose source names no path`,
     ],
     ...heldRows(runRecord),
     [
@@ -1822,7 +1822,7 @@ ${artifacts.skipped.length ? `<p>Not hashed: ${artifacts.skipped.map((s) => `<co
   const body = await renderReportBody(sandbox, {
     review: bodyReview(review, rel.examiner),
     release: rel.release,
-    grounding: coverage.grounding,
+    grounding: { ...coverage.grounding, ...Object.fromEntries(coverage.grounded_via_job.map((seq) => [seq, GROUNDED_VIA_JOB])) },
     ...(run?.model ? { defaultModel: run.model } : {}),
     workingReport: own ? { path: own.path, text: own.text, seal: await ownReportSeal(sandbox, own.path, own.sha256, hostCustody, lastAnchored?.artifacts_sha256) } : null,
     html: { ...(evidenceHtml ? { evidence: evidenceHtml } : {}), method: methodHtml, limits: limitsHtml },

@@ -18,7 +18,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readEventLogChecked, readLedger, supersededBy, type LedgerEntry } from "../extensions/protocol.ts";
-import { groundingOf, type Grounding } from "./coverage.ts";
+import { groundingOf, readJobDeclarations, type Grounding } from "./coverage.ts";
 import { readReviewState, reviewStatusOf } from "./report.ts";
 import { findRunBySandbox } from "./run-record.ts";
 import { sensitiveEntries } from "./output-hygiene.ts";
@@ -124,7 +124,7 @@ export async function exportLedger(sandboxArg: string, format: ExportFormat, ctx
   let grounding = ctx.grounding;
   if (!grounding) {
     const trace = await readEventLogChecked(sandbox);
-    grounding = trace.unreadable ? {} : groundingOf(ledger, trace.events);
+    grounding = trace.unreadable ? {} : groundingOf(ledger, trace.events, await readJobDeclarations(sandbox));
   }
   // The examiner's review, from beside the registry; every entry "not
   // reviewed" when there is none.
