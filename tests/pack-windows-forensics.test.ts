@@ -995,16 +995,19 @@ test("esedb_query numbers every row, keeps columns that share a name apart, and 
 
 test("esedb_query keeps what a time-limited export wrote and says it was stopped", async () => {
   await withCwd(async (cwd, bin) => {
-    await stub(bin, "esedbexport", ESEDBEXPORT_STUB(`printf 'Id\\n1\\n' > "$root.export/Part.0"\nsleep 30`));
+    await stub(bin, "esedbexport", ESEDBEXPORT_STUB(`printf 'Id\\n1\\n' > "$root.export/Part.0"\nsleep 300`));
     await writeFile(join(cwd, "work", "x.edb"), "ESE stand-in");
+    // The stand-in must get to write Part.0 before the deadline for "what the export wrote is kept" to mean anything, so the
+    // deadline is long enough for a loaded machine to start it (a shell script) and not a short time of the test's own: what is
+    // asked is the tool's own answer (`timed_out`), and a wall bound far under the stand-in's 300 seconds.
     const started = Date.now();
-    const out = body<EseOut>(await tool("esedb_query", cwd, { path: "work/x.edb", export_timeout_seconds: 1 }, { COUNT_FILE: join(cwd, "count") }, bin));
-    assert.ok(Date.now() - started < 20_000);
+    const out = body<EseOut>(await tool("esedb_query", cwd, { path: "work/x.edb", export_timeout_seconds: 8 }, { COUNT_FILE: join(cwd, "count") }, bin));
+    assert.ok(Date.now() - started < 120_000, "the tool ended at its own deadline, not when the stand-in did");
     assert.equal(out.status, "partial");
     assert.equal(out.timed_out, true);
     assert.deepEqual(out.tables_in_partial_export, ["Part"]);
     // A partial export is not reused as a complete one: the next call exports again.
-    const again = body<EseOut>(await tool("esedb_query", cwd, { path: "work/x.edb", export_timeout_seconds: 1 }, { COUNT_FILE: join(cwd, "count") }, bin));
+    const again = body<EseOut>(await tool("esedb_query", cwd, { path: "work/x.edb", export_timeout_seconds: 8 }, { COUNT_FILE: join(cwd, "count") }, bin));
     assert.equal(again.export_reused, false);
   });
 });

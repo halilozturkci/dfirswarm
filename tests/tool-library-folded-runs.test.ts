@@ -86,7 +86,7 @@ test("the AES fixture is a real AES: node's cipher agrees with its schedule, and
 });
 
 type Hit = { offset: number; key_bits: number; word_order: string; round_order?: string; key_file: string };
-type Scan = { ok: boolean; hits: Hit[]; hit_count: number; complete: boolean; next_start?: number; scanned_to: number; result_file: string; window: { start: number; end: number } };
+type Scan = { ok: boolean; hits: Hit[]; hit_count: number; complete: boolean; next_start?: number; scanned_to: number; result_file: string; window: { start: number; end: number }; prefilter_candidates: number; full_schedule_checks: number; seconds: number };
 
 const SCHEDULE_TOOL = join(LIB, "aes_schedule_scan", "run.mjs");
 const INVERSE_TOOL = join(LIB, "aes_inverse_scan", "run.mjs");
@@ -504,11 +504,18 @@ test("aes_inverse_scan finds the schedule of a key built to zero the words its f
     inverseSchedule(keyFor(32, "sparse"), { reverseRounds: true, reverseWords: false }).copy(keyed, 2_000_003);
     await writeFile(join(cwd, "inputs", "zeros.raw"), Buffer.alloc(32 * 1024 * 1024));
     await writeFile(join(cwd, "inputs", "sparse.raw"), keyed);
-    for (const [name, want] of [["zeros", []], ["sparse", [2_000_003]]] as const) {
-      const began = Date.now();
+    // "Fast" is asked of the tool's own counters of work, which do not move with the machine's load: a wall-clock bound failed
+    // here on a loaded runner without the scan having done any more. Zeros are crossed without a single candidate. The sparse
+    // memory is the worst case the filter has (a nonzero byte every 301 bytes, so that the relation words are mostly zero and
+    // pass the prefilter): at most 8 full schedule checks a position are possible (4 relations, 2 word orders) and this file costs
+    // 4.4, so a bound of 5 holds the filter where it is. The scan also ends inside its own 90-second budget (`complete`), which is
+    // the tool's own clock.
+    for (const [name, want, size] of [["zeros", [], 32 * 1024 * 1024], ["sparse", [2_000_003], 4 * 1024 * 1024]] as const) {
       const z = ok<Scan>(await runNode(INVERSE_TOOL, cwd, { path: `inputs/${name}.raw`, out_dir: `work/t1/${name}` }));
       assert.deepEqual(z.hits.map((h) => h.offset), want, name);
-      assert.ok(Date.now() - began < 20_000, `${name}: ${Date.now() - began} ms`);
+      assert.equal(z.complete, true, `${name}: the scan ended inside its own budget`);
+      if (name === "zeros") assert.deepEqual([z.prefilter_candidates, z.full_schedule_checks], [0, 0], "zeros are crossed, not tested");
+      else assert.ok(z.full_schedule_checks <= 5 * size, `${name}: ${z.full_schedule_checks} full schedule checks over ${size} bytes`);
     }
   });
 });

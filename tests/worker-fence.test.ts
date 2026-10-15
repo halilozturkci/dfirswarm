@@ -13,8 +13,28 @@ import assert from "node:assert/strict";
 import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawn } from "node:child_process";
-import { destroyWorker, listedNames, stopMaker } from "../scripts/vm.ts";
+import { spawn, spawnSync } from "node:child_process";
+import { destroyWorker as destroyOnce, listedNames, stopMaker as stopMakerOnce } from "../scripts/vm.ts";
+
+/**
+ * The fence looks for the process making the worker with `ps`, bounded at 15 seconds, and says "could not list processes" when
+ * the listing did not come back (a machine under a whole suite's load can take that long). That answer is about the listing, not
+ * about the worker: it comes before msb is asked anything, so asking again changes nothing the stand-in msb keeps. These two ask
+ * again (at most five times) when, and only when, that is the answer; every other answer is returned as it is.
+ */
+const NO_LISTING = /^could not list processes/;
+async function destroyWorker(name: string): Promise<{ ok: boolean; error?: string }> {
+  for (let tries = 1; ; tries++) {
+    const r = await destroyOnce(name);
+    if (r.ok || !NO_LISTING.test(r.error ?? "") || tries >= 5) return r;
+  }
+}
+async function stopMaker(name: string): Promise<{ ok: boolean; error?: string }> {
+  for (let tries = 1; ; tries++) {
+    const r = await stopMakerOnce(name);
+    if (r.ok || !NO_LISTING.test(r.error ?? "") || tries >= 5) return r;
+  }
+}
 
 // state: one name per line in $D/vms; $D/mode picks the behaviour.
 const STANDIN = `#!/bin/bash
@@ -50,7 +70,24 @@ function standIn(mode: string, vms: string[]): string {
   return D;
 }
 
-const NAME = "dfs-s000000-job-j000001-1";
+// The fence finds the process making a worker by the worker's name across the whole machine's process table, so a name that two
+// runs of this suite (or two checkouts) share lets one kill the other's stand-in: the names carry this process's own pid.
+const RUN = `s${String(process.pid).padStart(6, "0")}`;
+const NAME = `dfs-${RUN}-job-j000001-1`;
+
+/**
+ * Waits until `ps` shows `needle` in the command line of a process just spawned: a spawned process is its parent's image until
+ * its exec, and a loaded machine takes its time over that. A state waited for, not a time slept; what looks for the process by
+ * its command line must find it for these cases to mean anything.
+ */
+async function showsAs(pid: number | undefined, needle: string): Promise<void> {
+  for (let i = 0; i < 1200; i++) {
+    const args = spawnSync("ps", ["-ww", "-o", "args=", "-p", String(pid)], { encoding: "utf8" }).stdout;
+    if (args.includes(needle)) return;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error(`process ${pid} never showed as ${needle}`);
+}
 
 test("a worker msb neither inspects nor lists is gone", async () => {
   standIn("normal", [NAME, "dfs-s000000-s00000000"]);
@@ -90,15 +127,17 @@ test("a list that is not a list of named VMs is no answer", async () => {
 
 test("the process making a worker is stopped before msb is asked, found by the worker's name", async () => {
   standIn("normal", [NAME]);
-  const other = "dfs-s000000-job-j000002-1";
+  const other = `dfs-${RUN}-job-j000002-1`;
   const maker = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", "worker-once", "--name", NAME], { stdio: "ignore" });
   const bystander = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", "worker-once", "--name", other], { stdio: "ignore" });
   const exited = new Promise((r) => maker.on("exit", r));
   try {
-    await new Promise((r) => setTimeout(r, 300));
+    await showsAs(maker.pid, `worker-once --name ${NAME}`);
+    await showsAs(bystander.pid, `worker-once --name ${other}`);
     assert.deepEqual(await destroyWorker(NAME), { ok: true });
-    await exited;
-    assert.equal(maker.signalCode, "SIGKILL");
+    // Bounded, so that a maker that was not stopped fails this case by name instead of holding the run until the suite's timeout.
+    await Promise.race([exited, new Promise((r) => setTimeout(r, 60_000))]);
+    assert.equal(maker.signalCode, "SIGKILL", "the process making the worker was stopped");
     assert.equal(bystander.exitCode, null, "another worker's maker is left alone");
     assert.equal(bystander.signalCode, null);
     assert.deepEqual(await stopMaker(NAME), { ok: true }, "none left");

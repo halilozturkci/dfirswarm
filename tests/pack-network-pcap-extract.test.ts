@@ -36,7 +36,7 @@ printf '%s\\n' "$*" >> "$STUB_LOG"
 spec=""; fields=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --version) [ -f "$STUB_DIR/slow-version" ] && sleep 20; printf 'TShark (Wireshark) 4.2.0 (stand-in)\\n'; exit 0;;
+    --version) [ -f "$STUB_DIR/slow-version" ] && sleep 120; printf 'TShark (Wireshark) 4.2.0 (stand-in)\\n'; exit 0;;
     --export-objects) spec="$2"; shift;;
     -T) fields=yes;;
   esac
@@ -174,10 +174,13 @@ test("a build whose exporter list cannot be read is said, and the passes still r
 
 test("a first pass that runs out of time leaves an index and a partial receipt, and the passes after it are not attempted", async () => {
   await withCwd(async (cwd, bin) => {
-    await stage(cwd, bin, { sleeps: { http: 30 }, export: { smb: { "x.dat": BODY_B } } });
+    // The deadline counts the preflight (two runs of a shell stand-in), and the first pass has to be running when it falls for
+    // "timed_out" to be what the receipt says: it is long enough for a loaded machine, and the stand-in sleeps for 300 seconds,
+    // so the wall bound is far under what a pass that was not ended would take.
+    await stage(cwd, bin, { sleeps: { http: 300 }, export: { smb: { "x.dat": BODY_B } } });
     const started = Date.now();
-    const result = await tool(EXTRACT, cwd, { path: await capture(cwd), out_dir: "work/x", protocols: ["http", "smb"], timeout_seconds: 2 }, env(cwd), bin);
-    assert.ok(Date.now() - started < 20_000, "the deadline ended the pass");
+    const result = await tool(EXTRACT, cwd, { path: await capture(cwd), out_dir: "work/x", protocols: ["http", "smb"], timeout_seconds: 8 }, env(cwd), bin);
+    assert.ok(Date.now() - started < 120_000, "the deadline ended the pass");
     assert.notEqual(result.code, 0);
     const out = JSON.parse(result.stdout);
     assert.equal(out.ok, false);
@@ -390,14 +393,20 @@ test("a token-shaped directory name is moved aside too, and a pass's children di
   });
   await withCwd(async (cwd, bin) => {
     const { dir } = await stage(cwd, bin, { spawns: ["http"] });
+    // The deadline is long enough for a loaded machine to start the stand-in and let it record its sleeper (a shorter one ends
+    // the pass before there is a child to ask about); the stand-in's own pids are asked about, nothing else on the machine.
     const started = Date.now();
-    const result = await tool(EXTRACT, cwd, { path: await capture(cwd), out_dir: "work/x", protocols: ["http"], timeout_seconds: 2 }, env(cwd), bin);
-    assert.ok(Date.now() - started < 20_000);
-    assert.notEqual(result.code, 0);
-    const pid = Number((await readFile(join(dir, "child.pid"), "utf8")).trim());
-    assert.ok(pid > 1);
-    await new Promise((r) => setTimeout(r, 300));
-    assert.throws(() => process.kill(pid, 0), /ESRCH/, "the sleeper the pass started is gone");
+    let pid = 0;
+    try {
+      const result = await tool(EXTRACT, cwd, { path: await capture(cwd), out_dir: "work/x", protocols: ["http"], timeout_seconds: 8 }, env(cwd), bin);
+      assert.ok(Date.now() - started < 120_000, "the pass ended at its deadline, not when the stand-in's sleeper did");
+      assert.notEqual(result.code, 0);
+      pid = await pidFile(join(dir, "child.pid"));
+      assert.ok(pid > 1);
+      assert.equal(await gone(pid), true, "the sleeper the pass started is gone");
+    } finally {
+      if (pid > 1) try { process.kill(pid, "SIGKILL"); } catch { /* gone */ }
+    }
   });
 });
 
@@ -409,16 +418,20 @@ test("a stop signal kills the pass and leaves a receipt that says it was interru
     const stdout: Buffer[] = [];
     child.stdout.on("data", (c: Buffer) => stdout.push(c));
     child.stdin.end(await readFile(join(cwd, "args.json")));
-    for (let i = 0; i < 100 && !(await exists(join(dir, "started"))); i++) await new Promise((r) => setTimeout(r, 50));
+    // The stand-in writes "started" after its pids: waiting for it (as long as a loaded machine needs) is waiting for a state.
+    for (let i = 0; i < 600 && !(await exists(join(dir, "started"))); i++) await new Promise((r) => setTimeout(r, 50));
     assert.ok(await exists(join(dir, "started")), "the pass started");
-    const code = await new Promise<number | null>((resolve) => { child.on("close", resolve); child.kill("SIGTERM"); });
-    assert.equal(code, 143);
-    const receipt = JSON.parse(await readFile(join(cwd, "work/x/receipt.json"), "utf8"));
-    assert.equal(receipt.status, "interrupted");
-    assert.match(receipt.why, /signal 15/);
-    const pid = Number((await readFile(join(dir, "child.pid"), "utf8")).trim());
-    await new Promise((r) => setTimeout(r, 300));
-    assert.throws(() => process.kill(pid, 0), /ESRCH/);
+    const pid = await pidFile(join(dir, "child.pid"));
+    try {
+      const code = await new Promise<number | null>((resolve) => { child.on("close", resolve); child.kill("SIGTERM"); });
+      assert.equal(code, 143);
+      const receipt = JSON.parse(await readFile(join(cwd, "work/x/receipt.json"), "utf8"));
+      assert.equal(receipt.status, "interrupted");
+      assert.match(receipt.why, /signal 15/);
+      assert.equal(await gone(pid), true, "the sleeper the pass started is gone");
+    } finally {
+      try { process.kill(pid, "SIGKILL"); } catch { /* gone */ }
+    }
   });
 });
 
@@ -481,8 +494,10 @@ test("timeout_seconds is held under the manifest's limit, and the deadline count
   await withCwd(async (cwd, bin) => {
     await stage(cwd, bin, { slowVersion: true, export: { http: { "a.html": BODY_A } } });
     const started = Date.now();
+    // The version call of the stand-in sleeps for 120 seconds; the deadline is 3. A pass held to its deadline answers long before
+    // the call would have (any bound well under 120 s says so; this one leaves a loaded machine its time).
     const result = await tool(EXTRACT, cwd, { path: await capture(cwd), out_dir: "work/x", protocols: ["http"], timeout_seconds: 3 }, env(cwd), bin);
-    assert.ok(Date.now() - started < 12_000, `took ${Date.now() - started} ms: the 20-second version call was not held to the deadline`);
+    assert.ok(Date.now() - started < 60_000, `took ${Date.now() - started} ms: the 120-second version call was not held to the deadline`);
     assert.doesNotMatch(result.stderr, /Traceback/);
   });
 });
@@ -546,7 +561,7 @@ test("a named pipe in the export tree is listed and not opened; a cell over the 
     await stage(cwd, bin, { fifo: ["http"], export: { http: { "a.html": BODY_A } }, assoc: [row(8, 0, LONG, BODY_A)] });
     const started = Date.now();
     const result = await tool(EXTRACT, cwd, { path: await capture(cwd), out_dir: "work/x", protocols: ["http"] }, env(cwd), bin);
-    assert.ok(Date.now() - started < 15_000, "it hung on the pipe");
+    assert.ok(Date.now() - started < 60_000, "it hung on the pipe");
     const out = JSON.parse(result.stdout);
     const rows = await index(cwd, "work/x");
     const pipe = rows.find((r) => r.name === "pipe.bin");

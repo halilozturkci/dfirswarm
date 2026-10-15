@@ -50,15 +50,20 @@ test("the three programs that run programs carry the same process block, byte fo
   }
 });
 
-/** A stand-in engine that records its pid, starts a program of its own that records its pid, and then waits. */
+/**
+ * A stand-in engine that starts a program of its own, records the pid of that program and then its own, and then waits.
+ * The parent records both (the child does not have to be scheduled first), and writes its own pid last: when engine.pid is
+ * there, child.pid is too, so a test that has read the one can read the other without a wait that depends on the machine.
+ */
 function engineScript(extra = ""): string {
   return `#!/usr/bin/env python3
 import os, subprocess, sys, time
 d = os.environ["STUB_DIR"]
 ${extra}
 if not os.path.exists(d + "/engine.pid"):
+    kid = subprocess.Popen(["sleep", "300"])
+    open(d + "/child.pid", "w").write(str(kid.pid))
     open(d + "/engine.pid", "w").write(str(os.getpid()))
-    subprocess.Popen([sys.executable, "-c", "import os, time\\nopen(os.environ['STUB_DIR'] + '/child.pid', 'w').write(str(os.getpid()))\\ntime.sleep(300)"])
 time.sleep(300)
 `;
 }
@@ -131,37 +136,68 @@ test("linux_triage and the recipe still say terminated after a signal: the summa
   });
 });
 
+/** Kills what the stand-in recorded, whatever the test found: a stand-in that survived its tool would sleep for 300 seconds. */
+async function reapRecorded(dir: string): Promise<void> {
+  for (const name of ["engine.pid", "child.pid"]) {
+    const pid = Number((await readFile(join(dir, name), "utf8").catch(() => "")).trim());
+    if (pid > 1) try { process.kill(pid, "SIGKILL"); } catch { /* gone */ }
+  }
+}
+
+/** A call that must come back: bounded, so that a tool whose program outlived it fails this case by name (it holds the pipe) and not the suite's timeout. */
+async function comesBack<T>(call: Promise<T>, what: string, ms = 120_000): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([call, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`${what} did not come back in ${ms} ms: what it started outlived its deadline`)), ms); })]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 test("a deadline ends the engine and what it started, whichever tool ran it", async () => {
+  // The deadlines below are the tools' own and short for a test, but not so short that a loaded machine ends the stand-in
+  // before it has started its program (then there would be nothing to ask about): what is asked is the tool's own answer
+  // (`timed_out`), the processes the stand-in recorded, and a wall bound far under the stand-in's 300 seconds, not a short time.
   await withCwd(async (cwd, bin) => {
     // journal_export: max_seconds
     const { dir, env } = await stage(cwd, bin, "journalctl", engineScript());
-    const started = Date.now();
-    const out = body(await tool(JOURNAL, cwd, { path: "work/journal", max_seconds: 1 }, env, bin));
-    assert.ok(Date.now() - started < 15_000);
-    assert.equal(out.timed_out, true);
-    assert.equal(out.status, "partial");
-    assert.equal(await gone(await pidFile(join(dir, "engine.pid"))), true, "journalctl survived its deadline");
-    assert.equal(await gone(await pidFile(join(dir, "child.pid"))), true, "what journalctl started survived its deadline");
+    try {
+      const out = body(await comesBack(tool(JOURNAL, cwd, { path: "work/journal", max_seconds: 5 }, env, bin), "journal_export"));
+      assert.equal(out.timed_out, true);
+      assert.equal(out.status, "partial");
+      assert.equal(await gone(await pidFile(join(dir, "engine.pid"))), true, "journalctl survived its deadline");
+      assert.equal(await gone(await pidFile(join(dir, "child.pid"))), true, "what journalctl started survived its deadline");
+    } finally {
+      await reapRecorded(dir);
+    }
   });
   await withCwd(async (cwd, bin) => {
     // linux_triage: timeout_seconds
     const { dir, env } = await stage(cwd, bin, "target-query", engineScript());
-    const out = body(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/triage", groups: ["users"], timeout_seconds: 1, total_timeout_seconds: 5 }, env, bin));
-    const fn = out.groups[0].functions[0];
-    assert.equal(fn.status, "failed");
-    assert.equal(fn.timed_out, true);
-    assert.equal(await gone(await pidFile(join(dir, "engine.pid"))), true, "the function survived its timeout");
-    assert.equal(await gone(await pidFile(join(dir, "child.pid"))), true, "what the function started survived its timeout");
+    try {
+      const out = body(await comesBack(tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/triage", groups: ["users"], timeout_seconds: 5, total_timeout_seconds: 30 }, env, bin), "linux_triage"));
+      const fn = out.groups[0].functions[0];
+      assert.equal(fn.status, "failed");
+      assert.equal(fn.timed_out, true);
+      assert.equal(await gone(await pidFile(join(dir, "engine.pid"))), true, "the function survived its timeout");
+      assert.equal(await gone(await pidFile(join(dir, "child.pid"))), true, "what the function started survived its timeout");
+    } finally {
+      await reapRecorded(dir);
+    }
   });
   await withCwd(async (cwd, bin) => {
     // the recipe's detect
     const { dir, env } = await stage(cwd, bin, "target-query", engineScript());
     const { spawnSync } = await import("node:child_process");
-    const r = spawnSync("python3", [RECIPE, "detect", "--target", join(cwd, "target.json")], { cwd, env: { ...process.env, ...env, LINUX_TARGET_DETECT_SECONDS: "1", PATH: `${bin}:${process.env.PATH ?? ""}` }, encoding: "utf8" });
-    assert.equal(r.status, 2);
-    assert.equal(JSON.parse(String(r.stdout).trim()).applies, "unknown");
-    assert.equal(await gone(await pidFile(join(dir, "engine.pid"))), true, "the probe survived its deadline");
-    assert.equal(await gone(await pidFile(join(dir, "child.pid"))), true, "what the probe started survived its deadline");
+    try {
+      const r = spawnSync("python3", [RECIPE, "detect", "--target", join(cwd, "target.json")], { cwd, env: { ...process.env, ...env, LINUX_TARGET_DETECT_SECONDS: "5", PATH: `${bin}:${process.env.PATH ?? ""}` }, encoding: "utf8", timeout: 120_000, killSignal: "SIGKILL" });
+      assert.equal(r.status, 2, `detect did not end at its own deadline: ${r.error?.message ?? r.stderr}`);
+      assert.equal(JSON.parse(String(r.stdout).trim()).applies, "unknown");
+      assert.equal(await gone(await pidFile(join(dir, "engine.pid"))), true, "the probe survived its deadline");
+      assert.equal(await gone(await pidFile(join(dir, "child.pid"))), true, "what the probe started survived its deadline");
+    } finally {
+      await reapRecorded(dir);
+    }
   });
 });
 
@@ -181,9 +217,19 @@ test("the timeouts of the tools that run programs are held under their manifests
     // A detect budget that is not a number, or is far too large, is read as the default or the ceiling, never a traceback.
     const { spawnSync } = await import("node:child_process");
     await writeFile(join(bin, "target-query"), "#!/usr/bin/env python3\nprint('linux')\n");
-    for (const seconds of ["abc", "99999", "0", "-5"]) {
-      const r = spawnSync("python3", [RECIPE, "detect", "--target", join(cwd, "target.json")], { cwd, env: { ...process.env, LINUX_TARGET_DETECT_SECONDS: seconds, PATH: `${bin}:${process.env.PATH ?? ""}` }, encoding: "utf8" });
+    for (const seconds of ["abc", "99999"]) {
+      const r = spawnSync("python3", [RECIPE, "detect", "--target", join(cwd, "target.json")], { cwd, env: { ...process.env, LINUX_TARGET_DETECT_SECONDS: seconds, PATH: `${bin}:${process.env.PATH ?? ""}` }, encoding: "utf8", timeout: 120_000 });
       assert.equal(r.status, 0, `${seconds}: ${r.stderr}`);
+    }
+    // 0 and -5 are read as the one-second floor: not as no deadline, and not as the default of 240 seconds. A stand-in that needs
+    // eight seconds is therefore cut, whatever the machine's speed (a fast one that answers at once would be cut by a loaded
+    // machine's slow start, and the case would test the load).
+    await writeFile(join(bin, "target-query"), "#!/bin/sh\nsleep 8\necho linux\n");
+    for (const seconds of ["0", "-5"]) {
+      const r = spawnSync("python3", [RECIPE, "detect", "--target", join(cwd, "target.json")], { cwd, env: { ...process.env, LINUX_TARGET_DETECT_SECONDS: seconds, PATH: `${bin}:${process.env.PATH ?? ""}` }, encoding: "utf8", timeout: 120_000 });
+      assert.equal(r.status, 2, `${seconds}: ${r.stderr}`);
+      assert.equal(JSON.parse(String(r.stdout).trim()).applies, "unknown", seconds);
+      assert.doesNotMatch(r.stderr, /Traceback/, seconds);
     }
   });
 });

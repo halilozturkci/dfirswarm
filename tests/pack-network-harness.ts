@@ -77,7 +77,7 @@ export function startDetached(script: string, cwd: string, args: unknown, env: R
 }
 
 /** Whether a process is gone, giving it a moment (a killed process is reaped by its parent or by init). */
-export async function gone(pid: number, waitMs = 1500): Promise<boolean> {
+export async function gone(pid: number, waitMs = 30_000): Promise<boolean> {
   const until = Date.now() + waitMs;
   for (;;) {
     try {
@@ -91,7 +91,7 @@ export async function gone(pid: number, waitMs = 1500): Promise<boolean> {
 }
 
 /** Read a pid a stand-in wrote, waiting for it. */
-export async function pidFile(path: string, waitMs = 5000): Promise<number> {
+export async function pidFile(path: string, waitMs = 30_000): Promise<number> {
   const until = Date.now() + waitMs;
   for (;;) {
     const text = await readFile(path, "utf8").catch(() => "");

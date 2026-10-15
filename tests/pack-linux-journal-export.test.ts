@@ -14,7 +14,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { chmod, mkdir, readFile, readdir, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { IS_ROOT, JOURNAL, asJob, body, everythingBut, exists, filesUnder, lines, refused, rowsOf, tool, withCwd } from "./linux-pack-harness.ts";
+import { IS_ROOT, JOURNAL, asJob, body, everythingBut, exists, filesUnder, gone, lines, pidFile, refused, rowsOf, tool, withCwd } from "./linux-pack-harness.ts";
 import type { Json } from "./linux-pack-harness.ts";
 
 const BOOT_A = "9d6a4f4b7a7e4b2d9b2f0a1e3f4c5d6e";
@@ -176,7 +176,9 @@ test("journal_export asks for time bounds with their zone and records them", asy
 test("journal_export returns the paths and a partial status when journalctl does not finish, and names a line that is no JSON", async () => {
   await withCwd(async (cwd, bin) => {
     const env = await journalFixture(cwd, bin, nativeJournal() + "this is not json\n");
-    const slow = body(await asJob(JOURNAL, cwd, { path: "work/journal", write_text: true, max_seconds: 1 }, bin, { ...env, STUB_SLEEP: "30" }));
+    // The stand-in has to start and write before the deadline for "what was read is kept" to mean anything; the deadline is not
+    // what this case proves, so it is long enough for a stand-in that a loaded machine starts late (the stand-in sleeps far past it).
+    const slow = body(await asJob(JOURNAL, cwd, { path: "work/journal", write_text: true, max_seconds: 6 }, bin, { ...env, STUB_SLEEP: "120" }));
     assert.equal(slow.timed_out, true);
     assert.equal(slow.status, "partial");
     assert.equal(slow.entry_count, 5, "what was read before the deadline is kept");
@@ -230,19 +232,37 @@ test("journal_export does not stop at a boot id that is a list, and counts the l
 test("journal_export ends journalctl and what it started at its deadline, and refuses a directory with links in it", async () => {
   await withCwd(async (cwd, bin) => {
     const env = await journalFixture(cwd, bin, nativeJournal());
-    // The stand-in leaves a child holding the pipe open: killing only journalctl would not end the read.
+    // The stand-in leaves a child holding the pipe open: killing only journalctl would not end the read. Both processes record
+    // their pids, so the test asks about the processes it started and nothing else on the machine.
+    const pids = join(cwd, "pids");
+    await mkdir(pids, { recursive: true });
     await writeFile(join(bin, "journalctl"), `#!/usr/bin/env python3
 import os, subprocess, sys, time
 open(os.environ["STUB_ARGV"], "a").write("run\\n")
 sys.stdout.write(open(os.environ["STUB_LINES"]).read()); sys.stdout.flush()
-subprocess.Popen(["sleep", "30"])
-time.sleep(30)
+kid = subprocess.Popen(["sleep", "120"])
+open(os.environ["STUB_PIDS"] + "/child.pid", "w").write(str(kid.pid))
+open(os.environ["STUB_PIDS"] + "/engine.pid", "w").write(str(os.getpid()))
+time.sleep(120)
 `);
     await chmod(join(bin, "journalctl"), 0o755);
-    const started = Date.now();
-    const out = body(await asJob(JOURNAL, cwd, { path: "work/journal", max_seconds: 1 }, bin, env));
-    assert.equal(out.timed_out, true);
-    assert.ok(Date.now() - started < 6000, `took ${Date.now() - started} ms`);
+    let engine = 0, child = 0;
+    try {
+      // What this case proves is that the tool ends at its deadline although a child still holds the pipe: it answers long before
+      // the stand-in's 120 seconds are up. The deadline is short for a test, so it asks the tool's own answer, not a short wall time:
+      // `timed_out`, and the processes gone. The wall bound is far above any loaded machine's delay and far below 120 s.
+      const started = Date.now();
+      const out = body(await asJob(JOURNAL, cwd, { path: "work/journal", max_seconds: 4 }, bin, { ...env, STUB_PIDS: pids }));
+      const took = Date.now() - started;
+      assert.equal(out.timed_out, true);
+      assert.ok(took < 60_000, `took ${took} ms: the tool waited for the child that held the pipe`);
+      engine = await pidFile(join(pids, "engine.pid"));
+      child = await pidFile(join(pids, "child.pid"));
+      assert.equal(await gone(engine), true, "journalctl survived the deadline");
+      assert.equal(await gone(child), true, "what journalctl started survived the deadline");
+    } finally {
+      for (const pid of [engine, child]) if (pid) try { process.kill(pid, "SIGKILL"); } catch { /* gone */ }
+    }
     await symlink("/etc", join(cwd, "work", "journal", "elsewhere"));
     const refusedLinks = refused(await asJob(JOURNAL, cwd, { path: "work/journal" }, bin, env, "out-links"));
     assert.match(refusedLinks.error, /links/);
@@ -285,30 +305,34 @@ test("journal_export asks journalctl to be quiet and reads its `-- No entries --
 test("journal_export ends journalctl and its children when it is told to stop", async () => {
   await withCwd(async (cwd, bin) => {
     const env = await journalFixture(cwd, bin, nativeJournal());
+    // The stand-in and the child it starts each record their own pid, and the test asks about those two processes. It does not
+    // search the machine's process table for a command line: other sessions run `sleep` too.
     await writeFile(join(bin, "journalctl"), `#!/usr/bin/env python3
 import os, subprocess, time
+kid = subprocess.Popen(["sleep", "60"])
+open(os.environ["STUB_PID"] + ".child", "w").write(str(kid.pid))
 open(os.environ["STUB_PID"], "w").write(str(os.getpid()))
-subprocess.Popen(["sleep", "60"])
 time.sleep(60)
 `);
     await chmod(join(bin, "journalctl"), 0o755);
-    const pidFile = join(cwd, "stub.pid");
+    const pidPath = join(cwd, "stub.pid");
     await mkdir(join(cwd, "out"), { recursive: true });
-    const child = spawn("python3", [JOURNAL], { cwd, env: { ...process.env, ...env, STUB_PID: pidFile, AGENT_ID: "s1", JOB_ID: "j000050", OUT: join(cwd, "out"), PATH: `${bin}:${process.env.PATH ?? ""}` }, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn("python3", [JOURNAL], { cwd, env: { ...process.env, ...env, STUB_PID: pidPath, AGENT_ID: "s1", JOB_ID: "j000050", OUT: join(cwd, "out"), PATH: `${bin}:${process.env.PATH ?? ""}` }, stdio: ["pipe", "pipe", "pipe"] });
     child.stdin.end(JSON.stringify({ path: "work/journal" }));
     const exited = new Promise<number | null>((resolve) => child.on("close", (code) => resolve(code)));
-    let pid = 0;
-    for (let i = 0; i < 100 && !pid; i++) {
-      await new Promise((r) => setTimeout(r, 100));
-      pid = Number(await readFile(pidFile, "utf8").catch(() => "0"));
+    let pid = 0, kid = 0;
+    try {
+      // The stand-in writes its own pid last: when it is there, the child's is too. A loaded machine starts it late, not never.
+      pid = await pidFile(pidPath, 60_000);
+      kid = await pidFile(`${pidPath}.child`, 60_000);
+      child.kill("SIGTERM");
+      assert.equal(await exited, 143);
+      assert.equal(await gone(pid, 30_000), true, "journalctl did not outlive the tool");
+      assert.equal(await gone(kid, 30_000), true, `nor did what it started (pid ${kid})`);
+    } finally {
+      for (const p of [pid, kid]) if (p) try { process.kill(p, "SIGKILL"); } catch { /* gone */ }
+      if (child.exitCode === null) child.kill("SIGKILL");
     }
-    assert.ok(pid > 0);
-    child.kill("SIGTERM");
-    assert.equal(await exited, 143);
-    await new Promise((r) => setTimeout(r, 300));
-    assert.throws(() => process.kill(pid, 0), "journalctl did not outlive the tool");
-    const kids = spawnSync("pgrep", ["-f", "sleep 60"], { encoding: "utf8" }).stdout.trim();
-    assert.equal(kids, "", `nor did what it started: ${kids}`);
   });
 });
 

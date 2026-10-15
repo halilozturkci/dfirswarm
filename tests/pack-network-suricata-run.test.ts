@@ -38,7 +38,7 @@ if [ "$mode" = test ]; then
   if [ -f "$STUB_DIR/test-exit" ]; then echo "stand-in: configuration test failed on request" >&2; exit "$(cat "$STUB_DIR/test-exit")"; fi
   exit 0
 fi
-[ -f "$STUB_DIR/sleep" ] && { echo $$ > "$STUB_DIR/engine.pid"; sleep 60 & echo $! > "$STUB_DIR/child.pid"; echo started > "$STUB_DIR/started"; wait; }
+[ -f "$STUB_DIR/sleep" ] && { echo $$ > "$STUB_DIR/engine.pid"; sleep 300 & echo $! > "$STUB_DIR/child.pid"; echo started > "$STUB_DIR/started"; wait; }
 [ -f "$STUB_DIR/eve.json" ] && cp "$STUB_DIR/eve.json" "$logdir/eve.json"
 [ -f "$STUB_DIR/loadline-run" ] && cat "$STUB_DIR/loadline-run" >&2
 if [ -f "$STUB_DIR/run-exit" ]; then exit "$(cat "$STUB_DIR/run-exit")"; fi
@@ -241,13 +241,19 @@ test("the directory is private, in a job it must be under $OUT, a stop leaves no
   await withCwd(async (cwd, bin) => {
     const dir = await stage(cwd, bin, { sleep: true });
     const { path, rules } = await inputs(cwd);
+    // 10 seconds is the tool's smallest deadline. The wall bound is far under the stand-in's 300 seconds: what is asked is that
+    // the tool ended at its deadline (and said so), and that the sleeper it recorded is gone, not how quickly a loaded machine did it.
     const started = Date.now();
-    const err = refused(await tool(SURICATA, cwd, { path, rules, out_dir: "work/s", timeout_seconds: 10 }, env(cwd), bin));
-    assert.ok(Date.now() - started < 40_000);
-    assert.match(err.error, /did not finish in time/);
-    const pid = Number((await readFile(join(dir, "child.pid"), "utf8")).trim());
-    await new Promise((r) => setTimeout(r, 300));
-    assert.throws(() => process.kill(pid, 0), /ESRCH/, "what Suricata started is gone");
+    let pid = 0;
+    try {
+      const err = refused(await tool(SURICATA, cwd, { path, rules, out_dir: "work/s", timeout_seconds: 10 }, env(cwd), bin));
+      assert.ok(Date.now() - started < 120_000, "the tool ended at its deadline, not when the stand-in did");
+      assert.match(err.error, /did not finish in time/);
+      pid = await pidFile(join(dir, "child.pid"));
+      assert.equal(await gone(pid), true, "what Suricata started is gone");
+    } finally {
+      if (pid > 1) try { process.kill(pid, "SIGKILL"); } catch { /* gone */ }
+    }
   });
 });
 

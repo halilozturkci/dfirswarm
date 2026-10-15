@@ -21,16 +21,32 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { JobService, sealLeftStaging, type JobServiceOptions } from "../scripts/job-service.ts";
+import { JobService, sealLeftStaging as sealLeftStagingOnce, type JobServiceOptions } from "../scripts/job-service.ts";
 import { checkStore, storePaths, verifyJournalText } from "../scripts/evidence-store.ts";
 import { localWorker } from "./job-service-worker.ts";
 import type { WorkerSpec } from "../scripts/vm.ts";
 
 const ROOT = join(import.meta.dirname, "..");
 const CFB = join(ROOT, "packs", "computer-forensics-base");
+
+/**
+ * seal-left looks for a hub process with `ps` (bounded at 15 seconds) and refuses with "(ps failed)" when the listing did not come
+ * back, which a machine under a whole suite's load can cause. That refusal is about the listing, not about the hub or the run:
+ * nothing has been read or sealed when it comes. This asks again (at most five times) when, and only when, that is the refusal;
+ * every other answer, refusals included, is returned as it is.
+ */
+async function sealLeftStaging(...args: Parameters<typeof sealLeftStagingOnce>): ReturnType<typeof sealLeftStagingOnce> {
+  for (let tries = 1; ; tries++) {
+    try {
+      return await sealLeftStagingOnce(...args);
+    } catch (e) {
+      if (!/\(ps failed\)/.test(String((e as Error).message)) || tries >= 5) throw e;
+    }
+  }
+}
 
 function sandbox(): string {
   const S = join(mkdtempSync(join(tmpdir(), "stop-seal-")), "run");
@@ -64,7 +80,7 @@ function service(S: string, extra: Partial<JobServiceOptions> = {}) {
   return { svc, posts };
 }
 
-async function until(svc: JobService, id: string, states: string[], ms = 20000) {
+async function until(svc: JobService, id: string, states: string[], ms = 60000) {
   const end = Date.now() + ms;
   for (;;) {
     const j = svc.jobs.get(id);
@@ -198,7 +214,9 @@ test("seal-left finds a hub still up by its command line when hub.pid is gone, a
   for (const args of [["vm-hub.ts", S, "--dir", D], ["vm-hub.ts", "--resume", D]]) {
     const hub = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", ...args], { stdio: "ignore" });
     try {
-      await new Promise((res) => setTimeout(res, 300));
+      // Until `ps` shows the hub's command line (a spawned process is its parent's image until its exec): the lookup this case is
+      // about reads that line, and a loaded machine takes longer than any fixed time to get there.
+      for (let i = 0; i < 1200 && !spawnSync("ps", ["-ww", "-o", "args=", "-p", String(hub.pid)], { encoding: "utf8" }).stdout.includes("vm-hub.ts"); i++) await new Promise((res) => setTimeout(res, 50));
       await assert.rejects(sealLeftStaging(S, async () => ({ ok: true })), new RegExp(`hub \\(pid ${hub.pid}\\) is still up.*run swarm.sh stop for this run again`));
       assert.ok(staged(S, `${r.job.id}-1`), "left as it is beside a live hub");
     } finally {

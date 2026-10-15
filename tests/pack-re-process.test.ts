@@ -82,7 +82,10 @@ test("at the tool's own deadline the engine and what it started are ended, and t
   await withCwd(async (cwd, bin) => {
     const dir = await engines(cwd, bin);
     await put(cwd, "work/sample.bin", "x".repeat(2000));
-    const out = await tool(FUZZY, cwd, { path: "work/sample.bin", engine_timeout_seconds: 1 }, { PIDS: dir }, bin);
+    // The engine's deadline is the tool's own and has to outlast the start of a shell stand-in on a loaded machine: a deadline that
+    // passes first leaves no child to ask about. The engine waits for 60 seconds; what is asked is the tool's own answer
+    // (`tlsh_status: timeout`) and that the two pids the stand-in recorded are gone.
+    const out = await tool(FUZZY, cwd, { path: "work/sample.bin", engine_timeout_seconds: 6 }, { PIDS: dir }, bin);
     assert.equal(out.code, 0, out.stderr + out.stdout);
     const answer = JSON.parse(out.stdout) as Json;
     assert.equal(answer.files[0].tlsh_status, "timeout");
@@ -107,8 +110,9 @@ async function bigSample(cwd: string): Promise<string> {
 async function startRecipe(cwd: string, sample: string) {
   const out = join(cwd, "catalog");
   const run = startDetached(RECIPE, cwd, {}, {}, undefined, ["run", "--target", JSON.stringify({ paths: [sample] }), "--out", out]);
-  // entropy_map creates its profile file as it starts: from then on it is the running child.
-  const until = Date.now() + 15000;
+  // entropy_map creates its profile file as it starts: from then on it is the running child. The wait is for that state, as long
+  // as a loaded machine needs to start two interpreters; the pass itself (a hole of 1 GiB) runs for far longer than the wait.
+  const until = Date.now() + 90_000;
   let kids: number[] = [];
   for (;;) {
     const files = await readdir(out).catch(() => [] as string[]);

@@ -55,7 +55,7 @@ function startDetached(tool: string, cwd: string, args: unknown, env: Record<str
   };
 }
 
-async function gone(pid: number, waitMs = 3000): Promise<boolean> {
+async function gone(pid: number, waitMs = 30_000): Promise<boolean> {
   const until = Date.now() + waitMs;
   for (;;) {
     try {
@@ -68,7 +68,7 @@ async function gone(pid: number, waitMs = 3000): Promise<boolean> {
   }
 }
 
-async function pidOf(path: string, waitMs = 8000): Promise<number> {
+async function pidOf(path: string, waitMs = 30_000): Promise<number> {
   const until = Date.now() + waitMs;
   for (;;) {
     const text = await readFile(path, "utf8").catch(() => "");
@@ -175,11 +175,14 @@ for (const [name, sig, code] of [["SIGINT", "SIGINT", 130], ["SIGHUP", "SIGHUP",
   });
 }
 
+// The tools' own deadlines, short for a test but long enough for a loaded machine to start the stand-in (a shell script that
+// first answers the tool's probes) and let it record its pids: a deadline that passes before the stand-in has run leaves nothing
+// to ask about. The test asks the tool's own answer (`timed_out`) and the processes it started, not how long a wall clock took.
 const DEADLINE: Record<string, Record<string, unknown>> = {
-  esedb_query: { export_timeout_seconds: 2 },
-  extract_stream: { timeout_seconds: 2 },
-  sigma_hunt: { timeout_seconds: 10 },
-  yara_scan: { timeout_seconds: 2 },
+  esedb_query: { export_timeout_seconds: 8 },
+  extract_stream: { timeout_seconds: 8 },
+  sigma_hunt: { timeout_seconds: 12 },
+  yara_scan: { timeout_seconds: 8 },
 };
 
 for (const tool of Object.keys(DEADLINE)) {
@@ -192,7 +195,11 @@ for (const tool of Object.keys(DEADLINE)) {
       try {
         const started = Date.now();
         await run.closed;
-        assert.ok(Date.now() - started < 30_000, "the tool ended at its own deadline");
+        // Far under the stand-in's 300 seconds: the tool ended at its deadline, not when the program did.
+        assert.ok(Date.now() - started < 120_000, "the tool ended at its own deadline");
+        // The tools say it in their own words: a `timed_out` flag, or (sigma_hunt, with no result file) "did not finish in time".
+        const said = JSON.parse(run.stdout()) as { timed_out?: boolean; error?: string };
+        assert.ok(said.timed_out === true || /did not finish in time/.test(String(said.error)), `the tool says its own deadline ended the program: ${run.stdout().slice(0, 300)}`);
         assert.ok(await gone(engine), "the program is gone");
         assert.ok(await gone(child), "what it started is gone");
       } finally {

@@ -70,6 +70,27 @@ async function submitted(svc: JobService, who: string, spec: Record<string, unkn
   return until(svc, r.job.id);
 }
 
+/**
+ * A store record read once it is whole: the service writes job.json and manifest.json in place, just after the job reads committed,
+ * so a read on a loaded machine can land between the file's creation and its last byte ("Unexpected end of JSON input"). Waited for
+ * (a state, not a time): a record that never parses fails with what was read.
+ */
+async function settled(path: string): Promise<Buffer> {
+  if (!path.endsWith(".json")) return readFile(path);
+  let last = "";
+  for (let i = 0; i < 400; i++) {
+    const bytes = await readFile(path).catch(() => Buffer.alloc(0));
+    try {
+      JSON.parse(bytes.toString("utf8"));
+      return bytes;
+    } catch (e) {
+      last = `${(e as Error).message} after ${bytes.length} bytes`;
+    }
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  throw new Error(`${path} never held a whole JSON document: ${last}`);
+}
+
 /** The job's job_committed line on the store journal, waited for: it may land just after the job reads committed. */
 async function committedLine(S: string, job: string): Promise<{ sensitive: { why?: string } } & Record<string, unknown>> {
   for (let i = 0; i < 200; i++) {
@@ -89,7 +110,7 @@ test("secret_output seals every output sensitive; a job reading one is derived; 
   // On the journal (the record) and in the job's projection. The job_committed line may land just after the job reads committed: waited for.
   const committed = await committedLine(S, secret.id);
   assert.equal(committed.sensitive.why, "secret_output");
-  assert.equal(JSON.parse(await readFile(join(storePaths(S).jobs, secret.id, "job.json"), "utf8")).sensitive.why, "secret_output");
+  assert.equal(JSON.parse((await settled(join(storePaths(S).jobs, secret.id, "job.json"))).toString("utf8")).sensitive.why, "secret_output");
   assert.match(describe(secret), /Its outputs are sensitive \(it ran with secret_output\)/);
   assert.equal((await svc.submit("a1", { kind: "command", command: "true", inputs: [], secret_output: "yes" } as never)).ok, false, "secret_output is true or false");
 
@@ -136,7 +157,7 @@ test("identical bytes of a sensitive output are sensitive at commit, while the s
 test("derived sensitivity follows the executed snapshot: a work copy by its digest, a catalogue alias, and through several jobs", async () => {
   const { S, svc, base } = await run();
   const secret = await submitted(svc, "a1", { command: `printf '%s' '${VALUE}' > "$OUT/value.txt"`, inputs: [], secret_output: true });
-  const digest = JSON.parse(await readFile(join(storePaths(S).jobs, secret.id, "manifest.json"), "utf8")).files[0].sha256;
+  const digest = JSON.parse((await settled(join(storePaths(S).jobs, secret.id, "manifest.json"))).toString("utf8")).files[0].sha256;
   // An agent copies the sensitive output into its own work directory, under a name that says nothing.
   await mkdir(join(S, "work", "a1"), { recursive: true });
   await writeFile(join(S, "work", "a1", "notes.bin"), VALUE);
@@ -181,7 +202,7 @@ test("a redacted package withholds sensitive outputs whole, names them, and scan
     const pkg = join(base, name);
     for (const id of [secret.id, other.id]) {
       await mkdir(join(pkg, "store", "jobs", id, "out"), { recursive: true });
-      for (const f of ["job.json", "manifest.json", "stdout.log"]) await writeFile(join(pkg, "store", "jobs", id, f), await readFile(join(storePaths(S).jobs, id, f)));
+      for (const f of ["job.json", "manifest.json", "stdout.log"]) await writeFile(join(pkg, "store", "jobs", id, f), await settled(join(storePaths(S).jobs, id, f)));
     }
     await writeFile(join(pkg, "store", "jobs", secret.id, "out", "value.txt"), VALUE);
     await writeFile(join(pkg, "store", "jobs", other.id, "out", "p.txt"), "nothing sensitive\n");
@@ -241,7 +262,7 @@ test("a byte-identical copy of a sensitive output, with no ledger entry and no s
   const secret = await submitted(svc, "a1", { command: `cat > "$OUT/dump.txt" <<'EOF'\n${big}EOF`, inputs: [], secret_output: true });
   const pkg = join(base, "pkg");
   await mkdir(join(pkg, "store", "jobs", secret.id, "out"), { recursive: true });
-  for (const f of ["job.json", "manifest.json"]) await writeFile(join(pkg, "store", "jobs", secret.id, f), await readFile(join(storePaths(S).jobs, secret.id, f)));
+  for (const f of ["job.json", "manifest.json"]) await writeFile(join(pkg, "store", "jobs", secret.id, f), await settled(join(storePaths(S).jobs, secret.id, f)));
   const sealedBytes = await readFile(join(storePaths(S).jobs, secret.id, "out", "dump.txt"));
   await writeFile(join(pkg, "store", "jobs", secret.id, "out", "dump.txt"), sealedBytes);
   // A byte-identical copy far from the store, with no ledger entry at all.
@@ -250,7 +271,7 @@ test("a byte-identical copy of a sensitive output, with no ledger entry and no s
   // A small secret output, and a retained, non-sensitive file named after its value.
   const small = await submitted(svc, "a1", { command: `printf '%s' 'PINWORD-4821' > "$OUT/pin.txt"`, inputs: [], secret_output: true });
   await mkdir(join(pkg, "store", "jobs", small.id, "out"), { recursive: true });
-  for (const f of ["job.json", "manifest.json"]) await writeFile(join(pkg, "store", "jobs", small.id, f), await readFile(join(storePaths(S).jobs, small.id, f)));
+  for (const f of ["job.json", "manifest.json"]) await writeFile(join(pkg, "store", "jobs", small.id, f), await settled(join(storePaths(S).jobs, small.id, f)));
   await writeFile(join(pkg, "store", "jobs", small.id, "out", "pin.txt"), await readFile(join(storePaths(S).jobs, small.id, "out", "pin.txt")));
   await writeFile(join(pkg, "work", "a1", "notes-PINWORD-4821.txt"), "nothing in here\n");
   await writeFile(join(pkg, "ledger.jsonl"), "");
