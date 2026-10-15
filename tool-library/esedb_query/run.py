@@ -26,6 +26,14 @@ the candidates, never resolved by taking the first. An earlier export is reused 
 manifest was written by this version of the tool, its exit status was 0, and every table file
 it lists is on disk with the size it recorded and nothing else is there; otherwise it is made again.
 
+READING AND BOUNDS. The table file is read as the exporter wrote it: tab-separated text, a row to a line, no quoting rule (a quote is a
+character of its cell; a carriage return is one too, unless the whole file ends its lines with CR LF, which the answer says), and `_row` is the
+1-based line of the row after the header. What an answer prints inline is bounded: the rows that fit `limit` and 256 KiB, with a cell longer than
+4,096 characters shown cut (`_cells_shortened` names it). The file `all_results` names holds EVERY row with EVERY cell whole, and is written
+whenever the inline rows are not the whole of the table (more rows than fit, or a cell cut); it is never replaced by another result. A row longer
+than 8 MiB is read to that length (said, with its length) and is whole in the export. The tool stops at its own time limit (285 seconds, below the
+manifest's 300) with the rows read and says partial; SIGTERM, SIGINT and SIGHUP end it with JSON (status interrupted) and no temporary file.
+
 SENSITIVE OUTPUT. The export directory holds every table whole, so it holds whatever the database
 holds (a WebCache URL with a token in it, a SRUM user, the password material of an Active Directory
 database): it is made with mode 0700 (its files 0600), it is a sensitive output of the job that made it, and
@@ -38,7 +46,6 @@ string, fragment or user-info), listed in `url_secrets_withheld`. A URL's text i
 `write_url_secrets: true`, in a job run with secret_output: true, to a file under $OUT of mode 0600; the
 request is refused anywhere else. Binary cells are exported as text by esedbexport and are not inspected.
 """
-import csv
 import json
 import os
 import re
@@ -48,6 +55,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 # Lossless paging (the same in every library tool that pages): the page an
@@ -151,8 +159,162 @@ class LosslessPage:
         return result
 
 
-PARSER = "esedb_query/6"
+PARSER = "esedb_query/7"
 MAX_EXPORT_SECONDS = 270
+# The tool's own clock: the manifest allows 300 seconds, so the export is stopped at 270 and everything the tool does stops at 285, with
+# the rows it has read said to be a part (status partial), never a kill by the harness with no answer.
+DEADLINE_SECONDS = 285
+# What one answer carries inline. The rows shown are the first rows of the table that fit; every row, with every cell whole, is in the
+# file the answer names (all_results), which is written whenever the inline rows are not the whole of it.
+INLINE_BYTES = 256 * 1024
+CELL_INLINE_CHARS = 4096
+COLUMNS_INLINE = 1000
+# One row of the exported table is read up to this many characters; a longer row is read to its end (so that the next row is found) and
+# is said to be cut, with the file and the line where its whole text is (the export keeps every table whole).
+ROW_READ_CHARS = 8 * 1024 * 1024
+RESERVED_COLUMNS = ("_row", "_cells_shortened", "_row_read_cut")
+
+
+# BEGIN SHARED PLACE
+# The same text is in every windows-forensics tool that keeps a result file (a windows-forensics test holds the copies equal).
+# A result file that is there is never replaced by another result: a file of the same bytes is named again, any other result takes the next free
+# <stem>-<n><suffix>. The name is taken first, with an exclusive create, so a result written at the same moment cannot be replaced either.
+def same_bytes(a, b):
+    """Whether two files hold the same bytes (read in blocks, never whole)."""
+    try:
+        if os.path.getsize(a) != os.path.getsize(b):
+            return False
+        with open(a, "rb") as fa, open(b, "rb") as fb:
+            while True:
+                x, y = fa.read(1 << 20), fb.read(1 << 20)
+                if x != y:
+                    return False
+                if not x:
+                    return True
+    except OSError:
+        return False
+
+
+def place_without_replacing(tmp, path):
+    """Move the finished `tmp` to `path` and never replace what is there. The name is taken first, with an exclusive create, so a
+    result written at the same moment cannot be replaced either. Returns the path that holds it."""
+    for n in range(1, 1000):
+        candidate = path if n == 1 else path.with_name("%s-%d%s" % (path.stem, n, path.suffix))
+        try:
+            fd = os.open(str(candidate), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        except FileExistsError:
+            if not os.path.islink(candidate) and same_bytes(tmp, candidate):
+                os.unlink(tmp)
+                return candidate
+            continue
+        os.close(fd)
+        os.replace(tmp, candidate)             # only replaces the empty file this call just made
+        return candidate
+    raise OSError("no free name beside %s" % path)
+# END SHARED PLACE
+
+
+class NoReplacePage(LosslessPage):
+    """LosslessPage whose finished file is placed without replacing an earlier file of the same name (a rerun with other limits,
+    or one the time limit stopped, must not leave a smaller file where a larger one was)."""
+
+    def finish(self) -> dict:
+        result = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
+        if self._out is not None:
+            try:
+                self._out.flush()
+                os.fsync(self._out.fileno())
+                self._out.close()
+                assert self._tmp is not None
+                placed = place_without_replacing(self._tmp, self.path)
+            except OSError as exc:
+                self._cannot_write(exc)
+            self._tmp = None
+            self.path = placed
+            self.shown = self.shown[: len(self.shown) - len(Path(self.shown).name)] + placed.name
+            result["all_results"] = self.shown
+            result["all_results_format"] = "JSON Lines, one complete result per line"
+        return result
+
+
+class WholeRows(NoReplacePage):
+    """The rows of a table: a page of the first rows that fit `limit` rows and `budget` bytes, with a cell longer than the inline cut
+    shown cut; and a file of EVERY row with EVERY cell whole, written whenever the page is not the whole of the table (more rows than
+    fit, or a cell shown cut). Rows are written as they are read, so memory does not grow with the table."""
+
+    def __init__(self, tool, key, limit, budget):
+        super().__init__(tool, key, limit)
+        self.budget, self.used, self.closed = budget, 0, False
+        self.cells_shortened = 0
+        self.rows_not_inline = 0
+
+    def open_file(self):
+        if self._out is None:
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                fd, name = tempfile.mkstemp(dir=self.path.parent, prefix=".%s-" % self.path.name)
+                self._tmp = Path(name)
+                self._out = os.fdopen(fd, "w", encoding="utf-8")
+            except OSError as exc:
+                self._cannot_write(exc)
+            for kept in self.page:                    # rows that went inline whole are the rows of the file
+                self._write(kept)
+
+    def add_row(self, whole, shown=None):
+        """`whole`: the row with every cell whole. `shown`: the row as it goes inline when a cell is cut, else None."""
+        self.total += 1
+        inline = whole if shown is None else shown
+        fits = False
+        if not self.closed and len(self.page) < self.limit:
+            size = len(json.dumps(inline, ensure_ascii=True, default=str))
+            fits = self.used + size <= self.budget
+            if fits:
+                self.used += size
+        if not fits:
+            self.closed = True                        # the rows shown stay the first rows, one after the other
+            self.rows_not_inline += 1
+        if shown is not None:
+            self.cells_shortened += 1
+        if not fits or shown is not None:
+            self.open_file()
+        if fits:
+            self.page.append(inline)
+        if self._out is not None:
+            self._write(whole)
+
+    def finish(self) -> dict:
+        result = super().finish()
+        result["truncated"] = self.total > len(self.page) or self.cells_shortened > 0
+        result["rows_not_inline"] = self.rows_not_inline
+        result["rows_with_a_cell_shown_cut"] = self.cells_shortened
+        result["inline_budget_bytes"] = self.budget
+        return result
+
+
+def read_row(fh, cap):
+    """The next line of a table file as (text, chars, cut): `text` is its first `cap` characters without the line end, `chars` how
+    many characters the line has, `cut` whether `text` is not all of it. (None, 0, False) at the end of the file. A line ends at
+    a line feed and nowhere else (the file is opened so that no carriage return is a line end)."""
+    parts, got, total, last = [], 0, 0, ""
+    while True:
+        piece = fh.readline(1 << 16)
+        if not piece:
+            break
+        last = piece
+        total += len(piece)
+        if got < cap:
+            take = piece[: cap - got]
+            parts.append(take)
+            got += len(take)
+        if piece.endswith("\n"):
+            break
+    if total == 0:
+        return None, 0, False
+    chars = total - (1 if last.endswith("\n") else 0)
+    text = "".join(parts)
+    if len(text) > chars:
+        text = text[:chars]
+    return text, chars, len(text) < chars
 
 
 # BEGIN SHARED PROCESS
@@ -470,7 +632,7 @@ def withheld_column(name):
 
 
 def fail(message, **extra):
-    print(json.dumps({"error": message, **extra}))
+    print(json.dumps({"error": message, "status": "failed", "status_basis": "the tool stopped with an error (see error)", **extra}))
     raise SystemExit(1)
 
 
@@ -569,7 +731,8 @@ def make_export(path, digest, timeout, root):
             # ships (20181229) has none, and refused the call.
             argv = ["esedbexport", "-t", target, path]
             def interrupted(signum):
-                print(json.dumps({"error": "stopped by signal %d before esedbexport finished" % signum, "status": "interrupted", "signal": signum,
+                print(json.dumps({"error": "stopped by signal %d before esedbexport finished" % signum, "status": "interrupted",
+                                  "status_basis": "the tool was stopped by signal %d; the export it was making is not complete" % signum, "signal": signum,
                                   "export_dir": str(base),
                                   "note": "The export is not complete and has no manifest; the next call makes it again."}), flush=True)
 
@@ -615,6 +778,8 @@ def make_export(path, digest, timeout, root):
 
 
 def main():
+    started = time.monotonic()
+    deadline = started + DEADLINE_SECONDS
     install_signal_handlers()
     try:
         args = json.load(sys.stdin)
@@ -663,7 +828,9 @@ def main():
         values.close()
         fail("the database could not be read: nothing was exported", path=path, status="failed", reason=describe(exc))
     digest = full[:16]
-    # The directory is named by the first 16 hex digits; the manifest holds the whole digest.
+    # The directory is named by the first 16 hex digits; the manifest holds the whole digest. What hashing took is taken from the
+    # exporter's time, and 15 seconds are left for reading the table.
+    timeout = max(1, min(timeout, int(deadline - time.monotonic()) - 15))
     record, reused = make_export(path, full, timeout, root)
     base = root / digest
     export = base / "db.export"
@@ -697,13 +864,15 @@ def main():
     if not complete:
         common.update({
             "status": "partial",
+            "status_basis": "esedbexport %s, so the export is a part of the database; the rows of the tables it wrote are exactly what it wrote"
+                            % ("was stopped by its time limit" if record["timed_out"] else "exited with status %s" % record["exporter_exit_status"]),
             "complete": False,
             "warning": "esedbexport %s: this is a PARTIAL export, and a table missing from it, or short, is not absent from the database; "
                        "the exporter's own output is in stdout_file and stderr_file" % ("was stopped by its time limit" if record["timed_out"] else "exited with status %s" % record["exporter_exit_status"]),
             "stderr_first_lines": stderr_text.strip().splitlines()[:10],
         })
     else:
-        common.update({"status": "complete", "complete": True})
+        common.update({"status": "complete", "status_basis": "esedbexport exited 0 and wrote the tables listed", "complete": True})
 
     if table is None:
         sizes = {}
@@ -726,39 +895,77 @@ def main():
     exact = sorted(f for f in files if wanted in (f.lower(), f.lower().removesuffix(".csv")))
     hits = exact or sorted(f for f, name in files.items() if name.lower() == wanted)
     if not hits:
-        fail("no such table", table=table, tables=names, **{k: common[k] for k in ("status", "complete")})
+        values.close()
+        fail("no such table", table=table, tables=names, export_status=common["status"], export_complete=common["complete"])
     if len(hits) > 1:
+        values.close()
         fail("the table name matches more than one export file; name one of them", table=table, candidates=hits)
     chosen = files[hits[0]]
-    # Tab-separated, whatever the extension says.
     src = str(export / hits[0])
 
-    # A cell can be megabytes (a SRUM or WebCache blob): the reader's default field limit would stop on it.
-    csv.field_size_limit(min(sys.maxsize, 2 ** 31 - 1))
-    rows = LosslessPage("esedb_query", [path, table, hits[0], full], limit)
+    # The table file is what the exporter wrote: tab-separated text, one row to a line. It is read as that and as nothing else: a
+    # quote is a character, not a quoting rule, so a cell that begins with one does not run on over the tabs and lines after it, and a
+    # carriage return is a character of its cell. A file the exporter ended its lines with CR LF is read as that (said in the answer).
+    rows = WholeRows("esedb_query", [path, table, hits[0], full], limit, INLINE_BYTES)
+    url_secrets.locators = NoReplacePage("esedb_query-url-secrets", [path, table, limit], min(limit, 200))
+
+    def last_word(signum):
+        for page in (rows, url_secrets.locators):
+            if page._tmp is not None:
+                try:
+                    os.unlink(page._tmp)
+                except OSError:
+                    pass
+        values.close()
+        print(json.dumps({"error": "stopped by signal %d while the table was being read" % signum, "status": "interrupted",
+                          "status_basis": "the tool was stopped by signal %d; the rows it had read are not an answer" % signum,
+                          "signal": signum, "rows_read": rows.total, "table": chosen, "export_file": hits[0],
+                          "note": "The export is complete on disk and is reused; the whole of it is in export_dir."}), flush=True)
+
+    STATE["last_word"] = last_word
     try:
-        fh = open(src, "r", encoding="utf-8", errors="replace", newline="")
+        fh = open(src, "r", encoding="utf-8", errors="replace", newline="\n")
     except OSError as exc:
         values.close()
         fail("the exported table file could not be read", table=chosen, export_file=hits[0], status="failed", reason=describe(exc))
+    stopped = None                                    # why the reading ended before the end of the file, or None
+    rows_cut = []                                     # rows read only up to ROW_READ_CHARS: [(row, chars)]
     with fh:
-        reader = csv.reader(fh, delimiter="\t")
-        header = next(reader, [])
-        # Two columns of one name would overwrite each other in a row; the later ones are numbered.
-        names_seen, columns = {}, []
+        head, head_chars, head_cut = read_row(fh, ROW_READ_CHARS)
+        crlf = bool(head is not None and head.endswith("\r"))
+        if crlf:
+            head = head[:-1]
+        header = head.split("\t") if head else []
+        # Two columns of one name would overwrite each other in a row (and one named like a key the tool adds would replace it): the
+        # later ones are numbered.
+        count, used, columns = {}, set(), []
         for h in header:
-            names_seen[h] = names_seen.get(h, 0) + 1
-            columns.append(h if names_seen[h] == 1 else "%s_%d" % (h, names_seen[h]))
+            count[h] = count.get(h, 0) + 1
+            candidate = h if count[h] == 1 and h not in RESERVED_COLUMNS else "%s_%d" % (h, count[h] + (1 if h in RESERVED_COLUMNS else 0))
+            while candidate in used:
+                candidate += "_"
+            used.add(candidate)
+            columns.append(candidate)
         renamed = [c for c, h in zip(columns, header) if c != h]
         # Cells of a credential column are replaced by a marker that holds only their length; every other cell has the secrets of
         # its URLs withheld.
         why = {i: withheld_column(h) for i, h in enumerate(header)}
         withheld = {i: {"column": columns[i], "rule": r, "cells_withheld": 0, "total_length": 0} for i, r in why.items() if r}
         ordinal = 0
-        for row in reader:
+        while True:
+            if time.monotonic() > deadline:
+                stopped = "the tool's own time limit (%d seconds) was reached after row %d" % (DEADLINE_SECONDS, ordinal)
+                break
+            line, chars, cut = read_row(fh, ROW_READ_CHARS)
+            if line is None:
+                break
             ordinal += 1
-            cells = {}
-            for i, v in enumerate(row):
+            if crlf and line.endswith("\r") and not cut:
+                line = line[:-1]
+            if cut:
+                rows_cut.append((ordinal, chars))
+            cells, shown, shortened = {}, {}, {}
+            for i, v in enumerate(line.split("\t")):
                 name = columns[i] if i < len(columns) else "col%d" % i
                 if i in withheld and v != "":
                     withheld[i]["cells_withheld"] += 1
@@ -767,17 +974,53 @@ def main():
                 else:
                     v = url_secrets.mask(v, {"table": chosen, "row": ordinal, "column": name}) if "://" in v else v
                 cells[name] = v
-            rows.add({"_row": ordinal, **cells})
+                if len(v) > CELL_INLINE_CHARS:
+                    shown[name] = v[:CELL_INLINE_CHARS]
+                    shortened[name] = len(v)
+                else:
+                    shown[name] = v
+            whole = {"_row": ordinal, **cells}
+            if cut:
+                whole["_row_read_cut"] = {"chars_read": ROW_READ_CHARS, "row_chars": chars}
+            if shortened or cut:
+                inline = {"_row": ordinal, **shown, "_cells_shortened": {k: {"chars": n, "shown": CELL_INLINE_CHARS} for k, n in shortened.items()}}
+                if cut:
+                    inline["_row_read_cut"] = whole["_row_read_cut"]
+                rows.add_row(whole, inline)
+            else:
+                rows.add_row(whole)
     page = rows.finish()
+    status = "partial" if (stopped or rows_cut or not complete) else common["status"]
+    if stopped:
+        basis = stopped + "; the rows after it were not read (the whole table is in export_file)"
+    elif rows_cut:
+        basis = "%d row(s) were longer than %d characters and were read only that far (rows_read_cut)" % (len(rows_cut), ROW_READ_CHARS)
+    elif not complete:
+        basis = common["status_basis"]
+    else:
+        basis = "esedbexport exited 0 and every row of the table file was read"
+    columns_shown = header[:COLUMNS_INLINE]
     print(json.dumps({
         **common,
+        "status": status,
+        "status_basis": basis,
         "table": chosen,
         "export_file": hits[0],
-        "columns": header,
+        "export_file_line_ending": "CR LF" if crlf else "LF",
+        "columns": columns_shown,
+        "column_count": len(header),
+        "columns_not_shown": len(header) - len(columns_shown),
         "duplicate_columns_renamed": renamed,
         "rows": rows.page,
         "row_count": page["matched"],
-        "row_ordinals": "_row is the 1-based position of the row in the exported table file",
+        "rows_complete": stopped is None,
+        "rows_stopped": stopped,
+        "rows_read_cut": [{"row": r, "row_chars": n} for r, n in rows_cut[:50]],
+        "rows_read_cut_count": len(rows_cut),
+        "row_ordinals": "_row is the 1-based line of the row in the exported table file, counting from the line after the header; the file is "
+                        "in export_dir and holds every row and cell whole",
+        "cells": "cells are the text the exporter wrote, not decoded; a cell longer than %d characters is shown cut inline "
+                 "(_cells_shortened names it) and is whole in all_results" % CELL_INLINE_CHARS,
         "columns_withheld": list(withheld.values()),
         "url_secrets_withheld": url_secrets.summary(),
         "secret_values": values.summary("JSON Lines, mode 0600: finding_id, kind, parameter, table, row, column, url (the whole text), value (the secret)"),

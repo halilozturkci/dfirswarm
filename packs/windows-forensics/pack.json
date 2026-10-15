@@ -1,7 +1,7 @@
 {
   "id": "windows-forensics",
   "name": "Windows Forensics Pack",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "description": "Artefact-by-artefact method and tooling for a Windows examination: the file system and its journals, the hives, execution evidence, the event logs and the records inside a cleared one, accounts and remote access, persistence, PowerShell, browsers, shadow copies, memory, and the traces anti-forensics leaves.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -73,8 +73,8 @@
       "tools/evtx_carve/run.py": "05d80b5a654701b55f6dad5f27a5170f92eb8a817a5a1e827d681d59a83869f0",
       "tools/shellbags/manifest.json": "56c7580922f5779eb7c6b957ac86f6b8af882bba89c3dc07ea090dd760081cfa",
       "tools/shellbags/run.py": "50a0a4ff50c648faa7a66a37c9f81783a71183e969f78649f839e8e278d8703c",
-      "tools/esedb_query/manifest.json": "445ae1b86e6477e790898f313f9ba30e0d21d5acd459a5cfedeff73efcdd7a48",
-      "tools/esedb_query/run.py": "8dc50c988fa9eca55b36aa02fe96aa577c8445d5b3848381230bf5bd1cd4528c",
+      "tools/esedb_query/manifest.json": "0dcfff79d6e34e8525ee469b8004e9e7a6e1025b2a201d1c078f51ff44eac22d",
+      "tools/esedb_query/run.py": "87688d73f4cec722ceb45ae961a6448a1c69a7541510d509439b92a070920386",
       "tools/usn_journal/manifest.json": "f6b402da72171c4d55071e6d268626ab94fedf73ada2b92b4a2bd5d61b3ccb32",
       "tools/usn_journal/run.py": "d138d453dff72dcc716997b7244c959c9265cc20dc6c76dcd9bd11927d629851",
       "tools/browser_history/manifest.json": "5c99d8a4e0abd535f2f778d2572f3278e04352fdd13e062e16dc92f20a916e19",
@@ -118,7 +118,7 @@
       "skills/accounts/logons.md": "1f2e903c1fb1ba862249d97738a76f238524a804b79343326aac7c0391c7c649",
       "skills/accounts/sessions.md": "3229a61816b89d716a9d7f29ef3d94796c840623c2beb9a7dad8c9459e30dcd3",
       "skills/execution/amcache.md": "5eea8a079d5c5015d2ab98391e0382233e6ab25d8f0b31b6b5b115e8d63a14ee",
-      "skills/execution/esedb.md": "17156bff87aa1389c94e7b38da2a59e9893bb3aeb83b6d481864599145c5428e",
+      "skills/execution/esedb.md": "d49902204f19220809691903b0a616017837e40a98949cd1b256bd8db493ab64",
       "skills/execution/overview.md": "b7656b62c487bdb22396d72326432cde6a4756b25f9686425c9fa40661111d83",
       "skills/execution/prefetch-carved.md": "02f41a2a5e30fb3a88e5f05627e0e64612145b451946f9357bfee52b18ac1a5d",
       "skills/execution/prefetch.md": "9f5c605700648f2bd77f7bbca4d086160bdb14749ad0bd00b43c8a4440f25143",

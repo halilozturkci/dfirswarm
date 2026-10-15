@@ -130,7 +130,7 @@ or `tools/`.
 | `csearch` | python3 | `sf6df06` | 2 | Search the kickoff catalog files (filelist/timeline/bodyfile/pslist/cmdline/netscan/malfind/dlllist/psscan) f… |
 | `destlist_v4` | python3 | `sd29252` | 1 | Read the DestList stream of a Windows jump list, version 4 (the 130-byte entry layout): for each entry its pl… |
 | `encoded_literal_scan` | python3 | `s3472f0` | 1 | Find a literal you know the start and end of (marker ... closer) hidden in base64, base32, hex, rot13 or as U… |
-| `esedb_query` | python3 | `maintainer` | 6 | Read an ESE database (WebCacheV01.dat, SRUDB.dat, spartan.edb) as TABLES through esedbexport: list the tables… |
+| `esedb_query` | python3 | `maintainer` | 7 | Read an ESE database (WebCacheV01.dat, SRUDB.dat, spartan.edb) as TABLES through esedbexport: list the tables… |
 | `evtx_filter` | python3 | `sd1d101` | 1 | Parse a local EVTX; return EventID/TimeCreated/EventData for matching IDs or a time prefix |
 | `evtx_query` | python3 | `sbe1801` | 3 | Query an EVTX event log and return filtered events with timestamp, event id, channel, computer, provider, Eve… |
 | `extract_stream` | python3 | `sfcc303` | 5 | Extract one data stream of an NTFS volume by inode address to a file with icat (the Sleuth Kit). The stream i… |
