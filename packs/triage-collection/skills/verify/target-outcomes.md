@@ -17,4 +17,4 @@ Use when you read a collector's own account of its targets. Not for choosing wha
 
 Shows: what the collector says happened to each target. Does not show: why, whether the collector's list was complete, or whether the target existed on the source.
 Record: per target its state, the record and locator, the collector's wording, and the questions the loss limits.
-Sensitive output: a log row can hold a command line, a path or a secret the tool did not recognise; run `collection_id` as a job with `secret_output: true`, quote by locator, and never copy a credential-shaped string or a hash of one.
+Sensitive output: a log row can hold a command line, a path or a secret the tool did not recognise; run `collection_id` as a job with `secret_output: true`, quote by locator, and never copy a credential-shaped string or a hash of one. Withholding is by shape: a secret of another shape is printed (a plain password or passphrase alone, lower-case text of 24 letters, base32 of 16 characters: all of them; base36 of 24 to 32 characters: 18% to 26%), while the listed families, keys and name=value forms come out at 2.5% or less.

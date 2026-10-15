@@ -18,5 +18,5 @@ Use when a delivery is a tree or an archive of copied files. Not for a disk imag
 Only if you must describe a family's usual layout, or the tool names no collector: `identify/collector-clues`. Only if the collector read a live host, a mounted image or a snapshot and time or contamination matters: `identify/acquisition-mode`.
 
 Shows: which records are present, what they say they did, and what the delivery is made of. Does not show: that the collector finished, what it was asked to copy, that a log is complete, or that no manifest exists where none was found.
-Record: tool answer, each log path and status, the profile definition you were given.
-Sensitive output: logs can hold command lines and paths; run `collection_id` as a job with `secret_output: true`, cite locators, and never copy a credential-shaped string or a hash of one into a finding.
+Record: the tool answer, each log path and status, the profile you were given.
+Sensitive output: logs can hold command lines and paths; run `collection_id` as a job with `secret_output: true`, cite locators, never copy a credential-shaped string or its hash. Withholding is by shape: a secret of another shape is printed.

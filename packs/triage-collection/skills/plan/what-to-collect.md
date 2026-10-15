@@ -15,7 +15,7 @@ Use when a missing source could settle a question. Not for running a collector: 
 4. Ask for the collector's own record: its logs, manifests, the configuration it used and the acquisition record.
 5. Ask for the time on the machine against a trusted reference, with both zones, the measurement uncertainty and any evidence of synchronisation or clock changes. One comparison is not a constant historical offset; logs already held may bound it.
 6. Ask for configuration beside the logs. A configuration is observed state: it is not a change, or its author, unless a comparison or change record shows when and how.
-7. Key files, verifier stores and saved credentials only where the question and the authority justify it, read in jobs with `secret_output: true`. Report location, kind and meaning; never values, fragments or hashes of secrets.
+7. Key files, verifier stores and saved credentials only where the question and the authority justify it, read in jobs with `secret_output: true`. Report location, kind and meaning, never a hash. A key id the case's rules want in full is withheld and read only in the values file of a `secret_output` job; the tools withhold by shape, so some secrets still come out.
 
 Only if the delivery is Windows: `plan/sources-windows`. Only if it is Linux or Unix-like: `plan/sources-linux`.
 

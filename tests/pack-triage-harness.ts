@@ -32,7 +32,10 @@ let jobs = 0;
 export async function asJob(script: string, cwd: string, args: unknown, env: Record<string, string> = {}, outName = "out", jobId?: string): Promise<Run> {
   await mkdir(join(cwd, outName), { recursive: true });
   jobs += 1;
-  return tool(script, cwd, args, { JOB_ID: jobId ?? `j${String(jobs).padStart(6, "0")}`, OUT: join(cwd, outName), ...env });
+  // the job service sets SECRET_OUTPUT=1 for a job whose tool declares `secret_output` for an argument the call sets (write_values, hash_credential_stores)
+  const a = (args ?? {}) as Record<string, unknown>;
+  const secret: Record<string, string> = a.write_values || a.hash_credential_stores ? { SECRET_OUTPUT: "1" } : {};
+  return tool(script, cwd, args, { JOB_ID: jobId ?? `j${String(jobs).padStart(6, "0")}`, OUT: join(cwd, outName), ...secret, ...env });
 }
 
 export function body(out: Run): Json {

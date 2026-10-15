@@ -89,7 +89,7 @@ test("a path a KAPE copy log records is observed, with its log and row; rows tha
     const b = e["C/Users/b/NTUSER.DAT"];
     assert.equal(b.source_path_mapping, "observed", "two rows that agree on the source are not in doubt about it");
     assert.equal(b.source_path_observed.path, "C:\\Users\\b\\NTUSER.DAT");
-    assert.deepEqual(b.source_path_observed.also_rows, [{ log: "2026-02-15T09_12_00_2_CopyLog.csv", row: 1 }], "every row is cited");
+    assert.deepEqual(b.source_path_observed.also_rows, [{ log: "2026-02-15T09_12_00_2_CopyLog.csv", row: 1, line: 2 }], "every row is cited");
     const d = e["C/Users/d/NTUSER.DAT"];
     assert.equal(d.source_path_mapping, "ambiguous");
     assert.equal(d.source_path_observed, null);
@@ -341,16 +341,16 @@ test("a credential store is marked by its name and not hashed unless asked, in a
     }
     assert.equal(e["home/u/notes.txt"].may_hold_secrets, undefined);
     assert.match(e["home/u/notes.txt"].sha256, /^[0-9a-f]{64}$/);
-    assert.equal(e["credentials"].may_hold_secrets, undefined, "credentials outside .aws is an ordinary name");
-    assert.equal(out.hashing.not_attempted_credential_store_name, 3);
-    assert.match(refused(await tool(INDEX, cwd, { root: "inputs/s", hash_credential_stores: true })).error, /needs a job and write_values: true/);
-    assert.match(refused(await asJob(INDEX, cwd, { root: "inputs/s", hash_credential_stores: true }, {}, "out", "j000959")).error, /needs a job and write_values: true/);
+    assert.ok(e["credentials"].may_hold_secrets.kind, "a file named credentials is marked wherever it is");
+    assert.equal(out.hashing.not_attempted_credential_store_name, 4);
+    assert.match(refused(await tool(INDEX, cwd, { root: "inputs/s", hash_credential_stores: true })).error, /needs a secret-output job and write_values: true/);
+    assert.match(refused(await asJob(INDEX, cwd, { root: "inputs/s", hash_credential_stores: true }, {}, "out", "j000959")).error, /needs a secret-output job and write_values: true/);
     const jobRun = await asJob(INDEX, cwd, { root: "inputs/s", hash_credential_stores: true, write_values: true }, {}, "out", "j000960");
     const job = body(jobRun);
     const shadow = byPath(job)["etc/shadow"];
     assert.equal(shadow.sha256, null, "the digest of a credential store is not in the answer");
     assert.match(shadow.hash_status, /the digest is in the values file only/);
-    assert.equal(job.hashing.credential_store_digests_in_the_values_file, 3);
+    assert.equal(job.hashing.credential_store_digests_in_the_values_file, 4);
     assert.equal(job.hashing.not_attempted_credential_store_name, 0);
     const digest = createHash("sha256").update("root:x:1:::\n").digest("hex");
     assert.ok(!jobRun.stdout.includes(digest), "not in stdout");
@@ -758,13 +758,13 @@ test("the manifest example runs in a job: it names no out_file outside $OUT", as
 test("a contains pattern that can backtrack for ever is refused before anything is read, and the ordinary ones are not", async () => {
   await withCwd(async (cwd) => {
     await put(cwd, "inputs/r/" + "a".repeat(30) + "!", "x");
-    for (const bad of ["(a|a)+$", "(a+)+$", "(a*)*b", "((a|b)c)+", "(a)\\1"]) {
+    for (const bad of ["(a|a)+$", "(a+)+$", "(a*)*b", "((a|b)c)+", "(a)\\1", "(a?){30}a{30}", "a*a*a*a*a*a*a*b", ".*.*.*.*.*.*x"]) {
       // run with a deadline of the test's own: a tool that accepts the pattern would backtrack for minutes, and the suite must fail, not hang
       const run = spawnSync("python3", [INDEX], { cwd, input: JSON.stringify({ root: "inputs/r", contains: bad }), timeout: 15000, env: { ...process.env, AGENT_ID: "s1" } });
       assert.equal(run.signal, null, `${bad} was refused at once, not left to backtrack`);
-      assert.match(JSON.parse(run.stdout.toString()).error, /contains repeats a group|back-reference/, bad);
+      assert.match(JSON.parse(run.stdout.toString()).error, /outside the pattern language/, bad);
     }
-    for (const ok of ["NTUSER", "\\.(db|sqlite)$", "a+!", "^a{5,}", "(\\d+)-(\\d+)", "[a-z]+$"]) body(await tool(INDEX, cwd, { root: "inputs/r", contains: ok }));
+    for (const ok of ["NTUSER", "\\.(db|sqlite)$", "a+!", "^a{5,}", "(\\d+)-\\d{2}", "[a-z]+$"]) body(await tool(INDEX, cwd, { root: "inputs/r", contains: ok }));
   });
 });
 

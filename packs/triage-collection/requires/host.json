@@ -47,7 +47,7 @@
           }
         }
       },
-      "licence": "AGPL-3.0-or-later",
+      "licence": "AGPL-3.0 (declared, unverified)",
       "redistributable": false
     },
     {
@@ -59,7 +59,7 @@
         "brew": "https://github.com/orlikoski/CyLR/releases",
         "apt": "https://github.com/orlikoski/CyLR/releases"
       },
-      "licence": "GPL-3.0-or-later",
+      "licence": "GPL-3.0 (declared, unverified)",
       "redistributable": false,
       "not_in_image": "A collector, run on the live host whose files it pulls; the analysis image receives its zip and has no use for the program."
     }

@@ -84,8 +84,21 @@ const SHAPED: Array<[string, string]> = [
   ["https://x.example.test/blob?sv=2024&sig=abcdefghijklmnopqrstuvwx%3D&se=1", "abcdefghij"],
   ["mysql -u root -pS3cretPw db", "S3cretPw"],
   ["sshpass -p S3cretPw ssh host", "S3cretPw"],
+  ["token: expired; password: required", "required"],                                                     // the name says it is a secret; whatever follows is withheld
+  ["export DB_PASSWORD=Zebra7Quartz now", "Zebra7Quartz"],                                                 // a prefix joined with _ does not hide the name
+  ["adminPassword: Zebra7Quartz", "Zebra7Quartz"],
+  ['{"password": "Zebra7 Quartz"}', "Zebra7 Quartz"],
+  ["curl -u admin:Zebra7Quartz https://h.example.test/", "Zebra7Quartz"],
+  ["tool --password Zebra7Quartz --next", "Zebra7Quartz"],
+  ["glpat-Zq7Svb9Kt0-23456789ab", "Zq7Svb9Kt0"],                                                          // a GitLab token
+  ["sk_" + "live_Zq7Svb9Kt0123456789abcdef", "Zq7Svb9Kt0"],                                                // built in pieces: a literal of this shape is a push-protection hit
+  ["AIzaSyZq7Svb9Kt0123456789abcdefghijklmn", "Zq7Svb9Kt0"],
+  ["npm_Zq7Svb9Kt0123456789abcdefghijklmnop", "Zq7Svb9Kt0"],
+  ["ghp_Zq7Svb9\u200bKt00123456789abcdefghijKLMNOP", "Kt00123456789"],                                    // a zero-width character inside a token
+  ["xakia\u0000iosfodnn7examplezz", "iosfodnn7"],                                                         // a NUL inside a key id, in small letters
 ];
 const NOT_SHAPED = [
+  "/var/folders/n6/hn37q6pj7sj_9dmqqc2113800000gn/T/lib-eval-Ggw6dO/outside/secret.txt",             // the per-user temporary folder of a Mac, with an underscore in its id
   "{3F2504E0-4F89-11D3-9A0C-0305E82C3301}",                                          // a GUID
   "d41d8cd98f00b204e9800998ecf8427e",                                                // an md5
   "CMD.EXE-0BD30981.pf",                                                             // a Prefetch name
@@ -102,7 +115,6 @@ const NOT_SHAPED = [
   "C:\\Users\\a\\Library\\icon@2x.png",                                              // a file name with an @
   "Library/Caches/com.foo:bar@2x.png",
   "foo@example.com wrote to bar@example.org",
-  "token: expired; password: required",                                              // the words alone, no value after =
   "-----BEGIN CERTIFICATE-----\nMIIDdzCCAl+gAwIBAgIE\n-----END CERTIFICATE-----",    // a certificate is public
 ];
 
@@ -138,7 +150,7 @@ function ascii(text: string): string {
 const NAMES = ["collection_id", "collection_index"];
 
 test("every manifest has a use, a raised version, the sha256 of its script and a description that says what is and is not measured", async () => {
-  const versions: Record<string, number> = { collection_id: 4, collection_index: 5 };
+  const versions: Record<string, number> = { collection_id: 5, collection_index: 6 };
   for (const name of NAMES) {
     const manifest: Json = JSON.parse(await readFile(join(TOOLS, name, "manifest.json"), "utf8"));
     assert.ok(manifest.use?.names?.length >= (name === "collection_id" ? 5 : 1), `${name} says what it reads`);
@@ -147,6 +159,8 @@ test("every manifest has a use, a raised version, the sha256 of its script and a
     assert.ok(manifest.timeout_seconds >= 3600 && manifest.params.time_limit_seconds, `${name}: a deadline that ends before the kill`);
     assert.match(manifest.description, /does not say|not measured|does not measure|not read/i, `${name} says what it does not measure`);
     assert.match(manifest.description, /secret_output: true/, `${name} says the job runs with secret_output: true`);
+    assert.match(manifest.description, /Withholding is by shape\. Measured on random plants/, `${name} states the measured rates`);
+    assert.match(manifest.description, /A secret of another\s+shape is printed/, `${name} says what is printed`);
     assert.doesNotMatch(manifest.description, /recognise which collector|recognises the shape|undoing the rewrites|restor/i, `${name} still carries an old promise`);
   }
   const id: Json = JSON.parse(await readFile(join(TOOLS, "collection_id", "manifest.json"), "utf8"));

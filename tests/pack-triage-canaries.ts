@@ -255,17 +255,30 @@ def _(r):
 def _(r):
     p = rs(r, A62, 24); return "Cookie: session=" + p, [p]
 
+@shape("base36_lower_32", group="unlisted")
+def _(r):
+    s = rs(r, LOW36, 32); return s, [s]
+@shape("base36_upper_24", group="unlisted")
+def _(r):
+    s = rs(r, UP36, 24); return s, [s]
+@shape("lower_letters_24", group="residual")
+def _(r):
+    s = rs(r, string.ascii_lowercase, 24); return s, [s]
+@shape("base32_16", group="residual")
+def _(r):
+    s = rs(r, string.ascii_uppercase + "234567", 16); return s, [s]
+
 # ---- shapes no rule here claims; a test asserts they are printed ------------------------------------------------------
 @shape("plain_password_alone", group="residual")
 def _(r):
-    p = r.choice(["Summer", "Winter", "Dragon", "Monkey", "Shadow"]) + rs(r, string.digits, 4) + r.choice("!#$"); return p, [p]
+    p = r.choice(["Summer", "Winter", "Dragon", "Monkey", "Shadow"]) + rs(r, string.digits, 6) + r.choice("!#$"); return p, [p]
 @shape("passphrase_alone", group="residual")
 def _(r):
     w = ["correct", "horse", "battery", "staple", "garden", "lantern", "marble", "violet"]
     p = "-".join(r.choice(w) for _ in range(4)); return p, [p]
-@shape("short_random_8", group="residual")
+@shape("short_random_12", group="residual")
 def _(r):
-    p = rs(r, A62, 8); return p, [p]
+    p = rs(r, A62, 12); return p, [p]
 @shape("uuid_secret", group="residual")
 def _(r):
     h = rs(r, HEX, 32); p = "%s-%s-%s-%s-%s" % (h[:8], h[8:12], h[12:16], h[16:20], h[20:]); return p, [p]
