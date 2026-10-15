@@ -120,7 +120,7 @@ or `tools/`.
 | `aes_inverse_scan` | node | `s3472f0` | 2 | Find AES-128 and AES-256 key schedules stored as a decryption routine keeps them (InvMixColumns on the middle… |
 | `aes_schedule_scan` | node | `s3472f0` | 2 | Find AES-128 and AES-256 key schedules in a file or memory image, at every byte alignment, as the standard la… |
 | `aescrypt_v2_decrypt` | python3 | `s864a02` | 3 | Decrypt AES Crypt 3.10 Windows GUI v2 files (KDF: SHA256(IV||zeros16||UTF16LE pw)×8192). Returns plaintext pa… |
-| `amcache_apps` | python3 | `maintainer` | 2 | Application and file inventory from Amcache.hve (presence, not execution): path, hash, publisher, version and… |
+| `amcache_apps` | python3 | `maintainer` | 3 | Application and file inventory from Amcache.hve (presence, not execution): path, hash, publisher, version and… |
 | `browser_history` | python3 | `maintainer` | 3 | Query a browser history database from a copy of it and its -wal, -shm and -journal sidecars, made under the j… |
 | `catalog_grep` | python3 | `s864a02` | 1 | Grep catalog/AF-Case2.E01/p0/filelist.txt for a pattern; return matching lines. |
 | `catalog_search` | python3 | `sd1d100` | 10 | Search the evidence catalogue with a regex: a disk's filelist, timeline, bodyfile, fsstat or partitions, or a… |
@@ -155,7 +155,7 @@ or `tools/`.
 | `recyclebin_i` | python3 | `maintainer` | 3 | Parse $Recycle.Bin $I metadata (version 1 and 2 records, unsigned fields): the original path, original size a… |
 | `reg_hive_query` | python3 | `sbe1805` | 1 | Query a Windows registry hive file (regipy) and return a key's values and subkey names as JSON. |
 | `regkeys` | python3 | `sf4b205` | 4 | Dump a registry key's values and subkeys from a hive with regipy. Text values are decoded, REG_BINARY comes b… |
-| `regkv` | python3 | `s9f2005` | 3 | Read a Windows registry hive with regipy: a key's values (each with its registry type and length, read whole:… |
+| `regkv` | python3 | `s9f2005` | 4 | Read a Windows registry hive with regipy: a key's values (each with its registry type and length, read whole:… |
 | `sig_carve` | python3 | `s183906` | 3 | A signature scan: find where known file headers (magic bytes) occur in a binary file, in one pass over it, an… |
 | `sigscan_e01` | python3 | `s5d1001` | 3 | Scan an E01/raw image for a byte signature via TSK img_cat (logical media, not the EWF wrapper). Returns offs… |
 | `sqlite_query` | python3 | `s881002` | 7 | Run a read-only SQL query over a SQLite database file through Python's sqlite3 module and an authorizer that … |

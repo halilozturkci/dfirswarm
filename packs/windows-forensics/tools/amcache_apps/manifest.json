@@ -1,6 +1,6 @@
 {
   "name": "amcache_apps",
-  "description": "Application and file inventory from Amcache.hve (presence, not execution): path, hash, publisher, version and the dates the inventory holds, from both the older Root\\File layout (numbered values, named by the published mapping regipy's Amcache plugin follows) and the newer InventoryApplicationFile layout (named values), read together, every row naming its layout. An inventory: an entry is not proof that a program ran, and the absence of one is not proof that it did not. The PE linker timestamp (value f) is a 32-bit Unix-epoch value and is converted as one (raw value kept); the key's last-written time and the 11, 12 and 17 values are FILETIMEs (raw decimal and ISO 8601 UTC with seven fractional digits). A hash is returned as stored (sha1_raw) with its stripped form beside it where it has the four-zero shape; what range of the file was hashed is not established. It reports hive_dirty from the base block's sequence numbers and the transaction logs beside the hive; it replays none. status is complete or partial (rows_failed, problems).",
+  "description": "Application and file inventory from Amcache.hve (presence, not execution): path, hash, publisher, version and the dates the inventory holds, from both the older Root\\File layout (numbered values, named by the published mapping regipy's Amcache plugin follows) and the newer InventoryApplicationFile layout (named values), read together, every row naming its layout. An inventory: an entry is not proof that a program ran, and the absence of one is not proof that it did not. The PE linker timestamp (value f) is a 32-bit Unix-epoch value and is converted as one (raw value kept); the key's last-written time and the 11, 12 and 17 values are FILETIMEs (raw decimal and ISO 8601 UTC with seven fractional digits). A hash is returned as stored (sha1_raw) with its stripped form beside it where it has the four-zero shape; what range of the file was hashed is not established. It reports hive_dirty from the base block's sequence numbers and the transaction logs beside the hive; it replays none. Every list of subkeys and values is read through the size of the hive: a hive of N bytes holds at most N/76 keys and N/20 values, so an index that repeats one list (an ri element named again and again) is read to that bound, listed once per key, and said under problems; it is not followed. A value whose name is one of the tool's own fields (layout, key, volume, sha1_raw...) is kept as value:<name>, never over the field. Problems are a page (the first 40 inline, all in all_problems). The tool stops at its own time limit (85 seconds) and says partial; SIGTERM, SIGINT and SIGHUP end it with JSON and no temporary file; a result file is never replaced. The library's own messages are counted and never printed. status is complete or partial (problems, a time stop) and status_basis says which.",
   "params": {
     "hive": {
       "type": "string",
@@ -17,8 +17,8 @@
   "example": "{\"hive\": \"work/extracted/Amcache.hve\", \"limit\": 200}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 2,
-  "sha256": "5b6084c391f2d26a7e7d74603852b3475b7a42b4f07dc2f731726b6ec68e4d42",
+  "version": 3,
+  "sha256": "c49ab8e3a8d6334ff16b97b373c15f75f2a133c4b1b66b3a6725119efccbbd1e",
   "use": {
     "names": [
       "Amcache.hve"

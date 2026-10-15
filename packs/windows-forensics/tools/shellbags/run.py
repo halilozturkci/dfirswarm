@@ -148,9 +148,219 @@ class LosslessPage:
             result["all_results_format"] = "JSON Lines, one complete result per line"
         return result
 
+# BEGIN SHARED PLACE
+# The same text is in every windows-forensics tool that keeps a result file (a windows-forensics test holds the copies equal).
+# A result file that is there is never replaced by another result: a file of the same bytes is named again, any other result takes the next free
+# <stem>-<n><suffix>. The name is taken first, with an exclusive create, so a result written at the same moment cannot be replaced either.
+def same_bytes(a, b):
+    """Whether two files hold the same bytes (read in blocks, never whole)."""
+    try:
+        if os.path.getsize(a) != os.path.getsize(b):
+            return False
+        with open(a, "rb") as fa, open(b, "rb") as fb:
+            while True:
+                x, y = fa.read(1 << 20), fb.read(1 << 20)
+                if x != y:
+                    return False
+                if not x:
+                    return True
+    except OSError:
+        return False
+
+
+def place_without_replacing(tmp, path):
+    """Move the finished `tmp` to `path` and never replace what is there. The name is taken first, with an exclusive create, so a
+    result written at the same moment cannot be replaced either. Returns the path that holds it."""
+    for n in range(1, 1000):
+        candidate = path if n == 1 else path.with_name("%s-%d%s" % (path.stem, n, path.suffix))
+        try:
+            fd = os.open(str(candidate), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        except FileExistsError:
+            if not os.path.islink(candidate) and same_bytes(tmp, candidate):
+                os.unlink(tmp)
+                return candidate
+            continue
+        os.close(fd)
+        os.replace(tmp, candidate)             # only replaces the empty file this call just made
+        return candidate
+    raise OSError("no free name beside %s" % path)
+# END SHARED PLACE
+
+
+# BEGIN SHARED PAGE
+# The same text is in every windows-forensics tool that pages through LosslessPage (held equal by a windows-forensics test): LosslessPage replaces a file of the
+# same name; this one places its finished file with place_without_replacing, and registers itself so that a stop can remove its temporary file.
+PAGES = []
+
+
+class NoReplacePage(LosslessPage):
+    """LosslessPage whose finished file is placed without replacing an earlier file of the same name (a rerun with other limits, or one
+    the time limit stopped, must not leave a smaller file where a larger one was)."""
+
+    def __init__(self, tool, key, limit):
+        super().__init__(tool, key, limit)
+        PAGES.append(self)
+
+    def finish(self) -> dict:
+        result = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
+        if self._out is not None:
+            try:
+                self._out.flush()
+                os.fsync(self._out.fileno())
+                self._out.close()
+                assert self._tmp is not None
+                placed = place_without_replacing(self._tmp, self.path)
+            except OSError as exc:
+                self._cannot_write(exc)
+            self._tmp = None
+            self.path = placed
+            self.shown = self.shown[: len(self.shown) - len(Path(self.shown).name)] + placed.name
+            result["all_results"] = self.shown
+            result["all_results_format"] = "JSON Lines, one complete result per line"
+        return result
+# END SHARED PAGE
+
+
+# BEGIN SHARED STOP
+# The same text is in regkv, shellbags and amcache_apps (held equal by a windows-forensics test). SIGTERM, SIGINT and SIGHUP end the tool with JSON (status
+# interrupted, exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
+import signal
+import time
+
+STOP = {"last_word": None, "deadline": None}
+
+
+def set_deadline(seconds):
+    STOP["deadline"] = time.monotonic() + seconds
+
+
+def out_of_time():
+    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"]
+
+
+def _on_signal(signum, _frame):
+    for page in list(PAGES):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    last_word = STOP["last_word"]
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers(last_word=None):
+    STOP["last_word"] = last_word
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+
+
+def interrupted_answer(signum, **extra):
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "interrupted",
+                      "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
+                      "signal": signum, **extra}), flush=True)
+# END SHARED STOP
+
+
+# BEGIN SHARED HIVE BOUNDS
+# The same text is in regkv, shellbags and amcache_apps (a windows-forensics test holds the copies equal).
+# A hive of N bytes holds at most N // 76 key cells (an nk cell is at least 76 bytes) and N // 20 value cells (a vk cell is at least 20), however
+# many elements an index claims: regipy follows a subkey index (ri) element by element, so one list repeated by an index is read as many times as
+# it is repeated (a 61 KB hive listed a million keys and took 1.2 GB). Every list of subkeys and values is read through these bounds, and what is
+# past one is said, never followed.
+import itertools
+import logging
+import warnings
+
+KEY_CELL_BYTES = 76
+VALUE_CELL_BYTES = 20
+
+
+class LibraryLog(logging.Handler):
+    """regipy reports what it cannot parse through the logging module, and its text carries bytes of the value or the name it failed on
+    (for a text value that is neither UTF-16 nor UTF-8: the byte and its position). The text is not printed anywhere: it is counted."""
+    messages = 0
+    errors = 0
+
+    def emit(self, record):
+        LibraryLog.messages += 1
+        if record.levelno >= logging.ERROR:
+            LibraryLog.errors += 1
+
+
+def withhold_library_output():
+    logging.root.handlers[:] = [LibraryLog()]
+    warnings.simplefilter("ignore")
+
+
+class HiveBounds:
+    def __init__(self, hive_path, size=None):
+        size = os.path.getsize(hive_path) if size is None else size
+        self.hive_bytes = size
+        self.key_cells = max(size // KEY_CELL_BYTES, 1)
+        self.value_cells = max(size // VALUE_CELL_BYTES, 1)
+        self.keys_read = 0                      # subkey elements read over the whole walk
+        self.data_read = 0                      # bytes of value data read over the whole walk
+        self.repeats = 0                        # elements that named a key already named in the same list
+
+    def subkeys(self, node, where, problems):
+        """The distinct subkeys of `node`, at most the keys the hive can still hold; what is past that, or repeated, is a problem line."""
+        room = max(self.key_cells - self.keys_read, 0)
+        raw = list(itertools.islice(node.iter_subkeys() or [], room + 1))
+        if len(raw) > room:
+            raw = raw[:room]
+            problems.append({"where": where, "what": "subkeys",
+                             "error": "its subkey list yields more keys than a %d-byte hive can hold (%d keys at most, %d already read in this walk): "
+                                      "an index that repeats a list; the elements past that are not read" % (self.hive_bytes, self.key_cells, self.keys_read)})
+        self.keys_read += len(raw)
+        seen, distinct, repeated = set(), [], 0
+        for sub in raw:
+            header = getattr(sub, "header", None)
+            identity = (str(getattr(sub, "name", "")).lower(), getattr(header, "last_modified", None),
+                        getattr(header, "subkeys_list_offset", None), getattr(header, "values_list_offset", None))
+            if identity in seen:
+                repeated += 1
+                continue
+            seen.add(identity)
+            distinct.append(sub)
+        if repeated:
+            self.repeats += repeated
+            problems.append({"where": where, "what": "subkeys",
+                             "error": "its subkey list names %d key(s) more than once; each is listed once" % repeated})
+        return distinct
+
+    def values(self, node, where, problems, **kwargs):
+        """At most the values the hive can hold, as a list, and at most the data it can hold over the whole walk (a value list that names one big
+        record again and again reads that record every time); a key that lists more is a problem line."""
+        raw = []
+        for v in itertools.islice(node.iter_values(**kwargs), self.value_cells + 1):
+            if len(raw) >= self.value_cells:
+                problems.append({"where": where, "what": "values",
+                                 "error": "its value list yields more values than a %d-byte hive can hold (%d at most): the elements past that are not read"
+                                          % (self.hive_bytes, self.value_cells)})
+                break
+            data = getattr(v, "value", None)
+            self.data_read += len(data) if isinstance(data, (bytes, bytearray, str)) else sum(len(x) for x in data if isinstance(x, (str, bytes))) if isinstance(data, list) else 0
+            if self.data_read > 4 * self.hive_bytes:
+                problems.append({"where": where, "what": "values",
+                                 "error": "the values read in this walk hold more data than a %d-byte hive can: records that a value list names again and again; "
+                                          "the values past that are not read" % self.hive_bytes})
+                break
+            raw.append(v)
+        return raw
+# END SHARED HIVE BOUNDS
+
+
 FILETIME_EPOCH = datetime.datetime(1601, 1, 1, tzinfo=datetime.timezone.utc)
 BEEF0004 = 0xBEEF0004
-PARSER = "shellbags/3"
+PARSER = "shellbags/4"
+DEADLINE_SECONDS = 115            # the manifest allows 120
 MAX_DEPTH = 128
 DEFAULT_ROOTS = [
     r"Local Settings\Software\Microsoft\Windows\Shell\BagMRU",
@@ -161,7 +371,7 @@ DEFAULT_ROOTS = [
 
 
 def fail(message, **extra):
-    print(json.dumps({"error": message, **extra}))
+    print(json.dumps({"error": message, "status": "failed", "status_basis": "the tool stopped with an error (see error); no BagMRU key was walked", **extra}))
     raise SystemExit(1)
 
 
@@ -332,13 +542,23 @@ def binary(value):
     return None
 
 
-def values_of(key):
-    """The values of a key whole: regipy's iter_values cuts a binary value to 128 bytes unless told not to, and a
-    shell item is often longer. (A reader stub that does not take the argument is called without it.)"""
+def values_of(key, bounds, where, sink):
+    """The values of a key whole, at most as many as the hive can hold: regipy's iter_values cuts a binary value to 128 bytes unless told
+    not to, and a shell item is often longer. (A reader stub that does not take the argument is called without it.)"""
     try:
-        return key.iter_values(trim_values=False)
+        return bounds.values(key, where, sink, trim_values=False)
     except TypeError:
-        return key.iter_values()
+        return bounds.values(key, where, sink)
+
+
+class BoundProblems:
+    """What HiveBounds says about a list it cut or de-duplicated, as a line of the problem page."""
+
+    def __init__(self, page):
+        self.page = page
+
+    def append(self, item):
+        self.page.add({"key": item["where"], "why": item["error"]})
 
 
 def mru_order(values):
@@ -367,7 +587,7 @@ def rooted_key(hive, path):
     return hive.get_key("\\" + "\\".join(parts)) if parts else hive.root
 
 
-def nearest_key(hive, path):
+def nearest_key(hive, path, bounds=None):
     """Where `path` stops existing: the deepest key of it the hive has, the
     part that is not there, and the names that are. A caller who guessed a
     key (a printer key one Windows version keeps and another does not, a
@@ -376,26 +596,31 @@ def nearest_key(hive, path):
     parts = [p for p in str(path).replace("/", "\\").split("\\") if p]
     if parts and parts[0].lower() == (hive.root.name or "").lower():
         parts = parts[1:]
+    bounds = bounds or HiveBounds(None, 1 << 40)
     node, found = hive.root, []
     for part in parts:
-        kids = list(node.iter_subkeys())
+        kids = bounds.subkeys(node, "\\" + "\\".join(found), [])
         match = next((k for k in kids if k.name.lower() == part.lower()), None)
         if match is None:
-            return {"deepest_found": "\\" + "\\".join(found), "missing": part,
-                    "subkeys_there": sorted(k.name for k in kids)}
+            there = sorted(k.name for k in kids)
+            more = {"subkeys_there_count": len(there)} if len(there) > 200 else {}
+            return {"deepest_found": "\\" + "\\".join(found), "missing": part, "subkeys_there": there[:200], **more}
         node, found = match, found + [match.name]
     return {"deepest_found": "\\" + "\\".join(found), "missing": None, "subkeys_there": []}
 
 
-def safe_nearest_key(hive, path):
+def safe_nearest_key(hive, path, bounds=None):
     """nearest_key, which walks a hive that may be the damaged one: a failure of its own is said, not raised."""
     try:
-        return nearest_key(hive, path)
+        return nearest_key(hive, path, bounds)
     except Exception as exc:
         return {"deepest_found": None, "missing": None, "subkeys_there": [], "nearest_key_failed": "%s: %s" % (type(exc).__name__, exc)}
 
 
 def main():
+    withhold_library_output()
+    set_deadline(DEADLINE_SECONDS)
+    install_signal_handlers(lambda signum: interrupted_answer(signum))
     try:
         args = json.load(sys.stdin)
     except ValueError as exc:
@@ -432,6 +657,7 @@ def main():
     except Exception as exc:
         fail("regipy cannot open this hive", hive=hive_path, reason="%s: %s" % (type(exc).__name__, exc))
 
+    bounds = HiveBounds(hive_path)
     roots = [args["key"]] if args.get("key") else DEFAULT_ROOTS
     found_roots = []
     tried = []
@@ -439,16 +665,20 @@ def main():
         try:
             found_roots.append((rooted_key(hive, candidate), candidate))
         except Exception as exc:
-            tried.append({"key": candidate, "why": str(exc), **safe_nearest_key(hive, candidate)})
+            tried.append({"key": candidate, "why": str(exc), **safe_nearest_key(hive, candidate, bounds)})
     if not found_roots:
         fail("no BagMRU root in this hive", hive=hive_path, tried=tried)
 
-    key = [hive_path, [r[1] for r in found_roots], contains, max_depth]
-    entries = LosslessPage("shellbags", key, limit)
-    problems = LosslessPage("shellbags-problems", key, 40)
-    stopped = LosslessPage("shellbags-not-walked", key, 40)
-    orphans = LosslessPage("shellbags-orphan-values", key, 40)
-    counts = {"strings": 0, "orphans": 0, "other_values": 0, "walked": 0}
+    # The names of the whole results are made from what was asked about and never from `contains`: a needle can be a secret, and a name, like
+    # the answer, is not a place for it or for a digest of it (a digest is a way to confirm a guess offline). Whether a needle was given is in
+    # the name; two runs with different needles get the next free name, and a result file is never replaced.
+    key = [hive_path, [r[1] for r in found_roots], bool(contains), max_depth]
+    entries = NoReplacePage("shellbags", key, limit)
+    problems = NoReplacePage("shellbags-problems", key, 40)
+    bound_problems = BoundProblems(problems)
+    stopped = NoReplacePage("shellbags-not-walked", key, 40)
+    orphans = NoReplacePage("shellbags-orphan-values", key, 40)
+    counts = {"strings": 0, "orphans": 0, "other_values": 0, "walked": 0, "unread_for_time": 0}
 
     def item_entry(raw, slot_name, key_path, parent_path, depth, order, root_path, header=None, orphan=False):
         try:
@@ -489,10 +719,14 @@ def main():
                 problems.add({"key": key_path, "why": "its subkey list (offset %s) was already walked: a cycle, or a list two keys share; not walked again" % lid})
                 return
             visited.add(lid)
+        if out_of_time():
+            counts["unread_for_time"] += 1
+            stopped.add({"key": key_path, "depth": depth, "reason": "the tool's own time limit (%d seconds) was reached" % DEADLINE_SECONDS})
+            return
         if depth > max_depth:
             # Name the key where the walk stopped, and how much lies under it.
             try:
-                below = sum(1 for _ in key.iter_subkeys())
+                below = len(bounds.subkeys(key, key_path, bound_problems))
             except Exception as exc:
                 problems.add({"key": key_path, "why": "subkeys unreadable: %s" % exc})
                 return
@@ -501,14 +735,14 @@ def main():
             return
         values = {}
         try:
-            for value in values_of(key):
+            for value in values_of(key, bounds, key_path, bound_problems):
                 raw = binary(value.value)
                 values[value.name] = raw if raw is not None else value.value
         except Exception as exc:
             problems.add({"key": key_path, "why": "values unreadable: %s" % exc})
         order = mru_order(values)
         try:
-            subkeys = list(key.iter_subkeys())
+            subkeys = bounds.subkeys(key, key_path, bound_problems)
         except Exception as exc:
             problems.add({"key": key_path, "why": "subkeys unreadable: %s" % exc})
             return
@@ -538,13 +772,23 @@ def main():
     for root_key, root_path in found_roots:
         walk(root_key, root_path, "", 1, root_path)
 
+    if LibraryLog.messages:
+        problems.add({"key": None, "why": "regipy logged %d message(s) (%d of them errors) while reading; its text can hold bytes of a value or a name and is not shown" % (LibraryLog.messages, LibraryLog.errors)})
     page = entries.finish()
     problem_page = problems.finish()
     stopped_page = stopped.finish()
     orphan_page = orphans.finish()
+    reasons = []
+    if problem_page["matched"]:
+        reasons.append("%d problem(s) are named under problems" % problem_page["matched"])
+    if stopped_page["matched"]:
+        reasons.append("%d key(s) were not walked (not_walked_below_max_depth)" % stopped_page["matched"])
     out = {
         "parser": PARSER,
-        "status": "partial" if problem_page["matched"] or stopped_page["matched"] else "complete",
+        "status": "partial" if reasons else "complete",
+        "status_basis": "; ".join(reasons) if reasons else "every BagMRU key reached was walked to its end: no problem is named and no key was left unwalked",
+        "walk_stopped_by_time_limit": counts["unread_for_time"] > 0,
+        "library_messages_withheld": LibraryLog.messages,
         "hive": hive_path,
         "root": found_roots[0][1],
         "roots_walked": [r[1] for r in found_roots],

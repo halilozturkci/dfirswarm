@@ -602,7 +602,9 @@ test("shellbags walks the whole tree past the page and names the keys below max_
   // key deeper than max_depth was passed over without a word.
   await withCwd(async (cwd) => {
     const env = await stubModule(cwd, { "regipy/__init__.py": "", "regipy/registry.py": REGIPY_STUB });
-    await writeFile(join(cwd, "work", "UsrClass.dat"), JSON.stringify(bagHive()), "utf8");
+    // The stand-in reads this JSON as a hive. A real hive of a few dozen keys is tens of kilobytes (an nk cell is at least 76 bytes), and the tool reads
+    // a list only as far as the hive's size allows: trailing blanks give the file the size such a hive has.
+    await writeFile(join(cwd, "work", "UsrClass.dat"), JSON.stringify(bagHive()) + " ".repeat(65536), "utf8");
     const out = body<Page & {
       entries: { path: string; depth: number }[];
       entry_count: number;

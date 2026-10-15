@@ -17,7 +17,19 @@ const u16z = (text: string): Buffer => Buffer.concat([Buffer.from(text, "utf16le
  * bit set when the data is inline in the offset field, the type, flags 1 for an ASCII name).
  */
 export type HiveValue = { name: string; type: "sz" | "expand_sz" | "binary" | "dword" | "qword" | "multi_sz"; value: string | number | bigint | Buffer | string[] };
-export type HiveKey = { name: string; lastWritten?: bigint; values?: HiveValue[]; children?: HiveKey[] };
+export type HiveKey = {
+  name: string;
+  lastWritten?: bigint;
+  values?: HiveValue[];
+  children?: HiveKey[];
+  /**
+   * Write the key's subkey list as an "ri" index that names the one list of its children this many times (the layout's index root:
+   * its elements are offsets of leaf lists). A forged hive does this: 500 keys repeated 2,000 times read as a million.
+   */
+  indexRepeats?: number;
+  /** Write the key's value list with this many offsets, the first value's record repeated (the list may be longer than the values the key has). */
+  valueListRepeats?: number;
+};
 
 const REG_TYPE = { sz: 1, expand_sz: 2, binary: 3, dword: 4, multi_sz: 7, qword: 11 } as const;
 
@@ -70,6 +82,13 @@ export function hive(root: HiveKey, opts: { primarySeq?: number; secondarySeq?: 
       li.writeUInt16LE(childOffsets.length, 2);
       childOffsets.forEach((o, i) => li.writeUInt32LE(o, 4 + i * 4));
       listOffset = cell(li);
+      if (k.indexRepeats && k.indexRepeats > 1) {
+        const ri = Buffer.alloc(4 + k.indexRepeats * 4);
+        ri.write("ri", 0, "latin1");
+        ri.writeUInt16LE(Math.min(k.indexRepeats, 0xffff), 2);
+        for (let i = 0; i < k.indexRepeats; i++) ri.writeUInt32LE(listOffset, 4 + i * 4);
+        listOffset = cell(ri);
+      }
     }
     const valueOffsets = (k.values ?? []).map((v) => {
       const data = hiveValueData(v);
@@ -91,8 +110,9 @@ export function hive(root: HiveKey, opts: { primarySeq?: number; secondarySeq?: 
     });
     let valuesListOffset = 0xffffffff;
     if (valueOffsets.length) {
-      const list = Buffer.alloc(valueOffsets.length * 4);
-      valueOffsets.forEach((o, i) => list.writeUInt32LE(o, i * 4));
+      const total = k.valueListRepeats && k.valueListRepeats > valueOffsets.length ? k.valueListRepeats : valueOffsets.length;
+      const list = Buffer.alloc(total * 4);
+      for (let i = 0; i < total; i++) list.writeUInt32LE(valueOffsets[i % valueOffsets.length], i * 4);
       valuesListOffset = cell(list);
     }
     const name = Buffer.from(k.name, "latin1");
@@ -104,7 +124,7 @@ export function hive(root: HiveKey, opts: { primarySeq?: number; secondarySeq?: 
     nk.writeUInt32LE(childOffsets.length, 0x14);
     nk.writeUInt32LE(listOffset, 0x1c);
     nk.writeUInt32LE(0xffffffff, 0x20);
-    nk.writeUInt32LE((k.values ?? []).length, 0x24);
+    nk.writeUInt32LE(k.valueListRepeats && k.valueListRepeats > (k.values ?? []).length && (k.values ?? []).length ? k.valueListRepeats : (k.values ?? []).length, 0x24);
     nk.writeUInt32LE(valuesListOffset, 0x28);
     nk.writeUInt32LE(0xffffffff, 0x2c);
     nk.writeUInt32LE(0xffffffff, 0x30);

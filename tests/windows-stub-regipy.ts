@@ -35,8 +35,10 @@ class NoRegistrySubkeysException(RegipyException):
 `;
 
 const PY_REGISTRY = String.raw`
-import binascii, json
+import binascii, json, logging
 from regipy.exceptions import RegistryKeyNotFoundException, RegistryParsingException
+
+logger = logging.getLogger("regipy.utils")
 
 MAX_LEN = 256
 NAMES = {0: "REG_NONE", 1: "REG_SZ", 2: "REG_EXPAND_SZ", 3: "REG_BINARY", 4: "REG_DWORD", 5: "REG_DWORD_BIG_ENDIAN", 6: "REG_LINK",
@@ -54,7 +56,9 @@ def _decode(data, trim, max_len=MAX_LEN):
     except UnicodeDecodeError:
         try:
             value = data.decode().rstrip("\x00")
-        except Exception:
+        except Exception as ex:
+            # regipy 6.3 (utils.py): logger.warning(f"Could not parse data as string, formating to hex: {ex}"), which names the byte and its place
+            logger.warning(f"Could not parse data as string, formating to hex: {ex}")
             return data
     return value[:max_len] if trim else value
 
@@ -166,6 +170,10 @@ export type Node = {
   children?: Node[];
   /** Stand-in only: the key claims this many values (a record count that is not what the list holds). */
   declaredValues?: number;
+  /** The key's subkey list is an index that names the list of its children this many times (an "ri" that repeats a leaf list). */
+  indexRepeats?: number;
+  /** Real hive bytes only: the key's value list holds this many offsets, the first value's record repeated. */
+  valueListRepeats?: number;
 };
 
 const TYPE_NUMBER: Record<string, number> = { none: 0, sz: 1, expand_sz: 2, binary: 3, dword: 4, link: 6, multi_sz: 7, resource_list: 8, qword: 11 };
@@ -224,6 +232,12 @@ export function stubHive(root: Node, opts: { primarySeq?: number; secondarySeq?:
     }
     return first;
   })();
+  for (const [node, id] of ids) {
+    if (node.indexRepeats && node.indexRepeats > 1) {
+      const once = nodes[id].children as string[];
+      nodes[id].children = Array.from({ length: node.indexRepeats }, () => once).flat();
+    }
+  }
   opts.mutate?.(nodes, ids);
   return JSON.stringify({ root: rootId, nodes, primary: opts.primarySeq ?? 7, secondary: opts.secondarySeq ?? opts.primarySeq ?? 7 });
 }
@@ -305,7 +319,7 @@ function toHiveKey(node: Node, order: Placed[]): HiveKey {
     order.push({ name: v.name, retype: typeNumber(v) });
     return { name: v.name, type: "binary" as const, value: raw(v) };
   });
-  return { name: node.name, lastWritten: node.lastWritten, values, children };
+  return { name: node.name, lastWritten: node.lastWritten, values, children, indexRepeats: node.indexRepeats, valueListRepeats: node.valueListRepeats };
 }
 
 function applyRetypes(buf: Buffer, order: Placed[]): void {
