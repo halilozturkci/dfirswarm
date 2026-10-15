@@ -1,0 +1,3 @@
+# The virtualization pack's tools use the standard library only. Nothing to install.
+# qemu-img and Dissect (target-query) are declared by the base pack as optional programs; snapshot_chain_check
+# reads every format here natively and runs qemu-img only when asked and only if the image carries it.

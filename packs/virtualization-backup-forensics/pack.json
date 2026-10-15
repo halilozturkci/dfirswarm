@@ -1,0 +1,43 @@
+{
+  "id": "virtualization-backup-forensics",
+  "name": "Virtualization and Backup Forensics Pack",
+  "version": "1.0.0",
+  "description": "Method and tooling for the control plane of virtualization and backup: what hypervisor management records and VM configuration files say, whether a snapshot or disk chain is complete and which markers a consolidation or an unclean close may leave, what a backup catalogue, job record and retention setting show, and which recovery points survive. It reads exports and configuration files offline; it never runs hypervisor or backup software, reads no guest content, and supports only the products its tools list.",
+  "licence": "AGPL-3.0-or-later",
+  "authors": [
+    "DFIR Swarm"
+  ],
+  "depends": [
+    "computer-forensics-base>=1.2.0"
+  ],
+  "requires": {
+    "host": "requires/host.json",
+    "python": "requires/python.txt"
+  },
+  "secrets": [],
+  "checksums": {
+    "sha256": {
+      "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
+      "README.md": "c6559d01b76698c1534c062f921876be0346e2b76c8d45b2de8668e4d472ed90",
+      "tools/backup_audit_normalise/manifest.json": "ca90a623169af8d869f47d875fbda8e9bb389a31f610f4ce94bd24168ead193d",
+      "tools/backup_audit_normalise/run.py": "271a56583df7a8ee9234ae31fdf3a78b7e538b45fcc0187a457d55bfb2792062",
+      "tools/snapshot_chain_check/manifest.json": "c182af8cfe14be09e9039c119b351fec553c5c01351bed1d0a335053961a66c9",
+      "tools/snapshot_chain_check/run.py": "72a7e0b0749201db1a9f4d554e4e99e0a481924d97e6db50627e78ca5d2abfdb",
+      "tools/virtualization_inventory/manifest.json": "ed2f27fc3bdfc900e7baba4bd9c76e3415358ac80ed65e54a924a47683cc29f0",
+      "tools/virtualization_inventory/run.py": "49141b8c91f31848b0fb38eccea02f820bf56804b525fa70596d53df6ed9a563",
+      "tests/pack.test.sh": "35f4ae3f6e7e8ad51e0bc57a3904852dc550a7b23756951a21285a3497c213f4",
+      "skills/snapshots/chain-integrity.md": "6d07aefa2b94c37b17c8092a07f6a21deb24741094238c438ca28baf6551b955",
+      "skills/backup/catalogues-and-retention.md": "78d00413825ecd10e2317b98d70eb59b5bfc05fcd47ed84b6d42b15a69c0a9e3",
+      "skills/hypervisor/inventory.md": "f165cc51f3c83ebcbab1f28902004fbbc12e340c9077f4939d67c2f176c32921",
+      "requires/host.json": "064c01d7d1d7182f054ad3b8b4682b7f588d74d0baf9177aabf86fa9716b7ebe",
+      "requires/python.txt": "fa9a8f44dea09e8f1cdc03b90e14051ddf8ab2526fd075e952166541f7ec5bb3",
+      "skills/INDEX.md": "a3dde378b84c5b1e21b75f97f70f54bb513614e9c287bae0901ed649333f282d"
+    }
+  },
+  "tools": [
+    "backup_audit_normalise",
+    "snapshot_chain_check",
+    "virtualization_inventory"
+  ],
+  "skills": 3
+}

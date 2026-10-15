@@ -7,6 +7,7 @@
     "disk": [
       "computer-forensics-base",
       "encrypted-containers",
+      "virtualization-backup-forensics",
       "windows-forensics"
     ],
     "memory": [
@@ -45,6 +46,7 @@
       "ransomware-response",
       "reverse-engineering",
       "triage-collection",
+      "virtualization-backup-forensics",
       "windows-forensics"
     ],
     "web": {

@@ -1,0 +1,93 @@
+{
+  "name": "snapshot_chain_check",
+  "description": "Read the descriptors and headers of virtual-disk files and say how they chain: which file names which as its parent, whether the parent is in the set, whether the identity the child recorded is the identity the parent carries, which extents a descriptor needs and which are missing or short, and which markers a consolidation or an unclean close may leave. It reads, from their public descriptions and no others: VMware VMDK (a text descriptor, or the descriptor embedded in a sparse extent, versions 1 to 3; CID and parentCID as the 1 to 8 hexadecimal digits a writer prints, compared as numbers; parentFileNameHint, createType, extents; a COWD extent is recognised and not read), .vmx and .vmsd (only the disk file names and the snapshot database), VHD (footer, dynamic header, parent unique id, name and locators, with the checksums), VHDX (both headers with CRC-32C and sequence, region table, metadata, file parameters, virtual disk id, parent locator; a child's parent_linkage is held against the parent's DataWriteGuid of its current header, as MS-VHDX says it records, and the virtual disk id is information) and QCOW2 versions 2 and 3 (header, backing file and format, feature bits, header extensions, the internal snapshot table, streamed). A name inside a file is looked up among the files given and never opened by the tool; a parent outside the set is reported missing. It reads headers and descriptors, not disk content: a chain it calls complete has every named parent in the set and read, agreeing identities where the format records one (QCOW2 records none of its backing file, so only its name links it, and a raw backing file is a base that is present and not read), and every extent and external data file in the set; any other chain names the first problem from its leaf (cycle, too_deep, broken, parent_unreadable, identity_not_compared, identity_mismatch, extent_missing, data_file_missing) and lists every kind found. It is not a disk that boots or a statement about what the parent held when the child was made. A marker (an unclean-shutdown flag, a QCOW2 dirty bit, a VHDX log GUID, a delta no snapshot or configuration names, a running disk that is a delta while the snapshot database lists none, a lock artefact, an identity mismatch, two descriptors with one CID, parent names that disagree, an absent external data file) is a candidate with its observation beside it, never a verdict. The layouts are implemented from the format descriptions and are checked here against synthetic files; they have not been checked against files made by every product or version, and a version the tool does not know is reported and not read. Nothing is mounted, converted, repaired, merged or executed. Chains are found without recursion in one memoised pass, with a depth cap, cycle detection (a cycle no leaf reaches has a chain row of its own) and the clock checked throughout; a descriptor is read to 1 MiB, a .vmx or .vmsd over 16 MiB is named and not read, a .vmsd lists at most 20000 snapshot indexes (the rest are counted), and a QCOW2 snapshot table read short of its declared count is partial. A Hyper-V header that fails its own check (a VHD footer or dynamic-header checksum, both VHDX headers' or both region tables' CRC-32C; of the two region-table copies the first that holds is read) is read as written, named by a marker and makes the answer partial, and so does one VHDX header that fails its signature or CRC-32C (the other is taken as current) and a VHD whose end footer is missing (the start copy is read); a QCOW2 child that declares a qcow2 backing format over a raw file is parent_unreadable; and so does a chain the max_chain_depth limit stopped. Every answer carries `status` (complete, partial or failed) and `status_basis`, the pair the recipes' coverage.json carries; exit 0 means the engine ran, not that the examination is complete. SENSITIVE: every string the answer shows is judged by the field it fills, in three layers. (1) A name (VM, datastore, snapshot, storage, key), a path or file name, an identifier (GUID, VMFS volume id, naa./eui./t10./wwn- device id, VMware uuid, MAC, CID, number) and a simple value (an enum word, a version, a time) is shown only when it fits the plain grammar of its kind: letters, digits, space and . _ - ( ) + [ ] ' # , & ~ % $ (a path adds / \\\\ { } and a drive, storage or host:port prefix), no `=` or `@`, a `:` only between digits (or in an id), at most 160 characters for a name (96 for a simple value, 255 for each component of a path), no known token prefix, no secret's name beside a random-looking piece, and no run of 16 or more letters and digits that changes class as random text does unless it is a well-formed id, a default Windows machine name or made of words; anything else is `<withheld: N bytes, field F>` (a path component by component; when one is withheld as a piece of a base64 key, the pieces of the key next to it across a `/` are withheld with it, also a piece with something glued to it such as `local:`, `[ds1] ` or a quote; a padded 16- or 20-byte key with a `/` still shows 12 or more characters of itself in at most 0.3% of path fields; an iqn. or t10. device id is shown as an id only when it holds names, not a stretch of random text), and its original goes to the values file only with write_text in a job. (2) Every other text (a host name, a description, an annotation, an audit action or actor, a message) is judged on a copy with invisible and formatting characters taken out by Unicode category and the escapes of such characters decoded: user-info up to the last `@`, token-shaped runs, prefixed tokens (ghp_, AKIA, glpat-, sk_live_, SG., AIza and others), a PEM key, a run of more than 18 digits and the value after a name that says it is a secret (password, passwd, passphrase, pwd, secret, token, credential, api, access, account, private, master, shared, signing or encryption key, authorization, bearer, dsn, webhook url, connection string, ssh key, snmp community, pass, pw, auth, sig, sas, otp, psk, pin, with up to two digits after the name; any case, glued or CamelCase, anywhere in the string; and the value of --password, --passphrase, --secret, --token, --api-key, --client-secret (also written with one dash) and `set password`; a value in angle brackets is a value unless it is a placeholder word such as <redacted> or <password>) are withheld, in time linear in the length. (3) The serialised answer, every error answer and every paging-file row are read back and checked by a second check written apart from the first two (its own normaliser, named-secret search and class-transition test); a string it finds suspect is replaced by <withheld: N bytes>, its place and the check are listed in boundary.replaced_at, and the answer is partial. The judging of one run shares max_seconds and a cap of 400 million characters: past either, a string not judged before is withheld by its size, the answer is partial and boundary.stopped_by names the stop. Only the exact names of the files this run made are shown as they are; an extension that is not 1 to 10 letters or digits is counted under (other extensions). A short password used as a name, a token under 16 characters in a name, and the shapes listed with their measured rates in the pack's changelog are not recognised, so run as a job with secret_output: true. write_text: true (refused outside a job) creates $OUT/chain-values.jsonl, mode 0600, created before anything is read, holding the originals; a file already there is refused by name. ",
+  "params": {
+    "root": {
+      "type": "string",
+      "description": "A directory of the evidence files (a link is refused; links inside it are listed and never followed). Give root, paths, or both"
+    },
+    "paths": {
+      "type": "array",
+      "description": "Files named one by one (a link or a special file is named and never opened)"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Rows shown inline per list (default 200); every row is counted and, when there are more, the whole list is written as JSON Lines and named in pages.<list>.all_results"
+    },
+    "max_files": {
+      "type": "integer",
+      "description": "The most files taken into the set (default 20000, at most 200000); past it the answer is partial and says where the walk stopped"
+    },
+    "max_entries": {
+      "type": "integer",
+      "description": "The most directory entries listed (default 200000, at most 2000000)"
+    },
+    "max_depth": {
+      "type": "integer",
+      "description": "How deep the walk goes (default 16, at most 64); a deeper directory is named"
+    },
+    "max_seconds": {
+      "type": "number",
+      "description": "The time to spend (default 50, at most 50); what is left is named and the answer is partial; the reading stops at four fifths of it and the rest is kept for writing the rows and the answer, which stop at max_seconds itself (a stop is named in partial_reasons)"
+    },
+    "write_text": {
+      "type": "boolean",
+      "description": "Write the original of every name or value the answer shows withheld or shortened to one 0600 file under $OUT (default false). Refused unless the tool runs as a job, which must be run with secret_output: true"
+    },
+    "max_snapshots": {
+      "type": "integer",
+      "description": "The most internal QCOW2 snapshots read from one image (default 100000); the declared count is kept beside the number read"
+    },
+    "max_chain_depth": {
+      "type": "integer",
+      "description": "The longest chain followed (default 10000); a longer one is reported as too deep"
+    },
+    "qemu_img": {
+      "type": "string",
+      "description": "off (default), auto or require. auto runs `qemu-img info --output=json -f <format> <image>` once per parsed image of the set (never --backing-chain), when qemu-img is on PATH; require fails when it is not. A VMDK text descriptor and a QCOW2 image with an external data file are not given to it (qemu-img would open the files they name), nor an extent another descriptor names; a run that fails, times out or prints no JSON, and an eligible image left unchecked at qemu_img_max_images or the clock, make the answer partial. Its answer sits beside the native reading and replaces nothing"
+    },
+    "qemu_img_max_images": {
+      "type": "integer",
+      "description": "The most images qemu-img is run on (default 50)"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 60,
+  "example": "{\"root\": \"work/extracted/vm\"}",
+  "by": "maintainer",
+  "at": "2026-10-15T09:00:00.000Z",
+  "version": 1,
+  "use": {
+    "extensions": [
+      ".vmdk",
+      ".vhd",
+      ".vhdx",
+      ".avhd",
+      ".avhdx",
+      ".qcow2",
+      ".qcow",
+      ".vmsd",
+      ".vmx"
+    ],
+    "magic": [
+      {
+        "offset": 0,
+        "hex": "4b444d56"
+      },
+      {
+        "offset": 0,
+        "hex": "514649fb"
+      },
+      {
+        "offset": 0,
+        "hex": "7668647866696c65"
+      },
+      {
+        "offset": 0,
+        "hex": "636f6e6563746978"
+      }
+    ]
+  },
+  "sha256": "72a7e0b0749201db1a9f4d554e4e99e0a481924d97e6db50627e78ca5d2abfdb"
+}

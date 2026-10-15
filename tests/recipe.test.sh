@@ -45,8 +45,10 @@ jq -e '. == {"computer-forensics-base": "core"}' <<<"$jp" >/dev/null || fail "a 
 # A run's job images: each pack in its own profile, and a dependency every
 # profile holds with its dependents, not in the smallest image that holds it.
 jp="$(python3 "$R" job-profiles computer-forensics-base windows-forensics mobile-forensics encrypted-containers macos-forensics)"
-jq -e '. == {"computer-forensics-base": "disk", "windows-forensics": "disk", "mobile-forensics": "mobile", "encrypted-containers": "disk", "macos-forensics": "mobile"}' <<<"$jp" >/dev/null \
-  || fail "the base pack of a disk and mobile run should run in disk, not in memory: $jp"
+# disk and mobile each hold three of the run's packs (the base pack with two of the others); the tie goes to the profile of the
+# fewest packs, and disk holds four since virtualization-backup-forensics joined it, so the base pack runs in mobile (it was disk).
+jq -e '. == {"computer-forensics-base": "mobile", "windows-forensics": "disk", "mobile-forensics": "mobile", "encrypted-containers": "disk", "macos-forensics": "mobile"}' <<<"$jp" >/dev/null \
+  || fail "the base pack of a disk and mobile run should run in mobile (three of the run's packs, the fewest packs of the tie), not in memory or disk: $jp"
 jp="$(python3 "$R" job-profiles computer-forensics-base windows-forensics encrypted-containers linux-forensics)"
 [[ "$(jq -r '."computer-forensics-base"' <<<"$jp")" == disk ]] || fail "the base pack goes where most of the run's packs are (disk, two), not linux (one): $jp"
 [[ "$(python3 "$R" job-profiles computer-forensics-base memory-forensics | jq -r '."computer-forensics-base"')" == memory ]] || fail "with memory-forensics alone, the base pack runs in memory"
@@ -117,7 +119,7 @@ BY_HOLDING = {"encrypted-containers+ransomware-response", "memory-forensics+rans
 # Where the base pack's own jobs run (the third value of each entry). The set
 # of images a run boots does not change for a run without a pack of the new
 # profiles, but the base pack, which every profile holds, runs in another image
-# of that set in six of these runs, and in `core` when it is the run's only
+# of that set in ten of these runs, and in `core` when it is the run's only
 # pack. It was `memory` whenever `memory` was booted, wherever the other packs
 # ran; it is now the image most of the run's packs run in, then the one of the
 # fewest packs, then the name. Documented in images/README.md. Any other move of
@@ -126,10 +128,15 @@ PLACED = {
     BASE_PACK: ("memory", "core"),
     "computer-forensics-base+linux-forensics+memory-forensics+network-forensics": ("memory", "linux"),
     "computer-forensics-base+memory-forensics+reverse-engineering+ransomware-response": ("memory", "re"),
-    "computer-forensics-base+windows-forensics+encrypted-containers+memory-forensics+reverse-engineering+ransomware-response+network-forensics": ("memory", "disk"),
+    "computer-forensics-base+windows-forensics+encrypted-containers+memory-forensics+reverse-engineering+ransomware-response+network-forensics": ("memory", "re"),
     "computer-forensics-base+windows-forensics+memory-forensics+network-forensics+linux-forensics+mobile-forensics": ("memory", "mobile"),
     "linux-forensics+memory-forensics": ("memory", "linux"),
     "memory-forensics+mobile-forensics": ("memory", "mobile"),
+    # `disk` holds virtualization-backup-forensics beside its three packs, so a tie it used to win on the fewest packs goes to `re`.
+    "encrypted-containers+ransomware-response": ("disk", "re"),
+    "encrypted-containers+reverse-engineering": ("disk", "re"),
+    "ransomware-response+windows-forensics": ("disk", "re"),
+    "reverse-engineering+windows-forensics": ("disk", "re"),
 }
 
 def booted(run, base_job=False):

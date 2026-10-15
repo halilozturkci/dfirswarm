@@ -1,0 +1,95 @@
+{
+  "name": "backup_audit_normalise",
+  "description": "Turn a backup or hypervisor job record into canonical events and say what was not understood. It reads two things and no more: the Proxmox VE and Proxmox Backup Server task index (UPID lines: node, pid, start time, worker type, id, user, then end time and status; a Backup Server UPID carries one more field, the task counter, and escapes its worker id, which the event shows unescaped with the written form beside it) with a Proxmox VE task log (vzdump log lines and the TASK result line; a Backup Server task log is not read), and an export of ANY product (CSV, JSON Lines or XML) through a mapping the CALLER declares: which field is the time, the action, the result, the actor, the object, how the time is written and what each action means (category_map). The tool does not know a declared product and says so on every event. A product with no fixtures here (Veeam, Commvault, Rubrik, Cohesity, Acronis, NetBackup, vCenter and others) is `unsupported`: with format auto it is refused by name, and no vendor layout is ever guessed from a sample. Each event carries its file, line or record and byte offset, a category (from this tool's worker-type table, which is as the tool's author knows it and is to be checked against the product version, or from the caller's category_map; the raw action stays beside it), a result (ok, warning, error or unknown, with the reason) and a time read exactly as declared: epoch seconds are UTC by definition, an ISO 8601 time with an offset is converted, a time with no zone is NOT assumed UTC and stays raw unless a fixed offset is declared. An event says what a record says happened; it is not proof the operation took place as described, that a reported success was a usable restore point, or who did it. Lines are read a line at a time with a line cap; a CSV field is capped; XML is streamed record by record with every DOCTYPE and entity declaration refused, one record is bounded to 4 MiB of text and attributes (a record over it, or a field over 1 MiB, is counted and located, never read in part) and the reader stops when 16 MiB pass without an element or text ending; a declared field a JSON Lines or XML record does not have is counted per field, and a time or action absent makes the answer partial, and so does a declared time that never parses under the time_format given; aggregates hold at most 10000 distinct values; every line is an event, a blank line or a counted unparsed line (the first 200 are located by line and byte offset). A Backup Server status `unknown` is the result unknown (this tool's mapping), and the worker id is withheld in both its forms (as written and unescaped) whenever either form is. One XML file that cannot be read (an encoding the reader does not know included) fails that file and the run goes on. Every answer carries `status` (complete, partial or failed) and `status_basis`, the pair the recipes' coverage.json carries; exit 0 means the engine ran, not that the examination is complete. SENSITIVE: a log message or an error text can hold a path, a user name, a token or a repository string with user-info. The answer carries structured fields judged as below and the LENGTH of the free-text message; the message itself and the originals go to $OUT/audit-values.jsonl, mode 0600, only with write_text: true in a job run with secret_output: true. A time basis is a fixed phrase (never an exception's text). every string the answer shows is judged by the field it fills, in three layers. (1) A name (VM, datastore, snapshot, storage, key), a path or file name, an identifier (GUID, VMFS volume id, naa./eui./t10./wwn- device id, VMware uuid, MAC, CID, number) and a simple value (an enum word, a version, a time) is shown only when it fits the plain grammar of its kind: letters, digits, space and . _ - ( ) + [ ] ' # , & ~ % $ (a path adds / \\\\ { } and a drive, storage or host:port prefix), no `=` or `@`, a `:` only between digits (or in an id), at most 160 characters for a name (96 for a simple value, 255 for each component of a path), no known token prefix, no secret's name beside a random-looking piece, and no run of 16 or more letters and digits that changes class as random text does unless it is a well-formed id, a default Windows machine name or made of words; anything else is `<withheld: N bytes, field F>` (a path component by component; when one is withheld as a piece of a base64 key, the pieces of the key next to it across a `/` are withheld with it, also a piece with something glued to it such as `local:`, `[ds1] ` or a quote; a padded 16- or 20-byte key with a `/` still shows 12 or more characters of itself in at most 0.3% of path fields; an iqn. or t10. device id is shown as an id only when it holds names, not a stretch of random text), and its original goes to the values file only with write_text in a job. (2) Every other text (a host name, a description, an annotation, an audit action or actor, a message) is judged on a copy with invisible and formatting characters taken out by Unicode category and the escapes of such characters decoded: user-info up to the last `@`, token-shaped runs, prefixed tokens (ghp_, AKIA, glpat-, sk_live_, SG., AIza and others), a PEM key, a run of more than 18 digits and the value after a name that says it is a secret (password, passwd, passphrase, pwd, secret, token, credential, api, access, account, private, master, shared, signing or encryption key, authorization, bearer, dsn, webhook url, connection string, ssh key, snmp community, pass, pw, auth, sig, sas, otp, psk, pin, with up to two digits after the name; any case, glued or CamelCase, anywhere in the string; and the value of --password, --passphrase, --secret, --token, --api-key, --client-secret (also written with one dash) and `set password`; a value in angle brackets is a value unless it is a placeholder word such as <redacted> or <password>) are withheld, in time linear in the length. (3) The serialised answer, every error answer and every paging-file row are read back and checked by a second check written apart from the first two (its own normaliser, named-secret search and class-transition test); a string it finds suspect is replaced by <withheld: N bytes>, its place and the check are listed in boundary.replaced_at, and the answer is partial. The judging of one run shares max_seconds and a cap of 400 million characters: past either, a string not judged before is withheld by its size, the answer is partial and boundary.stopped_by names the stop. Only the exact names of the files this run made are shown as they are; an extension that is not 1 to 10 letters or digits is counted under (other extensions). A short password used as a name, a token under 16 characters in a name, and the shapes listed with their measured rates in the pack's changelog are not recognised, so run as a job with secret_output: true.",
+  "params": {
+    "path": {
+      "type": "string",
+      "description": "One export or log file (use paths for several)"
+    },
+    "paths": {
+      "type": "array",
+      "description": "Up to 100 files, all read as the same format; a link or special file is named and never opened"
+    },
+    "format": {
+      "type": "string",
+      "description": "auto (default: recognises only the Proxmox layouts), pve_task_index, pve_vzdump_log, declared_csv, declared_jsonl or declared_xml. Any other product is unsupported until fixtures for it exist"
+    },
+    "product": {
+      "type": "string",
+      "description": "The product's name. With format auto, a product this tool has no fixtures for is refused by name; with a declared format it is echoed as the caller's label and not verified"
+    },
+    "mapping": {
+      "type": "object",
+      "description": "For declared formats: which field is the time and the action (both required) and, optionally, the result, actor, object, host, job and message. CSV: column names. JSON Lines: dotted paths. XML: child paths such as a/b, @attr or tag@attr"
+    },
+    "category_map": {
+      "type": "object",
+      "description": "For declared formats: the raw action (case-insensitive) to a category: backup_job, backup_start, backup_end, backup_error, archive_created, restore, snapshot_create, snapshot_delete, snapshot_rollback, retention_prune, retention_gc, retention_remove, verification, sync, vm_create, vm_delete, vm_power, vm_start, clone, migrate, disk_delete, config_change, repository_change, login, task_end, other. An action not listed stays other, with its raw name"
+    },
+    "result_map": {
+      "type": "object",
+      "description": "For declared formats: the raw result text (case-insensitive) to ok, warning, error or unknown"
+    },
+    "time_format": {
+      "type": "string",
+      "description": "How the declared time is written: iso8601 (default), epoch_seconds, epoch_milliseconds or strptime:<format>"
+    },
+    "time_zone_offset_minutes": {
+      "type": "integer",
+      "description": "A fixed offset from UTC, in minutes, for times that carry no zone (also for the Proxmox vzdump log's 'Backup started at' line). Daylight saving is not accounted for. Without it such a time stays raw and time_utc is null"
+    },
+    "delimiter": {
+      "type": "string",
+      "description": "declared_csv: one character (default a comma)"
+    },
+    "has_header": {
+      "type": "boolean",
+      "description": "declared_csv: the first row names the columns (default true)"
+    },
+    "columns": {
+      "type": "array",
+      "description": "declared_csv: the column names when the file has no header row"
+    },
+    "record_tag": {
+      "type": "string",
+      "description": "declared_xml: the element name of one record"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Rows shown inline per list (default 200); every row is counted and, when there are more, the whole list is written as JSON Lines and named in pages.<list>.all_results"
+    },
+    "max_line_bytes": {
+      "type": "integer",
+      "description": "A line over this is located and not read (default 1048576, at least 4096)"
+    },
+    "max_file_bytes": {
+      "type": "integer",
+      "description": "A file over this is named and not read (default 8 GiB)"
+    },
+    "max_seconds": {
+      "type": "number",
+      "description": "The time to spend (default 50, at most 50); what is left is named and the answer is partial"
+    },
+    "write_text": {
+      "type": "boolean",
+      "description": "Write each event's free-text message, and the original of every name or value the answer shows withheld or shortened, to one 0600 file under $OUT (default false). Refused unless the tool runs as a job, which must be run with secret_output: true"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 60,
+  "example": "{\"path\": \"work/extracted/pve/tasks/index\", \"format\": \"pve_task_index\"}",
+  "by": "maintainer",
+  "at": "2026-10-15T09:00:00.000Z",
+  "version": 1,
+  "use": {
+    "names": [
+      "UPID:*",
+      "vzdump*.log",
+      "*backup*.csv",
+      "*audit*.csv",
+      "*jobs*.csv"
+    ]
+  },
+  "sha256": "271a56583df7a8ee9234ae31fdf3a78b7e538b45fcc0187a457d55bfb2792062"
+}
