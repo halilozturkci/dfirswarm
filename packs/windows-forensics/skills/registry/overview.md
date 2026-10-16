@@ -20,5 +20,5 @@ Use when you acquire or open an offline hive. Not for the answer fields of `regk
 - Time: a key's last-write time dates a change to that key, not to one value in it and not the key's first existence; software that restores or edits a hive can set it. Some values carry a time of their own with another meaning. Quote hive, full key path, value name and type, raw data, key time and tool version together.
 - A value's presence is configuration, not execution (`execution/overview`). Machine basics: `registry/system-profile`.
 
-Sensitive output: `regkv` withholds by name and place only (`registry/readers`).
+Sensitive output: `regkv` withholds by name, place and shape; a plain password is printed (`registry/readers`).
 Shows: the configuration a hive held in the state you acquired. Does not show: who set a value, that what it names was used, or that nothing else was there. Record: hive path and digest, sequence numbers, logs beside it, control set read.

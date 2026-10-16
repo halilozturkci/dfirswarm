@@ -18,4 +18,4 @@ Use when you read BagMRU, RecentDocs or OpenSavePidlMRU. Not for links (`artifac
 
 Shows: that a shell component opened that folder on this account, including folders on devices and shares that are gone. Does not show: who, that a file in it was opened, that the folder still exists, or when it was first or last viewed. Record: the root, full BagMRU path, value slot, MRU position, item type, and whether the name was decoded or found by strings.
 
-Sensitive output: `regkv` withholds secret-bearing values by name or place only; a shell item name is a path, not a credential.
+Sensitive output: `regkv` withholds secret-bearing values by name, place and shape; a shell item name is a path, withheld when it is not a plain name (`boundary`); `contains` looks at the path as printed, and unmatched entries with text withheld are counted in `contains_blind_entries` (partial).

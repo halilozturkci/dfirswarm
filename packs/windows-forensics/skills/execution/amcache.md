@@ -17,3 +17,4 @@ Use when you read Amcache.hve. Not for ShimCache (`execution/shimcache`) or for 
 - A negative names the hive, its sequence state and the layouts read; a user or volume whose hive was not collected is not a file with no entry.
 
 Shows: the inventory held an entry for that path and file. Does not show: that the program ran, who ran it or from which account, how often, that it finished, that the file was present at any date the entry does not carry, or (for a missing entry) that the file never existed there. Record: hive copy digest and state, layout per row, `sha1_raw` and `sha1`, raw FILETIMEs.
+Sensitive output: `amcache_apps` judges paths, names and publishers by shape (`boundary`): a name that is not plain is `<withheld N characters>`; `write_values` in a secret job writes the originals.

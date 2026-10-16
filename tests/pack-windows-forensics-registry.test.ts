@@ -73,7 +73,7 @@ dual("regkv returns a value whole with its type and length: a binary value past 
   // regipy trims a value to 256 characters by default, so a binary value came back cut at 128 bytes and a long
   // string at 256 characters, without a word; types were dropped.
   await withCwd(async (cwd) => {
-    const blob = Buffer.from(Array.from({ length: 700 }, (_, i) => i % 251));
+    const blob = Buffer.from(Array.from({ length: 700 }, (_, i) => (i % 31) + 1)); // control bytes: no printable view for the boundary to judge
     const longText = "C:\\Program Files\\" + "Directory\\".repeat(60) + "tool.exe";
     const env = await v.write(cwd, "work/NTUSER.DAT", {
       name: "ROOT",
@@ -764,7 +764,7 @@ dual("shellbags walks every BagMRU root the hive has, names them, and lists a nu
 dual("shellbags reads a shell item longer than 128 bytes whole, and refuses a max_depth that would exhaust the stack", async (v) => {
   // regipy's default read cut a binary value to 128 bytes, so a long item was decoded from its first 128.
   await withCwd(async (cwd) => {
-    const long = "a-very-long-folder-name-".repeat(14) + "end";
+    const long = "a-very-long-folder-name-".repeat(9) + "end";
     const bag: Node = {
       name: "BagMRU",
       values: [{ name: "0", type: "binary", value: folderItem("LONGFO~1", extensionBlock(7, long)) }, { name: "MRUListEx", type: "binary", value: mruList(0) }],
