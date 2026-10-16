@@ -57,10 +57,11 @@ import sqlite3
 import struct
 import sys
 import tempfile
+import time
 from pathlib import Path
 
-TOOL = {"name": "pcap_summary", "version": 4}
-PARSER = "pcap_summary/4"
+TOOL = {"name": "pcap_summary", "version": 5}
+PARSER = "pcap_summary/5"
 LINKTYPES = {0: "null", 1: "Ethernet", 9: "PPP", 101: "raw IP", 105: "802.11",
              113: "Linux cooked", 127: "802.11 radiotap", 228: "IPv4", 229: "IPv6",
              276: "Linux cooked v2"}
@@ -72,9 +73,178 @@ NG_BLOCKS = {0x0A0D0D0A: "section_header", 1: "interface_description", 2: "packe
 # secrets block holds key material: it is counted and never read out.
 NG_NOT_DECODED = {"name_resolution", "decryption_secrets", "custom"}
 MAX_RECORD = 64 << 20          # a record claiming more than this is a corrupt header, not a packet
-MAX_BLOCK = 1 << 28
+MAX_BLOCK = 1 << 28            # a block longer than this is not a block (skipped blocks are not read, only measured)
+MAX_PACKET_BLOCK = MAX_RECORD + (1 << 20)   # a packet block is read whole, so it is held to a packet's size plus its options
+MAX_OPTION_BLOCK = 1 << 20     # a section header, interface description or interface statistics block is read whole: options only
+DEFAULT_SECONDS = 540          # the tool's own clock; the manifest's limit is 600
+MAX_SECONDS = 570
 DEFAULT_TOP = 200
+MAX_INTERFACES = 10_000        # interface description blocks kept (one record each, about 3 KB resident); past it the file is unreadable from there
+MAX_SECTIONS = 10_000          # section headers in one capture; past it the same
+MAX_STATS_BLOCKS = 10_000      # interface statistics blocks kept
+LISTED_INLINE = 50             # interfaces, sections and statistics shown in the answer; the rest are in a file it names
+MANIFEST_SECONDS = 600         # the manifest's limit; the summary after the reading is clocked to end FINISH_MARGIN seconds before it
+FINISH_MARGIN = 15
 DEFAULT_MAX_MEMORY_TUPLES = 200_000
+
+# BEGIN SHARED WITHHOLDING
+# The same text is in pcap_extract, zeek_run, suricata_run and network_log_summary, so that the four tools withhold
+# the same strings; tests/pack-network-withholding.test.ts holds the copies equal. An identifier-shaped string is
+# withheld wherever the tool would print one: a name, a path component, a URL, a message that quotes either.
+COUNTS = {"names": 0, "urls": 0, "text": 0}
+# A run of name characters long enough to be a token. `=` is only a padding at the end (so a key= prefix stays);
+# `/` joins pieces of a base64 token and is handled apart, below.
+_RUN = re.compile(r"[A-Za-z0-9_+%-]{20,}={0,2}|[A-Za-z0-9_+%-]{14,}={2}")
+_SLASHED = re.compile(r"[A-Za-z0-9_+/%-]{30,}={0,2}")
+_HEX = re.compile(r"[0-9a-fA-F]{32,}")
+_PREFIXED = re.compile(r"(?:AKIA|ASIA)[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}"
+                       r"|xox[abeprs]-[A-Za-z0-9-]{10,}|sk-[A-Za-z0-9_-]{20,}"
+                       r"|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*"
+                       r"|(?i:basic|bearer)\s+[A-Za-z0-9+/=._~-]{8,}")
+# User-info: after `//` (a URL, or a scheme-relative one), or bare as name:password@host. A mailto: address is not one.
+_USERINFO = re.compile(r"(?<=//)[^/?#\s@]+(?=@)")
+_BARE_USERINFO = re.compile(r"(?<![\w.%+:/-])(?!mailto:)[\w.%+-]{1,64}:[^\s/@:]{1,128}(?=@[\w\[])")
+
+
+def _withheld(what, length, kind):
+    COUNTS[kind] = COUNTS.get(kind, 0) + 1
+    return ("<%s withheld %d characters>" % (what, length)) if what else ("<withheld %d characters>" % length)
+
+
+def _token_run(run):
+    """Is this run of name characters shaped like a token, and not like words, dates or versions?"""
+    if _HEX.search(run):
+        return True
+    chunks = [(m.group()[0].isdigit(), m.start(), m.end()) for m in re.finditer(r"[A-Za-z]+|[0-9]+", run)]
+    # digits packed between letters ("a9b2c7"), which words, dates and versions do not do
+    packed = 0
+    for i, (is_digit, start, end) in enumerate(chunks):
+        if not is_digit or end - start > 3:
+            continue
+        before = i > 0 and not chunks[i - 1][0] and chunks[i - 1][2] == start
+        after = i + 1 < len(chunks) and not chunks[i + 1][0] and chunks[i + 1][1] == end
+        packed += 1 if before or after else 0
+    if packed >= 3:
+        return True
+    letters = [c for c in run if c.isalpha()]
+    case_flips = sum(1 for a, b in zip(letters, letters[1:]) if a.islower() != b.islower())
+    if len(letters) >= 20 and case_flips >= max(8, 0.4 * len(letters)):
+        return True
+    if run.endswith("==") and len(run) >= 16:
+        return True
+    if run.endswith("=") and len(run) >= 24:
+        return True
+    return len(run) >= 40 and run.isalnum() and any(c.isdigit() for c in run) and any(c.isalpha() for c in run)
+
+
+def _randomish(piece):
+    """A piece of a path that is not a plain word: digits among letters, or capitals inside a word."""
+    if len(piece) < 4 or "." in piece or re.fullmatch(r"[A-Z][a-z]+", piece):
+        return False
+    letters = [c for c in piece if c.isalpha()]
+    mixed = any(c.islower() for c in letters) and any(c.isupper() for c in letters)
+    return (any(c.isdigit() for c in piece) and bool(letters)) or mixed
+
+
+def token_spans(text):
+    spans = [m.span() for m in _PREFIXED.finditer(text)]
+    for m in _RUN.finditer(text):
+        if _token_run(m.group()):
+            spans.append(m.span())
+    # A base64 token holds `/`: pieces too short to be one alone (an AWS-style secret has two) are caught as a whole.
+    for m in _SLASHED.finditer(text):
+        run = m.group()
+        if "/" in run and sum(1 for p in run.split("/") if _randomish(p)) >= 3 and re.search(r"[0-9+]", run):
+            spans.append(m.span())
+    # A flagged piece takes the random-looking pieces next to it across a `/`: the head of a token is not printed.
+    grown = []
+    for start, end in spans:
+        while start > 1 and text[start - 1] == "/":
+            m = re.search(r"[A-Za-z0-9_+%-]+$", text[:start - 1])
+            if not m or not _randomish(m.group()):
+                break
+            start = m.start()
+        while end < len(text) - 1 and text[end] == "/":
+            m = re.match(r"[A-Za-z0-9_+%-]+={0,2}", text[end + 1:])
+            if not m or not _randomish(m.group()):
+                break
+            end = end + 1 + m.end()
+        grown.append((start, end))
+    grown.sort()
+    merged = []
+    for start, end in grown:
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def token_shaped(text):
+    return bool(token_spans(text))
+
+
+def scrub(text, kind="text"):
+    """The text with every token-shaped run and every user-info withheld."""
+    text = _USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
+    text = _BARE_USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
+    out, last = [], 0
+    for start, end in token_spans(text):
+        out.append(text[last:start])
+        out.append(_withheld("token-shaped text", end - start, kind))
+        last = end
+    out.append(text[last:])
+    return "".join(out)
+
+
+def redact_url(url):
+    """A URL or request target without its user-info, its token-shaped path text, its query values or its fragment."""
+    rest, fragment = (url.split("#", 1) + [None])[:2]
+    rest, query = (rest.split("?", 1) + [None])[:2]
+    scheme = authority = ""
+    m = re.match(r"^((?:[A-Za-z][A-Za-z0-9+.-]*:)?//)([^/]*)(.*)$", rest, re.S)
+    if m:
+        scheme, authority, rest = m.group(1), m.group(2), m.group(3)
+        if "@" in authority:
+            userinfo, authority = authority.rsplit("@", 1)
+            authority = _withheld("userinfo", len(userinfo), "urls") + "@" + authority
+    out = scheme + authority + scrub(rest, "urls")
+    if query is not None:
+        pairs = []
+        for pair in query.split("&"):
+            name, eq, value = pair.partition("=")
+            pairs.append(scrub(name, "urls") + (eq + _withheld("", len(value), "urls") if eq else ""))
+        out += "?" + "&".join(pairs)
+    if fragment is not None:
+        out += "#" + _withheld("", len(fragment), "urls")
+    return out
+
+
+def cell(value):
+    """Text for one tab-separated cell or one printed path: no tab or line break, and a byte that was not UTF-8
+    (a lone surrogate) written as \\xNN, so that no writer raises on it."""
+    text = value if isinstance(value, str) else str(value)
+    out = []
+    for ch in text:
+        o = ord(ch)
+        if ch == "\\":
+            out.append("\\\\")
+        elif ch == "\t":
+            out.append("\\t")
+        elif ch == "\r":
+            out.append("\\r")
+        elif ch == "\n":
+            out.append("\\n")
+        elif 0xDC80 <= o <= 0xDCFF:
+            out.append("\\x%02x" % (o - 0xDC00))
+        elif 0xD800 <= o <= 0xDFFF:
+            out.append("\\u%04x" % o)
+        elif o < 0x20 or o == 0x7F:
+            out.append("\\x%02x" % o)
+        else:
+            out.append(ch)
+    return "".join(out)
+# END SHARED WITHHOLDING
 
 
 def describe(exc):
@@ -94,12 +264,18 @@ def cleanup():
 
 def fail(message, **extra):
     cleanup()
-    print(json.dumps({"error": message, "tool": TOOL, **extra}))
+    print(json.dumps({"error": message, "tool": TOOL, "status": "failed", "status_basis": "the tool stopped with an error (see error)", **extra}))
     raise SystemExit(1)
+
+
+PROGRESS = {"packets": 0, "stage": "arguments"}
 
 
 def _on_signal(signum, _frame):
     cleanup()
+    print(json.dumps({"tool": TOOL, "parser": PARSER, "status": "partial", "ok": False,
+                      "status_basis": "the tool was stopped by signal %d while it was %s; no summary had been answered yet" % (signum, PROGRESS["stage"]),
+                      "interrupted_by_signal": signum, "packets_read": PROGRESS["packets"]}), flush=True)
     os._exit(128 + signum)
 
 
@@ -263,6 +439,8 @@ class Info:
         self.section_options = []     # what a section header says about the capturing machine
         self.malformed_options = 0
         self.sections = 0
+        self.fraction_over_one_second = 0     # classic records whose fraction field is at or above one second's worth of ticks
+        self.captured_over_snap_length = 0    # records that hold more bytes than the snap length says could be kept
 
 
 def read_classic(fh, info):
@@ -305,6 +483,10 @@ def read_classic(fh, info):
             if len(header) < 16:
                 raise ValueError("truncated classic pcap packet header")
             sec, frac, incl, orig = struct.unpack(end + "IIII", header)
+            if frac >= tps:
+                info.fraction_over_one_second += 1
+            if snaplen and incl > snaplen:
+                info.captured_over_snap_length += 1
             if incl > MAX_RECORD:
                 raise ValueError("record declares a captured length of %d bytes, more than the %d this tool accepts for one packet" % (incl, MAX_RECORD))
             body = fh.read(incl)
@@ -333,7 +515,9 @@ def ng_options(body, at, end, info, owner=None):
 
 
 def text_of(raw):
-    return raw.decode("utf-8", "replace")
+    """Option text as printed: decoded with substitution and through the block of the pack. A capturing machine's own words
+    (its CPU, its system, an interface's description) are text from the evidence, and they are printed whole or not at all."""
+    return scrub(raw.decode("utf-8", "replace"))
 
 
 def read_pcapng(fh, info):
@@ -362,8 +546,8 @@ def read_pcapng(fh, info):
                 else:
                     raise ValueError("pcapng section has an invalid byte-order magic")
                 total = struct.unpack(end + "I", raw_total)[0]
-                if total < 28 or total > MAX_BLOCK:
-                    raise ValueError("pcapng section has an invalid block length")
+                if total < 28 or total > MAX_OPTION_BLOCK:
+                    raise ValueError("pcapng section header has an invalid length, or is longer than the %d bytes this tool reads whole" % MAX_OPTION_BLOCK)
                 rest = fh.read(total - 16)
                 trailer = fh.read(4)
                 if len(rest) != total - 16 or len(trailer) != 4 or struct.unpack(end + "I", trailer)[0] != total:
@@ -379,24 +563,36 @@ def read_pcapng(fh, info):
                     info.section_options.append(section)
                 info.blocks["section_header"] += 1
                 info.sections += 1
+                if info.sections > MAX_SECTIONS:
+                    raise ValueError("more than %d pcapng section headers: this tool keeps what each says about its machine, and stops reading here" % MAX_SECTIONS)
                 local = {}
                 continue
             block_type, total = struct.unpack(end + "II", header)
             if total < 12 or total > MAX_BLOCK:
                 raise ValueError("pcapng block has an invalid length")
+            name = NG_BLOCKS.get(block_type)
+            if name is None or name in NG_NOT_DECODED:
+                # A block this tool does not decode is measured, never read: it can be as long as the format allows, and a
+                # decryption secrets block is key material that is counted and not looked at.
+                fh.seek(total - 12, os.SEEK_CUR)
+                trailer = fh.read(4)
+                if len(trailer) != 4 or struct.unpack(end + "I", trailer)[0] != total:
+                    raise ValueError("truncated or inconsistent pcapng block")
+                if name is None:
+                    info.unknown["0x%08x" % block_type] += 1
+                    info.blocks["unknown"] += 1
+                else:
+                    info.blocks[name] += 1
+                    info.not_decoded["0x%08x %s" % (block_type, name)] += 1
+                continue
+            limit = MAX_PACKET_BLOCK if name in ("enhanced_packet", "packet_obsolete", "simple_packet") else MAX_OPTION_BLOCK
+            if total > limit:
+                raise ValueError("a pcapng %s block of %d bytes is longer than the %d this tool reads whole" % (name.replace("_", " "), total, limit))
             body = fh.read(total - 12)
             trailer = fh.read(4)
             if len(body) != total - 12 or len(trailer) != 4 or struct.unpack(end + "I", trailer)[0] != total:
                 raise ValueError("truncated or inconsistent pcapng block")
-            name = NG_BLOCKS.get(block_type)
-            if name is None:
-                info.unknown["0x%08x" % block_type] += 1
-                info.blocks["unknown"] += 1
-                continue
             info.blocks[name] += 1
-            if name in NG_NOT_DECODED:
-                info.not_decoded["0x%08x %s" % (block_type, name)] += 1
-                continue
             if name == "interface_description":
                 if len(body) < 8:
                     raise ValueError("pcapng interface description is shorter than its fixed part")
@@ -416,6 +612,8 @@ def read_pcapng(fh, info):
                 if opts.get(11) and opts[11][0]:
                     kind, payload = opts[11][0][0], opts[11][0][1:]
                     row["capture_filter"] = text_of(payload) if kind == 0 else "a compiled filter program (%d bytes)" % len(payload)
+                if len(info.interfaces) >= MAX_INTERFACES:
+                    raise ValueError("more than %d pcapng interface description blocks: this tool keeps one record for each, and stops reading here" % MAX_INTERFACES)
                 local[len(local)] = len(info.interfaces)
                 info.interfaces.append(row)
             elif name == "interface_statistics":
@@ -434,6 +632,8 @@ def read_pcapng(fh, info):
                                     (7, "packets_dropped_by_os"), (8, "packets_delivered_to_user")):
                     if opts.get(code) and len(opts[code][0]) == 8:
                         row[label] = struct.unpack(end + "Q", opts[code][0])[0]
+                if len(info.stats) >= MAX_STATS_BLOCKS:
+                    raise ValueError("more than %d pcapng interface statistics blocks: this tool keeps one record for each, and stops reading here" % MAX_STATS_BLOCKS)
                 info.stats.append(row)
             elif name in ("enhanced_packet", "packet_obsolete"):
                 if len(body) < 20:
@@ -446,6 +646,8 @@ def read_pcapng(fh, info):
                     raise ValueError("pcapng packet names an invalid interface or length")
                 index = local[iface]
                 row = info.interfaces[index]
+                if row["snap_length"] and incl > row["snap_length"]:
+                    info.captured_over_snap_length += 1
                 tps = row["ticks_per_second"]
                 ticks = (high << 32) | low
                 if name == "enhanced_packet" and len(body) > 20 + ((incl + 3) & ~3):
@@ -675,6 +877,16 @@ class Table:
         cursor = self.spill.db.execute("SELECT k, v FROM %s ORDER BY sk DESC, k" % self.name)
         for text, value in cursor:
             yield tuple(json.loads(text)), self.decode(json.loads(value))
+
+
+def table_count(table):
+    """How many keys the table holds, whether or not it was spilled."""
+    try:
+        if table.spilled:
+            return table.spill.db.execute("SELECT COUNT(*) FROM %s" % table.name).fetchone()[0]
+    except sqlite3.Error:
+        return None
+    return len(table.mem)
 
 
 # A tuple record: [packets, bytes_original, bytes_captured, a2b_original, b2a_original, a2b_captured, b2a_captured,
@@ -958,6 +1170,20 @@ def main():
     cap = args.get("max_memory_tuples", DEFAULT_MAX_MEMORY_TUPLES)
     if isinstance(cap, bool) or not isinstance(cap, int) or cap < 1:
         fail("max_memory_tuples must be a positive integer")
+    seconds_allowed = args.get("max_seconds", DEFAULT_SECONDS)
+    if isinstance(seconds_allowed, bool) or not isinstance(seconds_allowed, (int, float)) or not 1 <= seconds_allowed <= MAX_SECONDS:
+        fail("max_seconds must be a number from 1 to %d: the tool stops reading and answers with what it has before the manifest's 600-second limit" % MAX_SECONDS)
+    started = time.monotonic()
+    deadline = started + seconds_allowed
+    # The summary after the reading (ordering and writing the rows) has its own end, so a capture with millions of conversations still answers
+    # inside the manifest's limit: it is cut there, said so, and counted. PCAP_SUMMARY_FINISH_SECONDS exists for the tests.
+    try:
+        finish_seconds = float(os.environ.get("PCAP_SUMMARY_FINISH_SECONDS", ""))
+    except ValueError:
+        finish_seconds = None
+    finish_deadline = (time.monotonic() + finish_seconds) if finish_seconds is not None else max(deadline, started + MANIFEST_SECONDS - FINISH_MARGIN)
+    finish_cut = {}
+    PROGRESS["stage"] = "reading the capture"
 
     spill_dir = out_dir if out_dir else (os.path.join(os.environ["OUT"], "tool-output") if in_job() else None)
     spill = Spill(spill_dir)
@@ -971,6 +1197,7 @@ def main():
     truncated_by_protocol = collections.Counter()
     undissected_by_link = collections.Counter()
     first = last = None
+    file_problem = None
     totals = {"bo": 0, "bc": 0, "payload": 0, "with_payload": 0, "cut_packets": 0, "cut_bytes": 0, "within_headers": 0,
               "undissected_cut": 0, "inconsistent": 0, "untimed": 0, "nonfirst": 0, "matching": 0}
 
@@ -987,6 +1214,12 @@ def main():
             try:
                 for when, body, orig, index, raw in packets():
                     state["packets"] += 1
+                    if state["packets"] & 1023 == 0:
+                        PROGRESS["packets"] = state["packets"]
+                        if time.monotonic() > deadline:
+                            file_problem = {"kind": "time_limit", "packets_read": state["packets"], "bytes_consumed": fh.tell(),
+                                            "reason": "max_seconds (%s) ran out" % seconds_allowed}
+                            break
                     iface = info.interfaces[index]
                     iface["packets"] += 1
                     iface["bytes_original"] += orig
@@ -1066,10 +1299,9 @@ def main():
                         if flags & 0x04:
                             rec[RST] += 1
             except (ValueError, struct.error) as exc:
-                fail("capture ended malformed or truncated", path=path, reason=str(exc),
-                     packets_read=state["packets"], bytes_consumed=fh.tell(),
-                     note="Nothing past this point was read, and the packets before it are not summarised: a summary of part of a "
-                          "capture would read as the whole.")
+                # A cut-off or damaged capture is the usual case in an acquisition: the packets before the damage are summarised,
+                # and the answer says where the file stopped being readable and that nothing after that point is in it.
+                file_problem = {"kind": "malformed_or_truncated", "packets_read": state["packets"], "bytes_consumed": fh.tell(), "reason": str(exc)}
     except OSError as exc:
         fail("the capture could not be read (%s)" % describe(exc), path=path)
     except sqlite3.Error as exc:
@@ -1093,15 +1325,24 @@ def main():
         try:
             if grouping == "endpoint":
                 endpoints = Table("endpoints", cap, spill, merge_record, lambda r: r[BO], encode_record, decode_record)
+                aggregated = 0
                 for key, rec in tuples.rows():
+                    if aggregated & 255 == 255 and time.monotonic() > finish_deadline:
+                        # a sum over some of the tuples is not an endpoint's sum: no endpoint row is listed, and the answer says so
+                        finish_cut["endpoint_aggregation"] = {"written": aggregated, "unit": "tuples summed (no endpoint row is listed)", "of": table_count(tuples)}
+                        break
                     ekey, erec = endpoint_of(key, rec)
                     merge_record(endpoints.get(ekey, new_record), erec)
-                source = (endpoint_row(k, r, digits, with_syn_times) for k, r in endpoints.rows())
+                    aggregated += 1
+                source = iter(()) if "endpoint_aggregation" in finish_cut else (endpoint_row(k, r, digits, with_syn_times) for k, r in endpoints.rows())
                 spilled_here = lambda: tuples.spilled or endpoints.spilled  # noqa: E731
             else:
                 source = (tuple_row(k, r, digits, with_syn_times) for k, r in tuples.rows())
                 spilled_here = lambda: tuples.spilled  # noqa: E731
             for row in source:
+                if rows_page.total & 255 == 255 and time.monotonic() > finish_deadline:
+                    finish_cut["conversations"] = {"written": rows_page.total, "of": None if grouping == "endpoint" else table_count(tuples)}
+                    break
                 if tsv is not None:
                     if columns is None:
                         columns = list(row.keys())
@@ -1118,8 +1359,14 @@ def main():
             if tsv is not None and columns is None:
                 tsv.write("a\tb\tprotocol\n")
             for key, rec in talkers.rows():
+                if talker_page.total & 255 == 255 and time.monotonic() > finish_deadline:
+                    finish_cut["top_talkers"] = {"written": talker_page.total, "of": table_count(talkers)}
+                    break
                 talker_page.add({"address": key[0], "packets": rec[0], "bytes_original": rec[1], "bytes_captured": rec[2]})
             for key, rec in ports.rows():
+                if port_page.total & 255 == 255 and time.monotonic() > finish_deadline:
+                    finish_cut["top_ports"] = {"written": port_page.total, "of": table_count(ports)}
+                    break
                 port_page.add({"port": key[0], "packets": rec[0]})
             spilled = spilled_here() or talkers.spilled or ports.spilled
             pages = {conversations_name: rows_page.finish(), "top_talkers": talker_page.finish(), "top_ports": port_page.finish()}
@@ -1134,9 +1381,22 @@ def main():
     finally:
         spill.close()
 
+    PROGRESS["stage"] = "writing the result"
     unsupported = info.not_decoded + info.unknown
     unsupported_total = sum(unsupported.values())
     notes = []
+    if file_problem:
+        notes.append("THE CAPTURE WAS NOT READ TO ITS END (%s after %d packets, at byte %d of %d): everything below summarises the packets before that point and "
+                     "nothing after it; a summary of part of a capture is not a summary of the capture." %
+                     ("time limit" if file_problem["kind"] == "time_limit" else "malformed or truncated: " + file_problem["reason"],
+                      file_problem["packets_read"], file_problem["bytes_consumed"], os.path.getsize(path)))
+    if info.fraction_over_one_second:
+        notes.append("%d classic records hold a fraction field of one second or more (microsecond or nanosecond ticks): their time is the seconds "
+                     "field plus that fraction as written, which is later than the next second boundary; the field may be a writer's error."
+                     % info.fraction_over_one_second)
+    if info.captured_over_snap_length:
+        notes.append("%d records hold more bytes than the snap length says could be kept (captured_over_snap_length): the header and the data disagree."
+                     % info.captured_over_snap_length)
     if totals["cut_packets"]:
         notes.append("%d packets were captured shorter than they were on the wire (%d bytes cut): their content past the captured "
                      "bytes is not in this file." % (totals["cut_packets"], totals["cut_bytes"]))
@@ -1162,22 +1422,59 @@ def main():
     if any(i.get("epb_dropcount_total") for i in info.interfaces):
         notes.append("Some packet blocks carry a drop count (epb_dropcount_total on the interface): packets the capturing interface dropped just before them.")
 
-    shown_interfaces = [{k: v for k, v in row.items() if k != "digits"} for row in info.interfaces]
+    if file_problem:
+        status = "partial"
+        basis = ("the capture was not read to its end (%s, after %d packets): the summary covers the packets before that point" %
+                 ("max_seconds ran out" if file_problem["kind"] == "time_limit" else "it is malformed or truncated", file_problem["packets_read"]))
+    else:
+        status = "complete"
+        basis = "every packet record of the capture was read; the counts cover the whole file"
+    if finish_cut:
+        status = "partial"
+        cut_text = "; ".join("%s: %d of %s %s" % (name, c["written"], c["of"] if c["of"] is not None else "an unknown number", c.get("unit", "written")) for name, c in sorted(finish_cut.items()))
+        basis += ("; the ordering and writing of the lists after the reading ran out of time (%s): the lists stop there, the counts above them are whole" % cut_text
+                  if not file_problem else "; and the lists after the reading were cut at the end of their own time (%s)" % cut_text)
+        notes.append("The lists were cut at the end of the time the tool gives to ordering and writing them (%s). The rows are in order of bytes, so what is "
+                     "missing is the smallest. packets, the byte totals, the protocols and the times are whole; run it again with host or port to list the rest."
+                     % cut_text)
+    # Interfaces, statistics and sections are shown in a bounded number; every one is in a file the answer names.
+    lists = {}
+    for name, rows in (("interfaces", [{k: v for k, v in row.items() if k != "digits"} for row in info.interfaces]),
+                       ("interface_statistics", info.stats), ("section_options", info.section_options)):
+        lister = LosslessPage(name, LISTED_INLINE)
+        try:
+            for row in rows:
+                lister.add(row)
+            result = lister.finish()
+        except OSError as exc:
+            fail("the list of %s could not be written (%s)" % (name, describe(exc)), out_dir=out_dir)
+        lists[name] = {"shown": lister.page, "total": len(rows), "not_listed": len(rows) - len(lister.page), "file": result.get("all_results")}
+        if len(rows) > len(lister.page):
+            notes.append("%d %s are not listed inline: the first %d are, and all %d are in %s (JSON Lines)." % (len(rows) - len(lister.page), name.replace("_", " "), len(lister.page), len(rows), result.get("all_results")))
+    shown_interfaces = lists["interfaces"]["shown"]
     agreeing = {(i["link_type_id"], i["snap_length"]) for i in info.interfaces}
     single = shown_interfaces[0] if len(agreeing) == 1 and shown_interfaces else None
 
     print(json.dumps({
         "tool": TOOL, "parser": PARSER,
+        "status": status, "status_basis": basis,
+        "capture_read_to_the_end": file_problem is None,
+        "stopped_reading": file_problem,
         "path": path, "bytes": os.path.getsize(path), "format": info.format, "version": info.version,
         "link_type": single["link_type"] if single else None,
         "link_type_id": single["link_type_id"] if single else None,
         "snap_length": single["snap_length"] if single else None,
         "interfaces": shown_interfaces,
-        "interface_statistics": info.stats,
+        "interfaces_total": lists["interfaces"]["total"], "interfaces_not_listed": lists["interfaces"]["not_listed"], "interfaces_file": lists["interfaces"]["file"],
+        "interface_statistics": lists["interface_statistics"]["shown"],
+        "interface_statistics_total": lists["interface_statistics"]["total"], "interface_statistics_not_listed": lists["interface_statistics"]["not_listed"],
+        "interface_statistics_file": lists["interface_statistics"]["file"],
         "blocks": ({"total": sum(info.blocks.values()), "by_type": dict(info.blocks)} if info.format == "pcapng" else None),
         "unsupported_blocks": unsupported_total,
         "unsupported_block_types": dict(unsupported),
         "malformed_options": info.malformed_options,
+        "classic_records_with_fraction_over_one_second": info.fraction_over_one_second,
+        "records_captured_over_snap_length": info.captured_over_snap_length,
         "sections": info.sections if info.format == "pcapng" else None,
         "packets": state["packets"],
         "packets_without_timestamp": totals["untimed"],
@@ -1187,7 +1484,10 @@ def main():
         "last_packet_raw": raw_time(last[1]) if last else None,
         "duration_ns": (last[0] - first[0]) if first and last else None,
         "duration_seconds": ((last[0] - first[0]) / 1e9) if first and last else None,
-        "section_options": info.section_options,
+        "section_options": lists["section_options"]["shown"],
+        "section_options_total": lists["section_options"]["total"], "section_options_not_listed": lists["section_options"]["not_listed"],
+        "section_options_file": lists["section_options"]["file"],
+        "listing_cut_by_its_own_clock": finish_cut or None,
         "bytes_original_total": totals["bo"],
         "bytes_captured_total": totals["bc"],
         "payload_bytes_captured_total": totals["payload"],

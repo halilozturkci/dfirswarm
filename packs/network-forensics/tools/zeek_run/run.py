@@ -44,6 +44,7 @@ recognised. Zeek's own log files are kept whole: they are the evidence, and they
 import datetime
 import errno
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -54,8 +55,8 @@ import sys
 import time
 from pathlib import Path
 
-TOOL = {"name": "zeek_run", "version": 4}
-PARSER = "zeek_run/4"
+TOOL = {"name": "zeek_run", "version": 5}
+PARSER = "zeek_run/5"
 DEFAULT_TIMEOUT = 900
 MAX_TIMEOUT = 1100            # the manifest's outer limit is 1200
 DEFAULT_POLICIES = ["policy/frameworks/files/hash-all-files"]
@@ -67,6 +68,8 @@ HASH_FIELDS = ("md5", "sha1", "sha256")
 SECRET_FIELD = re.compile(r"(?i)(^|[._])(pass(word|wd)?|pwd|secret|token|cookie|community|credentials?|authorization|api_?key|session_?id)($|[._])")
 URL_FIELD = re.compile(r"(?i)^(uri|url|full_url|referr?er|origin|post_uri)$")
 MAX_NAMES = 10_000
+MAX_SEPARATOR = 8              # a separator, an empty-field or an unset-field marker longer than this is a header problem
+MAX_JSON_DEPTH = 64            # a JSON log record nested deeper than this is located and kept raw, not parsed (and never a recursion error)
 
 # BEGIN SHARED WITHHOLDING
 # The same text is in pcap_extract, zeek_run, suricata_run and network_log_summary, so that the four tools withhold
@@ -238,7 +241,7 @@ def in_job():
 
 
 def fail(message, **extra):
-    print(json.dumps({"error": scrub(message), "tool": TOOL, **extra}))
+    print(json.dumps({"error": scrub(message), "tool": TOOL, "status": "failed", "status_basis": "the tool stopped with an error (see error)", **extra}))
     raise SystemExit(1)
 
 
@@ -266,12 +269,17 @@ def resolve_output(out, what="output"):
 
 
 # BEGIN SHARED PROCESS
-# The same text is in pcap_extract, zeek_run, suricata_run and the network-capture recipe; tests/pack-network-process.test.ts
-# holds the copies equal. A program an engine tool runs is started in THIS tool's process group, never in a session of
+# The same text is in pcap_extract, zeek_run, suricata_run, the network-capture recipe and computer-forensics-base's
+# archive_extract; tests/pack-network-withholding.test.ts holds the four network copies equal and tests/pack-base-shared.test.ts
+# holds archive_extract's to them. A program an engine tool runs is started in THIS tool's process group, never in a session of
 # its own: the harness ends a tool that runs too long, or is aborted, by killing the tool's group (process.kill(-pid,
 # SIGKILL)), and an engine in a group of its own goes on writing into the output directory after the tool is gone. On
 # Linux the kernel is also asked to kill it if the tool dies. A deadline kills the program and what it started by
-# walking the process tree, and SIGTERM, SIGINT and SIGHUP do the same and then give the tool a last word.
+# walking the process tree, and SIGTERM, SIGINT and SIGHUP do the same and then give the tool a last word. Only what is
+# below a program this tool started and has not yet waited for is ever signalled: the walk starts at that program's pid
+# and nowhere else, and a program that has been waited for (its pid may be another process's by now) is left alone. The
+# walk has no bound but the number of processes. Two cases leave the tree running: a ps that needs more than PS_WAIT
+# seconds, and a sandbox that denies both libproc and ps (macOS).
 try:
     import ctypes
 except ImportError:  # pragma: no cover
@@ -294,8 +302,52 @@ def spawn(argv, **kwargs):
     return subprocess.Popen(argv, **kwargs)
 
 
+def _children_libproc(pid):
+    """The direct children of `pid` on macOS, from libproc (macOS only: proc_listchildpids is not a symbol of the other
+    BSDs; a library call, so no program is started and nothing can be slow); None when the library, the symbol or the
+    call is not there."""
+    try:
+        import ctypes.util
+        lib = ctypes.CDLL(ctypes.util.find_library("proc") or "/usr/lib/libproc.dylib", use_errno=True)
+        lib.proc_listchildpids.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
+        lib.proc_listchildpids.restype = ctypes.c_int
+        size = 256
+        while size <= 1 << 16:
+            buf = (ctypes.c_int * size)()
+            if lib.proc_listchildpids(pid, buf, ctypes.sizeof(buf)) < 0:
+                return None
+            found = []
+            for value in buf:
+                if value <= 0:
+                    break
+                found.append(int(value))
+            if len(found) < size:
+                return found
+            size *= 4
+        return found
+    except Exception:  # noqa: BLE001 - no library, no symbol: the caller falls back
+        return None
+
+
+PS_WAIT = 10    # seconds the ps fallback is given: ps is slow on a heavily loaded host, and a tree that is not found is a program left running
+
+
+def _below(kids, pid):
+    found, seen, stack = [], {pid}, [pid]
+    while stack:
+        for child in kids.get(stack.pop(), []):
+            if child not in seen:
+                seen.add(child)
+                found.append(child)
+                stack.append(child)
+    return found
+
+
 def descendants(pid):
-    """Every process below `pid`, from /proc where there is one, else from ps."""
+    """Every process below `pid` (never one beside it): from /proc where there is one, else from libproc, else from ps
+    (given PS_WAIT seconds). libproc is believed when it lists a child; an empty answer is believed only when libproc has
+    just listed this tool's own child `pid` (a library that answers nothing for a live child is not working, as in a
+    sandbox that denies it), and otherwise ps is asked."""
     kids = {}
     try:
         if os.path.isdir("/proc/self"):
@@ -308,24 +360,34 @@ def descendants(pid):
                     except (OSError, IndexError, ValueError):
                         continue
         else:
-            out = subprocess.run(["ps", "-A", "-o", "pid=,ppid="], capture_output=True, text=True, timeout=10).stdout
+            first = _children_libproc(pid)
+            if first:
+                found, seen, stack = list(first), {pid, *first}, list(first)
+                while stack:
+                    for child in _children_libproc(stack.pop()) or []:
+                        if child not in seen:
+                            seen.add(child)
+                            found.append(child)
+                            stack.append(child)
+                return found
+            if first is not None and pid in (_children_libproc(os.getpid()) or []):
+                return []
+            out = subprocess.run(["ps", "-A", "-o", "pid=,ppid="], capture_output=True, text=True, timeout=PS_WAIT).stdout
             for line in out.splitlines():
                 parts = line.split()
                 if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
                     kids.setdefault(int(parts[1]), []).append(int(parts[0]))
     except (OSError, subprocess.SubprocessError):
         return []
-    found, stack = [], [pid]
-    while stack:
-        for child in kids.get(stack.pop(), []):
-            found.append(child)
-            stack.append(child)
-    return found
+    return _below(kids, pid)
 
 
 def kill_tree(proc):
     """Kill the program and everything it started. The children are listed first: once the parent is gone they are
-    adopted by init and can no longer be found below it."""
+    adopted by init and can no longer be found below it. A program already waited for is not touched: its pid is free to
+    be another process's, and the walk below it would be that process's children."""
+    if proc.poll() is not None:
+        return
     victims = descendants(proc.pid)
     try:
         proc.kill()
@@ -417,6 +479,32 @@ def unescape(text):
     return raw.decode("utf-8", "surrogateescape")
 
 
+def valid_separator(text):
+    return 1 <= len(text) <= MAX_SEPARATOR
+
+
+def json_depth(line):
+    """The deepest nesting of brackets in a JSON text, counted without recursion and without parsing."""
+    depth = deepest = 0
+    in_string = escaped = False
+    for ch in line:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+        elif ch == '"':
+            in_string = True
+        elif ch in "[{":
+            depth += 1
+            deepest = max(deepest, depth)
+        elif ch in "]}":
+            depth -= 1
+    return deepest
+
+
 class BadValue(Exception):
     pass
 
@@ -476,6 +564,7 @@ class LogReader:
         self.malformed = []
         self.malformed_total = 0
         self.header_problem = None
+        self.sep_bad = {}                   # directive -> why, for an empty or over-long separator directive; cleared by a good one
         self.lines = 0
         self.hash_keys = set()
         self.times_not_decoded = 0
@@ -518,16 +607,27 @@ class LogReader:
                 line = raw.rstrip(b"\n").decode("utf-8", "surrogateescape")
                 if line.startswith("#"):
                     if line.startswith("#separator"):
-                        separator = unescape(line.split(" ", 1)[1]) if " " in line else "\t"
+                        wanted = unescape(line.split(" ", 1)[1]) if " " in line else "\t"
+                        if valid_separator(wanted):
+                            separator = wanted
+                            self.sep_bad.pop("#separator", None)
+                        else:
+                            self.sep_bad["#separator"] = "the #separator is empty or longer than %d characters: the columns cannot be told apart" % MAX_SEPARATOR
                     else:
                         parts = line.split(separator)
                         key, rest = parts[0], parts[1:]
-                        if key == "#set_separator" and rest:
-                            set_separator = unescape(rest[0])
-                        elif key == "#empty_field" and rest:
-                            empty = unescape(rest[0])
-                        elif key == "#unset_field" and rest:
-                            unset = unescape(rest[0])
+                        if key in ("#set_separator", "#empty_field", "#unset_field") and rest:
+                            value = unescape(rest[0])
+                            if not valid_separator(value):
+                                self.sep_bad[key] = "the %s is empty or longer than %d characters" % (key, MAX_SEPARATOR)
+                                continue
+                            self.sep_bad.pop(key, None)
+                            if key == "#set_separator":
+                                set_separator = value
+                            elif key == "#empty_field":
+                                empty = value
+                            else:
+                                unset = value
                         elif key == "#fields":
                             self.fields, self.types, self.header_problem = rest, None, None
                             self.format = self.format or "tsv"
@@ -548,9 +648,12 @@ class LogReader:
                         self._flag(self.lines, start, "a record before any #fields header: the columns are unknown", raw=line)
                         continue
                 if self.format == "json":
+                    if line.count("[") + line.count("{") > MAX_JSON_DEPTH and json_depth(line) > MAX_JSON_DEPTH:
+                        self._flag(self.lines, start, "a JSON line nested deeper than %d levels was not parsed" % MAX_JSON_DEPTH, raw=line)
+                        continue
                     try:
                         record = json.loads(line)
-                    except ValueError as exc:
+                    except (ValueError, RecursionError) as exc:
                         self._flag(self.lines, start, "not valid JSON (%s)" % str(exc)[:80], raw=line)
                         continue
                     if not isinstance(record, dict):
@@ -562,6 +665,9 @@ class LogReader:
                         if not record["ts_utc"]:
                             self.times_not_decoded += 1
                 else:
+                    if self.sep_bad:
+                        self._flag(self.lines, start, "; ".join(self.sep_bad.values()), raw=line)
+                        continue
                     cols = line.split(separator)
                     if self.header_problem:
                         self._flag(self.lines, start, self.header_problem, raw=line)
@@ -596,15 +702,57 @@ def withheld_text(length):
 
 
 # A string that is an identifier, a hash, a fingerprint, an address or a time stays as written; every other string is
-# scrubbed, since a record's free text (a notice's msg, a weird's addl, a file name, a header) can quote anything.
-KEEP_FIELD = re.compile(r"(?i)^(ts|uid|fuid|uids|fuids|conn_uids|md5|sha1|sha256|ja3s?|ja4[a-z0-9_]*|hassh[a-z0-9_]*|community_id|proto|service|conn_state|"
-                        r"history|level|id\.(orig|resp)_[hp]|[a-z_]*_h|[a-z_]*_p|[a-z_]*_utc)$")
+# scrubbed, since a record's free text (a notice's msg, a weird's addl, a file name, a header) can quote anything. What
+# counts as one of those is decided per log and per kind of value, not by a bare field name: `service` is a list of
+# analyzer names in conn.log and a service principal name from the wire in kerberos.log.
+KEEP_FIELD = re.compile(r"(?i)^(ts|uid|fuid|uids|fuids|conn_uids|md5|sha1|sha256|ja3s?|ja4[a-z0-9_]*|hassh[a-z0-9_]*|community_id|proto)$")
+KEEP_BY_LOG = {"conn": frozenset(("service", "conn_state", "history"))}
+ADDRESS_FIELD = re.compile(r"(?i)^(id\.(orig|resp)_h|[a-z_]*_h)$")
+DERIVED_TIME = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$")
+TS_TEXT = re.compile(r"^-?[0-9]+(?:\.[0-9]{1,9})?$")
+
+
+def is_address(text):
+    try:
+        ipaddress.ip_address(text)
+        return True
+    except ValueError:
+        return False
+
+
+def kept_as_written(stem, key, value):
+    """Is this value one of the typed kinds that is printed as written: a number or a bool (never text), an identifier or
+    hash Zeek made, a time, an IP address in an address field."""
+    if isinstance(value, list):
+        return all(kept_as_written(stem, key, v) for v in value)
+    if isinstance(value, dict):
+        return False
+    if not isinstance(value, str):
+        return True
+    if key == "ts":
+        return bool(TS_TEXT.match(value)) or bool(DERIVED_TIME.match(value))
+    if key.endswith("_utc"):
+        return bool(DERIVED_TIME.match(value))
+    if KEEP_FIELD.match(key) or key in KEEP_BY_LOG.get(stem, ()):
+        return True
+    return bool(ADDRESS_FIELD.match(key)) and is_address(value)
+
+
+def shown_url(url):
+    """A URL as printed: the block's own rule for user-info, token-shaped path text, query values and fragment, and the
+    authority through the same host rule as every other string (a token in a sub-domain is withheld)."""
+    out = redact_url(url)
+    m = re.match(r"^((?:[A-Za-z][A-Za-z0-9+.-]*:)?//)([^/?#]*)(.*)$", out, re.S)
+    if not m:
+        return out
+    prefix, _, host = m.group(2).rpartition("@")
+    return m.group(1) + (prefix + "@" if prefix else "") + (scrub(host) if host and not is_address(host.strip("[]")) else host) + m.group(3)
 
 
 def _scrub_value(value, withheld):
     if isinstance(value, str):
         if re.search(r"://|^//", value) or (value.startswith("/") and "?" in value):
-            shown = redact_url(value)
+            shown = shown_url(value)
             withheld["urls"] += 1 if shown != value else 0
         else:
             shown = scrub(value)
@@ -612,6 +760,8 @@ def _scrub_value(value, withheld):
         return shown
     if isinstance(value, list):
         return [_scrub_value(v, withheld) for v in value]
+    if isinstance(value, dict):
+        return {scrub(str(k)): _scrub_value(v, withheld) for k, v in value.items()}
     return value
 
 
@@ -633,17 +783,33 @@ def inline_copy(stem, record, withheld):
             out[key] = "<withheld: the object is shorter than %d bytes>" % SHORT_OBJECT
             withheld["short_hashes"] += 1
         elif URL_FIELD.match(key) and isinstance(value, str):
-            out[key] = redact_url(value)
+            out[key] = shown_url(value)
             withheld["urls"] += 1
-        elif KEEP_FIELD.match(key):
+        elif kept_as_written(stem, key, value):
             out[key] = value
         else:
             out[key] = _scrub_value(value, withheld)
     return out
 
 
+PROGRESS = {"stage": "arguments", "out_dir": None}
+
+
+def last_word(signum):
+    """What a stopped run says on stdout: partial, which stage it was in, and which logs were on disk."""
+    out_dir = PROGRESS.get("out_dir")
+    try:
+        logs = sorted(n[:-4] for n in os.listdir(out_dir) if n.endswith(".log")) if out_dir else []
+    except OSError:
+        logs = []
+    print(json.dumps({"tool": TOOL, "parser": PARSER, "status": "partial", "ok": False,
+                      "status_basis": "the tool was stopped by signal %d while it was %s; Zeek, if it was running, was killed with what it had started, and the logs it had written are whole files only up to the point it was stopped" % (signum, PROGRESS["stage"]),
+                      "interrupted_by_signal": signum, "stage": PROGRESS["stage"], "out_dir": out_dir, "logs_written_so_far": logs}), flush=True)
+
+
 def main():
     started = time.monotonic()
+    STATE["last_word"] = last_word
     install_signal_handlers()
     try:
         args = json.load(sys.stdin)
@@ -660,6 +826,7 @@ def main():
     if not isinstance(out_dir, str) or not out_dir:
         fail("out_dir is required: a directory under work/ (in a job, under $OUT) for Zeek's logs")
     out_dir = resolve_output(out_dir, "out_dir")
+    PROGRESS["out_dir"] = out_dir
     try:
         if os.path.exists(out_dir) and os.listdir(out_dir):
             fail("out_dir already holds files; stale Zeek logs would contaminate the result", out_dir=out_dir)
@@ -725,6 +892,7 @@ def main():
         argv.append(os.path.abspath(script_path))
     stdout_path = os.path.join(out_dir, "zeek.stdout")
     stderr_path = os.path.join(out_dir, "zeek.stderr")
+    PROGRESS["stage"] = "running Zeek"
     try:
         code, timed_out = run_to_files(argv, stdout_path, stderr_path, timeout - (time.monotonic() - started), cwd=out_dir)
     except OSError as exc:
@@ -743,6 +911,7 @@ def main():
         except OSError:
             pass
 
+    PROGRESS["stage"] = "reading the logs"
     withheld = {"fields": 0, "urls": 0, "text": 0, "short_hashes": 0}
     diagnostics = {"reporter": {"records": 0, "levels": {}, "first_messages": []},
                    "weird": {"records": 0, "by_name": {}, "names_over_cap": 0},
@@ -756,11 +925,13 @@ def main():
             level = str(record.get("level"))
             d["levels"][level] = d["levels"].get(level, 0) + 1
             if len(d["first_messages"]) < 5:
-                d["first_messages"].append(scrub(str(record.get("message", "")))[:500])
+                message = scrub(str(record.get("message", "")))
+                d["first_messages"].append(message if len(message) <= 500 else
+                                           message[:500] + " ...(%d characters not shown; the whole message is in reporter.log)" % (len(message) - 500))
         elif stem == "weird":
             d = diagnostics["weird"]
             d["records"] += 1
-            name = str(record.get("name"))
+            name = scrub(str(record.get("name")))      # the names of weird events are Zeek's, but a few carry wire text
             if name in d["by_name"] or len(d["by_name"]) < MAX_NAMES:
                 d["by_name"][name] = d["by_name"].get(name, 0) + 1
             else:
@@ -814,8 +985,20 @@ def main():
         problems.append({"why": "`zeek --version` %s, so the version of the engine that wrote these logs is not recorded" %
                          ("did not finish" if version_timed_out else "exited %s" % version_code)})
     ok = code == 0 and not problems and not total_malformed
+    if ok:
+        basis = "Zeek exited 0, every log it wrote was read through, and every line fit its header"
+    else:
+        reasons = []
+        if code != 0:
+            reasons.append("Zeek exited %s" % code)
+        if problems:
+            reasons.append("%d problem(s) (problems names each)" % len(problems))
+        if total_malformed:
+            reasons.append("%d record(s) did not fit their header (each is kept raw in a malformed-<log>.jsonl file)" % total_malformed)
+        basis = "; ".join(reasons) + ": the logs are whole in out_dir and the records that were read are in the answer"
     answer = {
         "tool": TOOL, "parser": PARSER,
+        "status": "complete" if ok else "partial", "status_basis": basis,
         "path": path, "out_dir": out_dir,
         "zeek_version": zeek_version,
         "command": argv,
@@ -864,7 +1047,7 @@ def main():
                  "engine_diagnostics."),
     }
     print(json.dumps(answer, indent=2))
-    return 0 if ok else 1
+    return 0
 
 
 if __name__ == "__main__":

@@ -154,7 +154,7 @@ test("EVE lines that are not events are counted with their line numbers, and the
     await stage(cwd, bin, { eve: [ALERT(1), "{broken", "[1,2,3]", "7", JSON.stringify({ timestamp: "2023-11-14T22:13:20+0000", note: "no event_type" }), ALERT(2), ""].join("\n") });
     const { path, rules } = await inputs(cwd);
     const result = await tool(SURICATA, cwd, { path, rules, out_dir: "work/s" }, env(cwd), bin);
-    assert.equal(result.code, 1);
+    assert.equal(result.code, 0, "exit 0 means the engine ran; status and ok say whether the run was clean");
     const out = JSON.parse(result.stdout);
     assert.equal(out.ok, false);
     assert.equal(out.invalid_eve_lines, 1);
@@ -172,7 +172,7 @@ test("rules that fail to load are a failure of the run, read from the engine's o
     await stage(cwd, bin, { eve: ALERT(1) + "\n", loadRun: "<Info> - 1 rule files processed. 3 rules successfully loaded, 1 rules failed, 0 rules skipped\n" });
     const { path, rules } = await inputs(cwd);
     const result = await tool(SURICATA, cwd, { path, rules, out_dir: "work/s" }, env(cwd), bin);
-    assert.equal(result.code, 1);
+    assert.equal(result.code, 0, "exit 0 means the engine ran; status and ok say whether the run was clean");
     const out = JSON.parse(result.stdout);
     assert.deepEqual(out.rule_load.run, { loaded: 3, failed: 1, from: "suricata.stderr" });
     assert.equal(out.ok, false);
@@ -290,7 +290,7 @@ test("a rules file from the evidence is refused as a config is, also through a l
     await stage(cwd, bin, { eve: ALERT(1) + "\n", loadRun: "<Info> - 1 rule files processed. 0 rules successfully loaded, 0 rules failed, 2 rules skipped\n" });
     const { path, rules } = await inputs(cwd);
     const result = await tool(SURICATA, cwd, { path, rules, out_dir: "work/s" }, env(cwd), bin);
-    assert.equal(result.code, 1);
+    assert.equal(result.code, 0, "exit 0 means the engine ran; status and ok say whether the run was clean");
     const out = JSON.parse(result.stdout);
     assert.equal(out.ok, false);
     assert.match(out.problems.join(" "), /0 rules loaded though the rules file has 2 rule lines/);
@@ -307,7 +307,7 @@ test("a failing --build-info is a problem and the version stays unrecorded; a fi
     await stage(cwd, bin, { eve: ev({ event_type: "quic", quic: {}, tls: { ja4: "q13d0310h3_55b375c5d22e_cd85d2d88918" } }) + "\n", buildFail: true });
     const { path, rules } = await inputs(cwd);
     const result = await tool(SURICATA, cwd, { path, rules, out_dir: "work/s" }, env(cwd), bin);
-    assert.equal(result.code, 1);
+    assert.equal(result.code, 0, "exit 0 means the engine ran; status and ok say whether the run was clean");
     const out = JSON.parse(result.stdout);
     assert.equal(out.suricata_version, null);
     assert.match(out.problems.join(" "), /--build-info/);
@@ -349,4 +349,116 @@ test("the harness ends a tool by killing its process group, and that ends Surica
       }
     });
   }
+});
+
+// --- D-network-F1 ----------------------------------------------------------------------------------------------------------
+
+import { createRng, planted } from "./pack-network-canaries.ts";
+
+test("a line nested 100,000 deep is counted as not read, named with its line, and the other events are still read", async () => {
+  await withCwd(async (cwd, bin) => {
+    const deep = `{"event_type":"alert","a":${"[".repeat(100_000)}${"]".repeat(100_000)}}`;
+    await stage(cwd, bin, { eve: [ALERT(1), deep, ALERT(2), ""].join("\n"), loadTest: "<Info> - 2 rules successfully loaded, 0 rules failed\n" });
+    const { path, rules } = await inputs(cwd);
+    const result = await tool(SURICATA, cwd, { path, rules, out_dir: "work/s" }, env(cwd), bin);
+    assert.equal(result.code, 0);
+    assert.doesNotMatch(result.stdout + result.stderr, /RecursionError|unexpected failure|Traceback/);
+    const out = JSON.parse(result.stdout);
+    assert.equal(out.alert_count, 2);
+    assert.equal(out.invalid_eve_lines, 1);
+    assert.deepEqual(out.eve_line_problems, [{ line: 2, why: "nested deeper than 64 levels: located, not parsed" }]);
+    assert.equal(out.ok, false);
+    assert.equal(out.status, "partial");
+  });
+});
+
+test("a line is refused for its nesting at 65 levels and read at 64, whatever the interpreter parses (the same answer on every Python)", async () => {
+  await withCwd(async (cwd, bin) => {
+    const nested = (levels: number) => `{"event_type":"alert","a":${"[".repeat(levels - 1)}${"]".repeat(levels - 1)}}`;
+    await stage(cwd, bin, { eve: [ALERT(1), nested(64), nested(65), nested(2_000), ""].join("\n"), loadTest: "<Info> - 2 rules successfully loaded, 0 rules failed\n" });
+    const { path, rules } = await inputs(cwd);
+    const out = body(await tool(SURICATA, cwd, { path, rules, out_dir: "work/s" }, env(cwd), bin));
+    assert.equal(out.alert_count, 2, "the line at 64 levels is an alert");
+    assert.deepEqual(out.eve_line_problems, [{ line: 3, why: "nested deeper than 64 levels: located, not parsed" }, { line: 4, why: "nested deeper than 64 levels: located, not parsed" }]);
+  });
+});
+
+test("every EVE line that was not read as an event is in a file with its line number, however many there are: the answer shows ten and says where the rest are", async () => {
+  await withCwd(async (cwd, bin) => {
+    const bad = Array.from({ length: 25 }, (_, i) => (i % 2 ? "not json " + i : "[1,2]"));
+    await stage(cwd, bin, { eve: [ALERT(1), ...bad, ev({ foo: 1 }), ""].join("\n"), loadTest: "<Info> - 2 rules successfully loaded, 0 rules failed\n" });
+    const { path, rules } = await inputs(cwd);
+    const out = body(await tool(SURICATA, cwd, { path, rules, out_dir: "work/s" }, env(cwd), bin));
+    assert.equal(out.eve_line_problems.length, 10);
+    assert.equal(out.eve_problem_lines_total, 26);
+    const rows = (await readFile(join(cwd, "work/s", out.eve_problems_file), "utf8")).trimEnd().split("\n").map((l) => JSON.parse(l));
+    assert.equal(rows.length, 26);
+    assert.deepEqual(rows.slice(0, 3).map((r: Json) => r.line), [2, 3, 4]);
+    assert.equal(((await stat(join(cwd, "work/s", out.eve_problems_file))).mode & 0o777).toString(8), "600");
+    // a clean run writes no such file
+    await stage(cwd, bin, { eve: ALERT(1) + "\n", loadTest: "<Info> - 2 rules successfully loaded, 0 rules failed\n" });
+    const clean = body(await tool(SURICATA, cwd, { path, rules, out_dir: "work/c" }, env(cwd), bin));
+    assert.equal(clean.eve_problems_file, null);
+    assert.equal(clean.status, "complete");
+    assert.match(clean.status_basis, /every EVE line was read/);
+  });
+});
+
+test("the slots of an inline alert are typed: an address is an address, a port or id is a number, and a signature, a protocol, a timestamp and the keys of event_types and signatures go through the block", async () => {
+  await withCwd(async (cwd, bin) => {
+    const rng = createRng(31337);
+    const shapes = ["ghp", "akia", "jwt", "xoxb", "github_pat", "sk"] as const;
+    const plant = Object.fromEntries(shapes.map((s) => [s, planted(rng, s)]));
+    const events = shapes.map((s, i) => ev({
+      event_type: i === 0 ? plant.ghp : "alert", timestamp: i === 1 ? plant.akia : "2023-11-14T22:13:20.123456+0000", flow_id: i === 2 ? plant.jwt : 5000 + i,
+      src_ip: i === 3 ? plant.xoxb : "10.0.0.5", src_port: i === 4 ? plant.github_pat : 50000, dest_ip: "203.0.113.7", dest_port: 443, proto: i === 5 ? plant.sk : "TCP",
+      alert: { signature_id: i === 0 ? plant.ghp : 1000001, signature: `ET TEST ${plant[s]}` },
+    }));
+    await stage(cwd, bin, { eve: [...events, ALERT(9999)].join("\n") + "\n", loadTest: "<Info> - 2 rules successfully loaded, 0 rules failed\n" });
+    const { path, rules } = await inputs(cwd);
+    const result = await tool(SURICATA, cwd, { path, rules, out_dir: "work/s" }, env(cwd), bin);
+    const out = JSON.parse(result.stdout);
+    for (const secret of Object.values(plant)) assert.equal(result.stdout.includes(secret), false, `${secret.slice(0, 10)}... was printed`);
+    const first = out.alerts.find((a: Json) => a.flow_id === 10999);
+    assert.equal(first.src_ip, "10.0.0.5");
+    assert.equal(first.proto, "TCP");
+    assert.equal(first.dest_ip, "203.0.113.7");
+    assert.equal(first.dest_port, 443);
+    assert.equal(first.timestamp, "2023-11-14T22:13:20.123456+0000");
+    assert.ok(Object.keys(out.signatures).some((k) => k.startsWith("ET TEST ")), "the readable part of a signature stays");
+  });
+});
+
+test("a stop signal prints partial JSON with the stage and the files on disk, and kills the engine and what it started (exit 128 + signal)", async () => {
+  for (const [sig, code] of [["SIGTERM", 143], ["SIGINT", 130], ["SIGHUP", 129]] as const) {
+    await withCwd(async (cwd, bin) => {
+      const dir = await stage(cwd, bin, { sleep: true, eve: ALERT(1) + "\n" });
+      const { path, rules } = await inputs(cwd);
+      const run = startDetached(SURICATA, cwd, { path, rules, out_dir: "work/s" }, env(cwd), bin);
+      for (let i = 0; i < 100 && !(await exists(join(dir, "started"))); i++) await new Promise((r) => setTimeout(r, 50));
+      run.signal(sig);
+      assert.equal(await run.closed, code, sig);
+      const last = JSON.parse(run.stdout());
+      assert.equal(last.status, "partial");
+      assert.equal(last.interrupted_by_signal, code - 128);
+      assert.equal(last.stage, "running Suricata");
+      assert.ok(last.files_on_disk.includes("suricata.yaml"));
+      const pid = Number((await readFile(join(dir, "child.pid"), "utf8")).trim());
+      await new Promise((r) => setTimeout(r, 300));
+      assert.throws(() => process.kill(pid, 0), /ESRCH/);
+    });
+  }
+});
+
+test("a bad home_net entry is named by its position and length, never echoed", async () => {
+  await withCwd(async (cwd, bin) => {
+    await stage(cwd, bin, { eve: ALERT(1) + "\n" });
+    const { path, rules } = await inputs(cwd);
+    const secret = planted(createRng(5), "ghp");
+    const err = refused(await tool(SURICATA, cwd, { path, rules, out_dir: "work/s", home_net: ["10.0.0.0/8", secret] }, env(cwd), bin));
+    assert.equal(err.home_net_index, 1);
+    assert.equal(err.home_net_entry_length, secret.length);
+    assert.equal(JSON.stringify(err).includes(secret), false);
+    assert.equal(err.status, "failed");
+  });
 });

@@ -1,0 +1,3 @@
+### Fixed: computer-forensics-base `archive_extract` ends a program the way the network pack's engine tools do
+
+`archive_extract` carries the shared process block, which the network pack's tools changed in the P3 fixes (the tree-kill asks libproc for the children on macOS and waits at most three seconds on `ps`). Its copy was not updated, so the two texts had drifted apart and `tests/pack-base-shared.test.ts` failed. The block in `archive_extract` is now the network pack's text again (the newer one, with the `ps` wait of ten seconds and the libproc check), byte for byte; nothing else in the tool changed.

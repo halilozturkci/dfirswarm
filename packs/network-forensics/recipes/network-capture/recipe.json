@@ -1,6 +1,6 @@
 {
   "id": "network-capture",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Catalogue a pcap or pcapng: capinfos metadata and a complete listing of the selected fields of every packet and of the DNS, HTTP and TLS packets (and of HTTP/2 and QUIC packets when the installed tshark lists their fields), for examiner pivots. A receipt from the first moment records each step, the tool versions and the truncated packets; the listings are one tshark's reading, not the capture.",
   "object": "network capture",
   "order": 40,
@@ -61,6 +61,6 @@
     "fields of packets that were truncated, malformed or of a protocol tshark does not decode",
     "http2.tsv and quic.tsv are not made when the installed tshark does not list the fields they need (the receipt says so)"
   ],
-  "covers": "Capture metadata and, for every packet, the selected fields tshark can decode (packets.tsv), with DNS, HTTP and TLS listings and, only where the installed tshark lists their fields, HTTP/2 and QUIC. It does not assert that a missing protocol is absent when packets were truncated, encrypted, malformed or unsupported; coverage.json counts the truncated packets. http.tsv can hold credentials in request URIs and is marked secret-bearing in the receipt.",
-  "sha256": "fa605e4090578d56357b7e9cd5444c6aefac276648cdbecb227bb789f79bd937"
+  "covers": "Capture metadata and, for every packet, the selected fields tshark can decode (packets.tsv), with DNS, HTTP and TLS listings and, only where the installed tshark lists their fields, HTTP/2 and QUIC. It does not assert that a missing protocol is absent when packets were truncated, encrypted, malformed or unsupported; coverage.json counts the truncated packets. http.tsv, dns.tsv, tls.tsv and http2.tsv can hold credentials, tokens and names in request URIs, query names and server names and are marked secret-bearing in the receipt (the mark is informational: nothing in the harness reads it); the directory is private (0700, files 0600). A field the installed tshark does not list is named in the step and left out of that listing.",
+  "sha256": "faeee3f7b93eadb4821890c6d7a2bc907b0aeab0c8c406c20885a5ade17df421"
 }

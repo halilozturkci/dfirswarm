@@ -268,7 +268,9 @@ test("every answer carries status and status_basis; the tool's own clock ends th
     assert.equal(cut.series_complete, false);
     assert.ok(cut.stopped_reading_at_input_index > 0 && cut.stopped_reading_at_input_index < 1_600_000);
     assert.equal(cut.values_supplied, cut.events);
-    assert.match(cut.status_basis, /max_seconds 1/);
+    assert.match(cut.status_basis, /max_seconds 1, of which reading takes the first two fifths/);
+    const manifest = JSON.parse(await readFile(join(BEACON, "..", "manifest.json"), "utf8"));
+    assert.match(manifest.params.max_seconds.description, /reading and measuring.*reading stops at two fifths of it/);
     for (const [sig, code] of [["SIGTERM", 143], ["SIGINT", 130], ["SIGHUP", 129]] as const) {
       const run = startDetached(BEACON, cwd, { timestamps_file: "work/big.txt", max_seconds: 40 });
       await new Promise((r) => setTimeout(r, 700));
@@ -306,5 +308,19 @@ test("every rejected value is listed, however many: five inline, all in a file t
     assert.equal(err.timestamps_without_zone, 9);
     assert.equal(err.first_without_zone.length, 5);
     assert.equal((await readFile(join(cwd, err.all_without_zone), "utf8")).trimEnd().split("\n").length, 9);
+  });
+});
+
+test("a series passed inline is held to 500,000 events and 32 MiB of arguments, and past either the answer is JSON that says to use timestamps_file", async () => {
+  await withCwd(async (cwd) => {
+    const over = refused(await tool(BEACON, cwd, { timestamps: Array.from({ length: 500_001 }, (_, i) => T0 + i) }));
+    assert.match(over.error, /500001 events, more than the 500000 a series passed inline may have: give it as timestamps_file/);
+    assert.equal(over.status, "failed");
+    const huge = refused(await tool(BEACON, cwd, { timestamps: [T0, T0 + 60], label: "x".repeat(33 * 1024 * 1024) }));
+    assert.match(huge.error, /larger than 32 MiB: give the series as timestamps_file/);
+    const one = body(await tool(BEACON, cwd, { timestamps: [...step(8, 60), "yesterday"] }));
+    assert.match(one.status_basis, /1 of the 9 values supplied was not scored \(1 unparseable\) and is not in the measurements/);
+    const edge = body(await tool(BEACON, cwd, { timestamps: Array.from({ length: 500_000 }, (_, i) => T0 + i * 60) }));
+    assert.equal(edge.events, 500_000);
   });
 });

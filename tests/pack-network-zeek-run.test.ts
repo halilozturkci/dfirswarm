@@ -192,7 +192,7 @@ test("a record that does not fit its header is counted with its line, kept whole
     ]);
     await stage(cwd, bin, { "conn.log": text });
     const result = await tool(ZEEK, cwd, { path: await capture(cwd), out_dir: "work/z" }, env(cwd), bin);
-    assert.equal(result.code, 1);
+    assert.equal(result.code, 0, "exit 0 means the engine ran; status and ok say whether the logs were whole");
     const out = JSON.parse(result.stdout);
     assert.equal(out.ok, false);
     assert.equal(out.malformed_records, 2);
@@ -215,7 +215,7 @@ test("a log with no header is a counted refusal to decode, not an empty list; JS
   await withCwd(async (cwd, bin) => {
     await stage(cwd, bin, { "dns.log": "1700000000.1\tC1\tquery\n", "conn.log": [JSON.stringify({ ts: 1700000000.25, uid: "C9", proto: "tcp" }), "{broken", "[1,2]", ""].join("\n") });
     const result = await tool(ZEEK, cwd, { path: await capture(cwd), out_dir: "work/z" }, env(cwd), bin);
-    assert.equal(result.code, 1);
+    assert.equal(result.code, 0, "exit 0 means the engine ran; status and ok say whether the logs were whole");
     const out = JSON.parse(result.stdout);
     assert.equal(out.logs.dns.total, 0);
     assert.equal(out.logs.dns.malformed, 1);
@@ -315,7 +315,7 @@ test("a Zeek that exits with an error keeps its logs and its whole diagnostic, a
   await withCwd(async (cwd, bin) => {
     await stage(cwd, bin, { "conn.log": tsvLog("conn", CONN_FIELDS, CONN_TYPES, [CONN_ROW]) }, { exit: 9, stderr: "error: could not find script policy/nope\n" });
     const result = await tool(ZEEK, cwd, { path: await capture(cwd), out_dir: "work/z", policies: ["policy/nope"] }, env(cwd), bin);
-    assert.equal(result.code, 1);
+    assert.equal(result.code, 0, "exit 0 means the engine ran; status and ok say whether the logs were whole");
     const out = JSON.parse(result.stdout);
     assert.equal(out.ok, false);
     assert.equal(out.exit_code, 9);
@@ -428,7 +428,7 @@ test("the reader is strict about types: a time, a count or an interval that is n
     ];
     await stage(cwd, bin, { "x.log": tsvLog("x", fields, types, rows) });
     const result = await tool(ZEEK, cwd, { path: await capture(cwd), out_dir: "work/z" }, env(cwd), bin);
-    assert.equal(result.code, 1);
+    assert.equal(result.code, 0, "exit 0 means the engine ran; status and ok say whether the logs were whole");
     const out = JSON.parse(result.stdout); // strict: NaN or Infinity would not parse
     assert.equal(out.malformed_records, 7, JSON.stringify(out.malformed.map((m: Json) => m.why)));
     const recs = Object.fromEntries(out.logs.x.records.map((r: Json) => [r.uid, r]));
@@ -456,10 +456,139 @@ test("a header that was bad does not make the rows after the next good header ma
   await withCwd(async (cwd, bin) => {
     await stage(cwd, bin, { "conn.log": tsvLog("conn", CONN_FIELDS, CONN_TYPES, [CONN_ROW]) }, { versionFail: true });
     const result = await tool(ZEEK, cwd, { path: await capture(cwd), out_dir: "work/z" }, env(cwd), bin);
-    assert.equal(result.code, 1);
+    assert.equal(result.code, 0, "exit 0 means the engine ran; status and ok say whether the logs were whole");
     const out = JSON.parse(result.stdout);
     assert.equal(out.zeek_version, null);
     assert.equal(out.ok, false);
     assert.match(JSON.stringify(out.problems), /--version/);
+  });
+});
+
+// --- D-network-F1 ----------------------------------------------------------------------------------------------------------
+
+
+import { createRng, planted } from "./pack-network-canaries.ts";
+
+test("an empty or over-long separator directive is a header problem of that log, counted with its lines: it never aborts the run", async () => {
+  await withCwd(async (cwd, bin) => {
+    const row = ["1700000000.1", "C1"];
+    const log = (directive: string): string => [
+      "#separator \\x09", directive, "#empty_field\t(empty)", "#unset_field\t-", "#path\tx", "#fields\tts\tuid", "#types\ttime\tstring", row.join("\t"), row.join("\t"), "#close\t2023-11-14-22-14-00", "",
+    ].join("\n");
+    await stage(cwd, bin, {
+      "a.log": log("#set_separator\t"),
+      "b.log": log("#set_separator\t,,,,,,,,,,,,"),
+      "c.log": ["#separator ", "#set_separator\t,", "#empty_field\t(empty)", "#unset_field\t-", "#fields\tts\tuid", "#types\ttime\tstring", row.join("\t"), ""].join("\n"),
+      "d.log": log("#set_separator\t,").replace("#empty_field\t(empty)", "#empty_field\t"),
+      // a later good directive heals it
+      "e.log": ["#separator \\x09", "#set_separator\t", "#set_separator\t,", "#empty_field\t(empty)", "#unset_field\t-", "#fields\tts\tuid", "#types\ttime\tstring", row.join("\t"), ""].join("\n"),
+    });
+    const result = await tool(ZEEK, cwd, { path: await capture(cwd), out_dir: "work/z" }, env(cwd), bin);
+    assert.equal(result.code, 0, result.stdout);
+    const out = JSON.parse(result.stdout);
+    assert.doesNotMatch(result.stdout, /unexpected failure|empty separator/);
+    for (const stem of ["a", "b", "c", "d"]) assert.ok(out.logs[stem].malformed >= 1, `${stem}: its records are counted malformed`);
+    assert.equal(out.logs.a.malformed, 2);
+    assert.equal(out.logs.e.malformed, 0, "a good directive after a bad one clears the problem");
+    assert.equal(out.logs.e.total, 1);
+    assert.equal(out.ok, false);
+    assert.equal(out.status, "partial");
+    assert.match(out.malformed.find((m: Json) => m.log === "a").why, /set_separator is empty or longer/);
+    assert.match(await readFile(join(cwd, "work/z/malformed-a.jsonl"), "utf8"), /1700000000\.1/);
+  });
+});
+
+test("a JSON line nested 100,000 deep is counted malformed with its line, kept raw in the malformed file, and the other lines are read; a 40-deep record is read and printed without a recursion error", async () => {
+  await withCwd(async (cwd, bin) => {
+    const deep = `{"ts":1700000000.5,"uid":"C2","a":${"[".repeat(100_000)}${"]".repeat(100_000)}}`;
+    let nested: unknown = "leaf-text";
+    for (let i = 0; i < 40; i++) nested = [nested];
+    const fine = JSON.stringify({ ts: 1700000000.25, uid: "C3", proto: "tcp", a: nested });
+    await stage(cwd, bin, { "conn.log": [JSON.stringify({ ts: 1700000000.1, uid: "C1", proto: "tcp" }), deep, fine, ""].join("\n") });
+    const result = await tool(ZEEK, cwd, { path: await capture(cwd), out_dir: "work/z" }, env(cwd), bin);
+    assert.equal(result.code, 0);
+    assert.doesNotMatch(result.stdout + result.stderr, /RecursionError|unexpected failure|Traceback/);
+    const out = JSON.parse(result.stdout);
+    assert.equal(out.logs.conn.total, 2);
+    assert.equal(out.logs.conn.malformed, 1);
+    assert.match(out.malformed[0].why, /nested deeper than 64/);
+    const kept = JSON.parse((await readFile(join(cwd, "work/z/malformed-conn.jsonl"), "utf8")).trimEnd());
+    assert.equal(kept.raw, deep, "the whole line is kept");
+  });
+});
+
+test("a string is kept as written only where its kind says it is an identifier, hash, address or time: service is conn.log's list of analyzers and a name from the wire in kerberos.log; the keys of weird names are scrubbed", async () => {
+  await withCwd(async (cwd, bin) => {
+    const rng = createRng(4242);
+    const names: Record<string, string> = {};
+    const lines: string[] = [];
+    const shapes = ["ghp", "akia", "jwt", "xoxb", "github_pat", "sk"] as const;
+    for (const shape of shapes) names[shape] = planted(rng, shape);
+    const kerberos = tsvLog("kerberos", ["ts", "uid", "client", "service", "id.orig_h"], ["time", "string", "string", "string", "addr"],
+      shapes.map((s, i) => [`1700000000.${i}`, `C${i}`, "alice", `host/${names[s]}.example.test`, "10.0.0.5"]));
+    const weird = tsvLog("weird", ["ts", "name"], ["time", "string"], shapes.map((s, i) => [`1700000000.${i}`, `name-${names[s]}`]));
+    const conn = tsvLog("conn", CONN_FIELDS.concat(["service", "history"]), CONN_TYPES.concat(["set[string]", "string"]),
+      [[...CONN_ROW.slice(0, 11), "(empty)", "http,ssl", "ShADadfF"]]);
+    const http = lines.concat([JSON.stringify({ ts: 1700000001.5, uid: "C9", host: `${names.ghp}.cdn.example.test`, uri: `http://${names.akia}.cdn.example.test/a`, meta: { [names.jwt]: names.xoxb, k: [names.sk] }, "id.orig_h": names.github_pat })]).join("\n");
+    await stage(cwd, bin, { "kerberos.log": kerberos, "weird.log": weird, "conn.log": conn, "http.log": http });
+    const result = await tool(ZEEK, cwd, { path: await capture(cwd), out_dir: "work/z" }, env(cwd), bin);
+    const out = JSON.parse(result.stdout);
+    for (const secret of Object.values(names)) assert.equal(result.stdout.includes(secret), false, `${secret.slice(0, 12)}... reached the answer`);
+    assert.deepEqual(out.logs.conn.records[0].service, ["http", "ssl"], "conn.log's service is the analyzers' names, as written");
+    assert.equal(out.logs.conn.records[0].history, "ShADadfF");
+    assert.equal(out.logs.kerberos.records[0].service.startsWith("host/"), true);
+    assert.match(out.logs.kerberos.records[0].service, /withheld/);
+    assert.equal(out.logs.kerberos.records[0]["id.orig_h"], "10.0.0.5");
+    assert.equal(Object.keys(out.engine_diagnostics.weird.by_name).every((k) => !shapes.some((s) => k.includes(names[s]))), true);
+  });
+});
+
+test("a host in a URL goes through the same rule as every other string: a token in a sub-domain is withheld, a plain name or an address is not", async () => {
+  await withCwd(async (cwd, bin) => {
+    const token = planted(createRng(9), "ghp");
+    await stage(cwd, bin, { "http.log": [
+      JSON.stringify({ ts: 1.5, uid: "C1", uri: `http://${token}.evil.example.test/a?x=1`, referrer: "http://b2eb-115-135-31-192.ngrok-free.app/seetwo/BetaTest.pdf" }),
+      JSON.stringify({ ts: 2.5, uid: "C2", uri: "http://203.0.113.7:8080/a", referrer: "https://[2001:db8::1]/x" }), ""].join("\n") });
+    const out = body(await tool(ZEEK, cwd, { path: await capture(cwd), out_dir: "work/z" }, env(cwd), bin));
+    const [a, b] = out.logs.http.records;
+    assert.equal(JSON.stringify(a).includes(token), false);
+    assert.equal(a.referrer, "http://b2eb-115-135-31-192.ngrok-free.app/seetwo/BetaTest.pdf");
+    assert.equal(b.uri, "http://203.0.113.7:8080/a");
+    assert.equal(b.referrer, "https://[2001:db8::1]/x");
+  });
+});
+
+test("a stop signal during the run prints partial JSON with the stage and the logs on disk, and still kills Zeek and what it started (exit 128 + signal)", async () => {
+  for (const [sig, code] of [["SIGTERM", 143], ["SIGINT", 130], ["SIGHUP", 129]] as const) {
+    await withCwd(async (cwd, bin) => {
+      const dir = await stage(cwd, bin, { "conn.log": tsvLog("conn", CONN_FIELDS, CONN_TYPES, [CONN_ROW]) }, { sleep: true });
+      const run = startDetached(ZEEK, cwd, { path: await capture(cwd), out_dir: "work/z" }, env(cwd), bin);
+      for (let i = 0; i < 100 && !(await exists(join(dir, "started"))); i++) await new Promise((r) => setTimeout(r, 50));
+      run.signal(sig);
+      assert.equal(await run.closed, code, sig);
+      const last = JSON.parse(run.stdout());
+      assert.equal(last.status, "partial");
+      assert.equal(last.interrupted_by_signal, code - 128);
+      assert.equal(last.stage, "running Zeek");
+      assert.ok(last.status_basis.length > 20);
+      const pid = Number((await readFile(join(dir, "child.pid"), "utf8")).trim());
+      await new Promise((r) => setTimeout(r, 300));
+      assert.throws(() => process.kill(pid, 0), /ESRCH/);
+    });
+  }
+});
+
+test("every answer carries status and status_basis, a reporter message over 500 characters says where the whole is, and a run whose logs are whole is complete", async () => {
+  await withCwd(async (cwd, bin) => {
+    await stage(cwd, bin, {
+      "conn.log": tsvLog("conn", CONN_FIELDS, CONN_TYPES, [CONN_ROW]),
+      "reporter.log": tsvLog("reporter", ["ts", "level", "message"], ["time", "enum", "string"], [["1700000000.1", "Reporter::WARNING", "m".repeat(900)]]),
+    });
+    const out = body(await tool(ZEEK, cwd, { path: await capture(cwd), out_dir: "work/z" }, env(cwd), bin));
+    assert.equal(out.status, "complete");
+    assert.match(out.status_basis, /every log it wrote was read/);
+    assert.match(out.engine_diagnostics.reporter.first_messages[0], /400 characters not shown; the whole message is in reporter\.log/);
+    const err = refused(await tool(ZEEK, cwd, { path: "work/missing.pcap", out_dir: "work/y" }, env(cwd), bin));
+    assert.equal(err.status, "failed");
   });
 });

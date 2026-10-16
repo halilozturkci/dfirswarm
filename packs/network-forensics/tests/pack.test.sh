@@ -76,9 +76,9 @@ fi
 if printf '{"path":"%s/one.pcap","max_packets":1}' "$TMP" | python3 "$summary" >/dev/null 2>&1; then
   fail "max_packets must not silently truncate a forensic summary"
 fi
-if printf '{"path":"%s/truncated.pcap"}' "$TMP" | python3 "$summary" >/dev/null 2>&1; then
-  fail "truncated packet bodies must make pcap_summary fail"
-fi
+truncated="$(printf '{"path":"%s/truncated.pcap"}' "$TMP" | python3 "$summary")" || fail "a truncated capture must be answered, not refused: $truncated"
+jq -e '.status == "partial" and .capture_read_to_the_end == false and (.stopped_reading.reason | test("truncated"))' <<<"$truncated" >/dev/null \
+  || fail "truncated packet bodies must make pcap_summary partial, saying where it stopped: $truncated"
 same_ip="$(printf '{"path":"%s/same-ip.pcap"}' "$TMP" | python3 "$summary")"
 jq -e '.tuple_conversation_count == 1 and .tuple_conversations[0].a_to_b_bytes_original == 54 and .tuple_conversations[0].b_to_a_bytes_original == 54' <<<"$same_ip" >/dev/null \
   || fail "same-IP session direction was not distinguished by port: $same_ip"
@@ -143,11 +143,10 @@ jq -e '.exit_code == 8 and .stderr and .stdout' "$TMP/suricata-fail.json" >/dev/
 [[ "$(wc -c < "$TMP/suricata-fail/suricata.stderr" | tr -d ' ')" -eq 5000 ]] \
   || fail "suricata_run truncated Suricata stderr"
 mkdir "$TMP/zeek-fail"
-if printf '{"path":"%s/one.pcap","out_dir":"%s/zeek-fail"}' "$TMP" "$TMP" | \
-  (cd "$TMP" && PATH="$TMP/fake-bin:$PATH" python3 "$PACK/tools/zeek_run/run.py") >"$TMP/zeek-fail.json"; then
-  fail "zeek_run reported a failed Zeek analysis as success"
-fi
-jq -e '.ok == false and .exit_code == 9 and .stderr and .stdout and .logs.conn.total == 1' "$TMP/zeek-fail.json" >/dev/null \
+printf '{"path":"%s/one.pcap","out_dir":"%s/zeek-fail"}' "$TMP" "$TMP" | \
+  (cd "$TMP" && PATH="$TMP/fake-bin:$PATH" python3 "$PACK/tools/zeek_run/run.py") >"$TMP/zeek-fail.json" \
+  || fail "zeek_run refused instead of answering: the engine ran, so the exit is 0 and status says partial"
+jq -e '.ok == false and .status == "partial" and .exit_code == 9 and .stderr and .stdout and .logs.conn.total == 1' "$TMP/zeek-fail.json" >/dev/null \
   || fail "zeek_run did not preserve its logs and name the failed analysis diagnostics"
 [[ "$(wc -c < "$TMP/zeek-fail/zeek.stdout" | tr -d ' ')" -eq 3000 ]] \
   || fail "zeek_run truncated Zeek stdout"

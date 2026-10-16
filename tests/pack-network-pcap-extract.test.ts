@@ -876,6 +876,25 @@ test("against the real tshark: a three-session HTTP capture is tied to its frame
   });
 });
 
+test("a stop signal still ends the pass's children when ps is slow: the tree is found without waiting on a program (libproc on macOS, /proc on Linux)", async () => {
+  await withCwd(async (cwd, bin) => {
+    const { dir } = await stage(cwd, bin, { spawns: ["http"] });
+    await stub(bin, "ps", "sleep 30\n");
+    const child = spawn("python3", [EXTRACT], { cwd, env: { ...process.env, AGENT_ID: "s1", PATH: `${bin}:${process.env.PATH}`, ...env(cwd) } });
+    child.stdout.on("data", () => undefined);
+    child.stdin.end(JSON.stringify({ path: await capture(cwd), out_dir: "work/x", protocols: ["http"] }));
+    for (let i = 0; i < 100 && !(await exists(join(dir, "started"))); i++) await new Promise((r) => setTimeout(r, 50));
+    assert.ok(await exists(join(dir, "started")));
+    const began = Date.now();
+    const code = await new Promise<number | null>((resolve) => { child.on("close", resolve); child.kill("SIGTERM"); });
+    assert.equal(code, 143);
+    assert.ok(Date.now() - began < 8_000, `took ${Date.now() - began} ms: the tree walk waited on ps`);
+    const pid = Number((await readFile(join(dir, "child.pid"), "utf8")).trim());
+    await new Promise((r) => setTimeout(r, 300));
+    assert.throws(() => process.kill(pid, 0), /ESRCH/, "the sleeper the pass started is gone");
+  });
+});
+
 test("write_values is refused as JSON, before anything is written, in a job whose process is not a secret job (SECRET_OUTPUT is not 1)", async () => {
   await withCwd(async (cwd, bin) => {
     await stage(cwd, bin, { export: { http: { "a.html": BODY_A } } });

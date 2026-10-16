@@ -9,7 +9,7 @@
  * handshake and its basis said, and a host filter written in a different IPv6 spelling still matches.
  */
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import {
@@ -237,18 +237,24 @@ test("times keep the capture's own resolution, with the raw ticks beside them", 
   });
 });
 
-test("a capture cut off mid-record fails with what was read, and a record claiming gigabytes is refused before it is read", async () => {
+test("a capture cut off mid-record is summarised up to the cut and says so (partial), and a record claiming gigabytes is not read: the capture stops being readable there", async () => {
   await withCwd(async (cwd) => {
     const frame = frameTcp4({ src: C, dst: S, sport: 1, dport: 2, flags: TCP.SYN, seq: 1 });
     const whole = pcapClassic([{ sec: 1, frame }, { sec: 2, frame }]);
     const cut = await drop(cwd, "work/cut.pcap", whole.subarray(0, whole.length - 5));
-    const err = refused(await tool(SUMMARY, cwd, { path: cut }));
-    assert.match(err.error, /truncated|malformed/);
-    assert.equal(err.packets_read, 1);
+    const part = body(await tool(SUMMARY, cwd, { path: cut }));
+    assert.equal(part.status, "partial");
+    assert.equal(part.capture_read_to_the_end, false);
+    assert.match(part.stopped_reading.reason, /truncated/);
+    assert.equal(part.stopped_reading.packets_read, 1);
+    assert.equal(part.packets, 1, "the packet before the cut is summarised");
+    assert.ok(part.notes.some((n: string) => /NOT READ TO ITS END/.test(n)));
     // A record header that declares a 3 GB capture length.
     const huge = Buffer.concat([pcapClassic([]), (() => { const h = Buffer.alloc(16); h.writeUInt32LE(3_000_000_000, 8); h.writeUInt32LE(3_000_000_000, 12); return h; })()]);
-    const err2 = refused(await tool(SUMMARY, cwd, { path: await drop(cwd, "work/huge.pcap", huge) }));
-    assert.match(err2.reason, /captured length of 3000000000 bytes/);
+    const err2 = body(await tool(SUMMARY, cwd, { path: await drop(cwd, "work/huge.pcap", huge) }));
+    assert.equal(err2.status, "partial");
+    assert.match(err2.stopped_reading.reason, /captured length of 3000000000 bytes/);
+    assert.equal(err2.packets, 0);
   });
 });
 
@@ -325,10 +331,12 @@ test("a refused run leaves no temporary aggregate file, and the same out_dir can
     const frames = Array.from({ length: 50 }, (_, i) => ({ sec: 10 + i, frame: frameTcp4({ src: C, dst: S, sport: 40000 + i, dport: 443, flags: TCP.SYN, seq: 1 }) }));
     const good = pcapClassic(frames);
     const cut = good.subarray(0, good.length - 9); // a capture that ends inside a packet
-    const failed = refused(await tool(SUMMARY, cwd, { path: await drop(cwd, "work/cut.pcap", cut), out_dir: "work/o", max_memory_tuples: 1 }));
-    assert.match(failed.error, /malformed or truncated/);
-    const left = await filesUnder(join(cwd, "work/o")).catch(() => [] as string[]);
+    const failed = body(await tool(SUMMARY, cwd, { path: await drop(cwd, "work/cut.pcap", cut), out_dir: "work/o", max_memory_tuples: 1 }));
+    assert.equal(failed.status, "partial");
+    assert.match(failed.stopped_reading.reason, /truncated/);
+    const left = (await filesUnder(join(cwd, "work/o")).catch(() => [] as string[])).filter((f) => f.includes("spill"));
     assert.deepEqual(left, [], "no .pcap_summary-spill file stays behind");
+    await rm(join(cwd, "work/o"), { recursive: true, force: true });
     const again = body(await tool(SUMMARY, cwd, { path: await drop(cwd, "work/good.pcap", good), out_dir: "work/o", max_memory_tuples: 1 }));
     assert.equal(again.packets, 50);
     assert.equal(again.spilled_to_disk, true);
@@ -337,8 +345,8 @@ test("a refused run leaves no temporary aggregate file, and the same out_dir can
   await withCwd(async (cwd) => {
     const frames = Array.from({ length: 50 }, (_, i) => ({ sec: 10 + i, frame: frameTcp4({ src: C, dst: S, sport: 40000 + i, dport: 443, flags: TCP.SYN, seq: 1 }) }));
     const cut = pcapClassic(frames).subarray(0, -9);
-    const failed = refused(await asJob(SUMMARY, cwd, { path: await drop(cwd, "work/cut.pcap", cut), max_memory_tuples: 1 }));
-    assert.match(failed.error, /malformed or truncated/);
+    const failed = body(await asJob(SUMMARY, cwd, { path: await drop(cwd, "work/cut.pcap", cut), max_memory_tuples: 1 }));
+    assert.equal(failed.status, "partial");
     assert.deepEqual((await filesUnder(join(cwd, "out"))).filter((f) => f.includes("spill")), [], "nothing is left at the root of $OUT");
   });
 });
@@ -421,5 +429,224 @@ test("endpoint rows for one service are one row even when only some of its tuple
     assert.match(out.top_talkers_basis, /SOURCE/);
     assert.match(out.top_ports_basis, /DESTINATION/);
     assert.match(out.notes.join(" "), /with_starts is the old name of with_syn_times/);
+  });
+});
+
+// --- D-network-F1 ----------------------------------------------------------------------------------------------------------
+
+import { spawnSync } from "node:child_process";
+import { writeFile } from "node:fs/promises";
+import { startDetached } from "./pack-network-harness.ts";
+import { createRng, planted } from "./pack-network-canaries.ts";
+
+const sectionWith = (opts: Buffer[]): Buffer => {
+  // a section header with options: the fixed part (byte-order magic, version, section length), then the options and the end option
+  const fixed = Buffer.alloc(16);
+  fixed.writeUInt32LE(0x1a2b3c4d, 0);
+  fixed.writeUInt16LE(1, 4);
+  fixed.writeBigInt64LE(-1n, 8);
+  return ngBlock(0x0a0d0d0a, Buffer.concat([fixed, ...opts, ngEnd()]));
+};
+
+test("the text a capture says about its capturing machine and interfaces is printed through the block of the pack: readable text stays, a secret in it does not (6 shapes x 7 slots)", async () => {
+  await withCwd(async (cwd) => {
+    const rng = createRng(99);
+    const frame = frameTcp4({ src: C, dst: S, sport: 50000, dport: 443, flags: TCP.SYN, seq: 1 });
+    const shapes = ["ghp", "akia", "jwt", "xoxb", "github_pat", "sk"] as const;
+    const slots: Array<[string, (c: string) => Buffer, Buffer[]]> = [];
+    const planted_: string[] = [];
+    for (const shape of shapes) {
+      const c = planted(rng, shape);
+      planted_.push(c);
+      const hw = sectionWith([ngOption(2, Buffer.from(`CPU ${c}`)), ngOption(3, Buffer.from(`macOS ${c}`)), ngOption(4, Buffer.from(`Dumpcap ${c}`))]);
+      const iface = ngInterface({ options: [ngOption(2, Buffer.from(`en0-${c}`)), ngOption(3, Buffer.from(`desc ${c}`)), ngOption(12, Buffer.from(`os ${c}`)), ngOption(11, Buffer.concat([Buffer.from([0]), Buffer.from(`host ${c}`)]))] });
+      slots.push([shape, () => Buffer.concat([hw, iface, ngPacket({ ticks: ticks(1_700_000_000, 0, 6), frame })]), []]);
+    }
+    for (const [shape, build] of slots) {
+      const result = await tool(SUMMARY, cwd, { path: await drop(cwd, `work/${shape}.pcapng`, build("")) });
+      const out = JSON.parse(result.stdout);
+      for (const c of planted_) assert.equal(result.stdout.includes(c), false, `${shape}: ${c.slice(0, 12)}... was printed`);
+      assert.match(out.section_options[0].hardware, /^CPU /);
+      assert.match(out.interfaces[0].description, /^desc /);
+    }
+    const plain = body(await tool(SUMMARY, cwd, { path: await drop(cwd, "work/plain.pcapng", Buffer.concat([
+      sectionWith([ngOption(2, Buffer.from("Intel(R) Core(TM) i7")), ngOption(3, Buffer.from("macOS 14.7, build 23H124")), ngOption(4, Buffer.from("Dumpcap (Wireshark) 4.4.3"))]),
+      ngInterface({ options: [ngOption(2, Buffer.from("en0")), ngOption(3, Buffer.from("Wi-Fi"))] }), ngPacket({ ticks: ticks(1_700_000_000, 0, 6), frame })])) }));
+    assert.deepEqual(plain.section_options[0], { section: 0, hardware: "Intel(R) Core(TM) i7", os: "macOS 14.7, build 23H124", application: "Dumpcap (Wireshark) 4.4.3" });
+  });
+});
+
+test("a classic record whose fraction is a second or more, and one that holds more bytes than the snap length allows, are counted and said", async () => {
+  await withCwd(async (cwd) => {
+    const frame = frameTcp4({ src: C, dst: S, sport: 50000, dport: 443, flags: TCP.SYN, seq: 1 });
+    const out = body(await tool(SUMMARY, cwd, { path: await drop(cwd, "work/odd.pcap", pcapClassic([{ sec: 10, frac: 2_500_000, frame }, { sec: 11, frame }], { snaplen: 30 })) }));
+    assert.equal(out.classic_records_with_fraction_over_one_second, 1);
+    assert.equal(out.records_captured_over_snap_length, 2);
+    assert.ok(out.notes.some((n: string) => /fraction field of one second or more/.test(n)));
+    assert.ok(out.notes.some((n: string) => /more bytes than the snap length/.test(n)));
+    const clean = body(await tool(SUMMARY, cwd, { path: await drop(cwd, "work/clean.pcap", pcapClassic([{ sec: 10, frame }])) }));
+    assert.equal(clean.classic_records_with_fraction_over_one_second, 0);
+    assert.equal(clean.records_captured_over_snap_length, 0);
+  });
+});
+
+test("a block the tool does not decode is measured, never read, however long it is: a 160 MB decryption-secrets block costs no memory; a packet block longer than a packet, or an options block over 1 MiB, is refused as unreadable from there", async () => {
+  await withCwd(async (cwd) => {
+    const frame = frameTcp4({ src: C, dst: S, sport: 50000, dport: 443, flags: TCP.SYN, seq: 1 });
+    const big = ngBlock(0x0a, Buffer.alloc(160 * 1024 * 1024 - 12));
+    await drop(cwd, "work/big.pcapng", Buffer.concat([ngSection(), ngInterface(), big, ngPacket({ ticks: ticks(1_700_000_000, 0, 6), frame })]));
+    const wrapper = `import atexit, resource, runpy, sys
+def report():
+    # On Linux ru_maxrss carries the peak of the process image that was replaced by exec: a parent holding the 160 MB
+    # capture in memory (this test does) would be counted against the tool. VmHWM is the new image's own peak.
+    peak = None
+    try:
+        for line in open("/proc/self/status"):
+            if line.startswith("VmHWM:"):
+                peak = int(line.split()[1]) // 1024
+    except OSError:
+        pass
+    if peak is None:
+        raw = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        peak = raw // (1024 * 1024) if sys.platform == "darwin" else raw // 1024
+    sys.stderr.write("MAXRSS_MB %d\\n" % peak)
+atexit.register(report)
+runpy.run_path(sys.argv[1], run_name="__main__")
+`;
+    const run = spawnSync("python3", ["-c", wrapper, SUMMARY], { cwd, input: JSON.stringify({ path: "work/big.pcapng" }), encoding: "utf8", env: { ...process.env, AGENT_ID: "s1" }, maxBuffer: 1 << 26 });
+    const out = JSON.parse(run.stdout);
+    assert.equal(out.packets, 1, "the packet after the long block is read");
+    assert.deepEqual(out.unsupported_block_types, { "0x0000000a decryption_secrets": 1 });
+    const mb = Number(/MAXRSS_MB (\d+)/.exec(run.stderr)?.[1]);
+    assert.ok(mb < 100, `peak resident ${mb} MB: the block was read`);
+    const longPacket = ngBlock(6, Buffer.alloc(80 * 1024 * 1024));
+    const refusedPacket = body(await tool(SUMMARY, cwd, { path: await drop(cwd, "work/long.pcapng", Buffer.concat([ngSection(), ngInterface(), longPacket])) }));
+    assert.equal(refusedPacket.status, "partial");
+    assert.match(refusedPacket.stopped_reading.reason, /enhanced packet block of \d+ bytes is longer than the \d+ this tool reads whole/);
+    const longOptions = ngBlock(1, Buffer.alloc(2 * 1024 * 1024));
+    const refusedOptions = body(await tool(SUMMARY, cwd, { path: await drop(cwd, "work/opt.pcapng", Buffer.concat([ngSection(), longOptions])) }));
+    assert.equal(refusedOptions.status, "partial");
+    assert.match(refusedOptions.stopped_reading.reason, /interface description block/);
+    // a block that says it is longer than the file is a truncated capture, not a read
+    const lying = ngBlock(0x0a, Buffer.alloc(100));
+    lying.writeUInt32LE(100_000_000, 4);
+    const short = body(await tool(SUMMARY, cwd, { path: await drop(cwd, "work/lie.pcapng", Buffer.concat([ngSection(), ngInterface(), lying])) }));
+    assert.equal(short.status, "partial");
+    assert.match(short.stopped_reading.reason, /truncated or inconsistent/);
+  });
+});
+
+test("the tool keeps its own clock: max_seconds ends the read, the packets before it are summarised, and the answer is partial", async () => {
+  await withCwd(async (cwd) => {
+    const frame = frameTcp4({ src: C, dst: S, sport: 50000, dport: 443, flags: TCP.ACK });
+    const records: Buffer[] = [pcapClassic([])];
+    const head = Buffer.alloc(16);
+    head.writeUInt32LE(1_700_000_000, 0);
+    head.writeUInt32LE(frame.length, 8);
+    head.writeUInt32LE(frame.length, 12);
+    const one = Buffer.concat([head, frame]);
+    await writeFile(join(cwd, "work/many.pcap"), Buffer.concat([records[0], Buffer.concat(Array.from({ length: 400_000 }, () => one))]));
+    const began = Date.now();
+    const out = body(await tool(SUMMARY, cwd, { path: "work/many.pcap", max_seconds: 1 }));
+    assert.ok(Date.now() - began < 60_000);
+    assert.equal(out.status, "partial");
+    assert.equal(out.stopped_reading.kind, "time_limit");
+    assert.ok(out.packets > 0 && out.packets < 400_000);
+    assert.match(out.status_basis, /max_seconds ran out/);
+    assert.match(refused(await tool(SUMMARY, cwd, { path: "work/many.pcap", max_seconds: 601 })).error, /max_seconds/);
+    for (const [sig, code] of [["SIGTERM", 143], ["SIGINT", 130], ["SIGHUP", 129]] as const) {
+      const run = startDetached(SUMMARY, cwd, { path: "work/many.pcap" });
+      await new Promise((r) => setTimeout(r, 700));
+      run.signal(sig);
+      assert.equal(await run.closed, code, `${sig}: ${run.stdout().slice(0, 200)}`);
+      const last = JSON.parse(run.stdout());
+      assert.equal(last.status, "partial");
+      assert.equal(last.interrupted_by_signal, code - 128);
+    }
+  });
+});
+
+test("every answer carries status and status_basis: a whole capture is complete, a refusal is failed", async () => {
+  await withCwd(async (cwd) => {
+    const frame = frameTcp4({ src: C, dst: S, sport: 50000, dport: 443, flags: TCP.SYN, seq: 1 });
+    const out = body(await tool(SUMMARY, cwd, { path: await drop(cwd, "work/ok.pcap", pcapClassic([{ sec: 10, frame }])) }));
+    assert.equal(out.status, "complete");
+    assert.equal(out.capture_read_to_the_end, true);
+    assert.match(out.status_basis, /every packet record/);
+    const bad = refused(await tool(SUMMARY, cwd, { path: await drop(cwd, "work/junk.pcap", Buffer.from("this is not a capture at all, just text")) }));
+    assert.equal(bad.status, "failed");
+  });
+});
+
+// --- the verification of the P1 and P3 pull requests ---------------------------------------------------------------------
+
+test("interfaces, interface statistics and sections are shown fifty at a time: the rest is counted, said, and in a file", async () => {
+  await withCwd(async (cwd) => {
+    const frame = frameTcp4({ src: C, dst: S, sport: 50000, dport: 443, flags: TCP.SYN, seq: 1 });
+    const parts: Buffer[] = [];
+    for (let s = 0; s < 60; s++) parts.push(sectionWith([ngOption(2, Buffer.from(`machine ${s}`))]), ngInterface(), ngStats({ iface: 0, recv: 1n }));
+    parts.push(ngPacket({ ticks: ticks(1_700_000_000, 0, 6), frame }));
+    const out = body(await tool(SUMMARY, cwd, { path: await drop(cwd, "work/many.pcapng", Buffer.concat(parts)) }));
+    for (const name of ["interfaces", "interface_statistics", "section_options"]) {
+      assert.equal(out[name].length, 50, name);
+      assert.equal(out[`${name}_total`], 60, name);
+      assert.equal(out[`${name}_not_listed`], 10, name);
+      const all = (await readFile(join(cwd, out[`${name}_file`]), "utf8")).trimEnd().split("\n");
+      assert.equal(all.length, 60, `${name}: every one is in the file`);
+    }
+    assert.ok(out.notes.some((n: string) => /10 interfaces are not listed inline: the first 50 are, and all 60 are in /.test(n)));
+    assert.equal(out.status, "complete");
+    const few = body(await tool(SUMMARY, cwd, { path: await drop(cwd, "work/few.pcapng", Buffer.concat([ngSection(), ngInterface(), ngPacket({ ticks: ticks(1_700_000_000, 0, 6), frame })])) }));
+    assert.equal(few.interfaces_not_listed, 0);
+    assert.equal(few.interfaces_file, null);
+  });
+});
+
+test("more interface description blocks than the tool keeps (10,000) end the reading there, partial, with the packets before them summarised", async () => {
+  await withCwd(async (cwd) => {
+    const frame = frameTcp4({ src: C, dst: S, sport: 50000, dport: 443, flags: TCP.SYN, seq: 1 });
+    const idb = ngInterface();
+    const parts: Buffer[] = [ngSection(), idb, ngPacket({ ticks: ticks(1_700_000_000, 0, 6), frame })];
+    for (let i = 0; i < 10_000; i++) parts.push(idb);
+    const out = body(await tool(SUMMARY, cwd, { path: await drop(cwd, "work/idbs.pcapng", Buffer.concat(parts)) }));
+    assert.equal(out.status, "partial");
+    assert.match(out.stopped_reading.reason, /more than 10000 pcapng interface description blocks/);
+    assert.equal(out.packets, 1);
+    assert.equal(out.interfaces_total, 10_000);
+    assert.equal(out.interfaces.length, 50);
+  });
+});
+
+test("the summary after the reading has its own end: the rows stop there, the answer is partial, and says how many were written of how many", async () => {
+  await withCwd(async (cwd) => {
+    const packets = Array.from({ length: 1000 }, (_, i) => ({ sec: 1_700_000_000 + i, frame: frameTcp4({ src: C, dst: S, sport: 40000 + i, dport: 443, flags: TCP.SYN, seq: i }) }));
+    const path = await drop(cwd, "work/flows.pcap", pcapClassic(packets));
+    const cut = body(await tool(SUMMARY, cwd, { path, top: 5 }, { PCAP_SUMMARY_FINISH_SECONDS: "0" }));
+    assert.equal(cut.status, "partial");
+    assert.deepEqual(cut.listing_cut_by_its_own_clock.conversations, { written: 255, of: 1000 });
+    assert.match(cut.status_basis, /ordering and writing of the lists after the reading ran out of time \(conversations: 255 of 1000 written/);
+    assert.equal(cut.packets, 1000, "the counts are whole");
+    assert.equal(cut.tuple_conversation_count, 255);
+    const whole = body(await tool(SUMMARY, cwd, { path, top: 5 }));
+    assert.equal(whole.status, "complete");
+    assert.equal(whole.tuple_conversation_count, 1000);
+    assert.equal(whole.listing_cut_by_its_own_clock, null);
+  });
+});
+
+test("with group endpoint the summing of the tuples is under the same end: cut, no endpoint row is listed, and the answer says how many tuples were summed", async () => {
+  await withCwd(async (cwd) => {
+    const packets = Array.from({ length: 1000 }, (_, i) => ({ sec: 1_700_000_000 + i, frame: frameTcp4({ src: C, dst: S, sport: 40000 + i, dport: 443, flags: TCP.SYN, seq: i }) }));
+    const path = await drop(cwd, "work/flows.pcap", pcapClassic(packets));
+    const cut = body(await tool(SUMMARY, cwd, { path, top: 5, group: "endpoint" }, { PCAP_SUMMARY_FINISH_SECONDS: "0" }));
+    assert.equal(cut.status, "partial");
+    assert.equal(cut.listing_cut_by_its_own_clock.endpoint_aggregation.written, 255);
+    assert.equal(cut.listing_cut_by_its_own_clock.endpoint_aggregation.of, 1000);
+    assert.match(cut.status_basis, /endpoint_aggregation: 255 of 1000 tuples summed \(no endpoint row is listed\)/);
+    assert.equal(cut.endpoint_aggregate_count, 0);
+    assert.equal(cut.packets, 1000);
+    const whole = body(await tool(SUMMARY, cwd, { path, top: 5, group: "endpoint" }));
+    assert.equal(whole.status, "complete");
+    assert.ok(whole.endpoint_aggregate_count > 0);
   });
 });

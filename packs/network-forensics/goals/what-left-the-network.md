@@ -12,13 +12,18 @@ any answer can be worth, and it comes before every other question.
    capture point and snap length mean for what can be established from it.
 2. The shape: top talkers, top destinations, protocols and ports, with byte
    counts each way.
-3. Anything periodic: the destination, the interval, the jitter, how long it ran
-   and whether it stopped — and what makes it more than a software update.
+3. Anything periodic: the destination, the interval and how tightly the series
+   clusters (`mad_over_median`, not a configured jitter), the span observed, and
+   what makes it more than a software update. Say that it stopped only as a
+   bounded negative: it needs a declared observation window and a sensor known
+   to be recording over it.
 4. What can still be established about encrypted sessions: names resolved,
    server names requested, certificates, and the sizes and timing.
 5. Outbound volume: which internal host sent most, to where, in what windows.
-6. Correlation with the host evidence, including the clock offset you measured
-   and applied.
+6. Correlation with the host evidence, including whether a clock offset between
+   the capture and the host could be measured from several independent matched
+   events (with its uncertainty), or that none could and times were correlated
+   over a stated interval.
 7. What you could not establish, and what evidence would settle it.
 
 ## How to divide the work
@@ -39,7 +44,8 @@ own. The sign-off is these acts, not a post. Nothing else is assigned.
 ## Definition of done
 
 `work/report.md` exists and answers questions 1 to 7 under the headings `## 1.`
-through `## 7.`. The snap length and the clock offset are both stated. The
+through `## 7.`. The snap length is stated, and the clock offset is either measured with its
+uncertainty or stated as not measurable. The
 ledger holds one `answer` entry per question (`question:1` to `question:7`) and
 one each for `summary` and `narrative`, with every defect the answers check
 names fixed or named by a limitation, and the critic, who wrote none of them,

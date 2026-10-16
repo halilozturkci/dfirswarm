@@ -1,5 +1,5 @@
 /**
- * network-forensics: four tools print names, paths, URLs and messages that can echo an identifier-shaped string
+ * network-forensics: five tools print names, paths, URLs and messages that can echo an identifier-shaped string
  * (a token, an API key, a session id, a JWT, user-info in a URL). They must withhold the same strings, so each
  * carries the same block of code between the markers below; this suite holds the copies equal and holds the
  * block to a table of strings written from the shapes the rule names (never from a tool's output).
@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
-import { EXTRACT, LOGS, RECIPE, SURICATA, ZEEK } from "./pack-network-harness.ts";
+import { EXTRACT, LOGS, RECIPE, SUMMARY, SURICATA, ZEEK } from "./pack-network-harness.ts";
 import { runPySnippet } from "./tool-library-harness.ts";
 import type { Json } from "./pack-network-harness.ts";
 
@@ -23,8 +23,8 @@ async function block(path: string): Promise<string> {
   return text.slice(start, end + END.length);
 }
 
-test("the four tools carry the same withholding block, byte for byte", async () => {
-  const blocks = await Promise.all([EXTRACT, ZEEK, SURICATA, LOGS].map(block));
+test("the five tools carry the same withholding block, byte for byte", async () => {
+  const blocks = await Promise.all([EXTRACT, ZEEK, SURICATA, LOGS, SUMMARY].map(block));
   for (const other of blocks.slice(1)) assert.equal(other, blocks[0]);
   assert.ok(blocks[0].length > 2000);
 });

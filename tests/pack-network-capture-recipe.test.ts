@@ -20,7 +20,7 @@ const TSHARK = `#!/bin/sh
 printf '%s\\n' "$*" >> "$STUB_LOG"
 case "$1" in
   --version) echo 'TShark (Wireshark) 4.2.0 (stand-in)'; exit 0;;
-  -G) cat "$STUB_DIR/fields.txt"; [ -f "$STUB_DIR/fields-exit" ] && exit "$(cat "$STUB_DIR/fields-exit")"; exit 0;;
+  -G) [ -f "$STUB_DIR/sleep-fields" ] && { echo $$ > "$STUB_DIR/engine-fields.pid"; echo started > "$STUB_DIR/started-fields"; sleep 60; }; cat "$STUB_DIR/fields.txt"; [ -f "$STUB_DIR/fields-exit" ] && exit "$(cat "$STUB_DIR/fields-exit")"; exit 0;;
 esac
 filter=packets
 while [ $# -gt 0 ]; do
@@ -40,7 +40,13 @@ exit 0
 
 const fieldLine = (name: string): string => `F\tA field\t${name}\tFT_STRING\tproto\t0\t0x0\tdescription`;
 
-type Opts = { fields?: string[]; tables?: Record<string, string>; sleeps?: string[]; exits?: Record<string, number> };
+// Every field the four always-run listings ask for: the build the stand-in plays lists them (the recipe checks every field).
+const BASE_FIELDS = ["frame.number", "frame.time_epoch", "frame.cap_len", "frame.len", "_ws.col.protocol", "ip.src", "ipv6.src", "tcp.srcport", "udp.srcport", "ip.dst", "ipv6.dst", "tcp.dstport", "udp.dstport",
+  "dns.id", "dns.flags.response", "dns.qry.name", "dns.qry.type", "dns.a", "dns.aaaa", "dns.resp.name", "dns.flags.rcode",
+  "tcp.stream", "http.request.method", "http.host", "http.request.uri", "http.response.code", "http.content_length", "http.user_agent",
+  "tls.handshake.type", "tls.handshake.extensions_server_name", "tls.handshake.ja3", "x509sat.uTF8String"];
+
+type Opts = { fields?: string[]; only?: string[]; sleepFields?: boolean; tables?: Record<string, string>; sleeps?: string[]; exits?: Record<string, number> };
 
 async function stage(cwd: string, bin: string, o: Opts = {}): Promise<string> {
   const dir = join(cwd, "stub");
@@ -48,9 +54,10 @@ async function stage(cwd: string, bin: string, o: Opts = {}): Promise<string> {
   await mkdir(dir, { recursive: true });
   await stub(bin, "tshark", TSHARK);
   await stub(bin, "capinfos", CAPINFOS);
-  await writeFile(join(dir, "fields.txt"), (o.fields ?? ["frame.number", "ip.src"]).map(fieldLine).join("\n") + "\n");
+  await writeFile(join(dir, "fields.txt"), (o.only ?? [...BASE_FIELDS, ...(o.fields ?? [])]).map(fieldLine).join("\n") + "\n");
   for (const [filter, text] of Object.entries(o.tables ?? {})) await writeFile(join(dir, `out-${filter}.tsv`), text);
   for (const f of o.sleeps ?? []) await writeFile(join(dir, `sleep-${f}`), "1");
+  if (o.sleepFields) await writeFile(join(dir, "sleep-fields"), "1");
   for (const [f, c] of Object.entries(o.exits ?? {})) await writeFile(join(dir, `exit-${f}`), String(c));
   await writeFile(join(cwd, "tshark-calls.txt"), "");
   return dir;
@@ -105,7 +112,8 @@ test("a run lists the selected fields of every packet and of DNS, HTTP and TLS, 
     assert.equal(steps["packets.tsv"].rows, 4);
     assert.equal(steps["http.tsv"].rows, 3);
     assert.equal(c.limits_on_what_the_listings_show.truncated_packets, 2, "two packets were captured shorter than they were on the wire");
-    assert.deepEqual(Object.keys(c.secret_bearing), ["http.tsv"]);
+    assert.deepEqual(Object.keys(c.secret_bearing), ["dns.tsv", "http.tsv", "tls.tsv"]);
+    for (const name of ["dns.tsv", "http.tsv", "tls.tsv"]) assert.equal(steps[name].secret_bearing, true, name);
     assert.match(c.secret_bearing["http.tsv"], /credentials/);
     assert.equal(steps["http.tsv"].secret_bearing, true);
     assert.match(c.not_covered, /does not show a protocol is absent/);
@@ -158,7 +166,9 @@ test("HTTP/2 and QUIC are listed only when the installed tshark lists their fiel
     const call = (await readFile(join(cwd, "tshark-calls.txt"), "utf8")).split("\n").find((l) => l.includes("-Y http2 ")) ?? "";
     assert.doesNotMatch(call, /http2\.type|http2\.headers\.status/);
     assert.match(call, /-e http2\.streamid/);
-    assert.equal(b.status, "complete");
+    assert.equal(b.status, "partial", "http2.tsv and quic.tsv were made without the fields the build lacks");
+    assert.match(b.status_basis, /listing\(s\) were made without a field the installed tshark does not list \(.*http2\.tsv: .*http2\.type/);
+    assert.equal(a.listings_without_fields, undefined, "a build that lacks only a whole optional listing's fields drops no column of a listing it made");
   });
 });
 
@@ -318,5 +328,65 @@ test("detect, a missing program and a target that is not a capture are answered 
     assert.equal(m.status, "failed");
     assert.equal(m.finished, true);
     assert.match(m.errors[0], /missing program\(s\): tshark, capinfos/);
+  });
+});
+
+// --- D-network-F1 ----------------------------------------------------------------------------------------------------------
+
+test("every field a listing asks for is checked against the build: one the build lacks is named in the step and left out, and the listing still runs", async () => {
+  await withCwd(async (cwd, bin) => {
+    await stage(cwd, bin, { only: BASE_FIELDS.filter((f) => f !== "ip.dst" && f !== "dns.id" && f !== "x509sat.uTF8String"), tables: { packets: PACKETS, dns: TABLE(["frame.number"], 2), http: TABLE(["frame.number"], 1), tls: TABLE(["frame.number"], 1) } });
+    const result = await recipe(cwd, bin, ["run", "--target", target(await capture(cwd)), "--out", "work/cat"]);
+    assert.equal(result.code, 0, result.stdout + result.stderr);
+    const c = await coverage(cwd, "work/cat");
+    const steps = Object.fromEntries(c.steps.map((s: Json) => [s.step, s]));
+    assert.deepEqual(steps["dns.tsv"].fields_missing.sort(), ["dns.id", "ip.dst"]);
+    assert.deepEqual(steps["tls.tsv"].fields_missing.sort(), ["ip.dst", "x509sat.uTF8String"]);
+    assert.equal(steps["dns.tsv"].status, "ok");
+    assert.equal(steps["dns.tsv"].fields.includes("ip.dst"), false);
+    const calls = (await readFile(join(cwd, "tshark-calls.txt"), "utf8")).split("\n");
+    const dns = calls.find((l) => l.includes("-Y dns ")) ?? "";
+    assert.doesNotMatch(dns, /-e ip\.dst|-e dns\.id/);
+    assert.match(dns, /-e ipv6\.dst/);
+    assert.equal(c.status, "partial", "listings made without a field the build lacks are not a complete answer");
+    assert.match(c.status_basis, /4 listing\(s\) were made without a field the installed tshark does not list \(dns\.tsv: .*dns\.id.*; http\.tsv: ip\.dst;/);
+    assert.deepEqual(Object.keys(c.listings_without_fields).sort(), ["dns.tsv", "http.tsv", "packets.tsv", "tls.tsv"]);
+    assert.equal(JSON.parse(result.stdout).status, "partial");
+    // _ws.col.Protocol is listed as _ws.col.protocol by the build, and is found
+    assert.deepEqual(steps["packets.tsv"].fields_missing, ["ip.dst"], "only the field that really is missing");
+  });
+});
+
+test("the output directory is private (0700), every file the recipe writes is 0600, and all four secret-bearing tables are marked", async () => {
+  await withCwd(async (cwd, bin) => {
+    await stage(cwd, bin, { fields: ["http2.streamid", "http2.type", "http2.headers.method", "http2.headers.authority", "http2.headers.path", "http2.headers.status"], tables: { packets: PACKETS, dns: TABLE(["frame.number"], 1), http: TABLE(["frame.number"], 1), tls: TABLE(["frame.number"], 1), http2: TABLE(["frame.number"], 2) } });
+    const result = await recipe(cwd, bin, ["run", "--target", target(await capture(cwd)), "--out", "work/cat"]);
+    assert.equal(result.code, 0, result.stderr);
+    const c = await coverage(cwd, "work/cat");
+    assert.deepEqual(Object.keys(c.secret_bearing), ["dns.tsv", "http.tsv", "tls.tsv", "http2.tsv"]);
+    const { stat, readdir } = await import("node:fs/promises");
+    assert.equal(((await stat(join(cwd, "work/cat"))).mode & 0o777).toString(8), "700");
+    for (const name of await readdir(join(cwd, "work/cat"))) assert.equal(((await stat(join(cwd, "work/cat", name))).mode & 0o777).toString(8), "600", name);
+    assert.equal(JSON.parse(result.stdout).status_basis.length > 10, true);
+    assert.match(c.status_basis, /every step ran/);
+  });
+});
+
+test("the field-list step is running while tshark -G fields runs: a kill during it leaves that step marked, not planned", async () => {
+  await withCwd(async (cwd, bin) => {
+    const dir = await stage(cwd, bin, { sleepFields: true, tables: { packets: PACKETS } });
+    const run = startDetached(RECIPE, cwd, null, env(cwd), bin, ["run", "--target", target(await capture(cwd)), "--out", "work/cat"]);
+    let engine = 0;
+    try {
+      engine = await pidFile(join(dir, "engine-fields.pid"));
+      run.killGroup();
+      await run.closed;
+      const c = await coverage(cwd, "work/cat");
+      const steps = Object.fromEntries(c.steps.map((s: Json) => [s.step, s]));
+      assert.equal(steps["tshark -G fields"].status, "running");
+      assert.equal(steps["dns.tsv"].status, "not_attempted");
+    } finally {
+      try { process.kill(engine, "SIGKILL"); } catch { /* gone */ }
+    }
   });
 });

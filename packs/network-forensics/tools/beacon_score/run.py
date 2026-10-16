@@ -49,11 +49,14 @@ from pathlib import Path
 TOOL = {"name": "beacon_score", "version": 4}
 MAX_EPOCH = 4_102_444_800        # 2100-01-01: a number above it is not epoch seconds (milliseconds, microseconds, nanoseconds)
 MAX_EVENTS = 3_000_000          # measured: 336 MB resident at this many events (it was 1.19 GB for the same 3 million before the series was packed)
+MAX_INLINE_EVENTS = 500_000     # a series passed in `timestamps`: the arguments are parsed whole (about 50 MB resident at this many), so a longer one belongs in timestamps_file
+MAX_ARGUMENT_BYTES = 32 << 20   # the arguments are read up to this many bytes; more is refused before it is parsed
 DEFAULT_LIMIT = 40
 MAX_VALUE_CHARS = 4096          # a longer line of a timestamps_file is not a time
 DEFAULT_SECONDS = 40            # the tool's own clock for reading; the manifest's limit is 60 seconds
 MAX_SECONDS = 45
-EXTRA_FOR_LIST = 5              # seconds past that clock the interval list may still take before it stops, leaving the answer room before 60
+TAIL_PER_READ = 1.5             # the ordering and the measurement after the last value take 0.6 (sorted) to 0.93 (shuffled) times as long as reading did at full speed, and about 1.4 times with a tenth of a CPU
+EXTRA_FOR_LIST = 0              # seconds past that clock the interval list may still take: none, reading and measuring have used their share and the answer needs room before 60
 
 
 def describe(exc):
@@ -299,10 +302,21 @@ def median_of(values):
 
 
 def main():
+    began = time.monotonic()         # the clock starts here: reading the arguments is part of what max_seconds covers
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _stop)
+    given = sys.stdin.buffer.read(MAX_ARGUMENT_BYTES + 1)
+    if len(given) > MAX_ARGUMENT_BYTES:
+        # the rest is read and dropped (for a few seconds at most), so that the caller writing it is not left with a broken pipe instead of the answer
+        drain_until = time.monotonic() + 5
+        while time.monotonic() < drain_until and sys.stdin.buffer.read(1 << 20):
+            pass
+        fail("the arguments are larger than %d MiB: give the series as timestamps_file (one time per line, up to %d events), not inline" % (MAX_ARGUMENT_BYTES >> 20, MAX_EVENTS))
     try:
-        args = json.load(sys.stdin)
-    except ValueError as exc:
+        args = json.loads(given)
+    except (ValueError, RecursionError) as exc:
         fail("arguments are not valid JSON", reason=str(exc))
+    del given
     if not isinstance(args, dict):
         fail("arguments must be a JSON object")
     raw, file_arg = args.get("timestamps"), args.get("timestamps_file")
@@ -325,7 +339,10 @@ def main():
     seconds_allowed = args.get("max_seconds", DEFAULT_SECONDS)
     if isinstance(seconds_allowed, bool) or not isinstance(seconds_allowed, (int, float)) or not 1 <= seconds_allowed <= MAX_SECONDS:
         fail("max_seconds must be a number from 1 to %d: the tool stops reading and answers with what it has before the manifest's 60-second limit" % MAX_SECONDS)
-    deadline = time.monotonic() + seconds_allowed
+    deadline = began + seconds_allowed
+    # max_seconds is the budget for reading AND measuring: the part after the last value cannot be interrupted and takes about as long as the
+    # reading did, so reading stops when it has used its share. A slow CPU then still ends with a partial answer inside the manifest's limit.
+    read_deadline = began + seconds_allowed / (1 + TAIL_PER_READ)
     out_dir = args.get("out_dir")
     if out_dir is not None:
         if not isinstance(out_dir, str) or not out_dir:
@@ -342,11 +359,10 @@ def main():
     else:
         if not isinstance(raw, list) or not raw:
             fail("timestamps is required: a non-empty list of event times, epoch seconds or ISO 8601 with a zone")
-        if len(raw) > MAX_EVENTS:
-            fail("the series has more than %d events: split it by destination or by window" % MAX_EVENTS)
+        if len(raw) > MAX_INLINE_EVENTS:
+            fail("timestamps holds %d events, more than the %d a series passed inline may have: give it as timestamps_file (one time per line, up to %d events)"
+                 % (len(raw), MAX_INLINE_EVENTS, MAX_EVENTS))
 
-    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
-        signal.signal(signum, _stop)
     PROGRESS["stage"] = "reading the series"
     counters = {"long_lines": 0}
     # The series is parsed once, as it is read: seconds in a packed array (8 bytes an event), the position of each in the input
@@ -364,7 +380,7 @@ def main():
             if supplied > MAX_EVENTS:
                 fail("the series has more than %d events: split it by destination or by window" % MAX_EVENTS, **({"timestamps_file": file_arg} if file_arg else {}))
             PROGRESS["values_read"] = supplied
-            if supplied & 4095 == 0 and time.monotonic() > deadline:
+            if supplied & 4095 == 0 and time.monotonic() > read_deadline:
                 timed_out_at = index
                 supplied -= 1
                 break
@@ -495,11 +511,12 @@ def main():
 
     rejected_total = sum(rejected.values())
     partial = timed_out_at is not None or list_cut or rejected_total > 0
-    not_scored = ("%d of the %d values supplied were not scored (%s) and are not in the measurements, which cover the other %d; each is named by "
-                  "position in first_rejected and all_rejected" % (rejected_total, supplied, ", ".join("%d %s" % (n, r.replace("_", " ")) for r, n in rejected.items() if n), count))
+    not_scored = ("%d of the %d values supplied %s not scored (%s) and %s not in the measurements, which cover the other %d; each is named by "
+                  "position in first_rejected and all_rejected" % (rejected_total, supplied, "was" if rejected_total == 1 else "were", ", ".join("%d %s" % (n, r.replace("_", " ")) for r, n in rejected.items() if n), "is" if rejected_total == 1 else "are", count))
     if timed_out_at is not None:
-        basis = ("the tool's own clock (max_seconds %s) ran out while the series was being read, at input position %d: the answer measures the %d values "
-                 "read before it, and nothing after them" % (seconds_allowed, timed_out_at, supplied))
+        basis = ("the tool's own clock (max_seconds %s, of which reading takes the first two fifths: the measurement after it takes as long again or more) ran out "
+                 "while the series was being read, at input position %d: the answer measures the %d values read before it, and nothing after them"
+                 % (seconds_allowed, timed_out_at, supplied))
     elif list_cut:
         basis = ("the series was measured whole, but the interval list stopped at the tool's clock after %d of %d intervals: the list in the files is "
                  "incomplete, the measurements are not" % (listed, len(intervals)))

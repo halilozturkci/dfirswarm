@@ -387,12 +387,17 @@ class SecretValues:
 
 
 # BEGIN SHARED PROCESS
-# The same text is in pcap_extract, zeek_run, suricata_run and the network-capture recipe; tests/pack-network-process.test.ts
-# holds the copies equal. A program an engine tool runs is started in THIS tool's process group, never in a session of
+# The same text is in pcap_extract, zeek_run, suricata_run, the network-capture recipe and computer-forensics-base's
+# archive_extract; tests/pack-network-withholding.test.ts holds the four network copies equal and tests/pack-base-shared.test.ts
+# holds archive_extract's to them. A program an engine tool runs is started in THIS tool's process group, never in a session of
 # its own: the harness ends a tool that runs too long, or is aborted, by killing the tool's group (process.kill(-pid,
 # SIGKILL)), and an engine in a group of its own goes on writing into the output directory after the tool is gone. On
 # Linux the kernel is also asked to kill it if the tool dies. A deadline kills the program and what it started by
-# walking the process tree, and SIGTERM, SIGINT and SIGHUP do the same and then give the tool a last word.
+# walking the process tree, and SIGTERM, SIGINT and SIGHUP do the same and then give the tool a last word. Only what is
+# below a program this tool started and has not yet waited for is ever signalled: the walk starts at that program's pid
+# and nowhere else, and a program that has been waited for (its pid may be another process's by now) is left alone. The
+# walk has no bound but the number of processes. Two cases leave the tree running: a ps that needs more than PS_WAIT
+# seconds, and a sandbox that denies both libproc and ps (macOS).
 try:
     import ctypes
 except ImportError:  # pragma: no cover
@@ -415,8 +420,52 @@ def spawn(argv, **kwargs):
     return subprocess.Popen(argv, **kwargs)
 
 
+def _children_libproc(pid):
+    """The direct children of `pid` on macOS, from libproc (macOS only: proc_listchildpids is not a symbol of the other
+    BSDs; a library call, so no program is started and nothing can be slow); None when the library, the symbol or the
+    call is not there."""
+    try:
+        import ctypes.util
+        lib = ctypes.CDLL(ctypes.util.find_library("proc") or "/usr/lib/libproc.dylib", use_errno=True)
+        lib.proc_listchildpids.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
+        lib.proc_listchildpids.restype = ctypes.c_int
+        size = 256
+        while size <= 1 << 16:
+            buf = (ctypes.c_int * size)()
+            if lib.proc_listchildpids(pid, buf, ctypes.sizeof(buf)) < 0:
+                return None
+            found = []
+            for value in buf:
+                if value <= 0:
+                    break
+                found.append(int(value))
+            if len(found) < size:
+                return found
+            size *= 4
+        return found
+    except Exception:  # noqa: BLE001 - no library, no symbol: the caller falls back
+        return None
+
+
+PS_WAIT = 10    # seconds the ps fallback is given: ps is slow on a heavily loaded host, and a tree that is not found is a program left running
+
+
+def _below(kids, pid):
+    found, seen, stack = [], {pid}, [pid]
+    while stack:
+        for child in kids.get(stack.pop(), []):
+            if child not in seen:
+                seen.add(child)
+                found.append(child)
+                stack.append(child)
+    return found
+
+
 def descendants(pid):
-    """Every process below `pid`, from /proc where there is one, else from ps."""
+    """Every process below `pid` (never one beside it): from /proc where there is one, else from libproc, else from ps
+    (given PS_WAIT seconds). libproc is believed when it lists a child; an empty answer is believed only when libproc has
+    just listed this tool's own child `pid` (a library that answers nothing for a live child is not working, as in a
+    sandbox that denies it), and otherwise ps is asked."""
     kids = {}
     try:
         if os.path.isdir("/proc/self"):
@@ -429,24 +478,34 @@ def descendants(pid):
                     except (OSError, IndexError, ValueError):
                         continue
         else:
-            out = subprocess.run(["ps", "-A", "-o", "pid=,ppid="], capture_output=True, text=True, timeout=10).stdout
+            first = _children_libproc(pid)
+            if first:
+                found, seen, stack = list(first), {pid, *first}, list(first)
+                while stack:
+                    for child in _children_libproc(stack.pop()) or []:
+                        if child not in seen:
+                            seen.add(child)
+                            found.append(child)
+                            stack.append(child)
+                return found
+            if first is not None and pid in (_children_libproc(os.getpid()) or []):
+                return []
+            out = subprocess.run(["ps", "-A", "-o", "pid=,ppid="], capture_output=True, text=True, timeout=PS_WAIT).stdout
             for line in out.splitlines():
                 parts = line.split()
                 if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
                     kids.setdefault(int(parts[1]), []).append(int(parts[0]))
     except (OSError, subprocess.SubprocessError):
         return []
-    found, stack = [], [pid]
-    while stack:
-        for child in kids.get(stack.pop(), []):
-            found.append(child)
-            stack.append(child)
-    return found
+    return _below(kids, pid)
 
 
 def kill_tree(proc):
     """Kill the program and everything it started. The children are listed first: once the parent is gone they are
-    adopted by init and can no longer be found below it."""
+    adopted by init and can no longer be found below it. A program already waited for is not touched: its pid is free to
+    be another process's, and the walk below it would be that process's children."""
+    if proc.poll() is not None:
+        return
     victims = descendants(proc.pid)
     try:
         proc.kill()

@@ -16,7 +16,7 @@
     },
     "display_filter": {
       "type": "string",
-      "description": "Optional Wireshark display filter, passed to every export pass (never to the listing pass, and not echoed in the answer or the receipt). Whether the installed build applies it to object export is not established by this tool: check an object you rely on"
+      "description": "Optional Wireshark display filter, passed to every export pass (never to the listing pass, and not echoed in the answer or the receipt). Whether the installed build applies it to object export is not established by this tool: check an object you rely on. The export passes still print the number of objects, so on a build that applies the filter to the export that number could say whether a filter over a withheld request URI matched; it does not on tshark 4.6.9 (the same count for no filter, a right guess and a wrong one), and it is not established for any other build"
     },
     "timeout_seconds": {
       "type": "integer",
@@ -37,7 +37,7 @@
   "by": "maintainer",
   "at": "2026-10-07T18:00:00.000Z",
   "version": 5,
-  "sha256": "f64aa572ee592f619def326e5f84659b804f4ab6d242245c373771d733d5e216",
+  "sha256": "7e9ecd6aebd32188751a5a0e76f5ba3517ab54d070babd6fbe516bd9749a9151",
   "use": {
     "extensions": [
       ".pcap",

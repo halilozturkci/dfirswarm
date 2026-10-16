@@ -91,14 +91,15 @@ test("every manifest example is written as the agent gives it (work/<your id>/..
       assert.doesNotMatch(result.stderr, /Traceback/, name);
       const out = JSON.parse(result.stdout);
       assert.equal(out.error, undefined, `${name}: the manifest's own example is refused in a job: ${out.error}`);
+      assert.ok(["complete", "partial"].includes(out.status), `${name}: ${out.status}`);
     }
   });
 });
 
 // --- the manifest declares secret output (docs/packs.md, "Secrets and sensitive output") -----------------------------------
 
-test("pcap_extract and network_log_summary declare secret_output: required (zeek_run and suricata_run follow in the next pull request); pcap_summary and beacon_score print addresses, ports and counts and do not", async () => {
-  for (const name of ["pcap_extract", "network_log_summary"]) {
+test("the four tools whose output is the evidence's text declare secret_output: required; the two that print addresses, ports and counts do not", async () => {
+  for (const name of ["pcap_extract", "zeek_run", "suricata_run", "network_log_summary"]) {
     const manifest: Json = JSON.parse(await readFile(join(TOOLS, name, "manifest.json"), "utf8"));
     assert.equal(manifest.secret_output, "required", name);
     assert.match(manifest.description, /secret_output: "required"/);

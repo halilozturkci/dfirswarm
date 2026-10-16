@@ -32,16 +32,24 @@ complete EVE log. `pcap_extract` performs Wireshark object export with a receipt
 from the first moment and ties an HTTP object to a frame when its bytes equal one
 response body. `network_log_summary` reads Apache/nginx access logs, Squid native
 logs and upper-case KEY=VALUE firewall records into a table with line numbers
-and byte offsets and an explicit timestamp column. The four tools that reach request
-data keep their output in a private directory and withhold what looks like a
-credential from their answers (by shape: a short secret that does not look like
-a token is not recognised): run them as jobs with `secret_output: true`. A
+and byte offsets and an explicit timestamp column. The tools that print text from the evidence (`pcap_extract`, `zeek_run`,
+`suricata_run`, `network_log_summary`, and the capture's own option text in
+`pcap_summary`) keep their output in a private directory and withhold what
+looks like a credential from their answers, column by column (by shape: a short
+secret that does not look like a token is not recognised; a hash, GUID or UUID
+is withheld too and recoverable in a job): run them as jobs with
+`secret_output: true`. Every answer of the six carries `status` (`complete`,
+`partial` or `failed`) and `status_basis`, exit 0 means the engine ran, and
+SIGTERM, SIGINT and SIGHUP end a tool with partial JSON. A
 flow export is identified and its semantics stated, not parsed.
 
 **One catalogue recipe.** `network-capture` detects pcap and pcapng by magic,
 then writes capture metadata and complete listings of the selected fields of
 every packet and of the DNS, HTTP and TLS packets (HTTP/2 and QUIC where the
-installed tshark lists their fields), with a receipt from the first moment. It
+installed tshark lists their fields; a field the build lacks is named and left
+out), with a receipt from the first moment. The directory is private (0700,
+files 0600) and the tables that can hold names and URIs are marked
+`secret_bearing`. It
 is a broad extraction (`purpose: broad_extraction`), one tshark's reading and not
 the capture: its `exclusions` say it reassembles no payload and reads no
 encrypted TLS, and a table with no rows does not show a protocol is absent.
