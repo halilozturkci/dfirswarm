@@ -8,7 +8,7 @@ import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 import { join } from "node:path";
 import { writeFile, mkdir } from "node:fs/promises";
-import { DOC_PROBE, ENTROPY, FUZZY, PE_INFO, RECIPE, buildPe, buildZip, stub, tool, withCwd } from "./pack-re-harness.ts";
+import { DOC_PROBE, DOC_STRUCTURE, ENTROPY, FUZZY, PE_DIRECTORIES, PE_INFO, RECIPE, buildPe, buildZip, stub, tool, withCwd } from "./pack-re-harness.ts";
 import type { Json } from "./pack-re-harness.ts";
 
 const BAD = "x\udcff.bin"; // the file is written with the byte 0xff in its name
@@ -31,7 +31,7 @@ test("pe_info, doc_probe and entropy_map answer for a file whose name is not UTF
     const pe = await put(cwd, buildPe({ imports: [{ dll: "A.dll", functions: ["f"] }] }).file);
     if (!pe) t.skip("this file system refuses a name that is not UTF-8 (macOS): the branch runs on Linux; the error path below does run");
     if (pe) {
-      for (const [script, expected] of [[PE_INFO, "complete"], [ENTROPY, "complete"]] as const) {
+      for (const [script, expected] of [[PE_INFO, "complete"], [ENTROPY, "complete"], [PE_DIRECTORIES, "complete"]] as const) {
         const out = await tool(script, cwd, { path: pe, limit: 1 });
         assert.equal(out.code, 0, out.stderr + out.stdout);
         assert.doesNotMatch(out.stderr, /Traceback/);
@@ -42,12 +42,18 @@ test("pe_info, doc_probe and entropy_map answer for a file whose name is not UTF
       assert.equal(doc.code, 0, doc.stderr + doc.stdout);
       assert.doesNotMatch(doc.stderr, /Traceback/);
       assert.equal((JSON.parse(doc.stdout) as Json).status, "complete");
+      const structure = await tool(DOC_STRUCTURE, cwd, { path: zip! });
+      assert.equal(structure.code, 0, structure.stderr + structure.stdout);
+      assert.doesNotMatch(structure.stderr, /Traceback/);
+      assert.equal((JSON.parse(structure.stdout) as Json).status, "partial", "a package with no [Content_Types].xml is a problem, and the name is in the answer escaped");
     }
     // A name that is not there at all is a JSON error, on every file system.
-    const none = await tool(PE_INFO, cwd, { path: "work/none\udcfe.bin" });
-    assert.notEqual(none.code, 0);
-    assert.doesNotMatch(none.stderr, /Traceback/);
-    assert.match((JSON.parse(none.stdout) as Json).error, /no such file/);
+    for (const script of [PE_INFO, DOC_STRUCTURE, PE_DIRECTORIES]) {
+      const none = await tool(script, cwd, { path: "work/none\udcfe.bin" });
+      assert.notEqual(none.code, 0);
+      assert.doesNotMatch(none.stderr, /Traceback/);
+      assert.match((JSON.parse(none.stdout) as Json).error, /no such file/);
+    }
   });
 });
 

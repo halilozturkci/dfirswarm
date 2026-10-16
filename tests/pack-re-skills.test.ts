@@ -10,9 +10,11 @@ import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { DOC_PROBE, FUZZY, PE_INFO, RE, SCN_CODE, SCN_EXEC, SCN_READ, SCN_WRITE, TOOLS, asJob, body, buildElf, buildMacho, buildPe, buildZip, filesUnder, put, rels, stub, tool, withCwd } from "./pack-re-harness.ts";
+import { DOC_PROBE, DOC_STRUCTURE, FUZZY, PE_DIRECTORIES, PE_INFO, RE, SCN_CODE, SCN_EXEC, SCN_READ, SCN_WRITE, TOOLS, asJob, body, buildElf, buildMacho, buildPe, buildZip, filesUnder, put, rels, stub, tool, withCwd } from "./pack-re-harness.ts";
 
 const SKILLS = join(RE, "skills");
+import { buildPdf, buildPeDirs, buildVbaProject } from "./pack-re-doc-fixtures.ts";
+
 const BASE_SKILLS = join(RE, "..", "computer-forensics-base", "skills");
 const TOKENS = (text: string): number => Buffer.byteLength(text) / 4.245;
 
@@ -104,9 +106,12 @@ test("every second-level leaf is pointed to by a leaf that says when to open it"
 const TAUGHT: Array<[string, string, string[]]> = [
   ["pe_info", "pe/structure", ["header_timestamp_raw", "header_timestamp_utc", "max_seconds", "writable_and_executable", "overlay_offset", "overlay_is_certificate_table", "declares_clr_runtime_header", "declares_tls", "declares_delay_imports", "declares_resources", "entropy_note", "status", "problems", "coverage"]],
   ["pe_info", "pe/signature-and-resources", ["export_name", "certificate_table_declared", "certificate_table", "within_file"]],
+  ["pe_directories", "pe/signature-and-resources", ["requested_execution_levels", "extract"]],
   ["pe_info", "elf/structure", ["section_headers_absent", "stripped", "needed_libraries", "soname", "rpath", "runpath", "interpreter", "entry_point", "segments", "PT_DYNAMIC", "withheld_fields", "file_offset"]],
   ["pe_info", "triage/quarantine", ["commands"]],
   ["doc_probe", "documents/macros", ["extension_content_disagreement", "members", "parts", "modified", "extract_to", "status", "withheld_names_file"]],
+  ["doc_structure", "documents/external-and-active-content", ["actions", "trigger", "reached_from_catalog", "encryption_summary"]],
+  ["doc_structure", "documents/macros", ["coverage", "problems", "status"]],
   ["doc_probe", "documents/external-and-active-content", ["external_targets", "finding_id", "write_values", "doc-probe-values.jsonl", "markers", "encrypt_marker_present", "objdata_markers", "classes"]],
   ["fuzzy_hash", "strings/decoding-and-similarity", ["insufficient_input", "tlsh_status"]],
 ];
@@ -119,7 +124,7 @@ function collect(v: unknown, into: Set<string>): void {
 
 /** What each tool writes, observed over fixtures: the keys and string values of its answers and of the files it wrote. */
 async function observed(): Promise<Record<string, Set<string>>> {
-  const seen: Record<string, Set<string>> = { pe_info: new Set(), doc_probe: new Set(), fuzzy_hash: new Set() };
+  const seen: Record<string, Set<string>> = { pe_info: new Set(), doc_probe: new Set(), doc_structure: new Set(), pe_directories: new Set(), fuzzy_hash: new Set() };
   await withCwd(async (cwd, bin) => {
     const run = async (name: string, script: string, rel: string, data: Buffer | string, args: Record<string, unknown> = {}, job = false): Promise<void> => {
       await put(cwd, rel, data);
@@ -164,6 +169,13 @@ async function observed(): Promise<Record<string, Set<string>>> {
     for (const line of (await readFile(join(cwd, "out", values!), "utf8")).trim().split("\n")) collect(JSON.parse(line), seen.doc_probe!);
     await run("doc_probe", DOC_PROBE, "work/a.pdf", "%PDF-1.4\n1 0 obj << /OpenAction 2 0 R /AA << >> /JS (x) /JavaScript /EmbeddedFile /Encrypt 3 0 R >> endobj\n");
     await run("doc_probe", DOC_PROBE, "work/a.rtf", "{\\rtf1{\\object{\\*\\objclass Word.Document.8}{\\*\\objdata 0105000002000000}}}");
+    // pe_directories: exports, resources with a manifest, a CLR header and a TLS callback.
+    const manifest = Buffer.from('<assembly xmlns="urn:schemas-microsoft-com:asm.v1"><requestedExecutionLevel level="asInvoker" uiAccess="false"/></assembly>');
+    await run("pe_directories", PE_DIRECTORIES, "work/d.exe", buildPeDirs({ exports: { functions: [{ name: "F" }] }, tlsCallbacks: [0x1010], clr: {}, resources: [{ type: 24, name: 1, lang: 0, data: manifest }] }).file);
+    // doc_structure: a PDF whose catalog opens an action, and a compound file with a VBA project.
+    const pdf = buildPdf([{ num: 1, body: "<< /Type /Catalog /Pages 2 0 R /OpenAction 4 0 R >>" }, { num: 2, body: "<< /Type /Pages /Kids [ 3 0 R ] /Count 1 >>" }, { num: 3, body: "<< /Type /Page /Parent 2 0 R >>" }, { num: 4, body: "<< /S /URI /URI (http://example.test/) >>" }], "/Root 1 0 R");
+    await run("doc_structure", DOC_STRUCTURE, "work/s.pdf", pdf.file);
+    await run("doc_structure", DOC_STRUCTURE, "work/s.bin", buildVbaProject([{ name: "Module1", source: "Sub AutoOpen()\r\nEnd Sub\r\n" }]));
     // fuzzy_hash against stand-ins: tlsh says the file is too short (TNULL).
     await stub(bin, "ssdeep", `if [ "$1" = "-V" ]; then echo "2.14.1"; exit 0; fi\necho 'ssdeep,1.1--blocksize:hash:hash,filename'\necho "3::,\\"$(basename "$3")\\""`);
     await stub(bin, "tlsh", `if [ "$1" = "-version" ]; then echo "tlsh 4.12.0"; exit 0; fi\nprintf 'TNULL\\t%s\\n' "$2"`);
@@ -191,8 +203,8 @@ test("every backticked field or parameter a skill attributes to a tool is one it
   const skills = await load(SKILLS);
   const seen = await observed();
   const known = new Set<string>();
-  for (const t of ["pe_info", "doc_probe", "fuzzy_hash"]) for (const n of seen[t]!) known.add(n);
-  for (const t of ["pe_info", "doc_probe", "entropy_map", "fuzzy_hash"]) {
+  for (const t of ["pe_info", "doc_probe", "doc_structure", "pe_directories", "fuzzy_hash"]) for (const n of seen[t]!) known.add(n);
+  for (const t of ["pe_info", "doc_probe", "doc_structure", "pe_directories", "entropy_map", "fuzzy_hash"]) {
     for (const n of Object.keys((JSON.parse(await readFile(join(TOOLS, t, "manifest.json"), "utf8")) as { params: Record<string, unknown> }).params)) known.add(n);
   }
   const elsewhere = new Set(["secret_output", ...(await readdir(join(RE, "..", "computer-forensics-base", "tools"))), ...(await readdir(TOOLS))]);   // the harness's own job flag and tool names
@@ -341,6 +353,6 @@ test("the review's wording fixes are in the leaves and the goal, and the goal's 
   // The counts outside the pack follow the pack.
   for (const file of ["docs/packs.md", "README.md"]) {
     const doc = await readFile(join(RE, "..", "..", file), "utf8");
-    assert.match(doc, /^\| `reverse-engineering` \| 12 \| 4 \| 1 \|/m, `${file} counts twelve skills`);
+    assert.match(doc, /^\| `reverse-engineering` \| 12 \| 6 \| 1 \|/m, `${file} counts twelve skills, six tools and one recipe`);
   }
 });

@@ -1,0 +1,108 @@
+{
+  "name": "doc_structure",
+  "description": "Read a document's structure from its bytes, without opening it in the application that made it and without running anything in it. OLE compound file (binary Word, Excel, PowerPoint, vbaProject.bin, an encrypted OOXML package): the header, FAT, mini FAT and the whole directory (every entry with size, start sector, class id and FILETIME times as raw value and UTC, and the entries no storage reaches); the VBA project (the dir stream is decompressed; each module's stream and the size of its compressed source are listed; source is written out only when extract asks for it); the encryption structures the Office formats record (EncryptionInfo, the Word FIB flags and table-stream header, the Excel FILEPASS record, the PowerPoint Current User token), reported as scheme, algorithm and key size and never as salts, verifiers or keys; Excel sheet kinds and visibility from the BOUNDSHEET records (after FILEPASS they are ciphertext: only the count and each sheet's stream position). A root entry the Office formats give a stream is read only when it is a stream, a VBA storage whose dir is missing or is not a stream is listed and said, two entries of one name in a storage (compared in upper case, [MS-CFB] 2.6.4) are a problem and every copy of a VBA storage's dir and module streams, and of a root WordDocument, Workbook, Book, PowerPoint Document, Current User, EncryptionInfo or EncryptedPackage stream, is read (the others under other_copies, each with its sid; ole:<path> writes every copy), and a VBA stream no dir names is said. OOXML/ZIP: the central directory (part names compare case-insensitively: two spellings of one name are a duplicate, said (all are counted, 100 are listed and 10 named in the problems), every copy of a part this tool reads is read, and when one spelling of a name is withheld every spelling is), a local header that disagrees with its central entry is said, a name marked UTF-8 that is not is read as CP437 and said, and a Unicode Path extra field (0x7075) is read by the tool and shown beside the central directory's name, by which every member is listed and read on every Python version; [Content_Types].xml, the document, workbook and presentation protection elements (hash, salt and password attributes by length only), and the VBA project: every member the content types (an Override, or a Default extension for a part with no Override) or a vbaProject relationship declare as one, every member named vbaProject.bin by either name, and every other member that begins with the compound file signature and holds a VBA storage, each read as a compound file and listed with selected_by (a declared one that is absent or not read is a problem). PDF: the cross-reference chain (tables, streams, hybrid files, every revision), every object's dictionary and stream filters, object streams, the encryption dictionary named by the current trailer (verifiers by length only), the catalog's actions and the way each is reached (OpenAction, additional-actions, annotations, form fields, outlines, the JavaScript name tree; a direct action is known by the place it sits; each step of every walker counts against max_objects and reads the clock, a /Next chain visits each action once and a link back to an earlier action or an outline that returns to an object is a named cycle), embedded files, and the page tree's declared and traversed counts. An object whose header is in the file and that the newest cross-reference chain marks free or does not list is counted (objects_scan), and an action dictionary in one is listed with outside_chain and makes the answer partial. In an encrypted file the action dictionaries of objects outside object streams are read and each target string is marked ciphertext: true, given by length only. Objects are parsed to a nesting of 150 whatever max_depth says. When the cross-reference chain is unusable the index is rebuilt by scanning, a 'trailer' keyword inside stream data or a comment is not taken for a trailer, and the search for trailers has a share of the scan budget of its own (a trailer dictionary is read to 1 MiB). RTF (a file that begins with {\\rt, as Word reads it): group structure and nesting, control words (one with a capital letter is no RTF control word: counted, never printed), object groups with class name, hex data length, the signature the data begins with (named, never printed), the OLE 1.0 object header and a nested compound file read as one, fields (by the field type they begin with when it is one of the ECMA-376 field types, and by length; a field inside another field's instruction or a template is a row of its own) and templates (by length, the target as the sanitiser shows it), each a row of a table; in a captured name, instruction or template \\'xx is the byte, \\uN the character N with its \\ucN fallback dropped, and a carriage return or line feed is dropped, as RTF readers do, before it is matched or withheld; an OLE 1.0 class name written as UTF-16 in its ANSI field is read as UTF-16. Every stream is read under budgets (per stream, in total, expansion ratio, entries, objects, depth, clock); every filter decodes in pieces and its output is held to the budget before it is allocated. The PDF parser reads the file in place and charges every piece of input it walks (strings, hex strings, names, numbers, comments, white space, values) to one budget per object over every window it is retried in and to one budget for the call, reading the clock as it goes; a failure that a larger window cannot change is not read again. What the parser keeps of what it parsed is held to budgets of its estimated size (one parse reads at most 250,000 values and holds at most 64 MiB by that estimate, a name counted at the one, two or four bytes a character Python holds it in; the object cache, the objects kept for the trace and the decoded object streams are bounded, an object not kept being read again when it is needed). A budget or the clock that is reached is a limit in the answer, never a clean result. Every key and every value of the answer and of each file it names passes the sanitiser and then a backstop: the sanitiser withholds by shape only: user-info to the last @ before the host (a name:password@ with no host included; a URL target's path then goes through the same rules), the value of a secret-named key (after = for Password, Pwd, AccountKey, token, secret, pass, pw, auth, credential and the like; after : for the password and key names; quoted or not), a PEM body, the shared block's token families in the whole text and in each / component, base64 joined by / (whole /-pieces whose character classes change at 0.45 of their characters or more, and padded base64), a token head, a withheld token with the random-looking pieces joined to it by /, and the whole of a text whose copy without NUL, control, zero-width, spaces other than U+0020, soft-hyphen, bidi and combining characters (and with full-width forms folded) holds any of these. It is a shape rule with a measured residue: of random AWS-format secret keys holding a /, 1.2% are printed whole; of the base64 of 16, 20, 24 or 32 random bytes holding a /, 1.4%, 0.7%, 2.9% and 0.1%; a secret of another shape (a plain password, a token family the rules do not name, a random alphanumeric of 20 to 28 characters, a token split across two fields) is printed, so a file whose secrets matter is read in a job with secret_output and write_values; the backstop withholds any key or value the sanitiser would still change, and a number of 32 digits or more, counts it in withheld_by_final_check and makes the answer partial; a name, key or target longer than 2,048 characters is given by length only, no message quotes bytes of the file, table and file names hold no text of the document, and no list in the answer is longer than the larger of limit and 100 items (a longer one is written whole to a file named beside it). No digest of an extracted object is printed (with write_values, in a job, it goes to the values file). A tool-output directory reached through a symbolic link is refused. Needs Python 3.11 or later (refused as JSON below). Not read: text, cells, slides, images, fonts, compiled VBA (p-code), property sets, JavaScript or embedded-file content (unless extract names it), the plaintext of anything encrypted (no key, not even an empty password, is tried), filters other than Flate, ASCIIHex, ASCII85 and RunLength. A structure shows what the file holds, not what an application would do: an action, macro, field or external target does not show that anything ran or was fetched, and a structure not found is not an absence of the thing.",
+  "use": {
+    "magic": [
+      {
+        "offset": 0,
+        "hex": "d0cf11e0a1b11ae1"
+      },
+      {
+        "offset": 0,
+        "hex": "504b0304"
+      },
+      {
+        "offset": 0,
+        "hex": "504b0506"
+      },
+      {
+        "offset": 0,
+        "hex": "255044462d"
+      },
+      {
+        "offset": 0,
+        "hex": "7b5c7274"
+      }
+    ],
+    "extensions": [
+      ".docx",
+      ".docm",
+      ".dotx",
+      ".dotm",
+      ".xlsx",
+      ".xlsm",
+      ".xltx",
+      ".xltm",
+      ".pptx",
+      ".pptm",
+      ".potx",
+      ".potm",
+      ".doc",
+      ".dot",
+      ".xls",
+      ".xlt",
+      ".ppt",
+      ".pot",
+      ".pdf",
+      ".rtf"
+    ]
+  },
+  "params": {
+    "path": {
+      "type": "string",
+      "description": "An OLE compound file, an Office Open XML package, a PDF or an RTF file"
+    },
+    "extract_to": {
+      "type": "string",
+      "description": "Where objects named in extract are written: a directory under work/<your agent id>/ (in a job, under $OUT). Files are created exclusively, mode 0600, named extract-NNNN.bin, and can contain secrets"
+    },
+    "extract": {
+      "type": "array",
+      "description": "Objects to write byte for byte (at most 64): vba (every VBA module's decompressed source), javascript (every PDF script), ole:<stream path>, zip:<member name>, pdf:<object number> (stream, filters undone), pdf-raw:<object number> (stream, still encoded), rtf:<object number> (the hex-decoded object data). Needs extract_to; run in a job with secret_output: true"
+    },
+    "write_values": {
+      "type": "boolean",
+      "description": "Write each PDF URI/launch target, RTF field instruction and template whole to doc-structure-values.jsonl under $OUT, and the real name behind every withheld name (default false; refused outside a job; run the job with secret_output: true)"
+    },
+    "max_stream_bytes": {
+      "type": "integer",
+      "description": "Most bytes one stream may be read or expand to (default 16777216)"
+    },
+    "max_total_bytes": {
+      "type": "integer",
+      "description": "Most bytes all streams may be read or expand to together (default 134217728)"
+    },
+    "max_entries": {
+      "type": "integer",
+      "description": "Most OLE directory entries and ZIP members read (default 10000, at most 100000)"
+    },
+    "max_objects": {
+      "type": "integer",
+      "description": "Most PDF objects indexed and traversed (default 200000, at most 2000000)"
+    },
+    "max_depth": {
+      "type": "integer",
+      "description": "Deepest nesting followed: RTF groups, OLE storages, PDF structures (default 256, at most 10000); PDF objects are parsed to a nesting of 150 at most"
+    },
+    "max_ratio": {
+      "type": "integer",
+      "description": "Most expanded bytes per compressed byte (default 1000)"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Rows of one table kept in the answer (default 1000, at most 20000: a larger number is refused, as the rows are withheld while the file is read); the whole of a longer table is written to a file and named"
+    },
+    "max_seconds": {
+      "type": "integer",
+      "description": "The tool's own time limit for reading, in seconds, from 1 to 90 (default 70); a read that reaches it stops, reports what it read and says so. The rows of each table are withheld as they are read, under this limit; for a ZIP the lists (the check of the part names, the member rows, the repeated names) have 60% of it and the rest is kept for its content types, relationships and VBA project, which are read whether or not the lists were finished; the rest of the answer is built after it and has until about 90 s after the call began, at least 5 s after the reading: a string it has no time to check is given by its length and the answer says so (partial). A call that has not answered within 105 s ends with a partial answer of the problems, the limits and the first rows of each table it holds, before the manifest's 120 s limit"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 120,
+  "example": "{\"path\": \"work/extracted/invoice.doc\"}",
+  "by": "maintainer",
+  "at": "2026-10-14T09:00:00.000Z",
+  "version": 1,
+  "sha256": "c850b6a23ec29c1ddd73e547663eaa7ba182a4160f26a34873100110c48cb255"
+}

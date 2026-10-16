@@ -4,7 +4,7 @@
       "name": "capa",
       "package": "capa",
       "optional": true,
-      "why": "Match a binary against capability rules over features extracted from the file and report named capabilities with the features and addresses each match used. A match is a rule-supported hypothesis about what the code can do, not observed behaviour; the rule set and version used are part of the result.",
+      "why": "Match a binary against capability rules over features extracted from the file and report named capabilities with the features and addresses each match used. A match is a rule-supported hypothesis about what the code can do, not observed behaviour; the rule set and version used are part of the result. The Linux download is pinned to a release and sha256 per architecture; the Homebrew install is unpinned (declared, unverified).",
       "install": {
         "brew": "python3 -m pip install flare-capa",
         "apt": "pinned download 9.4.0 (install.download): upstream standalone release, whose embedded rules make offline analysis work",
@@ -29,7 +29,7 @@
       "name": "floss",
       "package": "flare-floss",
       "optional": true,
-      "why": "Recover strings that plain extraction misses (strings a sample decodes or builds at runtime) by analysis and emulation of its code, without running the sample on a host. Recovery is incomplete and depends on the format, architecture and version; a recovered string is derived, not read at a file offset.",
+      "why": "Recover strings that plain extraction misses (strings a sample decodes or builds at runtime) by analysis and emulation of its code, without running the sample on a host. Recovery is incomplete and depends on the format, architecture and version; a recovered string is derived, not read at a file offset. Unpinned (declared, unverified): the release the image installs is what pip resolves, so a job records the output of `floss --version`.",
       "install": {
         "brew": "python3 -m pip install flare-floss",
         "apt": "python3 -m pip install flare-floss"
@@ -41,7 +41,7 @@
       "name": "olevba",
       "package": "oletools",
       "optional": true,
-      "why": "Extract VBA macro source from an Office document and name its auto-execution entry points. An entry-point name shows what a macro declares, not that anything ran.",
+      "why": "Extract VBA macro source from an Office document and name its auto-execution entry points. An entry-point name shows what a macro declares, not that anything ran. Unpinned (declared, unverified): the release the image installs is what pip resolves, so a job records the version the tool prints.",
       "install": {
         "brew": "python3 -m pip install oletools",
         "apt": "python3 -m pip install oletools"
@@ -76,7 +76,7 @@
       "name": "yara",
       "package": "yara",
       "optional": true,
-      "why": "Match a sample against a rule set and report each match, with the offsets of its string matches where the rule has strings (a condition-only match has none). The pack ships no rules.",
+      "why": "Match a sample against a rule set and report each match, with the offsets of its string matches where the rule has strings (a condition-only match has none). The pack ships no rules. Unpinned apt package (declared, unverified): the version the image carries is read from the program with `yara --version`.",
       "install": {
         "brew": "brew install yara",
         "apt": "apt-get install -y yara"
@@ -88,7 +88,7 @@
       "name": "strings",
       "package": "binutils",
       "optional": true,
-      "why": "A first pass over a binary before a parser is chosen. Always search UTF-16LE as well, which strings -el does.",
+      "why": "A first pass over a binary before a parser is chosen. Always search UTF-16LE as well, which strings -el does. Unpinned apt package (declared, unverified): the version the image carries is read from the program.",
       "install": {
         "brew": "brew install binutils",
         "apt": "apt-get install -y binutils"
@@ -111,7 +111,7 @@
     {
       "name": "ssdeep",
       "package": "ssdeep",
-      "why": "Compute context-triggered piecewise hashes so related binaries can be clustered even when their cryptographic hashes differ.",
+      "why": "Compute context-triggered piecewise hashes so related binaries can be clustered even when their cryptographic hashes differ. Unpinned apt package (declared, unverified): fuzzy_hash records what `ssdeep -V` printed.",
       "install": {
         "brew": "brew install ssdeep",
         "apt": "apt-get install -y ssdeep"
@@ -122,7 +122,7 @@
     {
       "name": "tlsh",
       "package": "tlsh-tools",
-      "why": "Compute and compare Trend Micro Locality Sensitive Hashes for samples with sufficient size and byte diversity.",
+      "why": "Compute and compare Trend Micro Locality Sensitive Hashes for samples with sufficient size and byte diversity. Unpinned apt package (declared, unverified): fuzzy_hash records what `tlsh -version` printed.",
       "install": {
         "brew": "not available in Homebrew (there is no tlsh formula): build the CLI from the upstream release, or run the tool in the re image, where apt provides tlsh-tools",
         "apt": "apt-get install -y tlsh-tools"

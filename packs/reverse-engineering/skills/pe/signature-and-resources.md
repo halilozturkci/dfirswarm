@@ -3,14 +3,16 @@ id: pe/signature-and-resources
 title: PE exports, certificate table and resources
 when: You need export names, signing state or version information.
 needs: []
-tools: [pe_info]
+tools: [pe_info, pe_directories]
 requires_host: [r2]
 ---
 
-Use when a question turns on exports, a signature or resources. Not for verifying anything: no tool in this pack validates a signature or extracts resources.
+Use when a question turns on exports, a signature or resources. Not for verifying anything: no tool in this pack validates a signature.
 
-- **Exports.** `export_name` is the export directory's image-name field, not the symbol list. An entry routine may be named, ordinal-only or forwarded, and a service DLL need not export a symbol called `ServiceMain`; correlate with the service configuration. List exports with `r2 -2 -q -c 'iE' SAMPLE` and keep the whole output: names, ordinals, forwarders.
+- **Exports.** `export_name` (`pe_info`) is the export directory's image-name field, not the symbol list. `pe_directories` lists every export: ordinal (base plus index), RVA, section, name and forwarder; an export may be named, ordinal-only or forwarded, and a name is a claim. A service DLL need not export a symbol called `ServiceMain`; correlate with the service configuration. Cross-check with `r2 -2 -q -c 'iE' SAMPLE` and keep the whole output.
 - **Certificate.** `certificate_table_declared` is a header declaration; `certificate_table` gives offset, size, `within_file` and the first entry's type. It does not show that the table parses, that a signature verifies, or who signed. No embedded table does not exclude catalog signing. Report verification, trust chain, timestamp and revocation separately, each with its policy, trust material and time; this pack has no trust-aware verifier, so write "not verified". A valid signature does not show a file is benign, and does not show a key was stolen: leave the circumstances open without other evidence (build records, distribution, certificate history).
-- **Resources** hold version information, icons, configuration and embedded objects. `pe_info` does not parse them. `r2` with `izz` lists strings across the whole file, and can show credentials; write it to `$OUT` (`r2 -2 -q -c 'izz' SAMPLE > "$OUT/izz.txt"`) in a job with `secret_output: true`, cite offsets and not values. It does not tie a string to a resource. Company and original-file-name values are editable claims. A renamed executable is matched by path, content identity and execution artefacts; an OriginalFilename or a Prefetch name alone does not establish it (the Windows execution skills, if that pack is loaded).
+- **Resources** hold version information, icons, configuration and embedded objects. `pe_directories` lists the tree (type, name, language, size, file offset), reads the version information and the manifest's `requested_execution_levels`, and `extract` writes a row byte for byte. `r2` with `izz` lists strings across the whole file and can show credentials; write it to `$OUT` (`r2 -2 -q -c 'izz' SAMPLE > "$OUT/izz.txt"`) in a job with `secret_output: true`, cite offsets and not values; it does not tie a string to a resource. Company and original-file-name values are editable claims. A renamed executable is matched by path, content identity and execution artefacts; an OriginalFilename or a Prefetch name alone does not establish it (the Windows execution skills, if that pack is loaded).
 
-Shows: declared structures and where they sit. Does not show: signature validity, publisher trust, resource contents. Record: offsets, the `r2` version and full output, and "signature not verified".
+Sensitive output: `izz` output, an extracted resource and the values file of `write_values` can hold credentials. Run those jobs with `secret_output: true` (not needed for a `pe_directories` call without `extract` or `write_values`: it withholds token-shaped strings); cite offset, kind and length, never a value, a fragment or a hash.
+
+Shows: declared structures and where they sit. Does not show: signature validity, publisher trust, what a resource or export does. Record: offsets, `pe_directories` status and problems, the `r2` version and output, and "signature not verified".
