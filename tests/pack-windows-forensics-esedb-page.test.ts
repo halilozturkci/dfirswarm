@@ -97,26 +97,34 @@ test("esedb_query numbers a column named like a key it adds, instead of letting 
 });
 
 test("esedb_query keeps what it prints inline small however large the cells are, and the file it names holds every row whole", async () => {
-  // 100 rows of 600 KB cells (a 60 MB table) came back as 60 MB on stdout: the page was bounded by a row count only.
+  // 100 rows of 1 MiB cells (a 100 MB table) came back as 100 MB on stdout: the page was bounded by a row count only.
   await withCwd(async (cwd, bin) => {
-    const cell = "x".repeat(600 * 1024);
-    const rows = Array.from({ length: 100 }, (_, i) => `${i + 1}\t${cell.slice(0, cell.length - 6)}${String(i).padStart(6, "0")}`);
+    const rows = Array.from({ length: 80 }, (_, i) => `${i + 1}\t${"x".repeat(5000 - 6)}${String(i).padStart(6, "0")}`);
     const env = await setup(cwd, bin, "Id\tBlob\n" + rows.join("\n") + "\n");
     const run = await tool("esedb_query", cwd, { path: "work/x.edb", table: "T", limit: 20000 }, env, bin);
     assert.ok(run.stdout.length < 400_000, `stdout is ${run.stdout.length} bytes`);
     const out = body<Answer>(run);
-    assert.equal(out.row_count, 100);
-    assert.ok(out.rows.length < 100, "not every row is inline");
+    assert.equal(out.row_count, 80);
+    assert.ok(out.rows.length < 80, "not every row is inline");
     assert.equal(out.truncated, true);
     assert.equal(out.rows[0].Blob.length, 4096, "a cell is shown cut");
-    assert.deepEqual(out.rows[0]._cells_shortened, { Blob: { chars: 600 * 1024, shown: 4096 } });
-    assert.equal(out.rows_not_inline, 100 - out.rows.length);
+    assert.deepEqual(out.rows[0]._cells_shortened, { Blob: { chars: 5000, shown: 4096 } });
+    assert.equal(out.rows_not_inline, 80 - out.rows.length);
     assert.equal(out.status, "complete", "what was not shown is not what was not read");
     const kept = await lines(join(cwd, out.all_results));
-    assert.equal(kept.length, 100);
-    assert.equal(kept[99].Blob.length, 600 * 1024, "the file holds the cell whole");
-    assert.ok(kept[99].Blob.endsWith("000099"));
+    assert.equal(kept.length, 80);
+    assert.equal(kept[79].Blob.length, 5000, "the file holds the cell whole");
+    assert.ok(kept[79].Blob.endsWith("000079"));
     assert.equal(kept[0]._cells_shortened, undefined, "the file's rows are the table's, with nothing added");
+  });
+});
+
+test("esedb_query judges a cell up to 256 KiB and withholds what is past that by its length", async () => {
+  await withCwd(async (cwd, bin) => {
+    const env = await setup(cwd, bin, "Id\tBlob\n1\t" + "x".repeat(600 * 1024) + "\n");
+    const out = body<Answer>(await tool("esedb_query", cwd, { path: "work/x.edb", table: "T" }, env, bin));
+    const kept = await lines(join(cwd, out.all_results));
+    assert.match(kept[0].Blob, /^x{262144}<withheld 352256 characters: rest of a long string>$/);
   });
 });
 

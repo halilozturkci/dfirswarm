@@ -980,7 +980,7 @@ test("esedb_query exports a database once, keeps the export under its digest, an
   });
 });
 
-test("esedb_query numbers every row, keeps columns that share a name apart, and keeps a cell of any size whole in the file it names", async () => {
+test("esedb_query numbers every row, keeps columns that share a name apart, and judges a cell of any size up to 256 KiB, the rest by its length, in the file it names", async () => {
   await withCwd(async (cwd, bin) => {
     const big = "x".repeat(2_000_000);
     await stub(bin, "esedbexport", ESEDBEXPORT_STUB(`printf 'Id\\tName\\tName\\n1\\ta\\tb\\n2\\tc\\t${big}\\n' > "$root.export/Dup.2"`));
@@ -994,7 +994,8 @@ test("esedb_query numbers every row, keeps columns that share a name apart, and 
     assert.equal((out.rows?.[1].Name_2 as string).length, 4096);
     assert.deepEqual(out.rows?.[1]._cells_shortened, { Name_2: { chars: 2_000_000, shown: 4096 } });
     const kept = (await readFile(join(cwd, out.all_results as string), "utf8")).trim().split("\n").map((l) => JSON.parse(l) as { Name_2: string });
-    assert.equal(kept[1].Name_2.length, 2_000_000);
+    // The file is sealed like the answer: a cell is judged up to 256 KiB and what is past that is withheld by its length (the whole cell is in the export).
+    assert.equal(kept[1].Name_2, "x".repeat(262144) + "<withheld 1737856 characters: rest of a long string>");
   });
 });
 

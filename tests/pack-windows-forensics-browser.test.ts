@@ -604,8 +604,10 @@ test("esedb_query withholds the secrets of a URL in a cell, and writes them only
     assert.deepEqual(out.url_secrets_withheld.locators.map((l: Answer) => [l.table, l.row, l.column]), [["Container_1", 1, "Url"], ["Container_1", 2, "Url"]]);
     await assertAbsent(run, cwd, [TOKEN, USERPW], (f) => f.includes("esedb-export") || f.endsWith("WebCacheV01.dat"));
     const refused = failed(await tool("esedb_query", cwd, { path: "work/WebCacheV01.dat", table: "Container_1", write_url_secrets: true }, env, bin));
-    assert.match(refused.error, /refused outside a job/);
-    const jobEnv = { ...env, ...(await inJob(cwd)) };
+    assert.match(refused.error, /write_url_secrets is refused/);
+    const notSecret = failed(await tool("esedb_query", cwd, { path: "work/WebCacheV01.dat", table: "Container_1", write_url_secrets: true }, { ...env, ...(await inJob(cwd)) }, bin));
+    assert.match(notSecret.error, /write_url_secrets is refused/, "a job the harness did not run as secret output");
+    const jobEnv = { ...env, ...(await inJob(cwd)), SECRET_OUTPUT: "1" };
     const jobRun = await tool("esedb_query", cwd, { path: "work/WebCacheV01.dat", table: "Container_1", write_url_secrets: true }, jobEnv, bin);
     const job = body<Answer>(jobRun);
     assert.equal(job.secret_values.written, 2);
