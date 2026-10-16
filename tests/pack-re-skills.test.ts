@@ -10,9 +10,11 @@ import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { DOC_PROBE, FUZZY, PE_INFO, RE, SCN_CODE, SCN_EXEC, SCN_READ, SCN_WRITE, TOOLS, asJob, body, buildElf, buildMacho, buildPe, buildZip, filesUnder, put, rels, stub, tool, withCwd } from "./pack-re-harness.ts";
+import { CPU_ARM64, CPU_X86_64, DOC_PROBE, DOC_STRUCTURE, FUZZY, PE_DIRECTORIES, PE_INFO, RE, SCN_CODE, SCN_EXEC, SCN_READ, SCN_WRITE, TOOLS, asJob, body, buildElf, buildFat, buildMacho, buildPe, buildZip, filesUnder, put, rels, stub, tool, withCwd } from "./pack-re-harness.ts";
 
 const SKILLS = join(RE, "skills");
+import { buildCfb, buildPdf, buildPeDirs, buildVbaProject, hex, ole1Object, wordFib } from "./pack-re-doc-fixtures.ts";
+
 const BASE_SKILLS = join(RE, "..", "computer-forensics-base", "skills");
 const TOKENS = (text: string): number => Buffer.byteLength(text) / 4.245;
 
@@ -43,7 +45,7 @@ async function load(root: string): Promise<Map<string, Skill>> {
 
 test("every skill is a leaf within the budget, opens with Use when ... Not for ..., and has a short index entry", async () => {
   const skills = await load(SKILLS);
-  assert.equal(skills.size, 12);
+  assert.equal(skills.size, 20);
   for (const s of skills.values()) {
     assert.ok(TOKENS(s.text) <= 800, `${s.id} is ${Math.round(TOKENS(s.text))} tokens`);
     assert.ok(s.text.split("\n").length <= 300, `${s.id} lines`);
@@ -104,9 +106,18 @@ test("every second-level leaf is pointed to by a leaf that says when to open it"
 const TAUGHT: Array<[string, string, string[]]> = [
   ["pe_info", "pe/structure", ["header_timestamp_raw", "header_timestamp_utc", "max_seconds", "writable_and_executable", "overlay_offset", "overlay_is_certificate_table", "declares_clr_runtime_header", "declares_tls", "declares_delay_imports", "declares_resources", "entropy_note", "status", "problems", "coverage"]],
   ["pe_info", "pe/signature-and-resources", ["export_name", "certificate_table_declared", "certificate_table", "within_file"]],
+  ["pe_directories", "pe/signature-and-resources", ["requested_execution_levels", "extract"]],
   ["pe_info", "elf/structure", ["section_headers_absent", "stripped", "needed_libraries", "soname", "rpath", "runpath", "interpreter", "entry_point", "segments", "PT_DYNAMIC", "withheld_fields", "file_offset"]],
-  ["pe_info", "triage/quarantine", ["commands"]],
   ["doc_probe", "documents/macros", ["extension_content_disagreement", "members", "parts", "modified", "extract_to", "status", "withheld_names_file"]],
+  ["doc_structure", "documents/external-and-active-content", ["actions", "trigger", "reached_from_catalog", "encryption_summary"]],
+  ["doc_structure", "documents/macros", ["coverage", "problems", "status"]],
+  ["doc_structure", "documents/pdf-rtf", ["structure_source", "anomalies", "revisions", "objects_scan", "numbers_defined_more_than_once", "headers_not_in_the_cross_reference_chain", "encryption_summary", "reached_from_catalog", "trigger", "script", "embedded_files", "undecodable_filter", "nested_compound_file", "write_values", "limits_hit", "coverage", "status", "problems", "pdf_actions", "extract", "extract_to", "ciphertext", "objects_unreadable", "extracted", "headers_freed_in_newest_chain", "outside_chain", "signature", "instruction_word", "rtf_fields", "rtf_templates"]],
+  ["pe_directories", "runtimes/python-packaged", ["resources", "extract", "extract_to"]],
+  ["pe_directories", "managed/clr", ["flags", "runtime_version", "is_native_rva", "managed_native_header", "token_table", "token_row", "strong_name_signature_field"]],
+  ["pe_info", "managed/clr", ["declares_clr_runtime_header", "overlay_offset", "overlay_bytes"]],
+  ["pe_info", "runtimes/python-packaged", ["overlay_offset", "overlay_bytes"]],
+  ["pe_info", "packing/static-recovery", ["size_entropy_pattern"]],
+  ["pe_info", "macho/structure", ["slices", "slices_read_in_full", "slices_declared", "cpu_type_name", "entry_offset", "code_signature", "linked_libraries", "linked_library_commands", "segments", "commands", "withheld_fields"]],
   ["doc_probe", "documents/external-and-active-content", ["external_targets", "finding_id", "write_values", "doc-probe-values.jsonl", "markers", "encrypt_marker_present", "objdata_markers", "classes"]],
   ["fuzzy_hash", "strings/decoding-and-similarity", ["insufficient_input", "tlsh_status"]],
 ];
@@ -119,7 +130,7 @@ function collect(v: unknown, into: Set<string>): void {
 
 /** What each tool writes, observed over fixtures: the keys and string values of its answers and of the files it wrote. */
 async function observed(): Promise<Record<string, Set<string>>> {
-  const seen: Record<string, Set<string>> = { pe_info: new Set(), doc_probe: new Set(), fuzzy_hash: new Set() };
+  const seen: Record<string, Set<string>> = { pe_info: new Set(), doc_probe: new Set(), doc_structure: new Set(), pe_directories: new Set(), fuzzy_hash: new Set() };
   await withCwd(async (cwd, bin) => {
     const run = async (name: string, script: string, rel: string, data: Buffer | string, args: Record<string, unknown> = {}, job = false): Promise<void> => {
       await put(cwd, rel, data);
@@ -164,6 +175,29 @@ async function observed(): Promise<Record<string, Set<string>>> {
     for (const line of (await readFile(join(cwd, "out", values!), "utf8")).trim().split("\n")) collect(JSON.parse(line), seen.doc_probe!);
     await run("doc_probe", DOC_PROBE, "work/a.pdf", "%PDF-1.4\n1 0 obj << /OpenAction 2 0 R /AA << >> /JS (x) /JavaScript /EmbeddedFile /Encrypt 3 0 R >> endobj\n");
     await run("doc_probe", DOC_PROBE, "work/a.rtf", "{\\rtf1{\\object{\\*\\objclass Word.Document.8}{\\*\\objdata 0105000002000000}}}");
+    // A section far larger in memory than on disk, with all byte values present: pe_info's size_entropy_pattern.
+    await run("pe_info", PE_INFO, "work/f.exe", buildPe({ sections: [{ name: ".upx0", data: Buffer.from(Array.from({ length: 4096 }, (_, i) => i & 0xff)), flags: SCN_CODE | SCN_EXEC | SCN_READ, vsize: 60000 }] }).file);
+    // A universal binary with an entry point, a code signature and two slices.
+    const thin = (cputype: number): Buffer => buildMacho({ cputype, commands: [{ segment: "__TEXT", fileoff: 0, filesize: 64 }, { main: 0x1000 }, { signature: { offset: 0x2000, size: 64 } }, { dylib: "/usr/lib/libSystem.B.dylib", cmd: 0xc }] });
+    await run("pe_info", PE_INFO, "work/g.macho", buildFat([{ cputype: CPU_X86_64, data: thin(CPU_X86_64) }, { cputype: CPU_ARM64, data: thin(CPU_ARM64) }]));
+    // pe_directories: exports, resources with a manifest, a CLR header and a TLS callback.
+    const manifest = Buffer.from('<assembly xmlns="urn:schemas-microsoft-com:asm.v1"><requestedExecutionLevel level="asInvoker" uiAccess="false"/></assembly>');
+    await run("pe_directories", PE_DIRECTORIES, "work/d.exe", buildPeDirs({ exports: { functions: [{ name: "F" }] }, tlsCallbacks: [0x1010], clr: {}, resources: [{ type: 24, name: 1, lang: 0, data: manifest }] }).file);
+    // doc_structure: a PDF whose catalog opens an action, and a compound file with a VBA project.
+    const pdf = buildPdf([{ num: 1, body: "<< /Type /Catalog /Pages 2 0 R /OpenAction 4 0 R >>" }, { num: 2, body: "<< /Type /Pages /Kids [ 3 0 R ] /Count 1 >>" }, { num: 3, body: "<< /Type /Page /Parent 2 0 R >>" }, { num: 4, body: "<< /S /URI /URI (http://example.test/) >>" }], "/Root 1 0 R");
+    await run("doc_structure", DOC_STRUCTURE, "work/s.pdf", pdf.file);
+    const withScript = buildPdf([{ num: 1, body: "<< /Type /Catalog /Pages 2 0 R /OpenAction 4 0 R >>" }, { num: 2, body: "<< /Type /Pages /Kids [ 3 0 R ] /Count 1 >>" }, { num: 3, body: "<< /Type /Page /Parent 2 0 R >>" }, { num: 4, body: "<< /S /JavaScript /JS (x) >>" }], "/Root 1 0 R");
+    await run("doc_structure", DOC_STRUCTURE, "work/s2.pdf", withScript.file);
+    const rtf = `{\\rtf1{\\object\\objemb{\\*\\objclass Package}{\\*\\objdata ${hex(ole1Object("Package", buildCfb([{ name: "WordDocument", data: wordFib() }])))}}}}`;
+    await run("doc_structure", DOC_STRUCTURE, "work/s.rtf", rtf);
+    await run("doc_structure", DOC_STRUCTURE, "work/s.bin", buildVbaProject([{ name: "Module1", source: "Sub AutoOpen()\r\nEnd Sub\r\n" }]));
+    // An encrypted PDF (a target string is ciphertext), an extracted script (its row names the file), an RTF with a field and a template.
+    // V 4 with named crypt filters (ISO 32000-1 7.6.5): StrF and StmF name StdCF, so strings are ciphertext and str_f / stm_f are written.
+    const enc = `<< /Filter /Standard /V 4 /R 4 /Length 128 /P -4 /CF << /StdCF << /CFM /AESV2 /Length 16 >> >> /StrF /StdCF /StmF /StdCF /O <${"11".repeat(32)}> /U <${"22".repeat(32)}> >>`;
+    const encrypted = buildPdf([{ num: 1, body: "<< /Type /Catalog /Pages 2 0 R /OpenAction 4 0 R >>" }, { num: 2, body: "<< /Type /Pages /Kids [ 3 0 R ] /Count 1 >>" }, { num: 3, body: "<< /Type /Page /Parent 2 0 R >>" }, { num: 4, body: "<< /S /URI /URI <a1b2c3> >>" }, { num: 9, body: enc }], "/Root 1 0 R /Encrypt 9 0 R");
+    await run("doc_structure", DOC_STRUCTURE, "work/e.pdf", encrypted.file);
+    await run("doc_structure", DOC_STRUCTURE, "work/s3.pdf", withScript.file, { extract: ["javascript"], extract_to: "out/x" }, true);
+    await run("doc_structure", DOC_STRUCTURE, "work/f.rtf", '{\\rtf1{\\field{\\*\\fldinst HYPERLINK "http://x.example/"}{\\fldrslt x}}{\\*\\template http://t.example/t.dotm}}');
     // fuzzy_hash against stand-ins: tlsh says the file is too short (TNULL).
     await stub(bin, "ssdeep", `if [ "$1" = "-V" ]; then echo "2.14.1"; exit 0; fi\necho 'ssdeep,1.1--blocksize:hash:hash,filename'\necho "3::,\\"$(basename "$3")\\""`);
     await stub(bin, "tlsh", `if [ "$1" = "-version" ]; then echo "tlsh 4.12.0"; exit 0; fi\nprintf 'TNULL\\t%s\\n' "$2"`);
@@ -191,8 +225,8 @@ test("every backticked field or parameter a skill attributes to a tool is one it
   const skills = await load(SKILLS);
   const seen = await observed();
   const known = new Set<string>();
-  for (const t of ["pe_info", "doc_probe", "fuzzy_hash"]) for (const n of seen[t]!) known.add(n);
-  for (const t of ["pe_info", "doc_probe", "entropy_map", "fuzzy_hash"]) {
+  for (const t of ["pe_info", "doc_probe", "doc_structure", "pe_directories", "fuzzy_hash"]) for (const n of seen[t]!) known.add(n);
+  for (const t of ["pe_info", "doc_probe", "doc_structure", "pe_directories", "entropy_map", "fuzzy_hash"]) {
     for (const n of Object.keys((JSON.parse(await readFile(join(TOOLS, t, "manifest.json"), "utf8")) as { params: Record<string, unknown> }).params)) known.add(n);
   }
   const elsewhere = new Set(["secret_output", ...(await readdir(join(RE, "..", "computer-forensics-base", "tools"))), ...(await readdir(TOOLS))]);   // the harness's own job flag and tool names
@@ -320,7 +354,8 @@ test("the review's wording fixes are in the leaves and the goal, and the goal's 
   assert.match(macros, /path under `\$OUT`/);
   assert.match(macros, /`parts\[\]\.modified`[^.]*no zone, two-second resolution/);
   assert.match(macros, /does not provide: record the comparison as not made/);
-  assert.match(macros, /`vbaProject\.bin`[^.]*OLE compound file/);
+  assert.match(macros, /OOXML VBA project part \(by content type\) is an OLE compound file/);
+  assert.match(macros, /A token-shaped part name is withheld, by shape only;/);
   assert.match(macros, /`AutoOpen`, `Document_Open` and `Workbook_Open`/);
   assert.match(text("documents/external-and-active-content"), /`\/JavaScript` and `\/JS`[^.]*`\/EmbeddedFile`/);
   // Rules.
@@ -341,6 +376,88 @@ test("the review's wording fixes are in the leaves and the goal, and the goal's 
   // The counts outside the pack follow the pack.
   for (const file of ["docs/packs.md", "README.md"]) {
     const doc = await readFile(join(RE, "..", "..", file), "utf8");
-    assert.match(doc, /^\| `reverse-engineering` \| 12 \| 4 \| 1 \|/m, `${file} counts twelve skills`);
+    assert.match(doc, /^\| `reverse-engineering` \| 20 \| 6 \| 1 \|/m, `${file} counts twenty skills, six tools and one goal template`);
   }
+});
+
+// --- the eight leaves of phase 2 ------------------------------------------------------------------------------------------
+
+const NEW_LEAVES = ["code/static-inspection", "managed/clr", "runtimes/go-rust", "runtimes/python-packaged", "scripts/static-analysis", "packing/static-recovery", "documents/pdf-rtf", "macho/structure"];
+
+test("the quarantine leaf routes to every new leaf, and each new leaf has a Sensitive output line that says secret_output: true", async () => {
+  const skills = await load(SKILLS);
+  const routing = skills.get("triage/quarantine")!.body;
+  for (const id of NEW_LEAVES) {
+    assert.ok(routing.includes(`\`${id}\``), `triage/quarantine routes to ${id}`);
+    const s = skills.get(id);
+    assert.ok(s, `${id} exists`);
+    assert.match(s.body, /Sensitive output:/, `${id} has a Sensitive output line`);
+    assert.deepEqual(s.meta.needs, ["triage/quarantine"], `${id} needs the quarantine leaf only: the chain stays within budget`);
+  }
+  for (const id of NEW_LEAVES.filter((x) => x !== "macho/structure")) assert.match(skills.get(id)!.body, /secret_output: true|keep it under `\$OUT`|write them to `\$OUT`|keep recovered content in `\$OUT`/, `${id} says where a value goes`);
+  for (const id of ["documents/pdf-rtf", "scripts/static-analysis", "managed/clr", "runtimes/go-rust", "runtimes/python-packaged", "code/static-inspection"]) assert.match(skills.get(id)!.body, /secret_output: true/, `${id} says the job runs with secret_output: true`);
+});
+
+test("the new leaves name no program this pack does not declare, and say a reader or decompiler is not provided where they stop", async () => {
+  const skills = await load(SKILLS);
+  for (const id of NEW_LEAVES) {
+    const text = skills.get(id)!.body;
+    // Programs the pack does not declare: naming one would imply it is installed.
+    assert.doesNotMatch(text, /\b(Ghidra|IDA Pro|x64dbg|OllyDbg|WinDbg|ILSpy|dnSpy|dotPeek|pyinstxtractor|uncompyle6?|decompyle3|pycdc|diec|Detect It Easy|PEiD|qpdf|pdfid|pdf-parser|osslsigncode|LIEF|angr|Unicorn|Qiling|Frida)\b/i, `${id} names a program the pack does not declare`);
+  }
+  assert.match(skills.get("managed/clr")!.body, /none is declared/);
+  assert.match(skills.get("runtimes/python-packaged")!.body, /No extractor or bytecode disassembler is declared/);
+  assert.match(skills.get("code/static-inspection")!.body, /This pack declares none/);
+  assert.match(skills.get("scripts/static-analysis")!.body, /No parse-only tooling is declared/);
+});
+
+test("the stopping rules hold: no leaf gives steps to run, debug, patch or emulate a sample, and the packing leaf says where static recovery ends", async () => {
+  const skills = await load(SKILLS);
+  const packing = skills.get("packing/static-recovery")!.body;
+  assert.match(packing, /Stopping rule/);
+  assert.match(packing, /a separate, authorised dynamic examination would be needed/);
+  assert.match(packing, /this leaf gives no steps for one/);
+  assert.match(packing, /never without `-o`/);
+  assert.match(skills.get("runtimes/python-packaged")!.body, /never `marshal\.loads`, `pickle\.loads`, `import` or `exec` a recovered module, and never run the launcher/);
+  assert.match(skills.get("code/static-inspection")!.body, /do not step or emulate the code in this leaf/);
+  assert.match(skills.get("code/static-inspection")!.body, /r2 -N/);
+  for (const id of NEW_LEAVES) {
+    const text = skills.get(id)!.body;
+    assert.doesNotMatch(text, /\b(set a breakpoint|attach a debugger|run it in a sandbox|detonate|dump the process|patch the (binary|entry)|bypass|evade|anti-?analysis|anti-?debug)/i, `${id} gives a dynamic or evasion step`);
+  }
+});
+
+test("the document and script leaves keep observation, inference and conclusion apart: a structure is not an execution, a call is a conditional capability", async () => {
+  const skills = await load(SKILLS);
+  const pdf = skills.get("documents/pdf-rtf")!.body;
+  assert.match(pdf, /three facts/);
+  assert.match(pdf, /depends on the reader, its version and settings/);
+  assert.match(pdf, /neither is a verified page count/);
+  assert.match(pdf, /Permission flags ask a reader to restrict; they protect nothing/);
+  const scripts = skills.get("scripts/static-analysis")!.body;
+  assert.match(scripts, /A call is a conditional capability/);
+  assert.match(scripts, /UTF-16LE text/);
+  assert.match(scripts, /Never contact an indicator/);
+  const macho = skills.get("macho/structure")!.body;
+  assert.match(macho, /A universal binary is several binaries/);
+  assert.match(macho, /write "not verified"/);
+  const dotnet = skills.get("managed/clr")!.body;
+  assert.match(dotnet, /Decompiled C# is a reconstruction/);
+  assert.match(dotnet, /not publisher trust/);
+  const gorust = skills.get("runtimes/go-rust")!.body;
+  assert.match(gorust, /Strings are not NUL-terminated/);
+  assert.match(gorust, /A `capa` match or an import is the author's only when the matched code is application code you can cite/);
+  assert.match(gorust, /even then it is a capability hypothesis, not intent/);
+});
+
+test("the three leaves that tell a worker when the tools' withholding is enough say that it is by shape and that a secret of another shape is printed", async () => {
+  const skills = await load(SKILLS);
+  const macros = skills.get("documents/macros")!.body;
+  assert.match(macros, /Names are withheld by shape; another shape is printed/);
+  const pdfRtf = skills.get("documents/pdf-rtf")!.body;
+  assert.match(pdfRtf, /targets are withheld by shape; another shape is printed/);
+  assert.doesNotMatch(pdfRtf, /trailing bytes/);
+  const pe = skills.get("pe/signature-and-resources")!.body;
+  assert.match(pe, /by shape only: a plain password or a token family it does not name is printed, and 0\.1-4% of random base64 or AWS-format keys holding a `\/`; run it with `secret_output` when a file's secrets matter/);
+  assert.doesNotMatch(pe, /not needed for a `pe_directories` call/);
 });

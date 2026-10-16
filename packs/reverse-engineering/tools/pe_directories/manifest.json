@@ -1,0 +1,64 @@
+{
+  "name": "pe_directories",
+  "description": "Read the PE data directories that pe_info declares and does not read, through checked ranges (an RVA becomes a file offset only through a section that holds file bytes there; a table that runs off its section is a problem, never an empty list). Exports: every function with ordinal (base plus index), RVA, section, name (attached through the ordinal table) and forwarder string. Delay-load imports: libraries and function names or ordinals, in the RVA form and the old virtual-address form; each name table is read once (a table shared with, or starting inside, one already read is said and not listed again) and all of them together list at most 1,000,000 rows. TLS: the directory and the callback array, each callback with the section that holds it (a declaration: nothing says what a callback does). Resources: the type/name/language tree with each leaf's RVA, file offset and size; the version information (the fixed file version, file flags and a few well-known string keys by value, the others by name: claims the file makes about itself) and the manifest's requested execution level; extract resource:<row> writes a resource byte for byte. CLR header: runtime version, flags, entry point token, strong-name and managed-native fields as declarations, and the metadata root's version string and stream names and sizes (the metadata tables are not read, so there is no assembly name). Debug directory: entry types and times (raw and UTC; with a REPRO entry no stamp is rendered as a time, they are build hashes) and the CodeView GUID, age and PDB path (a claim about the build machine). Rich header: raw decoded entries, not validated. A section whose PointerToRawData is not a multiple of FileAlignment (PE/COFF requires one of an executable image), and a FileAlignment outside 512..64K that is not equal to a SectionAlignment below the page size, are listed and are problems; the reading rule is stated beside them: with FileAlignment of 512 or more a value that is not a multiple of 512 is read from the value rounded down to 512, any other as written, and both values are given. Every bound (version blocks, strings, keys, stream headers, debug entries, descriptors) that is reached is a limit, and a version block whose length does not fit is a problem. No digest of an extracted resource is printed (with write_values, in a job, it goes to the values file). Every key and every value of the answer and of each file it names passes the sanitiser and then a backstop (the same shared block as doc_structure's; the backstop withholds any key or value the sanitiser would still change and makes the answer partial): a string out of the file is withheld by shape only, as doc_structure's manifest says (a secret of another shape is printed: read a file whose secrets matter in a job with secret_output; the whole only with write_values there), a string whose address points into the middle of a token run is sanitised whole and its head withheld, one longer than 2,048 characters is given by length only, two keys withheld to one text are both kept, a CodeView GUID whose bytes read as text (a run of nine token characters, or ten in all) is withheld, and no list in the answer is longer than the larger of limit and 100 items (a longer one is written whole to a file named beside it). A tool-output directory reached through a symbolic link is refused. Not read: import and base-relocation contents, exception tables, load configuration contents, resource contents beyond the version information and the manifest, CLR metadata tables and method bodies, Authenticode (nothing is parsed or verified), and anything about what code does. Every answer carries status, problems, limits_hit and coverage; a budget that is reached is a limit.",
+  "use": {
+    "magic": [
+      {
+        "offset": 0,
+        "hex": "4d5a"
+      }
+    ],
+    "extensions": [
+      ".exe",
+      ".dll",
+      ".sys",
+      ".scr",
+      ".cpl",
+      ".efi",
+      ".ocx",
+      ".drv"
+    ]
+  },
+  "params": {
+    "path": {
+      "type": "string",
+      "description": "A PE file (EXE, DLL, driver)"
+    },
+    "extract_to": {
+      "type": "string",
+      "description": "Where resources named in extract are written: a directory under work/<your agent id>/ (in a job, under $OUT). Files are created exclusively, mode 0600, named extract-NNNN.bin, and can contain secrets"
+    },
+    "extract": {
+      "type": "array",
+      "description": "Resources to write byte for byte (at most 64): resource:<row number in the resources table>. Needs extract_to; run in a job with secret_output: true"
+    },
+    "write_values": {
+      "type": "boolean",
+      "description": "Write each export forwarder, version string and PDB path whole to pe-directories-values.jsonl under $OUT, and the real name behind every withheld name (default false; refused outside a job; run the job with secret_output: true)"
+    },
+    "max_stream_bytes": {
+      "type": "integer",
+      "description": "Most bytes one resource may be read as (default 16777216)"
+    },
+    "max_total_bytes": {
+      "type": "integer",
+      "description": "Most bytes all extracted resources may total (default 134217728)"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Rows of one table kept in the answer (default 1000, at most 20000: a larger number is refused, as the rows are withheld while the file is read); the whole of a longer table is written to a file and named"
+    },
+    "max_seconds": {
+      "type": "integer",
+      "description": "The tool's own time limit for reading, in seconds, from 1 to 90 (default 70); a read that reaches it stops, reports what it read and says so. The rows of each table are withheld as they are read, under this limit; the rest of the answer is built after it and has until about 90 s after the call began, at least 5 s after the reading: a string it has no time to check is given by its length and the answer says so (partial). A call that has not answered within 105 s ends with a partial answer of the problems, the limits and the first rows of each table it holds, before the manifest's 120 s limit"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 120,
+  "example": "{\"path\": \"work/extracted/sample.dll\"}",
+  "by": "maintainer",
+  "at": "2026-10-14T09:00:00.000Z",
+  "version": 1,
+  "sha256": "92ebfd6d34921688c6ad3364f4bfc4dddc108d1a9af1d8362881def81ebce88b"
+}
