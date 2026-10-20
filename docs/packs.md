@@ -758,6 +758,20 @@ import each other), and holds to this:
   is a `UnicodeDecodeError`): the answer says the row and what the error's code
   decides (the time budget, the authorizer, a value over the length limit),
   never the message or the class, and no decision reads the message.
+- *The harness does not tell the size or the digest of a sensitive output.* A
+  file whose size depends on a withheld value is a bit of it per call, and its
+  sha256 confirms a guess, so the answer to the agent for a sensitive job
+  (`job_run`, `job_status`, the post that says it is done, a reuse hint) names
+  each file and gives a size bucket only (everything under 1 MiB is one bucket,
+  so empty and small look the same; then powers of two), with no byte count, no
+  sha256 and no `same_as`. The sealed manifest, the journal, custody and the
+  report keep both exactly. This does not make a size free to depend on a
+  value: a tool still must not write a values file whose size, or whether it
+  exists, follows what the answer withholds (a filter narrows the file only
+  with a constant-width marker per row, or not at all), and a tool that writes
+  megabytes more or less by a withheld value shows it across a bucket edge. A
+  sealed file is in `store/`, which the seat's VM mounts read-only: the
+  withholding is of what the harness tells, not an access control.
 - *The manifest declares it, and the harness enforces it.* The description
   says SENSITIVE and names the flag, and the manifest carries the key the job
   service reads, `"secret_output"`: `"required"` (every job of the tool) or

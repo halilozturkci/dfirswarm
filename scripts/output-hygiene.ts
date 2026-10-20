@@ -39,6 +39,25 @@ export type Sensitivity = {
   declared?: "tool_manifest";
 };
 
+/**
+ * The size an agent is shown for a sensitive output: a power-of-two bucket of
+ * whole MiB with a 1 MiB floor, never a count of bytes. The exact size of a
+ * file a tool writes only under a withheld condition is a bit of that
+ * condition (a values file of 299 bytes for the right guess and 0 for a wrong
+ * one), so no bucket may tell an empty file from a small one: everything under
+ * 1 MiB is one bucket. A tool that writes a megabyte more or less according to
+ * a withheld value still shows it across a bucket edge; the tool contract
+ * (docs/packs.md, "Secrets and sensitive output") keeps values files small.
+ * The exact size stays in the sealed manifest, the journal and custody.
+ */
+export function sizeBucket(bytes: number): string {
+  const MIB = 1024 * 1024;
+  if (!(bytes >= MIB)) return "under 1 MiB";
+  let low = 1;
+  while (low * 2 * MIB <= bytes) low *= 2;
+  return `${low} MiB to under ${low * 2} MiB`;
+}
+
 /** A sealed output file, as its job's manifest lists it. */
 export type OutputFile = { path: string; sha256: string; bytes: number };
 

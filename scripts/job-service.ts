@@ -44,7 +44,7 @@ import { assessJob, HEARTBEAT_LINES, HEARTBEAT_STOP, keepSample, readSamples, sa
 import type { Mount, WorkerSpec } from "./vm.ts";
 import { jobNetworkHosts } from "./net-grants.ts";
 import { indexOutputs, objectsMatch, opMatch, rankSimilar, reuseOf, sameAsOf, sameAsView, type Reuse, type SameAs, type Similar } from "./job-reuse.ts";
-import { declaredSecretOutput, derivedFrom, derivedSensitivity, ownSensitivity, parseSecretDeclaration, recipeSecretRefusal, sensitiveIndex, snapshotObjects, type SecretDeclaration, type Sensitivity } from "./output-hygiene.ts";
+import { declaredSecretOutput, derivedFrom, derivedSensitivity, ownSensitivity, parseSecretDeclaration, recipeSecretRefusal, sensitiveIndex, sizeBucket, snapshotObjects, type SecretDeclaration, type Sensitivity } from "./output-hygiene.ts";
 import { execRefused, execRefusedWords, type ExecRefused } from "./job-exec-refused.ts";
 import { writeRefused, writeRefusedWords, type WriteRefused } from "./job-write-refused.ts";
 
@@ -933,6 +933,7 @@ export class JobService {
         state: j.state,
         ...(j.status ? { status: j.status } : {}),
         ...(j.outputs ? { outputs: { files: j.outputs.files, bytes: j.outputs.bytes, path: j.outputs.path } } : {}),
+        ...(j.sensitive ? { sensitive: true as const } : {}),
         ...objects,
         match,
         op: j.reuse.op,
@@ -2701,10 +2702,12 @@ export function describe(job: JobRecord): string {
   if (job.state === "failed") return `Job ${job.id} (${what}) was not run: ${job.reason}.`;
   if (job.state === "cancelled") return `Job ${job.id} (${what}) was cancelled${job.reason ? `: ${job.reason}` : ""}.`;
   const o = job.outputs;
-  const files = o ? `${o.files} file(s), ${o.bytes} bytes in ${o.path}/${o.rejected ? ` (${o.rejected} link(s) or special file(s) left out, named in its manifest)` : ""}` : "no output";
+  // A sensitive output's exact size is a bit of what the job withheld: the post says a bucket (output-hygiene.ts sizeBucket), and its sha256 is never in it.
+  const files = o ? `${o.files} file(s), ${job.sensitive ? `sealed, size ${sizeBucket(o.bytes)}` : `${o.bytes} bytes`} in ${o.path}/${o.rejected ? ` (${o.rejected} link(s) or special file(s) left out, named in its manifest)` : ""}` : "no output";
   const head = job.status === "ok" ? "done" : `${job.status}${job.reason ? ` (${job.reason})` : ""}`;
   const cite = job.spec.seal && job.status === "ok" ? `record again citing ${job.spec.seal.ref}: it resolves to import:${job.id}/<name>` : `cite its files as job:${job.id}/<path>`;
-  const same = job.same_as?.length ? ` ${job.same_as.length} of its files are an earlier job's output byte for byte (job_status ${job.id} names them).` : "";
+  // Not for a sensitive job: "your file equals that one, byte for byte" confirms a guess at what it withheld.
+  const same = job.same_as?.length && !job.sensitive ? ` ${job.same_as.length} of its files are an earlier job's output byte for byte (job_status ${job.id} names them).` : "";
   return `Job ${job.id} (${what}) ${head}: ${files}; stdout and stderr whole in store/jobs/${job.id}/. job_status ${job.id} for the details; ${cite}.${job.generation ? ` Catalogued as ${job.generation}.` : ""}${same}${job.sensitive ? ` ${sensitiveWords(job)}` : ""}`;
 }
 
@@ -2751,11 +2754,15 @@ export async function jobView(S: string, job: JobRecord, o: { files?: number } =
   const dir = join(storePaths(S).jobs, job.id);
   const m = await readManifest(join(dir, "manifest.json"));
   const shown = o.files ?? 20;
+  // A sensitive job's outputs are shown by name and size bucket only. An exact byte count or a sha256 is a bit of what a
+  // tool withheld (a values file of 299 bytes for the right guess and 0 for a wrong one; a digest confirms a guess).
+  // The sealed manifest, the journal, custody and the operator's views keep both exactly.
+  const sensitive = Boolean(job.sensitive);
   view.outputs = {
     path: job.outputs.path,
     files: job.outputs.files,
-    bytes: job.outputs.bytes,
-    ...(m ? { list: m.manifest.files.slice(0, shown).map((f) => ({ path: f.path, bytes: f.bytes, sha256: f.sha256 })) } : {}),
+    ...(sensitive ? { size: sizeBucket(job.outputs.bytes), withheld: "sensitive output: exact sizes and sha256 are not shown here; the sealed manifest, custody and the report hold them" } : { bytes: job.outputs.bytes }),
+    ...(m ? { list: m.manifest.files.slice(0, shown).map((f) => (sensitive ? { path: f.path, size: sizeBucket(f.bytes) } : { path: f.path, bytes: f.bytes, sha256: f.sha256 })) } : {}),
     ...(m && m.manifest.files.length > shown ? { more: `${m.manifest.files.length - shown} more, every one in store/jobs/${job.id}/manifest.json` } : {}),
     ...(m && m.manifest.rejected.length ? { left_out: m.manifest.rejected.map((r) => `${r.path} (${r.kind})`) } : {}),
     manifest: `store/jobs/${job.id}/manifest.json`,
@@ -2772,7 +2779,7 @@ export async function jobView(S: string, job: JobRecord, o: { files?: number } =
   } catch {
     // no stderr
   }
-  Object.assign(view, sameAsView(job.id, job.same_as ?? []));
+  if (!sensitive) Object.assign(view, sameAsView(job.id, job.same_as ?? []));
   view.cite = `job:${job.id}/<path>`;
   return view;
 }

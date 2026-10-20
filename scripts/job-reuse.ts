@@ -26,6 +26,7 @@
 import { leadingCommand } from "../extensions/protocol.ts";
 import { resolveScope } from "./job-scope.ts";
 import type { Manifest } from "./evidence-store.ts";
+import { sizeBucket } from "./output-hygiene.ts";
 
 /** One object a job reads: a file by content (and where it sits), or a directory of the run by its path. */
 export type ReuseObject = { path: string; sha256?: string; dir?: true };
@@ -41,6 +42,8 @@ export type Similar = {
   state: string;
   status?: string;
   outputs?: { files: number; bytes: number; path: string };
+  /** Its outputs are sensitive (docs/adr/0016): the journal keeps their exact size, an answer to an agent shows a bucket. */
+  sensitive?: true;
   lead: string | null;
   /** same: the same objects; overlap: some of them (shared says how many of the new job's). */
   objects: "same" | "overlap";
@@ -156,10 +159,16 @@ export function similarView(job: string, similar: Similar[], independent: boolea
   if (!similar.length) return {};
   const shown = recorded ? similar.slice(0, SIMILAR_SHOWN) : similar;
   const rest = similar.length - shown.length;
+  // A sensitive output's exact size is a bit of what the job withheld: the answer shows a bucket (output-hygiene.ts sizeBucket).
+  const told = shown.map((s) => {
+    if (!s.sensitive || !s.outputs) return s;
+    const { bytes, ...outputs } = s.outputs;
+    return { ...s, outputs: { ...outputs, size: sizeBucket(bytes) } };
+  });
   const note = independent
     ? `Recorded as an independent reproduction: other seats ran the same work over the same objects (${shown.map((s) => s.job).join(", ")}${rest ? ", …" : ""}). Keep your result apart from theirs until yours is in, then compare.`
     : `Other seats ran the same work over the same objects: read their outputs (job:<id>/<path>) before you rely on a second run. This job runs as asked (job_status cancel=true stops it); when a second run is the point, say independent: true.`;
-  return { similar: shown, ...(rest ? { similar_more: `${rest} more, every one on the job_similar line for ${job} in store/journal.jsonl` } : {}), similar_note: note };
+  return { similar: told, ...(rest ? { similar_more: `${rest} more, every one on the job_similar line for ${job} in store/journal.jsonl` } : {}), similar_note: note };
 }
 
 /**
