@@ -477,7 +477,8 @@ def install_signal_handlers():
 # still being sealed at the seal stop of the tool (seal_stop_after: a point in time after which nothing is judged, not a stop of the tool's own
 # work, which has its own clock), has the rest of its strings replaced whole (<withheld N bytes: backstop: the judging time ran out>) and is
 # partial; what stays readable past that point is the names the tool made itself (OWN_NAMES) and strings of 15 characters or fewer of letters,
-# digits, `_` and `.` that do not start like a vendor token.
+# digits, `_` and `.` that do not start like a vendor token (and, in a field of a typed kind, fit the grammar of its type). The seal stop is 3.5 seconds before the
+# tool's time limit: the string in progress finishes after it, and one string of 256 KiB takes up to 2.3 seconds to judge on a loaded machine (the worst measured).
 # NOT RECOGNISED, by design: a secret that does not look like one (a plain password, a pronounceable passphrase, a UUID-shaped key,
 # anything under 16 characters in a name, a secret hidden in words or in an encoding this block does not read).
 import collections
@@ -1437,10 +1438,16 @@ _SHORT_PLAIN = re.compile(r"[A-Za-z0-9_.]{0,15}")      # what the late path may 
                                                           # argument after a flag and no `xox?-` token), and not starting like a vendor token (_unjudged)
 
 
-def _unjudged(text):
+def _unjudged(text, kind=None):
     """Whether a string may be printed past the judging time: a name this run made itself (OWN_NAMES: its schema keys, its file names), or a short plain
-    string that does not start like one of the vendor tokens the block knows (a prefix and 12 characters are 15)."""
-    return text in OWN_NAMES or (_SHORT_PLAIN.fullmatch(text) is not None and not text.lower().startswith(_S_PREFIX_WORDS))
+    string that does not start like one of the vendor tokens the block knows (a prefix and 12 characters are 15) and, in a field of a typed kind (a SID, a
+    GUID, a digest ...), fits the grammar of that type as the backstop checks it."""
+    if text in OWN_NAMES:
+        return True
+    if _SHORT_PLAIN.fullmatch(text) is None or text.lower().startswith(_S_PREFIX_WORDS):
+        return False
+    grammar = _S_TYPED.get(kind)
+    return grammar is None or len(text) <= 3 or grammar.fullmatch(text) is not None
 
 
 def _late():
@@ -1449,7 +1456,7 @@ def _late():
 
 
 def seal_stop_after(seconds):
-    """The seal stop of a tool: no seal runs on past `seconds` from now (its manifest's time limit less a margin); what is left is withheld whole,
+    """The seal stop of a tool: no seal runs on past `seconds` from now (its manifest's time limit less 3.5 seconds); what is left is withheld whole,
     except what _unjudged lets through. It stops the judging only, not the tool's own work: that has its own clock, which must run out first."""
     _CLOCK["stop"] = time.monotonic() + seconds
 
@@ -1607,10 +1614,10 @@ def _seal(value, kind, field, where, guard, fname=""):
     kind of what it holds, or to a function of the key of one item for a dict whose items have kinds of their own (event data, registry values).
     `where` is the tuple of (sealed key or position, position) on the way down."""
     if isinstance(value, str):
+        k = getattr(value, "kind", kind)
         if _late():
             # past the budget the rest is withheld whole, fail closed; what is let through is only a name of this run's own and a short plain string (_unjudged)
-            return value if _unjudged(value) else _replace(value, where, "the judging time ran out", True)
-        k = getattr(value, "kind", kind)
+            return value if _unjudged(value, k) else _replace(value, where, "the judging time ran out", True)
         out = show(value, k, field)
         if guard:
             check = _verdict(out, k)
@@ -1693,7 +1700,8 @@ def row_object(row):
             if type(k) is not str or (v is not None and type(v) not in _ROW_TYPES):
                 break
         else:
-            key = tuple(row.items())
+            # (the type is part of the key: 1, True and 1.0 are equal and print differently; a float by its repr, as -0.0 equals 0.0)
+            key = tuple((k, type(v), repr(v) if type(v) is float else v) for k, v in row.items())
     if key is not None and _ROW[0] == key:
         return dict(_ROW[1])
     replaced = BOUNDARY["replaced"]
@@ -2144,7 +2152,7 @@ def cell_kind(v):
 
 
 def main():
-    seal_stop_after(298)                   # the manifest allows 300: no seal runs on past that (the rest is withheld whole)
+    seal_stop_after(296.5)                 # the manifest allows 300, less 3.5: no seal runs on past that (the rest is withheld whole)
     started = time.monotonic()
     deadline = started + DEADLINE_SECONDS
     install_signal_handlers()

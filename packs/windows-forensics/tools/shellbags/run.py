@@ -408,7 +408,8 @@ class HiveBounds:
 # still being sealed at the seal stop of the tool (seal_stop_after: a point in time after which nothing is judged, not a stop of the tool's own
 # work, which has its own clock), has the rest of its strings replaced whole (<withheld N bytes: backstop: the judging time ran out>) and is
 # partial; what stays readable past that point is the names the tool made itself (OWN_NAMES) and strings of 15 characters or fewer of letters,
-# digits, `_` and `.` that do not start like a vendor token.
+# digits, `_` and `.` that do not start like a vendor token (and, in a field of a typed kind, fit the grammar of its type). The seal stop is 3.5 seconds before the
+# tool's time limit: the string in progress finishes after it, and one string of 256 KiB takes up to 2.3 seconds to judge on a loaded machine (the worst measured).
 # NOT RECOGNISED, by design: a secret that does not look like one (a plain password, a pronounceable passphrase, a UUID-shaped key,
 # anything under 16 characters in a name, a secret hidden in words or in an encoding this block does not read).
 import collections
@@ -1368,10 +1369,16 @@ _SHORT_PLAIN = re.compile(r"[A-Za-z0-9_.]{0,15}")      # what the late path may 
                                                           # argument after a flag and no `xox?-` token), and not starting like a vendor token (_unjudged)
 
 
-def _unjudged(text):
+def _unjudged(text, kind=None):
     """Whether a string may be printed past the judging time: a name this run made itself (OWN_NAMES: its schema keys, its file names), or a short plain
-    string that does not start like one of the vendor tokens the block knows (a prefix and 12 characters are 15)."""
-    return text in OWN_NAMES or (_SHORT_PLAIN.fullmatch(text) is not None and not text.lower().startswith(_S_PREFIX_WORDS))
+    string that does not start like one of the vendor tokens the block knows (a prefix and 12 characters are 15) and, in a field of a typed kind (a SID, a
+    GUID, a digest ...), fits the grammar of that type as the backstop checks it."""
+    if text in OWN_NAMES:
+        return True
+    if _SHORT_PLAIN.fullmatch(text) is None or text.lower().startswith(_S_PREFIX_WORDS):
+        return False
+    grammar = _S_TYPED.get(kind)
+    return grammar is None or len(text) <= 3 or grammar.fullmatch(text) is not None
 
 
 def _late():
@@ -1380,7 +1387,7 @@ def _late():
 
 
 def seal_stop_after(seconds):
-    """The seal stop of a tool: no seal runs on past `seconds` from now (its manifest's time limit less a margin); what is left is withheld whole,
+    """The seal stop of a tool: no seal runs on past `seconds` from now (its manifest's time limit less 3.5 seconds); what is left is withheld whole,
     except what _unjudged lets through. It stops the judging only, not the tool's own work: that has its own clock, which must run out first."""
     _CLOCK["stop"] = time.monotonic() + seconds
 
@@ -1538,10 +1545,10 @@ def _seal(value, kind, field, where, guard, fname=""):
     kind of what it holds, or to a function of the key of one item for a dict whose items have kinds of their own (event data, registry values).
     `where` is the tuple of (sealed key or position, position) on the way down."""
     if isinstance(value, str):
+        k = getattr(value, "kind", kind)
         if _late():
             # past the budget the rest is withheld whole, fail closed; what is let through is only a name of this run's own and a short plain string (_unjudged)
-            return value if _unjudged(value) else _replace(value, where, "the judging time ran out", True)
-        k = getattr(value, "kind", kind)
+            return value if _unjudged(value, k) else _replace(value, where, "the judging time ran out", True)
         out = show(value, k, field)
         if guard:
             check = _verdict(out, k)
@@ -1624,7 +1631,8 @@ def row_object(row):
             if type(k) is not str or (v is not None and type(v) not in _ROW_TYPES):
                 break
         else:
-            key = tuple(row.items())
+            # (the type is part of the key: 1, True and 1.0 are equal and print differently; a float by its repr, as -0.0 equals 0.0)
+            key = tuple((k, type(v), repr(v) if type(v) is float else v) for k, v in row.items())
     if key is not None and _ROW[0] == key:
         return dict(_ROW[1])
     replaced = BOUNDARY["replaced"]
@@ -1689,11 +1697,11 @@ def emit(doc, **dumps_kwargs):
 # They are shown as they are even past the judging time, so that an answer stays readable; a name from the evidence that is one of them holds no secret.
 OWN_NAMES.update((
     "accessed", "all_not_walked", "all_problems", "all_results", "all_results_format", "all_values_without_subkey", "class", "contains_blind",
-    "contains_blind_entries", "created", "decoded", "deepest_found", "depth", "entries", "entry_count", "error", "extension_block_size",
+    "contains_blind_entries", "created", "decoded", "deepest_found", "depth", "entries", "entries_not_listed_for_time", "entry_count", "error", "extension_block_size",
     "extension_block_size_fits", "extension_layout", "extension_version", "file_size", "guid", "hive", "item", "item_bytes", "key", "key_last_written",
     "key_last_written_filetime", "keys_walked", "library_messages_withheld", "limit", "localized_name", "localized_name_from", "long_name",
     "long_name_from", "matched", "max_depth", "missing", "modified", "mru_position", "name", "nearest_key_failed", "no_subkey", "not_attempted",
-    "not_walked_below_max_depth", "not_walked_count", "note", "orphans", "other_values", "other_values_ignored", "parser", "path", "problem_count",
+    "not_walked_below_max_depth", "not_walked_count", "not_walked_not_named", "note", "orphans", "other_values", "other_values_ignored", "parser", "path", "problem_count",
     "problems", "reason", "recovered_by_strings", "registry_key", "returned", "root", "roots_not_found", "roots_walked", "short_name", "signal", "slot",
     "status", "status_basis", "strings", "subkeys", "subkeys_there", "subkeys_there_count", "tried", "truncated", "type", "unread_for_time",
     "values_without_subkey", "values_without_subkey_count", "walk_stopped_by_time_limit", "walked", "what", "where", "why"
@@ -1712,7 +1720,8 @@ FIELDS.update({
 FILETIME_EPOCH = datetime.datetime(1601, 1, 1, tzinfo=datetime.timezone.utc)
 BEEF0004 = 0xBEEF0004
 PARSER = "shellbags/4"
-DEADLINE_SECONDS = 115            # the manifest allows 120
+MAX_UNOPENED_LISTED = 1000        # the keys and entries met after the tool's own time limit are named (listed) up to this many; the rest are counted, not judged
+DEADLINE_SECONDS = 114            # the manifest allows 120; the seal stop (116.5) is 2.5 seconds later
 MAX_DEPTH = 128
 DEFAULT_ROOTS = [
     r"Local Settings\Software\Microsoft\Windows\Shell\BagMRU",
@@ -1986,7 +1995,7 @@ def safe_nearest_key(hive, path, bounds=None):
 def main():
     withhold_library_output()
     set_deadline(DEADLINE_SECONDS)
-    seal_stop_after(118)                   # the manifest allows 120: no seal runs on past that (the rest is withheld whole)
+    seal_stop_after(116.5)                 # the manifest allows 120, less 3.5: no seal runs on past that (the rest is withheld whole)
     install_signal_handlers(lambda signum: interrupted_answer(signum))
     try:
         args = json.load(sys.stdin)
@@ -2053,7 +2062,7 @@ def main():
     bound_problems = BoundProblems(problems)
     stopped = SealedPage("shellbags-not-walked", key, 40)
     orphans = SealedPage("shellbags-orphan-values", key, 40)
-    counts = {"strings": 0, "orphans": 0, "other_values": 0, "walked": 0, "unread_for_time": 0, "contains_blind": 0}
+    counts = {"strings": 0, "orphans": 0, "other_values": 0, "walked": 0, "unread_for_time": 0, "contains_blind": 0, "late_named": 0, "not_named": 0, "not_listed": 0}
 
     def item_entry(raw, slot_name, key_path, parent_path, depth, order, root_path, header=None, orphan=False):
         try:
@@ -2122,7 +2131,17 @@ def main():
             problems.add({"key": key_path, "why": "subkeys unreadable: %s" % exc})
             return
         names = {s.name for s in subkeys}
-        for sub in subkeys:
+        for idx, sub in enumerate(subkeys):
+            if out_of_time():
+                # past the tool's own time limit every sibling would still be listed and named (two sealed rows each, 700,000 of them in a hostile BagMRU): the first
+                # MAX_UNOPENED_LISTED are, the rest are counted and not judged
+                if counts["late_named"] >= MAX_UNOPENED_LISTED:
+                    rest = len(subkeys) - idx
+                    counts["unread_for_time"] += rest
+                    counts["not_named"] += rest
+                    counts["not_listed"] += rest
+                    break
+                counts["late_named"] += 1
             entry, path = item_entry(values.get(sub.name), sub.name, key_path, parent_path, depth, order, root_path, getattr(sub, "header", None))
             if passes_contains(path):
                 entries.add(entry)
@@ -2134,6 +2153,11 @@ def main():
             if vname in names:
                 continue
             if vname.isdigit():
+                if out_of_time():
+                    if counts["late_named"] >= MAX_UNOPENED_LISTED:
+                        counts["not_listed"] += 1
+                        continue
+                    counts["late_named"] += 1
                 entry, path = item_entry(raw, vname, key_path, parent_path, depth, order, root_path, orphan=True)
                 counts["orphans"] += 1
                 orphans.add(entry)
@@ -2167,6 +2191,10 @@ def main():
         reasons.append("%d problem(s) are named under problems" % problem_page["matched"])
     if stopped_page["matched"]:
         reasons.append("%d key(s) were not walked (not_walked_below_max_depth)" % stopped_page["matched"])
+    if counts["not_named"]:
+        reasons.append("%d key(s) met after the time limit were counted and not named (not_walked_not_named)" % counts["not_named"])
+    if counts["not_listed"]:
+        reasons.append("%d entr(ies) met after the time limit were counted and not listed (entries_not_listed_for_time)" % counts["not_listed"])
     if counts["contains_blind"]:
         reasons.append("contains looks only in the text the answer prints: %d entr(ies) were not matched and have text withheld in their path, so the needle may be in what is "
                        "withheld (contains_blind_entries)" % counts["contains_blind"])
@@ -2174,7 +2202,7 @@ def main():
         "parser": PARSER,
         "status": "partial" if reasons else "complete",
         "status_basis": "; ".join(reasons) if reasons else "every BagMRU key reached was walked to its end: no problem is named and no key was left unwalked",
-        "walk_stopped_by_time_limit": counts["unread_for_time"] > 0,
+        "walk_stopped_by_time_limit": counts["unread_for_time"] > 0 or counts["not_listed"] > 0,
         "library_messages_withheld": LibraryLog.messages,
         "hive": hive_path,
         "root": found_roots[0][1],
@@ -2188,6 +2216,8 @@ def main():
         **page,
         "not_walked_below_max_depth": stopped.page,
         "not_walked_count": stopped_page["matched"],
+        "not_walked_not_named": counts["not_named"],
+        "entries_not_listed_for_time": counts["not_listed"],
         "values_without_subkey": orphans.page,
         "values_without_subkey_count": orphan_page["matched"],
         "other_values_ignored": counts["other_values"],

@@ -44,7 +44,7 @@ NUMBER_TYPES = ("REG_DWORD", "REG_DWORD_BIG_ENDIAN", "REG_QWORD")
 INLINE_NODES = 2000
 MAX_NODES = 1_000_000
 DEADLINE_SECONDS = 20             # the manifest allows 30: the walk stops at 20 so that what it has is written and sealed (a full walk of a 72 MB hive takes
-                                  # 7 to 10 s of CPU here, three to four times that on a slow host) before the seal stop at 28
+                                  # 7 to 10 s of CPU here, three to four times that on a slow host) before the seal stop at 26.5
 MAX_UNOPENED_LISTED = 1000        # the branches left unopened when the walk ran out of time are named up to this many (the rest are counted)
 INLINE_PROBLEMS = 50
 INLINE_NAMES = 200
@@ -405,7 +405,8 @@ class HiveBounds:
 # still being sealed at the seal stop of the tool (seal_stop_after: a point in time after which nothing is judged, not a stop of the tool's own
 # work, which has its own clock), has the rest of its strings replaced whole (<withheld N bytes: backstop: the judging time ran out>) and is
 # partial; what stays readable past that point is the names the tool made itself (OWN_NAMES) and strings of 15 characters or fewer of letters,
-# digits, `_` and `.` that do not start like a vendor token.
+# digits, `_` and `.` that do not start like a vendor token (and, in a field of a typed kind, fit the grammar of its type). The seal stop is 3.5 seconds before the
+# tool's time limit: the string in progress finishes after it, and one string of 256 KiB takes up to 2.3 seconds to judge on a loaded machine (the worst measured).
 # NOT RECOGNISED, by design: a secret that does not look like one (a plain password, a pronounceable passphrase, a UUID-shaped key,
 # anything under 16 characters in a name, a secret hidden in words or in an encoding this block does not read).
 import collections
@@ -1365,10 +1366,16 @@ _SHORT_PLAIN = re.compile(r"[A-Za-z0-9_.]{0,15}")      # what the late path may 
                                                           # argument after a flag and no `xox?-` token), and not starting like a vendor token (_unjudged)
 
 
-def _unjudged(text):
+def _unjudged(text, kind=None):
     """Whether a string may be printed past the judging time: a name this run made itself (OWN_NAMES: its schema keys, its file names), or a short plain
-    string that does not start like one of the vendor tokens the block knows (a prefix and 12 characters are 15)."""
-    return text in OWN_NAMES or (_SHORT_PLAIN.fullmatch(text) is not None and not text.lower().startswith(_S_PREFIX_WORDS))
+    string that does not start like one of the vendor tokens the block knows (a prefix and 12 characters are 15) and, in a field of a typed kind (a SID, a
+    GUID, a digest ...), fits the grammar of that type as the backstop checks it."""
+    if text in OWN_NAMES:
+        return True
+    if _SHORT_PLAIN.fullmatch(text) is None or text.lower().startswith(_S_PREFIX_WORDS):
+        return False
+    grammar = _S_TYPED.get(kind)
+    return grammar is None or len(text) <= 3 or grammar.fullmatch(text) is not None
 
 
 def _late():
@@ -1377,7 +1384,7 @@ def _late():
 
 
 def seal_stop_after(seconds):
-    """The seal stop of a tool: no seal runs on past `seconds` from now (its manifest's time limit less a margin); what is left is withheld whole,
+    """The seal stop of a tool: no seal runs on past `seconds` from now (its manifest's time limit less 3.5 seconds); what is left is withheld whole,
     except what _unjudged lets through. It stops the judging only, not the tool's own work: that has its own clock, which must run out first."""
     _CLOCK["stop"] = time.monotonic() + seconds
 
@@ -1535,10 +1542,10 @@ def _seal(value, kind, field, where, guard, fname=""):
     kind of what it holds, or to a function of the key of one item for a dict whose items have kinds of their own (event data, registry values).
     `where` is the tuple of (sealed key or position, position) on the way down."""
     if isinstance(value, str):
+        k = getattr(value, "kind", kind)
         if _late():
             # past the budget the rest is withheld whole, fail closed; what is let through is only a name of this run's own and a short plain string (_unjudged)
-            return value if _unjudged(value) else _replace(value, where, "the judging time ran out", True)
-        k = getattr(value, "kind", kind)
+            return value if _unjudged(value, k) else _replace(value, where, "the judging time ran out", True)
         out = show(value, k, field)
         if guard:
             check = _verdict(out, k)
@@ -1621,7 +1628,8 @@ def row_object(row):
             if type(k) is not str or (v is not None and type(v) not in _ROW_TYPES):
                 break
         else:
-            key = tuple(row.items())
+            # (the type is part of the key: 1, True and 1.0 are equal and print differently; a float by its repr, as -0.0 equals 0.0)
+            key = tuple((k, type(v), repr(v) if type(v) is float else v) for k, v in row.items())
     if key is not None and _ROW[0] == key:
         return dict(_ROW[1])
     replaced = BOUNDARY["replaced"]
@@ -1690,7 +1698,7 @@ OWN_NAMES.update((
     "last_modified_filetime", "length", "library_messages_withheld", "matched", "missing", "most_keys", "most_values", "name", "node_count", "nodes",
     "nodes_listed", "not_attempted", "ok", "parser", "path", "problem_count", "problems", "reason", "regipy_version", "repeated_subkey_elements_skipped",
     "returned", "sensitive_values_withheld", "signal", "status", "status_basis", "stopped_branch_count", "stopped_branches", "stopped_branches_not_named",
-    "subkey_elements_read", "subkey_list", "subkeys", "subkeys_there", "subkeys_there_count", "subkeys_there_not_shown", "subkeys_there_note",
+    "subkey_elements_read", "subkey_list", "subkeys", "subkeys_not_listed_for_time", "subkeys_there", "subkeys_there_count", "subkeys_there_not_shown", "subkeys_there_note",
     "transaction_logs_beside_hive", "transaction_logs_replayed", "tree_complete", "truncated", "type", "value_lengths", "value_types", "values",
     "values_file", "walk_stopped_by_time_limit", "what", "where"
 ))
@@ -1894,6 +1902,7 @@ def dump(hive_path, key, recurse=False, depth=2, limit=500, max_nodes=MAX_NODES)
     seen = 0
     tree_complete = True
     out_of_time_at = None
+    not_listed = 0                      # the subkeys of the key being listed when the time ran out that were neither listed nor judged (they are counted)
     visited = set()
     if list_id(k) is not None and k.subkey_count:
         visited.add(list_id(k))
@@ -1910,7 +1919,12 @@ def dump(hive_path, key, recurse=False, depth=2, limit=500, max_nodes=MAX_NODES)
             problems.append({"where": path, "what": "subkeys", "error": "%s: %s" % (type(exc).__name__, exc)})
             stopped.add({"path": path, "reason": "its subkeys could not be read", "error": "%s: %s" % (type(exc).__name__, exc)})
             continue
-        for s in children:
+        for idx, s in enumerate(children):
+            if out_of_time():
+                # a key can hold hundreds of thousands of subkeys, and each costs three sealed rows: the clock is read for every one, and what is left is counted, not listed or judged
+                not_listed = len(children) - idx
+                stopped.add({"path": path, "reason": "the tool's own time limit (%d seconds) was reached while its subkeys were listed" % DEADLINE_SECONDS, "subkeys": not_listed})
+                break
             seen += 1
             entry = {"name": s.name, "subkeys": s.subkey_count, "values": s.values_count}
             sh = getattr(s, "header", None)
@@ -1945,6 +1959,9 @@ def dump(hive_path, key, recurse=False, depth=2, limit=500, max_nodes=MAX_NODES)
                     if seen <= INLINE_NODES:
                         entry["subkey_list"] = sub
                     queue.append((s, sub, child_path, d + 1))
+        if not_listed:
+            out_of_time_at = seen
+            break
     unopened_not_named = 0
     if out_of_time_at is not None:
         # Whatever is still queued was not opened: the first MAX_UNOPENED_LISTED are named and the rest are counted (naming each costs a sealed row, and a walk
@@ -1952,10 +1969,14 @@ def dump(hive_path, key, recurse=False, depth=2, limit=500, max_nodes=MAX_NODES)
         for node, _target, path, d in itertools.islice(queue, MAX_UNOPENED_LISTED):
             stopped.add({"path": path, "reason": "the tool's own time limit (%d seconds) was reached" % DEADLINE_SECONDS, "subkeys": getattr(node, "subkey_count", None)})
         unopened_not_named = max(len(queue) - MAX_UNOPENED_LISTED, 0)
-        problems.append({"where": shown, "what": "walk", "error": "the tool's own time limit (%d seconds) was reached after %d keys; %d branch(es) were not opened%s" % (
-            DEADLINE_SECONDS, seen, len(queue), "" if not unopened_not_named else " (the first %d are named under stopped_branches, the rest only counted)" % MAX_UNOPENED_LISTED)})
-    out["tree_complete"] = tree_complete
+        problems.append({"where": shown, "what": "walk", "error": "the tool's own time limit (%d seconds) was reached after %d keys; %d branch(es) were not opened%s%s" % (
+            DEADLINE_SECONDS, seen, len(queue), "" if not unopened_not_named else " (the first %d are named under stopped_branches, the rest only counted)" % MAX_UNOPENED_LISTED,
+            "" if not not_listed else "; %d subkey(s) of the key being listed were not listed" % not_listed)})
+    # true only when every key reached is in the inline listing and the walk was not stopped by its time limit (a key past INLINE_NODES is in all_subkeys)
+    out["tree_complete"] = tree_complete and out_of_time_at is None
     out["nodes_listed"] = seen
+    if not_listed:
+        out["subkeys_not_listed_for_time"] = not_listed
     every_page = every.finish()
     if every_page.get("all_results"):
         out["all_subkeys"] = every_page["all_results"]
@@ -2003,7 +2024,7 @@ def refuse(message, **extra):
 def main():
     withhold_library_output()
     set_deadline(DEADLINE_SECONDS)
-    seal_stop_after(28)                   # the manifest allows 30: no seal runs on past that (the rest is withheld whole)
+    seal_stop_after(26.5)                 # the manifest allows 30, less 3.5: no seal runs on past that (the rest is withheld whole)
     install_signal_handlers(lambda signum: interrupted_answer(signum))
     raw = sys.stdin.read()
     if not raw.strip():
@@ -2062,7 +2083,7 @@ def main():
         reasons.append("%d problem(s) are named under problems" % out["problem_count"])
     if out["stopped_branch_count"]:
         reasons.append("%d branch(es) were not entered (stopped_branches)" % out["stopped_branch_count"])
-    if not out["tree_complete"]:
+    if out["nodes_listed"] > INLINE_NODES:
         reasons.append("the inline listing holds the first %d keys (the rest are in all_subkeys)" % INLINE_NODES)
     out = {"parser": PARSER, "regipy_version": regipy_version, "hive": hive,
            "status": "partial" if reasons else "complete",
