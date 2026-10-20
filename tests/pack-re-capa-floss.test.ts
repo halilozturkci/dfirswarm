@@ -12,7 +12,7 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFile, readdir, rm } from "node:fs/promises";
+import { readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { RE, childrenOf, gone, pidFile, put, startDetached, stub, withCwd } from "./pack-re-harness.ts";
@@ -360,17 +360,32 @@ test("every shape the one way out withholds, in capa's rule set paths, rule name
       meta: { version: "stand-in", analysis: { rules: all.map((c) => `/opt/rules/${c.plant}`) } },
       rules: Object.fromEntries(all.map((c, i) => [`rule ${i} ${c.plant}`, { meta: { namespace: `ns/${c.plant}`, attack: [{ id: c.plant }] }, matches: [[4096, {}]] }])),
     });
-    const say = (json: string): string => `if [ "$1" = "--version" ]; then echo v; exit 0; fi\ncat <<'JSON'\n${json}\nJSON\n`;
-    await engines(bin, { capa: say(capa) });
+    // From a file, not a here-document: this JSON is over 4096 bytes, and dash (the CI runners' /bin/sh) forks a process to feed a here-document
+    // that large to `cat`. That process can outlive the stand-in by a hair, and the recipe, which adopts and ends what an engine leaves
+    // behind, then counted it as an orphan and made capa partial (no matches.tsv: the ENOENT seen once in CI, about 1 run in 1000 under load).
+    const capaOut = join(bin, "capa-out.json");
+    await writeFile(capaOut, capa);
+    await engines(bin, { capa: `if [ "$1" = "--version" ]; then echo v; exit 0; fi\ncat '${capaOut}'\n` });
     const out = join(cwd, "catalog");
     recipe(cwd, bin, ["run", "--target", "TARGET", "--out", out]);
     const c = await coverage(out);
+    assert.equal(c.engines.capa.status, "complete", JSON.stringify(c.engines.capa));
     assert.equal(c.withheld_by_final_check, undefined, "the sanitiser withheld every shape: the backstop caught nothing");
     assert.equal(c.engines.capa.rule_sets.length, all.length);
     for (const name of ["coverage.json", "index.tsv", "matches.tsv"]) {
       const text = await readFile(join(out, name));
       for (const cn of all) for (const n of needles(cn)) assert.ok(!text.includes(n.bytes), `${name}: ${n.label}`);
     }
+  });
+});
+
+test("a stand-in cannot print a large output from a here-document: dash forks a writer for it that can be taken for an orphan of the engine", async () => {
+  await withCwd(async (_cwd, bin) => {
+    const big = "x".repeat(5000);
+    await assert.rejects(stub(bin, "big", `cat <<'JSON'\n${big}\nJSON\n`), /here-document over 4096 bytes/);
+    await assert.rejects(stub(bin, "big2", `cat <<EOF\n${big}\nEOF\n`), /here-document over 4096 bytes/);
+    await stub(bin, "small", `cat <<'JSON'\n{}\nJSON\n`);
+    await stub(bin, "bigfile", `echo '${big}'\n`);
   });
 });
 

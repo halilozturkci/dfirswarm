@@ -154,6 +154,12 @@ export async function put(root: string, rel: string, data: string | Buffer, mode
 
 /** An executable stand-in for a program, written into `bin`. */
 export async function stub(bin: string, name: string, script: string): Promise<void> {
+  // dash (the CI runners' /bin/sh) forks a process to feed a here-document over 4096 bytes to its reader. That process can outlive the
+  // stand-in by a hair, and the recipes that adopt and end what an engine leaves behind take it for an orphan and mark the engine partial:
+  // a failure about one run in a thousand under load. A stand-in with a large output prints it from a file instead.
+  if (/<<-?\s*['"\\]?\w+/.test(script) && Buffer.byteLength(script) > 4096) {
+    throw new Error(`stub ${name}: a here-document over 4096 bytes forks a writer under dash that races the stand-in's exit; write the output to a file and cat it`);
+  }
   const path = join(bin, name);
   await writeFile(path, script.startsWith("#!") ? script : `#!/bin/sh\n${script}`);
   await chmod(path, 0o755);
