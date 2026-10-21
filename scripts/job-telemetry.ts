@@ -31,6 +31,7 @@
 import type { Dirent } from "node:fs";
 import { appendFile, lstat, readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { jobSensitivity, sizeBucket, type SensitivityJob } from "./output-hygiene.ts";
 
 /** Entries walked in a job's output directory per sample: past it the count is a lower bound, and says so. */
 export const OUT_WALK_MAX = 10_000;
@@ -178,6 +179,40 @@ export type JobProgress = {
 };
 
 /**
+ * What an agent is shown of a running job whose outputs are, or will be,
+ * sensitive (docs/adr/0016): the verdict and the timing, which are what the
+ * signals are for, and the sizes as the sealed answer gives them, a bucket
+ * (output-hygiene.ts sizeBucket), never a count of bytes or files and never
+ * the newest file's name or time. An output directory that holds 299 bytes
+ * for the right guess and none for a wrong one is the bit the sealed answer
+ * hides; the running one must not hand it out a few seconds earlier. The
+ * verdict itself (`state`, `why`, the `still_ms` figures) is assessed from
+ * the exact samples first.
+ */
+export type SensitiveProgress = Omit<JobProgress, "signals"> & {
+  signals: {
+    out: { size: string; still_ms: number | null };
+    logs: { stdout_size: string; stderr_size: string; still_ms: number | null };
+    cpu: JobProgress["signals"]["cpu"];
+  };
+  withheld: string;
+};
+
+/** A running job's progress as an agent is shown it when the job is sensitive: sizes by bucket, no file count, no newest file. */
+export function sensitiveProgress(p: JobProgress): SensitiveProgress {
+  const { signals, ...rest } = p;
+  return {
+    ...rest,
+    signals: {
+      out: { size: sizeBucket(signals.out.bytes), still_ms: signals.out.still_ms },
+      logs: { stdout_size: sizeBucket(signals.logs.stdout_bytes), stderr_size: sizeBucket(signals.logs.stderr_bytes), still_ms: signals.logs.still_ms },
+      cpu: signals.cpu,
+    },
+    withheld: "sensitive output: its exact sizes, its file count and its newest file are not shown here; the sealed manifest, custody and the report hold what it wrote",
+  };
+}
+
+/**
  * Where a running job stands, from its samples: how long each signal has
  * been still (the first sample with the value it has now), and the verdict.
  */
@@ -268,17 +303,24 @@ export const HEARTBEAT_STOP = 'kill "$DFIRSWARM_HEARTBEAT" 2>/dev/null || true';
  * output): its record in store/jobs/<id>/job.json and the samples beside its
  * staging. Null when it is not running.
  */
-export async function jobProgressOnDisk(sandbox: string, id: string, now = Date.now()): Promise<JobProgress | null> {
+export async function jobProgressOnDisk(sandbox: string, id: string, now = Date.now()): Promise<JobProgress | SensitiveProgress | null> {
   const { storePaths } = await import("./evidence-store.ts");
   const P = storePaths(sandbox);
-  const job = await readFile(join(P.jobs, id, "job.json"), "utf8").then((t) => JSON.parse(t) as { state?: string; attempt?: number; started_at?: string; spec?: { timeout_seconds?: number } }).catch(() => null);
+  type OnDisk = { id?: string; state?: string; attempt?: number; started_at?: string; spec?: Record<string, unknown> & { timeout_seconds?: number }; scope?: { manifest?: string } };
+  const job = await readFile(join(P.jobs, id, "job.json"), "utf8").then((t) => JSON.parse(t) as OnDisk).catch(() => null);
   if (!job || job.state !== "running") return null;
   const samples = await readSamples(join(P.staging, `${id}-${job.attempt ?? 1}`));
-  return assessJob(samples, { started_at: job.started_at, timeout_seconds: Number(job.spec?.timeout_seconds ?? 0), now });
+  const progress = assessJob(samples, { started_at: job.started_at, timeout_seconds: Number(job.spec?.timeout_seconds ?? 0), now });
+  // What an agent is told of a job that is, or will be, sensitive is a bucket (the header and the regroup read it here).
+  const sensitive = await jobSensitivity(sandbox, { id, spec: (job.spec ?? {}) as SensitivityJob["spec"], ...(job.scope ? { scope: job.scope } : {}) }, { running: true }).catch(() => ({ why: "derived" }));
+  return sensitive ? sensitiveProgress(progress) : progress;
 }
 
 /** A job's progress in words, for a header or a regroup: its state, why, and what cancel does. */
-export function progressWords(id: string, p: JobProgress): string {
+export function progressWords(id: string, p: JobProgress | SensitiveProgress): string {
   const min = (ms: number | null) => (ms === null ? "?" : `${Math.round(ms / 60_000)} min`);
-  return `${id} ${p.state === "suspected_stall" ? "SUSPECTED STALL" : p.state} (running ${min(p.running_ms)}${p.timeout_in_ms !== null ? `, its timeout in ${min(p.timeout_in_ms)}` : ""}): ${p.why}; out ${p.signals.out.files}${p.signals.out.bounded ? "+" : ""} file(s), ${p.signals.out.bytes} bytes${p.signals.out.newest ? `, newest ${p.signals.out.newest}` : ""}; stdout ${p.signals.logs.stdout_bytes} B, stderr ${p.signals.logs.stderr_bytes} B. Not sealed, not citable yet; cancel keeps what it wrote, and nothing cancels it for you`;
+  const head = `${id} ${p.state === "suspected_stall" ? "SUSPECTED STALL" : p.state} (running ${min(p.running_ms)}${p.timeout_in_ms !== null ? `, its timeout in ${min(p.timeout_in_ms)}` : ""}): ${p.why}`;
+  const tail = "Not sealed, not citable yet; cancel keeps what it wrote, and nothing cancels it for you";
+  if ("withheld" in p) return `${head}; out ${p.signals.out.size} (sensitive: no byte count, no file count); stdout ${p.signals.logs.stdout_size}, stderr ${p.signals.logs.stderr_size}. ${tail}`;
+  return `${head}; out ${p.signals.out.files}${p.signals.out.bounded ? "+" : ""} file(s), ${p.signals.out.bytes} bytes${p.signals.out.newest ? `, newest ${p.signals.out.newest}` : ""}; stdout ${p.signals.logs.stdout_bytes} B, stderr ${p.signals.logs.stderr_bytes} B. ${tail}`;
 }

@@ -40,11 +40,11 @@ import { hubAlive, hubProcessFor, Journal, maybeCrash, publishGeneration, publis
 import { chooseImage, readImageRecords, type ImageChoice, type ImageRecord } from "./image-choice.ts";
 import { buildView, declaredScope, dropProjected, freeMb, PROJECTED_DIR, resolveScope, ScopeError, scopeKindOf, scopeManifestText, VIEW_DIR, type ScopeKind, type ScopeObject, type ViewEntry } from "./job-scope.ts";
 import { CANARY_NAME, OBSERVE_GUEST, observedRun, observeWanted, readObservation } from "./job-observe.ts";
-import { assessJob, HEARTBEAT_LINES, HEARTBEAT_STOP, keepSample, readSamples, sampleJob, type JobProgress } from "./job-telemetry.ts";
+import { assessJob, HEARTBEAT_LINES, HEARTBEAT_STOP, keepSample, readSamples, sampleJob, sensitiveProgress, type JobProgress, type SensitiveProgress } from "./job-telemetry.ts";
 import type { Mount, WorkerSpec } from "./vm.ts";
 import { jobNetworkHosts } from "./net-grants.ts";
 import { indexOutputs, objectsMatch, opMatch, rankSimilar, reuseOf, sameAsOf, sameAsView, type Reuse, type SameAs, type Similar } from "./job-reuse.ts";
-import { declaredSecretOutput, derivedFrom, derivedSensitivity, ownSensitivity, parseSecretDeclaration, recipeSecretRefusal, sensitiveIndex, sizeBucket, snapshotObjects, type SecretDeclaration, type Sensitivity } from "./output-hygiene.ts";
+import { declaredSecretOutput, jobSensitivity, parseSecretDeclaration, recipeSecretRefusal, sizeBucket, targetPaths, type SecretDeclaration, type Sensitivity } from "./output-hygiene.ts";
 import { execRefused, execRefusedWords, type ExecRefused } from "./job-exec-refused.ts";
 import { writeRefused, writeRefusedWords, type WriteRefused } from "./job-write-refused.ts";
 
@@ -1808,31 +1808,18 @@ export class JobService {
    * Null when none of these.
    */
   private async sensitivityOf(job: JobRecord, outputs: ReadonlyArray<{ sha256: string }> = []): Promise<Sensitivity | null> {
-    const own = ownSensitivity(job.spec);
-    if (own) return own;
-    // Every job the run holds sensitive so far, from the journal (the record), by their outputs' and logs' digests.
-    const index = await sensitiveIndex(this.S);
-    const sensitive = new Set([...index.jobs.keys()].filter((id) => id !== job.id));
-    if (!sensitive.size) return null;
-    // What the job actually read: its scope manifest's snapshot (each file's digest hashed at the job's start), not a scope resolved anew.
-    const objects = await snapshotObjects(this.S, job.scope?.manifest);
-    const text = [job.spec.command ?? "", job.spec.args ? JSON.stringify(job.spec.args) : "", job.spec.source ?? "", ...targetPaths(job.spec)].join("\n");
-    const from = derivedFrom({
-      objects,
-      text,
-      sensitive,
-      contentJob: (sha) => (index.content.get(sha) === job.id ? null : index.content.get(sha) ?? null),
-      generationJob: (gen) => index.genJob.get(gen) ?? null,
-      aliasJob: (alias) => index.aliasJob.get(alias) ?? null,
-    });
-    // A file it sealed that is byte for byte what a sensitive job wrote (what
-    // same_as names, ADR 0017) holds what that output holds, however it was
-    // made. Read from the journal's sensitive jobs and their manifests (the
-    // index above, the empty file excluded), never from the same_as index,
-    // which may still be building: the sensitivity is decided before
-    // job_committed is written.
-    const sameBytes = outputs.map((f) => index.content.get(f.sha256) ?? null).filter((id): id is string => id !== null && id !== job.id);
-    return derivedSensitivity([...new Set([...from, ...sameBytes])].sort());
+    return jobSensitivity(this.S, job, { outputs });
+  }
+
+  /**
+   * Whether a job that has not sealed is held sensitive: the answer the seal
+   * will give from what it declared to read (output-hygiene.ts jobSensitivity).
+   * What an agent is shown of it while it runs follows this. A job whose
+   * sensitivity cannot be read is held sensitive, as at the seal.
+   */
+  private async sensitiveWhileRunning(job: JobRecord): Promise<boolean> {
+    if (job.sensitive) return true;
+    return Boolean(await jobSensitivity(this.S, job, { running: true }).catch(() => ({ why: "derived" as const })));
   }
 
   /**
@@ -2029,10 +2016,17 @@ export class JobService {
    * derived recipe's own measure takes, once per sha256 in the run (an input,
    * an earlier offer or a catalogued object is skipped, named), queued to
    * wait for the lowest lane. A tool, command or import job, whatever its
-   * status: a failed job's files are kept, and may be what matters.
+   * status: a failed job's files are kept, and may be what matters. Not a
+   * sensitive job's files (docs/adr/0016): they are not offered at all.
    */
   private async offerFrom(job: JobRecord): Promise<void> {
     if (this.derivedOfferedJobs.has(job.id)) return;
+    // Nothing of a sensitive output is offered: whether a recipe takes it (its magic, its minimum size) is a fact about
+    // the bytes that a "Catalogue revision" post would tell every seat, and a catalogued form of it is a copy outside the job.
+    if (job.sensitive) {
+      this.derivedOfferedJobs.add(job.id);
+      return;
+    }
     const derived = await this.allRecipes("derived");
     if (!derived.length) return;
     const m = await readManifest(join(storePaths(this.S).jobs, job.id, "manifest.json"));
@@ -2406,7 +2400,7 @@ export class JobService {
   }
 
   /** A job's state for its requester (or anyone: jobs are the run's, not private), with a page of its stdout. */
-  async status(agent: string, id: string, o: { offset?: number; limit?: number; cancel?: boolean; wait?: number } = {}): Promise<{ ok: true; job: JobRecord; stdout?: { offset: number; bytes: number; total: number; text: string; next: number | null; path: string }; progress?: JobProgress } | { ok: false; reason: string }> {
+  async status(agent: string, id: string, o: { offset?: number; limit?: number; cancel?: boolean; wait?: number } = {}): Promise<{ ok: true; job: JobRecord; stdout?: { offset: number; bytes: number; total: number; text: string; next: number | null; path: string }; progress?: JobProgress | SensitiveProgress } | { ok: false; reason: string }> {
     if (!JOB_ID.test(id)) return { ok: false, reason: `${id} is not a job id` };
     const job = this.jobs.get(id);
     if (!job) return { ok: false, reason: `no job ${id}` };
@@ -2456,7 +2450,10 @@ export class JobService {
         await this.journal.append({ type: "job_notified", job: id, to: agent, how: "status" });
       }
     }
-    const progress = job.state === "running" ? await this.progress(id).catch(() => null) : null;
+    // The exact sample stays on the host (it decides moving, quiet and stalled); an agent is shown a bucket where the
+    // job's output is, or will be, sensitive: the size of a directory being written is the size the sealed answer hides.
+    const sampled = job.state === "running" ? await this.progress(id).catch(() => null) : null;
+    const progress = sampled && (await this.sensitiveWhileRunning(job)) ? sensitiveProgress(sampled) : sampled;
     return { ok: true, job, ...(stdout ? { stdout } : {}), ...(progress ? { progress } : {}) };
   }
 
@@ -2774,7 +2771,8 @@ export async function jobView(S: string, job: JobRecord, o: { files?: number } =
     if (err.length) {
       const room = job.status === "ok" ? 1024 : 2048;
       const tail = err.subarray(Math.max(0, err.length - room));
-      view.stderr = { tail: tail.toString("utf8"), bytes: err.length, ...(err.length > tail.length ? { whole: `store/jobs/${job.id}/stderr.log` } : {}) };
+      // The tail is shown whole; the length beyond it is a bucket for a sensitive job (a tool's stderr volume may follow a withheld value).
+      view.stderr = { tail: tail.toString("utf8"), ...(sensitive ? { size: sizeBucket(err.length) } : { bytes: err.length }), ...(err.length > tail.length ? { whole: `store/jobs/${job.id}/stderr.log` } : {}) };
     }
   } catch {
     // no stderr
@@ -2794,10 +2792,7 @@ export type WorkerPlan = {
   script: { lines: string[]; tool_sha256?: string };
 };
 
-/** A recipe's or a detect pass's target paths: part of its scope, whatever it declared. */
-export function targetPaths(spec: Pick<JobSpec, "target" | "targets">): string[] {
-  return [...(spec.target?.paths ?? []), ...(spec.targets ?? []).flatMap((t) => t.paths ?? [])];
-}
+export { targetPaths };
 
 /** A file's sha256 read through a descriptor that does not follow a link; a link, a special file or nothing is said. */
 async function hashNoFollow(path: string): Promise<{ sha256: string } | { reason: string }> {

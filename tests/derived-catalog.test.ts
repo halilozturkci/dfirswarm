@@ -309,6 +309,28 @@ test("the files of a failed job and of an import are offered too; with the deriv
   await off.svc.stop("over");
 });
 
+test("nothing a sensitive job made is offered to the recipes: whether a recipe takes its output is not told to any seat, and no catalogue revision is posted for it", async () => {
+  const S = sandbox();
+  const { svc, posts } = service(S);
+  await svc.start();
+  const secret = await svc.submit("a1", { kind: "command", command: zipCommand([["secret.zip", 150]]), inputs: [], secret_output: true });
+  assert.ok(secret.ok);
+  await until(svc, secret.job.id);
+  assert.equal(svc.jobs.get(secret.job.id)?.sensitive?.why, "secret_output");
+  // The same work, not sensitive: it is offered, and that is the proof that the first would have been by now.
+  const plain = await svc.submit("a1", { kind: "command", command: zipCommand([["plain.zip", 100]]), inputs: [] });
+  assert.ok(plain.ok);
+  await until(svc, plain.job.id);
+  await eventually(() => of(S, "derived_offered").length >= 1, "the plain job's offer");
+  await eventually(() => of(S, "generation_committed").length >= 1, "its generation");
+  await new Promise((res) => setTimeout(res, 300));
+  const offers = of(S, "derived_offered") as Array<JournalLine & { job: string }>;
+  assert.deepEqual(offers.map((o) => o.job), [plain.job.id], "only the job that is not sensitive was offered");
+  for (const g of of(S, "generation_committed")) assert.notEqual((g.target as { ref?: string }).ref, `job:${secret.job.id}/secret.zip`);
+  assert.equal(posts.some(([, b]) => b.includes("secret.zip") || (/atalogue/.test(b) && b.includes(secret.job.id))), false, `no post about a catalogue of the sensitive output: ${JSON.stringify(posts)}`);
+  await svc.stop("over");
+});
+
 test("custody sums the derived catalogue from its journal lines and holds every revision and generation to the journal", async () => {
   const S = sandbox();
   const { svc } = service(S);

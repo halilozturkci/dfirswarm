@@ -1328,6 +1328,12 @@ export async function checkLocator(sandboxRoot: string, loc: AnswerReviewLocator
   const abs = join(sandboxRoot, r.path);
   const st = await stat(abs).catch(() => null);
   if (!st?.isFile()) return no(`${loc.ref} ${st ? "is a directory: a locator names one file in it" : `cannot be read here (${r.path})`}`);
+  // A sensitive output (docs/adr/0016): the reply to a locator that does not hold says nothing of the file but that.
+  // How long it is, whether an offset is inside it, where a value is nearby, whether bytes are text: each is what the
+  // harness withholds of such a file (its size is a bit of what the tool withheld), and a past-the-end reply against a
+  // within-the-file reply would bisect the size by offset. One sentence for every way a locator can miss.
+  const sensitive = (await (await import("../scripts/output-hygiene.ts")).sensitiveRefs(sandboxRoot, [loc.ref]).catch(() => [])).length > 0;
+  const miss = (full: string): LocatorVerdict => no(sensitive ? `${loc.ref} is sensitive output: what is at offset ${loc.offset} is not what the locator says (the reply does not give the file's size, where else the value is, or what the bytes there read as)` : full);
   // What it vouches for is a value the answer or its chain states: an occurrence of anything else vouches for nothing the answer rests on.
   const stated = [looseText(answerText), looseText(chainText)];
   if (loc.value !== undefined) {
@@ -1337,7 +1343,7 @@ export async function checkLocator(sandboxRoot: string, loc: AnswerReviewLocator
   }
   const forms = loc.value !== undefined ? valueForms(loc.value) : [];
   const need = loc.value !== undefined ? Math.max(...forms.map((f) => f.bytes.length)) : (loc.length as number);
-  if (loc.offset >= st.size) return no(`offset ${loc.offset} is past the end of ${loc.ref} (${st.size} bytes)`);
+  if (loc.offset >= st.size) return miss(`offset ${loc.offset} is past the end of ${loc.ref} (${st.size} bytes)`);
   const from = Math.max(0, loc.offset - LOCATOR_NEAR_BYTES);
   const to = Math.min(st.size, loc.offset + need + LOCATOR_NEAR_BYTES);
   const fh = await open(abs, "r");
@@ -1365,11 +1371,11 @@ export async function checkLocator(sandboxRoot: string, loc: AnswerReviewLocator
         if (!near || Math.abs(o - loc.offset) < Math.abs(near.offset - loc.offset)) near = { offset: o, enc: f.enc };
       }
     }
-    return no(`the value is not at offset ${loc.offset} of ${loc.ref} in UTF-8 or UTF-16LE${near ? `: it begins at offset ${near.offset} (${near.enc}), ${Math.abs(near.offset - loc.offset)} bytes ${near.offset < loc.offset ? "before" : "after"}` : `, nor within ${LOCATOR_NEAR_BYTES} bytes of it`}`);
+    return miss(`the value is not at offset ${loc.offset} of ${loc.ref} in UTF-8 or UTF-16LE${near ? `: it begins at offset ${near.offset} (${near.enc}), ${Math.abs(near.offset - loc.offset)} bytes ${near.offset < loc.offset ? "before" : "after"}` : `, nor within ${LOCATOR_NEAR_BYTES} bytes of it`}`);
   }
   // A length and no value: the bytes read back, and found in the answer's words.
   const raw = window.subarray(at, at + need);
-  if (raw.length < need) return no(`${loc.ref} holds ${raw.length} bytes from offset ${loc.offset}, fewer than the length ${need} given`);
+  if (raw.length < need) return miss(`${loc.ref} holds ${raw.length} bytes from offset ${loc.offset}, fewer than the length ${need} given`);
   const readings: Array<{ enc: "utf-8" | "utf-16le"; text: string }> = [];
   // A reading is text: no control character but tab and line ends, no replacement character (UTF-16LE's zero bytes are not UTF-8 text).
   const control = /[\u0000-\u0008\u000e-\u001f]/;
@@ -1388,7 +1394,7 @@ export async function checkLocator(sandboxRoot: string, loc: AnswerReviewLocator
     const t = looseText(x.text);
     if (t.length >= LOCATOR_MIN_CHARS && stated.some((w) => w.includes(t))) return { ok: true, ref: loc.ref, offset: loc.offset, encoding: x.enc };
   }
-  return no(`the ${need} bytes at offset ${loc.offset} of ${loc.ref} ${readings.length ? `read as ${readings.map((x) => x.enc).join(" or ")} text neither the answer nor an entry it rests on states` : "are not UTF-8 or UTF-16LE text"}: give value, the value as it is in the object`);
+  return miss(`the ${need} bytes at offset ${loc.offset} of ${loc.ref} ${readings.length ? `read as ${readings.map((x) => x.enc).join(" or ")} text neither the answer nor an entry it rests on states` : "are not UTF-8 or UTF-16LE text"}: give value, the value as it is in the object`);
 }
 
 /** A derivation held to the run: its job is sealed and ran to its end, each input resolves, and each is among what the job declared it would read. */

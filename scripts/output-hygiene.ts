@@ -52,7 +52,9 @@ export type Sensitivity = {
  */
 export function sizeBucket(bytes: number): string {
   const MIB = 1024 * 1024;
+  // Not a size (NaN, a negative number) is the floor; no file is a petabyte, and Infinity must not loop.
   if (!(bytes >= MIB)) return "under 1 MiB";
+  if (!Number.isFinite(bytes) || bytes >= 2 ** 50) return "1 PiB or more";
   let low = 1;
   while (low * 2 * MIB <= bytes) low *= 2;
   return `${low} MiB to under ${low * 2} MiB`;
@@ -208,6 +210,71 @@ export async function snapshotObjects(sandbox: string, scopeManifest: string | u
   const out: Array<{ path: string; sha256?: string }> = [];
   for (const x of [...(m.accessible ?? []), ...(m.expanded ?? [])]) if (typeof x.path === "string") out.push({ path: x.path, ...(typeof x.sha256 === "string" ? { sha256: x.sha256 } : {}) });
   return out;
+}
+
+/** A recipe's or a detect pass's target paths: part of its scope, whatever it declared. */
+export function targetPaths(spec: { target?: { paths?: string[] }; targets?: Array<{ paths?: string[] }> }): string[] {
+  return [...(spec.target?.paths ?? []), ...(spec.targets ?? []).flatMap((t) => t.paths ?? [])];
+}
+
+/** What decides a job's sensitivity: its spec, and the scope manifest its start recorded. */
+export type SensitivityJob = {
+  id: string;
+  spec: {
+    secret_output?: unknown;
+    secret_output_by?: unknown;
+    command?: string;
+    args?: unknown;
+    source?: string;
+    inputs?: readonly string[];
+    target?: { paths?: string[] };
+    targets?: Array<{ paths?: string[] }>;
+  };
+  scope?: { manifest?: string };
+};
+
+/**
+ * Whether what a job seals is sensitive (docs/adr/0016): it was run with
+ * secret_output, or it read a sensitive output. What it read is what it
+ * declared (resolved again now: a sealed output does not change), by path,
+ * by digest, or a catalogue generation a sensitive job made; a job that
+ * declared no scope could read everything, so it is held to what its
+ * command, arguments, source and targets name; and a file it sealed that is
+ * byte for byte what a sensitive job wrote (`outputs`) is sensitive whatever
+ * it read. Null when none of these.
+ *
+ * `running: true` asks it of a job that has not sealed yet (nothing to read
+ * `outputs` from): the scope manifest its start recorded is there, and what
+ * it declares to read counts as named, so the answer is the one the seal
+ * will give except for a file that turns out to be a sensitive output's
+ * bytes. What an agent is shown of a running job follows this.
+ */
+export async function jobSensitivity(sandbox: string, job: SensitivityJob, o: { outputs?: ReadonlyArray<{ sha256: string }>; running?: boolean } = {}): Promise<Sensitivity | null> {
+  const own = ownSensitivity(job.spec);
+  if (own) return own;
+  // Every job the run holds sensitive so far, from the journal (the record), by their outputs' and logs' digests.
+  const index = await sensitiveIndex(sandbox);
+  const sensitive = new Set([...index.jobs.keys()].filter((id) => id !== job.id));
+  if (!sensitive.size) return null;
+  // What the job actually read: its scope manifest's snapshot (each file's digest hashed at the job's start), not a scope resolved anew.
+  const objects = await snapshotObjects(sandbox, job.scope?.manifest);
+  const text = [job.spec.command ?? "", job.spec.args ? JSON.stringify(job.spec.args) : "", job.spec.source ?? "", ...targetPaths(job.spec), ...(o.running ? (job.spec.inputs ?? []) : [])].join("\n");
+  const from = derivedFrom({
+    objects,
+    text,
+    sensitive,
+    contentJob: (sha) => (index.content.get(sha) === job.id ? null : index.content.get(sha) ?? null),
+    generationJob: (gen) => index.genJob.get(gen) ?? null,
+    aliasJob: (alias) => index.aliasJob.get(alias) ?? null,
+  });
+  // A file it sealed that is byte for byte what a sensitive job wrote (what
+  // same_as names, ADR 0017) holds what that output holds, however it was
+  // made. Read from the journal's sensitive jobs and their manifests (the
+  // index above, the empty file excluded), never from the same_as index,
+  // which may still be building: the sensitivity is decided before
+  // job_committed is written.
+  const sameBytes = (o.outputs ?? []).map((f) => index.content.get(f.sha256) ?? null).filter((id): id is string => id !== null && id !== job.id);
+  return derivedSensitivity([...new Set([...from, ...sameBytes])].sort());
 }
 
 export function derivedSensitivity(from: string[]): Sensitivity | null {

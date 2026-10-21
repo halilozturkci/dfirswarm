@@ -764,14 +764,25 @@ import each other), and holds to this:
   (`job_run`, `job_status`, the post that says it is done, a reuse hint) names
   each file and gives a size bucket only (everything under 1 MiB is one bucket,
   so empty and small look the same; then powers of two), with no byte count, no
-  sha256 and no `same_as`. The sealed manifest, the journal, custody and the
-  report keep both exactly. This does not make a size free to depend on a
-  value: a tool still must not write a values file whose size, or whether it
-  exists, follows what the answer withholds (a filter narrows the file only
+  sha256 and no `same_as`. While the job runs, `job_status` holds to the same:
+  the progress it carries gives buckets for the output directory and the logs,
+  and no file count, byte count or newest file, for a job that is sensitive or
+  reads a sensitive output (that is decided when it starts, not when it
+  seals). The stderr length beyond the tail it shows is a bucket too. The
+  sealed manifest, the journal, custody and the report keep the exact values.
+  This does not make a size free to depend on a value: a tool still must not
+  write a values file whose size, or whether it exists, follows what the
+  answer withholds (a filter narrows the file only
   with a constant-width marker per row, or not at all), and a tool that writes
   megabytes more or less by a withheld value shows it across a bucket edge. A
   sealed file is in `store/`, which the seat's VM mounts read-only: the
-  withholding is of what the harness tells, not an access control.
+  withholding is of what the harness tells, not an access control. Two
+  things stay as they are, and a tool is written knowing it: a ledger entry
+  or a job input may name a sealed file by `sha256:<hex>`, and a digest that
+  is a sensitive output's file is accepted (the entry recorded sensitive)
+  where any other digest is refused, so a guess at a whole file is confirmed
+  (the file is in `store/blobs/` under that digest in any case); and the
+  number and names of a job's files, with its stdout, are shown whole.
 - *The manifest declares it, and the harness enforces it.* The description
   says SENSITIVE and names the flag, and the manifest carries the key the job
   service reads, `"secret_output"`: `"required"` (every job of the tool) or

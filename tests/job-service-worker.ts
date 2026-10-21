@@ -4,7 +4,7 @@
  * directories the VM would have mounted, timeout(1) left out (macOS has
  * none; the tests give no job long enough to need it).
  */
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -25,6 +25,30 @@ export function localWorker(record: WorkerSpec[] = [], behaviour: { fenced?: () 
     const env = { ...process.env, ...spec.env, OUT: out.host };
     const r = spawnSync("bash", [join(ctl, "run-local.sh")], { cwd: spec.workdir, env, encoding: "utf8" });
     return { code: r.status, fenced: behaviour.fenced ? behaviour.fenced() : true, ...(behaviour.fenced && !behaviour.fenced() ? { fence_error: "msb still has it" } : {}) };
+  };
+}
+
+/**
+ * localWorker with the script run beside the test, not instead of it: the
+ * test's own process keeps running while the job does, so a test can ask the
+ * service about a job that is running (job_status mid-run) and then let it go.
+ */
+export function asyncLocalWorker(record: WorkerSpec[] = []) {
+  return async (spec: WorkerSpec) => {
+    record.push(spec);
+    const ctl = spec.mounts.find((m) => m.guest === "/job")!.host;
+    const out = spec.mounts.find((m) => m.host.includes(".staging/") && m.host.endsWith("/out"))!;
+    const local = (text: string) => text.split("/job/").join(`${ctl}/`).split(out.guest!).join(out.host);
+    for (const f of readdirSync(ctl)) if (f !== "run.sh" && f.endsWith(".json")) writeFileSync(join(ctl, f), local(readFileSync(join(ctl, f), "utf8")));
+    const script = local(readFileSync(join(ctl, "run.sh"), "utf8")).replace(/timeout --kill-after=10 (\d+) /g, "").replace(/timeout 300 /g, "");
+    writeFileSync(join(ctl, "run-local.sh"), script);
+    const env = { ...process.env, ...spec.env, OUT: out.host };
+    const code = await new Promise<number | null>((done) => {
+      const child = spawn("bash", [join(ctl, "run-local.sh")], { cwd: spec.workdir, env, stdio: "ignore" });
+      child.on("close", (c) => done(c));
+      child.on("error", () => done(null));
+    });
+    return { code, fenced: true };
   };
 }
 
