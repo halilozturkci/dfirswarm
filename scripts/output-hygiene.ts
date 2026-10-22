@@ -350,11 +350,13 @@ export async function sensitiveIndex(sandbox: string): Promise<SensitiveIndex> {
     } catch {
       continue;
     }
+    if (!l || typeof l !== "object") continue;
     if (l.type === "generation_committed" && l.generation && l.job) {
       genJob.set(String(l.generation), String(l.job));
       if (l.alias) aliasJob.set(String(l.alias).replace(/^catalog\//, "").replace(/\/$/, ""), String(l.job));
     }
-    if (l.type !== "job_committed" || !l.job || !l.sensitive) continue;
+    // A line that is not a job id and a record is not read (a hand-made or damaged journal reaches the paths below).
+    if (l.type !== "job_committed" || typeof l.job !== "string" || !/^[a-z0-9-]{1,64}$/.test(l.job) || !l.sensitive || typeof l.sensitive !== "object") continue;
     jobs.set(l.job, { id: l.job, sensitivity: l.sensitive, status: l.status ?? null, files: [], logs: [] });
     if (l.logs) logsOf.set(l.job, Object.values(l.logs).filter((h) => /^[0-9a-f]{64}$/.test(h)));
   }
@@ -363,7 +365,7 @@ export async function sensitiveIndex(sandbox: string): Promise<SensitiveIndex> {
   const EMPTY = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
   for (const j of jobs.values()) {
     const m = await readJson<{ files?: Array<{ path?: string; sha256?: string; bytes?: number }> }>(join(S, "store", "jobs", j.id, "manifest.json"));
-    j.files = (m?.files ?? []).map((f) => ({ path: String(f.path ?? ""), sha256: String(f.sha256 ?? ""), bytes: Number(f.bytes) || 0 }));
+    j.files = (Array.isArray(m?.files) ? m.files.filter((f) => f && typeof f === "object") : []).map((f) => ({ path: String(f.path ?? ""), sha256: String(f.sha256 ?? ""), bytes: Number(f.bytes) || 0 }));
     j.logs = logsOf.get(j.id) ?? [];
     for (const f of j.files) if (/^[0-9a-f]{64}$/.test(f.sha256) && f.sha256 !== EMPTY && !digests.has(f.sha256)) digests.set(f.sha256, j.id);
     for (const sha of [...j.files.map((f) => f.sha256), ...j.logs]) if (/^[0-9a-f]{64}$/.test(sha) && sha !== EMPTY && !content.has(sha)) content.set(sha, j.id);

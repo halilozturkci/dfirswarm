@@ -676,6 +676,15 @@ author.
 
 ### Secrets and sensitive output
 
+The sensitivity mark protects what flows out of the run (the board, the ledger,
+the report, the package, the trace's command lines and the network), not the
+secret from the agents of the run: an investigation uses a cracked password and a
+recovered key, so a sensitive output is read by whoever has the store, and the
+harness records the reads it sees
+([ADR 0018](adr/0018-sensitive-outputs-are-used-by-agents-and-every-access-is-recorded.md)).
+The rules below keep a value inside a marked file, which the mark covers, and out
+of everything it does not.
+
 1. **The hash of a secret is never written**, in a post, the ledger, a report
    or a tool's output: an unsalted hash of a weak secret is reversed in
    seconds. Nor are characters of a password, a PIN or any short secret. Of a
@@ -731,26 +740,35 @@ import each other), and holds to this:
   that names the tool has its "Sensitive output" line say the job runs with
   `secret_output: true`, and that the ledger cites the finding's file and
   offset, never the value.
-- *No filter over a withheld value.* A tool that takes a query or an expression
-  (a SQL statement, a regular expression, a name filter) must not offer it
-  while the values are withheld: with text you cannot see, each call is one bit
-  of every row, and a few hundred calls confirm a guess. The values-to-file
+- *No filter over a value the answer withholds.* A tool that takes a query or an
+  expression (a SQL statement, a regular expression, a name filter) must not
+  offer it while the answer withholds the values: an answer that follows text
+  it does not show is one bit of every row per call, and a few hundred calls
+  confirm a guess, in a place the sensitivity mark does not cover (a post, the
+  ledger, the trace's command lines). The values-to-file
   mode takes the table, not the query (`sqlite_query` with `write_values`), or
   lets the expression mark only the rows of the sealed file, never what the
   answer counts and never the file's size (`sqlite_freespace`'s `contains` marks
   every fragment's row and drops none, and a random id in each row makes the
   file's digest different in every run, because the harness shows a job output's
   size and digest to whoever asked; it runs only as an expression of bounded
-  cost: how long an expression runs on text you cannot see is a bit as well, and
+  cost: how long an expression runs on text the answer does not show is a bit as well, and
   the bound makes it a small one per character, not none, and it adds up with the
   volume: the job's duration still follows how much of the hidden text is of a
   class the expression matches. So the time never reaches the answer: the
   expression has a work budget in sizes the answer shows, a part past it is marked
   undecided and the status is partial, and the clock of `max_seconds` does not run
-  while it does). What a sealed file's reader can do is a separate question: the
-  sandbox's `store/` is mounted read-only in an agent's VM, so an agent that opens
-  a values file reads every row. The measures above guard what is shown without
-  opening it (the answer, its status and counts, the file's size and digest). A
+  while it does). None of this hides the file from an agent, and it is not meant to
+  ([ADR 0018](adr/0018-sensitive-outputs-are-used-by-agents-and-every-access-is-recorded.md)):
+  the sandbox's `store/` is mounted read-only in an agent's VM, an agent that opens a
+  values file reads every row, and a later job is given the file to use it. The file
+  is the sensitivity mark's unit, and the mark, the redaction of a package and the
+  access record cover what the agent does with it. These measures keep a value out
+  of what the tool prints (the answer, its status and counts, the file's size and
+  digest), because that is quoted in a post or the ledger without the mark. They stay
+  as they are built and are not extended: a hint of a value in an answer's size,
+  timing or order is a limit of the tool, noted where the tool is documented, while a
+  value printed in an answer, an error, a path or a key is a defect of the contract. A
   position is not free of
   the values by itself, either. A range over a key is a filter over that key
   when the key is a value: SQLite's rowid is the value of an `INTEGER PRIMARY

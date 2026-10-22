@@ -19,7 +19,7 @@ import * as board from "../extensions/board.ts";
 import { initSandbox } from "../extensions/protocol.ts";
 import { JobService } from "../scripts/job-service.ts";
 import { sensitiveIndex } from "../scripts/output-hygiene.ts";
-import { classifyTraceRow, type AccessIndex } from "../scripts/sensitive-access.ts";
+import { LOWER_BOUND_SENTENCE, accessRecord, classifyTraceRow, provenance, renderAccess, verifyAccess, type AccessIndex } from "../scripts/sensitive-access.ts";
 import { Hub } from "../scripts/vm-hub.ts";
 import { listInputs, localWorker } from "./job-service-worker.ts";
 
@@ -401,4 +401,45 @@ test("the matching, row by row", async () => {
   assert.deepEqual(hit("bash", { command: "cat store/jobs/j9*/out/x" }), []);
   assert.deepEqual(hit("bash", { command: "cat store/jobs/{j000001,j000002}/out/x" }).map((h) => [h.job, h.certainty]), [["j000001", "text"]], "a brace list that holds the id names it");
   assert.deepEqual(hit("bash", { command: "cat store/jobs/{j00000?,x}/out/x" }).map((h) => [h.job, h.certainty, h.candidates]), [[null, "maybe", ["j000001"]]]);
+});
+
+test("the reader (scripts/sensitive-access.ts) takes the hub's own lines: the record, the check against the trace and the chain of use", async () => {
+  const { S, hub, row, send, access, secret, submit } = await withJobs();
+  const derived = await submit("a2", { command: `wc -c store/jobs/${secret}/out/values.jsonl > "$OUT/c.txt"`, inputs: ["all"] });
+  const kept = "tool-output/a1/20261021T101500000-bash-ab12.out.log";
+  await send("a1", row("read", { path: `store/jobs/${secret}/out/values.jsonl` }));
+  await send("a1", row("bash", { command: `cat store/jobs/${secret}/out/values.jsonl` }, { ok: true, full_output: { path: kept, bytes: 9, lines: 1, sha256: "0".repeat(64) } }));
+  await send("a2", { ...row("read", { path: kept }), agent: "a2" });
+  await send("a1", row("bash", { command: "cat store/jobs/*/out/*" }));
+  await send("a1", row("read", { path: "work/a1/notes.txt" }));
+  await board.callBoard(hub.socketFor("a2"), "jobStatus", [S, { job_id: secret }]);
+  await until(() => access().length === 5, "five lines");
+  await new Promise((r) => setTimeout(r, 100));
+  const rec = await accessRecord(S);
+  assert.deepEqual(rec.problems, []);
+  const seen = rec.events.filter((e) => e.source === "trace");
+  assert.equal(seen.length, 5);
+  assert.ok(seen.every((e) => e.recorded && e.evidence === "harness_observed_read" && e.rules === 1));
+  assert.deepEqual(seen.map((e) => [e.seat, e.via, e.certainty, e.job, e.part]).sort(), [
+    ["a1", "path", "path", secret, "out"],
+    ["a1", "text", "maybe", null, "run"],
+    ["a1", "text", "text", secret, "out"],
+    ["a2", "api_page", "certain", secret, "stdout"],
+    ["a2", "path", "path", secret, "copy"],
+  ]);
+  assert.equal(seen.find((e) => e.part === "copy")?.tool_row?.agent, "a2");
+  // The derived job is a verified link from the journal, under the same root.
+  const link = rec.events.find((e) => e.evidence === "harness_verified_link");
+  assert.deepEqual([link?.by_job, link?.job, link?.how], [derived.id, secret, "named_in_text"]);
+  const prov = provenance(rec);
+  assert.deepEqual(prov.roots.map((r) => r.job), [secret]);
+  assert.equal(prov.roots[0].observed.length, 5);
+  assert.deepEqual(prov.roots[0].used_by.map((c) => c.node.job), [derived.id]);
+  // Every line points at a row the rules read as naming its job, and every such row has a line.
+  const v = await verifyAccess(S);
+  assert.deepEqual([v.ok, v.orphan.length, v.unrecorded.length, v.duplicate.length], [true, 0, 0, 0]);
+  // Deriving from the trace alone adds nothing the hub did not record.
+  const again = await accessRecord(S, { derive: true });
+  assert.equal(again.events.filter((e) => !e.recorded).length, 0);
+  assert.ok(renderAccess(rec).endsWith(`${LOWER_BOUND_SENTENCE}\n`));
 });
