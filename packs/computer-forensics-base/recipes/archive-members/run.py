@@ -19,6 +19,12 @@ no zone (`tz` is `unknown`) unless the member has an extended timestamp.
 `flags` names what an examiner should know before extracting: escapes-root,
 encrypted, ratio>1000, and name-not-utf8 (macOS refuses such a name, so an
 extraction there must rename the member; its bytes are path_b64).
+
+The format is read from the bytes in the order archive_extract reads them: a 7z or zip signature at offset 0, then a tar header that
+reads at offset 0, and only then a zip with something in front of it, which needs an end-of-central-directory record that agrees with
+the file (a directory of at least one entry that ends where the record starts and begins with a central-directory signature), not
+four bytes that spell one somewhere near the end. A tar that holds a zip as a member is listed as the tar, and coverage.json notes the
+zip record it also ends in.
 """
 import base64
 import datetime
@@ -110,8 +116,48 @@ def utc(ts):
         return ""
 
 
+ZIP_TAIL = 65557 + 4096  # an end record's comment is at most 65535 bytes; room before it for a zip64 locator and record
+
+
+def zip_end_agrees(path):
+    """True when the end-of-central-directory record in the file's last 64 KiB agrees with the file: it counts at least one entry,
+    its central directory ends where the record starts, begins with a central-directory signature, and does not start before the
+    offset the record declares for it (the difference is a prefix: a self-extractor). zipfile.is_zipfile finds the four record
+    bytes anywhere in that window and so says yes to a tar whose last member is a zip, and to any file that ends in 22 bytes
+    that spell a record."""
+    try:
+        size = os.path.getsize(path)
+        start = max(0, size - ZIP_TAIL)
+        with open(path, "rb") as fh:
+            fh.seek(start)
+            tail = fh.read()
+            at = len(tail)
+            while True:
+                at = tail.rfind(b"PK\x05\x06", 0, at)
+                if at < 0 or at + 22 > len(tail):
+                    return False
+                total, cd_bytes, cd_off = struct.unpack_from("<H", tail, at + 10)[0], struct.unpack_from("<I", tail, at + 12)[0], struct.unpack_from("<I", tail, at + 16)[0]
+                end_of_dir = start + at
+                if total == 0xFFFF or cd_bytes == 0xFFFFFFFF or cd_off == 0xFFFFFFFF:
+                    loc = tail.rfind(b"PK\x06\x07", 0, at)
+                    rec = tail.rfind(b"PK\x06\x06", 0, loc) if loc >= 0 else -1
+                    if rec < 0 or rec + 56 > len(tail):
+                        continue
+                    total, cd_bytes, cd_off = struct.unpack_from("<Q", tail, rec + 32)[0], struct.unpack_from("<Q", tail, rec + 40)[0], struct.unpack_from("<Q", tail, rec + 48)[0]
+                    end_of_dir = start + rec
+                begins = end_of_dir - cd_bytes
+                if total < 1 or cd_bytes < 46 or begins < 0 or begins < cd_off:
+                    continue
+                fh.seek(begins)
+                if fh.read(4) == b"PK\x01\x02":
+                    return True
+    except (OSError, struct.error):
+        return False
+
+
 def detect(path):
-    """(format, why) or (None, why)."""
+    """(format, why) or (None, why). A tar header that reads at offset 0 decides before a zip end record found near the end does:
+    the end record of a zip that is a member of a tar sits inside the tar. archive_extract orders the formats the same way."""
     try:
         with open(path, "rb") as fh:
             head = fh.read(512)
@@ -119,8 +165,8 @@ def detect(path):
         return None, "unreadable: %s" % (e.strerror or e)
     if head.startswith(SEVEN_Z_MAGIC):
         return "7z", "7z signature"
-    if zipfile.is_zipfile(path):
-        return "zip", "zip end-of-central-directory record"
+    if head.startswith((b"PK\x03\x04", b"PK\x05\x06")):
+        return "zip", "zip signature at offset 0"
     # tarfile.is_tarfile says yes to a file of zeros (an empty tar is two
     # zero blocks), and a memory or disk image can start with zeros: a tar
     # here is one whose first member header reads. Compressed by its magic,
@@ -133,11 +179,16 @@ def detect(path):
             first = tf.next()
         if first is not None:
             return "tar", "tar header"
-        return None, "no tar member (zero blocks, or not a tar)"
+        tar_why = "no tar member (zero blocks, or not a tar)"
     except HugeHeader as e:
         return "tar", "tar header (%s)" % e
     except Exception:
-        return None, "no tar, zip or 7z structure"
+        tar_why = "no tar, zip or 7z structure"
+    # No signature at offset 0: a zip with something in front of it (a self-extractor) is told by an end record that agrees
+    # with the file, not by four bytes anywhere in its last 64 KiB.
+    if zip_end_agrees(path):
+        return "zip", "zip end-of-central-directory record that agrees with the file (a prefix before the first entry)"
+    return None, tar_why
 
 
 class Writer:
@@ -265,7 +316,7 @@ def zip_ext_time(extra):
 
 # zipfile reads the whole central directory into memory: past this many
 # bytes of it, the archive is not listed, and says so (RECIPE_ZIP_DIRECTORY_BYTES).
-ZIP_DIRECTORY_MAX = int(os.environ.get("RECIPE_ZIP_DIRECTORY_BYTES") or 256 * 1024 * 1024)
+ZIP_DIRECTORY_MAX = int(os.environ.get("RECIPE_ZIP_DIRECTORY_BYTES") or 64 * 1024 * 1024)
 
 
 def zip_declared(path):
@@ -441,12 +492,18 @@ def run(path, out_dir):
            "covered": "the archive's list of members", "not_covered": "member contents; archives inside the archive",
            "limits_hit": [], "errors": []}
     if fmt is None:
-        cov.update(status="unsupported", why=why)
+        cov.update(status="unsupported", why=why, status_basis="no tar, zip or 7z structure was found in the file: " + why)
         json.dump(cov, open(os.path.join(out_dir, "coverage.json"), "w"), indent=2)
+        print(json.dumps({"ok": False, "status": "unsupported", "why": why}))
         return 2
     # Said before the first member is read, so a run cut short at any point leaves a coverage file that says it did not finish.
-    json.dump(dict(cov, status="partial", why="started; the member list was not finished (the run stopped before its end)"),
+    json.dump(dict(cov, status="partial", status_basis="the run had started and had listed nothing yet", why="started; the member list was not finished (the run stopped before its end)"),
               open(os.path.join(out_dir, "coverage.json"), "w"), indent=2)
+    if fmt == "tar" and zip_end_agrees(path):
+        note = ("read as a tar, because a tar header reads at offset 0; the file also ends in a zip end-of-central-directory record that "
+                "agrees with it, so a zip inside a member (or a second reading of the whole file) is not listed")
+        cov["notes"] = [note]
+        cov["covered"] += " (" + note + ")"
     w = Writer(out_dir)
     try:
         if fmt == "7z":
@@ -463,6 +520,10 @@ def run(path, out_dir):
     if status is None:
         status = "complete" if not cov["limits_hit"] and not cov["errors"] else ("partial" if n else "failed")
     cov["status"] = status
+    cov["status_basis"] = {"complete": "the whole member list was read and written, with no limit hit and no error",
+                           "partial": "part of the member list was read: a limit was hit or the archive broke part way (see limits_hit and errors)",
+                           "failed": "no member could be listed (see errors)",
+                           "unsupported": "7z, which this format needs, is not in this image"}.get(status, status)
     json.dump(cov, open(os.path.join(out_dir, "coverage.json"), "w"), indent=2)
     with open(os.path.join(out_dir, "index.tsv"), "w", encoding="utf-8") as fh:
         fh.write("members.tsv\t%s member list (%d): n, type, path, path_b64, size, packed, mtime, tz, mode, uid, gid, link, locator, flags; n is the member's number in archive order\n"

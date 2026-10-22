@@ -43,4 +43,4 @@ consistent, which build or architecture it is, or when it was taken, unless the
 format records that time and the acquisition record agrees.
 
 Record: the input's hash, the format and the evidence for it, the architecture, the captured ranges, whether the capture completed.
-Sensitive output: `mem_profile` prints header facts and no memory content; a memory file holds whatever the machine held, so cite offsets, never content.
+Sensitive output: `mem_profile` prints header facts and two short strings read from the capture, a kernel release and a Windows build string, each only when it has the grammar of a version; cite offsets, never content.

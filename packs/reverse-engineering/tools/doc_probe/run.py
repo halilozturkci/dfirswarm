@@ -23,7 +23,11 @@ expansion-ratio limit, and one that exceeds them is counted, not cut. Only store
 read (OOXML uses no other method): the standard library decompresses a bzip2 or LZMA chunk whole, with no
 limit on its output, so such a member is counted as unsupported and never opened. The ZIP reader is given
 the archive up to the end record this tool chose; a file with more than one end record is a problem, because
-readers that choose differently list different directories. The tool has its own clock (max_seconds). Relationship parts are parsed
+readers that choose differently list different directories. So is a directory at a different place than the end record's own
+offset names (the standard library reads the directory that ends where the end record starts; 7-Zip, Office and libarchive read the
+one at the offset): both are listed, and a member only one of them names is counted. A file whose bytes carry more than one format
+(an RTF with a %PDF- header in its first 1,024 bytes, a PDF with a ZIP appended) is read by the strongest claim first (a magic
+number at offset 0) and by every other claim as well, under `also_read_as`, with a problem. The tool has its own clock (max_seconds). Relationship parts are parsed
 by an XML parser that refuses a DOCTYPE, so nothing is expanded. A member that cannot be read
 (encrypted, corrupt, an unsupported method) is counted, never skipped. What a URL or a name can hold
 (a credential, a token) is withheld from the answer, in the caller's path and in part names too, component
@@ -46,8 +50,8 @@ import xml.parsers.expat
 import zipfile
 from pathlib import Path
 
-TOOL = {"name": "doc_probe", "version": 3}
-PARSER = "doc_probe/3"
+TOOL = {"name": "doc_probe", "version": 4}
+PARSER = "doc_probe/4"
 NOTE = ("Static container triage only. Markers, procedure names and external relationships do not prove execution or "
         "retrieval. Record parser coverage before drawing an absence conclusion.")
 
@@ -76,6 +80,7 @@ DEFAULT_TOTAL = 256 << 20          # bytes all members may expand to, together
 DEFAULT_MEMBERS = 10000            # members listed and read
 DEFAULT_RATIO = 1000               # expanded bytes per compressed byte (deflate's own ceiling is about 1032)
 DEFAULT_LIMIT = 1000               # rows of one table in the answer; the whole of a longer one is in a file
+MAX_LIMIT = 100000                 # the most rows a caller may ask the answer itself to hold
 MAX_DIRECTORY_ENTRIES = 100000     # a central directory is loaded whole by the ZIP reader: more than this is not opened
 MAX_DIRECTORY_BYTES = 64 << 20
 RATIO_FLOOR = 1 << 20              # a member that expands to less than this is never judged by its ratio
@@ -113,9 +118,11 @@ OLE_NOT_READ = ["the OLE directory and streams: a marker is a byte search, not a
                 "embedded objects"]
 
 # BEGIN SHARED WITHHOLDING
-# The same text is in pcap_extract, zeek_run, suricata_run and network_log_summary, so that the four tools withhold
-# the same strings; tests/pack-network-withholding.test.ts holds the copies equal. An identifier-shaped string is
-# withheld wherever the tool would print one: a name, a path component, a URL, a message that quotes either.
+# The same text is in every tool that withholds identifier-shaped strings (the network, base, virtualization and
+# reverse-engineering packs), so that they withhold the same strings; the tests that hold the copies equal are
+# tests/pack-network-withholding.test.ts, tests/pack-base-shared.test.ts, tests/pack-virtualization-shared.test.ts and
+# tests/pack-re-process.test.ts. An identifier-shaped string is withheld wherever the tool would print one: a name, a
+# path component, a URL, a message that quotes either.
 COUNTS = {"names": 0, "urls": 0, "text": 0}
 # A run of name characters long enough to be a token. `=` is only a padding at the end (so a key= prefix stays);
 # `/` joins pieces of a base64 token and is handled apart, below.
@@ -171,7 +178,88 @@ def _randomish(piece):
     return (any(c.isdigit() for c in piece) and bool(letters)) or mixed
 
 
+_SPAN_PIECE = re.compile(r"[A-Za-z0-9_+%-]+")
+# A text longer than this is withheld whole, by its length, and not examined: the examination is linear, but a text of
+# millions of characters is not one a name or a URL is, and the answer says how long it was.
+TEXT_LIMIT = 2097152
+
+
+def _grow_spans(text, spans):
+    """Each flagged span takes the random-looking pieces next to it across a `/`: the head of a token is not printed.
+
+    One pass cuts the text into pieces (runs of name characters) and keeps where each starts and ends. A span then walks
+    that array by index; a piece is judged once, and a walk that reaches a piece an earlier walk has settled stops there, so
+    the work is linear in the text and no range is sliced or searched again. (Looking back with a search over everything
+    before a piece costs the cube of the length for a name of many `/`-joined pieces.)"""
+    from bisect import bisect_left
+    starts, ends = [], []
+    for m in _SPAN_PIECE.finditer(text):
+        starts.append(m.start())
+        ends.append(m.end())
+    count, size = len(starts), len(text)
+    judged_left, judged_right, settled_left, settled_right = {}, {}, {}, {}
+
+    def padded(k):       # where piece k ends with the up to two `=` of padding after it
+        e = ends[k]
+        if e < size and text[e] == "=":
+            e += 2 if e + 1 < size and text[e + 1] == "=" else 1
+        return e
+
+    def left_ok(j):
+        if j not in judged_left:
+            judged_left[j] = _randomish(text[starts[j]:ends[j]])
+        return judged_left[j]
+
+    def right_ok(k):
+        if k not in judged_right:
+            judged_right[k] = _randomish(text[starts[k]:padded(k)])
+        return judged_right[k]
+
+    def before(at):      # the piece that growing left from offset `at` takes, or -1. `$` also ends a match before a final line break.
+        if at < 2 or text[at - 1] != "/":
+            return -1
+        for stop in ((at - 1, at - 2) if text[at - 2] == "\n" else (at - 1,)):
+            j = bisect_left(ends, stop)
+            if j < count and ends[j] == stop:
+                return j if left_ok(j) else -1
+        return -1
+
+    def after(k):        # the piece that growing right from the end of piece k takes, or -1
+        e = padded(k)
+        if k + 1 >= count or e >= size - 1 or text[e] != "/" or starts[k + 1] != e + 1:
+            return -1
+        return k + 1 if right_ok(k + 1) else -1
+
+    def settle(i, step, memo):
+        trail = []
+        while i not in memo:
+            trail.append(i)
+            j = step(i)
+            if j < 0:
+                memo[i] = i
+                break
+            i = j
+        final = memo[i]
+        for t in trail:
+            memo[t] = final
+        return final
+
+    grown = []
+    for start, end in spans:
+        j = before(start)
+        if j >= 0:
+            start = starts[settle(j, lambda i: before(starts[i]), settled_left)]
+        if end < size - 1 and text[end] == "/":
+            k = bisect_left(starts, end + 1)
+            if k < count and starts[k] == end + 1 and right_ok(k):
+                end = padded(settle(k, after, settled_right))
+        grown.append((start, end))
+    return grown
+
+
 def token_spans(text):
+    if len(text) > TEXT_LIMIT:
+        return [(0, len(text))]
     spans = [m.span() for m in _PREFIXED.finditer(text)]
     for m in _RUN.finditer(text):
         if _token_run(m.group()):
@@ -181,20 +269,7 @@ def token_spans(text):
         run = m.group()
         if "/" in run and sum(1 for p in run.split("/") if _randomish(p)) >= 3 and re.search(r"[0-9+]", run):
             spans.append(m.span())
-    # A flagged piece takes the random-looking pieces next to it across a `/`: the head of a token is not printed.
-    grown = []
-    for start, end in spans:
-        while start > 1 and text[start - 1] == "/":
-            m = re.search(r"[A-Za-z0-9_+%-]+$", text[:start - 1])
-            if not m or not _randomish(m.group()):
-                break
-            start = m.start()
-        while end < len(text) - 1 and text[end] == "/":
-            m = re.match(r"[A-Za-z0-9_+%-]+={0,2}", text[end + 1:])
-            if not m or not _randomish(m.group()):
-                break
-            end = end + 1 + m.end()
-        grown.append((start, end))
+    grown = _grow_spans(text, spans) if spans else []
     grown.sort()
     merged = []
     for start, end in grown:
@@ -211,6 +286,8 @@ def token_shaped(text):
 
 def scrub(text, kind="text"):
     """The text with every token-shaped run and every user-info withheld."""
+    if len(text) > TEXT_LIMIT:
+        return _withheld("over-long text", len(text), kind)
     text = _USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
     text = _BARE_USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
     out, last = [], 0
@@ -629,6 +706,7 @@ def zip_directory(fh, size):
     pos = plausible[-1]
     _sig, _disk, _cd_disk, _n_disk, total, cd_size, cd_off, _clen = struct.unpack_from("<IHHHHIIH", tail, pos)
     eocd_at = size - tail_len + pos
+    zip64 = False
     others = [size - tail_len + p for p in found if p != pos]
     if total == 0xFFFF or cd_size == 0xFFFFFFFF or cd_off == 0xFFFFFFFF:
         if eocd_at < 20:
@@ -643,9 +721,10 @@ def zip_directory(fh, size):
         if len(record) < 56 or record[:4] != b"PK\x06\x06":
             raise ZipProblem("the zip64 end of central directory record is not where its locator says")
         total, cd_size, cd_off = struct.unpack_from("<QQQ", record, 32)
+        zip64 = True
     if cd_off + cd_size > size:
         raise ZipProblem("the central directory (offset %d, %d bytes) lies outside the %d-byte file" % (cd_off, cd_size, size))
-    return {"total": total, "cd_size": cd_size, "cd_off": cd_off, "eocd_at": eocd_at, "others": others}
+    return {"total": total, "cd_size": cd_size, "cd_off": cd_off, "eocd_at": eocd_at, "others": others, "zip64": zip64}
 
 
 class Window(io.RawIOBase):
@@ -681,6 +760,93 @@ class Window(io.RawIOBase):
         buffer[:len(data)] = data
         self._pos += len(data)
         return len(data)
+
+
+class Spliced(io.RawIOBase):
+    """The first `limit` bytes of a file followed by `tail`: the file a reader sees if the end record sat right after the
+    directory that the record's own offset names, and not where the standard library finds the directory."""
+
+    def __init__(self, fh, limit, tail):
+        self._fh, self._limit, self._tail, self._pos = fh, limit, bytes(tail), 0
+
+    def readable(self):
+        return True
+
+    def seekable(self):
+        return True
+
+    def tell(self):
+        return self._pos
+
+    def seek(self, offset, whence=0):
+        base = {0: 0, 1: self._pos, 2: self._limit + len(self._tail)}[whence]
+        self._pos = max(0, base + offset)
+        return self._pos
+
+    def readinto(self, buffer):
+        want = len(buffer)
+        data = b""
+        if self._pos < self._limit:
+            self._fh.seek(self._pos)
+            data = self._fh.read(min(want, self._limit - self._pos))
+        if len(data) < want and self._pos + len(data) >= self._limit:
+            start = self._pos + len(data) - self._limit
+            data += self._tail[start:start + want - len(data)]
+        buffer[:len(data)] = data
+        self._pos += len(data)
+        return len(data)
+
+
+def other_directory(fh, end, listed, args, ctx, out):
+    """The central directory at the offset the end record names, when the standard library took another: the library reads the
+    directory that ends where the end record starts, and a reader that follows the record's offset (7-Zip, Office, libarchive)
+    reads this one. Both are listed; a member only one of them names is counted, and the second directory's members are not
+    read and nothing from it is extracted."""
+    named = {"offset": end["cd_off"], "bytes": end["cd_size"], "listed_directory_offset": listed["start_dir"]}
+    out["other_directory"] = named
+    shift = listed["start_dir"] - end["cd_off"]
+    head = ("the end record names the central directory at offset %d, and the directory listed here is the one at offset %d (%+d bytes): "
+            "a reader that follows the record's offset lists another directory, or data before the archive shifts every offset" % (end["cd_off"], listed["start_dir"], shift))
+    if end["zip64"]:
+        ctx.problem(head + ". The directory at the record's offset was not listed (the end record is a zip64 one)")
+        named["listed"] = False
+        return
+    fh.seek(end["eocd_at"])
+    record = bytearray(fh.read(22))
+    record[20] = record[21] = 0
+    try:
+        second = zipfile.ZipFile(io.BufferedReader(Spliced(fh, end["cd_off"] + end["cd_size"], record)))
+    except Exception as exc:
+        named["listed"] = False
+        named["not_listed_because"] = "%s: %s" % (type(exc).__name__, scrub(str(exc)))
+        ctx.problem(head + ". No readable directory lies at the record's offset (%s)" % named["not_listed_because"])
+        return
+    with second:
+        infos = second.infolist()
+        page = ctx.page("other_directory_parts")
+        here, only_there, code_related = set(listed["names"]), 0, []
+        for index, info in enumerate(infos):
+            if index >= args["max_members"]:
+                ctx.limit_hit("%d members of the directory at offset %d are past max_members (%d): not listed" % (len(infos) - index, end["cd_off"], args["max_members"]))
+                break
+            if index % 1024 == 1023 and ctx.expired("the second directory"):
+                break
+            name = info.filename
+            shown = member_name(name, ctx)
+            new = name not in here
+            only_there += new
+            row = {"name": shown, "bytes": info.file_size, "compressed": info.compress_size, "method": info.compress_type,
+                   "modified": "%04d-%02d-%02dT%02d:%02d:%02d" % info.date_time, "in_listed_directory": not new}
+            if any(part in name.lower() for part in CODE_PARTS):
+                row["name_matches_code_part"] = True
+                code_related.append(shown)
+            page.add(row)
+        there = {i.filename for i in infos}
+        named.update({"listed": True, "members": len(infos), "members_only_here": only_there,
+                      "members_only_in_listed_directory": len(here - there), "code_related_parts": code_related})
+        ctx.problem(head + ". The directory at the record's offset names %d member%s, %d of them not in the listed directory (%d of the listed ones are missing there): "
+                    "its members were listed and not read, and nothing from it was extracted"
+                    % (len(infos), "" if len(infos) == 1 else "s", only_there, len(here - there)))
 
 
 def stream_member(archive, info, budget):
@@ -729,6 +895,10 @@ def stream_member(archive, info, budget):
 
 
 class DoctypeRefused(Exception):
+    pass
+
+
+class OutOfTime(Exception):
     pass
 
 
@@ -832,6 +1002,9 @@ def probe_zip(path, size, ctx, args):
                 fail("extract_to could not be created: %s" % describe(exc), status="failed")
         with archive:
             infos = archive.infolist()
+            start_dir = getattr(archive, "start_dir", None)
+            if start_dir is not None and start_dir != end["cd_off"]:
+                other_directory(fh, end, {"start_dir": start_dir, "names": [i.filename for i in infos]}, args, ctx, out)
             if len(infos) != total:
                 ctx.problem("the end record declares %d member%s and the central directory holds %d" % (total, "" if total == 1 else "s", len(infos)))
             for index, info in enumerate(infos):
@@ -934,6 +1107,8 @@ def extract_member(archive, info, index, extract_to, budget, members, ctx, row, 
 
 def read_relationships(archive, info, shown, name, budget, members, relationship_parts, targets, out, ctx, row):
     def handle(rel):
+        if ctx.expired("the relationship read"):
+            raise OutOfTime()
         mode = rel.get("TargetMode")
         if mode == "External":
             serial = targets.total + 1
@@ -957,6 +1132,12 @@ def read_relationships(archive, info, shown, name, budget, members, relationship
         count_unreadable(members, ctx, exc.kind, shown, exc.reason)
         relationship_parts["failed"] += 1
         row["relationships"] = exc.kind
+        return
+    except OutOfTime:
+        ctx.problem("%s: the relationship read stopped at the tool's own clock: the relationships before that point are listed" % shown)
+        relationship_parts["failed"] += 1
+        members["not_attempted"] += 1
+        row["relationships"] = "stopped_at_clock"
         return
     except DoctypeRefused:
         ctx.problem("%s: the part contains a DOCTYPE, which is refused: it was not parsed" % shown)
@@ -1002,6 +1183,8 @@ def probe_pdf(blob, ctx):
     stopped = False
     for kw, rx, what in PDF_RX:
         count, first = 0, []
+        if not stopped and ctx.expired("the marker scan"):
+            stopped = True
         if stopped:
             present[kw] = 0
             continue
@@ -1055,7 +1238,7 @@ def probe_rtf(blob, ctx):
         if count % 4096 == 0 and ctx.expired("the object scan"):
             break
     classes, seen, markers = [], set(), 0
-    for m in RTF_OBJCLASS.finditer(blob):
+    for m in (() if ctx.expired("the class scan") else RTF_OBJCLASS.finditer(blob)):
         markers += 1
         name = scrub(m.group(1).decode("ascii"), "names")
         if name not in seen:
@@ -1088,6 +1271,63 @@ def probe_ole(blob, ctx):
     out["marker_note"] = ("A marker is a byte search over the whole file, not a directory entry: stream names in a compound file are "
                           "UTF-16LE, and a match can sit in ordinary data. The macro project, if there is one, is not parsed here.")
     return out
+
+
+# --- which container ----------------------------------------------------------------------------------------------------------------
+
+OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+
+
+def zip_evidence(path, size):
+    """Where a ZIP end of central directory record the file names lies, or None: read from the end of the file, as a reader of
+    an appended archive does, and only a record whose directory lies inside the file counts."""
+    try:
+        with open(path, "rb") as fh:
+            return zip_directory(fh, size)["eocd_at"]
+    except (ZipProblem, OSError, struct.error):
+        return None
+
+
+def containers(head, path, size):
+    """The containers the file's bytes claim, the first being the one read first: a magic number at offset 0 decides, then a PDF
+    header or an RTF group start in the first 1,024 bytes, in that order. A ZIP end record at the end of a file that is not a ZIP
+    is a claim of its own, always listed last. Each is (name, what the bytes say)."""
+    found = []
+    if head[:8] == OLE_MAGIC:
+        found.append(("OLE", "the OLE compound-file signature at offset 0"))
+    if head[:4] in (b"PK\x03\x04", b"PK\x05\x06"):
+        found.append(("ZIP", "a ZIP signature at offset 0"))
+    if head[:5] == b"{\\rtf":
+        found.append(("RTF", "an RTF group start ({\\rtf) at offset 0"))
+    if head[:5] == b"%PDF-":
+        found.append(("PDF", "a PDF header (%PDF-) at offset 0"))
+    for name, needle, label in (("PDF", b"%PDF-", "a PDF header (%%PDF-) at offset %d"), ("RTF", b"{\\rtf", "an RTF group start ({\\rtf) at offset %d")):
+        at = head.find(needle)
+        if at > 0 and not any(f[0] == name for f in found):
+            found.append((name, label % at + " (within the first %d bytes)" % HEAD_BYTES))
+    if not any(f[0] == "ZIP" for f in found):
+        at = zip_evidence(path, size)
+        if at is not None:
+            found.append(("ZIP", "a ZIP end of central directory record at offset %d" % at))
+    return found
+
+
+def read_as(name, path, size, ctx, cfg, head):
+    """The reading of the file as one container. Raises Stop only for a ZIP whose directory cannot be read."""
+    if name == "ZIP":
+        return probe_zip(path, size, ctx, cfg)
+    with open(path, "rb") as fh:
+        blob = mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ)
+        try:
+            if name == "OLE":
+                return probe_ole(blob, ctx)
+            if name == "PDF":
+                return probe_pdf(blob, ctx)
+            reading = probe_rtf(blob, ctx)
+            reading["rtf_header_offset"] = head.find(b"{\\rtf")
+            return reading
+        finally:
+            blob.close()
 
 
 # --- the call ---------------------------------------------------------------------------------------------------------------------------
@@ -1141,7 +1381,7 @@ def main():
         "max_total_bytes": positive_int(args, "max_total_bytes", DEFAULT_TOTAL),
         "max_members": positive_int(args, "max_members", DEFAULT_MEMBERS, MAX_DIRECTORY_ENTRIES),
         "max_ratio": positive_int(args, "max_ratio", DEFAULT_RATIO),
-        "external_limit": positive_int(args, "limit", DEFAULT_LIMIT),
+        "external_limit": positive_int(args, "limit", DEFAULT_LIMIT, MAX_LIMIT),
     }
     seconds = positive_int(args, "max_seconds", DEFAULT_SECONDS, MAX_SECONDS)
     try:
@@ -1165,29 +1405,36 @@ def main():
         values.close()
         fail("the file is empty", path=path)
     body, stop = {}, None
+    zip_reading = None
     try:
-        if head[:4] in (b"PK\x03\x04", b"PK\x05\x06"):
-            try:
-                body = probe_zip(path, size, ctx, cfg)
-            except Stop as exc:
-                stop = exc
-        else:
-            with open(path, "rb") as fh:
-                blob = mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ)
+        claims = containers(head, path, size)
+        if not any(not why.startswith("a ZIP end of central directory record") for _name, why in claims):
+            values.close()
+            fail("this is not a container this tool reads", status="unsupported", path=path, head_hex=head[:8].hex(),
+                 reads=["OOXML or ZIP", "PDF", "RTF", "OLE compound file"])
+        try:
+            body = read_as(claims[0][0], path, size, ctx, cfg, head)
+        except Stop as exc:
+            stop = exc
+        if stop is None and claims[0][0] == "ZIP":
+            zip_reading = body
+        if stop is None and len(claims) > 1:
+            # More than one format's bytes are in the file: a polyglot reads as a different document in a different application. The
+            # strongest claim was read first and the others are read as well, so that no format's markers are missing from the answer.
+            also = []
+            ctx.problem("the file reads as %s (%s) and also carries %s: the answer holds a reading of each, under `also_read_as`; which one an application takes is not decided here"
+                        % (claims[0][0], claims[0][1], "; ".join("%s (%s)" % c for c in claims[1:])))
+            for name, why in claims[1:]:
                 try:
-                    if head[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
-                        body = probe_ole(blob, ctx)
-                    elif b"%PDF-" in head:
-                        body = probe_pdf(blob, ctx)
-                    elif b"{\\rtf" in head:
-                        body = probe_rtf(blob, ctx)
-                        body["rtf_header_offset"] = head.find(b"{\\rtf")
-                    else:
-                        values.close()
-                        fail("this is not a container this tool reads", status="unsupported", path=path, head_hex=head[:8].hex(),
-                             reads=["OOXML or ZIP", "PDF", "RTF", "OLE compound file"])
-                finally:
-                    blob.close()
+                    reading = read_as(name, path, size, ctx, cfg, head)
+                except Stop as exc:
+                    also.append({"container": name, "evidence": why, "reading": None, "not_read": exc.message})
+                    ctx.problem("the file was not read as %s: %s" % (name, exc.message))
+                    continue
+                if name == "ZIP":
+                    zip_reading = reading
+                also.append({"container": name, "evidence": why, "reading": reading})
+            body["also_read_as"] = also
     finally:
         values.close()
         ctx.names.close()
@@ -1200,15 +1447,18 @@ def main():
     if ctx.names.error:
         ctx.problem("the real names behind the withheld ones could not be kept: %s" % ctx.names.error)
     if "parts" in ctx.pages:
-        body["parts"] = ctx.pages["parts"].page
+        (zip_reading if zip_reading is not None else body)["parts"] = ctx.pages["parts"].page
+    if "other_directory_parts" in ctx.pages and zip_reading is not None and "other_directory" in zip_reading:
+        zip_reading["other_directory"]["parts"] = ctx.pages["other_directory_parts"].page
     extension = os.path.splitext(path)[1].lower().lstrip(".")
     disagreement = None
-    if body.get("code_related_parts") and extension in ("docx", "xlsx", "pptx"):
-        disagreement = {"extension": extension, "code_related_part": body["code_related_parts"][0],
+    zip_body = zip_reading if zip_reading is not None else {}
+    if zip_body.get("code_related_parts") and extension in ("docx", "xlsx", "pptx"):
+        disagreement = {"extension": extension, "code_related_part": zip_body["code_related_parts"][0],
                         "text": ("The filename extension and the detected code-related parts disagree; renaming history, application "
                                  "acceptance and execution are not established.")}
     truncated = any(p["truncated"] for p in tables.values())
-    members = body.get("members")
+    members = zip_body.get("members")
     unread = bool(members and (members["encrypted"] or members["unsupported"] or members["failed"] or members["over_budget"] or members["not_attempted"]))
     head_out = {"tool": TOOL, "parser": PARSER, "path": shown, "bytes": size, "extension": scrub(extension, "names") or None}
     if stop is not None:

@@ -1,6 +1,6 @@
 {
   "name": "file_carver",
-  "description": "Cut ONE candidate file out of a raw dump at a known offset: from the offset to the end the format's own structure gives, with its SHA-256, optionally written to a new file (an existing file is never replaced). A candidate fragment, not a recovered file: the result says boundary: validated when a structure walk reached the format's end (PNG chunk CRCs to IEND, JPEG markers to EOI, GIF blocks to the trailer, a ZIP end record whose offsets agree, a registry hive's hive-bin chain adding up to the size its base block states, a SQLite header with a valid page count, a PDF's last startxref pointing at an xref) and boundary: heuristic when it rests on a header field or marker that was not cross-checked (a PE's section table and certificate table, with overlay_uncertain when bytes follow). It does not show the bytes are the whole original, unfragmented or unaltered. Reads the file at path as given: a container such as an E01 is not decoded. Streams; never holds the source whole.",
+  "description": "Cut ONE candidate file out of a raw dump at a known offset: from the offset to the end the format's own structure gives, with its SHA-256, optionally written to a new file (an existing file is never replaced). A candidate fragment, not a recovered file: the result says boundary: validated when a structure walk reached the format's end (PNG chunk CRCs to IEND, JPEG markers to EOI, GIF blocks to the trailer, a ZIP end record whose offsets agree, a registry hive's hive-bin chain adding up to the size its base block states, a SQLite header with a valid page count, a PDF's last startxref pointing at an xref) and boundary: heuristic when it rests on a header field or marker that was not cross-checked (a PE's section table and certificate table, with overlay_uncertain when bytes follow). It does not show the bytes are the whole original, unfragmented or unaltered. Reads the file at path as given: a container such as an E01 is not decoded. Streams; never holds the source whole. The walk has a clock of its own (25 seconds, inside the manifest's 30): a walk that uses it is refused with reached_bytes, how far it got, so a bigger max_size means a longer walk and not a kill with nothing said. status and status_basis say the carve ran to the end of its walk (boundary says how far the end is trusted).",
   "params": {
     "path": {
       "type": "string",
@@ -19,7 +19,7 @@
     },
     "max_size": {
       "type": "integer",
-      "description": "Ceiling for the candidate (default 100 MB); a larger one is refused with its required size, never cut"
+      "description": "Ceiling for the candidate (default 100 MB); a larger one is refused with its required size, never cut. The walk over a window has a 25-second clock: a window whose structure keeps it that long is refused with reached_bytes."
     },
     "output": {
       "type": "string",
@@ -32,6 +32,6 @@
   "example": "{\"path\":\"inputs/[UNALLOCATED]\",\"offset\":675840,\"sig_type\":\"PE\",\"output\":\"work/s183904/carved/pe_675840.bin\"}",
   "by": "s183904",
   "at": "2026-09-18T22:20:17.004Z",
-  "version": 3,
-  "sha256": "f4e224e891baafffc2be436ca3cf857b4c1ee19e4415fa9a33fc0a93c2ad048e"
+  "version": 4,
+  "sha256": "be88d7d9898293603c2fa5031a0e5c14f6a007c3d8dbde13097b3910fc4c18d5"
 }

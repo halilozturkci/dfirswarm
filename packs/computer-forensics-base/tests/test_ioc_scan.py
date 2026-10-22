@@ -10,7 +10,7 @@ import re
 import stat
 import unittest
 
-from support import Case, run_tool
+from support import Case, manifest, run_tool
 
 SECRET = b"hunter2-correct-horse"
 
@@ -74,7 +74,7 @@ class IocScan(Case):
         self.assertEqual([n for n in os.listdir(self.dir) if n != "blob.bin"], [])
         out = self.path("job-out")
         os.makedirs(out)
-        r = self.scan(data, "password=", write_values=True, env={"JOB_ID": "j000007", "OUT": out})
+        r = self.scan(data, "password=", write_values=True, env={"JOB_ID": "j000007", "OUT": out, "SECRET_OUTPUT": "1"})
         self.assertEqual(r.code, 0, r.stdout)
         self.assertNotIn(SECRET.decode(), r.stdout)
         sv = r.json["secret_values"]
@@ -86,7 +86,7 @@ class IocScan(Case):
         self.assertEqual((row["offset"], row["finding_id"], row["file"]), (30, "F000001", self.path("blob.bin")))
         self.assertIn(SECRET.decode(), row["value"])
         # A second run in the same job's output does not overwrite the first's file.
-        again = self.scan(data, "password=", write_values=True, env={"JOB_ID": "j000007", "OUT": out})
+        again = self.scan(data, "password=", write_values=True, env={"JOB_ID": "j000007", "OUT": out, "SECRET_OUTPUT": "1"})
         self.assertEqual(again.code, 1)
         self.assertEqual(again.stderr, "", "a refusal is a JSON answer, not a traceback")
         self.assertIn("values file already exists", again.json["error"])
@@ -126,7 +126,7 @@ class IocScan(Case):
         os.makedirs(out)
         victim = self.write("victim.txt", "keep me")
         os.symlink(victim, os.path.join(out, "ioc-scan-values.jsonl"))
-        env = {"JOB_ID": "j000008", "OUT": out}
+        env = {"JOB_ID": "j000008", "OUT": out, "SECRET_OUTPUT": "1"}
         r = self.scan(b"\0" * 20 + b"password=" + SECRET, "password=", write_values=True, env=env)
         self.assertEqual(r.code, 1)
         self.assertIn("values file already exists", r.json["error"])
@@ -169,6 +169,89 @@ class IocScan(Case):
             r = self.scan(data, empty)
             self.assertEqual(r.code, 1, empty)
             self.assertIn("needles is empty", r.json["error"])
+
+
+    def job_env(self, name="job-out", secret=True, **extra):
+        out = self.path(name)
+        os.makedirs(out, exist_ok=True)
+        env = {"JOB_ID": "j000020", "OUT": out}
+        if secret:
+            env["SECRET_OUTPUT"] = "1"
+        env.update(extra)
+        return env, out
+
+    def test_a_scan_that_uses_its_clock_answers_for_what_it_decided_and_the_rest_goes_on_from_next_start(self):
+        # 1,000 needles make 2,000 variants: the cost is needles times bytes, and a second is a fraction of 12 MiB.
+        needles = "|".join("zz%04dzz" % i for i in range(1000))
+        planted = b"zz0007zz"
+        data = bytearray(12 * 1024 * 1024)
+        for k in range(12):
+            data[k * 1024 * 1024 + 12345:k * 1024 * 1024 + 12345 + len(planted)] = planted
+        data[-len(planted):] = planted
+        data = bytes(data)
+        expect = self.expect(data, planted)
+        first = self.scan(data, needles, max_seconds=1, unique_only=False, max_hits=1000)
+        self.assertEqual(first.code, 0, first.stdout[:300])
+        j = first.json
+        self.assertIs(j["complete"], False)
+        self.assertEqual(j["status"], "partial")
+        self.assertIn("1-second time budget", j["stopped"])
+        self.assertIn("start=%d" % j["next_start"], j["stopped"])
+        self.assertGreater(j["next_start"], 0)
+        self.assertLessEqual(j["next_start"], j["scanned_end"])
+        got = [h["offset"] for h in j["hits"]]
+        self.assertTrue(got and all(o < j["next_start"] for o in got), "only occurrences that start before next_start are the first scan's")
+        rest = self.scan(data, needles, start=j["next_start"], max_seconds=110, unique_only=False, max_hits=1000)
+        self.assertIs(rest.json["complete"], True)
+        self.assertEqual(rest.json["status"], "complete")
+        more = [h["offset"] for h in rest.json["hits"]]
+        self.assertTrue(all(o >= j["next_start"] for o in more))
+        self.assertEqual(got + more, expect, "the two scans together find what one scan finds, none twice")
+
+    def test_values_are_refused_in_a_job_that_was_not_run_as_secret_output(self):
+        env, out = self.job_env(secret=False)
+        r = self.scan(b"x" * 20 + b"password=abc" + b"y" * 20, "password=", write_values=True, env=env)
+        self.assertEqual(r.code, 1)
+        self.assertIn("not run as secret output", r.json["error"])
+        self.assertEqual(r.json["write_values"], "refused")
+        self.assertEqual(os.listdir(out), [], "nothing was written before the refusal")
+
+    def test_the_manifest_makes_a_job_that_sets_write_values_secret_output(self):
+        self.assertEqual(manifest("ioc_scan")["secret_output"], {"when_args": ["write_values"]})
+        self.assertEqual(manifest("ioc_scan")["params"]["write_values"]["type"], "boolean")
+
+    def test_the_values_file_stops_at_its_cap_and_says_where_while_the_locators_go_on(self):
+        data = b"".join(b"..%03d password=%s .." % (i, SECRET) for i in range(200))
+        env, out = self.job_env(IOC_SCAN_VALUES_BYTES="3000")
+        r = self.scan(data, "password=", write_values=True, env=env, unique_only=False, max_hits=1)
+        self.assertEqual(r.code, 0, r.stdout[:300])
+        sv = r.json["secret_values"]
+        values_path = os.path.join(out, "ioc-scan-values.jsonl")
+        self.assertLessEqual(os.path.getsize(values_path), 3000)
+        self.assertIs(sv["complete"], False)
+        self.assertEqual(sv["cap_bytes"], 3000)
+        rows = [json.loads(x) for x in self.read(values_path).splitlines()]
+        self.assertEqual(len(rows), sv["written"])
+        self.assertEqual(sv["stopped_at_offset"], self.expect(data, b"password=")[len(rows)], "the first occurrence that did not fit")
+        self.assertIn("start=stopped_at_offset", sv["resume"].replace("from start=stopped_at_offset", "start=stopped_at_offset"))
+        self.assertEqual(r.json["status"], "partial")
+        self.assertIn("values file stopped", r.json["status_basis"])
+        all_rows = [json.loads(x) for x in self.read(os.path.join(out, "tool-output", os.path.basename(r.json["all_results"]))).splitlines()]
+        self.assertEqual(len(all_rows), 200, "the locators have every occurrence")
+
+    def test_a_file_name_that_is_not_utf8_does_not_stop_the_values_writer(self):
+        bad = os.path.join(self.dir, "bad\udcffname.bin")
+        try:
+            with open(bad, "wb") as fh:
+                fh.write(b"\0" * 10 + b"password=abc" + b"\0" * 10)
+        except OSError:
+            self.skipTest("this file system does not hold a name that is not UTF-8")
+        env, out = self.job_env()
+        r = run_tool("ioc_scan", {"path": bad, "needles": "password=", "write_values": True}, self.dir, env=env)
+        self.assertEqual(r.code, 0, r.stdout + r.stderr)
+        self.assertEqual(r.stderr, "")
+        row = json.loads(self.read(os.path.join(out, "ioc-scan-values.jsonl")).splitlines()[0])
+        self.assertEqual(row["file"], bad, "the name comes back whole, as an escape")
 
 
 if __name__ == "__main__":

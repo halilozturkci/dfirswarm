@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import hashlib, json, re, signal, sys, os, tempfile, time
 
-TOOL = {"name": "catalog_search", "version": 10}
+TOOL = {"name": "catalog_search", "version": 11}
 PATTERN_MAX = 4096
 LINE_MAX = 1 << 20
 BUDGET_SECONDS = 25
@@ -181,7 +181,14 @@ def _resolve_catalog(explicit=None, rev=None):
         return os.path.join(root, disks[0])
     raise SystemExit('{"ok": false, "error": "several catalogues; pass catalog=", "candidates": %s}' % json.dumps(subs + sorted(gens)))
 
-args = json.load(sys.stdin)
+try:
+    args = json.load(sys.stdin)
+except ValueError as exc:
+    print(json.dumps({"ok": False, "error": "arguments are not valid JSON", "reason": str(exc)}))
+    sys.exit(1)
+if not isinstance(args, dict):
+    print(json.dumps({"ok": False, "error": "arguments are a JSON object"}))
+    sys.exit(1)
 pattern = args.get("pattern") or ""
 which = args.get("which") or "filelist"
 flags = re.IGNORECASE if args.get("ignore_case", True) else 0

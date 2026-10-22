@@ -8,6 +8,14 @@ on:
     branches: [main]
   pull_request:
 
+# A new push to a pull request cancels the runs the older push left behind (a
+# queued run stops costing a macOS slot, a running one stops at once). Runs on
+# pushes to main, on tags, on schedules and by hand get their own group (the
+# run id) and are never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
@@ -208,7 +216,15 @@ jobs:
     # the first three runs. The limit stays at 55; a job is there to stop a hang.
     # tests/ci-shards.test.ts holds the three to cover every node suite and
     # every shell suite exactly once, so a new suite is never in no job.
-    timeout-minutes: 55
+    #
+    # The node part is the slow one on a hosted runner, and its speed varies:
+    # 13 to 46 minutes over 35 runs (median about 37), then 55 minutes twice on
+    # 2026-10-22, when the same suite ran at about half speed. The first was cut
+    # off with 3911 of 4550 tests done, the second finished all of them (0
+    # failed) 53.6 minutes in and was still marked cancelled by the limit. So
+    # that part gets 90; the shell parts (12 to 22 minutes) keep 55. A hang is
+    # still stopped: every test has its own 5-minute limit (scripts/test-node.ts).
+    timeout-minutes: ${{ matrix.node && 90 || 55 }}
     strategy:
       # A failing part does not cancel the others: their verdicts are wanted.
       fail-fast: false

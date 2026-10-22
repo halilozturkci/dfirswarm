@@ -96,7 +96,9 @@ test("auth_log reads a PAM failure as key=value pairs: user and source survive, 
     assert.equal(rows[0].source, "192.0.2.5");
     assert.equal(rows[0].pam_service, "sshd");
     assert.equal(rows[1].user_bytes, 3);
-    assert.equal(rows[1].ruser, "bob");
+    assert.equal(rows[1].ruser, undefined, "ruser= is the login name a service was given: typed text, withheld like user=");
+    assert.equal(rows[1].ruser_bytes, 3);
+    assert.equal(rows[1].logname, "bob", "the real login name of the caller is not typed text");
     assert.equal(rows[1].source, undefined, "rhost= is empty: no source is invented");
     assert.equal(rows[2].source, "192.0.2.6");
     assert.equal(rows[2].user, undefined);
@@ -371,7 +373,9 @@ test("auth_log reads a PAM line's own key=value text as text: no key but its own
     const run = await tool(AUTH, cwd, { path });
     const [row] = await rowsOf(cwd, body(run));
     assert.equal(row.kind, "auth_failure");
-    assert.equal(row.user_bytes, 3, "the typed user= is withheld");
+    // pam_unix writes user= last and the rest of the line is the name: `zed file=/etc/shadow ... time=1999` is all one typed text.
+    const typed = "zed file=/etc/shadow line=99 byte_offset=0 id=A000777 kind=ssh_accepted raw=TYPEDSECRETWORD pid=7 host=evil time=1999";
+    assert.equal(row.user_bytes, typed.length, "the typed user= is withheld, to the end of the line");
     assert.equal(row.source, "192.0.2.5");
     assert.equal(row.file, path + "/auth.log");
     assert.equal(row.line, 1);
@@ -697,5 +701,134 @@ test("auth_log writes a byte that is not UTF-8 to the text file as an escape tha
     assert.equal(Buffer.from(row.command, "utf8").length >= 0, true);
     assert.equal(row.command.endsWith("-end\r"), true, "one CR of the two is the line ending's, the other is the line's");
     assert.equal(out.records[0].command_bytes, "/bin/echo pw-".length + 2 + "-end\r".length);
+  });
+});
+
+/**
+ * A name someone typed at a prompt is withheld by its POSITION in a line the tool recognises, never by what it looks like. The
+ * positions: the name after "Invalid user" / "Illegal user", after "Failed <method> for invalid user" / "illegal user", after
+ * "Disconnected from invalid user", and the PAM user= and ruser= of pam_unix. Each position is filled below with eleven shapes
+ * of secret (keys, tokens, passwords, passphrases with spaces, user-info, a PEM line, and text that looks like another field of
+ * the same line) and the whole value is looked for in the answer and in the paging file. Rate on the old code: 78 of 88 shapes
+ * in the answer; on this code: 0 of 88.
+ */
+const SHAPES: Record<string, string> = {
+  aws: "AKIAIOSFODNN7EXAMPLE",
+  awsSecret: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+  base64: "Zk9mQ2xW7vB3nL8pR4tY6w/+==",
+  jwt: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+  password: "Tr0ub4dor&3xyz",
+  passphrase: "correct horse battery staple",
+  assignment: "password=hunter2xyz",
+  userinfo: "https://svc:s3cretpw@host.example/path",
+  pem: "-----BEGIN-OPENSSH-KEY-----",
+  fieldLike: "bob tty=PLANTEDTTYVALUE",
+  fromLike: "bob from PLANTEDFROMVALUE",
+};
+const SLOTS: Record<string, (v: string) => string> = {
+  invalidUser: (v) => `sshd[1]: Invalid user ${v} from 203.0.113.9 port 4000`,
+  illegalUser: (v) => `sshd[1]: Illegal user ${v} from 203.0.113.9 port 4000`,
+  failedInvalid: (v) => `sshd[1]: Failed password for invalid user ${v} from 203.0.113.9 port 4000 ssh2`,
+  failedIllegal: (v) => `sshd[1]: Failed password for illegal user ${v} from 203.0.113.9 port 4000 ssh2`,
+  disconnected: (v) => `sshd[1]: Disconnected from invalid user ${v} 203.0.113.9 port 4000 [preauth]`,
+  pamUser: (v) => `sshd[1]: pam_unix(sshd:auth): authentication failure; logname= uid=0 euid=0 tty=ssh ruser= rhost=203.0.113.9  user=${v}`,
+  pamRuser: (v) => `dovecot: pam_unix(dovecot:auth): authentication failure; logname= uid=0 euid=0 tty=dovecot ruser=${v} rhost=203.0.113.9`,
+  failedKey: (v) => `sshd[1]: Failed publickey for invalid user ${v} from 203.0.113.9 port 4000 ssh2: RSA SHA256:abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG`,
+};
+
+test("auth_log withholds a typed name by its position: eight positions, eleven shapes of secret, none in the answer or the paging file", async () => {
+  await withCwd(async (cwd) => {
+    const all: string[] = [];
+    const planted: { slot: string; shape: string; value: string }[] = [];
+    for (const [slot, make] of Object.entries(SLOTS)) {
+      for (const [shape, value] of Object.entries(SHAPES)) {
+        all.push(`Feb 14 09:30:00 web01 ${make(value)}`);
+        planted.push({ slot, shape, value });
+      }
+    }
+    const path = await authDir(cwd, "typed", { "auth.log": lines(...all) });
+    const run = await tool(AUTH, cwd, { path, limit: 20 });
+    const out = body(run);
+    const rows = await rowsOf(cwd, out);
+    const everything = await everythingBut(cwd, run.stdout, []);
+    assert.equal(rows.length, planted.length, "every line is a record");
+    const leaks = planted.filter((p) => everything.includes(p.value));
+    assert.deepEqual(leaks, [], `${leaks.length} of ${planted.length} planted values reached the answer or the paging file`);
+    // Every recognised position gives a typed field, with its whole length, in file order.
+    for (const [i, p] of planted.entries()) {
+      const field = p.slot === "pamRuser" ? "ruser" : "user";
+      assert.equal(rows[i][field], undefined, `${p.slot}/${p.shape}: ${field} printed`);
+      assert.equal(rows[i][`${field}_bytes`], Buffer.byteLength(p.value), `${p.slot}/${p.shape}: the whole name has its length`);
+      assert.equal(rows[i].source, "203.0.113.9", `${p.slot}/${p.shape}: the source is the address after the name, not a word of the name`);
+      assert.equal(rows[i].source_unvalidated, undefined, `${p.slot}/${p.shape}: nothing unvalidated stands in for a source`);
+      assert.equal(rows[i].tty === undefined || rows[i].tty === "ssh" || rows[i].tty === "dovecot", true, `${p.slot}/${p.shape}: a tty= inside the name set a field`);
+    }
+    // A job's text file has the names whole.
+    const job = body(await asJob(AUTH, cwd, { path, write_text: true }, undefined, {}, "out-typed"));
+    const text = await readFile(join(cwd, "out-typed", "auth-text.jsonl"), "utf8");
+    assert.ok(text.includes(SHAPES.passphrase) && text.includes(SHAPES.fromLike));
+    assert.equal(job.record_count, planted.length);
+  });
+});
+
+test("auth_log: the lines with no typed position print nothing a name could be in, and say so honestly in the skill's words", async () => {
+  await withCwd(async (cwd) => {
+    const path = await authDir(cwd, "other", {
+      "auth.log": lines(
+        "Feb 14 09:30:00 web01 sshd[1]: Connection closed by invalid user TYPEDWORD1 203.0.113.9 port 4000 [preauth]",
+        "Feb 14 09:30:01 web01 sshd[1]: Disconnected from invalid user TYPEDWORD2",
+        "Feb 14 09:30:02 web01 sshd[1]: error: maximum authentication attempts exceeded for invalid user TYPEDWORD3 from 203.0.113.9 port 4000 ssh2 [preauth]",
+      ),
+    });
+    const run = await tool(AUTH, cwd, { path });
+    const rows = await rowsOf(cwd, body(run));
+    assert.deepEqual(rows.map((r) => r.kind), ["other", "other", "other"]);
+    assert.ok(!run.stdout.includes("TYPEDWORD"), "an unrecognised line prints no field");
+  });
+});
+
+test("auth_log reads a name with a from-clause in it as a name, and the real source after it", async () => {
+  await withCwd(async (cwd) => {
+    const path = await authDir(cwd, "from", {
+      "auth.log": lines(
+        "Feb 14 09:30:00 web01 sshd[1]: Invalid user x from 198.51.100.1 port 1 from 203.0.113.9 port 4000",
+        "Feb 14 09:30:01 web01 sshd[1]: Failed password for invalid user x from 198.51.100.1 port 1 from 203.0.113.9 port 4000 ssh2",
+        "Feb 14 09:30:02 web01 sshd[1]: Failed password for root from 203.0.113.9 port 4000 ssh2",
+      ),
+    });
+    const rows = await rowsOf(cwd, body(await tool(AUTH, cwd, { path })));
+    assert.deepEqual(rows.map((r) => r.source), ["203.0.113.9", "203.0.113.9", "203.0.113.9"]);
+    assert.equal(rows[0].user_bytes, "x from 198.51.100.1 port 1".length);
+    assert.equal(rows[2].user, "root", "an account the log does not call invalid is shown");
+  });
+});
+
+test("auth_log reads the clock inside a line of many pieces: a file with no newline ends at max_seconds", async () => {
+  await withCwd(async (cwd) => {
+    const path = await authDir(cwd, "sparse", { "auth.log": "Feb 14 09:30:00 web01 sshd[1]: ok\n" });
+    // 3 GiB with no newline after the first line, as a sparse file (no disk is written).
+    const { open } = await import("node:fs/promises");
+    const fh = await open(join(cwd, path, "auth.log"), "a");
+    await fh.truncate(3 * 1024 ** 3);
+    await fh.close();
+    const started = Date.now();
+    const out = body(await tool(AUTH, cwd, { path, max_seconds: 1 }));
+    const took = (Date.now() - started) / 1000;
+    assert.ok(took < 30, `took ${took} s for max_seconds 1`);
+    assert.notEqual(out.status, "complete");
+    assert.match(JSON.stringify(out.read_errors), /max_seconds/, "the deadline was read inside the long line, and the file is named as not read further");
+  });
+});
+
+test("auth_log does not call the order of files consistent when one of them is ordered by its name only", async () => {
+  await withCwd(async (cwd) => {
+    const path = await authDir(cwd, "named", {
+      "auth.log": lines("Feb 10 09:30:00 web01 sshd[1]: Failed password for root from 203.0.113.9 port 4000 ssh2"),
+      "auth.log.bak": lines("Jan 10 09:30:00 web01 sshd[1]: Failed password for root from 203.0.113.9 port 4000 ssh2"),
+    });
+    const out = body(await tool(AUTH, cwd, { path }));
+    assert.match(out.cross_file_order, /^not established: a file is ordered by its name only/);
+    const one = await authDir(cwd, "one", { "auth.log.bak": lines("Feb 10 09:30:00 web01 sshd[1]: Failed password for root from 203.0.113.9 port 4000 ssh2") });
+    assert.equal(body(await tool(AUTH, cwd, { path: one })).cross_file_order, "consistent");
   });
 });

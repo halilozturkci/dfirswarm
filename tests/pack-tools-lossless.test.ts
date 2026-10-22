@@ -1027,17 +1027,35 @@ test("mem_carve refuses an output path outside work/<id>/", async () => {
       [{ results_to: "inputs/hits.jsonl" }, /under your own work\/<your id>\//],
       [{ results_to: "work/../inputs/hits.jsonl" }, /under your own work\/<your id>\//],
       [{ results_to: "work/hits.jsonl" }, /inside work\/<your id>\/, not work\/ itself/],
-      [{ extract_to: "../carved" }, /output must stay inside the run directory/],
-      [{ extract_to: "inputs/carved" }, /under your own work\/<your id>\//],
     ];
     for (const [extra, message] of cases) {
       const r = refused(await tool(join(MEM, "mem_carve", "run.py"), cwd, { path: "inputs/memory.raw", ...extra }));
       assert.match(r.error, message, JSON.stringify(extra));
     }
+    // extract_to is checked after the gate (write_values, a job, SECRET_OUTPUT): with the gate passed, a path outside $OUT is still refused.
+    const job = { JOB_ID: "j000001", OUT: join(cwd, "work", "s1"), SECRET_OUTPUT: "1" };
+    const extractCases: [string, RegExp][] = [
+      ["../carved", /output must stay inside the run directory/],
+      ["/tmp/mem-carve-outside", /output must stay inside the run directory/],
+      ["inputs/carved", /under your own work\/<your id>\//],
+      ["work/../inputs/carved", /under your own work\/<your id>\//],
+      ["work/carved", /inside work\/<your id>\/, not work\/ itself/],
+      ["work/other/carved", /extract_to must be a directory under \$OUT in a job/],
+    ];
+    for (const [extract_to, message] of extractCases) {
+      const r = refused(await tool(join(MEM, "mem_carve", "run.py"), cwd, { path: "inputs/memory.raw", extract_to, write_values: true }, job));
+      assert.match(r.error, message, extract_to);
+    }
+    // and without the gate the same paths get the gate's message, before anything is created
+    const gated = refused(await tool(join(MEM, "mem_carve", "run.py"), cwd, { path: "inputs/memory.raw", extract_to: "../carved" }));
+    assert.match(gated.error, /write_values: true/);
     assert.equal(await exists(join(cwd, "..", "outside.jsonl")), false);
+    assert.equal(await exists(join(cwd, "..", "carved")), false);
     assert.equal(await exists(join(cwd, "inputs", "hits.jsonl")), false);
     assert.equal(await exists(join(cwd, "inputs", "carved")), false);
     assert.equal(await exists(join(cwd, "work", "hits.jsonl")), false);
+    assert.equal(await exists(join(cwd, "work", "carved")), false);
+    assert.equal(await exists(join(cwd, "work", "other")), false);
   });
 });
 

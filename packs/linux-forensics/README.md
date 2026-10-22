@@ -39,7 +39,9 @@ read, and keeps the whole result in a file when the answer is a page of it.
 
 **Sensitive output.** Command lines, sudo lines, cron environments and journal messages can hold secrets. These
 tools answer without that text; it is written to a private file under `$OUT` only when `write_commands` or
-`write_text` is asked, in a job, which is run with `secret_output: true`.
+`write_text` is asked, in a job, which is run with `secret_output: true`. What is withheld is chosen by its position in
+a line the tool recognises (the name on an `Invalid user` line, a PAM `user=` or `ruser=`, a cron command, a journal message),
+never by what it looks like; text in a place a tool does not mark as sensitive is not recognised by its shape.
 
 **One recipe.** `linux-target` recognises a Linux disk and builds the `linux_triage` artefact files and a coverage
 receipt that follows what each function produced; the base pack's `disk-volumes` recipe still supplies partition

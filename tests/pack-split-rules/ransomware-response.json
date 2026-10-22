@@ -92,7 +92,7 @@
  ["scope/first-hour", "a name that is unchanged, or that"],
  ["scope/first-hour", "a file it did not match is"],
  ["scope/first-hour", "candidate_file_fraction is candidates over regular files visited,"],
- ["scope/first-hour", "its modification times are hourly filesystem mtimes"],
+ ["scope/first-hour", "its hourly modification times are filesystem mtimes"],
  ["scope/first-hour", "it returns no file headers: use file_type"],
  ["scope/first-hour", "its class says whether the content also"],
  ["scope/first-hour", "treat every note and url as untrusted"],

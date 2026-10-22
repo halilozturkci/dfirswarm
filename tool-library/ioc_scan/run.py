@@ -17,6 +17,10 @@ case-sensitive and on the needle's bytes: ASCII/UTF-8 as given, and the same tex
 UTF-16LE. Each read keeps back the bytes a needle or its context could still need, so a
 match or its context cut by a read boundary is found once, whole. `scanned_*` and
 `bytes_scanned` are the bytes actually read, not the range asked for.
+
+The scan has a clock (`max_seconds`, default 100, at most 110, inside the manifest's 120): a scan that reaches it answers for the
+range it decided, says `complete: false` and `status: partial`, and gives `next_start`, the offset to go on from (`start`). Every
+occurrence that starts before `next_start` is reported once; one that starts at or after it is the next scan's, found there once.
 """
 import errno
 import hashlib
@@ -25,10 +29,11 @@ import os
 import re
 import sys
 import tempfile
+import time
 from collections import defaultdict
 from pathlib import Path
 
-TOOL = {"name": "ioc_scan", "version": 5}
+TOOL = {"name": "ioc_scan", "version": 6}
 CHUNK_DEFAULT = 8 * 1024 * 1024
 CHUNK_MIN, CHUNK_MAX = 16, 256 * 1024 * 1024
 CONTEXT_MAX = 65536
@@ -38,6 +43,10 @@ NEEDLES_MAX = 1000
 NEEDLE_BYTES_MAX = 4096
 SEEN_CAP = 100_000                 # distinct contexts remembered for the inline view
 ROW_CAP = 20_000_000               # rows in the whole-result file; counting goes on past it
+VALUES_ROWS_MAX = 20_000_000       # rows in the values file (write_values); the scan and its locators go on past it
+VALUES_BYTES_MAX = int(os.environ.get("IOC_SCAN_VALUES_BYTES") or 1 << 30)    # bytes in the values file (a smaller cap can be asked for)
+SECONDS_DEFAULT, SECONDS_MAX = 100, 110   # the scan's own clock, inside the manifest's 120
+FEED = 256 * 1024                  # bytes handed to the engine at a time: the clock is looked at between feeds
 
 
 # BEGIN SHARED SCAN
@@ -124,6 +133,8 @@ class SecretValues:
     def __init__(self, enabled: bool):
         self.enabled = enabled
         self.written = 0
+        self.bytes = 0
+        self.stopped_at = None
         self._fh = None
         self.job = os.environ.get("JOB_ID") or ""
         self.out = os.environ.get("OUT") or ""
@@ -136,6 +147,13 @@ class SecretValues:
                 "write_values is refused outside a job: a value written here would be an ordinary "
                 "file, not a sealed secret output. Run this as job_run tool=ioc_scan with "
                 "secret_output: true, and ask again there. Nothing was written."
+            )
+        if os.environ.get("SECRET_OUTPUT") != "1":
+            raise SecretValuesRefused(
+                "write_values is refused in a job that was not run as secret output: its files would be sealed as ordinary "
+                "output. The harness sets SECRET_OUTPUT=1 for a secret job's process and it is not set here. Run it as "
+                "job_run(tool: \"ioc_scan\", args: {...}), whose manifest makes a job that sets write_values secret output, or give "
+                "a command job secret_output: true. Nothing was written."
             )
         self.path = Path(self.out) / self.NAME
         self.shown = "store/jobs/%s/out/%s" % (re.sub(r"[^A-Za-z0-9_.-]", "_", self.job), self.NAME)
@@ -155,9 +173,15 @@ class SecretValues:
     def add(self, finding_id: str, locator: dict, value: str) -> None:
         if not self.enabled:
             return
-        self._fh.write(json.dumps({"finding_id": finding_id, **locator, "value": value}, ensure_ascii=False))
-        self._fh.write("\n")
+        # ensure_ascii: a path that is not UTF-8 (its bytes arrive as lone surrogates) is written as an escape, never an encoding error.
+        line = json.dumps({"finding_id": finding_id, **locator, "value": value}, ensure_ascii=True) + "\n"
+        if self.stopped_at is not None or self.written >= VALUES_ROWS_MAX or self.bytes + len(line) > VALUES_BYTES_MAX:
+            if self.stopped_at is None:
+                self.stopped_at = locator.get("offset")
+            return      # from the first occurrence that did not fit on, none is written: the file is a prefix
+        self._fh.write(line)
         self.written += 1
+        self.bytes += len(line)
 
     def close(self) -> None:
         if self._fh is not None:
@@ -172,6 +196,10 @@ class SecretValues:
             "written": self.written,
             "values_file": self.shown if self.enabled else None,
             "contains_secret_values": self.written > 0,
+            **({"complete": self.stopped_at is None} if self.enabled else {}),
+            **({"stopped_at_offset": self.stopped_at, "cap_rows": VALUES_ROWS_MAX, "cap_bytes": VALUES_BYTES_MAX,
+                "resume": "the file holds every occurrence that starts before stopped_at_offset; to get the rest, scan again from start=stopped_at_offset in a new job"}
+               if self.stopped_at is not None else {}),
             "format": "JSON Lines, mode 0600: finding_id, file, offset, needle, encoding, value (the printable context around the match)" if self.enabled else None,
         }
 
@@ -266,7 +294,7 @@ class Locators:
         self.total += 1
         if self.fh:
             if self.written < ROW_CAP:
-                self.fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+                self.fh.write(json.dumps(row, ensure_ascii=True) + "\n")
                 self.written += 1
             elif self.stopped_at is None:
                 self.stopped_at = row["offset"]
@@ -343,6 +371,7 @@ DEFAULT_NEEDLES = [
 
 
 def main():
+    started = time.monotonic()
     try:
         args = json.load(sys.stdin)
     except ValueError as exc:
@@ -370,6 +399,7 @@ def main():
     if length is not None:
         length = whole(args, "length", None, 0, 1 << 62)
     chunk = whole(args, "chunk", CHUNK_DEFAULT, CHUNK_MIN, CHUNK_MAX)
+    max_seconds = whole(args, "max_seconds", SECONDS_DEFAULT, 1, SECONDS_MAX)
     if args.get("skip_zeros", False):
         fail("skip_zeros would make the scan lossy and is not supported", hint="omit skip_zeros or pass false")
     unique_only = bool(args.get("unique_only", True))
@@ -433,21 +463,38 @@ def main():
             text = "".join(chr(c) if 32 <= c < 127 else "." for c in raw)
             secret.add(fid, {"file": path, "offset": at, "needle": name, "encoding": kind}, text)
 
-    # The shared engine finds every occurrence once, in offset order, whatever chunk is (see StreamScan above).
+    # The shared engine finds every occurrence once, in offset order, whatever chunk is (see StreamScan above). The bytes of a read go
+    # to it FEED at a time and the clock is looked at between feeds: a scan that has used its seconds stops there, and the matches that
+    # start before scanner.done (all of which the engine has handed out) are its answer; the rest are the next scan's, from next_start.
     scanner = StreamScan([v[2] for v in variants], before=BEFORE, after=context, start=start)
+    deadline = started + max_seconds
     scanned = start
+    stopped = None
     try:
         with open(path, "rb") as fh:
             fh.seek(start)
-            while True:
-                data = fh.read(min(chunk, end - scanned)) if scanned < end else b""
-                at_end = not data
-                scanned += len(data)
-                for at, vi, buf, base in scanner.feed(data, final=at_end):
-                    kind, name, nb = variants[vi]
-                    emit(at, kind, name, nb, buf, base)
-                if at_end:
+            while scanned < end and stopped is None:
+                data = fh.read(min(chunk, end - scanned))
+                if not data:
                     break
+                for off in range(0, len(data), FEED):
+                    block = data[off:off + FEED] if len(data) > FEED else data
+                    for at, vi, buf, base in scanner.feed(block):
+                        kind, name, nb = variants[vi]
+                        emit(at, kind, name, nb, buf, base)
+                    scanned += len(block)
+                    if scanned < end and time.monotonic() > deadline:
+                        stopped = ("the %d-second time budget was used after %d bytes: the counts and hits are for the occurrences that start in [%d, %d); "
+                                   "run again with start=%d to go on" % (max_seconds, scanned - start, start, scanner.done, scanner.done))
+                        break
+        if stopped is None and scanned < end:
+            stopped_short = "the file ended after %d bytes, before the requested end at %d (it changed while it was read, or its size was wrong)" % (scanned, end)
+        else:
+            stopped_short = None
+        if stopped is None:
+            for at, vi, buf, base in scanner.feed(b"", final=True):
+                kind, name, nb = variants[vi]
+                emit(at, kind, name, nb, buf, base)
         secret.close()
         page = locators.finish()
     except OSError as exc:
@@ -466,7 +513,10 @@ def main():
         "scanned_end": scanned,
         "bytes_scanned": scanned - start,
         "requested": {"start": start, "length": length, "end": end},
-        "complete": scanned >= end,
+        "complete": scanned >= end and stopped is None,
+        "status": "complete" if scanned >= end and stopped is None else "partial",
+        "status_basis": ("every byte of the requested range was read and every occurrence that starts in it is reported" if scanned >= end and stopped is None
+                         else "the scan did not read the whole requested range (see stopped): only the occurrences it reports are known"),
         "size": size,
         "case_sensitive": True,
         "match_policy": "every occurrence by its start offset, overlapping ones included; a needle is searched as given (UTF-8) and as UTF-16LE",
@@ -480,6 +530,13 @@ def main():
         **page,
         "secret_values": secret.summary(),
     }
+    if stopped or stopped_short:
+        result["stopped"] = stopped or stopped_short
+    if stopped:
+        result["next_start"] = scanner.done
+    if secret.stopped_at is not None:
+        result["status"] = "partial"
+        result["status_basis"] += "; the values file stopped at its cap (secret_values.stopped_at_offset), the locators did not"
     if unique_only and locators.hidden:
         result["repeats_hidden_inline"] = locators.hidden
         result["repeats_note"] = "occurrences whose context repeats one already listed are not in the inline page; every one is in all_results"

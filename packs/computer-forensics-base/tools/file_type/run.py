@@ -36,7 +36,7 @@ import tempfile
 import time
 from pathlib import Path
 
-TOOL = {"name": "file_type", "version": 3}
+TOOL = {"name": "file_type", "version": 4}
 BUDGET_SECONDS = 100          # under the manifest's 120
 LIBMAGIC_TIMEOUT = 10
 ERRORS_SHOWN = 50
@@ -465,6 +465,8 @@ def main():
         "errors": errors,
         "truncated": inline_total > len(page),
         "complete": not why_not_complete,
+        "status": "complete" if not why_not_complete else "partial",
+        "status_basis": "every entry found was looked at" if not why_not_complete else "; ".join(why_not_complete),
         "note": "A mismatch is a lead, not a finding: plenty of legitimate files carry an "
                 "unexpected extension, and a container type such as ZIP covers a dozen document "
                 "formats. What matters is the direction — an executable named .txt is worth a "

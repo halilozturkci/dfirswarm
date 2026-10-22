@@ -26,7 +26,7 @@ item that could not be read): after a break the numbers are not a whole read's, 
 locators are. Declare every segment in the job's `inputs`. The files land in the
 store, cited as `job:<id>/<path>`, and the derived catalogue takes an archive or
 a disk image inside in turn. Keep `image.json`, `attributes.tsv`, the generation's
-coverage and the extraction manifest. A completed job is not proof the digests
+coverage and the extraction manifest. Data the tree does not lead to (a lost pointer; the format has no item count) makes the answer `partial`. A completed job is not proof the digests
 matched: read each item's `check`, the call's `integrity_status` and every error.
 `check` mismatch means the content is not what the imager hashed: say so before you
 rely on the file. The extracted file's own times are the host's, not the item's;

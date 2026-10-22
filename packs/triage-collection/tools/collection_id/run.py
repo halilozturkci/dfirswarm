@@ -40,8 +40,9 @@ recognisable shape can still appear in a collector's log: the skill says to run 
 anything is read.
 """
 # ---- BEGIN SHARED BLOCK ----------------------------------------------------------------------------------------------
-# Identical in collection_id and collection_index. A tool is standalone, so what the two share is copied, as LosslessPage
-# is in every pack tool, and tests/pack-triage-shared.test.ts holds the two copies equal. Edit it in both, never in
+# Identical in every tool of this pack that prints a path or a log line (collection_id, collection_index, collection_manifest_parse,
+# collection_manifest_verify, collection_path_map, collection_coverage). A tool is standalone, so what they share is copied, as
+# LosslessPage is in every pack tool, and tests/pack-triage-shared.test.ts holds the copies equal. Edit it in all, never in
 # one. It holds: the error form, typed arguments, where an output may be written and published without replacing another,
 # the lossless table, the secret-safe values file (the SecretValues of recovery_key_scan), the withholding of strings
 # shaped like a credential, the head-of-file classifier for what a delivery may hold besides copied files, and a deadline.
@@ -448,8 +449,8 @@ class SecretValues:
 
 
 # ---- withholding: nothing shaped like a credential is printed ------------------------------------------------------
-# [Local to this pack, with the boundary and the independent check below it: one clearly marked block, identical in both tools. The
-# pack-wide reference block of the shared-withholding task is meant to replace it; until then the two tools keep this one.]
+# [Local to this pack, with the boundary and the independent check below it: one clearly marked block, identical in every tool. The
+# pack-wide reference block of the shared-withholding task is meant to replace it; until then every tool keeps this one.]
 # A path or a line of a collector's log can carry a string that is a secret. What is judged here is its SHAPE, and the shapes
 # are rules, not a proof: a secret of no recognisable shape (a plain password alone in a name, a passphrase, a UUID-shaped key,
 # a lower-case token of 24 letters) is printed, and the skill says to run the tool as a job with secret_output: true. What is
@@ -987,12 +988,12 @@ def inline_text(text, limit=256):
 # above). A string it finds suspect is replaced by <withheld: N bytes> and counted; the answer then says so and is partial.
 # The check judges by shape as well and has its own misses (documented in the manifest); it is a second wall, not a proof.
 # [Local to this pack. It is meant to be replaced by the pack-wide reference block; keep it in this one marked block, identical in
-# both tools.]
+# every tool.]
 
 BOUNDARY = {"replaced": 0, "by": {}, "where": [], "not_listed": 0}
 MAX_REPLACED_LISTED = 25
 OWN_SHOWN = set()                  # names of files this run made and shows (random names, nothing in them is evidence)
-TYPED_FIELDS = {"modified_epoch_ns": r"[0-9]{1,24}", "sha256": r"[0-9a-f]{64}", "sha256_of_bytes_read": r"[0-9a-f]{64}"}
+TYPED_FIELDS = {"modified_epoch_ns": r"[0-9]{1,24}", "sha256": r"[0-9a-f]{64}", "sha256_of_bytes_read": r"[0-9a-f]{64}", "sha1": r"[0-9a-f]{40}", "md5": r"[0-9a-f]{32}"}
 _B_MARK = re.compile(r"<[A-Za-z][A-Za-z -]{2,60} withheld, [0-9]+ characters, W[0-9]{6}>|<withheld: [0-9]+ bytes>"
                      r"|<withheld: an integer of [0-9]+ bits>|<text over the scan budget withheld, [0-9]+ characters>")
 _B_PLAIN = re.compile(r"[\x20-\x7e]*")

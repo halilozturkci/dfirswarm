@@ -5,7 +5,6 @@
  * and FileAlignment at offsets 32 and 36, 40-byte section headers, the debug directory's RSDS record) and the VS_VERSIONINFO layout.
  */
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 import { PE_DIRECTORIES, body, put, tool, withCwd } from "./pack-re-harness.ts";
 import type { Json } from "./pack-re-harness.ts";
@@ -84,18 +83,4 @@ test("a CodeView GUID whose sixteen bytes read as text is withheld, by its lengt
     const { a: b } = await run(cwd, "p.dll", plain.file);
     assert.equal(b.debug.entries[0].codeview.guid, "00020906-0000-0000-C000-000000000046");
   });
-});
-
-test("pe_directories binds the linear span finder, and it finds what the shared block's token_spans finds on generated text", () => {
-  const code = [
-    "import importlib.util, random, sys",
-    "spec = importlib.util.spec_from_file_location('pd', sys.argv[1]); pd = importlib.util.module_from_spec(spec); spec.loader.exec_module(pd)",
-    "assert pd.token_spans is pd._linear_token_spans",
-    "rnd = random.Random(7)",
-    "atoms = ['/', '=', '\\n', 'aB3d', 'ghp_Ab3dEf5hIj7lMn9pQr1tUv3x', 'AKIAIOSFODNN7EXAMPLE', 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY', '@', ':', '//', 'x']",
-    "print(sum(pd._shared_token_spans(s) != pd._linear_token_spans(s) for s in (''.join(rnd.choice(atoms) for _ in range(rnd.randint(0, 40))) for _ in range(10000))))",
-  ].join("\n");
-  const r = spawnSync("python3", ["-I", "-c", code, PE_DIRECTORIES], { encoding: "utf8" });
-  assert.equal(r.status, 0, r.stderr);
-  assert.equal(r.stdout.trim(), "0");
 });

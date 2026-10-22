@@ -3,8 +3,8 @@ id: artifacts/jumplists
 title: Jump Lists
 when: Recent and pinned items.
 needs: [artifacts/shell]
-tools: [jumplist, lnk_parse]
-requires_host: [olecfexport]
+tools: [jumplist, lnk_parse, lnk_jumplist]
+requires_host: [olecfexport, lnkinfo]
 ---
 
 Use when you read Jump List files. Not for the Recent folder's own links (`artifacts/links`) or for execution (`execution/overview`).
@@ -15,6 +15,7 @@ Use when you read Jump List files. Not for the Recent folder's own links (`artif
 - A customDestinations-ms file has no container: its links are carved by the 20-byte header and marked `carved`, so they are candidates. Its categories, pins and tasks are not parsed.
 - A stream too large to read is named, not read (`not_read`, a problem, status partial). A FIFO or device is never opened: `not_attempted` and `files_not_attempted` count them. Read `status` (complete, partial, failed) and `problems` first.
 - `olecfexport` takes the compound file apart as a second reader of the container; it does not check what a DestList field means.
+- `lnk_jumplist` reads a file or a directory of them in one call: rows for the file, the container (consistent or not, with its problems), each stream with its `extents` in the file, each DestList entry with the stream it names (a stream with no entry is `orphan`), and each link with the same extents and an `integrity` that includes a second read by `lnkinfo`. Cite offsets from its rows.
 
 Shows: that an application or the shell listed that item (recent use, a pin, a destination or a task), with the entry's own last access. Does not show: an opening event, the target's timestamp, a person. Record: application id (the file name), source file, DestList version, entry and stream, the link written for it.
 

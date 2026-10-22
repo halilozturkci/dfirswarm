@@ -185,5 +185,19 @@ class CheckInputs(Case):
         self.assertEqual(rows, ["inputs/a.bin"], "nothing outside inputs/ was opened")
 
 
+    def test_an_inputs_json_that_is_not_utf8_or_is_nested_past_the_parser_is_an_answer_and_not_a_traceback(self):
+        for name, raw in (("not utf-8", b'{"files": [], "x": "\xff\xfe"}'), ("nested", b"[" * 6000 + b"]" * 6000)):
+            self.write("inputs.json", raw)
+            r = self.check()
+            self.assertEqual((r.code, r.stderr, r.json["status"]), (1, "", "FAIL"), name)
+            # Python 3.13 parses a deeply nested array (then it is not a manifest); before it, the parser gives up: either way, an answer
+            self.assertTrue("not JSON this tool can read" in r.json["error"] or "has no files list" in r.json["error"], (name, r.json["error"]))
+
+    def test_arguments_nested_past_the_parser_are_read_as_no_arguments(self):
+        self.manifest([])
+        r = run_tool("check_inputs", None, self.dir, raw_input="[" * 6000 + "]" * 6000)
+        self.assertEqual((r.code, r.stderr, r.json["status"]), (0, "", "OK"))
+
+
 if __name__ == "__main__":
     unittest.main()

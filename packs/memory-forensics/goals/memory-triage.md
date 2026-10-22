@@ -14,7 +14,7 @@ rule every claim here has to survive.
    where no framework was available — what you were able to establish without
    one, said plainly as that.
 3. Anything injected or hollowed: the process, the region, its protection, and
-   the hash of the bytes you dumped.
+   the job reference of the sealed dump.
 4. Network state: recovered endpoints and listeners, their supported owner
    associations, the enumeration or scanning method, and whether allocation
    state (the live table or freed structures) can actually be determined from

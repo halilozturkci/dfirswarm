@@ -266,7 +266,7 @@ test("ransom_note_scan writes values only on request, only in a job, to a file o
 
     const outDir = join(cwd, "out");
     await mkdir(outDir);
-    const job = { JOB_ID: "j000001", OUT: outDir };
+    const job = { JOB_ID: "j000001", OUT: outDir, SECRET_OUTPUT: "1" };
     const quiet = await tool(NOTES, cwd, { root: "work/ev" }, job);
     assert.equal(await exists(join(outDir, "ransom-note-values.jsonl")), false);
     assertNoValue(await everythingPrinted(cwd, quiet.stdout, outDir));
@@ -310,7 +310,7 @@ test("ransom_note_scan reads a UTF-16 note with or without a byte-order mark, an
     await writeFile(join(cwd, "work", "ev", "readme_be_plain.txt"), be);
     const outDir = join(cwd, "out");
     await mkdir(outDir);
-    const out = await tool(NOTES, cwd, { root: "work/ev", write_values: true }, { JOB_ID: "j000002", OUT: outDir });
+    const out = await tool(NOTES, cwd, { root: "work/ev", write_values: true }, { JOB_ID: "j000002", OUT: outDir, SECRET_OUTPUT: "1" });
     const scan = body<NoteScan>(out);
     const encodings = Object.fromEntries(scan.notes.map((n) => [n.file.split("/").pop(), [n.encoding, n.encoding_basis, n.decode_errors]]));
     assert.deepEqual(encodings, {
@@ -397,7 +397,7 @@ test("ransom_note_scan withholds a path component shaped like an identifier, and
     await writeFile(join(cwd, "work", "ev", "Users", "bob", "readme-ZqRkVxLmTpWnHcab.txt"), "Your personal ID: ZqRkVxLmTpWnHcab\ndecrypt your files\n");
     const outDir = join(cwd, "out");
     await mkdir(outDir);
-    const out = await tool(NOTES, cwd, { root: "work/ev", write_values: true }, { JOB_ID: "j000003", OUT: outDir });
+    const out = await tool(NOTES, cwd, { root: "work/ev", write_values: true }, { JOB_ID: "j000003", OUT: outDir, SECRET_OUTPUT: "1" });
     const scan = body<NoteScan>(out);
     const printed = await everythingPrinted(cwd, out.stdout, outDir);
     assert.ok(!printed.includes(VICTIM_ID), "the identifier is in a printed path");
@@ -502,7 +502,7 @@ test("ransom_note_scan goes on over a note that holds a byte that is not UTF-8, 
     await writeFile(join(dir, "readme_stray.txt"), note);
     const outDir = join(cwd, "out");
     await mkdir(outDir);
-    const out = await tool(NOTES, cwd, { root: "work/ev", limit: 1, write_values: true }, { JOB_ID: "j000004", OUT: outDir });
+    const out = await tool(NOTES, cwd, { root: "work/ev", limit: 1, write_values: true }, { JOB_ID: "j000004", OUT: outDir, SECRET_OUTPUT: "1" });
     const scan = body<NoteScan>(out);
     assert.equal(scan.candidate_count, 1);
     assert.equal(scan.notes[0].decode_errors, 1, "one byte that is not UTF-8");

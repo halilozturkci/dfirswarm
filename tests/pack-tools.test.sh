@@ -446,7 +446,8 @@ Units are in 512-byte sectors
 002:  000:000   0000002048   0000206847   0000204800   NTFS / exFAT (0x07)
 003:  000:001   0000206848   0062912511   0062705664   NTFS / exFAT (0x07)
 """
-sector, slots = il.parse_mmls(sample)
+sector, slots, skipped = il.parse_mmls(sample)
+assert skipped == [], skipped
 assert sector == 512, sector
 allocated = [s for s in slots if s["allocated"]]
 assert [s["start_sector"] for s in allocated] == [2048, 206848], allocated
@@ -514,7 +515,8 @@ PLASO
 done
 chmod +x "$OUT/bin/"*
 carve() { (cd "$OUT/run" && printf '{"path":"inputs/pic.png","offset":0,"sig_type":"PNG","max_size":64,"output":"%s"}' "$1" | "$PY" "$BASE/tools/file_carver/run.py"); }
-memc() { (cd "$OUT/run" && printf '{"path":"inputs/blob.bin","extract_to":"%s","max_extract":1}' "$1" | "$PY" "$ROOT/packs/memory-forensics/tools/mem_carve/run.py"); }
+# Cutting slices out is a values mode: write_values, and a job run as secret output (whose $OUT is the agent's directory here).
+memc() { (cd "$OUT/run" && printf '{"path":"inputs/blob.bin","extract_to":"%s","max_extract":1,"write_values":true}' "$1" | JOB_ID=j1 OUT="$OUT/run/work/a1" SECRET_OUTPUT=1 "$PY" "$ROOT/packs/memory-forensics/tools/mem_carve/run.py"); }
 plaso() { (cd "$OUT/run" && printf '{"source":"inputs/blob.bin","out_dir":"%s"}' "$1" | PATH="$OUT/bin:$PATH" "$PY" "$BASE/tools/timeline_super/run.py"); }
 for bad in ../escaped inputs/planted work/../inputs/planted "$OUT/abs"; do
   carve "$bad.bin" >/dev/null 2>&1 && fail "file_carver wrote output=$bad.bin"

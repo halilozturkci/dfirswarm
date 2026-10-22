@@ -41,6 +41,8 @@ export type Similar = {
   state: string;
   status?: string;
   outputs?: { files: number; bytes: number; path: string };
+  /** Its outputs are sensitive (docs/adr/0016). Said; nothing about the other job is withheld. */
+  sensitive?: true;
   lead: string | null;
   /** same: the same objects; overlap: some of them (shared says how many of the new job's). */
   objects: "same" | "overlap";

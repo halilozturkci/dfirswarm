@@ -17,6 +17,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { test } from "node:test";
 import { AUDIT, CHAIN, INVENTORY, json, put, tool, withCwd } from "./pack-virtualization-harness.ts";
+import { LADDER_PY } from "./pack-re-timing.ts";
 import type { Json } from "./pack-virtualization-harness.ts";
 
 const N = Number(process.env.VIRT_REVIEW5_N ?? 1000);
@@ -25,6 +26,8 @@ const ONE_STRING_CPU_SECONDS = 2;
 
 const HOST = String.raw`
 import importlib.util, json, random, sys, time, base64, string
+
+${LADDER_PY}
 
 spec = importlib.util.spec_from_file_location("tool", sys.argv[1])
 tool = importlib.util.module_from_spec(spec)
@@ -68,23 +71,33 @@ def cpu(fn, *a):
 
 
 def ids_time():
-    # every id kind of the identifier grammar, in the shapes that make a pattern try one split after another
+    # every id kind of the identifier grammar, in the shapes that make a pattern try one split after another: each combination on a ladder of sizes, the least
+    # CPU time of up to three rounds, and the combinations whose time is not linear named (the first few: the rest would only take longer)
     heads = ["t10.AB", "t10.AB_", "t10.AB_x", "t10.ATA_____Model", "iqn.2020-01.a", "iqn.2020-01.a:", "naa.", "eui.", "wwn-0x", "vml.", "WIN-", "DESKTOP-", "LAPTOP-", "a1b2c3d4-", "{", "00112233-44556677-8899-"]
     fillers = ["_", "-", "a", "A1", ".", ":", " ", "_a", "a_", "0", "f", "Ab"]
-    out = {}
-    for n in req["sizes"]:
-        worst = 0.0
-        for h in heads:
-            for f in fillers:
-                for form in (0, 1):
-                    unit = h + f * 3
-                    text = h + (f * (n // len(f) + 1))[:n - len(h)] if form == 0 else (unit * (n // len(unit) + 1))[:n]
-                    for field in (None, "name", "file", "uid", "state_file", "section", "version"):
+    worst = {str(n): 0.0 for n in req["sizes"]}
+    bad = []
+    for h in heads:
+        for f in fillers:
+            for form in (0, 1):
+                unit = h + f * 3
+                texts = [h + (f * (n // len(f) + 1))[:n - len(h)] if form == 0 else (unit * (n // len(unit) + 1))[:n] for n in req["sizes"]]
+                for field in (None, "name", "file", "uid", "state_file", "section", "version", "suspect"):
+                    def once(text):
                         fresh()
-                        worst = max(worst, cpu(tool.seal_text, text, "boundary", field))
-                    worst = max(worst, cpu(tool._suspect, text))
-        out[str(n)] = round(worst, 3)
-    return out
+                        if field == "suspect":
+                            tool._suspect(text)
+                        else:
+                            tool.seal_text(text, "boundary", field)
+                    times = ladder(once, texts)
+                    for n, t in zip(req["sizes"], times):
+                        if t is not None:
+                            worst[str(n)] = max(worst[str(n)], t)
+                    if not ladder_ok(times):
+                        bad.append({"head": h, "filler": f, "form": form, "field": field, "seconds": [None if t is None else round(t, 3) for t in times]})
+                    if len(bad) >= 3:
+                        return {"worst": worst, "bad": bad}
+    return {"worst": {k: round(v, 3) for k, v in worst.items()}, "bad": bad}
 
 
 def ids_judge():
@@ -261,12 +274,12 @@ const TOOLS: [string, string][] = [["snapshot_chain_check", CHAIN], ["virtualiza
 
 // ---- P2-T: every id kind is read in time proportional to the string ---------------------------------------------------------
 
-test("an id of every kind (t10., iqn., naa., eui., wwn-, vml., WIN-, DESKTOP-, LAPTOP-, a GUID) followed by 4,096 or 32,768 characters of underscores, dashes, dots, colons or letters is judged in time proportional to its length (0.04 CPU s at 4,096 characters, 0.3 at 32,768), in every field kind and in the second check", async () => {
+test("an id of every kind (t10., iqn., naa., eui., wwn-, vml., WIN-, DESKTOP-, LAPTOP-, a GUID) followed by 2,048, 8,192 or 32,768 characters of underscores, dashes, dots, colons or letters is judged in time proportional to its length (0.3 CPU s at 32,768 characters), in every field kind and in the second check; the least of up to three rounds, each step at most 8 times the one before", async () => {
   for (const [label, script] of TOOLS) {
-    const t = await host(script, { op: "ids_time", sizes: [4096, 32768] }) as Record<string, number>;
-    assert.ok(t["4096"] < 0.5, `${label}: 4,096 characters took ${t["4096"]} CPU s (the quadratic pattern took 3)`);
-    assert.ok(t["32768"] < ONE_STRING_CPU_SECONDS, `${label}: 32,768 characters took ${t["32768"]} CPU s (limit ${ONE_STRING_CPU_SECONDS})`);
-    assert.ok(t["32768"] <= Math.max(0.3, t["4096"] * 20), `${label}: 4,096 characters ${t["4096"]} s, 32,768 characters ${t["32768"]} s is not linear (8 times the length, at most 20 times the time)`);
+    const got = await host(script, { op: "ids_time", sizes: [2048, 8192, 32768] }) as { worst: Record<string, number>; bad: unknown[] };
+    assert.deepEqual(got.bad, [], `${label}: not linear (the least CPU seconds of up to three rounds at 2,048, 8,192 and 32,768 characters, each step four times the length)`);
+    assert.ok(got.worst["8192"] < 0.5, `${label}: 8,192 characters took ${got.worst["8192"]} CPU s (the quadratic pattern took 3 at 4,096)`);
+    assert.ok(got.worst["32768"] < ONE_STRING_CPU_SECONDS, `${label}: 32,768 characters took ${got.worst["32768"]} CPU s (limit ${ONE_STRING_CPU_SECONDS})`);
   }
 });
 

@@ -4,6 +4,7 @@
  * read, and a way to make a read fail with EIO wherever the suite runs.
  */
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { ROOT, runPy } from "./tool-library-harness.ts";
@@ -74,3 +75,33 @@ def _os_open(path, *args, **kwargs):
 builtins.open = _open
 os.open = _os_open
 `;
+
+/** Python that loads a tool file as a module: `load(path, name)`. */
+export const LOAD = String.raw`
+import importlib.util, io, json, os, sys
+def load(p, n="m"):
+    s = importlib.util.spec_from_file_location(n, p); m = importlib.util.module_from_spec(s); s.loader.exec_module(m); return m
+`;
+
+/**
+ * Run a tool's main() after `patch` (Python, with the tool loaded as `m`) has changed it: the arguments `args` come on stdin, the job
+ * environment points at `out`.
+ */
+export function runPatched(script: string, patch: string, args: string, cwd: string, out: string, env: Record<string, string> = {}): Promise<Run> {
+  const code = LOAD + `m = load(sys.argv[1])\n${patch}\nsys.stdin = io.StringIO(sys.argv[2])\ntry:\n    m.main()\nexcept SystemExit:\n    pass\n`;
+  return new Promise((resolve, reject) => {
+    const child = spawn("python3", ["-c", code, script, args], { cwd, env: { ...process.env, AGENT_ID: "s1", JOB_ID: "j000001", OUT: out, ...env } });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    child.stdout.on("data", (c: Buffer) => stdout.push(c));
+    child.stderr.on("data", (c: Buffer) => stderr.push(c));
+    child.on("error", reject);
+    child.on("close", (status) => resolve({ code: status, stdout: Buffer.concat(stdout).toString("utf8"), stderr: Buffer.concat(stderr).toString("utf8") }));
+    child.stdin.end("");
+  });
+}
+
+/** Run a tool's main() with the first rule removed (it judges nothing, scrubs nothing): only the second check is left. */
+export function runWithoutFirstRule(script: string, args: string, cwd: string, out: string): Promise<Run> {
+  return runPatched(script, "m.shaped = lambda name: False\nm.scrub = lambda text, kind='text': text\nm._judge.cache_clear()", args, cwd, out);
+}

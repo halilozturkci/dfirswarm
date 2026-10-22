@@ -154,7 +154,7 @@ try:
         steps = [json.loads(line) for line in fh if line.strip()]
 except OSError:
     pass
-json.dump({"recipe": "memory-windows", "status": status, "covered": covered,
+json.dump({"recipe": "memory-windows", "status": status, "status_basis": covered, "covered": covered,
            "not_covered": "every other Volatility plugin; YARA without supplied rules; non-Windows images; unsupported hibernation or crash-dump variants",
            "missing": json.loads(missing),
            "limits_hit": [note for note in notes if "exit 142" in note],

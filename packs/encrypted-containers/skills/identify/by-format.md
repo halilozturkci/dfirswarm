@@ -31,4 +31,4 @@ Use only if you name a particular format's protection from what the first pass s
 
 **Does not show.** That an APFS signature means every volume is encrypted; that high entropy and no signature identify VeraCrypt or TrueCrypt; that a supported archive container is encrypted; that an `MSWIN4.1` OEM string alone makes a volume BitLocker To Go.
 
-Sensitive output: `crypto_id` prints no raw bytes unless `include_head_hex` is true; leave it false for a possible key file (`identify/headers`).
+Sensitive output: `crypto_id` prints no raw bytes of the file, so a possible key file is never shown (`identify/headers`).

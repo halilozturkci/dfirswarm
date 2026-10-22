@@ -357,16 +357,18 @@ test("the linux-target recipe says could-not-tell for a target or an answer it c
     r = recipe(cwd, bin, {}, "detect", "--target", join(cwd, "target.json"));
     assert.equal(r.status, 2);
     assert.equal(answer(r).applies, "unknown");
-    // A second run into the same --out: the wrapper refuses, and the receipt does not borrow the first run's summary.
+    // A second run into the same --out is refused before anything is written: the first run's receipt is as it was (and never
+    // takes the place of, or borrows from, a run that did not happen).
     await targetQueryStub(bin);
     const out = join(cwd, "recipe-out");
     assert.equal(recipe(cwd, bin, env, "run", "--target", join(cwd, "target.json"), "--out", out).status, 0);
+    const first = await readFile(join(out, "coverage.json"), "utf8");
     const again = recipe(cwd, bin, env, "run", "--target", join(cwd, "target.json"), "--out", out);
-    assert.notEqual(again.status, 0);
-    const coverage = JSON.parse(await readFile(join(out, "coverage.json"), "utf8"));
-    assert.equal(coverage.status, "failed", "no summary of this run exists");
-    assert.match(coverage.status_basis, /no summary of this run/);
-    assert.ok(coverage.errors.some((e: string) => /linux_triage exited/.test(e)));
+    assert.equal(again.status, 2);
+    assert.equal(answer(again).status, "failed");
+    assert.match(answer(again).status_basis, /already holds a result of an earlier run/);
+    assert.equal(await readFile(join(out, "coverage.json"), "utf8"), first);
+    assert.equal(JSON.parse(first).status, "complete");
   });
 });
 

@@ -469,7 +469,7 @@ jq -e '[.errors[] | select(test("1083392"))] | length == 1' "$H/out-gpt/coverage
 jq -e '.status == "partial" and (.covered | test("started"))' "$H/first-coverage.json" >/dev/null || fail "coverage says partial before the first step finishes: $(cat "$H/first-coverage.json")"
 grep -q 'mactime TZ=UTC .* -z UTC' "$H/tsk-calls.log" || fail "mactime is given the zone its timeline says: $(cat "$H/tsk-calls.log")"
 # With nothing left unread the same table is complete, and a missing mactime is said, not skipped.
-sed -i.bak '/Unknown Type/d' "$H/tsk-shim2/mmls" && rm -f "$H/tsk-shim2/mmls.bak"
+sed -i.bak -e '/Unknown Type/d' -e 's/^005:/004:/' "$H/tsk-shim2/mmls" && rm -f "$H/tsk-shim2/mmls.bak"
 TSK_CALLS="$H/tsk-calls2.log" OUT_COVERAGE=/nonexistent FIRST_COVERAGE=/nonexistent PATH="$H/tsk-shim2:$H/mt-shim:$PATH" \
   bash "$DVR" run --target "{\"paths\": [\"$H/gpt.img\"], \"name\": \"gpt.img\"}" --out "$H/out-gpt2" >/dev/null || fail "disk-volumes with nothing unread should run"
 [[ "$(jq -r .status "$H/out-gpt2/coverage.json")" == complete ]] || fail "a table whose every entry was read or is structural is complete: $(cat "$H/out-gpt2/coverage.json")"

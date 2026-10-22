@@ -71,7 +71,7 @@
     },
     "max_entropy_bytes": {
       "type": "integer",
-      "description": "Work budget for section and segment entropy, in bytes measured (default 268435456); a range left unmeasured says so"
+      "description": "Work budget for section and segment entropy, in bytes measured (default 268435456, at most 4294967296); the pass also stops at max_seconds. A range left unmeasured says so"
     },
     "max_seconds": {
       "type": "integer",
@@ -84,6 +84,6 @@
   "example": "{\"path\": \"work/extracted/sample.exe\"}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 2,
-  "sha256": "fd4f51f5bfe7701c3f085b5dd941b732688a93cdcc83836299cbd77e8430ae96"
+  "version": 3,
+  "sha256": "5bdafbe0d401d7c5bee8c715f93b1f287a022924cff169aea614cd137c2c3379"
 }

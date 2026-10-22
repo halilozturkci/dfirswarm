@@ -498,6 +498,19 @@ class Snapshot(Case):
         for word in ("subprocess", "start_new_session", "setsid", "os.system", "Popen"):
             self.assertNotIn(word, code)
 
+    def test_a_wal_that_is_a_link_is_listed_and_not_followed_as_the_entry_says(self):
+        db = self.live_set("a.db", self.three_commits)
+        real_wal = self.path("elsewhere-wal")
+        shutil.move(db + "-wal", real_wal)
+        os.symlink(real_wal, db + "-wal")
+        r = self.snap(db)
+        files = {f["name"]: f for f in r.json["files"]}
+        self.assertIs(files["database.sqlite-wal"]["copied"], False)
+        self.assertIn("a link or a directory", files["database.sqlite-wal"]["error"])
+        self.assertTrue([p for p in r.json["problems"] if "not a regular file" in p], r.json["problems"])
+        self.assertNotEqual(r.json["status"], "complete")
+        self.assertFalse(os.path.exists(self.path("work/snap/original/database.sqlite-wal")), "what the link points at was not copied")
+
 
 class SqliteQueryOnASnapshot(Case):
     """sqlite_query takes a snapshot's directory or its database, says which state the rows are, and checks the file against the receipt."""

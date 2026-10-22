@@ -39,6 +39,7 @@ import math
 import os
 import re
 import secrets
+import signal
 import socket
 import stat
 import struct
@@ -48,7 +49,7 @@ import time
 from pathlib import Path
 
 TOOL = "utmp_parse"
-PARSER = "utmp_parse/4"
+PARSER = "utmp_parse/5"
 DEFAULT_LIMIT = 200
 RECORD = 384
 LASTLOG = {"lastlog-292": (292, 4, 4), "lastlog-296": (296, 8, 8)}   # slot width, bytes of ll_time, offset of ll_line
@@ -170,6 +171,35 @@ def touches_withheld_text(has_filter):
     """A filter that matches the text of a record is a search over text the answer withholds: it is honoured only in a job
     (whose output is sealed), and the answer says it was used."""
     return bool(has_filter) and in_job()
+
+
+REGEX_SECONDS = 2.0      # the most one match of the caller's expression may take; Python's re has no clock of its own
+
+
+class RegexTooSlow(Exception):
+    pass
+
+
+def _alarm(_signum, _frame):
+    raise RegexTooSlow()
+
+
+def arm_regex_clock():
+    """Make a match that runs too long end (SIGALRM, which Python's matcher polls): the expression is the caller's and the
+    text is the evidence's (a btmp user field is whatever was typed), and a nested repeat on a few dozen characters runs for minutes."""
+    if hasattr(signal, "setitimer"):
+        signal.signal(signal.SIGALRM, _alarm)
+
+
+def search_within(pattern, text, deadline):
+    """pattern.search(text), ended at REGEX_SECONDS or at the tool's deadline, whichever is first (RegexTooSlow)."""
+    if not hasattr(signal, "setitimer"):
+        return pattern.search(text)
+    signal.setitimer(signal.ITIMER_REAL, max(0.05, min(REGEX_SECONDS, deadline - time.monotonic())))
+    try:
+        return pattern.search(text)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
 
 
 # Lossless paging (the same in every library tool that pages): the page an agent reads stays small, and when
@@ -477,8 +507,13 @@ def parse_utmp(path, size, order, typed, args, pattern, wanted, page, text_file,
             # A typed name is text the answer withholds: it is matched only in a job.
             if typed and not in_job():
                 continue
-            if not pattern.search(user):
-                continue
+            try:
+                if not search_within(pattern, user, deadline):
+                    continue
+            except RegexTooSlow:
+                stats["stopped_at_record"] = index
+                stats["stopped_because"] = "the user expression did not finish within %s s on record %d: the read stopped there, and no later record was tested" % (REGEX_SECONDS, index)
+                return
         shown, error = when(sec, usec)
         addr = raw[0x15C:0x16C]
         row = {"id": "U%06d" % (stats["matched"] + 1), "parser": PARSER, "record_index": index, "byte_offset": offset,
@@ -620,7 +655,14 @@ def parse_lastlog(path, size, layout, order, args, pattern, wanted, page, stats,
                 stats["slots_read"] += 1
                 if slot.count(0) != len(slot):
                     stats["nonempty"] += 1
-                emit_slot(uid, uid * width, slot, width, fmt, time_bytes, text_at, users, pattern, wanted, page, stats, layout)
+                try:
+                    emit_slot(uid, uid * width, slot, width, fmt, time_bytes, text_at, users, pattern, wanted, page, stats, layout, deadline)
+                except RegexTooSlow:
+                    stats["slots_read"] -= 1
+                    stats["stopped"] = "expression"
+                    stats["next_uid"] = uid
+                    stats["stopped_because"] = "the user expression did not finish within %s s on slot %d: the read stopped there" % (REGEX_SECONDS, uid)
+                    return
         finally:
             os.close(fd)
         stats["next_uid"] = None
@@ -637,18 +679,24 @@ def parse_lastlog(path, size, layout, order, args, pattern, wanted, page, stats,
     stats["scope"] = "whole file" if start == 0 and end == total else "uid %d to %d" % (start, end - 1)
     for uid, offset, slot in nonempty_slots(path, size, width, start, end, state, deadline):
         stats["nonempty"] += 1
-        emit_slot(uid, offset, slot, width, fmt, time_bytes, text_at, users, pattern, wanted, page, stats, layout)
+        try:
+            emit_slot(uid, offset, slot, width, fmt, time_bytes, text_at, users, pattern, wanted, page, stats, layout, deadline)
+        except RegexTooSlow:
+            stats["nonempty"] -= 1
+            state["stopped_at_uid"] = uid
+            stats["stopped_because"] = "the user expression did not finish within %s s on slot %d: the read stopped there, and no later slot was tested" % (REGEX_SECONDS, uid)
+            break
     if "stopped_at_uid" in state:
         stats["slots_read"] = state["stopped_at_uid"] - start
         stats["next_uid"] = state["stopped_at_uid"]
-        stats["stopped"] = "max_seconds"
+        stats["stopped"] = "expression" if stats.get("stopped_because") else "max_seconds"
     else:
         stats["slots_read"] = end - start
         stats["next_uid"] = end if end < total else None
     stats["holes_skipped"] = state["holes"]
 
 
-def emit_slot(uid, offset, slot, width, fmt, time_bytes, text_at, users, pattern, wanted, page, stats, layout):
+def emit_slot(uid, offset, slot, width, fmt, time_bytes, text_at, users, pattern, wanted, page, stats, layout, deadline):
     if slot.count(0) == width:
         return
     sec = struct.unpack_from(fmt, slot, 0)[0]
@@ -656,7 +704,7 @@ def emit_slot(uid, offset, slot, width, fmt, time_bytes, text_at, users, pattern
     user = users.get(uid)
     if wanted and "LASTLOG" not in wanted:
         return
-    if pattern and not pattern.search(user or str(uid)):
+    if pattern and not search_within(pattern, user or str(uid), deadline):
         return
     shown, error = when(sec, 0)
     row = {"id": "U%06d" % (stats["matched"] + 1), "parser": PARSER, "type": "LASTLOG", "uid": uid, "slot": uid,
@@ -699,6 +747,7 @@ def main():
             pattern = re.compile(args["user"], re.I)
         except re.error as exc:
             fail("user is not a valid regex", reason=str(exc))
+        arm_regex_clock()
     want_str(args, "passwd")
     requested_format = args.get("format")
     if requested_format not in (None, "utmp", "lastlog"):
@@ -728,6 +777,10 @@ def main():
     if isinstance(start_record, bool) or not isinstance(start_record, int) or start_record < 0:
         fail("start_record must be a whole number")
     typed = (typed_arg == "true") or (typed_arg == "auto" and base.startswith("btmp"))
+    if pattern is not None and typed and not is_lastlog and not in_job():
+        fail("user is refused outside a job on a file whose user field is typed text (btmp): the field is withheld from this answer, so "
+             "a filter on it would match nothing and read as 'no such user'. Run this as job_run tool=utmp_parse with secret_output: true "
+             "and ask again there, or drop user and read the records (their user_bytes) instead. Nothing was read.", path=path, user_is_typed=True)
     try:
         text_file = TextFile(TEXT_NAME, write_text, "JSON Lines, mode 0600: the record's id and locator as in the answer, with `user` where it is a name someone typed (btmp)")
     except TextRefused as exc:
@@ -764,6 +817,7 @@ def main():
             "scope": stats["scope"],
             "next_uid": stats["next_uid"],
             "stopped": stats.get("stopped"),
+            "stopped_because": stats.get("stopped_because"),
             "holes_skipped": stats.get("holes_skipped"),
             "uids_beyond_file": stats["uids_beyond_file"],
             "trailing_bytes": size % width,
@@ -818,6 +872,7 @@ def main():
             "boots": stats["boots"],
             "start_record": start_record,
             "stopped_at_record": stopped,
+            "stopped_because": stats.get("stopped_because"),
             "trailing_bytes": size % RECORD,
             "trailing_offset": (size // RECORD) * RECORD if size % RECORD else None,
             "all_records_read": whole,
@@ -832,7 +887,8 @@ def main():
                     "or edited file).",
         })
         complete = whole
-        basis_complete = "every record of the file was read, in a byte order the records support"
+        basis_complete = ("every record of the file was read, but every record is empty, so no byte order is supported by them (byte_order is undetermined)"
+                          if order == "undetermined" else "every record of the file was read, in a byte order the records support")
         basis_partial = "the read stopped at max_seconds (stopped_at_record), the file ends in a short tail, it starts after record 0, or its records do not all read as utmp: the answer says which"
     text_file.close()
     pages = {"records": page.finish()}

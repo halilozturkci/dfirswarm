@@ -25,9 +25,10 @@ async function block(path: string): Promise<string> {
   return text.slice(start, text.indexOf("\n", end) + 1);
 }
 
-test("the two tools carry the same shared block, byte for byte", async () => {
-  const [a, b] = await Promise.all([block(ID), block(INDEX)]);
-  assert.equal(a, b);
+test("every tool carries the same shared block, byte for byte", async () => {
+  const [a, ...rest] = await Promise.all([ID, INDEX, ...MANIFEST_TOOLS.map((n) => join(TOOLS, n, "run.py"))].map(block));
+  assert.equal(rest.length, 5);
+  for (const b of rest) assert.equal(a, b);
   assert.ok(a.length > 8000);
 });
 
@@ -147,10 +148,11 @@ function ascii(text: string): string {
   return `'${[...text].map((c) => (c.charCodeAt(0) < 128 ? c : `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`)).join("")}'`;
 }
 
-const NAMES = ["collection_id", "collection_index"];
+const MANIFEST_TOOLS = ["collection_manifest_parse", "collection_manifest_verify", "collection_path_map", "collection_coverage"];
+const NAMES = ["collection_id", "collection_index", ...MANIFEST_TOOLS];
 
 test("every manifest has a use, a raised version, the sha256 of its script and a description that says what is and is not measured", async () => {
-  const versions: Record<string, number> = { collection_id: 5, collection_index: 6 };
+  const versions: Record<string, number> = { collection_id: 5, collection_index: 6, collection_manifest_parse: 1, collection_manifest_verify: 1, collection_path_map: 1, collection_coverage: 1 };
   for (const name of NAMES) {
     const manifest: Json = JSON.parse(await readFile(join(TOOLS, name, "manifest.json"), "utf8"));
     assert.ok(manifest.use?.names?.length >= (name === "collection_id" ? 5 : 1), `${name} says what it reads`);
@@ -225,12 +227,12 @@ def fake_scandir(path):
     return real_scandir(path)
 
 os.scandir = fake_scandir
-sys.stdin = io.StringIO(json.dumps({"root": "c", "limit": 1}))
+sys.stdin = io.StringIO(json.dumps({"root": "c", "limit": 1, "questions": [{"id": "q", "delivered_paths": ["*"]}]}))
 mod.main()
 `;
 
 test("a name that is not UTF-8, even one the tool cannot stat, is an escape in the answer and the file in both tools", async () => {
-  for (const script of [ID, INDEX]) {
+  for (const script of [ID, INDEX, ...MANIFEST_TOOLS.map((n) => join(TOOLS, n, "run.py"))]) {
     const run = await runPySnippet(SURROGATE_CODE, [script, "x"], null);
     assert.equal(run.code, 0, run.stderr);
     assert.doesNotMatch(run.stderr, /Traceback|UnicodeEncodeError/);

@@ -50,7 +50,7 @@ import zlib
 from pathlib import Path
 
 TOOL = "auth_log"
-PARSER = "auth_log/4"
+PARSER = "auth_log/5"
 DEFAULT_LIMIT = 200
 FIRST_FAILURES = 20
 MAX_LINE = 64 << 10         # a physical line longer than this is located, not parsed
@@ -355,15 +355,24 @@ RULES = [
     ("ssh_accepted", re.compile(
         r"^Accepted (?P<method>\S+) for (?P<user>.+?) from (?P<source>\S+) port (?P<port>\d+)(?: ssh2)?"
         r"(?::\s*(?P<key>.*))?")),
+    # A name typed at a prompt is read from its position in the line, never from its shape. Where sshd says the account does not
+    # exist (invalid user, illegal user) the name is everything between those words and the LAST " from <address> port <n>" (a
+    # name can hold spaces, and can hold "from x port 1" too); the source and the port are what follows that last one.
     ("ssh_failed", re.compile(
-        r"^Failed (?P<method>\S+) for (?P<invalid>invalid user )?(?P<user>.+?) from (?P<source>\S+) "
+        r"^Failed (?P<method>\S+) for (?P<invalid>(?:invalid|illegal) user )(?P<user>.+) from (?P<source>\S+) "
         r"port (?P<port>\d+)(?: ssh2)?(?::\s*(?P<key>.*))?")),
-    ("ssh_invalid_user", re.compile(r"^Invalid user (?P<user>.*?) from (?P<source>\S+)(?: port (?P<port>\d+))?")),
+    ("ssh_failed", re.compile(
+        r"^Failed (?P<method>\S+) for (?!(?:invalid|illegal) user )(?P<user>.+?) from (?P<source>\S+) "
+        r"port (?P<port>\d+)(?: ssh2)?(?::\s*(?P<key>.*))?")),
+    ("ssh_invalid_user", re.compile(r"^(?:Invalid|Illegal) user (?P<user>.*) from (?P<source>\S+)(?: port (?P<port>\d+))?")),
     ("ssh_disconnect", re.compile(
         r"^Received disconnect from (?P<source>\S+) port (?P<port>\d+):(?P<disconnect_code>\d{1,6}):\s*(?P<reason>.*)$")),
     ("ssh_disconnect", re.compile(
-        r"^Disconnected from (?:(?P<role>authenticating user|invalid user|user) (?P<user>.+?) )?"
-        r"(?P<source>\S+)(?: port (?P<port>\d+))?(?P<stage>.*)$")),
+        r"^Disconnected from (?P<role>authenticating user|invalid user|user) (?P<user>.*) (?P<source>\S+) port (?P<port>\d+)(?P<stage>.*)$")),
+    ("ssh_disconnect", re.compile(
+        r"^Disconnected from (?P<role>authenticating user|invalid user|user) (?P<user>.*) (?P<source>\S+)$")),
+    ("ssh_disconnect", re.compile(
+        r"^Disconnected from (?!(?:authenticating user|invalid user|user) )(?P<source>\S+)(?: port (?P<port>\d+))?(?P<stage>.*)$")),
     ("key_observed_authentication", re.compile(
         r"^Accepted key (?P<keytype>\S+) (?P<fingerprint>\S+)"
         r"(?: found at (?P<authorized_keys_file>.+?):(?P<authorized_keys_line>\d+))?")),
@@ -391,6 +400,9 @@ INT_FIELDS = ("port", "uid", "by_uid", "gid", "cert_serial", "authorized_keys_li
 # The key=value pairs of a pam_unix authentication failure that become fields. Any other key in the line is the
 # line's own text (a typed user name can contain "key=value"), and a key can never overwrite a locator field.
 PAM_KEYS = ("logname", "uid", "euid", "tty", "ruser", "rhost", "user")
+PAM_USER = re.compile(r"(?:^|\s)user=")
+PAM_RUSER = re.compile(r"(?:^|\s)ruser=")
+PAM_RHOST_LAST = re.compile(r"\s*(?:^|\s)rhost=(\S*)\s*$")
 # Fields a line's text can never set: they are the tool's own.
 RESERVED = {"user_bytes", "user_withheld", "id", "parser", "file", "line", "byte_offset", "time", "time_raw", "time_zone", "time_utc", "year", "host",
             "process", "pid", "kind", "reordered", "time_error", "text_bytes", "command_bytes", "raw", "line_text"}
@@ -434,14 +446,39 @@ def finish(kind, fields):
         if stage:
             fields["stage"] = stage
     if kind == "auth_failure":
-        # One pass, linear: split on whitespace and read `key=value` tokens. (A pattern for them was quadratic.)
-        for token in (fields.pop("kv", "") or "").split():
+        # pam_unix writes `user=` last, and the rest of the line is the name (a name can hold spaces, and "tty=x" or "rhost=x"):
+        # it is split off first, by position. `ruser=` (the remote user a service such as dovecot, vsftpd or exim passes: the
+        # login name typed there) is the text between `ruser=` and the last ` rhost=`; the key=value pairs before `ruser=`
+        # are read first-one-wins. Nothing that follows `ruser=` or `user=` can set another field.
+        text = fields.pop("kv", "") or ""
+        head = text
+        found = PAM_USER.search(text)
+        if found:
+            head = text[:found.start()]
+            name = text[found.end():]
+            if name.strip():
+                fields["user"] = name
+        pre = head
+        found = PAM_RUSER.search(head)
+        if found:
+            pre = head[:found.start()]
+            rest = head[found.end():]
+            tail = PAM_RHOST_LAST.search(rest)
+            ruser = rest[:tail.start()] if tail else rest
+            if tail and tail.group(1):
+                fields["rhost"] = tail.group(1)
+            if ruser.strip():
+                fields["ruser"] = ruser.strip()
+        for token in pre.split():
             key, eq, value = token.partition("=")
-            if not eq or value == "" or key not in PAM_KEYS:
+            if not eq or value == "" or key not in PAM_KEYS or key in ("user", "ruser") or key in fields:
                 continue
-            fields["source" if key == "rhost" else key] = value
-        if "user" in fields:
-            typed.append("user")
+            fields[key] = value
+        if "rhost" in fields:
+            fields["source"] = fields.pop("rhost")
+        for typed_key in ("user", "ruser"):
+            if typed_key in fields:
+                typed.append(typed_key)
     if kind == "su":
         for plain in ("target", "user"):
             if plain + "2" in fields:
@@ -508,13 +545,15 @@ def open_binary(path, state):
     return raw
 
 
-def physical_lines(path, state, expanded_cap=None):
+def physical_lines(path, state, expanded_cap=None, deadline=None):
     """(line number, byte offset, bytes or None when over MAX_LINE, bytes in the line) for each physical line.
 
     A read or a decompression error ends the iteration, is recorded in state.errors with where it
     happened, and is not raised: what was read before it is kept. The offset is into the stream as it
     comes out (the decompressed one for a gzip file); a gzip stream that expands past `expanded_cap`
-    bytes ends there as a recorded error, so a compression bomb costs a bounded amount of work."""
+    bytes ends there as a recorded error, so a compression bomb costs a bounded amount of work. The clock is read inside
+    the loop that skips a line over MAX_LINE (every 64 pieces), so a file with no newline for gigabytes ends at `deadline`
+    too: Overtime is raised from here."""
     try:
         handle = open_binary(path, state)
     except OSError as exc:
@@ -534,9 +573,13 @@ def physical_lines(path, state, expanded_cap=None):
                     return
                 if length > MAX_LINE and not chunk.endswith(b"\n"):
                     # Read on to the end of the line without holding it.
+                    pieces = 0
                     while True:
                         more = handle.readline(MAX_LINE + 1)
                         length += len(more)
+                        pieces += 1
+                        if deadline is not None and (pieces & 63) == 0 and time.monotonic() > deadline:
+                            raise Overtime()
                         if expanded_cap is not None and state.compression == "gzip" and offset + length > expanded_cap:
                             state.errors.append({"file": path, "error": "the decompressed stream passed max_expanded_bytes (%d): not read past it" % expanded_cap,
                                                  "line": number + 1, "byte_offset": offset})
@@ -815,7 +858,7 @@ def main():
         # last in-order line can be worked back through the year ends the months show.
         months, packed, numbers = array.array("b"), array.array("q"), array.array("q")
         try:
-            for n, (_n, _o, chunk, _l) in enumerate(physical_lines(target, state, expand_cap)):
+            for n, (_n, _o, chunk, _l) in enumerate(physical_lines(target, state, expand_cap, deadline)):
                 tick(n)
                 if chunk is None:
                     continue
@@ -866,7 +909,7 @@ def main():
         state = FileState(target)
         year, cursor, valid_index = first_year, None, 0
         try:
-            for number, offset, chunk, length in physical_lines(target, state, expand_cap):
+            for number, offset, chunk, length in physical_lines(target, state, expand_cap, deadline):
                 tick(number)
                 counts["physical"] += 1
                 info["physical_lines"] += 1
@@ -1036,7 +1079,8 @@ def main():
         "file_count": len(files),
         "files_not_reached": not_reached,
         "mixed_rotation_schemes": len(schemes) > 1,
-        "cross_file_order": "consistent" if not overlaps and len(schemes) <= 1 else ("overlap" if overlaps else "not established: more than one rotation scheme"),
+        "cross_file_order": ("overlap" if overlaps else "not established: more than one rotation scheme" if len(schemes) > 1 else
+                             "not established: a file is ordered by its name only" if len(files) > 1 and any(r == 0 for (r, _k, _b), _t in ranked) else "consistent"),
         "cross_file_order_overlaps": overlaps,
         "physical_lines": counts["physical"],
         "blank_lines": counts["blank"],

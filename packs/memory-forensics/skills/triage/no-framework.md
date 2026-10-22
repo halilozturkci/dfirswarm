@@ -19,7 +19,7 @@ conclusions are limited to the representation actually searched.
 Start here, in this order:
 
 1. **`mem_carve`** finds configured byte signatures in the file and can save a
-   fixed-size slice at each. Only if you run it: `triage/carve-signatures` says what
+   slice at each (`write_values: true`, in a secret job). Only if you run it: `triage/carve-signatures` says what
    each hit carries and what to record.
 2. **Hand each slice to its own parser, if the pack that has it is loaded.** The
    Windows Forensics pack's `regkv` reads a hive, `evtx_carve` an event log chunk,
@@ -45,7 +45,7 @@ Only if the evidence includes `pagefile.sys`, swap or `hiberfil.sys`: `triage/pa
 
 **Sensitive output.** An extracted slice can be a credential store (a SAM or
 SECURITY hive, a browser database), and the bytes around a match can be a secret: run
-extraction and the scans as jobs with `secret_output: true`, and cite slices by job
+extraction (`mem_carve` refuses it outside a secret job) and the scans as jobs with `secret_output: true`, and cite slices by job
 reference and offset, never by content (`credentials/material`).
 
 **Does not show.** That a signature hit is a whole, readable file; that a parse of a

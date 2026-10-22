@@ -1,0 +1,66 @@
+{
+  "id": "windows-artefacts",
+  "version": "1.0.0",
+  "description": "Read the Windows artefacts of an extracted collection (a directory, walked without following links) or of files named one by one, family by family, with the tool of this pack that reads each family, and keep every call's whole answer. Families: registry hives (registry_recover, with the .LOG1 and .LOG2 found beside each hive and named in the result), amcache and shellbags (the hive again, through amcache_apps and shellbags), prefetch, shortcuts and Jump Lists (lnk_jumplist), event logs, the Recycle Bin $I files, $MFT, the USN journal, ESE databases (SRUM, WebCache: the tables are listed, no table is read) and browser history databases. When the target is one directory and target-query (dissect.target) is installed, a fixed list of its functions that no tool of this pack covers is run too, one call each, with the whole stdout and stderr of every call kept. Plaso is not run. No parser is written here: a family is the answer of the tool for it, never a reading of the recipe's own. The receipt (coverage.json, written before the first tool runs and after every family, and again if the recipe is terminated) gives each family one of parsed, partial, empty, unsupported, failed or not_attempted, with the counts of calls by that state, the reason, and the tool; `complete` for the whole run means every family that had an input ended parsed or empty and nothing was cut short. It is not coverage of the host: a family with no file in the target is not_attempted, and its absence from the collection is not shown. The files found are classified by name and first bytes. The walk stops at its time or entry limit and says so; a walk that ran out of time and found nothing is `could not tell`, never `does not apply`. Every tool runs in this process's group (never a session of its own), so the harness ending the recipe by killing its group ends them; SIGTERM, SIGINT and SIGHUP end the running tool, write the receipt as partial and exit 128 plus the signal. What a tool writes beside its answer (recovered hive copies, keys.jsonl, whole result pages) is under the recipe's output directory outside a job, and under $OUT in a job. The recipe never asks a tool to write a withheld value (no write_values, no write_strings): what each tool withholds by shape stays withheld, and a secret of another shape is printed by the tool that read it, in its answer kept in results.jsonl. Not run automatically: it is requested for a collection.",
+  "object": "Windows artefact collection",
+  "order": 35,
+  "min_bytes": 64,
+  "magic": [
+    {
+      "offset": 0,
+      "hex": "72656766"
+    },
+    {
+      "offset": 0,
+      "hex": "456c6646696c6500"
+    },
+    {
+      "offset": 0,
+      "hex": "4c0000000114020000000000c000000000000046"
+    },
+    {
+      "offset": 4,
+      "hex": "53434341"
+    },
+    {
+      "offset": 0,
+      "hex": "4d414d04"
+    }
+  ],
+  "runtime": "python3",
+  "entry": "run.py",
+  "auto": [],
+  "limits": {
+    "seconds": 3600
+  },
+  "outputs": [
+    "registry-hives/results.jsonl",
+    "amcache/results.jsonl",
+    "shellbags/results.jsonl",
+    "prefetch/results.jsonl",
+    "shortcuts-jumplists/results.jsonl",
+    "event-logs/results.jsonl",
+    "recycle-bin/results.jsonl",
+    "mft/results.jsonl",
+    "usn-journal/results.jsonl",
+    "esedb/results.jsonl",
+    "browser-history/results.jsonl",
+    "dissect-target/results.jsonl",
+    "dissect-target/*.out",
+    "dissect-target/*.stderr",
+    "index.tsv",
+    "coverage.json"
+  ],
+  "purpose": "broad_extraction",
+  "capability": "windows-artifacts",
+  "exclusions": [
+    "Plaso: the disk-timeline recipe of the base pack runs it over a disk image",
+    "volume shadow copies, deleted and unallocated data: nothing is carved",
+    "UserAssist, BAM, ShimCache and SRUM joins, PowerShell block reassembly, the WMI repository and $LogFile: no tool of this pack reads them (dissect.target's own output stands in for some, when it is installed)",
+    "memory: a collection of files holds none",
+    "a family with no file in the target is not_attempted: its absence from the collection is not shown",
+    "the rows of an ESE database: its tables are listed, and reading a table is a separate call of esedb_query"
+  ],
+  "covers": "What each tool of the pack said about the Windows artefact files found in the target, as the tool said it (coverage.json: per family status, reason, tool, inputs, counts; results.jsonl: one line per call with its arguments, exit code and whole answer). A status other than parsed or empty names what is missing, and `complete` is not coverage of the host. It does not carve, does not read volume shadow copies, does not run Plaso, does not interpret records, and does not show that a family absent from the target was never there.",
+  "sha256": "9d7fe231829219861bb0d728a042af252bf40fd4f832d2657f0c53e35fb23daa"
+}

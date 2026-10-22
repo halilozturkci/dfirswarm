@@ -38,9 +38,23 @@ examiner should know first: escapes-root (a name that is empty, "." or
 "..", or holds a "/"), name-not-utf8, hash-mismatch, unknown-file, deleted,
 and encrypted (the source file system's encryption flag: the content may be
 ciphertext). attributes.tsv holds every metadata entry of every item (n,
-category, key, label, text), so nothing the image records is left out, and
-image.json the segment and logical image headers and the image's own
-metadata (its data source name).
+category, key, label, text), so nothing the image records is left out; an item
+that has the same metadata chain as an earlier item (the chain starts at one
+address) gets one row, label same-chain, naming that item, so a chain the
+image shares is written once. The entries written cannot add up to more than
+the bytes the image holds (entries sit at their own addresses): past that,
+chains overlap, attributes.tsv stops at the item named in limits_hit, and the
+items after it are still listed. image.json holds the segment and logical
+image headers and the image's own metadata (its data source name).
+
+The listing has a clock of its own, later than the one that stops a file's
+content being inflated: it stops at 97% of the recipe's seconds
+(RECIPE_LISTING_SECONDS sets the seconds), says where, and the items after
+that point are not listed. The walk cannot count items (the format has none),
+so it keeps the byte ranges it reached and counts the data no item, name,
+metadata entry, chunk table or chunk led to (zero bytes are padding):
+non-zero bytes there make the coverage partial and integrity_status
+unverified (unreferenced_nonzero_bytes).
 """
 import base64
 import hashlib
@@ -101,8 +115,13 @@ CLASSES = {b"1": "regular file", b"2": "placeholder", b"3": "folder", b"4": "fil
 # Every address is held to the data the segments hold, every chain to one
 # visit per address, the tree to a depth, every count to what the image can
 # hold and to a ceiling, every chunk to the chunk size and every file to its
-# size: a damaged or hostile image is named, never followed.
+# size: a damaged or hostile image is named, never followed. The format has no
+# item count, so a walk cannot know it reached every item: it keeps the byte
+# ranges it reached (items, names, metadata, chunk tables and chunks) and
+# ad1_unaccounted() says how much of the image's data nothing led to.
+import array as _array
 import bisect as _bisect
+import heapq as _heapq
 import os as _os
 import struct as _struct
 import zlib as _zlib
@@ -122,6 +141,12 @@ AD1_DEPTH_MAX = 1024
 AD1_OPEN_MAX = 64                 # segment files held open at once
 AD1_TABLE_BATCH = 4096            # chunk addresses read at a time
 AD1_CHUNKS_MAX = 1 << 26          # one file's chunks: 4 TiB at FTK Imager's 64 KiB
+AD1_CACHE_MAX = 32 << 20          # bytes (estimated) of the last metadata chains kept, for an item that shares one with an earlier item
+AD1_CACHE_CHAINS = 8              # and how many of them
+AD1_FOLD_AT = 1 << 16             # reached-range entries held before they are merged
+AD1_SLACK = 0                     # non-zero bytes of the data nothing may lead to before the walk is not called whole
+AD1_GAP_SCAN_MAX = 256 << 20      # bytes of unreached data read to count its non-zero bytes
+AD1_GUID_TABLES = (b"ATTRGUID", b"LOCSGUID")   # the two tables FTK Imager leaves after the items; the header points at them
 
 
 class AD1Error(Exception):
@@ -168,10 +193,10 @@ class AD1:
         stem, ext = _os.path.splitext(first)
         beside = ext[1:3].lower() == "ad" and ext[3:] == "1"
         self.paths, self.names, self.missing, self.errors, self.walk_errors = [], [], [], [], []
-        self.margins, self.starts = [], [0]
+        self.margins, self.starts, self.actual = [], [0], []
         for k in range(1, count + 1):
             p = given[k - 1] if k <= len(given) else (stem + ext[:-1] + str(k) if beside else None)
-            margin, span = self.segment["header"], self.segment["bytes"] - self.segment["header"]
+            margin, span, present = self.segment["header"], self.segment["bytes"] - self.segment["header"], 0
             if p and _os.path.isfile(p):
                 with open(p, "rb") as fh:
                     h = ad1_segment_header(fh.read(0x30))
@@ -181,15 +206,19 @@ class AD1:
                 margin, span = h["header"], h["bytes"] - h["header"]
                 if size - margin > span:
                     raise AD1Error("%s holds more than the %d bytes of data its header says" % (_os.path.basename(p), span))
+                present = size - margin   # the last segment is usually shorter than the size its header declares
             else:
                 self.missing.append(_os.path.basename(p) if p else "segment %d (the first is not named .ad1)" % k)
                 p = None
             self.names.append(_os.path.basename(p) if p else self.missing[-1])
             self.paths.append(p)
             self.margins.append(margin)
+            self.actual.append(present)
             self.starts.append(self.starts[-1] + span)
         self.end = self.starts[-1]
         self._open = {}
+        self._reached, self._lo, self._hi = _array.array("Q"), _array.array("Q"), _array.array("Q")
+        self._chains, self._chains_held = {}, 0
         if self.read(0, 14) != AD1_LOGICAL_MAGIC:
             raise AD1Error("no ADLOGICALIMAGE header at the start of the image's data")
         (self.version,) = _struct.unpack("<I", self.read(16, 4))
@@ -201,11 +230,15 @@ class AD1:
         self.meta_addr, self.first_item, name_len = _struct.unpack("<QQI", self.read(28, 20))
         (name_addr,) = _struct.unpack("<Q", self.read(52, 8))
         self.source_name = b""
+        after = [a for a in (self.meta_addr, self.first_item, name_addr) if a >= 60]
+        self._reach(0, min(after) if after else 60)       # the header runs on to the first thing it points at
+        self._reach_guid_tables()
         if name_len > AD1_TEXT_MAX:
             self.errors.append("the data source name says it is %d bytes long: not read" % name_len)
         elif name_addr:
             try:
                 self.source_name = self.read(name_addr, name_len)
+                self._reach(name_addr, name_len)
             except AD1Error as e:
                 self.errors.append("the data source name cannot be read: %s" % e)
 
@@ -241,9 +274,103 @@ class AD1:
             out += got
         return bytes(out)
 
+    def _reach(self, addr, n):
+        """The walk reached n bytes from addr (a structure it read, or one that it was led to)."""
+        if n > 0:
+            r = self._reached
+            if r and r[-1] == addr:
+                r[-1] = addr + n          # laid out one after the other, as a writer does: one range
+                return
+            r.append(addr)
+            r.append(addr + n)
+            if len(r) >= max(AD1_FOLD_AT, min(2 * len(self._lo), 1 << 20)):   # a fold costs the ranges held: wait for as many new ones
+                self._fold()
+
+    def _fold(self):
+        """Merge the ranges reached since the last fold into the sorted, disjoint ones already held (two arrays, 16 bytes a range)."""
+        fresh = sorted(zip(self._reached[0::2], self._reached[1::2]))
+        self._reached = _array.array("Q")
+        lo, hi = _array.array("Q"), _array.array("Q")
+        for a, b in _heapq.merge(zip(self._lo, self._hi), fresh):
+            if hi and a <= hi[-1]:
+                if b > hi[-1]:
+                    hi[-1] = b
+            else:
+                lo.append(a)
+                hi.append(b)
+        self._lo, self._hi = lo, hi
+
+    def _reach_guid_tables(self):
+        """The tables of GUIDs the logical image header points to (FTK Imager writes the pointers at +60 and +76, with room for
+        two more): an 8-byte tag, a count at +12, then 20 bytes an entry."""
+        for at in (60, 68, 76, 84):
+            try:
+                (addr,) = _struct.unpack("<Q", self.read(at, 8))
+                if addr >= 76 and self.read(addr, 8) in AD1_GUID_TABLES:
+                    (count,) = _struct.unpack("<I", self.read(addr + 12, 4))
+                    if count < 1 << 16:
+                        self._reach(addr, 16 + 20 * count)
+            except AD1Error:
+                pass
+
+    def _reach_table(self, table, size):
+        """A file's chunk table and the chunks it lists, as far as the table reads sanely (chunks() names the rest)."""
+        try:
+            (count,) = _struct.unpack("<Q", self.read(table, 8))
+            most = (size + self.chunk_size - 1) // self.chunk_size
+            if count > max(most, 1) or count > (self.end - table - 8) // 8 - 1 or count > AD1_CHUNKS_MAX:
+                return
+            (first,) = _struct.unpack("<Q", self.read(table + 8, 8))
+            (last,) = _struct.unpack("<Q", self.read(table + 8 + 8 * count, 8))
+        except AD1Error:
+            return
+        self._reach(table, 16 + 8 * count)
+        if first <= last <= self.end:
+            self._reach(first, last - first)
+
+    def _gaps(self):
+        """(from, to) of every stretch of the data present that no reached range covers, in address order."""
+        for k, extent in enumerate(self.actual):
+            at, end = self.starts[k], self.starts[k] + extent
+            for i in range(_bisect.bisect_right(self._hi, at), len(self._lo)):
+                lo, hi = self._lo[i], self._hi[i]
+                if lo >= end:
+                    break
+                if lo > at:
+                    yield at, lo
+                at = max(at, hi)
+            if at < end:
+                yield at, end
+
+    def unreferenced(self):
+        """(bytes, non-zero bytes, whole) of the image's data that no structure the walk read or was led to covers, or None while a
+        segment is not there. Zero bytes between structures are padding; the non-zero ones are content nothing led to. `whole` is
+        False when only the first AD1_GAP_SCAN_MAX unreached bytes were read for their non-zero ones. The image's own metadata chain
+        counts as reached, so it is read here if the caller has not."""
+        if self.missing:
+            return None
+        if self.meta_addr:
+            try:
+                self.metadata(self.meta_addr)
+            except AD1Error:
+                pass
+        self._fold()
+        total, nonzero, scanned = 0, 0, 0
+        for lo, hi in self._gaps():
+            total += hi - lo
+            while lo < hi and scanned < AD1_GAP_SCAN_MAX:
+                block = self.read(lo, min(hi - lo, 1 << 20, AD1_GAP_SCAN_MAX - scanned))
+                nonzero += len(block) - block.count(0)
+                scanned += len(block)
+                lo += len(block)
+        return total, nonzero, scanned >= total
+
     def metadata(self, addr):
-        """[(category, key, text bytes, address)] of a metadata chain."""
-        out, seen, held = [], set(), 0
+        """[(category, key, text bytes, address)] of a metadata chain. An item that shares its chain with an earlier one gets the same
+        list back (it is read once), so a caller does not change it."""
+        if addr in self._chains:
+            return self._chains[addr][0]
+        out, seen, held, head = [], set(), 0, addr
         while addr:
             if addr in seen:
                 raise AD1Error("the metadata chain loops back to address %d" % addr)
@@ -255,7 +382,14 @@ class AD1:
             if len(out) >= AD1_META_MAX or held > AD1_META_BYTES_MAX:
                 raise AD1Error("a metadata chain holds more than %d entries or %d bytes of text: not read further" % (AD1_META_MAX, AD1_META_BYTES_MAX))
             out.append((cat, key, self.read(addr + 20, length), addr))
+            self._reach(addr, 20 + length)
             addr = nxt
+        cost = held + 200 * len(out)
+        if head and cost <= AD1_CACHE_MAX:
+            self._chains[head] = (out, cost)
+            self._chains_held += cost
+            while len(self._chains) > AD1_CACHE_CHAINS or self._chains_held > AD1_CACHE_MAX:
+                self._chains_held -= self._chains.pop(next(iter(self._chains)))[1]
         return out
 
     def walk(self):
@@ -281,6 +415,9 @@ class AD1:
                     raise AD1Error("its name is %d bytes long" % name_len)
                 name = self.read(addr + 48, name_len)
                 meta = self.metadata(meta)
+                self._reach(addr, 48 + name_len)
+                if table:
+                    self._reach_table(table, size)
             except AD1Error as e:
                 self.walk_errors.append("item at address %d under %s cannot be read: %s; it and the siblings after it are not listed" % (addr, ad1_where(parent), e))
                 continue
@@ -344,6 +481,17 @@ class AD1:
             yield block
         if total != item["size"]:
             raise AD1Error("its content is %d bytes, not its size of %d" % (total, item["size"]))
+
+
+def ad1_unaccounted(img):
+    """None, or words, once a walk has reached the end of the tree: the image's data holds bytes that no item, name, metadata entry,
+    chunk table or chunk led to. A zeroed or damaged next or child pointer ends a chain early with no error, and the format has no item
+    count, so the walk cannot tell a tree that ended from a tree that was cut: it says what it could not account for."""
+    left = img.unreferenced()
+    if left is None or left[1] <= AD1_SLACK:
+        return None
+    return ("%s%d bytes of the image's data that are not zero are reached by no item, name, metadata entry, chunk table or chunk of the tree: a zeroed or damaged "
+            "next or child pointer would leave exactly such bytes, and the format has no item count, so the list is not shown to be whole" % ("" if left[2] else "at least ", left[1]))
 
 
 def ad1_text(meta, key):
@@ -525,7 +673,9 @@ def label(key):
 
 
 def run(target, paths, out_dir):
-    deadline = time.monotonic() + limits() * 0.9      # past this, no further file's content is inflated
+    seconds = limits()
+    deadline = time.monotonic() + seconds * 0.9       # past this, no further file's content is inflated
+    list_deadline = time.monotonic() + float(os.environ.get("RECIPE_LISTING_SECONDS") or seconds * 0.97)  # past this, no further item is listed
     os.makedirs(out_dir, exist_ok=True)
     cov = {"recipe": "ad1-items", "target": paths[0], "format": "AD1", "items": 0, "files": 0, "folders": 0, "checked": 0,
            "mismatches": [], "no_stored_hash": 0, "unread_at_limit": 0, "segments_missing": [],
@@ -539,14 +689,19 @@ def run(target, paths, out_dir):
 
     def finish(status, code):
         cov["status"] = status
+        cov["status_basis"] = {"complete": "every item of the tree was listed, its metadata written, and the data the tree leads to accounts for the image's",
+                               "partial": "a limit was hit, a segment is missing, an item broke, or the tree does not account for all of the image's data (see limits_hit and errors)",
+                               "failed": "no item could be listed (see errors)",
+                               "unsupported": "this is not an AD1 image this recipe reads (see why)"}.get(status, status)
         if "integrity_status" not in cov:
-            cov["integrity_status"] = "mismatch" if cov["mismatches"] else "unverified" if cov["files"] > cov["checked"] or cov["no_stored_hash"] else "verified" if cov["files"] else "not_applicable"
+            cov["integrity_status"] = "mismatch" if cov["mismatches"] else "unverified" if cov["files"] > cov["checked"] or cov["no_stored_hash"] or cov.get("unaccounted") else "verified" if cov["files"] else "not_applicable"
         write_cov()
         print(json.dumps({"ok": code == 0, "status": status, "format": "AD1", "items": cov["items"]}))
         return code
 
     # Said before the first read: a run cut short leaves a coverage file that says it was, never none.
     cov["status"] = "partial"
+    cov["status_basis"] = "the run had started and had listed nothing yet"
     cov["why"] = "started; the run did not reach its end"
     write_cov()
     del cov["why"]
@@ -569,17 +724,51 @@ def run(target, paths, out_dir):
             w.write("\t".join(COLUMNS) + "\n")
             a.write("n\tcategory\tkey\tlabel\ttext\n")
             escapes = set()
+            # Past the content deadline an item is still listed (its digests are then not checked); the listing has a later
+            # clock of its own, and an item budget, because a hostile image can make one item cost a metadata chain's worth.
+            written_chains, attr_cost, attr_stopped = {}, 0, None
+            holds = sum(img.actual)      # the bytes of data the image has (its last segment is shorter than its header says)
+            walked_all = False
             for item in img.walk():
                 if cov["items"] >= MAX_ITEMS:
-                    # The listing is not stopped by the clock (it is cheap, and every item stays listed past the
-                    # limit); it is bounded by an item budget, and says so.
                     cov["limits_hit"].append("items: the listing stopped after %d items; every item after it in the image's order is not listed" % cov["items"])
                     break
+                if cov["items"] and time.monotonic() > list_deadline:
+                    cov["limits_hit"].append("seconds: the listing stopped after %d items; every item after it in the image's order is not listed" % cov["items"])
+                    break
                 row_of(img, item, w, deadline, cov, escapes)
-                for cat, key, text, _addr in item["meta"]:
-                    a.write("%d\t%d\t0x%x\t%s\t%s\n" % (item["n"], cat, key, label(key), esc(text)))
+                # attributes.tsv: a metadata chain is written once, for the first item that has it; an item sharing the whole
+                # chain gets one row naming that item. The text written is held to the bytes the image holds: entries that
+                # sit at their own addresses cannot add up to more, so a total above it means chains that overlap.
+                head = item["meta"][0][3] if item["meta"] else None
+                if attr_stopped is not None:
+                    pass
+                elif head is not None and head in written_chains:
+                    a.write("%d\t\t\tsame-chain\tthe metadata entries of item %d, which has this chain (entry address %d)\n" % (item["n"], written_chains[head], head))
+                else:
+                    if head is not None:
+                        written_chains[head] = item["n"]
+                    for cat, key, text, _addr in item["meta"]:
+                        attr_cost += 20 + len(text)
+                        if attr_cost > holds:
+                            attr_stopped = item["n"]
+                            cov["limits_hit"].append("attributes: attributes.tsv stops inside item %d (ad1:item=%d): the entries of the chains written would be more than the %d bytes the image's data holds, "
+                                                     "so chains overlap; item %d and the items after it have no complete attribute rows there (their metadata is read from the image at the locator)"
+                                                     % (item["n"], item["addr"], holds, item["n"]))
+                            break
+                        a.write("%d\t%d\t0x%x\t%s\t%s\n" % (item["n"], cat, key, label(key), esc(text)))
                 cov["items"] += 1
+            else:
+                walked_all = not img.walk_errors
         cov["errors"] += img.walk_errors
+        if walked_all and not cov["limits_hit"]:
+            left = img.unreferenced()
+            if left is not None:
+                cov["unreferenced_bytes"], cov["unreferenced_nonzero_bytes"] = left[0], left[1]
+            lost = ad1_unaccounted(img)
+            if lost:
+                cov["errors"].append(lost)
+                cov["unaccounted"] = True
         try:
             own = [{"category": c, "key": "0x%x" % k, "label": label(k), "text": esc(t)} for c, k, t, _a in img.metadata(img.meta_addr)]
         except AD1Error as e:
@@ -602,7 +791,7 @@ def run(target, paths, out_dir):
         mism = len(cov["mismatches"])
         fh.write("members.tsv\tAD1 item list (%d items: %d files, %d folders), paths under the data source name %s: n, type, path, path_b64, size, packed, mtime, tz, mode, uid, gid, link, locator, flags, atime, btime, md5, sha1, sha256, check, class; ad1_extract takes n or the locator%s\n"
                  % (cov["items"], cov["files"], cov["folders"], esc(img_source) or "(none recorded)", "; %d file(s) whose content does not match the digests the image records (check mismatch)" % mism if mism else ""))
-        fh.write("attributes.tsv\tevery metadata entry of every item: n, category, key, label, text\n")
+        fh.write("attributes.tsv\tevery metadata entry of every item (a chain several items share is written once, then a same-chain row names the item): n, category, key, label, text\n")
         fh.write("image.json\tthe AD1 segment and logical image headers, its segments, its data source name and its own metadata\n")
     status = "complete" if not cov["limits_hit"] and not cov["errors"] else ("partial" if cov["items"] else "failed")
     return finish(status, 0 if status in ("complete", "partial") else 2)

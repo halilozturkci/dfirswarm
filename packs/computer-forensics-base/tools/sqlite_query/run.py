@@ -125,9 +125,11 @@ STREAM_AT = 1024 * 1024           # a BLOB longer than this is hashed and encode
 SLICE_BYTES = 3 * 256 * 1024      # a multiple of 3, so each slice's base64 joins the next without padding
 
 # BEGIN SHARED WITHHOLDING
-# The same text is in pcap_extract, zeek_run, suricata_run and network_log_summary, so that the four tools withhold
-# the same strings; tests/pack-network-withholding.test.ts holds the copies equal. An identifier-shaped string is
-# withheld wherever the tool would print one: a name, a path component, a URL, a message that quotes either.
+# The same text is in every tool that withholds identifier-shaped strings (the network, base, virtualization and
+# reverse-engineering packs), so that they withhold the same strings; the tests that hold the copies equal are
+# tests/pack-network-withholding.test.ts, tests/pack-base-shared.test.ts, tests/pack-virtualization-shared.test.ts and
+# tests/pack-re-process.test.ts. An identifier-shaped string is withheld wherever the tool would print one: a name, a
+# path component, a URL, a message that quotes either.
 COUNTS = {"names": 0, "urls": 0, "text": 0}
 # A run of name characters long enough to be a token. `=` is only a padding at the end (so a key= prefix stays);
 # `/` joins pieces of a base64 token and is handled apart, below.
@@ -183,7 +185,88 @@ def _randomish(piece):
     return (any(c.isdigit() for c in piece) and bool(letters)) or mixed
 
 
+_SPAN_PIECE = re.compile(r"[A-Za-z0-9_+%-]+")
+# A text longer than this is withheld whole, by its length, and not examined: the examination is linear, but a text of
+# millions of characters is not one a name or a URL is, and the answer says how long it was.
+TEXT_LIMIT = 2097152
+
+
+def _grow_spans(text, spans):
+    """Each flagged span takes the random-looking pieces next to it across a `/`: the head of a token is not printed.
+
+    One pass cuts the text into pieces (runs of name characters) and keeps where each starts and ends. A span then walks
+    that array by index; a piece is judged once, and a walk that reaches a piece an earlier walk has settled stops there, so
+    the work is linear in the text and no range is sliced or searched again. (Looking back with a search over everything
+    before a piece costs the cube of the length for a name of many `/`-joined pieces.)"""
+    from bisect import bisect_left
+    starts, ends = [], []
+    for m in _SPAN_PIECE.finditer(text):
+        starts.append(m.start())
+        ends.append(m.end())
+    count, size = len(starts), len(text)
+    judged_left, judged_right, settled_left, settled_right = {}, {}, {}, {}
+
+    def padded(k):       # where piece k ends with the up to two `=` of padding after it
+        e = ends[k]
+        if e < size and text[e] == "=":
+            e += 2 if e + 1 < size and text[e + 1] == "=" else 1
+        return e
+
+    def left_ok(j):
+        if j not in judged_left:
+            judged_left[j] = _randomish(text[starts[j]:ends[j]])
+        return judged_left[j]
+
+    def right_ok(k):
+        if k not in judged_right:
+            judged_right[k] = _randomish(text[starts[k]:padded(k)])
+        return judged_right[k]
+
+    def before(at):      # the piece that growing left from offset `at` takes, or -1. `$` also ends a match before a final line break.
+        if at < 2 or text[at - 1] != "/":
+            return -1
+        for stop in ((at - 1, at - 2) if text[at - 2] == "\n" else (at - 1,)):
+            j = bisect_left(ends, stop)
+            if j < count and ends[j] == stop:
+                return j if left_ok(j) else -1
+        return -1
+
+    def after(k):        # the piece that growing right from the end of piece k takes, or -1
+        e = padded(k)
+        if k + 1 >= count or e >= size - 1 or text[e] != "/" or starts[k + 1] != e + 1:
+            return -1
+        return k + 1 if right_ok(k + 1) else -1
+
+    def settle(i, step, memo):
+        trail = []
+        while i not in memo:
+            trail.append(i)
+            j = step(i)
+            if j < 0:
+                memo[i] = i
+                break
+            i = j
+        final = memo[i]
+        for t in trail:
+            memo[t] = final
+        return final
+
+    grown = []
+    for start, end in spans:
+        j = before(start)
+        if j >= 0:
+            start = starts[settle(j, lambda i: before(starts[i]), settled_left)]
+        if end < size - 1 and text[end] == "/":
+            k = bisect_left(starts, end + 1)
+            if k < count and starts[k] == end + 1 and right_ok(k):
+                end = padded(settle(k, after, settled_right))
+        grown.append((start, end))
+    return grown
+
+
 def token_spans(text):
+    if len(text) > TEXT_LIMIT:
+        return [(0, len(text))]
     spans = [m.span() for m in _PREFIXED.finditer(text)]
     for m in _RUN.finditer(text):
         if _token_run(m.group()):
@@ -193,20 +276,7 @@ def token_spans(text):
         run = m.group()
         if "/" in run and sum(1 for p in run.split("/") if _randomish(p)) >= 3 and re.search(r"[0-9+]", run):
             spans.append(m.span())
-    # A flagged piece takes the random-looking pieces next to it across a `/`: the head of a token is not printed.
-    grown = []
-    for start, end in spans:
-        while start > 1 and text[start - 1] == "/":
-            m = re.search(r"[A-Za-z0-9_+%-]+$", text[:start - 1])
-            if not m or not _randomish(m.group()):
-                break
-            start = m.start()
-        while end < len(text) - 1 and text[end] == "/":
-            m = re.match(r"[A-Za-z0-9_+%-]+={0,2}", text[end + 1:])
-            if not m or not _randomish(m.group()):
-                break
-            end = end + 1 + m.end()
-        grown.append((start, end))
+    grown = _grow_spans(text, spans) if spans else []
     grown.sort()
     merged = []
     for start, end in grown:
@@ -223,6 +293,8 @@ def token_shaped(text):
 
 def scrub(text, kind="text"):
     """The text with every token-shaped run and every user-info withheld."""
+    if len(text) > TEXT_LIMIT:
+        return _withheld("over-long text", len(text), kind)
     text = _USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
     text = _BARE_USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
     out, last = [], 0

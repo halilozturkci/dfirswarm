@@ -220,6 +220,9 @@ test("a sweep line recorded under an older version of the sweep's rules is read 
   assert.deepEqual([by(o.cov5).state, by(o.cov5).echoes!.map((h) => [h.ref, h.origins!.map((x) => x.why)])], ["clean", [[o.dump, ["registers"]]]]);
   assert.deepEqual([by(o.cov6).state, by(o.cov6).echoes!.map((h) => [h.ref, h.origins!.map((x) => x.why)])], ["clean", [[o.summary, ["harness"]]]]);
   assert.match(SW.sweepWords(by(o.cov5), o.cov5), /read again at .* under the sweep's rules version \d+, from a line that recorded no rules version \(the rules changed\): its hits sorted anew from what the earlier line recorded, nothing searched again/);
+  // The sweep's own render of ledger.md can be overtaken by one that began before its line was written (two renders write the same file, the later write
+  // wins); render once more from what is on disk, which is what this reads.
+  await P.renderLedger(S);
   assert.match(await readFile(join(S, P.LEDGER_MD), "utf8"), /read again at .* under the sweep's rules version/);
 
   const cleared = await checkLedgerAnswers(S, ["2", "5", "6"], ["2"]);

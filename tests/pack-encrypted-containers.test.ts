@@ -553,17 +553,18 @@ test("crypto_id does not read a LUKS version it does not handle as LUKS2", async
   });
 });
 
-test("crypto_id prints no raw bytes unless asked, bounds its sample, and says what it did not determine", async () => {
+test("crypto_id prints no raw bytes of the file, bounds its sample, and says what it did not determine", async () => {
   await withCwd(async (cwd) => {
-    // A file that could be a key file: crypto_id must not echo its first bytes.
+    // A file that could be a key file: crypto_id must not echo its bytes, and include_head_hex (which did) is gone.
     const key = Buffer.from("00112233445566778899aabbccddeeff102132435465768798a9bacbdcedfe0f", "hex");
     await writeFile(join(cwd, "work", "key.bin"), Buffer.concat([key, Buffer.alloc(2048)]));
     const plain = await tool(ID, cwd, { path: "work/key.bin" });
-    assert.ok(!plain.stdout.includes(key.subarray(0, 32).toString("hex")), "head_hex is opt-in");
+    assert.ok(!plain.stdout.includes(key.subarray(0, 32).toString("hex")));
     assert.equal(body<Id>(plain).head_hex, undefined);
-    const asked = body<Id>(await tool(ID, cwd, { path: "work/key.bin", include_head_hex: true }));
-    assert.equal(asked.head_hex, key.toString("hex"));
-    assert.match(String(asked.head_hex_note), /key material/i);
+    const asked = refused(await tool(ID, cwd, { path: "work/key.bin", include_head_hex: true })) as { error: string; include_head_hex: string };
+    assert.match(asked.error, /include_head_hex was removed/);
+    assert.equal(asked.include_head_hex, "removed");
+    assert.ok(!JSON.stringify(asked).includes(key.subarray(0, 8).toString("hex")));
     // The entropy sample has an upper bound as well as a lower one.
     assert.match(refused(await tool(ID, cwd, { path: "work/key.bin", entropy_sample: 1 << 30 })).error, /at most/);
     assert.match(refused(await tool(ID, cwd, { path: "work/key.bin", entropy_sample: 10 })).error, /at least/);
@@ -1156,7 +1157,7 @@ test("recovery_key_scan opens its values file first: a file or link already ther
     await writeFile(target, "already here\n");
     const exists = refused(await tool(SCAN, cwd, { path: "work/ev", write_values: true }, job)) as { error: string };
     assert.match(exists.error, /^the values file already exists: /);
-    assert.ok(exists.error.includes(target));
+    assert.ok(exists.error.endsWith("store/jobs/j000003/out/recovery-passwords.jsonl"), exists.error);
     assert.equal(await readFile(target, "utf8"), "already here\n");
     assert.deepEqual((await readdir(outDir)).sort(), ["recovery-passwords.jsonl"], "nothing was scanned or paged");
 

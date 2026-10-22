@@ -3,7 +3,7 @@ id: credentials/material
 title: Credential material in memory, and reporting it
 when: Memory may expose credentials, keys or tokens; say whether any were exposed or taken.
 needs: []
-tools: [mem_fs, ioc_scan]
+tools: [mem_fs, mem_carve, ioc_scan]
 requires_host: [memprocfs, vol, aeskeyfind]
 ---
 
@@ -20,7 +20,7 @@ a key schedule, a command line, an environment block, shell history or the bytes
 around a match. Its outputs, its stdout and its stderr are then sealed whole as
 sensitive, and so is anything made from them; an entry that cites one is recorded
 sensitive and a redacted package withholds it. That covers `mem_fs` in its text and
-export modes (the answer is a locator; the content is files under `$OUT/mem_fs`),
+export modes and `mem_carve` with `extract_to` (both refuse otherwise),
 `ioc_scan` (its answer carries snippets of the bytes around a hit), `aeskeyfind`,
 and the Volatility plugins and the YARA scans that print or dump memory
 (`triage/volatility`; `vol` and `memprocfs` are the engines).

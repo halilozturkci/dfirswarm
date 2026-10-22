@@ -6171,6 +6171,8 @@ export const TOOL_RESERVED_NAMES = new Set([
   "harness_record",
   // Tool jobs in worker VMs and the catalogue they grow (scripts/job-service.ts).
   "job_run", "job_status", "catalog_request",
+  // The hub's note of a seat's access to a sensitive output (scripts/sensitive-access.ts).
+  "sensitive_access",
   // The host-side model gateway (scripts/model-gateway.ts).
   "model_gateway_started", "model_gateway_refused", "model_gateway_upstream_error", "model_gateway_restarted",
   // A budget fold refused over an unreadable budget.json, and what a

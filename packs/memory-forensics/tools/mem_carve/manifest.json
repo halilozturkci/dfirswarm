@@ -1,6 +1,6 @@
 {
   "name": "mem_carve",
-  "description": "Sweep a memory image, page file or hibernation file for the byte signatures of structures that carry time and identity (registry hive, event log chunk and file, Prefetch record plain and MAM-compressed, PE header, SQLite database, MFT record, NTFS index block, zip, PDF, binary property list), and report for each hit the offset of its signature, the offset of the structure when the format puts something before the signature (a plain Prefetch record starts four bytes before SCCA; null when not established), and what the header's own fields support: header plausible, header implausible, truncated, or unknown (a signature only). A survey of signatures, not recovery: it does not parse, decompress, follow paging structures or join the pages of a fragmented structure, so a hit is a candidate and an extract is a fixed-size slice of the file from the structure's start, which can run into unrelated bytes or stop before the structure ends (declared_bytes is the header's own length where it declares one). Offsets are offsets in the file, not guest physical or process virtual addresses unless the file is a flat physical image. Hits come in offset order; the JSON preview is bounded (default 200) and every hit is kept in a JSON Lines file the answer names; max_extract takes the earliest candidates and the answer counts the rest. An extract is created exclusively: an existing file or a link is refused and counted, never written through. An extract can hold credential material (a SAM or SECURITY hive, a browser database): extracts are written mode 0600, and their sizes and sha256, and the digest of the hit-list file, are in extract-manifest.jsonl in the extract directory (named in extraction.manifest), not in the answer.",
+  "description": "Sweep a memory image, page file or hibernation file for the byte signatures of structures that carry time and identity (registry hive, event log chunk and file, Prefetch record plain and MAM-compressed, PE header, SQLite database, MFT record, NTFS index block, zip, PDF, binary property list), and report for each hit the offset of its signature, the offset of the structure when the format puts something before the signature (a plain Prefetch record starts four bytes before SCCA; null when not established), and what the header's own fields support: header plausible, header implausible, truncated (the FILE itself ends before the header or before the length it declares), or unknown (a signature only). A survey of signatures, not recovery: it does not parse, decompress, follow paging structures or join the pages of a fragmented structure, so a hit is a candidate and an extract is a slice of the file from the structure's start: the kind's fixed size, or, where the header declares more and the kind has a cap (Prefetch 16 MiB, event log file and SQLite 64 MiB, index block and chunk 64 KiB), the declared length; cut_complete says whether the slice holds the declared length (null when none is declared), and a slice can still run into unrelated bytes. Offsets are offsets in the file, not guest physical or process virtual addresses unless the file is a flat physical image. Hits come in offset order. The tool has its own clock: it stops at max_seconds (default 600, at most 780) or when the hit list and the slices cut out together reach max_results_bytes (default 1 GiB), says status partial, and gives coverage.resume_start, the offset to pass as start for the rest; every hit before it is reported and nothing is lost. The clock is looked at before every slice that is cut out (a slice is up to 64 MiB) and at every 4,096th hit otherwise. Every call makes progress: the first window (4 MiB) is searched whole and the first hit is reported whatever the time, so a call given very little time (a small max_seconds on a slow or shared CPU) can run past it by that one window of work and still moves resume_start forward, and a loop that resumes from resume_start ends. A clean image sweeps at 0.14-0.4 GB/s and a hostile one made of signatures only at about 270,000 hits per second (about 290 bytes of hit list each), so bound a very large image with start and max_bytes. The JSON preview is bounded (default 200, at most 5000) and every hit is kept in a JSON Lines file the answer names; max_extract (at most 1,000) takes the earliest candidates (a slice that was refused or failed counts toward it) and the answer counts the rest. SENSITIVE: a slice is memory content and can be a credential hive (SAM, SYSTEM, SECURITY) or a browser database, so cutting slices out (extract_to) needs write_values: true, a job, and a job run as secret output (the manifest declares it for write_values, and the tool checks SECRET_OUTPUT); anywhere else it is refused as JSON before anything is created. Credential hives are extracted on purpose, and cracking tools stay available downstream. Slices go into a directory with mode 0700 (the directories made on the way to it are 0700 too) as files with mode 0600, created exclusively and never through a link; their sizes and sha256, and the digest of the hit-list file, are in extract-manifest.jsonl in the extract directory (named in extraction.manifest), not in the answer. The hit list itself (offsets, kinds, validation) needs none of this. A results_to that exists is never replaced or written through: the result takes the next free name and the answer says so. A signal (SIGTERM, SIGINT, SIGHUP) ends it with one JSON answer (status interrupted, exit 128 plus the signal) that names the partial hit list and resume_start.",
   "params": {
     "path": {
       "type": "string",
@@ -12,11 +12,11 @@
     },
     "extract_to": {
       "type": "string",
-      "description": "Cut each hit out to this directory, under work/<your id>/ (in a job, under $OUT). A name that already exists there, a file or a link, is refused and counted: use an empty directory"
+      "description": "Cut each hit out to this directory, under work/<your id>/ (in a job, under $OUT). Needs write_values: true and a job run as secret output (see write_values). The directory is made mode 0700. A name that already exists there, a file or a link, is refused and counted: use an empty directory"
     },
     "max_extract": {
       "type": "integer",
-      "description": "How many hits to cut out, earliest first (default 25); the answer counts the ones it did not"
+      "description": "How many hits to try to cut out, earliest first (default 25, 0 to 1000: each slice is up to 64 MiB, so more is another call from coverage.resume_start); a slice refused or failed counts toward it, and the answer counts the ones it did not try"
     },
     "start": {
       "type": "integer",
@@ -26,23 +26,35 @@
       "type": "integer",
       "description": "Stop after this many bytes from start; coverage in the answer names the range actually read"
     },
+    "max_seconds": {
+      "type": "integer",
+      "description": "Stop the sweep after this many seconds (default 600, 1 to 780, inside the tool's own 900). The answer is partial and coverage.resume_start says where to continue; nothing before it is lost. The first window and the first hit of a call are never given up, so a very small value still moves resume_start forward"
+    },
+    "max_results_bytes": {
+      "type": "integer",
+      "description": "Stop when the hit list (the file that keeps every hit) and the slices cut out together reach this many bytes (default 1073741824, 1048576 to 17179869184). The answer is partial and coverage.resume_start says where to continue"
+    },
     "limit": {
       "type": "integer",
-      "description": "Hits in the JSON preview (default 200). Every hit is kept in results_to, or, when that is omitted, in a file under work/<your id>/tool-output/ (in a job, $OUT/tool-output/) that the answer names"
+      "description": "Hits in the JSON preview (default 200, at most 5000; a larger value is clamped and the answer says limit_clamped_to). Every hit is kept in results_to, or, when that is omitted and the preview is exceeded, in a file under work/<your id>/tool-output/ (in a job, $OUT/tool-output/) that the answer names"
     },
     "results_to": {
       "type": "string",
-      "description": "JSON Lines file under work/<your id>/ (in a job, under $OUT) that keeps every hit, in offset order"
+      "description": "JSON Lines file under work/<your id>/ (in a job, under $OUT) that keeps every hit, in offset order. It is never replaced and never written through a link: a name that is taken by a different file gives the next free name (<stem>-2<suffix>), a symbolic link is refused"
+    },
+    "write_values": {
+      "type": "boolean",
+      "description": "Allow extract_to to write slices of the image (memory content, credential hives included) to files (default false). Refused unless the tool runs as a job, which the harness runs as secret output because the manifest declares it; refused before anything is created otherwise. The answer never carries a slice's content or digest"
     }
   },
   "runtime": "python3",
   "entry": "run.py",
   "timeout_seconds": 900,
-  "example": "{\"path\": \"inputs/memory.raw\", \"kinds\": [\"registry hive\"], \"extract_to\": \"work/<your id>/carved\", \"results_to\": \"work/<your id>/memory-hits.jsonl\"}",
+  "example": "{\"path\": \"inputs/memory.raw\", \"kinds\": [\"registry hive\"], \"extract_to\": \"work/<your id>/carved\", \"write_values\": true, \"results_to\": \"work/<your id>/memory-hits.jsonl\"}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 4,
-  "sha256": "6d664d29366a7ef104b782ede7eaba5ed2103b514542a3a9e60317563b204613",
+  "version": 6,
+  "sha256": "c2590975965740d0075cff265112c1f350ce7a0253c53f14b8db07f00e4ccadd",
   "use": {
     "extensions": [
       ".vmem",
@@ -55,6 +67,11 @@
       "hiberfil.sys",
       "pagefile.sys",
       "swapfile.sys"
+    ]
+  },
+  "secret_output": {
+    "when_args": [
+      "write_values"
     ]
   }
 }

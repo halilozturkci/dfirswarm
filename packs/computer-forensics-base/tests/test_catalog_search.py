@@ -175,5 +175,13 @@ class CatalogSearch(Case):
         self.assertEqual((ok.code, ok.json["matched"]), (0, 1))
 
 
+    def test_arguments_that_are_not_a_json_object_are_an_answer_and_not_a_traceback(self):
+        for raw in ("not json", "[]", "7", ""):
+            r = run_tool("catalog_search", None, self.dir, raw_input=raw)
+            self.assertEqual(r.code, 1, raw)
+            self.assertEqual(r.stderr, "", raw)
+            self.assertIs(r.json["ok"], False, raw)
+
+
 if __name__ == "__main__":
     unittest.main()

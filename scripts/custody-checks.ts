@@ -404,7 +404,12 @@ const SHA256_OID = Buffer.from([0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 
 export function timestampRequest(digestHex: string, nonce = Buffer.from(createHash("sha256").update(`${digestHex}${Date.now()}`).digest().subarray(0, 8))): Buffer {
   const algo = der(0x30, Buffer.concat([SHA256_OID, Buffer.from([0x05, 0x00])]));
   const imprint = der(0x30, Buffer.concat([algo, der(0x04, Buffer.from(digestHex, "hex"))]));
-  const n = nonce[0] & 0x80 ? Buffer.concat([Buffer.from([0]), nonce]) : nonce;
+  // A DER INTEGER is minimal: no leading zero byte unless the next byte has its high bit set (a strict authority, openssl's among them, refuses
+  // anything else with status 2), and one is added in front when the high bit of the first byte is set so that the number stays positive.
+  let first = 0;
+  while (first < nonce.length - 1 && nonce[first] === 0) first += 1;
+  const trimmed = nonce.subarray(first);
+  const n = trimmed[0] & 0x80 ? Buffer.concat([Buffer.from([0]), trimmed]) : trimmed;
   return der(0x30, Buffer.concat([der(0x02, Buffer.from([1])), imprint, der(0x02, n), Buffer.from([0x01, 0x01, 0xff])]));
 }
 

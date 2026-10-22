@@ -1,6 +1,6 @@
 {
   "name": "ioc_scan",
-  "description": "Stream a large binary for ASCII and UTF-16LE needles and return locators: for every occurrence an id, its start offset, the needle, the encoding and how many bytes of context surround it. Context bytes are NOT returned by default (they are where passwords, tokens and card numbers sit): write_values: true, only in a job run with secret_output: true, writes them to a 0600 file under $OUT, and the answer names that file and says it holds secret values. Every occurrence is kept, overlapping ones included, so counts do not depend on chunk; matching is case-sensitive; scanned_start, scanned_end and bytes_scanned are what was actually read. unique_only (default true) only hides repeats of an identical context from the inline page; all_results has every occurrence. Needles are recorded in the trace: never put a secret in one. The file is read as given (an E01 is its container bytes). earlier_answers says how many other files answer the same question.",
+  "description": "Stream a large binary for ASCII and UTF-16LE needles and return locators: for every occurrence an id, its start offset, the needle, the encoding and how many bytes of context surround it. Context bytes are NOT returned by default (they are where passwords, tokens and card numbers sit): write_values: true, only in a job run as secret output (the manifest makes every job that sets it one), writes them to a 0600 file under $OUT, and the answer names that file and says it holds secret values. Every occurrence is kept, overlapping ones included, so counts do not depend on chunk; matching is case-sensitive; scanned_start, scanned_end and bytes_scanned are what was actually read. unique_only (default true) only hides repeats of an identical context from the inline page; all_results has every occurrence. Needles are recorded in the trace: never put a secret in one. The file is read as given (an E01 is its container bytes). earlier_answers says how many other files answer the same question. The scan has a clock (max_seconds, default 100): when it is used the answer is for the occurrences that start before next_start, with complete false, status partial and the offset to go on from. status and status_basis say whether the whole requested range was read.",
   "params": {
     "path": {
       "type": "string",
@@ -20,11 +20,11 @@
     },
     "start": {
       "type": "integer",
-      "description": "Start offset"
+      "description": "Start offset: an occurrence is reported when it starts at or after it. The way to go on after a scan stopped at its clock, which names next_start. The context before a hit is clipped at start."
     },
     "length": {
       "type": "integer",
-      "description": "Max bytes to scan"
+      "description": "Max bytes to scan (an occurrence that crosses the end of the range is not in it)"
     },
     "chunk": {
       "type": "integer",
@@ -40,7 +40,11 @@
     },
     "write_values": {
       "type": "boolean",
-      "description": "Write each occurrence's context to a 0600 file under $OUT. Refused outside a job; run the job with secret_output: true. Default false."
+      "description": "Write each occurrence's context to a 0600 file under $OUT. Refused outside a job, and in a job not run as secret output (the manifest makes a job that sets this secret output). The file stops at 20,000,000 rows or 1 GiB, and the answer names the offset it stopped at and how to go on. Default false."
+    },
+    "max_seconds": {
+      "type": "integer",
+      "description": "The scan's own clock in seconds (1 to 110, default 100): a scan that reaches it answers for the occurrences that start before next_start, says complete: false and status partial, and names where to go on (start). Cost grows with needles times bytes: 1,000 needles read about 2 MiB a second on a loaded host."
     }
   },
   "runtime": "python3",
@@ -49,6 +53,11 @@
   "example": "{\"path\": \"inputs/[UNALLOCATED]\", \"needles\": \"sysinternals|psexec|http://|https://|IEUser\", \"max_hits\": 30, \"length\": 50000000}",
   "by": "s183900",
   "at": "2026-09-18T22:16:43.028Z",
-  "version": 5,
-  "sha256": "d29a37ce8bc90a60dd84f5dc73d2d2dbbf4fa81cfd8126ca825df0399d729117"
+  "version": 6,
+  "sha256": "e6142c4ae0415fb933dd660cc23d0e530230e966eff1a0e524c4e800fe495f5f",
+  "secret_output": {
+    "when_args": [
+      "write_values"
+    ]
+  }
 }

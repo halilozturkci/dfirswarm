@@ -48,6 +48,14 @@ on:
         type: choice
         options: [none, broad]
 
+# A new push to a pull request cancels the runs the older push left behind (a
+# queued run stops costing a macOS slot, a running one stops at once). Runs on
+# pushes to main, on tags, on schedules and by hand get their own group (the
+# run id) and are never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 

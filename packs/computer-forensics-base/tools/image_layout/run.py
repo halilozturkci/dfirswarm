@@ -32,7 +32,7 @@ import tempfile
 import time
 from pathlib import Path
 
-TOOL = {"name": "image_layout", "version": 2}
+TOOL = {"name": "image_layout", "version": 3}
 CHILD_TIMEOUT = 120
 TOTAL_BUDGET = 270          # seconds, under the manifest's 300
 SECTOR_MAX = 65536
@@ -114,11 +114,18 @@ def parse_mmls(text):
     m = re.search(r"Units are in (\d+)-byte sectors", text)
     if m:
         sector = int(m.group(1))
-    slots = []
+    slots, skipped = [], []
+    expect = 0
     for line in text.splitlines():
         m = SLOT.match(line.strip())
         if not m:
             continue
+        # mmls prints a GPT partition name raw, so a name holding a line break can put a forged row in the table: a row is the one the table is
+        # at (slots count 000, 001, ...), and one that is out of sequence is not a partition.
+        if int(m.group("slot")) != expect:
+            skipped.append(line.strip()[:120])
+            continue
+        expect += 1
         desc = m.group("desc")
         slots.append({
             "slot": m.group("slot"),
@@ -129,7 +136,7 @@ def parse_mmls(text):
             # the description is a partition's own name in a GPT and says nothing of the sort.
             "allocated": m.group("table") != "-------" and m.group("table").lower() != "meta",
         })
-    return sector, slots
+    return sector, slots, skipped
 
 
 # [ \t]* after the colon, never \s*: a field with no value must not take the next line for its value.
@@ -325,13 +332,17 @@ def main():
                  "is not confirmed. " % out["container"])
                 + "The offsets below are sectors in the virtual disk, valid for Sleuth Kit commands against this container."
             )
-        unit, slots = parse_mmls(res["stdout"])
+        unit, slots, skipped = parse_mmls(res["stdout"])
+        for line in skipped:
+            out["notes"].append("a line of mmls's table is out of sequence and is not read as a partition (a partition name holding a line break would do this): %s" % line)
         if forced and unit != forced:
             out["notes"].append("sector_size %d was given, but mmls printed its offsets in %d-byte sectors: "
                                 "the offsets below are in %d-byte sectors." % (forced, unit, unit))
         out["sector_size"] = unit
         out["sector_size_source"] = "given by the caller (-b)" if forced else "the units line of mmls"
-        out["partition_table"] = True
+        out["partition_table"] = True if slots else "unknown"
+        if not slots:
+            out["partition_table_basis"] = "mmls ran but printed no row this tool could read, so whether the image has a partition table, and where, is not established"
         parts = []
         for n, slot in enumerate(slots):
             entry = dict(slot)
@@ -443,6 +454,9 @@ def main():
     out["raw_outputs"] = keep.files
     if keep.error:
         out["raw_outputs_error"] = keep.error
+    out["status"] = "partial" if (out.get("partition_table") == "unknown" or out.get("volumes_refused") or out.get("volumes_not_attempted")) else "complete"
+    out["status_basis"] = ("mmls and fsstat ran on every entry they were asked about and the layout is as they printed it" if out["status"] == "complete" else
+                           "the partition table is not established, or a file system fsstat was asked about was refused or not attempted (see notes and the partitions)")
     out["not_measured"] = ("Snapshots, backing files and the other segments of a split set are not read; "
                            "a file system fsstat reads here is not shown to be intact or complete, and an "
                            "encrypted volume looks like any other it cannot read.")

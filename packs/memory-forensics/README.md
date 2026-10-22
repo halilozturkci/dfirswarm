@@ -39,12 +39,21 @@ passes it no flag about that, and the pinned binary's behaviour was not verified
 content only when it runs as a job, only on `write_values: true`, and only under
 `$OUT/mem_fs`; its answer carries the locator of each file, never its content or a
 digest of it (`recovery_key_scan` of the encrypted-containers pack is the reference
-implementation of that pattern). The tool cannot see whether the job was run with
-`secret_output: true`, which seals every output of the job as sensitive: the skills
-say to run it that way, and to run `aeskeyfind`, the Volatility plugins that print
+implementation of that pattern). Both `mem_fs` and `mem_carve` declare `secret_output`
+for `write_values`, so the harness seals the job as sensitive, and both check
+`SECRET_OUTPUT=1` and refuse as JSON otherwise. `mem_carve` cuts slices out of an image
+(credential hives included, deliberately: a cracking tool downstream stays available)
+only with `write_values: true`, into a directory with mode 0700 (at most 1,000 slices a call; the slices count toward `max_results_bytes`, and the clock is looked at before each). What the tools print
+from the capture, a name MemProcFS lists, a line the engine prints, a kernel release
+and a build string, is judged first: a release and a build string are shown only when
+they have the grammar of a version (a closed list of tags), names by shape (withholding is by shape, so a
+plain password or a name under 16 characters is printed). The skills say to run
+`aeskeyfind`, the Volatility plugins that print
 command lines, environments or shell history, and YARA and `strings` match bytes
 that way too. None of them writes a secret, a fragment of one or a hash of one into
 a post, the ledger or the report.
+
+**What the name boundary does not read.** Measured on planted keys (1,000 per cell: a name alone, then inside `proc_<k>.exe`, `<k>.dll` and `1234-<k>`), the share of keys printed whole is 0 to 0.6 per cent for base64 and base62 keys alone and up to 2.9 per cent in a process-name context (24 base62 characters 2.9, 20 bytes of base64 1.2); in an engine line, which a failure shows and which has no allow-list, base64 keys of 16 to 32 bytes 0 to 18 per cent, base62 keys of 20 to 32 characters 10 to 61, a 24-character base36 key 48 to 65 and a base64 key holding `/` 37 to 40. The prefixes of the AWS, GitHub, Slack, Stripe (`sk_live_`, `rk_live_`, `pk_live_`, `whsec_`), GitLab and SendGrid keys, JWTs, 40-digit hexadecimal keys and user-info were not printed in 3,400 plants per shape. Not read at all, and printed in every cell tried: UUID-shaped secrets, 16-digit hexadecimal secrets, tokens split by `.` or `:` into pieces under 16 characters, word passwords and passphrases; printed at the rates given: 14-character policy passwords (67 to 100 per cent), base32 seeds (43 to 46), licence keys of five groups of five characters (18 to 20) and 12-character fragments of a bcrypt hash (28 to 31). A name that matters is read in a job run as secret output, with `write_values`, and a kernel release or a build string is printed only when it fits a closed list of version tags.
 
 **One goal template**: `memory-triage.md`.
 

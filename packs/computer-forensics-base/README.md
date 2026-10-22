@@ -65,7 +65,9 @@ file only when a job asks, with `secret_output`), a run that ended part way is
 the file was read (`ioc_scan`, `chunk_needles` and `sig_carve` find their matches with one shared engine,
 held equal in the three by a test and to a brute-force search over every way of cutting a stream into reads). A tool with a time budget of its own keeps that budget
 inside the manifest's limit, so reaching it is reported (`partial`, `not_checked`,
-`interrupted`) and is not a kill with nothing said. `sqlite_query` reads the main
+`interrupted`) and is not a kill with nothing said: the scanners (`ioc_scan`,
+`chunk_needles`) and `file_carver` have one, and the answer names where to go on or how far it got.
+`feature_scan`'s counting of the files bulk_extractor wrote has none. `sqlite_query` reads the main
 database file and reports a write-ahead log beside it without applying it; on a table of secrets,
 run as a job with `secret_output`, `write_values` with a `table` writes the cells to a 0600 file under `$OUT`
 and answers with locators, types and lengths only (no `sql` in that mode, so no filter can confirm a guess);
@@ -79,7 +81,9 @@ member list) inventory: they read no file's contents. `ad1-items` inventories
 an AccessData AD1 logical image (FTK Imager's custom content image, found by
 its `ADSEGMENTEDFILE` header): every item with its size, times, the
 digests the image records and a locator, each file inflated to check them,
-every claim the image makes bounded before it is followed, nothing
+every address, count and chain the image names held to what the image can hold
+before it is followed, a metadata chain that items share written once, the data
+no item leads to counted (a lost item makes the answer partial), nothing
 extracted; `ad1_extract` writes the files out. `memory-windows` is a
 broad extraction of a Windows memory image, Volatility's standard views of
 the whole of it. `disk-timeline` is a broad extraction of a disk image,

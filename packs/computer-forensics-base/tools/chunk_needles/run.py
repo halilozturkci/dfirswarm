@@ -12,10 +12,14 @@ What it finds, exactly: every occurrence of each needle, overlapping ones includ
 `chunk` is; a match is held back until its context is in the read, so a read boundary neither
 loses a match nor cuts its context. `source` names the stream: the file, or the image, the
 volume offset, the inode, and any sector size given. The stream is read once and never held whole.
-"""
-import json, re, shutil, sys, subprocess, os
 
-TOOL = {"name": "chunk_needles", "version": 7}
+The scan has a clock (`max_seconds`, default 100, at most 110, inside the manifest's 120): one that reaches it answers for the
+occurrences that start before `next_start` in the stream, says `complete: false` and `status: partial`, and how to go on (a file:
+ioc_scan with `start`; an inode: icat_extract it, then ioc_scan the file).
+"""
+import json, re, shutil, sys, subprocess, os, time
+
+TOOL = {"name": "chunk_needles", "version": 8}
 CHUNK_DEFAULT = 8 * 1024 * 1024
 CHUNK_MIN, CHUNK_MAX = 16, 256 * 1024 * 1024
 CONTEXT_MAX = 65536
@@ -23,6 +27,11 @@ HITS_MAX = 1_000_000
 NEEDLES_MAX = 1000
 NEEDLE_BYTES_MAX = 4096
 ROW_CAP = 20_000_000
+VALUES_ROWS_MAX = 20_000_000       # rows in the values file (write_values); the scan and its locators go on past it
+VALUES_BYTES_MAX = int(os.environ.get("CHUNK_NEEDLES_VALUES_BYTES") or 1 << 30)    # bytes in the values file (a smaller cap can be asked for)
+SECONDS_DEFAULT, SECONDS_MAX = 100, 110   # the scan's own clock, inside the manifest's 120
+FEED = 256 * 1024                  # bytes handed to the engine at a time: the clock is looked at between feeds
+STARTED = time.monotonic()
 SECTOR_MAX = 65536
 INODE = re.compile(r"^\d+(-\d+(-\d+)?)?$")
 
@@ -209,6 +218,8 @@ class SecretValues:
     def __init__(self, enabled: bool):
         self.enabled = enabled
         self.written = 0
+        self.bytes = 0
+        self.stopped_at = None
         self._fh = None
         self.job = os.environ.get("JOB_ID") or ""
         self.out = os.environ.get("OUT") or ""
@@ -221,6 +232,13 @@ class SecretValues:
                 "write_values is refused outside a job: a value written here would be an ordinary "
                 "file, not a sealed secret output. Run this as job_run tool=chunk_needles with "
                 "secret_output: true, and ask again there. Nothing was written."
+            )
+        if os.environ.get("SECRET_OUTPUT") != "1":
+            raise SecretValuesRefused(
+                "write_values is refused in a job that was not run as secret output: its files would be sealed as ordinary "
+                "output. The harness sets SECRET_OUTPUT=1 for a secret job's process and it is not set here. Run it as "
+                "job_run(tool: \"chunk_needles\", args: {...}), whose manifest makes a job that sets write_values secret output, or give "
+                "a command job secret_output: true. Nothing was written."
             )
         self.path = Path(self.out) / self.NAME
         self.shown = "store/jobs/%s/out/%s" % (re.sub(r"[^A-Za-z0-9_.-]", "_", self.job), self.NAME)
@@ -240,9 +258,15 @@ class SecretValues:
     def add(self, finding_id: str, locator: dict, value: str) -> None:
         if not self.enabled:
             return
-        self._fh.write(json.dumps({"finding_id": finding_id, **locator, "value": value}, ensure_ascii=False))
-        self._fh.write("\n")
+        # ensure_ascii: a source label that is not UTF-8 (a path's bytes arrive as lone surrogates) is written as an escape, never an encoding error.
+        line = json.dumps({"finding_id": finding_id, **locator, "value": value}, ensure_ascii=True) + "\n"
+        if self.stopped_at is not None or self.written >= VALUES_ROWS_MAX or self.bytes + len(line) > VALUES_BYTES_MAX:
+            if self.stopped_at is None:
+                self.stopped_at = locator.get("offset")
+            return      # from the first occurrence that did not fit on, none is written: the file is a prefix
+        self._fh.write(line)
         self.written += 1
+        self.bytes += len(line)
 
     def close(self) -> None:
         if self._fh is not None:
@@ -257,6 +281,10 @@ class SecretValues:
             "written": self.written,
             "values_file": self.shown if self.enabled else None,
             "contains_secret_values": self.written > 0,
+            **({"complete": self.stopped_at is None} if self.enabled else {}),
+            **({"stopped_at_offset": self.stopped_at, "cap_rows": VALUES_ROWS_MAX, "cap_bytes": VALUES_BYTES_MAX,
+                "resume": "the file holds every occurrence that starts before stopped_at_offset; to get the rest, scan again from there in a new job (ioc_scan start=)"}
+               if self.stopped_at is not None else {}),
             "format": "JSON Lines, mode 0600: finding_id, source, offset, needle, encoding, value (the printable context around the match)" if self.enabled else None,
         }
 
@@ -345,7 +373,7 @@ class Locators:
         fd, name = tempfile.mkstemp(dir=self.path.parent, prefix=".%s-" % self.tool)
         self.tmp, self.fh = Path(name), os.fdopen(fd, "w", encoding="utf-8")
         for row in self.page:
-            self.fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+            self.fh.write(json.dumps(row, ensure_ascii=True) + "\n")
             self.written += 1
 
     def add(self, row):
@@ -360,7 +388,7 @@ class Locators:
                 self.error = "the whole result could not be written (%s: %s)" % (self.path.parent, exc.strerror or exc)
         if self.fh:
             if self.written < ROW_CAP:
-                self.fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+                self.fh.write(json.dumps(row, ensure_ascii=True) + "\n")
                 self.written += 1
             elif self.stopped_at is None:
                 self.stopped_at = row["off"]
@@ -440,6 +468,7 @@ inode = args.get("inode")
 context = whole(args, "context", 60, 0, CONTEXT_MAX)          # 0 is 0, not the default
 max_hits = whole(args, "max_hits", 20, 1, HITS_MAX)
 chunk = whole(args, "chunk", CHUNK_DEFAULT, CHUNK_MIN, CHUNK_MAX)
+max_seconds = whole(args, "max_seconds", SECONDS_DEFAULT, 1, SECONDS_MAX)
 sector_size = args.get("sector_size")
 if sector_size is not None and (not isinstance(sector_size, int) or isinstance(sector_size, bool)
                                 or sector_size < 512 or sector_size > SECTOR_MAX or sector_size % 512):
@@ -469,7 +498,7 @@ except SecretValuesRefused as exc:
     fail(str(exc), write_values="refused")
 
 
-def scan_fh(fh, source):
+def scan_fh(fh, source, total=None):
     counts = {n: {"ascii": 0, "utf16le": 0} for n in need_list}
     key = [source["label"], source.get("image"), source.get("volume_offset_sectors"), source.get("inode"), source.get("sector_size"), context]
     pages = {n: Locators("chunk_needles", key + [n], max_hits) for n in need_list}
@@ -489,17 +518,27 @@ def scan_fh(fh, source):
 
     # The shared engine finds every occurrence once, in offset order, whatever chunk is (see StreamScan above).
     scanner = StreamScan([v[2] for v in variants], before=context, after=context)
+    deadline = STARTED + max_seconds
+    stopped = None
+    scanned = 0
     try:
-        scanned = 0
-        while True:
+        while stopped is None:
             data = fh.read(chunk)
-            at_end = not data
-            scanned += len(data)
-            for at, vi, buf, base in scanner.feed(data, final=at_end):
+            if not data:
+                break
+            for off in range(0, len(data), FEED):
+                block = data[off:off + FEED] if len(data) > FEED else data
+                for at, vi, buf, base in scanner.feed(block):
+                    name, enc, nb = variants[vi]
+                    emit(at, name, enc, nb, buf, base)
+                scanned += len(block)
+                if time.monotonic() > deadline and (total is None or scanned < total):
+                    stopped = scanner.done        # every occurrence that starts before this is reported; the rest are the next scan's
+                    break
+        if stopped is None:
+            for at, vi, buf, base in scanner.feed(b"", final=True):
                 name, enc, nb = variants[vi]
                 emit(at, name, enc, nb, buf, base)
-            if at_end:
-                break
         hits = {}
         for n in need_list:
             page = pages[n].finish()
@@ -507,7 +546,7 @@ def scan_fh(fh, source):
     finally:
         for n in need_list:
             pages[n].discard()                  # no half-written file is left when the run did not finish
-    return hits, scanned
+    return hits, scanned, stopped
 
 
 if path:
@@ -517,7 +556,7 @@ if path:
     source = {"kind": "file", "path": path, "bytes": os.path.getsize(path)}
     source["label"] = path
     with open(path, "rb") as f:
-        hits, scanned = scan_fh(f, source)
+        hits, scanned, stopped = scan_fh(f, source, source["bytes"])
 else:
     if inode is None:
         print(json.dumps({"error": "path or inode required"}))
@@ -545,21 +584,37 @@ else:
     # cannot stall the pipe being read.
     with tempfile.TemporaryFile() as errf:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf)
-        hits, scanned = scan_fh(proc.stdout, source)
+        hits, scanned, stopped = scan_fh(proc.stdout, source)
+        if stopped is not None:
+            proc.kill()                       # icat is blocked writing to a pipe nobody reads any more; its exit is not a failure
         rc = proc.wait()
         errf.seek(0)
         err_text = errf.read().decode("utf-8", "replace").strip()
-    if rc != 0:
+    if rc != 0 and stopped is None:
         secret.close()
         print(json.dumps({"error": err_text or f"icat exit {rc}", "image": image, "inode": inode, "offset": offset, "scanned_bytes": scanned,
                           "note": "what was found before icat failed is not a result; any locator or values file written meanwhile is partial",
                           "secret_values": secret.summary()}))
         sys.exit(1)
 secret.close()
-print(json.dumps({
+answer = {
     "tool": TOOL, "source": source, "scanned_bytes": scanned, "hits": hits,
+    "complete": stopped is None,
+    "status": "complete" if stopped is None else "partial",
+    "status_basis": ("the whole stream was read and every occurrence in it is reported" if stopped is None
+                     else "the scan stopped at its clock before the end of the stream (see stopped): only occurrences that start before next_start are reported"),
     "match_policy": "every occurrence by its start offset in the scanned stream, overlapping ones included, case-sensitive; each needle as UTF-8 and as UTF-16LE",
     "context": {"bytes_each_side": context, "returned_inline": False,
-                "note": "context bytes are not returned: they are where a secret sits. write_values: true, in a job run with secret_output: true, writes them to a file under $OUT."},
+                "note": "context bytes are not returned: they are where a secret sits. write_values: true, in a job run as secret output, writes them to a file under $OUT."},
     "secret_values": secret.summary(),
-}))
+}
+if stopped is not None:
+    answer["next_start"] = stopped
+    answer["stopped"] = ("the %d-second time budget was used after %d bytes of the stream: the counts and hits are for the occurrences that start before offset %d; %s"
+                         % (max_seconds, scanned, stopped,
+                            "go on with ioc_scan path=%s start=%d and the same needles" % (path, stopped) if path else
+                            "extract the inode (icat_extract) and go on with ioc_scan on the file, start=%d" % stopped))
+if secret.stopped_at is not None:
+    answer["status"] = "partial"
+    answer["status_basis"] += "; the values file stopped at its cap (secret_values.stopped_at_offset), the locators did not"
+print(json.dumps(answer))

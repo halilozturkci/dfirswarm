@@ -2,6 +2,8 @@
 
 Fetch a body with `skill("<id>")`. A body may name others; fetch those the same way.
 
+Router: `reverse-engineering/router`
+
 - `capabilities/mapping` Static capabilities and the evidence behind them: You must assess what a sample could do without claiming it ran.
 - `code/static-inspection` Reading native code with its analysis limits stated: You must read a native binary's code: functions, control flow, references.
 - `documents/external-and-active-content` External targets, PDF actions and RTF objects: A document has an external relationship, a PDF action marker or an RTF object.
@@ -14,6 +16,7 @@ Fetch a body with `skill("<id>")`. A body may name others; fetch those the same 
 - `packing/static-recovery` Identifying packing from structure, and where static recovery stops: Packing, compression or encryption of an executable is in question.
 - `pe/signature-and-resources` PE exports, certificate table and resources: You need export names, signing state or version information.
 - `pe/structure` A PE file and what its structure shows: The sample is a Windows-format executable, DLL or driver.
+- `reverse-engineering/router` Reverse engineering notes by question: Pick a reverse engineering note when none is listed, or you cannot choose.
 - `rules/authoring` Writing and validating a defensive YARA rule: You write a rule from a sample or test one against a corpus.
 - `rules/yara` YARA matches and what they mean: You search evidence with rules or must interpret a rule hit.
 - `runtimes/go-rust` Go and Rust binaries: A large statically linked binary looks like Go or Rust.

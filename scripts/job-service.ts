@@ -44,7 +44,7 @@ import { assessJob, HEARTBEAT_LINES, HEARTBEAT_STOP, keepSample, readSamples, sa
 import type { Mount, WorkerSpec } from "./vm.ts";
 import { jobNetworkHosts } from "./net-grants.ts";
 import { indexOutputs, objectsMatch, opMatch, rankSimilar, reuseOf, sameAsOf, sameAsView, type Reuse, type SameAs, type Similar } from "./job-reuse.ts";
-import { declaredSecretOutput, derivedFrom, derivedSensitivity, ownSensitivity, parseSecretDeclaration, recipeSecretRefusal, sensitiveIndex, snapshotObjects, type SecretDeclaration, type Sensitivity } from "./output-hygiene.ts";
+import { declaredSecretOutput, jobSensitivity, parseSecretDeclaration, recipeSecretRefusal, sensitiveIndex, targetPaths, type SecretDeclaration, type Sensitivity } from "./output-hygiene.ts";
 import { execRefused, execRefusedWords, type ExecRefused } from "./job-exec-refused.ts";
 import { writeRefused, writeRefusedWords, type WriteRefused } from "./job-write-refused.ts";
 
@@ -234,7 +234,22 @@ export type Requester = { agent: string; name?: string; doing?: string };
 export type SealSpec = { kind: "tool" | "trace"; ref: string; digest: string; line_sha256: string; path?: string; origin: TraceOrigin };
 
 /** What a job's scope was, on its record: which kind, and for a declared one what it resolved to and where the manifest is. */
-export type JobScope = { kind: ScopeKind; objects?: number; files?: number; bound?: number; manifest?: string; manifest_sha256?: string };
+export type JobScope = {
+  kind: ScopeKind;
+  objects?: number;
+  files?: number;
+  bound?: number;
+  manifest?: string;
+  manifest_sha256?: string;
+  /**
+   * A job that declared no scope (it could read every object) and whose command, arguments, source or targets name a
+   * sensitive job: the job ran, the dependency was recorded here when it started, and what it seals is sensitive
+   * (docs/adr/0016). `matched` is what the text held of the job: its store path, else its id.
+   */
+  auto_declared?: Array<{ from: string; how: "named_in_text"; matched: string }>;
+  /** A job that declared no scope: the sensitive jobs that were sealed when it started, which its mounts let it read. Not a record that it did. */
+  could_read_sensitive?: string[];
+};
 
 export type JobState = "accepted" | "running" | "finished" | "fenced" | "committed" | "failed" | "cancelled";
 
@@ -299,6 +314,8 @@ export type JobRecord = {
   exec_refused?: ExecRefused;
   /** Its outputs are sensitive, decided when they were sealed (output-hygiene.ts): run with secret_output, or made from a sensitive output. */
   sensitive?: Sensitivity;
+  /** Derived and known when the job started: what it declared, or its text, already reaches a sensitive output (job_started's `sensitive_at_start`; the seal decides again, from what it read). */
+  sensitive_at_start?: Sensitivity;
 };
 
 /**
@@ -588,7 +605,7 @@ export class JobService {
           if (j) j.same_as = l.same_as as SameAs[];
           break;
         case "job_started":
-          if (j) Object.assign(j, { state: "running", attempt: Number(l.attempt), started_at: l.at, worker: l.worker, image: l.image, tool_sha256: l.tool_sha256, accessible: l.accessible, network: l.network, ...(l.scope ? { scope: l.scope as JobScope } : {}), ...(l.cpus ? { worker_size: `${l.cpus} vCPU, ${l.memory_mib} MiB` } : {}), ...(l.lane ? { lane: l.lane as Lane } : {}), ...(l.image_choice ? { image_choice: l.image_choice as ImageChoice } : {}) });
+          if (j) Object.assign(j, { state: "running", attempt: Number(l.attempt), started_at: l.at, worker: l.worker, image: l.image, tool_sha256: l.tool_sha256, accessible: l.accessible, network: l.network, ...(l.scope ? { scope: l.scope as JobScope } : {}), ...(l.sensitive_at_start ? { sensitive_at_start: l.sensitive_at_start as Sensitivity } : {}), ...(l.cpus ? { worker_size: `${l.cpus} vCPU, ${l.memory_mib} MiB` } : {}), ...(l.lane ? { lane: l.lane as Lane } : {}), ...(l.image_choice ? { image_choice: l.image_choice as ImageChoice } : {}) });
           break;
         case "job_finished":
           if (j) Object.assign(j, { state: "finished", exit: l.exit as number | null, finished_at: l.at, status: l.status, reason: l.reason });
@@ -933,6 +950,7 @@ export class JobService {
         state: j.state,
         ...(j.status ? { status: j.status } : {}),
         ...(j.outputs ? { outputs: { files: j.outputs.files, bytes: j.outputs.bytes, path: j.outputs.path } } : {}),
+        ...(j.sensitive ? { sensitive: true as const } : {}),
         ...objects,
         match,
         op: j.reuse.op,
@@ -1555,14 +1573,17 @@ export class JobService {
       await chmod(join(this.S, rel), 0o444).catch(() => undefined);
       Object.assign(scope, plan.view ?? {}, { manifest: rel, manifest_sha256: sha256Hex(text) });
     }
+    // Why it is sensitive, if it already is (docs/adr/0016): what it declared, or for a job with no scope what its text names.
+    // The job runs either way; this records the dependency and what it could read, and nothing is refused or hidden.
+    const atStart = await this.sensitiveAtStart(job, scope);
     // Which lane it took, how it came to its image, and how long it waited for room on the host.
     const lane = this.laneOf(job);
     const since = this.waitingForHost.get(job.id);
     this.waitingForHost.delete(job.id);
     const hostWait = since !== undefined ? { host_wait_ms: Date.now() - since } : {};
     const imageChoice = Object.keys(this.o.images ?? {}).length ? { image_choice: chosen.choice } : {};
-    await this.journal.append({ type: "job_started", job: job.id, attempt: job.attempt, worker, image: chosen.ref, ...(chosen.profile ? { profile: chosen.profile } : {}), ...imageChoice, lane, ...hostWait, ...(script.tool_sha256 ? { tool_sha256: script.tool_sha256 } : {}), declared: job.spec.inputs, scope, accessible, observed: "unknown", network: netText, cpus: this.o.workerCpus, memory_mib: this.o.workerMemoryMib });
-    Object.assign(job, { state: "running", worker, worker_size: `${this.o.workerCpus} vCPU, ${this.o.workerMemoryMib} MiB`, started_at: new Date().toISOString(), image: chosen.ref, lane, ...imageChoice, accessible, scope, network: netText, ...(script.tool_sha256 ? { tool_sha256: script.tool_sha256 } : {}) });
+    await this.journal.append({ type: "job_started", job: job.id, attempt: job.attempt, worker, image: chosen.ref, ...(chosen.profile ? { profile: chosen.profile } : {}), ...imageChoice, lane, ...hostWait, ...(script.tool_sha256 ? { tool_sha256: script.tool_sha256 } : {}), declared: job.spec.inputs, scope, ...(atStart ? { sensitive_at_start: atStart } : {}), accessible, observed: "unknown", network: netText, cpus: this.o.workerCpus, memory_mib: this.o.workerMemoryMib });
+    Object.assign(job, { state: "running", worker, worker_size: `${this.o.workerCpus} vCPU, ${this.o.workerMemoryMib} MiB`, started_at: new Date().toISOString(), image: chosen.ref, lane, ...imageChoice, accessible, scope, ...(atStart ? { sensitive_at_start: atStart } : {}), network: netText, ...(script.tool_sha256 ? { tool_sha256: script.tool_sha256 } : {}) });
     await this.project(job);
     maybeCrash("job:started");
     const started = Date.now();
@@ -1806,32 +1827,33 @@ export class JobService {
    * byte for byte what a sensitive job wrote is sensitive whatever it read.
    * Null when none of these.
    */
-  private async sensitivityOf(job: JobRecord, outputs: ReadonlyArray<{ sha256: string }> = []): Promise<Sensitivity | null> {
-    const own = ownSensitivity(job.spec);
-    if (own) return own;
-    // Every job the run holds sensitive so far, from the journal (the record), by their outputs' and logs' digests.
-    const index = await sensitiveIndex(this.S);
-    const sensitive = new Set([...index.jobs.keys()].filter((id) => id !== job.id));
-    if (!sensitive.size) return null;
-    // What the job actually read: its scope manifest's snapshot (each file's digest hashed at the job's start), not a scope resolved anew.
-    const objects = await snapshotObjects(this.S, job.scope?.manifest);
-    const text = [job.spec.command ?? "", job.spec.args ? JSON.stringify(job.spec.args) : "", job.spec.source ?? "", ...targetPaths(job.spec)].join("\n");
-    const from = derivedFrom({
-      objects,
-      text,
-      sensitive,
-      contentJob: (sha) => (index.content.get(sha) === job.id ? null : index.content.get(sha) ?? null),
-      generationJob: (gen) => index.genJob.get(gen) ?? null,
-      aliasJob: (alias) => index.aliasJob.get(alias) ?? null,
-    });
-    // A file it sealed that is byte for byte what a sensitive job wrote (what
-    // same_as names, ADR 0017) holds what that output holds, however it was
-    // made. Read from the journal's sensitive jobs and their manifests (the
-    // index above, the empty file excluded), never from the same_as index,
-    // which may still be building: the sensitivity is decided before
-    // job_committed is written.
-    const sameBytes = outputs.map((f) => index.content.get(f.sha256) ?? null).filter((id): id is string => id !== null && id !== job.id);
-    return derivedSensitivity([...new Set([...from, ...sameBytes])].sort());
+  private async sensitivityOf(job: JobRecord, outputs: ReadonlyArray<{ sha256: string; path?: string }> = []): Promise<Sensitivity | null> {
+    return jobSensitivity(this.S, job, { outputs });
+  }
+
+  /**
+   * What a job that is starting already reaches (output-hygiene.ts
+   * jobSensitivity, running): sets `auto_declared` and `could_read_sensitive`
+   * on its scope when it declared none, and returns its derived sensitivity
+   * for the journal's `sensitive_at_start`. A sensitivity that cannot be read
+   * records nothing here: the seal decides it again and holds the output
+   * sensitive if it cannot.
+   */
+  private async sensitiveAtStart(job: JobRecord, scope: JobScope): Promise<Sensitivity | null> {
+    try {
+      // Asked as if the job were not secret_output itself: a job that is also reads sensitive outputs, and the record says so.
+      const sens = await jobSensitivity(this.S, { id: job.id, spec: { ...job.spec, secret_output: undefined, secret_output_by: undefined }, scope: { manifest: scope.manifest } }, { running: true });
+      if (!scope.manifest) {
+        const named = (sens?.because ?? []).filter((b) => b.how === "named_in_text");
+        if (named.length) scope.auto_declared = named.map((b) => ({ from: b.from, how: "named_in_text" as const, matched: b.object }));
+        const could = [...(await sensitiveIndex(this.S)).jobs.keys()].filter((id) => id !== job.id).sort();
+        if (could.length) scope.could_read_sensitive = could;
+      }
+      return sens && !job.spec.secret_output ? sens : null;
+    } catch (err) {
+      this.log(`${job.id}: what it reaches of the sensitive outputs could not be read when it started (${(err as Error).message}); the seal decides`);
+      return null;
+    }
   }
 
   /**
@@ -2787,10 +2809,7 @@ export type WorkerPlan = {
   script: { lines: string[]; tool_sha256?: string };
 };
 
-/** A recipe's or a detect pass's target paths: part of its scope, whatever it declared. */
-export function targetPaths(spec: Pick<JobSpec, "target" | "targets">): string[] {
-  return [...(spec.target?.paths ?? []), ...(spec.targets ?? []).flatMap((t) => t.paths ?? [])];
-}
+export { targetPaths };
 
 /** A file's sha256 read through a descriptor that does not follow a link; a link, a special file or nothing is said. */
 async function hashNoFollow(path: string): Promise<{ sha256: string } | { reason: string }> {

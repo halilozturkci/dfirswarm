@@ -3,7 +3,7 @@ id: artifacts/links
 title: Shell links
 when: Read a .lnk, or carve link structures.
 needs: [artifacts/shell]
-tools: [lnk_parse]
+tools: [lnk_parse, lnk_jumplist]
 requires_host: [lnkinfo]
 ---
 
@@ -14,7 +14,7 @@ Use when you read a shell link or carve link structures from a dump. Not for the
 - `structure_complete` false with `problems` means the read ended inside the structure: read more bytes (`size`) before citing a field of it. With `scan` and `dump`, links are carved by the 20-byte header and a hit is a candidate.
 - A removable `drive_type_name` with serial and label says the volume was recorded that way; tie it to a device only through `registry/devices`. A network target says that share path named it when the link was written, not that content came from there.
 - Target times and size are as they were when the link was last written.
-- `lnkinfo` reads a link by another implementation: for a field a report depends on, keep both outputs and any disagreement.
+- `lnkinfo` reads a link by another implementation: for a field a report depends on, keep both outputs and any disagreement. `lnk_jumplist` does that comparison field by field for every link of a file or a directory and reports `lnkinfo.disagreed`; it is also the call for links inside Jump Lists (`artifacts/jumplists`).
 
 Arguments and the string scan are withheld from the answer. You get `arguments_present`, `arguments_chars` and `arguments_first_token` (only a switch name, a program or a script; otherwise null with `arguments_first_token_withheld`), and `utf16_strings` as offsets and lengths with a `finding_id` (`utf16_string_count`). A path-like field shaped like a secret is replaced by a length marker, listed in `sensitive_fields_withheld`. The text goes only to `lnk-strings.jsonl` under $OUT with `write_strings: true`, in a job.
 

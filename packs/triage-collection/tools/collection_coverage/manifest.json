@@ -1,0 +1,73 @@
+{
+  "name": "collection_coverage",
+  "description": "State what a delivered collection covers for the questions the analyst asks of it, from records and files, never by default. Each question has patterns over the collector's source paths and/or the delivered paths (a case-insensitive glob: * and ?, either separator, no regular expression). For each question the tool counts the delivered files that match (by their own path or by the source path a record gives them), the records that say a matching file was copied or uploaded, the records that record a matching target as skipped or failed (the collector's own words, by locator, never explained), the records that name a matching file the complete census does not hold, and the matching delivered files that no record names where the directory has a per-file record; the statement it generates repeats only these counts. requested takes the patterns of the targets the collection was asked to take, as the analyst read them in the collector's profile, and says for each whether it was delivered, recorded as copied but not delivered, recorded as skipped or failed, or neither. verification takes the checks table of collection_manifest_verify and folds each matching file's status in; examined takes the delivered paths the analyst has examined and counts the matching files that are not among them. An empty match is a statement about this delivery and the records read, not about the source, about what the collector was asked to take, or about whether a skip row would have been written (a record that could not be read whole, or a KAPE run with no skip log, is named in the statement). There is no default sentence that something was never present. Not measured: whether the files are intact (unless verification is given), what a profile contained, whether a question's artefact would have survived on the source. At most 50 questions, 8 patterns of a kind each, 200 patterns in all. Run it as a job with secret_output: true (the tool cannot see whether the job was run so). write_values: true (jobs only) writes the real strings to $OUT/collection-coverage-values.jsonl, mode 0600, created first, a second run in the same job refused. Every key and value of the answer and of the table files it names is withheld by shape, and the structure is then read back by a second check written apart from the first; a string that check finds suspect is replaced by <withheld: N bytes>, counted in the answer's boundary entry, and the answer is partial. Withholding is by shape. Measured on random plants (1,000 per shape and context: alone, in a path, a file name, a log line, a URL, an option, glued to letters), the 33 listed shapes (token prefixes, JWT, PEM, connection strings, user-info, name=value and option forms, recovery passwords), the unlisted token families (GitLab, Stripe, Google, npm, SendGrid, DigitalOcean, Twilio), names such as DB_PASSWORD= and adminPassword:, and tokens split by NUL, zero-width, bidi, UTF-16-in-8-bit or full-width characters or written in another case come out in 0.2% or fewer of the plants; AWS-secret-shaped keys and base64 of 20 to 48 bytes in 0.7% or fewer, base64 of 16 bytes in 2.5%, 20 random letters and digits in 1.5% and 32 in 0.5%; base36 text of 24 to 32 characters in 18% to 26%. A plain password or passphrase alone in a name, a UUID-shaped key, 24 lower-case letters and 16 characters of base32 are printed (100%). A secret of another shape is printed: a file whose secrets matter is read in a secret_output job. Cost on real names, measured: 0.47% of this repository's paths, 0.14% of 37,916 Linux package paths and 3.64% of 57,142 macOS system and application paths (hardware ids and GUID-named profiles read as random) are withheld.",
+  "params": {
+    "root": {
+      "type": "string",
+      "description": "The collection directory (an archive is not opened by the tool: the collection-intake recipe reads one, or extract it into a job's output first)"
+    },
+    "questions": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "description": "1 to 50 objects: {id (letters, digits, _ . -), what (a sentence, optional), source_paths: [patterns], delivered_paths: [patterns]}; at least one list per question"
+    },
+    "requested": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Patterns over source paths of the targets the collection was asked to take (from the collector's profile, as you read it)"
+    },
+    "examined": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Patterns over delivered paths you have examined; matching files outside them are counted"
+    },
+    "verification": {
+      "type": "string",
+      "description": "The checks table collection_manifest_verify wrote (a JSON Lines file inside the run directory, e.g. its all_results path), to fold each matching file's verification status in"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Rows of each table shown inline (default 200); a longer table is whole in the file its *_table entry names"
+    },
+    "time_limit_seconds": {
+      "type": "integer",
+      "description": "Stop the walk and the reads after this long (default 1500, at most 3400): the answer then says it stopped, status partial, and what was not listed"
+    },
+    "write_values": {
+      "type": "boolean",
+      "description": "Write the real strings that were withheld to $OUT/collection-coverage-values.jsonl (default false). Refused unless the tool runs as a job, which must be run with secret_output: true; the file is created first and one already there is refused"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 3600,
+  "example": "{\"root\": \"inputs/collection\", \"questions\": [{\"id\": \"q1\", \"what\": \"the SYSTEM hive\", \"source_paths\": [\"*/config/system\"]}]}",
+  "by": "maintainer",
+  "at": "2026-10-21T12:00:00.000Z",
+  "version": 1,
+  "sha256": "dbdaa4a29bc1c8ff092a0ddcf243b4e8e3d6b04a2bdc59107926370c6aa6039a",
+  "use": {
+    "names": [
+      "*_CopyLog.csv",
+      "*_SkipLog.csv",
+      "*_ConsoleLog.txt",
+      "uac.log",
+      "hash_executables.md5",
+      "hash_executables.sha1",
+      "hash_executables.sha256",
+      "uploads.json",
+      "collection_context.json"
+    ]
+  },
+  "secret_output": {
+    "when_args": [
+      "write_values"
+    ]
+  }
+}

@@ -41,7 +41,7 @@
   "by": "maintainer",
   "at": "2026-10-07T18:00:00.000Z",
   "version": 6,
-  "sha256": "25e03e96dcfaf20fe397455ab35e40766adbd352fedccd6dec85f152e7095943",
+  "sha256": "e0e906c5a028f9c5cd935cf914c2b95d43d45f9ecc8747bf9a3f18cc45a478d0",
   "use": {
     "extensions": [
       ".pcap",

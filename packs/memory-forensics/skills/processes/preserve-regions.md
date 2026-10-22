@@ -39,7 +39,7 @@ code is read, parsed and disassembled, never run. If the extraction fails, repor
 the observations you do have and the limitation.
 
 **Sensitive output.** `mem_fs` export and text, and any dump, run as jobs with
-`secret_output: true`; the answer names files, never their content. Read
+`secret_output: true` (`mem_fs` refuses write_values in a job that is not one; its names are shown by shape, and a UUID-shaped, hexadecimal, dotted, word-only or base32 secret in a name is printed, so a name that matters is read in such a job with `write_values`); the answer names files, never their content; `contains_secret_values` is true in a later call too when an earlier call of the job wrote values. Read
 `credentials/material` before you cite anything taken from a process.
 
 **Does not show.** A sealed copy of a region is a copy of what the capture held, not that the region was complete or that injection happened.

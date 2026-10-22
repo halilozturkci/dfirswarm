@@ -1960,9 +1960,10 @@ test("extract_stream never overwrites a file, never writes under inputs/ or outs
 test("every windows-forensics tool manifest declares the programs its script runs, and says what it needs the engine for", async () => {
   // None of the twenty manifests had `requires`, so an image chosen from the manifests could lack the program a tool calls
   // (tests/recipe.test.sh scans only tool-library/). sigma_hunt needs ONE of two engines and declares neither: its description says so.
-  const programs = ["fls", "icat", "istat", "img_stat", "mmls", "esedbexport", "yara", "vshadowinfo", "ewfexport", "sqlite3", "vol"];
+  // registry_recover and lnk_jumplist call regfexport and lnkinfo as second readers and declare them.
+  const programs = ["fls", "icat", "istat", "img_stat", "mmls", "esedbexport", "yara", "vshadowinfo", "ewfexport", "sqlite3", "vol", "regfexport", "lnkinfo"];
   const dirs = await readdir(WIN);
-  assert.equal(dirs.length, 20);
+  assert.equal(dirs.length, 22);
   for (const name of dirs.sort()) {
     const manifest = JSON.parse(await readFile(join(WIN, name, "manifest.json"), "utf8")) as { entry: string; requires?: string[]; description: string; use?: unknown };
     const script = await readFile(join(WIN, name, manifest.entry), "utf8");

@@ -16,7 +16,7 @@ match locations. A match is a classification lead, not proof of execution or
 attribution.
 
 `encrypted_survey` names candidates and samples a few tails; its answer says what it
-read and did not (`coverage`, `complete`). `ransom_note_scan` says where note files
+read and did not (`status`, `status_basis`, `coverage`). `ransom_note_scan` says where note files
 sit, by name and content. Where a note sits shows where something wrote a note, not
 which directories were encrypted. Check a repeated tail against the file's own
 format, against independent files and against supported family research before it
@@ -30,4 +30,4 @@ write one, or a hash of one, into the ledger or the report.
 **Does not show.** A note's place does not show an encrypted directory; a rule
 match does not show who ran what.
 
-Record: the sample's hash and source, the engine and ruleset (source, revision, hash), rule names and match locations, the survey's `coverage` and `complete`.
+Record: the sample's hash and source, the engine and ruleset (source, revision, hash), rule names and match locations, the survey's `status`, `status_basis` and `coverage`.

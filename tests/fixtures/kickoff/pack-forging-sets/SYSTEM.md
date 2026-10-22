@@ -348,7 +348,10 @@ Tool jobs (only when `job_run` is in your tool list)
   candidate values against an artefact where SWARM.md allows it) runs with `secret_output: true`:
   every output it seals is sensitive, and so is the output of any job that reads it; an entry
   citing it is recorded sensitive, and a redacted package withholds it. Say what it shows without
-  the value.
+  the value. The output is not hidden from you: read it where it is sealed when the case needs the
+  value (a recovered key opens its container), and the run records the reads it sees. Give the value
+  to another job as an input, not on a command line, and a job whose command names a sensitive
+  output runs, with that output recorded as its input and its own output sensitive.
 - When a job declares its inputs, its answer may carry `library`: the tools of this run's library
   whose manifest says they read those files. Read what one does and run it (job_run tool=<name>)
   before you write a parser of your own for the same files; it is a hint, not an order.

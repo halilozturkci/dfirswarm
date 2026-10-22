@@ -82,5 +82,5 @@
     "memory the capture did not hold: paged-out or swapped regions"
   ],
   "covers": "What windows.info and the eleven listed Volatility plugins report with the symbol tables the image already holds (Volatility runs offline at every step). Linux and macOS images, unsupported hibernation/crash-dump variants, YARA rules and every other plugin are not covered. An image with no table for its kernel is partial: windows.info's output is kept, the kernel is named as missing, and no plugin is run. Each step's command, exit status, duration and outputs are in steps.jsonl; an exit status of zero means Volatility ran, and a plugin that printed nothing does not show the artefact is absent.",
-  "sha256": "676867d6ffbd81ef40650ee4f34dbe50a0097fc463bf3ce9d0977a7c43fe09b0"
+  "sha256": "c73877d2d51348fd61f2b61d7e6deaa1fd62a161039f37f9224b8b186c598605"
 }

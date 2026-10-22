@@ -28,7 +28,7 @@ import tempfile
 import time
 from pathlib import Path
 
-TOOL = {"name": "check_inputs", "version": 4}
+TOOL = {"name": "check_inputs", "version": 5}
 MANIFEST = "inputs.json"
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 SPECIALS = {"fifo": stat.S_ISFIFO, "socket": stat.S_ISSOCK, "char": stat.S_ISCHR, "block": stat.S_ISBLK}
@@ -119,15 +119,15 @@ if not os.path.isfile(MANIFEST):
     done({"status": "FAIL", "ok": False, "error": "inputs.json not found", "tool": TOOL}, 1)
 try:
     args = json.load(sys.stdin) if not sys.stdin.isatty() else {}
-except ValueError:
+except (ValueError, RecursionError):
     args = {}
 budget = args.get("max_seconds", DEFAULT_SECONDS) if isinstance(args, dict) else DEFAULT_SECONDS
 if not isinstance(budget, int) or isinstance(budget, bool) or not 1 <= budget <= SECONDS_MAX:
     done({"status": "FAIL", "ok": False, "error": "max_seconds is a whole number from 1 to %d" % SECONDS_MAX, "tool": TOOL}, 1)
 try:
     man = json.load(open(MANIFEST, encoding="utf-8"))
-except json.JSONDecodeError as err:
-    done({"status": "FAIL", "ok": False, "error": f"inputs.json is not JSON: {err}", "tool": TOOL}, 1)
+except (ValueError, RecursionError) as err:      # JSONDecodeError and UnicodeDecodeError are ValueErrors; a JSON nested thousands deep is a RecursionError
+    done({"status": "FAIL", "ok": False, "error": f"inputs.json is not JSON this tool can read: {type(err).__name__}: {str(err)[:200]}", "tool": TOOL}, 1)
 files = man.get("files") if isinstance(man, dict) else None
 if not isinstance(files, list):
     done({"status": "FAIL", "ok": False, "error": "inputs.json has no files list", "tool": TOOL}, 1)
@@ -265,6 +265,8 @@ ok = not (modified or missing or added or malformed or duplicates or digest_miss
 result = {
     "tool": TOOL,
     "status": "OK" if ok else "FAIL",
+    "status_basis": ("every file of the manifest was found and its size and sha256 agree, and nothing else is under inputs/" if ok else
+                     "a file is modified, missing, added, unreadable or not checked, or the manifest has a malformed, duplicate or digestless entry (see the lists)"),
     "ok": ok,
     "modified": modified,
     "missing": missing,

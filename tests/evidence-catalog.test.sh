@@ -12,12 +12,20 @@ pass() { echo "ok - $*"; }
 cov_row() { awk -F'\t' -v p="$2" '$1 == p { print $2 "|" $3 "|" $4 }' "$1"; }
 py() { python3 -c "import sys; sys.path.insert(0, '$ROOT/scripts'); import evidence_catalog as e; $1"; }
 
-# The disk recipe strips mmls's zero-padded start column; sector 0 must stay 0.
-eval "$(sed -n '/^mmls_start_sector()/,/^}/p' "$RECIPES/disk-volumes/run.sh")"
-[[ "$(type -t mmls_start_sector)" == function ]] || fail "mmls_start_sector missing from the disk-volumes recipe"
-[[ "$(mmls_start_sector $'00:  000  0000000000  0001028095   001028096   Linux')" == 0 ]] \
+# The disk recipe reads the start column of mmls's table as digits; sector 0 must stay 0.
+eval "$(sed -n '/^table_rows()/,/^}/p' "$RECIPES/disk-volumes/run.sh")"
+[[ "$(type -t table_rows)" == function ]] || fail "table_rows missing from the disk-volumes recipe"
+ROWS_TXT="$(mktemp "${TMPDIR:-/tmp}/rows.XXXXXX")"
+printf '%s\n' \
+  'DOS Partition Table' \
+  '      Slot    Start        End          Length       Description' \
+  $'000:  000:000   0000000000   0001028095   0001028096   Linux' \
+  $'001:  000:001   0000002048   0001028095   0001026048   NTFS' > "$ROWS_TXT"
+ROWS_OUT="$(table_rows "$ROWS_TXT")"
+rm -f "$ROWS_TXT"
+[[ "$(printf '%s\n' "$ROWS_OUT" | sed -n 1p | cut -f2)" == 0 ]] \
   || fail "sector 0 became empty and would be skipped"
-[[ "$(mmls_start_sector $'01:  000  0000002048  0001028095   001026048   NTFS')" == 2048 ]] \
+[[ "$(printf '%s\n' "$ROWS_OUT" | sed -n 2p | cut -f2)" == 2048 ]] \
   || fail "a non-zero start sector should keep its value"
 pass "mmls start sector 0 is 0, not skipped"
 
@@ -40,6 +48,8 @@ Offset Sector: 0
 Units are in 512-byte sectors
 
       Slot      Start        End          Length       Description
+000:  Meta      0000000000   0000000000   0000000001   Primary Table (#0)
+001:  -------   0000000000   0000002047   0000002048   Unallocated
 002:  000:000   0000002048   0001028095   001026048    NTFS (0x07)
 TABLE
 EOF
@@ -197,6 +207,8 @@ cat > "$COV/bin/mmls" <<'STUB'
 #!/usr/bin/env bash
 case "$1" in
   *disk.E01) printf '%s\n' 'DOS Partition Table' '      Slot      Start        End          Length       Description' \
+    '000:  Meta      0000000000   0000000000   0000000001   Primary Table (#0)' \
+    '001:  -------   0000000000   0000002047   0000002048   Unallocated' \
     '002:  000:000   0000002048   0001028095   001026048    NTFS (0x07)' ;;
   *) exit 1 ;;
 esac

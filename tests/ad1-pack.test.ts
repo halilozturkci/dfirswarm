@@ -214,7 +214,7 @@ test("an image in several segments is read across them, by name beside the first
 test("past the time limit the recipe stops inflating, never listing, and says so", () => {
   const d = dir("ad1-limit-");
   writeFileSync(join(d, "case.ad1"), ad1Image(tree()));
-  const { cov, out } = runRecipe([join(d, "case.ad1")], { RECIPE_SECONDS: "0" });
+  const { cov, out } = runRecipe([join(d, "case.ad1")], { RECIPE_SECONDS: "0", RECIPE_LISTING_SECONDS: "600" });
   assert.equal(cov.status, "partial");
   assert.match(cov.limits_hit[0], /^seconds: past the limit, the content of 8 file\(s\) was not inflated, so their digests were not checked \(check not-read\); every item is still listed$/);
   const rows = tsv(join(out, "members.tsv"));
@@ -681,6 +681,87 @@ test("the reader is one block, the same in the recipe and the tool", () => {
     return t.slice(a, b);
   };
   assert.equal(block(RECIPE), block(TOOL));
+});
+
+/** An image of `n` file items (no content) whose metadata entries are one chain of `entries` entries: every item points at the chain's start (`shared`) or item i at entry i (`suffix`). */
+function chainImage(n: number, entries: number, mode: "shared" | "suffix"): Buffer {
+  const data = ad1Logical((put) => {
+    const chain: Buffer[] = [];
+    const at: number[] = [];
+    for (let i = 0; i < entries; i += 1) {
+      const e = Buffer.alloc(20);
+      e.writeUInt32LE(3, 8);
+      e.writeUInt32LE(0x7000 + (i % 50), 12);
+      at.push(put(e));
+      chain.push(e);
+    }
+    chain.forEach((e, i) => { if (i + 1 < entries) e.writeBigUInt64LE(BigInt(at[i + 1]), 0); });
+    let first = 0;
+    let prev: Buffer | null = null;
+    for (let i = 0; i < n; i += 1) {
+      const it = ad1Item(put, `f${i}`, { meta: mode === "shared" ? at[0] : at[i % entries] });
+      if (prev) prev.writeBigUInt64LE(BigInt(it.at), 0); else first = it.at;
+      prev = it.header;
+    }
+    return first;
+  });
+  return ad1Segments(data)[0];
+}
+
+test("items that share one metadata chain are written once, and a chain that overlaps itself stops attributes.tsv, named", () => {
+  const d = dir("ad1-chains-");
+  // 50 items on one 20,000-entry chain: the chain's rows are written once and each later item names the item that has them.
+  writeFileSync(join(d, "shared.ad1"), chainImage(50, 20000, "shared"));
+  const shared = runRecipe([join(d, "shared.ad1")]);
+  assert.equal(shared.cov.status, "complete", JSON.stringify(shared.cov.errors));
+  const attrs = readFileSync(join(shared.out, "attributes.tsv"), "utf8").trimEnd().split("\n");
+  assert.ok(attrs.length < 20000 + 60, `attributes.tsv has ${attrs.length} lines (one per entry of the chain, and one per later item)`);
+  assert.equal(attrs.filter((l) => l.split("\t")[3] === "same-chain").length, 49);
+  assert.equal(tsv(join(shared.out, "members.tsv")).length, 50, "every item is still listed");
+  // Item i on entry i of a 1,500-entry chain: the suffixes add up to more entries than the image holds, so the rows stop, and the call says where.
+  writeFileSync(join(d, "suffix.ad1"), chainImage(1500, 1500, "suffix"));
+  const suffix = runRecipe([join(d, "suffix.ad1")]);
+  assert.equal(suffix.cov.status, "partial");
+  assert.match(suffix.cov.limits_hit.join("\n"), /^attributes: attributes\.tsv stops inside item \d+ \(ad1:item=\d+\)/);
+  assert.equal(tsv(join(suffix.out, "members.tsv")).length, 1500, "the listing goes on past the rows");
+  assert.ok(readFileSync(join(suffix.out, "attributes.tsv")).length < 2 * 1024 * 1024, "attributes.tsv is bounded by the image, not by the items times the chain");
+});
+
+test("the recipe's listing has a clock of its own and says where it stopped", () => {
+  const d = dir("ad1-listing-clock-");
+  writeFileSync(join(d, "case.ad1"), ad1Image(tree()));
+  const { cov, out } = runRecipe([join(d, "case.ad1")], { RECIPE_LISTING_SECONDS: "0" });
+  assert.equal(cov.status, "partial");
+  assert.match(cov.limits_hit.join("\n"), /^seconds: the listing stopped after 1 items; every item after it in the image's order is not listed$/m);
+  assert.equal(tsv(join(out, "members.tsv")).length, 1);
+});
+
+test("a zeroed next pointer does not leave a complete, verified answer: the data nothing led to is counted and named", async () => {
+  const t = tree();
+  const { data, addr } = ad1Data(t);
+  const d = dir("ad1-unaccounted-");
+  writeFileSync(join(d, "clean.ad1"), ad1Segments(data)[0]);
+  const ok = runRecipe([join(d, "clean.ad1")]);
+  assert.equal((ok.cov as Record<string, unknown>).unreferenced_nonzero_bytes, 0, "a whole image leaves no content unreached (padding is zeros)");
+  // notes.txt's next pointer zeroed: NOTES.txt, empty.txt, tampered.bin and evidence.zip are no longer in the tree, and nothing says so.
+  const notesAt = addr.get(t[0].children![0].children![0].children![0])!;
+  const dropped = Buffer.from(data);
+  dropped.fill(0, notesAt, notesAt + 8);
+  writeFileSync(join(d, "cut.ad1"), ad1Segments(dropped)[0]);
+  const { cov, out } = runRecipe([join(d, "cut.ad1")]);
+  assert.equal(tsv(join(out, "members.tsv")).length, 8, "four items are no longer in the tree");
+  assert.equal(cov.status, "partial");
+  assert.equal((cov as Record<string, unknown>).integrity_status, "unverified");
+  assert.match(cov.errors.join("\n"), /\d+ bytes of the image's data that are not zero are reached by no item/);
+  assert.ok(Number((cov as Record<string, unknown>).unreferenced_nonzero_bytes) > 100);
+  const cwd = runDir();
+  writeFileSync(join(cwd, "inputs", "cut.ad1"), ad1Segments(dropped)[0]);
+  const r = await runPy(TOOL, cwd, { image: "inputs/cut.ad1" }, undefined, { AGENT_ID: "s1" });
+  const res = JSON.parse(r.stdout);
+  assert.deepEqual([res.processing_status, res.integrity_status], ["partial", "unverified"]);
+  assert.match(res.errors.join("\n"), /reached by no item/);
+  const whole = await runPy(TOOL, cwd, { image: "inputs/case.ad1", out_dir: "work/s1/whole" }, undefined, { AGENT_ID: "s1" });
+  assert.equal(JSON.parse(whole.stdout).processing_status, "complete");
 });
 
 test("file_type names an AD1 image and its encrypted form by their first bytes", async () => {

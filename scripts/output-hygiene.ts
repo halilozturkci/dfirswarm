@@ -29,6 +29,25 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
+/**
+ * The six ways a job comes to be made from a sensitive output, as
+ * `derivedFrom` tells them apart: it declared a file of the sensitive job
+ * (`declared`), or bytes with that job's digest wherever they sat
+ * (`digest`), or a catalogue generation (`generation`) or alias (`alias`) it
+ * made; it declared no scope and its command, arguments, source or targets
+ * name the job (`named_in_text`); or a file it sealed is byte for byte one
+ * the sensitive job wrote (`same_bytes`).
+ */
+export type BecauseHow = "declared" | "digest" | "generation" | "alias" | "named_in_text" | "same_bytes";
+
+/**
+ * One reason a job is made from a sensitive output: the sensitive job
+ * (`from`), the way (`how`) and what matched (`object`): the path its scope
+ * manifest names, the store path (or the id) its text held, or its own sealed
+ * file for `same_bytes`. A job id and a path; never a value or a digest.
+ */
+export type Because = { from: string; how: BecauseHow; object: string };
+
 export type Sensitivity = {
   /** secret_output: the job was run so; derived: made from a sensitive output. */
   why: "secret_output" | "derived";
@@ -37,6 +56,8 @@ export type Sensitivity = {
   note: string;
   /** secret_output only: the tool's manifest declared it (the agent's flag was not needed). */
   declared?: "tool_manifest";
+  /** derived only: why, for each sensitive job and each way it applies (absent on a record from before this field). */
+  because?: Because[];
 };
 
 /** A sealed output file, as its job's manifest lists it. */
@@ -137,18 +158,8 @@ export function declaredSecretOutput(declaration: SecretDeclaration | null, args
   return declaration.mode === "required" || declaration.args.some((a) => Object.hasOwn(args, a) && argIsSet(args[a]));
 }
 
-/**
- * The sensitive jobs a job was made from, from what it actually read (the
- * executed snapshot, not a scope resolved anew): each object of its scope
- * manifest that is a sensitive job's output — by the digest the snapshot
- * hashed (a work copy of a sensitive output has the same bytes and so the
- * same digest, wherever it sits), by its path under store/jobs/<id>/, or by
- * a catalogue generation or alias a sensitive job made — and, for a job that
- * declared no scope (it could read every object), each sensitive job its
- * command, arguments, source or targets name by id or by its store path.
- * Pure.
- */
-export function derivedFrom(o: {
+/** What `derivedFrom` reads: the objects the job's scope manifest names (null for a broad-scope job), its text, and how a sensitive output is recognised. */
+export type DerivedInput = {
   /** The scope manifest's accessible files and expanded objects, each with the digest the snapshot hashed where it has one; null for a broad-scope job. */
   objects: Array<{ path: string; sha256?: string }> | null;
   text: string;
@@ -157,28 +168,54 @@ export function derivedFrom(o: {
   contentJob: (sha256: string) => string | null;
   generationJob: (generation: string) => string | null;
   aliasJob: (alias: string) => string | null;
-}): string[] {
-  const out = new Set<string>();
-  const add = (id: string | null) => {
-    if (id && o.sensitive.has(id)) out.add(id);
+};
+
+/**
+ * Why a job was made from each sensitive job it was made from, from what it
+ * actually read (the executed snapshot, not a scope resolved anew): each
+ * object of its scope manifest that is a sensitive job's output — declared
+ * by its path under store/jobs/<id>/, by the digest the snapshot hashed (a
+ * work copy of a sensitive output has the same bytes and so the same digest,
+ * wherever it sits), or by a catalogue generation or alias a sensitive job
+ * made — and, for a job that declared no scope (it could read every object),
+ * each sensitive job its command, arguments, source or targets name by id or
+ * by its store path. One entry per sensitive job and way, the first object
+ * that matched; sorted by job, then by way. Pure.
+ */
+export function derivedBecause(o: DerivedInput): Because[] {
+  const out = new Map<string, Because>();
+  const add = (from: string | null, how: BecauseHow, object: string) => {
+    if (from && o.sensitive.has(from) && !out.has(`${from}\0${how}`)) out.set(`${from}\0${how}`, { from, how, object });
   };
   for (const x of o.objects ?? []) {
+    const declaredJob = /^store\/jobs\/([a-z0-9-]{1,64})(?:\/|$)/.exec(x.path)?.[1] ?? null;
     // The bytes it read, wherever they came from (a work copy of a sensitive output is the same digest).
     const sha = (x.sha256 ?? /^store\/blobs\/([0-9a-f]{64})$/.exec(x.path)?.[1])?.toLowerCase();
-    if (sha) add(o.contentJob(sha));
-    add(/^store\/jobs\/([a-z0-9-]{1,64})(?:\/|$)/.exec(x.path)?.[1] ?? null);
+    const byDigest = sha ? o.contentJob(sha) : null;
+    // A file of the job itself, declared by path, is `declared`; its digest says the same thing a second time.
+    if (byDigest && byDigest !== declaredJob) add(byDigest, "digest", x.path);
+    add(declaredJob, "declared", x.path);
     const gen = /^catalog\/gen\/([a-z0-9-]+)(?:\/|$)/.exec(x.path)?.[1];
-    if (gen) add(o.generationJob(gen));
+    if (gen) add(o.generationJob(gen), "generation", x.path);
     const alias = /^catalog\/([A-Za-z0-9._-]+)(?:\/|$)/.exec(x.path)?.[1];
-    if (alias && alias !== "gen" && alias !== "revisions") add(o.aliasJob(alias));
+    if (alias && alias !== "gen" && alias !== "revisions") add(o.aliasJob(alias), "alias", x.path);
   }
   if (o.objects === null) {
     for (const id of o.sensitive) {
-      const re = new RegExp(`(?<![A-Za-z0-9_-])${id.replace(/[.*+?^${}()|[\]\\-]/g, "\\$&")}(?![A-Za-z0-9_-])`);
-      if (re.test(o.text)) out.add(id);
+      const word = id.replace(/[.*+?^${}()|[\]\\-]/g, "\\$&");
+      const re = new RegExp(`(?<![A-Za-z0-9_-])${word}(?![A-Za-z0-9_-])`);
+      if (!re.test(o.text)) continue;
+      // What the text held of it: its store path where it names one, else the id.
+      const path = new RegExp(`store/jobs/${word}(?![A-Za-z0-9_-])[^\\s"'\`;|&<>()]*`).exec(o.text)?.[0];
+      add(id, "named_in_text", path ?? id);
     }
   }
-  return [...out].sort();
+  return [...out.values()].sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : a.how < b.how ? -1 : a.how > b.how ? 1 : 0));
+}
+
+/** The sensitive jobs a job was made from (`derivedBecause`, one id each), sorted. */
+export function derivedFrom(o: DerivedInput): string[] {
+  return [...new Set(derivedBecause(o).map((b) => b.from))].sort();
 }
 
 /** The files a job's scope manifest names it read, each with the digest the snapshot hashed (a work copy carries the sensitive output's digest). Null when the job declared no scope. */
@@ -191,8 +228,80 @@ export async function snapshotObjects(sandbox: string, scopeManifest: string | u
   return out;
 }
 
-export function derivedSensitivity(from: string[]): Sensitivity | null {
-  return from.length ? { why: "derived", from, note: `made from the sensitive output of ${from.join(", ")}: every output it sealed is sensitive` } : null;
+export function derivedSensitivity(from: string[], because: Because[] = []): Sensitivity | null {
+  return from.length ? { why: "derived", from, note: `made from the sensitive output of ${from.join(", ")}: every output it sealed is sensitive`, ...(because.length ? { because } : {}) } : null;
+}
+
+/** A recipe's or a detect pass's target paths: part of its scope, whatever it declared. */
+export function targetPaths(spec: { target?: { paths?: string[] }; targets?: Array<{ paths?: string[] }> }): string[] {
+  return [...(spec.target?.paths ?? []), ...(spec.targets ?? []).flatMap((t) => t.paths ?? [])];
+}
+
+/** What decides a job's sensitivity: its spec, and the scope manifest its start recorded. */
+export type SensitivityJob = {
+  id: string;
+  spec: {
+    secret_output?: unknown;
+    secret_output_by?: unknown;
+    command?: string;
+    args?: unknown;
+    source?: string;
+    inputs?: readonly string[];
+    target?: { paths?: string[] };
+    targets?: Array<{ paths?: string[] }>;
+  };
+  scope?: { manifest?: string };
+};
+
+/**
+ * Whether what a job seals is sensitive (docs/adr/0016), and why: it was run
+ * with secret_output, or it read a sensitive output. What it read is what it
+ * declared (resolved again now: a sealed output does not change), by path,
+ * by digest, or a catalogue generation or alias a sensitive job made; a job
+ * that declared no scope could read everything, so it is held to what its
+ * command, arguments, source and targets name; and a file it sealed that is
+ * byte for byte what a sensitive job wrote (`outputs`) is sensitive whatever
+ * it read. A derived answer carries `because` (`derivedBecause`). Null when
+ * none of these.
+ *
+ * `running: true` asks it of a job that has not sealed yet (nothing to read
+ * `outputs` from): the scope manifest its start recorded is there, and what
+ * it declares to read counts as named, so the answer is the one the seal
+ * will give except for a file that turns out to be a sensitive output's
+ * bytes.
+ */
+export async function jobSensitivity(sandbox: string, job: SensitivityJob, o: { outputs?: ReadonlyArray<{ sha256: string; path?: string }>; running?: boolean } = {}): Promise<Sensitivity | null> {
+  const own = ownSensitivity(job.spec);
+  if (own) return own;
+  // Every job the run holds sensitive so far, from the journal (the record), by their outputs' and logs' digests.
+  const index = await sensitiveIndex(sandbox);
+  const sensitive = new Set([...index.jobs.keys()].filter((id) => id !== job.id));
+  if (!sensitive.size) return null;
+  // What the job actually read: its scope manifest's snapshot (each file's digest hashed at the job's start), not a scope resolved anew.
+  const objects = await snapshotObjects(sandbox, job.scope?.manifest);
+  const text = [job.spec.command ?? "", job.spec.args ? JSON.stringify(job.spec.args) : "", job.spec.source ?? "", ...targetPaths(job.spec), ...(o.running ? (job.spec.inputs ?? []) : [])].join("\n");
+  const because = derivedBecause({
+    objects,
+    text,
+    sensitive,
+    contentJob: (sha) => (index.content.get(sha) === job.id ? null : index.content.get(sha) ?? null),
+    generationJob: (gen) => index.genJob.get(gen) ?? null,
+    aliasJob: (alias) => index.aliasJob.get(alias) ?? null,
+  });
+  // A file it sealed that is byte for byte what a sensitive job wrote (what
+  // same_as names, ADR 0017) holds what that output holds, however it was
+  // made. Read from the journal's sensitive jobs and their manifests (the
+  // index above, the empty file excluded), never from the same_as index,
+  // which may still be building: the sensitivity is decided before
+  // job_committed is written.
+  for (const f of o.outputs ?? []) {
+    const from = index.content.get(f.sha256) ?? null;
+    if (from && from !== job.id) because.push({ from, how: "same_bytes", object: f.path ?? "" });
+  }
+  const seen = new Set<string>();
+  const kept = because.filter((b) => (seen.has(`${b.from}\0${b.how}`) ? false : (seen.add(`${b.from}\0${b.how}`), true)));
+  kept.sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : a.how < b.how ? -1 : a.how > b.how ? 1 : 0));
+  return derivedSensitivity([...new Set(kept.map((b) => b.from))].sort(), kept);
 }
 
 async function readJson<T>(path: string): Promise<T | null> {
@@ -241,11 +350,13 @@ export async function sensitiveIndex(sandbox: string): Promise<SensitiveIndex> {
     } catch {
       continue;
     }
+    if (!l || typeof l !== "object") continue;
     if (l.type === "generation_committed" && l.generation && l.job) {
       genJob.set(String(l.generation), String(l.job));
       if (l.alias) aliasJob.set(String(l.alias).replace(/^catalog\//, "").replace(/\/$/, ""), String(l.job));
     }
-    if (l.type !== "job_committed" || !l.job || !l.sensitive) continue;
+    // A line that is not a job id and a record is not read (a hand-made or damaged journal reaches the paths below).
+    if (l.type !== "job_committed" || typeof l.job !== "string" || !/^[a-z0-9-]{1,64}$/.test(l.job) || !l.sensitive || typeof l.sensitive !== "object") continue;
     jobs.set(l.job, { id: l.job, sensitivity: l.sensitive, status: l.status ?? null, files: [], logs: [] });
     if (l.logs) logsOf.set(l.job, Object.values(l.logs).filter((h) => /^[0-9a-f]{64}$/.test(h)));
   }
@@ -254,7 +365,7 @@ export async function sensitiveIndex(sandbox: string): Promise<SensitiveIndex> {
   const EMPTY = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
   for (const j of jobs.values()) {
     const m = await readJson<{ files?: Array<{ path?: string; sha256?: string; bytes?: number }> }>(join(S, "store", "jobs", j.id, "manifest.json"));
-    j.files = (m?.files ?? []).map((f) => ({ path: String(f.path ?? ""), sha256: String(f.sha256 ?? ""), bytes: Number(f.bytes) || 0 }));
+    j.files = (Array.isArray(m?.files) ? m.files.filter((f) => f && typeof f === "object") : []).map((f) => ({ path: String(f.path ?? ""), sha256: String(f.sha256 ?? ""), bytes: Number(f.bytes) || 0 }));
     j.logs = logsOf.get(j.id) ?? [];
     for (const f of j.files) if (/^[0-9a-f]{64}$/.test(f.sha256) && f.sha256 !== EMPTY && !digests.has(f.sha256)) digests.set(f.sha256, j.id);
     for (const sha of [...j.files.map((f) => f.sha256), ...j.logs]) if (/^[0-9a-f]{64}$/.test(sha) && sha !== EMPTY && !content.has(sha)) content.set(sha, j.id);

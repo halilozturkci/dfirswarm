@@ -20,7 +20,7 @@ Use only if you interpret a parsed auth line. Not for file order, year and zone 
 
 `sudo -i` followed by no further line shows only that this log has no further line: what the shell ran is in other sources (histories, the journal, audit records where auditd ran), and the report names which were searched.
 
-A name typed at a prompt (the name on an `Invalid user` line, or a PAM `user=`) can be a password typed into the wrong field: `auth_log` leaves it out of the answer and the paging file and gives its length (`user_bytes`, `user_withheld`) beside the line's locator; the name is in the job's text file. Cite the locator, never the name; `utmp_parse` does the same for btmp.
+A name typed at a prompt can be a password typed into the wrong field. `auth_log` withholds it by its position in a line it recognises, not by what it looks like: the name of an `Invalid user` or `Illegal user` line (to the last `from <address>`, spaces included), of `Failed <method> for invalid user` or `illegal user`, of `Disconnected from invalid user`, and a PAM `user=` (the rest of the line) or `ruser=`. It leaves the name out of the answer and the paging file and gives its length (`user_bytes`, `user_withheld`) beside the line's locator; the name is in the job's text file. A line the tool does not recognise is `other` and prints no field. Cite the locator, never the name; `utmp_parse` does the same for btmp.
 
 Shows: per line type, in the table. Does not show: per line type, in the table; none of them names a person. Record: line locator, the type, the service and the address or fingerprint the line gives.
 

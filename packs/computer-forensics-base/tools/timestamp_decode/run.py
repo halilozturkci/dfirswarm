@@ -36,7 +36,7 @@ import json
 import re
 import sys
 
-TOOL = {"name": "timestamp_decode", "version": 2}
+TOOL = {"name": "timestamp_decode", "version": 3}
 
 UTC = datetime.timezone.utc
 CTX = decimal.Context(prec=120, traps=[decimal.InvalidOperation, decimal.Overflow, decimal.DivisionByZero])
@@ -197,7 +197,10 @@ def main():
     high_day = parse_day(args.get("plausible_to", DEFAULT_TO), "plausible_to")
     if low >= high_day:
         fail("plausible_from must be before plausible_to", plausible_from=args.get("plausible_from"), plausible_to=args.get("plausible_to"))
-    high = high_day + datetime.timedelta(days=1)          # plausible_to is a day, and the whole day is inside
+    try:
+        high = high_day + datetime.timedelta(days=1)      # plausible_to is a day, and the whole day is inside
+    except OverflowError:
+        high = datetime.datetime.max                      # the last day a date can hold: nothing lies after it
     explicit_range = "plausible_from" in args or "plausible_to" in args
     plausible_only = args.get("plausible_only", False)
     if not isinstance(plausible_only, bool):
@@ -239,6 +242,8 @@ def main():
     kept = [r for r in ranked if r["plausible"]] if plausible_only else ranked
     print(json.dumps({
         "tool": TOOL,
+        "status": "complete",
+        "status_basis": "every epoch this tool knows was applied to the value; which reading the artefact uses is not decided here",
         "value": text,
         "hex": hex(int(number)) if number == number.to_integral_value() else None,
         "reference_range": {"from": low.date().isoformat(), "to": high_day.date().isoformat(),

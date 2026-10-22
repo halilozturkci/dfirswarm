@@ -1,0 +1,55 @@
+{
+  "name": "collection_manifest_parse",
+  "description": "Read the records a collector wrote into canonical records, one per row or line: KAPE copy, skip and console logs, UAC's uac.log and its hash lists (hash_executables.md5, .sha1, .sha256) and a Velociraptor container (uploads.json, results/*.json, log.json). Each adapter is versioned (the answer's adapters entry names the schema each one reads); a record in another shape is partial or unsupported, counted, and kept whole where it is a row, never zero failures. CyLR writes no record this pack has a schema for and is listed as unsupported. A record keeps what the collector wrote as it wrote it: the source path and the delivered path it claims, the size, the digest with the algorithm the collector used (never equated with another), its times as raw strings, its outcome, the collector's own words for a failure, and the locator (log, row, line) of the raw row; the file the answer names holds every record, whole. failures_recorded.count of a run is null, never 0, unless every failure-source record of that run was read whole, the walk was complete and no archive at the top of the delivery went unopened; failures_recorded.seen is how many were read all the same. A skip or an error is the collector's own outcome, never explained or judged. Not measured: that a record is true, that the collector finished, whether a delivered file exists or matches a digest (collection_manifest_verify), where a delivered file came from (collection_path_map), what the delivery covers (collection_coverage), the collector's version (unknown unless a record states it) or what a record omits. A record found inside collected data ([root], uploads) belongs to the source host and is listed, not read. The digest a collector recorded for a file whose name marks a credential store is withheld from the record and goes only to the values file. The answer starts with the summary and ends with the pages. Run it as a job with secret_output: true (the tool cannot see whether the job was run so). write_values: true (jobs only) writes the real strings to $OUT/collection-manifest-parse-values.jsonl, mode 0600, created first, a second run in the same job refused. Every key and value of the answer and of the table files it names is withheld by shape, and the structure is then read back by a second check written apart from the first; a string that check finds suspect is replaced by <withheld: N bytes>, counted in the answer's boundary entry, and the answer is partial. Withholding is by shape. Measured on random plants (1,000 per shape and context: alone, in a path, a file name, a log line, a URL, an option, glued to letters), the 33 listed shapes (token prefixes, JWT, PEM, connection strings, user-info, name=value and option forms, recovery passwords), the unlisted token families (GitLab, Stripe, Google, npm, SendGrid, DigitalOcean, Twilio), names such as DB_PASSWORD= and adminPassword:, and tokens split by NUL, zero-width, bidi, UTF-16-in-8-bit or full-width characters or written in another case come out in 0.2% or fewer of the plants; AWS-secret-shaped keys and base64 of 20 to 48 bytes in 0.7% or fewer, base64 of 16 bytes in 2.5%, 20 random letters and digits in 1.5% and 32 in 0.5%; base36 text of 24 to 32 characters in 18% to 26%. A plain password or passphrase alone in a name, a UUID-shaped key, 24 lower-case letters and 16 characters of base32 are printed (100%). A secret of another shape is printed: a file whose secrets matter is read in a secret_output job. Cost on real names, measured: 0.47% of this repository's paths, 0.14% of 37,916 Linux package paths and 3.64% of 57,142 macOS system and application paths (hardware ids and GUID-named profiles read as random) are withheld.",
+  "params": {
+    "root": {
+      "type": "string",
+      "description": "The collection directory (an archive is not opened by the tool: the collection-intake recipe reads one, or extract it into a job's output first)"
+    },
+    "collectors": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Read only these collectors' records: kape, uac, velociraptor (cylr is listed as unsupported). Default: every collector found"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Rows of each table shown inline (default 200); a longer table is whole in the file its *_table entry names"
+    },
+    "time_limit_seconds": {
+      "type": "integer",
+      "description": "Stop the walk and the reads after this long (default 1500, at most 3400): the answer then says it stopped, status partial, and what was not listed"
+    },
+    "write_values": {
+      "type": "boolean",
+      "description": "Write the real strings that were withheld to $OUT/collection-manifest-parse-values.jsonl (default false). Refused unless the tool runs as a job, which must be run with secret_output: true; the file is created first and one already there is refused"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 3600,
+  "example": "{\"root\": \"inputs/collection\"}",
+  "by": "maintainer",
+  "at": "2026-10-21T12:00:00.000Z",
+  "version": 1,
+  "sha256": "c18c4917c242c40f881b780657aa9cc3b18351fb35822c3c082424b09499d886",
+  "use": {
+    "names": [
+      "*_CopyLog.csv",
+      "*_SkipLog.csv",
+      "*_ConsoleLog.txt",
+      "uac.log",
+      "hash_executables.md5",
+      "hash_executables.sha1",
+      "hash_executables.sha256",
+      "uploads.json",
+      "collection_context.json"
+    ]
+  },
+  "secret_output": {
+    "when_args": [
+      "write_values"
+    ]
+  }
+}

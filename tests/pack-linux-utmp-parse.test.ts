@@ -252,9 +252,10 @@ test("utmp_parse keeps a name typed at a login prompt (btmp) out of the answer a
     // Outside a job the text is refused, and a user filter matches nothing it cannot show.
     assert.match(refused(await tool(UTMP, cwd, { path: "work/btmp", write_text: true })).error, /outside a job/);
     assert.match(refused(await tool(UTMP, cwd, { path: "work/btmp", preview_text: true })).error, /outside a job/);
-    const probe = body(await tool(UTMP, cwd, { path: "work/btmp", user: "^BTMP" }));
-    assert.equal(probe.record_count, 0, "a filter on text the answer withholds is an oracle on it");
-    assert.equal(probe.filter_touched_withheld_text, false);
+    // ... and is refused, not answered with an empty list that reads as "no such user".
+    const probe = refused(await tool(UTMP, cwd, { path: "work/btmp", user: "^BTMP" }));
+    assert.match(probe.error, /user is refused outside a job/);
+    assert.equal(probe.status, "failed");
     const inJob = body(await asJob(UTMP, cwd, { path: "work/btmp", user: "^BTMP", write_text: true }, undefined, {}, "out-btmp"));
     assert.equal(inJob.record_count, 1);
     assert.equal(inJob.filter_touched_withheld_text, true);

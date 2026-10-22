@@ -1,7 +1,7 @@
 {
   "id": "virtualization-backup-forensics",
   "name": "Virtualization and Backup Forensics Pack",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Method and tooling for the control plane of virtualization and backup: what hypervisor management records and VM configuration files say, whether a snapshot or disk chain is complete and which markers a consolidation or an unclean close may leave, what a backup catalogue, job record and retention setting show, and which recovery points survive. It reads exports and configuration files offline; it never runs hypervisor or backup software, reads no guest content, and supports only the products its tools list.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -19,12 +19,12 @@
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
       "README.md": "f6164fecf48dc52c673627ebfa043d4c8c1498e55c7c7ae991efdcc97d36f05b",
-      "tools/backup_audit_normalise/manifest.json": "e602771b03b7048cd66e1dc374e6f3105e3d65a4cd4919aa20a7b7d49efec102",
-      "tools/backup_audit_normalise/run.py": "279ce04d120d38d278ed2cd15b88f3ca4970a2d86cbb53db1baf21cbe1981e71",
-      "tools/snapshot_chain_check/manifest.json": "7e205b3c6cb1cdbadd6a2c5ab61038a86f04a09b05198e8bfe263ceddfefd97c",
-      "tools/snapshot_chain_check/run.py": "1775b947f007c95a4a2289924012f2b25996e4db547831332392829ab0fc5814",
-      "tools/virtualization_inventory/manifest.json": "39485b2358256aff612dbf92b9243d087fdd058e8ca134c17ce52711e9d0cc06",
-      "tools/virtualization_inventory/run.py": "21c5e8fcd08058fb9095e9ad9ae362e525cd95a16ea1182d37b1f9f02720f0b6",
+      "tools/backup_audit_normalise/manifest.json": "9fd1c9d082b99e28c0ef82900b39f0f2b7c157a9e69eba0f3f73ab9727db2d32",
+      "tools/backup_audit_normalise/run.py": "52aa27f4f96b2d7548db9d83c0c8b23049d4d2463d9d4b5b8542eacd6d1172f8",
+      "tools/snapshot_chain_check/manifest.json": "1c3a842d492bc3e37ff78ddbff437d0fcf113b6d0e5737e9547ade4b17cd59a5",
+      "tools/snapshot_chain_check/run.py": "f6096eaf18bff636e442c9dce34db022fe3d6f7fec837e923c402f2a6abf1989",
+      "tools/virtualization_inventory/manifest.json": "ba86e9b402e8ded3ea0f636774c7c08c60623ab685b262ac59bd1a2350f625f0",
+      "tools/virtualization_inventory/run.py": "01fdb2af2ec84b3a1ac444f3b3e2a0298bae2e9665cca733fe1194717404074e",
       "goals/what-recovery-survives.md": "f3900b9667ad619f3efa79f0deecdc3c5a654ca5108a06e50a9ce83865c62c5f",
       "tests/pack.test.sh": "35f4ae3f6e7e8ad51e0bc57a3904852dc550a7b23756951a21285a3497c213f4",
       "skills/evidence/boundaries.md": "6a4b17b3a719a5edcf99bfd48d737536772aecf3e7a650f8e4e617607c65f4ee",

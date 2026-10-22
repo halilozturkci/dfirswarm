@@ -2,8 +2,8 @@
  * How the windows-forensics tools that run a program end it. The harness ends a tool that runs too long, or is aborted, by
  * killing the tool's process group (extensions/protocol-core.ts: process.kill(-pid, SIGKILL)); a program the tool started in a
  * session of its own is not in that group and goes on writing after the tool is gone (Zeek wrote conn.log six seconds after
- * its tool was killed). The five tools (esedb_query, extract_stream, sigma_hunt, vss_stores, yara_scan) share one process
- * block: the program stays in the tool's group, the kernel is asked to kill it with the tool, the tool's own deadline kills it
+ * its tool was killed). The seven tools (esedb_query, extract_stream, sigma_hunt, vss_stores, yara_scan, registry_recover, lnk_jumplist) and the
+ * windows-artefacts recipe share one process block: the program stays in the tool's group, the kernel is asked to kill it with the tool, the tool's own deadline kills it
  * and what it started, and SIGTERM, SIGINT and SIGHUP do the same and leave a last word.
  */
 import assert from "node:assert/strict";
@@ -15,6 +15,9 @@ import { withCwd } from "./tool-library-harness.ts";
 import { AGENT, WIN, stub } from "./windows-pack-harness.ts";
 
 const TOOLS = ["esedb_query", "extract_stream", "sigma_hunt", "vss_stores", "yara_scan"];
+/** The two newer tools and the recipe hold the same block; their own group-kill, clock and signal cases are in their own suites (the program they start is optional, and a stand-in is wired to their arguments there). */
+const BLOCK_TOOLS = [...TOOLS, "registry_recover", "lnk_jumplist"];
+const RECIPE = join(WIN, "..", "recipes", "windows-artefacts", "run.py");
 
 const stripped = (text: string): string => text.replace(/"""[\s\S]*?"""/g, "").replace(/^\s*#.*$/gm, "");
 const block = (text: string): string => {
@@ -23,13 +26,16 @@ const block = (text: string): string => {
   return m[0];
 };
 
-test("the five tools carry one and the same process block, and no tool of the pack starts a program outside its own group", async () => {
+test("the seven tools and the recipe carry one and the same process block, and no tool of the pack starts a program outside its own group", async () => {
   const copies = new Set<string>();
-  for (const tool of TOOLS) copies.add(block(await readFile(join(WIN, tool, "run.py"), "utf8")));
+  for (const tool of BLOCK_TOOLS) copies.add(block(await readFile(join(WIN, tool, "run.py"), "utf8")));
+  copies.add(block(await readFile(RECIPE, "utf8")));
   assert.equal(copies.size, 1, "the copies of the shared process block are equal");
+  const recipe = await readFile(RECIPE, "utf8");
+  assert.doesNotMatch(stripped(recipe.replace(block(recipe), "")), /start_new_session|\bsetsid\b|preexec_fn|os\.setpgid|os\.setpgrp|killpg/, "the recipe starts or kills a program by a group of its own");
   for (const tool of await readdir(WIN)) {
     const text = await readFile(join(WIN, tool, "run.py"), "utf8");
-    const outside = stripped(TOOLS.includes(tool) ? text.replace(block(text), "") : text);
+    const outside = stripped(BLOCK_TOOLS.includes(tool) ? text.replace(block(text), "") : text);
     assert.doesNotMatch(outside, /start_new_session|\bsetsid\b|preexec_fn|os\.setpgid|os\.setpgrp|killpg/, `${tool} starts or kills a program by a group of its own`);
   }
 });

@@ -1,0 +1,52 @@
+{
+  "name": "collection_manifest_verify",
+  "description": "Check what a collector's records claim against the files that were delivered. Each delivery claim (a KAPE copy row, a Velociraptor upload or result, a UAC hash-list line) is joined to the delivered file it names (a KAPE destination by its longest tail under the log's directory, a case-folded join; a Velociraptor stored name; UAC's [root] convention) and checked in three separate parts: the path, the size and the digest. The digest is compared in the algorithm the collector used and an independent SHA-256 is measured beside it in the same pass; one algorithm is never equated with another. The status of a row is matched, mismatch, missing, unverifiable, ambiguous or read_failed, and a delivered file no row names, inside the directory of a per-file record, is unexpected; the counts come with their denominators and nothing is cut (every row is in a file the answer names, the rows that are not matched in a second one). missing is said only when the census of the delivery is complete; a walk that stopped, a directory that could not be listed or the census cap makes absence unverifiable. A skip or an upload error is the collector's outcome, not a claim that a file was delivered, and is counted and not checked. A sparse or partial Velociraptor upload is not compared by digest. A UAC hash list names files of the source host and is unverifiable where the delivery holds no collected copy. Not measured: why a size or a digest differs (a changed file, a collector that hashed another byte sequence and a damaged copy look alike), that the collector read the source correctly, that the collection is complete (collection_coverage) or where a file came from (collection_path_map). The digests of a file whose name marks a credential store are compared and not printed. hash: false skips the digests (those rows are unverifiable). Run it as a job with secret_output: true (the tool cannot see whether the job was run so). write_values: true (jobs only) writes the real strings to $OUT/collection-manifest-verify-values.jsonl, mode 0600, created first, a second run in the same job refused. Every key and value of the answer and of the table files it names is withheld by shape, and the structure is then read back by a second check written apart from the first; a string that check finds suspect is replaced by <withheld: N bytes>, counted in the answer's boundary entry, and the answer is partial. Withholding is by shape. Measured on random plants (1,000 per shape and context: alone, in a path, a file name, a log line, a URL, an option, glued to letters), the 33 listed shapes (token prefixes, JWT, PEM, connection strings, user-info, name=value and option forms, recovery passwords), the unlisted token families (GitLab, Stripe, Google, npm, SendGrid, DigitalOcean, Twilio), names such as DB_PASSWORD= and adminPassword:, and tokens split by NUL, zero-width, bidi, UTF-16-in-8-bit or full-width characters or written in another case come out in 0.2% or fewer of the plants; AWS-secret-shaped keys and base64 of 20 to 48 bytes in 0.7% or fewer, base64 of 16 bytes in 2.5%, 20 random letters and digits in 1.5% and 32 in 0.5%; base36 text of 24 to 32 characters in 18% to 26%. A plain password or passphrase alone in a name, a UUID-shaped key, 24 lower-case letters and 16 characters of base32 are printed (100%). A secret of another shape is printed: a file whose secrets matter is read in a secret_output job. Cost on real names, measured: 0.47% of this repository's paths, 0.14% of 37,916 Linux package paths and 3.64% of 57,142 macOS system and application paths (hardware ids and GUID-named profiles read as random) are withheld.",
+  "params": {
+    "root": {
+      "type": "string",
+      "description": "The collection directory (an archive is not opened by the tool: the collection-intake recipe reads one, or extract it into a job's output first)"
+    },
+    "hash": {
+      "type": "boolean",
+      "description": "Hash the delivered files that a record gives a digest for (default true; false is much faster, and those rows are then unverifiable)"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Rows of each table shown inline (default 200); a longer table is whole in the file its *_table entry names"
+    },
+    "time_limit_seconds": {
+      "type": "integer",
+      "description": "Stop the walk and the reads after this long (default 3000, at most 3400): the answer then says it stopped, status partial, and what was not listed"
+    },
+    "write_values": {
+      "type": "boolean",
+      "description": "Write the real strings that were withheld to $OUT/collection-manifest-verify-values.jsonl (default false). Refused unless the tool runs as a job, which must be run with secret_output: true; the file is created first and one already there is refused"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 3600,
+  "example": "{\"root\": \"inputs/collection\"}",
+  "by": "maintainer",
+  "at": "2026-10-21T12:00:00.000Z",
+  "version": 1,
+  "sha256": "661ae0335e64d5bc235304d89a06be0ffd0c5b6ddab07246e868390701f25196",
+  "use": {
+    "names": [
+      "*_CopyLog.csv",
+      "*_SkipLog.csv",
+      "*_ConsoleLog.txt",
+      "uac.log",
+      "hash_executables.md5",
+      "hash_executables.sha1",
+      "hash_executables.sha256",
+      "uploads.json",
+      "collection_context.json"
+    ]
+  },
+  "secret_output": {
+    "when_args": [
+      "write_values"
+    ]
+  }
+}

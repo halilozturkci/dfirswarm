@@ -48,4 +48,4 @@ Only if the case supplies a recovery password, key file or escrow export and you
 was suspended, or by whom; that a protector list is complete; that a TPM-only volume
 can be opened from an image; what the contents are before a validated opening.
 
-**Sensitive output.** `crypto_id` prints no raw bytes unless `include_head_hex` is true: leave it off. Record which protector was used and a reference to the sealed source of any secret, never the secret (`volumes/bitlocker-opening`).
+**Sensitive output.** `crypto_id` prints no raw bytes of the file. Record which protector was used and a reference to the sealed source of any secret, never the secret (`volumes/bitlocker-opening`).

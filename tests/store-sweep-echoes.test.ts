@@ -105,6 +105,9 @@ test("an echo is not held: an output made from the run's registers, a summary th
   assert.match(words, /echoes, holding nothing \(is each only the run's own words\?\): .*from the run's own registers: the run's words, not evidence/);
   assert.match(words, /kept by the harness from a seat's own words/);
   assert.match(words, /whose own words name the string: an echo of the search/);
+  // The sweep's own render of ledger.md can be overtaken by one that began before its line was written (two renders write the same file, the later write
+  // wins); render once more from what is on disk, which is what this reads.
+  await P.renderLedger(S);
   assert.match(await readFile(join(S, P.LEDGER_MD), "utf8"), /store sweep clean: .*echoes, holding nothing/);
   await L.leadsDigest(a3);
   const snap = await L.leadsSnapshot(S);

@@ -14,6 +14,10 @@ import { CPU_ARM64, CPU_X86_64, DOC_PROBE, DOC_STRUCTURE, FUZZY, PE_DIRECTORIES,
 
 const SKILLS = join(RE, "skills");
 import { buildCfb, buildPdf, buildPeDirs, buildVbaProject, hex, ole1Object, wordFib } from "./pack-re-doc-fixtures.ts";
+import { routerChecks } from "./pack-router-checks.ts";
+
+// The pack's one router: shown alone when a run's index is over budget, and names every other skill once (routerChecks at the end).
+const ROUTER = "reverse-engineering/router";
 
 const BASE_SKILLS = join(RE, "..", "computer-forensics-base", "skills");
 const TOKENS = (text: string): number => Buffer.byteLength(text) / 4.245;
@@ -45,15 +49,17 @@ async function load(root: string): Promise<Map<string, Skill>> {
 
 test("every skill is a leaf within the budget, opens with Use when ... Not for ..., and has a short index entry", async () => {
   const skills = await load(SKILLS);
-  assert.equal(skills.size, 20);
+  assert.equal(skills.size, 21);
   for (const s of skills.values()) {
-    assert.ok(TOKENS(s.text) <= 800, `${s.id} is ${Math.round(TOKENS(s.text))} tokens`);
+    assert.ok(TOKENS(s.text) <= (s.id === ROUTER ? 400 : 800), `${s.id} is ${Math.round(TOKENS(s.text))} tokens`);
     assert.ok(s.text.split("\n").length <= 300, `${s.id} lines`);
     const first = s.body.trim().split("\n")[0]!;
     assert.match(first, /^Use when /, `${s.id} opens with Use when`);
     assert.match(first, /\bNot for\b/, `${s.id} says what it is not for`);
     const entry = `- \`${s.id}\` ${s.meta.title}: ${s.meta.when}`;
     assert.ok(TOKENS(entry) <= 40, `${s.id} index entry is ${Math.round(TOKENS(entry))} tokens`);
+    // The router reads no artefact: it names notes and holds no rule, so it has none of the parts of a leaf.
+    if (s.id === ROUTER) continue;
     for (const part of ["Shows", "Does not show", "Record"]) assert.match(s.body, new RegExp(`${part}:`), `${s.id} has ${part}`);
   }
   const index = await readFile(join(SKILLS, "INDEX.md"), "utf8");
@@ -376,7 +382,7 @@ test("the review's wording fixes are in the leaves and the goal, and the goal's 
   // The counts outside the pack follow the pack.
   for (const file of ["docs/packs.md", "README.md"]) {
     const doc = await readFile(join(RE, "..", "..", file), "utf8");
-    assert.match(doc, /^\| `reverse-engineering` \| 20 \| 6 \| 1 \|/m, `${file} counts twenty skills, six tools and one goal template`);
+    assert.match(doc, /^\| `reverse-engineering` \| 20 \| 6 \| 1 \|/m, `${file} counts twenty skills (the router is not counted), six tools and one goal template`);
   }
 });
 
@@ -460,4 +466,18 @@ test("the three leaves that tell a worker when the tools' withholding is enough 
   const pe = skills.get("pe/signature-and-resources")!.body;
   assert.match(pe, /by shape only: a plain password or a token family it does not name is printed, and 0\.1-4% of random base64 or AWS-format keys holding a `\/`; run it with `secret_output` when a file's secrets matter/);
   assert.doesNotMatch(pe, /not needed for a `pe_directories` call/);
+});
+
+// ---- The router: the one entry a run shows for this pack when its index is over the run's budget. ----
+
+routerChecks({
+  pack: "reverse-engineering",
+  router: ROUTER,
+  before: [
+    "capabilities/mapping", "code/static-inspection", "documents/external-and-active-content", "documents/macros", "documents/pdf-rtf",
+    "elf/packing-and-identity", "elf/structure", "macho/structure", "managed/clr", "packing/static-recovery", "pe/signature-and-resources",
+    "pe/structure", "rules/authoring", "rules/yara", "runtimes/go-rust", "runtimes/python-packaged", "scripts/static-analysis",
+    "strings/decoding-and-similarity", "strings/obfuscated", "triage/quarantine",
+  ],
+  profiles: ["re", "full"],
 });

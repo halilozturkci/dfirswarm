@@ -17,6 +17,7 @@ import { draftRelease, runContext } from "../scripts/release.ts";
 import { mirrorRelease, timestampRelease } from "../scripts/release-witness.ts";
 import { readReleases, runLayout, verifyReleases } from "../scripts/release-record.ts";
 import { custodyAnchorPath } from "../scripts/custody.ts";
+import { readTimestampResponse, timestampRequest } from "../scripts/custody-checks.ts";
 import { reviewsPath } from "../scripts/review.ts";
 import { cleanUp, opensslTs, script, stoppedRun, testPki, tsaServer, type StoppedRun } from "./release-fixture.ts";
 
@@ -69,6 +70,16 @@ test("a token is checked against the authority's CA: verified by the one that is
     assert.match(v.lines[0], /its timestamp token DOES NOT VERIFY against /);
   } finally {
     tsa.close();
+  }
+});
+
+test("a timestamp request is a minimal DER, whatever its nonce: one that starts with zero bytes is not refused by the authority", { skip: !opensslTs() && "no openssl ts on this host" }, async () => {
+  const pki = await testPki();
+  const digest = "ab".repeat(32);
+  const nonces = ["0012010203040506", "0000000000000001", "0000000000000000", "00ff010203040506", "7b4b77533d9e7200", "ff00000000000000", "003000e2ebcdaca1"];
+  for (const hex of nonces) {
+    const read = readTimestampResponse(pki.reply(timestampRequest(digest, Buffer.from(hex, "hex"))), digest);
+    assert.ok(read.granted && read.imprint, `nonce ${hex}: status ${read.status}`);
   }
 });
 

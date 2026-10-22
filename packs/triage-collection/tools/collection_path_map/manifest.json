@@ -1,0 +1,55 @@
+{
+  "name": "collection_path_map",
+  "description": "Say where each delivered file came from, as far as a collector's own record says it, and label the rest as a reading. For every delivered file the row is observed (a record names the file and gives its source path, with the record's locator and how the record was joined to the file: the destination or stored name the collector wrote, or UAC's [root] convention, said per row), ambiguous (records give different source paths), hypothesis_only (no record names it) or collector_record. A hypothesis is a convention's reading of the delivered path with its method, its confidence (low, medium or none), the components it could not explain and the other readings; the same function collection_index uses makes it, and it sits beside an observation and is never promoted to one. A source path is the collector's claim, not proof of where the bytes came from. Also stated: delivered path components that are not UTF-8 or that carry percent-escapes, the drive of a source path, a source path that names an NTFS stream (with the delivered file of its base file when there is one), and the collisions: a delivered file named with different source paths, a source path delivered more than once, delivered names that differ only by case, and a record that cannot be told from another file. Not measured: that a file is intact (collection_manifest_verify), that the collection is complete (collection_coverage), the collector's version, a source path for a file no record names. paths limits the rows to those delivered paths; the tables are whole otherwise. Run it as a job with secret_output: true (the tool cannot see whether the job was run so). write_values: true (jobs only) writes the real strings to $OUT/collection-path-map-values.jsonl, mode 0600, created first, a second run in the same job refused. Every key and value of the answer and of the table files it names is withheld by shape, and the structure is then read back by a second check written apart from the first; a string that check finds suspect is replaced by <withheld: N bytes>, counted in the answer's boundary entry, and the answer is partial. Withholding is by shape. Measured on random plants (1,000 per shape and context: alone, in a path, a file name, a log line, a URL, an option, glued to letters), the 33 listed shapes (token prefixes, JWT, PEM, connection strings, user-info, name=value and option forms, recovery passwords), the unlisted token families (GitLab, Stripe, Google, npm, SendGrid, DigitalOcean, Twilio), names such as DB_PASSWORD= and adminPassword:, and tokens split by NUL, zero-width, bidi, UTF-16-in-8-bit or full-width characters or written in another case come out in 0.2% or fewer of the plants; AWS-secret-shaped keys and base64 of 20 to 48 bytes in 0.7% or fewer, base64 of 16 bytes in 2.5%, 20 random letters and digits in 1.5% and 32 in 0.5%; base36 text of 24 to 32 characters in 18% to 26%. A plain password or passphrase alone in a name, a UUID-shaped key, 24 lower-case letters and 16 characters of base32 are printed (100%). A secret of another shape is printed: a file whose secrets matter is read in a secret_output job. Cost on real names, measured: 0.47% of this repository's paths, 0.14% of 37,916 Linux package paths and 3.64% of 57,142 macOS system and application paths (hardware ids and GUID-named profiles read as random) are withheld.",
+  "params": {
+    "root": {
+      "type": "string",
+      "description": "The collection directory (an archive is not opened by the tool: the collection-intake recipe reads one, or extract it into a job's output first)"
+    },
+    "paths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Map only these delivered paths, relative to root (default: every delivered file)"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Rows of each table shown inline (default 200); a longer table is whole in the file its *_table entry names"
+    },
+    "time_limit_seconds": {
+      "type": "integer",
+      "description": "Stop the walk and the reads after this long (default 1500, at most 3400): the answer then says it stopped, status partial, and what was not listed"
+    },
+    "write_values": {
+      "type": "boolean",
+      "description": "Write the real strings that were withheld to $OUT/collection-path-map-values.jsonl (default false). Refused unless the tool runs as a job, which must be run with secret_output: true; the file is created first and one already there is refused"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 3600,
+  "example": "{\"root\": \"inputs/collection\"}",
+  "by": "maintainer",
+  "at": "2026-10-21T12:00:00.000Z",
+  "version": 1,
+  "sha256": "da5f0022486470ed383344ae650fcf8315e217418bb3eed9e0c6d0eb8ac18e84",
+  "use": {
+    "names": [
+      "*_CopyLog.csv",
+      "*_SkipLog.csv",
+      "*_ConsoleLog.txt",
+      "uac.log",
+      "hash_executables.md5",
+      "hash_executables.sha1",
+      "hash_executables.sha256",
+      "uploads.json",
+      "collection_context.json"
+    ]
+  },
+  "secret_output": {
+    "when_args": [
+      "write_values"
+    ]
+  }
+}

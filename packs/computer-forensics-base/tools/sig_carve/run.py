@@ -21,7 +21,7 @@ import tempfile
 import time
 from pathlib import Path
 
-TOOL = {"name": "sig_carve", "version": 3}
+TOOL = {"name": "sig_carve", "version": 4}
 WINDOW = 8 * 1024 * 1024
 BUDGET_SECONDS = 100              # inside the manifest's 120: past it the scan stops, says so, and names where to continue
 CONTEXT_MAX = 4096
@@ -441,6 +441,10 @@ def main():
         scan["read_error"] = read_error
     print(json.dumps({
         "tool": TOOL,
+        "status": "complete" if complete else "partial" if not read_error else "failed",
+        "status_basis": ("the whole requested range was read and every header in it is reported" if complete else
+                         "the scan stopped at its clock (scanned.stopped says where to go on)" if not read_error else
+                         "the file could not be read all the way (scanned.read_error)"),
         "source": {"path": path, "bytes": size, "address_space": "the bytes of this file as given; a container (E01, VMDK) is not decoded"},
         "scanned": scan,
         "context_bytes": context,

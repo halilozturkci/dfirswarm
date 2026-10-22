@@ -27,24 +27,35 @@ one-line index once and fetches a body only when it reaches that artefact family
 | Memory | `memory/windows` (`memory/hibernation-pagefile`) |
 | Anti-forensics | `antiforensics/traces` (`antiforensics/wiping`, `antiforensics/log-clearing`, `antiforensics/timestamps-clock`, `antiforensics/controls`) |
 
-**Twenty tools.** The parsers that carry most cases: `mft_records` (both time
+**Twenty-two tools.** The parsers that carry most cases: `mft_records` (both time
 sets, resident data, every named stream), `evtx_query` and `evtx_carve` (records
 from a log, and records from a log that was cleared), `regkv`, `prefetch_mam`
 and `mam_scan`, `amcache_apps`, `usn_journal`, `shellbags`, `jumplist`,
 `lnk_parse`, `recyclebin_i`, `vss_stores`, `browser_history`, `indx_carve`, `sigma_hunt`,
-`esedb_query`, `extract_stream`, `utf16_urls`, `yara_scan`.
+`esedb_query`, `extract_stream`, `utf16_urls`, `yara_scan`, `registry_recover` (replays a hive's
+transaction logs on a copy, never on the original, and says what it could not apply) and
+`lnk_jumplist` (shell links and Jump Lists as rows with the place of every structure in the file,
+the container's consistency, and a second read by `lnkinfo`).
+
+**One recipe**, `windows-artefacts`, run on request over an extracted collection: it reads each
+family of artefact it finds with the tool above that reads it (and runs a fixed list of
+dissect.target's functions when that is installed and the target is one directory), keeps the
+whole answer of every call, and writes `coverage.json` with `parsed`, `partial`, `empty`,
+`unsupported`, `failed` or `not_attempted` for each family. `complete` there is not coverage of
+the host.
 
 What a tool measures, and what it does not, is in its manifest, and a tool says
 what it did not read rather than hand back a clean answer for a run that did not
 read everything: `partial` or `failed` in a `status` where it has one, and
 otherwise its own counts (`structure_complete`, `unrecognised_bytes`,
 `records_examined` against `parse_errors`). An exit status of 0 means the engine
-ran, not that the examination is complete. Three of them can reach secret material and print none
+ran, not that the examination is complete. Five of them can reach secret material and print none
 of it: `browser_history` replaces the credential cells of Login Data, Cookies and
-Firefox's key database by their length, `regkv` does the same for values that can
-be secrets, and `yara_scan` returns where a rule matched, never the bytes it
-matched; only `yara_scan`, in a job run with `secret_output: true`, can be asked
-(`write_matches`) to write the matched bytes to a sealed file.
+Firefox's key database by their length, `regkv` and `registry_recover` do the same for values that can
+be secrets, `lnk_jumplist` withholds a link's arguments, and `yara_scan` returns where a rule matched, never the bytes it
+matched; `yara_scan`, in a job run with `secret_output: true`, can be asked
+(`write_matches`) to write the matched bytes to a sealed file; `registry_recover` and `lnk_jumplist` can be asked
+(`write_values`, `write_strings`) to write theirs, in a job run with `secret_output: true`.
 
 **Three goal templates** in `goals/`, each with its own questions, definition of
 done and checks: `intrusion-triage.md`, `data-left-the-building.md`,

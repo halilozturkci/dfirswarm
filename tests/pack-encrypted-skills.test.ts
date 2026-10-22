@@ -151,7 +151,8 @@ test("the secret rules: a Sensitive output line wherever a tool that reaches sec
   assert.match(skills.get("volumes/bitlocker-opening")!.body, /Never write a\s+recovery password, a fragment of one, or a hash of one/);
   assert.match(skills.get("volumes/bitlocker-opening")!.body, /name the routes tried/);
   assert.match(flat(skills.get("volumes/luks-filevault")!.body), /Do not write that no usable key exists/);
-  assert.match(skills.get("identify/headers")!.body, /`crypto_id` prints no raw bytes unless `include_head_hex` is\s+true/);
+  assert.match(skills.get("identify/headers")!.body, /`crypto_id` prints no raw bytes of the file/);
+  assert.doesNotMatch([...skills.values()].map((s) => s.text).join("\n"), /include_head_hex/, "the parameter that printed key material is gone");
   assert.match(skills.get("archives/protected")!.body, /this skill does not authorise it\s+and gives no method/);
   assert.match(skills.get("archives/protected")!.body, /Never write a password, a fragment of one, or a hash of one/);
   const all = [...skills.values()].map((s) => s.text).join("\n");
@@ -179,9 +180,9 @@ test("the claims the review removed are not back, and the front matter lists wha
 
 // Fields and names a skill teaches, each of which a tool must write: file -> skill -> names.
 const TAUGHT: Array<[string, string, string[]]> = [
-  ["tools/crypto_id/run.py", "identify/headers", ["include_head_hex"]],
-  ["tools/recovery_key_scan/run.py", "keys/recovery-key-scan", ["max_bytes_per_file", "write_values", "recovery-passwords.jsonl"]],
-  ["tools/archive_probe/run.py", "archives/protected", ["header_encrypted"]],
+  ["tools/crypto_id/run.py", "identify/headers", ["header_fields_withheld"]],
+  ["tools/recovery_key_scan/run.py", "keys/recovery-key-scan", ["max_bytes_per_file", "write_values", "recovery-passwords.jsonl", "paths_withheld", "max_seconds"]],
+  ["tools/archive_probe/run.py", "archives/protected", ["header_encrypted", "names_withheld"]],
   ["tools/archive_probe/run.py", "archives/formats", ["timezone_unknown", "modified_utc"]],
 ];
 

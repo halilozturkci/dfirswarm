@@ -42,7 +42,9 @@ async function load(root: string): Promise<Map<string, Skill>> {
   return out;
 }
 
-const DECISION = ["identify/collector", "verify/manifests", "normalise/layout", "gaps/what-is-missing", "plan/what-to-collect"];
+const DECISION = ["identify/collector", "verify/manifests", "normalise/layout", "gaps/what-is-missing", "plan/what-to-collect",
+  // the second phase: each is opened on its own question and points to nothing below it
+  "coverage/delivered-collection", "normalise/container-members", "verify/collector-effects", "identify/collector-records", "verify/raw-and-derived"];
 const SECOND_LEVEL: Record<string, string> = {
   "identify/collector-clues": "identify/collector", "identify/acquisition-mode": "identify/collector",
   "verify/target-outcomes": "verify/manifests", "verify/time-layers": "verify/manifests",
@@ -56,7 +58,7 @@ const ROUTER = "triage/router";
 
 test("every skill is a leaf within the budget, opens with Use when ... Not for ..., has a short index entry and its Shows, Does not show and Record", async () => {
   const skills = await load(SKILLS);
-  assert.equal(skills.size, 15);
+  assert.equal(skills.size, 20);
   assert.deepEqual([...skills.keys()].sort(), [ROUTER, ...DECISION, ...Object.keys(SECOND_LEVEL)].sort());
   for (const s of skills.values()) {
     assert.ok(TOKENS(s.text) <= (s.id === ROUTER ? 400 : 800), `${s.id} is ${Math.round(TOKENS(s.text))} tokens`);
@@ -218,7 +220,7 @@ test("the old claims are gone, in any phrasing; no skill states a version fact o
     assert.match(s.body, /Sensitive output:[^\n]*secret_output: true/, `${s.id} names a tool and says the job runs with secret_output: true`);
   }
   assert.match(skills.get("verify/manifests")!.body, /does not open a container/);
-  assert.doesNotMatch(all, /archive_extract/, "an extractor that no pack ships is not advertised");
+  assert.match(skills.get("normalise/container-members")!.body, /archive_extract/, "the base extractor is named where members become files");
   assert.match(skills.get("identify/collector")!.body, /\bnot determined, never zero\b/);
   assert.match(skills.get("identify/collector")!.body, /more than one kind of object/);
   assert.doesNotMatch(skills.get("identify/collector")!.body, /copied files sit beside an image/);
@@ -276,6 +278,7 @@ routerChecks({
     "gaps/coverage-statement", "gaps/what-is-missing", "identify/acquisition-mode", "identify/collector", "identify/collector-clues",
     "normalise/inventory", "normalise/layout", "normalise/parsers", "plan/sources-linux", "plan/sources-windows", "plan/what-to-collect",
     "verify/manifests", "verify/target-outcomes", "verify/time-layers",
+    "coverage/delivered-collection", "normalise/container-members", "verify/collector-effects", "identify/collector-records", "verify/raw-and-derived",
   ],
   profiles: ["full"],
 });

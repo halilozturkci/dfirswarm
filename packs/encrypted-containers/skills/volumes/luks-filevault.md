@@ -37,8 +37,8 @@ Only for an Apple volume (Core Storage or APFS): `volumes/filevault-apfs`.
 key exists; anything about an APFS volume's encryption from a reader that does not
 support it.
 
-**Sensitive output.** `cryptsetup luksDump`'s volume-key option and `crypto_id`'s
-`include_head_hex` print key material: leave them off for a metadata job.
+**Sensitive output.** `cryptsetup luksDump`'s volume-key option prints key material:
+leave it off for a metadata job. `crypto_id` prints none of the file's bytes.
 
 **Both routes.** Use material the case supplies, within the recorded authority. Jobs
 that handle secret material run with `secret_output: true`; the ledger and the report

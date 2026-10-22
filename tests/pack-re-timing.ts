@@ -26,3 +26,34 @@ export const GROWTH_PY = [
   "            break",
   "    return best",
 ].join("\n");
+
+/**
+ * The same for a ladder of sizes, each four times the one before: every step must be linear by `linearOk`. A size that was never measured (null: the
+ * ladder stopped at the step before it, see LADDER_PY) fails.
+ */
+export const ladderOk = (times: (number | null)[]): boolean => times.every((t, i) => t !== null && (i === 0 || linearOk(times[i - 1] as number, t)));
+
+/**
+ * Python source for a ladder: `ladder(f, texts)` returns the least CPU time of each text over up to three rounds, stopping at the first round in which every
+ * step to the next text is linear (`ladder_ok`). The texts are measured from the shortest; a round stops at the first step that is not linear, so the longer
+ * texts of a rule that is quadratic are never run (their time is None) and a test fails in seconds, not in the minutes the longest text would take.
+ * Needs `time` imported; `f` must reset whatever state it caches between calls.
+ */
+export const LADDER_PY = [
+  `LINEAR_BOUND, LINEAR_FLOOR = ${LINEAR_BOUND}, ${LINEAR_FLOOR}`,
+  "def ladder_ok(best):",
+  "    return None not in best and all(best[i] <= LINEAR_BOUND * max(best[i - 1], LINEAR_FLOOR) for i in range(1, len(best)))",
+  "def ladder(f, texts, tries=3):",
+  "    best = [None] * len(texts)",
+  "    for _ in range(tries):",
+  "        for i, t in enumerate(texts):",
+  "            start = time.process_time()",
+  "            f(t)",
+  "            took = time.process_time() - start",
+  "            best[i] = took if best[i] is None else min(best[i], took)",
+  "            if i and best[i] > LINEAR_BOUND * max(best[i - 1], LINEAR_FLOOR):",
+  "                break",
+  "        if ladder_ok(best):",
+  "            break",
+  "    return best",
+].join("\n");

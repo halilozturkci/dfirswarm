@@ -21,7 +21,10 @@ fields it read, and any damaged, missing or unsupported structure.
 
 `crypto_id` shows a recognised signature at the offset, the header fields at fixed
 places (LUKS1 slot table; LUKS2 version, label, UUID), the basis of the call, the next
-reader, and what is not determined.
+reader, and what is not determined. A header text field that is not what the format says
+(a cipher or hash off the closed lists, a UUID field that is no UUID, a label shaped like
+an identifier or a secret) is not printed; `header_fields_withheld` names it, and
+a header reader run on the evidence copy shows it to you.
 
 **Does not show.** BitLocker protectors, LUKS2 keyslots, whether an APFS volume is
 encrypted, document encryption, or whether any data is intact or openable. "No scheme
@@ -29,11 +32,12 @@ recognised" is not "not encrypted".
 
 Only if you name a particular format's protection (BitLocker, LUKS, Apple, VeraCrypt and TrueCrypt, archives, Office, PDF, phone backups): `identify/by-format`.
 
-**Sensitive output.** `crypto_id` prints no raw bytes unless `include_head_hex` is
-true: leave it false when the input may itself be a key or credential file, and do
-not copy those bytes into the report or the ledger. Run any job that may emit secret
-material with `secret_output: true`, and record locations and sealed references,
-never values or hashes.
+**Sensitive output.** `crypto_id` prints no raw bytes of the file (it does print the header's numbers and the
+sample's entropy), so a possible key file is identified by its size and entropy and never shown; to see bytes, use a hex viewer
+on the evidence copy and do not copy them into the report or the ledger. Run any job that
+may emit secret material with `secret_output: true`, and record locations and sealed
+references, never values or hashes. Withholding of header text and names is by shape:
+a secret of another shape is printed.
 
 Before opening anything, fix the question and the authority for examining it. Use
 keys and passwords the case supplies, or that were found within that authority; a

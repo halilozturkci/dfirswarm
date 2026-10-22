@@ -17,7 +17,9 @@
 # did not finish), unsupported (a layer TSK does not read, an LVM or RAID member)
 # or structural (a container or a partition that holds no file system by
 # definition: an extended partition, swap, a Microsoft reserved or a BIOS boot
-# partition). complete means nothing was failed or unsupported. coverage.json is
+# partition). complete means nothing was failed or unsupported. A partition name is the evidence's own text (mmls prints a GPT name raw), so a
+# row of the table is taken only as mmls writes one, in sequence, and its start sector only as digits: a line that is not a row is a note in
+# coverage.json, never a partition or a directory name. coverage.json is
 # written as partial before the first step, and the body file's times are read as
 # UTC (mactime -z UTC), which is the zone its timeline.csv says.
 set -uo pipefail
@@ -37,11 +39,39 @@ else:
 PY
 }
 
-# mmls prints start sectors zero-padded; sector 0 must stay 0.
-mmls_start_sector() {
-  local n
-  n="$(printf '%s' "$1" | awk '{print $3}' | sed 's/^0*//')"
-  printf '%s\n' "${n:-0}"
+# table_rows <partitions.txt>: the rows of mmls's table that are partition entries, one "ROW<TAB>start<TAB>description"
+# each, and one "NOTE<TAB>text" for every line after the header that is not a row, or is a row out of sequence. mmls
+# prints a GPT partition name raw, so a name holding a line break can put a second, forged "row" in the table: a row is
+# taken only when it has the shape of one (three numbers after the slot) and the number the table is at, and the start
+# sector is the digits of the third column and nothing else. A description has its control characters replaced.
+table_rows() {
+  python3 - "$1" <<'PY'
+import re, sys
+sys.stdout.reconfigure(encoding="utf-8")
+row = re.compile(r"^(\d{3,}):[ \t]+(Meta|-+|\d{3,}(?::\d{3,})?)[ \t]+(\d+)[ \t]+(\d+)[ \t]+(\d+)(?:[ \t]+(.*))?$")
+ctl = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029]")
+raw = open(sys.argv[1], "rb").read().decode("utf-8", "replace")
+expect, header = 0, False
+for no, line in enumerate(raw.split("\n"), 1):
+    line = line.rstrip("\r")
+    if not header:
+        if "Slot" in line and "Start" in line and "Description" in line:
+            header = True
+            continue
+        if not row.match(line):
+            continue
+    if not line.strip():
+        continue
+    m = row.match(line)
+    if not m or int(m.group(1)) != expect:
+        why = "is not a row of the table" if not m else "is row %d where row %d was due" % (int(m.group(1)), expect)
+        print("NOTE\tline %d of partitions.txt %s (a partition name holding a line break would do this): it is not read as a partition: %s" % (no, why, ctl.sub("?", line)[:120]))
+        continue
+    expect += 1
+    if m.group(2) == "Meta" or set(m.group(2)) == {"-"}:
+        continue
+    print("ROW\t%d\t%s" % (int(m.group(3)), ctl.sub("?", (m.group(6) or "").strip())))
+PY
 }
 
 STEP_TIMEOUT="${RECIPE_STEP_SECONDS:-900}"
@@ -89,6 +119,7 @@ reads_a_file_system() {
 
 volume() { # volume <img> <shown name> <start> <description>
   local img="$1" shown="$2" start="$3" desc="$4" pdir r
+  [[ "$start" =~ ^[0-9]+$ ]] || return  # a start sector is digits; it names a directory
   pdir="$out/p$start"
   mkdir -p "$pdir"
   candidate_volumes=$((candidate_volumes + 1))
@@ -147,7 +178,7 @@ inventory = []
 for e in entries:
     start, desc, outcome, why = (e.split("\t") + ["", "", "", ""])[:4]
     inventory.append({"start_sector": int(start) if start.isdigit() else start, "description": desc, "outcome": outcome, "why": why})
-json.dump({"recipe": "disk-volumes", "status": status, "covered": covered,
+json.dump({"recipe": "disk-volumes", "status": status, "status_basis": covered, "covered": covered,
            "not_covered": "file contents, carving, encrypted volumes, volume shadow copies",
            "inventory": inventory, "limits_hit": [], "errors": notes}, open(path, "w"), indent=2)
 PY
@@ -208,12 +239,8 @@ case "$cmd" in
     fi
     if [[ "$mmls_rc" -eq 0 ]]; then
       index_row "partitions.txt" "partition table of $shown (mmls)"
-      while IFS= read -r line; do
-        start="$(mmls_start_sector "$line")"
-        slot="$(printf '%s' "$line" | awk '{print $2}')"
-        # A table row (Meta) or a gap (-------) is not a partition entry.
-        case "$slot" in Meta|-------) continue ;; esac
-        desc="$(printf '%s' "$line" | awk '{ $1=$2=$3=$4=$5=""; print $0 }' | sed 's/^ *//')"
+      while IFS=$'\t' read -r kind start desc; do
+        if [[ "$kind" == NOTE ]]; then notes+=("$start"); continue; fi
         # What holds no file system by definition is named in the inventory and not counted against coverage:
         # an extended partition is a container of the rows after it, swap and a reserved or boot partition
         # hold none ("DOS Extended" used to match `*Ext*`).
@@ -248,7 +275,7 @@ case "$cmd" in
         esac
         # Everything else is tried: fsstat, not a list of descriptions, says whether a file system is there.
         volume "$img" "$shown" "$start" "$desc"
-      done < <(grep -E '^[0-9]+:' "$out/partitions.txt")
+      done < <(table_rows "$out/partitions.txt")
       if [[ "$volumes" -eq 0 ]]; then
         coverage partial "a partition table and $candidate_volumes candidate partition(s), but no readable filesystem"
       elif [[ ${#notes[@]} -gt 0 ]]; then

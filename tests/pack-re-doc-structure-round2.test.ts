@@ -79,25 +79,6 @@ const pdfOf = (objs: PdfObj[], trailer = "/Root 1 0 R"): Buffer => buildPdf([CAT
 
 // --- the one way out --------------------------------------------------------------------------------------------------------
 
-test("the linear span finder this tool binds finds what the shared block's token_spans finds, on 30,000 generated texts", () => {
-  const code = [
-    "import importlib.util, random, sys",
-    "spec = importlib.util.spec_from_file_location('ds', sys.argv[1]); ds = importlib.util.module_from_spec(spec); spec.loader.exec_module(ds)",
-    "assert ds.token_spans is ds._linear_token_spans and ds._shared_token_spans is not ds._linear_token_spans",
-    "rnd = random.Random(136)",
-    "atoms = ['/', '=', '==', '\\n', '.', ':', '@', '//', ' ', 'aB3d', 'xY7z', 'Word', 'word', 'ghp_Ab3dEf5hIj7lMn9pQr1tUv3x', 'AKIAIOSFODNN7EXAMPLE', 'a9b2c7',",
-    "         '0123456789abcdef0123456789abcdef', 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY', '_', '-', '+', '%', 'Q', '7', 'eyJhbGciOi.eyJzdWIiOi.sig', 'bearer abcdefgh123']",
-    "bad = 0",
-    "for i in range(30000):",
-    "    s = ''.join(rnd.choice(atoms) if rnd.random() < 0.6 else rnd.choice('aZ09/=_-\\n.') for _ in range(rnd.randint(0, 60)))",
-    "    bad += ds._shared_token_spans(s) != ds._linear_token_spans(s)",
-    "print(bad)",
-  ].join("\n");
-  const r = spawnSync("python3", ["-I", "-c", code, DOC_STRUCTURE], { encoding: "utf8" });
-  assert.equal(r.status, 0, r.stderr);
-  assert.equal(r.stdout.trim(), "0");
-});
-
 test("every key is withheld like a value, and two keys withheld to one text are both kept: two /Type names shaped like tokens are two counts", async () => {
   await withCwd(async (cwd) => {
     const other = "ghp_Zz9yXw8vUt7sRq6pOn5mLk4jIh3gFe2dCb1a";

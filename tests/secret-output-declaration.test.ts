@@ -27,6 +27,7 @@ import type { WorkerSpec } from "../scripts/vm.ts";
 const ROOT = join(import.meta.dirname, "..");
 const BASE = join(ROOT, "packs", "computer-forensics-base");
 const ENCRYPTED = join(ROOT, "packs", "encrypted-containers");
+const RANSOMWARE = join(ROOT, "packs", "ransomware-response");
 /** A value a job writes and the run treats as secret: a placeholder, never a real credential. */
 const VALUE = "TOKEN-sample-7f3a91";
 
@@ -275,6 +276,28 @@ test("recovery_key_scan declares the same, and writes no value in a job that is 
   assert.deepEqual([answer.write_values, answer.written], ["refused", false]);
   assert.match(answer.error, /not run as secret output/);
   assert.equal(existsSync(join(storePaths(S).jobs, hand.id, "out", "recovery-passwords.jsonl")), false);
+  await svc.stop("test over");
+});
+
+test("ransom_note_scan declares the same, and writes no value in a job that is not secret", async () => {
+  const { S, svc } = await make([RANSOMWARE]);
+  spawnSync("cp", ["-R", join(RANSOMWARE, "tools", "ransom_note_scan"), join(S, "tools", "ransom_note_scan")]);
+  const manifest = JSON.parse(await readFile(join(S, "tools", "ransom_note_scan", "manifest.json"), "utf8"));
+  assert.deepEqual(manifest.secret_output, { when_args: ["write_values"] });
+  const ID = "Zq9" + "Km4".repeat(3) + "Pw";
+  await mkdir(join(S, "work", "a1", "ev"), { recursive: true });
+  await writeFile(join(S, "work", "a1", "ev", "README.txt"), `Your files are encrypted. Decrypt them and pay in bitcoin to restore your files.\nyour personal id: ${ID}\n`);
+  const asked = await submitted(svc, "a1", { tool: "ransom_note_scan", args: { root: "work/a1/ev", write_values: true }, inputs: undefined });
+  assert.equal(asked.sensitive?.why, "secret_output", await readFile(join(storePaths(S).jobs, asked.id, "stderr.log"), "utf8"));
+  assert.match(await outFile(S, asked.id, "ransom-note-values.jsonl"), new RegExp(ID));
+  const listed = await submitted(svc, "a1", { tool: "ransom_note_scan", args: { root: "work/a1/ev" }, inputs: undefined });
+  assert.equal(listed.sensitive, undefined);
+  const args = JSON.stringify({ root: "work/a1/ev", write_values: true });
+  const hand = await submitted(svc, "a1", { kind: "command", command: `printf '%s' '${args}' | python3 tools/ransom_note_scan/run.py > "$OUT/answer.json"; true`, inputs: undefined });
+  const answer = JSON.parse(await outFile(S, hand.id, "answer.json"));
+  assert.deepEqual([answer.write_values, answer.written], ["refused", false]);
+  assert.match(answer.error, /not run as secret output/);
+  assert.equal(existsSync(join(storePaths(S).jobs, hand.id, "out", "ransom-note-values.jsonl")), false);
   await svc.stop("test over");
 });
 

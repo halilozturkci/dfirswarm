@@ -22,14 +22,19 @@ import {
   AUDIT, CHAIN, INVENTORY, asJob, body, filesUnder, json, prng, put, qcow2, startDetached, tool, vhdDynamic, vhdx, vmdkDescriptor, vmx, withCwd,
 } from "./pack-virtualization-harness.ts";
 import { made } from "./pack-virtualization-canary-lib.ts";
+import { LADDER_PY, ladderOk } from "./pack-re-timing.ts";
 import type { Json } from "./pack-virtualization-harness.ts";
 
+// each step four times the one before: a linear rule takes four times as long, a quadratic one sixteen
+const SIZES = [6250, 25000, 100000];
 const N = Number(process.env.VIRT_RATE_N ?? 400);
 // the number of forms of each family in the Python host above
 const FLAG_FORMS = 15, BARE_FORMS = 11, PH_FORMS = 7, PH_SPACE_FORMS = 3;
 
 const HOST = String.raw`
 import importlib.util, json, random, sys, time, unicodedata, zlib, string, base64
+
+${LADDER_PY}
 
 spec = importlib.util.spec_from_file_location("tool", sys.argv[1])
 tool = importlib.util.module_from_spec(spec)
@@ -221,15 +226,14 @@ def linear():
                             ("secret_brackets", lambda n: ("[token-(pwd-" * n)[:n]), ("glued_flags", lambda n: ("--master-keyabcdefgh --userpass" * n)[:n]), ("camel_flags", lambda n: ("--apiToken -AdminPassword " * n)[:n]),
                             ("key_files", lambda n: ("--key ~/.ssh/id_rsa --tls-auth ta.key " * n)[:n]), ("iqn_hex", lambda n: ("iqn.2010-06.com.purestorage:flasharray." + "a1" * n)[:n]), ("flag_dashes", lambda n: ("--a-b-c-d-e-password" * n)[:n]),
                             ("secret_tags_long", lambda n: ("pwd-" + "srv01-" * n)[:n])):
-        row = {}
-        for n in req["sizes"]:
-            text = make_text(n)
+        def once(text):
             tool._SEALED.clear(); tool._CHECKED.clear(); tool.RUN["chars"] = 0; tool.RUN["stop"] = None
-            t0 = time.process_time()
             tool.seal_text(text, "boundary", req.get("field"))
             tool._suspect(text)
-            row[str(n)] = round(time.process_time() - t0, 4)
-        out[name] = row
+        times = ladder(once, [make_text(n) for n in req["sizes"]])
+        out[name] = dict(zip((str(n) for n in req["sizes"]), (None if t is None else round(t, 4) for t in times)))
+        if not ladder_ok(times):
+            break  # the test names this shape; the rest would only take longer
     return out
 
 
@@ -512,14 +516,14 @@ test("a secret name glued to a letter or written in CamelCase (adminPassword=, v
 
 // ---- time and size: every layer is linear ---------------------------------------------------------------------------------
 
-test("the layers take time proportional to the length of a string: 5,000, 20,000 and 100,000 characters of each pathological shape (`a-a-a-...`, `a_a_a_...`, `~:~:`, `Ab1/Ab1/`, `u:p@u:p@`, `password=password=`, a run of backslashes, `eyJeyJ`, `\\u20\\u20`, `t10.AB` and a run of underscores, `iqn.`, `naa.`, `eui.`, `WIN-` runs, `password=<` runs, `--a-b-c-key` flags, `password=<redacted> abcdefgh` repeated, `t10.` and `iqn.` ids with a long run of one letter, `WD2D` runs, `pwd-srv01` and `pwd.vmdk` repeated, groups of four, counters, time stamps and brackets after a secret's name, glued and CamelCase flags, key files, `iqn.` ids with a hexadecimal serial), in CPU seconds", async () => {
+test("the layers take time proportional to the length of a string: 6,250, 25,000 and 100,000 characters of each pathological shape (`a-a-a-...`, `a_a_a_...`, `~:~:`, `Ab1/Ab1/`, `u:p@u:p@`, `password=password=`, a run of backslashes, `eyJeyJ`, `\\u20\\u20`, `t10.AB` and a run of underscores, `iqn.`, `naa.`, `eui.`, `WIN-` runs, `password=<` runs, `--a-b-c-key` flags, `password=<redacted> abcdefgh` repeated, `t10.` and `iqn.` ids with a long run of one letter, `WD2D` runs, `pwd-srv01` and `pwd.vmdk` repeated, groups of four, counters, time stamps and brackets after a secret's name, glued and CamelCase flags, key files, `iqn.` ids with a hexadecimal serial), in CPU seconds, the least of up to three rounds, each step at most 8 times the one before", async () => {
   for (const [label, script] of TOOLS) {
     for (const field of [null, "name", "file", "uid"]) {
-      const t = await host(script, { op: "linear", sizes: [5000, 20000, 100000], field });
-      for (const [shape, row] of Object.entries(t as Record<string, Record<string, number>>)) {
-        assert.ok(row["100000"] < 3, `${label} ${field} ${shape}: 100 KB took ${row["100000"]} s`);
-        assert.ok(row["100000"] <= Math.max(0.3, row["5000"] * 40), `${label} ${field} ${shape}: 5 KB ${row["5000"]} s, 100 KB ${row["100000"]} s is not linear`);
-        assert.ok(row["20000"] <= Math.max(0.15, row["5000"] * 8), `${label} ${field} ${shape}: 5 KB ${row["5000"]} s, 20 KB ${row["20000"]} s is not linear`);
+      const t = await host(script, { op: "linear", sizes: SIZES, field });
+      for (const [shape, row] of Object.entries(t as Record<string, Record<string, number | null>>)) {
+        const times = SIZES.map((n) => row[String(n)]);
+        assert.ok(ladderOk(times), `${label} ${field} ${shape}: ${SIZES.map((n, i) => `${n} characters ${times[i] === null ? "not run" : `${times[i]} s`}`).join(", ")} is not linear (best of up to three rounds, each step four times the length)`);
+        assert.ok((times[times.length - 1] as number) < 3, `${label} ${field} ${shape}: 100 KB took ${times[times.length - 1]} s`);
       }
     }
   }

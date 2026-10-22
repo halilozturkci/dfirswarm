@@ -49,6 +49,9 @@ not that the document is plain, empty or permanently inaccessible.
 intact or openable; that a PDF or Office file with no marker is plain; who encrypted it,
 or why.
 
-**Sensitive output.** `archive_probe` reaches no secret value. A job that handles a
-password, a candidate list or a decrypted derivative runs with `secret_output: true`.
+**Sensitive output.** `archive_probe` reads no secret value, but it prints member
+names, header strings and the path, and a part of one shaped like an identifier or a
+secret is withheld (`names_withheld`); a secret of another shape is printed, so read
+a file whose names matter in a job. A job that handles a password, a candidate list or
+a decrypted derivative runs with `secret_output: true`.
 Never write a password, a fragment of one, or a hash of one.

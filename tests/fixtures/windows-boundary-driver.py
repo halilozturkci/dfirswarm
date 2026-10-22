@@ -72,15 +72,24 @@ elif case == "redos":
     worst = 0.0
     cases = 0
 
+    def seconds(make, kind, n):
+        text = make(n)
+        t0 = time.process_time()
+        blk.seal({"v": blk.T(kind, text)})
+        return time.process_time() - t0
+
     def measure(make, label, kinds):
         global worst, cases
         for kind in kinds:
-            t0 = time.time()
-            blk.seal({"v": blk.T(kind, make(small))})
-            t1 = time.time() - t0
-            t0 = time.time()
-            blk.seal({"v": blk.T(kind, make(large))})
-            t2 = time.time() - t0
+            # CPU time, and the least of up to three rounds when a round looks slow or not linear (as tests/pack-re-timing.ts does: one round of a few
+            # hundredths of a second on a loaded runner is several times too long); the base keeps its floor of 0.01 s so that a quadratic rule is still seen at these sizes
+            t1 = t2 = None
+            for _ in range(3):
+                a, b = seconds(make, kind, small), seconds(make, kind, large)
+                t1 = a if t1 is None else min(t1, a)
+                t2 = b if t2 is None else min(t2, b)
+                if t2 <= 0.3 or (t2 <= 4 and t2 / max(t1, 0.01) <= 24):
+                    break
             cases += 1
             worst = max(worst, t2)
             if t2 > 4 or (t2 > 0.3 and t2 / max(t1, 0.01) > 24):

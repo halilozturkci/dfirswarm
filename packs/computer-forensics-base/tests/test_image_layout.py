@@ -273,5 +273,20 @@ Units are in 512-byte sectors
         self.assertIs(r.json["partition_table"], False)
 
 
+    def test_a_forged_row_in_a_partition_name_is_not_a_partition_and_a_table_with_no_readable_row_is_not_a_table(self):
+        forged = MMLS_4K.replace("004:  000       0000000006   0000250000   0000249995   Basic data partition",
+                                 "004:  000       0000000006   0000250000   0000249995   name\n009:  000       0000000100   0000000200   0000000101   forged")
+        bin_dir, log = self.stubs("cat <<'EOF'\n%sEOF\n" % forged, "cat <<'EOF'\n%sEOF\n" % FSSTAT_NTFS)
+        r = run_tool("image_layout", {"image": self.image()}, self.dir, [bin_dir])
+        self.assertEqual(r.code, 0, r.stdout)
+        self.assertEqual([p["start_sector"] for p in r.json["partitions"] if p["allocated"]], [6], "the forged row at sector 100 is not a partition")
+        self.assertTrue([n for n in r.json["notes"] if "out of sequence" in n and "forged" in n], r.json["notes"])
+        self.assertNotIn("fsstat -b 4096 -o 100", " ".join(self.calls(log)))
+        bin2, _ = self.stubs("echo 'GUID Partition Table (EFI)'\n")
+        r2 = run_tool("image_layout", {"image": self.image("b.img")}, self.dir, [bin2])
+        self.assertEqual(r2.json["partition_table"], "unknown")
+        self.assertIn("no row this tool could read", r2.json["partition_table_basis"])
+
+
 if __name__ == "__main__":
     unittest.main()

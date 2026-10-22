@@ -1,0 +1,60 @@
+{
+  "name": "lnk_jumplist",
+  "description": "Read shell links and Jump Lists as one set of rows, each with where its structure sits in the file, what it decodes to, and whether it holds together. An adapter, not a new decoder: a link is decoded by this pack's lnk_parse, a DestList by the layouts of this pack's jumplist, and a link is read again by liblnk's `lnkinfo` as an independent reader; what this tool adds is the part those do not do. It reads the OLE compound file an automaticDestinations-ms is stored in (MS-CFB, standard library only) and says where every stream sits, whether the container is consistent (header, FAT, directory, mini-stream, chains that loop, share a sector or leave the file), which DestList entry names which stream, and which entries have no stream and which streams no entry. A customDestinations-ms has no container: its link structures are carved by the 20-byte header, each marked carved, and the container is not parsed. Inputs: a .lnk, an automaticDestinations-ms, a customDestinations-ms, or a directory of them (walked, links not followed; a file of another kind is counted, named and not read). A file named as `path` is classified by its first bytes; one in a directory by its name and first bytes. Rows (row: file, container, stream, destlist_entry, link): every offset inside a link's record is from the start of that link structure, and `file_offset` and `extents` say where the structure sits in the file. A link row has the header FILETIMEs raw (decimal) beside ISO 8601 UTC with seven fractional digits, the structured target (local path with VolumeID: drive type, serial as eight hex digits, label; or a network target with share, device and provider), the string fields, the tracker block, and `integrity`: structure_complete, lnk_parse's problems, and what lnkinfo says (time, size, volume, target and label compared field by field, or why it was not run). The rows are JSON Lines: `limit` rows are shown inline and the whole set is in the file the answer names (`rows_file`). status is complete only when no row is incomplete, no container problem is named, lnkinfo disagrees nowhere, nothing was left unread and the tool's own clock did not run out; the status_basis says which. Not done: JLECmd is not used (no backend of it is declared), a link's target is not resolved or opened, a DestList's access counters are returned raw as lnk_parse/jumplist return them (no access count is claimed), and a customDestinations-ms's categories, pins and tasks are not parsed. A FIFO, socket or device is never opened: it is counted under not_attempted and the status is partial. Bounds: a link file past 64 MiB is named and not parsed, at most 32 MiB of one container stream is read (the rest is named, and the status is partial), at most 20,000 files of a directory are read (max_files), and the tool's own clock (max_seconds) ends the walk with what was read; memory stays small because files are read in pieces (a 300 MiB sparse jump list was read at about 32 MB resident). SENSITIVE and withheld by shape: a link's arguments, its UTF-16 string scan, and a path-like field shaped like a secret are handled as lnk_parse handles them: not in the answer. The answer gives arguments_present, arguments_chars and arguments_first_token; the text goes only to lnk-strings.jsonl under $OUT with mode 0600 when write_strings is true, and write_strings is refused unless the tool runs as a job with secret_output: true (nothing is made when it is refused). A secret in a field that does not look like one is printed with the rest.",
+  "params": {
+    "path": {
+      "type": "string",
+      "description": "A shell link, a Jump List file, or a directory of them",
+      "required": true
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Rows shown inline (default 100, an inline page size); every row is kept, and the whole set is in the file the answer names"
+    },
+    "max_files": {
+      "type": "integer",
+      "description": "Most files read from a directory (default 20000); those past it are counted and the status is partial"
+    },
+    "write_strings": {
+      "type": "boolean",
+      "description": "Write the withheld text (arguments, the UTF-16 strings, a secret-shaped field) to lnk-strings.jsonl under $OUT, mode 0600 (default false). Refused unless the tool runs as a job with secret_output: true; the answer never carries a value"
+    },
+    "max_seconds": {
+      "type": "number",
+      "description": "The tool's own time limit in seconds, 1 to 110 (default 100); files after it are not read, the answer says so and is partial"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 120,
+  "example": "{\"path\": \"work/extracted/AutomaticDestinations\", \"limit\": 20}",
+  "by": "maintainer",
+  "at": "2026-10-21T09:00:00.000Z",
+  "version": 1,
+  "use": {
+    "magic": [
+      {
+        "offset": 0,
+        "hex": "4c0000000114020000000000c000000000000046"
+      },
+      {
+        "offset": 0,
+        "hex": "d0cf11e0a1b11ae1"
+      }
+    ],
+    "extensions": [
+      ".lnk",
+      ".automaticdestinations-ms",
+      ".customdestinations-ms"
+    ]
+  },
+  "requires": [
+    "lnkinfo"
+  ],
+  "secret_output": {
+    "when_args": [
+      "write_strings"
+    ]
+  },
+  "sha256": "a1e87ddac337c2110acea2819874763a17f7f586211dda5436cc6f2b431c5d96"
+}

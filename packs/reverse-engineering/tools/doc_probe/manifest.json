@@ -75,7 +75,7 @@
     },
     "limit": {
       "type": "integer",
-      "description": "Rows of one table kept in the answer (default 1000); the whole of a longer table is written to a file and named"
+      "description": "Rows of one table kept in the answer (default 1000, at most 100000); the whole of a longer table is written to a file and named"
     },
     "max_seconds": {
       "type": "integer",
@@ -88,6 +88,6 @@
   "example": "{\"path\": \"work/extracted/invoice.docx\"}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 3,
-  "sha256": "bcad4896950fde5d97a0522f822e07c65f21430cba00739de6fab4af6c8c14af"
+  "version": 4,
+  "sha256": "b4d4e7b03f5ed330a5bdc9b7295a83dc94a1c9d8e255078c99f601ee1c607dff"
 }

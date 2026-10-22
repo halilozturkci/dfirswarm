@@ -178,10 +178,12 @@ async function block(path: string, name: string): Promise<string> {
 const processBlock = (path: string): Promise<string> => block(path, "PROCESS");
 const sha = (text: string): string => createHash("sha256").update(text).digest("hex");
 
-// The text of each block as the network pack carries it (its PR 1a, head f5ad0030): a copy here is a copy of that text, and a
-// change to either side shows as a change of this hash, to be made in both places.
-const NETWORK_PROCESS_SHA = "072a9f28f521a9bc039e717811ef0a2b4e9118169fca908bfd4467969cefddac";
-const NETWORK_WITHHOLDING_SHA = "e90959c1c374a2ce465fdd85e1c8a5e9c9f5fe1d6088192a3291baa9da0c23c2";
+// The text of each block as the network pack carries it: a copy here is a copy of that text, and a change to either side shows
+// as a change of this hash, to be made in every copy (the withholding block is in the network, base, virtualization and
+// reverse-engineering packs and the tool library; the tests of each hold their copies equal). The process block is the one
+// with the poll() guard in kill_tree, the seen set in the walk and the libproc route on macOS.
+const NETWORK_PROCESS_SHA = "d6dc512281472e451aa994429aab766d808c330114650ecad2a72aeeada8a944";
+const NETWORK_WITHHOLDING_SHA = "55adb95b4f37b7db293b04e77281316735ab82ea609762d6bd46fc8ad2d1eee1";
 
 test("the tool and the recipes that start programs carry one process block, the network pack's text, and nothing in the pack starts a program in a session or a group of its own", async () => {
   const files = [join(TOOLS, "fuzzy_hash", "run.py"), RECIPE, CAPA_FLOSS];
@@ -209,24 +211,14 @@ test("the withholding blocks of doc_probe, doc_structure, pe_directories, pe_inf
   for (const path of [DOC_PROBE, DOC_STRUCTURE, PE_DIRECTORIES, PE_INFO, CAPA_FLOSS]) assert.equal(sha(await block(path, "WITHHOLDING")), NETWORK_WITHHOLDING_SHA, path);
 });
 
-test("doc_structure, pe_directories and the capa-floss recipe carry one linear-spans block, bound after the shared withholding block it stands in for", async () => {
-  const blocks = await Promise.all([DOC_STRUCTURE, PE_DIRECTORIES, CAPA_FLOSS].map((p) => block(p, "LINEAR SPANS")));
-  for (const other of blocks.slice(1)) assert.equal(other, blocks[0]);
-  assert.match(blocks[0]!, /^token_spans = _linear_token_spans$/m);
-  for (const path of [DOC_STRUCTURE, PE_DIRECTORIES, CAPA_FLOSS]) {
-    const text = await readFile(path, "utf8");
-    assert.ok(text.indexOf("# END SHARED WITHHOLDING") < text.indexOf("# BEGIN SHARED LINEAR SPANS"), `${path}: the linear block follows the withholding block`);
-  }
-});
-
-test("doc_structure, pe_directories and the capa-floss recipe carry one ONE WAY OUT block (the sanitiser and the backstop), after the linear-spans block", async () => {
+test("doc_structure, pe_directories and the capa-floss recipe carry one ONE WAY OUT block (the sanitiser and the backstop), after the withholding block", async () => {
   const blocks = await Promise.all([DOC_STRUCTURE, PE_DIRECTORIES, CAPA_FLOSS].map((p) => block(p, "ONE WAY OUT")));
   for (const other of blocks.slice(1)) assert.equal(other, blocks[0]);
   assert.match(blocks[0]!, /^def shown_path\(text\):$/m);
   assert.match(blocks[0]!, /^def final_check\(value, safe=None, key=""\):$/m);
   for (const path of [DOC_STRUCTURE, PE_DIRECTORIES, CAPA_FLOSS]) {
     const text = await readFile(path, "utf8");
-    assert.ok(text.indexOf("# END SHARED LINEAR SPANS") < text.indexOf("# BEGIN SHARED ONE WAY OUT"), `${path}: the one-way-out block follows the linear block`);
+    assert.ok(text.indexOf("# END SHARED WITHHOLDING") < text.indexOf("# BEGIN SHARED ONE WAY OUT"), `${path}: the one-way-out block follows the withholding block`);
     // one definition of each: no second sanitiser elsewhere in the file
     assert.equal(text.match(/^def shown_path\(/gm)?.length, 1, `${path}: one shown_path`);
     assert.equal(text.match(/^def final_check\(/gm)?.length, 1, `${path}: one final_check`);

@@ -60,7 +60,7 @@ const CHILDREN: Record<string, string> = {
   "persistence/login-items-quieter": "persistence/mechanisms",
 };
 // The leaves that can reach secret material say so; the rest point to them.
-const SECRET_LEAVES = ["accounts/users", "artifacts/plists", "artifacts/knowledgec", "logs/unified", "persistence/mechanisms", "triage/system-profile"];
+const SECRET_LEAVES = ["accounts/users", "artifacts/plists", "artifacts/knowledgec", "artifacts/fsevents", "logs/unified", "persistence/mechanisms", "triage/system-profile"];
 
 test("every skill is a leaf within the budget, opens with Use when/only if ... Not for ..., has a short index entry, and old ids stay", async () => {
   const skills = await load(SKILLS);
@@ -119,10 +119,10 @@ test("every second-level leaf is pointed to by its parent with an 'only if' that
 const TAUGHT: Array<[string, string, string[]]> = [
   ["plist_read", "artifacts/plists", ["extracted_file_mtime", "write_values"]],
   ["knowledgec_query", "artifacts/knowledgec", ["source_used", "problems", "filters_unapplied"]],
-  ["knowledgec_query", "artifacts/knowledgec-fields-time", ["value_type_code", "utc_offset_seconds", "export_oversize", "_truncated", "_where"]],
-  ["fsevents_parse", "artifacts/fsevents", ["files_by_state", "flags_undecoded", "coverage", "problems"]],
-  ["unified_log", "logs/unified", ["decoded_coverage", "support_files", "problems", "warnings"]],
-  ["unified_log", "logs/unified-readers", ["reader"]],
+  ["knowledgec_query", "artifacts/knowledgec-fields-time", ["value_type_code", "utc_offset_seconds", "export_oversize", "_truncated", "_where", "_hex", "max_seconds", "resume", "resume_since"]],
+  ["fsevents_parse", "artifacts/fsevents", ["files_by_state", "flags_undecoded", "coverage", "problems", "status_basis", "max_seconds", "not_attempted", "contains_blind_records", "write_values"]],
+  ["unified_log", "logs/unified", ["decoded_coverage", "support_files", "problems", "warnings", "status_basis", "reader_outcome"]],
+  ["unified_log", "logs/unified-readers", ["reader", "timeout_seconds", "budget"]],
 ];
 
 test("the tool fields a skill names are fields the tools write", async () => {
@@ -178,6 +178,10 @@ test("the rules the split keeps: observation against verdict, bounded negatives,
   has("filesystem/apfs-recovery", /there is no NTFS-style `\$MFT` does not mean there is no recoverable history/);
   has("filesystem/apfs-encryption", /`fvdeinfo` is for Core Storage; it is not assumed to read APFS/);
   has("logs/unified", /Complete is not a coverage claim/);
+  has("logs/unified", /the reader's whole output named in `output` is not judged and holds every message as decoded/);
+  has("artifacts/knowledgec", /That is by shape: a plain password, a passphrase, a UUID-shaped key, a BitLocker key or anything under 16 characters in a name is printed/);
+  has("artifacts/fsevents", /a plain password, a BitLocker key or an ordinary-looking name is printed/);
+  has("artifacts/plists", /A file that does not parse is a row with the kind of error and its place, never the file's text/);
   has("logs/unified", /not proof that everything between them was recorded/);
   has("logs/unified-readers", /It does not bring back an entry that was never persisted, was removed by retention or was redacted/);
   has("persistence/mechanisms", /an agent loaded at login has not shown its program ran then/);

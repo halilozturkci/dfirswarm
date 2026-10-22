@@ -195,7 +195,7 @@ test("the claims the review removed are not back, and the front matter lists wha
 
 // Fields and names a skill teaches, each of which a tool must write: file -> skill -> names.
 const TAUGHT: Array<[string, string, string[]]> = [
-  ["tools/encrypted_survey/run.py", "scope/triage-tools", ["noncandidate", "unmeasured", "read_failed", "candidate_file_fraction", "complete", "coverage", "tail_bytes"]],
+  ["tools/encrypted_survey/run.py", "scope/triage-tools", ["noncandidate", "unmeasured", "read_failed", "candidate_file_fraction", "status", "status_basis", "max_seconds", "sample", "coverage", "tail_bytes"]],
   ["tools/encrypted_survey/run.py", "identify/family", ["shared_tail_suffix", "tail_bytes"]],
   ["tools/ransom_note_scan/run.py", "scope/triage-tools", ["content_resembles_note", "filename_only", "write_values", "ransom-note-values.jsonl"]],
 ];

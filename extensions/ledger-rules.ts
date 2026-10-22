@@ -1782,8 +1782,35 @@ function mdCell(text: string | undefined): string {
   return (text ?? "").replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
 }
 
-/** ledger/ledger.md: the timeline in time order, the indicators, the findings. */
+/** The renders waiting or running, one chain per ledger path in this process. */
+const renderChains = new Map<string, Promise<unknown>>();
+
+/**
+ * ledger/ledger.md: the timeline in time order, the indicators, the findings.
+ *
+ * Renders of one ledger run one at a time, in the order they were asked for,
+ * and each reads the run's records when its turn comes, not when it was asked
+ * for: a render that started before a store sweep line was written can no
+ * longer finish after the sweep's own render and put back a document that
+ * says the sweep is pending. The chain orders the renders of this process; a
+ * lock beside the registers orders them against another process. A render
+ * given `entries` renders those entries (the caller holds the register), the
+ * rest it reads when it runs.
+ */
 export async function renderLedger(sandboxRoot: string, entries?: LedgerEntry[]): Promise<string> {
+  const key = resolve(sandboxRoot);
+  const turn = (renderChains.get(key) ?? Promise.resolve()).catch(() => undefined).then(() => withNamedLock(sandboxRoot, RENDER_LOCK, () => renderLedgerNow(sandboxRoot, entries)));
+  renderChains.set(key, turn);
+  try {
+    return await turn;
+  } finally {
+    if (renderChains.get(key) === turn) renderChains.delete(key);
+  }
+}
+
+const RENDER_LOCK = "ledger-render";
+
+async function renderLedgerNow(sandboxRoot: string, entries?: LedgerEntry[]): Promise<string> {
   const all = await withAttestations(sandboxRoot, entries ?? (await readLedger(sandboxRoot)));
   const events = all.filter((e) => e.kind === "event").sort((a, b) => (a.ts ?? "").localeCompare(b.ts ?? "") || a.seq - b.seq);
   const iocs = all.filter((e) => e.kind === "ioc");

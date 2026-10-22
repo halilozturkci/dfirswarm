@@ -11,7 +11,7 @@
  */
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { chmod, mkdir, readFile, readdir, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { IS_ROOT, JOURNAL, asJob, body, everythingBut, exists, filesUnder, gone, lines, pidFile, refused, rowsOf, tool, withCwd } from "./linux-pack-harness.ts";
@@ -401,5 +401,75 @@ test("journal_export takes no NaN for a budget", async () => {
       assert.equal(r.status, 1, literal);
       assert.match(JSON.parse(r.stdout).error, /max_seconds/);
     }
+  });
+});
+
+test("journal_export's own-journal guard follows links: a path that leads to where this machine keeps its journal is refused", async () => {
+  await withCwd(async (cwd, bin) => {
+    const env = await journalFixture(cwd, bin, nativeJournal());
+    // Where this machine "keeps its journal" is a directory of the test's own, named to the tool the way /var/log/journal is.
+    const own = join(cwd, "machine", "var-log-journal");
+    await mkdir(join(own, "abc"), { recursive: true });
+    await writeFile(join(own, "abc", "system.journal"), Buffer.concat([Buffer.from("LPKSHHRH"), Buffer.alloc(248)]));
+    const elsewhere = join(cwd, "..", `je-links-${process.pid}`);
+    await mkdir(elsewhere, { recursive: true });
+    await symlink(own, join(elsewhere, "alias"));
+    const driver = `
+import importlib.util, io, json, os, sys
+spec = importlib.util.spec_from_file_location("journal_export_under_test", ${JSON.stringify(JOURNAL)})
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+mod.OWN_JOURNALS = (${JSON.stringify(own)},)
+sys.stdin = io.StringIO(json.dumps({"path": sys.argv[1]}))
+try:
+    mod.main()
+except SystemExit as exit:
+    sys.exit(exit.code)
+`;
+    // The cwd is a run directory that holds none of these paths.
+    const here = join(cwd, "run");
+    await mkdir(here, { recursive: true });
+    const call = (path: string) => spawnSync("python3", ["-I", "-c", driver, path], { cwd: here, encoding: "utf8", env: { ...process.env, ...env, PATH: `${bin}:${process.env.PATH ?? ""}`, AGENT_ID: "s1" }, timeout: 60_000 });
+    const direct = call(join(own, "abc", "system.journal"));
+    assert.equal(direct.status, 1);
+    assert.match(JSON.parse(direct.stdout).error, /keeps its own journal/);
+    for (const via of [join(elsewhere, "alias", "abc", "system.journal"), join(own, "..", "var-log-journal", "abc", "system.journal")]) {
+      const r = call(via);
+      assert.equal(r.status, 1, `${via}: ${r.stdout}`);
+      assert.match(JSON.parse(r.stdout).error, /keeps its own journal/, via);
+    }
+    // A journal that is somewhere else is read.
+    const fine = call(join(cwd, "work", "journal", "system.journal"));
+    assert.equal(fine.status, 0, fine.stdout + fine.stderr);
+    assert.equal(JSON.parse(fine.stdout).entry_count, 5);
+    await rm(elsewhere, { recursive: true, force: true });
+  });
+});
+
+test("journal_export bounds every field of a row: a byte array is named by its length, a huge identity value is cut, the census names are cut", async () => {
+  await withCwd(async (cwd, bin) => {
+    const bytes = Array.from("secret-token-in-comm", (c) => c.charCodeAt(0));
+    const hugeList = Array.from({ length: 200_000 }, (_, i) => i % 256);
+    const native = [
+      entry(1, { MESSAGE: "x", _COMM: bytes, _EXE: hugeList, __CURSOR: "s=" + "c".repeat(3_000_000), _BOOT_ID: BOOT_A + "f".repeat(5000) }),
+      entry(2, { MESSAGE: "y", _SYSTEMD_UNIT: ["a.service", "b.service", "c.service", "d.service", "e.service", "f.service", "g.service"] as unknown as string, ["F".repeat(100_000)]: "z" }),
+      entry(3, { MESSAGE: "z", __REALTIME_TIMESTAMP: "9".repeat(400) + "x" }),
+    ].join("\n") + "\n";
+    const env = await journalFixture(cwd, bin, native);
+    const run = await asJob(JOURNAL, cwd, { path: "work/journal", limit: 5 }, bin, env);
+    const out = body(run);
+    assert.ok(run.stdout.length < 60_000, `the answer is ${run.stdout.length} bytes for three entries`);
+    const rows = await rowsOf(cwd, out);
+    assert.deepEqual(rows[0].comm, { encoding: "bytes", bytes: bytes.length });
+    assert.equal(run.stdout.includes("115,101,99"), false, "the bytes of a byte array are not printed as numbers");
+    assert.deepEqual(rows[0].exe, { encoding: "bytes", bytes: 200_000 });
+    assert.equal(rows[0].cursor.length, 1024);
+    assert.equal(rows[0].truncated_fields.cursor, 3_000_002);
+    assert.equal(rows[1].unit.encoding, "several values");
+    assert.equal(rows[1].unit.values, 7);
+    assert.equal(rows[1].unit.first.length, 5);
+    assert.ok(out.field_census && Object.keys(out.field_census).some((k) => k.startsWith("FFFF") && k.endsWith("(100000 characters)")));
+    assert.equal(out.entries_with_a_boot_id_over_128_characters, 1);
+    assert.ok(rows[2].time_error.length < 300, "an unparseable time is quoted cut");
   });
 });

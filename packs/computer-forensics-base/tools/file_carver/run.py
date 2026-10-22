@@ -26,6 +26,10 @@ container bytes here, not the disk inside, and an offset taken from a decoded
 image does not belong to the container. The file is streamed, never held whole,
 and the output file is created new (an existing one is an error, not
 overwritten).
+
+The walk has a clock of its own (25 seconds, inside the manifest's 30): every read of the source looks at it, so a structure that
+makes the walk long (a window of a gigabyte, a file of a million tiny segments) is refused with how far the walk got
+(`reached_bytes`), not killed with nothing said. A bigger `max_size` is a longer walk.
 """
 import hashlib
 import json
@@ -34,13 +38,16 @@ import re
 import struct
 import sys
 import tempfile
+import time
 import zlib
 from pathlib import Path
 
-TOOL = {"name": "file_carver", "version": 3}
+TOOL = {"name": "file_carver", "version": 4}
 CHUNK = 1 << 20
 DEFAULT_MAX = 100_000_000
 PDF_EOF_LIMIT = 1000
+SECONDS = min(25.0, float(os.environ.get("FILE_CARVER_SECONDS") or 25))   # the walk's own clock, inside the manifest's 30 (a shorter one can be asked for)
+STARTED = time.monotonic()
 
 
 class Refuse(Exception):
@@ -52,7 +59,7 @@ class Refuse(Exception):
 
 
 def fail(message, **extra):
-    print(json.dumps({"ok": False, "error": message, "tool": TOOL, **extra}))
+    print(json.dumps({"ok": False, "status": "failed", "status_basis": "the tool refused or stopped with an error (see error)", "error": message, "tool": TOOL, **extra}))
     raise SystemExit(1)
 
 
@@ -102,10 +109,17 @@ class Src:
     def __init__(self, path):
         self.fh = open(path, "rb")
         self.size = os.fstat(self.fh.fileno()).st_size
+        self.origin = 0                # where the candidate starts, for the distance a refusal names
+        self.reached = 0               # the furthest byte any read has reached
 
     def read(self, offset, n):
         if offset < 0 or n < 0 or offset > self.size:
             return b""
+        self.reached = max(self.reached, offset + n)
+        if time.monotonic() - STARTED > SECONDS:
+            raise Refuse("the %g-second time budget was used before the candidate's end was found: the walk had read as far as %d bytes from the offset "
+                         "(a larger max_size is a longer walk; cut a smaller window, or read the structure in place)" % (SECONDS, min(self.reached, self.size) - self.origin),
+                         reached_bytes=min(self.reached, self.size) - self.origin, time_budget_seconds=SECONDS)
         self.fh.seek(offset)
         return self.fh.read(n)
 
@@ -536,6 +550,7 @@ def carve(path, offset, sig_type, max_size, dest=None):
         raise Refuse("this signature has no boundary check here", sig_type=sig_type, supported=sorted(MAGICS),
                      hint="find its offset with sig_carve, then use a format-aware extractor")
     src = Src(path)
+    src.origin = offset
     try:
         header = src.read(offset, 16)
         expected = MAGICS[sig_type]
@@ -556,6 +571,8 @@ def carve(path, offset, sig_type, max_size, dest=None):
         digest, first = copy_range(src, offset, size, dest)
         result = {
             "ok": True, "tool": TOOL, "kind": "candidate_fragment",
+            "status": "complete",
+            "status_basis": "the structure walk for %s ended and the bytes up to its end were read; boundary says how far the end is trusted" % sig_type,
             "source": {"path": path, "bytes": src.size, "address_space": "the bytes of this file as given; a container (E01, VMDK) is not decoded"},
             "offset": offset, "size": size, "sha256": digest, "sig_type": sig_type,
             "boundary": boundary, "boundary_basis": basis, "checks": checks, "notes": notes, **extra,

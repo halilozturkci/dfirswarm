@@ -41,6 +41,7 @@ import math
 import os
 import re
 import secrets
+import signal
 import stat
 import sys
 import tempfile
@@ -48,7 +49,7 @@ import time
 from pathlib import Path
 
 TOOL = "shell_history"
-PARSER = "shell_history/4"
+PARSER = "shell_history/5"
 DEFAULT_LIMIT = 200
 FIRST_FAILURES = 20
 MAX_PIECE = 8 << 20          # a physical line longer than this is read in pieces, none dropped
@@ -176,6 +177,37 @@ def touches_withheld_text(has_filter):
     """A filter that matches the text of a record is a search over text the answer withholds: it is honoured only in a job
     (whose output is sealed), and the answer says it was used."""
     return bool(has_filter) and in_job()
+
+
+REGEX_SECONDS = 2.0      # the most one match of the caller's expression may take; Python's re has no clock of its own
+
+
+class RegexTooSlow(Exception):
+    pass
+
+
+def _alarm(_signum, _frame):
+    raise RegexTooSlow()
+
+
+def arm_regex_clock():
+    """Make a match that runs too long end (SIGALRM, which Python's matcher polls): the expression is the caller's and the
+    text is the evidence's, and a nested repeat on a few dozen characters runs for minutes. False where there is no timer."""
+    if not hasattr(signal, "setitimer"):
+        return False
+    signal.signal(signal.SIGALRM, _alarm)
+    return True
+
+
+def search_within(pattern, text, deadline):
+    """pattern.search(text), ended at REGEX_SECONDS or at the tool's deadline, whichever is first (RegexTooSlow)."""
+    if not hasattr(signal, "setitimer"):
+        return pattern.search(text)
+    signal.setitimer(signal.ITIMER_REAL, max(0.05, min(REGEX_SECONDS, deadline - time.monotonic())))
+    try:
+        return pattern.search(text)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
 
 
 # Lossless paging (the same in every library tool that pages): the page an agent reads stays small, and when
@@ -371,26 +403,35 @@ def text_of(data):
     return decode(data)
 
 
-def physical(path):
+def physical(path, counters):
     """(line number, byte offset, bytes without the newline, more, first) for each physical line or piece of one.
 
     A line longer than MAX_PIECE comes in pieces that share its number: `first` is true on the first piece and
-    `more` on every piece but the last; nothing is dropped. A read error is raised to the caller, which has the
-    records so far."""
+    `more` on every piece but the last; nothing is dropped. `offset` is the position of the line's first byte in the
+    file (the terminator, CR and LF, is counted). The clock is read here, not only per record: a file of blank lines,
+    or of data lines under one stamp, yields no record for a very long time, and a piece of MAX_PIECE bytes is always
+    followed by a look at the clock. When max_seconds has passed the iteration ends and counters["stopped"] says so, so
+    that the reader flushes the record it holds and the caller names the file as partial. A read error is raised to the
+    caller, which has the records so far."""
     with open(path, "rb") as fh:
-        number, offset, first = 1, 0, True
+        number, offset, first, pieces = 1, 0, True, 0
         while True:
             chunk = fh.readline(MAX_PIECE)
             if not chunk:
                 return
+            pieces += 1
+            if ((pieces & 1023) == 0 or len(chunk) == MAX_PIECE) and time.monotonic() > counters["deadline"]:
+                counters["stopped"] = True
+                return
+            width = len(chunk)
             ended = chunk.endswith(b"\n")
-            more = not ended and len(chunk) == MAX_PIECE
+            more = not ended and width == MAX_PIECE
             if ended:
                 chunk = chunk[:-1]
                 if chunk.endswith(b"\r"):
                     chunk = chunk[:-1]
             yield number, offset, chunk, more, first
-            offset += len(chunk)
+            offset += width
             first = ended
             if ended:
                 number += 1
@@ -399,7 +440,7 @@ def physical(path):
 def scan(path, counters):
     """physical(), with the file's physical and blank lines counted: (number, offset, data, piece, blank) where
     `piece` says this is part of a line that was read in pieces."""
-    for number, offset, data, more, first in physical(path):
+    for number, offset, data, more, first in physical(path, counters):
         if first:
             counters["physical"] += 1
         blank = not data.strip()
@@ -628,6 +669,7 @@ def main():
             pattern = re.compile(args["contains"], re.I)
         except re.error as exc:
             fail("contains is not a valid regex", reason=str(exc))
+    arm_regex_clock()
     only_user = want_str(args, "user")
     seconds = want_seconds(args, "max_seconds", DEFAULT_SECONDS, MAX_SECONDS)
     deadline = time.monotonic() + seconds
@@ -685,11 +727,14 @@ def main():
 
     files, walk_errors, skipped_symlinks, excluded, not_parsed, read_failures = [], [], [], [], [], []
     seen, seq, matched, with_time, partial_reason = 0, 0, 0, 0, None
+    stop, filtered_out = False, 0
 
     def on_error(exc):
         walk_errors.append({"path": getattr(exc, "filename", None), "error": describe(exc)})
 
     for dirpath, dirs, names in os.walk(root, onerror=on_error):
+        if stop:
+            break
         if time.monotonic() > deadline:
             partial_reason = partial_reason or "the walk stopped at max_seconds (%s); directories after %s were not visited" % (seconds, dirpath)
             break
@@ -703,6 +748,10 @@ def main():
                                                           "a directory of that name deeper in the tree is read)" % name})
                 dirs.remove(name)
         for name in sorted(names):
+            if time.monotonic() > deadline:
+                partial_reason = partial_reason or "the walk stopped at max_seconds (%s) in %s; the files after %s were not read" % (seconds, dirpath, name)
+                stop = True
+                break
             full = os.path.join(dirpath, name)
             if name in NOT_PARSED:
                 not_parsed.append({"file": full, "reason": NOT_PARSED[name]})
@@ -731,6 +780,7 @@ def main():
                 user, user_source = "unknown", None
             base = os.path.basename(home) or home
             if only_user and only_user != (user if user not in ("unknown", "ambiguous") else base):
+                filtered_out += 1
                 continue
             seen += 1
             try:
@@ -741,7 +791,8 @@ def main():
             info = {"file": full, "program": program, "format": fmt, "home": home, "home_basename": base, "user": user,
                     "user_source": user_source, "size": size, "last_written": last, "records": 0, "physical_lines": 0,
                     "blank_lines": 0, "with_timestamps": 0, "timestamps_out_of_order": 0, "partial": False}
-            counters = {"physical": 0, "blank": 0, "other_lines": 0, "other_format": {}, "blank_beyond_cap": 0}
+            counters = {"physical": 0, "blank": 0, "other_lines": 0, "other_format": {}, "blank_beyond_cap": 0,
+                        "deadline": deadline, "stopped": False}
             previous, index = None, 0
             try:
                 ticks = 0
@@ -762,7 +813,7 @@ def main():
                         if previous is not None and rec.time < previous:
                             info["timestamps_out_of_order"] += 1
                         previous = rec.time
-                    if pattern and not pattern.search(command if in_job() else shown_fields_text(info, rec)):
+                    if pattern and not search_within(pattern, command if in_job() else shown_fields_text(info, rec), deadline):
                         continue
                     seq += 1
                     matched += 1
@@ -791,10 +842,19 @@ def main():
                     page.add(row)
                     if preview and len(preview_rows) < limit:
                         preview_rows.append({**row, "command": command})
+            except RegexTooSlow:
+                partial_reason = partial_reason or ("the contains expression did not finish within %s s on the record at line %d of %s: the read "
+                                                    "stopped there, and no later record of this file or of any other was tested" % (REGEX_SECONDS, rec.start, full))
+                info["partial"] = True
+                stop = True
             except OSError as exc:
                 info["error"] = describe(exc)
                 info["partial"] = True
                 read_failures.append({"file": full, "error": describe(exc)})
+            if counters["stopped"]:
+                partial_reason = partial_reason or "the read stopped at max_seconds (%s) inside %s, after line %d; the rest of it and later files were not read" % (seconds, full, counters["physical"])
+                info["partial"] = True
+                stop = True
             info["physical_lines"], info["blank_lines"] = counters["physical"], counters["blank"]
             if counters["other_lines"]:
                 info["lines_outside_an_entry"] = counters["other_lines"]
@@ -802,14 +862,18 @@ def main():
             if wrong and fmt != "zsh":
                 info["looks_like_other_format"] = wrong[0]
             files.append(info)
+            if stop:
+                break
     text.close()
     pages = {"records": page.finish()}
-    all_read = not read_failures and not walk_errors and partial_reason is None and not special
+    all_read = bool(files) and not read_failures and not walk_errors and partial_reason is None and not special
+    none_found = "no history file was found under root%s" % (" (%d were left out by the user filter)" % filtered_out if filtered_out else "")
     outcome = status_of(
         all_read, bool(files) is False and bool(walk_errors or read_failures),
         "every history file found was read through, no directory could not be opened and nothing was left unopened",
-        "%d read failure(s), %d walk error(s), %d special file(s) not opened%s: the answer names each" % (
-            len(read_failures), len(walk_errors), len(special), "; the read stopped at max_seconds" if partial_reason else ""),
+        "%d read failure(s), %d walk error(s), %d special file(s) not opened%s%s: the answer names each" % (
+            len(read_failures), len(walk_errors), len(special), "; the read stopped at max_seconds or at the contains expression's time" if partial_reason else "",
+            "; " + none_found if not files else ""),
         "no history file could be read")
     print(json.dumps({
         "parser": PARSER,

@@ -78,6 +78,9 @@ test("the store sweep: a hit outside the record's objects holds the negative, UT
   assert.equal(sw.unsearched.length, 0);
   assert.ok(sw.searched.objects >= 8, "every job's output is searched");
   assert.equal(SW.verifySweepChain(await readFile(join(S, SW.LEDGER_SWEEPS), "utf8")).ok, true);
+  // The sweep's own render of ledger.md can be overtaken by one that began before its line was written (two renders write the same file, the later write
+  // wins); render once more from what is on disk, which is what this reads.
+  await P.renderLedger(S);
   assert.match(await readFile(join(S, P.LEDGER_MD), "utf8"), /looked for: "alice", "bob-laptop", "no-such-string-xyz"; store sweep hits: .*found outside the record's objects: "alice" in job:j000007\/export\.csv/);
   // The review offer carries the sweep and asks for the whole store.
   await L.leadsDigest(a3);

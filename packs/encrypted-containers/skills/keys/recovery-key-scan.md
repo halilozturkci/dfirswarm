@@ -18,8 +18,10 @@ image, an archive or a container (no OCR, no unpacking). It reads the first 8 Mi
 of each file unless `max_bytes_per_file` is raised, and lists every file it could
 not read, skipped or read only in part: a clean result is bounded by that coverage.
 A value is found unless it is glued to more digits (`key_<value>` is found,
-`<value>7` is not). A file or directory named after a recovery password has that
-name withheld from the paths it prints.
+`<value>7` is not). A path component shaped like a recovery password, an
+identifier or a secret is withheld from the paths it prints (by shape; `paths_withheld`).
+At `max_seconds` or on a signal it stops and answers `partial`, naming the files and
+directories it did not reach: report those as not searched.
 It returns no value, fragment, shape or digest; `write_values: true` is for the one
 case that needs the value (`keys/where-they-hide`, Sensitive output).
 

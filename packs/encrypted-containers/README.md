@@ -22,7 +22,8 @@ rule, and is the one line a run shows for the pack when its skills index is over
 **Three tools.**
 `crypto_id` names the scheme from the first bytes of a volume or file and reads
 what a header holds without a key: the LUKS1 key-slot fields, the LUKS2 binary
-header (version, label, UUID). It does not read LUKS2 keyslots, BitLocker
+header (version, label, UUID). It prints no raw bytes of the file, and header text
+only when it is what the format says (the header's numbers and the sample's entropy are printed). It does not read LUKS2 keyslots, BitLocker
 protectors or the encryption state of an APFS volume, and it names the reader
 that does. `archive_probe` lists a ZIP's members with per-member encryption, and
 says what it can and cannot establish about 7-Zip, RAR, PDF and OLE documents; a
@@ -30,7 +31,9 @@ result from a byte search is marked a heuristic, never "not encrypted".
 `recovery_key_scan` sweeps a tree for text in the BitLocker 48-digit format,
 private-key headers and the file names key files are saved under. It returns
 where each is (file, offset, length, a structure check), never the value, a
-fragment of it or a hash of it, and lists every file it could not read in full.
+fragment of it or a hash of it, and lists every file it could not read in full or
+did not reach before its own time limit. Names, paths and header strings the three
+tools print have parts shaped like identifiers or secrets withheld, by shape.
 
 **One goal template**: `what-is-locked.md`.
 

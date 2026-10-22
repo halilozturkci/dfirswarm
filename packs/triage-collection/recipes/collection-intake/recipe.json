@@ -1,0 +1,59 @@
+{
+  "id": "collection-intake",
+  "version": "1.0.0",
+  "description": "Read a collector's output archive (a zip, or a tar plain or compressed) in one pass without extracting it: the member list, a SHA-256 of every member, the collector's own records (KAPE copy, skip and console logs, UAC's log and hash lists, a Velociraptor container) as canonical records with the locator of each raw row, and one verification row per delivery claim (path, size and digest checked apart, the digest in the collector's own algorithm). It applies when a member is named like a collector's record. An archive inside the archive is named, never opened; a 7z is not read. Its receipt and its answers carry `status` (complete, partial or failed) and `status_basis`.",
+  "object": "collector output archive",
+  "order": 35,
+  "min_bytes": 22,
+  "suffixes": [
+    ".zip",
+    ".tar",
+    ".tgz",
+    ".tar.gz",
+    ".tbz2",
+    ".tar.bz2",
+    ".txz",
+    ".tar.xz"
+  ],
+  "magic": [
+    {
+      "offset": 0,
+      "hex": "504b0304"
+    },
+    {
+      "offset": 0,
+      "hex": "1f8b"
+    },
+    {
+      "offset": 0,
+      "hex": "425a68"
+    },
+    {
+      "offset": 0,
+      "hex": "fd377a585a00"
+    },
+    {
+      "offset": 257,
+      "hex": "7573746172"
+    }
+  ],
+  "runtime": "python3",
+  "entry": "run.py",
+  "auto": [
+    "kickoff",
+    "derived"
+  ],
+  "limits": {
+    "seconds": 7200
+  },
+  "outputs": [
+    "inventory.tsv",
+    "records.jsonl",
+    "verification.jsonl",
+    "units.json",
+    "coverage.json"
+  ],
+  "purpose": "inventory",
+  "covers": "The archive's own member list, a digest of every member, the records a collector wrote (as the collector wrote them, one per row or line) and whether the members agree with them: path, size and digest apart. It extracts nothing to disk, opens no archive inside the archive (extract it with archive_extract and run this on the result), reads no 7z, and says nothing about whether the archive is authentic or complete as acquired, whether a record is true, what the collector was asked to take, where a member came from (collection_path_map) or what a question is covered by (collection_coverage).",
+  "sha256": "d0fbfedeb4a70e6ac4f3634cdf546b46b790d6ecd909886951b78c882b6aafb3"
+}

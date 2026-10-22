@@ -5,14 +5,17 @@ sparse file here, so the declared size is real to tarfile and costs the test no 
 by the standard library and then has one byte of a stored name changed, in both its local and its central header, as an archiver that
 stored the name would have.
 """
+import io
 import json
 import os
+import shutil
 import resource
 import signal
 import stat
 import struct
 import subprocess
 import sys
+import tarfile
 import time
 import unittest
 import zipfile
@@ -133,6 +136,48 @@ class ArchiveMembers(Case):
         archive = self.write("a.7z", b"7z\xbc\xaf\x27\x1c" + b"\0" * 64)
         self.run_recipe(archive, env={"PATH": d + os.pathsep + os.environ["PATH"]})
         self.assertEqual([m["flags"] for m in self.members()], ["escapes-root", "escapes-root", ""])
+
+
+    def zip_bytes(self, name="a.txt", data=b"hello"):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr(name, data)
+        return buf.getvalue()
+
+    def test_a_tar_whose_last_member_is_a_zip_is_listed_as_the_tar_and_says_it_also_ends_in_a_zip_record(self):
+        path = self.path("t.tar")
+        inner = self.zip_bytes()
+        with tarfile.open(path, "w") as tf:
+            for name, data in (("first.txt", b"x" * 10), ("inner.zip", inner)):
+                info = tarfile.TarInfo(name)
+                info.size = len(data)
+                tf.addfile(info, io.BytesIO(data))
+        proc = self.run_recipe(path)
+        self.assertEqual(json.loads(proc.stdout), {"ok": True, "status": "complete", "format": "tar", "members": 2})
+        self.assertEqual([m["path"] for m in self.members()], ["first.txt", "inner.zip"], "the tar's own members, not the zip inside the last one")
+        cov = self.coverage()
+        self.assertEqual(cov["format"], "tar")
+        self.assertTrue([n for n in cov["notes"] if "also ends in a zip end-of-central-directory record" in n], cov)
+
+    def test_bytes_that_end_in_a_zip_record_that_does_not_agree_with_the_file_are_not_a_zip(self):
+        for tail in (b"PK\x05\x06" + b"\0" * 18, b"PK\x05\x06" + b"\x01\0\x01\0" + b"\x2e\0\0\0" + b"\x10\0\0\0" + b"\0\0"):
+            path = self.write("junk.bin", os.urandom(1000) + tail)
+            proc = self.run_recipe(path)
+            self.assertEqual(proc.returncode, 2)
+            got = json.loads(proc.stdout)
+            self.assertEqual((got["ok"], got["status"]), (False, "unsupported"), "the answer says so on stdout, not only in coverage.json")
+            self.assertEqual(self.coverage()["status"], "unsupported")
+            self.assertFalse(os.path.exists(self.path("out/members.tsv")))
+            shutil.rmtree(self.path("out"))
+
+    def test_a_zip_with_a_prefix_is_still_a_zip_and_so_is_one_with_trailing_junk(self):
+        zb = self.zip_bytes("p.txt")
+        for name, data in (("sfx.zip", b"MZ" + b"\0" * 100 + zb), ("trail.zip", zb + b"J" * 100)):
+            path = self.write(name, data)
+            proc = self.run_recipe(path)
+            self.assertEqual(json.loads(proc.stdout)["format"], "zip", name)
+            self.assertEqual([m["path"] for m in self.members()], ["p.txt"], name)
+            shutil.rmtree(self.path("out"))
 
 
 if __name__ == "__main__":

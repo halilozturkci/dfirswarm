@@ -20,7 +20,7 @@ import sys
 import time
 from pathlib import Path
 
-TOOL = {"name": "icat_extract", "version": 8}
+TOOL = {"name": "icat_extract", "version": 9}
 BLOCK = 1 << 20
 MAX_BYTES_DEFAULT = 32 * 1024 ** 3
 MAX_BYTES_CEILING = 1024 ** 4
@@ -328,7 +328,9 @@ else:
 files = [e for e in listed if e["type"] != "d"]
 catalogued = (next((e for e in files if not e["deleted"]), None) or (files or [None])[0] or {}).get("path")
 result = {"tool": TOOL, "path": shown, "size": size, "sha256": digest.hexdigest(), "image": image, "offset": offset,
-          "sector_size": sector_size, "inode": str(inode), "status": status, "icat_exit": rc, "command": " ".join(cmd),
+          "sector_size": sector_size, "inode": str(inode), "status": status,
+          "status_basis": ("icat exited 0 and the whole stream was written" if status == "complete" else
+                           "icat did not exit 0 or the stream was not all written: what was written is kept under its partial name (see problem)"), "icat_exit": rc, "command": " ".join(cmd),
           "catalog_path": catalogued, "catalog_paths": [{"address": e["address"], "path": e["path"], "deleted": e["deleted"]} for e in files]}
 if why and stream_whole:
     result["problem"] = why

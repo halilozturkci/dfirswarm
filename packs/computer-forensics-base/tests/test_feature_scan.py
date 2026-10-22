@@ -83,7 +83,7 @@ class FeatureScan(Case):
         self.assertFalse(os.path.exists(self.path("work/features")))
         out = self.path("job-out")
         os.makedirs(out)
-        r = self.scan(write_values=True, top=1, env={"JOB_ID": "j000009", "OUT": out}, out_dir=self.path("job-out/features"))
+        r = self.scan(write_values=True, top=1, env={"JOB_ID": "j000009", "OUT": out, "SECRET_OUTPUT": "1"}, out_dir=self.path("job-out/features"))
         self.assertEqual(r.code, 0, r.stdout)
         self.assertNotIn(SECRET_ADDRESS, r.stdout)
         self.assertEqual(r.json["secret_values"]["values_file"], "store/jobs/j000009/out/feature-scan-values.jsonl")
@@ -168,7 +168,7 @@ class FeatureScan(Case):
     def test_a_second_values_run_in_one_job_is_a_json_refusal_and_an_empty_values_file_says_written_zero(self):
         out = self.path("job-out")
         os.makedirs(out)
-        env = {"JOB_ID": "j000014", "OUT": out}
+        env = {"JOB_ID": "j000014", "OUT": out, "SECRET_OUTPUT": "1"}
         first = self.scan(write_values=True, env=env, out_dir=self.path("job-out/f1"))
         self.assertEqual(first.code, 0, first.stdout)
         again = self.scan(write_values=True, env=env, out_dir=self.path("job-out/f2"))

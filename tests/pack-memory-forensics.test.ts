@@ -34,6 +34,8 @@ const CARVE = join(MEM, "mem_carve", "run.py");
 const PROFILE = join(MEM, "mem_profile", "run.py");
 const FS = join(MEM, "mem_fs", "run.py");
 const AGENT = { AGENT_ID: "s1" };
+/** A job run as secret output whose $OUT is work/s1: cutting slices out of an image needs one (write_values, a job, SECRET_OUTPUT=1). */
+const carveJob = (cwd: string): Record<string, string> => ({ JOB_ID: "j000001", OUT: join(cwd, "work", "s1"), SECRET_OUTPUT: "1" });
 
 type Run = { code: number | null; stdout: string; stderr: string };
 
@@ -118,7 +120,7 @@ test("mem_carve cuts a plain Prefetch record from its version field, which prefe
     pf.copy(blob, 0x3000);
     await writeFile(join(cwd, "work", "memory.raw"), blob);
     const out = body<Carve>(
-      await tool(CARVE, cwd, { path: "work/memory.raw", kinds: ["prefetch record"], extract_to: "work/s1/carved" }),
+      await tool(CARVE, cwd, { path: "work/memory.raw", kinds: ["prefetch record"], extract_to: "work/s1/carved", write_values: true }, carveJob(cwd)),
     );
     assert.equal(out.hit_count, 1);
     const hit = out.hits[0];
@@ -162,7 +164,7 @@ test("mem_carve writes private extracts and keeps their digests in a manifest be
     hiveBaseBlock(5).copy(blob, 0x1000);
     blob.write("%PDF-1.7", 0x2000, "latin1");
     await writeFile(join(cwd, "work", "memory.raw"), blob);
-    const run = await tool(CARVE, cwd, { path: "work/memory.raw", extract_to: "work/s1/carved", results_to: "work/s1/hits.jsonl" });
+    const run = await tool(CARVE, cwd, { path: "work/memory.raw", extract_to: "work/s1/carved", results_to: "work/s1/hits.jsonl", write_values: true }, carveJob(cwd));
     const out = body<Carve & { extraction: { manifest?: string } }>(run);
     assert.equal(out.extracted, 2);
     assert.doesNotMatch(run.stdout, /[0-9a-f]{64}/i, "a digest is in the answer");
@@ -207,14 +209,14 @@ test("mem_carve extracts the earliest candidates when max_extract is smaller tha
     blob.write("MZ\x90\x00\x03", 0x200, "latin1");
     await writeFile(join(cwd, "work", "memory.raw"), blob);
     const out = body<Carve>(
-      await tool(CARVE, cwd, { path: "work/memory.raw", extract_to: "work/s1/carved", max_extract: 1 }),
+      await tool(CARVE, cwd, { path: "work/memory.raw", extract_to: "work/s1/carved", max_extract: 1, write_values: true }, carveJob(cwd)),
     );
     assert.deepEqual(out.hits.map((h) => [h.kind, h.signature_offset]), [["PE header", 0x200], ["registry hive", 0x1000]]);
     assert.equal(out.hits[0].extracted_bytes, 0x4000 - 0x200);
     assert.equal(out.hits[1].extracted_to, undefined);
     assert.equal(out.extracted, 1);
     const { manifest, ...rest } = out.extraction as Record<string, unknown>;
-    assert.deepEqual(rest, { max_extract: 1, extracted: 1, not_extracted: 1, refused: 0, failed: 0 });
+    assert.deepEqual(rest, { max_extract: 1, extracted: 1, not_extracted: 1, refused: 0, failed: 0, extracted_bytes: 0x4000 - 0x200 });
     assert.match(manifest as string, /extract-manifest\.jsonl$/);
   });
 });
@@ -256,7 +258,7 @@ test("mem_carve refuses to write through a link or over a file in the extract di
     await writeFile(join(cwd, "work", "s1", "victim.txt"), "do not touch");
     const name = "000000001000-registry_hive.bin";
     await symlink(join(cwd, "work", "s1", "victim.txt"), join(cwd, "work", "s1", "carved", name));
-    const out = body<Carve>(await tool(CARVE, cwd, { path: "work/memory.raw", extract_to: "work/s1/carved" }));
+    const out = body<Carve>(await tool(CARVE, cwd, { path: "work/memory.raw", extract_to: "work/s1/carved", write_values: true }, carveJob(cwd)));
     assert.equal(await readFile(join(cwd, "work", "s1", "victim.txt"), "utf8"), "do not touch");
     assert.equal(out.hit_count, 1);
     assert.equal(out.hits[0].extracted_to, undefined);
@@ -268,7 +270,7 @@ test("mem_carve refuses to write through a link or over a file in the extract di
     // A second run into a directory that already holds the first one's extract refuses it too.
     await mkdir(join(cwd, "work", "s1", "again"), { recursive: true });
     await writeFile(join(cwd, "work", "s1", "again", name), "an earlier extract");
-    const second = body<Carve>(await tool(CARVE, cwd, { path: "work/memory.raw", extract_to: "work/s1/again" }));
+    const second = body<Carve>(await tool(CARVE, cwd, { path: "work/memory.raw", extract_to: "work/s1/again", write_values: true }, carveJob(cwd)));
     assert.equal(second.extraction?.refused, 1);
     assert.equal(await readFile(join(cwd, "work", "s1", "again", name), "utf8"), "an earlier extract");
   });
@@ -624,7 +626,7 @@ while True:
 async function jobDir(cwd: string, id = "j000042"): Promise<{ out: string; job: Record<string, string> }> {
   const out = join(cwd, ".jobs", id);
   await mkdir(out, { recursive: true });
-  return { out, job: { JOB_ID: id, OUT: out } };
+  return { out, job: { JOB_ID: id, OUT: out, SECRET_OUTPUT: "1" } };
 }
 
 type FsAnswer = {
@@ -758,7 +760,10 @@ test("mem_fs names the phase that failed, with the engine's own output and what 
     const early = refused(await tool(FS, cwd, { path: "inputs/memory.raw", mount: "work/s1/m1", mode: "list", timeout_seconds: 30 }, exits, bin));
     assert.equal(early.phase, "startup");
     assert.match(early.error, /exited before the mount appeared/);
-    assert.match(early.stderr as string, /FUSE is not available/);
+    assert.match(JSON.stringify((early.engine_stderr as { lines: string[] }).lines), /FUSE is not available/, "the engine's own first lines are shown, after judging");
+    assert.equal(early.stderr, undefined, "the raw log text is not echoed; the log file is named");
+    assert.equal(early.status, "failed");
+    assert.deepEqual(early.blocked_by === null || Array.isArray(early.blocked_by), true);
     assert.ok(early.prerequisites, "what the host has for FUSE is named");
     assert.ok(await exists(early.logs_dir ? String(early.logs_dir) : join(cwd, "work", "s1")), "the logs are kept");
 
@@ -780,16 +785,18 @@ test("mem_fs refuses a virtual path outside the mount, and a second path that la
     assert.match(escape.error, /inside the mount/);
     assert.equal(await exists(env.STUB_LOG), false, "MemProcFS was started for a path outside the mount");
 
-    // "a b.txt" and "a_b.txt" are different virtual files; their output names are the same once spaces are replaced.
+    // "a b.txt" and "a_b.txt" are different virtual files and keep different output names (a space is written %20); two spellings
+    // of the same virtual file ("name/x" and "name//x") land on one output name, and the second is refused.
     const both = body<FsAnswer>(await tool(
       FS, cwd,
-      { ...base, mount: join(out, "mem"), paths: ["name/1234-notepad.exe/a b.txt", "name/1234-notepad.exe/a_b.txt", "name/1234-notepad.exe/missing.txt"] },
+      { ...base, mount: join(out, "mem"), paths: ["name/1234-notepad.exe/a b.txt", "name//1234-notepad.exe/a b.txt", "name/1234-notepad.exe/a_b.txt", "name/1234-notepad.exe/missing.txt"] },
       { ...env, ...job }, bin,
     ));
-    assert.deepEqual(both.counts, { requested: 3, exported: 1, failed: 1, refused: 1, not_exported: 0, partial: 0, not_attempted: 0 });
+    assert.deepEqual(both.counts, { requested: 4, exported: 2, failed: 1, refused: 1, not_exported: 0, partial: 0, not_attempted: 0 });
     assert.equal(both.complete, false);
-    assert.deepEqual(both.items?.map((i) => i.status.split(":")[0]), ["exported", "refused", "failed"]);
-    assert.equal(await readFile(join(out, "mem_fs", "name", "1234-notepad.exe", "a_b.txt"), "utf8"), "with a space\n", "the first one kept its name; the second did not overwrite it");
+    assert.deepEqual(both.items?.map((i) => i.status.split(":")[0]), ["exported", "refused", "exported", "failed"]);
+    assert.equal(await readFile(join(out, "mem_fs", "name", "1234-notepad.exe", "a%20b.txt"), "utf8"), "with a space\n", "the first one kept its name; the second did not overwrite it");
+    assert.equal(await readFile(join(out, "mem_fs", "name", "1234-notepad.exe", "a_b.txt"), "utf8"), "with an underscore\n");
   });
 });
 

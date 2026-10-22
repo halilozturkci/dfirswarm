@@ -38,7 +38,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-TOOL = {"name": "feature_scan", "version": 3}
+TOOL = {"name": "feature_scan", "version": 4}
 DEFAULT_TIMEOUT = 900
 TIMEOUT_MAX = 1000                # the tool's own limit is 1200 seconds: the counting of what bulk_extractor wrote needs the rest
 DISTINCT_CAP = 200_000            # distinct values remembered per feature file; past it the count is a lower bound
@@ -92,6 +92,13 @@ class SecretValues:
                 "file, not a sealed secret output. Run this as job_run tool=feature_scan with "
                 "secret_output: true, and ask again there. Nothing was written."
             )
+        if os.environ.get("SECRET_OUTPUT") != "1":
+            raise SecretValuesRefused(
+                "write_values is refused in a job that was not run as secret output: its files would be sealed as ordinary "
+                "output. The harness sets SECRET_OUTPUT=1 for a secret job's process and it is not set here. Run it as "
+                "job_run(tool: \"feature_scan\", args: {...}), whose manifest makes every job of this tool secret output, or give "
+                "a command job secret_output: true. Nothing was written."
+            )
         self.path = Path(self.out) / self.NAME
         self.shown = "store/jobs/%s/out/%s" % (re.sub(r"[^A-Za-z0-9_.-]", "_", self.job), self.NAME)
         # Created now, before anything is scanned: a file or a link already at that name is
@@ -110,7 +117,7 @@ class SecretValues:
     def add(self, finding_id: str, locator: dict, value: str) -> None:
         if not self.enabled:
             return
-        self._fh.write(json.dumps({"finding_id": finding_id, **locator, "value": value}, ensure_ascii=False))
+        self._fh.write(json.dumps({"finding_id": finding_id, **locator, "value": value}, ensure_ascii=True))   # a path with bytes that are not UTF-8 is an escape, not an encoding error
         self._fh.write("\n")
         self.written += 1
 
@@ -382,6 +389,9 @@ def main():
         "path": path,
         "out_dir": out_dir,
         "status": status,
+        "status_basis": ("bulk_extractor exited 0 and what it wrote is listed (it does not say that every scanner reached every byte)" if status == "complete" else
+                         "bulk_extractor did not exit 0 or ran out of time, and what it had written is listed" if status == "partial" else
+                         "bulk_extractor did not exit 0 and wrote nothing"),
         "exit_code": code,
         "timed_out": timed_out,
         "command": " ".join(argv),

@@ -8,6 +8,7 @@ are the bytes that were put in, hashed here, never read back from the tool's own
 import bz2
 import gzip
 import hashlib
+import importlib.util
 import io
 import json
 import lzma
@@ -947,6 +948,81 @@ class Extract(Case):
         self.assertIs(got["ok"], False)
         self.assertIn("internal error", got["error"])
         self.assertEqual(json.loads(self.read("work/out/receipt.json"))["status"], "failed")
+
+    # ---- the zip directory is held whole in memory; the 7z ratio; the 7z listing's clock ----
+
+    def test_a_zip_directory_declaring_far_more_members_than_the_call_extracts_is_not_loaded(self):
+        make_zip(self.path("inputs/many.zip"), [("m%03d.txt" % i, b"x") for i in range(50)], compress=zipfile.ZIP_STORED)
+        r = self.extract("inputs/many.zip", "work/out", max_members=5)
+        self.assertEqual(r.code, 1, r.stdout[:300])
+        self.assertIn("declares 50 members, more than 4 times the max_members of 5", r.json["error"])
+        self.assertIn("Raise max_members to at least 13", r.json["error"])
+        self.assertEqual(r.json["members_declared"], 50)
+        self.assertFalse(os.path.exists(self.path("work/out/extracted/m000.txt")), "nothing was extracted")
+        ok = self.extract("inputs/many.zip", "work/out2", max_members=13)
+        self.assertEqual(ok.code, 0, ok.stdout[:300])
+        self.assertEqual(ok.json["counts"]["extracted"], 13)
+        self.assertEqual(ok.json["stopped_by"], "max_members")
+
+    def test_a_zip_directory_declared_past_the_memory_the_tool_reads_it_into_is_refused_before_it_is_read(self):
+        # a stored member, then an end record that declares one entry and a directory of 100 MiB that is not there
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:
+            zf.writestr("a.txt", b"a")
+        data = buf.getvalue()
+        eocd = data.rfind(b"PK\x05\x06")
+        forged = bytearray(data)
+        struct.pack_into("<I", forged, eocd + 12, 100 * 1024 * 1024)       # size of the central directory
+        self.write("inputs/huge-dir.zip", bytes(forged))
+        r = self.extract("inputs/huge-dir.zip", "work/out")
+        self.assertEqual(r.code, 1, r.stdout[:300])
+        self.assertIn("this tool reads into memory", r.json["error"])
+        self.assertIn("%d" % (64 * 1024 * 1024), r.json["error"])
+        self.assertIn("archive-members recipe", r.json["error"])
+
+    def test_a_zip_directory_whose_size_says_more_than_its_count_is_not_loaded_for_a_few_members(self):
+        n = 60000
+        cd = b"".join(struct.pack("<IHHHHHHIIIHHHHHII", 0x02014b50, 20, 20, 0, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0) + b"a%07d" % i for i in range(n))
+        eocd = struct.pack("<IHHHHIIH", 0x06054b50, 0, 0, 1, 1, len(cd), 0, 0)      # the count says one entry; the directory holds sixty thousand
+        self.write("inputs/lying.zip", cd + eocd)
+        r = self.extract("inputs/lying.zip", "work/out", max_members=5)
+        self.assertEqual(r.code, 1, r.stdout[:300])
+        self.assertIn("whatever the end record's count says", r.json["error"])
+
+    def test_a_7z_that_writes_far_more_than_its_size_allows_is_stopped_by_the_ratio_and_not_written_whole(self):
+        # the archive file is 72 bytes; its listing says one member of 20 MiB and the program writes 20 MiB of zeros
+        bindir = self.fake_7z("head -c 20971520 /dev/zero")
+        listing = self.path("bin/7z")
+        text = self.read(listing).replace("Size = 100000", "Size = 20971520")
+        with open(listing, "w") as fh:
+            fh.write(text)
+        r = run_tool("archive_extract", {"path": "inputs/slow.7z", "out_dir": "work/out"}, self.dir, path_dirs=[bindir], timeout=60)
+        self.assertEqual(r.code, 0, r.stdout + r.stderr)
+        self.assertEqual(r.json["stopped_by"], "max_ratio")
+        self.assertIn("7z wrote", r.json["stop"])
+        self.assertLess(r.json["bytes_written"], 3 * 1024 * 1024, "the member stopped near the ratio's bound (1000 times 72 bytes, and a megabyte of slack)")
+        self.assertEqual(r.json["status"], "partial")
+        self.assertEqual(self.rows("work/out")[0]["status"], "partial")
+
+    def test_the_first_pass_over_a_7z_listing_looks_at_the_clock(self):
+        spec = importlib.util.spec_from_file_location("archive_extract_under_test", tool_path("archive_extract"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        bindir = self.fake_7z("true")
+
+        class Eng:
+            out_root = mod.Path(self.path("work/out7"))
+            a = {"max_seconds": 1, "max_ratio": 1000}
+            extra = {}
+
+            def time_left(self):
+                return -1.0                      # the budget is already spent
+
+        os.makedirs(Eng.out_root)
+        with self.assertRaises(mod.Budget) as ctx:
+            mod.run_7z(Eng(), self.path("inputs/slow.7z"), 0, 10, os.path.join(bindir, "7z"))
+        self.assertEqual(ctx.exception.reason, "max_seconds")
+        self.assertIn("reading 7z's listing", str(ctx.exception))
 
     def test_no_program_is_started_in_a_session_of_its_own(self):
         text = self.read(tool_path("archive_extract"))

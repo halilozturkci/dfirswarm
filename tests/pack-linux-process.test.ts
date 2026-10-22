@@ -9,8 +9,10 @@ import assert from "node:assert/strict";
 import { chmod, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
+import { spawnSync } from "node:child_process";
 import { JOURNAL, RECIPE, TRIAGE, TOOLS, body, gone, pidFile, refused, startDetached, tool, withCwd } from "./linux-pack-harness.ts";
 import type { Json } from "./linux-pack-harness.ts";
+import { ROOT } from "./tool-library-harness.ts";
 
 const BEGIN = "# BEGIN SHARED PROCESS";
 const END = "# END SHARED PROCESS";
@@ -37,6 +39,9 @@ async function processBlock(path: string): Promise<string> {
 test("the three programs that run programs carry the same process block, byte for byte, and no script of the pack starts one in a session of its own", async () => {
   const blocks = await Promise.all([JOURNAL, TRIAGE, RECIPE].map(processBlock));
   for (const other of blocks.slice(1)) assert.equal(other, blocks[0]);
+  // ... and it is the text the network pack's engine tools carry (the reference copy, with the walk that never starts at a program
+  // already waited for, the seen set, and the libproc route on macOS that needs no ps), not an older one.
+  assert.equal(blocks[0], await processBlock(join(LINUX, "..", "network-forensics", "tools", "zeek_run", "run.py")));
   assert.ok(blocks[0].length > 3000);
   assert.match(blocks[0], /PR_SET_PDEATHSIG/);
   assert.match(blocks[0], /SIGTERM, signal\.SIGINT, signal\.SIGHUP/);
@@ -232,4 +237,81 @@ test("the timeouts of the tools that run programs are held under their manifests
       assert.doesNotMatch(r.stderr, /Traceback/, seconds);
     }
   });
+});
+
+/** Every .py of the repository's packs and of the tool library that carries the shared process block. */
+async function carriers(): Promise<string[]> {
+  const all = [...(await pyFiles(join(ROOT, "packs"))), ...(await pyFiles(join(ROOT, "tool-library")))];
+  const out: string[] = [];
+  for (const path of all) if ((await readFile(path, "utf8")).includes(BEGIN)) out.push(path);
+  return out.sort();
+}
+
+/** Runs the process block of `path` the way the tool does (its text, in a namespace of its own) and then `code`. */
+function withBlock(path: string, code: string): { status: number | null; stdout: string; stderr: string } {
+  const driver = `
+import os, signal, subprocess, sys, time
+text = open(${JSON.stringify(path)}).read()
+start = text.index(${JSON.stringify(BEGIN)}); end = text.index(${JSON.stringify(END)})
+ns = {"os": os, "signal": signal, "subprocess": subprocess, "sys": sys, "time": time}
+exec(text[start:end], ns)
+${code}
+`;
+  const r = spawnSync("python3", ["-I", "-c", driver], { encoding: "utf8", timeout: 60_000, killSignal: "SIGKILL" });
+  return { status: r.status, stdout: String(r.stdout), stderr: String(r.stderr) };
+}
+
+test("every carrier of the shared process block, in every pack and in the tool library, has the kill walk that never starts at a program already waited for", async () => {
+  const paths = await carriers();
+  assert.ok(paths.length >= 20, `found ${paths.length} carriers`);
+  const texts = new Map<string, string[]>();
+  for (const path of paths) {
+    const block = await processBlock(path);
+    texts.set(block, [...(texts.get(block) ?? []), path]);
+    assert.match(block, /if proc\.poll\(\) is not None:\s+return/, `${path}: kill_tree starts a walk at a pid that was already waited for`);
+    assert.match(block, /seen/, `${path}: the walk has no seen set`);
+    assert.match(block, /PS_WAIT/, `${path}: the ps fallback is not given its wait`);
+    assert.match(block, /_children_libproc/, `${path}: macOS has no route that needs no ps`);
+  }
+  // Two lineages: the engine tools' (one text in the network, base, linux, reverse-engineering and virtualization packs) and the
+  // windows tools' (the same, with wait_for): no third, no older copy.
+  assert.ok(texts.size <= 2, [...texts.values()].map((v) => v.join(",")).join(" | "));
+});
+
+test("kill_tree leaves alone the children of a pid whose program was already waited for, in every carrier", async () => {
+  // A program that has been waited for has a pid that is free to be another process's. The walk below it would be that
+  // process's children: here a stand-in for the new owner of the pid, with a child of its own that must survive.
+  for (const path of await carriers()) {
+    const r = withBlock(path, `
+owner = subprocess.Popen(["sh", "-c", "sleep 300 & echo $!; wait"], stdout=subprocess.PIPE, text=True)
+child = int(owner.stdout.readline())
+class Waited:
+    pid = owner.pid
+    def poll(self): return 0
+    def kill(self): raise SystemExit("kill_tree signalled a program that was already waited for")
+try:
+    ns["kill_tree"](Waited())
+    time.sleep(0.3)
+    os.kill(child, 0)
+    print("child alive")
+finally:
+    for pid in (child, owner.pid):
+        try: os.kill(pid, signal.SIGKILL)
+        except OSError: pass
+`);
+    assert.equal(r.status, 0, `${path}: ${r.stderr}`);
+    assert.match(r.stdout, /child alive/, path);
+  }
+});
+
+test("the walk below a pid ends and lists each process once where the table is cyclic (a pid reused while it was read)", async () => {
+  for (const path of await carriers()) {
+    const r = withBlock(path, `
+kids = {10: [11, 12], 11: [13], 13: [10], 12: []}
+found = ns["_below"](kids, 10)
+print(sorted(found))
+`);
+    assert.equal(r.status, 0, `${path}: ${r.stderr}`);
+    assert.equal(r.stdout.trim(), "[11, 12, 13]", path);
+  }
 });

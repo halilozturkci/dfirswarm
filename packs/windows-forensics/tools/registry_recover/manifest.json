@@ -1,0 +1,73 @@
+{
+  "name": "registry_recover",
+  "description": "Replay the transaction logs (.LOG1, .LOG2) a registry hive was copied with onto a COPY of it, and read the key and value records of the result. A hive that was in use when it was copied is dirty (its two sequence numbers differ) and its newest state is in its logs; regkv reads the hive as it is. The logs are the ones you name: nothing is looked for beside the hive. The original and the logs are only opened for reading; the copy, a receipt and the records are written under work/<your id>/registry_recover-<id>/ (in a job, under $OUT). The replay follows the two log layouts (Suhanov's registry format specification; libyal's REGF notes) and does not use regipy's apply_transaction_logs, which writes every entry whatever its sequence number. New format (HvLE, Windows 8.1 and later): an entry is applied only when its signature and its two Marvin32 hashes are right and its sequence number is the one the hive needs next; an entry older than the hive's state, an entry that does not follow, and the log from an entry whose hash is wrong are NOT applied and are listed under `unrecovered` with the hive ranges their pages would have written. Old format (a DIRT vector and dirty sectors): applied as a whole only when the log's own sequence numbers agree with each other and with the hive's primary number. A clean hive is not replayed; a log entry newer than a clean hive is reported, not applied. The recovered copy differs from the original in the pages of the applied entries and in three fields of its base block, which the receipt names (both sequence numbers, the hive bins data size, the checksum). It is a derivative: cite the original, the logs and this tool's version beside it. Records are read with regipy (keys.jsonl: path, name, depth, raw last-write FILETIME and ISO UTC, subkey and value counts, then each value with its type, size and raw data; changes.jsonl: what differs from the original when a replay applied something) and counted again by libregf's regfexport when it is installed: `independent_reader` says whether the counts agree, and a disagreement makes the status partial. Not done: no other state than the one the logs lead to (earlier states are other sources), no repair of a hive that is damaged beyond its logs, no interpretation of values. SENSITIVE and withheld by shape: the V and SupplementalCredentials values of each SAM user, the values under the LSA secrets and cached-logon keys of a SECURITY hive, and any value whose name says password, secret, token or credential (a DWORD or QWORD excepted) are written as a record with their place, name, type and length, and not their bytes. `write_values: true` writes those values to values.jsonl with mode 0600 and is refused unless the tool runs as a job with secret_output: true; nothing is made when it is refused. A secret inside a value that does not look like one (a command line with a password in it) is not recognised and is written with the rest, so run the tool as a job with secret_output: true when the hive's content matters. Every answer carries status (complete, partial, failed) and status_basis; partial names what was not read or not applied. A hive larger than 4 GiB, a pipe or a device is not opened. Memory: the replay itself stays under 100 MB however large the hive (it works in 1 MiB pieces); reading the records is regipy's, which holds the whole hive in memory, so a 300 MiB hive was read at about 400 MB resident (export: false skips the reading). It starts no program in a group of its own and ends regfexport with itself.",
+  "params": {
+    "hive": {
+      "type": "string",
+      "description": "The registry hive file (a copy of it). It is only opened for reading",
+      "required": true
+    },
+    "log1": {
+      "type": "string",
+      "description": "The .LOG1 transaction log of that hive (named; none is looked for)"
+    },
+    "log2": {
+      "type": "string",
+      "description": "The .LOG2 transaction log of that hive"
+    },
+    "export": {
+      "type": "boolean",
+      "description": "Write keys.jsonl (and changes.jsonl when a replay applied something) (default true). false replays and writes the receipt only"
+    },
+    "write_values": {
+      "type": "boolean",
+      "description": "Write the values that are withheld to values.jsonl under $OUT, mode 0600 (default false). Refused unless the tool runs as a job with secret_output: true; the answer never carries a value"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Rows of keys.jsonl shown inline (default 200, an inline page size); every row is kept, and the whole result is in the file the answer names"
+    },
+    "max_seconds": {
+      "type": "number",
+      "description": "The tool's own time limit in seconds, 1 to 110 (default 90); a read that reaches it stops, says so and is partial"
+    }
+  },
+  "runtime": "python3",
+  "entry": "run.py",
+  "timeout_seconds": 120,
+  "example": "{\"hive\": \"work/extracted/NTUSER.DAT\", \"log1\": \"work/extracted/NTUSER.DAT.LOG1\", \"log2\": \"work/extracted/NTUSER.DAT.LOG2\", \"limit\": 20}",
+  "by": "maintainer",
+  "at": "2026-10-21T09:00:00.000Z",
+  "version": 1,
+  "use": {
+    "magic": [
+      {
+        "offset": 0,
+        "hex": "72656766"
+      }
+    ],
+    "extensions": [
+      ".hve"
+    ],
+    "names": [
+      "NTUSER.DAT",
+      "UsrClass.dat",
+      "SAM",
+      "SYSTEM",
+      "SOFTWARE",
+      "SECURITY",
+      "Amcache.hve",
+      "DEFAULT",
+      "COMPONENTS"
+    ]
+  },
+  "requires": [
+    "regfexport"
+  ],
+  "secret_output": {
+    "when_args": [
+      "write_values"
+    ]
+  },
+  "sha256": "35be6af3376baeb7f74c74668b7b344368686369a53e9df55ce839d11d6987da"
+}

@@ -183,5 +183,14 @@ class TimestampDecode(Case):
         self.assertEqual(self.decode(value="1700000000").code, 0)
 
 
+    def test_the_last_day_a_date_holds_is_a_valid_end_of_the_range_and_not_a_traceback(self):
+        r = run_tool("timestamp_decode", {"value": "133000000000000000", "plausible_to": "9999-12-31"}, self.dir)
+        self.assertEqual(r.code, 0, r.stdout + r.stderr)
+        self.assertEqual(r.stderr, "")
+        self.assertEqual(r.json["reference_range"]["to"], "9999-12-31")
+        ft = reading(r.json, "FILETIME")
+        self.assertIs(ft["plausible"], True)
+
+
 if __name__ == "__main__":
     unittest.main()

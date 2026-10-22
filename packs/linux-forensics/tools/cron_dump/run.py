@@ -42,6 +42,7 @@ import math
 import os
 import re
 import secrets
+import signal
 import stat
 import sys
 import tempfile
@@ -49,13 +50,16 @@ import time
 from pathlib import Path
 
 TOOL = "cron_dump"
-PARSER = "cron_dump/5"
+PARSER = "cron_dump/6"
 DEFAULT_LIMIT = 200
 MAX_CONTINUED = 1 << 20      # a unit line continued with backslashes is joined up to this many bytes
 MAX_FILE_BYTES = 64 << 20    # a cron table larger than this is named as unread (a table is read a line at a time)
 MAX_UNIT_BYTES = 8 << 20     # a unit file or a passwd file larger than this is named as unread, not read whole
 MAX_CRON_LINE = 1 << 20      # a cron line longer than this is located, not parsed
 MAX_NAMED = 500              # how many errors, links and special files are named inline (all are counted)
+MAX_SHOWN_ASSIGNMENTS = 50   # assignments of one timer shown in its row; the rest are paged under pages.assignments (all are counted)
+MAX_SHOWN_SCHEDULES = 50     # the timer keys of one timer listed in its row (the count says how many there are)
+REGEX_SECONDS = 2.0          # the most one match of the caller's expression may take; Python's re has no clock of its own
 MAX_LOCATIONS = 200          # how many places of the census are shown inline (the whole is paged)
 DEFAULT_SECONDS = 50.0       # the manifest allows 60
 MAX_SECONDS = 50.0           # the most a caller may ask for (the manifest allows 60)
@@ -97,10 +101,18 @@ UNSUPPORTED = [
 ]
 
 CRON_NUM = r"[*0-9][*0-9/,\-]{0,63}"
-CRON_NAMED = r"[*0-9A-Za-z][*0-9A-Za-z/,\-]{0,63}"
+# Month and weekday fields: numbers, `*`, the three-letter names cron knows, ranges, steps and lists, and nothing else (a word
+# of any other kind in those positions is not a schedule).
+_NAME = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|sun|mon|tue|wed|thu|fri|sat)"
+_ITEM = r"(?:\*|[0-9]{1,2}|" + _NAME + r")"
+_RANGE = _ITEM + r"(?:-" + _ITEM + r")?(?:/[0-9]{1,3})?"
+CRON_NAMED = r"(?i:" + _RANGE + r"(?:," + _RANGE + r")*)"
 FIVE = re.compile(r"^(\s*)((?:%s)\s+(?:%s)\s+(?:%s)\s+(?:%s)\s+(?:%s))(\s+)(.*)$" % (CRON_NUM, CRON_NUM, CRON_NUM, CRON_NAMED, CRON_NAMED), re.S)
 SPECIAL = re.compile(r"^(\s*)(@[A-Za-z]+)(\s+)(.*)$", re.S)
-USER_COMMAND = re.compile(r"^(\S+)(\s+)(.*)$", re.S)
+# The user field of a system table: a user name (cron refuses anything else). A line pasted from a user's table has no user
+# field, and its first word is then in this position: it is read as the user when it has the shape of a name, and a word with
+# any other character (`=`, `/`, `:`, `+`, a quote) makes the line unparsed, its text kept in the text file.
+USER_COMMAND = re.compile(r"^([A-Za-z_][A-Za-z0-9_.-]{0,63}\$?)(\s+)(.*)$", re.S)
 ENV_LINE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$", re.S)
 
 
@@ -396,7 +408,33 @@ def inside(root, path):
 
 
 class Overtime(Exception):
+    """The inventory ran out of time (max_seconds, or one match of `contains`); its text, when it has one, is the reason."""
+
+
+class RegexTooSlow(Exception):
     pass
+
+
+def _alarm(_signum, _frame):
+    raise RegexTooSlow()
+
+
+def arm_regex_clock():
+    """Make a match that runs too long end (SIGALRM, which Python's matcher polls): the expression is the caller's and the
+    text is the evidence's, and a nested repeat on a few dozen characters runs for minutes."""
+    if hasattr(signal, "setitimer"):
+        signal.signal(signal.SIGALRM, _alarm)
+
+
+def search_within(pattern, text, deadline):
+    """pattern.search(text), ended at REGEX_SECONDS or at the tool's deadline, whichever is first (RegexTooSlow)."""
+    if not hasattr(signal, "setitimer"):
+        return pattern.search(text)
+    signal.setitimer(signal.ITIMER_REAL, max(0.05, min(REGEX_SECONDS, deadline - time.monotonic())))
+    try:
+        return pattern.search(text)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
 
 
 def shown_hay(row):
@@ -408,8 +446,9 @@ class Run:
     """What was looked at, entry by entry as it is met: nothing is kept but the first page, so memory does not follow the
     size of the evidence, and coverage is counted before any filter."""
 
-    def __init__(self, root, text, page, unparsed_page, pattern, preview, limit, deadline):
+    def __init__(self, root, text, page, unparsed_page, assignments_page, pattern, preview, limit, deadline):
         self.root, self.text, self.page, self.unparsed_page = root, text, page, unparsed_page
+        self.assignments_page = assignments_page
         self.pattern, self.preview, self.limit, self.deadline = pattern, preview, limit, deadline
         self.need_text = text.enabled or preview
         self.need_command = self.need_text or (pattern is not None and in_job())
@@ -445,7 +484,12 @@ class Run:
         self.total += 1
         if self.pattern is not None:
             hay = ("%s %s %s" % (texts.get("command") or "", row.get("unit") or "", row.get("script") or "")) if in_job() else shown_hay(row)
-            if not self.pattern.search(hay):
+            try:
+                found = search_within(self.pattern, hay, self.deadline)
+            except RegexTooSlow:
+                raise Overtime("the contains expression did not finish within %s s on the entry at %s line %s: the inventory stopped there, "
+                               "and no later entry was tested" % (REGEX_SECONDS, row.get("file"), row.get("line", "-")))
+            if not found:
                 return
         self.matched += 1
         self.at_reboot += 1 if row.get("at_reboot") else 0
@@ -463,6 +507,7 @@ class Run:
 
 def cron_entries(run, path, has_user, owner):
     """A cron table, a line at a time (a table of 64 MiB costs no more memory than one line)."""
+    run.check()
     try:
         if not stat.S_ISREG(os.lstat(path).st_mode):
             run.not_regular(path)
@@ -488,9 +533,13 @@ def cron_entries(run, path, has_user, owner):
             if number % 2048 == 0:
                 run.check()
             if len(rawb) > MAX_CRON_LINE and not rawb.endswith(b"\n"):
+                skipped = 0
                 while True:                          # read on to the end of the line without holding it
                     more = fh.readline(MAX_CRON_LINE + 1)
                     offset += len(more)
+                    skipped += 1
+                    if (skipped & 63) == 0:
+                        run.check()                  # a line of many gigabytes is read in many pieces: the clock is read here too
                     if not more or more.endswith(b"\n"):
                         break
                 run.unparsed_line(path, number, start, "a line over %d bytes: located, not parsed" % MAX_CRON_LINE, None)
@@ -537,7 +586,7 @@ def cron_entries(run, path, has_user, owner):
             row = {"id": "C%06d" % run.seq, "parser": PARSER, "source": "cron", "file": path, "line": number, "byte_offset": start,
                    "file_modified": stamp, "mode": mode, "schedule": schedule, "user": user_shown, "user_basis": user_basis,
                    "at_reboot": schedule.lower() == "@reboot", "command_bytes": blen(command),
-                   "environment_count": len(ordered_names), "environment_keys": ordered_names[:50]}
+                   "environment_count": len(ordered_names), "environment_keys": [bound(n, 256)[0] for n in ordered_names[:50]]}
             if user_whole is not None:
                 row["user_bytes"] = user_whole
             if len(ordered_names) > 50:
@@ -555,26 +604,43 @@ def cron_entries(run, path, has_user, owner):
             run.emit(row, texts)
 
 
-def unit_assignments(text):
-    """(every `key=value` of a unit file in order, with its section and the number of the line it began on; the
-    number of lines that were neither an assignment, a section header nor a comment)."""
-    if text.startswith("﻿"):
+def unit_lines(text):
+    """The lines of a unit file, one at a time (the same lines text.split("\n") gives, none held but the one in hand)."""
+    start = 0
+    while True:
+        end = text.find("\n", start)
+        if end < 0:
+            yield text[start:]
+            return
+        yield text[start:end]
+        start = end + 1
+
+
+def unit_assignments(text, run, tally):
+    """Every `key=value` of a unit file in order, as {line, section, key, value}, one at a time: a file of two million
+    assignments costs the clock a look every 4,096 lines and the memory nothing. `tally["other"]` ends as the number of
+    lines that were neither an assignment, a section header nor a comment."""
+    if text.startswith("\ufeff"):
         text = text[1:]
-    lines = text.split("\n")
-    out, section, i, other = [], None, 0, 0
-    while i < len(lines):
-        start = i + 1
-        parts = [lines[i].rstrip("\r")]
+    lines = unit_lines(text)
+    section, number = None, 0
+    for first in lines:
+        number += 1
+        start = number
+        if (number & 4095) == 0:
+            run.check()
+        parts = [first.rstrip("\r")]
         size = len(parts[0])
         # A comment line is one line: a backslash at its end is not read as a continuation here (whether systemd
         # continues a comment was not checked, and reading it as one would hide the assignment that follows).
-        while (parts[-1].endswith("\\") and not parts[0].lstrip().startswith(("#", ";"))
-               and i + 1 < len(lines) and size < MAX_CONTINUED):
+        while parts[-1].endswith("\\") and not parts[0].lstrip().startswith(("#", ";")) and size < MAX_CONTINUED:
+            following = next(lines, None)
+            if following is None:
+                break
+            number += 1
             parts[-1] = parts[-1][:-1]
-            i += 1
-            parts.append(lines[i].rstrip("\r"))
+            parts.append(following.rstrip("\r"))
             size += len(parts[-1])
-        i += 1
         stripped = " ".join(parts).strip()
         if not stripped or stripped[0] in "#;":
             continue
@@ -583,13 +649,13 @@ def unit_assignments(text):
             continue
         key, sep, value = stripped.partition("=")
         if sep:
-            out.append({"line": start, "section": section, "key": key.strip(), "value": value.strip()})
+            yield {"line": start, "section": section, "key": key.strip(), "value": value.strip()}
         else:
-            other += 1
-    return out, other
+            tally["other"] += 1
 
 
 def timer_entry(run, path, manager):
+    run.check()
     try:
         if not stat.S_ISREG(os.lstat(path).st_mode):
             run.not_regular(path)
@@ -602,45 +668,79 @@ def timer_entry(run, path, manager):
     except OSError as exc:
         run.error(path, exc)
         return
-    assignments, other = unit_assignments(data)
 
     def shown_value(a):
         # A value is shown only where its key has scheduling semantics and sits in a section a timer has: a
         # Description=, an Environment= or anything else can say anything.
         return a["key"] in SHOWN_KEYS and (a["section"] or "").lower() in SHOWN_SECTIONS
 
-    nonempty = [a for a in assignments if a["value"] and shown_value(a)]
-    calendars = [a["value"] for a in nonempty if a["key"] in TIMER_KEYS]
-    units = [a["value"] for a in nonempty if a["key"] == "Unit"]
-    persistent = [a["value"] for a in nonempty if a["key"] == "Persistent"]
-    shown = []
-    for a in assignments:
-        if shown_value(a):
-            value, whole = bound(a["value"], 1024)
-            item = {"line": a["line"], "section": a["section"], "key": a["key"], "value": value}
-            if whole is not None:
-                item["value_bytes"] = whole
-            shown.append(item)
-        else:
-            shown.append({"line": a["line"], "section": a["section"], "key": a["key"],
-                          "value_bytes": blen(a["value"]), "value_withheld": True})
-
     def one(value):
         return bound(value, 1024)[0]
+
+    def view(a):
+        """The assignment as the answer shows it: its key and section cut at 128 characters (with their lengths), its value only
+        where the key has scheduling semantics."""
+        key, key_whole = bound(a["key"], 128)
+        section, section_whole = bound(a["section"], 128)
+        item = {"line": a["line"], "section": section, "key": key}
+        if key_whole is not None:
+            item["key_bytes"] = key_whole
+        if section_whole is not None:
+            item["section_bytes"] = section_whole
+        if shown_value(a):
+            value, whole = bound(a["value"], 1024)
+            item["value"] = value
+            if whole is not None:
+                item["value_bytes"] = whole
+        else:
+            item.update({"value_bytes": blen(a["value"]), "value_withheld": True})
+        return item
+
     run.seq += 1
-    row = {"id": "C%06d" % run.seq, "parser": PARSER, "source": "systemd", "manager": manager, "file": path,
+    entry_id = "C%06d" % run.seq
+    tally = {"other": 0}
+    count, shown = 0, []
+    calendars, calendar_count, units_last, persistent_last, at_reboot = [], 0, None, None, False
+    for a in unit_assignments(data, run, tally):
+        count += 1
+        item = view(a)
+        if count <= MAX_SHOWN_ASSIGNMENTS:
+            shown.append(item)
+        else:
+            run.assignments_page.add({"entry_id": entry_id, "file": path, **item})
+        if run.text.enabled:
+            # The whole, one row each, the values of the withheld keys included: the text file is the sealed copy.
+            run.text.add({"record_type": "assignment", "entry_id": entry_id, "file": path, "line": a["line"], "section": a["section"],
+                          "key": a["key"], "value": a["value"]})
+        if a["value"] and shown_value(a):
+            if a["key"] in TIMER_KEYS:
+                calendar_count += 1
+                if len(calendars) < MAX_SHOWN_SCHEDULES:
+                    calendars.append(one(a["value"]))
+            if a["key"] in STARTUP_KEYS:
+                at_reboot = True
+            if a["key"] == "Unit":
+                units_last = one(a["value"])
+            if a["key"] == "Persistent":
+                persistent_last = one(a["value"])
+    row = {"id": entry_id, "parser": PARSER, "source": "systemd", "manager": manager, "file": path,
            "file_modified": mtime_of(path), "mode": mode_of(path), "assignments": shown,
-           "assignment_count": len(assignments), "lines_without_assignment": other,
-           "schedule": one(calendars[0]) if calendars else None,
-           "schedules": [one(c) for c in calendars],
-           "unit": one(units[-1]) if units else os.path.basename(path)[: -len(".timer")] + ".service",
-           "unit_basis": "last non-empty Unit=" if units else "no Unit=: the service of the same name",
-           "persistent": one(persistent[-1]) if persistent else None,
-           "at_reboot": any(a["key"] in STARTUP_KEYS for a in nonempty),
+           "assignment_count": count, "assignments_shown": len(shown), "lines_without_assignment": tally["other"],
+           "schedule": calendars[0] if calendars else None,
+           "schedules": calendars, "schedule_count": calendar_count,
+           "unit": units_last if units_last is not None else os.path.basename(path)[: -len(".timer")] + ".service",
+           "unit_basis": "last non-empty Unit=" if units_last is not None else "no Unit=: the service of the same name",
+           "persistent": persistent_last,
+           "at_reboot": at_reboot,
            "derived_basis": "schedule, schedules, unit and persistent are read naively from the assignments in file order, from the "
                             "keys with scheduling semantics only: an empty assignment that resets a list, drop-ins and other "
                             "overrides are not applied"}
-    run.emit(row, {"assignments": assignments})
+    if count > len(shown):
+        row["assignments_not_shown"] = count - len(shown)
+        row["assignments_not_shown_where"] = "pages.assignments (entry_id %s), and the unit file at the lines given" % entry_id
+    if calendar_count > len(calendars):
+        row["schedules_not_shown"] = calendar_count - len(calendars)
+    run.emit(row, {})
 
 
 def scan_dir(run, rel, handle):
@@ -680,6 +780,7 @@ def scan_dir(run, rel, handle):
                 run.keep("skipped_symlinks", {"file": sub, "target": os.readlink(sub)})
                 dirs.remove(name)
         for name in sorted(names):
+            run.check()                  # one look at the clock per file: a directory of tens of thousands of files is not read past the deadline
             handle(dirpath, name)
     run.census(rel, "read", entries=run.total - before)
 
@@ -762,6 +863,7 @@ def main():
             pattern = re.compile(args["contains"], re.I)
         except re.error as exc:
             fail("contains is not a valid regex", reason=str(exc))
+        arm_regex_clock()
     try:
         text = TextFile(TEXT_NAME, write_text, "JSON Lines, mode 0600: the entry's id and fields as in the answer, with `raw_line`, "
                         "`command` and `environment` for a cron line (every environment assignment once, as its own row) and the "
@@ -770,7 +872,8 @@ def main():
         fail(str(exc))
     page = LosslessPage(TOOL, "entries", limit)
     unparsed_page = LosslessPage(TOOL, "unparsed", limit)
-    run = Run(root, text, page, unparsed_page, pattern, preview_text, limit, time.monotonic() + seconds)
+    assignments_page = LosslessPage(TOOL, "assignments", limit)
+    run = Run(root, text, page, unparsed_page, assignments_page, pattern, preview_text, limit, time.monotonic() + seconds)
     homes_info = ([], "not reached", None, [])
     try:
         for rel in SYSTEM_TABLES:
@@ -841,8 +944,8 @@ def main():
                         scan_dir(run, "run/user/%s/%s" % (uid, sub), handle_timer_dir(run, "user"))
             except OSError as exc:
                 run.error(run_user, exc)
-    except Overtime:
-        run.partial_reason = "the inventory stopped at max_seconds (%s): the places after the last one in locations were not looked in" % seconds
+    except Overtime as exc:
+        run.partial_reason = str(exc) or "the inventory stopped at max_seconds (%s): the places after the last one in locations were not looked in" % seconds
     homes, home_source, homes_beyond_passwd, homes_ignored = homes_info
     text.close()
     locations_page = LosslessPage(TOOL, "locations", MAX_LOCATIONS)
@@ -851,16 +954,18 @@ def main():
         locations_page.add(loc)
         key = loc["state"].split(":")[0].split(" (")[0]
         by_state[key] = by_state.get(key, 0) + 1
-    pages = {"entries": page.finish(), "unparsed": unparsed_page.finish(), "locations": locations_page.finish()}
-    all_read = (not run.counts["read_errors"] and not run.counts["walk_errors"] and not run.counts["skipped_symlinks"]
-                and not run.counts["special"] and run.partial_reason is None)
+    pages = {"entries": page.finish(), "unparsed": unparsed_page.finish(), "assignments": assignments_page.finish(), "locations": locations_page.finish()}
     looked = sum(1 for loc in run.locations if loc["state"] == "read")
+    all_read = (looked > 0 and not run.counts["read_errors"] and not run.counts["walk_errors"] and not run.counts["skipped_symlinks"]
+                and not run.counts["special"] and run.partial_reason is None and run.unparsed_count == 0)
     outcome = status_of(
         all_read, bool(run.counts["read_errors"] or run.counts["walk_errors"]) and looked == 0,
-        "every place listed in locations was looked in and read, none was left unread",
-        "%d read error(s), %d walk error(s), %d link(s) not followed, %d special file(s) not opened%s: the answer names each" % (
-            run.counts["read_errors"], run.counts["walk_errors"], run.counts["skipped_symlinks"], run.counts["special"],
-            "; the inventory stopped at max_seconds" if run.partial_reason else ""),
+        "every place listed in locations was looked in and read, none was left unread, and every line of a cron table matched a table shape",
+        "%d of %d place(s) listed were read (the others are missing, links or not directories: see locations); %d line(s) of a cron table "
+        "matched no table shape (see unparsed); %d read error(s), %d walk error(s), %d link(s) not followed, %d special file(s) not opened%s: "
+        "the answer names each" % (
+            looked, len(run.locations), run.unparsed_count, run.counts["read_errors"], run.counts["walk_errors"], run.counts["skipped_symlinks"],
+            run.counts["special"], "; the inventory stopped before the end (partial_reason)" if run.partial_reason else ""),
         "no scheduling place could be read")
     print(json.dumps({
         "parser": PARSER,
@@ -880,6 +985,7 @@ def main():
         "at_reboot": run.at_reboot,
         "unparsed_lines": run.unparsed_count,
         "unparsed": unparsed_page.page,
+        "assignments_beyond_the_rows": assignments_page.page,
         "text": text.summary(preview_text),
         "all_checked_locations_read": all_read,
         "partial_reason": run.partial_reason,

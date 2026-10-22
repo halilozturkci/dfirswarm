@@ -80,9 +80,11 @@ NESTED_INLINE = 20                  # nested compound files whose VBA projects t
 SPILL_FLOOR = 100                   # no list in the answer is longer than the larger of `limit` and this: a longer one is in a file, whole
 
 # BEGIN SHARED WITHHOLDING
-# The same text is in pcap_extract, zeek_run, suricata_run and network_log_summary, so that the four tools withhold
-# the same strings; tests/pack-network-withholding.test.ts holds the copies equal. An identifier-shaped string is
-# withheld wherever the tool would print one: a name, a path component, a URL, a message that quotes either.
+# The same text is in every tool that withholds identifier-shaped strings (the network, base, virtualization and
+# reverse-engineering packs), so that they withhold the same strings; the tests that hold the copies equal are
+# tests/pack-network-withholding.test.ts, tests/pack-base-shared.test.ts, tests/pack-virtualization-shared.test.ts and
+# tests/pack-re-process.test.ts. An identifier-shaped string is withheld wherever the tool would print one: a name, a
+# path component, a URL, a message that quotes either.
 COUNTS = {"names": 0, "urls": 0, "text": 0}
 # A run of name characters long enough to be a token. `=` is only a padding at the end (so a key= prefix stays);
 # `/` joins pieces of a base64 token and is handled apart, below.
@@ -138,7 +140,88 @@ def _randomish(piece):
     return (any(c.isdigit() for c in piece) and bool(letters)) or mixed
 
 
+_SPAN_PIECE = re.compile(r"[A-Za-z0-9_+%-]+")
+# A text longer than this is withheld whole, by its length, and not examined: the examination is linear, but a text of
+# millions of characters is not one a name or a URL is, and the answer says how long it was.
+TEXT_LIMIT = 2097152
+
+
+def _grow_spans(text, spans):
+    """Each flagged span takes the random-looking pieces next to it across a `/`: the head of a token is not printed.
+
+    One pass cuts the text into pieces (runs of name characters) and keeps where each starts and ends. A span then walks
+    that array by index; a piece is judged once, and a walk that reaches a piece an earlier walk has settled stops there, so
+    the work is linear in the text and no range is sliced or searched again. (Looking back with a search over everything
+    before a piece costs the cube of the length for a name of many `/`-joined pieces.)"""
+    from bisect import bisect_left
+    starts, ends = [], []
+    for m in _SPAN_PIECE.finditer(text):
+        starts.append(m.start())
+        ends.append(m.end())
+    count, size = len(starts), len(text)
+    judged_left, judged_right, settled_left, settled_right = {}, {}, {}, {}
+
+    def padded(k):       # where piece k ends with the up to two `=` of padding after it
+        e = ends[k]
+        if e < size and text[e] == "=":
+            e += 2 if e + 1 < size and text[e + 1] == "=" else 1
+        return e
+
+    def left_ok(j):
+        if j not in judged_left:
+            judged_left[j] = _randomish(text[starts[j]:ends[j]])
+        return judged_left[j]
+
+    def right_ok(k):
+        if k not in judged_right:
+            judged_right[k] = _randomish(text[starts[k]:padded(k)])
+        return judged_right[k]
+
+    def before(at):      # the piece that growing left from offset `at` takes, or -1. `$` also ends a match before a final line break.
+        if at < 2 or text[at - 1] != "/":
+            return -1
+        for stop in ((at - 1, at - 2) if text[at - 2] == "\n" else (at - 1,)):
+            j = bisect_left(ends, stop)
+            if j < count and ends[j] == stop:
+                return j if left_ok(j) else -1
+        return -1
+
+    def after(k):        # the piece that growing right from the end of piece k takes, or -1
+        e = padded(k)
+        if k + 1 >= count or e >= size - 1 or text[e] != "/" or starts[k + 1] != e + 1:
+            return -1
+        return k + 1 if right_ok(k + 1) else -1
+
+    def settle(i, step, memo):
+        trail = []
+        while i not in memo:
+            trail.append(i)
+            j = step(i)
+            if j < 0:
+                memo[i] = i
+                break
+            i = j
+        final = memo[i]
+        for t in trail:
+            memo[t] = final
+        return final
+
+    grown = []
+    for start, end in spans:
+        j = before(start)
+        if j >= 0:
+            start = starts[settle(j, lambda i: before(starts[i]), settled_left)]
+        if end < size - 1 and text[end] == "/":
+            k = bisect_left(starts, end + 1)
+            if k < count and starts[k] == end + 1 and right_ok(k):
+                end = padded(settle(k, after, settled_right))
+        grown.append((start, end))
+    return grown
+
+
 def token_spans(text):
+    if len(text) > TEXT_LIMIT:
+        return [(0, len(text))]
     spans = [m.span() for m in _PREFIXED.finditer(text)]
     for m in _RUN.finditer(text):
         if _token_run(m.group()):
@@ -148,20 +231,7 @@ def token_spans(text):
         run = m.group()
         if "/" in run and sum(1 for p in run.split("/") if _randomish(p)) >= 3 and re.search(r"[0-9+]", run):
             spans.append(m.span())
-    # A flagged piece takes the random-looking pieces next to it across a `/`: the head of a token is not printed.
-    grown = []
-    for start, end in spans:
-        while start > 1 and text[start - 1] == "/":
-            m = re.search(r"[A-Za-z0-9_+%-]+$", text[:start - 1])
-            if not m or not _randomish(m.group()):
-                break
-            start = m.start()
-        while end < len(text) - 1 and text[end] == "/":
-            m = re.match(r"[A-Za-z0-9_+%-]+={0,2}", text[end + 1:])
-            if not m or not _randomish(m.group()):
-                break
-            end = end + 1 + m.end()
-        grown.append((start, end))
+    grown = _grow_spans(text, spans) if spans else []
     grown.sort()
     merged = []
     for start, end in grown:
@@ -178,6 +248,8 @@ def token_shaped(text):
 
 def scrub(text, kind="text"):
     """The text with every token-shaped run and every user-info withheld."""
+    if len(text) > TEXT_LIMIT:
+        return _withheld("over-long text", len(text), kind)
     text = _USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
     text = _BARE_USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
     out, last = [], 0
@@ -237,103 +309,6 @@ def cell(value):
             out.append(ch)
     return "".join(out)
 # END SHARED WITHHOLDING
-
-
-# BEGIN SHARED LINEAR SPANS
-# The same text is in doc_structure, pe_directories and the capa-floss recipe (tests/pack-re-process.test.ts holds the copies
-# equal). The shared block's token_spans grows each flagged span across `/` by searching the whole text before it again for
-# every piece it takes, which costs about the cube of the text's length: a name of 13 KB of `/`-joined tokens took 44 s. The
-# block is not edited (its copies are held equal to the network pack's), so this tool binds the same function, computed in
-# linear time: the same spans for every text, which tests/pack-re-canary-harness.test.ts holds against the block's own
-# token_spans on generated text. Making the block itself linear, for every tool that carries it, is a follow-up.
-_NAME_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_+%-")
-_shared_token_spans = token_spans
-
-
-def _linear_token_spans(text):
-    spans = [m.span() for m in _PREFIXED.finditer(text)]
-    for m in _RUN.finditer(text):
-        if _token_run(m.group()):
-            spans.append(m.span())
-    for m in _SLASHED.finditer(text):
-        run = m.group()
-        if "/" in run and sum(1 for p in run.split("/") if _randomish(p)) >= 3 and re.search(r"[0-9+]", run):
-            spans.append(m.span())
-    if not spans:
-        return []
-    n = len(text)
-    run_start, run_end = [0] * n, [0] * n
-    i = 0
-    while i < n:
-        if text[i] in _NAME_CHARS:
-            j = i
-            while j < n and text[j] in _NAME_CHARS:
-                j += 1
-            for k in range(i, j):
-                run_start[k], run_end[k] = i, j
-            i = j
-        else:
-            i += 1
-    left, right = {}, {}
-
-    def piece_left(start):
-        # what re.search(r"[A-Za-z0-9_+%-]+$", text[:start - 1]) finds: `$` also matches before a final line break
-        last = start - 2
-        if text[last] in _NAME_CHARS:
-            return run_start[last], last + 1
-        if text[last] == "\n" and last >= 1 and text[last - 1] in _NAME_CHARS:
-            return run_start[last - 1], last
-        return None
-
-    def grow_left(start):
-        path = []
-        while True:
-            if start in left:
-                start = left[start]
-                break
-            if not (start > 1 and text[start - 1] == "/"):
-                break
-            found = piece_left(start)
-            if found is None or not _randomish(text[found[0]:found[1]]):
-                break
-            path.append(start)
-            start = found[0]
-        for p in path:
-            left[p] = start
-        return start
-
-    def grow_right(end):
-        path = []
-        while True:
-            if end in right:
-                end = right[end]
-                break
-            if not (end < n - 1 and text[end] == "/") or text[end + 1] not in _NAME_CHARS:
-                break
-            stop = run_end[end + 1]
-            pads = 0
-            while pads < 2 and stop + pads < n and text[stop + pads] == "=":
-                pads += 1
-            if not _randomish(text[end + 1:stop + pads]):
-                break
-            path.append(end)
-            end = stop + pads
-        for p in path:
-            right[p] = end
-        return end
-
-    grown = sorted((grow_left(start), grow_right(end)) for start, end in spans)
-    merged = []
-    for start, end in grown:
-        if merged and start <= merged[-1][1]:
-            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
-        else:
-            merged.append((start, end))
-    return merged
-
-
-token_spans = _linear_token_spans
-# END SHARED LINEAR SPANS
 
 
 SHOWN_TARGET = 2048                 # characters of a target the answer shows; the whole is in the values file with write_values

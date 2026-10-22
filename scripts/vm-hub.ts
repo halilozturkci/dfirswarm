@@ -75,10 +75,11 @@
  */
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { appendFileSync, chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
+import { appendFileSync, chmodSync, closeSync, createReadStream, existsSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { connect, createServer, type Server, type Socket } from "node:net";
 import { basename, dirname, join, relative, resolve } from "node:path";
+import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import * as P from "../extensions/protocol.ts";
 import * as F from "../extensions/finish.ts";
@@ -93,6 +94,8 @@ import { bindJobGrants, checkJobGrants, fetchForSeat, netTick, netViewFor, reque
 import { readCasePolicy } from "./case-policy.ts";
 import { resolveScope, scopeKindOf } from "./job-scope.ts";
 import { commandNames, libraryHint } from "./library-hint.ts";
+import { sensitiveIndex } from "./output-hygiene.ts";
+import { ACCESS_RULES, apiPageHit, classifyTraceRow, type AccessHit } from "./sensitive-access.ts";
 
 /** What a job tool is told in a run with no job service. */
 /**
@@ -286,6 +289,19 @@ const QUEUE_MAX = 192;
  * than the peer's last write.
  */
 export const SETTLE_MS_DEFAULT = 6_000;
+
+/**
+ * Lines the hub writes for one seat and one sensitive job; the next says that
+ * the rest are on the trace as the rows they come from, and writes no more.
+ */
+const ACCESS_BURST_MAX = 200;
+/** The tools of a seat whose rows may name a sensitive output (scripts/sensitive-access.ts). */
+const ACCESS_TOOLS = new Set(["read", "grep", "find", "ls", "bash", "powershell"]);
+/** Where a row can name the store, the catalogue, a kept output or a job: the rest need no look at the journal. */
+const ACCESS_PROBE = /store|catalog|tool-output|j\d{6}/;
+
+/** Bytes of a job's output that an API answer carried to a seat. */
+export type ApiPage = { fn: string; job: string; part: "stdout" | "stderr"; path: string; offset: number; bytes: number; total: number };
 
 /** Calls the hub records on the trace when they succeed; every refusal is recorded. */
 const AUDITED = new Set(["markDone", "runFinishLine", "forgeTool", "restoreFileVersion", "claimName", "threadOpen", "publishFile", "recordEntry", "attestEntry", "disputeEntry", "jobSubmit", "catalogRequest", "leadOpen", "leadClaim", "leadRelease", "leadClose", "leadLink", "leadInterpret", "leadReopen", "routeReview", "leadHandoff", "leadConfirm", "offerAnswer", "finishTurnFor", "finishAct", "questionOpen", "questionAsk", "premisePropose", "netRequest", "netFetch"]);
@@ -549,6 +565,8 @@ export function boardTable(hub: {
   gatewaySeat?: (who: string) => boolean;
   /** The run's job service, when it has one. */
   jobs?: () => JobService | undefined;
+  /** An API answer carried bytes of a job's output to a seat: the hub records it when the job is sensitive. */
+  accessed?: (who: string, page: ApiPage) => Promise<void>;
   /** The hub's own directory (the fetch service's config and secret are there, in no VM). */
   dir?: string;
 }) {
@@ -591,6 +609,18 @@ export function boardTable(hub: {
     })().finally(() => {
       finishLine = null;
     }));
+  // A job as the seat is shown it, and, when the answer carried bytes of the
+  // job's output (a page of stdout, the tail of stderr), a note of that for
+  // the access record. Whether the job is sensitive is for the hub to say.
+  const shown = async (who: string, fn: string, job: Parameters<typeof jobView>[1], stdout?: { offset: number; bytes: number; total: number; path: string }) => {
+    const view = await jobView(S, job);
+    if (hub.accessed) {
+      if (stdout) await hub.accessed(who, { fn, job: job.id, part: "stdout", path: stdout.path, offset: stdout.offset, bytes: stdout.bytes, total: stdout.total }).catch(() => undefined);
+      const err = view.stderr as { tail?: string; bytes?: number } | undefined;
+      if (err && typeof err.tail === "string") await hub.accessed(who, { fn, job: job.id, part: "stderr", path: `store/jobs/${job.id}/stderr.log`, offset: Math.max(0, (err.bytes ?? 0) - Buffer.byteLength(err.tail)), bytes: Buffer.byteLength(err.tail), total: err.bytes ?? 0 }).catch(() => undefined);
+    }
+    return view;
+  };
   type Call = (who: string, a: unknown[], signal: AbortSignal) => Promise<unknown>;
   const table: Record<string, Call> = {
     applySessionUsage: async (who, a) => {
@@ -907,7 +937,7 @@ export function boardTable(hub: {
       const library = r.job.spec.kind === "command" && scopeKindOf(r.job.spec) === "declared" ? await admissionHint(S, r.job.spec).catch(() => null) : null;
       return {
         ok: true,
-        job: await jobView(S, r.job),
+        job: await shown(who, "jobSubmit", r.job),
         ...(attached?.ok && attached.lead ? { lead: attached.lead } : {}),
         ...(coverage ? { coverage: { ...coverage, note: "a hint: another seat works the same questions or objects now; overlap is not identity, so read what they have (leads, list_team) before you duplicate it" } } : {}),
         // The reuse hint (ADR 0017): other seats' same operation over the same objects, under way or committed.
@@ -926,14 +956,14 @@ export function boardTable(hub: {
         ...(typeof raw.wait === "number" ? { wait: raw.wait } : {}),
       });
       if (!r.ok) return r;
-      return { ok: true, job: await jobView(S, r.job), ...(r.stdout ? { stdout: r.stdout } : {}), ...(r.progress ? { progress: r.progress } : {}) };
+      return { ok: true, job: await shown(who, "jobStatus", r.job, r.stdout), ...(r.stdout ? { stdout: r.stdout } : {}), ...(r.progress ? { progress: r.progress } : {}) };
     },
     catalogRequest: async (who, a) => {
       const svc = hub.jobs?.();
       if (!svc) return { ok: false, reason: NO_JOBS };
       const raw = isObject(a[1]) ? (a[1] as Record<string, unknown>) : {};
       const r = await svc.catalogRequest(who, String(raw.target ?? ""), typeof raw.recipe === "string" && raw.recipe ? raw.recipe : undefined, typeof raw.reason === "string" ? raw.reason : undefined);
-      return r.ok ? { ok: true, job: await jobView(S, r.job) } : r;
+      return r.ok ? { ok: true, job: await shown(who, "catalogRequest", r.job) } : r;
     },
     // The dynamic network (net-broker.ts, docs/adr/0012): who asks is the
     // socket's seat; a request is decided on the host and recorded before it
@@ -1068,6 +1098,7 @@ export class Hub {
       },
       gatewaySeat: (who) => this.gatewaySeats.has(who),
       jobs: () => this.jobService,
+      accessed: (who, page) => this.noteApiPage(who, page),
       dir: this.cfg.dir,
     });
     this.collector = new CollectorLink(this.cfg.collector);
@@ -2197,6 +2228,20 @@ export class Hub {
   /** The seats and models a substitution was told to the operator for, so each is told once. */
   private substitutionsTold = new Set<string>();
 
+  /**
+   * What the access record keeps between lines: the seat rows
+   * already noted (a row sent again is not written twice), how many lines each
+   * seat and job has, and the copies of a read that were kept under
+   * tool-output/. Read from the trace the first time a row needs them, so a
+   * hub brought back after a crash goes on where the last left off.
+   */
+  private accessSeen = new Set<string>();
+  private accessCount = new Map<string, number>();
+  private accessCopies = new Map<string, string>();
+  private accessLoaded: Promise<void> | null = null;
+  /** One row at a time: the counts and the dedupe above are read and written in order. */
+  private accessChain: Promise<void> = Promise.resolve();
+
   private forwardTrace(agent: string, record: Record<string, unknown>): Promise<boolean> {
     // A seat's extension saw the provider answer with a model other than
     // the one asked for (model_reported, substituted): the operator is told,
@@ -2211,7 +2256,118 @@ export class Hub {
     const { token: _t, gate: _g, ...rest } = record;
     const token = this.cfg.tokens[agent];
     const line = `${JSON.stringify(token ? { ...rest, token } : rest)}\n`;
-    return this.sendToCollector(line);
+    return this.sendToCollector(line).then(async (ok) => {
+      // The seat's row first, then the hub's note of what it names: the note
+      // follows its row on the chain. A row the collector did not take comes
+      // again, and is noted then.
+      if (ok) await this.noteSensitiveAccess(agent, record);
+      return ok;
+    });
+  }
+
+  /**
+   * The seat's row, looked at for the sensitive outputs it names. Never in
+   * the seat's way: nothing is held, changed or refused, and a failure here
+   * is the hub's to log, not the seat's to meet.
+   */
+  private noteSensitiveAccess(seat: string, record: Record<string, unknown>): Promise<void> {
+    const tool = typeof record.tool === "string" ? record.tool : "";
+    if (!ACCESS_TOOLS.has(tool) || !isObject(record.args)) return Promise.resolve();
+    const probe = tool === "bash" || tool === "powershell" ? record.args.command : ["path", "filePath", "file_path", "file"].map((k) => (record.args as Record<string, unknown>)[k]).find((v) => typeof v === "string" && v.trim()) ?? "";
+    if (typeof probe !== "string" || (probe && !ACCESS_PROBE.test(probe))) return Promise.resolve();
+    const next = this.accessChain.then(async () => {
+      const ix = await sensitiveIndex(this.cfg.sandbox);
+      await this.loadAccessHistory();
+      if (!ix.jobs.size && !this.accessCopies.size) return;
+      const hits = classifyTraceRow({ tool, args: record.args }, ix, { sandbox: this.cfg.sandbox, copies: this.accessCopies });
+      const row = { sid: typeof record.sid === "string" ? record.sid : undefined, seq: typeof record.seq === "number" ? record.seq : undefined, ts: typeof record.ts === "string" ? record.ts : undefined, tool };
+      const kept = isObject(record.result) && isObject(record.result.full_output) && typeof record.result.full_output.path === "string" ? record.result.full_output.path : undefined;
+      for (const hit of hits) await this.writeAccess(seat, hit, { row, ...(kept ? { kept } : {}) });
+    });
+    this.accessChain = next.catch(() => undefined);
+    return next.catch((err: Error) => this.log(`sensitive access: ${err.message}`));
+  }
+
+  /** An API answer carried bytes of a job's output to a seat: noted when the job is sensitive. */
+  private noteApiPage(seat: string, page: ApiPage): Promise<void> {
+    const next = this.accessChain.then(async () => {
+      const ix = await sensitiveIndex(this.cfg.sandbox);
+      if (!ix.jobs.has(page.job)) return;
+      await this.loadAccessHistory();
+      await this.writeAccess(seat, apiPageHit(page.job, page.part, page.path), { api: { fn: page.fn, offset: page.offset, bytes: page.bytes, total: page.total } });
+    });
+    this.accessChain = next.catch(() => undefined);
+    return next.catch((err: Error) => this.log(`sensitive access: ${err.message}`));
+  }
+
+  /** Read the lines this hub (or the hub before it) wrote, once: what is seen, counted and kept. */
+  private loadAccessHistory(): Promise<void> {
+    return (this.accessLoaded ??= (async () => {
+      for (const file of [join(this.cfg.sandbox, P.EVENTS_REL), this.spillFile()]) {
+        if (!existsSync(file)) continue;
+        const lines = createInterface({ input: createReadStream(file, { encoding: "utf8" }), crlfDelay: Infinity });
+        for await (const line of lines) {
+          if (!line.includes('"tool":"sensitive_access"')) continue;
+          let r: unknown;
+          try {
+            r = JSON.parse(line);
+          } catch {
+            continue;
+          }
+          if (!isObject(r) || r.agent !== "system" || r.tool !== "sensitive_access" || !isObject(r.args)) continue;
+          const a = r.args;
+          const seat = String(a.seat ?? "");
+          const on = isObject(a.on) ? a.on : {};
+          const job = typeof on.job === "string" ? on.job : "*";
+          if (isObject(a.tool_row)) this.accessSeen.add(`${seat}\0${String(a.tool_row.sid)}\0${String(a.tool_row.seq)}\0${job}\0${String(a.via)}`);
+          const bucket = `${seat}\0${job}`;
+          this.accessCount.set(bucket, Math.max(this.accessCount.get(bucket) ?? 0, isObject(a.burst) ? ACCESS_BURST_MAX + 1 : (this.accessCount.get(bucket) ?? 0) + 1));
+          if (isObject(r.result) && typeof r.result.kept_as === "string" && typeof on.job === "string") this.accessCopies.set(r.result.kept_as, on.job);
+        }
+      }
+    })().catch((err: Error) => this.log(`sensitive access: history: ${err.message}`)));
+  }
+
+  /**
+   * One line of the access record, as the harness's own on the trace. It
+   * names the seat, the way the harness came to see it (`via`), how sure it
+   * is (`certainty`), the sensitive job and the part reached, and points to
+   * the row it was made from; never the value, a digest, or a range of bytes.
+   */
+  private async writeAccess(seat: string, hit: AccessHit, from: { row?: { sid?: string; seq?: number; ts?: string; tool: string }; api?: Record<string, unknown>; kept?: string }): Promise<void> {
+    const job = hit.job;
+    const row = from.row;
+    if (row?.sid !== undefined && row.seq !== undefined) {
+      const key = `${seat}\0${row.sid}\0${row.seq}\0${job ?? "*"}\0${hit.via}`;
+      if (this.accessSeen.has(key)) return;
+      this.accessSeen.add(key);
+    }
+    const bucket = `${seat}\0${job ?? "*"}`;
+    const n = this.accessCount.get(bucket) ?? 0;
+    if (n > ACCESS_BURST_MAX) return;
+    this.accessCount.set(bucket, n + 1);
+    const ix = job ? await sensitiveIndex(this.cfg.sandbox) : null;
+    const on = { job, ...(hit.candidates ? { candidates: hit.candidates } : {}), part: hit.part, ...(job ? { why: ix?.jobs.get(job)?.sensitivity.why } : {}), paths: hit.paths };
+    if (n === ACCESS_BURST_MAX) {
+      await this.event("sensitive_access", { rules: ACCESS_RULES, seat, via: hit.via, certainty: hit.certainty, on: { job, part: hit.part }, burst: { after: ACCESS_BURST_MAX, note: "this seat's further accesses to this job are on the trace as the rows they come from; no more lines are written for the pair" } }, { ok: true });
+      return;
+    }
+    await this.event(
+      "sensitive_access",
+      {
+        rules: ACCESS_RULES,
+        seat,
+        via: hit.via,
+        certainty: hit.certainty,
+        on,
+        ...(row ? { tool_row: { agent: seat, ...(row.sid !== undefined ? { sid: row.sid } : {}), ...(row.seq !== undefined ? { seq: row.seq } : {}), ...(row.ts ? { ts: row.ts } : {}), tool: row.tool } } : {}),
+        ...(from.api ? { api: from.api } : {}),
+      },
+      { ok: true, ...(from.kept ? { kept_as: from.kept } : {}) },
+    );
+    // A whole output kept under tool-output/ holds what the call read: a later
+    // read of that copy is the same access, and is noted as a `copy`.
+    if (from.kept && job) this.accessCopies.set(from.kept, job);
   }
 
   sendToCollector(line: string): Promise<boolean> {

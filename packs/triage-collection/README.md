@@ -8,14 +8,18 @@ introduces the problem. This pack is the work.
 
 ## What it carries
 
-**Fifteen skills**: the pack's router, `triage/router` (at most 400 tokens: it names the other fourteen by the question each answers, holds no rule, and is the one line a run shows for the pack when its skills index is over budget), five decision-rule skills, `identify/collector`, `verify/manifests`,
+**Twenty skills**: the pack's router, `triage/router` (at most 400 tokens: it names the other nineteen by the question each answers, holds no rule, and is the one line a run shows for the pack when its skills index is over budget), ten decision-rule skills (the five below and `coverage/delivered-collection`, `normalise/container-members`, `verify/collector-effects`, `identify/collector-records` and `verify/raw-and-derived`), `identify/collector`, `verify/manifests`,
 `normalise/layout`, `gaps/what-is-missing` and `plan/what-to-collect`, and nine
 second-level skills they point to when a case needs them (`identify/collector-clues`,
 `identify/acquisition-mode`, `verify/target-outcomes`, `verify/time-layers`,
 `normalise/inventory`, `normalise/parsers`, `gaps/coverage-statement`,
 `plan/sources-windows`, `plan/sources-linux`). The skills that read an artefact say what it shows, what it does not show and what to record, and none runs live collection.
 
-**Two tools.** `collection_id` surveys a delivered directory. It classifies every
+**Six tools and one recipe.** Four tools read the collector's own records and join them to the delivered files; `collection_id` and `collection_index` come first.
+
+`collection_manifest_parse` reads KAPE copy, skip and console logs, UAC's log and hash lists and a Velociraptor container into canonical records, one per row or line, with the locator of the raw row and the collector's digest under its own algorithm (an unknown shape is `partial` or `unsupported`, never zero failures; CyLR writes no record this pack reads). `collection_manifest_verify` checks every delivery claim against the delivered file, path, size and digest apart, with an independent SHA-256 beside the collector's digest, and names the delivered files no record names. `collection_path_map` says where a delivered file came from as far as a record says (observed, with the record and how it was joined) and keeps a convention's reading beside it as a labelled hypothesis. `collection_coverage` generates, from counts of records and files, what a delivery covers for the questions you ask, with no default sentence that something was never present. The `collection-intake` recipe does the reading for a collector's zip or tar in one pass without extracting anything, and names an archive inside it without opening it.
+
+**The first two tools.** `collection_id` surveys a delivered directory. It classifies every
 object in it (copied files, disk containers, memory captures, archives) from its first
 bytes and its name and says which of the two the class rests on, so a memory capture
 beside a copied tree makes the delivery `mixed` instead of a "physical image" (a note

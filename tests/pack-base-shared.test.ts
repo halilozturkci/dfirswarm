@@ -34,6 +34,7 @@ test("archive_extract, sqlite_snapshot and sqlite_query withhold what the networ
 test("archive_extract ends a program the way the network pack's engine tools do: the process block is the same text and nothing starts a session", async () => {
   const network = await block(NETWORK, "PROCESS");
   assert.equal(await block(BASE("archive_extract"), "PROCESS"), network);
+  assert.equal(await block(BASE("timeline_super"), "PROCESS"), network, "timeline_super carries the same process block");
   for (const tool of ["archive_extract", "sqlite_snapshot"]) {
     const text = await readFile(BASE(tool), "utf8");
     const code = text.replace(/^\s*#.*$/gm, "").replace(/"""[\s\S]*?"""/g, "");

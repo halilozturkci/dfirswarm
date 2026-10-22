@@ -42,7 +42,12 @@ the macOS pack's copy of the pattern recovery_key_scan introduced:
 A tool that fails loudly: a file it cannot parse, one over `max_file_bytes` or
 `max_nodes`, a tree deeper than `max_depth`, a link not followed and a file not
 attempted before `max_seconds` are each counted and named, per file; one bad file
-never stops the sweep and never becomes an empty result.
+never stops the sweep and never becomes an empty result. A file that does not parse is
+a row with the class of the error (for an XML syntax error the reader's fixed text, the
+line and the column) and never the parser's message, which quotes the text that failed
+(`invalid literal for int(): 'x'`): in a job run as secret output, `write_values` puts the
+message in the values file. SIGTERM, SIGINT and SIGHUP end the sweep between two rows with
+one JSON answer (status partial, `interrupted`, exit 128 plus the signal).
 """
 import base64
 import datetime
@@ -57,14 +62,17 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from xml.parsers import expat
 
-PARSER = "plist_read/3"
+PARSER = "plist_read/4"
 SECRET_VALUES_NAME = "plist-values.jsonl"
 DEFAULT_MAX_BLOB = 4096
 DEFAULT_MAX_FILE_BYTES = 32 << 20
 DEFAULT_MAX_NODES = 200000
 DEFAULT_MAX_DEPTH = 100
 DEFAULT_MAX_SECONDS = 90.0
+MAX_SECONDS_LIMIT = 100.0
+WALK_GRACE_SECONDS = 5.0
 DEFAULT_INLINE_BYTES = 1 << 20
 FIRST_FAILURES = 20
 
@@ -73,13 +81,110 @@ FIRST_FAILURES = 20
 # costs a locator instead of a value (the value is in the values file, in a job); a
 # false negative would print a secret, so the list leans broad.
 SECRET_KEY = re.compile(
-    r"shadowhash|kerberoskeys|passw|passphrase|secret|token|credential|api[_-]?key|private[_-]?key|verifier|^hint$",
+    r"shadowhash|kerberoskeys|passw|passphrase|secret|token|credential|api[_-]?key|private[_-]?key|verifier"
+    r"|(?:^|[_.-])hint(?:_?text)?$|(?:user|account|login|auth)hint$"
+    r"|(?:^|[^a-z])psk|psk(?:$|[^a-z])|presharedkey|sharedkey|authkey|accesskey|cookie|passcode|bearer|(?:^|[_.-])otp(?:$|[_.-])",
     re.I,
 )
 
 
+# BEGIN SHARED STOP
+# The same text is in every macos-forensics tool (a macos-forensics test holds the copies equal). SIGTERM, SIGINT and SIGHUP end a tool the way its
+# time limit does: the work in hand is closed, what was done is kept and named, ONE JSON answer says status partial and `interrupted` (the signal's
+# name), and the exit code is 128 plus the signal number. The handler raises Interrupted (a BaseException, so no `except Exception` swallows it) from
+# wherever the signal lands; a write that must be whole (a row of a result file, the answer) is made under held(), and the signal is delivered when
+# it ends, and hold_signals() holds them for good once the answer is being written; a signal that arrives meanwhile is found by pending_stop_signal() before the
+# answer is printed, and the answer says so. The first signal counts: later ones do nothing while the tool cleans up. STOP["hooks"] run first (a database connection's
+# interrupt, the kill of the reader process this tool started and of its descendants: its own, never a search by name).
+import signal
+
+STOP = {"signal": None, "hooks": []}
+STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+
+
+class Interrupted(BaseException):
+    def __init__(self, signum):
+        super().__init__(signum)
+        self.signum = signum
+
+
+def signal_name(signum):
+    try:
+        return signal.Signals(signum).name
+    except ValueError:
+        return "signal %d" % signum
+
+
+def _on_stop_signal(signum, _frame):
+    if STOP["signal"] is not None:
+        return
+    STOP["signal"] = signum
+    for hook in list(STOP["hooks"]):
+        try:
+            hook()
+        except Exception:
+            pass
+    raise Interrupted(signum)
+
+
+def check_stop():
+    """Raise Interrupted again when a stop signal was seen but its exception was lost (a callback that sqlite called swallows exceptions)."""
+    if STOP["signal"] is not None:
+        raise Interrupted(STOP["signal"])
+
+
+def install_stop_handlers():
+    for signum in STOP_SIGNALS:
+        signal.signal(signum, _on_stop_signal)
+
+
+class held:
+    """`with held():` the stop signals wait until the outermost block ends, so a row of a result file is written whole or not at all."""
+    depth = 0
+
+    def __enter__(self):
+        if held.depth == 0:
+            try:
+                signal.pthread_sigmask(signal.SIG_BLOCK, set(STOP_SIGNALS))
+            except (AttributeError, ValueError, OSError):
+                pass
+        held.depth += 1
+        return self
+
+    def __exit__(self, *exc):
+        held.depth -= 1
+        if held.depth == 0:
+            try:
+                signal.pthread_sigmask(signal.SIG_UNBLOCK, set(STOP_SIGNALS))
+            except (AttributeError, ValueError, OSError):
+                pass
+        return False
+
+
+def pending_stop_signal():
+    """The stop signal that arrived while signals were held and was not delivered, or None (how a signal that lands while the answer is sealed is found)."""
+    try:
+        pending = signal.sigpending()
+    except (AttributeError, OSError):
+        return None
+    for signum in STOP_SIGNALS:
+        if signum in pending:
+            return signum
+    return None
+
+
+def hold_signals():
+    """Hold the stop signals for good: the work is done and the answer is being written, and a signal must not start a second one."""
+    held.depth += 1
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, set(STOP_SIGNALS))
+    except (AttributeError, ValueError, OSError):
+        pass
+# END SHARED STOP
+
+
 def fail(message, **extra):
-    print(json.dumps({"error": message, **extra}))
+    print(json.dumps({"error": message, "status": "failed", "status_basis": "the tool stopped with an error (see error); nothing was read", **extra}))
     raise SystemExit(1)
 
 
@@ -104,8 +209,22 @@ def resolve_output(out, what="output"):
     return str(dest.relative_to(root))
 
 
+LINE_AT = re.compile(r"\bline ([0-9]{1,9})\b")
+
+
 def describe(exc):
-    return "%s: %s" % (type(exc).__name__, exc)
+    """What an error says about itself, without its message. plistlib and the XML reader quote the text that failed
+    (`invalid literal for int() with base 10: 'x'`, `missing value for key 'x'`), and that text is the file's: a value under a key
+    named for a secret would come out in the failed row's `error`. So: the class; for the XML reader its fixed error text, line and
+    column; for another reader the line its message names; for the system the system's own text. In a job with write_values the
+    whole message goes to the values file (see read_one)."""
+    name = type(exc).__name__
+    if isinstance(exc, expat.ExpatError):
+        return "%s: %s at line %s, column %s" % (name, expat.ErrorString(exc.code), exc.lineno, exc.offset)
+    if isinstance(exc, OSError):
+        return "%s: %s" % (name, exc.strerror or "error")
+    line = LINE_AT.search(str(exc)) if isinstance(exc, ValueError) else None
+    return "%s: the file's content is not valid (line %s)" % (name, line.group(1)) if line else name
 
 
 # Lossless paging (the same in every library tool that pages): the page an
@@ -219,6 +338,13 @@ class SecretValues:
                 "write_values is refused outside a job: a value written here would be an ordinary "
                 "file, not a sealed secret output. Run this as job_run tool=plist_read with "
                 "secret_output: true, and ask again there. Nothing was written."
+            )
+        if os.environ.get("SECRET_OUTPUT") != "1":
+            # The manifest declares secret_output for this argument and the harness sets SECRET_OUTPUT=1 for such a job; a job that
+            # reached the script without it (a command job) would seal the file as ordinary output.
+            raise SecretValuesRefused(
+                "write_values is refused: the values file is written only in a job the harness runs as secret output "
+                "(job_run with secret_output: true), where it is a sealed secret output. Nothing was written."
             )
         self.path = Path(self.out) / SECRET_VALUES_NAME
         self.shown = "store/jobs/%s/out/%s" % (re.sub(r"[^A-Za-z0-9_.-]", "_", self.job), SECRET_VALUES_NAME)
@@ -398,14 +524,27 @@ def iso_mtime(path):
         return None
 
 
+def failed_row(row, exc, keep, ids):
+    """The row of a file that did not parse: the error without its message, and, when values are written, the message in the values file
+    (it may quote the file's text)."""
+    row.update(status="failed", error=describe(exc))
+    found = []
+    if keep and not isinstance(exc, OSError):
+        message = str(exc)
+        fid = ids()
+        row["finding_id"] = fid
+        found.append((fid, {"key_path": "", "kind": "error", "length": len(message), "reason": "the parser's message, which can quote the file's text"},
+                      message))
+    return row, found
+
+
 def read_one(path, key, limits, ids, keep):
     """One file's row, and what was found in it. Never raises: a failure is the row."""
     row = {"file": path, "parser": PARSER}
     try:
         size = os.path.getsize(path)
     except OSError as exc:
-        row.update(status="failed", error=describe(exc))
-        return row, []
+        return failed_row(row, exc, keep, ids)
     row["bytes"] = size
     row["extracted_file_mtime"] = iso_mtime(path)
     if size > limits["max_file_bytes"]:
@@ -417,8 +556,7 @@ def read_one(path, key, limits, ids, keep):
             fh.seek(0)
             tree = plistlib.load(fh)
     except Exception as exc:  # a parser fault on hostile input is that file's failure, not the sweep's
-        row.update(status="failed", error=describe(exc))
-        return row, []
+        return failed_row(row, exc, keep, ids)
     row["encoding"] = "binary" if head.startswith(b"bplist") else ("xml" if head.lstrip().startswith(b"<") else "unknown")
     walk = Walk(ids, limits["max_nodes"], limits["max_depth"], limits["max_blob"], keep)
     try:
@@ -443,8 +581,7 @@ def read_one(path, key, limits, ids, keep):
         return row, []
     except RecursionError as exc:
         row.pop("value", None)
-        row.update(status="failed", error=describe(exc))
-        return row, []
+        return failed_row(row, exc, keep, ids)
     row["status"] = "parsed"
     row["nodes"] = walk.nodes
     row["binary_values"] = walk.binary
@@ -465,6 +602,8 @@ def main():
         args = json.load(sys.stdin)
     except ValueError as exc:
         fail("arguments are not valid JSON", reason=str(exc))
+    if not isinstance(args, dict):
+        fail("the arguments must be a JSON object")
     path = args.get("path")
     if not isinstance(path, str) or not path:
         fail("path is required: a .plist file or a directory to walk")
@@ -484,6 +623,8 @@ def main():
     max_seconds = args.get("max_seconds", DEFAULT_MAX_SECONDS)
     if not isinstance(max_seconds, (int, float)) or isinstance(max_seconds, bool) or max_seconds < 0:
         fail("max_seconds must be a non-negative number", max_seconds=max_seconds)
+    requested_seconds = max_seconds
+    max_seconds = min(max_seconds, MAX_SECONDS_LIMIT)       # the manifest allows 120 s: the tool's own clock stays below it
     key = args.get("key")
     if key is not None and (not isinstance(key, str) or not key):
         fail("key must be a non-empty string")
@@ -499,134 +640,186 @@ def main():
     if not os.path.isdir(path) and not os.path.isfile(path):
         fail("path is neither a regular file nor a directory", path=path)
 
-    # Refused before anything is read: a values file that cannot be made, an out_file
-    # that already exists. Nothing is overwritten, and nothing is half written.
-    try:
-        values = SecretValues(write_values)
-    except SecretValuesRefused as exc:
-        fail(str(exc), write_values=True)
+    values = None
     sink = None
-    if named:
+    interrupted = None
+    current = [None]
+    try:
+        # Refused before anything is read: a values file that cannot be made, an out_file
+        # that already exists. Nothing is overwritten, and nothing is half written.
         try:
-            # The name as the caller gave it, not where a link would send it: O_EXCL refuses a name
-            # that exists, a link (a dangling one included) as much as a file.
-            Path(named).parent.mkdir(parents=True, exist_ok=True)
-            fd = os.open(named, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
-        except FileExistsError:
-            values.close()
-            fail("out_file already exists; the tool does not overwrite: use a new name", out_file=named)
-        except OSError as exc:
-            values.close()
-            fail("out_file could not be created", out_file=named, reason=describe(exc))
-        sink = os.fdopen(fd, "w", encoding="utf-8", newline="\n")
-    paging = None if sink else LosslessPage("plist_read", [path, key], limit, inline_bytes)
+            values = SecretValues(write_values)
+        except SecretValuesRefused as exc:
+            fail(str(exc), write_values=True)
+        if named:
+            try:
+                # The name as the caller gave it, not where a link would send it: O_EXCL refuses a name
+                # that exists, a link (a dangling one included) as much as a file.
+                Path(named).parent.mkdir(parents=True, exist_ok=True)
+                fd = os.open(named, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            except FileExistsError:
+                values.close()
+                fail("out_file already exists; the tool does not overwrite: use a new name", out_file=named)
+            except OSError as exc:
+                values.close()
+                fail("out_file could not be created", out_file=named, reason=describe(exc))
+            sink = os.fdopen(fd, "w", encoding="utf-8", newline="\n")
+        paging = None if sink else LosslessPage("plist_read", [path, key], limit, inline_bytes)
 
-    counter = [0]
+        counter = [0]
 
-    def next_id():
-        counter[0] += 1
-        return "F%06d" % counter[0]
+        def next_id():
+            counter[0] += 1
+            return "F%06d" % counter[0]
 
-    inline = []
-    inline_state = {"bytes": 0, "full": False, "bounded_by_bytes": False}
-    totals = {"parsed": 0, "failed": 0, "skipped": 0, "not_attempted": 0, "binary_plist_files": 0,
-              "files_with_withheld_values": 0, "binary_values": 0, "withheld_values": 0}
-    first = {"failed": [], "skipped": [], "not_attempted": []}
-    notes = {"links_not_followed": 0, "files_not_matched": 0, "not_regular_files": 0, "directories_unreadable": 0}
-    problems = []
-    rows_total = [0]
+        inline = []
+        inline_state = {"bytes": 0, "full": False, "bounded_by_bytes": False}
+        totals = {"parsed": 0, "failed": 0, "skipped": 0, "not_attempted": 0, "binary_plist_files": 0,
+                  "files_with_withheld_values": 0, "binary_values": 0, "withheld_values": 0}
+        first = {"failed": [], "skipped": [], "not_attempted": []}
+        notes = {"links_not_followed": 0, "files_not_matched": 0, "not_regular_files": 0, "directories_unreadable": 0,
+                 "walk_stopped_by_time_limit": False}
+        problems = []
+        rows_total = [0]
 
-    def take(row, found):
-        rows_total[0] += 1
-        state = row["status"]
-        totals[state] += 1
-        if state != "parsed" and len(first[state]) < FIRST_FAILURES:
-            first[state].append({"file": row["file"], "why": row.get("error") or row.get("reason")})
-        if state == "parsed":
-            totals["binary_values"] += row["binary_values"]
-            totals["withheld_values"] += row["withheld_values"]
-            if row["withheld_values"]:
-                totals["files_with_withheld_values"] += 1
-            if row.get("encoding") == "binary":
-                totals["binary_plist_files"] += 1
-        for fid, locator, value in found:
-            values.add(fid, {"file": row["file"], **locator}, value)
-        if sink:
-            line = json.dumps(row, default=str, sort_keys=True)
-            sink.write(line + "\n")
-            sink.flush()
-            if not inline_state["full"] and len(inline) < limit:
-                if inline_state["bytes"] + len(line) <= inline_bytes:
-                    inline.append(row)
-                    inline_state["bytes"] += len(line)
+        def take(row, found):
+            with held():                       # a row is counted, written and kept whole, or not at all
+                rows_total[0] += 1
+                state = row["status"]
+                totals[state] += 1
+                if state != "parsed" and len(first[state]) < FIRST_FAILURES:
+                    first[state].append({"file": row["file"], "why": row.get("error") or row.get("reason")})
+                if state == "parsed":
+                    totals["binary_values"] += row["binary_values"]
+                    totals["withheld_values"] += row["withheld_values"]
+                    if row["withheld_values"]:
+                        totals["files_with_withheld_values"] += 1
+                    if row.get("encoding") == "binary":
+                        totals["binary_plist_files"] += 1
+                for fid, locator, value in found:
+                    values.add(fid, {"file": row["file"], **locator}, value)
+                if sink:
+                    line = json.dumps(row, default=str, sort_keys=True)
+                    sink.write(line + "\n")
+                    sink.flush()
+                    if not inline_state["full"] and len(inline) < limit:
+                        if inline_state["bytes"] + len(line) <= inline_bytes:
+                            inline.append(row)
+                            inline_state["bytes"] += len(line)
+                        else:
+                            inline_state["bounded_by_bytes"] = True
+                            inline_state["full"] = True
+                    else:
+                        inline_state["full"] = True
                 else:
-                    inline_state["bounded_by_bytes"] = True
-                    inline_state["full"] = True
+                    paging.add(row)
+
+        def out_of_time():
+            return time.monotonic() - started > max_seconds
+
+        def visit(file):
+            if out_of_time():
+                totals["not_attempted"] += 1
+                if len(first["not_attempted"]) < FIRST_FAILURES:
+                    first["not_attempted"].append({"file": file, "why": "max_seconds (%s) passed before it was reached" % max_seconds})
+                return
+            current[0] = file
+            row, found = read_one(file, key, limits, next_id, write_values)
+            take(row, found)
+            current[0] = None
+
+        matched = 0
+        try:
+            if os.path.isdir(path):
+                def on_error(exc):
+                    notes["directories_unreadable"] += 1
+                    if len(problems) < FIRST_FAILURES:
+                        problems.append({"path": getattr(exc, "filename", None), "why": describe(exc)})
+
+                seen = 0
+                for dirpath, dirs, names in os.walk(path, onerror=on_error):
+                    dirs.sort()
+                    notes["links_not_followed"] += sum(1 for d in dirs if os.path.islink(os.path.join(dirpath, d)))
+                    for name in sorted(names):
+                        seen += 1
+                        if seen % 256 == 0 and time.monotonic() - started > max_seconds + WALK_GRACE_SECONDS:
+                            # a tree of millions of entries none of which matches is timed too: after max_seconds files are only
+                            # counted (not attempted); WALK_GRACE_SECONDS later the walk itself stops and says so
+                            notes["walk_stopped_by_time_limit"] = True
+                            break
+                        full = os.path.join(dirpath, name)
+                        if os.path.islink(full):
+                            notes["links_not_followed"] += 1
+                            continue
+                        if not name.lower().endswith((".plist", ".btm")):
+                            notes["files_not_matched"] += 1
+                            continue
+                        try:
+                            regular = stat.S_ISREG(os.lstat(full).st_mode)
+                        except OSError:
+                            regular = False
+                        if not regular:
+                            notes["not_regular_files"] += 1
+                            continue
+                        matched += 1
+                        visit(full)
+                    if notes["walk_stopped_by_time_limit"]:
+                        break
             else:
-                inline_state["full"] = True
+                matched = 1
+                visit(path)
+        except Interrupted as stop:
+            interrupted = stop.signum
+    except Interrupted:
+        # a signal before the sweep began (opening the values file or the out_file): nothing was read, what was opened is closed
+        if values is not None:
+            values.close()
+        if sink is not None:
+            sink.close()
+        raise
+
+    with held():
+        if values is not None:
+            values.close()
+        if sink:
+            sink.flush()
+            os.fsync(sink.fileno())
+            sink.close()
+            page = {"matched": rows_total[0], "returned": len(inline), "truncated": rows_total[0] > len(inline),
+                    "inline_byte_limit": inline_bytes}
+            if inline_state["bounded_by_bytes"]:
+                page["inline_bounded_by_bytes"] = True
+            complete = named
         else:
-            paging.add(row)
-
-    def visit(file):
-        if time.monotonic() - started > max_seconds:
-            totals["not_attempted"] += 1
-            if len(first["not_attempted"]) < FIRST_FAILURES:
-                first["not_attempted"].append({"file": file, "why": "max_seconds (%s) passed before it was reached" % max_seconds})
-            return
-        row, found = read_one(file, key, limits, next_id, write_values)
-        take(row, found)
-
-    matched = 0
-    if os.path.isdir(path):
-        def on_error(exc):
-            notes["directories_unreadable"] += 1
-            if len(problems) < FIRST_FAILURES:
-                problems.append({"path": getattr(exc, "filename", None), "why": describe(exc)})
-
-        for dirpath, dirs, names in os.walk(path, onerror=on_error):
-            dirs.sort()
-            notes["links_not_followed"] += sum(1 for d in dirs if os.path.islink(os.path.join(dirpath, d)))
-            for name in sorted(names):
-                full = os.path.join(dirpath, name)
-                if os.path.islink(full):
-                    notes["links_not_followed"] += 1
-                    continue
-                if not name.lower().endswith((".plist", ".btm")):
-                    notes["files_not_matched"] += 1
-                    continue
-                try:
-                    regular = stat.S_ISREG(os.lstat(full).st_mode)
-                except OSError:
-                    regular = False
-                if not regular:
-                    notes["not_regular_files"] += 1
-                    continue
-                matched += 1
-                visit(full)
-    else:
-        matched = 1
-        visit(path)
-
-    values.close()
-    if sink:
-        sink.flush()
-        os.fsync(sink.fileno())
-        sink.close()
-        page = {"matched": rows_total[0], "returned": len(inline), "truncated": rows_total[0] > len(inline),
-                "inline_byte_limit": inline_bytes}
-        if inline_state["bounded_by_bytes"]:
-            page["inline_bounded_by_bytes"] = True
-        complete = named
-    else:
-        page = paging.finish()
-        inline = paging.page
-        complete = page.get("all_results")
+            page = paging.finish()
+            inline = paging.page
+            complete = page.get("all_results")
     done = totals["parsed"]
-    status = "complete" if done == matched else ("failed" if done == 0 and matched else "partial")
+    reasons = []
+    if interrupted is not None:
+        reasons.append("the tool was stopped by %s while %s; the rows written before it are kept"
+                       % (signal_name(interrupted), ("reading " + current[0]) if current[0] else "between two files"))
+    if notes["walk_stopped_by_time_limit"]:
+        reasons.append("max_seconds (%s) passed during the walk of the directory, which was not finished" % max_seconds)
+    if totals["not_attempted"]:
+        reasons.append("%d matched file(s) were not attempted before max_seconds (%s)" % (totals["not_attempted"], max_seconds))
+    if totals["failed"] or totals["skipped"]:
+        reasons.append("%d file(s) failed to parse and %d were skipped over a bound (named under first_problems)" % (totals["failed"], totals["skipped"]))
+    if interrupted is None and done == matched and not notes["walk_stopped_by_time_limit"]:
+        status = "complete"
+        basis = ("every one of the %d matched file(s) was read" % matched) if matched else "no .plist or .btm file was found under the path: nothing was read"
+    elif done == 0 and matched and interrupted is None:
+        status = "failed"
+        basis = "no matched file could be read: " + "; ".join(reasons)
+    else:
+        status = "partial"
+        basis = "; ".join(reasons) or "not every matched file was read"
     result = {
         "path": path,
         "parser": PARSER,
         "status": status,
+        "status_basis": basis,
+        **({"interrupted": signal_name(interrupted)} if interrupted is not None else {}),
         "files": inline,
         "file_count": rows_total[0],
         "files_inline": len(inline),
@@ -641,7 +834,8 @@ def main():
                    "skipped_over_a_bound": totals["skipped"], "not_attempted": totals["not_attempted"]},
         "first_problems": {k: v for k, v in first.items() if v},
         "walk": {**notes, "problems": problems},
-        "limits": {**limits, "max_seconds": max_seconds},
+        "limits": {**limits, "max_seconds": max_seconds,
+                   **({"max_seconds_requested": requested_seconds} if requested_seconds != max_seconds else {})},
         "secret_bearing": {
             "binary_values_not_printed": totals["binary_values"],
             "withheld_by_key_name": totals["withheld_values"],
@@ -653,12 +847,36 @@ def main():
                 "a locator (finding_id, key path, kind, length). `extracted_file_mtime` is the mtime of the file "
                 "as read here, a working copy's, not the original's. A preference file says what a setting is "
                 "on disk, not what it was, when it was changed or by whom. A parsed file is a structural "
-                "reading: NSKeyedArchiver object graphs are not resolved.",
+                "reading: NSKeyedArchiver object graphs are not resolved. A string or number under a key whose name "
+                "is not a secret's is printed as it is, and the key names themselves are printed.",
     }
+    hold_signals()                     # the work is done: a signal now waits for the answer instead of replacing it
+    late = pending_stop_signal() if interrupted is None else None
+    if late is not None:
+        # it arrived after the last read and before the answer: the answer says so
+        interrupted = late
+        result["interrupted"] = signal_name(late)
+        if result["status"] == "complete":
+            result["status"] = "partial"
+        result["status_basis"] = "%s; %s arrived while the answer was being written; the answer below is whole" % (result["status_basis"], signal_name(late))
     print(json.dumps(result, indent=2, default=str))
+    if interrupted is not None:
+        sys.exit(128 + interrupted)
     if status == "failed":
         raise SystemExit(1)
 
 
 if __name__ == "__main__":
-    main()
+    install_stop_handlers()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Interrupted as stop:
+        print(json.dumps({"error": "the tool was stopped by %s before it had read anything" % signal_name(stop.signum), "status": "failed",
+                          "status_basis": "stopped by %s during start-up: nothing was read" % signal_name(stop.signum), "interrupted": signal_name(stop.signum)}))
+        sys.exit(128 + stop.signum)
+    except Exception as exc:                 # whatever hostile input does, the answer is JSON (the class only: a message can quote the file)
+        print(json.dumps({"error": "the tool stopped on an unexpected error", "type": type(exc).__name__, "status": "failed",
+                          "status_basis": "the tool stopped with an unexpected error: nothing is complete"}))
+        sys.exit(1)

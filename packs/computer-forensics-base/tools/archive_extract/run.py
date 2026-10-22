@@ -28,8 +28,10 @@ bound. What it does, exactly:
     archive declared and its CRC (where the archive has one) matches. A member that stops, fails or mismatches stays as
     .partial and its row says why. A digest or CRC of a member shorter than 128 bytes is not written (a short value can
     be reversed from its digest); the row says so.
-  * Budgets: max_total_bytes, max_member_bytes, max_members, max_ratio (expanded over packed, per member where the archive
-    gives the packed size, else over the whole stream), max_depth (path components) and max_seconds. A member-level budget
+  * Budgets: max_total_bytes, max_member_bytes, max_members, max_ratio (expanded over packed: per member for a zip, whose directory
+    gives each member's packed size; over the whole stream for a gzip, bzip2, xz or zstd file or tar, and for a 7z, whose output is
+    held to max_ratio times the archive's size; a plain tar stores its members, so nothing in it expands), max_depth (path
+    components) and max_seconds. A member-level budget
     skips or cuts that member and goes on; a global one stops the run, names it (`stopped_by`) and gives `next_index`:
     run again with from_index set to it and resume true to go on in the same out_dir (a second manifest, members.2.jsonl,
     is written beside the first; nothing is replaced).
@@ -68,7 +70,7 @@ import zipfile
 import zlib
 from pathlib import Path
 
-TOOL = {"name": "archive_extract", "version": 1}
+TOOL = {"name": "archive_extract", "version": 2}
 CHUNK = 1 << 20
 SHORT_MEMBER = 128                       # a member shorter than this has no digest and no CRC written
 MAX_TOTAL_DEFAULT = 8 * 1024 ** 3
@@ -88,7 +90,8 @@ LIMIT_CEILING = 1000
 LINK_TARGET_MAX = 4096
 HASH_ARCHIVE_MAX = 4 * 1024 ** 3         # the archive's own sha256 is taken up to this size
 META_MAX = 1024 * 1024                   # a tar long-name or pax header that declares more is not read (tarfile reads it whole)
-ZIP_DIRECTORY_MAX = 256 * 1024 * 1024
+ZIP_DIRECTORY_MAX = 64 * 1024 * 1024      # zipfile holds every entry of the directory in memory (about 500 bytes each): 64 MiB of it is some 1.4 million entries
+ZIP_DIRECTORY_FACTOR = 4                  # and a directory declaring more than this many times max_members is not loaded to extract that few
 SEVEN_Z_MAGIC = b"7z\xbc\xaf\x27\x1c"
 SEVEN_Z_NAMES = ("7z", "7zz", "7za", "7zr")
 LISTING_LINE_MAX = 16 * 1024 * 1024
@@ -97,9 +100,11 @@ SEGMENT = 200                            # an on-disk name component longer than
 FIRST_FAILURES = 20
 
 # BEGIN SHARED WITHHOLDING
-# The same text is in pcap_extract, zeek_run, suricata_run and network_log_summary, so that the four tools withhold
-# the same strings; tests/pack-network-withholding.test.ts holds the copies equal. An identifier-shaped string is
-# withheld wherever the tool would print one: a name, a path component, a URL, a message that quotes either.
+# The same text is in every tool that withholds identifier-shaped strings (the network, base, virtualization and
+# reverse-engineering packs), so that they withhold the same strings; the tests that hold the copies equal are
+# tests/pack-network-withholding.test.ts, tests/pack-base-shared.test.ts, tests/pack-virtualization-shared.test.ts and
+# tests/pack-re-process.test.ts. An identifier-shaped string is withheld wherever the tool would print one: a name, a
+# path component, a URL, a message that quotes either.
 COUNTS = {"names": 0, "urls": 0, "text": 0}
 # A run of name characters long enough to be a token. `=` is only a padding at the end (so a key= prefix stays);
 # `/` joins pieces of a base64 token and is handled apart, below.
@@ -155,7 +160,88 @@ def _randomish(piece):
     return (any(c.isdigit() for c in piece) and bool(letters)) or mixed
 
 
+_SPAN_PIECE = re.compile(r"[A-Za-z0-9_+%-]+")
+# A text longer than this is withheld whole, by its length, and not examined: the examination is linear, but a text of
+# millions of characters is not one a name or a URL is, and the answer says how long it was.
+TEXT_LIMIT = 2097152
+
+
+def _grow_spans(text, spans):
+    """Each flagged span takes the random-looking pieces next to it across a `/`: the head of a token is not printed.
+
+    One pass cuts the text into pieces (runs of name characters) and keeps where each starts and ends. A span then walks
+    that array by index; a piece is judged once, and a walk that reaches a piece an earlier walk has settled stops there, so
+    the work is linear in the text and no range is sliced or searched again. (Looking back with a search over everything
+    before a piece costs the cube of the length for a name of many `/`-joined pieces.)"""
+    from bisect import bisect_left
+    starts, ends = [], []
+    for m in _SPAN_PIECE.finditer(text):
+        starts.append(m.start())
+        ends.append(m.end())
+    count, size = len(starts), len(text)
+    judged_left, judged_right, settled_left, settled_right = {}, {}, {}, {}
+
+    def padded(k):       # where piece k ends with the up to two `=` of padding after it
+        e = ends[k]
+        if e < size and text[e] == "=":
+            e += 2 if e + 1 < size and text[e + 1] == "=" else 1
+        return e
+
+    def left_ok(j):
+        if j not in judged_left:
+            judged_left[j] = _randomish(text[starts[j]:ends[j]])
+        return judged_left[j]
+
+    def right_ok(k):
+        if k not in judged_right:
+            judged_right[k] = _randomish(text[starts[k]:padded(k)])
+        return judged_right[k]
+
+    def before(at):      # the piece that growing left from offset `at` takes, or -1. `$` also ends a match before a final line break.
+        if at < 2 or text[at - 1] != "/":
+            return -1
+        for stop in ((at - 1, at - 2) if text[at - 2] == "\n" else (at - 1,)):
+            j = bisect_left(ends, stop)
+            if j < count and ends[j] == stop:
+                return j if left_ok(j) else -1
+        return -1
+
+    def after(k):        # the piece that growing right from the end of piece k takes, or -1
+        e = padded(k)
+        if k + 1 >= count or e >= size - 1 or text[e] != "/" or starts[k + 1] != e + 1:
+            return -1
+        return k + 1 if right_ok(k + 1) else -1
+
+    def settle(i, step, memo):
+        trail = []
+        while i not in memo:
+            trail.append(i)
+            j = step(i)
+            if j < 0:
+                memo[i] = i
+                break
+            i = j
+        final = memo[i]
+        for t in trail:
+            memo[t] = final
+        return final
+
+    grown = []
+    for start, end in spans:
+        j = before(start)
+        if j >= 0:
+            start = starts[settle(j, lambda i: before(starts[i]), settled_left)]
+        if end < size - 1 and text[end] == "/":
+            k = bisect_left(starts, end + 1)
+            if k < count and starts[k] == end + 1 and right_ok(k):
+                end = padded(settle(k, after, settled_right))
+        grown.append((start, end))
+    return grown
+
+
 def token_spans(text):
+    if len(text) > TEXT_LIMIT:
+        return [(0, len(text))]
     spans = [m.span() for m in _PREFIXED.finditer(text)]
     for m in _RUN.finditer(text):
         if _token_run(m.group()):
@@ -165,20 +251,7 @@ def token_spans(text):
         run = m.group()
         if "/" in run and sum(1 for p in run.split("/") if _randomish(p)) >= 3 and re.search(r"[0-9+]", run):
             spans.append(m.span())
-    # A flagged piece takes the random-looking pieces next to it across a `/`: the head of a token is not printed.
-    grown = []
-    for start, end in spans:
-        while start > 1 and text[start - 1] == "/":
-            m = re.search(r"[A-Za-z0-9_+%-]+$", text[:start - 1])
-            if not m or not _randomish(m.group()):
-                break
-            start = m.start()
-        while end < len(text) - 1 and text[end] == "/":
-            m = re.match(r"[A-Za-z0-9_+%-]+={0,2}", text[end + 1:])
-            if not m or not _randomish(m.group()):
-                break
-            end = end + 1 + m.end()
-        grown.append((start, end))
+    grown = _grow_spans(text, spans) if spans else []
     grown.sort()
     merged = []
     for start, end in grown:
@@ -195,6 +268,8 @@ def token_shaped(text):
 
 def scrub(text, kind="text"):
     """The text with every token-shaped run and every user-info withheld."""
+    if len(text) > TEXT_LIMIT:
+        return _withheld("over-long text", len(text), kind)
     text = _USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
     text = _BARE_USERINFO.sub(lambda m: _withheld("userinfo", len(m.group()), kind), text)
     out, last = [], 0
@@ -961,6 +1036,10 @@ class Engine:
         out = {
             "tool": TOOL,
             "status": status,
+            "status_basis": {"complete": "every member the archive lists was read to its end and written, or is a directory",
+                             "partial": "a member did not come out whole or a budget stopped the run (see counts, stopped_by and first_failures)",
+                             "failed": "the archive could not be read",
+                             "interrupted": "the run was ended by a signal before it finished", "running": "the run has not finished"}.get(status, status),
             "archive": self.archive,
             "out_dir": str(self.out_root.relative_to(Path.cwd().resolve())) if Path.cwd().resolve() in self.out_root.parents else str(self.out_root),
             "extracted_dir": "extracted",
@@ -987,8 +1066,8 @@ class Engine:
             "sensitive_output": {
                 "extracted_content": True,
                 "out_dir_mode": "0700, files 0600",
-                "advice": "extracted members are evidence content and can hold credentials, keys and tokens: run this as a job with secret_output: true, "
-                          "and record where a secret sits, its kind and length, never its value",
+                "advice": "extracted members are evidence content and can hold credentials, keys and tokens: when the member list shows credential stores, keys, "
+                          "tokens or browser profiles, run this as a job with secret_output: true, and record where a secret sits, its kind and length, never its value",
             },
             "not_measured": "the content of a member is not examined; a nested archive is named, not opened; a member's CRC or size agreeing with the "
                             "archive's record shows the bytes are what the archive held, not that the archive is authentic or complete",
@@ -1383,7 +1462,18 @@ def run_zip(eng, path, from_index, max_members):
     if declared is not None:
         eng.extra["members_declared"] = declared
     if cd_bytes is not None and cd_bytes > ZIP_DIRECTORY_MAX:
-        raise ArchiveError("the central directory is %d bytes, more than the %d this tool reads into memory" % (cd_bytes, ZIP_DIRECTORY_MAX), members_declared=declared)
+        raise ArchiveError("the central directory is %d bytes, more than the %d this tool reads into memory (every entry is held, about 500 bytes each): "
+                           "nothing was extracted; list it with the archive-members recipe, or split the archive" % (cd_bytes, ZIP_DIRECTORY_MAX), members_declared=declared)
+    wanted = max(from_index + max_members, 1) * ZIP_DIRECTORY_FACTOR
+    if cd_bytes is not None and cd_bytes > (1 << 20) and cd_bytes // 46 > wanted:
+        # the count in the end record is the archive's claim and zipfile reads the directory by its size: an entry is at least 46 bytes
+        raise ArchiveError("the central directory is %d bytes, room for more than %d entries (%d times the max_members of %d, and from_index %d), whatever the end record's count says: "
+                           "the whole directory is loaded to extract any of it, so it is not loaded for that few; nothing was extracted. Raise max_members to at least %d"
+                           % (cd_bytes, wanted, ZIP_DIRECTORY_FACTOR, max_members, from_index, -(-(cd_bytes // 46) // ZIP_DIRECTORY_FACTOR)), members_declared=declared)
+    if declared is not None and declared > wanted:
+        raise ArchiveError("the central directory declares %d members, more than %d times the max_members of %d (and from_index %d): the whole directory is loaded to extract any of it, "
+                           "so it is not loaded for that few; nothing was extracted. Raise max_members to at least %d to extract from this archive"
+                           % (declared, ZIP_DIRECTORY_FACTOR, max_members, from_index, -(-declared // ZIP_DIRECTORY_FACTOR)), members_declared=declared)
     try:
         zf = zipfile.ZipFile(path)
     except (zipfile.BadZipFile, OSError, NotImplementedError, ValueError, EOFError) as exc:
@@ -1588,11 +1678,12 @@ def seven_member(n, f):
 class Pipe:
     """The bytes 7z writes to its stdout, read with the clock running; split into members by the sizes of its own listing."""
 
-    def __init__(self, proc, deadline):
+    def __init__(self, proc, deadline, max_ratio=None, packed=0):
         self.fd = proc.stdout.fileno()
         self.deadline = deadline
         self.eof = False
         self.total = 0
+        self.max_ratio, self.packed = max_ratio, packed    # the whole output is held to max_ratio times the archive's size
 
     def read(self, n):
         if self.eof or n <= 0:
@@ -1607,6 +1698,8 @@ class Pipe:
         if not data:
             self.eof = True
         self.total += len(data)
+        if self.max_ratio and self.total > self.max_ratio * max(self.packed, 1) + RATIO_SLACK:
+            raise Ratio("7z wrote %d bytes from an archive of %d (more than %d times)" % (self.total, self.packed, self.max_ratio))
         return data
 
 
@@ -1663,6 +1756,8 @@ def run_7z(eng, path, from_index, max_members, sevenz):
     n_all = encrypted_n = device_n = 0
     names_plain, names_all = {}, {}
     for n, f in enumerate(listing_records(str(listing))):
+        if n % 1024 == 0 and eng.time_left() <= 0:
+            raise Budget("max_seconds", "the time budget of %d seconds was used reading 7z's listing, after %d members" % (eng.a["max_seconds"], n))
         m = seven_member(n, f)
         n_all += 1
         encrypted_n += 1 if m["encrypted"] else 0
@@ -1703,7 +1798,7 @@ def run_7z(eng, path, from_index, max_members, sevenz):
     err_fh = private_file(str(stderr_x), "wb")
     proc = spawn(argv, stdout=subprocess.PIPE, stderr=err_fh, env=env)
     ACTIVE.append(proc)
-    pipe = Pipe(proc, eng.deadline)
+    pipe = Pipe(proc, eng.deadline, eng.a["max_ratio"], os.path.getsize(path))
     handled = 0
     desync = False
     try:

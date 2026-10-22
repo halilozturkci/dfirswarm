@@ -163,7 +163,7 @@ test("encrypted_survey says what it read, where, and that three windows can over
     assert.equal(byName["small.xlsx.locked"].windows_overlap, true);
     assert.equal(byName["big.xlsx.locked"].tail_hex, big.subarray(-16).toString("hex"));
     assert.equal(survey.sampling.profiled, 2);
-    assert.match(survey.sampling.method, /first .* candidates .* traversal order/);
+    assert.match(survey.sampling.method, /first .* candidates .* print order/);
   });
 });
 

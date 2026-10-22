@@ -15,8 +15,20 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NG="$ROOT/scripts/netguard.sh"
 WWW="$(mktemp -d "${TMPDIR:-/tmp}/slice2-netguard.XXXXXX")"
-PORT=$(( 20000 + RANDOM % 20000 ))
-PROXY_PORT=$(( 40000 + RANDOM % 20000 ))
+# Both ports below 32768: above it lie the ranges a kernel hands out to the outgoing connections of every process on the host (Linux 32768-60999, macOS
+# 49152-65535), which a port picked at random there can collide with. A port something already answers on is passed over.
+port_in_use() { bash -c "exec 3<>/dev/tcp/127.0.0.1/$1" 2>/dev/null; }
+pick_port() { # pick_port <from> <count> [<taken>]
+  local p i
+  for i in $(seq 1 100); do
+    p=$(( $1 + RANDOM % $2 ))
+    if [[ "$p" != "${3:-}" ]] && ! port_in_use "$p"; then echo "$p"; return 0; fi
+  done
+  echo "no free port in $1..$(( $1 + $2 - 1 ))" >&2
+  return 1
+}
+PORT="$(pick_port 20000 6000)"
+PROXY_PORT="$(pick_port 27000 5000 "$PORT")"
 SERVER_PID=""
 # Reap the fixture server after killing it, or bash 3.2 reports the kill
 # ("Terminated: 15") on the way out.

@@ -1,7 +1,7 @@
 {
   "id": "triage-collection",
   "name": "Triage and Collection Pack",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "What to do when the evidence is a collector's output rather than an image: surveying what was delivered and which collectors left records, reading those records without turning them into findings, keeping the source, delivered and analysis paths apart, saying what the delivery can and cannot establish, requesting more evidence through the operator, and handing files to the platform packs.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -18,45 +18,64 @@
   "checksums": {
     "sha256": {
       "LICENCE": "c271b022edf4f543b6fc7c4e6fc0b138c57648f0dffe25a4e34c7e9f1c178d8a",
-      "README.md": "165d92bfc4a7ed57522bcd756b5d00cbac8f5ce4a7e3bd15732a8be8e9e3d73c",
-      "tools/collection_index/manifest.json": "509ac4aa23ce9b773165f09dbfc02b13bdcc5a4707c12e951a59aef0dedb5a55",
-      "tools/collection_index/run.py": "235b153d3d1d7ff5d0320fc785f6831c3b4644532bfabc564ec8a9923550892c",
-      "tools/collection_id/manifest.json": "a669a1a46ca9d11a9c59a7d1a68226c307159efa27f1b28a11683bb1b50e01d3",
-      "tools/collection_id/run.py": "67dca8ad002e4dbd40ee3b769dc39ac77884efaceee2d4975a770b8ab6521777",
+      "README.md": "fde7a155e0fbe5aa5f1266bfe5269b25a54ffb4725008d63aefd832c6e3077aa",
+      "tools/collection_coverage/manifest.json": "d37976dd7c0fd6e9e01d4e4a1d4b84e44d86d37c5621b862a85221f6111eebe7",
+      "tools/collection_coverage/run.py": "dbdaa4a29bc1c8ff092a0ddcf243b4e8e3d6b04a2bdc59107926370c6aa6039a",
+      "tools/collection_manifest_parse/manifest.json": "5b4d91ed3c373e3c6c2d38e6112ce0009435447bf8ff9897cf4863047216e7a2",
+      "tools/collection_manifest_parse/run.py": "c18c4917c242c40f881b780657aa9cc3b18351fb35822c3c082424b09499d886",
+      "tools/collection_manifest_verify/manifest.json": "abef8fc6044509b27cfa1c0492e92007dff9ffd69369e35cf0fff14a31227b14",
+      "tools/collection_manifest_verify/run.py": "661ae0335e64d5bc235304d89a06be0ffd0c5b6ddab07246e868390701f25196",
+      "tools/collection_index/manifest.json": "701e565bcb27892e43f0808f6944aeb0cdfd3e228341ec17babe32de26774910",
+      "tools/collection_index/run.py": "640ff63eb4d0a438bf6d208a8d17e947b1479f79c116bf5e99a59c36e3d51961",
+      "tools/collection_path_map/manifest.json": "05d2cd7f7129c709079a0a246d888a36df418b5b9b22ddf2a2f4e45c8f18ff7f",
+      "tools/collection_path_map/run.py": "da5f0022486470ed383344ae650fcf8315e217418bb3eed9e0c6d0eb8ac18e84",
+      "tools/collection_id/manifest.json": "b54e87dc5e41c0d0555052e21fa8c272d39190255367c53af1bdd80e7a05160a",
+      "tools/collection_id/run.py": "b96456fef334ad5186a54a787664f00b47471fe7015da691a0d5557fb1014e2b",
       "goals/collection-intake.md": "ed89303440885a201a191d42de56977b609170e07f15c0268114bb68511651c2",
+      "recipes/collection-intake/recipe.json": "939d7528c385e925e00e754a5fe399af4c785423ca2e7bb6eaecaa0ddc154a19",
+      "recipes/collection-intake/run.py": "d0fbfedeb4a70e6ac4f3634cdf546b46b790d6ecd909886951b78c882b6aafb3",
       "skills/identify/acquisition-mode.md": "759d307cd7f986e16a93a7f6fd9ea8b6f0f332f600e85b74415db8064ff6f067",
       "skills/identify/collector-clues.md": "f1470612a0091f04d5b2f89d3995b622dc7a0457facf4faf096108c417f41a22",
-      "skills/identify/collector.md": "1946f3a9d26ffd18d4770675e64cd1c96a7588bb352ebd2ea7311ecd120b943e",
-      "skills/verify/manifests.md": "fd8ad2fe48e37d3c9a93eb35c2b9a0db40dec85f682d196779252d429c0d7f9b",
+      "skills/identify/collector-records.md": "25429967b97ff2413905fa15062c506aa276f51d83a7939277659958e78fd290",
+      "skills/identify/collector.md": "56b2f5fa9589c4b604827b9e5ba341e307e1c8ed3b2df930fa8fff200e380f23",
+      "skills/verify/collector-effects.md": "79302260229c2989d4afadeb1c69a157528c2620d0d0f36d5e6f481b8d538185",
+      "skills/verify/manifests.md": "7fbd88eb8e211e676ca9f92091db1b6a2ec700687cb115f9bbf7e3fd12ce92b4",
+      "skills/verify/raw-and-derived.md": "b9018d3a208c3500fd2ab5029f7eb2decfbdb4cc392d1e6cae65d5ff3ca7f1fd",
       "skills/verify/target-outcomes.md": "420b464d85ca59e391bd3dfb36b5ef5161917a0055b27cae8c349ebbe98eb185",
       "skills/verify/time-layers.md": "1c5ae12396541f66581eb5ede022671d3bfd076ff004dc57b84de0e51a5f72eb",
-      "skills/gaps/coverage-statement.md": "e91e657ab7156e2738c94fe6625fa1782207a80e7b7ed65de9f68621cf020e79",
+      "skills/gaps/coverage-statement.md": "7c18587561569f59c4441db6b9cce54999b5ff9522644b3d2df459490f24d11c",
       "skills/gaps/what-is-missing.md": "12d48f23c9300456318fe522b0694eb5bdcbc31fa8821c7596e84a7eeda1325d",
       "skills/plan/sources-linux.md": "d1d05a364bd011282cace85a232475f4624f3635d26c5b2b456e25bd60ef33fa",
       "skills/plan/sources-windows.md": "8b4491f285b16f045932f3adedacd18f80f8a015560e2057b85145d11f054d12",
       "skills/plan/what-to-collect.md": "baf9ca058dea6ef8fa4ce94a6414ff777ae4200bbb02a3522ca6dd5afe104911",
-      "skills/triage/router.md": "c3a4600de3dba33dea755b231fb0e5689945c1c3d632c6ef2790f0eb0e62e417",
+      "skills/triage/router.md": "b95524e4cc7876dfaf65af89a1be3e3ea2d19a3724227046701a194db3b93e16",
+      "skills/normalise/container-members.md": "05f8a19b3dd565ab461f8c438c70a99f1250e4248e13d394eb20b075af9b0685",
       "skills/normalise/inventory.md": "8474b8d720d76a03732beeb3667de75891eb9051cd9f1ec40dff8df3ab98ce13",
-      "skills/normalise/layout.md": "3b013ce49870281bb4438501cdb4644714a30af61d9315fd6e24e13ee5ab2a3d",
+      "skills/normalise/layout.md": "49065c97a509a9b20a759e74f945a36318c77bf2fa15524ce3acbd26f96ec2c2",
       "skills/normalise/parsers.md": "b87f648ddb7354276ef59549a1c5fcb749ad1b546a7aeb40c4122795f83ed851",
+      "skills/coverage/delivered-collection.md": "3a9201adbdcbd0ab78d24592d2b9ba5b5e7d745c82d5bf29a3238838f20b685e",
       "requires/host.json": "368bdeaf5f0ad23688b039415acd34f80e21622ce31384215b8b6a7fd429b793",
       "requires/python.txt": "4f753bdd539922ce6d87e00b3c099f7c18af8cf5d04139588668f957d7d3eddd",
-      "skills/INDEX.md": "be236be5e24763c1a2faa03460af65acbf982abe8f3ee7b0f14a9c5508df96ff"
+      "skills/INDEX.md": "3ac62b06c23cfe9cc450c25e388df629bd1f493b6d00888f4ae0d467b219ddd0"
     }
   },
   "tools": [
+    "collection_coverage",
     "collection_id",
-    "collection_index"
+    "collection_index",
+    "collection_manifest_parse",
+    "collection_manifest_verify",
+    "collection_path_map"
   ],
-  "skills": 15,
+  "skills": 20,
   "unreferenced_ok": [
     {
       "name": "uac",
-      "why": "declared for operator preparation only: UAC is a shell collector an operator runs on the host to be collected; the harness never runs it, no skill commands it, and its delivered output is read as files"
+      "why": "declared for operator preparation only: UAC is a shell collector an operator runs on the host to be collected; the harness never runs it, no skill commands it, and its delivered output is read as files by collection_manifest_parse"
     },
     {
       "name": "velociraptor",
-      "why": "declared for operator preparation and as a candidate offline reader of its own containers (unverified, used by no skill); the harness never collects live"
+      "why": "declared for operator preparation and as a candidate offline reader of its own containers (unverified, used by no skill: collection_manifest_parse reads a container's files itself); the harness never collects live"
     }
   ],
   "method_only": [
@@ -64,5 +83,8 @@
       "path": "skills/triage/router.md",
       "why": "the pack's router: it names the other notes by the question each answers and holds no rule, tool or program of its own"
     }
+  ],
+  "recipes": [
+    "triage-collection/collection-intake"
   ]
 }

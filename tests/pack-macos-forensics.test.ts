@@ -41,8 +41,14 @@ async function tool(script: string, cwd: string, args: unknown, env: Record<stri
   return runPy(script, cwd, args, bin, { ...AGENT, ...env });
 }
 
-/** The tool as a job runs it: JOB_ID and OUT set, OUT inside the run directory. */
+/** The tool as a job runs it: JOB_ID and OUT set, OUT inside the run directory, and SECRET_OUTPUT=1 (a job the harness runs as secret output). */
 async function asJob(script: string, cwd: string, args: unknown): Promise<Run> {
+  await mkdir(join(cwd, "out"), { recursive: true });
+  return tool(script, cwd, args, { JOB_ID: "j-1", OUT: join(cwd, "out"), SECRET_OUTPUT: "1" });
+}
+
+/** A job that is not secret output: the values modes are refused in it. */
+async function asPlainJob(script: string, cwd: string, args: unknown): Promise<Run> {
   await mkdir(join(cwd, "out"), { recursive: true });
   return tool(script, cwd, args, { JOB_ID: "j-1", OUT: join(cwd, "out") });
 }
@@ -264,6 +270,10 @@ test("plist_read writes values only on write_values, only in a job, only to a pr
     const outside = refused(await tool(PLIST, cwd, { path: "work/alice.plist", write_values: true }));
     assert.match(outside.error, /refused outside a job/);
     assert.deepEqual(await readdir(join(cwd, "work")), ["alice.plist"]);
+    // In a job the harness does not run as secret output the request is refused too, before anything is created.
+    const plain = refused(await asPlainJob(PLIST, cwd, { path: "work/alice.plist", write_values: true }));
+    assert.match(plain.error, /secret output/);
+    assert.deepEqual(await readdir(join(cwd, "out")), [], "nothing was written");
 
     const run = await asJob(PLIST, cwd, { path: "work/alice.plist", write_values: true });
     const answer = body<PlistAnswer>(run);
@@ -315,7 +325,7 @@ test("plist_read labels the file time as the extracted copy's and does not overw
     const answer = body<PlistAnswer>(await tool(PLIST, cwd, { path: "work/a.plist" }));
     assert.match(answer.files[0].extracted_file_mtime ?? "", /^\d{4}-\d\d-\d\dT.*Z$/);
     assert.equal(answer.files[0].modified, undefined);
-    assert.equal(answer.files[0].parser, "plist_read/3");
+    assert.equal(answer.files[0].parser, "plist_read/4");
 
     await writeFile(join(cwd, "work", "keep.jsonl"), "precious\n");
     const clash = refused(await tool(PLIST, cwd, { path: "work/a.plist", out_file: "work/keep.jsonl" }));
@@ -508,7 +518,7 @@ test("fsevents_parse reads version 1 and 2 pages across two gzip members and cou
     assert.equal(answer.records[2].member, 1);
     assert.equal(answer.records[0].page_offset, 0);
     assert.equal(answer.records[0].record_offset, 12);
-    assert.equal(answer.records[0].parser, "fsevents_parse/3");
+    assert.equal(answer.records[0].parser, "fsevents_parse/4");
   });
 });
 
@@ -519,7 +529,7 @@ test("fsevents_parse says a page of a version it does not read is unsupported, w
     const run = await tool(FS, cwd, { path: dir });
     const answer = fsAnswer(run);
     assert.equal(run.code, 1, "nothing was decoded, and the exit says so");
-    assert.equal(answer.status, "unsupported");
+    assert.equal(answer.status, "failed", "the status is one of complete, partial and failed; the file's own state says unsupported");
     assert.deepEqual(answer.files_by_state, { parsed: 0, partial: 0, empty: 0, unsupported: 1, failed: 0 });
     assert.equal(answer.per_file[0].state, "unsupported");
     assert.equal(answer.per_file[0].magic_seen, "3SLD");
@@ -791,7 +801,7 @@ test("knowledgec_query joins ZSTRUCTUREDMETADATA and ZSOURCE and exports the typ
     assert.equal(focus.stream, "/app/inFocus");
     assert.equal(focus.value_string, "com.apple.Terminal");
     assert.equal(focus.source_table, "ZOBJECT");
-    assert.equal(focus.parser, "knowledgec_query/3");
+    assert.equal(focus.parser, "knowledgec_query/4");
     assert.equal(focus.start_raw, 760000000.25);
     assert.equal(focus.start, "2025-01-31T07:06:40.250000Z");
     assert.equal(focus.end, "2025-01-31T07:07:40.250000Z");
@@ -1034,10 +1044,10 @@ c.commit()
     assert.ok(run.mb < 120, `peak memory ${run.mb} MB for a 150 MB cell and a 20 MB TEXT value`);
     assert.ok(run.stdout.length < 200_000, `the answer is ${run.stdout.length} bytes`);
     const answer = JSON.parse(run.stdout) as KcAnswer & { values: { truncated: number; exported: number } };
-    const big = answer.entries[0].zobject_other as Record<string, { _blob_bytes: number; _base64: string; _truncated: boolean; _where: { table: string; column: string; rowid: number } }>;
+    const big = answer.entries[0].zobject_other as Record<string, { _blob_bytes: number; _hex: string; _truncated: boolean; _where: { table: string; column: string; rowid: number } }>;
     assert.equal(big.ZPAYLOAD._blob_bytes, 150_000_000);
     assert.equal(big.ZPAYLOAD._truncated, true);
-    assert.equal(Buffer.from(big.ZPAYLOAD._base64, "base64").length, 4096);
+    assert.equal(Buffer.from(big.ZPAYLOAD._hex, "hex").length, 4096);
     assert.deepEqual(big.ZPAYLOAD._where, { table: "ZOBJECT", column: "ZPAYLOAD", rowid: 1 });
     const text = answer.entries[1].value_string as unknown as { _text_head: string; _text_bytes: number; _truncated: boolean };
     assert.equal(text._text_bytes, 20_000_000);
@@ -1045,19 +1055,20 @@ c.commit()
     assert.equal(answer.values.truncated, 2);
     assert.equal(answer.values.exported, 0);
     assert.equal(answer.entries[1].zobject_other?.ZPAYLOAD !== undefined, true, "a small BLOB is whole");
-    // Asked, the whole value is streamed to a file that the answer names, and nothing is cut.
+    // Asked, in a job the harness runs as secret output, the whole value is streamed to a private file that the answer names, and nothing is cut.
     const exported = body<KcAnswer & { values: { exported: number; exported_bytes: number } }>(
-      await tool(KC, cwd, { db: "work/big.db", stream: "/s", export_oversize: true, max_export_bytes: 200_000_000 }),
+      await asJob(KC, cwd, { db: "work/big.db", stream: "/s", export_oversize: true, max_export_bytes: 200_000_000 }),
     );
     assert.equal(exported.values.exported, 2);
     const e1 = exported.entries[1].value_string as unknown as { _whole_value_file: string; _whole_value_bytes_written: number };
-    assert.match(e1._whole_value_file, /^work\/s1\/tool-output\/knowledgec-values\/ZOBJECT\.ZVALUESTRING\.2\.txt$/);
+    assert.match(e1._whole_value_file, /^store\/jobs\/j-1\/out\/tool-output\/knowledgec-values\/ZOBJECT\.ZVALUESTRING\.2\.txt$/);
     assert.equal(e1._whole_value_bytes_written, 20_000_000);
-    assert.equal((await stat(join(cwd, e1._whole_value_file))).size, 20_000_000);
-    assert.equal((await stat(join(cwd, e1._whole_value_file))).mode & 0o777, 0o600);
+    const written = join(cwd, "out", "tool-output", "knowledgec-values", "ZOBJECT.ZVALUESTRING.2.txt");
+    assert.equal((await stat(written)).size, 20_000_000);
+    assert.equal((await stat(written)).mode & 0o777, 0o600);
     // Over the export budget the value is not written, and the answer says so.
     const refusedExport = body<KcAnswer & { values: { exported: number } }>(
-      await tool(KC, cwd, { db: "work/big.db", stream: "/s", export_oversize: true, max_export_bytes: 1000 }),
+      await asJob(KC, cwd, { db: "work/big.db", stream: "/s", export_oversize: true, max_export_bytes: 1000 }),
     );
     assert.equal(refusedExport.values.exported, 0);
     assert.equal(refusedExport.status, "partial");
@@ -1343,12 +1354,13 @@ test("unified_log keeps a record with none of an entry's fields apart from the e
   });
 });
 
-test("unified_log says an output with no entries is empty, not complete", async () => {
+test("unified_log says an output with no entries is not complete: partial, with the reader's outcome empty", async () => {
   await withCwd(async (cwd) => {
     const bin = await ulBin(cwd);
     const out = await ul(cwd, bin, { path: await logarchive(cwd), out_dir: "work/u4" }, "empty");
     const answer = JSON.parse(out.stdout) as UlAnswer;
-    assert.equal(answer.status, "empty");
+    assert.equal(answer.status, "partial", "the status is one of complete, partial and failed");
+    assert.equal((answer as unknown as { reader_outcome: string }).reader_outcome, "empty");
     assert.equal(answer.entry_count, 0);
     assert.ok(answer.problems.some((p) => /no entries/.test(p)));
   });
@@ -1611,6 +1623,7 @@ m = load(sys.argv[1])
 os.chdir(sys.argv[2])
 os.environ["JOB_ID"] = "j-9"
 os.environ["OUT"] = os.path.join(sys.argv[2], "out9")
+os.environ["SECRET_OUTPUT"] = "1"
 v = m.SecretValues(True)
 v.add("F000001", {"file": "dir/bad\\udcff.plist", "key_path": "k"}, "value")
 v.close()
@@ -1633,7 +1646,7 @@ test("plist_read reads a directory whose file name is not UTF-8 end to end", { s
     const bad = Buffer.concat([Buffer.from(dir + "/"), Buffer.from([0x62, 0x61, 0x64, 0xff]), Buffer.from(".plist")]);
     await writeFile(bad, bplist({ name: "x", ShadowHashData: [VERIFIER] }));
     await mkdir(join(cwd, "out"), { recursive: true });
-    const run = await tool(PLIST, cwd, { path: "work/badnames", write_values: true, limit: 1 }, { JOB_ID: "j-1", OUT: join(cwd, "out") });
+    const run = await tool(PLIST, cwd, { path: "work/badnames", write_values: true, limit: 1 }, { JOB_ID: "j-1", OUT: join(cwd, "out"), SECRET_OUTPUT: "1" });
     assert.equal(run.code, 0, run.stderr);
     assert.doesNotMatch(run.stderr, /Traceback/);
     const rows = (await readFile(join(cwd, "out", "plist-values.jsonl"), "utf8")).trimEnd().split("\n");
@@ -1681,7 +1694,7 @@ test("plist_read bounds its inline answer by bytes and keeps the whole in a file
 test("fsevents_parse bounds its inline answer by bytes, keeps the whole, and counts a zero tail as padding", async () => {
   // A 59 MB path record made a 62 MB answer: the page was bounded by a count of records, not by bytes.
   await withCwd(async (cwd) => {
-    const giant = "g".repeat(3_000_000);
+    const giant = "dir/".repeat(750_000);                      // 3 MB of plain components: the boundary shows the first 256 KiB and withholds the rest
     const tail = Buffer.alloc(30);
     const dir = await fsDir(cwd, "evbytes", {
       "0000000000000aaa": gzipSync(Buffer.concat([fsPage("2SLD", [fsRecord("small/one", 1n, CREATED, 1n), fsRecord(giant, 2n, CREATED, 2n), fsRecord("small/two", 3n, CREATED, 3n), tail])])),
@@ -1696,12 +1709,18 @@ test("fsevents_parse bounds its inline answer by bytes, keeps the whole, and cou
     assert.equal(answer.coverage.records.empty_path, 0);
     assert.equal((answer.coverage as unknown as { padding_bytes: number }).padding_bytes, 30);
     const rows = (await readFile(join(cwd, answer.complete_records as string), "utf8")).trimEnd().split("\n").map((l) => JSON.parse(l) as { path: string });
-    assert.deepEqual(rows.map((r) => r.path.length), [9, 3_000_000, 9]);
-    // With an out_file the inline page is bounded the same way and the file holds every record.
-    const withFile = body<FsAnswer & { inline_bounded_by_bytes: boolean }>(await tool(FS, cwd, { path: dir, out_file: "work/fsb.jsonl" }));
+    assert.equal(rows.length, 3);
+    assert.deepEqual([rows[0].path, rows[2].path], ["small/one", "small/two"]);
+    assert.ok(rows[1].path.length > 200_000 && rows[1].path.length < 400_000 && /<withheld \d+ characters: rest of a long string>$/.test(rows[1].path), `a 3 MB path is kept as its first 256 KiB and a placeholder: ${rows[1].path.length}`);
+    // With an out_file the inline page is bounded the same way (by the size of the rows as they are written, after the boundary: 256 KiB of a long path)
+    // and the file holds every record.
+    const many = await fsDir(cwd, "evbytes2", {
+      "0000000000000aaa": gzipSync(Buffer.concat([fsPage("2SLD", [fsRecord("small/one", 1n, CREATED, 1n), ...[2n, 3n, 4n, 5n, 6n].map((id) => fsRecord(giant, id, CREATED, id)), fsRecord("small/two", 7n, CREATED, 7n)])])),
+    });
+    const withFile = body<FsAnswer & { inline_bounded_by_bytes: boolean }>(await tool(FS, cwd, { path: many, out_file: "work/fsb.jsonl" }));
     assert.equal(withFile.inline_bounded_by_bytes, true);
-    assert.equal(withFile.records.length, 1);
-    assert.equal((await readFile(join(cwd, "work", "fsb.jsonl"), "utf8")).trimEnd().split("\n").length, 3);
+    assert.ok(withFile.records.length >= 2 && withFile.records.length < 7, `${withFile.records.length} records inline`);
+    assert.equal((await readFile(join(cwd, "work", "fsb.jsonl"), "utf8")).trimEnd().split("\n").length, 7);
   });
 });
 

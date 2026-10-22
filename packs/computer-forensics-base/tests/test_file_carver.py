@@ -399,5 +399,30 @@ class FileCarver(Case):
         self.assertEqual(self.read(os.path.join(out, "pic.png"), "rb"), png())
 
 
+    def test_a_walk_that_uses_its_clock_is_refused_with_how_far_it_got(self):
+        # A GIF of one-byte data blocks (the grammar allows them): a long walk for few bytes, never ending in the trailer here.
+        gif = b"GIF89a" + struct.pack("<HHBBB", 1, 1, 0, 0, 0) + b"\x2c" + struct.pack("<HHHHB", 0, 0, 1, 1, 0) + b"\x08" + b"\x01\x00" * (4 * 1024 * 1024)
+        path = self.write("work/hostile.gif", gif)
+        r = run_tool("file_carver", {"path": path, "offset": 0, "sig_type": "GIF", "max_size": 100_000_000}, self.dir, env={"FILE_CARVER_SECONDS": "0.05"})
+        self.assertEqual(r.code, 1)
+        self.assertIs(r.json["ok"], False)
+        self.assertEqual(r.json["status"], "failed")
+        self.assertIn("time budget", r.json["error"])
+        self.assertGreater(r.json["reached_bytes"], 0)
+        self.assertLess(r.json["reached_bytes"], len(gif), "the walk stopped part way and says how far it got")
+        # the same file with the budget it has is walked to the end of what is there (a refusal for another reason, not for the clock)
+        r2 = run_tool("file_carver", {"path": path, "offset": 0, "sig_type": "GIF", "max_size": 100_000_000}, self.dir)
+        self.assertNotIn("time budget", r2.json["error"])
+
+    def test_a_carve_says_complete_and_on_what_basis(self):
+        png = b"\x89PNG\r\n\x1a\n"
+        for kind, body in ((b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 0, 0, 0, 0)), (b"IEND", b"")):
+            png += struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF)
+        path = self.write("work/x.png", b"\0" * 16 + png + b"\0" * 16)
+        r = run_tool("file_carver", {"path": path, "offset": 16, "sig_type": "PNG"}, self.dir)
+        self.assertEqual((r.json["status"], r.json["boundary"]), ("complete", "validated"))
+        self.assertIn("PNG", r.json["status_basis"])
+
+
 if __name__ == "__main__":
     unittest.main()

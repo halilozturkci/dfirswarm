@@ -12,8 +12,8 @@ rather than text.
 1. The system profile: product version and build, recorded hostname, setup-related
    evidence and its limits, timestamp encodings and timezone assumptions, and the
    acquired containers, volumes and snapshots examined.
-2. Initial access: how the operator first reached this machine, with the
-   artefact that shows it and the time in UTC.
+2. Initial access: how the suspected actor first reached this machine, where
+   the artefacts show it, with the artefact that shows it and the time in UTC.
 3. Persistence: acquired launch items, login and background registrations, scheduled
    tasks, profiles and extensions relevant to the suspected compromise; distinguish
    configuration, enabled state, execution and maliciousness, and bound any negative

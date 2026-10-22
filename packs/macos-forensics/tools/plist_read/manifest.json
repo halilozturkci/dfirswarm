@@ -1,6 +1,6 @@
 {
   "name": "plist_read",
-  "description": "Read XML and binary property lists (plistlib) and return them as JSON: dates converted from the Apple epoch to ISO 8601 UTC, UID references kept as {_uid}, a binary value as its length and kind only. A structural reading, not an interpretation: an NSKeyedArchiver object graph is not resolved, a .btm file is shown as the structure it has, not as a list of login items, and a date is plistlib's conversion (microsecond resolution, the raw float not kept). SENSITIVE: a plist can hold a password verifier (an account plist: ShadowHashData, Kerberos keys, a hint), a token or a password. No binary value is printed, hashed or previewed (no digest, no base64, no head), and a value under a key whose name marks it secret-bearing (verifier, Kerberos keys, password, passphrase, secret, token, credential, private key, hint) is withheld at any depth and when `key` selects it: the answer carries a locator (finding_id, key path, kind, length). A value under any other key is printed as it is, so read an account plist as a job with secret_output: true, or select the keys the question needs. write_values: true (refused outside a job) creates $OUT/plist-values.jsonl, mode 0600, before it reads anything (a file or link already there is refused) and writes the withheld and binary values there and nowhere else, a binary value as base64 up to max_blob bytes with its whole length beside it. Reads one file, or every .plist and .btm file under a directory in sorted order (links are not followed). One file at a time: each file's row is written as it is read, a file that does not parse, is over max_file_bytes or max_nodes, or nests deeper than max_depth is that file's failed or skipped row with the reason, and files not reached before max_seconds are counted and named, so status is complete only when every matched file was read. `extracted_file_mtime` is the mtime of the file as read, a working copy's, not the original's. A rerun of the same sweep that finds fewer files does not replace a larger earlier page file: it writes a new name and says which earlier file it kept.",
+  "description": "Read XML and binary property lists (plistlib) and return them as JSON: dates converted from the Apple epoch to ISO 8601 UTC, UID references kept as {_uid}, a binary value as its length and kind only. A structural reading, not an interpretation: an NSKeyedArchiver object graph is not resolved, a .btm file is shown as the structure it has, not as a list of login items, and a date is plistlib's conversion (microsecond resolution, the raw float not kept). SENSITIVE: a plist can hold a password verifier (an account plist: ShadowHashData, Kerberos keys, a hint), a token or a password. No binary value is printed, hashed or previewed (no digest, no base64, no head), and a value under a key whose name marks it secret-bearing (verifier, Kerberos keys, password, passphrase, secret, token, credential, private key, pre-shared key, shared, auth or access key, cookie, passcode, bearer, one-time password, hint, hint_text, UserHint) is withheld at any depth and when `key` selects it: the answer carries a locator (finding_id, key path, kind, length). A value under any other key is printed as it is, so read an account plist as a job with secret_output: true, or select the keys the question needs. write_values: true (refused outside a job and in a job the harness does not run as secret output: the manifest declares secret_output for it, and the tool checks SECRET_OUTPUT=1 before it opens anything) creates $OUT/plist-values.jsonl, mode 0600, before it reads anything (a file or link already there is refused) and writes the withheld and binary values there and nowhere else, a binary value as base64 up to max_blob bytes with its whole length beside it, and, for a file that did not parse, the parser's whole message under the finding_id the failed row carries. Reads one file, or every .plist and .btm file under a directory in sorted order (links are not followed). One file at a time: each file's row is written as it is read, a file that does not parse, is over max_file_bytes or max_nodes, or nests deeper than max_depth is that file's failed or skipped row with the reason, and files not reached before max_seconds are counted and named, so status is complete only when every matched file was read. `extracted_file_mtime` is the mtime of the file as read, a working copy's, not the original's. A file that does not parse, or has a value plistlib cannot read, is that file's failed row with the class of the error (for an XML syntax error the reader's fixed text, the line and the column) and never the message, which quotes the text that failed (a malformed <integer> under a key named password came out in the error before). The walk of a directory is timed too (a tree of millions of entries that match nothing); max_seconds is clamped to 100, below the 120 seconds of the manifest. SIGTERM, SIGINT and SIGHUP end the sweep between two rows: one JSON answer, status partial and interrupted set to the signal's name, exit 128 plus the signal, every row already written whole. A signal that arrives after the last file was read, while the answer is being written, is named in it the same way. Every answer and refusal carries status and status_basis; out_file is created with mode 0600. On 67,260 property lists of a development Mac (933,552 distinct key names) the pattern withholds 1,493 names, 211 more than before this round widened it; the added ones are pre-shared-key, access-key, cookie, passcode, bearer, one-time-password and hint names, some of them not secrets (cipher-suite names, HTTP cookie constants), whose value is then read in a secret_output job. A rerun of the same sweep that finds fewer files does not replace a larger earlier page file: it writes a new name and says which earlier file it kept.",
   "params": {
     "path": {
       "type": "string",
@@ -20,11 +20,11 @@
     },
     "out_file": {
       "type": "string",
-      "description": "JSONL path for every file's row, one per line as each file is read. The tool does not overwrite: an existing file or link at that name is refused"
+      "description": "JSONL path for every file's row, one per line as each file is read, mode 0600. The tool does not overwrite: an existing file or link at that name is refused"
     },
     "write_values": {
       "type": "boolean",
-      "description": "Write each binary and withheld value to $OUT/plist-values.jsonl (default false). Refused unless the tool runs as a job, which must be run with secret_output: true; the file is created first and an existing file or link is refused; the answer never carries a value"
+      "description": "Write each binary and withheld value to $OUT/plist-values.jsonl (default false). Refused unless the tool runs as a job the harness runs with secret_output: true (the manifest declares it); the file is created first and an existing file or link is refused; the answer never carries a value"
     },
     "max_file_bytes": {
       "type": "integer",
@@ -40,7 +40,7 @@
     },
     "max_seconds": {
       "type": "number",
-      "description": "Stop starting new files after this many seconds (default 90); the files not reached are counted and the first are named"
+      "description": "Stop starting new files after this many seconds (default 90, at most 100: a larger value is clamped and the answer says so); the files not reached are counted and the first are named"
     },
     "max_inline_bytes": {
       "type": "integer",
@@ -53,8 +53,8 @@
   "example": "{\"path\": \"work/extracted/Library/LaunchDaemons\", \"out_file\": \"work/<your id>/plists.jsonl\"}",
   "by": "maintainer",
   "at": "2026-09-22T16:00:00.000Z",
-  "version": 3,
-  "sha256": "17d8d19d7093c34b72181d4fdd5c9564c653ba8012c852ca9aba3aadf6909085",
+  "version": 4,
+  "sha256": "e753a78c1f07ad8314c1ebe2b6e5eb6766202455146e8a9e79ed31a833710ccb",
   "use": {
     "extensions": [
       ".plist",
@@ -65,6 +65,11 @@
         "offset": 0,
         "hex": "62706c6973743030"
       }
+    ]
+  },
+  "secret_output": {
+    "when_args": [
+      "write_values"
     ]
   }
 }

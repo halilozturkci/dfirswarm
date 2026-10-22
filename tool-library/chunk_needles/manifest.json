@@ -1,6 +1,6 @@
 {
   "name": "chunk_needles",
-  "description": "Scan a local file, or one inode streamed from an image through icat, for ASCII and UTF-16LE needles; return per needle the counts and locators (id, offset in the scanned stream, encoding, context length) and a source that names the image, volume offset, inode and sector size. Every occurrence is found, overlapping ones included, whatever chunk is. Context bytes are NOT returned (they are where secrets sit): write_values: true, in a job run with secret_output: true, writes them to a 0600 file under $OUT. Needles are recorded in the trace: never put a secret in one. earlier_answers says how many other files answer the same question.",
+  "description": "Scan a local file, or one inode streamed from an image through icat, for ASCII and UTF-16LE needles; return per needle the counts and locators (id, offset in the scanned stream, encoding, context length) and a source that names the image, volume offset, inode and sector size. Every occurrence is found, overlapping ones included, whatever chunk is. Context bytes are NOT returned (they are where secrets sit): write_values: true, only in a job run as secret output (the manifest makes every job that sets it one), writes them to a 0600 file under $OUT. Needles are recorded in the trace: never put a secret in one. earlier_answers says how many other files answer the same question. The scan has a clock (max_seconds, default 100): when it is used the answer is for the occurrences that start before next_start, with complete false, status partial and how to go on. status and status_basis say whether the whole stream was read.",
   "params": {
     "needles": {
       "type": "string",
@@ -46,7 +46,11 @@
     },
     "write_values": {
       "type": "boolean",
-      "description": "Write each occurrence's context to a 0600 file under $OUT. Refused outside a job; run the job with secret_output: true. Default false."
+      "description": "Write each occurrence's context to a 0600 file under $OUT. Refused outside a job, and in a job not run as secret output (the manifest makes a job that sets this secret output). The file stops at 20,000,000 rows or 1 GiB, and the answer names the offset it stopped at and how to go on. Default false."
+    },
+    "max_seconds": {
+      "type": "integer",
+      "description": "The scan's own clock in seconds (1 to 110, default 100): a scan that reaches it answers for the occurrences that start before next_start, says complete: false and status partial, and names how to go on. Cost grows with needles times bytes: 1,000 needles read about 2 MiB a second on a loaded host."
     }
   },
   "runtime": "python3",
@@ -58,6 +62,11 @@
   ],
   "by": "sd1d102",
   "at": "2026-09-18T14:26:18.665Z",
-  "version": 7,
-  "sha256": "92000b3bdb9eb64e1ce564bc83f978022add08fb2b7ae104c81e685f6d6f9d88"
+  "version": 8,
+  "sha256": "79e382231fbf10004e4e980eeb78841a32117dd431e3b4b69c30ab047dc89227",
+  "secret_output": {
+    "when_args": [
+      "write_values"
+    ]
+  }
 }

@@ -9,7 +9,7 @@ import re
 import stat
 import unittest
 
-from support import Case, run_tool, stand_in
+from support import Case, manifest, run_tool, stand_in
 
 SECRET = b"s3cr3t-token-value"
 
@@ -74,7 +74,7 @@ class ChunkNeedles(Case):
         self.assertIn("refused outside a job", refused.json["error"])
         out = self.path("job-out")
         os.makedirs(out)
-        ok = self.file_run(data, "token=", write_values=True, env={"JOB_ID": "j000011", "OUT": out})
+        ok = self.file_run(data, "token=", write_values=True, env={"JOB_ID": "j000011", "OUT": out, "SECRET_OUTPUT": "1"})
         self.assertEqual(ok.code, 0, ok.stdout)
         self.assertNotIn(SECRET.decode(), ok.stdout)
         path = os.path.join(out, "chunk-needles-values.jsonl")
@@ -136,7 +136,7 @@ class ChunkNeedles(Case):
         data = b"\0" * 40 + b"token=" + SECRET + b"\0" * 40
         out = self.path("job-out")
         os.makedirs(out)
-        env = {"JOB_ID": "j000012", "OUT": out}
+        env = {"JOB_ID": "j000012", "OUT": out, "SECRET_OUTPUT": "1"}
         first = self.file_run(data, "token=", write_values=True, env=env)
         self.assertEqual(first.code, 0, first.stdout)
         again = self.file_run(data, "token=", write_values=True, env=env)
@@ -203,6 +203,90 @@ class ChunkNeedles(Case):
         self.assertEqual(r.code, 1)
         self.assertIn("several images", r.json["error"])
         self.assertEqual(sorted(r.json["candidates"]), ["inputs/a.dd", "inputs/b.dd"])
+
+
+    def job_env(self, secret=True, **extra):
+        out = self.path("job-out")
+        os.makedirs(out, exist_ok=True)
+        env = {"JOB_ID": "j000021", "OUT": out}
+        if secret:
+            env["SECRET_OUTPUT"] = "1"
+        env.update(extra)
+        return env, out
+
+    def test_a_scan_that_uses_its_clock_answers_for_what_it_decided_and_says_how_to_go_on(self):
+        needles = "|".join("zz%04dzz" % i for i in range(1000))
+        planted = b"zz0007zz"
+        data = bytearray(12 * 1024 * 1024)
+        for k in range(12):
+            data[k * 1024 * 1024 + 12345:k * 1024 * 1024 + 12345 + len(planted)] = planted
+        data = bytes(data)
+        expect = self.expect(data, planted)
+        r = self.file_run(data, needles, max_seconds=1, max_hits=1000)
+        self.assertEqual(r.code, 0, r.stdout[:300])
+        j = r.json
+        self.assertIs(j["complete"], False)
+        self.assertEqual(j["status"], "partial")
+        self.assertIn("1-second time budget", j["stopped"])
+        self.assertIn("ioc_scan path=work/blob.bin start=%d" % j["next_start"], j["stopped"])
+        got = [x["off"] for x in j["hits"]["zz0007zz"]["locations"]]
+        self.assertTrue(got and all(o < j["next_start"] for o in got))
+        self.assertEqual(got, [o for o in expect if o < j["next_start"]], "every occurrence that starts before next_start, none missing")
+        whole = self.file_run(data, "zz0007zz", max_hits=1000)
+        self.assertIs(whole.json["complete"], True)
+        self.assertEqual(whole.json["status"], "complete")
+        self.assertEqual([x["off"] for x in whole.json["hits"]["zz0007zz"]["locations"]], expect)
+
+    def test_an_inode_stream_that_uses_its_clock_stops_icat_and_is_not_reported_as_an_icat_failure(self):
+        d = self.path("bin")
+        os.makedirs(d)
+        # an icat that never ends: it writes blocks until it is killed
+        stand_in(d, "icat", "exec yes aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n")
+        self.write("inputs/disk.E01", b"x")
+        r = run_tool("chunk_needles", {"needles": "needle", "inode": 12, "image": "inputs/disk.E01", "offset": 0, "max_seconds": 1}, self.dir, [d], timeout=60)
+        self.assertEqual(r.code, 0, r.stdout[:300] + r.stderr[-300:])
+        self.assertEqual(r.json["status"], "partial")
+        self.assertIn("extract the inode (icat_extract)", r.json["stopped"])
+        self.assertGreater(r.json["next_start"], 0)
+
+    def test_values_are_refused_in_a_job_that_was_not_run_as_secret_output(self):
+        env, out = self.job_env(secret=False)
+        r = self.file_run(b"x" * 20 + b"token=abc" + b"y" * 20, "token=", write_values=True, env=env)
+        self.assertEqual(r.code, 1)
+        self.assertIn("not run as secret output", r.json["error"])
+        self.assertEqual(os.listdir(out), [])
+
+    def test_the_manifest_makes_a_job_that_sets_write_values_secret_output(self):
+        self.assertEqual(manifest("chunk_needles")["secret_output"], {"when_args": ["write_values"]})
+        self.assertEqual(manifest("chunk_needles")["params"]["write_values"]["type"], "boolean")
+
+    def test_the_values_file_stops_at_its_cap_and_says_where_while_the_locators_go_on(self):
+        data = b"".join(b"..%03d token=%s .." % (i, SECRET) for i in range(200))
+        env, out = self.job_env(CHUNK_NEEDLES_VALUES_BYTES="3000")
+        r = self.file_run(data, "token=", write_values=True, env=env, max_hits=500)
+        self.assertEqual(r.code, 0, r.stdout[:300])
+        sv = r.json["secret_values"]
+        path = os.path.join(out, "chunk-needles-values.jsonl")
+        self.assertLessEqual(os.path.getsize(path), 3000)
+        self.assertIs(sv["complete"], False)
+        rows = self.read(path).splitlines()
+        self.assertEqual(len(rows), sv["written"])
+        self.assertEqual(sv["stopped_at_offset"], self.expect(data, b"token=")[len(rows)])
+        self.assertEqual(r.json["status"], "partial")
+        self.assertEqual(len(r.json["hits"]["token="]["locations"]), 200, "the locators have every occurrence")
+
+    def test_a_file_name_that_is_not_utf8_does_not_stop_the_values_writer(self):
+        bad = os.path.join(self.dir, "bad\udcffname.bin")
+        try:
+            with open(bad, "wb") as fh:
+                fh.write(b"\0" * 10 + b"token=abc" + b"\0" * 10)
+        except OSError:
+            self.skipTest("this file system does not hold a name that is not UTF-8")
+        env, out = self.job_env()
+        r = run_tool("chunk_needles", {"path": bad, "needles": "token=", "write_values": True}, self.dir, env=env)
+        self.assertEqual(r.code, 0, r.stdout + r.stderr)
+        row = json.loads(self.read(os.path.join(out, "chunk-needles-values.jsonl")).splitlines()[0])
+        self.assertEqual(row["source"], bad)
 
 
 if __name__ == "__main__":
