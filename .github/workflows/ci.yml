@@ -200,11 +200,13 @@ jobs:
     # check and says so.
     name: macOS · ${{ matrix.part }}
     runs-on: macos-latest
-    # One job of three, run side by side. The one job that did all of it took
+    # One job of four, run side by side. The one job that did all of it took
     # 44 minutes of the 55 (typecheck and node tests 12, shell suites 31, over
     # three pushes to main), and a grown suite had already needed reruns. Now
-    # the node tests are one job and the shell suites are two, dealt out by the
-    # time each takes (tests/shell-suites.weights): 12 to 19 minutes each over
+    # the node tests are two jobs (node's own --test-shard, which deals the
+    # sorted suite files out round-robin) and the shell suites are two, dealt
+    # out by the time each takes (tests/shell-suites.weights): 12 to 19
+    # minutes each over
     # the first three runs. The limit stays at 55; a job is there to stop a hang.
     # tests/ci-shards.test.ts holds the three to cover every node suite and
     # every shell suite exactly once, so a new suite is never in no job.
@@ -214,8 +216,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - part: typecheck · node tests
-            node: true
+          # The typecheck runs in the first node part only, so no costly
+          # work is done twice; the Playwright browser is in both, because
+          # which part gets the Playwright suite follows the file order.
+          - part: typecheck · node tests 1/2
+            node: "1/2"
+            typecheck: true
+          - part: node tests 2/2
+            node: "2/2"
           - part: shell suites 1/2
             shard: "1/2"
           - part: shell suites 2/2
@@ -238,11 +246,11 @@ jobs:
         if: matrix.node
         run: npx playwright install --only-shell chromium
       - name: Typecheck
-        if: matrix.node
+        if: matrix.typecheck
         run: npm run typecheck
-      - name: Node tests
+      - name: Node tests ${{ matrix.node }}
         if: matrix.node
-        run: npm test
+        run: npm test -- --test-shard=${{ matrix.node }}
       - name: Shell suites ${{ matrix.shard }}
         if: matrix.shard
         run: npm run test:bash -- --shard ${{ matrix.shard }}
