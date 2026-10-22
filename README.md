@@ -86,23 +86,23 @@ When the evidence cannot answer something a reference service can (a domain's re
 | Pack | Skills | Tools | Goals |
 | --- | --- | --- | --- |
 | `computer-forensics-base` | 29 | 16 | — |
-| `windows-forensics` | 53 | 20 | 3 |
+| `windows-forensics` | 53 | 22 | 3 |
 | `linux-forensics` | 26 | 6 | 2 |
 | `macos-forensics` | 18 | 4 | 1 |
 | `mobile-forensics` | 11 | 3 | 1 |
 | `memory-forensics` | 20 | 3 | 1 |
 | `network-forensics` | 13 | 6 | 1 |
-| `reverse-engineering` | 20 | 6 | 1 |
+| `reverse-engineering` | 21 | 6 | 1 |
 | `encrypted-containers` | 12 | 3 | 1 |
 | `cloud-forensics` | 10 | 3 | 1 |
 | `ransomware-response` | 18 | 2 | 1 |
-| `triage-collection` | 15 | 2 | 1 |
+| `triage-collection` | 20 | 6 | 1 |
 | `virtualization-backup-forensics` | 11 | 3 | 1 |
 
 A **pack** is a directory an operator installs once and names at kickoff: skills
 an agent fetches by name, tools seeded into the run, the host binaries the case
 needs, and goal templates with their own checks. **Thirteen ship in this
-repository** under the same licence as the harness: 256 skills, 77 tools and 15
+repository** under the same licence as the harness: 262 skills, 83 tools and 15
 goal templates across Windows, Linux, macOS, mobile, memory, network, reverse
 engineering, encrypted containers, cloud, ransomware, triage collections, and
 virtualization and backup, all on one base pack.
