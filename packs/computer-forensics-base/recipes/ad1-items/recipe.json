@@ -1,6 +1,6 @@
 {
   "id": "ad1-items",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "The item list of an AccessData AD1 logical image (FTK Imager's custom content image): every file and folder with its size, its modified, accessed and created times, the MD5 and SHA-1 the image records, the SHA-256 of its content and a locator that names it alike in a partial and a whole read, each file inflated to check those digests, and every metadata entry the image keeps. Nothing is extracted: the ad1_extract tool writes the tree out, as a job, and the derived catalogue takes what it writes.",
   "object": "AD1 logical image",
   "order": 32,
@@ -32,5 +32,5 @@
   ],
   "purpose": "inventory",
   "covers": "Every item of an unencrypted version 4 AD1 image's tree, its metadata as the image records it, and whether each file's content matches the digests the image records. A logical image holds only what the imager took: no unallocated space, and slack only where it was taken as an item. It opens no file inside the image (ad1_extract writes them out, and the derived catalogue takes them from there), does not decrypt an ADCRYPT image, and reads a segment that is not beside the first, or not in a job's view, as missing.",
-  "sha256": "42f4f643c002cd67d9d898e78323ccc703df37c7c5123bbbb7b0ba8440fb1c53"
+  "sha256": "26aef41780d21d4812200e0b721f5654c3f2280b0a73ef07c712c1a7c7e5aa39"
 }

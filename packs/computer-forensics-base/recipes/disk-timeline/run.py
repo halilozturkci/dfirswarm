@@ -52,7 +52,12 @@ NOT_COVERED = ("volume shadow copies (run with --vss_stores none); encrypted vol
 
 def target_of(value):
     text = open(value, encoding="utf-8").read() if os.path.isfile(value) else value
-    target = json.loads(text)
+    try:
+        target = json.loads(text)
+    except ValueError as exc:
+        raise ValueError("the target is not valid JSON: %s" % exc)
+    if not isinstance(target, dict):
+        raise ValueError("the target is a JSON object with a paths list")
     paths = target.get("paths") or []
     if not paths or not isinstance(paths[0], str):
         raise ValueError("the target names no path")

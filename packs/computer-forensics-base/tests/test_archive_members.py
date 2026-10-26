@@ -159,6 +159,46 @@ class ArchiveMembers(Case):
         self.assertEqual(cov["format"], "tar")
         self.assertTrue([n for n in cov["notes"] if "also ends in a zip end-of-central-directory record" in n], cov)
 
+    def test_a_target_that_is_not_json_or_not_an_object_is_an_answer_not_a_traceback(self):
+        for target in ("{not json", "[]", "3", '{"paths": 4}'):
+            proc = subprocess.run([sys.executable, recipe_path("archive-members", "run.py"), "run", "--target", target, "--out", self.path("out")],
+                                  cwd=self.dir, capture_output=True, text=True, timeout=60)
+            self.assertNotIn("Traceback", proc.stderr, target)
+            self.assertEqual(proc.returncode, 2, target)
+            self.assertIs(json.loads(proc.stdout)["ok"], False, target)
+
+    def test_a_7z_is_listed_by_7zz_when_there_is_no_7z(self):
+        d = self.path("bin")
+        os.makedirs(d)
+        stand_in(d, "7zz", 'printf "Path = a.txt\\nSize = 1\\n\\n"\n')
+        archive = self.write("a.7z", b"7z\xbc\xaf\x27\x1c" + b"\0" * 64)
+        proc = self.run_recipe(archive, env={"PATH": d})
+        self.assertEqual(json.loads(proc.stdout)["status"], "complete", proc.stdout + proc.stderr)
+        self.assertEqual([m["path"] for m in self.members()], ["a.txt"])
+        empty = self.path("none")
+        os.makedirs(empty)
+        proc = self.run_recipe(archive, out="out2", env={"PATH": empty})
+        self.assertEqual(json.loads(proc.stdout)["status"], "unsupported")
+        self.assertIn("7zz", "\n".join(self.coverage("out2")["errors"]), "the answer names every program it looked for")
+
+    def test_a_tar_whose_first_member_is_named_like_a_zip_signature_and_ends_in_a_zip_is_listed_as_the_zip_and_says_it_is_also_a_tar(self):
+        path = self.path("poly.tar")
+        inner = self.zip_bytes()
+        with tarfile.open(path, "w", format=tarfile.USTAR_FORMAT) as tf:
+            for name, data in (("PK\x03\x04first", b"x" * 10), ("inner.zip", inner)):
+                info = tarfile.TarInfo(name)
+                info.size = len(data)
+                tf.addfile(info, io.BytesIO(data))
+        proc = self.run_recipe(path)
+        self.assertEqual(json.loads(proc.stdout)["format"], "zip", proc.stdout + proc.stderr)
+        cov = self.coverage()
+        self.assertTrue([n for n in cov.get("notes", []) if "also reads there" in n and "also a tar" in n], cov)
+        plain = self.path("plain.zip")
+        with zipfile.ZipFile(plain, "w") as z:
+            z.writestr("a.txt", "a")
+        self.run_recipe(plain, out="out3")
+        self.assertNotIn("notes", self.coverage("out3"), "a zip that is only a zip says nothing of a tar")
+
     def test_bytes_that_end_in_a_zip_record_that_does_not_agree_with_the_file_are_not_a_zip(self):
         for tail in (b"PK\x05\x06" + b"\0" * 18, b"PK\x05\x06" + b"\x01\0\x01\0" + b"\x2e\0\0\0" + b"\x10\0\0\0" + b"\0\0"):
             path = self.write("junk.bin", os.urandom(1000) + tail)

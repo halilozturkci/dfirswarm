@@ -280,12 +280,57 @@ Units are in 512-byte sectors
         r = run_tool("image_layout", {"image": self.image()}, self.dir, [bin_dir])
         self.assertEqual(r.code, 0, r.stdout)
         self.assertEqual([p["start_sector"] for p in r.json["partitions"] if p["allocated"]], [6], "the forged row at sector 100 is not a partition")
-        self.assertTrue([n for n in r.json["notes"] if "out of sequence" in n and "forged" in n], r.json["notes"])
+        self.assertTrue([n for n in r.json["notes"] if "was due" in n and "forged" in n], r.json["notes"])
         self.assertNotIn("fsstat -b 4096 -o 100", " ".join(self.calls(log)))
         bin2, _ = self.stubs("echo 'GUID Partition Table (EFI)'\n")
         r2 = run_tool("image_layout", {"image": self.image("b.img")}, self.dir, [bin2])
         self.assertEqual(r2.json["partition_table"], "unknown")
         self.assertIn("no row this tool could read", r2.json["partition_table_basis"])
+
+
+    def layout_of(self, table):
+        bin_dir, log = self.stubs("cat <<'EOF'\n%sEOF\n" % table, "cat <<'EOF'\n%sEOF\n" % FSSTAT_NTFS)
+        r = run_tool("image_layout", {"image": self.image()}, self.dir, [bin_dir])
+        self.assertEqual(r.code, 0, r.stdout)
+        return r.json, self.calls(log)
+
+    def test_a_forged_last_line_that_continues_the_sequence_is_not_a_partition_and_the_answer_is_not_complete(self):
+        # mmls writes its columns %.10; a partition name of 36 characters cannot hold a row of that width.
+        for forged in ("005:  000 100 1 1 forged", "005: 000 100 200 101 forged"):
+            doc, calls = self.layout_of(MMLS_4K + forged + "\n")
+            self.assertEqual([p["start_sector"] for p in doc["partitions"] if p["allocated"]], [6], forged)
+            self.assertEqual(doc["status"], "partial", forged)
+            self.assertTrue([n for n in doc["notes"] if "is not a row of the table" in n and "forged" in n], doc["notes"])
+            self.assertNotIn("-o 100", " ".join(calls))
+
+    def test_a_forged_row_in_digits_of_another_script_is_not_a_partition(self):
+        arabic = "005:  000 100 1 1 forged".translate({ord(c): ord("\u0660") + int(c) for c in "0123456789"})
+        doc, calls = self.layout_of(MMLS_4K + arabic + "\n")
+        self.assertEqual([p["start_sector"] for p in doc["partitions"] if p["allocated"]], [6])
+        self.assertEqual(doc["status"], "partial")
+
+    def test_a_row_whose_end_and_length_do_not_agree_with_its_start_is_not_a_partition(self):
+        doc, calls = self.layout_of(MMLS_4K + "005:  000       0000000100   0000000200   0000000005   odd\n")
+        self.assertEqual([p["start_sector"] for p in doc["partitions"] if p["allocated"]], [6])
+        self.assertEqual(doc["status"], "partial")
+        self.assertTrue([n for n in doc["notes"] if "do not agree with its start" in n], doc["notes"])
+
+    def test_a_carriage_return_or_vertical_tab_in_a_name_does_not_start_a_row(self):
+        for sep in ("\r", "\x0b", "\x85", "\u2028"):
+            table = MMLS_4K.replace("Basic data partition", "name" + sep + "005:  000 100 1 1 forged")
+            doc, calls = self.layout_of(table)
+            self.assertEqual([p["start_sector"] for p in doc["partitions"] if p["allocated"]], [6], repr(sep))
+            self.assertNotIn("-o 100", " ".join(calls), repr(sep))
+
+    @unittest.skipUnless(have("mmls"), "mmls is not on this host")
+    def test_the_real_mmls_a_gpt_name_that_holds_a_forged_last_row_is_no_phantom_partition(self):
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from test_disk_volumes import gpt_image
+        path = self.write("gpt.img", gpt_image("x\n005: 000 1088 1 1 z", only_one_to_the_end=True))
+        r = run_tool("image_layout", {"image": path}, self.dir)
+        self.assertEqual([p["start_sector"] for p in r.json["partitions"] if p["allocated"]], [64])
+        self.assertEqual(r.json["status"], "partial")
 
 
 if __name__ == "__main__":

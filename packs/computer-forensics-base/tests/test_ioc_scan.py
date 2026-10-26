@@ -83,7 +83,7 @@ class IocScan(Case):
         values_path = os.path.join(out, "ioc-scan-values.jsonl")
         self.assertEqual(stat.S_IMODE(os.stat(values_path).st_mode), 0o600)
         row = json.loads(self.read(values_path).splitlines()[0])
-        self.assertEqual((row["offset"], row["finding_id"], row["file"]), (30, "F000001", self.path("blob.bin")))
+        self.assertEqual((row["offset"], row["finding_id"], row["file"]), (30, "F30-0", self.path("blob.bin")))
         self.assertIn(SECRET.decode(), row["value"])
         # A second run in the same job's output does not overwrite the first's file.
         again = self.scan(data, "password=", write_values=True, env={"JOB_ID": "j000007", "OUT": out, "SECRET_OUTPUT": "1"})
@@ -119,7 +119,7 @@ class IocScan(Case):
             self.assertEqual(r.json["counts"], {"AAA": 2, "BBB": 2}, chunk)
             self.assertEqual(r.json["matched"], 4, chunk)
         self.assertEqual(len({str(v) for v in pages.values()}), 1, pages)
-        self.assertEqual(pages[16], [("F000001", 10, "AAA"), ("F000002", 53, "BBB"), ("F000003", 96, "AAA")])
+        self.assertEqual(pages[16], [("F10-0", 10, "AAA"), ("F53-2", 53, "BBB"), ("F96-0", 96, "AAA")])
 
     def test_a_link_at_the_values_file_is_refused_by_name_and_an_empty_file_is_reported_with_nothing_written(self):
         out = self.path("job-out")
@@ -208,6 +208,56 @@ class IocScan(Case):
         self.assertTrue(all(o >= j["next_start"] for o in more))
         self.assertEqual(got + more, expect, "the two scans together find what one scan finds, none twice")
 
+    def dense(self, n_needles, data_len, **kw):
+        """A stream of one repeated byte searched for n_needles needles that are each a prefix of the next: every position matches every needle."""
+        return self.scan(b"A" * data_len, ["A" * k for k in range(1, n_needles + 1)], unique_only=False, max_hits=5, **kw)
+
+    def test_dense_matches_times_many_needles_end_at_the_clock_and_not_after_a_whole_feed(self):
+        # 30 needles over 256 KiB of A: 7.8 million matches in the first feed alone. The clock was looked at after the feed (19 s for
+        # max_seconds 5, 92 s for 150 needles); it is now looked at every 256 matches.
+        import time
+        t = time.monotonic()
+        r = self.dense(30, 4 * 1024 * 1024, max_seconds=1)
+        wall = time.monotonic() - t
+        self.assertEqual(r.code, 0, r.stdout[:300] + r.stderr[-300:])
+        self.assertLess(wall, 6, "the call ended near its clock (1 second), after %.1f s" % wall)
+        j = r.json
+        self.assertIs(j["complete"], False)
+        self.assertEqual(j["status"], "partial")
+        self.assertGreater(j["next_start"], 0)
+        self.assertIn("start=%d" % j["next_start"], j["stopped"])
+
+    def test_scans_stopped_by_the_clock_inside_a_feed_and_gone_on_from_next_start_find_what_one_scan_finds(self):
+        # Needle k is k 'A's, so it starts at every offset up to N - k: the answer is known without a second search.
+        n, k = 160 * 1024, 6
+        counts = {"A" * i: 0 for i in range(1, k + 1)}
+        start, stops, covered = 0, 0, []
+        while True:
+            r = self.dense(k, n, start=start, max_seconds=1)
+            self.assertEqual(r.code, 0, r.stdout[:300])
+            j = r.json
+            for name, c in j["counts"].items():
+                counts[name] += c
+            if j["complete"]:
+                covered.append((start, n))
+                break
+            stops += 1
+            self.assertGreater(j["next_start"], start, "every stop advanced")
+            covered.append((start, j["next_start"]))
+            start = j["next_start"]
+            self.assertLess(stops, 200)
+        self.assertGreaterEqual(stops, 1, "the clock stopped the first scan inside its feed")
+        self.assertEqual(counts, {"A" * i: n - i + 1 for i in range(1, k + 1)}, "none missing, none twice")
+        self.assertEqual([a for a, _ in covered[1:]], [b for _, b in covered[:-1]], "each scan starts where the last ended")
+
+    def test_a_finding_id_names_the_occurrence_so_a_scan_that_goes_on_never_reuses_one(self):
+        data = b"-" * 10 + b"AAA" + b"-" * 40 + b"BBB" + b"-" * 20
+        whole = {h["offset"]: h["finding_id"] for h in self.scan(data, "AAA|BBB", unique_only=False, max_hits=10).json["hits"]}
+        later = {h["offset"]: h["finding_id"] for h in self.scan(data, "AAA|BBB", unique_only=False, max_hits=10, start=20).json["hits"]}
+        self.assertEqual(sorted(whole), [10, 53])
+        self.assertEqual(later, {53: whole[53]}, "the same occurrence has the same id in a later call, and no other occurrence has it")
+        self.assertEqual(len(set(whole.values())), 2)
+
     def test_values_are_refused_in_a_job_that_was_not_run_as_secret_output(self):
         env, out = self.job_env(secret=False)
         r = self.scan(b"x" * 20 + b"password=abc" + b"y" * 20, "password=", write_values=True, env=env)
@@ -235,9 +285,29 @@ class IocScan(Case):
         self.assertEqual(sv["stopped_at_offset"], self.expect(data, b"password=")[len(rows)], "the first occurrence that did not fit")
         self.assertIn("start=stopped_at_offset", sv["resume"].replace("from start=stopped_at_offset", "start=stopped_at_offset"))
         self.assertEqual(r.json["status"], "partial")
+        self.assertIs(r.json["complete"], False, "complete is false beside status partial, whichever file stopped")
         self.assertIn("values file stopped", r.json["status_basis"])
         all_rows = [json.loads(x) for x in self.read(os.path.join(out, "tool-output", os.path.basename(r.json["all_results"]))).splitlines()]
         self.assertEqual(len(all_rows), 200, "the locators have every occurrence")
+
+    def test_the_locators_file_has_a_byte_cap_and_names_where_it_stopped_while_the_counts_go_on(self):
+        data = b"".join(b"..%03d password=%s .." % (i, SECRET) for i in range(200))
+        env, out = self.job_env(IOC_SCAN_LOCATORS_BYTES="3000")
+        r = self.scan(data, "password=", env=env, unique_only=False, max_hits=1)
+        self.assertEqual(r.code, 0, r.stdout[:300])
+        j = r.json
+        path = os.path.join(out, "tool-output", os.path.basename(j["all_results"]))
+        self.assertLessEqual(os.path.getsize(path), 3000)
+        rows = [json.loads(x) for x in self.read(path).splitlines()]
+        expect = self.expect(data, b"password=")
+        self.assertEqual([x["offset"] for x in rows], expect[:len(rows)], "the file is a prefix, every row whole")
+        self.assertLess(len(rows), 200)
+        self.assertIs(j["all_results_complete"], False)
+        self.assertEqual(j["all_results_stopped_at_offset"], expect[len(rows)], "the first occurrence that did not fit")
+        self.assertEqual(j["all_results_cap_bytes"], 3000)
+        self.assertIn("all_results_stopped_at_offset", j["all_results_note"])
+        self.assertEqual(j["matched"], 200, "the count is of the whole scan")
+        self.assertEqual(j["status"], "complete", "the scan read every byte; the file's cap is named beside it")
 
     def test_a_file_name_that_is_not_utf8_does_not_stop_the_values_writer(self):
         bad = os.path.join(self.dir, "bad\udcffname.bin")

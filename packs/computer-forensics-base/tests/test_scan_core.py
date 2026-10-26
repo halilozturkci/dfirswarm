@@ -164,7 +164,7 @@ class Same(Case):
                 text = fh.read()
             code = "\n".join(l for l in text.splitlines() if not l.lstrip().startswith("#"))
             self.assertIn("StreamScan(", code, name)
-            self.assertNotIn(".find(", code.replace("self.buf.find", ""), "%s searches a buffer itself instead of through the engine" % name)
+            self.assertNotIn(".find(", code.replace("buf.find(needle", ""), "%s searches a buffer itself instead of through the engine" % name)
 
 
 if __name__ == "__main__":

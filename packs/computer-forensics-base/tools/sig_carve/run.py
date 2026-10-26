@@ -21,7 +21,7 @@ import tempfile
 import time
 from pathlib import Path
 
-TOOL = {"name": "sig_carve", "version": 4}
+TOOL = {"name": "sig_carve", "version": 5}
 WINDOW = 8 * 1024 * 1024
 BUDGET_SECONDS = 100              # inside the manifest's 120: past it the scan stops, says so, and names where to continue
 CONTEXT_MAX = 4096
@@ -35,13 +35,25 @@ ROWS_PER_SIGNATURE = 2_000_000       # rows kept in the whole-result file per si
 # whatever the block size. A match is held back until `after` bytes of context follow it (or the stream has ended), and
 # `before` bytes of context are kept behind the searched position, so a match, or its context, cut by a read boundary is
 # neither lost nor counted twice. Each tool keeps its own answer: what it reports for a match, its pages and its budgets.
-SCAN_SLICE = 256 * 1024            # positions searched, sorted and handed out together
+import heapq
+
+SCAN_SLICE = 256 * 1024            # positions searched and handed out together
+
+
+def _positions(buf, needle, index, lo, stop):
+    """(position, index) wherever `needle` starts in buf[lo:stop], one at a time: nothing is collected, so a stream that is one repeated
+    byte searched for many nested needles holds one position per needle, not every match of a slice."""
+    j = buf.find(needle, lo, stop)
+    while j >= 0:
+        yield j, index
+        j = buf.find(needle, j + 1, stop)
 
 
 class StreamScan:
     """feed() each block as it is read; every call returns (offset, needle index, buffer, buffer's offset) for the matches that can
-    be decided now, in order. The buffer holds the match and its context. Exhaust the generator before the next feed: the
-    buffer is trimmed when it ends.
+    be decided now, in (offset, needle index) order. The buffer holds the match and its context. Exhaust the generator before the
+    next feed: the buffer is trimmed when it ends. A caller may instead stop taking matches between two of them (a clock): every
+    match it took came in order, none after it was handed out, and the scan is over (this object is not fed again).
 
     needles   the byte strings (a needle's index is its position in this list)
     before    bytes of context behind a match that stay in the buffer
@@ -71,15 +83,11 @@ class StreamScan:
             a = lo
             while a < hi:
                 b = min(hi, a + SCAN_SLICE)
-                found = []
-                for vi, nb in enumerate(self.needles):
-                    stop = min(len(self.buf), b + len(nb) - 1)
-                    j = self.buf.find(nb, max(a, self.first[vi] - self.base), stop)
-                    while j >= 0:
-                        found.append((j, vi))
-                        j = self.buf.find(nb, j + 1, stop)
-                found.sort()                      # by offset, then by needle order: the same list for any block size
-                for j, vi in found:
+                # One lazy stream per needle, merged by (offset, needle index): the same order for any block size, and the caller
+                # can stop between any two matches (a clock looked at per match) without a slice's matches having been collected.
+                streams = [_positions(self.buf, nb, vi, max(a, self.first[vi] - self.base), min(len(self.buf), b + len(nb) - 1))
+                           for vi, nb in enumerate(self.needles)]
+                for j, vi in heapq.merge(*streams):
                     yield self.base + j, vi, self.buf, self.base
                 a = b
             self.done = process_end

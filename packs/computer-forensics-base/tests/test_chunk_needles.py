@@ -119,7 +119,7 @@ class ChunkNeedles(Case):
             pages[chunk] = [(x["finding_id"], x["off"], x["enc"]) for x in r.json["hits"]["ab"]["locations"]]
             self.assertEqual((r.json["hits"]["ab"]["ascii"], r.json["hits"]["ab"]["utf16le"]), (1, 1), chunk)
         self.assertEqual(len({str(v) for v in pages.values()}), 1, pages)
-        self.assertEqual(pages[16], [("F000001", 10, "utf16le"), ("F000002", 54, "ascii")])
+        self.assertEqual(pages[16], [("F10-1", 10, "utf16le"), ("F54-0", 54, "ascii")])
 
     def test_a_leading_zero_is_the_same_address_and_icat_must_exist(self):
         bin_dir = self.icat(b"needle")
@@ -237,6 +237,28 @@ class ChunkNeedles(Case):
         self.assertEqual(whole.json["status"], "complete")
         self.assertEqual([x["off"] for x in whole.json["hits"]["zz0007zz"]["locations"]], expect)
 
+    def test_dense_matches_times_many_needles_end_at_the_clock_and_not_after_a_whole_feed(self):
+        # 30 needles over 256 KiB of A: 7.8 million matches in the first feed alone; the clock was looked at only after the feed.
+        import time
+        t = time.monotonic()
+        r = self.file_run(b"A" * (4 * 1024 * 1024), "|".join("A" * k for k in range(1, 31)), max_seconds=1, max_hits=5)
+        wall = time.monotonic() - t
+        self.assertEqual(r.code, 0, r.stdout[:300] + r.stderr[-300:])
+        self.assertLess(wall, 6, "the call ended near its clock (1 second), after %.1f s" % wall)
+        self.assertIs(r.json["complete"], False)
+        self.assertEqual(r.json["status"], "partial")
+        self.assertGreater(r.json["next_start"], 0)
+
+    def test_a_finding_id_names_the_occurrence_so_a_scan_that_goes_on_never_reuses_one(self):
+        data = b"-" * 10 + b"AAA" + b"-" * 40 + b"BBB" + b"-" * 20
+        hits = self.file_run(data, "AAA|BBB", max_hits=10).json["hits"]
+        rows = [x for n in hits for x in hits[n]["locations"]]
+        self.assertEqual(sorted(x["off"] for x in rows), [10, 53])
+        for x in rows:
+            self.assertTrue(x["finding_id"].startswith("F%d-" % x["off"]), x)
+        again = self.file_run(data, "BBB|AAA", max_hits=10).json["hits"]
+        self.assertEqual({x["off"]: x["finding_id"] for n in again for x in again[n]["locations"]}.keys(), {10, 53})
+
     def test_an_inode_stream_that_uses_its_clock_stops_icat_and_is_not_reported_as_an_icat_failure(self):
         d = self.path("bin")
         os.makedirs(d)
@@ -273,7 +295,24 @@ class ChunkNeedles(Case):
         self.assertEqual(len(rows), sv["written"])
         self.assertEqual(sv["stopped_at_offset"], self.expect(data, b"token=")[len(rows)])
         self.assertEqual(r.json["status"], "partial")
+        self.assertIs(r.json["complete"], False, "complete is false beside status partial, whichever file stopped")
         self.assertEqual(len(r.json["hits"]["token="]["locations"]), 200, "the locators have every occurrence")
+
+    def test_the_locators_file_has_a_byte_cap_and_names_where_it_stopped_while_the_counts_go_on(self):
+        data = b"".join(b"..%03d token=%s .." % (i, SECRET) for i in range(200))
+        env, out = self.job_env(CHUNK_NEEDLES_LOCATORS_BYTES="3000")
+        r = self.file_run(data, "token=", env=env, max_hits=1)
+        self.assertEqual(r.code, 0, r.stdout[:300])
+        h = r.json["hits"]["token="]
+        path = os.path.join(out, "tool-output", os.path.basename(h["all_results"]))
+        self.assertLessEqual(os.path.getsize(path), 3000)
+        rows = [json.loads(x) for x in self.read(path).splitlines()]
+        expect = self.expect(data, b"token=")
+        self.assertEqual([x["off"] for x in rows], expect[:len(rows)], "the file is a prefix, every row whole")
+        self.assertIs(h["all_results_complete"], False)
+        self.assertEqual(h["all_results_stopped_at_offset"], expect[len(rows)])
+        self.assertEqual(h["all_results_cap_bytes"], 3000)
+        self.assertEqual(h["ascii"], 200, "the count is of the whole stream")
 
     def test_a_file_name_that_is_not_utf8_does_not_stop_the_values_writer(self):
         bad = os.path.join(self.dir, "bad\udcffname.bin")
