@@ -2357,13 +2357,13 @@ def finish(hits, why, depth, weak):
     regular = [h for h in hits if h[2] == "f"]
     if weak:
         return {"status": "ambiguous", "rel": rels[0] if len(rels) == 1 else None, "matched_by": why, "depth": depth, "candidates": rels[:REC_FIRST],
-                "reason": "only the file name matches"}
+                "all_candidates": rels, "reason": "only the file name matches"}
     if len(rels) > 1:
         return {"status": "ambiguous", "rel": None, "matched_by": why, "depth": depth, "candidates": rels[:REC_FIRST],
-                "reason": "%d delivered files differ from each other only by case" % len(rels)}
+                "all_candidates": rels, "reason": "%d delivered files differ from each other only by case" % len(rels)}
     if len(hits) > len(rels):
         return {"status": "ambiguous", "rel": None, "matched_by": why, "depth": depth, "candidates": rels[:REC_FIRST],
-                "reason": "the name appears %d times (an archive can hold one name twice)" % len(hits)}
+                "all_candidates": rels, "reason": "the name appears %d times (an archive can hold one name twice)" % len(hits)}
     if not regular:
         return {"status": "not_regular", "rel": rels[0], "matched_by": why, "depth": depth, "candidates": rels,
                 "reason": "the delivered entry is a link or a special file: it is not followed"}
@@ -2629,13 +2629,66 @@ def withhold_digest(value, where):
     return "<digest of a credential store withheld, %d characters, %s>" % (len(value), fid)
 
 
+DIGEST_KEY = re.compile(r"md5|sha|hash|digest|checksum", re.I)
+DIGEST_HEX = re.compile(r"(?:[0-9A-Fa-f]{32}|[0-9A-Fa-f]{40}|[0-9A-Fa-f]{56}|[0-9A-Fa-f]{64}|[0-9A-Fa-f]{96}|[0-9A-Fa-f]{128})")
+
+
+def withhold_field_digests(value, where, digest_key=False, any_key=False):
+    """(copy of `value` with every digest-shaped string under a digest-named key withheld, how many). The row's own `fields` keep the
+    collector's keys and structure: a key named md5, Sha256, hash or digest (at any depth, a list under it too) whose string is the hex of a
+    digest of a known length is the digest of the file the row is about. With `any_key`, a digest-shaped string is withheld whatever its key
+    (a record that names a credential store, whose columns may be shifted). The walk is iterative: it has no depth at which it stops."""
+    holder = [None]
+    count = 0
+    stack = [(value, (None, where), digest_key, holder, 0)]
+    while stack:
+        item, path, dk, parent, slot = stack.pop()
+        if isinstance(item, dict):
+            new = {}
+            parent[slot] = new
+            for key in item:
+                new[key] = None
+            for key, sub in reversed(list(item.items())):
+                stack.append((sub, (path, key), dk or bool(DIGEST_KEY.search(str(key))), new, key))
+        elif isinstance(item, list):
+            new = [None] * len(item)
+            parent[slot] = new
+            for i in range(len(item) - 1, -1, -1):
+                stack.append((item[i], path, dk, new, i))
+        elif (dk or any_key) and isinstance(item, str) and DIGEST_HEX.fullmatch(item.strip()):
+            names = []
+            node = path
+            while node[0] is not None:
+                names.append(str(node[1]))
+                node = node[0]
+            parent[slot] = withhold_digest(item.strip(), "%s%s" % (node[1], "".join(", field %s" % n for n in reversed(names))))
+            count += 1
+        else:
+            parent[slot] = item
+    return holder[0], count
+
+
 def guard_digests(rec):
-    """For a record that names a credential store, the collector's own digests are withheld from the record (the comparison still
-    runs on the real ones, in the caller)."""
+    """For a record that names a credential store, every digest the record carries is withheld from the record: the claims, the digests
+    in the collector's own `fields` (a Velociraptor upload record keeps its sha256, md5 and sha1 there) under whatever key or column
+    they stand in, and a path claim that is itself a digest (a row with a column missing shifts the others). The comparison still runs
+    on the real ones, in the caller, from the claims it took before this."""
     hint = path_hint(rec.get("source_path_claim"), rec.get("delivered_path_claim"))
-    if hint and rec.get("hash_claims"):
-        where = "record %s of %s" % ((rec.get("locator") or {}).get("row") or (rec.get("locator") or {}).get("line"), rec.get("log"))
+    if not hint:
+        return rec
+    where = "record %s of %s" % ((rec.get("locator") or {}).get("row") or (rec.get("locator") or {}).get("line"), rec.get("log"))
+    withheld = 0
+    if rec.get("hash_claims"):
         rec["hash_claims"] = {algorithm: withhold_digest(value, where) for algorithm, value in rec["hash_claims"].items()}
+        withheld += len(rec["hash_claims"])
+    if isinstance(rec.get("fields"), dict):
+        rec["fields"], count = withhold_field_digests(rec["fields"], where, any_key=True)
+        withheld += count
+    for claim in ("source_path_claim", "delivered_path_claim"):
+        if isinstance(rec.get(claim), str) and DIGEST_HEX.fullmatch(rec[claim].strip()):
+            rec[claim] = withhold_digest(rec[claim].strip(), "%s, %s" % (where, claim))
+            withheld += 1
+    if withheld:
         rec["flags"] = list(rec.get("flags") or []) + ["digest_withheld_credential_store"]
         rec["credential_store_hint"] = hint
     return rec
@@ -2693,6 +2746,7 @@ class CoverageSink(Sink):
         super().__init__()
         self.census, self.questions, self.matches, self.problem_table = census, questions, matches, problems
         self.named = {}                       # delivered path -> case-folded source path of the first record that named it
+        self.maybe_named = set()              # delivered paths an ambiguous record may name (it cannot be told from another file): named by no record is not said of them
         self.by_kind = collections.Counter()
 
     def problem(self, row):
@@ -2709,6 +2763,8 @@ class CoverageSink(Sink):
         norm_source = norm_text(source) if isinstance(source, str) else None
         failed = outcome in ("skipped", "upload_error")
         res = None if failed else resolve(self.census, rec)
+        if res and res["status"] == "ambiguous":
+            self.maybe_named.update(res.get("all_candidates") or [])
         rel = res["rel"] if res and res["status"] == "found" else None
         norm_delivered = norm_text(rel) if rel else (norm_text(rec["delivered_path_claim"]) if isinstance(rec.get("delivered_path_claim"), str) else None)
         if rel and rel not in self.named:
@@ -2772,11 +2828,28 @@ def read_verification(path):
     return states, rows, bad
 
 
-def statement_for(q, outcomes_unknown, integrity_given, examined_given):
+def census_gaps(census):
+    """What the census of the delivery did not examine, in words and counts and never a path: [] when it is complete."""
+    gaps = []
+    if census.stopped:
+        gaps.append("the walk stopped early (%s)" % census.stopped["reason"])
+    if census.errors_total:
+        gaps.append("%d director%s or entr%s could not be listed or examined" % (census.errors_total, "y" if census.errors_total == 1 else "ies",
+                                                                             "y" if census.errors_total == 1 else "ies"))
+    if census.capped:
+        gaps.append("the census reached its cap of %d entries" % census.cap)
+    if not gaps and not census.complete:
+        gaps.append("the census is not complete")
+    return gaps
+
+
+def statement_for(q, outcomes_unknown, integrity_given, examined_given, gaps=()):
     parts = []
     head = "Question %s%s: " % (q.id, " (%s)" % q.what if q.what else "")
     if q.files:
-        parts.append("%d delivered file(s) match" % q.files)
+        parts.append("%d delivered file(s) match" % q.files + (" (counted among the files that were listed)" if gaps else ""))
+    elif gaps:
+        parts.append("no listed delivered file matches")
     else:
         parts.append("no delivered file matches")
     if q.copied:
@@ -2796,13 +2869,39 @@ def statement_for(q, outcomes_unknown, integrity_given, examined_given):
     if examined_given and q.files:
         parts.append("%d matching delivered file(s) are not among the paths stated as examined" % q.unexamined)
     text = head + "; ".join(parts) + "."
-    if not q.files and not q.copied and not q.failed and not q.hash_claims:
+    if gaps:
+        text += (" The census of the delivery is incomplete (%s): a file that matches may be in what was not examined, and a record that names a file the census "
+                 "does not hold is not called absent. This is not a statement that the delivery holds nothing under these patterns."
+                 % "; ".join(gaps))
+    elif not q.files and not q.copied and not q.failed and not q.hash_claims and outcomes_unknown:
+        text += (" No delivered file matches and no record that was read mentions these patterns; some collector records could not be read whole (%s), so whether a record "
+                 "says the target was copied, skipped or failed is not decided, and nothing is said of the source or of what the collector was asked to take."
+                 % ", ".join(outcomes_unknown[:3]))
+        return text
+    elif not q.files and not q.copied and not q.failed and not q.hash_claims:
         text += (" The delivery holds nothing under these patterns and no record that was read mentions them; that is a statement about this delivery and these records, "
                  "not about the source or about what the collector was asked to take.")
     if outcomes_unknown:
         text += (" Some collector records could not be read whole (%s), so the absence of a skip or error row here does not show the collector took the target."
                  % ", ".join(outcomes_unknown[:3]))
     return text
+
+
+def requested_state(q, census_complete, outcomes_unknown):
+    """What the delivery and the records say of one requested target. A negative is said only from a complete census and records read whole."""
+    if q.files:
+        return "delivered"
+    if q.copied_but_absent:
+        return "recorded_not_delivered"
+    if q.copied:
+        return "recorded_delivery_not_decided"           # records say copied; the census is incomplete, or the join cannot tell the file from another
+    if q.failed:
+        return "recorded_as_skipped_or_failed"
+    if not census_complete:
+        return "unknown_census_incomplete"
+    if outcomes_unknown:
+        return "unknown_records_unread"
+    return "neither_delivered_nor_recorded"
 
 
 def main():
@@ -2858,13 +2957,20 @@ def main():
     sink = CoverageSink(census, questions + req_questions, matches, problems)
     sources = read_collection(DirSource(root), found, sink)
 
-    scopes = []
+    def read_whole(log, uploads):
+        for s in sources:
+            if s["log"] == log:
+                sub = s.get("sources", {}).get("uploads.json") if uploads else None
+                return (sub["status"] if sub else s["status"]) == "parsed"
+        return False
+
+    scopes = []                                  # (directory, whether the per-file record of it was read whole): a file no row names is "without a record" only against rows that were read
     for (directory, _run), logs in found["kape"].items():
         if "copy" in logs:
-            scopes.append(directory)
+            scopes.append((directory, read_whole(logs["copy"], False)))
     for directory, files in found["velociraptor"].items():
         if "uploads" in files:
-            scopes.append(join_rel(directory, "uploads"))
+            scopes.append((join_rel(directory, "uploads"), read_whole(files["uploads"], True)))
     record_files = set(found["uac_logs"]) | set(found["uac_hashes"])
     for logs in found["kape"].values():
         record_files.update(logs.values())
@@ -2879,7 +2985,8 @@ def main():
             continue
         norm_rel = norm_text(rel)
         norm_src = sink.named.get(rel)
-        in_scope = any(rel == s or rel.startswith(s + "/") or rel.startswith(s + os.sep) or not s for s in scopes)
+        scope_read = next((whole for s, whole in scopes if rel == s or rel.startswith(s + "/") or rel.startswith(s + os.sep) or not s), None)
+        in_scope = scope_read is not None
         for q in sink.questions:
             if not (any_match(q.delivered_patterns, norm_rel) or any_match(q.source_patterns, norm_src)):
                 continue
@@ -2888,8 +2995,13 @@ def main():
                 q.file_examples.append(rel)
             row = {"question": q.id, "match": "delivered_file", "delivered": rel, "bytes": size,
                    "named_by_a_record": rel in sink.named, "in_the_directory_of_a_per_file_record": in_scope}
-            if rel not in sink.named and in_scope:
-                q.without_record += 1
+            if rel in sink.maybe_named and rel not in sink.named:
+                row["may_be_named_by_an_ambiguous_record"] = True
+            if rel not in sink.named and rel not in sink.maybe_named and in_scope:
+                if scope_read:
+                    q.without_record += 1
+                else:
+                    row["record_not_read_whole"] = True
             if verification is not None:
                 state = verification.get(rel)
                 q.integrity[state or "not in the table"] += 1
@@ -2907,6 +3019,7 @@ def main():
     tables = {"matches": matches.finish(), "problems": problems.finish()}
     values = VALUES[0]
     out_questions = []
+    gaps = census_gaps(census)
     for q in questions:
         state = []
         if q.files:
@@ -2917,8 +3030,10 @@ def main():
             state.append("recorded_as_copied_but_not_in_the_delivery")
         if q.files and q.without_record:
             state.append("delivered_without_a_record")
-        if not q.files and not q.copied and not q.failed and not q.hash_claims:
-            state.append("no_file_and_no_record")
+        if not q.files and not q.copied and not q.failed and not q.hash_claims and census.complete:
+            state.append("no_file_and_no_record_read" if outcomes_unknown else "no_file_and_no_record")
+        if not census.complete:
+            state.append("census_incomplete")
         if outcomes_unknown:
             state.append("some_records_unreadable")
         out_questions.append({"id": q.id, "what": q.what, "patterns": {"source_paths": q.source_patterns, "delivered_paths": q.delivered_patterns},
@@ -2927,10 +3042,10 @@ def main():
                               "copied_but_not_in_the_delivery": q.copied_but_absent, "delivered_without_a_record": q.without_record if q.files else 0,
                               "first_failed": q.failed_examples, "integrity": dict(sorted(q.integrity.items())) if verification is not None else None,
                               "not_among_examined": q.unexamined if examined else None, "state": state,
-                              "statement": statement_for(q, outcomes_unknown, verification is not None, bool(examined))})
+                              "statement": statement_for(q, outcomes_unknown, verification is not None, bool(examined), gaps)})
     out_requested = [{"pattern": q.source_patterns[0], "delivered_files": q.files, "records_copied_or_uploaded": q.copied,
                       "records_failed_or_skipped": q.failed,
-                      "state": ("delivered" if q.files else "recorded_not_delivered" if q.copied else "recorded_as_skipped_or_failed" if q.failed else "neither_delivered_nor_recorded")}
+                      "state": requested_state(q, census.complete, outcomes_unknown)}
                      for q in req_questions]
 
     problem_lines = []

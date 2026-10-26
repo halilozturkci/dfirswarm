@@ -153,6 +153,10 @@ MAX_PATH_CHARS = 32767
 # A DestList stream is read whole before it is parsed; a real one is a few hundred
 # kilobytes at most, so a stream past this is refused by name instead of held in memory.
 MAX_DESTLIST_BYTES = 64 * 1024 * 1024
+# Every entry read is a record of about fifteen fields that is kept until the file's rows are written; Windows keeps a
+# few thousand entries at most, so a stream that holds more than this is read to this many entries and the rest is
+# named by where it starts, never decoded one dictionary at a time into memory.
+MAX_DESTLIST_ENTRIES = 50_000
 # olefile holds an opened stream whole in memory; a link structure is small by nature, so a stream past this is named and not read.
 MAX_STREAM_BYTES = 32 * 1024 * 1024
 # The fixed part of an entry, the offset of its path length (a 16-bit count of UTF-16
@@ -200,6 +204,12 @@ def parse_destlist(data):
     fixed, chars_at, trailer = layout["fixed"], layout["chars_at"], layout["trailer"]
     offset = DESTLIST_HEADER
     while offset + fixed <= len(data):
+        if len(out["entries"]) >= MAX_DESTLIST_ENTRIES:
+            out["entries_not_read_from"] = offset
+            out["problems"].append(
+                "the stream holds more than the %d entries this tool reads: the first %d are read, and the rest (from stream offset %d, %d bytes) is not"
+                % (MAX_DESTLIST_ENTRIES, MAX_DESTLIST_ENTRIES, offset, len(data) - offset))
+            break
         chars = struct.unpack_from("<H", data, offset + chars_at)[0]
         end = offset + fixed + chars * 2
         if chars > MAX_PATH_CHARS or end + trailer > len(data):
@@ -230,7 +240,7 @@ def parse_destlist(data):
             entry["undecoded_0x70_0x80_hex"] = data[offset + 0x70:offset + 0x80].hex()
         out["entries"].append(entry)
         offset = end + trailer
-    if count and len(out["entries"]) != count:
+    if count and len(out["entries"]) != count and "entries_not_read_from" not in out:
         out["problems"].append(
             "the header claims %d entries and %d were read" % (count, len(out["entries"])))
     if offset < len(data) and not out["problems"]:

@@ -11,9 +11,19 @@ compressed with gzip, bzip2 or xz. It applies when a member is named like a reco
 so a record's digest is compared in its own algorithm) and keeps the collector's records in memory or in a temporary file, which are
 removed. The records are read by the same adapters collection_manifest_parse uses and joined to the members the way
 collection_manifest_verify joins them to files. An archive inside the archive is named and not opened: extract it with
-archive_extract (from_index is the number in inventory.tsv) and run this recipe, or the tools, on the result. A 7z is not read here.
+archive_extract (from_index is the number in inventory.tsv) and run this recipe, or the tools, on the result; until then the run is partial, unless
+the archive is a file the collector copied from the source host (below the [root] of a UAC run, below the uploads directory of a Velociraptor
+container, or named by a record as a delivered file). A tar must end with its end-of-archive marker (a zero block) and nothing after it, a
+gzip, bzip2 or xz stream must end where its trailer says (the gzip CRC-32 and length are checked) with nothing after it (xz padding of zero
+bytes excepted), and a zip must hold nothing before its first member, between members or after its end record; else the run is partial and the
+claims it cannot find are unverifiable, not missing. A compressed tar is decompressed in steps of at most 1 MiB with the clock between them,
+and a tar metadata record (pax header, GNU long name) over 1 MiB is refused before it is read. The records kept on disk for parsing are
+bounded in total (1 GiB); one that would pass the bound is named and not parsed, and the run is partial. The pass stops, partial, when the process
+holds 60% of the memory it may hold (a cgroup or address-space limit it can see) rather than being killed with nothing written. A 7z is not read.
 
-    inventory.tsv       n, kind, size, sha256, name (escaped); n counts members in archive order, duplicates included
+    inventory.tsv       n, kind, size, sha256, name (escaped); n counts members in archive order, duplicates included. The sha256 of a member whose own
+                        name marks a credential store is withheld, as the index does; one that a record calls by such a name and that was delivered under
+                        another is hashed like any member
     records.jsonl       the canonical records, one per row or line of a collector's record, each with the locator of its raw row
     verification.jsonl  one row per delivery claim: path, size and digest checked apart, and the status they add up to
     units.json          the recognised units (a collector's run or container), their sources and their statuses
@@ -29,6 +39,7 @@ import io
 import json
 import os
 import signal
+import struct
 import sys
 import tarfile
 import tempfile
@@ -38,9 +49,59 @@ import zipfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 MAX_MEMBERS = 2000000
 MAX_KEPT_BYTES = 1 << 30           # a record kept in full for parsing; a larger one is not parsed and the run says so
+MAX_KEPT_TOTAL = 1 << 30           # all the records kept at once; one that would pass it is not kept, not parsed, and the run names it (COLLECTION_INTAKE_KEPT_TOTAL_BYTES sets it lower)
 DEADLINE = [None]
 WITHHELD = {"count": 0}
 VALUES = [None]
+
+
+def memory_ceiling():
+    """The bytes this process may hold, as far as it can be known: COLLECTION_INTAKE_MEMORY_BYTES, else the smallest of the cgroup limit and
+    the address-space and data limits. None when nothing limits it that this can see."""
+    try:
+        if os.environ.get("COLLECTION_INTAKE_MEMORY_BYTES"):
+            return int(os.environ["COLLECTION_INTAKE_MEMORY_BYTES"])
+    except ValueError:
+        pass
+    found = []
+    for path in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        try:
+            with open(path) as fh:
+                text = fh.read().strip()
+            if text.isdigit() and int(text) < (1 << 60):
+                found.append(int(text))
+        except OSError:
+            pass
+    try:
+        import resource
+        for which in (resource.RLIMIT_AS, resource.RLIMIT_DATA):
+            soft = resource.getrlimit(which)[0]
+            if soft != resource.RLIM_INFINITY:
+                found.append(soft)
+    except (ImportError, ValueError, OSError):
+        pass
+    return min(found) if found else None
+
+
+MEMORY_CEILING = [None, False]         # (bytes, looked up)
+
+
+def over_memory():
+    """A sentence when the process holds more than 60% of what it may hold (the per-member state of a delivery of millions of members is the
+    one thing that grows with the input), else None: the pass stops there and says so, instead of being killed with nothing written."""
+    if not MEMORY_CEILING[1]:
+        MEMORY_CEILING[0], MEMORY_CEILING[1] = memory_ceiling(), True
+    ceiling = MEMORY_CEILING[0]
+    if not ceiling:
+        return None
+    try:
+        import resource
+        peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * (1 if sys.platform == "darwin" else 1024)
+    except (ImportError, OSError):
+        return None
+    if peak > ceiling * 0.6:
+        return "the memory bound (%d MB held of the %d MB this process may hold)" % (peak >> 20, ceiling >> 20)
+    return None
 
 
 def out_of_time():
@@ -979,13 +1040,13 @@ def finish(hits, why, depth, weak):
     regular = [h for h in hits if h[2] == "f"]
     if weak:
         return {"status": "ambiguous", "rel": rels[0] if len(rels) == 1 else None, "matched_by": why, "depth": depth, "candidates": rels[:REC_FIRST],
-                "reason": "only the file name matches"}
+                "all_candidates": rels, "reason": "only the file name matches"}
     if len(rels) > 1:
         return {"status": "ambiguous", "rel": None, "matched_by": why, "depth": depth, "candidates": rels[:REC_FIRST],
-                "reason": "%d delivered files differ from each other only by case" % len(rels)}
+                "all_candidates": rels, "reason": "%d delivered files differ from each other only by case" % len(rels)}
     if len(hits) > len(rels):
         return {"status": "ambiguous", "rel": None, "matched_by": why, "depth": depth, "candidates": rels[:REC_FIRST],
-                "reason": "the name appears %d times (an archive can hold one name twice)" % len(hits)}
+                "all_candidates": rels, "reason": "the name appears %d times (an archive can hold one name twice)" % len(hits)}
     if not regular:
         return {"status": "not_regular", "rel": rels[0], "matched_by": why, "depth": depth, "candidates": rels,
                 "reason": "the delivered entry is a link or a special file: it is not followed"}
@@ -1251,13 +1312,66 @@ def withhold_digest(value, where):
     return "<digest of a credential store withheld, %d characters, %s>" % (len(value), fid)
 
 
+DIGEST_KEY = re.compile(r"md5|sha|hash|digest|checksum", re.I)
+DIGEST_HEX = re.compile(r"(?:[0-9A-Fa-f]{32}|[0-9A-Fa-f]{40}|[0-9A-Fa-f]{56}|[0-9A-Fa-f]{64}|[0-9A-Fa-f]{96}|[0-9A-Fa-f]{128})")
+
+
+def withhold_field_digests(value, where, digest_key=False, any_key=False):
+    """(copy of `value` with every digest-shaped string under a digest-named key withheld, how many). The row's own `fields` keep the
+    collector's keys and structure: a key named md5, Sha256, hash or digest (at any depth, a list under it too) whose string is the hex of a
+    digest of a known length is the digest of the file the row is about. With `any_key`, a digest-shaped string is withheld whatever its key
+    (a record that names a credential store, whose columns may be shifted). The walk is iterative: it has no depth at which it stops."""
+    holder = [None]
+    count = 0
+    stack = [(value, (None, where), digest_key, holder, 0)]
+    while stack:
+        item, path, dk, parent, slot = stack.pop()
+        if isinstance(item, dict):
+            new = {}
+            parent[slot] = new
+            for key in item:
+                new[key] = None
+            for key, sub in reversed(list(item.items())):
+                stack.append((sub, (path, key), dk or bool(DIGEST_KEY.search(str(key))), new, key))
+        elif isinstance(item, list):
+            new = [None] * len(item)
+            parent[slot] = new
+            for i in range(len(item) - 1, -1, -1):
+                stack.append((item[i], path, dk, new, i))
+        elif (dk or any_key) and isinstance(item, str) and DIGEST_HEX.fullmatch(item.strip()):
+            names = []
+            node = path
+            while node[0] is not None:
+                names.append(str(node[1]))
+                node = node[0]
+            parent[slot] = withhold_digest(item.strip(), "%s%s" % (node[1], "".join(", field %s" % n for n in reversed(names))))
+            count += 1
+        else:
+            parent[slot] = item
+    return holder[0], count
+
+
 def guard_digests(rec):
-    """For a record that names a credential store, the collector's own digests are withheld from the record (the comparison still
-    runs on the real ones, in the caller)."""
+    """For a record that names a credential store, every digest the record carries is withheld from the record: the claims, the digests
+    in the collector's own `fields` (a Velociraptor upload record keeps its sha256, md5 and sha1 there) under whatever key or column
+    they stand in, and a path claim that is itself a digest (a row with a column missing shifts the others). The comparison still runs
+    on the real ones, in the caller, from the claims it took before this."""
     hint = path_hint(rec.get("source_path_claim"), rec.get("delivered_path_claim"))
-    if hint and rec.get("hash_claims"):
-        where = "record %s of %s" % ((rec.get("locator") or {}).get("row") or (rec.get("locator") or {}).get("line"), rec.get("log"))
+    if not hint:
+        return rec
+    where = "record %s of %s" % ((rec.get("locator") or {}).get("row") or (rec.get("locator") or {}).get("line"), rec.get("log"))
+    withheld = 0
+    if rec.get("hash_claims"):
         rec["hash_claims"] = {algorithm: withhold_digest(value, where) for algorithm, value in rec["hash_claims"].items()}
+        withheld += len(rec["hash_claims"])
+    if isinstance(rec.get("fields"), dict):
+        rec["fields"], count = withhold_field_digests(rec["fields"], where, any_key=True)
+        withheld += count
+    for claim in ("source_path_claim", "delivered_path_claim"):
+        if isinstance(rec.get(claim), str) and DIGEST_HEX.fullmatch(rec[claim].strip()):
+            rec[claim] = withhold_digest(rec[claim].strip(), "%s, %s" % (where, claim))
+            withheld += 1
+    if withheld:
         rec["flags"] = list(rec.get("flags") or []) + ["digest_withheld_credential_store"]
         rec["credential_store_hint"] = hint
     return rec
@@ -1266,13 +1380,10 @@ def guard_digests(rec):
 
 
 RECIPE_ID = "collection-intake"
+BOM_LE, BOM_BE, NUL_HEAD = b"\xff\xfe", b"\xfe\xff", b"\x00"          # the heads kept for a record refused as binary: binary_reason reads a byte-order mark, else a NUL byte
 NESTED_SUFFIXES = (".zip", ".tar", ".tgz", ".tar.gz", ".tbz2", ".tar.bz2", ".txz", ".tar.xz", ".7z", ".rar", ".gz", ".bz2", ".xz", ".zst", ".ad1", ".e01", ".ex01")
 STATUS_ORDER = ("matched", "mismatch", "missing", "unverifiable", "ambiguous", "read_failed")
 KEPT_DIRS = []
-
-
-class Stopped(Exception):
-    pass
 
 
 def limits():
@@ -1293,8 +1404,20 @@ def target_of(arg):
     return t, paths[0]
 
 
-def sniff(path):
-    """(format, why): zip, or tar (plain, gzip, bzip2 or xz), judged from the bytes; 7z is named and not read."""
+def tar_kind(head):
+    """How the bytes of a tar are wrapped, from the first bytes: gz, bz2, xz, or tar (not compressed)."""
+    if head[:2] == b"\x1f\x8b":
+        return "gz"
+    if head[:3] == b"BZh":
+        return "bz2"
+    if head[:6] == b"\xfd7zXZ\x00":
+        return "xz"
+    return "tar"
+
+
+def sniff(path, expired=None):
+    """(format, why): zip, or tar (plain, gzip, bzip2 or xz), judged from the bytes; 7z is named and not read. A tar that is cut before its first
+    header, or whose first header is a metadata record over the bound, is not 'not a tar': the reason says it could not be told."""
     try:
         with open(path, "rb") as fh:
             head = fh.read(512)
@@ -1304,30 +1427,415 @@ def sniff(path):
         return "zip", None
     if head[:6] == b"7z\xbc\xaf\x27\x1c":
         return None, "a 7z archive: this recipe reads zip and tar; list it with archive-members and extract it with archive_extract"
-    if head[257:262] == b"ustar" or head[:2] == b"\x1f\x8b" or head[:3] == b"BZh" or head[:6] == b"\xfd7zXZ\x00":
+    if head[257:262] == b"ustar" or tar_kind(head) != "tar":
         try:
-            with tarfile.open(path, mode="r|*") as tf:
-                tf.next()
+            with open(path, "rb") as raw:
+                stream = TarStream(raw, tar_kind(head), expired or (lambda: False))
+                with tarfile.open(fileobj=stream, mode="r|", tarinfo=BoundedTarInfo) as tf:
+                    tf.next()
+        except ClockStopped:
+            return None, "the time limit ended the read of the first member header: could not tell"
+        except TarMetaTooLarge as exc:
+            return None, "the first member header is a metadata record over the bound (%s): could not tell" % exc
         except (tarfile.TarError, OSError, EOFError) as exc:
+            if isinstance(exc, EOFError) or str(exc) in ("truncated header", "empty file", "unexpected end of data"):
+                return None, "the archive ends inside or before its first member header (%s): could not tell" % describe(exc)
             return None, "not a tar archive (%s)" % describe(exc)
         return "tar", None
     return None, "neither a zip nor a tar by its first bytes"
 
 
-def iterate(path, fmt):
+class Stopped(Exception):
+    pass
+
+
+class ClockStopped(Stopped):
+    """The clock a caller gave ran out while the archive was being read."""
+
+
+class StreamDamaged(tarfile.ReadError):
+    """The compressed stream around the tar is damaged (a header, a block, or the gzip CRC-32 or length)."""
+
+
+class TarMetaTooLarge(tarfile.ReadError):
+    """A pax or GNU long-name record is larger than any real one: it is refused before tarfile reads it whole into memory."""
+
+
+MAX_META = 1 << 20                # the largest tar metadata record (pax header, GNU long name or link) that is read
+STEP_IN = 1 << 16
+STEP_OUT = 1 << 20                # one decompression call returns at most this much; the clock is looked at between calls
+META_TYPES = (tarfile.GNUTYPE_LONGNAME, tarfile.GNUTYPE_LONGLINK, tarfile.XHDTYPE, tarfile.XGLTYPE, tarfile.SOLARIS_XHDTYPE)
+
+
+class BoundedTarInfo(tarfile.TarInfo):
+    """A tar header that refuses a metadata record over MAX_META before tarfile reads it."""
+
+    def _proc_member(self, tarfile_):
+        if self.type in META_TYPES and self.size > MAX_META:
+            raise TarMetaTooLarge("a tar metadata record of %d bytes, over the bound of %d" % (self.size, MAX_META))
+        return super()._proc_member(tarfile_)
+
+
+def gz_header_length(buf):
+    """The length of the gzip header at the start of `buf`, None when `buf` is too short to tell; ValueError when it is not a gzip header."""
+    if len(buf) < 10:
+        return None
+    if buf[0] != 0x1F or buf[1] != 0x8B or buf[2] != 8:
+        raise ValueError("not a gzip header")
+    flags, pos = buf[3], 10
+    if flags & 4:
+        if len(buf) < pos + 2:
+            return None
+        pos += 2 + (buf[pos] | buf[pos + 1] << 8)
+    for bit in (8, 16):
+        if flags & bit:
+            end = buf.find(b"\0", pos)
+            if end < 0:
+                if len(buf) > MAX_META:
+                    raise ValueError("the gzip header is longer than %d bytes" % MAX_META)
+                return None
+            pos = end + 1
+    if flags & 2:
+        pos += 2
+    return pos if len(buf) >= pos else None
+
+
+class TarStream:
+    """The bytes of a tar for tarfile's stream reader. A compressed tar is decompressed here, by our own reader, in steps: each call to
+    the decompressor may return at most STEP_OUT bytes (so a few KiB of input cannot become gigabytes in one call) and the clock is
+    consulted between calls. For gzip the header is read here and the CRC-32 and length in the trailer are checked against the bytes
+    the stream returned (tarfile does not keep them); what the check or the stream's end finds is told by `problem()`, after the
+    tar inside has been read, so a damaged trailer around a readable tar is partial, not a refusal."""
+
+    def __init__(self, raw, kind, expired):
+        self.raw, self.kind, self.expired = raw, kind, expired
+        self.chunk, self.pos = b"", 0
+        self.raw_done = False
+        self.error = None
+        self.d = None
+        self.name = {"gz": "gzip", "bz2": "bzip2", "xz": "xz"}.get(kind, kind)
+        self.errors = ()
+        self.stage = "header" if kind == "gz" else "body"          # gzip only: header, body, trailer (the deflate stream has ended)
+        self.hbuf = bytearray()
+        self.crc = self.size = 0
+        self.trailer_error = None
+        self.served = 0                                            # bytes of the tar returned so far, and the last of them (see block_at)
+        self.tail = bytearray()
+        self.rest = b""                                            # gzip: the bytes after the deflate stream that are not the trailer
+        try:
+            if kind == "gz":
+                import zlib
+                self.zlib = zlib
+                self.d, self.errors = zlib.decompressobj(-15), (zlib.error,)
+            elif kind == "bz2":
+                import bz2
+                self.d = bz2.BZ2Decompressor()
+            elif kind == "xz":
+                import lzma
+                self.d, self.errors = lzma.LZMADecompressor(format=lzma.FORMAT_XZ), (lzma.LZMAError,)
+        except ImportError as exc:
+            raise tarfile.CompressionError("this Python has no %s module (%s)" % (self.name, exc))
+
+    def _more(self):
+        data = self.raw.read(STEP_IN)
+        if not data:
+            self.raw_done = True
+        return data
+
+    def _damaged(self, exc):
+        self.error = StreamDamaged("the %s stream is damaged (%s)" % (self.name, exc))
+        raise self.error from None
+
+    def _gz_open(self):
+        """Read the gzip header; the bytes after it go to the deflate stream. False when the stream ends inside the header."""
+        while True:
+            try:
+                n = gz_header_length(self.hbuf)
+            except ValueError as exc:
+                self._damaged(exc)
+            if n is not None:
+                break
+            more = self._more()
+            if not more:
+                return False
+            self.hbuf += more
+        self.pending_in = bytes(self.hbuf[n:])
+        self.hbuf = bytearray()
+        self.stage = "body"
+        return True
+
+    def _gz_trailer(self):
+        """The deflate stream has ended: its CRC-32 and length are in the next 8 bytes."""
+        rest = bytes(self.d.unused_data)
+        while len(rest) < 8 and not self.raw_done:
+            rest += self._more()
+        self.stage = "trailer"
+        if len(rest) < 8:
+            self.trailer_error = "the gzip trailer is cut (%d of 8 bytes): the stream is not finished" % len(rest)
+            return
+        crc, size = struct.unpack("<II", rest[:8])
+        self.rest = rest[8:]
+        if crc != (self.crc & 0xFFFFFFFF):
+            self.trailer_error = "the gzip CRC-32 is not that of the bytes the stream returned: the stream is damaged"
+        elif size != (self.size & 0xFFFFFFFF):
+            self.trailer_error = "the gzip trailer's length is not that of the bytes the stream returned: the stream is damaged"
+
+    def _step(self):
+        """Fill `chunk` with the next bytes; False when the stream has no more (finished, or cut)."""
+        if self.error is not None:
+            raise self.error
+        if self.expired():
+            raise ClockStopped()
+        self.chunk, self.pos = b"", 0
+        if self.kind == "tar":
+            self.chunk = self.raw.read(STEP_OUT)
+            return bool(self.chunk)
+        if self.kind == "gz":
+            if self.stage == "trailer":
+                return False
+            if self.stage == "header":
+                if not self._gz_open():
+                    return False
+            feed = self.d.unconsumed_tail
+            if not feed:
+                feed, self.pending_in = self.pending_in, b""
+            if not feed and not self.raw_done:
+                feed = self._more()
+        else:
+            if self.d.eof:
+                return False
+            feed = b""
+            if self.d.needs_input and not self.raw_done:
+                feed = self._more()
+        try:
+            out = self.d.decompress(feed, STEP_OUT)
+        except (ValueError, EOFError, OSError) + self.errors as exc:
+            self._damaged(exc)
+        if self.kind == "gz":
+            self.crc = self.zlib.crc32(out, self.crc)
+            self.size += len(out)
+            if self.d.eof:
+                self._gz_trailer()
+        if not out and not feed and not self.d.eof:
+            return False                          # no input left and nothing pending: the stream is cut
+        self.chunk = out
+        return True
+
+    def read(self, size):
+        if size is None or size < 0:
+            raise ValueError("TarStream reads a bounded size")
+        parts = []
+        while size > 0:
+            if self.pos < len(self.chunk):
+                piece = self.chunk[self.pos:self.pos + size]
+                self.pos += len(piece)
+                size -= len(piece)
+                parts.append(piece)
+                continue
+            if not self._step():
+                break
+        out = b"".join(parts)
+        self.served += len(out)
+        self.tail += out
+        if len(self.tail) > (1 << 17):
+            del self.tail[:-(1 << 16)]
+        return out
+
+    def block_at(self, offset):
+        """The 512 bytes of the tar at `offset`, if they are among the last bytes returned, else None."""
+        start = self.served - len(self.tail)
+        i = offset - start
+        return bytes(self.tail[i:i + 512]) if i >= 0 and i + 512 <= len(self.tail) else None
+
+    def problem(self):
+        """Why the compressed stream under the tar did not end as a finished one (it never reached its end, is damaged, its gzip CRC-32 or
+        length disagree, or another stream or garbage follows it), or None; None too for a tar that is not compressed. The tar inside may be
+        whole while the stream around it is not."""
+        if self.d is None:
+            return None
+        if self.error is not None:
+            return str(self.error)
+        if not self.d.eof:
+            return "the %s stream does not reach its end (cut, or damaged): the tar inside may be whole while the stream around it is not" % self.name
+        if self.trailer_error:
+            return self.trailer_error
+        rest = self.rest if self.kind == "gz" else bytes(self.d.unused_data)
+        total, nonzero = len(rest), len(rest) - rest.count(0)
+        while True:
+            if self.expired():
+                return "the time limit ended the check of the bytes after the %s" % ("gzip trailer" if self.kind == "gz" else self.name + " stream")
+            block = self.raw.read(1 << 20)
+            if not block:
+                break
+            total += len(block)
+            nonzero += len(block) - block.count(0)
+        if total == 0 or (self.kind == "xz" and nonzero == 0 and total % 4 == 0):          # xz allows zero padding to a multiple of 4 bytes
+            return None
+        return ("%d byte(s) follow the %s (another %s, or garbage): a reader stops after the first one, so what follows was not read"
+                % (total, "gzip trailer" if self.kind == "gz" else self.name + " stream", "gzip member" if self.kind == "gz" else "stream"))
+
+
+def tar_end(tf, expired, stream=None):
+    """How a tar stream ended, after its last member: `marker` (an all-zero block where a header should be: the writer finished the archive),
+    `boundary` (the stream ended exactly where a header should start, with no end marker: cut there, or written without one), `partial` (part
+    of a header, `bytes` long), `damaged` (a block that is not zero and not a header where the marker should be), or `unknown`. After a
+    marker the rest of the stream is read: bytes that are not zero are members a tar reader does not reach (a second archive appended to
+    the first)."""
+    try:
+        pending = tf.fileobj.pos - tf.offset
+    except AttributeError:
+        return {"kind": "unknown"}
+    if pending == 0:
+        return {"kind": "boundary"}
+    if pending < 512:
+        return {"kind": "partial", "bytes": pending}
+    block = stream.block_at(tf.offset) if stream is not None else None
+    if block is not None and block.count(0) != 512:
+        return {"kind": "damaged", "nonzero": 512 - block.count(0)}
+    after, nonzero, first = 0, 0, None
+    try:
+        while True:
+            if expired():
+                return {"kind": "marker", "after_marker_bytes": after, "after_marker_checked": False}
+            block = tf.fileobj.read(1 << 20)
+            if not block:
+                break
+            if block.count(0) != len(block):
+                nonzero += len(block) - block.count(0)
+                if first is None:
+                    first = after + next(i for i, b in enumerate(block) if b)
+            after += len(block)
+    except (tarfile.TarError, OSError, EOFError, ValueError) as exc:
+        return {"kind": "marker", "after_marker_bytes": after, "after_marker_error": describe(exc)}
+    return {"kind": "marker", "after_marker_bytes": after, "after_marker_nonzero": nonzero, "after_marker_first_nonzero": first}
+
+
+def tar_end_problem(end):
+    """Why a tar's end is not the end of a finished archive, or None."""
+    if end.get("compression"):
+        return end["compression"]
+    kind = end.get("kind")
+    if kind == "boundary":
+        return "the tar ends where a member header should start and has no end-of-archive marker (two zero blocks): it is cut there, or was written without one, and any member after that point is not known"
+    if kind == "partial":
+        return "the tar ends %d byte(s) into a member header and has no end-of-archive marker: it is cut there, and the members after that point are not known" % end["bytes"]
+    if kind == "damaged":
+        return ("the block where the tar's end-of-archive marker should start is not zero and is not a member header (%d byte(s) are not zero): a damaged "
+                "header, or something that is not a tar block; the members after that point are not known" % end["nonzero"])
+    if kind == "unknown":
+        return "this Python does not show where the tar stream ended: whether the archive has its end-of-archive marker is not known"
+    if end.get("after_marker_error"):
+        return "the bytes after the tar's end-of-archive marker could not be read (%s)" % end["after_marker_error"]
+    if end.get("after_marker_checked") is False:
+        return "the time limit ended the check of the bytes after the tar's end-of-archive marker"
+    if end.get("after_marker_nonzero"):
+        return ("%d byte(s) that are not zero follow the tar's end-of-archive marker (the first at offset %d after it): a reader stops at the marker, so whatever "
+                "is there, a second archive appended to the first for one, was not read" % (end["after_marker_nonzero"], end["after_marker_first_nonzero"]))
+    if not hasattr(tarfile.TarInfo, "_proc_member"):
+        return "this Python's tarfile has no hook for the bound on a tar metadata record (%d bytes): the bound was not enforced" % MAX_META
+    return None
+
+
+def zip_problem(path, infos, start_dir, expired):
+    """Why a zip is not read whole by its central directory, or None: bytes before the first member (another archive in front, or a
+    concatenation, whose members are never read), bytes between one member and the next or before the central directory, members that
+    overlap, and bytes after the end record. A reader follows the central directory of the last archive in the file."""
+    notes = []
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as fh:
+            tail = min(size, (1 << 16) + 22)
+            fh.seek(size - tail)
+            data = fh.read(tail)
+            at = data.rfind(b"PK\x05\x06")
+            if at >= 0 and len(data) >= at + 22:
+                comment = struct.unpack("<H", data[at + 20:at + 22])[0]
+                after = len(data) - (at + 22 + comment)
+                if after > 0:
+                    notes.append("%d byte(s) follow the zip's end record" % after)
+            spans = sorted(infos, key=lambda i: i.header_offset)
+            if spans and spans[0].header_offset > 0:
+                notes.append("%d byte(s) come before the first member (another archive in front of this one, or a self-extractor): the members of what is in front are not read"
+                             % spans[0].header_offset)
+            for k, info in enumerate(spans):
+                if (k & 1023) == 0 and expired():
+                    notes.append("the time limit ended the check of the space between members")
+                    break
+                fh.seek(info.header_offset)
+                head = fh.read(30)
+                if len(head) < 30 or head[:4] != b"PK\x03\x04":
+                    break                       # reading the member says so
+                name_len, extra_len = struct.unpack("<HH", head[26:30])
+                flags = struct.unpack("<H", head[6:8])[0]
+                end = info.header_offset + 30 + name_len + extra_len + info.compress_size
+                following = spans[k + 1].header_offset if k + 1 < len(spans) else start_dir
+                if following is None:
+                    continue
+                gap = following - end
+                if gap < 0:
+                    notes.append("members overlap (the member at offset %d runs into the next)" % info.header_offset)
+                    break
+                if gap > (24 if flags & 8 else 0):
+                    notes.append("%d byte(s) lie between the member at offset %d and the next part of the file that the central directory names" % (gap, info.header_offset))
+                    break
+    except (OSError, struct.error) as exc:
+        notes.append("the layout of the zip could not be checked (%s)" % describe(exc))
+    if not notes:
+        return None
+    return "; ".join(notes[:3]) + ": a reader follows the central directory, so bytes it does not name were not read"
+
+
+def end_problem(fmt, end):
+    return end.get("zip") if fmt == "zip" else tar_end_problem(end)
+
+
+def iterate(path, fmt, expired=None, end=None):
     """(name, kind, header size, opener) for each member in archive order; kind f (regular file), l (link), s (special), d (directory).
-    The opener is valid only while the member is the current one."""
+    The opener is valid only while the member is the current one. `expired()` is consulted at every read of the archive (ClockStopped);
+    `end`, a dict, is given how the archive ended when the members were read to the end."""
+    expired = expired or (lambda: False)
     if fmt == "zip":
         with zipfile.ZipFile(path) as zf:
-            for info in zf.infolist():
+            infos = zf.infolist()
+            for info in infos:
                 mode = (info.external_attr >> 16) & 0o170000
                 kind = "d" if info.is_dir() else "l" if mode == 0o120000 else "s" if mode in (0o020000, 0o060000, 0o010000, 0o140000) else "f"
                 yield info.filename, kind, info.file_size, (lambda i=info: zf.open(i))
+            if end is not None:
+                end["zip"] = zip_problem(path, infos, getattr(zf, "start_dir", None), expired)
     else:
-        with tarfile.open(path, mode="r|*") as tf:
-            for member in tf:
-                kind = "d" if member.isdir() else "f" if member.isreg() else "l" if (member.issym() or member.islnk()) else "s"
-                yield member.name, kind, member.size, (lambda m=member: tf.extractfile(m))
+        raw = open(path, "rb")
+        try:
+            stream = TarStream(raw, tar_kind(raw.read(6)), expired)
+            raw.seek(0)
+            with tarfile.open(fileobj=stream, mode="r|", tarinfo=BoundedTarInfo) as tf:
+                for member in tf:
+                    kind = "d" if member.isdir() else "f" if member.isreg() else "l" if (member.issym() or member.islnk()) else "s"
+                    yield member.name, kind, member.size, (lambda m=member: tf.extractfile(m))
+                    tf.members = []                 # the stream reader keeps every header it has read; a delivery of millions of members need not
+                if end is not None:
+                    end.update(tar_end(tf, expired, stream))
+                    drained = end.get("kind") in ("boundary", "partial") or (end.get("kind") == "marker" and end.get("after_marker_checked", True))
+                    gone = stream.problem() if drained else None            # the stream's end is judged only when the tar was read up to it
+                    if gone:
+                        end["compression"] = gone
+        finally:
+            raw.close()
+
+
+def collected_roots(found):
+    """(prefix, ...): the directories whose files are the source host's own, by the layout of a collector recognised in this archive: the
+    uploads directory beside a Velociraptor container's uploads.json (or collection_context.json), and the [root] directory of a UAC run
+    (the directory that holds uac.log, or the hash lists' directory's parent). A directory named uploads or [root] anywhere else is only a name."""
+    roots = set()
+    for directory in found["velociraptor"]:
+        roots.add(join_rel(directory, "uploads") + "/")
+    for rel in found["uac_logs"]:
+        roots.add(join_rel(parent_of(rel), "[root]") + "/")
+    for rel in found["uac_hashes"]:
+        directory = parent_of(rel)
+        roots.add(join_rel(parent_of(directory) if name_of(directory) == "hash_executables" else directory, "[root]") + "/")
+    return tuple(sorted(roots))
 
 
 def marker_name(rel):
@@ -1353,18 +1861,45 @@ class ArchiveSource:
     """The collector's records from the archive, kept as temporary files: each opened afresh, so a record read twice is read twice."""
     kind = "archive"
 
-    def __init__(self, kept):
+    def __init__(self, kept, not_kept=None, heads=None):
         self.kept = kept
+        self.not_kept = not_kept or {}
+        self.heads = heads or {}              # for a record not kept because it is binary: the byte-order mark or one NUL byte that binary_reason judges it by
 
     def open_binary(self, rel):
         path = self.kept.get(rel)
         if path is None:
-            raise OSError(2, "the member was not kept: it is not a record this recipe reads, or it was over %d bytes" % MAX_KEPT_BYTES)
+            why = self.not_kept.get(rel)
+            raise OSError(2, "the member was not kept: %s" % (why or "it is not a record this recipe reads"))
         return open(path, "rb")
 
     def head(self, rel, count=4096):
+        if rel in self.heads:
+            return self.heads[rel][:count]
         with self.open_binary(rel) as fh:
             return fh.read(count)
+
+
+class FirstBytes:
+    """A source that holds only the first bytes of one member: enough for binary_reason, which judges a record by its first 4 KiB."""
+
+    def __init__(self, head):
+        self.first = head
+
+    def head(self, rel, count=4096):
+        return self.first[:count]
+
+
+def judged_by_head(rel):
+    """True for the records whose readers refuse a binary file by its first bytes (every one but a Velociraptor results file and log.json, which are read as JSON Lines whatever they hold)."""
+    return not (name_of(rel) == "log.json" or (rel.endswith(".json") and name_of(parent_of(rel)) == "results"))
+
+
+def kept_total_limit():
+    try:
+        return int(os.environ.get("COLLECTION_INTAKE_KEPT_TOTAL_BYTES") or MAX_KEPT_TOTAL)
+    except ValueError:
+        return MAX_KEPT_TOTAL
 
 
 def pass_one(path, fmt, out_dir, census, inventory, digests, kept, state):
@@ -1372,77 +1907,109 @@ def pass_one(path, fmt, out_dir, census, inventory, digests, kept, state):
     tmp = tempfile.mkdtemp(dir=out_dir, prefix=".intake-")
     KEPT_DIRS.append(tmp)
     state["tmp"] = tmp
+    cap_total = kept_total_limit()
+    kept_bytes = 0
     n = 0
-    for name, kind, header_size, opener in iterate(path, fmt):
-        if n >= MAX_MEMBERS:
-            state["limit"] = "the member cap of %d" % MAX_MEMBERS
-            break
-        if out_of_time():
-            state["limit"] = "the time limit"
-            break
-        n += 1
-        rel = member_rel(name)
-        size, digest_row = header_size, None
-        if kind == "f":
-            hashers = (hashlib.sha256(), hashlib.sha1(), hashlib.md5())
-            keep = marker_name(rel)
-            dest = None
-            total = 0
-            try:
-                fh = opener()
-                if fh is None:
-                    raise OSError(22, "the member cannot be read")
-                with fh:
-                    if keep:
-                        dest = open(os.path.join(tmp, "k%d" % n), "wb")
-                    while True:
-                        block = fh.read(1 << 20)
-                        if not block:
-                            break
-                        total += len(block)
-                        for h in hashers:
-                            h.update(block)
-                        if dest is not None:
-                            if total > MAX_KEPT_BYTES:
+    try:
+        for name, kind, header_size, opener in iterate(path, fmt, expired=out_of_time, end=state["tar_end"]):
+            if n >= MAX_MEMBERS:
+                state["limit"] = "the member cap of %d" % MAX_MEMBERS
+                break
+            if out_of_time():
+                state["limit"] = "the time limit"
+                break
+            if (n & 1023) == 0 and over_memory():
+                state["limit"] = over_memory()
+                break
+            n += 1
+            rel = member_rel(name)
+            size, digest_row = header_size, None
+            if kind == "f":
+                hashers = (hashlib.sha256(), hashlib.sha1(), hashlib.md5())
+                keep = marker_name(rel)
+                dest = None
+                total = 0
+                if keep and kept_bytes + header_size > cap_total:
+                    keep = False
+                    state["not_kept_total"].append({"name": rel, "bytes": header_size})
+                    state["not_kept_why"][rel] = ("the records kept at once would have passed %d bytes (%d are kept, this one declares %d)"
+                                                  % (cap_total, kept_bytes, header_size))
+                try:
+                    fh = opener()
+                    if fh is None:
+                        raise OSError(22, "the member cannot be read")
+                    with fh:
+                        if keep:
+                            dest = open(os.path.join(tmp, "k%d" % n), "wb")
+                        while True:
+                            block = fh.read(1 << 20)
+                            if not block:
+                                break
+                            first_block = total == 0
+                            total += len(block)
+                            for h in hashers:
+                                h.update(block)
+                            if dest is not None and first_block and judged_by_head(rel) and binary_reason(FirstBytes(block[:4096]), rel):
+                                # a record the readers will refuse as binary (UTF-16 or NUL bytes in its first 4 KiB) is not worth the disk: its head is kept, so the reason is the same
                                 dest.close()
                                 os.unlink(dest.name)
                                 dest = None
-                                state["too_large"].append(rel)
-                            else:
-                                dest.write(block)
-                        if out_of_time():
-                            raise Stopped()
-            except Stopped:
+                                state["heads"][rel] = BOM_LE if block[:2] == BOM_LE else BOM_BE if block[:2] == BOM_BE else NUL_HEAD       # what binary_reason needs, a shared constant per member
+                                state["not_kept_why"][rel] = "it is binary (see its source)"
+                            if dest is not None:
+                                if total > MAX_KEPT_BYTES:
+                                    dest.close()
+                                    os.unlink(dest.name)
+                                    dest = None
+                                    state["too_large"].append(rel)
+                                    state["not_kept_why"][rel] = "it is over %d bytes" % MAX_KEPT_BYTES
+                                elif kept_bytes + total > cap_total:
+                                    dest.close()
+                                    os.unlink(dest.name)
+                                    dest = None
+                                    state["not_kept_total"].append({"name": rel, "bytes": header_size})
+                                    state["not_kept_why"][rel] = ("the records kept at once would have passed %d bytes (%d are kept)" % (cap_total, kept_bytes))
+                                else:
+                                    dest.write(block)
+                            if out_of_time():
+                                raise Stopped()
+                except Stopped:
+                    if dest is not None:
+                        dest.close()
+                        os.unlink(dest.name)
+                    state["limit"] = "the time limit (member %d was being read)" % n
+                    inventory.append((n, kind, header_size, None, rel, "the time limit ended the read of this member"))
+                    census.add(rel, header_size, "f")
+                    break
+                except (OSError, RuntimeError, EOFError, zipfile.BadZipFile, tarfile.TarError, ValueError, NotImplementedError) as exc:
+                    if dest is not None:
+                        dest.close()
+                        os.unlink(dest.name)
+                    state["unreadable"].append({"n": n, "name": rel, "error": describe(exc)})
+                    inventory.append((n, kind, header_size, None, rel, "unreadable: " + describe(exc)))
+                    census.add(rel, header_size, "f")
+                    continue
                 if dest is not None:
                     dest.close()
-                state["limit"] = "the time limit (member %d was being read)" % n
-                inventory.append((n, kind, header_size, None, rel, "the time limit ended the read of this member"))
-                census.add(rel, header_size, "f")
-                break
-            except (OSError, RuntimeError, EOFError, zipfile.BadZipFile, tarfile.TarError, ValueError, NotImplementedError) as exc:
-                if dest is not None:
-                    dest.close()
-                state["unreadable"].append({"n": n, "name": rel, "error": describe(exc)})
-                inventory.append((n, kind, header_size, None, rel, "unreadable: " + describe(exc)))
-                census.add(rel, header_size, "f")
-                continue
-            if dest is not None:
-                dest.close()
-                kept[rel] = dest.name
-            size = total
-            digest_row = {"sha256": hashers[0].hexdigest(), "sha1": hashers[1].hexdigest(), "md5": hashers[2].hexdigest()}
-            digests.setdefault(rel, []).append(digest_row)
-            census.add(rel, size, "f")
-            if rel.lower().endswith(NESTED_SUFFIXES):
-                state["nested"].append({"n": n, "name": rel, "bytes": size})
-            hint = path_hint(rel)
-            inventory.append((n, kind, size, "(withheld: %s)" % hint if hint else digest_row["sha256"], rel, ""))
-        elif kind in ("l", "s"):
-            census.add(rel, 0, kind)
-            inventory.append((n, kind, header_size, None, rel, "a link or a special file: recorded, not followed"))
-        else:
-            state["directories"] += 1
+                    kept[rel] = dest.name
+                    kept_bytes += total
+                size = total
+                digest_row = {"sha256": hashers[0].hexdigest(), "sha1": hashers[1].hexdigest(), "md5": hashers[2].hexdigest()}
+                digests.setdefault(rel, []).append(digest_row)
+                census.add(rel, size, "f")
+                if rel.lower().endswith(NESTED_SUFFIXES):
+                    state["nested"].append({"n": n, "name": rel, "bytes": size})
+                hint = path_hint(rel)
+                inventory.append((n, kind, size, "(withheld: %s)" % hint if hint else digest_row["sha256"], rel, ""))
+            elif kind in ("l", "s"):
+                census.add(rel, 0, kind)
+                inventory.append((n, kind, header_size, None, rel, "a link or a special file: recorded, not followed"))
+            else:
+                state["directories"] += 1
+    except ClockStopped:
+        state["limit"] = "the time limit (the archive was being read after member %d)" % n
     state["members"] = n
+    state["kept_bytes"] = kept_bytes
 
 
 class IntakeSink(Sink):
@@ -1455,18 +2022,22 @@ class IntakeSink(Sink):
         self.by_status = {}
         self.not_checked = 0
         self.by_kind = {}
+        self.claimed = set()                 # members a record names as a delivered file: the source host's own files
 
     def record(self, rec):
         self.count += 1
         rec["n"] = self.count
         original = dict(rec.get("hash_claims") or {})
+        joinable = dict(rec)                          # the join runs on the claims as the collector wrote them; the record that is written is the guarded one
         guard_digests(rec)
         self.by_kind[rec["kind"]] = self.by_kind.get(rec["kind"], 0) + 1
         self.records_fh.write(json.dumps(rec, default=str) + "\n")
         if rec["outcome"] in ("skipped", "upload_error", "error", "warning") or rec["kind"] in ("log_event", "unrecognised_row"):
             self.not_checked += 1
             return
-        res = resolve(self.census, rec)
+        res = resolve(self.census, joinable)
+        if res["status"] == "found":
+            self.claimed.add(res["rel"])
         if res["status"] == "no_claim":
             self.not_checked += 1
             return
@@ -1553,16 +2124,18 @@ def on_signal(signum, frame):
 
 def detect(path):
     """(exit code, answer). Applies when a member is named like a collector's record; the listing is bounded and a bound that is hit is
-    'could not tell', never 'does not apply'."""
-    fmt, why = sniff(path)
-    if fmt is None:
-        return (1 if "neither a zip nor a tar" in (why or "") or "not a tar" in (why or "") else 2), {"applies": False, "why": why}
-    census = Census()
+    'could not tell', never 'does not apply'. The clock is consulted at every read of the archive, so a member of any size (or any
+    expansion) is inside it."""
     deadline = time.monotonic() + float(os.environ.get("COLLECTION_INTAKE_DETECT_SECONDS", "120"))
+    fmt, why = sniff(path, lambda: time.monotonic() > deadline)
+    if fmt is None:
+        return (1 if "neither a zip nor a tar" in (why or "") or "not a tar archive" in (why or "") else 2), {"applies": False, "why": why}
+    census = Census()
     stopped = None
     n = 0
+    end = {}
     try:
-        for name, kind, _size, _opener in iterate(path, fmt):
+        for name, kind, _size, _opener in iterate(path, fmt, expired=lambda: time.monotonic() > deadline, end=end):
             n += 1
             if kind == "f":
                 census.add(member_rel(name), 0, "f")
@@ -1572,11 +2145,19 @@ def detect(path):
             if (n & 255) == 0 and time.monotonic() > deadline:
                 stopped = "the detect time limit"
                 break
+            if (n & 1023) == 0 and over_memory():
+                stopped = over_memory()
+                break
+    except ClockStopped:
+        stopped = "the detect time limit"
     except (tarfile.TarError, zipfile.BadZipFile, OSError, EOFError, ValueError) as exc:
         stopped = "the listing failed (%s)" % describe(exc)
+    if stopped is None:
+        stopped = end_problem(fmt, end)
     markers = [rel for rel, _s, k in census.entries() if k == "f" and marker_name(rel)]
     if markers:
-        return 0, {"applies": True, "format": fmt, "why": "%d member(s) are named like a collector's record (first: %s)" % (len(markers), esc(markers[0]))}
+        return 0, {"applies": True, "format": fmt, "why": "%d member(s) are named like a collector's record (first: %s)" % (len(markers), esc(markers[0])),
+                   **({"listing_note": stopped} if stopped else {})}
     if stopped:
         return 2, {"applies": False, "why": "no collector record among the %d members listed, and the listing stopped (%s): could not tell" % (n, stopped)}
     return 1, {"applies": False, "why": "no member of the %d is named like a collector's record" % n}
@@ -1593,7 +2174,7 @@ def run(path, out_dir, probe=False):
                            "what the collector was asked to take; the original path of a member (collection_path_map); the coverage of a question (collection_coverage)"),
            "limits_hit": [], "errors": []}
     write_json(cov_path, cov)
-    fmt, why = sniff(path)
+    fmt, why = sniff(path, out_of_time)
     if fmt is None:
         cov.update(status="failed", status_basis=why)
         write_json(cov_path, cov)
@@ -1604,7 +2185,8 @@ def run(path, out_dir, probe=False):
     if hasattr(signal, "SIGHUP"):
         signal.signal(signal.SIGHUP, on_signal)
     census, inventory, digests, kept = Census(), [], {}, {}
-    state = {"limit": None, "too_large": [], "unreadable": [], "nested": [], "directories": 0, "members": 0, "tmp": None}
+    state = {"limit": None, "too_large": [], "not_kept_total": [], "not_kept_why": {}, "heads": {}, "unreadable": [], "nested": [], "directories": 0, "members": 0, "tmp": None,
+             "tar_end": {}, "kept_bytes": 0}
     try:
         try:
             pass_one(path, fmt, out_dir, census, inventory, digests, kept, state)
@@ -1614,11 +2196,16 @@ def run(path, out_dir, probe=False):
         if state["limit"]:
             cov["limits_hit"].append(state["limit"])
             census.complete = False
+        elif not cov["errors"]:
+            ended = end_problem(fmt, state["tar_end"]) if state["tar_end"] else "the archive's end was not reached"
+            if ended:
+                cov["errors"].append(ended)
+                census.complete = False
         found = discover(census)
         with open(os.path.join(out_dir, "records.jsonl"), "w", encoding="utf-8") as records_fh, \
                 open(os.path.join(out_dir, "verification.jsonl"), "w", encoding="utf-8") as verification_fh:
             sink = IntakeSink(census, digests, records_fh, verification_fh)
-            sources = read_collection(ArchiveSource(kept), found, sink)
+            sources = read_collection(ArchiveSource(kept, state["not_kept_why"], state["heads"]), found, sink)
         with open(os.path.join(out_dir, "inventory.tsv"), "w", encoding="utf-8") as fh:
             fh.write("n\tkind\tsize\tsha256\tname\tnote\n")
             for n, kind, size, sha, name, note_text in inventory:
@@ -1639,17 +2226,36 @@ def run(path, out_dir, probe=False):
         if state["unreadable"]:
             problems.append("%d member(s) could not be read" % len(state["unreadable"]))
         if state["too_large"]:
-            problems.append("%d collector record(s) were over %d bytes and were not parsed" % (len(state["too_large"]), MAX_KEPT_BYTES))
+            problems.append("%d collector record(s) were over %d bytes and were not kept or parsed: %s"
+                            % (len(state["too_large"]), MAX_KEPT_BYTES, ", ".join(esc(x) for x in state["too_large"][:5]) + (" and more" if len(state["too_large"]) > 5 else "")))
+        if state["not_kept_total"]:
+            problems.append("%d collector record(s) were not kept or parsed because the records kept at once would have passed %d bytes: %s"
+                            % (len(state["not_kept_total"]), kept_total_limit(),
+                               ", ".join(esc(x["name"]) for x in state["not_kept_total"][:5]) + (" and more" if len(state["not_kept_total"]) > 5 else "")))
         problems += ["%s is %s" % (esc(s["log"]), s["status"]) for s in sources if s["status"] != "parsed"]
         if not sources:
             problems.append("no recognised collector record was read")
+        roots = collected_roots(found)
+        unaccounted = [x for x in state["nested"] if not (x["name"].startswith(roots) or x["name"] in sink.claimed)]
+        accounted = len(state["nested"]) - len(unaccounted)
+        if unaccounted:
+            problems.append("%d archive(s) inside the archive were not opened and may hold records: %s"
+                            % (len(unaccounted), ", ".join(esc(x["name"]) for x in unaccounted[:5]) + (" and more" if len(unaccounted) > 5 else "")))
         status = "complete" if not problems else ("partial" if state["members"] else "failed")
-        cov.update(status=status, status_basis=("every member was read and hashed and every recognised record was read whole" if not problems else "; ".join(problems[:10])),
+        basis = ("every member was read and hashed and every recognised record was read whole" if not problems else
+                 "; ".join(problems[:10]) + ("; and %d more (all in `problems`)" % (len(problems) - 10) if len(problems) > 10 else ""))
+        if accounted and not problems:
+            basis += ("; %d archive(s) inside the archive are files the collector copied from the source host (below the [root] of a UAC run, below the uploads "
+                      "directory of a Velociraptor container, or named by a record as a delivered file) and were not opened" % accounted)
+        cov.update(status=status, status_basis=basis, problems=problems,
                    format=fmt, members=state["members"], files=census.files, directories=state["directories"],
                    records=sink.count, records_by_kind=dict(sorted(sink.by_kind.items())), verification=dict(sorted(sink.by_status.items())),
                    records_not_checked=sink.not_checked, nested_archives=state["nested"][:1000], nested_archives_total=len(state["nested"]),
+                   nested_archives_not_opened_and_not_collected_files=unaccounted[:1000], nested_archives_not_opened_and_not_collected_files_total=len(unaccounted),
                    nested_archives_note=("named, not opened: extract one with archive_extract (from_index is its n in inventory.tsv) and run this recipe or the "
-                                         "collection tools on the result"),
+                                         "collection tools on the result. One that is not below the [root] of a UAC run or the uploads directory of a Velociraptor container "
+                                         "and that no record names as a delivered file may hold records, and the status is partial until it is opened"),
+                   records_kept_bytes=state["kept_bytes"], records_not_kept_total_cap=state["not_kept_total"][:1000], records_over_member_cap=state["too_large"][:1000],
                    members_unreadable=state["unreadable"][:100], members_unreadable_total=len(state["unreadable"]),
                    outputs={"inventory": "inventory.tsv", "records": "records.jsonl", "verification": "verification.jsonl", "units": "units.json"})
         write_json(cov_path, cov)
