@@ -2604,38 +2604,48 @@ def withhold_digest(value, where):
 
 DIGEST_KEY = re.compile(r"md5|sha|hash|digest|checksum", re.I)
 DIGEST_HEX = re.compile(r"(?:[0-9A-Fa-f]{32}|[0-9A-Fa-f]{40}|[0-9A-Fa-f]{56}|[0-9A-Fa-f]{64}|[0-9A-Fa-f]{96}|[0-9A-Fa-f]{128})")
-FIELD_DEPTH = 8
 
 
-def withhold_field_digests(value, where, digest_key=False, depth=0):
+def withhold_field_digests(value, where, digest_key=False, any_key=False):
     """(copy of `value` with every digest-shaped string under a digest-named key withheld, how many). The row's own `fields` keep the
     collector's keys and structure: a key named md5, Sha256, hash or digest (at any depth, a list under it too) whose string is the hex of a
-    digest of a known length is the digest of the file the row is about."""
-    if depth > FIELD_DEPTH:
-        return value, 0
-    if isinstance(value, dict):
-        out, count = {}, 0
-        for key, item in value.items():
-            new, n = withhold_field_digests(item, "%s, field %s" % (where, key), digest_key or bool(DIGEST_KEY.search(str(key))), depth + 1)
-            out[key] = new
-            count += n
-        return out, count
-    if isinstance(value, list):
-        out, count = [], 0
-        for item in value:
-            new, n = withhold_field_digests(item, where, digest_key, depth + 1)
-            out.append(new)
-            count += n
-        return out, count
-    if digest_key and isinstance(value, str) and DIGEST_HEX.fullmatch(value.strip()):
-        return withhold_digest(value.strip(), where), 1
-    return value, 0
+    digest of a known length is the digest of the file the row is about. With `any_key`, a digest-shaped string is withheld whatever its key
+    (a record that names a credential store, whose columns may be shifted). The walk is iterative: it has no depth at which it stops."""
+    holder = [None]
+    count = 0
+    stack = [(value, (None, where), digest_key, holder, 0)]
+    while stack:
+        item, path, dk, parent, slot = stack.pop()
+        if isinstance(item, dict):
+            new = {}
+            parent[slot] = new
+            for key in item:
+                new[key] = None
+            for key, sub in reversed(list(item.items())):
+                stack.append((sub, (path, key), dk or bool(DIGEST_KEY.search(str(key))), new, key))
+        elif isinstance(item, list):
+            new = [None] * len(item)
+            parent[slot] = new
+            for i in range(len(item) - 1, -1, -1):
+                stack.append((item[i], path, dk, new, i))
+        elif (dk or any_key) and isinstance(item, str) and DIGEST_HEX.fullmatch(item.strip()):
+            names = []
+            node = path
+            while node[0] is not None:
+                names.append(str(node[1]))
+                node = node[0]
+            parent[slot] = withhold_digest(item.strip(), "%s%s" % (node[1], "".join(", field %s" % n for n in reversed(names))))
+            count += 1
+        else:
+            parent[slot] = item
+    return holder[0], count
 
 
 def guard_digests(rec):
-    """For a record that names a credential store, every digest the record carries is withheld from the record: the claims, and the digests
-    in the collector's own `fields` (a Velociraptor upload record keeps its sha256, md5 and sha1 there). The comparison still runs on the
-    real ones, in the caller, from the claims it took before this."""
+    """For a record that names a credential store, every digest the record carries is withheld from the record: the claims, the digests
+    in the collector's own `fields` (a Velociraptor upload record keeps its sha256, md5 and sha1 there) under whatever key or column
+    they stand in, and a path claim that is itself a digest (a row with a column missing shifts the others). The comparison still runs
+    on the real ones, in the caller, from the claims it took before this."""
     hint = path_hint(rec.get("source_path_claim"), rec.get("delivered_path_claim"))
     if not hint:
         return rec
@@ -2645,8 +2655,12 @@ def guard_digests(rec):
         rec["hash_claims"] = {algorithm: withhold_digest(value, where) for algorithm, value in rec["hash_claims"].items()}
         withheld += len(rec["hash_claims"])
     if isinstance(rec.get("fields"), dict):
-        rec["fields"], count = withhold_field_digests(rec["fields"], where)
+        rec["fields"], count = withhold_field_digests(rec["fields"], where, any_key=True)
         withheld += count
+    for claim in ("source_path_claim", "delivered_path_claim"):
+        if isinstance(rec.get(claim), str) and DIGEST_HEX.fullmatch(rec[claim].strip()):
+            rec[claim] = withhold_digest(rec[claim].strip(), "%s, %s" % (where, claim))
+            withheld += 1
     if withheld:
         rec["flags"] = list(rec.get("flags") or []) + ["digest_withheld_credential_store"]
         rec["credential_store_hint"] = hint

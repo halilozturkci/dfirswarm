@@ -249,6 +249,13 @@ def gen_velo(case, rng, d):
                 up["Hashes"] = {"SHA256": sha("sha256", data), "list": [sha("md5", data)]}
             if cred:
                 case.canaries += [sha("sha1", data), sha("sha256", data), sha("md5", data)]
+        if cred and rng.random() < 0.3:
+            # the digest of a credential store nested in the collector's own record, 1 to 14 levels down, under a digest-named key
+            deep = {rng.choice(["sha256", "Sha1", "md5", "digest"]): sha("sha256", data)}
+            case.canaries.append(deep[next(iter(deep))])
+            for level in range(rng.randint(1, 14)):
+                deep = {"n%d" % level: deep}
+            up["Wrap"] = deep
         if rng.random() < 0.15:
             up["Error"] = "Access is denied"
         res_rows.append(json.dumps({"_Source": "A", "Upload": up}))
@@ -661,7 +668,7 @@ def coverage_oracle(rep, seed, case, ans, args, results):
                 rep.find("coverage", seed, "copied_but_not_in_the_delivery over an incomplete census", q["id"])
         else:
             if q["delivered_files"] == 0 and q["records_copied_or_uploaded"] == 0 and q["records_failed_or_skipped"] == 0 and q["hash_list_lines"] == 0:
-                if "no_file_and_no_record" not in q["state"]:
+                if "no_file_and_no_record" not in q["state"] and "no_file_and_no_record_read" not in q["state"]:
                     rep.find("coverage", seed, "a complete census with nothing found lacks no_file_and_no_record", q["id"])
         # delivered-only questions: the count of files is the model's
         if spec.get("delivered_paths") and not spec.get("source_paths"):
@@ -738,11 +745,24 @@ def recipe_case(pack, seed, case, rep, rng, kept_cap=None):
     os.makedirs(arch, exist_ok=True)
     kind = rng.choice(["zip", "tar", "tar", "tgz", "tbz2", "txz"])
     cut = None
+    damaged = False             # bytes of the archive were changed: a name in a record may no longer be the credential store's, so the name hint cannot hold its digest
     dest = os.path.join(arch, "a." + {"zip": "zip", "tar": "tar", "tgz": "tgz", "tbz2": "tbz2", "txz": "txz"}[kind])
     if kind == "zip":
         members = pack_tree(case, "zip", rng, dest)
         if not members:
             return
+        roll = rng.random()
+        if roll < 0.08:
+            # another zip in front of this one, or after it: a reader follows the last central directory only
+            other = io.BytesIO()
+            with zipfile.ZipFile(other, "w") as z2:
+                z2.writestr("other/2027_CopyLog.csv", "SourceFile\r\n")
+            mine = open(dest, "rb").read()
+            open(dest, "wb").write(other.getvalue() + mine if rng.random() < 0.5 else mine + other.getvalue())
+            cut = "garbage"
+        elif roll < 0.14:
+            open(dest, "ab").write(b"X" * rng.randint(1, 40))
+            cut = "garbage"
     else:
         res = pack_tree(case, "tar", rng, dest)
         members, data = res
@@ -784,7 +804,11 @@ def recipe_case(pack, seed, case, rep, rng, kept_cap=None):
                     cut = "boundary"
             else:
                 data_out = body + b"\0" * (512 * endpad if endpad else 1024)
-                if rng.random() < 0.1:
+                if rng.random() < 0.08:
+                    # the block where the end marker should start is damaged (not zero, not a header), then zeros
+                    data_out = body + bytes(rng.randint(1, 255) for _ in range(512)) + b"\0" * 1024
+                    cut = "garbage"
+                elif rng.random() < 0.1:
                     data_out += b"trailing garbage not zero"
                     cut = "garbage"
                 elif rng.random() < 0.08:
@@ -800,9 +824,29 @@ def recipe_case(pack, seed, case, rep, rng, kept_cap=None):
             full = body + b"\0" * 1024
             comp = {"tgz": gzip.compress, "tbz2": bz2.compress, "txz": lzma.compress}[kind]
             blob = comp(full)
-            if rng.random() < 0.3:
+            roll = rng.random()
+            if roll < 0.3:
                 blob = blob[: rng.randint(len(blob) // 3, len(blob) - 1)]
                 cut = "compressed"
+            elif roll < 0.4:
+                blob = blob + comp(b"\0" * 1024 if rng.random() < 0.5 else full)         # a second stream (gzip member, bzip2 stream, xz stream)
+                cut = "garbage"
+            elif roll < 0.47:
+                blob = blob + bytes(rng.randint(1, 255) for _ in range(rng.randint(1, 30)))
+                cut = "garbage"
+            elif roll < 0.62:
+                # one flipped bit anywhere: if a module reading the stream whole does not return the same tar, the recipe must not be complete
+                at = rng.randrange(len(blob))
+                flipped = bytearray(blob)
+                flipped[at] ^= 1 << rng.randrange(8)
+                blob = bytes(flipped)
+                try:
+                    same = {"tgz": gzip.decompress, "tbz2": bz2.decompress, "txz": lzma.decompress}[kind](blob) == full
+                except Exception:
+                    same = False
+                if not same:
+                    cut = "compressed"
+                    damaged = True
             open(dest, "wb").write(blob)
     env = dict(os.environ)
     if kept_cap:
@@ -836,7 +880,7 @@ def recipe_case(pack, seed, case, rep, rng, kept_cap=None):
             if os.path.isfile(p):
                 out_text += open(p, "rb").read().decode("utf-8", "replace")
     for c in set(case.canaries) - EMPTY:
-        if c and (c in out_text or c.upper() in out_text or c in run.stdout):
+        if not damaged and c and (c in out_text or c.upper() in out_text or c in run.stdout):
             rep.find("recipe", seed, "credential-store digest printed", c)
             break
     try:
