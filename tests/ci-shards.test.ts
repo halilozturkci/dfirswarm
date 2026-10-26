@@ -1,13 +1,16 @@
 /**
- * The macOS CI job is split in parts that run side by side: one runs the
- * typecheck and every node suite, the others the shell suites, `--shard I/N`
- * each (scripts/test-bash.sh). Splitting must not lose a test, so this suite
- * reads the workflow and the shard assignment and fails if any shell suite is
- * in no shard, in two, or if the node suites are not all run by one part.
+ * The macOS CI job is split in parts that run side by side: some run the node
+ * suites, `--test-shard I/N` each (node's own, handed through `npm test`; the
+ * first of them also runs the typecheck), the others the shell suites,
+ * `--shard I/N` each (scripts/test-bash.sh). Splitting must not lose a test, so
+ * this suite reads the workflow and the shard assignment and fails if any shell
+ * suite is in no shard or in two, or if the node parts are not shards 1..N of
+ * one N that together leave no node suite out.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -76,11 +79,19 @@ test("the weights file names only suites that exist, once each", () => {
 
 test("the macOS job's parts together run every node suite and every shell suite", () => {
   const job = macosJob();
-  // Node: exactly one matrix entry has `node: true`, and its steps run the
-  // whole of `npm test` (scripts/test-node.ts finds every suite itself).
-  assert.equal((job.match(/^\s+node: true$/gm) ?? []).length, 1, "exactly one part runs the node tests");
-  assert.match(job, /- name: Node tests\n\s+if: matrix\.node\n\s+run: npm test\n/, "the node part must run plain `npm test`, with no filter");
-  assert.match(job, /if: matrix\.node\n\s+run: npm run typecheck\n/, "the typecheck stays in the node part");
+  // Node: the matrix names every shard 1..N of one N, each once, and the step
+  // passes the part's own shard to node. The suites themselves are all found
+  // by scripts/test-node.ts, with no filter, so a new one is in some shard.
+  const nodeShards = [...job.matchAll(/^\s+node: "(\d+)\/(\d+)"$/gm)].map((m) => [Number(m[1]), Number(m[2])]);
+  assert.ok(nodeShards.length >= 1, "no node part in the macOS job");
+  const nn = nodeShards[0][1];
+  assert.deepEqual(nodeShards.map(([i]) => i).sort(), Array.from({ length: nn }, (_, k) => k + 1), "the node parts must be shards 1..N, each once");
+  assert.ok(nodeShards.every(([, m]) => m === nn), "the node parts name different shard counts");
+  assert.match(job, /- name: Node tests[^\n]*\n\s+if: matrix\.node\n\s+run: npm test -- --test-shard=\$\{\{ matrix\.node \}\}\n/, "the node step must run `npm test` with the part's own --test-shard and no filter");
+  // The typecheck is done once: in exactly one part, which is a node part.
+  assert.equal((job.match(/^\s+typecheck: true$/gm) ?? []).length, 1, "exactly one part runs the typecheck");
+  assert.match(job, /- name: Typecheck\n\s+if: matrix\.typecheck\n\s+run: npm run typecheck\n/, "the typecheck step must run for the part that names it");
+  assert.match(job, /node: "\d+\/\d+"\n\s+typecheck: true\n/, "the typecheck belongs to a node part");
   // Shell: the matrix names every shard 1..N of one N, and the step passes it on.
   const shards = [...job.matchAll(/^\s+shard: "(\d+)\/(\d+)"$/gm)].map((m) => [Number(m[1]), Number(m[2])]);
   assert.ok(shards.length >= 1, "no shell part in the macOS job");
@@ -91,6 +102,33 @@ test("the macOS job's parts together run every node suite and every shell suite"
   // And that shard count, applied by the script, covers all of them.
   const ran = Array.from({ length: n }, (_, k) => shardOf(k + 1, n)).flat();
   assert.deepEqual([...ran].sort(), allShellSuites());
+});
+
+test("node's --test-shard, as the node parts use it, runs every suite file exactly once", () => {
+  // Measured on this Node, not assumed: five tiny suites, every shard of 1..4
+  // run with `--test-shard` and the files that ran collected from the output.
+  const dir = mkdtempSync(join(tmpdir(), "ci-node-shard-"));
+  // Inside a test run, node reports a nested `node --test` to its parent
+  // instead of printing: take the marker out so the child prints its own.
+  const childEnv = { ...process.env };
+  delete childEnv.NODE_TEST_CONTEXT;
+  try {
+    const files = ["a", "b", "c", "d", "e"].map((k) => {
+      const f = join(dir, `${k}.test.mjs`);
+      writeFileSync(f, `import { test } from "node:test";\ntest("t", () => { console.log("RAN-${k}"); });\n`);
+      return f;
+    });
+    for (const n of [1, 2, 3, 4]) {
+      const ran: string[] = [];
+      for (let i = 1; i <= n; i++) {
+        const out = execFileSync(process.execPath, ["--test", `--test-shard=${i}/${n}`, ...files], { encoding: "utf8", env: childEnv });
+        ran.push(...[...out.matchAll(/RAN-([a-e])/g)].map((m) => m[1]));
+      }
+      assert.deepEqual([...ran].sort(), ["a", "b", "c", "d", "e"], `${n} node shards: their union is not every suite, or a suite ran twice`);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("the node suites npm test runs are found by scripts/test-node.ts, none lost to a filter", () => {
