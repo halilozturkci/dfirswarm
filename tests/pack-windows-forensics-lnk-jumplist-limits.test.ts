@@ -446,7 +446,7 @@ test("jumplist reads a DestList to its first 50,000 entries and names the rest; 
     const exact = body<Answer>(await tool("jumplist", cwd, { path: "work/exact.automaticDestinations-ms", limit: 3 }));
     const exactFile = exact.files[0] as Answer;
     assert.equal(exactFile.entry_count, 50_000);
-    assert.equal(exactFile.problems, undefined);
+    assert.deepEqual(exactFile.problems, []);
     assert.equal(exact.status, "complete");
     const over = body<Answer>(await tool("jumplist", cwd, { path: "work/over.automaticDestinations-ms", limit: 3 }));
     const overFile = over.files[0] as Answer;

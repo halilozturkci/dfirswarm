@@ -386,8 +386,35 @@ test("regfexport gets a ceiling on its memory: a program that wants three gigaby
     assert.equal(reader.finished, false);
     assert.ok(reader.limits.address_space_bytes >= 2 ** 30 && reader.limits.address_space_bytes < 2 ** 30 + 1e6, JSON.stringify(reader.limits));
     assert.match(reader.why_not_finished, /exited with status \d+/);
-    assert.match(reader.why_not_finished, /held to \d+ bytes of address space/);
+    assert.match(reader.why_not_finished, /it ran with at most \d+ bytes of address space/);
     assert.equal(out.status, "partial");
+  });
+});
+
+test("regfexport's lines are counted once, however the pipe cuts its output: a line that ends one read and sits in the carried bytes of the next is not counted again", { skip }, async () => {
+  await withCwd(async (cwd, bin) => {
+    // The first read ends right after "Value: " and the second begins with its text, 300 ms later: the old carry of twelve bytes held the whole of "\nValue: ".
+    await stub(bin, "regfexport", "printf 'Key path: k1\\nValue: '; sleep 0.4; printf 'v1\\nKey path: k2\\nValue: '; sleep 0.4; printf 'v2\\n'");
+    await writeFile(join(cwd, "work", "h.dat"), G[0]);
+    const out = body<Answer>(await tool("registry_recover", cwd, { hive: "work/h.dat", limit: 5, export: true }, {}, bin));
+    const reader = out.records.independent_reader.regfexport;
+    assert.equal(reader.finished, true);
+    assert.deepEqual([reader.keys, reader.values], [2, 2]);
+  });
+});
+
+test("a regfexport that exits with an error leaves the status partial and says so: an independent read that was not made is not a clean one", { skip }, async () => {
+  await withCwd(async (cwd, bin) => {
+    await stub(bin, "regfexport", "echo 'Key path: x'; exit 3");
+    await writeFile(join(cwd, "work", "h.dat"), G[0]);
+    const out = body<Answer>(await tool("registry_recover", cwd, { hive: "work/h.dat", limit: 5, export: true }, {}, bin));
+    const reader = out.records.independent_reader.regfexport;
+    assert.equal(reader.finished, false);
+    assert.equal(reader.exit_code, 3);
+    assert.equal(reader.agrees, undefined);
+    assert.equal(out.records.status, "complete", "regipy's own read was whole");
+    assert.equal(out.status, "partial");
+    assert.match(out.status_basis, /regfexport exited with status 3 after 12 bytes of output, so it did not read the hive to its end/);
   });
 });
 

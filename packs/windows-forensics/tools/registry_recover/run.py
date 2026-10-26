@@ -1699,8 +1699,9 @@ def regfexport_counts(path, seconds):
                 over_output = True
                 break
             data = carry + chunk
-            keys += data.count(b"\nKey path: ")
-            values += data.count(b"\nValue: ")
+            # What lies wholly in the carry was counted with the chunk before it: only the matches that reach into this chunk are new.
+            keys += data.count(b"\nKey path: ") - carry.count(b"\nKey path: ")
+            values += data.count(b"\nValue: ") - carry.count(b"\nValue: ")
             carry = data[-12:]
         code = proc.wait()
     finally:
@@ -1723,8 +1724,8 @@ def regfexport_counts(path, seconds):
         elif code < 0:
             result["why_not_finished"] = "regfexport was ended by signal %d (%s): its counts are partial and are not compared" % (-code, "the hive may be damaged in a way that breaks the library")
         else:
-            result["why_not_finished"] = ("regfexport exited with status %d after %d bytes of output%s: its counts are partial and are not compared"
-                                          % (code, printed, " (it was held to %d bytes of address space, and a program that cannot get more stops or fails)" % memory_applied if memory_applied else ""))
+            result["why_not_finished"] = ("regfexport exited with status %d after %d bytes of output, so it did not read the hive to its end: its counts are partial and are not compared%s"
+                                          % (code, printed, " (it ran with at most %d bytes of address space)" % memory_applied if memory_applied else ""))
     return result
 
 
