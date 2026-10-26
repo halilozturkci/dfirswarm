@@ -31,7 +31,13 @@ whole in files); a function the installed version does not have is `unsupported`
 with that reason. Plaso is not run (the base pack's disk-timeline recipe runs it over a disk image).
 
 Processes. Every tool runs in this process's own group, never a session of its own, so the harness ending the recipe by killing
-its group ends them; SIGTERM, SIGINT and SIGHUP end the running tool, write the receipt as `incomplete` and exit 128 + the signal.
+its group ends them; SIGTERM, SIGINT and SIGHUP end the running tool, write the receipt as partial and exit 128 + the signal. In that
+receipt the family being read is `interrupted` (its counts are the calls that had ended), every family not yet started is
+`not_attempted` with its inputs and calls counted, and the status text says only that.
+
+Logs. The files beside a hive named for its logs (.LOG1, .LOG2, and a legacy single .LOG when there is no pair) are looked at with lstat:
+a symbolic link (dangling or not), a directory or a pipe is never followed, opened or handed to registry_recover. The hive is read
+without it, the row names it under `log_files_not_used`, and the hive's call ends `partial` at best.
 """
 import json
 import os
