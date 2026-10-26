@@ -241,10 +241,13 @@ COUNTS = {"names": 0, "urls": 0, "text": 0}
 _RUN = re.compile(r"[A-Za-z0-9_+%-]{20,}={0,2}|[A-Za-z0-9_+%-]{14,}={2}")
 _SLASHED = re.compile(r"[A-Za-z0-9_+/%-]{30,}={0,2}")
 _HEX = re.compile(r"[0-9a-fA-F]{32,}")
-_PREFIXED = re.compile(r"(?:AKIA|ASIA)[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}"
-                       r"|xox[abeprs]-[A-Za-z0-9-]{10,}|sk-[A-Za-z0-9_-]{20,}"
-                       r"|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*"
-                       r"|(?i:basic|bearer)\s+[A-Za-z0-9+/=._~-]{8,}")
+# The prefixed secrets that one expression finds. A JWT is not among them: `eyJ` + 8 name characters + `.` + 8 + `.` + the rest, tried at
+# every `eyJ`, runs to the end of the run of name characters and fails again at each next `eyJ` of a text made of them, which costs the
+# square of the length. `_prefixed_spans` reads a JWT in one pass instead, and puts it in order with these.
+_PREFIX_RULES = re.compile(r"(?:AKIA|ASIA)[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}"
+                           r"|xox[abeprs]-[A-Za-z0-9-]{10,}|sk-[A-Za-z0-9_-]{20,}"
+                           r"|(?i:basic|bearer)\s+[A-Za-z0-9+/=._~-]{8,}")
+_JWT_RUN = re.compile(r"[A-Za-z0-9_-]+")
 # User-info: after `//` (a URL, or a scheme-relative one), or bare as name:password@host. A mailto: address is not one.
 _USERINFO = re.compile(r"(?<=//)[^/?#\s@]+(?=@)")
 _BARE_USERINFO = re.compile(r"(?<![\w.%+:/-])(?!mailto:)[\w.%+-]{1,64}:[^\s/@:]{1,128}(?=@[\w\[])")
@@ -291,9 +294,65 @@ def _randomish(piece):
 
 
 _SPAN_PIECE = re.compile(r"[A-Za-z0-9_+%-]+")
-# A text longer than this is withheld whole, by its length, and not examined: the examination is linear, but a text of
-# millions of characters is not one a name or a URL is, and the answer says how long it was.
-TEXT_LIMIT = 2097152
+# A text longer than this is withheld whole, by its length, and not examined: no name, path or URL is tens of thousands of characters
+# long, and the answer says how long the text was. Every rule below reads a text of this length in well under a second whatever its
+# characters are, so that no call of `scrub` or `token_spans` can run for long on a text a file chose; the limit is the backstop for
+# a shape of text that no rule was tried on, and the rules themselves are linear.
+TEXT_LIMIT = 65536
+
+
+def _prefixed_spans(text, tail=None):
+    """The spans of the prefixed secrets in the text (a vendor prefix, a JWT, `Basic`/`Bearer` and its value), left to right and apart,
+    as one expression holding all of them would find them (the first match at each offset, the next search where the last ended), in
+    time linear in the text. With `tail`, an expression matched where each span ends, the span takes what it matches.
+
+    A JWT is read from the runs of name characters (`[A-Za-z0-9_-]+`), cut once: its head is the first `eyJ` of a run that is followed
+    by 8 or more characters of that run, and it ends where the third part of the JWT does; every later `eyJ` of the run reads the same
+    rest, so the first one is the one that matches and a run that does not hold a JWT is not read again for each `eyJ` in it."""
+    from bisect import bisect_right
+    size = len(text)
+    starts, ends, rest = [], [], {}
+    if "eyJ" in text:
+        for m in _JWT_RUN.finditer(text):
+            starts.append(m.start())
+            ends.append(m.end())
+
+    def jwt_end(r):      # where a JWT whose head is in run r ends, or -1: `.`, a run of 8 or more, `.`, then the rest of the next run
+        if r not in rest:
+            end, last = -1, ends[r] + 1
+            if (last < size and text[last - 1] == "." and r + 1 < len(starts) and starts[r + 1] == last
+                    and ends[r + 1] - last >= 8 and ends[r + 1] < size and text[ends[r + 1]] == "."):
+                end = ends[r + 1] + 1
+                if r + 2 < len(starts) and starts[r + 2] == end:
+                    end = ends[r + 2]
+            rest[r] = end
+        return rest[r]
+
+    def next_jwt(at):    # (start, end) of the first JWT that starts at or after `at`, or None
+        while True:
+            p = text.find("eyJ", at)
+            if p < 0:
+                return None
+            r = bisect_right(starts, p) - 1
+            if p + 11 <= ends[r] and jwt_end(r) >= 0:
+                return p, jwt_end(r)
+            at = ends[r]  # no `eyJ` further in this run can be a head either
+
+    spans, at = [], 0
+    other = _PREFIX_RULES.search(text)
+    jwt = next_jwt(0) if starts else None
+    while other is not None or jwt is not None:
+        if other is not None and other.start() < at:      # it began inside the span just taken: look again from its end
+            other = _PREFIX_RULES.search(text, at)
+        elif jwt is not None and jwt[0] < at:
+            jwt = next_jwt(at)
+        else:
+            start, end = other.span() if jwt is None or (other is not None and other.start() < jwt[0]) else jwt
+            if tail is not None:
+                end = tail.match(text, end).end()
+            spans.append((start, end))
+            at = end
+    return spans
 
 
 def _grow_spans(text, spans):
@@ -372,7 +431,7 @@ def _grow_spans(text, spans):
 def token_spans(text):
     if len(text) > TEXT_LIMIT:
         return [(0, len(text))]
-    spans = [m.span() for m in _PREFIXED.finditer(text)]
+    spans = _prefixed_spans(text)
     for m in _RUN.finditer(text):
         if _token_run(m.group()):
             spans.append(m.span())

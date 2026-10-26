@@ -53,10 +53,11 @@ import time
 from pathlib import Path
 
 TOOL = "journal_export"
-PARSER = "journal_export/5"
+PARSER = "journal_export/6"
 DEFAULT_LIMIT = 200
 DEFAULT_SECONDS = 240.0
 MAX_SECONDS = 270.0           # the most a caller may ask for (the manifest allows 300)
+MAX_WALK_ENTRIES = 100000     # a journal directory holds a few hundred files; a directory with more entries than this is not one, and is not walked on
 FIRST_FAILURES = 20
 MAX_BOOTS = 5000
 MAX_BOOT_ID = 128          # a boot id is 32 hexadecimal digits; a longer one is counted and not grouped
@@ -535,6 +536,51 @@ def is_own_journal(path, own_journals=None):
     return any(spelling == home or spelling.startswith(home.rstrip(os.sep) + os.sep) for spelling in spellings for home in homes)
 
 
+def refuse_root_directory(path):
+    """A directory that is the root of the file system (spelled however, or reached through a link such as /proc/self/root) is a whole
+    file system and not a journal: it is refused before anything below it is looked at."""
+    if os.path.isdir(path) and os.path.realpath(path) == os.sep:
+        fail("refusing the root directory: it is a whole file system, not a journal. Pass the journal's own directory (such as "
+             "var/log/journal/<machine id>) or its .journal files", path=path)
+
+
+def look_for_links(top, deadline):
+    """(links found, entries looked at, why the walk ended early or None): every entry below `top` is examined with lstat and no link
+    is followed. The clock is read for every entry and the walk ends at MAX_WALK_ENTRIES, so a directory that is not a journal's
+    (a whole file system passed by mistake) costs a bounded time. Names are listed lazily (scandir), so one directory of millions
+    of entries is not read whole before the first look at the clock."""
+    links, looked, stack = [], 0, []
+    try:
+        stack.append(os.scandir(top))
+    except OSError as exc:
+        return links, looked, "the directory could not be listed: %s" % describe(exc)
+    try:
+        while stack:
+            try:
+                entry = next(stack[-1])
+            except StopIteration:
+                stack.pop().close()
+                continue
+            except OSError as exc:
+                return links, looked, "a directory could not be listed: %s" % describe(exc)
+            looked += 1
+            if time.monotonic() > deadline:
+                return links, looked, "max_seconds passed after %d entries, in %s" % (looked, os.path.dirname(entry.path))
+            if looked > MAX_WALK_ENTRIES:
+                return links, looked, "more than %d entries were met, in %s: this is not a journal directory" % (MAX_WALK_ENTRIES, os.path.dirname(entry.path))
+            try:
+                if entry.is_symlink():
+                    links.append(entry.path)
+                elif entry.is_dir(follow_symlinks=False):
+                    stack.append(os.scandir(entry.path))
+            except OSError as exc:
+                return links, looked, "%s could not be examined: %s" % (entry.path, describe(exc))
+    finally:
+        for it in stack:
+            it.close()
+    return links, looked, None
+
+
 def decoded_time(micro):
     try:
         return (EPOCH + datetime.timedelta(microseconds=int(micro))).isoformat() + "Z", None
@@ -743,6 +789,7 @@ def main():
             walked = os.path.join(walked, part)
             if os.path.islink(walked):
                 fail("refusing a path that goes through a link (%s): pass the journal's real location inside the evidence" % walked, path=path, link=walked)
+    refuse_root_directory(path)
     mode = args.get("mode", "export")
     if mode not in ("export", "verify"):
         fail("mode must be export or verify")
@@ -751,6 +798,7 @@ def main():
     if preview_text:
         require_job("preview_text")
     seconds = want_seconds(args, "max_seconds", DEFAULT_SECONDS, MAX_SECONDS)
+    started = time.monotonic()      # max_seconds covers the whole call: the walk below and journalctl share it
     if args.get("grep") and not in_job():
         fail("grep is refused outside a job: it matches the text of the messages, which this answer withholds, so a count of what "
              "it matched would be an oracle on that text. Run this as job_run tool=journal_export with secret_output: true, and ask again there.")
@@ -770,14 +818,15 @@ def main():
              install="apt-get install -y systemd; the journal is a binary format that journalctl reads",
              note="On macOS there is no journalctl at all: copy the journal to a Linux host.")
     if os.path.isdir(path):
-        links = []
-        for root_, dirs_, names_ in os.walk(path):
-            for entry_ in dirs_ + names_:
-                if os.path.islink(os.path.join(root_, entry_)):
-                    links.append(os.path.join(root_, entry_))
+        links, looked, stopped = look_for_links(path, started + seconds)
         if links:
             fail("refusing a journal directory that holds links: journalctl --directory may follow them out of the evidence. "
-                 "Pass each real journal file as path instead.", links=links[:FIRST_FAILURES], link_count=len(links))
+                 "Pass each real journal file as path instead.", links=links[:FIRST_FAILURES], link_count=len(links),
+                 entries_looked_at=looked, walk_ended_early=stopped)
+        if stopped:
+            fail("the directory could not be checked for links, so journalctl was not run on it: %s. Pass the journal's own directory "
+                 "(such as var/log/journal/<machine id>) or its .journal files, not a directory that holds more than a journal." % stopped,
+                 path=path, entries_looked_at=looked, walk_ended_early=stopped)
     where = ["--directory" if os.path.isdir(path) else "--file", path]
 
     if mode == "verify":
@@ -788,7 +837,7 @@ def main():
         try:
             with open(out_path, "wb") as sink:
                 STATE["last_word"] = lambda signum: sink.flush()
-                code, timed_out = run_journalctl(argv, sink.write, lambda raw: None, lambda size: None, err_path, seconds)
+                code, timed_out = run_journalctl(argv, sink.write, lambda raw: None, lambda size: None, err_path, max(1.0, seconds - (time.monotonic() - started)))
         except OSError as exc:
             fail("journalctl could not be run: %s" % describe(exc), argv=argv)
         outcome = status_of(not timed_out, False,
@@ -884,7 +933,7 @@ def main():
     install_signal_handlers()
     STATE["last_word"] = lambda signum: text.close()
     try:
-        code, timed_out = run_journalctl(argv, text.add_bytes_raw, sink, oversized, err_path, seconds)
+        code, timed_out = run_journalctl(argv, text.add_bytes_raw, sink, oversized, err_path, max(1.0, seconds - (time.monotonic() - started)))
     except OSError as exc:
         text.close()
         fail("journalctl could not be run: %s" % describe(exc), argv=argv)

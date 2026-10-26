@@ -50,7 +50,7 @@ import zlib
 from pathlib import Path
 
 TOOL = "auth_log"
-PARSER = "auth_log/5"
+PARSER = "auth_log/6"
 DEFAULT_LIMIT = 200
 FIRST_FAILURES = 20
 MAX_LINE = 64 << 10         # a physical line longer than this is located, not parsed
@@ -367,10 +367,15 @@ RULES = [
     ("ssh_invalid_user", re.compile(r"^(?:Invalid|Illegal) user (?P<user>.*) from (?P<source>\S+)(?: port (?P<port>\d+))?")),
     ("ssh_disconnect", re.compile(
         r"^Received disconnect from (?P<source>\S+) port (?P<port>\d+):(?P<disconnect_code>\d{1,6}):\s*(?P<reason>.*)$")),
+    # sshd always writes the port, and after it only a bracketed stage such as [preauth]. For an invalid user anything else is not
+    # that form: the whole of what follows the words is the typed name (a name can hold " x port 1"), and no source is read from it.
     ("ssh_disconnect", re.compile(
-        r"^Disconnected from (?P<role>authenticating user|invalid user|user) (?P<user>.*) (?P<source>\S+) port (?P<port>\d+)(?P<stage>.*)$")),
+        r"^Disconnected from (?P<role>invalid user) (?P<user>.*) (?P<source>\S+) port (?P<port>\d+)(?P<stage>(?: \[[^\]]*\])?)$")),
+    ("ssh_disconnect", re.compile(r"^Disconnected from (?P<role>invalid user) (?P<user>.* \S+)$")),
     ("ssh_disconnect", re.compile(
-        r"^Disconnected from (?P<role>authenticating user|invalid user|user) (?P<user>.*) (?P<source>\S+)$")),
+        r"^Disconnected from (?P<role>authenticating user|user) (?P<user>.*) (?P<source>\S+) port (?P<port>\d+)(?P<stage>.*)$")),
+    ("ssh_disconnect", re.compile(
+        r"^Disconnected from (?P<role>authenticating user|user) (?P<user>.*) (?P<source>\S+)$")),
     ("ssh_disconnect", re.compile(
         r"^Disconnected from (?!(?:authenticating user|invalid user|user) )(?P<source>\S+)(?: port (?P<port>\d+))?(?P<stage>.*)$")),
     ("key_observed_authentication", re.compile(

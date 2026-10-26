@@ -29,7 +29,14 @@ jobs:
     # (windows, reverse engineering, virtualization) made it 30 to 35 min (the
     # slowest success 34 min 54 s of the 35, and 14 runs cut off at 35 min 18 s),
     # so the limit is 60: a hang is still stopped, a grown suite is not.
-    timeout-minutes: 60
+    #
+    # Hosted runners vary in speed. Over the last 60 runs (41 successes) this
+    # job took 36 to 59 min 54 s (median 53.5), four runs were cut off at the
+    # limit, and on a slow host `npm test` alone took about 23 minutes and
+    # `npm run test:bash` was cut off. 60 left no room for a slow host, so the
+    # limit is 90, the same as the macOS node parts. A hang is still stopped:
+    # every test has its own 5-minute limit (scripts/test-node.ts).
+    timeout-minutes: 90
     steps:
       # actions/checkout runs `git init` on the runner, and git prints its
       # init.defaultBranch hint unless one is configured.
@@ -85,8 +92,11 @@ jobs:
     name: typecheck · node tests · Node 22.19 (the engines floor)
     runs-on: ubuntu-latest
     # The node suites alone take 13 to 20 min now (the slowest success 20 min 0 s
-    # of the 20): 35, the same step up as the job above.
-    timeout-minutes: 35
+    # of the 20): 35, the same step up as the job above. Over the last 60 runs
+    # the 43 successes took 20 to 34 min (the slowest 33 min 54 s of the 35) and
+    # two runs were cut off at the limit on a slow host, so now 55 (1.6 times
+    # the slowest success).
+    timeout-minutes: 55
     steps:
       - run: git config --global init.defaultBranch main
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -111,8 +121,10 @@ jobs:
     # builds on node:24. The node suites again, on 24.
     name: node tests · Node 24 (the VM image's)
     runs-on: ubuntu-latest
-    # 14 to 19 min now (the slowest success 19 min 12 s of the 20): 35.
-    timeout-minutes: 35
+    # 14 to 19 min now (the slowest success 19 min 12 s of the 20): 35. Over the
+    # last 60 runs the 48 successes took 19 to 32 min (the slowest 32 min 24 s of
+    # the 35, none cut off yet), so the same 55 as the Node 22.19 job.
+    timeout-minutes: 55
     steps:
       - run: git config --global init.defaultBranch main
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -215,8 +227,9 @@ jobs:
     # sorted suite files out round-robin) and the shell suites are two, dealt
     # out by the time each takes (tests/shell-suites.weights): 12 to 19
     # minutes each over
-    # the first three runs. The limit stays at 55; a job is there to stop a hang.
-    # tests/ci-shards.test.ts holds the three to cover every node suite and
+    # the first three runs. A job's limit is there to stop a hang, so the shell
+    # parts keep 55; the node parts are given more, below.
+    # tests/ci-shards.test.ts holds the four parts to cover every node suite and
     # every shell suite exactly once, so a new suite is never in no job.
     #
     # The node part is the slow one on a hosted runner, and its speed varies:
@@ -224,7 +237,7 @@ jobs:
     # 2026-10-22, when the same suite ran at about half speed. The first was cut
     # off with 3911 of 4550 tests done, the second finished all of them (0
     # failed) 53.6 minutes in and was still marked cancelled by the limit. So
-    # that part gets 90; the shell parts (12 to 22 minutes) keep 55. A hang is
+    # the node parts get 90; the shell parts (12 to 22 minutes) keep 55. A hang is
     # still stopped: every test has its own 5-minute limit (scripts/test-node.ts).
     timeout-minutes: ${{ matrix.node && 90 || 55 }}
     strategy:

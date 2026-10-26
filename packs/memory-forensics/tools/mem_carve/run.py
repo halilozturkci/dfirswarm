@@ -46,6 +46,11 @@ the first window is always searched whole and the first hit always reported, so 
 that is given so little time that it cannot finish even that runs past `max_seconds` by
 that one window of work and still moves `resume_start` forward; a resume loop ends.
 
+STOPS. A signal (SIGTERM, SIGINT, SIGHUP) ends the tool with one JSON answer (status "interrupted", exit 128 plus the signal) that names the
+hits kept so far under a visible name ending in .partial, never a hidden temporary one, and resume_start. Once the sweep has ended, the hit list is
+placed under its final name and the answer written without a stop being acted on (a stop that arrives then is held until the answer is out and
+changes nothing, signal_after_sweep says it came): the answer is the complete one, and stdout never holds two documents.
+
 MEMORY CONTENT. A slice is memory content: it can be a credential store (a SAM, SYSTEM
 or SECURITY hive, a browser database) or run into the pages next to one. The hit list
 (offsets, kinds, validation) is always available; cutting slices out (`extract_to`)
@@ -55,19 +60,35 @@ deliberately: a cracking tool downstream is a legitimate next step and stays
 available; the slices are written into a directory with mode 0700, as files with mode
 0600, and the answer names them and never prints their content or a digest of it.
 """
-import errno
-import hashlib
 import json
 import os
-import re
 import signal
-import struct
 import sys
-import tempfile
-import time
-from pathlib import Path
 
-PARSER = "mem_carve/5"
+PARSER = "mem_carve/6"
+
+
+def _before_start(signum, _frame):
+    """A stop that arrives while the rest of the module is still loading: nothing was read or written yet, and the one answer says so."""
+    sys.stdout.write(json.dumps({
+        "error": "stopped by signal %d before the sweep started" % signum, "status": "interrupted",
+        "status_basis": "the tool was stopped by signal %d before it read or wrote anything; nothing is a finding, and the call can be repeated "
+                        "as it was" % signum,
+        "signal": signum, "parser": PARSER, "partial_results": None, "resume_start": None, "hit_count_so_far": 0}) + "\n")
+    sys.stdout.flush()
+    os._exit(128 + signum)
+
+
+for _signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+    signal.signal(_signum, _before_start)   # replaced by run_guarded() once the module is loaded
+
+import errno  # noqa: E402  (after the early handler, so a stop during these imports is answered too)
+import hashlib  # noqa: E402
+import re  # noqa: E402
+import struct  # noqa: E402
+import tempfile  # noqa: E402
+import time  # noqa: E402
+from pathlib import Path  # noqa: E402
 SIGNATURES = [
     (b"regf", "registry hive", 1 << 20),
     (b"ElfChnk\x00", "event log chunk", 65536),
@@ -113,7 +134,9 @@ FIND_CHECK_EVERY = 1 << 16  # finds between two looks at the clock inside one wi
 # under work/<agent>/tool-output (in a job, $OUT/tool-output) and names it. A row is serialised with the default ASCII
 # escapes, so a name that is not valid UTF-8 (a lone surrogate) is written as a \udcXX escape and cannot break the writer.
 # The finished file is placed without replacing an earlier one (a rerun that stopped sooner never leaves a smaller file
-# where a larger one was; the name actually used is the one in `shown`), and a stop removes or names the temporary file.
+# where a larger one was; the name actually used is the one in `shown`), and a stop removes or names the temporary file, under a name
+# an answer may print (never the hidden one). Closing and placing the file is held against a stop, which is acted on right after.
+# The module that carries this block defines GUARD (a dict with "depth") and checkpoint().
 def same_bytes(a, b):
     """Whether two files hold the same bytes (read in blocks, never whole)."""
     try:
@@ -144,9 +167,34 @@ def place_without_replacing(tmp, path):
                 return candidate
             continue
         os.close(fd)
-        os.replace(tmp, candidate)             # only replaces the empty file this call just made
+        try:
+            os.replace(tmp, candidate)         # only replaces the empty file this call just made
+        except OSError:
+            try:
+                os.unlink(candidate)           # the empty name this call took is not left behind
+            except OSError:
+                pass
+            raise
         return candidate
     raise OSError(errno.EEXIST, "no free name beside %s" % path)
+
+
+def place_visibly(tmp, wanted):
+    """Give the kept `tmp` a name an answer may print: `wanted` (or the next free one), and when the directory refuses that, a plain
+    rename to <wanted>.<pid>. Returns the path, or None when `tmp` is gone or could not be renamed. The hidden name of `tmp` is never
+    what an answer prints: a caller that gets None says that nothing is named."""
+    try:
+        return place_without_replacing(tmp, wanted)
+    except OSError:
+        pass
+    if not os.path.lexists(tmp):
+        return None
+    fallback = wanted.with_name("%s.%d" % (wanted.name, os.getpid()))
+    try:
+        os.rename(tmp, fallback)
+    except OSError:
+        return None
+    return fallback
 
 
 PAGES = []
@@ -163,6 +211,7 @@ class LosslessPage:
         self.bytes = 0                          # what the whole result takes as JSON Lines, kept in memory or not
         self._out = None
         self._tmp: Path | None = None
+        self.placed = False                     # the finished file is under its final name (and, if a stop comes now, is kept and named)
         digest = hashlib.sha256(
             json.dumps(key, sort_keys=True, default=str).encode("utf-8", "surrogatepass")
         ).hexdigest()[:16]
@@ -193,8 +242,10 @@ class LosslessPage:
             return
         if self._out is None:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            fd, name = tempfile.mkstemp(dir=self.path.parent, prefix=f".{self.path.name}-")
-            self._tmp = Path(name)
+            # The object knows the hidden name before the file exists, so a stop at any point leaves nothing that abort() or
+            # keep_partial() cannot find.
+            self._tmp = self.path.parent / (".%s-%s" % (self.path.name, os.urandom(6).hex()))
+            fd = os.open(str(self._tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
             self._out = os.fdopen(fd, "w", encoding="ascii")
             for kept in self.page:
                 self._write(json.dumps(kept, default=str))
@@ -203,15 +254,21 @@ class LosslessPage:
     def finish(self) -> dict:
         result = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
         if self._out is not None:
-            self._out.flush()
-            os.fsync(self._out.fileno())
-            self._out.close()
-            self._out = None
-            assert self._tmp is not None
-            placed = place_without_replacing(self._tmp, self.path)
-            self._tmp = None
-            self.path = placed
-            self.shown = self.shown[: len(self.shown) - len(self.shown.rsplit("/", 1)[-1])] + placed.name
+            GUARD["depth"] += 1                 # closing the file and giving it its name is finished before a stop is acted on
+            try:
+                self._out.flush()
+                os.fsync(self._out.fileno())
+                self._out.close()
+                self._out = None
+                assert self._tmp is not None
+                placed = place_without_replacing(self._tmp, self.path)
+                self._tmp = None
+                self.path = placed
+                self.shown = self.shown[: len(self.shown) - len(self.shown.rsplit("/", 1)[-1])] + placed.name
+                self.placed = True
+            finally:
+                GUARD["depth"] -= 1
+            checkpoint()
             result["all_results"] = self.shown
             result["all_results_format"] = "JSON Lines, one complete result per line"
         return result
@@ -231,15 +288,19 @@ class LosslessPage:
     def keep_partial(self):
         """Close the temporary file and give it a visible name ending in .partial (never replacing a file); returns the
         path, or None when nothing was being written. Whole lines only are in it when the rows were added whole."""
-        if self._out is None or self._tmp is None:
+        if self._tmp is None:
             return None
-        try:
-            self._out.flush()
-            self._out.close()
-        except OSError:
-            pass
-        self._out = None
-        placed = place_without_replacing(self._tmp, self.path.with_name(self.path.name + ".partial"))
+        if self._out is not None:
+            try:
+                self._out.flush()
+                self._out.close()
+            except OSError:
+                pass
+            self._out = None
+        if not os.path.lexists(self._tmp):      # a stop between choosing the name and creating the file
+            self._tmp = None
+            return None
+        placed = place_visibly(self._tmp, self.path.with_name(self.path.name + ".partial"))
         self._tmp = None
         return placed
 # END SHARED PAGE
@@ -309,8 +370,11 @@ class Terminated(BaseException):
         self.signum = signum
 
 
+# GUARD["depth"] above zero holds a signal until the section is over (it is acted on at the next checkpoint(), or, in the end game, after the
+# answer is out); GUARD["stopping"] says a stop is under way or the answer has left, so a later signal changes nothing.
 GUARD = {"depth": 0, "pending": None, "stopping": False}
-STATE = {"partial": None, "resume_start": None, "extract_manifest": None, "hits_so_far": 0, "extracted": 0}
+ANSWER = {"printed": False}
+STATE = {"resume_start": None, "extract_manifest": None, "hits_so_far": 0, "extracted": 0}
 
 
 def _on_signal(signum, _frame):
@@ -331,19 +395,34 @@ def checkpoint():
         raise Terminated(signum)
 
 
+def emit(text):
+    """The one way an answer leaves: whole, once, and not cut by a signal. A signal that arrives while it is written is held, and once it
+    is out a later one changes nothing, so stdout never holds two documents (a complete answer followed by an interrupted one)."""
+    GUARD["depth"] += 1
+    try:
+        if ANSWER["printed"]:
+            return False
+        ANSWER["printed"] = True
+        print(text, flush=True)
+        return True
+    finally:
+        GUARD["depth"] -= 1
+        GUARD["stopping"] = True
+
+
 def interrupted_answer(signum, **extra):
-    print(json.dumps({
+    emit(json.dumps({
         "error": "stopped by signal %d before the sweep was complete" % signum,
         "status": "interrupted",
         "status_basis": "the tool was stopped by signal %d; the hits written so far are named in partial_results and every "
                         "hit with a signature offset before resume_start is in them" % signum,
-        "signal": signum, "parser": PARSER, **extra}), flush=True)
+        "signal": signum, "parser": PARSER, **extra}))
 
 
 def fail(message, **extra):
-    print(json.dumps({"error": message, "status": "failed",
-                      "status_basis": "the call was refused or ended before an answer; nothing in this document is a finding",
-                      **extra}))
+    emit(json.dumps({"error": message, "status": "failed",
+                     "status_basis": "the call was refused or ended before an answer; nothing in this document is a finding",
+                     **extra}))
     raise SystemExit(1)
 
 
@@ -643,11 +722,13 @@ def main():
     # page of `preview` hits is returned and, past it, the whole result is written to
     # a file the answer names. Either way no hit list is held in memory.
     results, temporary_results, page = None, None, None
+    # A signal is held from the moment the hidden file exists until the try below, where it is acted on: the file is then always either
+    # removed, named, or placed, and never reaches the outer handler as a name nobody can see.
+    GUARD["depth"] += 1
     if results_to:
         fd, temporary_results = tempfile.mkstemp(
             dir=results_to.parent, prefix=".%s." % results_to.name, suffix=".partial")
         results = os.fdopen(fd, "w", encoding="ascii")
-        STATE["partial"] = temporary_results
     else:
         page = LosslessPage("mem_carve", [str(Path(path).resolve()), start, end, sorted(wanted)], preview)
 
@@ -671,6 +752,8 @@ def main():
     sweep_end = end                  # where the sweep really ends: the end of the range, or where the file ended first
     accept_lo = start
     try:
+        GUARD["depth"] -= 1
+        checkpoint()
         with open(path, "rb") as fh, open(path, "rb") as side:
             def read_at(offset, n):
                 side.seek(offset)
@@ -832,6 +915,10 @@ def main():
                 position = block_end
                 STATE["resume_start"] = accept_lo
                 checkpoint()
+        # The sweep is over. From here the answer is made whole: the hit list is closed and placed under its final name and the answer is
+        # printed, and a signal in the meantime is held until the answer is out, where it changes nothing (a complete answer is not
+        # turned into an interrupted one, and no file is half-placed). The hold is never released: the answer is the last thing done.
+        GUARD["depth"] += 1
         if stop:
             ended = stop
         if results:
@@ -841,7 +928,6 @@ def main():
             results = None
             placed = place_without_replacing(Path(temporary_results), results_to)
             temporary_results = None
-            STATE["partial"] = None
             results_to = placed
         finished = True
     except Terminated as stopped:
@@ -863,24 +949,23 @@ def main():
 
     if interrupted is not None:
         # The hits found so far are kept and named; every hit before resume_start is in them.
+        # The kept file is named by a visible name only; when it cannot be given one, nothing is named and the answer says so.
         named = None
         if temporary_results:
-            try:
-                named = place_without_replacing(Path(temporary_results), results_to.with_name(results_to.name + ".partial"))
-            except OSError:
-                named = Path(temporary_results)
+            named = place_visibly(Path(temporary_results), results_to.with_name(results_to.name + ".partial"))
         elif page is not None:
             try:
-                kept = page.keep_partial()
+                named = page.keep_partial()
             except OSError:
-                kept = None
-            named = kept
+                named = None
         if manifest is not None:
             manifest.close()
         resume = STATE["resume_start"] if STATE["resume_start"] is not None else start
         extra = {"partial_results": str(named) if named else None,
-                 "partial_results_note": "JSON Lines, one hit per line, in offset order; every hit whose signature offset is below resume_start is in "
-                                         "it or in hits (the first rows, kept in memory until the file was started)",
+                 "partial_results_note": ("JSON Lines, one hit per line, in offset order; every hit whose signature offset is below resume_start is in "
+                                          "it or in hits (the first rows, kept in memory until the file was started)") if named else
+                                         ("no file could be named: the directory would not take a visible name for the hits written so far, so the "
+                                          "rows after the ones in hits (if any) are not named here; resume_start is where to continue"),
                  "resume_start": resume, "hit_count_so_far": hit_count, "extracted_so_far": extraction["extracted"],
                  "extract_manifest": str(manifest.path) if manifest is not None and manifest.path else None}
         if page is not None and not named:
@@ -979,7 +1064,10 @@ def main():
     elif paged.get("all_results"):
         result["complete_results"] = paged["all_results"]
         result["complete_results_format"] = paged["all_results_format"]
-    print(json.dumps(result, indent=2))
+    if GUARD["pending"]:
+        result["signal_after_sweep"] = {"signal": GUARD["pending"], "note": "a stop arrived after the sweep had ended, while the answer was being made; "
+                                                                           "the answer is complete and the signal changed nothing"}
+    emit(json.dumps(result, indent=2))
 
 
 def run_guarded():
@@ -990,7 +1078,7 @@ def run_guarded():
     except SystemExit:
         raise
     except Terminated as stopped:   # a signal before the sweep started, or while its answer was being made
-        interrupted_answer(stopped.signum, partial_results=STATE["partial"], resume_start=STATE["resume_start"],
+        interrupted_answer(stopped.signum, partial_results=None, resume_start=STATE["resume_start"],
                            hit_count_so_far=STATE["hits_so_far"])
         raise SystemExit(128 + stopped.signum)
     except Exception as exc:  # never an empty or clean answer for a failure

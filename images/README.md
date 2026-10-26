@@ -224,9 +224,9 @@ anything is unpacked, installed or built.
   package per architecture) and Zeek (the Zeek project's own `zeek-8.0-core`
   for Debian 12; `bin` names where the package puts it, `/opt/zeek/bin`).
 - `run` — the interpreter a program needs: `python`, or a program the image
-  holds. Eric Zimmerman's MFTECmd, EvtxECmd and RECmd are their net9 zips,
+  holds. Eric Zimmerman's MFTECmd, EvtxECmd and RECmd are their `net` zips (built for .NET 10),
   one for every architecture, each run by `dotnet`, which the same pack pins
-  as a download of its own (the .NET 9 runtime per architecture): a runtime
+  as a download of its own (the .NET 10 runtime per architecture): a runtime
   is installed once, before what runs on it.
 - `install.source` — one archive for every architecture, a tag's tarball,
   unpacked under `/opt/dfir/src/<name>` without its top directory, less the

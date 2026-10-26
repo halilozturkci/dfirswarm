@@ -10,7 +10,7 @@ Use when a zip, tar, 7z or compressed file must become files. Not for an AD1 log
 
 An archive is hostile input and a container whose list is its own claim. List first, extract second.
 
-**List.** The `archive-members` recipe writes `members.tsv` without extracting: `n` (the member's number in archive order, duplicates included), exact name bytes (`path_b64`), type, sizes, times, link target and `flags` (`escapes-root`, `encrypted`, `ratio>1000`, `name-not-utf8`, `nul-in-name`). It runs `7z` for a 7z.
+**List.** The `archive-members` recipe writes `members.tsv` without extracting: `n` (the member's number in archive order, duplicates included), exact name bytes (`path_b64`), type, sizes, times, link target and `flags` (`escapes-root`, `encrypted`, `ratio>1000`, `name-not-utf8`, `nul-in-name`). It runs `7z` (or `7zz`) for a 7z.
 
 **Extract** as a job with `archive_extract`. It takes the archive, `out_dir` under `{OUT}`, budgets (`max_total_bytes`, `max_member_bytes`, `max_members`, `max_ratio`, `max_depth`, `max_seconds`) and `from_index` (the recipe's `n`):
 

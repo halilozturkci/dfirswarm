@@ -1,6 +1,6 @@
 {
   "name": "ioc_scan",
-  "description": "Stream a large binary for ASCII and UTF-16LE needles and return locators: for every occurrence an id, its start offset, the needle, the encoding and how many bytes of context surround it. Context bytes are NOT returned by default (they are where passwords, tokens and card numbers sit): write_values: true, only in a job run as secret output (the manifest makes every job that sets it one), writes them to a 0600 file under $OUT, and the answer names that file and says it holds secret values. Every occurrence is kept, overlapping ones included, so counts do not depend on chunk; matching is case-sensitive; scanned_start, scanned_end and bytes_scanned are what was actually read. unique_only (default true) only hides repeats of an identical context from the inline page; all_results has every occurrence. Needles are recorded in the trace: never put a secret in one. The file is read as given (an E01 is its container bytes). earlier_answers says how many other files answer the same question. The scan has a clock (max_seconds, default 100): when it is used the answer is for the occurrences that start before next_start, with complete false, status partial and the offset to go on from. status and status_basis say whether the whole requested range was read.",
+  "description": "Stream a large binary for ASCII and UTF-16LE needles and return locators: for every occurrence an id, its start offset, the needle, the encoding and how many bytes of context surround it. Context bytes are NOT returned by default (they are where passwords, tokens and card numbers sit): write_values: true, only in a job run as secret output (the manifest makes every job that sets it one), writes them to a 0600 file under $OUT, and the answer names that file and says it holds secret values. Every occurrence is kept, overlapping ones included, so counts do not depend on chunk; matching is case-sensitive; scanned_start, scanned_end and bytes_scanned are what was actually read. unique_only (default true) only hides repeats of an identical context from the inline page; all_results has every occurrence. Needles are recorded in the trace: never put a secret in one. The file is read as given (an E01 is its container bytes). earlier_answers says how many other files answer the same question. The scan has a clock (max_seconds, default 100), read between reads and every 256 matches, so dense matches times many needles end at it too: when it is used the answer is for the occurrences that start before next_start, with complete false, status partial and the offset to go on from. complete is false beside every partial status, a values file that stopped at its cap included. finding_id names the occurrence (its offset and the needle variant), so a scan that goes on from next_start never reuses an id. all_results stops at 20,000,000 rows or 1 GiB and then says all_results_complete false and all_results_stopped_at_offset; the counts are of the whole scan. status and status_basis say whether the whole requested range was read.",
   "params": {
     "path": {
       "type": "string",
@@ -53,8 +53,8 @@
   "example": "{\"path\": \"inputs/[UNALLOCATED]\", \"needles\": \"sysinternals|psexec|http://|https://|IEUser\", \"max_hits\": 30, \"length\": 50000000}",
   "by": "s183900",
   "at": "2026-09-18T22:16:43.028Z",
-  "version": 6,
-  "sha256": "e6142c4ae0415fb933dd660cc23d0e530230e966eff1a0e524c4e800fe495f5f",
+  "version": 7,
+  "sha256": "4f7bcfb348a13108d712b5b25f3b353e681c675692e916f7d0ee74836cfa0cd9",
   "secret_output": {
     "when_args": [
       "write_values"

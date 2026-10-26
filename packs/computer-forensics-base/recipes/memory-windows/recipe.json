@@ -1,6 +1,6 @@
 {
   "id": "memory-windows",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "A Windows memory image's OS and capture time, live/scanned process views and tree, command lines, handles, services, network connections, suspicious executable regions, VADs, kernel modules and loaded DLLs (Volatility 3, offline, the image's own symbol tables only: nothing is fetched). When the image holds no symbol table for the kernel, it names the kernel (PDB, GUID, age) as missing, runs no plugin that needs symbols and reports coverage partial; a kickoff stops on the missing table unless --allow-missing-symbols.",
   "object": "memory image",
   "order": 20,
@@ -82,5 +82,5 @@
     "memory the capture did not hold: paged-out or swapped regions"
   ],
   "covers": "What windows.info and the eleven listed Volatility plugins report with the symbol tables the image already holds (Volatility runs offline at every step). Linux and macOS images, unsupported hibernation/crash-dump variants, YARA rules and every other plugin are not covered. An image with no table for its kernel is partial: windows.info's output is kept, the kernel is named as missing, and no plugin is run. Each step's command, exit status, duration and outputs are in steps.jsonl; an exit status of zero means Volatility ran, and a plugin that printed nothing does not show the artefact is absent.",
-  "sha256": "c73877d2d51348fd61f2b61d7e6deaa1fd62a161039f37f9224b8b186c598605"
+  "sha256": "5113da396361b81e962b66a658a3eddc9d956200d7af1edc7f8a732aaa9fd6c6"
 }

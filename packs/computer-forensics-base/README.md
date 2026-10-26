@@ -66,7 +66,7 @@ the file was read (`ioc_scan`, `chunk_needles` and `sig_carve` find their matche
 held equal in the three by a test and to a brute-force search over every way of cutting a stream into reads). A tool with a time budget of its own keeps that budget
 inside the manifest's limit, so reaching it is reported (`partial`, `not_checked`,
 `interrupted`) and is not a kill with nothing said: the scanners (`ioc_scan`,
-`chunk_needles`) and `file_carver` have one, and the answer names where to go on or how far it got.
+`chunk_needles`) and `file_carver` have one, and the answer names where to go on or how far it got. The scanners read their clock between reads and every 256 matches, so a stream of one repeated byte searched for many nested needles ends at it too (memory is one position per needle, not every match of a read).
 `feature_scan`'s counting of the files bulk_extractor wrote has none. `sqlite_query` reads the main
 database file and reports a write-ahead log beside it without applying it; on a table of secrets,
 run as a job with `secret_output`, `write_values` with a `table` writes the cells to a 0600 file under `$OUT`

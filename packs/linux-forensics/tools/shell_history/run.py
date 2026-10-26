@@ -49,7 +49,7 @@ import time
 from pathlib import Path
 
 TOOL = "shell_history"
-PARSER = "shell_history/5"
+PARSER = "shell_history/6"
 DEFAULT_LIMIT = 200
 FIRST_FAILURES = 20
 MAX_PIECE = 8 << 20          # a physical line longer than this is read in pieces, none dropped
@@ -183,11 +183,19 @@ REGEX_SECONDS = 2.0      # the most one match of the caller's expression may tak
 
 
 class RegexTooSlow(Exception):
-    pass
+    """A match of the caller's expression was ended. `by_deadline` is true when the cause was the tool's own max_seconds (the
+    match had not been given its full REGEX_SECONDS because less time was left, or none was), false when one match used them all."""
+
+    def __init__(self, by_deadline=False):
+        super().__init__()
+        self.by_deadline = by_deadline
+
+
+CLOCK = {"by_deadline": False}      # whether the match now running was given the time left to the deadline and not the full REGEX_SECONDS
 
 
 def _alarm(_signum, _frame):
-    raise RegexTooSlow()
+    raise RegexTooSlow(CLOCK["by_deadline"])
 
 
 def arm_regex_clock():
@@ -200,10 +208,16 @@ def arm_regex_clock():
 
 
 def search_within(pattern, text, deadline):
-    """pattern.search(text), ended at REGEX_SECONDS or at the tool's deadline, whichever is first (RegexTooSlow)."""
+    """pattern.search(text), ended at REGEX_SECONDS or at the tool's deadline, whichever is first (RegexTooSlow). It is called
+    for every record, and what is left of the time is read each time: after the deadline no match is begun (there is no grace), and
+    a match is given no more than the time that is left, so the tool always ends at its deadline and not at a coarser tick."""
+    left = deadline - time.monotonic()
+    if left <= 0.001:
+        raise RegexTooSlow(True)
     if not hasattr(signal, "setitimer"):
         return pattern.search(text)
-    signal.setitimer(signal.ITIMER_REAL, max(0.05, min(REGEX_SECONDS, deadline - time.monotonic())))
+    CLOCK["by_deadline"] = left < REGEX_SECONDS
+    signal.setitimer(signal.ITIMER_REAL, min(REGEX_SECONDS, left))
     try:
         return pattern.search(text)
     finally:
@@ -220,6 +234,7 @@ class LosslessPage:
             raise ValueError("limit must be a positive integer")
         self.tool = re.sub(r"[^A-Za-z0-9_.-]", "_", tool)
         self.limit = limit
+        self.key = key
         self.page = []
         self.total = 0
         self._out = None
@@ -237,8 +252,7 @@ class LosslessPage:
 
     def _write(self, row):
         try:
-            self._out.write(json.dumps(row, ensure_ascii=False, default=str))
-            self._out.write("\n")
+            self._out.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")     # one write: a stop never leaves half a row
         except OSError as exc:
             fail("the whole result could not be written to %s: %s" % (self.path, describe(exc)), paging_file=str(self.path))
 
@@ -250,14 +264,29 @@ class LosslessPage:
         if self._out is None:
             try:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
-                fd, name = tempfile.mkstemp(dir=self.path.parent, prefix=".%s-" % self.path.name)
-                self._tmp = Path(name)
+                # The name is known before the file exists, so a signal at any point after this line finds the file by it.
+                self._tmp = self.path.parent / (".%s-%s" % (self.path.name, secrets.token_hex(8)))
+                fd = os.open(str(self._tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
                 self._out = os.fdopen(fd, "w", encoding="utf-8", errors="backslashreplace")
             except OSError as exc:
                 fail("the whole result could not be written: %s cannot be created (%s)" % (self.path, describe(exc)), paging_file=str(self.path))
             for kept in self.page:
                 self._write(kept)
         self._write(row)
+
+    def stop_here(self):
+        """The rows written so far, kept under the final name (a signal ended the tool): the path as shown, or None where nothing was written."""
+        if self._tmp is None:
+            return None
+        out, self._out = self._out, None
+        if out is not None:
+            out.flush()
+            os.fsync(out.fileno())
+            out.close()
+        if not os.path.exists(self._tmp):
+            return None
+        os.replace(self._tmp, self.path)
+        return self.shown
 
     def finish(self):
         result = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
@@ -272,6 +301,46 @@ class LosslessPage:
             result["all_results"] = self.shown
             result["all_results_format"] = "JSON Lines, one complete result per line"
         return result
+
+
+# A signal ends the tool with a last word. The harness ends a tool that runs too long with SIGTERM before it kills the group, and a
+# tool that ignored it left its paging files as unfinished temporary files nobody could name. The rows written so far are kept under
+# their final names and the text file is closed, so the last word can say where they are; the answer itself was never built.
+STATE = {"pages": [], "text": None}
+
+
+def _on_signal(signum, _frame):
+    kept = {}
+    for page in STATE["pages"]:
+        try:
+            shown = page.stop_here()
+        except BaseException:  # noqa: BLE001 - a last word is best effort
+            shown = None
+        if shown:
+            kept[page.key] = shown
+    text = STATE["text"]
+    text_file = getattr(text, "shown", None) if text is not None and getattr(text, "written", 0) else None
+    if text is not None:
+        try:
+            text.close()
+        except BaseException:  # noqa: BLE001
+            pass
+    try:
+        sys.stdout.write(json.dumps({
+            "parser": PARSER, "status": "failed", "stopped_by_signal": signum,
+            "status_basis": "this tool was stopped by signal %d before it finished: no answer was built, and what it had read is not a complete result" % signum,
+            "paging_files_kept": kept, "text_file_kept": text_file,
+            "kept_note": "the rows each file holds were written in the order read, up to where the tool was stopped; the files are named here and nowhere else",
+        }) + "\n")
+        sys.stdout.flush()
+    except Exception:  # noqa: BLE001
+        pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers():
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
 
 
 def require_job(flag):
@@ -654,6 +723,7 @@ def read_passwd(path):
 
 def main():
     args = read_args()
+    install_signal_handlers()
     root = want_str(args, "root", "root is required: a home directory or an extracted file system root")
     if os.path.islink(root):
         fail("refusing a symlink root: pass the extracted evidence directory", root=root, target=os.readlink(root))
@@ -722,6 +792,8 @@ def main():
     except TextRefused as exc:
         fail(str(exc))
     page = LosslessPage(TOOL, "records", limit)
+    STATE["pages"].append(page)
+    STATE["text"] = text
     preview_rows = []
     special = []
 
@@ -798,7 +870,7 @@ def main():
                 ticks = 0
                 for rec in READERS[fmt](full, counters):
                     ticks += 1
-                    if ticks % 1024 == 0 and time.monotonic() > deadline:
+                    if (ticks % 1024 == 0 or pattern) and time.monotonic() > deadline:      # with an expression the clock is read for every record
                         partial_reason = partial_reason or "the read stopped at max_seconds (%s) inside %s; later records of it and later files were not read" % (seconds, full)
                         info["partial"] = True
                         break
@@ -842,9 +914,12 @@ def main():
                     page.add(row)
                     if preview and len(preview_rows) < limit:
                         preview_rows.append({**row, "command": command})
-            except RegexTooSlow:
-                partial_reason = partial_reason or ("the contains expression did not finish within %s s on the record at line %d of %s: the read "
-                                                    "stopped there, and no later record of this file or of any other was tested" % (REGEX_SECONDS, rec.start, full))
+            except RegexTooSlow as exc:
+                partial_reason = partial_reason or (
+                    ("max_seconds (%s) passed while the contains expression was being tested on the record at line %d of %s" % (seconds, rec.start, full)
+                     if exc.by_deadline else
+                     "the contains expression did not finish within %s s on the record at line %d of %s" % (REGEX_SECONDS, rec.start, full))
+                    + ": the read stopped there, and no later record of this file or of any other was tested")
                 info["partial"] = True
                 stop = True
             except OSError as exc:

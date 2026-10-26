@@ -87,7 +87,10 @@ test("mem_fs ends with one JSON answer on SIGTERM, stops its engine, and leaves 
     const pidFile = join(cwd, "engine.pid");
     const env = await fsStub(cwd, bin, { tree: { "proc/a.txt": "alpha\n" }, mode: "never", pidFile });
     await image(cwd);
-    const run = await runTool(FS, cwd, { path: "inputs/memory.raw", mount: "work/s1/m", mode: "list", timeout_seconds: 60 }, env, bin, "SIGTERM", 1500);
+    // The signal is sent when the engine has started (it writes its pid file), not after a time: the engine never mounts, so the tool is waiting for it.
+    const started = (file: string) => async () => (await readFile(file, "utf8").catch(() => "")).trim() !== "";
+    const run = await runTool(FS, cwd, { path: "inputs/memory.raw", mount: "work/s1/m", mode: "list", timeout_seconds: 60 }, env, bin, "SIGTERM", 0, started(pidFile));
+    assert.ok(!run.gateTimedOut, "the engine started");
     assert.equal(run.code, 143, run.stderr);
     assert.doesNotMatch(run.stderr, /Traceback/);
     const out = json<Fs>(run);
@@ -97,7 +100,9 @@ test("mem_fs ends with one JSON answer on SIGTERM, stops its engine, and leaves 
     const pid = Number(await readFile(pidFile, "utf8"));
     assert.throws(() => process.kill(pid, 0), "the engine is gone");
     assert.deepEqual(await readdir(join(cwd, "work", "s1", "m")), []);
-    const hup = await runTool(FS, cwd, { path: "inputs/memory.raw", mount: "work/s1/m2", mode: "list", timeout_seconds: 60 }, env, bin, "SIGINT", 1000);
+    const pidFile2 = join(cwd, "engine2.pid");
+    const hup = await runTool(FS, cwd, { path: "inputs/memory.raw", mount: "work/s1/m2", mode: "list", timeout_seconds: 60 }, { ...env, STUB_PID: pidFile2 }, bin, "SIGINT", 0, started(pidFile2));
+    assert.ok(!hup.gateTimedOut, "the engine started");
     assert.equal(hup.code, 130);
     assert.doesNotMatch(hup.stderr, /Traceback|KeyboardInterrupt/);
   });

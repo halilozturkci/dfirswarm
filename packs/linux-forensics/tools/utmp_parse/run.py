@@ -49,7 +49,7 @@ import time
 from pathlib import Path
 
 TOOL = "utmp_parse"
-PARSER = "utmp_parse/5"
+PARSER = "utmp_parse/6"
 DEFAULT_LIMIT = 200
 RECORD = 384
 LASTLOG = {"lastlog-292": (292, 4, 4), "lastlog-296": (296, 8, 8)}   # slot width, bytes of ll_time, offset of ll_line
@@ -177,11 +177,19 @@ REGEX_SECONDS = 2.0      # the most one match of the caller's expression may tak
 
 
 class RegexTooSlow(Exception):
-    pass
+    """A match of the caller's expression was ended. `by_deadline` is true when the cause was the tool's own max_seconds (the
+    match had not been given its full REGEX_SECONDS because less time was left, or none was), false when one match used them all."""
+
+    def __init__(self, by_deadline=False):
+        super().__init__()
+        self.by_deadline = by_deadline
+
+
+CLOCK = {"by_deadline": False}      # whether the match now running was given the time left to the deadline and not the full REGEX_SECONDS
 
 
 def _alarm(_signum, _frame):
-    raise RegexTooSlow()
+    raise RegexTooSlow(CLOCK["by_deadline"])
 
 
 def arm_regex_clock():
@@ -192,14 +200,28 @@ def arm_regex_clock():
 
 
 def search_within(pattern, text, deadline):
-    """pattern.search(text), ended at REGEX_SECONDS or at the tool's deadline, whichever is first (RegexTooSlow)."""
+    """pattern.search(text), ended at REGEX_SECONDS or at the tool's deadline, whichever is first (RegexTooSlow). It is called
+    for every record, and what is left of the time is read each time: after the deadline no match is begun (there is no grace), and
+    a match is given no more than the time that is left, so the tool always ends at its deadline and not at a coarser tick."""
+    left = deadline - time.monotonic()
+    if left <= 0.001:
+        raise RegexTooSlow(True)
     if not hasattr(signal, "setitimer"):
         return pattern.search(text)
-    signal.setitimer(signal.ITIMER_REAL, max(0.05, min(REGEX_SECONDS, deadline - time.monotonic())))
+    CLOCK["by_deadline"] = left < REGEX_SECONDS
+    signal.setitimer(signal.ITIMER_REAL, min(REGEX_SECONDS, left))
     try:
         return pattern.search(text)
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
+
+
+def slow_because(exc, what, after):
+    """The sentence for a read ended by a match of the caller's expression: the deadline when it was the deadline (the match was
+    not given its full REGEX_SECONDS, or none), the 2-second clock when one match used it all."""
+    if exc.by_deadline:
+        return "max_seconds passed while the user expression was being tested on %s: the read stopped there%s" % (what, after)
+    return "the user expression did not finish within %s s on %s: the read stopped there%s" % (REGEX_SECONDS, what, after)
 
 
 # Lossless paging (the same in every library tool that pages): the page an agent reads stays small, and when
@@ -212,6 +234,7 @@ class LosslessPage:
             raise ValueError("limit must be a positive integer")
         self.tool = re.sub(r"[^A-Za-z0-9_.-]", "_", tool)
         self.limit = limit
+        self.key = key
         self.page = []
         self.total = 0
         self._out = None
@@ -229,8 +252,7 @@ class LosslessPage:
 
     def _write(self, row):
         try:
-            self._out.write(json.dumps(row, ensure_ascii=False, default=str))
-            self._out.write("\n")
+            self._out.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")     # one write: a stop never leaves half a row
         except OSError as exc:
             fail("the whole result could not be written to %s: %s" % (self.path, describe(exc)), paging_file=str(self.path))
 
@@ -242,14 +264,29 @@ class LosslessPage:
         if self._out is None:
             try:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
-                fd, name = tempfile.mkstemp(dir=self.path.parent, prefix=".%s-" % self.path.name)
-                self._tmp = Path(name)
+                # The name is known before the file exists, so a signal at any point after this line finds the file by it.
+                self._tmp = self.path.parent / (".%s-%s" % (self.path.name, secrets.token_hex(8)))
+                fd = os.open(str(self._tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
                 self._out = os.fdopen(fd, "w", encoding="utf-8", errors="backslashreplace")
             except OSError as exc:
                 fail("the whole result could not be written: %s cannot be created (%s)" % (self.path, describe(exc)), paging_file=str(self.path))
             for kept in self.page:
                 self._write(kept)
         self._write(row)
+
+    def stop_here(self):
+        """The rows written so far, kept under the final name (a signal ended the tool): the path as shown, or None where nothing was written."""
+        if self._tmp is None:
+            return None
+        out, self._out = self._out, None
+        if out is not None:
+            out.flush()
+            os.fsync(out.fileno())
+            out.close()
+        if not os.path.exists(self._tmp):
+            return None
+        os.replace(self._tmp, self.path)
+        return self.shown
 
     def finish(self):
         result = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
@@ -264,6 +301,46 @@ class LosslessPage:
             result["all_results"] = self.shown
             result["all_results_format"] = "JSON Lines, one complete result per line"
         return result
+
+
+# A signal ends the tool with a last word. The harness ends a tool that runs too long with SIGTERM before it kills the group, and a
+# tool that ignored it left its paging files as unfinished temporary files nobody could name. The rows written so far are kept under
+# their final names and the text file is closed, so the last word can say where they are; the answer itself was never built.
+STATE = {"pages": [], "text": None}
+
+
+def _on_signal(signum, _frame):
+    kept = {}
+    for page in STATE["pages"]:
+        try:
+            shown = page.stop_here()
+        except BaseException:  # noqa: BLE001 - a last word is best effort
+            shown = None
+        if shown:
+            kept[page.key] = shown
+    text = STATE["text"]
+    text_file = getattr(text, "shown", None) if text is not None and getattr(text, "written", 0) else None
+    if text is not None:
+        try:
+            text.close()
+        except BaseException:  # noqa: BLE001
+            pass
+    try:
+        sys.stdout.write(json.dumps({
+            "parser": PARSER, "status": "failed", "stopped_by_signal": signum,
+            "status_basis": "this tool was stopped by signal %d before it finished: no answer was built, and what it had read is not a complete result" % signum,
+            "paging_files_kept": kept, "text_file_kept": text_file,
+            "kept_note": "the rows each file holds were written in the order read, up to where the tool was stopped; the files are named here and nowhere else",
+        }) + "\n")
+        sys.stdout.flush()
+    except Exception:  # noqa: BLE001
+        pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers():
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
 
 
 def require_job(flag):
@@ -484,8 +561,8 @@ def decide_byte_order(found):
 def parse_utmp(path, size, order, typed, args, pattern, wanted, page, text_file, preview, preview_rows, limit, stats, deadline, start):
     e = "<" if order != "big" else ">"
     for index, offset, raw in utmp_records(path, size, start):
-        if (index & 4095) == 4095 and time.monotonic() > deadline:
-            stats["stopped_at_record"] = index
+        if ((index & 4095) == 4095 or pattern) and time.monotonic() > deadline:
+            stats["stopped_at_record"] = index          # with an expression the clock is read for every record, not every 4,096th
             return
         stats["records"] += 1
         ut_type, pid = struct.unpack_from(e + "hxxi", raw, 0)
@@ -510,9 +587,9 @@ def parse_utmp(path, size, order, typed, args, pattern, wanted, page, text_file,
             try:
                 if not search_within(pattern, user, deadline):
                     continue
-            except RegexTooSlow:
+            except RegexTooSlow as exc:
                 stats["stopped_at_record"] = index
-                stats["stopped_because"] = "the user expression did not finish within %s s on record %d: the read stopped there, and no later record was tested" % (REGEX_SECONDS, index)
+                stats["stopped_because"] = slow_because(exc, "record %d" % index, ", and no later record was tested")
                 return
         shown, error = when(sec, usec)
         addr = raw[0x15C:0x16C]
@@ -657,11 +734,12 @@ def parse_lastlog(path, size, layout, order, args, pattern, wanted, page, stats,
                     stats["nonempty"] += 1
                 try:
                     emit_slot(uid, uid * width, slot, width, fmt, time_bytes, text_at, users, pattern, wanted, page, stats, layout, deadline)
-                except RegexTooSlow:
+                except RegexTooSlow as exc:
                     stats["slots_read"] -= 1
-                    stats["stopped"] = "expression"
+                    stats["nonempty"] -= 1 if slot.count(0) != len(slot) else 0     # a slot that was not emitted is not counted
+                    stats["stopped"] = "max_seconds" if exc.by_deadline else "expression"
                     stats["next_uid"] = uid
-                    stats["stopped_because"] = "the user expression did not finish within %s s on slot %d: the read stopped there" % (REGEX_SECONDS, uid)
+                    stats["stopped_because"] = slow_because(exc, "slot %d" % uid, "")
                     return
         finally:
             os.close(fd)
@@ -681,15 +759,16 @@ def parse_lastlog(path, size, layout, order, args, pattern, wanted, page, stats,
         stats["nonempty"] += 1
         try:
             emit_slot(uid, offset, slot, width, fmt, time_bytes, text_at, users, pattern, wanted, page, stats, layout, deadline)
-        except RegexTooSlow:
+        except RegexTooSlow as exc:
             stats["nonempty"] -= 1
             state["stopped_at_uid"] = uid
-            stats["stopped_because"] = "the user expression did not finish within %s s on slot %d: the read stopped there, and no later slot was tested" % (REGEX_SECONDS, uid)
+            state["by_deadline"] = exc.by_deadline
+            stats["stopped_because"] = slow_because(exc, "slot %d" % uid, ", and no later slot was tested")
             break
     if "stopped_at_uid" in state:
         stats["slots_read"] = state["stopped_at_uid"] - start
         stats["next_uid"] = state["stopped_at_uid"]
-        stats["stopped"] = "expression" if stats.get("stopped_because") else "max_seconds"
+        stats["stopped"] = "expression" if stats.get("stopped_because") and not state.get("by_deadline") else "max_seconds"
     else:
         stats["slots_read"] = end - start
         stats["next_uid"] = end if end < total else None
@@ -719,6 +798,7 @@ def emit_slot(uid, offset, slot, width, fmt, time_bytes, text_at, users, pattern
 
 def main():
     args = read_args()
+    install_signal_handlers()
     path = want_str(args, "path", "path is required: a wtmp, btmp, utmp or lastlog file")
     try:
         if os.path.islink(path):
@@ -786,6 +866,8 @@ def main():
     except TextRefused as exc:
         fail(str(exc))
     page = LosslessPage(TOOL, "records", limit)
+    STATE["pages"].append(page)
+    STATE["text"] = text_file
     preview_rows = []
     stats = {"records": 0, "empty": 0, "matched": 0, "boots": 0, "by_type": {}, "slots_read": 0, "nonempty": 0,
              "scope": "whole file", "next_uid": None, "uids_beyond_file": [], "passwd": {"file": None, "uids_mapped": 0}}
