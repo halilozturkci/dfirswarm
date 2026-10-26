@@ -15,11 +15,12 @@
  *     path, name or answer (the cells are checked against the layout, not against a fixture's own reading).
  */
 import assert from "node:assert/strict";
+import { spawn, spawnSync } from "node:child_process";
 import { readFile, stat, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { withCwd } from "./tool-library-harness.ts";
-import { REGIPY, body, everyFileUnder, tool } from "./windows-pack-harness.ts";
+import { REGIPY, WIN, body, everyFileUnder, stub, tool } from "./windows-pack-harness.ts";
 import { prng } from "./windows-canary.ts";
 import { hive } from "./windows-hive.ts";
 import type { HiveKey } from "./windows-hive.ts";
@@ -352,4 +353,104 @@ test("structure-aware damage to the cells of a hive (100 cases): no withheld val
 test("the limits are said in the manifest and the receipt", async () => {
   const manifest = JSON.parse(await readFile(join(process.cwd(), "packs/windows-forensics/tools/registry_recover/manifest.json"), "utf8")) as Answer;
   for (const word of ["512 MiB", "50,000", "whole 512-byte sectors", "last-written", "name withheld"]) assert.match(manifest.description, new RegExp(word.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")), word);
+});
+
+// ---- the independent reader, the hashes and a signal ----------------------------------------------------------------------------------
+
+const LINUX = process.platform === "linux" ? false : "address space is limited on Linux, where the tool runs";
+
+test("regfexport is stopped when it prints far more than the hive can hold: the reason is said, its counts are not compared, and the status is partial", { skip }, async () => {
+  await withCwd(async (cwd, bin) => {
+    await stub(bin, "regfexport", "exec yes 'Key path: x'");
+    await writeFile(join(cwd, "work", "h.dat"), G[0]);
+    const began = Date.now();
+    const out = body<Answer>(await tool("registry_recover", cwd, { hive: "work/h.dat", limit: 5, export: true, max_seconds: 60 }, {}, bin));
+    const reader = out.records.independent_reader.regfexport;
+    assert.ok(Date.now() - began < 20_000, `returned in ${Date.now() - began} ms, not at the tool's clock`);
+    assert.equal(reader.ran, true);
+    assert.equal(reader.finished, false);
+    assert.equal(reader.agrees, undefined, "an unfinished count is not compared");
+    assert.ok(reader.output_bytes > 64 * 2 ** 20 && reader.output_bytes < 80 * 2 ** 20, `${reader.output_bytes} bytes were read before it was stopped`);
+    assert.match(reader.why_not_finished, /printed more than \d+ bytes/);
+    assert.equal(out.status, "partial");
+    assert.match(out.status_basis, /regfexport printed more than/);
+  });
+});
+
+test("regfexport gets a ceiling on its memory: a program that wants three gigabytes for a small hive fails, and that is said", { skip: skip || LINUX }, async () => {
+  await withCwd(async (cwd, bin) => {
+    await stub(bin, "regfexport", "exec python3 -c \"b = bytearray(3 << 30); print('Key path: x')\"");
+    await writeFile(join(cwd, "work", "h.dat"), G[0]);
+    const out = body<Answer>(await tool("registry_recover", cwd, { hive: "work/h.dat", limit: 5, export: true }, {}, bin));
+    const reader = out.records.independent_reader.regfexport;
+    assert.equal(reader.finished, false);
+    assert.ok(reader.limits.address_space_bytes >= 2 ** 30 && reader.limits.address_space_bytes < 2 ** 30 + 1e6, JSON.stringify(reader.limits));
+    assert.match(reader.why_not_finished, /exited with status \d+/);
+    assert.match(reader.why_not_finished, /held to \d+ bytes of address space/);
+    assert.equal(out.status, "partial");
+  });
+});
+
+/** The tool as a module with its clock set to run out when `armed` says so; `after` names the function whose return arms it. */
+function inProcess(cwd: string, args: Record<string, unknown>, after: string): { status: number | null; stdout: string; stderr: string } {
+  const code = [
+    "import importlib.util, json, sys",
+    "spec = importlib.util.spec_from_file_location('rrun', sys.argv[1])",
+    "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)",
+    "state = {'out': False}",
+    "real = getattr(m, sys.argv[2])",
+    "def arm(*a, **k):",
+    "    r = real(*a, **k)",
+    "    state['out'] = True",
+    "    return r",
+    "setattr(m, sys.argv[2], arm)",
+    "m.out_of_time = lambda *a, **k: state['out']",
+    "m.main()",
+  ].join("\n");
+  return spawnSync("python3", ["-c", code, join(WIN, "registry_recover", "run.py"), after], { cwd, encoding: "utf8", input: JSON.stringify(args), env: { ...process.env, AGENT_ID: "s1" }, maxBuffer: 1 << 26 });
+}
+
+test("the hive and the logs are hashed with the tool's clock looked at: a hash the time limit stopped is not made, the receipt names it, and the status is partial", async () => {
+  await withCwd(async (cwd) => {
+    await writeFile(join(cwd, "work", "h.dat"), DIRTY);
+    await writeFile(join(cwd, "work", "h.log1"), logOf(rawEntry({ sequence: 11, hbs: BINS, refs: [[differingPages(G[0], G[1])[0].offset, 512]], pages: differingPages(G[0], G[1])[0].data.subarray(0, 512) })));
+    // The clock runs out as soon as the base block of the hive has been read, which is before the first hash.
+    const r = inProcess(cwd, { hive: "work/h.dat", log1: "work/h.log1", export: false, limit: 5 }, "read_base");
+    assert.equal(r.status, 0, r.stderr);
+    const out = JSON.parse(r.stdout) as Answer;
+    assert.equal(out.status, "partial");
+    assert.match(out.status_basis, /not every file was hashed \(the hive: the time limit was reached after 0 bytes of \d+ were hashed; log1: the time limit was reached after 0 bytes of \d+ were hashed\)/);
+    const receipt = JSON.parse(await readFile(join(cwd, out.receipt), "utf8")) as Answer;
+    assert.equal(receipt.hive_original.sha256, null);
+    assert.match(receipt.hive_original.sha256_not_made, /time limit/);
+    assert.equal(receipt.not_hashed.length, 2);
+    assert.equal(out.recovered_copy ?? null, null, "no replay was made in no time");
+    assert.match(receipt.replay.reason, /time limit was reached while the logs were scanned, before an applicable entry was found/);
+  });
+});
+
+test("a signal that ends the tool after the recovered copy was placed and before its receipt leaves no recovered copy behind", { skip }, async () => {
+  await withCwd(async (cwd, bin) => {
+    const pidFile = join(cwd, "regfexport.pid");
+    await stub(bin, "regfexport", `echo $$ > "${pidFile}"; exec sleep 60`);
+    const page = differingPages(G[0], G[1])[0];
+    await writeFile(join(cwd, "work", "h.dat"), DIRTY);
+    await writeFile(join(cwd, "work", "h.log1"), logOf(rawEntry({ sequence: 11, hbs: BINS, refs: [[page.offset, page.data.length]], pages: page.data })));
+    const child = spawn("python3", [join(WIN, "registry_recover", "run.py")], { cwd, env: { ...process.env, AGENT_ID: "s1", PATH: `${bin}:${process.env.PATH}` }, stdio: ["pipe", "pipe", "pipe"] });
+    const chunks: Buffer[] = [];
+    child.stdout.on("data", (c: Buffer) => chunks.push(c));
+    child.stdin.end(JSON.stringify({ hive: "work/h.dat", log1: "work/h.log1", limit: 5, export: true, max_seconds: 60 }));
+    // regfexport is running, which is after the copy was placed and before the receipt.
+    for (let i = 0; i < 100 && !(await stat(pidFile).then(() => true, () => false)); i++) await new Promise((r) => setTimeout(r, 100));
+    assert.ok((await everyFileUnder(join(cwd, "work"))).some((f) => f.endsWith("recovered.hive")), "the copy had been placed");
+    child.kill("SIGTERM");
+    const code = await new Promise<number | null>((resolve) => child.on("close", (c) => resolve(c)));
+    assert.equal(code, 143);
+    const last = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Answer;
+    assert.equal(last.status, "interrupted");
+    assert.match(last.status_basis, /the recovered copy, which had no receipt yet/);
+    const left = await everyFileUnder(join(cwd, "work"));
+    assert.deepEqual(left.filter((f) => /recovered/.test(f)), [], "no recovered copy without its receipt");
+    assert.deepEqual(left.filter((f) => /receipt/.test(f)), []);
+  });
 });

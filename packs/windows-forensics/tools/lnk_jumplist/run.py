@@ -30,6 +30,7 @@ lnk_parse handles them: not in the answer; `write_strings: true`, in a job run a
 mode 0600 under a finding id the rows cite. Refused anywhere else, before anything is made.
 """
 import array
+import bisect
 import hashlib
 import importlib.util
 import json
@@ -952,13 +953,18 @@ class Cfb:
         return bytes(data)
 
 
-def map_range(extents, start, length):
-    """Where [start, start + length) of a stream is in the file: [(file offset, bytes)], one piece when it is contiguous."""
+def map_range(extents, starts, start, length):
+    """Where [start, start + length) of a stream is in the file: [(file offset, bytes)], one piece when it is contiguous. `extents` are in stream order and
+    `starts` is their stream offsets, so the first extent that can hold `start` is found by bisection and the walk stops at the end of the range: a stream
+    of many fragments costs the fragments a range touches, not all of them, however many ranges are asked."""
     out, end = [], start + length
-    for at, off, n in extents:
+    i = max(bisect.bisect_right(starts, start) - 1, 0)
+    while i < len(extents) and extents[i][0] < end:
+        at, off, n = extents[i]
         lo, hi = max(at, start), min(at + n, end)
         if lo < hi:
             out.append((off + lo - at, hi - lo))
+        i += 1
     return out
 
 
@@ -1244,16 +1250,24 @@ def read_automatic(run, path, size):
                 destlist_row = {"row": "destlist", "source": path, "version": parsed.get("destlist_version"), "entries_claimed": parsed.get("entries_claimed"),
                                 "entries_read": len(dest_entries), "pinned_claimed": parsed.get("pinned_claimed"), "problems": parsed.get("problems", []),
                                 "not_decoded": parsed.get("not_decoded", [])}
+                if parsed.get("entries_not_read_from") is not None:
+                    destlist_row["entries_not_read_from"] = parsed["entries_not_read_from"]
         elif streams and not run.stopped:
             # A container with no stream at all is what Windows leaves for an empty jump list (1,536 bytes: header, FAT, directory); one that holds streams and no
             # DestList is not a jump list, or its DestList's directory entry is damaged.
             cfb.flag("no-destlist", "there is no stream named DestList, and the container holds %d other stream(s): this is a compound file but not a jump list container (or the directory entry of its DestList is damaged)" % len(streams))
         by_stream, entry_rows = {}, []
         heads = {s["path"].lower(): (head, whole) for s, _e, whole, _m, head in shown}
-        for e in dest_entries:
+        destlist_cut = destlist_row is not None and destlist_row.get("entries_not_read_from") is not None
+        dest_starts = [x[0] for x in destlist[1]] if destlist is not None else []
+        for number_read, e in enumerate(dest_entries):
+            if number_read & 0x3FF == 0x3FF and out_of_time():
+                run.stopped = True
+                cfb.flag("time", "the time limit was reached after %d of the %d DestList entries were matched to the streams: the entries after them have no row" % (number_read, len(dest_entries)))
+                break
             extents = destlist[1]
-            pieces = map_range(extents, e["stream_offset"], 0x82 + 2 * e["path_chars"])
-            present = any(x["path"].lower() == e["stream"] for x, _e, _w, _m, _h in shown)
+            pieces = map_range(extents, dest_starts, e["stream_offset"], 0x82 + 2 * e["path_chars"])
+            present = e["stream"] in heads
             e_row = {"row": "destlist_entry", "source": path, **e, "container_offset": pieces[0][0] if pieces else None,
                      "container_contiguous": len(pieces) == 1, "stream_present": present}
             if e["stream"] in by_stream:
@@ -1294,14 +1308,15 @@ def read_automatic(run, path, size):
             srow = {"row": "stream", "source": path, "name": s["path"], "bytes": s["size"], "storage": "mini stream" if s["size"] < cfb.cutoff else "sectors",
                     "start_sector": s["start"], "file_offset": extents[0][1] if extents else None, "contiguous": len(extents) <= 1,
                     "extent_count": len(extents), "extents": [{"stream_offset": a, "file_offset": o, "bytes": n} for a, o, n in extents[:MAX_EXTENTS_SHOWN]],
-                    "chain_whole": whole, "is_link": head == LNK_MAGIC, "in_destlist": bool(entry) if not is_dest else None}
+                    "chain_whole": whole, "is_link": head == LNK_MAGIC, "in_destlist": (bool(entry) or (None if destlist_cut else False)) if not is_dest else None}
             if len(extents) > MAX_EXTENTS_SHOWN:
                 srow["extents_not_shown"] = len(extents) - MAX_EXTENTS_SHOWN
                 srow["extents_note"] = "the first %d of %d extents are listed; the rest follow the stream's sector chain from the start sector" % (MAX_EXTENTS_SHOWN, len(extents))
             if mine:
                 srow["problems"] = mine
             if not is_dest and has_destlist and not entry:
-                srow["orphan"] = "a stream the DestList has no entry for"
+                srow["orphan"] = ("a stream none of the %d DestList entries read has an entry for (the DestList was read only to its first %d entries)" % (len(dest_entries), len(dest_entries))
+                                  if destlist_cut else "a stream the DestList has no entry for")
             run.add(srow)
             if is_dest or head != LNK_MAGIC:
                 continue

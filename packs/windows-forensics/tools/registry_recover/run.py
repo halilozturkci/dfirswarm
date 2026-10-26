@@ -546,6 +546,7 @@ def out_of_time(share=1.0, started=None):
 
 
 TEMPS = []                       # temporary files made by this run, removed when it is stopped
+PLACED = []                      # files this run has put in their final place that are results only together with the receipt, which is written last
 
 
 def forget_temps():
@@ -1207,7 +1208,8 @@ def replay(hive_path, hive_size, hive, logs, out_dir):
                     receipt["hive_bins_data_size"] = {"before": hive["hive_bins_data_size"], "after": new_hbs}
                     receipt["base_block_fields_changed"] = changed
             else:
-                receipt["reason"] = "the hive is dirty (sequence %d / %d) and no named log holds an applicable entry" % (hive["primary_sequence"], hive["secondary_sequence"])
+                receipt["reason"] = ("the hive is dirty (sequence %d / %d) and the time limit was reached while the logs were scanned, before an applicable entry was found"
+                                     if time_notes else "the hive is dirty (sequence %d / %d) and no named log holds an applicable entry") % (hive["primary_sequence"], hive["secondary_sequence"])
         if time_notes:
             receipt["time_limit"] = "; ".join(time_notes)
         # What was not applied, with the hive ranges its pages would have written.
@@ -1623,22 +1625,59 @@ class ChangeDb:
 
 # ---- the run ---------------------------------------------------------------------------------------------------------------------------
 
+# The independent reader is a program this tool does not control, and a damaged hive can send it into a loop of allocations and output: 8 KB of hive have
+# made libregf's regfexport take 5.5 GB of memory and print 5 to 8 GB. It is given room for any hive this tool reads (a gigabyte and four times the hive's
+# size of address space; its work on a 300 MiB hive is about a third of that) and a ceiling on what it may print (a hive's honest output is a small multiple
+# of its size, 64 times and 64 MiB is far above it), and is stopped, with the reason said, when it passes either.
+REGFEXPORT_MEMORY_BASE = 1 << 30
+REGFEXPORT_MEMORY_PER_HIVE_BYTE = 4
+REGFEXPORT_OUTPUT_PER_HIVE_BYTE = 64
+REGFEXPORT_OUTPUT_FLOOR = 64 << 20
+
+
+def start_with_memory_limit(argv, memory):
+    """Start `argv` with at most `memory` bytes of address space. The limit is set on this process for the moment of the start and put back at once: the
+    program keeps it through exec, this tool does not. (spawn() is the one place a program is started, and what it passes to the child is the same for
+    every tool; the limit is carried by inheritance.) Returns the process and the limit that was applied, or None when it could not be set here."""
+    try:
+        import resource
+        old = resource.getrlimit(resource.RLIMIT_AS)
+        new = memory if old[1] == resource.RLIM_INFINITY else min(memory, old[1])
+        resource.setrlimit(resource.RLIMIT_AS, (new, old[1]))
+    except (ImportError, ValueError, OSError, AttributeError):
+        return spawn(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL), None
+    try:
+        return spawn(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL), new
+    except (OSError, MemoryError):
+        return None, None
+    finally:
+        try:
+            resource.setrlimit(resource.RLIMIT_AS, old)
+        except (ValueError, OSError):
+            pass
+
+
 def regfexport_counts(path, seconds):
     """An independent read of the hive: libregf's regfexport prints one 'Key path:' line per key and one 'Value:' line per value. The two counts, read
-    from its output as it streams (nothing of the output is kept), and whether it finished."""
+    from its output as it streams (nothing of the output is kept), and whether it finished and, if not, why."""
     import shutil
     program = shutil.which("regfexport")
     if not program:
         return {"ran": False, "why": "regfexport (libregf-utils) is not in this image"}
+    hive_bytes = os.path.getsize(path)
+    memory = REGFEXPORT_MEMORY_BASE + REGFEXPORT_MEMORY_PER_HIVE_BYTE * hive_bytes
+    output_ceiling = REGFEXPORT_OUTPUT_FLOOR + REGFEXPORT_OUTPUT_PER_HIVE_BYTE * hive_bytes
     try:
-        proc = spawn([program, str(path)], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        proc, memory_applied = start_with_memory_limit([program, str(path)], memory)
+        if proc is None:
+            proc, memory_applied = spawn([program, str(path)], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL), None
     except OSError as exc:
         return {"ran": False, "why": "regfexport could not be started: %s" % describe(exc)}
     ACTIVE.append(proc)
-    keys = values = 0
+    keys = values = printed = 0
     carry = b"\n"          # the first line of the output has a line break before it, as every other has
     end = time.monotonic() + max(seconds, 1.0)
-    timed_out = False
+    timed_out = over_output = False
     fd = proc.stdout.fileno()
     try:
         while True:
@@ -1654,6 +1693,11 @@ def regfexport_counts(path, seconds):
             chunk = os.read(fd, 1 << 16)
             if not chunk:
                 break
+            printed += len(chunk)
+            if printed > output_ceiling:
+                kill_tree(proc)
+                over_output = True
+                break
             data = carry + chunk
             keys += data.count(b"\nKey path: ")
             values += data.count(b"\nValue: ")
@@ -1666,8 +1710,22 @@ def regfexport_counts(path, seconds):
             proc.stdout.close()
         except OSError:
             pass
-    return {"ran": True, "exit_code": code, "finished": not timed_out and code == 0, "keys": keys, "values": values,
-            "counted_by": "the lines of its output that start 'Key path: ' and 'Value: ' (a value whose text holds such a line is counted too)"}
+    finished = not timed_out and not over_output and code == 0
+    result = {"ran": True, "exit_code": code, "finished": finished, "keys": keys, "values": values, "output_bytes": printed,
+              "limits": {"address_space_bytes": memory_applied, "output_bytes": output_ceiling},
+              "counted_by": "the lines of its output that start 'Key path: ' and 'Value: ' (a value whose text holds such a line is counted too)"}
+    if not finished:
+        if over_output:
+            result["why_not_finished"] = ("regfexport printed more than %d bytes (%d bytes were read from a hive of %d) and was stopped: its counts are partial and are not compared"
+                                          % (output_ceiling, printed, hive_bytes))
+        elif timed_out:
+            result["why_not_finished"] = "regfexport did not finish within the time left and was stopped: its counts are partial and are not compared"
+        elif code < 0:
+            result["why_not_finished"] = "regfexport was ended by signal %d (%s): its counts are partial and are not compared" % (-code, "the hive may be damaged in a way that breaks the library")
+        else:
+            result["why_not_finished"] = ("regfexport exited with status %d after %d bytes of output%s: its counts are partial and are not compared"
+                                          % (code, printed, " (it was held to %d bytes of address space, and a program that cannot get more stops or fails)" % memory_applied if memory_applied else ""))
+    return result
 
 
 def output_directory(identity):
@@ -1708,12 +1766,27 @@ class FilePage(NoReplacePage):
 
 
 def sha256_file(path):
+    """The SHA-256 of a file read in blocks with the tool's clock looked at between them: (digest, None), or (None, why) when the time limit was reached
+    first. A hive of several GiB on slow storage cannot be read through inside the tool's own limit, so what is not hashed is said, never waited for."""
     import hashlib
     h = hashlib.sha256()
+    done = 0
     with open(path, "rb") as fh:
-        for piece in iter(lambda: fh.read(BLOCK), b""):
+        while True:
+            if out_of_time():
+                return None, "the time limit was reached after %d bytes of %d were hashed" % (done, os.fstat(fh.fileno()).st_size)
+            piece = fh.read(BLOCK)
+            if not piece:
+                break
             h.update(piece)
-    return h.hexdigest()
+            done += len(piece)
+    return h.hexdigest(), None
+
+
+def stand_in(path):
+    """What names a file in the run's directory name when its hash could not be made: its path, size and modification time."""
+    st = os.stat(path)
+    return "unhashed:%s:%d:%d" % (path, st.st_size, st.st_mtime_ns)
 
 
 def place_json(directory, name, value):
@@ -1788,7 +1861,19 @@ def main():
         fail("the hive is larger than the %d bytes this tool reads" % MAX_HIVE_BYTES, bytes=hive_size)
     with open(hive_path, "rb") as fh:
         hive, _block = read_base(fh, hive_size)
-    identity_parts = [hive_path, sha256_file(hive_path)] + [sha256_file(p) if os.path.isfile(p) else p for _r, p in logs]
+    hive_sha, hive_sha_why = sha256_file(hive_path)
+    not_hashed = []        # what the clock stopped the hashing of, said in the receipt and the status
+    if hive_sha is None:
+        not_hashed.append("the hive: " + hive_sha_why)
+    identity_parts = [hive_path, hive_sha or stand_in(hive_path)]
+    for role, p in logs:
+        if not os.path.isfile(p):
+            identity_parts.append(p)
+            continue
+        log_sha, log_sha_why = sha256_file(p)
+        if log_sha is None:
+            not_hashed.append("%s: %s" % (role, log_sha_why))
+        identity_parts.append(log_sha or stand_in(p))
     import hashlib
     identity = hashlib.sha256(json.dumps(identity_parts).encode("utf-8")).hexdigest()[:12]
     directory = output_directory(identity)
@@ -1799,16 +1884,26 @@ def main():
     values_file = ValuesFile(write_values, directory)
 
     receipt = {"parser": PARSER, "hive_original": {"path": hive_path, "bytes": hive_size, **{k: v for k, v in hive.items() if k not in ("bytes_read", "problems")}, "problems": hive.get("problems", [])}}
-    receipt["hive_original"]["sha256"] = identity_parts[1]
+    receipt["hive_original"]["sha256"] = hive_sha
+    if hive_sha is None:
+        receipt["hive_original"]["sha256_not_made"] = hive_sha_why
+    if not_hashed:
+        receipt["not_hashed"] = not_hashed
     replay_receipt, log_receipts, unrecovered, working = replay(hive_path, hive_size, hive, logs, directory)
     receipt["replay"] = replay_receipt
     receipt["logs"] = log_receipts
     recovered_path = None
     if working is not None:
         recovered_path = place_without_replacing(working, directory / "recovered.hive")
+        PLACED.append(recovered_path)
         TEMPS[:] = [t for t in TEMPS if t != str(working)]
         os.chmod(recovered_path, 0o644)
-        receipt["recovered"] = {"path": shown_path(recovered_path), "bytes": os.path.getsize(recovered_path), "sha256": sha256_file(recovered_path)}
+        recovered_sha, recovered_sha_why = sha256_file(recovered_path)
+        receipt["recovered"] = {"path": shown_path(recovered_path), "bytes": os.path.getsize(recovered_path), "sha256": recovered_sha}
+        if recovered_sha is None:
+            receipt["recovered"]["sha256_not_made"] = recovered_sha_why
+            not_hashed.append("the recovered copy: " + recovered_sha_why)
+            receipt["not_hashed"] = not_hashed
         with open(recovered_path, "rb") as fh:
             after, _b = read_base(fh, os.path.getsize(recovered_path))
         receipt["recovered"]["base_block"] = {k: v for k, v in after.items() if k not in ("bytes_read",)}
@@ -1914,11 +2009,15 @@ def main():
         if export and export_receipt.get("status") != "complete":
             reasons.append("the key and value records are %s%s" % (export_receipt.get("status"), (": " + export_receipt["why"]) if export_receipt.get("why") else ""))
         reader_said = (export_receipt.get("independent_reader") or {}).get("regfexport") or {}
+        if reader_said.get("ran") and not reader_said.get("finished"):
+            reasons.append(reader_said["why_not_finished"])
         if reader_said.get("agrees") is False:
             reasons.append("regfexport counted %d keys and %d values where regipy counted %d and %d" % (
                 reader_said["keys"], reader_said["values"], reader_said["regipy"]["keys"], reader_said["regipy"]["values"]))
         if hive.get("problems"):
             reasons.append("the hive's base block has a problem: " + "; ".join(hive["problems"]))
+        if not_hashed:
+            reasons.append("not every file was hashed (%s): the digests named in the receipt are those that were made" % "; ".join(not_hashed))
         if receipt["replay"].get("time_limit"):
             reasons.append(receipt["replay"]["time_limit"])
         if (receipt["replay"].get("base_block_from_log") or {}).get("taken") is False:
@@ -1938,6 +2037,7 @@ def main():
             basis = "; ".join(said)
     receipt["status"], receipt["status_basis"] = status, basis
     placed = place_json(directory, "receipt.json", receipt)
+    del PLACED[:]
     answer = {"parser": PARSER, "status": status, "status_basis": basis, "hive": hive_path,
               "dirty_before": receipt["replay"]["dirty_before"], "replayed": receipt["replay"]["performed"],
               "sequence_before": receipt["replay"]["sequence_before"], "sequence_after": receipt["replay"].get("sequence_after"),
@@ -1951,10 +2051,25 @@ def main():
     print(json.dumps(answer, indent=1))
 
 
+def forget_placed():
+    """A recovered copy is a result with its receipt, which is written last: a copy placed by a run that did not get to its receipt is removed, not left to be taken for one."""
+    removed = 0
+    for path in PLACED:
+        try:
+            os.unlink(path)
+            removed += 1
+        except OSError:
+            pass
+    del PLACED[:]
+    return removed
+
+
 def last_word(signum):
     forget_temps()
+    copies = forget_placed()
     print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "interrupted",
-                      "status_basis": "the tool was stopped by signal %d; nothing it had made is a result (the temporary files were removed)" % signum, "signal": signum}), flush=True)
+                      "status_basis": "the tool was stopped by signal %d; nothing it had made is a result (the temporary files were removed%s)" % (
+                          signum, ", and so was the recovered copy, which had no receipt yet" if copies else ""), "signal": signum}), flush=True)
 
 
 if __name__ == "__main__":
@@ -1966,5 +2081,6 @@ if __name__ == "__main__":
         fail(str(exc))
     except Exception as exc:                                  # whatever hostile input does, the answer is JSON
         forget_temps()
+        forget_placed()
         print(json.dumps({"ok": False, "error": "the run failed", "status": "failed", "status_basis": "the tool stopped with an unexpected error", "reason": "%s: %s" % (type(exc).__name__, exc)}))
         sys.exit(1)

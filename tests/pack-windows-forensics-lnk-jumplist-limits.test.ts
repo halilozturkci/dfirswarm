@@ -18,7 +18,7 @@ import { readFile, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { withCwd } from "./tool-library-harness.ts";
-import { WIN, body, tool } from "./windows-pack-harness.ts";
+import { WIN, body, pythonCanImport, tool } from "./windows-pack-harness.ts";
 import { FILETIME_A, cfb, destList, lnk } from "./windows-t1-fixtures.ts";
 
 type Answer = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -36,19 +36,20 @@ const rowsOf = async (cwd: string, out: Answer): Promise<Row[]> => (await readFi
 const containerOf = async (cwd: string, out: Answer): Promise<Row> => (await rowsOf(cwd, out)).find((r) => r.row === "container")!;
 
 /** Run the tool and say how much memory it peaked at: a wrapper that starts it and reads the peak resident size of its child (bytes on macOS, KiB elsewhere). */
-function measured(cwd: string, args: unknown): { answer: Answer; rssMb: number; seconds: number } {
+function measured(cwd: string, args: unknown): { answer: Answer; rssMb: number; seconds: number; cpu: number } {
   const code = [
     "import json, os, resource, subprocess, sys, time",
     "t = time.time()",
     "p = subprocess.run([sys.executable, sys.argv[1]], input=sys.argv[2], capture_output=True, text=True, env={**os.environ, 'AGENT_ID': 's1'})",
     "ru = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss",
-    "print(json.dumps({'out': p.stdout, 'err': p.stderr[-300:], 'mb': ru / (1 << 20) if sys.platform == 'darwin' else ru / 1024, 'sec': time.time() - t}))",
+    "cpu = resource.getrusage(resource.RUSAGE_CHILDREN).ru_utime + resource.getrusage(resource.RUSAGE_CHILDREN).ru_stime",
+    "print(json.dumps({'out': p.stdout, 'err': p.stderr[-300:], 'mb': ru / (1 << 20) if sys.platform == 'darwin' else ru / 1024, 'sec': time.time() - t, 'cpu': cpu}))",
   ].join("\n");
   const r = spawnSync("python3", ["-c", code, join(WIN, "lnk_jumplist", "run.py"), JSON.stringify(args)], { cwd, encoding: "utf8", maxBuffer: 1 << 28 });
   assert.equal(r.status, 0, r.stderr);
-  const w = JSON.parse(r.stdout) as { out: string; err: string; mb: number; sec: number };
+  const w = JSON.parse(r.stdout) as { out: string; err: string; mb: number; sec: number; cpu: number };
   assert.doesNotMatch(w.err, /Traceback/);
-  return { answer: JSON.parse(w.out) as Answer, rssMb: w.mb, seconds: w.sec };
+  return { answer: JSON.parse(w.out) as Answer, rssMb: w.mb, seconds: w.sec, cpu: w.cpu };
 }
 
 // ---- files that are small and ask for a lot ------------------------------------------------------------------------------------------
@@ -295,5 +296,163 @@ test("a compound file with streams and no DestList is partial; one with no strea
     assert.equal(e.status, "complete", e.status_basis);
     const file = (await rowsOf(cwd, e)).find((r) => r.row === "file")!;
     assert.equal(file.kind, "compound file without a DestList");
+  });
+});
+
+// ---- a DestList is bounded in the work it asks for and the memory it holds ------------------------------------------------------------
+
+/** A version 1 DestList of `n` entries (114 bytes each: the path is empty) that name streams numbered from `first`, so none of them need exist. */
+const manyEntries = (n: number, first = 0x100000): Buffer => destList(1, Array.from({ length: n }, (_v, i) => ({ number: first + i, host: "", filetime: FILETIME_A, pin: -1, path: "" })));
+
+test("6,000 streams and 30,000 DestList entries that name none of them are matched in linear time: the entries are looked up by name, not by a pass over every stream", async () => {
+  await withCwd(async (cwd) => {
+    const streams = [{ name: "DestList", data: manyEntries(30_000) }, ...Array.from({ length: 6000 }, (_v, i) => ({ name: (0x10000 + i).toString(16), data: Buffer.alloc(0) }))];
+    await writeFile(join(cwd, "work", "x.automaticDestinations-ms"), cfb(streams));
+    const m = measured(cwd, { path: "work/x.automaticDestinations-ms", max_seconds: 10 });
+    assert.ok(m.cpu < 8, `${m.cpu.toFixed(1)} s of CPU for 1.8e8 stream-by-entry steps if they are all made (the host's load is not counted)`);
+    assert.equal(m.answer.status, "partial");
+    const rows = await rowsOf(cwd, m.answer);
+    assert.equal(rows.filter((r) => r.row === "destlist_entry").length, 30_000);
+    assert.equal(rows.filter((r) => r.row === "stream").length, 6001);
+    assert.ok(rows.filter((r) => r.row === "destlist_entry").every((r) => r.stream_present === false));
+    const dl = rows.find((r) => r.row === "destlist")!;
+    assert.equal(dl.entries_read, 30_000);
+    assert.equal(dl.entries_not_read_from, undefined, "under the bound, nothing is left unread");
+  });
+});
+
+/** A container whose only stream is a DestList of `n` entries written in sectors that are in reverse order in the file: every sector is an extent of its own. */
+function reversedDestList(n: number): { file: Buffer; offsetOf: (streamOffset: number) => number; sectors: number } {
+  const data = manyEntries(n);
+  const D = Math.ceil(data.length / 512);
+  let fats = 1;
+  while (fats * 128 < fats + 1 + D) fats++;
+  assert.ok(fats <= 109);
+  const c0 = fats + 1;
+  const physical = (k: number): number => c0 + (D - 1 - k);
+  const table = new Uint32Array(fats * 128).fill(FREE);
+  for (let i = 0; i < fats; i++) table[i] = FATSECT;
+  table[fats] = END;
+  for (let k = 0; k < D; k++) table[physical(k)] = k + 1 < D ? physical(k + 1) : END;
+  const header = Buffer.alloc(512);
+  Buffer.from("d0cf11e0a1b11ae1", "hex").copy(header, 0);
+  header.writeUInt16LE(3, 0x1a);
+  header.writeUInt16LE(0xfffe, 0x1c);
+  header.writeUInt16LE(9, 0x1e);
+  header.writeUInt16LE(6, 0x20);
+  [fats, fats, 0, 4096, END, 0, END, 0].forEach((v, i) => header.writeUInt32LE(v >>> 0, 0x2c + 4 * i));
+  for (let i = 0; i < 109; i++) header.writeUInt32LE(i < fats ? i : FREE, 0x4c + 4 * i);
+  const file = Buffer.alloc(512 + (c0 + D) * 512);
+  header.copy(file, 0);
+  Buffer.from(table.buffer).copy(file, 512);
+  dirEntry("Root Entry", 5, FREE, FREE, 1, END, 0).copy(file, 512 + fats * 512);
+  dirEntry("DestList", 2, FREE, FREE, FREE, physical(0), data.length).copy(file, 512 + fats * 512 + 128);
+  for (let k = 0; k < D; k++) data.copy(file, 512 + physical(k) * 512, k * 512, Math.min(data.length, (k + 1) * 512));
+  return { file, offsetOf: (s) => 512 + physical(Math.floor(s / 512)) * 512 + (s % 512), sectors: D };
+}
+
+test("a DestList of 4,000 fragments and 20,000 entries is mapped to the file by bisection: each entry costs the fragments it touches, not all of them", async () => {
+  await withCwd(async (cwd) => {
+    const r = reversedDestList(20_000);
+    assert.ok(r.sectors > 4000);
+    await writeFile(join(cwd, "work", "x.automaticDestinations-ms"), r.file);
+    const m = measured(cwd, { path: "work/x.automaticDestinations-ms", max_seconds: 10 });
+    assert.ok(m.cpu < 8, `${m.cpu.toFixed(1)} s of CPU (a pass over every fragment for every entry is 9e7 steps)`);
+    const rows = await rowsOf(cwd, m.answer);
+    const entriesOut = rows.filter((r2) => r2.row === "destlist_entry");
+    assert.equal(entriesOut.length, 20_000);
+    // Entry 7 lies inside a sector (114 bytes each: 32 + 114 * 6 = 716 is in the second sector); entry 3 starts at 32 + 228 = 260 and ends at 374, inside the first.
+    for (const i of [0, 2, 3, 4, 5, 6, 7, 9_999, 19_999]) {
+      const start = 32 + 114 * i;
+      const row = entriesOut[i];
+      assert.equal(row.stream_offset, start);
+      const inOne = Math.floor(start / 512) === Math.floor((start + 0x82 - 1) / 512);
+      assert.equal(row.container_contiguous, inOne, `entry ${i + 1}`);
+      assert.equal(row.container_offset, r.offsetOf(start), `entry ${i + 1}`);
+    }
+    assert.ok(entriesOut.some((e) => e.container_contiguous === false), "the reversed sectors really break an entry that crosses one");
+  });
+});
+
+test("a DestList of 60,000 entries is read to its first 50,000: the rest is named by where it starts and how long it is", async () => {
+  await withCwd(async (cwd) => {
+    const dl = manyEntries(60_000);
+    await writeFile(join(cwd, "work", "x.automaticDestinations-ms"), cfb([{ name: "DestList", data: dl }]));
+    const m = measured(cwd, { path: "work/x.automaticDestinations-ms" });
+    assert.ok(m.rssMb < 150, `peak ${m.rssMb.toFixed(0)} MB`);
+    assert.equal(m.answer.status, "partial");
+    const rows = await rowsOf(cwd, m.answer);
+    const row = rows.find((r) => r.row === "destlist")!;
+    assert.equal(row.entries_read, 50_000);
+    assert.equal(row.entries_claimed, 60_000);
+    assert.equal(row.entries_not_read_from, 32 + 114 * 50_000);
+    assert.match(row.problems.join(" | "), /holds more than the 50000 entries this tool reads: the first 50000 are read, and the rest \(from stream offset 5700032, 1140000 bytes\) is not/);
+    assert.equal(rows.filter((r) => r.row === "destlist_entry").length, 50_000);
+    assert.equal(m.answer.container_problems, 2, "the cut DestList and the entries that name no stream");
+  });
+});
+
+test("a stream whose DestList entry lies past the bound is not called an orphan as if the DestList had been read whole", async () => {
+  await withCwd(async (cwd) => {
+    const dl = Buffer.concat([manyEntries(50_000, 0x200000), manyEntries(1, 0x1)]);
+    dl.writeUInt32LE(50_001, 4);
+    const f = cfb([{ name: "DestList", data: dl }, { name: "1", data: LNK }]);
+    await writeFile(join(cwd, "work", "x.automaticDestinations-ms"), f);
+    const out = body<Answer>(await tool("lnk_jumplist", cwd, { path: "work/x.automaticDestinations-ms" }));
+    assert.equal(out.status, "partial");
+    const rows = await rowsOf(cwd, out);
+    const s = rows.find((r) => r.row === "stream" && r.name === "1")!;
+    assert.equal(s.in_destlist, null);
+    assert.match(s.orphan, /none of the 50000 DestList entries read has an entry for \(the DestList was read only to its first 50000 entries\)/);
+  });
+});
+
+test("the clock is looked at while the DestList entries are matched to the streams: when it runs out the entries after that point have no row, the container says so, and the streams are not examined", async () => {
+  await withCwd(async (cwd) => {
+    await writeFile(join(cwd, "work", "x.automaticDestinations-ms"), cfb([{ name: "DestList", data: manyEntries(1500) }, { name: "1", data: LNK }]));
+    // The tool is loaded as a module and its clock is made to run out when the 1,000th entry is mapped to the file (a real one would need a file that takes
+    // seconds); everything else is the tool as it runs.
+    const code = [
+      "import importlib.util, io, json, sys",
+      "spec = importlib.util.spec_from_file_location('lnkrun', sys.argv[1])",
+      "m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)",
+      "state = {'n': 0, 'out': False}",
+      "real = m.map_range",
+      "def counted(*a):",
+      "    state['n'] += 1",
+      "    if state['n'] >= 1000: state['out'] = True",
+      "    return real(*a)",
+      "m.map_range = counted",
+      "m.out_of_time = lambda: state['out']",
+      "m.main()",
+    ].join("\n");
+    const r = spawnSync("python3", ["-c", code, join(WIN, "lnk_jumplist", "run.py")], { cwd, encoding: "utf8", input: JSON.stringify({ path: "work/x.automaticDestinations-ms" }), env: { ...process.env, AGENT_ID: "s1" }, maxBuffer: 1 << 26 });
+    assert.equal(r.status, 0, r.stderr);
+    const out = JSON.parse(r.stdout) as Answer;
+    assert.equal(out.status, "partial");
+    assert.match(out.status_basis, /time limit/);
+    const box = await containerOf(cwd, out);
+    assert.match(box.problems.join(" | "), /the time limit was reached after 1023 of the 1500 DestList entries were matched to the streams: the entries after them have no row/);
+    const rows = await rowsOf(cwd, out);
+    assert.equal(rows.filter((x) => x.row === "destlist_entry").length, 1023);
+    assert.equal(rows.filter((x) => x.row === "stream").length, 0, "the streams after a time limit are not examined, and none is called an orphan");
+  });
+});
+
+test("jumplist reads a DestList to its first 50,000 entries and names the rest; a DestList of exactly 50,000 is read whole and has no problem", { skip: pythonCanImport("olefile") ? false : "olefile is not installed on this host" }, async () => {
+  await withCwd(async (cwd) => {
+    await writeFile(join(cwd, "work", "exact.automaticDestinations-ms"), cfb([{ name: "DestList", data: manyEntries(50_000) }]));
+    await writeFile(join(cwd, "work", "over.automaticDestinations-ms"), cfb([{ name: "DestList", data: manyEntries(50_001) }]));
+    const exact = body<Answer>(await tool("jumplist", cwd, { path: "work/exact.automaticDestinations-ms", limit: 3 }));
+    const exactFile = exact.files[0] as Answer;
+    assert.equal(exactFile.entry_count, 50_000);
+    assert.equal(exactFile.problems, undefined);
+    assert.equal(exact.status, "complete");
+    const over = body<Answer>(await tool("jumplist", cwd, { path: "work/over.automaticDestinations-ms", limit: 3 }));
+    const overFile = over.files[0] as Answer;
+    assert.equal(overFile.entry_count, 50_000);
+    assert.equal(overFile.entries_not_read_from, 32 + 114 * 50_000);
+    assert.match(overFile.problems.join(" | "), /holds more than the 50000 entries this tool reads: the first 50000 are read, and the rest \(from stream offset 5700032, 114 bytes\) is not/);
+    assert.equal(over.status, "partial");
   });
 });
