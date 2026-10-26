@@ -216,7 +216,7 @@ jobs:
     # out by the time each takes (tests/shell-suites.weights): 12 to 19
     # minutes each over
     # the first three runs. The limit stays at 55; a job is there to stop a hang.
-    # tests/ci-shards.test.ts holds the three to cover every node suite and
+    # tests/ci-shards.test.ts holds the four parts to cover every node suite and
     # every shell suite exactly once, so a new suite is never in no job.
     #
     # The node part is the slow one on a hosted runner, and its speed varies:
