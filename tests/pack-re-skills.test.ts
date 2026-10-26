@@ -382,7 +382,7 @@ test("the review's wording fixes are in the leaves and the goal, and the goal's 
   // The counts outside the pack follow the pack.
   for (const file of ["docs/packs.md", "README.md"]) {
     const doc = await readFile(join(RE, "..", "..", file), "utf8");
-    assert.match(doc, /^\| `reverse-engineering` \| 20 \| 6 \| 1 \|/m, `${file} counts twenty skills (the router is not counted), six tools and one goal template`);
+    assert.match(doc, /^\| `reverse-engineering` \| 21 \| 6 \| 1 \|/m, `${file} counts 21 skills (the router is counted, as pack.json counts it), six tools and one goal template`);
   }
 });
 
