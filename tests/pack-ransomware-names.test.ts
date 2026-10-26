@@ -23,6 +23,23 @@ function mixed(n: number): string {
     if (/\d/.test(s) && /[A-Za-z]/.test(s)) return s;
   }
 }
+/**
+ * A letters-only draw can read as words to the rule: one word, one capitalised word, several capitalised words or all capitals are not
+ * identifier-shaped (the manifests say so, and give the rate: 24 mixed-case letters read as capitalised words in about 0.5% of draws before
+ * the shared withholding rules, 0.07% after, measured on 40,000 draws; the second test below holds those rates). This test is about the
+ * shapes the rule withholds, so a draw in that documented class is drawn again; without it, a run failed one time in about 400
+ * ("encrypted_survey printed QvxlcUfWpvapSivtbtthbsvs": Qvxlc, Uf, Wpvap and Sivtbtthbsvs are four capitalised words). A draw that is not
+ * in the class and is printed still fails the test: 1,200,000 such draws of the two letters-only shapes were all withheld.
+ */
+const READS_AS_WORDS = /^(?:[A-Z]?[a-z]+(?:[A-Z][a-z]+)*|[A-Z]+)$/;
+function notWords(build: () => string): () => string {
+  return () => {
+    for (;;) {
+      const s = build();
+      if (!READS_AS_WORDS.test(s)) return s;
+    }
+  };
+}
 const fullwidth = (s: string): string => [...s].map((c) => String.fromCodePoint(c.charCodeAt(0) - 0x21 + 0xff01)).join("");
 const uuid = (): string => `${pick(HEX, 8)}-${pick(HEX, 4)}-4${pick(HEX, 3)}-a${pick(HEX, 3)}-${pick(HEX, 12)}`;
 
@@ -35,8 +52,8 @@ const WITHHELD_SHAPES: Record<string, () => string> = {
   alnum40: () => mixed(40),
   decimal12: () => pick(DIGITS, 12),
   decimal20: () => pick(DIGITS, 20),
-  letters24: () => pick(LETTERS, 24),
-  base58_22: () => pick(B58, 22),
+  letters24: notWords(() => pick(LETTERS, 24)),
+  base58_22: notWords(() => pick(B58, 22)), // 2.5% of the draws hold no digit, and are letters only
   uuid,
   fullwidth12: () => fullwidth(mixed(12)),
 };
