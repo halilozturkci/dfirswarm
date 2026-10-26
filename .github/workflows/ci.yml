@@ -29,7 +29,14 @@ jobs:
     # (windows, reverse engineering, virtualization) made it 30 to 35 min (the
     # slowest success 34 min 54 s of the 35, and 14 runs cut off at 35 min 18 s),
     # so the limit is 60: a hang is still stopped, a grown suite is not.
-    timeout-minutes: 60
+    #
+    # Hosted runners vary in speed. Over the last 60 runs (41 successes) this
+    # job took 36 to 59 min 54 s (median 53.5), four runs were cut off at the
+    # limit, and on a slow host `npm test` alone took about 23 minutes and
+    # `npm run test:bash` was cut off. 60 left no room for a slow host, so the
+    # limit is 90, the same as the macOS node parts. A hang is still stopped:
+    # every test has its own 5-minute limit (scripts/test-node.ts).
+    timeout-minutes: 90
     steps:
       # actions/checkout runs `git init` on the runner, and git prints its
       # init.defaultBranch hint unless one is configured.
@@ -85,8 +92,11 @@ jobs:
     name: typecheck · node tests · Node 22.19 (the engines floor)
     runs-on: ubuntu-latest
     # The node suites alone take 13 to 20 min now (the slowest success 20 min 0 s
-    # of the 20): 35, the same step up as the job above.
-    timeout-minutes: 35
+    # of the 20): 35, the same step up as the job above. Over the last 60 runs
+    # the 43 successes took 20 to 34 min (the slowest 33 min 54 s of the 35) and
+    # two runs were cut off at the limit on a slow host, so now 55 (1.6 times
+    # the slowest success).
+    timeout-minutes: 55
     steps:
       - run: git config --global init.defaultBranch main
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -111,8 +121,10 @@ jobs:
     # builds on node:24. The node suites again, on 24.
     name: node tests · Node 24 (the VM image's)
     runs-on: ubuntu-latest
-    # 14 to 19 min now (the slowest success 19 min 12 s of the 20): 35.
-    timeout-minutes: 35
+    # 14 to 19 min now (the slowest success 19 min 12 s of the 20): 35. Over the
+    # last 60 runs the 48 successes took 19 to 32 min (the slowest 32 min 24 s of
+    # the 35, none cut off yet), so the same 55 as the Node 22.19 job.
+    timeout-minutes: 55
     steps:
       - run: git config --global init.defaultBranch main
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
