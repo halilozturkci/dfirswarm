@@ -198,7 +198,36 @@ def install_signal_handlers():
         signal.signal(signum, _on_signal)
 # END SHARED PROCESS
 STORE = re.compile(r"^Store:\s*(\d+)\s*$")
-FIELD = re.compile(r"^\s+(.+?)\s*:\s*(.*\S)\s*$")
+
+
+def parse_field(line):
+    """(key, value) of a `<whitespace><key> : <value>` line, or None: what `^\\s+(.+?)\\s*:\\s*(.*\\S)\\s*$` matched, found in time linear in the
+    line. That expression backtracks over the leading whitespace and the key together, so a line of 4,096 spaces in the output took 37 s (the cube of
+    its length), and any text of the image that the reader prints on a line of its own could hold the tool. The key ends at the first point
+    from which the next character that is not whitespace is a `:` with something after it; the leading whitespace gives back one character
+    at a time only when no key ends after a longer start."""
+    n = len(line)
+    if n == 0 or not line[0].isspace():
+        return None
+    after = [n] * (n + 2)                          # after[i]: the first index at or after i that is not whitespace (n when there is none)
+    for i in range(n - 1, -1, -1):
+        after[i] = after[i + 1] if line[i].isspace() else i
+    lead = after[0]
+    if lead == n:
+        return None
+    key_end = [n + 1] * (n + 2)                    # key_end[k]: the smallest k' >= k at which a key can end
+    for k in range(n, 0, -1):
+        j = after[k]
+        key_end[k] = k if j < n and line[j] == ":" and after[j + 1] < n else key_end[k + 1]
+    for start in range(lead, 0, -1):
+        end = key_end[start + 1]
+        if end <= n:
+            first = after[after[end] + 1]
+            last = n
+            while line[last - 1].isspace():
+                last -= 1
+            return line[start:end], line[first:last]
+    return None
 
 
 def fail(message, **extra):
@@ -316,9 +345,9 @@ def main():
             continue
         if current is None:
             continue
-        m = FIELD.match(line)
-        if m:
-            current[key_of(m.group(1))] = m.group(2)
+        field = parse_field(line)
+        if field:
+            current[key_of(field[0])] = field[1]
 
     claimed = None
     m = re.search(r"Number of stores:\s*(\d+)", text)

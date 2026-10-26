@@ -1,7 +1,7 @@
 {
   "id": "linux-forensics",
   "name": "Linux Forensics Pack",
-  "version": "1.5.3",
+  "version": "1.5.4",
   "description": "Artefact-by-artefact method and tooling for a Linux host: the system profile and its clocks, authentication and journal records, accounts and authorization, scheduling and systemd candidates, ext metadata and storage layers, container evidence locations, and package verification against local and independently trusted baselines. Each tool says what it read, what it did not, and where the whole result is kept.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -53,8 +53,8 @@
       "README.md": "8b8d0eb2fbb2d6342f8a1317148853e010bddb5327a37ff21ed8eecf4923fc58",
       "tools/linux_triage/manifest.json": "be394c6ce10bfde5f79c5dbdced12846dfe1659569a541f31657931d0a3c19e5",
       "tools/linux_triage/run.py": "5dae69839eacb2b668b15d08d948d7838d15ef1bc2185967f9d352b6d83f9cc0",
-      "tools/auth_log/manifest.json": "bedc9e1a496703fa5967066ce88bb468c9912de81aa55a1f1926c041a00f5bf7",
-      "tools/auth_log/run.py": "f80333c2b36e86ee00f4ccccf3f4126319a8ba4100e273ce9c90627c8782a874",
+      "tools/auth_log/manifest.json": "bbc905643749b9efde098e1c801c0f342794fdbebcb77c92ff9f1923816b9d63",
+      "tools/auth_log/run.py": "af42bc7ffbd6ec2c4b60145b3d055321ad88cc13d3bc0c4bb163e3c84864f657",
       "tools/journal_export/manifest.json": "a930e2a14022d367f1c824bab825adf766065978986d1c06d199f724adabf834",
       "tools/journal_export/run.py": "07c2b5fa16e388c256d85c0f0ff566863814a8f7386018645273449b54e2abbe",
       "tools/utmp_parse/manifest.json": "0c0d10380030d3c63fdf7ce6a62ef7b54e12f80413c3e1c92595a76f46a1b87e",

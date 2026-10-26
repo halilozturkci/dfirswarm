@@ -407,7 +407,24 @@ INT_FIELDS = ("port", "uid", "by_uid", "gid", "cert_serial", "authorized_keys_li
 PAM_KEYS = ("logname", "uid", "euid", "tty", "ruser", "rhost", "user")
 PAM_USER = re.compile(r"(?:^|\s)user=")
 PAM_RUSER = re.compile(r"(?:^|\s)ruser=")
-PAM_RHOST_LAST = re.compile(r"\s*(?:^|\s)rhost=(\S*)\s*$")
+
+
+def pam_rhost_last(rest):
+    """(where the whitespace before it begins, its value) for an `rhost=<value>` that is the last word of `rest`, else None; the value may be
+    empty. It is what `\\s*(?:^|\\s)rhost=(\\S*)\\s*$` found, in one pass from the end: that expression is tried at every offset, and in a
+    64 KiB run of spaces each try ran to the end of the run, which cost the square of the length (a line of 65,000 bytes took a minute)."""
+    body = rest.rstrip()
+    start = len(body)
+    while start > 0 and not body[start - 1].isspace():
+        start -= 1
+    if not body.startswith("rhost=", start):
+        return None
+    gap = start
+    while gap > 0 and body[gap - 1].isspace():
+        gap -= 1
+    return gap, body[start + len("rhost="):]
+
+
 # Fields a line's text can never set: they are the tool's own.
 RESERVED = {"user_bytes", "user_withheld", "id", "parser", "file", "line", "byte_offset", "time", "time_raw", "time_zone", "time_utc", "year", "host",
             "process", "pid", "kind", "reordered", "time_error", "text_bytes", "command_bytes", "raw", "line_text"}
@@ -468,10 +485,10 @@ def finish(kind, fields):
         if found:
             pre = head[:found.start()]
             rest = head[found.end():]
-            tail = PAM_RHOST_LAST.search(rest)
-            ruser = rest[:tail.start()] if tail else rest
-            if tail and tail.group(1):
-                fields["rhost"] = tail.group(1)
+            tail = pam_rhost_last(rest)
+            ruser = rest[:tail[0]] if tail else rest
+            if tail and tail[1]:
+                fields["rhost"] = tail[1]
             if ruser.strip():
                 fields["ruser"] = ruser.strip()
         for token in pre.split():

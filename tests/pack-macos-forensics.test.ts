@@ -325,7 +325,7 @@ test("plist_read labels the file time as the extracted copy's and does not overw
     const answer = body<PlistAnswer>(await tool(PLIST, cwd, { path: "work/a.plist" }));
     assert.match(answer.files[0].extracted_file_mtime ?? "", /^\d{4}-\d\d-\d\dT.*Z$/);
     assert.equal(answer.files[0].modified, undefined);
-    assert.equal(answer.files[0].parser, "plist_read/4");
+    assert.equal(answer.files[0].parser, "plist_read/5");
 
     await writeFile(join(cwd, "work", "keep.jsonl"), "precious\n");
     const clash = refused(await tool(PLIST, cwd, { path: "work/a.plist", out_file: "work/keep.jsonl" }));

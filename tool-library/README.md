@@ -145,7 +145,7 @@ or `tools/`.
 | `icat_root` | python3 | `s9d8306` | 5 | Extract an inode from an EXT4 volume with icat. The Webserver case's image and its 503808-sector offset are t… |
 | `ioc_scan` | python3 | `s183900` | 7 | Stream a large binary for ASCII and UTF-16LE needles and return locators: for every occurrence an id, its sta… |
 | `ledger_timeline` | python3 | `se5fdcd` | 3 | Write a run's dated ledger entries as one timeline in time order (Markdown table, CSV or JSON Lines). Leaves … |
-| `lnk_parse` | python3 | `s183902` | 4 | Parse a Windows shell link (.lnk), or every link structure found in a slice of a dump, by the MS-SHLLINK layo… |
+| `lnk_parse` | python3 | `s183902` | 5 | Parse a Windows shell link (.lnk), or every link structure found in a slice of a dump, by the MS-SHLLINK layo… |
 | `mam_pf_parse` | python3 | `s2f6600` | 1 | Decompress a MAM-wrapped Windows prefetch file and return executable name, version, run count, and non-zero l… |
 | `mam_scan` | python3 | `s183901` | 2 | Scan a raw dump or image region for MAM-compressed Prefetch records (the signature MAM\x04 and a declared siz… |
 | `marshal_inspect` | python3 | `sd29252` | 1 | Read a Python marshal stream (a .pyc, or a stream carved from a packed executable or memory) as data and neve… |
