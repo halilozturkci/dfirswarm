@@ -405,14 +405,30 @@ def run_tool(tool, args, cwd, seconds):
 
 
 def beside(path, suffixes):
-    """The files beside `path` whose name is its name plus one of the suffixes, matched without regard to case."""
+    """({suffix: file}, {suffix: why not}) for the files beside `path` whose name is its name plus one of the suffixes, matched without regard to case. Only a regular
+    file is returned: a symbolic link (dangling or not), a directory or a pipe with such a name is never followed or opened, and is named with the reason."""
     directory, name = os.path.split(path)
     try:
         listing = os.listdir(directory)
     except OSError:
-        return {}
+        return {}, {}
     wanted = {name.lower() + s.lower(): s for s in suffixes}
-    return {wanted[f.lower()]: os.path.join(directory, f) for f in listing if f.lower() in wanted}
+    found, refused = {}, {}
+    for f in sorted(listing):
+        suffix = wanted.get(f.lower())
+        if suffix is None:
+            continue
+        full = os.path.join(directory, f)
+        try:
+            mode = os.lstat(full).st_mode
+        except OSError as exc:
+            refused[suffix] = (full, "could not be examined: %s" % describe(exc))
+            continue
+        if not stat.S_ISREG(mode):
+            refused[suffix] = (full, ("a symbolic link" if stat.S_ISLNK(mode) else "not a regular file") + ": not followed and not passed to registry_recover")
+        elif suffix not in found:
+            found[suffix] = full
+    return found, refused
 
 
 def minimal_directories(files):
@@ -425,17 +441,32 @@ def minimal_directories(files):
     return kept
 
 
+LOG_NOTES = {}           # hive -> what was said about the logs beside it (a link not followed, a legacy .LOG)
+LOG_REFUSED = {}         # hive -> the log files beside it that were not passed (a symbolic link, a directory): the hive is read without them
+
+
 def calls_for(family, files):
     """[(label, tool, args)] for a family's files."""
     if family == "registry-hives":
         out = []
         for f in files:
-            logs = beside(f, [".LOG1", ".LOG2"])
+            logs, refused = beside(f, [".LOG1", ".LOG2", ".LOG"])
             args = {"hive": f, "limit": 1}
+            notes = ["%s (%s) is %s" % (os.path.basename(full), suffix, why) for suffix, (full, why) in sorted(refused.items())]
             if ".LOG1" in logs:
                 args["log1"] = logs[".LOG1"]
             if ".LOG2" in logs:
                 args["log2"] = logs[".LOG2"]
+            if ".LOG" in logs:
+                if ".LOG1" in logs or ".LOG2" in logs:
+                    notes.append("%s is a legacy single log beside a .LOG1/.LOG2 pair: it was not passed" % os.path.basename(logs[".LOG"]))
+                else:
+                    args["log1"] = logs[".LOG"]
+                    notes.append("%s is a legacy single log (before Windows 8.1): passed as log1" % os.path.basename(logs[".LOG"]))
+            if notes:
+                LOG_NOTES[f] = notes
+            if refused:
+                LOG_REFUSED[f] = [full for full, _why in refused.values()]
             out.append((f, "registry_recover", args))
         return out
     if family == "shortcuts-jumplists":
@@ -631,10 +662,39 @@ def main_run(paths, shown, out):
 
     write_receipt("before the first tool ran")
 
+    plan = {}               # family -> (tool, calls, files), set once the walk is done
+    current = {"family": None}
+
     def stopped(signum, _frame):
         for proc in list(ACTIVE):
             kill_tree(proc)
-        receipt["status"], receipt["status_basis"] = "partial", "the recipe was terminated by signal %d before it finished: the families below are what had been read" % signum
+        # Every family gets a state: the one in flight is `interrupted` (its counts are the calls that had ended), a family not started is `not_attempted`
+        # with its inputs and calls counted, and the ones the recipe does not run keep their reason.
+        for fid in FAMILIES:
+            fam = receipt["families"].get(fid)
+            tool, calls, files = plan.get(fid, (None, [], []))
+            if fam is None:
+                receipt["families"][fid] = {"tool": tool or {"registry-hives": "registry_recover"}.get(fid), "inputs": len(files), "calls": len(calls) if plan else None,
+                                            "status": "not_attempted",
+                                            "reason": ("the recipe was terminated by signal %d before this family was started" % signum) if plan else
+                                                      "the recipe was terminated by signal %d during the walk of the target: nothing of this family was looked for" % signum,
+                                            "counts": {"parsed": 0, "partial": 0, "empty": 0, "unsupported": 0, "failed": 0, "not_attempted": len(calls)}}
+            elif "status" not in fam:
+                ended = sum(fam["counts"].values())
+                fam["status"] = "interrupted"
+                fam["reason"] = "the recipe was terminated by signal %d while this family was being read: %d of its %d call(s) had ended (counts), %d had not" % (signum, ended, fam["calls"], fam["calls"] - ended)
+                fam["calls_not_ended"] = fam["calls"] - ended
+        if "dissect-target" not in receipt["families"]:
+            receipt["families"]["dissect-target"] = {"tool": "target-query", "inputs": None, "calls": None,
+                                                     "status": "interrupted" if current["family"] == "dissect-target" else "not_attempted",
+                                                     "reason": "the recipe was terminated by signal %d %s" % (signum, "while its functions were running" if current["family"] == "dissect-target" else "before this stage was started"),
+                                                     "counts": {}}
+        for fid, why in NOT_RUN.items():
+            receipt["families"].setdefault(fid, {"tool": None, "inputs": 0, "calls": 0, "status": "not_attempted", "reason": why, "counts": {}})
+        receipt["status"] = "partial"
+        receipt["status_basis"] = ("the recipe was terminated by signal %d before it finished: a family marked parsed, partial, empty, unsupported or failed had ended; the family that was being read is "
+                                   "marked interrupted (its counts are the calls that had ended); every family that was not started is marked not_attempted" % signum)
+        receipt["errors"].append("the recipe was terminated by signal %d; the receipt is complete as to which families ended, were interrupted or were not started, and says nothing more" % signum)
         write_receipt("after this process was terminated")
         os._exit(128 + signum)
 
@@ -648,7 +708,6 @@ def main_run(paths, shown, out):
     for fam in by_family.values():
         fam.sort()
     receipt["walk"] = {"entries_seen": seen, "files_found": len(found), "cut_short": cut}
-    plan = {}
     for fid in FAMILIES:
         if fid in EXTRA_CALLS:
             parent, pick, tool, mk = EXTRA_CALLS[fid]
@@ -664,6 +723,7 @@ def main_run(paths, shown, out):
         tool, calls, files = plan[fid]
         fam = {"tool": tool or {"registry-hives": "registry_recover"}.get(fid), "inputs": len(files), "calls": len(calls), "counts": {"parsed": 0, "partial": 0, "empty": 0, "unsupported": 0, "failed": 0, "not_attempted": 0}}
         receipt["families"][fid] = fam
+        current["family"] = fid
         if not calls:
             fam["status"] = "not_attempted"
             fam["reason"] = "no file of this family is in the target" + ("; the walk was cut short, so one may exist unseen" if cut else "")
@@ -694,10 +754,12 @@ def main_run(paths, shown, out):
                     results.write(json.dumps({"input": label, "tool": tool_name, "state": state, "why": why}) + "\n")
                     continue
                 state, records = judge(parsed, code, timed_out)
+                if tool_name == "registry_recover" and label in LOG_REFUSED and state in ("parsed", "empty"):
+                    state = "partial"          # a log beside the hive was not used, so what the hive's logs hold is not in this answer
                 fam["counts"][state] += 1
                 if timed_out:
                     limits.append("%s: %s was killed at %d seconds" % (fid, label, int(seconds)))
-                row = {"input": label, "tool": tool_name, "arguments": args, "note": note, "exit_code": code, "timed_out": timed_out, "state": state, "records": records,
+                row = {"input": label, "tool": tool_name, "arguments": args, "note": note, "log_notes": LOG_NOTES.get(label), "log_files_not_used": LOG_REFUSED.get(label), "exit_code": code, "timed_out": timed_out, "state": state, "records": records,
                        "answer": parsed if parsed is not None else text, "stderr_tail": err or None}
                 results.write(json.dumps(row) + "\n")
         c = fam["counts"]
@@ -715,6 +777,7 @@ def main_run(paths, shown, out):
         else:
             fam["status"], fam["reason"] = "partial", "calls ended: " + ", ".join("%d %s" % (v, k) for k, v in c.items() if v)
         write_receipt("after family %s" % fid)
+    current["family"] = "dissect-target"
     receipt["families"]["dissect-target"] = dissect_stage(paths, out, deadline, limits)
     write_receipt("after family dissect-target")
     for fid, why in NOT_RUN.items():

@@ -19,10 +19,17 @@ Each link row has `integrity`: structure_complete, lnk_parse's problems, and wha
 label compared field by field, or why it was not run). status is complete only when no row is incomplete, no container problem is
 named, no independent read disagrees, nothing was left unread, and the tool's own clock did not run out.
 
+The container is checked, not only read: the header, the DIFAT (a FAT sector named twice or outside the file, more of them than a file of
+this size can need), the FAT marks of the FAT and DIFAT sectors, the directory (name lengths, object types, a tree that loops, names an entry
+twice or an unallocated one, an allocated entry the tree never reaches) and every chain. Each sector is held by one chain: a second chain
+that enters it is not followed further, and its row says where it stops, so the work is linear in the sectors of the file. A DestList
+entry that names a stream that is not a link is a container problem; so is a container that holds streams and no DestList.
+
 SENSITIVE OUTPUT. A link's arguments, its strings, and the text of a path-like field with the shape of a secret are handled as
 lnk_parse handles them: not in the answer; `write_strings: true`, in a job run as secret output, writes them to a file with
 mode 0600 under a finding id the rows cite. Refused anywhere else, before anything is made.
 """
+import array
 import hashlib
 import importlib.util
 import json
@@ -37,7 +44,7 @@ import tempfile
 import time
 from pathlib import Path
 
-PARSER = "lnk_jumplist/1"
+PARSER = "lnk_jumplist/2"
 LNK_MAGIC = bytes.fromhex("4c0000000114020000000000c000000000000046")
 OLE_MAGIC = bytes.fromhex("d0cf11e0a1b11ae1")
 MAX_LNK_BYTES = 64 << 20          # a link past this is not read whole: it is named and not parsed
@@ -495,18 +502,54 @@ def ft_iso(value):
 
 FREESECT, ENDOFCHAIN, FATSECT, DIFSECT = 0xFFFFFFFF, 0xFFFFFFFE, 0xFFFFFFFD, 0xFFFFFFFC
 NOSTREAM = 0xFFFFFFFF
+OWNER_MAX_SECTORS = 1 << 26          # past this many sectors (a 32 GiB file) the sectors' owners are not tracked, and the container says so
+MARKERS = {FREESECT: "free", FATSECT: "FAT", DIFSECT: "DIFAT"}
 
 
 class CfbError(Exception):
     pass
 
 
+class CfbTime(Exception):
+    """The tool's own time limit was reached while a container was being read."""
+
+
+class Problems:
+    """What is wrong with a container, by kind: the first example of a kind is kept whole and the others are counted, so a damaged file that
+    repeats one fault a million times is one line with a count and not a million lines. The streams' own rows carry their own faults."""
+
+    def __init__(self):
+        self.kinds = {}
+
+    def add(self, kind, text):
+        item = self.kinds.get(kind)
+        if item is None:
+            self.kinds[kind] = [text, 1]
+        else:
+            item[1] += 1
+
+    def lines(self):
+        return [text if n == 1 else "%s (and %d more of this kind)" % (text, n - 1) for text, n in self.kinds.values()]
+
+    def total(self):
+        return sum(n for _t, n in self.kinds.values())
+
+
+def mark_text(marker):
+    return MARKERS.get(marker, "unknown")
+
+
 class Cfb:
     """The directory and sector chains of a compound file, read in sectors (never the file whole). `problems` collects what is inconsistent;
-    a header that is not a compound file's raises CfbError."""
+    a header that is not a compound file's raises CfbError.
+
+    Every sector that something holds (the FAT, the DIFAT, the directory, the mini FAT, the mini stream, each stream) is claimed once in an owner
+    table, so a chain that loops, a chain that enters another chain and a stream that shares a sector are found by the same lookup and a chain is
+    followed at most once: the work is linear in the sectors of the file however many streams name the same chain. A chain that enters sectors another
+    holds is not followed further (its extents stop there and the row says where it goes on)."""
 
     def __init__(self, fh, size):
-        self.fh, self.size, self.problems = fh, size, []
+        self.fh, self.size, self.found = fh, size, Problems()
         head = self._read(0, 512)
         if len(head) < 512 or head[:8] != OLE_MAGIC:
             raise CfbError("not a compound file: the 8-byte signature is missing")
@@ -517,35 +560,36 @@ class Cfb:
         if (major, shift) not in ((3, 9), (4, 12)) or mshift != 6:
             raise CfbError("major version %d with sector shift %d and mini sector shift %d is not a layout this reader knows (3/9/6 or 4/12/6)" % (major, shift, mshift))
         self.major, self.ss, self.mini_ss = major, 1 << shift, 64
+        self.per = self.ss // 4
         (self.n_fat, self.dir_start, _txn, self.cutoff, self.minifat_start, self.n_minifat, self.difat_start, self.n_difat) = struct.unpack_from("<IIIIIIII", head, 0x2C)
         self.sectors = max(-(-(size - self.ss) // self.ss), 0)       # the header takes the first sector-sized slot
         if size % self.ss:
-            self.problems.append("the file is %d bytes, not a whole number of %d-byte sectors (the last sector is short)" % (size, self.ss))
-        difat = list(struct.unpack_from("<109I", head, 0x4C))
-        seen_difat, next_difat, left = set(), self.difat_start, self.n_difat
-        while left > 0 and next_difat not in (ENDOFCHAIN, FREESECT):
-            if next_difat in seen_difat or next_difat >= self.sectors:
-                self.problems.append("the DIFAT chain %s (sector %d)" % ("loops" if next_difat in seen_difat else "leaves the file", next_difat))
-                break
-            seen_difat.add(next_difat)
-            raw = self._sector(next_difat)
-            per = self.ss // 4 - 1
-            difat += list(struct.unpack_from("<%dI" % per, raw, 0))
-            next_difat = struct.unpack_from("<I", raw, per * 4)[0]
-            left -= 1
-        fat_sectors = [s for s in difat if s != FREESECT][: self.n_fat]
-        if len(fat_sectors) < self.n_fat:
-            self.problems.append("the header declares %d FAT sectors and the DIFAT names %d" % (self.n_fat, len(fat_sectors)))
-        self.fat = []
-        for s in fat_sectors:
-            if s >= self.sectors:
-                self.problems.append("a FAT sector (%d) is outside the file" % s)
-                continue
-            self.fat += struct.unpack("<%dI" % (self.ss // 4), self._sector(s))
-        self.owner = {}                                           # sector -> what holds it, to see two streams share one
+            self.flag("short", "the file is %d bytes, not a whole number of %d-byte sectors (the last sector is short)" % (size, self.ss))
+        n_dir_sectors = struct.unpack_from("<I", head, 0x28)[0]
+        if major == 3 and n_dir_sectors:
+            self.flag("header", "the header gives %d directory sectors; a version 3 file keeps zero there" % n_dir_sectors)
+        self.n_dir_sectors = n_dir_sectors
+        if head[0x22:0x28] != bytes(6):
+            self.flag("header", "the reserved bytes of the header (0x22 to 0x27) are not zero")
+        if self.cutoff != 4096:
+            self.flag("header", "the mini stream cutoff is %d bytes, not the 4096 the specification fixes" % self.cutoff)
+        self.labels, self.label_ids = [None], {}
+        self.owner = array.array("I", bytes(4 * self.sectors)) if self.sectors <= OWNER_MAX_SECTORS else None
+        if self.owner is None:
+            self.flag("owners", "the file holds %d sectors: which sector belongs to which chain is not tracked at this size, so a shared sector would not be found" % self.sectors)
+        self.fat = array.array("I")
+        self._load_fat(head)
+        self.mini_owner = None
         self.directory = self._directory()
         self.minifat = self._minifat()
         self.mini_container = None
+
+    @property
+    def problems(self):
+        return self.found.lines()
+
+    def flag(self, kind, text):
+        self.found.add(kind, text)
 
     def _read(self, offset, length):
         self.fh.seek(offset)
@@ -557,36 +601,164 @@ class Cfb:
     def sector_offset(self, n):
         return self.ss * (n + 1)
 
-    def chain(self, start, what, limit=None):
-        """The sectors of a chain, and what is wrong with it: a loop, a sector outside the file or the FAT, an unallocated or FAT-marked link."""
-        out, seen, n = [], set(), start
-        cap = limit if limit is not None else len(self.fat) + 1
-        while n not in (ENDOFCHAIN,) and len(out) <= cap:
+    def claim(self, sector, key, text):
+        """Record that the chain `key` (named `text`) holds `sector`. None when it was free; ("loop", text) when this chain held it already;
+        ("shared", text of the other chain) when another did."""
+        if self.owner is None or sector >= len(self.owner):
+            return None
+        label = self.label_ids.get(key)
+        if label is None:
+            label = self.label_ids[key] = len(self.labels)
+            self.labels.append(text)
+        held = self.owner[sector]
+        if held == 0:
+            self.owner[sector] = label
+            return None
+        return ("loop" if held == label else "shared", self.labels[held])
+
+    def _load_fat(self, head):
+        max_fat = -(-self.sectors // self.per)                     # FAT sectors that describe every sector of a file this size
+        max_difat = max(-(-(max_fat - 109) // (self.per - 1)), 0)
+        listed, difat_sectors, names = [], [], {}                  # the FAT sectors the DIFAT lists (distinct, in order); sector -> first position
+        extra = [0]
+
+        def note(position, sector):
+            if sector == FREESECT:
+                return
+            if len(names) >= self.n_fat or len(listed) >= max_fat:
+                extra[0] += 1
+                return
+            if sector in names:
+                self.flag("fat-twice", "the DIFAT names FAT sector %d more than once (entries %d and %d)" % (sector, names[sector], position))
+                self.fat.extend(array.array("I", [FREESECT]) * self.per)           # its place in the FAT stays, empty
+                return
+            names[sector] = position
+            if sector >= self.sectors:
+                self.flag("fat-outside", "a FAT sector (%d) is outside the file" % sector)
+                self.fat.extend(array.array("I", [FREESECT]) * self.per)
+                return
+            listed.append(sector)
+            block = array.array("I")
+            block.frombytes(self._sector(sector)[: self.ss])
+            if sys.byteorder != "little":
+                block.byteswap()
+            self.fat.extend(block)
+
+        position = 0
+        for sector in struct.unpack_from("<109I", head, 0x4C):
+            note(position, sector)
+            position += 1
+        seen, nxt, walked = set(), self.difat_start, 0
+        while nxt not in (ENDOFCHAIN, FREESECT) and walked < max(self.n_difat, 0) + 1:
+            if nxt in seen or nxt >= self.sectors:
+                self.flag("difat", "the DIFAT chain %s (sector %d)" % ("loops" if nxt in seen else "leaves the file", nxt))
+                break
+            if walked >= max_difat:
+                self.flag("difat", "the DIFAT chain is longer than a file of %d sectors can need (%d DIFAT sectors at most); the rest of it is not read" % (self.sectors, max_difat))
+                break
+            if out_of_time():
+                raise CfbTime()
+            seen.add(nxt)
+            difat_sectors.append(nxt)
+            walked += 1
+            raw = self._sector(nxt)
+            for sector in struct.unpack_from("<%dI" % (self.per - 1), raw, 0):
+                note(position, sector)
+                position += 1
+            nxt = struct.unpack_from("<I", raw, (self.per - 1) * 4)[0]
+        if walked != self.n_difat:
+            self.flag("difat", "the header declares %d DIFAT sectors and the DIFAT chain holds %d" % (self.n_difat, walked))
+        if extra[0]:
+            self.flag("fat-count", "the DIFAT names %d more FAT sector(s) than the header declares (%d) or than a file of %d sectors can need (%d)" % (extra[0], self.n_fat, self.sectors, max_fat))
+        if len(names) < self.n_fat:
+            self.flag("fat-count", "the header declares %d FAT sectors and the DIFAT names %d" % (self.n_fat, len(names)))
+        for sector in listed:
+            held = self.claim(sector, ("fat", sector), "the FAT")
+            if held:
+                self.flag("shared", "FAT sector %d is also held by %s" % (sector, held[1]))
+            if sector < len(self.fat) and self.fat[sector] != FATSECT:
+                self.flag("fat-mark", "FAT sector %d is not marked as a FAT sector in the FAT (its entry is %s)" % (sector, self._entry_text(self.fat[sector])))
+            elif sector >= len(self.fat):
+                self.flag("fat-mark", "FAT sector %d lies past the end of the FAT, so it cannot be marked as a FAT sector" % sector)
+        for sector in difat_sectors:
+            held = self.claim(sector, ("difat", sector), "the DIFAT")
+            if held:
+                self.flag("shared", "DIFAT sector %d is also held by %s" % (sector, held[1]))
+            if sector < len(self.fat) and self.fat[sector] != DIFSECT:
+                self.flag("fat-mark", "DIFAT sector %d is not marked as a DIFAT sector in the FAT (its entry is %s)" % (sector, self._entry_text(self.fat[sector])))
+        if self.fat.count(FATSECT) != len(listed):
+            self.flag("fat-mark", "the FAT marks %d sectors as FAT sectors and the DIFAT names %d" % (self.fat.count(FATSECT), len(listed)))
+        if self.fat.count(DIFSECT) != len(difat_sectors):
+            self.flag("fat-mark", "the FAT marks %d sectors as DIFAT sectors and the DIFAT chain holds %d" % (self.fat.count(DIFSECT), len(difat_sectors)))
+        if len(self.fat) < self.sectors:
+            self.flag("fat-short", "the FAT describes %d sectors and the file holds %d" % (len(self.fat), self.sectors))
+
+    @staticmethod
+    def _entry_text(value):
+        return {FREESECT: "free", ENDOFCHAIN: "end of chain", FATSECT: "FAT", DIFSECT: "DIFAT"}.get(value, "sector %d" % value)
+
+    def follow(self, start, key, text, stop, limit=None):
+        """The sectors of one chain, one at a time. `stop` receives why the chain ended: ("end",), ("marker", marker), ("outside", sector, in_fat),
+        ("loop", sector), ("shared", sector, other), ("limit",) when the chain goes on past `limit` sectors, or ("time",)."""
+        n, steps, fat = start, 0, self.fat
+        while True:
+            if n == ENDOFCHAIN:
+                stop.append(("end",))
+                return
             if n in (FREESECT, FATSECT, DIFSECT):
-                self.problems.append("%s: its chain reaches a %s sector" % (what, {FREESECT: "free", FATSECT: "FAT", DIFSECT: "DIFAT"}[n]))
-                break
-            if n >= len(self.fat) or n >= self.sectors:
-                self.problems.append("%s: its chain reaches sector %d, outside %s" % (what, n, "the FAT" if n >= len(self.fat) else "the file"))
-                break
-            if n in seen:
-                self.problems.append("%s: its sector chain loops back to sector %d" % (what, n))
-                break
-            seen.add(n)
-            out.append(n)
-            n = self.fat[n]
-        else:
-            if n != ENDOFCHAIN:
-                self.problems.append("%s: its sector chain is longer than the FAT" % what)
+                stop.append(("marker", n))
+                return
+            if n >= len(fat) or n >= self.sectors:
+                stop.append(("outside", n, n < len(fat)))
+                return
+            if limit is not None and steps >= limit:
+                label = self.label_ids.get(key)
+                stop.append(("loop", n, text) if label is not None and self.owner is not None and self.owner[n] == label else ("limit",))
+                return
+            if steps & 0x3FFF == 0x3FFF and out_of_time():
+                raise CfbTime()
+            held = self.claim(n, key, text)
+            if held is not None:
+                stop.append((held[0], n, held[1]))
+                return
+            yield n
+            steps += 1
+            n = fat[n]
+
+    def stop_text(self, stop, what):
+        """The sentence for a chain that did not end cleanly, or None."""
+        kind = stop[0]
+        if kind == "marker":
+            return "%s: its chain reaches a %s sector" % (what, mark_text(stop[1]))
+        if kind == "outside":
+            return "%s: its chain reaches sector %d, outside %s" % (what, stop[1], "the file" if stop[2] else "the FAT")
+        if kind == "loop":
+            return "%s: its sector chain loops back to sector %d" % (what, stop[1])
+        if kind == "shared":
+            return "%s shares sector %d with %s" % (what, stop[1], stop[2])
+        return None
+
+    def chain(self, start, key, what):
+        """The sectors of a whole chain as a list (the directory, the mini FAT, the mini stream), and what is wrong with it."""
+        out, stop = [], []
+        if start in (ENDOFCHAIN, FREESECT):
+            return out
+        out.extend(self.follow(start, key, what, stop))
+        text = self.stop_text(stop[0], what)
+        if text:
+            self.flag("chain-" + stop[0][0], text)
         return out
 
     def _directory(self):
         entries = []
-        sectors = self.chain(self.dir_start, "the directory")
+        sectors = self.chain(self.dir_start, ("dir",), "the directory")
+        if self.major == 4 and self.n_dir_sectors != len(sectors):
+            self.flag("header", "the header gives %d directory sectors and the directory chain holds %d" % (self.n_dir_sectors, len(sectors)))
         for s in sectors:
             raw = self._sector(s)
             for i in range(self.ss // 128):
                 if len(entries) >= MAX_DIR_ENTRIES:
-                    self.problems.append("the directory holds more than %d entries; the rest are not read" % MAX_DIR_ENTRIES)
+                    self.flag("dir-limit", "the directory holds more than %d entries; the rest are not read" % MAX_DIR_ENTRIES)
                     return entries
                 rec = raw[i * 128:(i + 1) * 128]
                 nlen = struct.unpack_from("<H", rec, 64)[0]
@@ -596,105 +768,180 @@ class Cfb:
                 start = struct.unpack_from("<I", rec, 116)[0]
                 size = struct.unpack_from("<Q", rec, 120)[0]
                 if self.major == 3:
+                    if size >> 32 and kind in (2, 5):
+                        self.flag("dir-size", "directory entry %d (%r) has a size of %d bytes: a version 3 file keeps a size in the low 32 bits and the high 32 bits are zero, so only the low 32 bits (%d) are used"
+                                  % (len(entries), name, size, size & 0xFFFFFFFF))
                     size &= 0xFFFFFFFF
-                entries.append({"id": len(entries), "name": name, "type": kind, "left": left, "right": right, "child": child, "start": start, "size": size})
+                index = len(entries)
+                if kind in (1, 2, 5):
+                    if nlen < 4 or nlen > 64 or nlen % 2:
+                        self.flag("dir-name", "directory entry %d (a %s) has a name length of %d bytes: a name is an even number of bytes from 4 (one character and its end) to 64, so %s"
+                                  % (index, {1: "storage", 2: "stream", 5: "root"}[kind], nlen, "the entry has no name that can be read" if nlen < 4 else "its name is cut or damaged"))
+                    elif rec[nlen - 2:nlen] != b"\x00\x00":
+                        self.flag("dir-name", "directory entry %d (%r) has a name that does not end with its end mark" % (index, name))
+                elif kind != 0:
+                    self.flag("dir-type", "directory entry %d has the object type %d, which the specification does not define" % (index, kind))
+                if kind == 5 and index != 0:
+                    self.flag("dir-type", "directory entry %d is a second root storage" % index)
+                entries.append({"id": index, "name": name, "type": kind, "left": left, "right": right, "child": child, "start": start, "size": size})
         return entries
 
     def _minifat(self):
         if self.minifat_start in (ENDOFCHAIN, FREESECT) or not self.n_minifat:
-            return []
-        out = []
-        for s in self.chain(self.minifat_start, "the mini FAT"):
-            out += struct.unpack("<%dI" % (self.ss // 4), self._sector(s))
+            return array.array("I")
+        out = array.array("I")
+        sectors = self.chain(self.minifat_start, ("minifat",), "the mini FAT")
+        if len(sectors) != self.n_minifat:
+            self.flag("minifat-count", "the header declares %d mini FAT sectors and the chain holds %d" % (self.n_minifat, len(sectors)))
+        for s in sectors:
+            block = array.array("I")
+            block.frombytes(self._sector(s)[: self.ss])
+            if sys.byteorder != "little":
+                block.byteswap()
+            out.extend(block)
         return out
 
     def streams(self):
-        """Every stream entry reached from the root by the red-black tree, with its path; a loop in the tree is a problem."""
+        """Every stream entry reached from the root by the red-black tree, with its path; a loop in the tree, a link to an entry that is not allocated and an
+        allocated entry the tree never reaches are problems."""
         if not self.directory or self.directory[0]["type"] != 5:
-            self.problems.append("the first directory entry is not the root storage")
+            self.flag("root", "the first directory entry is not the root storage")
             return []
-        found, seen, stack = [], set(), [(self.directory[0]["child"], "")]
+        found, seen, stack = [], {0}, [(self.directory[0]["child"], "")]
         while stack:
             sid, prefix = stack.pop()
             if sid == NOSTREAM:
                 continue
             if sid >= len(self.directory) or sid in seen:
-                self.problems.append("the directory tree %s (entry %d)" % ("loops" if sid in seen else "names an entry outside the directory", sid))
+                self.flag("tree", "the directory tree %s (entry %d)" % ("loops, or names an entry twice" if sid in seen else "names an entry outside the directory", sid))
                 continue
             seen.add(sid)
             e = self.directory[sid]
+            if e["type"] == 0:
+                self.flag("tree-free", "the directory tree names entry %d, which is not allocated" % sid)
+                continue
+            if e["type"] not in (1, 2):
+                self.flag("tree-type", "the directory tree names entry %d, which is not a storage or a stream (object type %d)" % (sid, e["type"]))
+                continue
             stack.append((e["left"], prefix))
             stack.append((e["right"], prefix))
             path = prefix + e["name"]
             if e["type"] == 2:
+                if e["child"] != NOSTREAM:
+                    self.flag("stream-child", "directory entry %d (stream %r) has a child pointer (%d): a stream has no children, so the tree names an entry twice or names one that is not there" % (sid, e["name"], e["child"]))
                 found.append({**e, "path": path})
             elif e["type"] == 1:
                 stack.append((e["child"], path + "/"))
+        for e in self.directory[1:]:
+            if e["type"] in (1, 2) and e["id"] not in seen:
+                self.flag("unreachable", "directory entry %d (%r, a %s) is allocated but the directory tree from the root never reaches it" % (e["id"], e["name"], "storage" if e["type"] == 1 else "stream"))
         names = [s["path"].lower() for s in found]
         if len(set(names)) != len(names):
-            self.problems.append("two streams have the same name")
+            self.flag("same-name", "two streams have the same name")
         return sorted(found, key=lambda s: s["id"])
 
     def _container_chain(self):
         if self.mini_container is None:
             root = self.directory[0] if self.directory else None
-            self.mini_container = self.chain(root["start"], "the mini stream") if root and root["start"] not in (ENDOFCHAIN, FREESECT) and root["size"] else []
+            self.mini_container = self.chain(root["start"], ("mini",), "the mini stream") if root and root["start"] not in (ENDOFCHAIN, FREESECT) and root["size"] else []
+            if root and root["size"] and len(self.mini_container) * self.ss < root["size"]:
+                self.flag("mini", "the root entry declares a mini stream of %d bytes and its chain holds %d" % (root["size"], len(self.mini_container) * self.ss))
         return self.mini_container
 
     def extents(self, entry):
-        """[(stream offset, file offset, length)] of a stream, joined where the sectors are neighbours, and whether the chain is whole."""
+        """([(stream offset, file offset, length)] of a stream, joined where the sectors are neighbours, whether the chain is whole, this stream's own
+        problems). The extents are joined as they are found, so a stream of any length holds only its fragments in memory."""
         size = entry["size"]
         label = "stream %r" % entry["name"]
-        pieces, whole = [], True
-        if size == 0:
-            return pieces, True
-        if size < self.cutoff:
-            container, mini = self._container_chain(), []
-            n, seen = entry["start"], set()
-            while n != ENDOFCHAIN and len(mini) <= len(self.minifat):
-                if n >= len(self.minifat) or n in seen:
-                    self.problems.append("%s: its mini sector chain %s" % (label, "loops" if n in seen else "leaves the mini FAT"))
-                    break
-                seen.add(n)
-                mini.append(n)
-                n = self.minifat[n]
-            if len(mini) * self.mini_ss < size:
-                self.problems.append("%s declares %d bytes and its mini chain holds %d" % (label, size, len(mini) * self.mini_ss))
-                whole = False
-            at = 0
-            for m in mini:
-                if at >= size:
-                    break
-                c, within = divmod(m * self.mini_ss, self.ss)
-                if c >= len(container):
-                    self.problems.append("%s: mini sector %d is past the end of the mini stream" % (label, m))
-                    whole = False
-                    break
-                take = min(self.mini_ss, size - at)
-                pieces.append((at, self.sector_offset(container[c]) + within, take))
-                at += take
-        else:
-            sectors = self.chain(entry["start"], label, limit=(size + self.ss - 1) // self.ss + 1)
-            for s in sectors:
-                if self.owner.setdefault(s, label) != label:
-                    self.problems.append("%s shares sector %d with %s" % (label, s, self.owner[s]))
-            if len(sectors) * self.ss < size:
-                self.problems.append("%s declares %d bytes and its chain holds %d" % (label, size, len(sectors) * self.ss))
-                whole = False
-            at = 0
-            for s in sectors:
-                if at >= size:
-                    break
-                take = min(self.ss, size - at)
-                pieces.append((at, self.sector_offset(s), take))
-                at += take
-        joined = []
-        for at, off, n in pieces:
+        key = ("stream", entry["id"])
+        joined, whole, mine = [], True, []
+
+        def say(kind, text):
+            self.flag(kind, text)
+            if len(mine) < 5:
+                mine.append(text)
+
+        def push(at, off, n):
             if joined and joined[-1][0] + joined[-1][2] == at and joined[-1][1] + joined[-1][2] == off:
                 joined[-1] = (joined[-1][0], joined[-1][1], joined[-1][2] + n)
             else:
                 joined.append((at, off, n))
-        return joined, whole
+
+        if size == 0:
+            return joined, True, mine
+        stop = []
+        if size < self.cutoff:
+            container = self._container_chain()
+            if self.mini_owner is None:
+                self.mini_owner = array.array("I", bytes(4 * len(self.minifat)))
+            need = -(-size // self.mini_ss)
+            at, count, n = 0, 0, entry["start"]
+            while True:
+                if n == ENDOFCHAIN:
+                    stop.append(("end",))
+                    break
+                if n in (FREESECT, FATSECT, DIFSECT) or n >= len(self.minifat):
+                    stop.append(("mini-outside", n))
+                    break
+                if count >= need:
+                    stop.append(("mini-loop", n) if self.mini_owner[n] == entry["id"] + 1 else ("limit",))
+                    break
+                if count & 0x3FFF == 0x3FFF and out_of_time():
+                    raise CfbTime()
+                held = self.mini_owner[n]
+                mark = entry["id"] + 1
+                if held:
+                    stop.append(("mini-loop" if held == mark else "mini-shared", n, self._stream_name(held - 1)))
+                    break
+                self.mini_owner[n] = mark
+                c, within = divmod(n * self.mini_ss, self.ss)
+                if n * self.mini_ss >= self.mini_size():
+                    say("mini-past", "%s: mini sector %d is past the end of the mini stream, which the root entry declares as %d bytes" % (label, n, self.mini_size()))
+                    whole = False
+                    break
+                if c >= len(container):
+                    say("mini-past", "%s: mini sector %d is past the end of the mini stream" % (label, n))
+                    whole = False
+                    break
+                take = min(self.mini_ss, size - at)
+                push(at, self.sector_offset(container[c]) + within, take)
+                at += take
+                count += 1
+                n = self.minifat[n]
+            kind = stop[0][0] if stop else "end"
+            if kind == "mini-outside":
+                say("chain-mini", "%s: its mini sector chain leaves the mini FAT (sector %d)" % (label, stop[0][1]))
+            elif kind == "mini-loop":
+                say("chain-loop", "%s: its mini sector chain loops back to mini sector %d" % (label, stop[0][1]))
+            elif kind == "mini-shared":
+                say("shared-mini", "%s shares mini sector %d with %s" % (label, stop[0][1], stop[0][2]))
+            elif kind == "limit":
+                say("chain-long", "%s: its mini sector chain holds more sectors than its %d bytes need" % (label, size))
+            if at < size:
+                say("chain-short", "%s declares %d bytes and its mini chain holds %d" % (label, size, at))
+                whole = False
+        else:
+            need = -(-size // self.ss)
+            at = 0
+            for s in self.follow(entry["start"], key, label, stop, limit=need):
+                take = min(self.ss, size - at)
+                push(at, self.sector_offset(s), take)
+                at += take
+            text = self.stop_text(stop[0], label)
+            if text:
+                say("chain-" + stop[0][0], text)
+            elif stop[0][0] == "limit":
+                say("chain-long", "%s: its sector chain holds more sectors than its %d bytes need" % (label, size))
+            if at < size:
+                say("chain-short", "%s declares %d bytes and its chain holds %d" % (label, size, at))
+                whole = False
+        return joined, whole, mine
+
+    def mini_size(self):
+        return self.directory[0]["size"] if self.directory else 0
+
+    def _stream_name(self, entry_id):
+        return "stream %r" % self.directory[entry_id]["name"] if 0 <= entry_id < len(self.directory) else "another stream"
 
     def read(self, extents, limit):
         data = bytearray()
@@ -963,58 +1210,96 @@ def read_automatic(run, path, size):
             run.unread += 1
             run.add({"row": "file", "path": path, "kind": "compound file", "bytes": size, "status": "failed", "problems": [str(exc)]})
             return
+        except CfbTime:
+            run.unread += 1
+            run.stopped = True
+            run.add({"row": "file", "path": path, "kind": "compound file", "bytes": size, "status": "failed",
+                     "problems": ["the time limit was reached while the container's FAT was read: nothing of this file was examined"]})
+            return
+        # First everything is found out, then the rows are written: the container row carries every problem found, the ones the streams and the DestList add too.
         streams = cfb.streams()
         shown = []
-        for s in streams:
-            extents, whole = cfb.extents(s)
-            shown.append((s, extents, whole))
-        container_problems = list(cfb.problems)
-        has_destlist = any(s["path"] == "DestList" for s in streams)
-        run.add({"row": "file", "path": path, "kind": "automaticDestinations-ms" if has_destlist else "compound file without a DestList", "bytes": size, "status": "read",
-                 "application_id": os.path.basename(path).split(".")[0] if re.fullmatch(r"[0-9a-fA-F]{16}", os.path.basename(path).split(".")[0]) else None})
-        run.add({"row": "container", "source": path, "major_version": cfb.major, "sector_size": cfb.ss, "mini_sector_size": cfb.mini_ss, "mini_stream_cutoff": cfb.cutoff,
-                 "sectors_in_file": cfb.sectors, "fat_sectors": cfb.n_fat, "directory_entries": len(cfb.directory), "streams": len(streams),
-                 "problems": container_problems, "consistent": not container_problems})
-        run.counts["containers"] += 1
-        if container_problems:
-            run.container_problems += 1
-        destlist, by_stream = None, {}
-        for s, extents, whole in shown:
+        try:
+            for s in streams:
+                if out_of_time():
+                    raise CfbTime()
+                extents, whole, mine = cfb.extents(s)
+                shown.append((s, extents, whole, mine, cfb.read(extents, 20)))
+        except CfbTime:
+            run.stopped = True
+            cfb.flag("time", "the time limit was reached after %d of the %d streams were examined: the streams after them have no row" % (len(shown), len(streams)))
+        has_destlist = any(s["path"] == "DestList" for s, _e, _w, _m, _h in shown) or any(s["path"] == "DestList" for s in streams)
+        destlist_row, dest_entries, destlist = None, [], None
+        for s, extents, whole, _mine, _head in shown:
             if s["path"] == "DestList":
                 destlist = (s, extents)
-        dest_entries = []
         if destlist is not None:
             s, extents = destlist
             if s["size"] > MAX_DESTLIST_BYTES:
-                run.add({"row": "destlist", "source": path, "problems": ["the DestList stream is %d bytes, over the %d this tool reads; it was not parsed" % (s["size"], MAX_DESTLIST_BYTES)]})
+                destlist_row = {"row": "destlist", "source": path, "problems": ["the DestList stream is %d bytes, over the %d this tool reads; it was not parsed" % (s["size"], MAX_DESTLIST_BYTES)]}
                 run.unread += 1
             else:
                 parsed = run.jumplist.parse_destlist(cfb.read(extents, MAX_DESTLIST_BYTES))
                 dest_entries = parsed.pop("entries")
-                run.add({"row": "destlist", "source": path, "version": parsed.get("destlist_version"), "entries_claimed": parsed.get("entries_claimed"),
-                         "entries_read": len(dest_entries), "pinned_claimed": parsed.get("pinned_claimed"), "problems": parsed.get("problems", []),
-                         "not_decoded": parsed.get("not_decoded", [])})
-                if parsed.get("problems"):
-                    run.container_problems += 1
-                for e in dest_entries:
-                    pieces = map_range(extents, e["stream_offset"], 0x82 + 2 * e["path_chars"])
-                    e_row = {"row": "destlist_entry", "source": path, **e, "container_offset": pieces[0][0] if pieces else None,
-                             "container_contiguous": len(pieces) == 1, "stream_present": any(x["path"].lower() == e["stream"] for x in streams)}
-                    by_stream[e["stream"]] = e_row
-                    run.counts["destlist_entries"] += 1
-                    run.add(e_row)
-        for s, extents, whole in shown:
+                destlist_row = {"row": "destlist", "source": path, "version": parsed.get("destlist_version"), "entries_claimed": parsed.get("entries_claimed"),
+                                "entries_read": len(dest_entries), "pinned_claimed": parsed.get("pinned_claimed"), "problems": parsed.get("problems", []),
+                                "not_decoded": parsed.get("not_decoded", [])}
+        elif streams and not run.stopped:
+            # A container with no stream at all is what Windows leaves for an empty jump list (1,536 bytes: header, FAT, directory); one that holds streams and no
+            # DestList is not a jump list, or its DestList's directory entry is damaged.
+            cfb.flag("no-destlist", "there is no stream named DestList, and the container holds %d other stream(s): this is a compound file but not a jump list container (or the directory entry of its DestList is damaged)" % len(streams))
+        by_stream, entry_rows = {}, []
+        heads = {s["path"].lower(): (head, whole) for s, _e, whole, _m, head in shown}
+        for e in dest_entries:
+            extents = destlist[1]
+            pieces = map_range(extents, e["stream_offset"], 0x82 + 2 * e["path_chars"])
+            present = any(x["path"].lower() == e["stream"] for x, _e, _w, _m, _h in shown)
+            e_row = {"row": "destlist_entry", "source": path, **e, "container_offset": pieces[0][0] if pieces else None,
+                     "container_contiguous": len(pieces) == 1, "stream_present": present}
+            if e["stream"] in by_stream:
+                cfb.flag("destlist-twice", "DestList entries %d and %d both name stream %r" % (by_stream[e["stream"]]["entry_number"], e["entry_number"], e["stream"]))
+            by_stream[e["stream"]] = e_row
+            if present:
+                head = heads[e["stream"]][0]
+                e_row["stream_is_link"] = head == LNK_MAGIC
+                if head != LNK_MAGIC:
+                    cfb.flag("destlist-nonlink", "DestList entry %d names stream %r, which is not a shell link (its first bytes are %s): its content is not decoded" % (e["entry_number"], e["stream"], head[:8].hex() or "none"))
+            entry_rows.append(e_row)
+        for number, e_row in by_stream.items():
+            if not e_row["stream_present"]:
+                cfb.flag("destlist-nostream", "DestList entry %d names stream %r, which the container does not hold" % (e_row["entry_number"], number))
+        container_problems = cfb.problems
+        run.add({"row": "file", "path": path, "kind": "automaticDestinations-ms" if has_destlist else "compound file without a DestList", "bytes": size, "status": "read",
+                 "application_id": os.path.basename(path).split(".")[0] if re.fullmatch(r"[0-9a-fA-F]{16}", os.path.basename(path).split(".")[0]) else None})
+        run.add({"row": "container", "source": path, "major_version": cfb.major, "sector_size": cfb.ss, "mini_sector_size": cfb.mini_ss, "mini_stream_cutoff": cfb.cutoff,
+                 "sectors_in_file": cfb.sectors, "fat_sectors": cfb.n_fat, "directory_entries": len(cfb.directory), "streams": len(streams),
+                 "problems": container_problems, "problem_count": cfb.found.total(), "consistent": not container_problems})
+        run.counts["containers"] += 1
+        if container_problems:
+            run.container_problems += 1
+        if destlist_row is not None:
+            run.add(destlist_row)
+            if destlist_row.get("problems"):
+                run.container_problems += 1
+        for e_row in entry_rows:
+            run.counts["destlist_entries"] += 1
+            run.add(e_row)
+        for s, extents, whole, mine, head in shown:
             if out_of_time():
                 run.stopped = True
                 return
             run.counts["streams"] += 1
             is_dest = s["path"] == "DestList"
-            head = cfb.read(extents, 20)
             entry = by_stream.get(s["path"].lower())
             srow = {"row": "stream", "source": path, "name": s["path"], "bytes": s["size"], "storage": "mini stream" if s["size"] < cfb.cutoff else "sectors",
                     "start_sector": s["start"], "file_offset": extents[0][1] if extents else None, "contiguous": len(extents) <= 1,
                     "extent_count": len(extents), "extents": [{"stream_offset": a, "file_offset": o, "bytes": n} for a, o, n in extents[:MAX_EXTENTS_SHOWN]],
                     "chain_whole": whole, "is_link": head == LNK_MAGIC, "in_destlist": bool(entry) if not is_dest else None}
+            if len(extents) > MAX_EXTENTS_SHOWN:
+                srow["extents_not_shown"] = len(extents) - MAX_EXTENTS_SHOWN
+                srow["extents_note"] = "the first %d of %d extents are listed; the rest follow the stream's sector chain from the start sector" % (MAX_EXTENTS_SHOWN, len(extents))
+            if mine:
+                srow["problems"] = mine
             if not is_dest and has_destlist and not entry:
                 srow["orphan"] = "a stream the DestList has no entry for"
             run.add(srow)
@@ -1041,7 +1326,6 @@ def read_automatic(run, path, size):
             if not e_row["stream_present"]:
                 run.add({"row": "destlist_entry_without_stream", "source": path, "entry_number": e_row["entry_number"], "stream": number, "path": e_row["path"],
                          "note": "the DestList names a stream that the container does not hold (deleted, or a damaged directory)"})
-                run.container_problems += 1
 
 
 def classify(path, name, size):
@@ -1169,7 +1453,7 @@ def main():
     unread_names = skipped + run.not_attempted
     reasons = []
     if run.stopped:
-        reasons.append("the tool's own time limit (%d seconds) was reached: files after it were not read" % int(seconds))
+        reasons.append("the tool's own time limit (%d seconds) was reached: the file being read, if it was not read to its end, and the files after it were not read whole" % int(seconds))
     if over:
         reasons.append("%d file(s) past max_files (%d) were not read" % (over, max_files))
     unopened = sum(1 for item in skipped if item.get("unopened"))

@@ -23,9 +23,20 @@ regipy's apply_transaction_logs is not used for the replay: it writes the pages 
 its sequence number, so an entry older than the hive's state is written over newer data, and it takes
 the first dirty sector of an old-format log to be at a fixed place.
 
-The recovered copy differs from the original in the pages of the applied entries and in three fields of
-its base block, which the receipt names: both sequence numbers (set to the number after the last applied
-entry), the hive bins data size (from the last applied entry) and the base block checksum (recomputed).
+The recovered copy differs from the original in the pages of the applied entries and in the fields of its
+base block that the receipt names: both sequence numbers (set to the number after the last applied entry), the
+hive bins data size (from the last applied entry) and the base block checksum (recomputed) always; for a
+new-format log also the root cell offset and the last-written time (from the base block of the log that holds
+the last applied entry; a log whose own base block checksum is wrong is not believed) and the flags (those of
+that entry), where they differ.
+
+Bounds. An entry that lists no page, declares a hive bins size that is not a positive multiple of 4096 or is
+more than the hive file's own bins plus HBS_GROWTH (and MAX_HIVE_BYTES), names a page that is not whole
+512-byte sectors or lists more pages than its bins have sectors is not applied, whatever its hashes, and the
+reason is under `unrecovered`. At most MAX_LOG_ENTRIES entries of a log are scanned and the rest is named in
+the receipt. An entry keeps the number and the place of its page references, never the list, and the clock is
+looked at while the log is scanned, while hashes are checked and while pages are written; a replay that runs
+out of time leaves no copy. A hive or recovered copy over MAX_READ_BYTES is replayed and not read.
 A hive that is clean is not replayed (a clean hive's logs only hold entries it already contains; a log
 entry newer than a clean hive is reported, not applied). The key and value records are read with
 regipy: `keys.jsonl` is the state read (the recovered copy when something was applied, else the hive),
@@ -55,7 +66,7 @@ import tempfile
 import time
 from pathlib import Path
 
-PARSER = "registry_recover/1"
+PARSER = "registry_recover/2"
 BASE_BLOCK = 4096
 LOG_HEADER = 512
 MARVIN_SEED = 0x82EF4D887A4E55C5
@@ -63,7 +74,13 @@ FILETIME_EPOCH = datetime.datetime(1601, 1, 1, tzinfo=datetime.timezone.utc)
 SENSITIVE_NAME = re.compile(r"passw(or)?d|pwd|secret|token|credential|api_?key|private_?key", re.I)
 NUMBER_TYPES = ("REG_DWORD", "REG_DWORD_BIG_ENDIAN", "REG_QWORD")
 MAX_HIVE_BYTES = 4 << 30
-MAX_LOG_ENTRIES = 1_000_000
+MAX_LOG_ENTRIES = 50_000            # entries one log is scanned for; the rest of the log is named (the memory is about 1.5 KB for each entry)
+HBS_GROWTH = 64 << 20               # how far past the hive file's own hive bins an entry may declare the bins to grow
+MAX_READ_BYTES = 512 << 20          # regipy holds the whole hive it reads in memory; a larger hive is replayed and not read
+REF_BLOCK = 1 << 17                 # page references read at once (1 MiB of them)
+LISTED_RANGES = 20_000              # page references of one entry listed as hive ranges; the rest are named by where they are in the log
+RANGE_BUDGET = 200_000              # page references listed as hive ranges over the whole receipt
+SECTOR = 512
 MAX_DEPTH = 512
 DEFAULT_SECONDS = 90
 MAX_SECONDS = 110
@@ -653,11 +670,78 @@ def zero_tail(fh, start, size):
     return True
 
 
-def scan_hvle(fh, size, base_hbs):
+def iter_refs(fh, e):
+    """The page references (hive offset, size) of a well-formed entry, read from the log in blocks: the entry keeps their number and place, never the list."""
+    left, at = e["dirty_pages"], e["offset"] + 40
+    while left:
+        n = min(left, REF_BLOCK)
+        fh.seek(at)                                    # the caller reads other parts of the log between two blocks
+        raw = fh.read(8 * n)
+        if len(raw) != 8 * n:
+            raise OSError("the log ended inside the page references of the entry at %d" % e["offset"])
+        yield from struct.iter_unpack("<II", raw)
+        left -= n
+        at += 8 * n
+
+
+def check_refs(fh, offset, count, hbs, entry_size):
+    """Read the page references of the entry at `offset` once, in blocks, and say what is wrong with them (None when nothing is) and the bytes of
+    pages they claim. The clock is looked at between blocks."""
+    fh.seek(offset + 40)
+    left, index, total = count, 0, 0
+    while left:
+        if out_of_time():
+            raise TimeLimit()
+        n = min(left, REF_BLOCK)
+        raw = fh.read(8 * n)
+        if len(raw) != 8 * n:
+            return "the log ends inside its page references", total
+        for ref_off, ref_size in struct.iter_unpack("<II", raw):
+            total += ref_size
+            if ref_size == 0 or ref_off + ref_size > hbs:
+                return "page reference %d (offset %d, %d bytes) is outside the hive bins data size %d the entry declares" % (index, ref_off, ref_size, hbs), total
+            if ref_off % SECTOR or ref_size % SECTOR:
+                return "page reference %d (offset %d, %d bytes) does not name whole 512-byte sectors" % (index, ref_off, ref_size), total
+            index += 1
+        left -= n
+    return None, total
+
+
+def bins_cap(hive_size):
+    """The most hive bins data an entry or an old-format log may declare: the bins the hive file really holds plus HBS_GROWTH, and never more than the tool reads."""
+    return min(MAX_HIVE_BYTES, max(hive_size - BASE_BLOCK, 0) + HBS_GROWTH)
+
+
+def entry_flaw(entry_size, count, hbs, cap, off, size):
+    """What makes an HvLE entry whose header hash holds unusable, or None. Windows' own readers refuse the same: a size that is not a multiple of 512, no page,
+    a hive bins size that is not a positive multiple of 4096. The two bounds are this tool's: it never writes a copy past `cap`, and an entry cannot name more
+    pages than the bins it declares have sectors."""
+    if entry_size % 512 or entry_size < 512 or entry_size < 40 + 8 * count or off + entry_size > size:
+        return "the entry size %d is not a multiple of 512 that holds its %d page references and fits in the file" % (entry_size, count)
+    if count == 0:
+        return "it lists no page (an entry holds at least one dirty page)"
+    if hbs < 4096 or hbs % 4096:
+        return "the hive bins data size %d it declares is not a positive multiple of 4096" % hbs
+    if hbs > cap:
+        return ("it declares %d bytes of hive bins data, more than this tool writes: the hive file's own bins plus %d bytes (%d here), at most %d; "
+                "the entry is not applied" % (hbs, HBS_GROWTH, cap, MAX_HIVE_BYTES))
+    if count > hbs // SECTOR:
+        return "it lists %d page references, more than the %d 512-byte sectors of the %d bytes of bins it declares" % (count, hbs // SECTOR, hbs)
+    return None
+
+
+def scan_hvle(fh, size, cap):
     """The entries of a new-format log, in file order, each with what its header says; the scan stops at the first thing that is not a
-    well-formed entry and says what the bytes from there on are."""
+    well-formed entry and says what the bytes from there on are. An entry keeps the number of its page references and where they are
+    in the log, not the references (they are read again where they are used). The clock is looked at for every entry and every block of references."""
     entries, off, trailing = [], LOG_HEADER, None
-    while off + 40 <= size and len(entries) < MAX_LOG_ENTRIES:
+    while off + 40 <= size:
+        if len(entries) >= MAX_LOG_ENTRIES:
+            trailing = {"offset": off, "bytes": size - off, "reason": "more than %d entries: the scan stopped; the entries from here on were not read" % MAX_LOG_ENTRIES, "all_zero": False}
+            break
+        if out_of_time():
+            trailing = {"offset": off, "bytes": size - off, "reason": "the time limit was reached while the log was scanned: the entries from here on were not read", "all_zero": False, "time_limit": True}
+            break
         fh.seek(off)
         head = fh.read(40)
         if head[:4] != b"HvLE":
@@ -665,38 +749,34 @@ def scan_hvle(fh, size, base_hbs):
             break
         entry_size, flags, seq, hbs, count, hash1, hash2 = struct.unpack_from("<IIIIIQQ", head, 4)
         e = {"index": len(entries), "offset": off, "size": entry_size, "sequence": seq, "flags": flags, "hive_bins_data_size": hbs, "dirty_pages": count,
-             "header_hash_ok": marvin32([head[:32]]) == hash2, "pages_hash_ok": None, "valid": False, "refs": []}
+             "header_hash_ok": marvin32([head[:32]]) == hash2, "pages_hash_ok": None, "valid": False}
         entries.append(e)
         if not e["header_hash_ok"]:
             e["reason"] = "the header hash (hash-2) is wrong"
-        elif entry_size % 512 or entry_size < 40 + 8 * count or off + entry_size > size:
-            e["reason"] = "the entry size %d is not a multiple of 512 that holds its %d page references and fits in the file" % (entry_size, count)
         else:
-            refs = fh.read(8 * count)
-            total, bad = 0, None
-            for i in range(count):
-                ref_off, ref_size = struct.unpack_from("<II", refs, 8 * i)
-                total += ref_size
-                if ref_size == 0 or ref_off + ref_size > hbs:
-                    bad = "page reference %d (offset %d, %d bytes) is outside the hive bins data size %d the entry declares" % (i, ref_off, ref_size, hbs)
-                    break
-                e["refs"].append((ref_off, ref_size))
-            if bad is None and 40 + 8 * count + total > entry_size:
-                bad = "its page references claim %d bytes of pages, more than the entry holds" % total
-            if bad:
-                e["reason"] = bad
-                e["refs"] = []
+            flaw = entry_flaw(entry_size, count, hbs, cap, off, size)
+            if flaw:
+                e["reason"] = flaw
             else:
-                e["valid"] = True
-                e["page_bytes"] = total
-                e["pages_at"] = off + 40 + 8 * count
+                try:
+                    bad, total = check_refs(fh, off, count, hbs, entry_size)
+                except TimeLimit:
+                    trailing = {"offset": off, "bytes": size - off, "reason": "the time limit was reached while the page references of the entry at this offset were read: it and the entries after it were not read",
+                                "all_zero": False, "time_limit": True}
+                    e["reason"] = "the time limit was reached while its page references were read"
+                    break
+                if bad is None and 40 + 8 * count + total > entry_size:
+                    bad = "its page references claim %d bytes of pages, more than the entry holds" % total
+                if bad:
+                    e["reason"] = bad
+                else:
+                    e["valid"] = True
+                    e["page_bytes"] = total
+                    e["pages_at"] = off + 40 + 8 * count
         if not e["valid"]:
-            trailing = {"offset": off, "bytes": size - off, "reason": "the entry at this offset is not well formed (%s); nothing after it is read" % e["reason"], "all_zero": False}
+            trailing = {"offset": off, "bytes": size - off, "reason": "the entry at this offset cannot be used (%s); nothing after it is read" % e["reason"], "all_zero": False}
             break
         off += entry_size
-    else:
-        if off + 40 <= size:
-            trailing = {"offset": off, "bytes": size - off, "reason": "more than %d entries: the scan stopped" % MAX_LOG_ENTRIES, "all_zero": False}
     if trailing is None and off < size:
         trailing = {"offset": off, "bytes": size - off, "reason": "fewer than 40 bytes follow the last entry", "all_zero": zero_tail(fh, off, size)}
     return entries, trailing
@@ -730,12 +810,15 @@ def old_format_layout(fh, size, hbs):
     raw = fh.read(4 + vector_bytes)
     if len(raw) < 4 + vector_bytes:
         return None
+    marked = sum(bin(byte).count("1") for byte in raw[4:])
+    if data_start + marked * SECTOR > size:
+        return None                                    # the vector marks more sectors than the log holds: nothing is listed from it
     sectors = [i for i in range(vector_bytes * 8) if raw[4 + i // 8] >> (i % 8) & 1]
     return {"vector_bytes": vector_bytes, "data_start": data_start, "sectors": sectors}
 
 
-def examine_log(path, role, hive):
-    """Everything the replay needs to know about one log, and its receipt entry."""
+def examine_log(path, role, hive, cap):
+    """Everything the replay needs to know about one log, and its receipt entry. `cap` is the most hive bins data a log may declare (bins_cap)."""
     log = {"role": role, "path": path, "problems": []}
     try:
         st = os.stat(path)
@@ -754,7 +837,7 @@ def examine_log(path, role, hive):
         return log, None
     fh = open(path, "rb")
     try:
-        base, _block = read_base(fh, st.st_size)
+        base, block = read_base(fh, st.st_size)
         log["base_block"] = {k: v for k, v in base.items() if k != "problems"}
         log["problems"] += base["problems"]
         if not base["signature_ok"]:
@@ -771,17 +854,23 @@ def examine_log(path, role, hive):
         magic = read_at(fh, LOG_HEADER, 4) if st.st_size >= LOG_HEADER + 4 else b""
         if magic == b"HvLE":
             log["format"] = "new (HvLE entries)"
-            entries, trailing = scan_hvle(fh, st.st_size, hive.get("hive_bins_data_size"))
+            entries, trailing = scan_hvle(fh, st.st_size, cap)
             log["entry_count"] = len(entries)
             log["trailing"] = trailing
             log["usable"] = True
-            return log, {"fh": fh, "kind": "hvle", "entries": entries, "base": base}
+            return log, {"fh": fh, "kind": "hvle", "entries": entries, "base": base, "block": bytes(block[:LOG_HEADER])}
         if magic == b"DIRT":
             log["format"] = "old (DIRT vector)"
             hbs = hive.get("hive_bins_data_size") or 0
+            if hbs < 4096 or hbs % 4096 or hbs > cap:
+                log["problems"].append("an old-format log is read against the hive bins data size the hive declares (%d); it is not a positive multiple of 4096 or is more than this tool "
+                                       "handles for a hive file of this size (%d), so the log's DIRT vector is not read" % (hbs, cap))
+                log["usable"] = False
+                fh.close()
+                return log, None
             layout = old_format_layout(fh, st.st_size, hbs)
             if layout is None:
-                log["problems"].append("is shorter than the DIRT vector the hive's size needs")
+                log["problems"].append("is shorter than the DIRT vector the hive's size needs, or its vector marks more sectors dirty than the log holds")
                 log["usable"] = False
                 fh.close()
                 return log, None
@@ -851,27 +940,70 @@ def plan_hvle(hive, parsed, receipt_logs):
     return steps, start, expected, notes, timed_out
 
 
+def discard_temp(name):
+    try:
+        os.unlink(name)
+    except OSError:
+        pass
+    if name in TEMPS:
+        TEMPS.remove(name)
+
+
 def fresh_copy(src_path, dest, size):
-    """A copy of the hive made in blocks (never read whole), opened for writing."""
+    """A copy of the hive made in blocks (never read whole), opened for writing. The clock is looked at between blocks; a copy that is not finished is removed."""
     fd, name = tempfile.mkstemp(dir=dest.parent, prefix=".recovered-")
     TEMPS.append(name)
-    with os.fdopen(fd, "wb") as out, open(src_path, "rb") as src:
-        for piece in file_chunks(src, 0, size):
-            out.write(piece)
+    try:
+        with os.fdopen(fd, "wb") as out, open(src_path, "rb") as src:
+            for piece in file_chunks(src, 0, size, clock=True):
+                out.write(piece)
+    except BaseException:
+        discard_temp(name)
+        raise
     return Path(name)
 
 
-def write_pages(out_fh, log_fh, e):
-    """Copy an entry's pages to their places in the working copy, in blocks. Returns the hive ranges written."""
-    written = []
+class Growth:
+    """Which 512-byte sectors of the hive bins the copy did not have before the replay (from `lo` up to `hi`) an applied page writes: a bitmap of at most
+    HBS_GROWTH / 512 bytes, whatever the log holds. What no page writes is zeros in the copy."""
+
+    def __init__(self, lo, hi):
+        self.lo, self.hi = lo, hi
+        self.first = lo // SECTOR
+        self.marks = bytearray(max((hi + SECTOR - 1) // SECTOR - self.first, 0))
+
+    def add(self, offset, size):
+        a = max(offset // SECTOR, self.first)
+        b = min((offset + size + SECTOR - 1) // SECTOR, self.first + len(self.marks))
+        if a < b:
+            self.marks[a - self.first:b - self.first] = b"\x01" * (b - a)
+
+    def gaps(self):
+        """[(start, end)] of the uncovered bytes of [lo, hi), in order."""
+        out, start = [], None
+        for i, mark in enumerate(self.marks):
+            if not mark and start is None:
+                start = i
+            elif mark and start is not None:
+                out.append((start, i))
+                start = None
+        if start is not None:
+            out.append((start, len(self.marks)))
+        return [(max((self.first + a) * SECTOR, self.lo), min((self.first + b) * SECTOR, self.hi)) for a, b in out]
+
+
+def write_pages(out_fh, log_fh, e, growth):
+    """Copy an entry's pages to their places in the working copy, in blocks; the clock is looked at between references and between blocks."""
     at = e["pages_at"]
-    for ref_off, ref_size in e["refs"]:
+    for n, (ref_off, ref_size) in enumerate(iter_refs(log_fh, e)):
+        if n % 256 == 255 and out_of_time():
+            raise TimeLimit()
         out_fh.seek(BASE_BLOCK + ref_off)
-        for piece in file_chunks(log_fh, at, ref_size):
+        for piece in file_chunks(log_fh, at, ref_size, clock=True):
             out_fh.write(piece)
-        written.append((ref_off, ref_size))
+        if growth is not None:
+            growth.add(ref_off, ref_size)
         at += ref_size
-    return written
 
 
 def merge_ranges(ranges):
@@ -884,15 +1016,48 @@ def merge_ranges(ranges):
     return [{"hive_offset": s, "bytes": n} for s, n in merged]
 
 
+def hive_ranges_of(fh, e, budget):
+    """(hive ranges, extra fields) of an entry's pages as the receipt lists them: at most LISTED_RANGES references of one entry and RANGE_BUDGET of the whole
+    receipt are listed; the rest are counted and named by where they are in the log (their number, and the offset of the first), so nothing is lost with
+    the log in hand."""
+    if not e["valid"]:
+        return [], {}
+    count = e["dirty_pages"]
+    wanted = max(min(count, LISTED_RANGES, budget["left"]), 0)
+    refs = []
+    if wanted:
+        for ref in iter_refs(fh, e):
+            refs.append(ref)
+            if len(refs) >= wanted:
+                break
+    budget["left"] -= len(refs)
+    extra = {}
+    if len(refs) < count:
+        extra = {"hive_ranges_not_listed": count - len(refs),
+                 "page_references": {"log_offset": e["offset"] + 40, "count": count, "bytes_each": 8, "layout": "offset and size, two little-endian 32-bit numbers, from the start of the hive bins data"}}
+    return merge_ranges(refs), extra
+
+
+def unrecovered_entry(role, e, why, fh, budget):
+    ranges, extra = hive_ranges_of(fh, e, budget)
+    return {"log": role, "entry": e["index"], "sequence": e["sequence"], "why": why, "hive_ranges": ranges, "log_range": {"offset": e["offset"], "bytes": e["size"]}, **extra}
+
+
 def replay(hive_path, hive_size, hive, logs, out_dir):
     """The whole replay. Returns the receipt part, and the path of the working copy when something was applied."""
     receipt = {"performed": False, "reason": None, "order": [], "entries_applied": 0, "pages_applied": 0, "bytes_applied": 0}
     unrecovered, log_receipts, parsed = [], [], {}
+    cap = bins_cap(hive_size)
+    receipt["bounds"] = {"hive_bins_data_size_cap": cap, "max_log_entries": MAX_LOG_ENTRIES, "listed_ranges_per_entry": LISTED_RANGES}
+    budget = {"left": RANGE_BUDGET}
+    time_notes = []
     for role, path in logs:
-        info, handle = examine_log(path, role, hive)
+        info, handle = examine_log(path, role, hive, cap)
         log_receipts.append(info)
         if handle is not None:
             parsed[role] = handle
+        if (info.get("trailing") or {}).get("time_limit"):
+            time_notes.append("the time limit was reached while %s was scanned: %s" % (role, info["trailing"]["reason"]))
     dirty = hive.get("signature_ok") and hive["primary_sequence"] != hive["secondary_sequence"]
     receipt["dirty_before"] = bool(dirty)
     receipt["sequence_before"] = [hive.get("primary_sequence"), hive.get("secondary_sequence")]
@@ -908,8 +1073,7 @@ def replay(hive_path, hive_size, hive, logs, out_dir):
                 for e in parsed[role]["entries"]:
                     if e["sequence"] >= hive["primary_sequence"]:
                         e["state"] = "not applied: newer than a clean hive (Windows does not replay a clean hive's logs)"
-                        unrecovered.append({"log": role, "entry": e["index"], "sequence": e["sequence"], "why": e["state"][13:],
-                                            "hive_ranges": merge_ranges(e["refs"]) if e["valid"] else [], "log_range": {"offset": e["offset"], "bytes": e["size"]}})
+                        unrecovered.append(unrecovered_entry(role, e, e["state"][13:], parsed[role]["fh"], budget))
                     else:
                         e["state"] = "not needed: older than the clean hive's state"
         elif not parsed:
@@ -919,16 +1083,20 @@ def replay(hive_path, hive_size, hive, logs, out_dir):
                 steps, start, expected, notes, timed_out = plan_hvle(hive, parsed, log_receipts)
                 receipt["notes"] = notes
                 if timed_out:
-                    receipt["time_limit"] = "the time limit was reached while the pages hash of the entry of sequence %d was checked: nothing after it was examined" % timed_out[0]
+                    time_notes.append("the time limit was reached while the pages hash of the entry of sequence %d was checked: nothing after it was examined" % timed_out[0])
             dirt_roles = [r for r, p in parsed.items() if p["kind"] == "dirt"]
             dirt_applied = None
             for role in dirt_roles:
                 b = parsed[role]["base"]
+                lhbs = b.get("hive_bins_data_size") or 0
                 ok = b.get("checksum_ok") and b["primary_sequence"] == b["secondary_sequence"] == hive["primary_sequence"]
-                parsed[role]["state"] = "applied" if ok and dirt_applied is None and not steps else None
+                sized = 4096 <= lhbs <= cap and lhbs % 4096 == 0
+                parsed[role]["state"] = "applied" if ok and sized and dirt_applied is None and not steps else None
                 if not ok:
                     parsed[role]["why"] = ("its own sequence numbers (%s, %s) are not equal to each other and to the hive's primary sequence number (%s), or its base block checksum is wrong"
                                            % (b.get("primary_sequence"), b.get("secondary_sequence"), hive["primary_sequence"]))
+                elif not sized:
+                    parsed[role]["why"] = ("it declares %d bytes of hive bins data, which is not a positive multiple of 4096 or is more than this tool writes for a hive file of this size (%d)" % (lhbs, cap))
                 elif steps:
                     parsed[role]["why"] = "a new-format log was applied; an old-format log is not mixed with it"
                 elif dirt_applied is not None:
@@ -936,67 +1104,112 @@ def replay(hive_path, hive_size, hive, logs, out_dir):
                 else:
                     dirt_applied = role
             if steps or dirt_applied:
-                working = fresh_copy(hive_path, out_dir, hive_size)
-                new_hbs = hive["hive_bins_data_size"]
-                ranges_applied = []
-                with open(working, "r+b") as out_fh:
+                made = None
+                try:
+                    working = made = fresh_copy(hive_path, out_dir, hive_size)
                     if steps:
-                        for role, e in steps:
-                            ranges_applied += write_pages(out_fh, parsed[role]["fh"], e)
-                            new_hbs = e["hive_bins_data_size"]
-                            receipt["order"].append({"log": role, "entry": e["index"], "sequence": e["sequence"], "pages": e["dirty_pages"], "page_bytes": e["page_bytes"]})
-                            receipt["entries_applied"] += 1
-                            receipt["pages_applied"] += e["dirty_pages"]
-                            receipt["bytes_applied"] += e["page_bytes"]
-                        final = expected
+                        new_hbs = steps[-1][1]["hive_bins_data_size"]
                     else:
-                        p = parsed[dirt_applied]
-                        layout = p["layout"]
-                        at = layout["data_start"]
-                        for sector in layout["sectors"]:
-                            out_fh.seek(BASE_BLOCK + sector * 512)
-                            out_fh.write(read_at(p["fh"], at, 512))
-                            ranges_applied.append((sector * 512, 512))
-                            at += 512
-                        new_hbs = p["base"].get("hive_bins_data_size", new_hbs)
-                        final = hive["primary_sequence"]
-                        receipt["order"].append({"log": dirt_applied, "dirty_sectors": len(layout["sectors"])})
-                        receipt["entries_applied"] = 1
-                        receipt["pages_applied"] = len(layout["sectors"])
-                        receipt["bytes_applied"] = len(layout["sectors"]) * 512
-                    wanted = BASE_BLOCK + new_hbs
-                    current = out_fh.seek(0, 2)
-                    if current < wanted:
-                        out_fh.truncate(wanted)
-                        covered = merge_ranges(ranges_applied)
-                        gap_from = max(current - BASE_BLOCK, 0)
-                        pos = gap_from
-                        for r in covered:
-                            if r["hive_offset"] + r["bytes"] <= gap_from:
-                                continue
-                            if r["hive_offset"] > pos:
-                                unrecovered.append({"log": None, "why": "the working copy had %d bytes of hive bins and the log declares %d; no applied page writes this range, which is zeros" % (gap_from, new_hbs),
-                                                    "hive_ranges": [{"hive_offset": pos, "bytes": r["hive_offset"] - pos}]})
-                            pos = max(pos, r["hive_offset"] + r["bytes"])
-                        if pos < new_hbs:
-                            unrecovered.append({"log": None, "why": "the working copy had %d bytes of hive bins and the log declares %d; no applied page writes this range, which is zeros" % (gap_from, new_hbs),
-                                                "hive_ranges": [{"hive_offset": pos, "bytes": new_hbs - pos}]})
-                    out_fh.seek(0)
-                    block = bytearray(out_fh.read(BASE_BLOCK))
-                    struct.pack_into("<II", block, 4, final, final)
-                    struct.pack_into("<I", block, 40, new_hbs)
-                    struct.pack_into("<I", block, 508, base_checksum(bytes(block)))
-                    out_fh.seek(0)
-                    out_fh.write(block)
-                    out_fh.flush()
-                    os.fsync(out_fh.fileno())
-                receipt["performed"] = True
-                receipt["sequence_after"] = [final, final]
-                receipt["dirty_after"] = False
-                receipt["hive_bins_data_size"] = {"before": hive["hive_bins_data_size"], "after": new_hbs}
-                receipt["base_block_fields_changed"] = ["primary_sequence", "secondary_sequence", "hive_bins_data_size", "checksum"]
+                        new_hbs = parsed[dirt_applied]["base"]["hive_bins_data_size"]
+                    with open(working, "r+b") as out_fh:
+                        before = os.fstat(out_fh.fileno()).st_size
+                        wanted = BASE_BLOCK + new_hbs
+                        growth = Growth(max(before - BASE_BLOCK, 0), new_hbs) if before < wanted else None
+                        if steps:
+                            for role, e in steps:
+                                if out_of_time():
+                                    raise TimeLimit()
+                                write_pages(out_fh, parsed[role]["fh"], e, growth)
+                                receipt["order"].append({"log": role, "entry": e["index"], "sequence": e["sequence"], "pages": e["dirty_pages"], "page_bytes": e["page_bytes"]})
+                                receipt["entries_applied"] += 1
+                                receipt["pages_applied"] += e["dirty_pages"]
+                                receipt["bytes_applied"] += e["page_bytes"]
+                            final = expected
+                        else:
+                            p = parsed[dirt_applied]
+                            layout = p["layout"]
+                            at = layout["data_start"]
+                            for n, sector in enumerate(layout["sectors"]):
+                                if n % 1024 == 1023 and out_of_time():
+                                    raise TimeLimit()
+                                out_fh.seek(BASE_BLOCK + sector * SECTOR)
+                                out_fh.write(read_at(p["fh"], at, SECTOR))
+                                if growth is not None:
+                                    growth.add(sector * SECTOR, SECTOR)
+                                at += SECTOR
+                            final = hive["primary_sequence"]
+                            receipt["order"].append({"log": dirt_applied, "dirty_sectors": len(layout["sectors"])})
+                            receipt["entries_applied"] = 1
+                            receipt["pages_applied"] = len(layout["sectors"])
+                            receipt["bytes_applied"] = len(layout["sectors"]) * SECTOR
+                        if growth is not None:
+                            out_fh.truncate(wanted) if out_fh.seek(0, 2) < wanted else None
+                            gaps = growth.gaps()
+                            if gaps:
+                                shown = [{"hive_offset": a, "bytes": b - a} for a, b in gaps[:LISTED_RANGES]]
+                                row = {"log": None, "why": "the working copy had %d bytes of hive bins and the log declares %d; no applied page writes these ranges, which are zeros" % (growth.lo, new_hbs),
+                                       "hive_ranges": shown}
+                                if len(gaps) > len(shown):
+                                    row["hive_ranges_not_listed"] = len(gaps) - len(shown)
+                                    row["hive_ranges_note"] = "the ranges past these are the sectors from %d up to %d that no applied page writes" % (growth.lo, new_hbs)
+                                unrecovered.append(row)
+                        out_fh.seek(0)
+                        block = bytearray(out_fh.read(BASE_BLOCK))
+                        changed = ["primary_sequence", "secondary_sequence", "hive_bins_data_size", "checksum"]
+                        struct.pack_into("<II", block, 4, final, final)
+                        struct.pack_into("<I", block, 40, new_hbs)
+                        if steps and len(block) >= 0x94:
+                            # What the log carries for the base block (Suhanov's recovery of a primary file; yarp does the same): the root cell offset and the last-written time are
+                            # the log's, and the flags are those of the last applied entry. A log whose own base block checksum is wrong is not believed.
+                            last_role, last_entry = steps[-1]
+                            lbase, lblock = parsed[last_role]["base"], parsed[last_role]["block"]
+                            if lbase.get("signature_ok") and lbase.get("checksum_ok") and len(lblock) >= 0x28:
+                                was = {"root_cell_offset": struct.unpack_from("<I", block, 0x24)[0], "last_written_filetime": struct.unpack_from("<Q", block, 0x0C)[0], "flags": struct.unpack_from("<I", block, 0x90)[0]}
+                                now = {"root_cell_offset": struct.unpack_from("<I", lblock, 0x24)[0], "last_written_filetime": struct.unpack_from("<Q", lblock, 0x0C)[0], "flags": last_entry["flags"]}
+                                struct.pack_into("<I", block, 0x24, now["root_cell_offset"])
+                                struct.pack_into("<Q", block, 0x0C, now["last_written_filetime"])
+                                struct.pack_into("<I", block, 0x90, now["flags"])
+                                for field, label in (("root_cell_offset", "root_cell_offset"), ("last_written_filetime", "last_written"), ("flags", "flags")):
+                                    if was[field] != now[field]:
+                                        changed.append(label)
+                                receipt["base_block_from_log"] = {
+                                    "log": last_role, "taken": True,
+                                    "root_cell_offset": {"original": was["root_cell_offset"], "recovered": now["root_cell_offset"]},
+                                    "last_written": {"original": ft_iso(was["last_written_filetime"]), "recovered": ft_iso(now["last_written_filetime"])},
+                                    "flags": {"original": was["flags"], "recovered": now["flags"]},
+                                    "source": "root cell offset and last-written time: the base block of the log that holds the last applied entry; flags: that entry's own flags field"}
+                            else:
+                                receipt["base_block_from_log"] = {"log": last_role, "taken": False, "why": "the base block of this log has a wrong signature or checksum, so its root cell offset, "
+                                                                  "last-written time and the entry's flags were not written into the copy: they are the original's"}
+                        struct.pack_into("<I", block, 508, base_checksum(bytes(block)))
+                        out_fh.seek(0)
+                        out_fh.write(block)
+                        out_fh.flush()
+                        os.fsync(out_fh.fileno())
+                except TimeLimit:
+                    if made is not None:
+                        discard_temp(str(made))
+                    working = None
+                    time_notes.append("the time limit was reached while the recovered copy was being made: no copy exists, and the entries that would have been applied are listed as not applied")
+                    for role, e in steps:
+                        e["state"] = "not applied: the time limit was reached before the recovered copy was complete"
+                    if dirt_applied is not None:
+                        parsed[dirt_applied]["state"] = None
+                        parsed[dirt_applied]["why"] = "the time limit was reached before the recovered copy was complete"
+                    receipt.update({"entries_applied": 0, "pages_applied": 0, "bytes_applied": 0, "order": []})
+                    unrecovered[:] = [u for u in unrecovered if u.get("log") is not None]
+                    receipt["reason"] = time_notes[-1]
+                    steps = []
+                else:
+                    receipt["performed"] = True
+                    receipt["sequence_after"] = [final, final]
+                    receipt["dirty_after"] = False
+                    receipt["hive_bins_data_size"] = {"before": hive["hive_bins_data_size"], "after": new_hbs}
+                    receipt["base_block_fields_changed"] = changed
             else:
                 receipt["reason"] = "the hive is dirty (sequence %d / %d) and no named log holds an applicable entry" % (hive["primary_sequence"], hive["secondary_sequence"])
+        if time_notes:
+            receipt["time_limit"] = "; ".join(time_notes)
         # What was not applied, with the hive ranges its pages would have written.
         for role in hvle_roles:
             for e in parsed[role]["entries"]:
@@ -1010,8 +1223,7 @@ def replay(hive_path, hive_size, hive, logs, out_dir):
                     else:
                         e["state"] = "not applied"
                 if e["state"].startswith("not applied") and not (not dirty):
-                    unrecovered.append({"log": role, "entry": e["index"], "sequence": e["sequence"], "why": e["state"][len("not applied: "):],
-                                        "hive_ranges": merge_ranges(e["refs"]) if e["valid"] else [], "log_range": {"offset": e["offset"], "bytes": e["size"]}})
+                    unrecovered.append(unrecovered_entry(role, e, e["state"][len("not applied: "):], parsed[role]["fh"], budget))
         for info in log_receipts:
             p = parsed.get(info["role"])
             if p is not None and p["kind"] == "hvle":
@@ -1041,10 +1253,83 @@ CACHED_LOGON = re.compile(r"^NL\$", re.I)
 SECRET_PLACES = ("\\policy\\secrets\\", "\\policy\\poleklist\\", "\\policy\\polsecretencryptionkey\\")
 
 
+class CellGuard:
+    """Stands in for one of regipy's record layouts (the key node `nk` and the value key `vk`) and checks what the record declares against the cell it was read
+    from. regipy reads a name as long as the record says, whether or not the cell is that long, so a damaged length reads the next cell: the bytes of
+    whatever is stored there, a withheld value's data among them, ended up in key paths and names. A name longer than its cell is not believed: the record is
+    given a name that says where it is (`[name withheld: ...]`, hive offset and the numbers, none of the bytes), and a value data size longer than its data
+    cell is cut at the cell. Each is listed in CELL_DAMAGE for the walk to name."""
+
+    MARK = "[name withheld: "
+
+    def __init__(self, real, kind):
+        self.real, self.kind = real, kind
+
+    def parse_stream(self, stream):
+        start = stream.tell()
+        rec = self.real.parse_stream(stream)
+        end = stream.tell()
+        try:
+            self.check(stream, start, rec)
+        finally:
+            stream.seek(end)
+        return rec
+
+    @staticmethod
+    def cell_size(stream, at):
+        stream.seek(at)
+        raw = stream.read(4)
+        return abs(struct.unpack("<i", raw)[0]) if len(raw) == 4 else None
+
+    def check(self, stream, start, rec):
+        if self.kind == "nk":
+            cell_at, fixed, declared = start - 6, 6 + 74, rec.key_name_size
+        else:
+            cell_at, fixed, declared = start - 4, 4 + 20, rec.name_size
+        if cell_at < 0:
+            return
+        size = self.cell_size(stream, cell_at)
+        if size is None:
+            return
+        if declared > max(size - fixed, 0):
+            mark = ("%s%s at hive offset 0x%x declares %d name bytes in a %d-byte cell]" % (self.MARK, self.kind, cell_at, declared, size)).encode("ascii")
+            if self.kind == "nk":
+                rec["key_name_string"], rec["key_name_size"] = mark, len(mark)
+                rec.flags.KEY_COMP_NAME = True
+            else:
+                rec["name"], rec["name_size"] = mark, len(mark)
+                rec.flags.VALUE_COMP_NAME = True
+            CELL_DAMAGE.append("a %s record at hive offset 0x%x declares a name of %d bytes in a cell of %d bytes: its name is withheld, none of the bytes past the cell are read" % (self.kind, cell_at, declared, size))
+        if self.kind == "vk" and 0 < rec.data_size < 0x80000000:          # 0x80000000 and up: the data is inside the record itself
+            data_cell = 4096 + rec.data_offset
+            dsize = self.cell_size(stream, data_cell)
+            big = rec.data_size > 0x3FD8 and stream.read(2) == b"db"       # a big-data record: its segments are named by the record, not read from this cell
+            if dsize is not None and not big and rec.data_size > max(dsize - 4, 0):
+                CELL_DAMAGE.append("the value record at hive offset 0x%x declares %d bytes of data in a cell of %d bytes at hive offset 0x%x: only the cell's bytes are read"
+                                   % (cell_at, rec.data_size, dsize, data_cell))
+                rec["data_size"] = max(dsize - 4, 0)
+
+
+CELL_DAMAGE = []
+
+
+def is_withheld_name(name):
+    return isinstance(name, str) and name.startswith(CellGuard.MARK)
+
+
+def guard_regipy():
+    import regipy.registry as reg
+    if not isinstance(reg.CM_KEY_NODE, CellGuard):
+        reg.CM_KEY_NODE = CellGuard(reg.CM_KEY_NODE, "nk")
+        reg.VALUE_KEY = CellGuard(reg.VALUE_KEY, "vk")
+
+
 def sensitive_value(names, name, vtype):
     """Whether this value is registry material that can be a secret: by its name and by the place the hive itself holds it in, never by its type
     (a DWORD or QWORD under a secret-sounding name is a number and is let through)."""
     name = name or ""
+    if is_withheld_name(name) or any(is_withheld_name(n) for n in names):
+        return "unreadable name"                       # a name that was withheld cannot be told from a secret's: the value is withheld with it
     if (SENSITIVE_NAME.search(name) or CACHED_LOGON.match(name)) and vtype not in NUMBER_TYPES:
         return "name"
     path = "\\" + "\\".join(names).lower() + "\\"
@@ -1150,6 +1435,8 @@ class Walk:
 
     def __init__(self, path, deadline_at):
         from regipy.registry import RegistryHive
+        guard_regipy()
+        del CELL_DAMAGE[:]
         self.hive = RegistryHive(path)
         self.bounds = HiveBounds(path)
         self.deadline_at = deadline_at
@@ -1169,6 +1456,11 @@ class Walk:
         self.problems_count += 1
         if len(self.problems) < 5000:
             self.problems.append({"where": where, "what": what, "error": error})
+
+    def drain(self, where):
+        """Name what the guard changed since the last call."""
+        while CELL_DAMAGE:
+            self.problem(where, "cell", CELL_DAMAGE.pop(0))
 
     def run(self, on_key, on_value):
         root = self.hive.root
@@ -1201,6 +1493,7 @@ class Walk:
                     on_value(rec, payload, kind)
             except Exception as exc:
                 self.problem(shown, "values", "%s: %s" % (type(exc).__name__, exc))
+            self.drain(shown)
             if not descend:
                 continue
             if len(names) >= MAX_DEPTH:
@@ -1212,6 +1505,8 @@ class Walk:
             except Exception as exc:
                 self.problem(shown, "subkeys", "%s: %s" % (type(exc).__name__, exc))
                 continue
+            finally:
+                self.drain(shown)
             for child in reversed(children):
                 header = getattr(child, "header", None)
                 lid = getattr(header, "subkeys_list_offset", None)
@@ -1262,7 +1557,9 @@ def read_state(hive_path, deadline_at, key_page, change_db, mode, values_file, c
         if kind:
             walk.withheld += 1
             out["withheld"] = kind
-            out["withheld_why"] = "a value in a place or under a name that can hold a secret: its place, name, type and length are here, its bytes are not; write_values in a job run as secret output writes them"
+            out["withheld_why"] = ("a value whose name, or the name of a key above it, could not be read (its length was longer than its cell): it cannot be told from a secret, so its bytes are withheld; write_values in a job run as secret output writes them"
+                                   if kind == "unreadable name" else
+                                   "a value in a place or under a name that can hold a secret: its place, name, type and length are here, its bytes are not; write_values in a job run as secret output writes them")
             sensitive_log.append({"key": rec["key"], "name": rec["name"], "type": rec["type"], "length": rec["length"], "why": kind})
             values_file.add({**rec, **payload, "why": kind})
         else:
@@ -1522,11 +1819,18 @@ def main():
     if export and hive.get("signature_ok"):
         read_from = recovered_path or Path(hive_path)
         export_receipt["source"] = "the recovered copy" if recovered_path else "the hive as it is (nothing was applied)"
+        read_bytes = os.path.getsize(read_from)
         try:
             import regipy.registry  # noqa: F401
-        except ImportError as exc:
+            have_regipy = True
+        except ImportError:
+            have_regipy = False
             export_receipt.update(status="failed", why="regipy is not installed: python3 -m pip install regipy")
-        else:
+        if have_regipy and read_bytes > MAX_READ_BYTES:
+            have_regipy = False
+            export_receipt.update(status="skipped", bytes=read_bytes, why="the %s is %d bytes; regipy holds the whole hive in memory, so a hive over %d bytes is not read (the replay above was done, "
+                                  "and the recovered copy, if one was made, is the place to read it with a tool that streams)" % (export_receipt["source"], read_bytes, MAX_READ_BYTES))
+        if have_regipy:
             withhold_library_output()
             key_page = FilePage(directory, "keys.jsonl", [identity, "keys"], limit)
             changes_page = FilePage(directory, "changes.jsonl", [identity, "changes"], limit)
@@ -1608,7 +1912,7 @@ def main():
         if unrecovered:
             reasons.append("%d log entr%s or range%s were not applied (unrecovered)" % (len(unrecovered), "y" if len(unrecovered) == 1 else "ies", "" if len(unrecovered) == 1 else "s"))
         if export and export_receipt.get("status") != "complete":
-            reasons.append("the key and value records are %s" % export_receipt.get("status"))
+            reasons.append("the key and value records are %s%s" % (export_receipt.get("status"), (": " + export_receipt["why"]) if export_receipt.get("why") else ""))
         reader_said = (export_receipt.get("independent_reader") or {}).get("regfexport") or {}
         if reader_said.get("agrees") is False:
             reasons.append("regfexport counted %d keys and %d values where regipy counted %d and %d" % (
@@ -1617,6 +1921,8 @@ def main():
             reasons.append("the hive's base block has a problem: " + "; ".join(hive["problems"]))
         if receipt["replay"].get("time_limit"):
             reasons.append(receipt["replay"]["time_limit"])
+        if (receipt["replay"].get("base_block_from_log") or {}).get("taken") is False:
+            reasons.append(receipt["replay"]["base_block_from_log"]["why"])
         status = "partial" if reasons else "complete"
         if reasons:
             basis = "; ".join(reasons)
