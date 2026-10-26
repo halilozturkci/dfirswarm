@@ -34,8 +34,15 @@ target_field() {
   python3 - "$1" "$2" <<'PY'
 import json, os, sys
 arg, field = sys.argv[1], sys.argv[2]
-t = json.load(open(arg, encoding="utf-8")) if os.path.isfile(arg) else json.loads(arg)
+try:
+    t = json.load(open(arg, encoding="utf-8")) if os.path.isfile(arg) else json.loads(arg)
+except (ValueError, OSError):
+    t = None
+if not isinstance(t, dict):
+    sys.exit(0)        # nothing is printed: the caller answers "the target is not a readable file" as JSON
 paths = t.get("paths") or []
+if not isinstance(paths, list):
+    paths = []
 print((paths[0] if paths else "") if field == "paths0" else (t.get("name") or (paths[0] if paths else "")))
 PY
 }

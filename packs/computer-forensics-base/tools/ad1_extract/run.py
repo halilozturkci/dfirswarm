@@ -481,8 +481,16 @@ def ad1_unaccounted(img):
     chunk table or chunk led to. A zeroed or damaged next or child pointer ends a chain early with no error, and the format has no item
     count, so the walk cannot tell a tree that ended from a tree that was cut: it says what it could not account for."""
     left = img.unreferenced()
-    if left is None or left[1] <= AD1_SLACK:
+    if left is None:
         return None
+    if left[1] <= AD1_SLACK:
+        if left[2]:
+            return None
+        # Only the first AD1_GAP_SCAN_MAX bytes of the unreached data were read, and they held nothing: that says nothing of the rest, where a
+        # zeroed pointer's lost items can sit behind a long run of zeros.
+        return ("%d of the %d bytes of the image's data that no item, name, metadata entry, chunk table or chunk of the tree leads to were read for non-zero bytes "
+                "(the first %d MiB) and held none; the rest was not read, so the tree is not shown to account for the image's data and the list is not shown to be whole"
+                % (min(left[0], AD1_GAP_SCAN_MAX), left[0], AD1_GAP_SCAN_MAX >> 20))
     return ("%s%d bytes of the image's data that are not zero are reached by no item, name, metadata entry, chunk table or chunk of the tree: a zeroed or damaged "
             "next or child pointer would leave exactly such bytes, and the format has no item count, so the list is not shown to be whole" % ("" if left[2] else "at least ", left[1]))
 
@@ -674,6 +682,8 @@ def main():
         args = json.load(sys.stdin)
     except ValueError as e:
         fail("arguments are JSON on stdin: %s" % e)
+    if not isinstance(args, dict):
+        fail("arguments are a JSON object")
     image = args.get("image")
     if not isinstance(image, str) or not image:
         fail("image is required: the AD1 image's first segment (.ad1)")

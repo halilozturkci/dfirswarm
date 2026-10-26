@@ -1,6 +1,6 @@
 {
   "id": "archive-members",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "List the members of a tar (plain or compressed), zip or 7z archive without extracting any: path, type, size, time, mode, link target and where each member sits in the archive.",
   "object": "archive",
   "order": 30,
@@ -50,5 +50,5 @@
   ],
   "purpose": "inventory",
   "covers": "The archive's own list of members. It opens no member, searches no contents and lists no archive inside the archive: a member is extracted with the archive_extract tool, which takes the member number n of members.tsv (from_index) and writes each member under its own bounded, link-free rules, then catalogued on its own. A tar compressed with zstd is not listed here (archive_extract reads it where a zstd reader exists).",
-  "sha256": "7cd355c3cc5cbe5f0a5f34ede7af10c88adf84fedc0da66c2c6d5f2853980149"
+  "sha256": "96db644ae244874245534324868cacf9d09b0bc39d4352ff4ddd523fb50659aa"
 }

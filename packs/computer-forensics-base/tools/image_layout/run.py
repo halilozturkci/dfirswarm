@@ -32,7 +32,7 @@ import tempfile
 import time
 from pathlib import Path
 
-TOOL = {"name": "image_layout", "version": 3}
+TOOL = {"name": "image_layout", "version": 4}
 CHILD_TIMEOUT = 120
 TOTAL_BUDGET = 270          # seconds, under the manifest's 300
 SECTOR_MAX = 65536
@@ -104,8 +104,11 @@ def container_of(path):
     return "raw", "no container signature matched: the bytes of a disk or volume, or a format this tool does not know"
 
 
+# The columns mmls writes are fixed width: its slot is %.3d and its start, end and length are %.10 (TSK's mmls.c), so a row has three
+# runs of ten or more ASCII digits. A GPT name holds 36 UTF-16 units, a Mac partition name 32 bytes: a line made of a slot, a table column
+# and three such runs does not fit in one, so a name holding a line break cannot forge a row. [0-9], never \d (Arabic-Indic digits are \d).
 SLOT = re.compile(
-    r"^(?P<slot>\d{3}):\s+(?P<table>\S+)\s+(?P<start>\d+)\s+(?P<end>\d+)\s+(?P<len>\d+)\s+(?P<desc>.*\S)\s*$"
+    r"^(?P<slot>[0-9]{3,}):[ \t]+(?P<table>\S+)[ \t]+(?P<start>[0-9]{10,})[ \t]+(?P<end>[0-9]{10,})[ \t]+(?P<len>[0-9]{10,})[ \t]+(?P<desc>.*\S)[ \t]*$"
 )
 
 
@@ -115,22 +118,36 @@ def parse_mmls(text):
     if m:
         sector = int(m.group(1))
     slots, skipped = [], []
-    expect = 0
-    for line in text.splitlines():
-        m = SLOT.match(line.strip())
-        if not m:
+    expect, header = 0, False
+    # Split on the line feed only: a name holding a carriage return or a vertical tab is still one line of the table.
+    for raw in text.split("\n"):
+        line = raw.rstrip("\r").strip()
+        m = SLOT.match(line)
+        if not header and not m:
+            header = "Slot" in line and "Start" in line and "Description" in line
             continue
-        # mmls prints a GPT partition name raw, so a name holding a line break can put a forged row in the table: a row is the one the table is
-        # at (slots count 000, 001, ...), and one that is out of sequence is not a partition.
+        if not line:
+            continue
+        # mmls prints a GPT partition name raw, so a name holding a line break can put a forged line in the table: a row is a line of the
+        # shape mmls writes, the one the table is at (slots count 000, 001, ...) and one whose end and length agree with its start. Anything
+        # else after the header is not a partition and is said.
+        if not m:
+            skipped.append("is not a row of the table: " + line[:120])
+            continue
+        start, end, length = int(m.group("start")), int(m.group("end")), int(m.group("len"))
         if int(m.group("slot")) != expect:
-            skipped.append(line.strip()[:120])
+            skipped.append("is row %d where row %d was due: %s" % (int(m.group("slot")), expect, line[:120]))
+            continue
+        if end < start or length != end - start + 1:
+            expect += 1
+            skipped.append("has an end (%d) and a length (%d) that do not agree with its start (%d): %s" % (end, length, start, line[:120]))
             continue
         expect += 1
         desc = m.group("desc")
         slots.append({
             "slot": m.group("slot"),
-            "start_sector": int(m.group("start")),
-            "length_sectors": int(m.group("len")),
+            "start_sector": start,
+            "length_sectors": length,
             "description": desc,
             # The table column says what a row is ("-------" a gap, "Meta" a table area, anything else an entry);
             # the description is a partition's own name in a GPT and says nothing of the sort.
@@ -322,6 +339,7 @@ def main():
                 "The Sleuth Kit opened this %s container as %s, so no offset or file system is read from it: convert or attach it (qemu-img, a "
                 "mount of the virtual disk) and run this tool on the result, or use a reader of the container." % (out["container"], opened_as))
             res = {"kind": "container-not-opened", "stdout": "", "stderr": "", "code": None}
+    lines_not_read = 0
     if res["kind"] == "container-not-opened":
         pass
     elif res["kind"] == "ok":
@@ -333,8 +351,9 @@ def main():
                 + "The offsets below are sectors in the virtual disk, valid for Sleuth Kit commands against this container."
             )
         unit, slots, skipped = parse_mmls(res["stdout"])
+        lines_not_read = len(skipped)
         for line in skipped:
-            out["notes"].append("a line of mmls's table is out of sequence and is not read as a partition (a partition name holding a line break would do this): %s" % line)
+            out["notes"].append("a line of mmls's table after its header %s (a partition name holding a line break would do this); it is not read as a partition" % line)
         if forced and unit != forced:
             out["notes"].append("sector_size %d was given, but mmls printed its offsets in %d-byte sectors: "
                                 "the offsets below are in %d-byte sectors." % (forced, unit, unit))
@@ -454,9 +473,9 @@ def main():
     out["raw_outputs"] = keep.files
     if keep.error:
         out["raw_outputs_error"] = keep.error
-    out["status"] = "partial" if (out.get("partition_table") == "unknown" or out.get("volumes_refused") or out.get("volumes_not_attempted")) else "complete"
+    out["status"] = "partial" if (out.get("partition_table") == "unknown" or out.get("volumes_refused") or out.get("volumes_not_attempted") or lines_not_read) else "complete"
     out["status_basis"] = ("mmls and fsstat ran on every entry they were asked about and the layout is as they printed it" if out["status"] == "complete" else
-                           "the partition table is not established, or a file system fsstat was asked about was refused or not attempted (see notes and the partitions)")
+                           "the partition table is not established, a line of it was not read as a row, or a file system fsstat was asked about was refused or not attempted (see notes and the partitions)")
     out["not_measured"] = ("Snapshots, backing files and the other segments of a split set are not read; "
                            "a file system fsstat reads here is not shown to be intact or complete, and an "
                            "encrypted volume looks like any other it cannot read.")
