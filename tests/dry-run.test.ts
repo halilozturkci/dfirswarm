@@ -4,11 +4,13 @@
  */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { test } from "node:test";
+import fsPromises from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
+import { mock, test } from "node:test";
 import { spawnSync } from "node:child_process";
 import { chmod, link, stat } from "node:fs/promises";
 import {
@@ -1694,14 +1696,39 @@ test("budget: a fold reads a budget.json caught mid-save once more before refusi
     await writeBudget(root, seeded);
     await applySessionUsage(root, "agent00", { spent_usd: 0.1, tokens: 10, calls: 1, input: 10, output: 0, cache_read: 0, cache_write: 0 });
 
-    // An editor raising the cap to 5, caught between truncate and write.
+    // An editor raising the cap to 5, caught between truncate and write. The
+    // file is left empty, and the finished save is released by the fold's own
+    // first read of it (a spy on readFile), not by a timer: no delay of a
+    // loaded machine can put the fold's second read before the save, or its
+    // first read after it. The save is whole (a temp file, then rename), so
+    // the second read sees the old empty file or the new one, never half.
+    const path = join(root, "budget.json");
     const raised = { ...seeded, cap_usd: 5 };
-    await writeFile(join(root, "budget.json"), "", "utf8");
-    const finished = new Promise((done) => setTimeout(done, 20)).then(() =>
-      writeFile(join(root, "budget.json"), JSON.stringify(raised), "utf8"),
-    );
-    const applied = await applySessionUsage(root, "agent00", { spent_usd: 2, tokens: 20, calls: 2, input: 20, output: 0, cache_read: 0, cache_write: 0 });
-    await finished;
+    await writeFile(path, "", "utf8");
+    const original = fsPromises.readFile;
+    const seen: string[] = [];
+    const spy = mock.method(fsPromises, "readFile", async (...args: Parameters<typeof original>) => {
+      const text = await original(...args);
+      if (String(args[0]) === path) {
+        seen.push(String(text));
+        if (seen.length === 1) {
+          writeFileSync(`${path}.save`, JSON.stringify(raised), "utf8");
+          renameSync(`${path}.save`, path);
+        }
+      }
+      return text;
+    });
+    syncBuiltinESMExports();
+    let applied: Awaited<ReturnType<typeof applySessionUsage>>;
+    try {
+      applied = await applySessionUsage(root, "agent00", { spent_usd: 2, tokens: 20, calls: 2, input: 20, output: 0, cache_read: 0, cache_write: 0 });
+    } finally {
+      spy.mock.restore();
+      syncBuiltinESMExports();
+    }
+    assert.equal(seen[0], "", "the first read caught the save half done");
+    assert.equal(seen.length, 2, "and the fold read it once more, no more, before it would have refused");
+    assert.equal(JSON.parse(seen[1]).cap_usd, 5);
     assert.equal(applied.budget.cap_usd, 5, "the raised cap, read on the second try");
     assert.equal(applied.over_budget, false);
     assert.equal((await readBudget(root)).cap_usd, 5);

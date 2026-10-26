@@ -136,7 +136,10 @@ test("the process making a worker is stopped before msb is asked, found by the w
     await showsAs(bystander.pid, `worker-once --name ${other}`);
     assert.deepEqual(await destroyWorker(NAME), { ok: true });
     // Bounded, so that a maker that was not stopped fails this case by name instead of holding the run until the suite's timeout.
-    await Promise.race([exited, new Promise((r) => setTimeout(r, 60_000))]);
+    // The timer is cleared once the maker is gone: left pending it kept this file's process alive for the full 60 s after the last test, which every CI run then waited out.
+    let bound: NodeJS.Timeout | undefined;
+    await Promise.race([exited, new Promise((r) => { bound = setTimeout(r, 60_000); })]);
+    clearTimeout(bound);
     assert.equal(maker.signalCode, "SIGKILL", "the process making the worker was stopped");
     assert.equal(bystander.exitCode, null, "another worker's maker is left alone");
     assert.equal(bystander.signalCode, null);
