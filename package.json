@@ -46,6 +46,9 @@
     "test:bash": "bash scripts/test-bash.sh",
     "test:vm": "node --experimental-strip-types --test --test-concurrency=1 tests/vm-integration.test.ts tests/vm-jobs.test.ts tests/vm-secret-rotation.test.ts"
   },
+  "overrides": {
+    "undici": "^8.12.2"
+  },
   "engines": {
     "node": ">=22.19"
   },
