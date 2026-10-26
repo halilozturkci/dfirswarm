@@ -50,7 +50,7 @@ import time
 from pathlib import Path
 
 TOOL = "cron_dump"
-PARSER = "cron_dump/6"
+PARSER = "cron_dump/7"
 DEFAULT_LIMIT = 200
 MAX_CONTINUED = 1 << 20      # a unit line continued with backslashes is joined up to this many bytes
 MAX_FILE_BYTES = 64 << 20    # a cron table larger than this is named as unread (a table is read a line at a time)
@@ -61,9 +61,15 @@ MAX_SHOWN_ASSIGNMENTS = 50   # assignments of one timer shown in its row; the re
 MAX_SHOWN_SCHEDULES = 50     # the timer keys of one timer listed in its row (the count says how many there are)
 REGEX_SECONDS = 2.0          # the most one match of the caller's expression may take; Python's re has no clock of its own
 MAX_LOCATIONS = 200          # how many places of the census are shown inline (the whole is paged)
+MAX_PAGING_BYTES = 128 << 20  # all the paging files of one call hold this much together; a row past it is counted and located, not written
 DEFAULT_SECONDS = 50.0       # the manifest allows 60
 MAX_SECONDS = 50.0           # the most a caller may ask for (the manifest allows 60)
 TEXT_NAME = "cron-text.jsonl"
+
+# A plausible account name for a word in the user position of a table that has a user field: useradd's own grammar, lower case
+# (the evidence's passwd names more, and `root`). Any other word there is not shown: a line pasted in without its user field has its
+# first command word in that position, and a command word can be a key or a password.
+USER_SHAPE = re.compile(r"[a-z_][a-z0-9_-]{0,31}\$?")
 
 SPECIALS = {"@reboot", "@yearly", "@annually", "@monthly", "@weekly", "@daily", "@midnight", "@hourly"}
 SYSTEM_TABLES = ["etc/crontab"]
@@ -225,14 +231,19 @@ def touches_withheld_text(has_filter):
 # there are more rows the whole result is written as JSON Lines under work/<agent>/tool-output (in a job,
 # $OUT/tool-output) and named. The file name is random: it is never a digest of anything asked for. A write
 # that fails is an error answer naming the file, never a traceback and never a silent loss.
+PAGING = {"left": MAX_PAGING_BYTES}      # what the paging files of this call may still hold, in bytes, all of them together
+
+
 class LosslessPage:
     def __init__(self, tool, key, limit):
         if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
             raise ValueError("limit must be a positive integer")
         self.tool = re.sub(r"[^A-Za-z0-9_.-]", "_", tool)
         self.limit = limit
+        self.key = key
         self.page = []
         self.total = 0
+        self.not_written = 0        # rows after the paging cap: counted in `total`, not in the file
         self._out = None
         self._tmp = None
         name = "%s-%s.jsonl" % (self.tool, secrets.token_hex(8))
@@ -246,10 +257,15 @@ class LosslessPage:
             self.path = Path("work") / agent / "tool-output" / name
             self.shown = str(self.path)
 
-    def _write(self, row):
+    def _write(self, row, kept=False):
+        data = json.dumps(row, ensure_ascii=False, default=str) + "\n"
+        size = len(data.encode("utf-8", "backslashreplace"))
+        if not kept and (self.not_written or size > PAGING["left"]):
+            self.not_written += 1       # once a row is refused no later one is written: the file stays the first rows in order
+            return
+        PAGING["left"] = max(0, PAGING["left"] - size)
         try:
-            self._out.write(json.dumps(row, ensure_ascii=False, default=str))
-            self._out.write("\n")
+            self._out.write(data)     # one write: a stop never leaves half a row
         except OSError as exc:
             fail("the whole result could not be written to %s: %s" % (self.path, describe(exc)), paging_file=str(self.path))
 
@@ -261,14 +277,29 @@ class LosslessPage:
         if self._out is None:
             try:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
-                fd, name = tempfile.mkstemp(dir=self.path.parent, prefix=".%s-" % self.path.name)
-                self._tmp = Path(name)
+                # The name is known before the file exists, so a signal at any point after this line finds the file by it.
+                self._tmp = self.path.parent / (".%s-%s" % (self.path.name, secrets.token_hex(8)))
+                fd = os.open(str(self._tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
                 self._out = os.fdopen(fd, "w", encoding="utf-8", errors="backslashreplace")
             except OSError as exc:
                 fail("the whole result could not be written: %s cannot be created (%s)" % (self.path, describe(exc)), paging_file=str(self.path))
             for kept in self.page:
-                self._write(kept)
+                self._write(kept, kept=True)
         self._write(row)
+
+    def stop_here(self):
+        """The rows written so far, kept under the final name (a signal ended the tool): the path as shown, or None where nothing was written."""
+        if self._tmp is None:
+            return None
+        out, self._out = self._out, None
+        if out is not None:
+            out.flush()
+            os.fsync(out.fileno())
+            out.close()
+        if not os.path.exists(self._tmp):
+            return None
+        os.replace(self._tmp, self.path)
+        return self.shown
 
     def finish(self):
         result = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
@@ -282,7 +313,52 @@ class LosslessPage:
                 fail("the whole result could not be written to %s: %s" % (self.path, describe(exc)), paging_file=str(self.path))
             result["all_results"] = self.shown
             result["all_results_format"] = "JSON Lines, one complete result per line"
+        if self.not_written:
+            result["not_written"] = self.not_written
+            result["not_written_why"] = ("the paging files of one call hold at most %d bytes together: the first %d rows are in the file, in order; "
+                                         "the %d after them are counted in `matched` and are in the evidence at the file and line each entry names"
+                                         % (MAX_PAGING_BYTES, self.total - self.not_written, self.not_written))
         return result
+
+
+# A signal ends the tool with a last word. The harness ends a tool that runs too long with SIGTERM before it kills the group, and a
+# tool that ignored it left its paging files as unfinished temporary files nobody could name. The rows written so far are kept under
+# their final names and the text file is closed, so the last word can say where they are; the answer itself was never built.
+STATE = {"pages": [], "text": None}
+
+
+def _on_signal(signum, _frame):
+    kept = {}
+    for page in STATE["pages"]:
+        try:
+            shown = page.stop_here()
+        except BaseException:  # noqa: BLE001 - a last word is best effort
+            shown = None
+        if shown:
+            kept[page.key] = shown
+    text = STATE["text"]
+    text_file = getattr(text, "shown", None) if text is not None and getattr(text, "written", 0) else None
+    if text is not None:
+        try:
+            text.close()
+        except BaseException:  # noqa: BLE001
+            pass
+    try:
+        sys.stdout.write(json.dumps({
+            "parser": PARSER, "status": "failed", "stopped_by_signal": signum,
+            "status_basis": "this tool was stopped by signal %d before it finished: no answer was built, and what it had read is not a complete result" % signum,
+            "paging_files_kept": kept, "text_file_kept": text_file,
+            "kept_note": "the rows each file holds were written in the order read, up to where the tool was stopped; the files are named here and nowhere else",
+        }) + "\n")
+        sys.stdout.flush()
+    except Exception:  # noqa: BLE001
+        pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers():
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
 
 
 def require_job(flag):
@@ -412,11 +488,19 @@ class Overtime(Exception):
 
 
 class RegexTooSlow(Exception):
-    pass
+    """A match of the caller's expression was ended. `by_deadline` is true when the cause was the tool's own max_seconds (the
+    match had not been given its full REGEX_SECONDS because less time was left, or none was), false when one match used them all."""
+
+    def __init__(self, by_deadline=False):
+        super().__init__()
+        self.by_deadline = by_deadline
+
+
+CLOCK = {"by_deadline": False}      # whether the match now running was given the time left to the deadline and not the full REGEX_SECONDS
 
 
 def _alarm(_signum, _frame):
-    raise RegexTooSlow()
+    raise RegexTooSlow(CLOCK["by_deadline"])
 
 
 def arm_regex_clock():
@@ -427,10 +511,16 @@ def arm_regex_clock():
 
 
 def search_within(pattern, text, deadline):
-    """pattern.search(text), ended at REGEX_SECONDS or at the tool's deadline, whichever is first (RegexTooSlow)."""
+    """pattern.search(text), ended at REGEX_SECONDS or at the tool's deadline, whichever is first (RegexTooSlow). It is called
+    for every record, and what is left of the time is read each time: after the deadline no match is begun (there is no grace), and
+    a match is given no more than the time that is left, so the tool always ends at its deadline and not at a coarser tick."""
+    left = deadline - time.monotonic()
+    if left <= 0.001:
+        raise RegexTooSlow(True)
     if not hasattr(signal, "setitimer"):
         return pattern.search(text)
-    signal.setitimer(signal.ITIMER_REAL, max(0.05, min(REGEX_SECONDS, deadline - time.monotonic())))
+    CLOCK["by_deadline"] = left < REGEX_SECONDS
+    signal.setitimer(signal.ITIMER_REAL, min(REGEX_SECONDS, left))
     try:
         return pattern.search(text)
     finally:
@@ -450,6 +540,8 @@ class Run:
         self.root, self.text, self.page, self.unparsed_page = root, text, page, unparsed_page
         self.assignments_page = assignments_page
         self.pattern, self.preview, self.limit, self.deadline = pattern, preview, limit, deadline
+        self.seconds = None
+        self.passwd_data, self.known_users = None, set()
         self.need_text = text.enabled or preview
         self.need_command = self.need_text or (pattern is not None and in_job())
         self.preview_rows = []
@@ -463,6 +555,11 @@ class Run:
     def check(self):
         if time.monotonic() > self.deadline:
             raise Overtime()
+
+    def plausible_user(self, name):
+        """Whether a word may be shown as the user of a table line: `root`, an account of the evidence's passwd, or a lower-case name
+        of useradd's shape. Anything else is not printed (it may be a command word, and a command can be a secret)."""
+        return name == "root" or name in self.known_users or USER_SHAPE.fullmatch(name) is not None
 
     def keep(self, which, item):
         self.counts[which] += 1
@@ -486,9 +583,11 @@ class Run:
             hay = ("%s %s %s" % (texts.get("command") or "", row.get("unit") or "", row.get("script") or "")) if in_job() else shown_hay(row)
             try:
                 found = search_within(self.pattern, hay, self.deadline)
-            except RegexTooSlow:
-                raise Overtime("the contains expression did not finish within %s s on the entry at %s line %s: the inventory stopped there, "
-                               "and no later entry was tested" % (REGEX_SECONDS, row.get("file"), row.get("line", "-")))
+            except RegexTooSlow as exc:
+                where = "the entry at %s line %s" % (row.get("file"), row.get("line", "-"))
+                raise Overtime("%s: the inventory stopped there, and no later entry was tested" % (
+                    "max_seconds (%s) passed while the contains expression was being tested on %s" % (self.seconds, where) if exc.by_deadline else
+                    "the contains expression did not finish within %s s on %s" % (REGEX_SECONDS, where)))
             if not found:
                 return
         self.matched += 1
@@ -530,8 +629,8 @@ def cron_entries(run, path, has_user, owner):
             number += 1
             start = offset
             offset += len(rawb)
-            if number % 2048 == 0:
-                run.check()
+            if number % 2048 == 0 or run.pattern is not None:
+                run.check()                          # with an expression the clock is read for every line
             if len(rawb) > MAX_CRON_LINE and not rawb.endswith(b"\n"):
                 skipped = 0
                 while True:                          # read on to the end of the line without holding it
@@ -579,6 +678,11 @@ def cron_entries(run, path, has_user, owner):
                 split = USER_COMMAND.match(rest)
                 if not split or not split.group(3).strip():
                     run.unparsed_line(path, number, start, "a user field and no command", line)
+                    continue
+                if not run.plausible_user(split.group(1)):
+                    run.unparsed_line(path, number, start, "the word in the user position is not an account of the evidence's passwd and not shaped like a user name "
+                                      "(lower case, at most 32 characters): it is not shown, as it may be the command's first word of a line written without a user field; "
+                                      "the line is in the text file when write_text was asked", line)
                     continue
                 user, command, user_basis = split.group(1), split.group(3), "user field"
             run.seq += 1
@@ -700,6 +804,7 @@ def timer_entry(run, path, manager):
     entry_id = "C%06d" % run.seq
     tally = {"other": 0}
     count, shown = 0, []
+    unwritten_before = run.assignments_page.not_written
     calendars, calendar_count, units_last, persistent_last, at_reboot = [], 0, None, None, False
     for a in unit_assignments(data, run, tally):
         count += 1
@@ -738,6 +843,10 @@ def timer_entry(run, path, manager):
     if count > len(shown):
         row["assignments_not_shown"] = count - len(shown)
         row["assignments_not_shown_where"] = "pages.assignments (entry_id %s), and the unit file at the lines given" % entry_id
+    if run.assignments_page.not_written > unwritten_before:
+        row["assignments_not_paged"] = run.assignments_page.not_written - unwritten_before
+        row["assignments_not_paged_where"] = ("the paging cap was reached (see partial_reason): those assignments are in the unit file at the lines of "
+                                              "the last paged row onward, and in the text file when write_text was asked")
     if calendar_count > len(calendars):
         row["schedules_not_shown"] = calendar_count - len(calendars)
     run.emit(row, {})
@@ -773,15 +882,19 @@ def scan_dir(run, rel, handle):
     def on_error(exc):
         run.keep("walk_errors", {"path": getattr(exc, "filename", None), "error": describe(exc)})
 
-    for dirpath, dirs, names in os.walk(full, onerror=on_error):
-        for name in list(dirs):
-            sub = os.path.join(dirpath, name)
-            if os.path.islink(sub):
-                run.keep("skipped_symlinks", {"file": sub, "target": os.readlink(sub)})
-                dirs.remove(name)
-        for name in sorted(names):
-            run.check()                  # one look at the clock per file: a directory of tens of thousands of files is not read past the deadline
-            handle(dirpath, name)
+    try:
+        for dirpath, dirs, names in os.walk(full, onerror=on_error):
+            for name in list(dirs):
+                sub = os.path.join(dirpath, name)
+                if os.path.islink(sub):
+                    run.keep("skipped_symlinks", {"file": sub, "target": os.readlink(sub)})
+                    dirs.remove(name)
+            for name in sorted(names):
+                run.check()                  # one look at the clock per file: a directory of tens of thousands of files is not read past the deadline
+                handle(dirpath, name)
+    except Overtime:
+        run.census(rel, "stopped: the inventory ended inside this place (see partial_reason); the entries counted are those read before it", entries=run.total - before)
+        raise
     run.census(rel, "read", entries=run.total - before)
 
 
@@ -798,37 +911,49 @@ def handle_timer_dir(run, manager):
     return handle
 
 
-def homes_of(run):
-    """(homes relative to the root, where the list came from, how many the account database does not list, the home
-    paths it gave that were not used): the accounts' homes from the evidence's etc/passwd, and every directory under home/
-    and root, because an account that was deleted leaves its home behind."""
-    homes, source, from_passwd, ignored = [], [], 0, []
+def read_passwd(run):
+    """The evidence's etc/passwd, read once at the start (a regular file inside the root, up to MAX_UNIT_BYTES): run.passwd_data is its
+    text (None where it was not read, the reason a read error in run.read_errors) and run.known_users the account names in it. The
+    names say which word of a table line may be shown as its user; the homes in it say where to look for user timers."""
     passwd = os.path.join(run.root, "etc", "passwd")
     try:
         usable = os.path.isfile(passwd) and not os.path.islink(passwd) and inside(run.root, passwd)
     except OSError:
         usable = False
-    if usable:
-        try:
-            if os.path.getsize(passwd) > MAX_UNIT_BYTES:
-                raise OSError("etc/passwd is larger than the %d this tool reads" % MAX_UNIT_BYTES)
-            with open(passwd, "rb") as fh:
-                data = decode(fh.read())
-        except OSError as exc:
-            run.error(passwd, exc)
-            data = None
-        if data is not None:
-            for line in data.split("\n"):
-                fields = line.split(":")
-                if len(fields) >= 6 and fields[5].startswith("/") and fields[5] not in ("/", "/nonexistent"):
-                    parts = [p for p in fields[5].split("/") if p]
-                    if ".." in parts or "." in parts or "\0" in fields[5]:
-                        if len(ignored) < MAX_NAMED:
-                            ignored.append(fields[5])
-                        continue
-                    homes.append("/".join(parts))
-            from_passwd = len(homes)
-            source.append("etc/passwd")
+    if not usable:
+        return
+    try:
+        if os.path.getsize(passwd) > MAX_UNIT_BYTES:
+            raise OSError("etc/passwd is larger than the %d this tool reads" % MAX_UNIT_BYTES)
+        with open(passwd, "rb") as fh:
+            run.passwd_data = decode(fh.read())
+    except OSError as exc:
+        run.error(passwd, exc)
+        return
+    for line in run.passwd_data.split("\n"):
+        name = line.split(":", 1)[0]
+        if name and not name.startswith("#") and len(name) <= 256:
+            run.known_users.add(name)
+
+
+def homes_of(run):
+    """(homes relative to the root, where the list came from, how many the account database does not list, the home
+    paths it gave that were not used): the accounts' homes from the evidence's etc/passwd, and every directory under home/
+    and root, because an account that was deleted leaves its home behind."""
+    homes, source, from_passwd, ignored = [], [], 0, []
+    data = run.passwd_data
+    if data is not None:
+        for line in data.split("\n"):
+            fields = line.split(":")
+            if len(fields) >= 6 and fields[5].startswith("/") and fields[5] not in ("/", "/nonexistent"):
+                parts = [p for p in fields[5].split("/") if p]
+                if ".." in parts or "." in parts or "\0" in fields[5]:
+                    if len(ignored) < MAX_NAMED:
+                        ignored.append(fields[5])
+                    continue
+                homes.append("/".join(parts))
+        from_passwd = len(homes)
+        source.append("etc/passwd")
     home_dir = os.path.join(run.root, "home")
     try:
         if os.path.isdir(home_dir) and not os.path.islink(home_dir):
@@ -847,6 +972,7 @@ def homes_of(run):
 
 def main():
     args = read_args()
+    install_signal_handlers()
     root = want_str(args, "root", "root is required: an extracted file system root")
     if os.path.islink(root):
         fail("refusing a symlink root: pass the extracted evidence directory", root=root, target=os.readlink(root))
@@ -873,7 +999,11 @@ def main():
     page = LosslessPage(TOOL, "entries", limit)
     unparsed_page = LosslessPage(TOOL, "unparsed", limit)
     assignments_page = LosslessPage(TOOL, "assignments", limit)
+    STATE["pages"] += [page, unparsed_page, assignments_page]
+    STATE["text"] = text
     run = Run(root, text, page, unparsed_page, assignments_page, pattern, preview_text, limit, time.monotonic() + seconds)
+    run.seconds = seconds
+    read_passwd(run)
     homes_info = ([], "not reached", None, [])
     try:
         for rel in SYSTEM_TABLES:
@@ -886,7 +1016,11 @@ def main():
                 run.census(rel, "link or outside the root: not followed")
             elif os.path.isfile(full):
                 before = run.total
-                cron_entries(run, full, True, None)
+                try:
+                    cron_entries(run, full, True, None)
+                except Overtime:
+                    run.census(rel, "stopped: the inventory ended inside this place (see partial_reason); the entries counted are those read before it", entries=run.total - before)
+                    raise
                 run.census(rel, "read", entries=run.total - before)
             else:
                 run.census(rel, "not a file")
@@ -955,17 +1089,24 @@ def main():
         key = loc["state"].split(":")[0].split(" (")[0]
         by_state[key] = by_state.get(key, 0) + 1
     pages = {"entries": page.finish(), "unparsed": unparsed_page.finish(), "assignments": assignments_page.finish(), "locations": locations_page.finish()}
+    capped = {name: p["not_written"] for name, p in pages.items() if p.get("not_written")}
+    if capped and run.partial_reason is None:
+        run.partial_reason = ("the paging files reached their cap of %d bytes: %s row(s) are counted and are not in a paging file (see not_written in `pages`); "
+                              "each is in the evidence at the file and line it names, and the text file, when asked for, holds every one"
+                              % (MAX_PAGING_BYTES, ", ".join("%d of %s" % (n, name) for name, n in capped.items())))
     looked = sum(1 for loc in run.locations if loc["state"] == "read")
     all_read = (looked > 0 and not run.counts["read_errors"] and not run.counts["walk_errors"] and not run.counts["skipped_symlinks"]
                 and not run.counts["special"] and run.partial_reason is None and run.unparsed_count == 0)
     outcome = status_of(
         all_read, bool(run.counts["read_errors"] or run.counts["walk_errors"]) and looked == 0,
         "every place listed in locations was looked in and read, none was left unread, and every line of a cron table matched a table shape",
-        "%d of %d place(s) listed were read (the others are missing, links or not directories: see locations); %d line(s) of a cron table "
+        "%d of %d place(s) listed were read (%s: see locations); %d line(s) of a cron table "
         "matched no table shape (see unparsed); %d read error(s), %d walk error(s), %d link(s) not followed, %d special file(s) not opened%s: "
         "the answer names each" % (
-            looked, len(run.locations), run.unparsed_count, run.counts["read_errors"], run.counts["walk_errors"], run.counts["skipped_symlinks"],
-            run.counts["special"], "; the inventory stopped before the end (partial_reason)" if run.partial_reason else ""),
+            looked, len(run.locations),
+            "the others are missing, links or not directories, or the inventory stopped inside them" if run.partial_reason else "the others are missing, links or not directories",
+            run.unparsed_count, run.counts["read_errors"], run.counts["walk_errors"], run.counts["skipped_symlinks"],
+            run.counts["special"], "; the inventory stopped before the end, or a paging file was capped (partial_reason)" if run.partial_reason else ""),
         "no scheduling place could be read")
     print(json.dumps({
         "parser": PARSER,

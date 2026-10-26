@@ -832,3 +832,26 @@ test("auth_log does not call the order of files consistent when one of them is o
     assert.equal(body(await tool(AUTH, cwd, { path: one })).cross_file_order, "consistent");
   });
 });
+
+// ---- auth_log: the portless disconnect --------------------------------------------------------------------------
+
+test("auth_log reads the whole tail of a portless 'Disconnected from invalid user' as the typed name", async () => {
+  await withCwd(async (cwd) => {
+    const path = await authDir(cwd, "portless", {
+      "auth.log": lines(
+        "Feb 14 09:30:00 web01 sshd[1]: Disconnected from invalid user a x port 1 PLANTEDSTAGEVALUE 203.0.113.9",
+        "Feb 14 09:30:01 web01 sshd[1]: Disconnected from invalid user bob 203.0.113.9 port 4000 [preauth]",
+        "Feb 14 09:30:02 web01 sshd[1]: Disconnected from invalid user c y port 2 203.0.113.8 port 4001 [preauth]",
+      ),
+    });
+    const run = await tool(AUTH, cwd, { path });
+    const rows = await rowsOf(cwd, body(run));
+    assert.equal(run.stdout.includes("PLANTEDSTAGEVALUE"), false);
+    assert.equal(rows[0].source, undefined);
+    assert.equal(rows[0].port, undefined);
+    assert.equal(rows[0].stage, undefined);
+    assert.equal(rows[0].user_bytes, "a x port 1 PLANTEDSTAGEVALUE 203.0.113.9".length);
+    assert.deepEqual([rows[1].source, rows[1].port, rows[1].stage], ["203.0.113.9", 4000, "[preauth]"]);
+    assert.deepEqual([rows[2].source, rows[2].port, rows[2].user_bytes], ["203.0.113.8", 4001, "c y port 2".length]);
+  });
+});
