@@ -2332,13 +2332,13 @@ def finish(hits, why, depth, weak):
     regular = [h for h in hits if h[2] == "f"]
     if weak:
         return {"status": "ambiguous", "rel": rels[0] if len(rels) == 1 else None, "matched_by": why, "depth": depth, "candidates": rels[:REC_FIRST],
-                "reason": "only the file name matches"}
+                "all_candidates": rels, "reason": "only the file name matches"}
     if len(rels) > 1:
         return {"status": "ambiguous", "rel": None, "matched_by": why, "depth": depth, "candidates": rels[:REC_FIRST],
-                "reason": "%d delivered files differ from each other only by case" % len(rels)}
+                "all_candidates": rels, "reason": "%d delivered files differ from each other only by case" % len(rels)}
     if len(hits) > len(rels):
         return {"status": "ambiguous", "rel": None, "matched_by": why, "depth": depth, "candidates": rels[:REC_FIRST],
-                "reason": "the name appears %d times (an archive can hold one name twice)" % len(hits)}
+                "all_candidates": rels, "reason": "the name appears %d times (an archive can hold one name twice)" % len(hits)}
     if not regular:
         return {"status": "not_regular", "rel": rels[0], "matched_by": why, "depth": depth, "candidates": rels,
                 "reason": "the delivered entry is a link or a special file: it is not followed"}
@@ -2604,13 +2604,66 @@ def withhold_digest(value, where):
     return "<digest of a credential store withheld, %d characters, %s>" % (len(value), fid)
 
 
+DIGEST_KEY = re.compile(r"md5|sha|hash|digest|checksum", re.I)
+DIGEST_HEX = re.compile(r"(?:[0-9A-Fa-f]{32}|[0-9A-Fa-f]{40}|[0-9A-Fa-f]{56}|[0-9A-Fa-f]{64}|[0-9A-Fa-f]{96}|[0-9A-Fa-f]{128})")
+
+
+def withhold_field_digests(value, where, digest_key=False, any_key=False):
+    """(copy of `value` with every digest-shaped string under a digest-named key withheld, how many). The row's own `fields` keep the
+    collector's keys and structure: a key named md5, Sha256, hash or digest (at any depth, a list under it too) whose string is the hex of a
+    digest of a known length is the digest of the file the row is about. With `any_key`, a digest-shaped string is withheld whatever its key
+    (a record that names a credential store, whose columns may be shifted). The walk is iterative: it has no depth at which it stops."""
+    holder = [None]
+    count = 0
+    stack = [(value, (None, where), digest_key, holder, 0)]
+    while stack:
+        item, path, dk, parent, slot = stack.pop()
+        if isinstance(item, dict):
+            new = {}
+            parent[slot] = new
+            for key in item:
+                new[key] = None
+            for key, sub in reversed(list(item.items())):
+                stack.append((sub, (path, key), dk or bool(DIGEST_KEY.search(str(key))), new, key))
+        elif isinstance(item, list):
+            new = [None] * len(item)
+            parent[slot] = new
+            for i in range(len(item) - 1, -1, -1):
+                stack.append((item[i], path, dk, new, i))
+        elif (dk or any_key) and isinstance(item, str) and DIGEST_HEX.fullmatch(item.strip()):
+            names = []
+            node = path
+            while node[0] is not None:
+                names.append(str(node[1]))
+                node = node[0]
+            parent[slot] = withhold_digest(item.strip(), "%s%s" % (node[1], "".join(", field %s" % n for n in reversed(names))))
+            count += 1
+        else:
+            parent[slot] = item
+    return holder[0], count
+
+
 def guard_digests(rec):
-    """For a record that names a credential store, the collector's own digests are withheld from the record (the comparison still
-    runs on the real ones, in the caller)."""
+    """For a record that names a credential store, every digest the record carries is withheld from the record: the claims, the digests
+    in the collector's own `fields` (a Velociraptor upload record keeps its sha256, md5 and sha1 there) under whatever key or column
+    they stand in, and a path claim that is itself a digest (a row with a column missing shifts the others). The comparison still runs
+    on the real ones, in the caller, from the claims it took before this."""
     hint = path_hint(rec.get("source_path_claim"), rec.get("delivered_path_claim"))
-    if hint and rec.get("hash_claims"):
-        where = "record %s of %s" % ((rec.get("locator") or {}).get("row") or (rec.get("locator") or {}).get("line"), rec.get("log"))
+    if not hint:
+        return rec
+    where = "record %s of %s" % ((rec.get("locator") or {}).get("row") or (rec.get("locator") or {}).get("line"), rec.get("log"))
+    withheld = 0
+    if rec.get("hash_claims"):
         rec["hash_claims"] = {algorithm: withhold_digest(value, where) for algorithm, value in rec["hash_claims"].items()}
+        withheld += len(rec["hash_claims"])
+    if isinstance(rec.get("fields"), dict):
+        rec["fields"], count = withhold_field_digests(rec["fields"], where, any_key=True)
+        withheld += count
+    for claim in ("source_path_claim", "delivered_path_claim"):
+        if isinstance(rec.get(claim), str) and DIGEST_HEX.fullmatch(rec[claim].strip()):
+            rec[claim] = withhold_digest(rec[claim].strip(), "%s, %s" % (where, claim))
+            withheld += 1
+    if withheld:
         rec["flags"] = list(rec.get("flags") or []) + ["digest_withheld_credential_store"]
         rec["credential_store_hint"] = hint
     return rec
@@ -2638,6 +2691,7 @@ class VerifySink(Sink):
         self.parts = {"path": collections.Counter(), "size": collections.Counter(), "hash": collections.Counter()}
         self.claimed = {}                  # delivered path -> number of the first record that named it
         self.claimed_more = {}             # delivered path -> numbers of the records that named it again
+        self.maybe_named = set()           # delivered paths an ambiguous record may name: not "unexpected", for a record may name them
         self.hash_stopped = False
         self.hashed_bytes = 0
         self.problem_table = None
@@ -2656,6 +2710,8 @@ class VerifySink(Sink):
         if res["status"] == "no_claim":
             self.not_checked["%s/%s: names no delivered file" % (rec["kind"], rec["outcome"])] += 1
             return
+        if res["status"] == "ambiguous":
+            self.maybe_named.update(res.get("all_candidates") or [])
         row = self.check(rec, res)
         self.by_status[row["status"]] += 1
         self.checks.add(row)
@@ -2803,6 +2859,11 @@ def main():
     record_files.update(found["uac_hashes"])
     in_scope = 0
     unexpected_total = 0
+    possibly_named = 0
+    undecided = 0
+    whole = {}                                # per-file record -> whether its rows were read whole: a file is called unexpected only against rows that were
+    for _directory, log, inner in scopes:
+        whole[log] = any(s["log"] == log and (s.get("sources", {}).get("uploads.json", s)["status"] == "parsed" if inner else s["status"] == "parsed") for s in sources)
     for rel, size, kind in sorted((e for e in census.entries() if e[2] == "f"), key=lambda e: os.fsencode(e[0])):
         if rel in record_files:
             continue
@@ -2811,7 +2872,11 @@ def main():
             if lead and not (rel.startswith(lead + "/") or rel.startswith(lead + os.sep)):
                 continue
             in_scope += 1
-            if rel not in sink.claimed:
+            if rel not in sink.claimed and rel in sink.maybe_named:
+                possibly_named += 1
+            elif rel not in sink.claimed and not whole[log]:
+                undecided += 1
+            elif rel not in sink.claimed:
                 unexpected_total += 1
                 unexpected.add({"status": "unexpected", "delivered": rel, "bytes": size, "scope": {"record": log},
                                 "note": "a delivered file below a per-file record's directory that no row of any record names"})
@@ -2846,7 +2911,9 @@ def main():
         "by_status": {s: sink.by_status.get(s, 0) for s in STATUSES if s != "unexpected"} | {"unexpected": unexpected_total},
         "by_status_basis": ("matched: every check the record claims (size, digest) agrees and at least one was made. mismatch: a size or a digest differs "
                             "(no cause is given: a changed file, a collector that hashed another byte sequence and a damaged copy look alike). missing: the "
-                            "record names a delivered file and the complete census holds none. unexpected: a delivered file no record names. unverifiable: the "
+                            "record names a delivered file and the complete census holds none. unexpected: a delivered file no row of a record that was read whole names (below a record that "
+                            "was cut, by the time limit or a malformed row, a file no row read names is counted in delivered_files_not_decided_the_record_was_not_read_whole, "
+                            "not called unexpected). unverifiable: the "
                             "record claims nothing to check, the claim is about a source-host file, the upload is sparse, hashing was off or ran out of time, or "
                             "the census is not complete. ambiguous: the record's file cannot be told from another (case, or only the file name matches). "
                             "read_failed: the file could not be read"),
@@ -2855,6 +2922,8 @@ def main():
         "not_checked_basis": "a skip, an upload error and a logged line are the collector's outcomes, not claims that a file was delivered; they are counted here and are not checked",
         "denominators": {"records": sink.count, "delivery_claims_checked": sum(sink.by_status.values()), "delivered_files": census.files,
                          "delivered_files_in_scope_of_a_per_file_record": in_scope, "delivered_files_named_by_a_record": len(sink.claimed),
+                         "delivered_files_an_ambiguous_record_may_name": possibly_named,
+                         "delivered_files_not_decided_the_record_was_not_read_whole": undecided,
                          "delivered_files_named_by_more_than_one_record": len(dup), "bytes_hashed": sink.hashed_bytes},
         "files_named_by_more_than_one_record": [{"delivered": inline_text(shown(rel, "delivered path")), "records": [sink.claimed[rel]] + nums[:FIRST_PROBLEMS]}
                                                 for rel, nums in list(dup.items())[:FIRST_PROBLEMS]],

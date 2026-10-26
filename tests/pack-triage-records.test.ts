@@ -91,7 +91,8 @@ test("recipe: a KAPE zip is read in one pass, each member hashed, each claim che
     assert.equal(run.code, 0, run.stdout);
     assert.deepEqual((await readdir(join(cwd, "o"))).sort(), ["coverage.json", "index.tsv", "inventory.tsv", "records.jsonl", "units.json", "verification.jsonl"], "no member was written, no temporary directory is left");
     const cov: Json = JSON.parse(await readFile(join(cwd, "o", "coverage.json"), "utf8"));
-    assert.equal(cov.status, "complete");
+    assert.equal(cov.status, "partial", "an archive inside the archive was not opened and may hold records");
+    assert.match(cov.status_basis, /run\/inner\.zip/);
     assert.equal(cov.members, 5);
     assert.equal(cov.records, 3);
     assert.deepEqual(cov.verification, { matched: 1, mismatch: 1, missing: 1 });
