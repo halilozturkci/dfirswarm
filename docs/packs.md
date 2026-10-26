@@ -256,11 +256,11 @@ matter, optional and at most one a pack:
 
     router: true
 
-The base pack is not the only one: `encrypted-containers`, `triage-collection`,
-`mobile-forensics`, `network-forensics` and `cloud-forensics` each name one too
-(`encrypted/router`, `triage/router`, `mobile/router`, `network/router` and
-`cloud/router`), and a router names no program, tool or rule, only which note
-answers which question.
+A router names no program, tool or rule, only which note answers which
+question. Its id is the pack's own (`base/router` and `windows/router`, but
+`router/start` in `virtualization-backup-forensics`), and the `Router:` line of a
+pack's `skills/INDEX.md` says which pack has one and under what id. A pack that
+names none is shown whole whatever the budget.
 
 `pack.sh seal` refuses a value that is not `true` or `false`, and a second
 router. When there is one, the generated `skills/INDEX.md` carries a line
@@ -269,12 +269,9 @@ its index is byte for byte what it was. The harness reads only that line: a run
 whose index is over budget shows the router's own entry for each pack in the
 prompt, and the router names the notes under it. This is the mechanism; which
 packs have routers, and how long a router may be, are the pack standard's and
-the pack lint's to say. `computer-forensics-base` names one, `base/router`, and
-so do `windows-forensics`, `linux-forensics`, `memory-forensics`,
-`macos-forensics` and `ransomware-response` (`<platform>/router`): a run of the
-base pack with windows-forensics and linux-forensics has 2,860 tokens of index
-entries whole, over the run's 2,500; the base router alone brings it to 1,898,
-and with the other two routers as well the prompt carries three router lines.
+the pack lint's to say. A run of the base pack with `windows-forensics` and
+`linux-forensics` has index entries whole over the run's 2,500 tokens; with
+each pack shown by its router the prompt carries three router lines and fits.
 
 ### Tool help stays out of the context window
 
@@ -538,24 +535,24 @@ result.
 
 ## 7. The packs in this repository
 
-Twelve, all under the same AGPL-3.0-or-later as the harness, in `packs/`:
-199 skills, 72 tools and 14 goal templates. Every one of them is sealed,
+Thirteen, all under the same AGPL-3.0-or-later as the harness, in `packs/`:
+262 skills, 83 tools and 15 goal templates. Every one of them is sealed,
 checksummed, and installs and verifies in the test suite.
 
 | Pack | Skills | Tools | Goals | What it is for |
 | --- | --- | --- | --- | --- |
 | `computer-forensics-base` | 29 | 16 | — | the method true of any platform; everything else depends on it |
-| `windows-forensics` | 52 | 20 | 3 | ten artefact families, from `$MFT` to what anti-forensics leaves behind |
-| `linux-forensics` | 10 | 6 | 2 | auth logs, the journal, accounts, systemd and cron, ext4, containers |
-| `macos-forensics` | 8 | 4 | 1 | property lists, the unified log, FSEvents, KnowledgeC, APFS |
-| `mobile-forensics` | 10 | 3 | 1 | iOS and Android extractions, app databases, protobuf |
-| `memory-forensics` | 19 | 3 | 1 | containers, what works with no framework, injection, credentials |
-| `network-forensics` | 12 | 6 | 1 | captures, sessions, DNS and TLS metadata, beacons, exfiltration |
-| `reverse-engineering` | 20 | 6 | 1 | static triage of a binary or a document, under quarantine |
-| `encrypted-containers` | 11 | 3 | 1 | which scheme, which protectors, and where the key already is |
-| `cloud-forensics` | 9 | 3 | 1 | Microsoft 365, Entra, AWS, Workspace, and the tokens behind them |
-| `ransomware-response` | 17 | 2 | 1 | scoping, recovery impairment, family candidates and recovery validation, each with its limits |
-| `triage-collection` | 14 | 2 | 1 | a collector's output, which is how most cases arrive |
+| `windows-forensics` | 53 | 22 | 3 | ten artefact families, from `$MFT` to what anti-forensics leaves behind |
+| `linux-forensics` | 26 | 6 | 2 | auth logs, the journal, accounts, systemd and cron, ext4, containers |
+| `macos-forensics` | 18 | 4 | 1 | property lists, the unified log, FSEvents, KnowledgeC, APFS |
+| `mobile-forensics` | 11 | 3 | 1 | iOS and Android extractions, app databases, protobuf |
+| `memory-forensics` | 20 | 3 | 1 | containers, what works with no framework, injection, credentials |
+| `network-forensics` | 13 | 6 | 1 | captures, sessions, DNS and TLS metadata, beacons, exfiltration |
+| `reverse-engineering` | 21 | 6 | 1 | static triage of a binary or a document, under quarantine |
+| `encrypted-containers` | 12 | 3 | 1 | which scheme, which protectors, and where the key already is |
+| `cloud-forensics` | 10 | 3 | 1 | Microsoft 365, Entra, AWS, Workspace, and the tokens behind them |
+| `ransomware-response` | 18 | 2 | 1 | scoping, recovery impairment, family candidates and recovery validation, each with its limits |
+| `triage-collection` | 20 | 6 | 1 | a collector's output, which is how most cases arrive |
 | `virtualization-backup-forensics` | 11 | 3 | 1 | the control plane of virtualization and backup: hypervisor records, disk and snapshot chains, backup catalogues, and which recovery points survive |
 
     scripts/pack.sh install packs/computer-forensics-base
@@ -572,7 +569,7 @@ would collide, so the generic tools — `file_type`, `sqlite_query`,
 **Every reference resolves inside its own pack's dependency closure**, not
 merely somewhere in the repository. A Windows skill may name a base pack tool
 because Windows depends on base; it may not name a network pack tool. The same
-test checks that for all twelve.
+test checks that for every pack.
 
 ### Third-party tools
 
