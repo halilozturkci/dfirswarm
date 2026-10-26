@@ -361,7 +361,7 @@ scripts/swarm.sh start \
   examiner's method in front of the swarm: the agents see a one-line index of
   every skill and fetch a body only when they reach that artefact family, so
   a pack the size of a textbook costs a few hundred tokens until it is used.
-  Twelve packs are in the repository ([packs.md](packs.md#7-the-packs-in-this-repository));
+  The packs are in the repository ([packs.md](packs.md#7-the-packs-in-this-repository));
   install what the case needs with `scripts/pack.sh install packs/<name>`, and
   the console's **Packs** tab then says which skills the run read and which
   it carried and never opened.
