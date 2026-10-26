@@ -2330,13 +2330,13 @@ def finish(hits, why, depth, weak):
     regular = [h for h in hits if h[2] == "f"]
     if weak:
         return {"status": "ambiguous", "rel": rels[0] if len(rels) == 1 else None, "matched_by": why, "depth": depth, "candidates": rels[:REC_FIRST],
-                "reason": "only the file name matches"}
+                "all_candidates": rels, "reason": "only the file name matches"}
     if len(rels) > 1:
         return {"status": "ambiguous", "rel": None, "matched_by": why, "depth": depth, "candidates": rels[:REC_FIRST],
-                "reason": "%d delivered files differ from each other only by case" % len(rels)}
+                "all_candidates": rels, "reason": "%d delivered files differ from each other only by case" % len(rels)}
     if len(hits) > len(rels):
         return {"status": "ambiguous", "rel": None, "matched_by": why, "depth": depth, "candidates": rels[:REC_FIRST],
-                "reason": "the name appears %d times (an archive can hold one name twice)" % len(hits)}
+                "all_candidates": rels, "reason": "the name appears %d times (an archive can hold one name twice)" % len(hits)}
     if not regular:
         return {"status": "not_regular", "rel": rels[0], "matched_by": why, "depth": depth, "candidates": rels,
                 "reason": "the delivered entry is a link or a special file: it is not followed"}
@@ -2602,13 +2602,52 @@ def withhold_digest(value, where):
     return "<digest of a credential store withheld, %d characters, %s>" % (len(value), fid)
 
 
+DIGEST_KEY = re.compile(r"md5|sha|hash|digest|checksum", re.I)
+DIGEST_HEX = re.compile(r"(?:[0-9A-Fa-f]{32}|[0-9A-Fa-f]{40}|[0-9A-Fa-f]{56}|[0-9A-Fa-f]{64}|[0-9A-Fa-f]{96}|[0-9A-Fa-f]{128})")
+FIELD_DEPTH = 8
+
+
+def withhold_field_digests(value, where, digest_key=False, depth=0):
+    """(copy of `value` with every digest-shaped string under a digest-named key withheld, how many). The row's own `fields` keep the
+    collector's keys and structure: a key named md5, Sha256, hash or digest (at any depth, a list under it too) whose string is the hex of a
+    digest of a known length is the digest of the file the row is about."""
+    if depth > FIELD_DEPTH:
+        return value, 0
+    if isinstance(value, dict):
+        out, count = {}, 0
+        for key, item in value.items():
+            new, n = withhold_field_digests(item, "%s, field %s" % (where, key), digest_key or bool(DIGEST_KEY.search(str(key))), depth + 1)
+            out[key] = new
+            count += n
+        return out, count
+    if isinstance(value, list):
+        out, count = [], 0
+        for item in value:
+            new, n = withhold_field_digests(item, where, digest_key, depth + 1)
+            out.append(new)
+            count += n
+        return out, count
+    if digest_key and isinstance(value, str) and DIGEST_HEX.fullmatch(value.strip()):
+        return withhold_digest(value.strip(), where), 1
+    return value, 0
+
+
 def guard_digests(rec):
-    """For a record that names a credential store, the collector's own digests are withheld from the record (the comparison still
-    runs on the real ones, in the caller)."""
+    """For a record that names a credential store, every digest the record carries is withheld from the record: the claims, and the digests
+    in the collector's own `fields` (a Velociraptor upload record keeps its sha256, md5 and sha1 there). The comparison still runs on the
+    real ones, in the caller, from the claims it took before this."""
     hint = path_hint(rec.get("source_path_claim"), rec.get("delivered_path_claim"))
-    if hint and rec.get("hash_claims"):
-        where = "record %s of %s" % ((rec.get("locator") or {}).get("row") or (rec.get("locator") or {}).get("line"), rec.get("log"))
+    if not hint:
+        return rec
+    where = "record %s of %s" % ((rec.get("locator") or {}).get("row") or (rec.get("locator") or {}).get("line"), rec.get("log"))
+    withheld = 0
+    if rec.get("hash_claims"):
         rec["hash_claims"] = {algorithm: withhold_digest(value, where) for algorithm, value in rec["hash_claims"].items()}
+        withheld += len(rec["hash_claims"])
+    if isinstance(rec.get("fields"), dict):
+        rec["fields"], count = withhold_field_digests(rec["fields"], where)
+        withheld += count
+    if withheld:
         rec["flags"] = list(rec.get("flags") or []) + ["digest_withheld_credential_store"]
         rec["credential_store_hint"] = hint
     return rec

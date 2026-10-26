@@ -1,7 +1,7 @@
 {
   "id": "collection-intake",
-  "version": "1.0.0",
-  "description": "Read a collector's output archive (a zip, or a tar plain or compressed) in one pass without extracting it: the member list, a SHA-256 of every member, the collector's own records (KAPE copy, skip and console logs, UAC's log and hash lists, a Velociraptor container) as canonical records with the locator of each raw row, and one verification row per delivery claim (path, size and digest checked apart, the digest in the collector's own algorithm). It applies when a member is named like a collector's record. An archive inside the archive is named, never opened; a 7z is not read. Its receipt and its answers carry `status` (complete, partial or failed) and `status_basis`.",
+  "version": "1.0.1",
+  "description": "Read a collector's output archive (a zip, or a tar plain or compressed) in one pass without extracting it: the member list, a SHA-256 of every member, the collector's own records (KAPE copy, skip and console logs, UAC's log and hash lists, a Velociraptor container) as canonical records with the locator of each raw row, and one verification row per delivery claim (path, size and digest checked apart, the digest in the collector's own algorithm). It applies when a member is named like a collector's record. An archive inside the archive is named, never opened, and the run is partial when one that may hold records was not opened (a collected file that is an archive is named and does not make it so); a tar without its end-of-archive marker is partial; the records kept on disk at once are bounded and one over the bound is named, not parsed; a 7z is not read. Its receipt and its answers carry `status` (complete, partial or failed) and `status_basis`.",
   "object": "collector output archive",
   "order": 35,
   "min_bytes": 22,
@@ -55,5 +55,5 @@
   ],
   "purpose": "inventory",
   "covers": "The archive's own member list, a digest of every member, the records a collector wrote (as the collector wrote them, one per row or line) and whether the members agree with them: path, size and digest apart. It extracts nothing to disk, opens no archive inside the archive (extract it with archive_extract and run this on the result), reads no 7z, and says nothing about whether the archive is authentic or complete as acquired, whether a record is true, what the collector was asked to take, where a member came from (collection_path_map) or what a question is covered by (collection_coverage).",
-  "sha256": "d0fbfedeb4a70e6ac4f3634cdf546b46b790d6ecd909886951b78c882b6aafb3"
+  "sha256": "e582117a4d069ba764fa872819fa2a22436864c873f0f222ded48acafdbf4a00"
 }
