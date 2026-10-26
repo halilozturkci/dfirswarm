@@ -240,24 +240,24 @@
       "name": "dotnet",
       "package": ".NET runtime",
       "optional": true,
-      "why": "The runtime Eric Zimmerman's MFTECmd, EvtxECmd and RECmd run on (their net9 builds): installed once, and each of them runs through it.",
+      "why": "The runtime Eric Zimmerman's MFTECmd, EvtxECmd and RECmd run on (their net builds, which target .NET 10): installed once, and each of them runs through it.",
       "install": {
         "brew": "brew install --cask dotnet",
-        "apt": "pinned download 9.0.20 (install.download)",
+        "apt": "pinned download 10.0.14 (install.download)",
         "download": {
-          "version": "9.0.20",
+          "version": "10.0.14",
           "apt_deps": [
             "libicu72",
             "libssl3"
           ],
           "amd64": {
-            "url": "https://builds.dotnet.microsoft.com/dotnet/Runtime/9.0.20/dotnet-runtime-9.0.20-linux-x64.tar.gz",
-            "sha256": "8aee9b39327d622a2becac4942af3fa601fff58f5f38207052a8fe8dc65a05ab",
+            "url": "https://builds.dotnet.microsoft.com/dotnet/Runtime/10.0.14/dotnet-runtime-10.0.14-linux-x64.tar.gz",
+            "sha256": "bd3a25b2c5b617934de7ca55fc410711afd772c0d95a1af9205db6c3cc2c59f1",
             "bin": "dotnet"
           },
           "arm64": {
-            "url": "https://builds.dotnet.microsoft.com/dotnet/Runtime/9.0.20/dotnet-runtime-9.0.20-linux-arm64.tar.gz",
-            "sha256": "4287e6023f8a9abe9654bc2a8420e500216dbdc68260dbe3c6df19de31732a1d",
+            "url": "https://builds.dotnet.microsoft.com/dotnet/Runtime/10.0.14/dotnet-runtime-10.0.14-linux-arm64.tar.gz",
+            "sha256": "b7647c18ea4cf034daf2716b759fd7baf0083cd2501b156b521363c15cbad848",
             "bin": "dotnet"
           }
         }
@@ -272,18 +272,18 @@
       "why": "The $MFT, $J, $Boot and $SDS parser most reports cite. Needs the .NET runtime; MIT licensed.",
       "install": {
         "brew": "https://ericzimmerman.github.io/",
-        "apt": "pinned download 2026.5.0 (install.download), run by the .NET runtime (dotnet)",
+        "apt": "pinned download 2026.10.6 (install.download), run by the .NET runtime (dotnet)",
         "download": {
-          "version": "2026.5.0",
+          "version": "2026.10.6",
           "run": "dotnet",
           "amd64": {
-            "url": "https://download.ericzimmermanstools.com/net9/MFTECmd.zip",
-            "sha256": "60ae857a554b830243e38e91fafdfdf6066f31c703282c5c6f40daf3b64d3160",
+            "url": "https://download.ericzimmermanstools.com/net/MFTECmd.zip",
+            "sha256": "f390ce9077f96bcf34561a75c82933f21403fa3e5fda49bcb739a5dda7cddd47",
             "bin": "MFTECmd.dll"
           },
           "arm64": {
-            "url": "https://download.ericzimmermanstools.com/net9/MFTECmd.zip",
-            "sha256": "60ae857a554b830243e38e91fafdfdf6066f31c703282c5c6f40daf3b64d3160",
+            "url": "https://download.ericzimmermanstools.com/net/MFTECmd.zip",
+            "sha256": "f390ce9077f96bcf34561a75c82933f21403fa3e5fda49bcb739a5dda7cddd47",
             "bin": "MFTECmd.dll"
           }
         }
@@ -298,18 +298,18 @@
       "why": "Event log parser with maps that normalise the payload differences between event ids. Needs the .NET runtime.",
       "install": {
         "brew": "https://ericzimmerman.github.io/",
-        "apt": "pinned download 2026.5.0 (install.download), run by the .NET runtime (dotnet)",
+        "apt": "pinned download 2026.10.2 (install.download), run by the .NET runtime (dotnet)",
         "download": {
-          "version": "2026.5.0",
+          "version": "2026.10.2",
           "run": "dotnet",
           "amd64": {
-            "url": "https://download.ericzimmermanstools.com/net9/EvtxECmd.zip",
-            "sha256": "4d740e51c4532c340d080f832c766c2acb0351832dae118d1abe9bb49203faa4",
+            "url": "https://download.ericzimmermanstools.com/net/EvtxECmd.zip",
+            "sha256": "efd5b3df9a526fad7e2f2a628911f6db80553e3e0468caef8f9e9a49926cb5d0",
             "bin": "EvtxeCmd/EvtxECmd.dll"
           },
           "arm64": {
-            "url": "https://download.ericzimmermanstools.com/net9/EvtxECmd.zip",
-            "sha256": "4d740e51c4532c340d080f832c766c2acb0351832dae118d1abe9bb49203faa4",
+            "url": "https://download.ericzimmermanstools.com/net/EvtxECmd.zip",
+            "sha256": "efd5b3df9a526fad7e2f2a628911f6db80553e3e0468caef8f9e9a49926cb5d0",
             "bin": "EvtxeCmd/EvtxECmd.dll"
           }
         }
@@ -324,18 +324,18 @@
       "why": "Registry hive search and export with batch files for whole artefact families. Needs the .NET runtime.",
       "install": {
         "brew": "https://ericzimmerman.github.io/",
-        "apt": "pinned download 2026.5.0 (install.download), run by the .NET runtime (dotnet)",
+        "apt": "pinned download 2026.10.2 (install.download), run by the .NET runtime (dotnet)",
         "download": {
-          "version": "2026.5.0",
+          "version": "2026.10.2",
           "run": "dotnet",
           "amd64": {
-            "url": "https://download.ericzimmermanstools.com/net9/RECmd.zip",
-            "sha256": "4a4e2f4beba54fdb9ba4eeb5e6f9d323e666b309e407ac89e047f82be0c963a2",
+            "url": "https://download.ericzimmermanstools.com/net/RECmd.zip",
+            "sha256": "dc1fca0143f0a2e837b113d6707c17272accf977a6ae7555ffd5e8b9b1f61bb1",
             "bin": "RECmd/RECmd.dll"
           },
           "arm64": {
-            "url": "https://download.ericzimmermanstools.com/net9/RECmd.zip",
-            "sha256": "4a4e2f4beba54fdb9ba4eeb5e6f9d323e666b309e407ac89e047f82be0c963a2",
+            "url": "https://download.ericzimmermanstools.com/net/RECmd.zip",
+            "sha256": "dc1fca0143f0a2e837b113d6707c17272accf977a6ae7555ffd5e8b9b1f61bb1",
             "bin": "RECmd/RECmd.dll"
           }
         }
