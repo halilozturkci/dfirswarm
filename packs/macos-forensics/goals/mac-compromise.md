@@ -18,9 +18,13 @@ rather than text.
    tasks, profiles and extensions relevant to the suspected compromise; distinguish
    configuration, enabled state, execution and maliciousness, and bound any negative
    by the coverage you examined.
-4. Privacy authorization: the states recorded in the acquired system and user TCC
-   stores, their client and service identities and any applicable policy; give
-   historical grant or use times only where further evidence supports them.
+4. Privacy authorization: where an available parser can read the acquired system and
+   user TCC stores, the states recorded in them, their client and service identities
+   and any applicable policy, with historical grant or use times only where further
+   evidence supports them; otherwise state that the available parser cannot answer
+   the question. This pack has no TCC parser or skill: a generic SQLite query can
+   open a TCC database, but nothing here says what its tables, columns or
+   authorization values mean, so say what you read and what you could not interpret.
 5. Activity: retained application, device-state and session evidence, separating
    account association, remote activity and any independently supported attribution
    to a person.

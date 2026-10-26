@@ -501,7 +501,8 @@ parent = os.path.join(root, "stage")
 os.mkdir(parent)
 names = {"dead": "knowledgec-%d-abcd1234" % dead.pid, "live": "knowledgec-%d-abcd1234" % os.getpid(), "other": "keep-%d-abcd1234" % dead.pid}
 for n in names.values():
-    os.mkdir(os.path.join(parent, n)); open(os.path.join(parent, n, "k.db"), "w").write("x")
+    os.mkdir(os.path.join(parent, n), 0o700)            # (a private copy as the tool makes it: 0700 with 0600 files)
+    fd = os.open(os.path.join(parent, n, "k.db"), os.O_WRONLY | os.O_CREAT, 0o600); os.write(fd, b"x"); os.close(fd)
 os.symlink(root, os.path.join(parent, "knowledgec-%d-link" % dead.pid))
 m.remove_dead_stages(parent)
 print("left", sorted(os.listdir(parent)))
