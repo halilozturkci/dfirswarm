@@ -5,7 +5,7 @@
  */
 import assert from "node:assert/strict";
 import { mkdir, readFile, readdir, stat, symlink, truncate, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { test } from "node:test";
 import { withCwd } from "./tool-library-harness.ts";
 import { CARVE, json, runTool } from "./memory-f1-support.ts";
@@ -70,24 +70,44 @@ test("mem_carve stops at max_seconds within a couple of seconds, with a resume o
 
 test("mem_carve ends with one JSON answer on SIGTERM, exit 143, and names the partial hit list (P2-5)", async () => {
   await withCwd(async (cwd) => {
-    await writeFile(join(cwd, "work", "dense.raw"), dense(2_500_000));
-    const run = await runTool(CARVE, cwd, { path: "work/dense.raw", results_to: "work/s1/sig.jsonl" }, {}, undefined, "SIGTERM", 1500);
+    // 64 Ki hits (1 MiB), then 64 GiB of nothing (sparse): the sweep cannot end before the signal, however fast the machine is, and the
+    // signal is sent when the tool has written its first rows (a marker on disk), not after a time.
+    const raw = join(cwd, "work", "long.raw");
+    await writeFile(raw, dense(65_536));
+    await truncate(raw, 64 * 2 ** 30);
+    const hidden = (dir: string, prefix: string) => async () => {
+      for (const name of await readdir(dir)) if (name.startsWith(prefix) && (await stat(join(dir, name))).size > 0) return true;
+      return false;
+    };
+    const run = await runTool(CARVE, cwd, { path: "work/long.raw", results_to: "work/s1/sig.jsonl" }, {}, undefined, "SIGTERM", 0, hidden(join(cwd, "work", "s1"), ".sig.jsonl."));
+    assert.ok(!run.gateTimedOut, "the sweep wrote its first rows");
     assert.equal(run.code, 143, run.stderr);
     assert.doesNotMatch(run.stderr, /Traceback/);
     const out = json<Carve>(run);
     assert.equal(out.status, "interrupted");
     assert.equal(out.signal, 15);
     assert.match(out.partial_results as string, /sig\.jsonl\.partial$/);
+    assert.ok(!basename(out.partial_results as string).startsWith("."), "the answer names no hidden file");
     const rows = await lines(out.partial_results as string);
     assert.ok(rows.length > 0);
     assert.equal(rows.length, out.hit_count_so_far, "whole lines only, as many as were counted");
-    assert.equal(out.resume_start, rows[rows.length - 1].signature_offset + 1);
+    const resume = out.resume_start as number;
+    assert.ok(resume >= rows[rows.length - 1].signature_offset + 1, "resume_start is past the last row kept");
+    assert.deepEqual(rows.map((h) => h.signature_offset), Array.from({ length: Math.min(65_536, Math.ceil(resume / 16)) }, (_, i) => i * 16), "every hit before resume_start, and no other, is in the file");
     const names = await readdir(join(cwd, "work", "s1"));
-    assert.deepEqual(names.filter((n) => n.endsWith(".partial")), ["sig.jsonl.partial"], "no hidden partial is left behind");
-    const hup = await runTool(CARVE, cwd, { path: "work/dense.raw", limit: 5 }, {}, undefined, "SIGINT", 1000);
+    assert.deepEqual(names, ["sig.jsonl.partial"], "no hidden partial is left behind");
+    // SIGINT, no results_to: the rows past the preview go to a file of the tool's own, which a stop keeps and names
+    const pages = join(cwd, "work", "s1", "tool-output");
+    const hup = await runTool(CARVE, cwd, { path: "work/long.raw", limit: 5 }, {}, undefined, "SIGINT", 0, hidden(pages, ".mem_carve-"));
+    assert.ok(!hup.gateTimedOut, "the sweep wrote its first rows");
     assert.equal(hup.code, 130);
     assert.doesNotMatch(hup.stderr, /Traceback|KeyboardInterrupt/);
-    assert.equal(json<Carve>(hup).status, "interrupted");
+    const stopped = json<Carve>(hup);
+    assert.equal(stopped.status, "interrupted");
+    assert.match(stopped.partial_results as string, /\.jsonl\.partial$/);
+    assert.ok(!basename(stopped.partial_results as string).startsWith("."), "the answer names no hidden file");
+    assert.equal((await lines(join(cwd, stopped.partial_results as string))).length, stopped.hit_count_so_far);
+    assert.deepEqual((await readdir(pages)).filter((n) => n.startsWith(".")), [], "no hidden file is left behind");
   });
 });
 

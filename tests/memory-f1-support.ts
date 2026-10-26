@@ -13,10 +13,16 @@ export const CARVE = join(MEM, "mem_carve", "run.py");
 export const PROFILE = join(MEM, "mem_profile", "run.py");
 export const FS = join(MEM, "mem_fs", "run.py");
 
-export type Run = { code: number | null; signal: string | null; stdout: string; stderr: string; ms: number };
+export type Run = { code: number | null; signal: string | null; stdout: string; stderr: string; ms: number; gateTimedOut?: boolean };
 
-/** Run a tool, send it `signal` after `afterMs` (when given), and collect everything. */
-export function runTool(script: string, cwd: string, args: unknown, env: Record<string, string> = {}, bin?: string, signal?: NodeJS.Signals, afterMs = 0): Promise<Run> {
+/** The longest a `gate` is waited for. Far above what any machine needs, so it only ends a test whose marker can never come. */
+const GATE_LIMIT_MS = 120_000;
+
+/**
+ * Run a tool, send it `signal` after `afterMs` (when given), and collect everything. With a `gate` the signal is sent when the
+ * gate says the tool has reached the point the test means (an observable marker, polled every few milliseconds), not after a time.
+ */
+export function runTool(script: string, cwd: string, args: unknown, env: Record<string, string> = {}, bin?: string, signal?: NodeJS.Signals, afterMs = 0, gate?: () => Promise<boolean>): Promise<Run> {
   const e: NodeJS.ProcessEnv = { AGENT_ID: "s1", ...process.env, ...env };
   delete e.JOB_ID; delete e.OUT; delete e.SECRET_OUTPUT;
   Object.assign(e, { AGENT_ID: "s1" }, env);
@@ -29,9 +35,21 @@ export function runTool(script: string, cwd: string, args: unknown, env: Record<
     child.stdout.on("data", (c: Buffer) => out.push(c));
     child.stderr.on("data", (c: Buffer) => err.push(c));
     child.on("error", reject);
-    child.on("close", (code, sig) => resolve({ code, signal: sig, stdout: Buffer.concat(out).toString("utf8"), stderr: Buffer.concat(err).toString("utf8"), ms: Date.now() - t0 }));
+    let gateTimedOut = false;
+    let closed = false;
+    child.on("close", (code, sig) => { closed = true; resolve({ code, signal: sig, stdout: Buffer.concat(out).toString("utf8"), stderr: Buffer.concat(err).toString("utf8"), ms: Date.now() - t0, ...(gateTimedOut ? { gateTimedOut } : {}) }); });
     child.stdin.end(JSON.stringify(args));
-    if (signal) setTimeout(() => { try { child.kill(signal); } catch { /* gone already */ } }, afterMs);
+    if (signal && gate) {
+      void (async () => {
+        while (!closed && Date.now() - t0 < GATE_LIMIT_MS) {
+          try { if (await gate()) break; } catch { /* the marker is not there yet */ }
+          await new Promise((r) => setTimeout(r, 5));
+        }
+        if (closed) return;
+        if (Date.now() - t0 >= GATE_LIMIT_MS) { gateTimedOut = true; try { child.kill("SIGKILL"); } catch { /* gone already */ } return; }
+        try { child.kill(signal); } catch { /* gone already */ }
+      })();
+    } else if (signal) setTimeout(() => { try { child.kill(signal); } catch { /* gone already */ } }, afterMs);
   });
 }
 
