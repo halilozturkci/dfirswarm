@@ -19,7 +19,7 @@ inside the structure says so under `problems` and `structure_complete`.
 import json, sys, struct, datetime, os, stat
 from pathlib import Path
 
-PARSER = "lnk_parse/4"
+PARSER = "lnk_parse/5"
 MAX_READ = 256 * 1024 * 1024
 
 # Lossless paging (the same in every library tool that pages): the page an
@@ -230,14 +230,56 @@ class SecretValues:
 # can only be a switch name or a program). A path-like field is printed unless it has the shape of a secret, when a marker
 # holding only its length stands in its place. The values themselves go, when `write_strings` asks for them and only in a job,
 # to a 0600 file under $OUT, each under a finding id the answer cites.
+# The shapes one expression finds. A URL with a password and a web token are not among them: their expressions are tried at every
+# letter of a long run of name characters, run to the end of the run, fail there and start again one character on, so that a string of
+# 65,535 characters (the longest a link records) cost the square of its length and took 25 s. `secret_shaped` reads both in one pass
+# over the runs instead, and gives the answer the single expression gave (a test holds them equal).
 SECRET_SHAPES = re.compile(
     r"(?i)(?:pass(?:word|wd|phrase)?|pwd|secret|token|api[-_]?key|access[-_]?key|client[-_]?secret|credential|private[-_]?key|bearer|authorization)s?\s*[=:]\s*\S"
-    r"|[a-z][a-z0-9+.-]*://[^/\s:@]+:[^/\s@]+@"
-    r"|\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"
     r"|\bAKIA[0-9A-Z]{16}\b|\bgh[pousr]_[A-Za-z0-9]{20,}|\bxox[abprs]-[A-Za-z0-9-]{10,}"
     r"|-----BEGIN [A-Z ]*PRIVATE KEY"
     r"|(?:^|\s)--?(?:p|pw|pass|passw|password|passwd|pwd|token|secret|apikey|api-key)\s+\S"
 )
+# a run of scheme characters that stands right before `://`; it starts where its run starts (the look-behind), so a run is read once
+SCHEME_RUN = re.compile(r"(?i)(?<![a-z0-9+.-])[a-z0-9+.-]+(?=://)")
+SCHEME_LETTER = re.compile(r"(?i)[a-z]")
+USERINFO_TAIL = re.compile(r"[^/\s:@]+:[^/\s@]+@")
+NAME_RUN = re.compile(r"(?i)[A-Za-z0-9_-]+")
+JWT_HEAD = re.compile(r"(?i)\beyJ")
+
+
+def url_with_password(text):
+    """Whether the text holds `scheme://user:password@`: a scheme is a run of letters, digits, `+`, `.` and `-` that holds a letter and
+    stands right before `://` (the first letter of the run is as good a start as any other), so each run is looked at once."""
+    for run in SCHEME_RUN.finditer(text):
+        if SCHEME_LETTER.search(run.group()) and USERINFO_TAIL.match(text, run.end() + 3):
+            return True
+    return False
+
+
+def web_token(text):
+    """Whether the text holds a JSON web token: `eyJ` at a word boundary, ten or more name characters, a `.`, ten or more more. Every
+    `eyJ` of a run of name characters reads the same rest of the run, so the first one decides: when it has ten characters after it
+    and a `.` and ten more follow the run, the text holds a token, and when it does not no later `eyJ` of the run does either."""
+    at = 0
+    while True:
+        head = JWT_HEAD.search(text, at)
+        if head is None:
+            return False
+        end = NAME_RUN.match(text, head.start()).end()
+        if end - head.end() >= 10 and text[end:end + 1] == ".":
+            second = NAME_RUN.match(text, end + 1)
+            if second is not None and second.end() - second.start() >= 10:
+                return True
+        at = end
+
+
+def secret_shaped(text):
+    """Whether the text has the shape of a secret: a name assigned a value, a URL with a password, a web token, a vendor key, a private
+    key, a password option. Linear in the length of the text."""
+    return SECRET_SHAPES.search(text) is not None or url_with_password(text) or web_token(text)
+
+
 SWITCH = re.compile(r"^[-/]{1,2}[A-Za-z][A-Za-z0-9_-]{0,31}$")
 PROGRAM_FILE = re.compile(r"^[A-Za-z0-9_.:\\ -]{1,80}\.(?:exe|com|bat|cmd|ps1|vbs|vbe|js|jse|wsf|hta|dll|msi|msc|cpl|scr|py|jar|lnk)$", re.I)
 PROGRAM_WORDS = {"cmd", "powershell", "pwsh", "wscript", "cscript", "mshta", "rundll32", "regsvr32", "msiexec", "explorer",
@@ -279,12 +321,23 @@ class Held:
         return finding
 
 
+# A string longer than this is not read for the shape of a secret: no path, name or description of a link is a quarter of a million
+# characters long (the string data of a link holds 65,535 at most), so it is withheld whole, by its length, and the sink row says so.
+SCAN_LIMIT = 1 << 18
+
+
 def guard(held, sink, locator, text):
-    """A string of the link as the answer may show it: itself, or, when it has the shape of a secret, a marker."""
-    if isinstance(text, str) and SECRET_SHAPES.search(text):
-        finding = held.hold(locator, text)
-        sink.append({"field": locator["field"], "chars": len(text), "finding_id": finding})
-        return withheld_marker(text)
+    """A string of the link as the answer may show it: itself, or, when it has the shape of a secret (or is too long to be read for
+    one), a marker."""
+    if isinstance(text, str):
+        too_long = len(text) > SCAN_LIMIT
+        if too_long or secret_shaped(text):
+            finding = held.hold(locator, text)
+            row = {"field": locator["field"], "chars": len(text), "finding_id": finding}
+            if too_long:
+                row["not_scanned"] = "longer than %d characters: withheld whole, not read for the shape of a secret" % SCAN_LIMIT
+            sink.append(row)
+            return withheld_marker(text)
     return text
 
 
@@ -306,7 +359,7 @@ def first_token(arguments):
     else:
         token = text.split(None, 1)[0]
     token = token.split("=", 1)[0]
-    if SECRET_SHAPES.search(token):
+    if len(token) > SCAN_LIMIT or secret_shaped(token):
         return None
     if SWITCH.match(token) or PROGRAM_FILE.match(token) or token.lower() in PROGRAM_WORDS:
         return token

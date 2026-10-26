@@ -470,7 +470,6 @@ SHAPES = [
                                     r"|ya29\.[A-Za-z0-9_-]{20,}|SG\.[A-Za-z0-9_-]{16,}(?:\.[A-Za-z0-9_-]{16,})?|npm_[A-Za-z0-9]{30,}|shpat_[A-Za-z0-9]{30,}"
                                     r"|pypi-[A-Za-z0-9_-]{50,}|hf_[A-Za-z]{30,}|1//0[A-Za-z0-9_-]{30,}|SK[0-9a-f]{32})")),
     ("token-shaped text", re.compile(r"(?<![A-Za-z0-9])sk-(?=[A-Za-z0-9_-]{0,47}[0-9])[A-Za-z0-9_-]{20,}")),
-    ("web-token-shaped text", re.compile(r"eyJ[A-Za-z0-9_=-]{8,}(?:\.[A-Za-z0-9_=-]*){2,4}")),
     ("base64-shaped text", re.compile(r"(?<![A-Za-z0-9+/=])[A-Za-z0-9+/]{15,}={1,2}(?![A-Za-z0-9+=])")),
     ("webhook URL", re.compile(r"https://hooks\.slack\.com/services/[A-Za-z0-9/]+")),
     ("credential after a header", re.compile(r"(?i:(?:proxy-)?authorization[ \t]{0,3}[:=][ \t]{0,3}(?:basic|bearer|token|negotiate|digest)[ \t]{1,8})(?P<secret>[^\s'\",;]{1,2048})")),
@@ -478,6 +477,35 @@ SHAPES = [
     ("credential after a key name", re.compile(r"(?i:[?&]sig=)(?P<secret>[A-Za-z0-9%+/=]{16,})")),
     ("credential after a key name", re.compile(r"(?i:\bConvertTo-SecureString[ \t]{1,8}(?:-String[ \t]{1,8})?)(?P<secret>'[^'\r\n]{1,512}'|\"[^\"\r\n]{1,512}\"|[^\s;|]{1,512})")),
 ]
+# A web token (`eyJ`, 8 or more name characters, then two to four `.`-joined parts) is found by `_web_token_spans`, not by an expression: tried at
+# every `eyJ` of a run of name characters, an expression runs to the end of the run, fails there and starts again three characters on, so a
+# text of `eyJ` repeated cost the square of its length (8,192 characters took 0.5 s, a window; 64 KiB took 6 s). The first `eyJ` of a run
+# that has 8 name characters after it decides for the run, and a run is read once.
+_WEB_RUN = re.compile(r"[A-Za-z0-9_=-]+")
+_WEB_PART = re.compile(r"[A-Za-z0-9_=-]*")
+
+
+def _web_token_spans(f):
+    """(start, end) of each web-token-shaped text of `f`, left to right: what `eyJ[A-Za-z0-9_=-]{8,}(?:\\.[A-Za-z0-9_=-]*){2,4}` finds, in time
+    linear in the text."""
+    spans, pos = [], 0
+    while True:
+        at = f.find("eyJ", pos)
+        if at < 0:
+            return spans
+        stop = _WEB_RUN.match(f, at).end()            # the run of name characters the `eyJ` is in, to its end
+        parts, end = 0, stop
+        if stop - (at + 3) >= 8:
+            while parts < 4 and f.startswith(".", end):
+                end = _WEB_PART.match(f, end + 1).end()
+                parts += 1
+        if parts >= 2:
+            spans.append((at, end))
+            pos = end
+        else:
+            pos = stop                                # no later `eyJ` of this run has more after it, or a different end
+
+
 _ANY_CHEAP = re.compile(r"[0-9]{6}[-_. ]?[0-9]{6}|[A-Za-z0-9_-]{16}|[=:@]|-----|eyJ|(?i:authorization|cookie|ConvertTo)|\s--?[a-zA-Z]")
 # the name of a secret, read before an `=` or a `:` (the word may be glued to a prefix with `_` `-` `.` or by CamelCase)
 _NAME = re.compile(r"(?i:pass(?:word|wd|phrase)?|pwd|secret(?:[_-]?(?:access[_-]?)?key)?|token|credential|api[_-]?key|access[_-]?key|account[_-]?key|"
@@ -783,6 +811,7 @@ def _spans(f, allow, budget):
             has_secret = "secret" in rx.groupindex
             for m in rx.finditer(f):
                 spans.append((m.start("secret"), m.end("secret"), kind) if has_secret else (m.start(), m.end(), kind))
+        spans += [(s, e, "web-token-shaped text") for s, e in _web_token_spans(f)]
         spans += _block_spans(f)
         if "@" in f:
             spans += _user_info_spans(f, budget)

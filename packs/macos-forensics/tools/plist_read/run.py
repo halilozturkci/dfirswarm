@@ -64,7 +64,7 @@ import time
 from pathlib import Path
 from xml.parsers import expat
 
-PARSER = "plist_read/4"
+PARSER = "plist_read/5"
 SECRET_VALUES_NAME = "plist-values.jsonl"
 DEFAULT_MAX_BLOB = 4096
 DEFAULT_MAX_FILE_BYTES = 32 << 20
@@ -86,6 +86,12 @@ SECRET_KEY = re.compile(
     r"|(?:^|[^a-z])psk|psk(?:$|[^a-z])|presharedkey|sharedkey|authkey|accesskey|cookie|passcode|bearer|(?:^|[_.-])otp(?:$|[_.-])",
     re.I,
 )
+
+
+# A key name longer than this is not read for the name of a secret (the pattern above costs 0.4 microseconds a character, so a 30 MiB key
+# name held a run for 12 s): no real key is 64 KiB long, so such a name is taken to be secret-bearing and its value is withheld, with the
+# reason said in the answer and in the values file.
+MAX_KEY_SCAN = 1 << 16
 
 
 # BEGIN SHARED STOP
@@ -482,7 +488,9 @@ class Walk:
             out = {}
             for k, v in value.items():
                 name = str(k)
-                if SECRET_KEY.search(name):
+                if len(name) > MAX_KEY_SCAN:
+                    out[name] = self.withhold(v, key_path + [name], long_name=True)
+                elif SECRET_KEY.search(name):
                     out[name] = self.withhold(v, key_path + [name])
                 else:
                     out[name] = self.convert(v, key_path + [name], depth + 1)
@@ -495,11 +503,16 @@ class Walk:
             return {"_binary_bytes": len(value), "_kind": "data", "finding_id": fid}
         return self.scalar(value)
 
-    def withhold(self, value, key_path):
+    def withhold(self, value, key_path, long_name=False):
         self.withheld += 1
         if isinstance(value, (bytes, bytearray)):
             self.binary += 1
         kind, length = kind_of(value), length_of(value)
+        if long_name:
+            reason = "key name over %d characters: not read for a secret's name, so withheld" % MAX_KEY_SCAN
+            fid = self.locate(kind, length, reason, key_path, value)
+            return {"_withheld": "the key's name is over %d characters and was not read for a secret's name" % MAX_KEY_SCAN, "_kind": kind,
+                    "_length": length, "finding_id": fid}
         fid = self.locate(kind, length, "key name marks it secret-bearing", key_path, value)
         return {"_withheld": "the key's name marks a secret-bearing value", "_kind": kind, "_length": length,
                 "finding_id": fid}
