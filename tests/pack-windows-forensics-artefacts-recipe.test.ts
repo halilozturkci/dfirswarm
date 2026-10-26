@@ -508,3 +508,76 @@ test("the files of the recipe: recipe.json names its entry and the outputs it wr
   const families = [...text.matchAll(/^FAMILIES = \[(.*)\]$/gm)][0][1].match(/"([a-z-]+)"/g)!.map((x) => x.replace(/"/g, ""));
   for (const family of families) assert.ok(manifest.outputs.includes(`${family}/results.jsonl`), `${family}/results.jsonl is declared`);
 });
+
+test("run: a recipe stopped by SIGTERM gives every family a state: the one in flight is interrupted, the ones not started are not_attempted with their inputs, and the text says no more than that", async () => {
+  await withCwd(async (cwd) => {
+    await withPackCopy(async (pack, entry) => {
+      await collection(join(cwd, "c"));
+      const pidFile = join(cwd, "tool.pid");
+      await replace(pack, "registry_recover", `import json, os, sys, time
+json.load(sys.stdin)
+open(${JSON.stringify(pidFile)}, "w").write(str(os.getpid()))
+time.sleep(300)
+`);
+      const out = join(cwd, "out");
+      const child = spawn("python3", [entry, "run", "--target", target("c"), "--out", out], { cwd, env: { ...process.env, AGENT_ID: "s1" }, stdio: ["ignore", "pipe", "pipe"] });
+      let pid = 0;
+      for (let i = 0; i < 100 && !pid; i++) {
+        await new Promise((r) => setTimeout(r, 100));
+        pid = Number(await readFile(pidFile, "utf8").catch(() => "")) || 0;
+      }
+      assert.ok(pid, "the tool started");
+      child.kill("SIGTERM");
+      assert.equal(await new Promise<number | null>((resolve) => child.on("close", (c) => resolve(c))), 143);
+      const cov = await coverage(out);
+      const hives = cov.families["registry-hives"];
+      assert.equal(hives.status, "interrupted", "the family in flight has a state");
+      assert.equal(hives.inputs, 2);
+      assert.equal(hives.calls_not_ended, 2, "none of its calls had ended");
+      assert.match(hives.reason, /terminated by signal 15 while this family was being read/);
+      const links = cov.families["shortcuts-jumplists"];
+      assert.equal(links.status, "not_attempted", "a family that was not started is listed, with its inputs");
+      assert.equal(links.inputs, 2);
+      assert.equal(links.counts.not_attempted, links.calls);
+      assert.match(links.reason, /before this family was started/);
+      for (const name of Object.keys(cov.families)) assert.ok(typeof cov.families[name].status === "string", `${name} has a state`);
+      assert.ok(cov.families["dissect-target"] && cov.families.plaso, "the stage and the families the recipe does not run are listed too");
+      assert.equal(cov.status, "partial");
+      assert.doesNotMatch(cov.status_basis, /families below are what had been read/);
+      assert.match(cov.status_basis, /marked interrupted/);
+    });
+  });
+});
+
+test("run: a log beside a hive that is a symbolic link (dangling or not) is never followed or passed on: the hive is read without it and the row says so; a legacy .LOG is passed as log1", async () => {
+  await withCwd(async (cwd) => {
+    const root = join(cwd, "c");
+    await collection(root);
+    const user = join(root, "C", "Users", "x");
+    const config = join(root, "C", "Windows", "System32", "config");
+    await writeFile(join(cwd, "secret.txt"), "not a log, and not to be opened");
+    await symlink(join(cwd, "secret.txt"), join(user, "NTUSER.DAT.LOG2"));
+    await symlink(join(cwd, "does-not-exist"), join(config, "SYSTEM.LOG1"));
+    await writeFile(join(config, "SOFTWARE"), G[0]);
+    await writeFile(join(config, "SOFTWARE.LOG"), LOG);
+    const out = join(cwd, "out");
+    const r = recipe(cwd, ["run", "--target", target("c"), "--out", out]);
+    assert.equal(r.code, 0, r.stderr + r.stdout);
+    const rows = await results(out, "registry-hives");
+    const by = (name: string): Answer => rows.find((x) => String(x.input).endsWith(`/${name}`))!;
+    const user_ = by("NTUSER.DAT");
+    assert.ok(user_.arguments.log1.endsWith("NTUSER.DAT.LOG1"));
+    assert.equal(user_.arguments.log2, undefined, "the link is not passed to the tool");
+    assert.deepEqual(user_.log_files_not_used.map((p: string) => p.split("/").pop()), ["NTUSER.DAT.LOG2"]);
+    assert.match(user_.log_notes.join(" "), /a symbolic link: not followed/);
+    const system = by("SYSTEM");
+    assert.equal(system.arguments.log1, undefined, "a dangling link is not passed, so it cannot fail the hive");
+    assert.notEqual(system.state, "failed");
+    assert.equal(system.state, "partial", "a hive read without a log beside it is not parsed whole");
+    assert.match(system.log_notes.join(" "), /SYSTEM\.LOG1/);
+    const software = by("SOFTWARE");
+    assert.ok(software.arguments.log1.endsWith("SOFTWARE.LOG"));
+    assert.match(software.log_notes.join(" "), /legacy single log/);
+    assert.notEqual((await coverage(out)).families["registry-hives"].status, "failed");
+  });
+});
