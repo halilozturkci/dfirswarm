@@ -488,8 +488,16 @@ def ad1_unaccounted(img):
     chunk table or chunk led to. A zeroed or damaged next or child pointer ends a chain early with no error, and the format has no item
     count, so the walk cannot tell a tree that ended from a tree that was cut: it says what it could not account for."""
     left = img.unreferenced()
-    if left is None or left[1] <= AD1_SLACK:
+    if left is None:
         return None
+    if left[1] <= AD1_SLACK:
+        if left[2]:
+            return None
+        # Only the first AD1_GAP_SCAN_MAX bytes of the unreached data were read, and they held nothing: that says nothing of the rest, where a
+        # zeroed pointer's lost items can sit behind a long run of zeros.
+        return ("%d of the %d bytes of the image's data that no item, name, metadata entry, chunk table or chunk of the tree leads to were read for non-zero bytes "
+                "(the first %d MiB) and held none; the rest was not read, so the tree is not shown to account for the image's data and the list is not shown to be whole"
+                % (min(left[0], AD1_GAP_SCAN_MAX), left[0], AD1_GAP_SCAN_MAX >> 20))
     return ("%s%d bytes of the image's data that are not zero are reached by no item, name, metadata entry, chunk table or chunk of the tree: a zeroed or damaged "
             "next or child pointer would leave exactly such bytes, and the format has no item count, so the list is not shown to be whole" % ("" if left[2] else "at least ", left[1]))
 
@@ -511,12 +519,25 @@ def limits():
     return int(os.environ.get("RECIPE_SECONDS") or lim.get("seconds") or 3600)
 
 
+def refuse(message):
+    """A target that cannot be read is an answer on stdout, as every other refusal here is, not a traceback."""
+    print(json.dumps({"ok": False, "error": message}))
+    sys.exit(2)
+
+
 def target_of(arg):
     text = open(arg, encoding="utf-8").read() if os.path.isfile(arg) else arg
-    t = json.loads(text)
+    try:
+        t = json.loads(text)
+    except ValueError as exc:
+        refuse("the target is not valid JSON: %s" % exc)
+    if not isinstance(t, dict):
+        refuse("the target is a JSON object with a paths list")
     paths = t.get("paths") or []
+    if not isinstance(paths, list):
+        refuse("the target is a JSON object with a paths list")
     if not paths or not all(isinstance(p, str) for p in paths):
-        raise SystemExit(json.dumps({"ok": False, "error": "the target names no path"}))
+        refuse("the target names no path")
     return t, paths
 
 

@@ -102,8 +102,9 @@ test("every tool that carries the shared withholding block carries the same text
 test("the linear growth finds the spans the cubic one found, on generated texts that join pieces by `/`, `=` padding and line breaks, in each copy in the reverse-engineering pack", () => {
   // The code the shared block had before: the reference every text is compared against.
   const reference = [
+    "OLD_PREFIXED = m.re.compile(r'(?:AKIA|ASIA)[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abeprs]-[A-Za-z0-9-]{10,}|sk-[A-Za-z0-9_-]{20,}|eyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]*|(?i:basic|bearer)\\s+[A-Za-z0-9+/=._~-]{8,}')",
     "def reference(text):",
-    "    spans = [m.span() for m in m._PREFIXED.finditer(text)]",
+    "    spans = [m.span() for m in OLD_PREFIXED.finditer(text)]",
     "    for x in m._RUN.finditer(text):",
     "        if m._token_run(x.group()):",
     "            spans.append(x.span())",
@@ -158,7 +159,7 @@ test("a text longer than the block's limit is withheld whole, by its length, in 
     ].join("\n"));
     assert.equal(r.status, 0, `${path}: ${r.stderr}`);
     const [long, atLimit, shaped, url] = JSON.parse(r.stdout) as [string, boolean, boolean, string];
-    assert.match(long, /^<over-long text withheld 2097153 characters>$/, path);
+    assert.match(long, /^<over-long text withheld 65537 characters>$/, path);
     assert.ok(atLimit, `${path}: a text of exactly the limit is examined, not withheld`);
     assert.ok(shaped, path);
     assert.match(url, /^http:\/\/h\/?<over-long text withheld \d+ characters>$/, path);

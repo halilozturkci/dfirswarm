@@ -33,6 +33,7 @@ import lzma
 import os
 import re
 import select
+import shutil
 import struct
 import subprocess
 import sys
@@ -60,6 +61,7 @@ def name_flags(raw):
         flags.append("escapes-root")
     return flags
 SEVEN_Z_MAGIC = b"7z\xbc\xaf\x27\x1c"
+SEVEN_Z_NAMES = ("7z", "7zz", "7za", "7zr")    # the programs archive_extract looks for, in the same order
 COLUMNS = ["n", "type", "path", "path_b64", "size", "packed", "mtime", "tz", "mode", "uid", "gid", "link", "locator", "flags"]
 
 
@@ -74,12 +76,25 @@ def limits():
     return seconds, members
 
 
+def refuse(message):
+    """A target that cannot be read is an answer on stdout, as every other refusal here is, not a traceback."""
+    print(json.dumps({"ok": False, "error": message}))
+    sys.exit(2)
+
+
 def target_of(arg):
     text = open(arg, encoding="utf-8").read() if os.path.isfile(arg) else arg
-    t = json.loads(text)
+    try:
+        t = json.loads(text)
+    except ValueError as exc:
+        refuse("the target is not valid JSON: %s" % exc)
+    if not isinstance(t, dict):
+        refuse("the target is a JSON object with a paths list")
     paths = t.get("paths") or []
+    if not isinstance(paths, list):
+        refuse("the target is a JSON object with a paths list")
     if not paths or not isinstance(paths[0], str):
-        raise SystemExit(json.dumps({"ok": False, "error": "the target names no path"}))
+        refuse("the target names no path")
     return t, paths[0]
 
 
@@ -152,6 +167,18 @@ def zip_end_agrees(path):
                 if fh.read(4) == b"PK\x01\x02":
                     return True
     except (OSError, struct.error):
+        return False
+
+
+def reads_as_tar(path):
+    """Whether a tar header with a valid checksum reads at offset 0 (a plain tar: the first member of one that is compressed is not asked)."""
+    try:
+        with open(path, "rb") as fh:
+            if fh.read(512)[257:262] != b"ustar":
+                return False
+        with tarfile.open(path, mode="r:", tarinfo=BoundedInfo) as tf:
+            return tf.next() is not None
+    except Exception:
         return False
 
 
@@ -402,10 +429,13 @@ def list_7z(path, w, deadline, max_members, cov, out_dir):
     err_path = os.path.join(out_dir, "7z.stderr")
     try:
         err = open(err_path, "wb")
-        proc = subprocess.Popen(["7z", "l", "-slt", "-ba", "--", path], stdout=subprocess.PIPE, stderr=err, env=env)
+        program = next((found for found in (shutil.which(n) for n in SEVEN_Z_NAMES) if found), None)
+        if program is None:
+            raise FileNotFoundError("7z")
+        proc = subprocess.Popen([program, "l", "-slt", "-ba", "--", path], stdout=subprocess.PIPE, stderr=err, env=env)
     except FileNotFoundError:
         cov["status_override"] = "unsupported"
-        cov["errors"].append("7z is not in this image")
+        cov["errors"].append("no 7z program (7z, 7zz, 7za or 7zr) is in this image")
         return 0
     n = 0
     fields = {}
@@ -502,6 +532,11 @@ def run(path, out_dir):
     if fmt == "tar" and zip_end_agrees(path):
         note = ("read as a tar, because a tar header reads at offset 0; the file also ends in a zip end-of-central-directory record that "
                 "agrees with it, so a zip inside a member (or a second reading of the whole file) is not listed")
+        cov["notes"] = [note]
+        cov["covered"] += " (" + note + ")"
+    if fmt == "zip" and reads_as_tar(path):
+        note = ("read as a zip, because a zip signature is at offset 0; a tar header with a valid checksum also reads there (a first member "
+                "named like a zip signature), so the file is also a tar and its tar members are not listed")
         cov["notes"] = [note]
         cov["covered"] += " (" + note + ")"
     w = Writer(out_dir)

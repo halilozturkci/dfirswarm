@@ -1,6 +1,6 @@
 {
   "id": "disk-timeline",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "A broad extraction of a disk image: Plaso's log2timeline over every partition and volume with every parser it carries, then psort's CSV super timeline, the searchable form of what the image's artefacts say happened when. It takes hours on a large image, so it is offered, not run by itself. complete means the pipeline finished, not that every parser read every source: Plaso's own processing report (pinfo.txt, when pinfo is present) says what each parser did. An evidence timezone may be given in the target (\"timezone\") or RECIPE_TIMEZONE.",
   "object": "disk image",
   "order": 12,
@@ -79,5 +79,5 @@
     "pinfo.stderr"
   ],
   "covers": "What log2timeline's parsers read from every partition and volume of the image, written by psort as one CSV timeline; the storage file is kept for psort and pinfo. A parser that finds nothing adds no row, which does not show the artefact never existed. The run refuses an output directory that already holds a timeline from an earlier run. The status says the pipeline finished, not what the parsers covered.",
-  "sha256": "8696e7a1fabc7c52f55dbd32842ff1586145a15bae0b28f4dfd119e91941380f"
+  "sha256": "66d9f381b123f525bd1d82c669402b0808a466b7dc699f76445234c7bd5b46f2"
 }

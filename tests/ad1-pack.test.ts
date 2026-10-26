@@ -764,6 +764,55 @@ test("a zeroed next pointer does not leave a complete, verified answer: the data
   assert.equal(JSON.parse(whole.stdout).processing_status, "complete");
 });
 
+/** Four file items f0..f3 after `pad` zero bytes, linked f1 -> f2 -> f3 and f0 left without a next pointer (a zeroed one): f1..f3 are lost with no error. */
+function paddedCutImage(pad: number, linked: boolean): Buffer {
+  const data = ad1Logical((put) => {
+    put(Buffer.alloc(pad));
+    const items = [0, 1, 2, 3].map((i) => ad1Item(put, `f${i}`));
+    items[1].header.writeBigUInt64LE(BigInt(items[2].at), 0);
+    items[2].header.writeBigUInt64LE(BigInt(items[3].at), 0);
+    if (linked) items[0].header.writeBigUInt64LE(BigInt(items[1].at), 0);
+    return items[0].at;
+  });
+  return ad1Segments(data)[0];
+}
+
+test("a zero run longer than the gap scan ahead of the lost items is not a complete, verified answer", async () => {
+  const d = dir("ad1-gap-");
+  const pad = 270 * 1024 * 1024;
+  writeFileSync(join(d, "cut.ad1"), paddedCutImage(pad, false));
+  const { cov, out } = runRecipe([join(d, "cut.ad1")]);
+  assert.equal(tsv(join(out, "members.tsv")).length, 1, "three items are no longer in the tree");
+  assert.equal(cov.status, "partial");
+  assert.equal((cov as Record<string, unknown>).integrity_status, "unverified");
+  assert.match(cov.errors.join("\n"), /were read for non-zero bytes \(the first 256 MiB\) and held none; the rest was not read/);
+  const cwd = runDir();
+  writeFileSync(join(cwd, "inputs", "cut.ad1"), readFileSync(join(d, "cut.ad1")));
+  const r = await runPy(TOOL, cwd, { image: "inputs/cut.ad1" }, undefined, { AGENT_ID: "s1" });
+  const res = JSON.parse(r.stdout);
+  assert.deepEqual([res.processing_status, res.integrity_status], ["partial", "unverified"]);
+  assert.match(res.errors.join("\n"), /the rest was not read/);
+  // A pad the scan reads to its end is padding, and a tree that leads to everything is complete.
+  writeFileSync(join(d, "small.ad1"), paddedCutImage(8 * 1024 * 1024, true));
+  const small = runRecipe([join(d, "small.ad1")]);
+  assert.equal(small.cov.status, "complete", JSON.stringify(small.cov.errors));
+  assert.equal(tsv(join(small.out, "members.tsv")).length, 4);
+});
+
+test("arguments that are a JSON array, and a target that is not an object, are answers and not tracebacks", () => {
+  const cwd = dir("ad1-args-");
+  const r = spawnSync("python3", [TOOL], { input: "[]", cwd, encoding: "utf8" });
+  assert.equal(r.stderr, "", "no traceback");
+  assert.equal(JSON.parse(r.stdout).ok, false);
+  assert.match(JSON.parse(r.stdout).error, /JSON object/);
+  for (const target of ["{not json", "[]", "3", '{"paths": 4}']) {
+    const run = py(RECIPE, ["run", "--target", target, "--out", join(cwd, "out")]);
+    assert.equal(run.code, 2, target);
+    assert.equal(run.err, "", `${target}: no traceback`);
+    assert.equal(JSON.parse(run.out).ok, false, target);
+  }
+});
+
 test("file_type names an AD1 image and its encrypted form by their first bytes", async () => {
   const cwd = runDir();
   writeFileSync(join(cwd, "inputs", "enc.ad1"), Buffer.concat([B("ADCRYPT\0"), Buffer.alloc(600)]));

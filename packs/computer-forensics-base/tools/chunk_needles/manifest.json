@@ -1,6 +1,6 @@
 {
   "name": "chunk_needles",
-  "description": "Scan a local file, or one inode streamed from an image through icat, for ASCII and UTF-16LE needles; return per needle the counts and locators (id, offset in the scanned stream, encoding, context length) and a source that names the image, volume offset, inode and sector size. Every occurrence is found, overlapping ones included, whatever chunk is. Context bytes are NOT returned (they are where secrets sit): write_values: true, only in a job run as secret output (the manifest makes every job that sets it one), writes them to a 0600 file under $OUT. Needles are recorded in the trace: never put a secret in one. earlier_answers says how many other files answer the same question. The scan has a clock (max_seconds, default 100): when it is used the answer is for the occurrences that start before next_start, with complete false, status partial and how to go on. status and status_basis say whether the whole stream was read.",
+  "description": "Scan a local file, or one inode streamed from an image through icat, for ASCII and UTF-16LE needles; return per needle the counts and locators (id, offset in the scanned stream, encoding, context length) and a source that names the image, volume offset, inode and sector size. Every occurrence is found, overlapping ones included, whatever chunk is. Context bytes are NOT returned (they are where secrets sit): write_values: true, only in a job run as secret output (the manifest makes every job that sets it one), writes them to a 0600 file under $OUT. Needles are recorded in the trace: never put a secret in one. earlier_answers says how many other files answer the same question. The scan has a clock (max_seconds, default 100), read between reads and every 256 matches, so dense matches times many needles end at it too: when it is used the answer is for the occurrences that start before next_start, with complete false, status partial and how to go on. complete is false beside every partial status, a values file that stopped at its cap included. finding_id names the occurrence (its offset in the stream and the needle variant). A needle's locators file stops at 20,000,000 rows or 1 GiB and then says all_results_complete false and all_results_stopped_at_offset; the counts are of the whole stream. status and status_basis say whether the whole stream was read.",
   "params": {
     "needles": {
       "type": "string",
@@ -62,8 +62,8 @@
   ],
   "by": "sd1d102",
   "at": "2026-09-18T14:26:18.665Z",
-  "version": 8,
-  "sha256": "79e382231fbf10004e4e980eeb78841a32117dd431e3b4b69c30ab047dc89227",
+  "version": 9,
+  "sha256": "53c906c75dc86e6c189f7297329111b9ed9806ee8bcea1e58642df022673de32",
   "secret_output": {
     "when_args": [
       "write_values"

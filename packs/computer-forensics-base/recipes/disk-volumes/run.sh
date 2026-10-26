@@ -30,8 +30,15 @@ target_field() { # target_field <json or file> <paths0|name>
   python3 - "$1" "$2" <<'PY'
 import json, os, sys
 arg, field = sys.argv[1], sys.argv[2]
-t = json.load(open(arg, encoding="utf-8")) if os.path.isfile(arg) else json.loads(arg)
+try:
+    t = json.load(open(arg, encoding="utf-8")) if os.path.isfile(arg) else json.loads(arg)
+except (ValueError, OSError):
+    t = None
+if not isinstance(t, dict):
+    sys.exit(0)        # nothing is printed: the caller answers "the target is not a readable file" as JSON
 paths = t.get("paths") or []
+if not isinstance(paths, list):
+    paths = []
 if field == "paths0":
     print(paths[0] if paths else "")
 else:
@@ -42,13 +49,15 @@ PY
 # table_rows <partitions.txt>: the rows of mmls's table that are partition entries, one "ROW<TAB>start<TAB>description"
 # each, and one "NOTE<TAB>text" for every line after the header that is not a row, or is a row out of sequence. mmls
 # prints a GPT partition name raw, so a name holding a line break can put a second, forged "row" in the table: a row is
-# taken only when it has the shape of one (three numbers after the slot) and the number the table is at, and the start
-# sector is the digits of the third column and nothing else. A description has its control characters replaced.
+# taken only when it has the shape mmls writes (a slot, a table column and three runs of ten or more ASCII digits: mmls
+# prints them %.10, and a name of 36 UTF-16 units, or a Mac name of 32 bytes, cannot hold a line that long), the number
+# the table is at and an end and a length that agree with the start, and the start sector is the digits of the third
+# column and nothing else. A description has its control characters replaced.
 table_rows() {
   python3 - "$1" <<'PY'
 import re, sys
 sys.stdout.reconfigure(encoding="utf-8")
-row = re.compile(r"^(\d{3,}):[ \t]+(Meta|-+|\d{3,}(?::\d{3,})?)[ \t]+(\d+)[ \t]+(\d+)[ \t]+(\d+)(?:[ \t]+(.*))?$")
+row = re.compile(r"^([0-9]{3,}):[ \t]+(Meta|-+|[0-9]{3,}(?::[0-9]{3,})?)[ \t]+([0-9]{10,})[ \t]+([0-9]{10,})[ \t]+([0-9]{10,})[ \t]+(\S.*)$")
 ctl = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029]")
 raw = open(sys.argv[1], "rb").read().decode("utf-8", "replace")
 expect, header = 0, False
@@ -67,10 +76,15 @@ for no, line in enumerate(raw.split("\n"), 1):
         why = "is not a row of the table" if not m else "is row %d where row %d was due" % (int(m.group(1)), expect)
         print("NOTE\tline %d of partitions.txt %s (a partition name holding a line break would do this): it is not read as a partition: %s" % (no, why, ctl.sub("?", line)[:120]))
         continue
+    start, end, length = int(m.group(3)), int(m.group(4)), int(m.group(5))
+    if end < start or length != end - start + 1:
+        expect += 1
+        print("NOTE\tline %d of partitions.txt has an end (%d) and a length (%d) that do not agree with its start (%d): it is not read as a partition: %s" % (no, end, length, start, ctl.sub("?", line)[:120]))
+        continue
     expect += 1
     if m.group(2) == "Meta" or set(m.group(2)) == {"-"}:
         continue
-    print("ROW\t%d\t%s" % (int(m.group(3)), ctl.sub("?", (m.group(6) or "").strip())))
+    print("ROW\t%d\t%s" % (start, ctl.sub("?", m.group(6).strip())))
 PY
 }
 

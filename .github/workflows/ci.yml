@@ -227,8 +227,9 @@ jobs:
     # sorted suite files out round-robin) and the shell suites are two, dealt
     # out by the time each takes (tests/shell-suites.weights): 12 to 19
     # minutes each over
-    # the first three runs. The limit stays at 55; a job is there to stop a hang.
-    # tests/ci-shards.test.ts holds the three to cover every node suite and
+    # the first three runs. A job's limit is there to stop a hang, so the shell
+    # parts keep 55; the node parts are given more, below.
+    # tests/ci-shards.test.ts holds the four parts to cover every node suite and
     # every shell suite exactly once, so a new suite is never in no job.
     #
     # The node part is the slow one on a hosted runner, and its speed varies:
@@ -236,7 +237,7 @@ jobs:
     # 2026-10-22, when the same suite ran at about half speed. The first was cut
     # off with 3911 of 4550 tests done, the second finished all of them (0
     # failed) 53.6 minutes in and was still marked cancelled by the limit. So
-    # that part gets 90; the shell parts (12 to 22 minutes) keep 55. A hang is
+    # the node parts get 90; the shell parts (12 to 22 minutes) keep 55. A hang is
     # still stopped: every test has its own 5-minute limit (scripts/test-node.ts).
     timeout-minutes: ${{ matrix.node && 90 || 55 }}
     strategy:

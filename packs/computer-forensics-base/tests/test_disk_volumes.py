@@ -29,8 +29,26 @@ Units are in 512-byte sectors
 """
 
 
-def gpt_image(first_name):
-    """A GPT disk of 4096 sectors whose first partition carries `first_name` (UTF-16LE, up to 36 characters), laid out as the UEFI specification does."""
+def fat12(sectors=64):
+    """A FAT12 volume of `sectors` sectors, a boot sector and two tables, as Microsoft's FAT specification lays them out."""
+    b = bytearray(sectors * 512)
+    b[0:3] = b"\xeb\x3c\x90"
+    b[3:11] = b"MSDOS5.0"
+    struct.pack_into("<HBHBHHBHHHII", b, 11, 512, 1, 1, 2, 16, sectors, 0xF8, 1, 32, 64, 0, 0)
+    b[36] = 0x80
+    b[38] = 0x29
+    struct.pack_into("<I", b, 39, 0x12345678)
+    b[43:54] = b"NO NAME    "
+    b[54:62] = b"FAT12   "
+    b[510:512] = b"\x55\xaa"
+    for fat in (1, 2):
+        b[fat * 512:fat * 512 + 3] = b"\xf8\xff\xff"
+    return bytes(b)
+
+
+def gpt_image(first_name, only_one_to_the_end=False):
+    """A GPT disk of 4096 sectors whose first partition carries `first_name` (UTF-16LE, up to 36 characters), laid out as the UEFI specification does.
+    With `only_one_to_the_end` the table holds that one partition, from sector 64 to the last sector, so no row of mmls's table follows it."""
     sec, total = 512, 4096
     img = bytearray(total * sec)
     img[446 + 4] = 0xEE
@@ -45,7 +63,10 @@ def gpt_image(first_name):
         e[56:56 + 72] = name.encode("utf-16le")[:72].ljust(72, b"\0")
         return bytes(e)
 
-    entries = (entry(2048, 2559, first_name) + entry(2560, 3071, "second")).ljust(128 * 128, b"\0")
+    if only_one_to_the_end:
+        entries = entry(64, total - 1, first_name).ljust(128 * 128, b"\0")
+    else:
+        entries = (entry(2048, 2559, first_name) + entry(2560, 3071, "second")).ljust(128 * 128, b"\0")
     header = bytearray(92)
     header[0:8] = b"EFI PART"
     struct.pack_into("<IIII", header, 8, 0x10000, 92, 0, 0)
@@ -129,6 +150,59 @@ class DiskVolumes(Case):
         self.assertEqual(sorted(os.listdir(self.path("box/catalog/gen"))), ["g0001", "g0002"])
         cov = json.loads(self.read("box/catalog/gen/g0002/coverage.json"))
         self.assertEqual(cov["status"], "partial")
+
+    def readable_stubs(self, table):
+        """Stand-ins for a host where fsstat reads a file system at every offset it is asked about."""
+        bin_dir = self.stubs(table, fsstat_ok=True)
+        stand_in(bin_dir, "mactime", "echo 'Date,Size,Type,Mode,UID,GID,Meta,File Name'\n")
+        stand_in(bin_dir, "fls", "case \"$1\" in -m) echo '0|/a|12|r/rrw-r--r--|0|0|9|0|0|0|0';; *) echo 'r/r 12:\ta';; esac\n")
+        return bin_dir
+
+    def assert_no_phantom(self, table, phantom_start, why):
+        r = self.run_recipe(self.write("disk.img", b"\0" * 65536), self.path("out"), self.readable_stubs(table))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        cov = json.loads(self.read("out/coverage.json"))
+        self.assertNotIn(phantom_start, [e["start_sector"] for e in cov["inventory"]], "the forged line is a partition entry")
+        self.assertFalse(os.path.exists(self.path("out/p%d" % phantom_start)), "a directory was made for the forged line")
+        self.assertEqual(cov["status"], "partial", "a table with a line that is no row of it is not complete")
+        self.assertTrue([e for e in cov["errors"] if why in e and "it is not read as a partition" in e], cov["errors"])
+        self.assertEqual(json.loads(r.stdout)["candidate_volumes"], 2, "the two real entries, and only them")
+
+    def test_a_forged_last_line_that_continues_the_sequence_is_not_a_partition_and_the_answer_is_not_complete(self):
+        clean = MMLS_FORGED.replace("%s\n", "")
+        # The rows mmls writes have three runs of ten digits; a name of 36 characters cannot hold them.
+        self.assert_no_phantom(clean + "004:  000 1088 1 1 z\n", 1088, "is not a row of the table")
+
+    def test_a_forged_row_in_digits_of_another_script_is_not_a_partition(self):
+        clean = MMLS_FORGED.replace("%s\n", "")
+        arabic = "004:  000 1088 1 1 z".translate({ord(c): ord("\u0660") + int(c) for c in "0123456789"})
+        self.assert_no_phantom(clean + arabic + "\n", 1088, "is not a row of the table")
+
+    def test_a_row_whose_end_and_length_do_not_agree_with_its_start_is_not_a_partition(self):
+        clean = MMLS_FORGED.replace("%s\n", "")
+        self.assert_no_phantom(clean + "004:  000       0000003072   0000003073   0000000005   odd\n", 3072, "do not agree with its start")
+
+    @unittest.skipUnless(have("mmls") and have("fsstat") and have("fls"), "the Sleuth Kit is not installed on this host")
+    def test_with_the_real_mmls_a_forged_last_row_is_no_phantom_volume_and_the_answer_is_not_complete(self):
+        disk = bytearray(gpt_image("x\n005: 000 1088 1 1 z", only_one_to_the_end=True))
+        disk[64 * 512:64 * 512 + 64 * 512] = fat12()
+        disk[1088 * 512:1088 * 512 + 64 * 512] = fat12()      # a second volume that is in no table
+        r = self.run_recipe(self.write("gpt.img", bytes(disk)), self.path("out"))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        answer = json.loads(r.stdout)
+        cov = json.loads(self.read("out/coverage.json"))
+        self.assertEqual([e["start_sector"] for e in cov["inventory"]], [64], "the one entry the table holds")
+        self.assertEqual(answer["volumes"], 1)
+        self.assertEqual(answer["status"], "partial", "a table that holds a line which is no row of it is not complete")
+        self.assertFalse(os.path.exists(self.path("out/p1088")))
+
+    def test_a_target_that_is_not_json_or_not_an_object_is_an_answer_not_a_traceback(self):
+        for target in ("{not json", "[]", "3", '{"paths": 4}'):
+            r = subprocess.run(["bash", recipe_path("disk-volumes", "run.sh"), "run", "--target", target, "--out", self.path("out")],
+                               cwd=self.dir, capture_output=True, text=True, timeout=60)
+            self.assertNotIn("Traceback", r.stderr, target)
+            self.assertEqual(r.returncode, 2, target)
+            self.assertIs(json.loads(r.stdout)["ok"], False, target)
 
     def test_a_clean_table_is_read_as_before(self):
         clean = MMLS_FORGED.replace("%s\n", "")

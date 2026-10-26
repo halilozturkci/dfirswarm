@@ -50,7 +50,7 @@ Units are in 512-byte sectors
       Slot      Start        End          Length       Description
 000:  Meta      0000000000   0000000000   0000000001   Primary Table (#0)
 001:  -------   0000000000   0000002047   0000002048   Unallocated
-002:  000:000   0000002048   0001028095   001026048    NTFS (0x07)
+002:  000:000   0000002048   0001028095   0001026048   NTFS (0x07)
 TABLE
 EOF
 chmod +x "$TMP/bin/mmls"
@@ -209,7 +209,7 @@ case "$1" in
   *disk.E01) printf '%s\n' 'DOS Partition Table' '      Slot      Start        End          Length       Description' \
     '000:  Meta      0000000000   0000000000   0000000001   Primary Table (#0)' \
     '001:  -------   0000000000   0000002047   0000002048   Unallocated' \
-    '002:  000:000   0000002048   0001028095   001026048    NTFS (0x07)' ;;
+    '002:  000:000   0000002048   0001028095   0001026048   NTFS (0x07)' ;;
   *) exit 1 ;;
 esac
 STUB

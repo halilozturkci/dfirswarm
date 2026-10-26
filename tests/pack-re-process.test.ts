@@ -183,7 +183,7 @@ const sha = (text: string): string => createHash("sha256").update(text).digest("
 // reverse-engineering packs and the tool library; the tests of each hold their copies equal). The process block is the one
 // with the poll() guard in kill_tree, the seen set in the walk and the libproc route on macOS.
 const NETWORK_PROCESS_SHA = "d6dc512281472e451aa994429aab766d808c330114650ecad2a72aeeada8a944";
-const NETWORK_WITHHOLDING_SHA = "55adb95b4f37b7db293b04e77281316735ab82ea609762d6bd46fc8ad2d1eee1";
+const NETWORK_WITHHOLDING_SHA = "fdd1ae506f0e017a7fb011e552ba9ac5dd015728d8eeadc534fbc88e3f72c0a5";
 
 test("the tool and the recipes that start programs carry one process block, the network pack's text, and nothing in the pack starts a program in a session or a group of its own", async () => {
   const files = [join(TOOLS, "fuzzy_hash", "run.py"), RECIPE, CAPA_FLOSS];

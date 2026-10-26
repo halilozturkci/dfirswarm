@@ -19,7 +19,7 @@ match or its context cut by a read boundary is found once, whole. `scanned_*` an
 `bytes_scanned` are the bytes actually read, not the range asked for.
 
 The scan has a clock (`max_seconds`, default 100, at most 110, inside the manifest's 120): a scan that reaches it answers for the
-range it decided, says `complete: false` and `status: partial`, and gives `next_start`, the offset to go on from (`start`). Every
+range it decided, says `complete: false` and `status: partial`, and gives `next_start`, the offset to go on from (`start`). The clock is read between reads and every CLOCK_EVERY matches. Every
 occurrence that starts before `next_start` is reported once; one that starts at or after it is the next scan's, found there once.
 """
 import errno
@@ -33,7 +33,7 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
-TOOL = {"name": "ioc_scan", "version": 6}
+TOOL = {"name": "ioc_scan", "version": 7}
 CHUNK_DEFAULT = 8 * 1024 * 1024
 CHUNK_MIN, CHUNK_MAX = 16, 256 * 1024 * 1024
 CONTEXT_MAX = 65536
@@ -44,9 +44,11 @@ NEEDLE_BYTES_MAX = 4096
 SEEN_CAP = 100_000                 # distinct contexts remembered for the inline view
 ROW_CAP = 20_000_000               # rows in the whole-result file; counting goes on past it
 VALUES_ROWS_MAX = 20_000_000       # rows in the values file (write_values); the scan and its locators go on past it
+LOCATORS_BYTES_MAX = int(os.environ.get("IOC_SCAN_LOCATORS_BYTES") or 1 << 30)  # bytes in the whole-result file (a smaller cap can be asked for)
 VALUES_BYTES_MAX = int(os.environ.get("IOC_SCAN_VALUES_BYTES") or 1 << 30)    # bytes in the values file (a smaller cap can be asked for)
 SECONDS_DEFAULT, SECONDS_MAX = 100, 110   # the scan's own clock, inside the manifest's 120
 FEED = 256 * 1024                  # bytes handed to the engine at a time: the clock is looked at between feeds
+CLOCK_EVERY = 256                  # and between this many matches of one feed: a feed of dense matches times many needles is millions of them
 
 
 # BEGIN SHARED SCAN
@@ -56,13 +58,25 @@ FEED = 256 * 1024                  # bytes handed to the engine at a time: the c
 # whatever the block size. A match is held back until `after` bytes of context follow it (or the stream has ended), and
 # `before` bytes of context are kept behind the searched position, so a match, or its context, cut by a read boundary is
 # neither lost nor counted twice. Each tool keeps its own answer: what it reports for a match, its pages and its budgets.
-SCAN_SLICE = 256 * 1024            # positions searched, sorted and handed out together
+import heapq
+
+SCAN_SLICE = 256 * 1024            # positions searched and handed out together
+
+
+def _positions(buf, needle, index, lo, stop):
+    """(position, index) wherever `needle` starts in buf[lo:stop], one at a time: nothing is collected, so a stream that is one repeated
+    byte searched for many nested needles holds one position per needle, not every match of a slice."""
+    j = buf.find(needle, lo, stop)
+    while j >= 0:
+        yield j, index
+        j = buf.find(needle, j + 1, stop)
 
 
 class StreamScan:
     """feed() each block as it is read; every call returns (offset, needle index, buffer, buffer's offset) for the matches that can
-    be decided now, in order. The buffer holds the match and its context. Exhaust the generator before the next feed: the
-    buffer is trimmed when it ends.
+    be decided now, in (offset, needle index) order. The buffer holds the match and its context. Exhaust the generator before the
+    next feed: the buffer is trimmed when it ends. A caller may instead stop taking matches between two of them (a clock): every
+    match it took came in order, none after it was handed out, and the scan is over (this object is not fed again).
 
     needles   the byte strings (a needle's index is its position in this list)
     before    bytes of context behind a match that stay in the buffer
@@ -92,15 +106,11 @@ class StreamScan:
             a = lo
             while a < hi:
                 b = min(hi, a + SCAN_SLICE)
-                found = []
-                for vi, nb in enumerate(self.needles):
-                    stop = min(len(self.buf), b + len(nb) - 1)
-                    j = self.buf.find(nb, max(a, self.first[vi] - self.base), stop)
-                    while j >= 0:
-                        found.append((j, vi))
-                        j = self.buf.find(nb, j + 1, stop)
-                found.sort()                      # by offset, then by needle order: the same list for any block size
-                for j, vi in found:
+                # One lazy stream per needle, merged by (offset, needle index): the same order for any block size, and the caller
+                # can stop between any two matches (a clock looked at per match) without a slice's matches having been collected.
+                streams = [_positions(self.buf, nb, vi, max(a, self.first[vi] - self.base), min(len(self.buf), b + len(nb) - 1))
+                           for vi, nb in enumerate(self.needles)]
+                for j, vi in heapq.merge(*streams):
                     yield self.base + j, vi, self.buf, self.base
                 a = b
             self.done = process_end
@@ -282,6 +292,7 @@ class Locators:
             self.shown = str(self.path)
         self.tmp = self.fh = self.error = None
         self.written = 0
+        self.bytes = 0
         self.stopped_at = None
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -293,11 +304,13 @@ class Locators:
     def add(self, row, show):
         self.total += 1
         if self.fh:
-            if self.written < ROW_CAP:
-                self.fh.write(json.dumps(row, ensure_ascii=True) + "\n")
+            line = json.dumps(row, ensure_ascii=True) + "\n"
+            if self.stopped_at is None and self.written < ROW_CAP and self.bytes + len(line) <= LOCATORS_BYTES_MAX:
+                self.fh.write(line)
                 self.written += 1
+                self.bytes += len(line)
             elif self.stopped_at is None:
-                self.stopped_at = row["offset"]
+                self.stopped_at = row["offset"]       # from the first row that did not fit on, none is written: the file is a prefix
         if show and len(self.page) < self.limit:
             self.page.append(row)
         elif show is False:
@@ -329,8 +342,12 @@ class Locators:
                 info["earlier_answers"] = earlier_answers(self.path)
                 info["all_results_format"] = "JSON Lines, one locator per occurrence: finding_id, offset, needle, enc, context_length"
                 if self.stopped_at is not None:
+                    info["all_results_complete"] = False
                     info["all_results_stopped_at_offset"] = self.stopped_at
                     info["all_results_cap_rows"] = ROW_CAP
+                    info["all_results_cap_bytes"] = LOCATORS_BYTES_MAX
+                    info["all_results_note"] = ("the file holds every occurrence that starts before all_results_stopped_at_offset, and is whole as far as it goes; "
+                                                "the counts and the inline page are of the whole scan. To list the rest, scan again from start=all_results_stopped_at_offset")
             else:
                 os.unlink(self.tmp)
         if self.error:
@@ -440,15 +457,16 @@ def main():
     locators = Locators([path, needles, start, end, context, unique_only, size], max_hits)
     counts = defaultdict(int)
     seen = set()
-    next_id = [0]
 
-    def emit(at, kind, name, nb, buf, base):
+    def emit(at, kind, name, nb, buf, base, vi):
         i = at - base
         s = max(0, i - BEFORE)
         e = min(len(buf), i + len(nb) + context)
         raw = buf[s:e]
-        next_id[0] += 1
-        fid = "F%06d" % next_id[0]
+        # Named by where the occurrence starts and which needle variant it is, so a scan that goes on from next_start (or from where the
+        # values file stopped) never gives an id an earlier call gave to another occurrence, and one that finds the same occurrence again
+        # gives it the same id.
+        fid = "F%d-%d" % (at, vi)
         counts[name] += 1
         row = {"finding_id": fid, "offset": at, "needle": name, "enc": kind, "context_length": len(raw)}
         show = True
@@ -463,13 +481,33 @@ def main():
             text = "".join(chr(c) if 32 <= c < 127 else "." for c in raw)
             secret.add(fid, {"file": path, "offset": at, "needle": name, "encoding": kind}, text)
 
-    # The shared engine finds every occurrence once, in offset order, whatever chunk is (see StreamScan above). The bytes of a read go
-    # to it FEED at a time and the clock is looked at between feeds: a scan that has used its seconds stops there, and the matches that
-    # start before scanner.done (all of which the engine has handed out) are its answer; the rest are the next scan's, from next_start.
+    # The shared engine finds every occurrence once, in (offset, needle) order, whatever chunk is (see StreamScan above). The bytes of a
+    # read go to it FEED at a time. The clock is looked at between feeds and every CLOCK_EVERY matches: a scan that has used its seconds
+    # stops there. Between feeds the matches that start before scanner.done are its answer; inside a feed they are the ones that start at
+    # or before the offset of the match it stopped at (those at that offset are all taken first), so next_start is that offset + 1. The
+    # rest are the next scan's, from next_start.
     scanner = StreamScan([v[2] for v in variants], before=BEFORE, after=context, start=start)
     deadline = started + max_seconds
     scanned = start
     stopped = None
+    next_start = None
+    taken, cut = [0], [None]
+
+    def drain(matches):
+        """Emit the matches a feed hands out; False when the clock stopped them, after the last one of the offset it stopped at."""
+        for at, vi, buf, base in matches:
+            if cut[0] is not None and at != cut[0]:
+                return False
+            kind, name, nb = variants[vi]
+            emit(at, kind, name, nb, buf, base, vi)
+            taken[0] += 1
+            if cut[0] is None and taken[0] % CLOCK_EVERY == 0 and time.monotonic() > deadline:
+                cut[0] = at
+        return True
+
+    def stop_inside_a_feed():
+        return ("the %d-second time budget was used inside a read, after the occurrences that start at or before offset %d: the counts and hits are for the "
+                "occurrences that start in [%d, %d); run again with start=%d to go on" % (max_seconds, cut[0], start, cut[0] + 1, cut[0] + 1))
     try:
         with open(path, "rb") as fh:
             fh.seek(start)
@@ -479,11 +517,13 @@ def main():
                     break
                 for off in range(0, len(data), FEED):
                     block = data[off:off + FEED] if len(data) > FEED else data
-                    for at, vi, buf, base in scanner.feed(block):
-                        kind, name, nb = variants[vi]
-                        emit(at, kind, name, nb, buf, base)
+                    inside = not drain(scanner.feed(block))
                     scanned += len(block)
+                    if inside:
+                        stopped, next_start = stop_inside_a_feed(), cut[0] + 1
+                        break
                     if scanned < end and time.monotonic() > deadline:
+                        next_start = scanner.done
                         stopped = ("the %d-second time budget was used after %d bytes: the counts and hits are for the occurrences that start in [%d, %d); "
                                    "run again with start=%d to go on" % (max_seconds, scanned - start, start, scanner.done, scanner.done))
                         break
@@ -491,10 +531,8 @@ def main():
             stopped_short = "the file ended after %d bytes, before the requested end at %d (it changed while it was read, or its size was wrong)" % (scanned, end)
         else:
             stopped_short = None
-        if stopped is None:
-            for at, vi, buf, base in scanner.feed(b"", final=True):
-                kind, name, nb = variants[vi]
-                emit(at, kind, name, nb, buf, base)
+        if stopped is None and not drain(scanner.feed(b"", final=True)):
+            stopped, next_start = stop_inside_a_feed(), cut[0] + 1
         secret.close()
         page = locators.finish()
     except OSError as exc:
@@ -513,7 +551,7 @@ def main():
         "scanned_end": scanned,
         "bytes_scanned": scanned - start,
         "requested": {"start": start, "length": length, "end": end},
-        "complete": scanned >= end and stopped is None,
+        "complete": scanned >= end and stopped is None and secret.stopped_at is None,
         "status": "complete" if scanned >= end and stopped is None else "partial",
         "status_basis": ("every byte of the requested range was read and every occurrence that starts in it is reported" if scanned >= end and stopped is None
                          else "the scan did not read the whole requested range (see stopped): only the occurrences it reports are known"),
@@ -533,7 +571,7 @@ def main():
     if stopped or stopped_short:
         result["stopped"] = stopped or stopped_short
     if stopped:
-        result["next_start"] = scanner.done
+        result["next_start"] = next_start
     if secret.stopped_at is not None:
         result["status"] = "partial"
         result["status_basis"] += "; the values file stopped at its cap (secret_values.stopped_at_offset), the locators did not"
