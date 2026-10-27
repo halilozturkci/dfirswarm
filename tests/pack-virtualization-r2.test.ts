@@ -219,7 +219,7 @@ test("a limit of 100,000 shows the rows inline only up to a size; every row is i
     assert.equal(out.counts.events, 6000);
     assert.ok(out.events.length < 6000 && out.events.length > 100, `${out.events.length} rows inline`);
     assert.equal(out.pages.events.truncated, true);
-    assert.match(out.pages.events.inline_cut_by_size, /stop at about 1048576 bytes/);
+    assert.match(out.pages.events.inline_cut_by_size, /stop at about 524288 bytes/);
     assert.ok(run.stdout.length < 6 * 1024 * 1024, `${run.stdout.length} bytes of answer`);
     const rows = await rowsOf(cwd, out, "events");
     assert.equal(rows.length, 6000, "nothing is lost: the paging file holds every row");
@@ -274,5 +274,31 @@ test("a Proxmox .conf of a hundred thousand sections stops at max_seconds inside
     assert.equal(out.states.partial, 1);
     assert.match(JSON.stringify(out.sources), /max_seconds \(1\.0\) was reached while this file was read/);
     assert.ok(seconds < 6, `the call took ${seconds}s for max_seconds 1`);
+  });
+});
+
+// ---- the verifier's P2-A: the zero-filled descriptor area of a split sparse extent is no descriptor -----------------------------
+
+test("a split sparse VMDK whose extents carry a zero-filled embedded descriptor is complete; a descriptor with text and no extent line is still partial", async () => {
+  await withCwd(async (cwd) => {
+    // what qemu-img writes for twoGbMaxExtentSparse: a text descriptor naming the extents, and KDMV extents whose header
+    // points at a descriptor area that is all zeros
+    const zeroed = (): Buffer => {
+      const extent = vmdkSparse({ descriptor: "a".repeat(2000) });
+      extent.fill(0, 512, 512 + 2048);
+      return extent;
+    };
+    await put(cwd, "inputs/split/base.vmdk", vmdkDescriptor({ cid: "aaaa0001", createType: "twoGbMaxExtentSparse", extents: [
+      { sectors: 2048, type: "SPARSE", name: "base-s001.vmdk" }, { sectors: 2048, type: "SPARSE", name: "base-s002.vmdk" }] }));
+    await put(cwd, "inputs/split/base-s001.vmdk", zeroed());
+    await put(cwd, "inputs/split/base-s002.vmdk", zeroed());
+    const out = body(await tool(CHAIN, cwd, { root: "inputs/split" }));
+    assert.equal(out.status, "complete", JSON.stringify(out.partial_reasons) + JSON.stringify(out.sources));
+    assert.equal(out.states.parsed, 3);
+    assert.deepEqual(chains(out), ["complete"]);
+    assert.deepEqual((out.markers as Json[]).filter((m) => m.kind === "descriptor_problem"), []);
+    // text in the embedded area and no extent line in it: not read whole
+    await put(cwd, "inputs/text/s.vmdk", vmdkSparse({ descriptor: "# Disk DescriptorFile\nversion=1\nCID=aaaa0002\nparentCID=ffffffff\ncreateType=\"monolithicSparse\"\n" }));
+    await notComplete(cwd, "inputs/text", /lists no extent line/);
   });
 });

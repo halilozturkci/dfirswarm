@@ -56,7 +56,7 @@
     },
     "limit": {
       "type": "integer",
-      "description": "Rows shown inline per list (default 200); every row is counted and, when there are more, the whole list is written as JSON Lines and named in pages.<list>.all_results; the rows shown inline also stop at about 1 MiB per list whatever limit says (pages.<list>.inline_cut_by_size), so that the answer is written within max_seconds and keeps its status: the rest is in the file"
+      "description": "Rows shown inline per list (default 200); every row is counted and, when there are more, the whole list is written as JSON Lines and named in pages.<list>.all_results; the rows shown inline also stop at about 512 KiB per list whatever limit says (pages.<list>.inline_cut_by_size), so that the answer is written within max_seconds and keeps its status: the rest is in the file"
     },
     "max_line_bytes": {
       "type": "integer",
@@ -91,5 +91,5 @@
       "*jobs*.csv"
     ]
   },
-  "sha256": "292c907ff9a5e61b78ca8bd1ed3043ca0b445e9fff18386fb9178f7618803e10"
+  "sha256": "f404cdadae77f8cb1d8a73eb26aa0501675d27238e4d0dc8a501021059934b47"
 }

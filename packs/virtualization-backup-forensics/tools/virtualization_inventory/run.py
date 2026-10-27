@@ -47,7 +47,7 @@ import unicodedata
 from pathlib import Path
 
 TOOL = "virtualization_inventory"
-PARSER = "virtualization_inventory/1"
+PARSER = "virtualization_inventory/2"
 DEFAULT_LIMIT = 200
 DEFAULT_SECONDS = 50.0          # the manifest allows 60
 MAX_SECONDS = 50.0
@@ -553,7 +553,7 @@ def decode(data):
 # The rows an answer shows inline are cut by size as well as by count: the answer is judged, serialised and read back within
 # the run's clock, and a `limit` of 100000 over rows of a few hundred bytes would make that take longer than max_seconds
 # (and leave the answer without its keys). The cut is lossless: every row is in the paging file, named by all_results.
-INLINE_BYTES = 1 << 20
+INLINE_BYTES = 1 << 19
 
 
 class LosslessPage:

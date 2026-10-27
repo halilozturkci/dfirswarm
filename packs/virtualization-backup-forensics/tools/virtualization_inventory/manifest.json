@@ -12,7 +12,7 @@
     },
     "limit": {
       "type": "integer",
-      "description": "Rows shown inline per list (default 200); every row is counted and, when there are more, the whole list is written as JSON Lines and named in pages.<list>.all_results; the rows shown inline also stop at about 1 MiB per list whatever limit says (pages.<list>.inline_cut_by_size), so that the answer is written within max_seconds and keeps its status: the rest is in the file"
+      "description": "Rows shown inline per list (default 200); every row is counted and, when there are more, the whole list is written as JSON Lines and named in pages.<list>.all_results; the rows shown inline also stop at about 512 KiB per list whatever limit says (pages.<list>.inline_cut_by_size), so that the answer is written within max_seconds and keeps its status: the rest is in the file"
     },
     "max_files": {
       "type": "integer",
@@ -59,5 +59,5 @@
       "storage.cfg"
     ]
   },
-  "sha256": "ea98c5236e9cc17509764576582d9842897692b7c39f94a17739a0a842a5cbd7"
+  "sha256": "a1b75de45a06a19c9afe675da96c90c04ca026324fac2b4b55af7fd5502f4a1e"
 }

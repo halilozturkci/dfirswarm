@@ -63,7 +63,7 @@ import uuid
 from pathlib import Path
 
 TOOL = "snapshot_chain_check"
-PARSER = "snapshot_chain_check/1"
+PARSER = "snapshot_chain_check/2"
 DEFAULT_LIMIT = 200
 DEFAULT_SECONDS = 50.0          # the manifest allows 60
 MAX_SECONDS = 50.0
@@ -557,7 +557,7 @@ def decode(data):
 # The rows an answer shows inline are cut by size as well as by count: the answer is judged, serialised and read back within
 # the run's clock, and a `limit` of 100000 over rows of a few hundred bytes would make that take longer than max_seconds
 # (and leave the answer without its keys). The cut is lossless: every row is in the paging file, named by all_results.
-INLINE_BYTES = 1 << 20
+INLINE_BYTES = 1 << 19
 
 
 class LosslessPage:
@@ -2578,7 +2578,7 @@ def unquote(value):
 def parse_descriptor(text):
     """The fields of a VMDK descriptor, its extents (up to MAX_EXTENTS) and the counts of what was not kept."""
     d = {"fields": {}, "extents": [], "extents_total": 0, "ddb": {}, "ddb_other": 0, "lines_over_cap": False, "other_lines": 0,
-         "extent_like_unread": 0, "extent_like_first": None, "over_read_cap": False}
+         "extent_like_unread": 0, "extent_like_first": None, "over_read_cap": False, "blank": not text.strip()}
     for number, raw in enumerate(text.split("\n"), 1):
         if number > MAX_DESC_LINES:
             d["lines_over_cap"] = True
@@ -2640,7 +2640,7 @@ def descriptor_gaps(d):
     if d["extent_like_unread"]:
         gaps.append("%d line(s) begin like an extent line (RW, RDONLY or NOACCESS; the first is line %d) and are not in the shape this tool reads: those extents were not checked" % (
             d["extent_like_unread"], d["extent_like_first"]))
-    if d["extents_total"] == 0:
+    if d["extents_total"] == 0 and not d["blank"]:        # no text at all is no descriptor (the zero-filled area of a split sparse extent), not one without extents
         gaps.append("the descriptor lists no extent line: what the disk is made of is not known")
     return gaps + descriptor_problems(d)
 
@@ -3284,7 +3284,7 @@ def main():
     # The reading stops at four fifths of max_seconds; the rest is for writing the rows and the answer, which stop at
     # max_seconds itself, so that the call ends near the time asked for even when a stop leaves many rows to write.
     clock = Clock(seconds * 0.8)
-    out_clock = Clock(seconds)
+    out_clock = Clock(seconds * 0.9)     # the rows and the answer end a tenth of the time before max_seconds: writing them took up to 12 s on a loaded host
     at_limit = "max_seconds (%s; the reading stops at four fifths of it)" % seconds
     files = FileSet(shown)
     partial = []
