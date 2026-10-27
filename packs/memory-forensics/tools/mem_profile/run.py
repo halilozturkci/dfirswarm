@@ -33,6 +33,9 @@ release is not printed at all (kernel_build_offset says where it is). The tool s
 ends it with one JSON answer (status interrupted, exit 128 plus the signal; a range list already finished is kept and named). A signal that
 arrives while a file is placed or the answer written is held until that is done. The walk of a LiME file's headers has its own clock
 (LIME_WALK_SECONDS) and cap; when it stops before the end of the file (container.walk_complete false) the status is partial.
+The process leaves without the interpreter's shutdown (os._exit after the flush), which would put the default action of every signal back
+first. What no script can answer is a stop that arrives before the interpreter has run this file's first lines, tens of milliseconds at
+the start of a process (longer on a loaded machine): it ends the process with no answer, and nothing had been read yet.
 """
 import json
 import os
@@ -1367,4 +1370,17 @@ def run_guarded():
 
 
 if __name__ == "__main__":
-    run_guarded()
+    code = 0
+    try:
+        run_guarded()
+    except SystemExit as exit_:
+        code = exit_.code if isinstance(exit_.code, int) else (0 if exit_.code is None else 1)
+    # The answer is out and flushed. Leave here and not through the interpreter's own shutdown, which puts every signal's default action
+    # back before it is over: a stop that arrived in that time ended the process by the signal (exit status 128 plus it, or none at all)
+    # although the one complete document had been written.
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except (OSError, ValueError):
+        pass
+    os._exit(code)

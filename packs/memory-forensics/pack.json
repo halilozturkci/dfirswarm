@@ -1,7 +1,7 @@
 {
   "id": "memory-forensics",
   "name": "Memory Forensics Pack",
-  "version": "1.7.3",
+  "version": "1.7.4",
   "description": "Method and tooling for a memory image: what the container is before anything else, what can be read with no framework at all, processes and injection, network state, credential material, and the discipline that keeps a string in memory from becoming a claim about behaviour.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -29,12 +29,12 @@
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
       "README.md": "1df37bf8ea526a6cb6b3f2907cc71b5febf898cbf10e3f0e29f52cb0df00f7b8",
-      "tools/mem_carve/manifest.json": "e143209f23e1fe7ea6a7fbc7fe20d32be36c0c0f4998b832e6982a386ca861db",
-      "tools/mem_carve/run.py": "70034ed33a89f3548f7290043db4b30078b034df95ada7b0151f1168210ff2cc",
-      "tools/mem_profile/manifest.json": "dc8a4df3d101a7d76e5d814beede4e4319e2372f86bb43ee7249d7564e237e65",
-      "tools/mem_profile/run.py": "db5d8cf9a0c0663471e604389a2042361126dc0481fc13abe06d0c9b63b49162",
-      "tools/mem_fs/manifest.json": "0f24406b5043dfde19012520e31457405d49032519e729ce85a61d508a0d0016",
-      "tools/mem_fs/run.py": "9540882a9a195cd891996b8a8560d0a1c8b720a351a59d50382a5504c10266bb",
+      "tools/mem_carve/manifest.json": "a62bb29c4e30699c3ce5bf8a6e3af37e5d05ea49ea3a6ed2ec4dee7517f1039e",
+      "tools/mem_carve/run.py": "ec512361715f80ab20c37c4b453bc786602622e024595abfb1595316e15efbe2",
+      "tools/mem_profile/manifest.json": "7ffa5876043c46a6ed52d5966fb878a5c4d9b0134708b0439bd4f2b41363f318",
+      "tools/mem_profile/run.py": "6b46792eb80a63bcf35411e8460cb10c71c72810f4fe49bc33dab58f0a55b96e",
+      "tools/mem_fs/manifest.json": "a9ce23fb5b04df8d9bf7b353607dea7dbd98ea4e2ed48a8052e13a865c973d6b",
+      "tools/mem_fs/run.py": "7555bbe866aacdb338792fe816b45882a6fea3b502e95c2bea5a85c0315b35a5",
       "goals/memory-triage.md": "1be2dc25f56a47512ea498c817c8bc6f42cd8e132f6dd7267465e7d69d15d152",
       "skills/strings/discipline.md": "c33bacce4c1586a72a3894f674ef5622ce67bc1ffe9685b1c21bf24bb6bb29a6",
       "skills/memory/router.md": "d4db11f8423442b29f33a5c55890808eb0c6c7d3bcad22110149a60eb6f5cc65",

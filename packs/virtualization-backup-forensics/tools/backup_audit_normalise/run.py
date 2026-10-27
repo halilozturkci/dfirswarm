@@ -58,7 +58,7 @@ import unicodedata
 from pathlib import Path
 
 TOOL = "backup_audit_normalise"
-PARSER = "backup_audit_normalise/1"
+PARSER = "backup_audit_normalise/2"
 DEFAULT_LIMIT = 200
 DEFAULT_SECONDS = 50.0          # the manifest allows 60
 MAX_SECONDS = 50.0
@@ -557,6 +557,12 @@ def decode(data):
 # digest of anything asked for (sixteen decimal digits), and the way out shows this exact name, registered here, as it is. Every row is sealed
 # (the one way out, below) as it is written. A write that fails is an error answer naming the file, never a loss that
 # goes unsaid.
+# The rows an answer shows inline are cut by size as well as by count: the answer is judged, serialised and read back within
+# the run's clock, and a `limit` of 100000 over rows of a few hundred bytes would make that take longer than max_seconds
+# (and leave the answer without its keys). The cut is lossless: every row is in the paging file, named by all_results.
+INLINE_BYTES = 1 << 19
+
+
 class LosslessPage:
     def __init__(self, tool, key, limit):
         if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
@@ -565,6 +571,7 @@ class LosslessPage:
         self.key = re.sub(r"[^A-Za-z0-9_.-]", "_", key)
         self.limit = limit
         self.page = []
+        self.page_bytes = 0
         self.total = 0
         self._out = None
         self._tmp = None
@@ -589,8 +596,9 @@ class LosslessPage:
 
     def add(self, row):
         self.total += 1
-        if len(self.page) < self.limit:
+        if len(self.page) < self.limit and self.page_bytes < INLINE_BYTES:
             self.page.append(row)
+            self.page_bytes += len(repr(row))
             return
         if self._out is None:
             stops = {signal.SIGTERM, signal.SIGINT, signal.SIGHUP}
@@ -631,6 +639,8 @@ class LosslessPage:
 
     def finish(self):
         result = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
+        if self.total > len(self.page) and len(self.page) < self.limit:
+            result["inline_cut_by_size"] = "the rows shown inline stop at about %d bytes whatever limit says; the whole list is in all_results" % INLINE_BYTES
         if self._out is not None:
             try:
                 self._out.flush()
@@ -656,7 +666,8 @@ class TextFile:
     The secret-safe output pattern of recovery_key_scan's SecretValues, for rows. With `enabled` false it writes
     nothing and `summary()` says so. Enabled, it is refused outside a job; inside one the file is created before
     anything is read (mode 0600, exclusively: a file or a link already at that name is refused by name) under $OUT, and
-    the answer names it and says it may hold secrets. With nothing to keep it stays an empty file and says written: 0.
+    the answer names it and says it may hold secrets. A job that was not run as secret output (the harness gives its process
+    SECRET_OUTPUT=1 when it was) is refused too: the file would be sealed as an ordinary output. With nothing to keep it stays an empty file and says written: 0.
     """
 
     def __init__(self, name, enabled, what, flag="write_text"):
@@ -674,6 +685,10 @@ class TextFile:
             raise TextRefused("%s is refused outside a job: the originals written here would be an ordinary file, not a "
                               "sealed output. Run this as job_run tool=%s with secret_output: true, and ask again there. "
                               "Nothing was written." % (flag, TOOL))
+        if os.environ.get("SECRET_OUTPUT") != "1":
+            raise TextRefused("%s is refused in a job that was not run as secret output: the originals would be sealed as ordinary "
+                              "output. The harness sets SECRET_OUTPUT=1 for a secret job's process and it is not set here. Run this as "
+                              "job_run tool=%s with secret_output: true, and ask again there. Nothing was written." % (flag, TOOL))
         self.path = Path(out) / name
         self.shown = "store/jobs/%s/out/%s" % (re.sub(r"[^A-Za-z0-9_.-]", "_", job), name)
         OWN_NAMES.update((self.shown, str(self.path)))
@@ -2289,17 +2304,17 @@ UPID = re.compile(r"^UPID:([^:]*):([0-9A-Fa-f]{8}):([0-9A-Fa-f]{8,16}):([0-9A-Fa
 UPID_PBS = re.compile(r"^UPID:([^:]*):([0-9A-Fa-f]{8}):([0-9A-Fa-f]{8,16}):([0-9A-Fa-f]{8}):([0-9A-Fa-f]{8}):([^:]*):([^:]*):([^:]*):(?:\s+([0-9A-Fa-f]{8})\s*(.*))?$")
 
 
+_SYSTEMD_ESCAPE = re.compile(r"\\x([0-9a-fA-F]{2})")
+
+
 def systemd_unescape(text):
-    """A PBS worker id as written (systemd unit-name escaping: `-` stands for `/`, \\xNN for a byte) back to its text."""
-    out, i = [], 0
-    while i < len(text):
-        if text.startswith("\\x", i) and re.fullmatch(r"[0-9a-fA-F]{2}", text[i + 2:i + 4]):
-            out.append(chr(int(text[i + 2:i + 4], 16)))
-            i += 4
-        else:
-            out.append("/" if text[i] == "-" else text[i])
-            i += 1
-    return "".join(out)
+    """A PBS worker id as written (systemd unit-name escaping: `-` stands for `/`, \\xNN for a byte) back to its text.
+    The escapes are found by the regular expression (C speed, left to right, none overlapping), so that a worker id of a
+    megabyte does not cost a Python loop over its characters; what lies between two escapes has its `-` turned into `/`."""
+    parts = _SYSTEMD_ESCAPE.split(text)           # plain, hex, plain, hex, ..., plain
+    parts[0::2] = [piece.replace("-", "/") for piece in parts[0::2]]
+    parts[1::2] = [chr(int(code, 16)) for code in parts[1::2]]
+    return "".join(parts)
 
 
 def pve_category(task_type):
@@ -2314,7 +2329,7 @@ def pve_category(task_type):
 
 def parse_task_index(fh, source, events, clock, max_line, stats):
     for n, off, length, raw in read_lines(fh, max_line):
-        clock.check(1024)
+        clock.check()
         if raw is None:
             stats["over_limit"] += 1
             stats["problem_lines"].append({"source_id": source["id"], "line": n, "byte_offset": off, "reason": "line over max_line_bytes: located, not read"})
@@ -2391,7 +2406,7 @@ LOG_TIME = re.compile(r"^Backup (started|finished) at (\d{4}-\d{2}-\d{2} \d{2}:\
 
 def parse_vzdump_log(fh, source, events, clock, max_line, stats, times):
     for n, off, length, raw in read_lines(fh, max_line):
-        clock.check(1024)
+        clock.check()
         if raw is None:
             stats["over_limit"] += 1
             stats["problem_lines"].append({"source_id": source["id"], "line": n, "byte_offset": off, "reason": "line over max_line_bytes: located, not read"})
@@ -2514,7 +2529,7 @@ def parse_csv(fh, source, events, clock, max_line, stats, mapping, times, catego
     used = {v for v in mapping.values() if isinstance(v, str)}
     try:
         for row in reader:
-            clock.check(1024)
+            clock.check()
             if header is None and has_header:
                 header = [c.strip().lstrip("﻿") for c in row]
                 missing = sorted(u for u in used if u not in header)
@@ -2546,7 +2561,7 @@ def shown_names(names):
 
 def parse_jsonl(fh, source, events, clock, max_line, stats, mapping, times, category_map, result_map):
     for n, off, length, raw in read_lines(fh, max_line):
-        clock.check(1024)
+        clock.check()
         if raw is None:
             stats["over_limit"] += 1
             stats["problem_lines"].append({"source_id": source["id"], "line": n, "byte_offset": off, "reason": "line over max_line_bytes: located, not read"})

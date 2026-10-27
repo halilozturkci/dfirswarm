@@ -172,7 +172,7 @@ test("each interval names the positions in the supplied series it comes from; a 
 
 // --- D-network-F1 ----------------------------------------------------------------------------------------------------------
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createRng, planted } from "./pack-network-canaries.ts";
 import type { Json } from "./pack-network-harness.ts";
 import { startDetached } from "./pack-network-harness.ts";
@@ -181,8 +181,8 @@ test("an integer too large for a float is a number that is not epoch seconds: co
   await withCwd(async (cwd) => {
     const huge = "1" + "0".repeat(400);
     const input = `{"timestamps": [${step(8, 60).join(", ")}, ${huge}, -${huge}], "min_events": 6}`;
-    const run = spawnSync("python3", [BEACON], { cwd, input, encoding: "utf8" });
-    assert.equal(run.status, 0, run.stdout + run.stderr);
+    const run = spawnSync("python3", [BEACON], { cwd, input, encoding: "utf8", timeout: 60_000 });
+    assert.equal(run.status, 0, `${run.error?.message ?? ""} ${run.stdout}${run.stderr}`);
     const out = JSON.parse(run.stdout);
     assert.equal(out.events, 8);
     assert.equal(out.rejected.out_of_range, 2);
@@ -274,12 +274,16 @@ test("every answer carries status and status_basis; the tool's own clock ends th
     assert.match(manifest.params.max_seconds.description, /reading and measuring.*reading stops at two fifths of it/);
     for (const [sig, code] of [["SIGTERM", 143], ["SIGINT", 130], ["SIGHUP", 129]] as const) {
       const run = startDetached(BEACON, cwd, { timestamps_file: "work/big.txt", max_seconds: 40 });
-      await new Promise((r) => setTimeout(r, 700));
-      run.signal(sig);
-      assert.equal(await run.closed, code, `${sig}: ${run.stdout().slice(0, 200)}`);
-      const last = JSON.parse(run.stdout());
-      assert.equal(last.status, "partial");
-      assert.equal(last.interrupted_by_signal, code - 128);
+      try {
+        await new Promise((r) => setTimeout(r, 700));
+        run.signal(sig);
+        assert.equal(await run.closed, code, `${sig}: ${run.stdout().slice(0, 200)}`);
+        const last = JSON.parse(run.stdout());
+        assert.equal(last.status, "partial");
+        assert.equal(last.interrupted_by_signal, code - 128);
+      } finally {
+        try { run.killGroup(); } catch { /* already gone */ }
+      }
     }
   });
 });
@@ -329,11 +333,14 @@ test("a series passed inline is held to 500,000 events and 32 MiB of arguments, 
 test("timestamps_file must be a regular file: /dev/zero is refused at once instead of being read for ever", async () => {
   await withCwd(async (cwd) => {
     const run = startDetached(BEACON, cwd, { timestamps_file: "/dev/zero" });
+    let timer: NodeJS.Timeout | undefined;
     try {
-      const watchdog = new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 20_000));
+      // the watchdog is cleared when the tool has answered: a timer left running holds the whole test file open for its full 20 s
+      const watchdog = new Promise<"hung">((resolve) => { timer = setTimeout(() => resolve("hung"), 20_000); });
       const ended = await Promise.race([run.closed.then(() => "ended" as const), watchdog]);
       assert.equal(ended, "ended", "the tool never returned for /dev/zero");
     } finally {
+      clearTimeout(timer);
       try { run.killGroup(); } catch { /* already gone */ }
     }
     const answer = JSON.parse(run.stdout());
@@ -367,17 +374,50 @@ test("the skip of a line too long to be a time is under the clock: values_of rai
   });
 });
 
-test("a series nested 100,000 deep is a JSON answer on every Python, not an unexpected failure: no text is built from it (Python 3.14 parses it)", async () => {
-  const found = spawnSync("sh", ["-c", "command -v python3.14 python3.13 | head -1"], { encoding: "utf8" }).stdout.trim();
+/**
+ * One run of the tool on `input` under the given interpreter's directory on PATH, in a process group of its own and under a
+ * hard limit: a run that has not ended by then is killed (the whole group, with SIGKILL) and reported as hung, with the
+ * interpreter and the time. It is not a spawnSync: that blocks the runner's event loop, so no test timeout can fire, a hang
+ * ends the whole file unnamed at the suite limit (300 s), and every test after it is lost with it.
+ */
+async function runBounded(cwd: string, dir: string, input: string, limitMs: number): Promise<{ code: number | null; stdout: string; stderr: string; ms: number; hung: boolean }> {
+  const began = Date.now();
+  const child = spawn("python3", [BEACON], { cwd, detached: true, stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, AGENT_ID: "s1", PATH: `${dir}:${process.env.PATH}` } });
+  const out: Buffer[] = [];
+  const err: Buffer[] = [];
+  child.stdout.on("data", (c: Buffer) => out.push(c));
+  child.stderr.on("data", (c: Buffer) => err.push(c));
+  child.stdin.on("error", () => undefined); // a tool that answers before it has read everything breaks the pipe: its answer is still the result
+  child.stdin.end(input);
+  let hung = false;
+  const killGroup = (): void => { try { process.kill(-(child.pid as number), "SIGKILL"); } catch { /* already gone */ } };
+  const timer = setTimeout(() => { hung = true; killGroup(); }, limitMs);
+  try {
+    const code = await new Promise<number | null>((resolve, reject) => { child.on("error", reject); child.on("close", (c) => resolve(c)); });
+    return { code, stdout: Buffer.concat(out).toString("utf8"), stderr: Buffer.concat(err).toString("utf8"), ms: Date.now() - began, hung };
+  } finally {
+    clearTimeout(timer);
+    killGroup();
+  }
+}
+
+// A run takes about one second on a laptop and four for all four of them on a hosted macOS runner; the limit is a wide margin over that,
+// and four of them still end well inside the suite's 300 s.
+const DEEP_RUN_LIMIT_MS = 45_000;
+
+test("a series nested 100,000 deep is a JSON answer on every Python, not an unexpected failure: no text is built from it (Python 3.14 parses it)", { timeout: 4 * DEEP_RUN_LIMIT_MS + 20_000 }, async (t) => {
+  const found = spawnSync("sh", ["-c", "command -v python3.14 python3.13 | head -1"], { encoding: "utf8", timeout: 10_000 }).stdout.trim();
   await withCwd(async (cwd, bin) => {
     // The interpreters that parse a document this deep without a RecursionError are the new ones; on the others the parse is refused as JSON already.
     const deep = "[".repeat(100_000) + "]".repeat(100_000);
-    for (const body_ of [`{"timestamps":[1,2,3,4,5,6,7,${deep}]}`, `{"timestamps":[1,2,3,4,5,6,7],"window_end":${deep}}`]) {
+    for (const [which, body_] of [["in the series", `{"timestamps":[1,2,3,4,5,6,7,${deep}]}`], ["as window_end", `{"timestamps":[1,2,3,4,5,6,7],"window_end":${deep}}`]]) {
       for (const python of ["python3", ...(found ? [found] : [])]) {
         const dir = join(cwd, "py-" + python.replace(/\W/g, ""));
         await mkdir(dir, { recursive: true });
         if (python !== "python3") await symlink(python, join(dir, "python3")).catch((e: NodeJS.ErrnoException) => { if (e.code !== "EEXIST") throw e; });
-        const run = spawnSync("python3", [BEACON], { cwd, input: body_, encoding: "utf8", env: { ...process.env, AGENT_ID: "s1", PATH: `${dir}:${process.env.PATH}` }, maxBuffer: 1 << 26 });
+        const run = await runBounded(cwd, dir, body_, DEEP_RUN_LIMIT_MS);
+        t.diagnostic(`${python}, nested ${which}: ${run.ms} ms`);
+        assert.equal(run.hung, false, `${python}, nested ${which}: the tool had not answered after ${DEEP_RUN_LIMIT_MS} ms (it was killed); stdout so far: ${run.stdout.slice(0, 200)}`);
         assert.doesNotMatch(run.stderr, /Traceback/);
         const answer = JSON.parse(run.stdout);
         assert.doesNotMatch(answer.error ?? "", /unexpected failure|RecursionError/, `${python}: ${run.stdout.slice(0, 300)}`);

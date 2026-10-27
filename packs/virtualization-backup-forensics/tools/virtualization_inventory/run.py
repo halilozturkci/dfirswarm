@@ -47,7 +47,7 @@ import unicodedata
 from pathlib import Path
 
 TOOL = "virtualization_inventory"
-PARSER = "virtualization_inventory/1"
+PARSER = "virtualization_inventory/2"
 DEFAULT_LIMIT = 200
 DEFAULT_SECONDS = 50.0          # the manifest allows 60
 MAX_SECONDS = 50.0
@@ -550,6 +550,12 @@ def decode(data):
 # digest of anything asked for (sixteen decimal digits), and the way out shows this exact name, registered here, as it is. Every row is sealed
 # (the one way out, below) as it is written. A write that fails is an error answer naming the file, never a loss that
 # goes unsaid.
+# The rows an answer shows inline are cut by size as well as by count: the answer is judged, serialised and read back within
+# the run's clock, and a `limit` of 100000 over rows of a few hundred bytes would make that take longer than max_seconds
+# (and leave the answer without its keys). The cut is lossless: every row is in the paging file, named by all_results.
+INLINE_BYTES = 1 << 19
+
+
 class LosslessPage:
     def __init__(self, tool, key, limit):
         if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
@@ -558,6 +564,7 @@ class LosslessPage:
         self.key = re.sub(r"[^A-Za-z0-9_.-]", "_", key)
         self.limit = limit
         self.page = []
+        self.page_bytes = 0
         self.total = 0
         self._out = None
         self._tmp = None
@@ -582,8 +589,9 @@ class LosslessPage:
 
     def add(self, row):
         self.total += 1
-        if len(self.page) < self.limit:
+        if len(self.page) < self.limit and self.page_bytes < INLINE_BYTES:
             self.page.append(row)
+            self.page_bytes += len(repr(row))
             return
         if self._out is None:
             stops = {signal.SIGTERM, signal.SIGINT, signal.SIGHUP}
@@ -624,6 +632,8 @@ class LosslessPage:
 
     def finish(self):
         result = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
+        if self.total > len(self.page) and len(self.page) < self.limit:
+            result["inline_cut_by_size"] = "the rows shown inline stop at about %d bytes whatever limit says; the whole list is in all_results" % INLINE_BYTES
         if self._out is not None:
             try:
                 self._out.flush()
@@ -649,7 +659,8 @@ class TextFile:
     The secret-safe output pattern of recovery_key_scan's SecretValues, for rows. With `enabled` false it writes
     nothing and `summary()` says so. Enabled, it is refused outside a job; inside one the file is created before
     anything is read (mode 0600, exclusively: a file or a link already at that name is refused by name) under $OUT, and
-    the answer names it and says it may hold secrets. With nothing to keep it stays an empty file and says written: 0.
+    the answer names it and says it may hold secrets. A job that was not run as secret output (the harness gives its process
+    SECRET_OUTPUT=1 when it was) is refused too: the file would be sealed as an ordinary output. With nothing to keep it stays an empty file and says written: 0.
     """
 
     def __init__(self, name, enabled, what, flag="write_text"):
@@ -667,6 +678,10 @@ class TextFile:
             raise TextRefused("%s is refused outside a job: the originals written here would be an ordinary file, not a "
                               "sealed output. Run this as job_run tool=%s with secret_output: true, and ask again there. "
                               "Nothing was written." % (flag, TOOL))
+        if os.environ.get("SECRET_OUTPUT") != "1":
+            raise TextRefused("%s is refused in a job that was not run as secret output: the originals would be sealed as ordinary "
+                              "output. The harness sets SECRET_OUTPUT=1 for a secret job's process and it is not set here. Run this as "
+                              "job_run tool=%s with secret_output: true, and ask again there. Nothing was written." % (flag, TOOL))
         self.path = Path(out) / name
         self.shown = "store/jobs/%s/out/%s" % (re.sub(r"[^A-Za-z0-9_.-]", "_", job), name)
         OWN_NAMES.update((self.shown, str(self.path)))
@@ -2394,8 +2409,10 @@ def text_of(el, name):
 # ---- the sink: every record passes through here ----------------------------------------------------------------------
 
 class Sink:
-    def __init__(self, limit, shown, index):
-        self.shown, self.index = shown, index
+    def __init__(self, limit, shown, index, clock):
+        self.shown, self.index, self.clock = shown, index, clock
+        self.long_lines = collections.Counter()        # file id -> lines of MAX_LINE bytes or more, which no parser reads
+        self.long_first = {}                           # file id -> the first such line
         self.pages = {k: LosslessPage(TOOL, k, limit) for k in ("vms", "disks", "snapshots", "datastores", "hosts", "sources")}
         self.counts = collections.Counter()
         self.seq = collections.Counter()
@@ -2422,6 +2439,7 @@ class Sink:
         return value
 
     def emit(self, kind, row):
+        self.clock.check(64)                    # a file of a hundred thousand records is read inside max_seconds too
         row = self.clean(row)
         fid = self.current_file["id"]
         if self.per_file[fid] >= MAX_RECORDS_PER_FILE:
@@ -2454,9 +2472,13 @@ class Sink:
 CONFIG_KV = re.compile(r'^\s*([A-Za-z0-9_.:\-]+)\s*=\s*"(.*)"\s*$')
 
 
-def read_lines(fh):
+def read_lines(fh, sink):
+    """(line number, text) a line at a time; None as the text past MAX_LINES. A line of MAX_LINE bytes or more is not read: it is
+    counted for its file in the sink (long_lines, long_first), which makes the file partial, and yields an empty text."""
     n = 0
+    fid = sink.current_file["id"]
     while True:
+        sink.clock.check(256)
         raw = fh.readline(MAX_LINE + 1)
         if not raw:
             return
@@ -2467,6 +2489,8 @@ def read_lines(fh):
         if len(raw) > MAX_LINE:
             while raw and not raw.endswith(b"\n"):
                 raw = fh.readline(MAX_LINE)
+            sink.long_lines[fid] += 1
+            sink.long_first.setdefault(fid, n)
             yield n, ""
             continue
         yield n, raw.decode("utf-8", "surrogateescape").rstrip("\r\n")
@@ -2481,7 +2505,7 @@ def key_report(not_shown, sensitive):
 
 def parse_vmx(fh, sink, rec, shown):
     shown_vals, devices, not_shown, sensitive, bad, capped = {}, collections.OrderedDict(), 0, [], 0, False
-    for n, line in read_lines(fh):
+    for n, line in read_lines(fh, sink):
         if line is None:
             capped = True
             break
@@ -2528,7 +2552,7 @@ def parse_vmx(fh, sink, rec, shown):
 
 def parse_vmsd(fh, sink, rec, shown):
     entries, top, over, capped = collections.OrderedDict(), {}, 0, False
-    for n, line in read_lines(fh):
+    for n, line in read_lines(fh, sink):
         if line is None:
             capped = True
             break
@@ -2706,7 +2730,7 @@ def parse_pve_conf(fh, sink, rec, shown):
     node, vmid = pve_ids(rec["rel"])
     sections = collections.OrderedDict([("", {"line": 1, "kv": collections.OrderedDict(), "comment_lines": 0})])
     cur, bad, sensitive, not_shown, capped, sections_over = "", 0, [], 0, False, False
-    for n, line in read_lines(fh):
+    for n, line in read_lines(fh, sink):
         if line is None:
             capped = True
             break
@@ -2736,6 +2760,7 @@ def parse_pve_conf(fh, sink, rec, shown):
         sink.emit("hosts", {"node": shown(node, rec["id"], "node"), "node_basis": "a directory name in the path of the configuration file; no host record was read",
                             "locator": {"file": rec["id"]}})
     for sname, sec in sections.items():
+        sink.clock.check(256)
         for k, (v, n) in sec["kv"].items():
             if sname == "" and k not in PVE_SHOWN and not PVE_DISK.match(k) and not re.match(r"^net\d+$", k) and k not in PVE_SNAP_SHOWN:
                 not_shown += 1
@@ -2798,7 +2823,7 @@ def parse_pve_storage(fh, sink, rec, shown):
             sink.emit("datastores", {"format": "pve_storage_cfg", "type": cur["type"], "name": shown(cur["name"], rec["id"], "storage name"),
                                      "settings": {k: shown(v, rec["id"], k) for k, v in cur["kv"].items() if k in allowed},
                                      "locator": {"file": rec["id"], "line": cur["line"]}, **key_report(cur["not_shown"], cur["sensitive"])})
-    for n, line in read_lines(fh):
+    for n, line in read_lines(fh, sink):
         if line is None:
             capped = True
             break
@@ -2914,7 +2939,7 @@ def main():
     if files.truncated:
         partial.append(files.truncated)
     index = Index(files.files)
-    sink = Sink(limit, shown, index)
+    sink = Sink(limit, shown, index, clock)
     kinds, other_ext, states = collections.Counter(), collections.Counter(), collections.Counter()
     unreadable = []
     parsers_xml = {"libvirt_domain": parse_libvirt_domain, "libvirt_snapshot": parse_libvirt_snapshot, "libvirt_pool": parse_libvirt_pool, "vm_inventory_xml": parse_vm_inventory_xml}
@@ -2939,6 +2964,7 @@ def main():
                 row = {"source_id": rec["id"], "file": shown(rec["rel"], rec["id"], "file"), "size": rec["size"], "kind": kind}
                 state, reason = "parsed", None
                 before = sum(sink.counts.values())
+                stopped = False
                 try:
                     if kind == "refused:doctype":
                         state, reason = "failed", "a DOCTYPE or ENTITY declaration is refused: no entity is expanded, and the file was not handed to a parser"
@@ -2962,20 +2988,29 @@ def main():
                     state, reason = "failed", "the structure could not be read (%s)" % describe(exc)
                 except OSError as exc:
                     state, reason = "failed", "a read failed (%s)" % describe(exc)
+                except Overtime:
+                    state, reason = "partial", "max_seconds (%s) was reached while this file was read: the records read before it are listed and the rest of the file was not read" % seconds
+                    stopped = True
             if sink.over_cap[rec["id"]]:
                 state, reason = "partial", "%d record(s) past the cap of %d for one file were counted and not listed" % (sink.over_cap[rec["id"]], MAX_RECORDS_PER_FILE)
+            if sink.long_lines[rec["id"]] and state in ("parsed", "partial"):
+                note = "%d line(s) of %d bytes or more were not read (the first is line %d): counted here, nothing in them is in the answer" % (
+                    sink.long_lines[rec["id"]], MAX_LINE, sink.long_first[rec["id"]])
+                state, reason = "partial", "%s; %s" % (reason, note) if reason else note
             states[state] += 1
             if state in ("failed", "partial"):
                 problems += 1
             row.update(state=state, reason=reason, records=sum(sink.counts.values()) - before)
             sink.pages["sources"].add(row)
+            if stopped:
+                raise Overtime()
     except Overtime:
         partial.append("the examination stopped at max_seconds (%s): the files after the last one listed in sources were not read" % seconds)
     values.close()
     result_pages = {k: v.finish() for k, v in sink.pages.items()}
     unsupported = sum(c for k, c in kinds.items() if k.startswith("unsupported") or k == "xml_other")
     complete = not problems and not partial and not files.skipped_counts["unreadable"] and not files.skipped_counts["too_deep"]
-    outcome = status_of(complete, bool(files.files) and not sum(sink.counts.values()) and problems and not unsupported,
+    outcome = status_of(complete, bool(files.files) and not sum(sink.counts.values()) and problems and not unsupported and not partial,
                         "every file of a kind this tool reads was read and nothing was left out" + ("; %d file(s) of a recognised kind it does not read are listed as unsupported" % unsupported if unsupported else ""),
                         "%d file(s) were not read whole, %d unreadable, %d directory(ies) too deep%s: the answer names them" % (
                             problems, files.skipped_counts["unreadable"], files.skipped_counts["too_deep"], ("; " + "; ".join(partial)) if partial else ""),

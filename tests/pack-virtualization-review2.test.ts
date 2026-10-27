@@ -175,7 +175,7 @@ test("a name shaped like the tool's own paging or values file, with a token insi
   const ownWork = `work/${GHP}/tool-output/a_b-c-0123456789012345.jsonl`, ownStore = `store/jobs/${AKIA}/out/x-values.jsonl`;
   for (const job of [false, true]) {
     await withCwd(async (cwd) => {
-      const env: Record<string, string> = job ? { JOB_ID: "j000777", OUT: join(cwd, "out") } : {};
+      const env: Record<string, string> = job ? { JOB_ID: "j000777", OUT: join(cwd, "out"), SECRET_OUTPUT: "1" } : {};
       if (job) await mkdir(env.OUT, { recursive: true });
       await put(cwd, "inputs/vm/a.vmdk", vmdkDescriptor({ cid: "aabbccd1", parentCid: "aabbccd0", createType: "vmfsSparse", parentHint: ownWork, extents: [{ sectors: 8, type: "FLAT", name: ownStore }] }));
       await put(cwd, "inputs/vm/b.vmdk", vmdkDescriptor({ cid: "aabbccd2", parentHint: ownStore, extents: [{ sectors: 8, type: "FLAT", name: ownWork }] }));
