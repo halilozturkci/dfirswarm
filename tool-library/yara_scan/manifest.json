@@ -30,7 +30,7 @@
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
   "version": 5,
-  "sha256": "4611c0ea403ca53df8a9e31c0aaae30d42ce421d5ed804548515e7193e432deb",
+  "sha256": "759248956c8415c30d53480088f0975b70a409c89c7db304aa24ea192f34e2f1",
   "requires": [
     "yara"
   ]

@@ -10,8 +10,9 @@ holding its modules, handles, memory map and the regions MemProcFS can read, and
 the parsed artefacts it builds. All of it is files, for the length of the call.
 
 This tool starts MemProcFS, does one thing with the tree and stops it, so nothing
-is left holding the evidence open. The mount is gone when the call returns: what
-survives is the files an export wrote. Three modes:
+is left holding the evidence open. The mount is released when the call returns: what
+survives is the files an export wrote (a clean-up that fails is a named problem of the
+cleanup phase, and the mount may then remain). Three modes:
 
     list     names, kinds and sizes of a directory (or one file): metadata, no content
     text     one file that is UTF-8 text, written to a file under $OUT/mem_fs
@@ -914,6 +915,8 @@ def emit(answer):
 
 
 def fail(message, **extra):
+    for page in list(PAGES):    # a page that was being written is dropped with its hidden temporary file, whatever ended the call
+        page.abort()
     emit({"error": message, "status": "failed",
           "status_basis": "the call was refused or ended before an answer; nothing in this document is a finding about the evidence", **extra})
     raise SystemExit(1)
@@ -1199,51 +1202,62 @@ def _pdeathsig():
         pass
 
 
-def reap_orphans():
-    """Kill what the engine started and lost: a process of the tool's own group that is no longer below the tool (its parent, the engine,
-    has ended and init adopted it, so it cannot be found from the engine's pid, and it can hold the engine's pipes for as long as it
-    lives). Only when the tool leads its group (the harness starts a tool as the leader of one), so that every other member of the group
-    is something the tool's tree started: a process outside the group is never looked at, a tool run by hand in a shell's group kills
-    nothing, and a pid is checked against the group again at the moment it is signalled. The processes are listed from /proc, or from
-    ps (given 10 seconds) where there is none."""
-    me = os.getpid()
+def process_table():
+    """{pid: parent pid} for every process, from /proc where there is one, else from ps (given 10 seconds); {} when neither answers."""
     table = {}
     try:
-        if os.getpgrp() != me:
-            return
         if os.path.isdir("/proc/self"):
             for entry in os.listdir("/proc"):
                 if entry.isdigit():
                     try:
                         with open("/proc/%s/stat" % entry, "rb") as fh:
-                            fields = fh.read().rsplit(b")", 1)[1].split()
-                        table[int(entry)] = (int(fields[1]), int(fields[2]))
+                            table[int(entry)] = int(fh.read().rsplit(b")", 1)[1].split()[1])
                     except (OSError, IndexError, ValueError):
                         continue
         else:
-            listing = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,pgid="], capture_output=True, text=True, timeout=10).stdout
+            listing = subprocess.run(["ps", "-A", "-o", "pid=,ppid="], capture_output=True, text=True, timeout=10).stdout
             for line in listing.splitlines():
                 parts = line.split()
-                if len(parts) == 3 and all(part.isdigit() for part in parts):
-                    table[int(parts[0])] = (int(parts[1]), int(parts[2]))
+                if len(parts) == 2 and all(part.isdigit() for part in parts):
+                    table[int(parts[0])] = int(parts[1])
     except (OSError, subprocess.SubprocessError):
-        return
+        return {}
+    return table
+
+
+def below(table, root):
+    """Every process below `root` in the table (never one beside it)."""
     kids = {}
-    for pid, (parent, _group) in table.items():
+    for pid, parent in table.items():
         kids.setdefault(parent, []).append(pid)
-    below, stack = {me}, [me]
+    found, stack = set(), [root]
     while stack:
         for child in kids.get(stack.pop(), []):
-            if child not in below:
-                below.add(child)
+            if child not in found:
+                found.add(child)
                 stack.append(child)
-    for pid, (_parent, group) in table.items():
-        if group == me and pid not in below:
-            try:
-                if os.getpgid(pid) == me:
-                    os.kill(pid, signal.SIGKILL)
-            except OSError:
-                pass
+    return found
+
+
+def end_what_the_engine_left(listed):
+    """End the processes that were listed below the engine while it ran and are still there once it has stopped, with their parent gone
+    (init has adopted them; they can hold the engine's pipes for as long as they live). Only a pid seen below the engine is signalled,
+    never anything else in the tool's group or session, and not one that is below the tool again or has a live parent that is not init
+    (a pid reused since the listing)."""
+    if not listed:
+        return
+    table = process_table()
+    mine = below(table, os.getpid())
+    for pid in listed:
+        parent = table.get(pid)
+        if parent is None or pid in mine or pid == os.getpid():
+            continue
+        if parent in table and parent != 1 and parent not in listed:
+            continue
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
 
 
 def is_mounted(mount):
@@ -1658,6 +1672,10 @@ def main():
                     problem = ("cleanup", message)
 
             try:
+                listed = below(process_table(), proc.pid)    # what the engine has started, while it is still the engine's parent
+            except Exception:  # noqa: BLE001 - a listing is best effort
+                listed = set()
+            try:
                 proc.terminate()
             except OSError:
                 pass
@@ -1670,7 +1688,7 @@ def main():
                 except (subprocess.TimeoutExpired, OSError):
                     cleanup_problem("memprocfs did not end within %ds of being killed" % CLEANUP_WAIT)
             # What the engine started and left (it holds the engine's pipes for as long as it lives) is ended with it.
-            reap_orphans()
+            end_what_the_engine_left(listed)
             if is_mounted(mount):
                 unmount = shutil.which("fusermount3") or shutil.which("fusermount")
                 if unmount:
@@ -1830,6 +1848,8 @@ def run_guarded():
     except SystemExit:
         raise
     except Terminated as stopped:   # a signal before the engine started, or while the answer was being made
+        for page in list(PAGES):
+            page.abort()
         interrupted_answer(stopped.signum, logs=STATE["logs"])
         raise SystemExit(128 + stopped.signum)
     except Exception as exc:  # never an empty or clean answer for a failure

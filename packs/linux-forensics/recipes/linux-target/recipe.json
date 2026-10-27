@@ -69,5 +69,5 @@
     "an empty plugin result is not proof the artefact never existed"
   ],
   "covers": "Records exposed by the selected dissect.target Linux functions, each with the status it earned from its exit code, its records and its stderr. `complete` in the receipt means every selected function ran and produced records or nothing: it is not coverage of the host. It does not carve deleted/unallocated data, parse arbitrary application data, acquire memory, unlock encrypted volumes without a key, or prove that an empty parser result means the artefact never existed.",
-  "sha256": "389cbf8a43d09f0fe7b43b08fd6c201613fa4fdf31d112c0b50085c1eddfd110"
+  "sha256": "8851663f5fa027681e203f177542813c6edfbe9b933a9ddb09ce9def8462b98e"
 }

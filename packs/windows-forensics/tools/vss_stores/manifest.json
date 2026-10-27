@@ -22,7 +22,7 @@
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
   "version": 5,
-  "sha256": "971b3a34b7af21a2f5a7278bfab1416c4b9cc734ee4caf7aed97b1c0f5ab6951",
+  "sha256": "792b6209ca67dd3c2151bdcc40d320805ec6a4c86c3871f781be7a66856aa96b",
   "requires": [
     "vshadowinfo"
   ],

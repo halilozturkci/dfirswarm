@@ -62,5 +62,5 @@
     "the rows of an ESE database: its tables are listed, and reading a table is a separate call of esedb_query"
   ],
   "covers": "What each tool of the pack said about the Windows artefact files found in the target, as the tool said it (coverage.json: per family status, reason, tool, inputs, counts; results.jsonl: one line per call with its arguments, exit code and whole answer). A status other than parsed or empty names what is missing, and `complete` is not coverage of the host. It does not carve, does not read volume shadow copies, does not run Plaso, does not interpret records, and does not show that a family absent from the target was never there.",
-  "sha256": "c344c64081bdb210794a6302ec4827d2581eb096a1ab89c04c2274f22be1daab"
+  "sha256": "5c9cb58b36220a25b6cc6896989b01a59bfc2b41da55f089839d407566f9cb1c"
 }

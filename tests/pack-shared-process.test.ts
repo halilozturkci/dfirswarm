@@ -26,8 +26,8 @@ const END = "# END SHARED PROCESS";
 const sha = (text: string): string => createHash("sha256").update(text).digest("hex");
 
 /** The two texts, as a copy carries them (from BEGIN to END, the way the other suites cut them). */
-export const GENERAL_SHA = "f67d47aa26a8a86a890e7061a545a25cb5840a782e1d78683dbebad3fe2e4ce2";
-export const WINDOWS_SHA = "525ec320741441f753ee4d131dd7f576d85d0c93ed562032fb6973d78c308627";
+export const GENERAL_SHA = "6a346a556fd3aa04e663d17a505434db5195726251411f19809dd8c69e96e9f2";
+export const WINDOWS_SHA = "d856905899410381ac49ee6157a8fd1c8c1db13c2c520dfac5ec2edfe12f324e";
 
 async function carriers(): Promise<string[]> {
   const found: string[] = [];
@@ -108,11 +108,16 @@ time.sleep(30)
 const HOLDER = HEAD + String.raw`
 t = time.monotonic()
 holder = work + "/holder.pid"
-proc = ns["spawn"](["sh", "-c", "(sleep 120 & echo $! > " + holder + "); echo '{\"ok\": true}'; exit 0"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+# "child": the program starts a holder of its pipes and stays a moment, so the holder is seen below it; "daemon": it starts the holder
+# the way a daemon does (a child of a child that ends at once) and ends at once, so nothing was ever seen below it
+daemon = os.environ.get("HOLD_MODE") == "daemon"
+shell = ("(sleep 120 & echo $! > " + holder + "); " if daemon else "sleep 120 & echo $! > " + holder + "; sleep 0.8; ") + "echo '{\"ok\": true}'; exit 0"
+proc = ns["spawn"](["sh", "-c", shell], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 ns["ACTIVE"].append(proc)
 out, err, timed_out = ns["communicate_bounded"](proc, 30)
 ns["ACTIVE"].remove(proc)
-print(json.dumps({"out": out.decode(), "timed_out": timed_out, "code": proc.returncode, "took": time.monotonic() - t}))
+print(json.dumps({"out": out.decode(), "timed_out": timed_out, "code": proc.returncode, "took": time.monotonic() - t}), flush=True)
+open(work + "/done", "w").write("1")
 `;
 
 const HUNG = HEAD + String.raw`
@@ -223,6 +228,62 @@ for (const [family, script] of FAMILIES) {
   });
 }
 
+for (const [family, script] of FAMILIES) {
+  test(`${family}: a program that ends at once and leaves a daemon holding its pipes does not hold the tool (the daemon is ended where /proc names the pipe's holders)`, async () => {
+    await withCwd(async (cwd) => {
+      let holder = 0;
+      let ran: Ran | undefined;
+      try {
+        ran = await lead(HOLDER, [script, cwd], { HOLD_MODE: "daemon" });
+        holder = await pidFile(join(cwd, "holder.pid"), 5000);
+        assert.equal(ran.code, 0, ran.stderr);
+        assert.ok(JSON.parse(ran.stdout).took < 10);
+        // Linux names the holders of a pipe; elsewhere a holder that was never seen below the tool is not the tool's to end
+        if (process.platform === "linux") assert.equal(await gone(holder, 10_000), true, "the holder of the pipes was not ended");
+      } finally {
+        ran?.endGroup();
+        if (holder) end(holder);
+      }
+    });
+  });
+}
+
+/** A tool that heads a pipeline in a job-control shell leads its group, and the next stage of the pipeline is in that group without being its child. */
+async function inPipeline(code: string, script: string, cwd: string): Promise<{ code: number | null; stdout: string; endGroup: () => void }> {
+  const shell = 'set -m; python3 -c "$1" "$2" "$3" | sh -c \'echo $$ > "$0/consumer.pid"; exec sleep 300\' "$3" & wait';
+  const child = spawn("bash", ["-c", shell, "bash", code, script, cwd], { detached: true, stdio: ["ignore", "pipe", "pipe"] });
+  child.stdout.resume();
+  child.stderr.resume();
+  child.unref();
+  return { code: null, stdout: "", endGroup: () => { try { process.kill(-(child.pid as number), "SIGKILL"); } catch { /* gone */ } } };
+}
+
+for (const [family, script] of FAMILIES) {
+  test(`${family}: the next stage of a pipeline the tool heads, in the tool's group, is not ended by a stop signal or by a held pipe`, async () => {
+    for (const [name, code] of [["signal", BEFORE_ACTIVE], ["held pipe", HOLDER]] as const) {
+      await withCwd(async (cwd) => {
+        let consumer = 0, child = 0, holder = 0;
+        let ran: { endGroup: () => void } | undefined;
+        try {
+          ran = await inPipeline(code, script, cwd);
+          consumer = await pidFile(join(cwd, "consumer.pid"), 5000);
+          if (name === "signal") {
+            child = await pidFile(join(cwd, "child.pid"), 5000);
+            assert.equal(await gone(child, 10_000), true, "the signal path did not end the program's tree");
+          } else {
+            holder = await pidFile(join(cwd, "holder.pid"), 5000);
+            await pidFile(join(cwd, "done"), 30_000);     // the tool has gone through its grace and its reaping
+          }
+          assert.equal(await gone(consumer, 500), false, `${name}: the next stage of the pipeline, which the tool never started, was ended`);
+        } finally {
+          ran?.endGroup();
+          for (const pid of [consumer, child, holder]) if (pid) end(pid);
+        }
+      });
+    }
+  });
+}
+
 // --- the tools, end to end ----------------------------------------------------------------------------------------------
 
 type Started = { pid: number; exited: Promise<number | null>; stdout: () => string; killGroup: () => void };
@@ -300,7 +361,7 @@ test("zeek_run: a signal that lands after the engine is forked and before it is 
 const ZEEK_HOLDING = `#!/bin/sh
 for a in "$@"; do
   case "$a" in
-    --version) (sleep 120 & echo $! > "$STUB_DIR/holder.pid"); printf 'zeek version 8.0.10-stand-in\\n'; exit 0;;
+    --version) sleep 120 & echo $! > "$STUB_DIR/holder.pid"; sleep 0.8; printf 'zeek version 8.0.10-stand-in\\n'; exit 0;;
   esac
 done
 exit 0

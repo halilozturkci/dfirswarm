@@ -226,7 +226,8 @@ class NoReplacePage(LosslessPage):
 # interrupted, exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
 # The handlers are in as soon as the module has run as far as this block, with a minimal last word until main() installs the tool's own (only
 # the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
-# first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written.
+# first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
+# (the ransomware tools print through it; the windows tools hold the signals in the emit of their boundary block, and carry this text unused).
 import signal
 import time
 

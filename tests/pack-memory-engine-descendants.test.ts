@@ -6,7 +6,8 @@
  *  - an engine whose descendant holds the pipes after the engine is gone does not hold the tool (it closed a stream a thread was
  *    reading, which waits for the last holder: the call ran as long as the descendant lived, past the manifest's 600 seconds), and the
  *    descendant, which is in the tool's own group, is ended; a process outside the tool is not;
- *  - a tool that does not lead its group ends nothing but returns all the same;
+ *  - the program is ended whether the tool leads its group or not, and wherever it was put (a session of its own), because it was seen below
+ *    the engine while the engine ran; a process beside the tool is never ended;
  *  - an unmount helper that does not answer is a named problem of the clean-up, and the clean-up goes on (it raised, and the answer was
  *    "unexpected failure: TimeoutExpired" with the drains, the files and the secret file still open).
  */
@@ -67,25 +68,29 @@ test("an engine that ended and left a program holding its pipes does not hold me
   });
 });
 
-test("a tool that does not lead its group returns all the same, and ends only what is not its own: a process beside it stays", async () => {
-  await withCwd(async (cwd, bin) => {
-    const holdPid = join(cwd, "hold.pid");
-    const env = await fsStub(cwd, bin, { tree: { "proc/a.txt": "alpha\n", "sys/x": "" }, hold: { seconds: 40, pidFile: holdPid } });
-    await writeFile(join(cwd, "inputs", "memory.raw"), Buffer.alloc(4096));
-    const decoy = spawn("sleep", ["300"], { stdio: "ignore" });
-    let holder = 0;
-    let ran: Ended | undefined;
-    try {
-      ran = await start(FS, cwd, { path: "inputs/memory.raw", mount: join(cwd, "work", "s1", "m"), mode: "list", timeout_seconds: 30 }, env, bin, false);
-      holder = await pidFile(holdPid, 5000);
-      assert.ok(ran.ms < 30_000, `took ${ran.ms} ms`);
-      assert.equal(JSON.parse(ran.stdout).status, "complete", ran.stdout);
-      assert.equal(await gone(decoy.pid as number, 300), false, "a process beside the tool was signalled");
-    } finally {
-      for (const pid of [holder, decoy.pid as number]) if (pid) end(pid);
-    }
+for (const [name, leader, ownSession] of [["a tool that does not lead its group", false, false], ["a holder in a session of its own", true, true]] as const) {
+  test(`${name}: mem_fs returns, ends the program it saw below the engine, and leaves a process beside it alone`, async () => {
+    await withCwd(async (cwd, bin) => {
+      const holdPid = join(cwd, "hold.pid");
+      const env = await fsStub(cwd, bin, { tree: { "proc/a.txt": "alpha\n", "sys/x": "" }, hold: { seconds: 40, pidFile: holdPid, ownSession } });
+      await writeFile(join(cwd, "inputs", "memory.raw"), Buffer.alloc(4096));
+      const decoy = spawn("sleep", ["300"], { stdio: "ignore" });
+      let holder = 0;
+      let ran: Ended | undefined;
+      try {
+        ran = await start(FS, cwd, { path: "inputs/memory.raw", mount: join(cwd, "work", "s1", "m"), mode: "list", timeout_seconds: 30 }, env, bin, leader);
+        holder = await pidFile(holdPid, 5000);
+        assert.ok(ran.ms < 25_000, `took ${ran.ms} ms`);
+        assert.equal(JSON.parse(ran.stdout).status, "complete", ran.stdout);
+        assert.equal(await gone(holder, 10_000), true, "the program the engine left was not ended");
+        assert.equal(await gone(decoy.pid as number, 300), false, "a process beside the tool was signalled");
+      } finally {
+        ran?.endGroup();
+        for (const pid of [holder, decoy.pid as number]) if (pid) end(pid);
+      }
+    });
   });
-});
+}
 
 test("an unmount helper that does not answer is a named problem of the clean-up, and the clean-up goes on", async () => {
   await withCwd(async (cwd, bin) => {

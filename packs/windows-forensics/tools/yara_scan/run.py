@@ -226,9 +226,12 @@ PARSER = "yara_scan/4"
 # and nowhere else, and a program that has been waited for (its pid may be another process's by now) is left alone. The
 # walk has no bound but the number of processes. Two cases leave the tree running: a ps that needs more than PS_WAIT
 # seconds, and a sandbox that denies both libproc and ps (macOS). A stop signal is the one case that reaches further: it also
-# ends everything below the tool itself (a program that was forked a moment before it was entered in ACTIVE is among it) and, when
-# the tool leads its group, what the tool started and lost (reap_orphans). A program that has ended while something it started
-# still holds its pipes does not hold the tool: communicate_bounded gives the pipes PIPE_GRACE seconds and goes on without them.
+# ends everything below the tool itself (a program that was forked a moment before it was entered in ACTIVE is among it) and what
+# the tool started and lost (reap_orphans): a process that was seen below the tool, in the tool's own group, and whose parent has since
+# ended. Nothing else is ever ended: a process the tool never saw in its tree (the next stage of a pipeline the tool heads, a process a
+# launcher put in the group) is left alone, whoever leads the group. A program that has ended while something it started still
+# holds its pipes does not hold the tool: communicate_bounded gives the pipes PIPE_GRACE seconds and goes on without them. (In the
+# windows lineage only the windows-artefacts recipe and lnk_jumplist call it; the lineage is one text, so the others carry it unused.)
 import time
 
 try:
@@ -238,6 +241,7 @@ except ImportError:  # pragma: no cover
 
 STATE = {"last_word": None}    # what to do, with the signal number, when the tool is stopped by a signal
 ACTIVE = []                    # the programs running now
+SEEN = set()                   # the pids seen below a program this tool started: the only ones reap_orphans may end once their parent is gone
 
 
 def _die_with_parent():  # runs in the child between fork and exec
@@ -251,7 +255,9 @@ def spawn(argv, **kwargs):
     kwargs.setdefault("stdin", subprocess.DEVNULL)
     if sys.platform.startswith("linux") and ctypes is not None:
         kwargs["preexec_fn"] = _die_with_parent
-    return subprocess.Popen(argv, **kwargs)
+    proc = subprocess.Popen(argv, **kwargs)
+    SEEN.add(proc.pid)
+    return proc
 
 
 def _children_libproc(pid):
@@ -368,12 +374,61 @@ def _process_table():
     return table
 
 
-def reap_orphans():
+def _sample(pid):
+    """Remember what is below `pid` now, by the cheap routes only (/proc, or libproc on macOS; never a program): a process that is seen
+    here and later loses its parent is the tool's to end, and one that was never seen is not."""
+    try:
+        if os.path.isdir("/proc/self"):
+            kids = {}
+            for child, (parent, _group) in (_process_table() or {}).items():
+                kids.setdefault(parent, []).append(child)
+            SEEN.update(_below(kids, pid))
+        else:
+            seen, stack = {pid}, [pid]
+            while stack:
+                for child in _children_libproc(stack.pop()) or []:
+                    if child not in seen:
+                        seen.add(child)
+                        stack.append(child)
+            SEEN.update(seen - {pid})
+    except Exception:  # noqa: BLE001 - a sample is best effort
+        pass
+
+
+def _pipe_inodes(proc):
+    """The inodes of the pipes the tool holds with `proc` (Linux: /proc names a pipe by it; elsewhere the answer is not used)."""
+    found = set()
+    for handle in (proc.stdin, proc.stdout, proc.stderr):
+        try:
+            if handle is not None:
+                found.add(os.fstat(handle.fileno()).st_ino)
+        except (OSError, ValueError):
+            pass
+    return found
+
+
+def _holds_pipe(pid, inodes):
+    """Whether `pid` holds one of the pipes (Linux only, from /proc/<pid>/fd): the pipes are private to the tool and what it started."""
+    try:
+        for name in os.listdir("/proc/%d/fd" % pid):
+            try:
+                link = os.readlink("/proc/%d/fd/%s" % (pid, name))
+            except OSError:
+                continue
+            if link.startswith("pipe:[") and link.endswith("]") and int(link[6:-1]) in inodes:
+                return True
+    except (OSError, ValueError):
+        pass
+    return False
+
+
+def reap_orphans(inodes=None):
     """Kill what this tool started and lost: a process of the tool's own group that is no longer below the tool (its parent ended and
-    init adopted it, so the walk from a program's pid cannot find it). Only when the tool leads its group (the harness starts a tool as
-    the leader of one), so that every other member of the group is something the tool's tree started; a tool run by hand in a shell's
-    group kills nothing here. A process outside the group is never looked at, and a pid is checked against the group again at the
-    moment it is signalled. Returns the pids signalled."""
+    init adopted it, so the walk from a program's pid cannot find it) and that the tool knows to be its own: it was seen below the tool
+    (SEEN: the programs it started, the trees it listed, the samples taken while it waited), or, on Linux, it holds one of `inodes`,
+    the pipes the tool made. A process the tool never saw in its tree is not touched, whoever leads the group: the next stage of a
+    pipeline the tool heads, or a process a launcher put in the group, is not the tool's. A process outside the group is never looked
+    at, and a pid is checked against the group again at the moment it is signalled. Returns the pids signalled."""
     me = os.getpid()
     try:
         if os.getpgrp() != me:
@@ -387,9 +442,12 @@ def reap_orphans():
     for pid, (parent, _group) in table.items():
         kids.setdefault(parent, []).append(pid)
     below = set(_below(kids, me))
+    on_linux = os.path.isdir("/proc/self")
     killed = []
     for pid, (_parent, group) in table.items():
         if group != me or pid == me or pid in below:
+            continue
+        if pid not in SEEN and not (inodes and on_linux and _holds_pipe(pid, inodes)):
             continue
         try:
             if os.getpgid(pid) != me:
@@ -413,6 +471,7 @@ def kill_tree(proc):
         pass
     try:
         victims = descendants(proc.pid)
+        SEEN.update(victims)
     finally:
         try:
             proc.kill()
@@ -456,6 +515,7 @@ def communicate_bounded(proc, seconds, input=None):
             timed_out = True
             kill_tree(proc)
             break
+        _sample(proc.pid)
         try:
             out, err = proc.communicate(None if started else input, timeout=max(0.01, min(0.2, deadline - now)))
             return out or b"", err or b"", False
@@ -466,7 +526,7 @@ def communicate_bounded(proc, seconds, input=None):
         out, err = proc.communicate(None if started else input, timeout=PIPE_GRACE)
     except subprocess.TimeoutExpired as exc:
         out, err = exc.stdout or b"", exc.stderr or b""
-        reap_orphans()
+        reap_orphans(_pipe_inodes(proc))
         for pipe in (proc.stdin, proc.stdout, proc.stderr):
             try:
                 if pipe is not None:
@@ -485,7 +545,9 @@ def kill_all():
     program forked a moment before it was entered in ACTIVE is among it. Then what an earlier program started and lost (reap_orphans)."""
     for proc in list(ACTIVE):
         kill_tree(proc)
-    for pid in descendants(os.getpid()):
+    below = descendants(os.getpid())
+    SEEN.update(below)
+    for pid in below:
         try:
             os.kill(pid, signal.SIGKILL)
         except OSError:

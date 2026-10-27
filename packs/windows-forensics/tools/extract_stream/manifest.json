@@ -31,7 +31,7 @@
   "by": "sfcc303",
   "at": "2026-10-07T12:00:00.000Z",
   "version": 6,
-  "sha256": "529b2cd4451d8551fad22cd7d22348828144ce280dcce610e680223a8acef8ca",
+  "sha256": "0fb96048a1434a7e56cc0e5371cdca0fa8b4a351dc728e6afab2c58a6d72b6fe",
   "requires": [
     "icat"
   ],

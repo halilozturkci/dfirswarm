@@ -105,7 +105,7 @@ export type StubOptions = {
   /** bytes of text the stub writes to each of its stdout and stderr */
   flood?: number;
   /** the stub starts `sleep <holdFor>`, which inherits its stdout and stderr (the engine's pipes), and writes that pid to holdPidFile */
-  hold?: { seconds: number; pidFile: string };
+  hold?: { seconds: number; pidFile: string; ownSession?: boolean };
   /** the stub ignores SIGTERM (it ends only when it is killed) */
   ignoreTerm?: boolean;
 };
@@ -133,7 +133,7 @@ if os.environ.get("STUB_PID"):
 print("stub memprocfs: initialising")
 if os.environ.get("STUB_HOLD"):
     import subprocess
-    kid = subprocess.Popen(["sleep", os.environ["STUB_HOLD"]])
+    kid = subprocess.Popen(["sleep", os.environ["STUB_HOLD"]], start_new_session=bool(os.environ.get("STUB_HOLD_SESSION")))
     open(os.environ["STUB_HOLD_PID"], "w").write(str(kid.pid))
 if os.environ.get("STUB_STDERR"):
     print(os.environ["STUB_STDERR"], file=sys.stderr, flush=True)
@@ -174,7 +174,7 @@ while True:
   return {
     PYTHONPATH: shim, STUB_TREE: tree, STUB_LOG: log, STUB_MODE: o.mode ?? "", STUB_LINKS: JSON.stringify(o.links ?? []),
     STUB_STDERR: o.stderrText ?? "", ...(o.pidFile ? { STUB_PID: o.pidFile } : {}), ...(o.flood ? { STUB_FLOOD: String(o.flood) } : {}),
-    ...(o.hold ? { STUB_HOLD: String(o.hold.seconds), STUB_HOLD_PID: o.hold.pidFile } : {}), ...(o.ignoreTerm ? { STUB_IGNORE_TERM: "1" } : {}),
+    ...(o.hold ? { STUB_HOLD: String(o.hold.seconds), STUB_HOLD_PID: o.hold.pidFile, ...(o.hold.ownSession ? { STUB_HOLD_SESSION: "1" } : {}) } : {}), ...(o.ignoreTerm ? { STUB_IGNORE_TERM: "1" } : {}),
   };
 }
 

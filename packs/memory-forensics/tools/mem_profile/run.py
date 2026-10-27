@@ -897,6 +897,8 @@ def emit(answer):
 
 
 def fail(message, **extra):
+    for page in list(PAGES):    # a page that was being written is dropped with its hidden temporary file, whatever ended the call
+        page.abort()
     emit({"error": message, "status": "failed",
           "status_basis": "the call was refused or ended before an answer; nothing in this document is a finding about the evidence", **extra})
     raise SystemExit(1)

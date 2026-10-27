@@ -57,7 +57,7 @@
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
   "version": 7,
-  "sha256": "8ee05aeac72d5f7213dd896176030752cc2723b7423d11ee061891495ae8d7d3",
+  "sha256": "f8a88f51907bb006918cd50a3b9e9d17b6a39197ace3bbdfa7a0bf4aa2e5e175",
   "use": {
     "extensions": [
       ".journal",
