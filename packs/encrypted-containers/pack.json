@@ -1,7 +1,7 @@
 {
   "id": "encrypted-containers",
   "name": "Encrypted Containers Pack",
-  "version": "1.6.2",
+  "version": "1.6.3",
   "description": "Telling one kind of encryption from another: volume headers and their key protectors, LUKS key slots, the container that has no signature at all, password-protected archives and documents, and where key material the case supplies may already be.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -45,12 +45,12 @@
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
       "README.md": "ebd3f5c5b564a63e5d31428458fac1bfe7d070c947b72cc8d54986d30db23bd6",
-      "tools/recovery_key_scan/manifest.json": "fd3c32bbe2c033a215802d6e3d6d42952c4ade53bc27d881f648707d01b0834c",
-      "tools/recovery_key_scan/run.py": "e962dc394c3509896f13194c37d6828f717466bacd6172700d50356d5e36887f",
-      "tools/archive_probe/manifest.json": "e6c8350867fc851c3b23973e90060c32b144f1c320fc410abaefc3418451631c",
-      "tools/archive_probe/run.py": "43b952432c4e8e92430969caba486db533839559101943b66b3b884c2aed1659",
-      "tools/crypto_id/manifest.json": "439e2b4d3644994a6f97d327e0041b9820713ae58dd83f8f9311e3384572efbb",
-      "tools/crypto_id/run.py": "704106ab6a009b237e963e416b9ef9d794272cacf61221a7707aca0b0e728713",
+      "tools/recovery_key_scan/manifest.json": "16a779d0d843fbdcc3cd3624db22ca71545525b5223c3210e28f29c9cf9ecea8",
+      "tools/recovery_key_scan/run.py": "843ea11bb6b6c8938f752480f0f8223eb393c4ac7337ff08ba1934b9b872dafc",
+      "tools/archive_probe/manifest.json": "15bc95cd0dc0f8d42be25987b420741c6de7d6b4d4fcc6d9269629f3a3965da5",
+      "tools/archive_probe/run.py": "93c33878856cf5e2e030d1bbcc310f599c31c989d9635acf00f34b3c824e890a",
+      "tools/crypto_id/manifest.json": "541e00b9327c71ec562aaf35ea2057b95223aacfd8cc8f37ada6784cbaedbbb1",
+      "tools/crypto_id/run.py": "3b90bffde9adfedb3031b2310a7d422b6a438101cf4d628a2c6b8ebfbd775f1d",
       "goals/what-is-locked.md": "0c9e1377f093ab6fe998a9502df2c351ed6a150edce2029f02517173348f59f2",
       "skills/identify/by-format.md": "6cb24899bf2988d40466415b8c3d24e2fa8297a1459a5f23e5638757428046d8",
       "skills/identify/headers.md": "63589019145d78b8f67d6ee21c11bf893b844cc02d36553c4393d8a08d87ad51",

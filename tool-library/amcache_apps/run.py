@@ -205,6 +205,9 @@ class NoReplacePage(LosslessPage):
 # BEGIN SHARED STOP
 # The same text is in regkv, shellbags and amcache_apps (held equal by a windows-forensics test). SIGTERM, SIGINT and SIGHUP end the tool with JSON (status
 # interrupted, exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
+# The handlers are in as soon as the module has run as far as this block, with a minimal last word until main() installs the tool's own (only
+# the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
+# first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written.
 import signal
 import time
 
@@ -220,7 +223,9 @@ def out_of_time():
 
 
 def _on_signal(signum, _frame):
-    for page in list(PAGES):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    for page in list(globals().get("PAGES", ())):
         tmp = getattr(page, "_tmp", None)
         if tmp is not None:
             try:
@@ -246,6 +251,20 @@ def interrupted_answer(signum, **extra):
     print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "interrupted",
                       "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
                       "signal": signum, **extra}), flush=True)
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back: a signal that came in the middle of the write would end the process there, with the
+    answer cut. The tool ends by itself right after, so a signal that is held is not lost for good."""
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    STOP["last_word"] = None
+    print(json.dumps(answer, **dumps_kwargs))
+
+
+install_signal_handlers(lambda signum: interrupted_answer(signum))
 # END SHARED STOP
 
 

@@ -44,8 +44,8 @@
   "example": "{\"path\": \"inputs/capture.pcap\", \"rules\": \"work/case.rules\", \"out_dir\": \"work/<your id>/suricata\"}",
   "by": "maintainer",
   "at": "2026-10-07T18:00:00.000Z",
-  "version": 6,
-  "sha256": "7582bfb695e59a7957ebd11e1df981466cd391a52adb6ab4f60921c42e83f7d5",
+  "version": 7,
+  "sha256": "75193c84a0a2d4604cd92a2e4e6604d8fddade49eb16d5d3b3dc7b682c41778e",
   "use": {
     "extensions": [
       ".pcap",

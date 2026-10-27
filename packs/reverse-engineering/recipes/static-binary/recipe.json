@@ -1,6 +1,6 @@
 {
   "id": "static-binary",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Catalogue a PE, ELF or Mach-O executable without running it: pe_info's structure (long tables kept whole in files) and a complete entropy profile, with a status taken from what the parsers say they read.",
   "object": "executable file",
   "order": 40,
@@ -76,5 +76,5 @@
   ],
   "purpose": "inventory",
   "covers": "Static headers, sections or segments, imports or linked libraries, and whole-file entropy, as far as the parsers' own status says (coverage.json: status, warnings, omissions, limits_hit, errors; a zero exit code is not completeness). It does not execute, unpack, decompile, verify a signature or claim observed behaviour.",
-  "sha256": "5be77d1d97e98078ce3b7d963c2a62890f4e11cb10adb90eeb1ebe76b92d8786"
+  "sha256": "55aa7f2a6456c39fb4eb04cecc52197e0820b65c1e231575915432fd3f10eebc"
 }

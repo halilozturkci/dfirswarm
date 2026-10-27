@@ -45,8 +45,8 @@
   "example": "{\"path\": \"work/extracted/system_logs.logarchive\", \"predicate\": \"process == \\\"sudo\\\"\", \"out_dir\": \"work/<your id>/ulog\"}",
   "by": "maintainer",
   "at": "2026-09-22T16:00:00.000Z",
-  "version": 4,
-  "sha256": "d122193ca42b65dd65cfaf93e4f778cd1b29400ff7ba91c7b8b65265b4647ef6",
+  "version": 5,
+  "sha256": "eb600e105d936ad1951aa234dd0600ab450134f649950494a5fba4c100f377cc",
   "requires": [
     "unifiedlog_iterator"
   ],

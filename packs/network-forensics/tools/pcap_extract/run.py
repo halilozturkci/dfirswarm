@@ -528,7 +528,12 @@ class SecretValues:
 # below a program this tool started and has not yet waited for is ever signalled: the walk starts at that program's pid
 # and nowhere else, and a program that has been waited for (its pid may be another process's by now) is left alone. The
 # walk has no bound but the number of processes. Two cases leave the tree running: a ps that needs more than PS_WAIT
-# seconds, and a sandbox that denies both libproc and ps (macOS).
+# seconds, and a sandbox that denies both libproc and ps (macOS). A stop signal is the one case that reaches further: it also
+# ends everything below the tool itself (a program that was forked a moment before it was entered in ACTIVE is among it) and, when
+# the tool leads its group, what the tool started and lost (reap_orphans). A program that has ended while something it started
+# still holds its pipes does not hold the tool: communicate_bounded gives the pipes PIPE_GRACE seconds and goes on without them.
+import time
+
 try:
     import ctypes
 except ImportError:  # pragma: no cover
@@ -592,6 +597,15 @@ def _below(kids, pid):
     return found
 
 
+def _libproc_works(pid):
+    """Whether an empty libproc answer for `pid` can be believed: libproc has just listed `pid` as this tool's own child, or, when `pid`
+    is the tool itself, has just listed the tool as its parent's child. A library that lists nothing for a live process is not working
+    (as in a sandbox that denies it)."""
+    if pid in (_children_libproc(os.getpid()) or []):
+        return True
+    return pid == os.getpid() and os.getpid() in (_children_libproc(os.getppid()) or [])
+
+
 def descendants(pid):
     """Every process below `pid` (never one beside it): from /proc where there is one, else from libproc, else from ps
     (given PS_WAIT seconds). libproc is believed when it lists a child; an empty answer is believed only when libproc has
@@ -619,7 +633,7 @@ def descendants(pid):
                             found.append(child)
                             stack.append(child)
                 return found
-            if first is not None and pid in (_children_libproc(os.getpid()) or []):
+            if first is not None and _libproc_works(pid):
                 return []
             out = subprocess.run(["ps", "-A", "-o", "pid=,ppid="], capture_output=True, text=True, timeout=PS_WAIT).stdout
             for line in out.splitlines():
@@ -631,17 +645,81 @@ def descendants(pid):
     return _below(kids, pid)
 
 
+def _process_table():
+    """{pid: (parent pid, process group)} for every process, from /proc where there is one, else from ps (given PS_WAIT seconds);
+    None when neither answers."""
+    table = {}
+    try:
+        if os.path.isdir("/proc/self"):
+            for entry in os.listdir("/proc"):
+                if entry.isdigit():
+                    try:
+                        with open("/proc/%s/stat" % entry, "rb") as fh:
+                            fields = fh.read().rsplit(b")", 1)[1].split()
+                        table[int(entry)] = (int(fields[1]), int(fields[2]))
+                    except (OSError, IndexError, ValueError):
+                        continue
+        else:
+            out = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,pgid="], capture_output=True, text=True, timeout=PS_WAIT).stdout
+            for line in out.splitlines():
+                parts = line.split()
+                if len(parts) == 3 and all(part.isdigit() for part in parts):
+                    table[int(parts[0])] = (int(parts[1]), int(parts[2]))
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return table
+
+
+def reap_orphans():
+    """Kill what this tool started and lost: a process of the tool's own group that is no longer below the tool (its parent ended and
+    init adopted it, so the walk from a program's pid cannot find it). Only when the tool leads its group (the harness starts a tool as
+    the leader of one), so that every other member of the group is something the tool's tree started; a tool run by hand in a shell's
+    group kills nothing here. A process outside the group is never looked at, and a pid is checked against the group again at the
+    moment it is signalled. Returns the pids signalled."""
+    me = os.getpid()
+    try:
+        if os.getpgrp() != me:
+            return []
+    except OSError:
+        return []
+    table = _process_table()
+    if not table:
+        return []
+    kids = {}
+    for pid, (parent, _group) in table.items():
+        kids.setdefault(parent, []).append(pid)
+    below = set(_below(kids, me))
+    killed = []
+    for pid, (_parent, group) in table.items():
+        if group != me or pid == me or pid in below:
+            continue
+        try:
+            if os.getpgid(pid) != me:
+                continue
+            os.kill(pid, signal.SIGKILL)
+            killed.append(pid)
+        except OSError:
+            pass
+    return killed
+
+
 def kill_tree(proc):
     """Kill the program and everything it started. The children are listed first: once the parent is gone they are
     adopted by init and can no longer be found below it. A program already waited for is not touched: its pid is free to
     be another process's, and the walk below it would be that process's children."""
     if proc.poll() is not None:
         return
-    victims = descendants(proc.pid)
     try:
-        proc.kill()
+        proc.send_signal(signal.SIGSTOP)    # a program that is stopped forks nothing more while its tree is listed
     except OSError:
         pass
+    try:
+        victims = descendants(proc.pid)
+    finally:
+        try:
+            proc.kill()
+        except OSError:
+            pass
     for pid in victims:
         try:
             os.kill(pid, signal.SIGKILL)
@@ -649,9 +727,64 @@ def kill_tree(proc):
             pass
 
 
-def _on_signal(signum, _frame):
+PIPE_GRACE = 1.0    # seconds the pipes of a program that has ended are given to reach end of file
+
+
+def communicate_bounded(proc, seconds, input=None):
+    """(stdout bytes, stderr bytes, timed out) for a program started with pipes, in bytes. At `seconds` the program and what it started
+    are killed (timed out). A program that has ended while something it started still holds its pipes (a daemon, a helper that
+    inherited them) does not hold the tool: the pipes are given PIPE_GRACE seconds, what the program wrote is kept, what the tool
+    lost is killed (reap_orphans), and the pipes are let go. The pipes are read here and by nothing else, so letting them go is safe."""
+    deadline = time.monotonic() + max(0.1, seconds)
+    out = err = b""
+    started, timed_out = False, False
+    while proc.poll() is None:
+        now = time.monotonic()
+        if now >= deadline:
+            timed_out = True
+            kill_tree(proc)
+            break
+        try:
+            out, err = proc.communicate(None if started else input, timeout=max(0.01, min(0.2, deadline - now)))
+            return out or b"", err or b"", False
+        except subprocess.TimeoutExpired as exc:
+            started = True
+            out, err = exc.stdout or b"", exc.stderr or b""
+    try:
+        out, err = proc.communicate(None if started else input, timeout=PIPE_GRACE)
+    except subprocess.TimeoutExpired as exc:
+        out, err = exc.stdout or b"", exc.stderr or b""
+        reap_orphans()
+        for pipe in (proc.stdin, proc.stdout, proc.stderr):
+            try:
+                if pipe is not None:
+                    pipe.close()
+            except (OSError, ValueError):
+                pass
+    try:
+        proc.wait(timeout=PIPE_GRACE)
+    except subprocess.TimeoutExpired:
+        pass
+    return out or b"", err or b"", timed_out
+
+
+def kill_all():
+    """End every program the tool has running, with what each started. Then everything below the tool itself, which is the tool's own: a
+    program forked a moment before it was entered in ACTIVE is among it. Then what an earlier program started and lost (reap_orphans)."""
     for proc in list(ACTIVE):
         kill_tree(proc)
+    for pid in descendants(os.getpid()):
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+    reap_orphans()
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)     # the first signal counts: a second one starts no second answer
+    kill_all()
     last_word = STATE.get("last_word")
     if last_word:
         try:
@@ -669,12 +802,8 @@ def preflight(argv, seconds):
         return None, b"", describe(exc).encode("utf-8", "replace"), False
     ACTIVE.append(proc)
     try:
-        out, err = proc.communicate(timeout=max(1.0, seconds))
-        return proc.returncode, out, err, False
-    except subprocess.TimeoutExpired:
-        kill_tree(proc)
-        out, err = proc.communicate()
-        return None, out, err, True
+        out, err, timed_out = communicate_bounded(proc, max(1.0, seconds))
+        return (None if timed_out else proc.returncode), out, err, timed_out
     finally:
         ACTIVE.remove(proc)
 
