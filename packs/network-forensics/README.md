@@ -40,8 +40,9 @@ secret that does not look like a token is not recognised; a hash, GUID or UUID
 is withheld too and recoverable in a job): run them as jobs with
 `secret_output: true`. Every answer of the six carries `status` (`complete`,
 `partial` or `failed`) and `status_basis`, exit 0 means the engine ran, and
-SIGTERM, SIGINT and SIGHUP end a tool with partial JSON. A
-flow export is identified and its semantics stated, not parsed.
+SIGTERM, SIGINT and SIGHUP end a tool with partial JSON. No flow
+export (NetFlow, IPFIX) is read by anything here: `skills/capture/what-you-have.md` says
+how to identify the producer and what its byte counters mean, and that is all.
 
 **One catalogue recipe.** `network-capture` detects pcap and pcapng by magic,
 then writes capture metadata and complete listings of the selected fields of
