@@ -11,15 +11,14 @@ Use only if you read a ZIP, 7-Zip, RAR, Office or PDF structure for its protecti
 
 **ZIP.** Read each member's protection from its own flags and fields: ZipCrypto,
 WinZip AES (strength and AE version come from the extra field) and other variants
-differ, and one archive can mix encrypted and plain members. The directory being
-readable is a separate finding from any member being encrypted. A name that is not valid text
-is shown escaped and does not hide the other members; a directory larger than
-`max_metadata_bytes`, or declared larger than the file, is not listed (`partial`). A comment can hold an End
+differ, and one archive can mix encrypted and plain members. A readable directory is
+a separate finding from any member being encrypted. A name that is not valid text
+is shown escaped; a directory over `max_metadata_bytes`, or larger than the file, is not listed (`partial`). A comment can hold an End
 record of its own, bytes can follow the archive, and a second archive can be appended (7-Zip lists the first,
 `zipfile` the last). When End records disagree (`end_records_disagree`), bytes that are not zeros follow the
-comment, an End record or a ZIP signature at byte 0 shows an archive in front (`archive_in_front`), or a member's flags differ
-between the directory and its local header (`local_header_flags`), the answer is `partial` and `protected`
-is not `false`.
+comment, anything shaped like an archive lies before the first member (`archive_in_front`, whatever shape its
+End record has), 7-Zip lists other members (`seven_zip_cross_check`), or a member's flags differ between the
+directory and its local header (`local_header_flags`), the answer is `partial` and `protected` is not `false`.
 
 **7-Zip and RAR.** Separate data encryption from header encryption. Printable strings
 in a header are not a member list: confirm names, sizes and encryption with a reader
@@ -29,8 +28,7 @@ without any password failure.
 **Time.** A ZIP member's `modified` is an MS-DOS local time with no zone and a
 two-second resolution (`timezone_unknown`); do not append UTC to it. A recorded
 extended or NTFS time is a separate field (`modified_utc`) with its source. Keep the
-raw fields, note conflicts, and remember that archive times are member metadata, not
-the time of collection or transfer.
+raw fields and note conflicts; archive times are member metadata, not the time of collection.
 
 **Office.** Separate encryption needed to open a document from editing restrictions,
 a write-reservation password and rights management. OOXML encryption sits in

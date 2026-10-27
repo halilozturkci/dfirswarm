@@ -7,6 +7,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
+import { crc32 } from "node:zlib";
 import { ROOT, runPy, withCwd } from "./tool-library-harness.ts";
 
 const ENC = join(ROOT, "packs", "encrypted-containers");
@@ -33,10 +34,12 @@ const DOS_TIME = (9 << 11) | (30 << 5) | 22;
 type Member = { name: string; flags?: number; localFlags?: number; data?: Buffer };
 
 /** A ZIP from the APPNOTE's record layouts. `localFlags` is the local header's flags where they are not the directory's. */
-function buildZip(members: Member[], opts: { disk?: number; cdDisk?: number; dropLocal?: boolean; zip64Extensible?: number } = {}): Buffer {
+type Mutation = "sigflip" | "cdsize+1" | "cdsize-1" | "cdsize0" | "digsig" | "noEnd" | "noDir" | "commentOverrun";
+
+function buildZip(members: Member[], opts: { disk?: number; cdDisk?: number; dropLocal?: boolean; zip64Extensible?: number; base?: number; mutate?: Mutation } = {}): Buffer {
   const parts: Buffer[] = [];
   const central: Buffer[] = [];
-  let at = 0;
+  let at = opts.base ?? 0; // the offsets count from the start of the file (`zip -A`) when a base is given
   for (const m of members) {
     const name = Buffer.from(m.name, "utf8");
     const data = m.data ?? Buffer.from("x");
@@ -65,13 +68,17 @@ function buildZip(members: Member[], opts: { disk?: number; cdDisk?: number; dro
   }
   const cd = Buffer.concat(central);
   const eocd = Buffer.alloc(22);
-  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt32LE(opts.mutate === "sigflip" ? 0x06054b51 : 0x06054b50, 0);
   eocd.writeUInt16LE(opts.disk ?? 0, 4);
   eocd.writeUInt16LE(opts.cdDisk ?? 0, 6);
   eocd.writeUInt16LE(members.length, 8);
   eocd.writeUInt16LE(members.length, 10);
-  eocd.writeUInt32LE(cd.length, 12);
+  eocd.writeUInt32LE(opts.mutate === "cdsize+1" ? cd.length + 1 : opts.mutate === "cdsize-1" ? cd.length - 1 : opts.mutate === "cdsize0" ? 0 : cd.length, 12);
   eocd.writeUInt32LE(at, 16);
+  if (opts.mutate === "commentOverrun") eocd.writeUInt16LE(4000, 20);
+  if (opts.mutate === "noDir") return Buffer.concat(parts);
+  if (opts.mutate === "noEnd") return Buffer.concat([...parts, cd]);
+  if (opts.mutate === "digsig") return Buffer.concat([...parts, cd, Buffer.from("PK\x05\x05", "latin1"), Buffer.from([16, 0]), Buffer.alloc(16, 0x53), eocd]);
   if (opts.zip64Extensible === undefined) return Buffer.concat([...parts, cd, eocd]);
   // A Zip64 end record with extensible data (its size field above 44), a locator, and an End record that points to both.
   const rec = Buffer.alloc(56 + opts.zip64Extensible);
@@ -216,36 +223,178 @@ test("archive_probe and crypto_id name doc_structure, not 'not available yet' or
   });
 });
 
-// --- P1-C: an archive in front of the one read, beyond the last 64 KiB ----------------------------------------------------
+// --- P1-C and what followed: the file is accounted for, not only checked for contradictions ------------------------------
+
+const FIRST = [{ name: "a.txt", flags: 1 }, { name: "b.txt", flags: 1 }, { name: "c.txt" }];
+const MZ_STUB = Buffer.concat([Buffer.from("MZ"), Buffer.alloc(2000, 0x90)]);
+const JUNK = Buffer.from(Array.from({ length: 50 }, (_, i) => (i * 37 + 11) & 0x7f | 0x20));
 
 test("archive_probe: a second archive appended, larger than the last 64 KiB, is not 'complete' with 'protected: false'", async () => {
   await withCwd(async (cwd) => {
-    const first = buildZip([{ name: "a.txt", flags: 1 }, { name: "b.txt", flags: 1 }, { name: "c.txt" }]);
+    const first = buildZip(FIRST);
     const second = buildZip(plain(3000));
     assert.ok(second.length > 200_000, "the second archive's directory is above 64 KiB");
     await writeFile(join(cwd, "work", "two.zip"), Buffer.concat([first, second]));
     const out = answer(await tool(PROBE, cwd, { path: "work/two.zip" }));
     assert.equal(out.status, "partial");
     assert.notEqual(out.protected, false);
-    assert.equal(out.archive_in_front.offset, 0);
-    assert.equal(out.archive_in_front.chosen_archive_begins, first.length);
-    assert.match(out.status_basis, /another archive lies in front/);
+    assert.equal(out.archive_in_front.at, 0);
+    assert.equal(out.archive_in_front.first_member_at, first.length);
+    assert.match(out.status_basis, /another archive, whole or damaged, shares this file/);
   });
 });
 
-test("archive_probe: a self-extracting stub or a plain archive in front of nothing stays complete", async () => {
+// The first archive in every shape 7-Zip still lists (a damaged End record, a missing one, no directory at all, a signature record between the
+// directory and the End record, an End record whose comment runs into the next archive, a Zip64 record with 450 bytes of extensible data), behind
+// every kind of prefix, and a second archive of either size behind it. None of them is a complete answer, and none says `protected: false`.
+test("archive_probe: an archive in front is found whatever shape its own End record has, behind any prefix, before a small or a big archive", async () => {
   await withCwd(async (cwd) => {
-    const zip = buildZip(plain(20));
-    // The offsets in a self-extracting archive count from the start of the file in some tools and from the start of the archive in others:
-    // here they count from the archive, as the tool allows for.
-    await writeFile(join(cwd, "work", "sfx.zip"), Buffer.concat([Buffer.from("MZ"), Buffer.alloc(998, 0x90), zip]));
-    await writeFile(join(cwd, "work", "one.zip"), zip);
-    for (const f of ["sfx.zip", "one.zip"]) {
-      const out = answer(await tool(PROBE, cwd, { path: `work/${f}` }));
-      assert.equal(out.status, "complete", f);
-      assert.equal(out.protected, false, f);
-      assert.equal(out.archive_in_front, undefined);
+    const shapes: Record<string, Buffer> = {
+      intact: buildZip(FIRST),
+      sigflip: buildZip(FIRST, { mutate: "sigflip" }),
+      "cdsize+1": buildZip(FIRST, { mutate: "cdsize+1" }),
+      "cdsize-1": buildZip(FIRST, { mutate: "cdsize-1" }),
+      cdsize0: buildZip(FIRST, { mutate: "cdsize0" }),
+      digsig: buildZip(FIRST, { mutate: "digsig" }),
+      noEnd: buildZip(FIRST, { mutate: "noEnd" }),
+      noDir: buildZip(FIRST, { mutate: "noDir" }),
+      commentOverrun: buildZip(FIRST, { mutate: "commentOverrun" }),
+      zip64ext450: buildZip(FIRST, { zip64Extensible: 450 }),
+    };
+    const prefixes: Record<string, Buffer> = { none: Buffer.alloc(0), mz: MZ_STUB, junk: JUNK, spanning: Buffer.from("PK\x07\x08", "latin1"), pk00: Buffer.from("PK00", "latin1") };
+    const backs: Record<string, Buffer> = { big: buildZip(plain(3000)), small: buildZip(plain(1)) };
+    let cases = 0;
+    for (const [shape, front] of Object.entries(shapes)) {
+      for (const [pn, prefix] of Object.entries(prefixes)) {
+        for (const [bn, back] of Object.entries(backs)) {
+          const name = `${shape}-${pn}-${bn}.bin`;
+          await writeFile(join(cwd, "work", name), Buffer.concat([prefix, front, back]));
+          const out = answer(await tool(PROBE, cwd, { path: `work/${name}` }));
+          cases++;
+          assert.notEqual(out.status, "complete", name);
+          assert.notEqual(out.protected, false, name);
+        }
+      }
     }
+    assert.equal(cases, 100);
+  });
+});
+
+// The last archive's offsets count from the start of the file (what `zip -A` and `zip -F` write), so that the first member is not where a
+// bound computed from the End record's offset would put the front of the archive.
+test("archive_probe: an archive in front of one whose offsets are absolute is found (zip -A)", async () => {
+  await withCwd(async (cwd) => {
+    const first = buildZip(FIRST);
+    for (const [pn, prefix] of [["none", Buffer.alloc(0)], ["mz", MZ_STUB], ["junk", JUNK]] as const) {
+      for (const n of [1, 3000]) {
+        const second = buildZip(plain(n), { base: prefix.length + first.length });
+        await writeFile(join(cwd, "work", `abs-${pn}-${n}.bin`), Buffer.concat([prefix, first, second]));
+        const out = answer(await tool(PROBE, cwd, { path: `work/abs-${pn}-${n}.bin` }));
+        assert.notEqual(out.status, "complete", `${pn} ${n}`);
+        assert.notEqual(out.protected, false, `${pn} ${n}`);
+        assert.equal(out.archive_in_front.first_member_at, prefix.length + first.length, `${pn} ${n}`);
+        assert.equal(out.entry_count, n);
+      }
+    }
+    // Absolute offsets alone (an adjusted self-extracting archive) are the archive and nothing else: complete.
+    const adjusted = Buffer.concat([MZ_STUB, buildZip(plain(20), { base: MZ_STUB.length })]);
+    await writeFile(join(cwd, "work", "adjusted.exe"), adjusted);
+    const ok = answer(await tool(PROBE, cwd, { path: "work/adjusted.exe" }));
+    assert.deepEqual([ok.status, ok.protected, ok.entry_count], ["complete", false, 20]);
+  });
+});
+
+// Another format in front: a 7-Zip start header (with its CRC right) and a RAR block (with its CRC right).
+test("archive_probe: a 7-Zip or RAR archive in front of a ZIP is found", async () => {
+  await withCwd(async (cwd) => {
+    const startHeader = Buffer.alloc(32);
+    Buffer.from([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c, 0x00, 0x04]).copy(startHeader, 0);
+    startHeader.writeUInt32LE(crc32(startHeader.subarray(12, 32)), 8);
+    const rar5body = Buffer.from([0x03, 0x01, 0x00, 0x00]); // header size 3, type 1 (main), flags 0, archive flags 0
+    const rar5 = Buffer.alloc(8 + 4 + 4);
+    Buffer.from("Rar!\x1a\x07\x01\x00", "latin1").copy(rar5, 0);
+    rar5.writeUInt32LE(crc32(rar5body), 8);
+    rar5body.copy(rar5, 12);
+    const second = buildZip(plain(3000));
+    for (const [label, front] of [["7z", startHeader], ["rar5", rar5]] as const) {
+      for (const [pn, prefix] of [["none", Buffer.alloc(0)], ["mz", MZ_STUB], ["junk", JUNK]] as const) {
+        await writeFile(join(cwd, "work", `${label}-${pn}.bin`), Buffer.concat([prefix, front, Buffer.alloc(40, 0x61), second]));
+        const out = answer(await tool(PROBE, cwd, { path: `work/${label}-${pn}.bin` }));
+        // With the 7z or the RAR at byte 0 the file is read as that format (no ZIP is read at all).
+        if (out.container === "ZIP") assert.notEqual(out.status, "complete", `${label} ${pn}`);
+        assert.notEqual(out.protected, false, `${label} ${pn}`);
+      }
+    }
+  });
+});
+
+test("archive_probe: self-extracting stubs, executables and polyglots in front of one archive stay complete", async () => {
+  await withCwd(async (cwd) => {
+    const zip = buildZip(plain(3000));
+    const enc = buildZip([{ name: "a.txt", flags: 1 }, { name: "b.txt" }]);
+    // An unzip stub holds the record signatures as constants, and nothing that follows them is a record.
+    const unzipStub = Buffer.concat([Buffer.from("MZ"), Buffer.alloc(300, 0x90), Buffer.from("PK\x05\x06"), Buffer.from("PK\x03\x04PK\x01\x02PK\x06\x06PK\x06\x07"), Buffer.alloc(5000, 0x41), Buffer.from("PK\x05\x06\x00\x00\x00\x00\x03\x00\x03\x00"), Buffer.alloc(2000, 0x42)]);
+    // The all-zero End record of a ZIP library (python's zipimport, libzip): an empty archive, which holds no member.
+    const zipLibrary = Buffer.concat([Buffer.from("\x7fELF"), Buffer.alloc(100, 0x07), Buffer.from("PK\x05\x06"), Buffer.alloc(18), Buffer.alloc(100, 0x07)]);
+    const stubs: Record<string, Buffer> = {
+      unzip_stub: unzipStub,
+      zip_library: zipLibrary,
+      elf: Buffer.concat([Buffer.from("\x7fELF"), Buffer.alloc(4000, 0x07)]),
+      shell: Buffer.from("#!/bin/sh\nexec java -jar \"$0\" \"$@\"\n"),
+      png_polyglot: Buffer.concat([Buffer.from("\x89PNG\r\n\x1a\n"), Buffer.alloc(100_000, 0x5a)]),
+    };
+    for (const [name, stub] of Object.entries(stubs)) {
+      for (const [label, archive, protectedWant, abs] of [["plain", zip, false, false], ["encrypted", enc, true, false], ["adjusted", buildZip(plain(20), { base: stub.length }), false, true]] as const) {
+        await writeFile(join(cwd, "work", `${name}-${label}.bin`), Buffer.concat([stub, archive]));
+        const out = answer(await tool(PROBE, cwd, { path: `work/${name}-${label}.bin` }));
+        assert.equal(out.status, "complete", `${name} ${label}: ${out.status_basis}`);
+        assert.equal(out.protected, protectedWant, `${name} ${label}`);
+        assert.equal(out.archive_in_front, undefined, abs ? `${name} ${label}` : label);
+        assert.equal(out.front_unsearched, undefined);
+      }
+    }
+  });
+});
+
+test("archive_probe: bytes in front of the first member that hold more archive signatures than can be checked are named as not searched, and the answer is partial", async () => {
+  await withCwd(async (cwd) => {
+    const stub = Buffer.concat([Buffer.from("MZ"), ...Array.from({ length: 20_500 }, () => Buffer.from("PK\x05\x06xxxxxxxxxxxxxxxxxx"))]);
+    await writeFile(join(cwd, "work", "many.bin"), Buffer.concat([stub, buildZip(plain(10))]));
+    const out = answer(await tool(PROBE, cwd, { path: "work/many.bin" }));
+    assert.equal(out.status, "partial");
+    assert.notEqual(out.protected, false);
+    assert.match(out.front_unsearched.why, /more than 20000 archive signatures/);
+  });
+});
+
+// 7-Zip is a second reader: where it reads the file as a ZIP and lists other members, or reads it as another format, the answer is partial.
+test("archive_probe compares what 7-Zip lists with what it read: a different count, a different format and a listing that does not finish are partial", async () => {
+  await withCwd(async (cwd, bin) => {
+    await writeFile(join(cwd, "work", "two.zip"), buildZip([{ name: "a.txt" }, { name: "b.txt" }]));
+    const listing = (type: string, members: number, encrypted: number) => {
+      const rows = Array.from({ length: members }, (_, i) => `Path = m${i}\nSize = 1\nEncrypted = ${i < encrypted ? "+" : "-"}\n\n`).join("");
+      return `\n--\nPath = two.zip\nType = ${type}\nPhysical Size = 1\n\n----------\n${rows}`;
+    };
+    const cases: Array<[string, string, string]> = [
+      ["same", listing("zip", 2, 0), "complete"],
+      ["more members", listing("zip", 3, 1), "partial"],
+      ["an encrypted member", listing("zip", 2, 1), "partial"],
+      ["another format", listing("7z", 2, 0), "partial"],
+      ["a program (a stub)", listing("PE", 5, 0), "complete"],
+    ];
+    for (const [label, body, want] of cases) {
+      await writeFile(join(bin, "7z"), `#!/bin/sh\nprintf '${body.replace(/\n/g, "\\n")}'\nexit 0\n`);
+      await chmod(join(bin, "7z"), 0o755);
+      const out = answer(await tool(PROBE, cwd, { path: "work/two.zip" }, {}, bin));
+      assert.equal(out.status, want, label);
+      if (want === "partial") assert.notEqual(out.protected, false, label);
+    }
+    // A 7-Zip that does not finish within the tool's clock.
+    await writeFile(join(bin, "7z"), "#!/bin/sh\nprintf '\\n--\\nPath = two.zip\\nType = zip\\n\\n----------\\n'\nexec sleep 20\n");
+    await chmod(join(bin, "7z"), 0o755);
+    const slow = answer(await tool(PROBE, cwd, { path: "work/two.zip", max_seconds: 2 }, {}, bin));
+    assert.equal(slow.status, "partial");
+    assert.notEqual(slow.protected, false);
   });
 });
 
@@ -380,66 +529,6 @@ test("recovery_key_scan prints exactly one JSON document when the page file cann
 
 // --- Verification of the first fixes (PR #216): the same bugs through variants ------------------------------------------------
 
-// N1: the first archive does not start with a ZIP signature (a stub, junk, a spanning marker), and the second one has a big directory.
-test("archive_probe: an archive in front that does not start with a ZIP signature is found from its End record, beyond the last 64 KiB", async () => {
-  await withCwd(async (cwd) => {
-    const first = buildZip([{ name: "a.txt", flags: 1 }, { name: "b.txt", flags: 1 }, { name: "c.txt" }]);
-    const second = buildZip(plain(3000));
-    assert.ok(second.length > 200_000);
-    const front: Record<string, Buffer> = {
-      mz_stub: Buffer.concat([Buffer.from("MZ"), Buffer.alloc(2000, 0x90)]),
-      junk: Buffer.from(Array.from({ length: 50 }, (_, i) => (i * 37 + 11) & 0xff)),
-      spanning_marker: Buffer.from("PK\x07\x08", "latin1"),
-    };
-    for (const [name, prefix] of Object.entries(front)) {
-      await writeFile(join(cwd, "work", `${name}.bin`), Buffer.concat([prefix, first, second]));
-      const out = answer(await tool(PROBE, cwd, { path: `work/${name}.bin` }));
-      assert.equal(out.status, "partial", name);
-      assert.notEqual(out.protected, false, name);
-      assert.equal(out.archive_in_front.found_by, "an End record before the archive read", name);
-      assert.equal(out.archive_in_front.chosen_archive_begins, prefix.length + first.length, name);
-      assert.equal(out.archive_in_front.offset, prefix.length, name);
-      assert.match(out.status_basis, /another archive lies at byte|End record of another archive/, name);
-    }
-  });
-});
-
-test("archive_probe: self-extracting stubs, executables and polyglots in front of one archive stay complete", async () => {
-  await withCwd(async (cwd) => {
-    const zip = buildZip(plain(3000));
-    const enc = buildZip([{ name: "a.txt", flags: 1 }, { name: "b.txt" }]);
-    // An unzip stub holds the record signatures as constants, and nothing that follows them is a directory.
-    const unzipStub = Buffer.concat([Buffer.from("MZ"), Buffer.alloc(300, 0x90), Buffer.from("PK\x05\x06"), Buffer.from("PK\x03\x04PK\x01\x02PK\x06\x06PK\x06\x07"), Buffer.alloc(5000, 0x41), Buffer.from("PK\x05\x06\x00\x00\x00\x00\x03\x00\x03\x00"), Buffer.alloc(2000, 0x42)]);
-    const stubs: Record<string, Buffer> = {
-      unzip_stub: unzipStub,
-      elf: Buffer.concat([Buffer.from("\x7fELF"), Buffer.alloc(4000, 0x07)]),
-      shell: Buffer.from("#!/bin/sh\nexec java -jar \"$0\" \"$@\"\n"),
-      png_polyglot: Buffer.concat([Buffer.from("\x89PNG\r\n\x1a\n"), Buffer.alloc(100_000, 0x5a)]),
-    };
-    for (const [name, stub] of Object.entries(stubs)) {
-      for (const [label, archive, protectedWant] of [["plain", zip, false], ["encrypted", enc, true]] as const) {
-        await writeFile(join(cwd, "work", `${name}-${label}.bin`), Buffer.concat([stub, archive]));
-        const out = answer(await tool(PROBE, cwd, { path: `work/${name}-${label}.bin` }));
-        assert.equal(out.status, "complete", `${name} ${label}: ${out.status_basis}`);
-        assert.equal(out.protected, protectedWant, `${name} ${label}`);
-        assert.equal(out.archive_in_front, undefined);
-        assert.equal(out.front_unsearched, undefined);
-      }
-    }
-  });
-});
-
-test("archive_probe: bytes in front of the archive that hold too many End record signatures to check are named as not searched, and the answer is partial", async () => {
-  await withCwd(async (cwd) => {
-    const stub = Buffer.concat([Buffer.from("MZ"), ...Array.from({ length: 2500 }, () => Buffer.from("PK\x05\x06xxxxxxxxxxxxxxxxxx"))]);
-    await writeFile(join(cwd, "work", "many.bin"), Buffer.concat([stub, buildZip(plain(10))]));
-    const out = answer(await tool(PROBE, cwd, { path: "work/many.bin" }));
-    assert.equal(out.status, "partial");
-    assert.notEqual(out.protected, false);
-    assert.match(out.front_unsearched.why, /more than 2000 End record signatures/);
-  });
-});
-
 // The Zip64 end record with extensible data in a file whose stub's offsets were not adjusted, and a fake End record in the comment.
 test("archive_probe: a Zip64 end record with extensible data behind an unadjusted stub is read, and a fake End record in its comment is named", async () => {
   await withCwd(async (cwd) => {
@@ -499,5 +588,43 @@ test("archive_probe lists a plain 7-Zip archive with an encrypted one appended a
     const out = answer(await tool(PROBE, cwd, { path: "work/both.7z" }));
     assert.notEqual(out.status, "complete");
     assert.notEqual(out.protected, false);
+  });
+});
+
+// --- The 7-Zip listing: protected is false only of a whole listing -------------------------------------------------------------
+
+test("archive_probe: a 7-Zip listing the clock cut never says protected: false", async () => {
+  await withCwd(async (cwd, bin) => {
+    await sevenArchive(cwd, "big.7z");
+    const rows = Array.from({ length: 50 }, (_, i) => `Path = a${i}\\nSize = 1\\nEncrypted = -\\n\\n`).join("");
+    await writeFile(join(bin, "7z"), `#!/bin/sh\nprintf '\\n--\\nPath = big.7z\\nType = 7z\\n\\n----------\\n${rows}'\nexec sleep 20\n`);
+    await chmod(join(bin, "7z"), 0o755);
+    const out = answer(await tool(PROBE, cwd, { path: "work/big.7z", max_seconds: 2 }, {}, bin));
+    assert.equal(out.listing.status, "timed_out");
+    assert.equal(out.status, "partial");
+    assert.equal(out.protected, null);
+    assert.ok(out.member_count > 0, "the members read before the stop are still listed");
+  });
+});
+
+test("archive_probe: a truncated plain 7z called 'wrong password.7z' is not a header that 7-Zip says is encrypted", async () => {
+  await withCwd(async (cwd, bin) => {
+    // A start header that points past the end of the file: the archive is cut short.
+    const start = Buffer.alloc(32);
+    Buffer.from([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c, 0x00, 0x04]).copy(start, 0);
+    start.writeBigUInt64LE(100n, 12);
+    start.writeBigUInt64LE(50n, 20);
+    start.writeUInt32LE(crc32(start.subarray(12, 32)), 8);
+    for (const name of ["wrong password.7z", "Cannot open encrypted archive.7z"]) {
+      await writeFile(join(cwd, "work", name), start);
+      // 7-Zip echoes the path on its error line, as it does, and says what is wrong with the file.
+      await writeFile(join(bin, "7z"), `#!/bin/sh\nlast=""\nfor a in "$@"; do last="$a"; done\nprintf '\\nListing archive: %s\\n\\nERROR: %s : Unexpected end of archive\\n\\nErrors: 1\\n' "$last" "$last"\nexit 2\n`);
+      await chmod(join(bin, "7z"), 0o755);
+      const out = answer(await tool(PROBE, cwd, { path: `work/${name}` }, {}, bin));
+      assert.equal(out.status, "partial", name);
+      assert.notEqual(out.header_encrypted, true, name);
+      assert.notEqual(out.protected, true, name);
+      assert.doesNotMatch(out.status_basis, /header is encrypted/, name);
+    }
   });
 });

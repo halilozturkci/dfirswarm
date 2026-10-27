@@ -1315,7 +1315,10 @@ test("archive_probe answers a ZIP the same whether 7z is installed or not, and w
         assert.deepEqual([cut.container, cut.listing, cut.protected], ["ZIP", "failed", null], where);
       }
     }
-    // The 7z stand-in is never run for a ZIP: its argument record was not written.
-    assert.equal(await stat(join(bin, "7z-args.txt")).then(() => true, () => false), false);
+    // The 7z stand-in is run for a ZIP only to count what it lists (a second reader, never the source of the answer), without a password
+    // prompt and without expanding the name; it cannot open these files, so it changes no answer above.
+    const asked = (await readFile(join(bin, "7z-args.txt"), "utf8")).trimEnd().split("\n");
+    assert.deepEqual(asked.slice(0, 3), ["l", "-slt", "-y"]);
+    assert.ok(asked.includes("-spd"));
   });
 });

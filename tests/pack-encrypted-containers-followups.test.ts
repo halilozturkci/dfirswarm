@@ -299,7 +299,7 @@ test("archive_probe names a sound archive that lies wholly before the one that e
     assert.deepEqual(both.end_records_disagree.others.map((o: Json) => o.entries), [6]);
     assert.equal(both.end_records_disagree.others[0].offset, a.length - 22);
     assert.match(both.status_basis, /other End record with a different directory/);
-    assert.match(both.not_determined[0], /which End record is the archive's/);
+    assert.ok(both.not_determined.some((n: string) => /which End record is the archive's/.test(n)));
     // The other way round (the larger archive last) and three archives: every earlier archive is named.
     const rev = await listed("b-then-a.zip", Buffer.concat([b, a]));
     assert.deepEqual([rev.status, rev.entry_count, rev.encrypted_entries, rev.end_records_disagree.others.length], ["partial", 6, 5, 1]);
