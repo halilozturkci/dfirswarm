@@ -811,16 +811,25 @@ class LosslessPage:
         return result
 
     def abort(self) -> None:
-        """Drop the hidden temporary file of a run that failed part way."""
-        if self._out is not None:
-            self._out.close()
-            self._out = None
-        if self._tmp is not None:
-            try:
-                os.unlink(self._tmp)
-            except FileNotFoundError:
-                pass
-            self._tmp = None
+        """Drop the hidden temporary file of a run that failed part way. Closing the file flushes what is buffered, and on a full disk
+        (or past a quota) that raises: the file is unlinked all the same, and the error is not the caller's to meet while it is
+        already giving up the page."""
+        out, tmp = self._out, self._tmp
+        self._out = None
+        try:
+            if out is not None:
+                out.close()
+        except OSError:
+            pass
+        finally:
+            if tmp is not None:
+                try:
+                    os.unlink(tmp)
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    pass
+                self._tmp = None
 
     def keep_partial(self):
         """Close the temporary file and give it a visible name ending in .partial (never replacing a file); returns the
@@ -891,6 +900,8 @@ def emit(answer):
 
 
 def fail(message, **extra):
+    for page in list(PAGES):    # a page that was being written is dropped with its hidden temporary file, whatever ended the call
+        page.abort()
     emit({"error": message, "status": "failed",
           "status_basis": "the call was refused or ended before an answer; nothing in this document is a finding about the evidence", **extra})
     raise SystemExit(1)

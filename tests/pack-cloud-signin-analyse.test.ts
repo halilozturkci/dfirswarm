@@ -333,7 +333,7 @@ test("a path that is a directory, a missing path and an unsupported file are JSO
     const bad = refused(await tool(SIGNIN, cwd, { path: "work/ev/x.json" }));
     assert.equal(bad.status, "failed");
     assert.equal(bad.coverage.records_rejected, 1);
-    assert.match(bad.file_problems.join(" "), /not a sign-in record: none of a user, a time, an address or a result/);
+    assert.match(bad.file_problems.join(" "), /not a sign-in record: it says fewer than two of who tried, a result, an address/);
   });
 });
 

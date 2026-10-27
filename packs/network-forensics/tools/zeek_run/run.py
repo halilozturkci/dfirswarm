@@ -55,10 +55,13 @@ import sys
 import time
 from pathlib import Path
 
-TOOL = {"name": "zeek_run", "version": 5}
+TOOL = {"name": "zeek_run", "version": 7}
 PARSER = "zeek_run/5"
 DEFAULT_TIMEOUT = 900
 MAX_TIMEOUT = 1100            # the manifest's outer limit is 1200
+MANIFEST_SECONDS = 1200       # the manifest's limit: the tool's own clock for reading the logs ends READ_MARGIN seconds before it
+READ_MARGIN = 30              # kept for building and printing the answer after the last log was read
+CLOCK_BYTES = 1 << 20         # the reading clock is also looked at after this many bytes of log
 DEFAULT_POLICIES = ["policy/frameworks/files/hash-all-files"]
 SCRIPT_NAME = "network-forensics.local.zeek"
 MAX_LINE = 16 << 20            # a log line longer than this is located, not read
@@ -410,7 +413,14 @@ def resolve_output(out, what="output"):
 # below a program this tool started and has not yet waited for is ever signalled: the walk starts at that program's pid
 # and nowhere else, and a program that has been waited for (its pid may be another process's by now) is left alone. The
 # walk has no bound but the number of processes. Two cases leave the tree running: a ps that needs more than PS_WAIT
-# seconds, and a sandbox that denies both libproc and ps (macOS).
+# seconds, and a sandbox that denies both libproc and ps (macOS). A stop signal is the one case that reaches further: it also
+# ends everything below the tool itself (a program that was forked a moment before it was entered in ACTIVE is among it) and what
+# the tool started and lost (reap_orphans): a process that was seen below the tool, in the tool's own group, and whose parent has since
+# ended. Nothing else is ever ended: a process the tool never saw in its tree (the next stage of a pipeline the tool heads, a process a
+# launcher put in the group) is left alone, whoever leads the group. A program that has ended while something it started still
+# holds its pipes does not hold the tool: communicate_bounded gives the pipes PIPE_GRACE seconds and goes on without them.
+import time
+
 try:
     import ctypes
 except ImportError:  # pragma: no cover
@@ -418,6 +428,7 @@ except ImportError:  # pragma: no cover
 
 STATE = {"last_word": None}    # what to do, with the signal number, when the tool is stopped by a signal
 ACTIVE = []                    # the programs running now
+SEEN = set()                   # the pids seen below a program this tool started: the only ones reap_orphans may end once their parent is gone
 
 def _die_with_parent():  # runs in the child between fork and exec
     try:
@@ -430,7 +441,9 @@ def spawn(argv, **kwargs):
     kwargs.setdefault("stdin", subprocess.DEVNULL)
     if sys.platform.startswith("linux") and ctypes is not None:
         kwargs["preexec_fn"] = _die_with_parent
-    return subprocess.Popen(argv, **kwargs)
+    proc = subprocess.Popen(argv, **kwargs)
+    SEEN.add(proc.pid)
+    return proc
 
 
 def _children_libproc(pid):
@@ -474,6 +487,15 @@ def _below(kids, pid):
     return found
 
 
+def _libproc_works(pid):
+    """Whether an empty libproc answer for `pid` can be believed: libproc has just listed `pid` as this tool's own child, or, when `pid`
+    is the tool itself, has just listed the tool as its parent's child. A library that lists nothing for a live process is not working
+    (as in a sandbox that denies it)."""
+    if pid in (_children_libproc(os.getpid()) or []):
+        return True
+    return pid == os.getpid() and os.getpid() in (_children_libproc(os.getppid()) or [])
+
+
 def descendants(pid):
     """Every process below `pid` (never one beside it): from /proc where there is one, else from libproc, else from ps
     (given PS_WAIT seconds). libproc is believed when it lists a child; an empty answer is believed only when libproc has
@@ -501,7 +523,7 @@ def descendants(pid):
                             found.append(child)
                             stack.append(child)
                 return found
-            if first is not None and pid in (_children_libproc(os.getpid()) or []):
+            if first is not None and _libproc_works(pid):
                 return []
             out = subprocess.run(["ps", "-A", "-o", "pid=,ppid="], capture_output=True, text=True, timeout=PS_WAIT).stdout
             for line in out.splitlines():
@@ -513,17 +535,134 @@ def descendants(pid):
     return _below(kids, pid)
 
 
+def _process_table():
+    """{pid: (parent pid, process group)} for every process, from /proc where there is one, else from ps (given PS_WAIT seconds);
+    None when neither answers."""
+    table = {}
+    try:
+        if os.path.isdir("/proc/self"):
+            for entry in os.listdir("/proc"):
+                if entry.isdigit():
+                    try:
+                        with open("/proc/%s/stat" % entry, "rb") as fh:
+                            fields = fh.read().rsplit(b")", 1)[1].split()
+                        table[int(entry)] = (int(fields[1]), int(fields[2]))
+                    except (OSError, IndexError, ValueError):
+                        continue
+        else:
+            out = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,pgid="], capture_output=True, text=True, timeout=PS_WAIT).stdout
+            for line in out.splitlines():
+                parts = line.split()
+                if len(parts) == 3 and all(part.isdigit() for part in parts):
+                    table[int(parts[0])] = (int(parts[1]), int(parts[2]))
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return table
+
+
+def _sample(pid):
+    """Remember what is below `pid` now, by the cheap routes only (/proc, or libproc on macOS; never a program): a process that is seen
+    here and later loses its parent is the tool's to end, and one that was never seen is not."""
+    try:
+        if os.path.isdir("/proc/self"):
+            kids = {}
+            for child, (parent, _group) in (_process_table() or {}).items():
+                kids.setdefault(parent, []).append(child)
+            SEEN.update(_below(kids, pid))
+        else:
+            seen, stack = {pid}, [pid]
+            while stack:
+                for child in _children_libproc(stack.pop()) or []:
+                    if child not in seen:
+                        seen.add(child)
+                        stack.append(child)
+            SEEN.update(seen - {pid})
+    except Exception:  # noqa: BLE001 - a sample is best effort
+        pass
+
+
+def _pipe_inodes(proc):
+    """The inodes of the pipes the tool holds with `proc` (Linux: /proc names a pipe by it; elsewhere the answer is not used)."""
+    found = set()
+    for handle in (proc.stdin, proc.stdout, proc.stderr):
+        try:
+            if handle is not None:
+                found.add(os.fstat(handle.fileno()).st_ino)
+        except (OSError, ValueError):
+            pass
+    return found
+
+
+def _holds_pipe(pid, inodes):
+    """Whether `pid` holds one of the pipes (Linux only, from /proc/<pid>/fd): the pipes are private to the tool and what it started."""
+    try:
+        for name in os.listdir("/proc/%d/fd" % pid):
+            try:
+                link = os.readlink("/proc/%d/fd/%s" % (pid, name))
+            except OSError:
+                continue
+            if link.startswith("pipe:[") and link.endswith("]") and int(link[6:-1]) in inodes:
+                return True
+    except (OSError, ValueError):
+        pass
+    return False
+
+
+def reap_orphans(inodes=None):
+    """Kill what this tool started and lost: a process of the tool's own group that is no longer below the tool (its parent ended and
+    init adopted it, so the walk from a program's pid cannot find it) and that the tool knows to be its own: it was seen below the tool
+    (SEEN: the programs it started, the trees it listed, the samples taken while it waited), or, on Linux, it holds one of `inodes`,
+    the pipes the tool made. A process the tool never saw in its tree is not touched, whoever leads the group: the next stage of a
+    pipeline the tool heads, or a process a launcher put in the group, is not the tool's. A process outside the group is never looked
+    at, and a pid is checked against the group again at the moment it is signalled. Returns the pids signalled."""
+    me = os.getpid()
+    try:
+        if os.getpgrp() != me:
+            return []
+    except OSError:
+        return []
+    table = _process_table()
+    if not table:
+        return []
+    kids = {}
+    for pid, (parent, _group) in table.items():
+        kids.setdefault(parent, []).append(pid)
+    below = set(_below(kids, me))
+    on_linux = os.path.isdir("/proc/self")
+    killed = []
+    for pid, (_parent, group) in table.items():
+        if group != me or pid == me or pid in below:
+            continue
+        if pid not in SEEN and not (inodes and on_linux and _holds_pipe(pid, inodes)):
+            continue
+        try:
+            if os.getpgid(pid) != me:
+                continue
+            os.kill(pid, signal.SIGKILL)
+            killed.append(pid)
+        except OSError:
+            pass
+    return killed
+
+
 def kill_tree(proc):
     """Kill the program and everything it started. The children are listed first: once the parent is gone they are
     adopted by init and can no longer be found below it. A program already waited for is not touched: its pid is free to
     be another process's, and the walk below it would be that process's children."""
     if proc.poll() is not None:
         return
-    victims = descendants(proc.pid)
     try:
-        proc.kill()
+        proc.send_signal(signal.SIGSTOP)    # a program that is stopped forks nothing more while its tree is listed
     except OSError:
         pass
+    try:
+        victims = descendants(proc.pid)
+        SEEN.update(victims)
+    finally:
+        try:
+            proc.kill()
+        except OSError:
+            pass
     for pid in victims:
         try:
             os.kill(pid, signal.SIGKILL)
@@ -531,9 +670,67 @@ def kill_tree(proc):
             pass
 
 
-def _on_signal(signum, _frame):
+PIPE_GRACE = 1.0    # seconds the pipes of a program that has ended are given to reach end of file
+
+
+def communicate_bounded(proc, seconds, input=None):
+    """(stdout bytes, stderr bytes, timed out) for a program started with pipes, in bytes. At `seconds` the program and what it started
+    are killed (timed out). A program that has ended while something it started still holds its pipes (a daemon, a helper that
+    inherited them) does not hold the tool: the pipes are given PIPE_GRACE seconds, what the program wrote is kept, what the tool
+    lost is killed (reap_orphans), and the pipes are let go. The pipes are read here and by nothing else, so letting them go is safe."""
+    deadline = time.monotonic() + max(0.1, seconds)
+    out = err = b""
+    started, timed_out = False, False
+    while proc.poll() is None:
+        now = time.monotonic()
+        if now >= deadline:
+            timed_out = True
+            kill_tree(proc)
+            break
+        _sample(proc.pid)
+        try:
+            out, err = proc.communicate(None if started else input, timeout=max(0.01, min(0.2, deadline - now)))
+            return out or b"", err or b"", False
+        except subprocess.TimeoutExpired as exc:
+            started = True
+            out, err = exc.stdout or b"", exc.stderr or b""
+    try:
+        out, err = proc.communicate(None if started else input, timeout=PIPE_GRACE)
+    except subprocess.TimeoutExpired as exc:
+        out, err = exc.stdout or b"", exc.stderr or b""
+        reap_orphans(_pipe_inodes(proc))
+        for pipe in (proc.stdin, proc.stdout, proc.stderr):
+            try:
+                if pipe is not None:
+                    pipe.close()
+            except (OSError, ValueError):
+                pass
+    try:
+        proc.wait(timeout=PIPE_GRACE)
+    except subprocess.TimeoutExpired:
+        pass
+    return out or b"", err or b"", timed_out
+
+
+def kill_all():
+    """End every program the tool has running, with what each started. Then everything below the tool itself, which is the tool's own: a
+    program forked a moment before it was entered in ACTIVE is among it. Then what an earlier program started and lost (reap_orphans)."""
     for proc in list(ACTIVE):
         kill_tree(proc)
+    below = descendants(os.getpid())
+    SEEN.update(below)
+    for pid in below:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+    reap_orphans()
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)     # the first signal counts: a second one starts no second answer
+    kill_all()
     last_word = STATE.get("last_word")
     if last_word:
         try:
@@ -551,12 +748,8 @@ def preflight(argv, seconds):
         return None, b"", describe(exc).encode("utf-8", "replace"), False
     ACTIVE.append(proc)
     try:
-        out, err = proc.communicate(timeout=max(1.0, seconds))
-        return proc.returncode, out, err, False
-    except subprocess.TimeoutExpired:
-        kill_tree(proc)
-        out, err = proc.communicate()
-        return None, out, err, True
+        out, err, timed_out = communicate_bounded(proc, max(1.0, seconds))
+        return (None if timed_out else proc.returncode), out, err, timed_out
     finally:
         ACTIVE.remove(proc)
 
@@ -640,6 +833,10 @@ class BadValue(Exception):
     pass
 
 
+class ReadTimeLimit(Exception):
+    """The tool's own clock for reading the logs ran out."""
+
+
 INTEGER = re.compile(r"-?[0-9]+")
 COUNT = re.compile(r"[0-9]+")
 DECIMAL = re.compile(r"-?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?|-?inf|nan")
@@ -685,8 +882,10 @@ def convert(value, typ, set_separator, empty, unset):
 class LogReader:
     """One Zeek log, read as a stream: records that fit the header, and a locator for those that do not."""
 
-    def __init__(self, path, stem, limit, malformed_path, hook):
+    def __init__(self, path, stem, limit, malformed_path, hook, deadline=None):
         self.path, self.stem, self.limit, self.malformed_path, self.hook = path, stem, limit, malformed_path, hook
+        self.deadline = deadline
+        self.cut = None                     # where the tool's own clock stopped the read: {"lines_read", "stopped_at_byte"}
         self.format = None
         self.fields = None
         self.types = None
@@ -716,14 +915,35 @@ class LogReader:
             row["raw"] = raw
         self._bad.write(json.dumps(row) + "\n")
 
+    def _clock(self, offset, mid_line=False):
+        """Raises when the tool's own clock for reading the logs has run out; the line being read is not counted."""
+        if self.deadline is not None and time.monotonic() > self.deadline:
+            self.cut = {"lines_read": self.lines - (1 if mid_line else 0), "stopped_at_byte": offset}
+            raise ReadTimeLimit()
+
     def read(self):
+        try:
+            self._read()
+        finally:
+            if self._bad is not None:
+                self._bad.flush()
+                os.fsync(self._bad.fileno())
+                self._bad.close()
+                self._bad = None
+
+    def _read(self):
         separator, set_separator, empty, unset = "\t", ",", "(empty)", "-"
         offset = 0
+        since = 0
         with open(self.path, "rb") as fh:
             while True:
                 raw = fh.readline(MAX_LINE + 1)
                 if not raw:
                     break
+                since += len(raw)
+                if since >= CLOCK_BYTES or self.lines & 1023 == 0:
+                    since = 0
+                    self._clock(offset)
                 start = offset
                 offset += len(raw)
                 self.lines += 1
@@ -733,6 +953,7 @@ class LogReader:
                         offset += len(more)
                         if not more or more.endswith(b"\n"):
                             break
+                        self._clock(offset, True)
                     self._flag(self.lines, start, "a line longer than %d bytes was not read" % MAX_LINE)
                     continue
                 line = raw.rstrip(b"\n").decode("utf-8", "surrogateescape")
@@ -822,10 +1043,6 @@ class LogReader:
                 self.hook(self.stem, record, self)
                 if len(self.records) < self.limit:
                     self.records.append(record)
-        if self._bad is not None:
-            self._bad.flush()
-            os.fsync(self._bad.fileno())
-            self._bad.close()
 
 
 def withheld_text(length):
@@ -872,6 +1089,11 @@ def kept_as_written(stem, key, value):
 def shown_url(url):
     """A URL as printed: the block's own rule for user-info, token-shaped path text, query values and fragment, and the
     authority through the same host rule as every other string (a token in a sub-domain is withheld)."""
+    # Over TEXT_LIMIT the query and fragment are withheld whole, by their length (the block's own rule for a text over the limit): the block
+    # splits a query pair by pair, so a megabyte of `&` there costs seconds a URL. What is kept is the scheme, host and path part.
+    cut = min((i for i in (url.find("?"), url.find("#")) if i >= 0), default=len(url)) if len(url) > TEXT_LIMIT else len(url)
+    if cut < len(url):
+        return shown_url(url[:cut]) + url[cut] + _withheld("over-long query or fragment", len(url) - cut - 1, "urls")
     out = redact_url(url)
     m = re.match(r"^((?:[A-Za-z][A-Za-z0-9+.-]*:)?//)([^/?#]*)(.*)$", out, re.S)
     if not m:
@@ -936,6 +1158,18 @@ def last_word(signum):
     print(json.dumps({"tool": TOOL, "parser": PARSER, "status": "partial", "ok": False,
                       "status_basis": "the tool was stopped by signal %d while it was %s; Zeek, if it was running, was killed with what it had started, and the logs it had written are whole files only up to the point it was stopped" % (signum, PROGRESS["stage"]),
                       "interrupted_by_signal": signum, "stage": PROGRESS["stage"], "out_dir": out_dir, "logs_written_so_far": logs}), flush=True)
+
+
+def answer_out(text):
+    """Print the final answer as one unit a stop signal cannot cut or follow: signals are held while it is written and there is no last
+    word to add to it, so a signal that arrives during or after it ends the tool (exit 128 plus the signal) with this one document."""
+    held = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+    signal.pthread_sigmask(signal.SIG_BLOCK, held)
+    try:
+        STATE["last_word"] = None
+        print(text, flush=True)
+    finally:
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, held)
 
 
 def main():
@@ -1043,6 +1277,14 @@ def main():
             pass
 
     PROGRESS["stage"] = "reading the logs"
+    # Reading the logs has its own end, the same for every log: the manifest's limit less READ_MARGIN, counted from the start of the tool, so
+    # what the preflight and the engine used is already out of it. ZEEK_RUN_READ_SECONDS (seconds from here) exists for the tests.
+    try:
+        read_seconds = float(os.environ.get("ZEEK_RUN_READ_SECONDS", ""))
+    except ValueError:
+        read_seconds = None
+    read_deadline = (time.monotonic() + read_seconds) if read_seconds is not None else started + MANIFEST_SECONDS - READ_MARGIN
+    logs_not_read, logs_cut = [], {}
     withheld = {"fields": 0, "urls": 0, "text": 0, "short_hashes": 0}
     diagnostics = {"reporter": {"records": 0, "levels": {}, "first_messages": []},
                    "weird": {"records": 0, "by_name": {}, "names_over_cap": 0},
@@ -1089,9 +1331,18 @@ def main():
         stem = name[:-4]
         log_path = os.path.join(out_dir, name)
         inline = (not wanted) or stem in wanted
-        reader = LogReader(log_path, stem, limit if inline else 0, os.path.join(out_dir, "malformed-%s.jsonl" % re.sub(r"[^A-Za-z0-9_.-]", "_", stem)), hook)
+        if time.monotonic() > read_deadline:
+            logs_not_read.append(stem)
+            problems.append({"log": stem, "why": "not read: the tool's own clock for reading the logs ran out before it; the file is whole in out_dir"})
+            continue
+        reader = LogReader(log_path, stem, limit if inline else 0, os.path.join(out_dir, "malformed-%s.jsonl" % re.sub(r"[^A-Za-z0-9_.-]", "_", stem)), hook,
+                           read_deadline)
         try:
             reader.read()
+        except ReadTimeLimit:
+            logs_cut[stem] = reader.cut
+            problems.append({"log": stem, "why": "read only to line %d (stopped at byte %d): the tool's own clock for reading the logs ran out; the file is whole in out_dir, "
+                                                 "and the records, counts and diagnostics here are those of the lines read" % (reader.cut["lines_read"], reader.cut["stopped_at_byte"])})
         except OSError as exc:
             problems.append({"log": stem, "why": describe(exc)})
             continue
@@ -1102,13 +1353,14 @@ def main():
         if reader.malformed_total:
             malformed.extend(reader.malformed)
             malformed_files[stem] = "malformed-%s.jsonl" % re.sub(r"[^A-Za-z0-9_.-]", "_", stem)
-        if reader.parsed == 0 and not reader.malformed_total:
+        if reader.parsed == 0 and not reader.malformed_total and reader.cut is None:
             empty.append(stem)
         if inline:
             logs[stem] = {"file": log_path, "format": reader.format, "fields": reader.fields, "types": reader.types,
                           "records": [inline_copy(stem, r, withheld) for r in reader.records],
                           "returned": len(reader.records), "total": reader.parsed, "omitted": reader.parsed - len(reader.records),
                           "malformed": reader.malformed_total, "lines": reader.lines,
+                          "read_to_the_end": reader.cut is None,
                           **({"header_problem": reader.header_problem} if reader.header_problem else {})}
     not_written = sorted(n for n in wanted if n + ".log" not in written)
     hashes_produced = files["records_with_a_hash"] > 0
@@ -1124,6 +1376,8 @@ def main():
             reasons.append("Zeek exited %s" % code)
         if problems:
             reasons.append("%d problem(s) (problems names each)" % len(problems))
+        if logs_cut or logs_not_read:
+            reasons.append("the tool's own clock for reading the logs ran out (%d log(s) read in part, %d not read)" % (len(logs_cut), len(logs_not_read)))
         if total_malformed:
             reasons.append("%d record(s) did not fit their header (each is kept raw in a malformed-<log>.jsonl file)" % total_malformed)
         basis = "; ".join(reasons) + ": the logs are whole in out_dir and the records that were read are in the answer"
@@ -1145,6 +1399,9 @@ def main():
         "logs_written": [n[:-4] for n in written],
         "logs_requested_not_written": not_written,
         "logs_empty": empty,
+        "reading_cut_by_its_clock": bool(logs_cut or logs_not_read),
+        "logs_read_in_part": logs_cut or None,
+        "logs_not_read": logs_not_read or None,
         "logs": logs,
         "problems": problems,
         "malformed_records": total_malformed,
@@ -1177,7 +1434,7 @@ def main():
                  "none. Zeek's own stdout and stderr are kept beside the logs; reporter, weird and capture_loss are summarised under "
                  "engine_diagnostics."),
     }
-    print(json.dumps(answer, indent=2))
+    answer_out(json.dumps(answer, indent=2))
     return 0
 
 

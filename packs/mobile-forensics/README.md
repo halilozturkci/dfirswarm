@@ -46,7 +46,11 @@ opens a `Manifest.db`'s `-wal` and `-journal` in a working copy, with the file.
   and `epoch.consistency` counts the times that fall after the backup's own date or
   before 2007 under the epoch applied (the wrong epoch is a 31-year shift). The
   Files table is read in row order, so a damaged index page does not cost the
-  listing, and a `Manifest.db` cut inside its last page is said and partial.
+  listing, and a `Manifest.db` cut inside its last page is said and partial. Every
+  SQLite statement is ended at `max_seconds` and by a stop signal (the count of the
+  rows gets a tenth of the time, and an answer without it says so); a name column
+  is read to its first 8,193 characters, and a row whose metadata is not in the
+  answer for any reason makes the status partial.
 - `sqlite_freespace` reads the free space of a SQLite database's main file
   (freelist pages, the unallocated gap of a page, the freeblock chain) and returns
   where each text fragment is: page, kind of region, byte offset (read back from
@@ -68,9 +72,13 @@ opens a `Manifest.db`'s `-wal` and `-journal` in a working copy, with the file.
   the job's duration can say that much of the hidden text is of a class the
   expression matches, up to about 7 s. The answer does not say it: the expression
   has a work budget in sizes the answer shows (a character of a fragment times the
-  expression's cost), a fragment past it is marked `match` 2 and the status is
+  expression's cost, and 1,000 steps for every fragment it is called on), a fragment past it is marked `match` 2 and the status is
   partial, the same for any text of those sizes, and the clock of `max_seconds`
-  does not run while the expression does. A job that asks for `write_values` is run
+  does not run while the expression does, for 12 seconds at most in all (a run with
+  `contains` ends within `max_seconds` plus that). `complete` means every page was
+  accounted for: b-tree and free pages are read, the others must be overflow pages a
+  cell of a b-tree names; a page no structure owns (what a header with its freelist
+  fields zeroed leaves) is read as free space and makes the status `corrupt`. A job that asks for `write_values` is run
   as secret output.
 - `protobuf_peek` reads the wire structure of a protobuf message without its
   schema: field numbers, wire types, absolute offsets and field paths, numbers
@@ -104,9 +112,12 @@ member name as the archive spelled it and every occurrence of a duplicated name)
 and `android-backup` reads an adb-backup header and inventories every member of an
 unencrypted payload of a version it reads (1 to 5), within a decompression budget.
 Both follow the tar header by header beside the tar library and say `complete`
-only when the end-of-archive block came and the library listed as many members as
+only when the two end-of-archive blocks came and the library listed as many members as
 there are headers: a tar cut at a member boundary, or ended quietly by a header the
-library refuses, is `partial`, with where. Neither writes over an earlier run's
+library refuses, is `partial`, with where; a zero block with a header after it is
+read past, as GNU tar does, and said (partial), and data after the end blocks is not
+read and said. `ios-filesystem` decodes a compressed tar within an output budget
+too (`--max-decompressed-bytes`). Neither writes over an earlier run's
 output.
 Two broad extractions, run by the kickoff: `ios-ileapp` hands a whole iOS full
 file-system acquisition (a tar or a zip) to iLEAPP and keeps every report it
@@ -122,7 +133,7 @@ log shape does not explain: a module that errored while the others wrote their
 reports leaves the run `partial`. A module with no report is `no_record`, which
 does not show the artefact is absent from the phone, and an `unsupported` module
 is one whose own gate does not take the operating-system version. Their `exclusions` say
-what they do not hold, and a run stopped before its end says partial. And one
+what they do not hold, and a run stopped before its end says partial: the program runs in a process group of its own with a time limit (`--max-seconds`), and a stop signal ends it and its children. And one
 declared and never run: `android-backup-apps`, the broad extraction an adb backup
 would need, which the image cannot do (ALEAPP reads a file-system layout, an adb
 backup keeps each app under `apps/<package>/`), so the harness records the

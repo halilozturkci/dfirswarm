@@ -83,8 +83,10 @@ MAX_INTERFACES = 10_000        # interface description blocks kept (one record e
 MAX_SECTIONS = 10_000          # section headers in one capture; past it the same
 MAX_STATS_BLOCKS = 10_000      # interface statistics blocks kept
 LISTED_INLINE = 50             # interfaces, sections and statistics shown in the answer; the rest are in a file it names
+TYPES_IN_MEMORY = 4096         # distinct pcapng block types this tool does not know that are held in memory; past it they are merged into the spill file
+CLOCK_BLOCKS = 4096            # pcapng blocks of any kind between two reads of the clock
 MANIFEST_SECONDS = 600         # the manifest's limit; the summary after the reading is clocked to end FINISH_MARGIN seconds before it
-FINISH_MARGIN = 15
+FINISH_MARGIN = 30           # the tail after the finish cut (closing the spill, the answer) took 7 s on a slow disk with 14 million tuples; 15 left 8 s of the 600
 DEFAULT_MAX_MEMORY_TUPLES = 200_000
 
 # BEGIN SHARED WITHHOLDING
@@ -414,6 +416,18 @@ def in_job():
     return bool(os.environ.get("JOB_ID") and os.environ.get("OUT"))
 
 
+def refuse_followed_page_dir():
+    """The whole results of a long list are written under tool-output (in a job, $OUT/tool-output). If that name is already a symbolic link
+    the results would land where it points, outside the place the tool is allowed to write: refuse before anything is read."""
+    job, out = os.environ.get("JOB_ID"), os.environ.get("OUT")
+    if job and out:
+        directory = os.path.join(out, "tool-output")
+    else:
+        directory = os.path.join("work", re.sub(r"[^A-Za-z0-9_.-]", "_", os.environ.get("AGENT_ID") or "tool"), "tool-output")
+    if os.path.islink(directory):
+        fail("tool-output is a symbolic link: the whole results would be written where it points. Remove it, or give the run a directory of its own", tool_output=directory)
+
+
 def resolve_output(out, what="output"):
     """Where `out` really lands, as a path under the run directory; a place
     outside it, the run directory itself, or anything under inputs/ is refused.
@@ -556,16 +570,67 @@ def resolution_of(raw):
 
 # --- the two containers --------------------------------------------------------------------------------------
 
+class ReadTimeLimit(Exception):
+    """The clock ran out between two pcapng blocks that yield no packet."""
+
+
+class TypeTally:
+    """Block type -> number of blocks, for the types this tool does not know. A type is 4 bytes in the file and a key of a few
+    hundred bytes here, so a capture of millions of blocks, each of a type of its own, would otherwise cost gigabytes of memory
+    and an answer of the same order. Up to TYPES_IN_MEMORY distinct types are held; past that the counts are merged into the
+    spill file in batches, so memory stays bounded and no type is dropped."""
+
+    def __init__(self, spill):
+        self.spill = spill
+        self.mem = {}
+        self.spilled = False
+        self.total = 0
+
+    def add(self, block_type):
+        self.total += 1
+        self.mem[block_type] = self.mem.get(block_type, 0) + 1
+        if len(self.mem) > TYPES_IN_MEMORY:
+            self.flush()
+
+    def flush(self):
+        if not self.mem:
+            return
+        self.spill.open()
+        db = self.spill.db
+        if not self.spilled:
+            db.execute("CREATE TABLE IF NOT EXISTS unknown_types (t INTEGER PRIMARY KEY, n INTEGER NOT NULL)")
+            self.spilled = True
+        db.execute("BEGIN")
+        db.executemany("INSERT INTO unknown_types (t, n) VALUES (?, ?) ON CONFLICT(t) DO UPDATE SET n = n + excluded.n", self.mem.items())
+        db.execute("COMMIT")
+        self.mem.clear()
+
+    def distinct(self):
+        if not self.spilled:
+            return len(self.mem)
+        self.flush()
+        return self.spill.db.execute("SELECT COUNT(*) FROM unknown_types").fetchone()[0]
+
+    def rows(self):
+        """Every (type, blocks), by type."""
+        if not self.spilled:
+            yield from sorted(self.mem.items())
+            return
+        self.flush()
+        yield from self.spill.db.execute("SELECT t, n FROM unknown_types ORDER BY t")
+
+
 class Info:
     """What the container said about itself, filled in while the packets are read."""
 
-    def __init__(self):
+    def __init__(self, spill):
         self.format = None
         self.version = None
+        self.deadline = None          # the reading clock: read_pcapng looks at it every CLOCK_BLOCKS blocks, packets or not
         self.interfaces = []          # one dict per interface description, across sections
         self.blocks = collections.Counter()
         self.not_decoded = collections.Counter()
-        self.unknown = collections.Counter()
+        self.unknown = TypeTally(spill)
         self.stats = []               # interface statistics blocks
         self.section_options = []     # what a section header says about the capturing machine
         self.malformed_options = 0
@@ -661,7 +726,11 @@ def read_pcapng(fh, info):
     def packets():
         local = {}            # interface id in this section -> index in info.interfaces
         end = "<"
+        seen = 0
         while True:
+            seen += 1
+            if seen % CLOCK_BLOCKS == 0 and info.deadline is not None and time.monotonic() > info.deadline:
+                raise ReadTimeLimit()   # a block that yields no packet never reaches the loop that looks at the clock
             header = fh.read(8)
             if len(header) == 0:
                 return
@@ -710,7 +779,7 @@ def read_pcapng(fh, info):
                 if len(trailer) != 4 or struct.unpack(end + "I", trailer)[0] != total:
                     raise ValueError("truncated or inconsistent pcapng block")
                 if name is None:
-                    info.unknown["0x%08x" % block_type] += 1
+                    info.unknown.add(block_type)
                     info.blocks["unknown"] += 1
                 else:
                     info.blocks[name] += 1
@@ -1316,11 +1385,13 @@ def main():
     finish_cut = {}
     PROGRESS["stage"] = "reading the capture"
 
+    refuse_followed_page_dir()
     spill_dir = out_dir if out_dir else (os.path.join(os.environ["OUT"], "tool-output") if in_job() else None)
     spill = Spill(spill_dir)
     CLEANUP.append(spill.close)       # on every way out: a refused run, a cut-off capture, a signal
     state = {"packets": 0}
-    info = Info()
+    info = Info(spill)
+    info.deadline = deadline
     tuples = Table("tuples", cap, spill, merge_record, lambda r: r[BO], encode_record, decode_record)
     talkers = Table("talkers", cap, spill, merge_counts, lambda r: r[1], list, list)
     ports = Table("ports", cap, spill, merge_counts, lambda r: r[0], list, list)
@@ -1429,6 +1500,9 @@ def main():
                             rec[FIN] += 1
                         if flags & 0x04:
                             rec[RST] += 1
+            except ReadTimeLimit:
+                file_problem = {"kind": "time_limit", "packets_read": state["packets"], "bytes_consumed": fh.tell(),
+                                "reason": "max_seconds (%s) ran out" % seconds_allowed}
             except (ValueError, struct.error) as exc:
                 # A cut-off or damaged capture is the usual case in an acquisition: the packets before the damage are summarised,
                 # and the answer says where the file stopped being readable and that nothing after that point is in it.
@@ -1444,6 +1518,7 @@ def main():
     talker_page = LosslessPage("top_talkers", top)
     port_page = LosslessPage("top_ports", top)
     syn_page = LosslessPage("syn_times", 0)
+    unsupported_page = LosslessPage("unsupported_block_types", LISTED_INLINE)
     syn_rows_cut = 0
     tsv_path = None
     tsv = None
@@ -1499,6 +1574,16 @@ def main():
                     finish_cut["top_ports"] = {"written": port_page.total, "of": table_count(ports)}
                     break
                 port_page.add({"port": key[0], "packets": rec[0]})
+            # The block types this tool does not decode: a bounded number inline, every one in a file the answer names.
+            for label, blocks in sorted(info.not_decoded.items()):
+                unsupported_page.add({"block_type": label, "blocks": blocks})
+            for block_type, blocks in info.unknown.rows():
+                if unsupported_page.total & 255 == 255 and time.monotonic() > finish_deadline:
+                    finish_cut["unsupported_block_types"] = {"written": unsupported_page.total, "of": len(info.not_decoded) + info.unknown.distinct(), "unit": "block types listed"}
+                    break
+                unsupported_page.add({"block_type": "0x%08x" % block_type, "blocks": blocks})
+            unsupported_types = len(info.not_decoded) + info.unknown.distinct()
+            unsupported_result = unsupported_page.finish()
             spilled = spilled_here() or talkers.spilled or ports.spilled
             pages = {conversations_name: rows_page.finish(), "top_talkers": talker_page.finish(), "top_ports": port_page.finish()}
             syn_times_file = syn_page.finish().get("all_results") if syn_rows_cut else None
@@ -1513,8 +1598,8 @@ def main():
         spill.close()
 
     PROGRESS["stage"] = "writing the result"
-    unsupported = info.not_decoded + info.unknown
-    unsupported_total = sum(unsupported.values())
+    unsupported_total = sum(info.not_decoded.values()) + info.unknown.total
+    endpoints_not_summed = "endpoint_aggregation" in finish_cut
     notes = []
     if file_problem:
         notes.append("THE CAPTURE WAS NOT READ TO ITS END (%s after %d packets, at byte %d of %d): everything below summarises the packets before that point and "
@@ -1535,6 +1620,9 @@ def main():
         notes.append("%d packets were not IP, or used a link type this parser does not decode." % sum(undissected_by_link.values()))
     if unsupported_total:
         notes.append("%d pcapng blocks of types this tool does not decode were counted, not read (unsupported_block_types)." % unsupported_total)
+    if unsupported_types > len(unsupported_page.page):
+        notes.append("%d block types are not listed inline: the first %d are, and %d are in %s (JSON Lines, one type for each, by type)."
+                     % (unsupported_types - len(unsupported_page.page), len(unsupported_page.page), unsupported_page.total, unsupported_result.get("all_results")))
     if info.malformed_options:
         notes.append("%d options declared a length past their block and were not read (malformed_options)." % info.malformed_options)
     if totals["untimed"]:
@@ -1602,7 +1690,10 @@ def main():
         "interface_statistics_file": lists["interface_statistics"]["file"],
         "blocks": ({"total": sum(info.blocks.values()), "by_type": dict(info.blocks)} if info.format == "pcapng" else None),
         "unsupported_blocks": unsupported_total,
-        "unsupported_block_types": dict(unsupported),
+        "unsupported_block_types": {row["block_type"]: row["blocks"] for row in unsupported_page.page},
+        "unsupported_block_types_total": unsupported_types,
+        "unsupported_block_types_not_listed": unsupported_types - len(unsupported_page.page),
+        "unsupported_block_types_file": unsupported_result.get("all_results"),
         "malformed_options": info.malformed_options,
         "classic_records_with_fraction_over_one_second": info.fraction_over_one_second,
         "records_captured_over_snap_length": info.captured_over_snap_length,
@@ -1638,9 +1729,10 @@ def main():
         "group_note": ("session is the old name for tuple: these rows are tuple aggregates, not TCP sessions"
                        if grouping_arg == "session" else None),
         conversations_name: rows_page.page,
-        ("endpoint_aggregate_count" if grouping == "endpoint" else "tuple_conversation_count"): rows_page.total,
-        conversations_name + "_returned": len(rows_page.page),
-        conversations_name + "_omitted": rows_page.total - len(rows_page.page),
+        # When the endpoint sums were cut no endpoint row was built: the counts of rows would say 0 where the truth is "not known" (listing_cut_by_its_own_clock says why)
+        ("endpoint_aggregate_count" if grouping == "endpoint" else "tuple_conversation_count"): None if endpoints_not_summed else rows_page.total,
+        conversations_name + "_returned": None if endpoints_not_summed else len(rows_page.page),
+        conversations_name + "_omitted": None if endpoints_not_summed else rows_page.total - len(rows_page.page),
         conversations_name + "_tsv": tsv_path,
         "top_talkers": talker_page.page,
         "top_talkers_basis": "per address as the SOURCE of a packet: bytes_original and bytes_captured are what that address sent, not what it received",

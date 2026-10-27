@@ -52,12 +52,16 @@ import shutil
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
-TOOL = {"name": "suricata_run", "version": 5}
+TOOL = {"name": "suricata_run", "version": 7}
 PARSER = "suricata_run/5"
 TEST_SECONDS = 120
 MAX_TIMEOUT = 1000            # the manifest's limit is 1200: --build-info (30 s) and the configuration test (120 s) come first
+MANIFEST_SECONDS = 1200       # the manifest's limit: the tool's own clock for reading eve.json ends READ_MARGIN seconds before it, counted from the start
+READ_MARGIN = 30              # kept for building and printing the answer after the last line was read
+CLOCK_BYTES = 1 << 20         # the reading clock is also looked at after this many bytes of EVE
 DEFAULT_HOME_NET = ["192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12"]
 PREFLIGHT_SECONDS = 30
 MAX_LINE = 16 << 20
@@ -404,7 +408,14 @@ def resolve_output(out, what="output"):
 # below a program this tool started and has not yet waited for is ever signalled: the walk starts at that program's pid
 # and nowhere else, and a program that has been waited for (its pid may be another process's by now) is left alone. The
 # walk has no bound but the number of processes. Two cases leave the tree running: a ps that needs more than PS_WAIT
-# seconds, and a sandbox that denies both libproc and ps (macOS).
+# seconds, and a sandbox that denies both libproc and ps (macOS). A stop signal is the one case that reaches further: it also
+# ends everything below the tool itself (a program that was forked a moment before it was entered in ACTIVE is among it) and what
+# the tool started and lost (reap_orphans): a process that was seen below the tool, in the tool's own group, and whose parent has since
+# ended. Nothing else is ever ended: a process the tool never saw in its tree (the next stage of a pipeline the tool heads, a process a
+# launcher put in the group) is left alone, whoever leads the group. A program that has ended while something it started still
+# holds its pipes does not hold the tool: communicate_bounded gives the pipes PIPE_GRACE seconds and goes on without them.
+import time
+
 try:
     import ctypes
 except ImportError:  # pragma: no cover
@@ -412,6 +423,7 @@ except ImportError:  # pragma: no cover
 
 STATE = {"last_word": None}    # what to do, with the signal number, when the tool is stopped by a signal
 ACTIVE = []                    # the programs running now
+SEEN = set()                   # the pids seen below a program this tool started: the only ones reap_orphans may end once their parent is gone
 
 def _die_with_parent():  # runs in the child between fork and exec
     try:
@@ -424,7 +436,9 @@ def spawn(argv, **kwargs):
     kwargs.setdefault("stdin", subprocess.DEVNULL)
     if sys.platform.startswith("linux") and ctypes is not None:
         kwargs["preexec_fn"] = _die_with_parent
-    return subprocess.Popen(argv, **kwargs)
+    proc = subprocess.Popen(argv, **kwargs)
+    SEEN.add(proc.pid)
+    return proc
 
 
 def _children_libproc(pid):
@@ -468,6 +482,15 @@ def _below(kids, pid):
     return found
 
 
+def _libproc_works(pid):
+    """Whether an empty libproc answer for `pid` can be believed: libproc has just listed `pid` as this tool's own child, or, when `pid`
+    is the tool itself, has just listed the tool as its parent's child. A library that lists nothing for a live process is not working
+    (as in a sandbox that denies it)."""
+    if pid in (_children_libproc(os.getpid()) or []):
+        return True
+    return pid == os.getpid() and os.getpid() in (_children_libproc(os.getppid()) or [])
+
+
 def descendants(pid):
     """Every process below `pid` (never one beside it): from /proc where there is one, else from libproc, else from ps
     (given PS_WAIT seconds). libproc is believed when it lists a child; an empty answer is believed only when libproc has
@@ -495,7 +518,7 @@ def descendants(pid):
                             found.append(child)
                             stack.append(child)
                 return found
-            if first is not None and pid in (_children_libproc(os.getpid()) or []):
+            if first is not None and _libproc_works(pid):
                 return []
             out = subprocess.run(["ps", "-A", "-o", "pid=,ppid="], capture_output=True, text=True, timeout=PS_WAIT).stdout
             for line in out.splitlines():
@@ -507,17 +530,134 @@ def descendants(pid):
     return _below(kids, pid)
 
 
+def _process_table():
+    """{pid: (parent pid, process group)} for every process, from /proc where there is one, else from ps (given PS_WAIT seconds);
+    None when neither answers."""
+    table = {}
+    try:
+        if os.path.isdir("/proc/self"):
+            for entry in os.listdir("/proc"):
+                if entry.isdigit():
+                    try:
+                        with open("/proc/%s/stat" % entry, "rb") as fh:
+                            fields = fh.read().rsplit(b")", 1)[1].split()
+                        table[int(entry)] = (int(fields[1]), int(fields[2]))
+                    except (OSError, IndexError, ValueError):
+                        continue
+        else:
+            out = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,pgid="], capture_output=True, text=True, timeout=PS_WAIT).stdout
+            for line in out.splitlines():
+                parts = line.split()
+                if len(parts) == 3 and all(part.isdigit() for part in parts):
+                    table[int(parts[0])] = (int(parts[1]), int(parts[2]))
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return table
+
+
+def _sample(pid):
+    """Remember what is below `pid` now, by the cheap routes only (/proc, or libproc on macOS; never a program): a process that is seen
+    here and later loses its parent is the tool's to end, and one that was never seen is not."""
+    try:
+        if os.path.isdir("/proc/self"):
+            kids = {}
+            for child, (parent, _group) in (_process_table() or {}).items():
+                kids.setdefault(parent, []).append(child)
+            SEEN.update(_below(kids, pid))
+        else:
+            seen, stack = {pid}, [pid]
+            while stack:
+                for child in _children_libproc(stack.pop()) or []:
+                    if child not in seen:
+                        seen.add(child)
+                        stack.append(child)
+            SEEN.update(seen - {pid})
+    except Exception:  # noqa: BLE001 - a sample is best effort
+        pass
+
+
+def _pipe_inodes(proc):
+    """The inodes of the pipes the tool holds with `proc` (Linux: /proc names a pipe by it; elsewhere the answer is not used)."""
+    found = set()
+    for handle in (proc.stdin, proc.stdout, proc.stderr):
+        try:
+            if handle is not None:
+                found.add(os.fstat(handle.fileno()).st_ino)
+        except (OSError, ValueError):
+            pass
+    return found
+
+
+def _holds_pipe(pid, inodes):
+    """Whether `pid` holds one of the pipes (Linux only, from /proc/<pid>/fd): the pipes are private to the tool and what it started."""
+    try:
+        for name in os.listdir("/proc/%d/fd" % pid):
+            try:
+                link = os.readlink("/proc/%d/fd/%s" % (pid, name))
+            except OSError:
+                continue
+            if link.startswith("pipe:[") and link.endswith("]") and int(link[6:-1]) in inodes:
+                return True
+    except (OSError, ValueError):
+        pass
+    return False
+
+
+def reap_orphans(inodes=None):
+    """Kill what this tool started and lost: a process of the tool's own group that is no longer below the tool (its parent ended and
+    init adopted it, so the walk from a program's pid cannot find it) and that the tool knows to be its own: it was seen below the tool
+    (SEEN: the programs it started, the trees it listed, the samples taken while it waited), or, on Linux, it holds one of `inodes`,
+    the pipes the tool made. A process the tool never saw in its tree is not touched, whoever leads the group: the next stage of a
+    pipeline the tool heads, or a process a launcher put in the group, is not the tool's. A process outside the group is never looked
+    at, and a pid is checked against the group again at the moment it is signalled. Returns the pids signalled."""
+    me = os.getpid()
+    try:
+        if os.getpgrp() != me:
+            return []
+    except OSError:
+        return []
+    table = _process_table()
+    if not table:
+        return []
+    kids = {}
+    for pid, (parent, _group) in table.items():
+        kids.setdefault(parent, []).append(pid)
+    below = set(_below(kids, me))
+    on_linux = os.path.isdir("/proc/self")
+    killed = []
+    for pid, (_parent, group) in table.items():
+        if group != me or pid == me or pid in below:
+            continue
+        if pid not in SEEN and not (inodes and on_linux and _holds_pipe(pid, inodes)):
+            continue
+        try:
+            if os.getpgid(pid) != me:
+                continue
+            os.kill(pid, signal.SIGKILL)
+            killed.append(pid)
+        except OSError:
+            pass
+    return killed
+
+
 def kill_tree(proc):
     """Kill the program and everything it started. The children are listed first: once the parent is gone they are
     adopted by init and can no longer be found below it. A program already waited for is not touched: its pid is free to
     be another process's, and the walk below it would be that process's children."""
     if proc.poll() is not None:
         return
-    victims = descendants(proc.pid)
     try:
-        proc.kill()
+        proc.send_signal(signal.SIGSTOP)    # a program that is stopped forks nothing more while its tree is listed
     except OSError:
         pass
+    try:
+        victims = descendants(proc.pid)
+        SEEN.update(victims)
+    finally:
+        try:
+            proc.kill()
+        except OSError:
+            pass
     for pid in victims:
         try:
             os.kill(pid, signal.SIGKILL)
@@ -525,9 +665,67 @@ def kill_tree(proc):
             pass
 
 
-def _on_signal(signum, _frame):
+PIPE_GRACE = 1.0    # seconds the pipes of a program that has ended are given to reach end of file
+
+
+def communicate_bounded(proc, seconds, input=None):
+    """(stdout bytes, stderr bytes, timed out) for a program started with pipes, in bytes. At `seconds` the program and what it started
+    are killed (timed out). A program that has ended while something it started still holds its pipes (a daemon, a helper that
+    inherited them) does not hold the tool: the pipes are given PIPE_GRACE seconds, what the program wrote is kept, what the tool
+    lost is killed (reap_orphans), and the pipes are let go. The pipes are read here and by nothing else, so letting them go is safe."""
+    deadline = time.monotonic() + max(0.1, seconds)
+    out = err = b""
+    started, timed_out = False, False
+    while proc.poll() is None:
+        now = time.monotonic()
+        if now >= deadline:
+            timed_out = True
+            kill_tree(proc)
+            break
+        _sample(proc.pid)
+        try:
+            out, err = proc.communicate(None if started else input, timeout=max(0.01, min(0.2, deadline - now)))
+            return out or b"", err or b"", False
+        except subprocess.TimeoutExpired as exc:
+            started = True
+            out, err = exc.stdout or b"", exc.stderr or b""
+    try:
+        out, err = proc.communicate(None if started else input, timeout=PIPE_GRACE)
+    except subprocess.TimeoutExpired as exc:
+        out, err = exc.stdout or b"", exc.stderr or b""
+        reap_orphans(_pipe_inodes(proc))
+        for pipe in (proc.stdin, proc.stdout, proc.stderr):
+            try:
+                if pipe is not None:
+                    pipe.close()
+            except (OSError, ValueError):
+                pass
+    try:
+        proc.wait(timeout=PIPE_GRACE)
+    except subprocess.TimeoutExpired:
+        pass
+    return out or b"", err or b"", timed_out
+
+
+def kill_all():
+    """End every program the tool has running, with what each started. Then everything below the tool itself, which is the tool's own: a
+    program forked a moment before it was entered in ACTIVE is among it. Then what an earlier program started and lost (reap_orphans)."""
     for proc in list(ACTIVE):
         kill_tree(proc)
+    below = descendants(os.getpid())
+    SEEN.update(below)
+    for pid in below:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+    reap_orphans()
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)     # the first signal counts: a second one starts no second answer
+    kill_all()
     last_word = STATE.get("last_word")
     if last_word:
         try:
@@ -545,12 +743,8 @@ def preflight(argv, seconds):
         return None, b"", describe(exc).encode("utf-8", "replace"), False
     ACTIVE.append(proc)
     try:
-        out, err = proc.communicate(timeout=max(1.0, seconds))
-        return proc.returncode, out, err, False
-    except subprocess.TimeoutExpired:
-        kill_tree(proc)
-        out, err = proc.communicate()
-        return None, out, err, True
+        out, err, timed_out = communicate_bounded(proc, max(1.0, seconds))
+        return (None if timed_out else proc.returncode), out, err, timed_out
     finally:
         ACTIVE.remove(proc)
 
@@ -744,7 +938,20 @@ def configuration(out_dir, home_net):
     )
 
 
+def answer_out(text):
+    """Print the final answer as one unit a stop signal cannot cut or follow: signals are held while it is written and there is no last
+    word to add to it, so a signal that arrives during or after it ends the tool (exit 128 plus the signal) with this one document."""
+    held = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+    signal.pthread_sigmask(signal.SIG_BLOCK, held)
+    try:
+        STATE["last_word"] = None
+        print(text, flush=True)
+    finally:
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, held)
+
+
 def main():
+    started = time.monotonic()
     STATE["last_word"] = last_word
     install_signal_handlers()
     try:
@@ -872,6 +1079,15 @@ def main():
         fail("suricata wrote no eve.json", exit_code=code, command=argv, stdout=stdout_path, stderr=stderr_path, out_dir=out_dir)
 
     PROGRESS["stage"] = "reading eve.json"
+    # Reading eve.json has its own end: the manifest's limit less READ_MARGIN, counted from the start of the tool, so the build information, the
+    # configuration test and the engine's own time are already out of it. SURICATA_RUN_READ_SECONDS (seconds from here) exists for the tests.
+    try:
+        read_seconds = float(os.environ.get("SURICATA_RUN_READ_SECONDS", ""))
+    except ValueError:
+        read_seconds = None
+    read_deadline = (time.monotonic() + read_seconds) if read_seconds is not None else started + MANIFEST_SECONDS - READ_MARGIN
+    read_cut = None
+    since_clock = 0
     event_types, signatures = collections.Counter(), collections.Counter()
     alerts, bad_lines, not_objects, no_type, too_long = [], [], 0, 0, []
     problem_total = 0
@@ -886,12 +1102,24 @@ def main():
             raw = fh.readline(MAX_LINE + 1)
             if not raw:
                 break
+            since_clock += len(raw)
+            if since_clock >= CLOCK_BYTES or lines & 1023 == 0:
+                since_clock = 0
+                if time.monotonic() > read_deadline:
+                    read_cut = {"lines_read": lines, "stopped_at_byte": fh.tell() - len(raw)}
+                    break
             lines += 1
             if len(raw) > MAX_LINE and not raw.endswith(b"\n"):
                 while True:
                     more = fh.readline(MAX_LINE)
                     if not more or more.endswith(b"\n"):
                         break
+                    if time.monotonic() > read_deadline:
+                        read_cut = {"lines_read": lines - 1, "stopped_at_byte": fh.tell()}
+                        break
+                if read_cut:
+                    lines -= 1        # the line being skipped was not finished: it is not a line read
+                    break
                 if len(too_long) < 10:
                     too_long.append(lines)
                 problem_total += 1
@@ -965,10 +1193,13 @@ def main():
         problems.append("Suricata reported 0 rules loaded though the rules file has %d rule lines: an empty detection run is not a run with no alerts" % rule_lines)
     if invalid or not_objects or too_long or no_type:
         problems.append("%d EVE lines were not read as events" % (invalid + not_objects + len(too_long) + no_type))
+    if read_cut:
+        problems.append("eve.json was read only to line %d (stopped at byte %d): the tool's own clock for reading it ran out; the file is whole in out_dir, "
+                        "and the events, alerts and counts here are those of the lines read" % (read_cut["lines_read"], read_cut["stopped_at_byte"]))
     ok = not problems
     basis = ("the engine exited 0, its configuration test passed, every rule loaded and every EVE line was read as an event" if ok else
              "; ".join(problems[:6]) + (" (and %d more, all in problems)" % (len(problems) - 6) if len(problems) > 6 else "") + ": eve.json is whole in out_dir")
-    print(json.dumps({
+    answer_out(json.dumps({
         "tool": TOOL, "parser": PARSER,
         "status": "complete" if ok else "partial", "status_basis": basis,
         "path": path, "out_dir": out_dir, "eve_json": eve,
@@ -1002,6 +1233,7 @@ def main():
                     "the build lacks the feature, and a build may ignore a key it does not know.",
         },
         "tls_with_ja3": tls_ja3, "tls_with_ja4": tls_ja4,
+        "eve_read_to_the_end": read_cut is None, "eve_reading_cut_by_its_clock": read_cut,
         "eve_lines": lines, "invalid_eve_lines": invalid, "eve_lines_not_objects": not_objects, "events_without_event_type": no_type,
         "eve_lines_over_limit": too_long, "eve_line_problems": bad_lines,
         "eve_problem_lines_total": problem_total, "eve_problems_file": "eve-problems.jsonl" if problem_total else None,

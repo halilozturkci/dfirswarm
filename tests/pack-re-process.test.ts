@@ -181,8 +181,9 @@ const sha = (text: string): string => createHash("sha256").update(text).digest("
 // The text of each block as the network pack carries it: a copy here is a copy of that text, and a change to either side shows
 // as a change of this hash, to be made in every copy (the withholding block is in the network, base, virtualization and
 // reverse-engineering packs and the tool library; the tests of each hold their copies equal). The process block is the one
-// with the poll() guard in kill_tree, the seen set in the walk and the libproc route on macOS.
-const NETWORK_PROCESS_SHA = "d6dc512281472e451aa994429aab766d808c330114650ecad2a72aeeada8a944";
+// with the poll() guard in kill_tree, the seen set in the walk, the libproc route on macOS, the bounded pipe read (communicate_bounded) and the
+// signal path that also ends everything below the tool (tests/pack-shared-process.test.ts holds those cases).
+const NETWORK_PROCESS_SHA = "6a346a556fd3aa04e663d17a505434db5195726251411f19809dd8c69e96e9f2";
 const NETWORK_WITHHOLDING_SHA = "fdd1ae506f0e017a7fb011e552ba9ac5dd015728d8eeadc534fbc88e3f72c0a5";
 
 test("the tool and the recipes that start programs carry one process block, the network pack's text, and nothing in the pack starts a program in a session or a group of its own", async () => {

@@ -54,10 +54,12 @@ import re
 import struct
 import sys
 import tarfile
+import time
 import zlib
 
 MAGIC = b"ANDROID BACKUP\n"
 SUPPORTED_VERSIONS = (1, 2, 3, 4, 5)
+DEFAULT_SECONDS = 1500         # recipe.json limits.seconds is 1800; what follows the listing is a few small files
 DEFAULT_BUDGET = 32 << 30
 PIECE = 1 << 20
 SCHEME_WORD = re.compile(r"[A-Za-z0-9._-]{1,16}\Z")
@@ -67,10 +69,14 @@ OUTPUTS = ("backup.json", "members.tsv", "index.tsv", "coverage.json")
 # --- tar watch: begin ----------------------------------------------------------------------------
 # Held byte for byte equal in the four recipes that read a tar (a test compares the copies). The watch
 # follows a tar header by header, apart from the library that lists it, and says what that library does
-# not: whether the end-of-archive block came, whether a header would be refused (a checksum that does not
+# not: whether the end-of-archive blocks came, whether a header would be refused (a checksum that does not
 # match, a number that does not parse), how many members there are, and whether an extended header declares
 # more than the library should be allowed to hold in memory (it reads a GNU long name or a pax header whole).
+# The end of an archive is TWO zero blocks. One zero block with a header after it is not an end: GNU tar and bsdtar
+# warn ("lone zero block") and read on, and so does the listing (the library is opened with ignore_zeros); the watch
+# counts such blocks, and the run is partial for them.
 EXTENDED_HEADER_LIMIT = 16 << 20
+ZERO_BLOCK = b"\0" * 512
 NO_DATA_TYPES = set(b"123456")        # hard link, symbolic link, character and block device, directory, fifo: the size is not followed by data
 
 
@@ -131,7 +137,12 @@ class TarWatch:
         self.acc = bytearray()
         self.position = 0
         self.ended = False
-        self.end_at = None           # where the end-of-archive block starts
+        self.end_at = None           # where the end-of-archive blocks start
+        self.zero_at = None          # a zero block just met, the first of the two that end the archive unless a header follows
+        self.lone_zeros = 0          # zero blocks that a header followed: not an end
+        self.lone_first = None       # where the first of them is
+        self.tail_at = None          # the first byte that is not zero after the end-of-archive blocks
+        self.zeroed_data = 0         # GNU long-name, long-link and pax headers whose data starts with a zero byte: a name block that was wiped
         self.violation = None        # the size an extended header declares, over the limit
         self.violation_at = None     # where that header starts
         self.bad_at = None           # where a header starts that the tar library would refuse
@@ -179,6 +190,10 @@ class TarWatch:
                 self.header(bytes(self.block))
                 self.block.clear()
         if self.stopped():
+            if self.ended and self.tail_at is None and i < n:
+                rest = data[i:]
+                if rest.count(0) != len(rest):
+                    self.tail_at = self.position + len(rest) - len(rest.lstrip(b"\0"))
             self.position += n - i
 
     def walk(self, fh, size, until=None):
@@ -210,7 +225,29 @@ class TarWatch:
             self.position += 512
             self.header(block)
 
+    def look_past_end(self, fh, size):
+        """For a tar on disk whose end blocks came: where the first byte that is not zero lies after them (padding to a record is zeros)."""
+        if not self.ended or self.tail_at is not None:
+            return
+        at = self.end_at + 1024
+        while at < size:
+            fh.seek(at)
+            chunk = fh.read(min(1 << 20, size - at))
+            if not chunk:
+                return
+            data = chunk.lstrip(b"\0")
+            if data:
+                self.tail_at = at + len(chunk) - len(data)
+                return
+            at += len(chunk)
+
     def finish_pax(self):
+        if self.acc[:1] == b"\0":
+            self.zeroed_data += 1        # a name or a pax record never starts with a zero byte
+        if self.collecting in (ord("L"), ord("K")):
+            self.acc.clear()             # only its first byte was read: the library reads the name itself
+            self.skip = self.collect_padding
+            return
         size = pax_size(bytes(self.acc))
         if self.collecting in (ord("x"), ord("X")):
             # The library starts from the global records and lets this header's override them.
@@ -229,9 +266,17 @@ class TarWatch:
                 self.in_ext = False
                 self.skip = self.after_ext
             return
-        if block == b"\0" * 512:
-            self.ended, self.end_at = True, start
+        if block == ZERO_BLOCK:
+            if self.zero_at is None:
+                self.zero_at = start
+            else:
+                self.ended, self.end_at = True, self.zero_at
             return
+        if self.zero_at is not None:
+            self.lone_zeros += 1
+            if self.lone_first is None:
+                self.lone_first = self.zero_at
+            self.zero_at = None
         size = tar_header(block)
         if size is None or size < 0:
             self.bad_at = start
@@ -249,7 +294,11 @@ class TarWatch:
             if size > EXTENDED_HEADER_LIMIT:
                 self.violation, self.violation_at = size, start
                 return
-            self.skip = -(-size // 512) * 512
+            padded = -(-size // 512) * 512
+            if size:
+                self.collecting, self.collect, self.collect_padding = flag, 1, padded - 1       # its first byte is looked at: a wiped name starts with zero
+            else:
+                self.skip = padded
             return
         self.members += 1
         if flag in NO_DATA_TYPES:
@@ -269,7 +318,7 @@ class TarWatch:
 def tar_verdict(watch, listed, cut_short=False):
     """What the watch saw, set against the `listed` members the library returned: (tar_end, limits, errors).
 
-    `cut_short`: the bytes were stopped by a budget, so neither the end block nor the count is judged.
+    `cut_short`: the bytes were stopped by a budget, so neither the end blocks nor the count is judged.
     """
     limits, errors = [], []
     if watch.violation is not None:
@@ -286,7 +335,21 @@ def tar_verdict(watch, listed, cut_short=False):
         tar_end = "not_reached"
     else:
         tar_end = "missing"
-        errors.append("the tar ends without its end-of-archive block (%d bytes read): the archive is cut short or damaged, and the listing is what came before the cut" % watch.position)
+        if watch.zero_at is not None:
+            errors.append("the tar ends after one zero block at offset %d, and an archive ends with two (%d bytes read): it is cut short or damaged, and the listing is what came before"
+                          % (watch.zero_at, watch.position))
+        else:
+            errors.append("the tar ends without its end-of-archive blocks (%d bytes read): the archive is cut short or damaged, and the listing is what came before the cut" % watch.position)
+    if watch.lone_zeros:
+        errors.append("%d lone zero block(s) inside the tar, the first at offset %d: an archive ends with two zero blocks, and this one goes on after each. GNU tar and bsdtar "
+                      "warn and read on, and so does this listing, but the archive was written or damaged in a way a clean one is not"
+                      % (watch.lone_zeros, watch.lone_first))
+    if watch.zeroed_data:
+        errors.append("%d GNU long-name, long-link or pax header(s) whose data starts with a zero byte: the data block was wiped, and the member that follows carries a name "
+                      "the archive does not hold" % watch.zeroed_data)
+    if watch.tail_at is not None and not cut_short:
+        errors.append("data follows the tar's end-of-archive blocks (the first byte that is not zero is at offset %d of the tar): tar stops at the blocks and so does this listing, "
+                      "so an archive appended to this one, or anything else after them, is not listed" % watch.tail_at)
     if not cut_short and listed != watch.members:
         errors.append("the tar reader listed %d members and a header-by-header walk counted %d: the two disagree, so the listing may be missing members" % (listed, watch.members))
     return tar_end, limits, errors
@@ -329,8 +392,15 @@ class ZlibReader(io.RawIOBase):
                 self.pending = chunk
             produced = self.decoder.decompress(self.pending, min(PIECE, self.budget - self.produced))
             self.pending = self.decoder.unconsumed_tail
+            before = self.produced
             self.produced += len(produced)
             self.watch.feed(produced)
+            # The library is given the tar only as far as the watch lets it: not into a header it must not hold or would refuse, and not past the
+            # two zero blocks that end the archive (it is opened with ignore_zeros, so that it reads past a lone zero block). The rest of the
+            # zlib stream is still read, so that its end marker and checksum are verified.
+            stop = self.watch.stop_at()
+            if stop is not None:
+                produced = produced[:max(0, stop - before)]
             if self.watch.violation is not None:
                 # What the library would read next is an extended header too large to hold: the stream ends here.
                 self.buffer.extend(produced)
@@ -371,21 +441,26 @@ class Tap(io.RawIOBase):
     def __init__(self, source, watch):
         self.source = source
         self.watch = watch
+        self.served = 0
 
     def readable(self):
         return True
 
     def readinto(self, target):
-        if self.watch.violation is not None:
+        if self.watch.stop_at() is not None:
             return 0
         data = self.source.read(len(target))
         self.watch.feed(data)
+        stop = self.watch.stop_at()
+        if stop is not None:
+            data = data[:max(0, stop - self.served)]       # not into a header the library must not read, nor past the end blocks
+        self.served += len(data)
         target[:len(data)] = data
         return len(data)
 
     def drain(self):
-        """The rest of the payload after the library stopped, so that the watch sees it."""
-        while not self.watch.stopped():
+        """The rest of the payload after the library stopped, so that the watch sees it (what follows the end blocks too)."""
+        while self.watch.violation is None and self.watch.bad_at is None:
             data = self.source.read(PIECE)
             if not data:
                 break
@@ -501,13 +576,20 @@ def detect(path):
         return False, str(exc)
 
 
-def run(path, out, budget):
+def run(path, out, budget, seconds=DEFAULT_SECONDS):
     present = [name for name in OUTPUTS if os.path.lexists(os.path.join(out, name))]
     if present:
         # Before anything is written: an earlier run's files stay as they are.
         print(json.dumps({"ok": False, "status": "refused", "why": "the output directory already holds a file of an earlier run (%s): the recipe does not write over it" % ", ".join(present)}))
         return None
     os.makedirs(out, exist_ok=True)
+    # Said before the listing starts: a run the harness stops at its limit leaves this, and is read as partial.
+    with open(os.path.join(out, "coverage.json"), "w", encoding="utf-8") as handle:
+        json.dump({"recipe": "android-backup", "status": "partial", "covered": "started; the listing did not finish (stopped before its end)",
+                   "limits_hit": [], "errors": ["the run ended before the listing did"]}, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    deadline = time.monotonic() + seconds
+    timed_out = False
     errors, limits_hit = [], []
     member_count = 0
     stream, tar_end = "not_applicable", "not_applicable"
@@ -527,8 +609,11 @@ def run(path, out, budget):
                 tap = Tap(source, watch) if reader is None else None
                 payload = io.BufferedReader(reader if reader is not None else tap)
                 try:
-                    with tarfile.open(fileobj=payload, mode="r|", encoding="utf-8", errors="surrogateescape") as archive:
+                    with tarfile.open(fileobj=payload, mode="r|", encoding="utf-8", errors="surrogateescape", ignore_zeros=True) as archive:
                         for member in archive:
+                            if not member_count % 256 and time.monotonic() > deadline:
+                                timed_out = True
+                                break
                             listing.write("%d\t%s\t%s\t%d\t%s\t%o\t%s\t%s\n" % (
                                 member_count, member_type(member), escaped(member.name), member.size,
                                 utc(member.mtime), member.mode, escaped(member.linkname or ""), b64(member.name)))
@@ -539,18 +624,23 @@ def run(path, out, budget):
                         reader.damaged = True
                     errors.append("the zlib stream is damaged: %s" % exc)
                 except (tarfile.TarError, EOFError, OSError) as exc:
-                    errors.append("embedded tar traversal stopped: %s" % exc)
-                if watch.violation is None and not (reader and reader.damaged):
+                    if not (str(exc) == "empty file" and watch.ended and watch.end_at == 0):      # two zero blocks and nothing else are a valid archive of no member
+                        errors.append("embedded tar traversal stopped: %s" % exc)
+                if watch.violation is None and not (reader and reader.damaged) and not timed_out:
                     try:
                         (reader or tap).drain()
                     except zlib.error as exc:
                         reader.damaged = True
                         errors.append("the zlib stream is damaged after the tar's end: %s" % exc)
-                cut_short = False
+                cut_short = timed_out
+                if timed_out:
+                    limits_hit.append("time limit of %g seconds for the listing (the recipe's own is longer): the listing stopped after %d members" % (seconds, member_count))
                 if reader is not None:
                     produced = reader.produced
                     if reader.damaged:
                         stream, cut_short = "damaged", True
+                    elif timed_out:
+                        stream = "not_reached"
                     elif reader.exceeded:
                         stream, cut_short = "not_reached", True
                         limits_hit.append("decompressed output budget of %d bytes (the listing stopped after %d members)" % (budget, member_count))
@@ -617,6 +707,7 @@ def main():
     # and keeps nothing, so the directory is taken and left empty.
     parser.add_argument("--probe-out")
     parser.add_argument("--max-decompressed-bytes", type=int, default=DEFAULT_BUDGET)
+    parser.add_argument("--max-seconds", type=float, default=DEFAULT_SECONDS)
     args = parser.parse_args()
     try:
         path = target_of(args.target)
@@ -638,7 +729,7 @@ def main():
         print(json.dumps({"ok": False, "status": "unsupported", "why": why}))
         return 2
     try:
-        answer = run(path, args.out, args.max_decompressed_bytes)
+        answer = run(path, args.out, args.max_decompressed_bytes, args.max_seconds)
     except (OSError, UnicodeError, ValueError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 2
