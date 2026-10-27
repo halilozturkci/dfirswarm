@@ -345,15 +345,18 @@ test("a list nested 800, 900 and 990 deep is read, and a record nested 20000 dee
     const hostile = `${JSON.stringify(ct({ eventID: "x" })).slice(0, -1)},"requestParameters":{"deep":${deep(20000)}}}`;
     await put(cwd, "work/ev/t.json", `{"Records":[${JSON.stringify(ct({ eventID: "a" }))},${hostile},${JSON.stringify(ct({ eventID: "c" }))}]}`);
     const t = body(await tool(TRAIL, cwd, { path: "work/ev/t.json", link_sessions: false }));
-    assert.equal(t.record_count, 2, "the record after the deep one is read");
-    assert.equal(t.status, "partial");
-    assert.match(JSON.stringify(t.rejected_records), /nested too deeply/);
+    // Python before 3.13 cannot decode a record this deep (it is rejected alone); a newer one can (it is read, its depth withheld)
+    assert.ok(t.record_count >= 2 && t.records.some((r: Json) => r.event_id === "c"), "the record after the deep one is read");
+    if (t.record_count === 2) {
+      assert.equal(t.status, "partial");
+      assert.match(JSON.stringify(t.rejected_records), /nested too deeply/);
+    }
     await put(cwd, "work/ev/s.json", `{"value":[${JSON.stringify(signIn(1))},{"id":"deep","userPrincipalName":"a@example.org","x":${deep(20000)}},${JSON.stringify(signIn(3))}]}`);
     const s = body(await tool(SIGNIN, cwd, { path: "work/ev/s.json" }));
-    assert.equal(s.event_count, 2);
+    assert.ok(s.event_count >= 2 && s.events.some((e: Json) => e.event_id === "signin-3"));
     await put(cwd, "work/ev/u.json", `[${JSON.stringify(audit({ Id: "a" }))},{"Operation":"Send","UserId":"a@example.org","x":${deep(20000)}},${JSON.stringify(audit({ Id: "c" }))}]`);
     const u = body(await tool(UAL, cwd, { path: "work/ev/u.json" }));
-    assert.equal(u.rows_read, 2);
+    assert.ok(u.rows_read >= 2 && u.records.some((r: Json) => r.record_id === "c"));
   });
 });
 
