@@ -44,12 +44,17 @@ The clock is looked at before every slice that is cut out (a slice is up to 64 M
 every 4,096th hit otherwise, and inside the search of a window. Every call makes progress:
 the first window is always searched whole and the first hit always reported, so a call
 that is given so little time that it cannot finish even that runs past `max_seconds` by
-that one window of work and still moves `resume_start` forward; a resume loop ends.
+that one window of work and still moves `resume_start` forward; a resume loop ends. An explicit hit list (`results_to`) is flushed to disk
+every 256 MiB inside that loop, so the flush at the end of a sweep has at most that much left to do; the temporary list the tool keeps when
+no `results_to` is given is flushed once, at the end, and the time that takes at the 16 GiB `max_results_bytes` cap was not measured.
 
 STOPS. A signal (SIGTERM, SIGINT, SIGHUP) ends the tool with one JSON answer (status "interrupted", exit 128 plus the signal) that names the
 hits kept so far under a visible name ending in .partial, never a hidden temporary one, and resume_start. Once the sweep has ended, the hit list is
 placed under its final name and the answer written without a stop being acted on (a stop that arrives then is held until the answer is out and
-changes nothing, signal_after_sweep says it came): the answer is the complete one, and stdout never holds two documents.
+changes nothing, signal_after_sweep says it came): the answer is the complete one, and stdout never holds two documents. The process leaves
+without the interpreter's shutdown (os._exit after the flush), which would put the default action of every signal back first. What no
+script can answer is a stop that arrives before the interpreter has run this file's first lines, tens of milliseconds at the start of a
+process (longer on a loaded machine): it ends the process with no answer, and nothing had been read or written yet.
 
 MEMORY CONTENT. A slice is memory content: it can be a credential store (a SAM, SYSTEM
 or SECURITY hive, a browser database) or run into the pages next to one. The hit list
@@ -126,6 +131,7 @@ MAX_RESULT_BYTES_DEFAULT, MAX_RESULT_BYTES_CAP, MAX_RESULT_BYTES_FLOOR = 1 << 30
 CHECK_EVERY = 4096          # hits between two looks at the clock (a hit with a slice cut out is looked at every time)
 MAX_EXTRACT_CAP = 1000      # slices one call may cut: each is up to 64 MiB, and a larger number is a second call from resume_start
 FIND_CHECK_EVERY = 1 << 16  # finds between two looks at the clock inside one window
+SYNC_EVERY = 256 << 20      # bytes of an explicit hit list written between two fsyncs: the one at the end then has at most this much to flush
 
 
 # BEGIN SHARED PAGE
@@ -426,8 +432,8 @@ def fail(message, **extra):
     raise SystemExit(1)
 
 
-def resolve_output(out):
-    """Resolve an output below this agent's work/<id>/ directory.
+def resolve_output(out, what=None):
+    """Resolve an output below this agent's work/<id>/ directory, or, in a job, below its $OUT (and nowhere else).
 
     A string check is not enough: `work/../inputs/x` and an absolute path
     both name a file the tool must not write, and neither starts with
@@ -451,6 +457,11 @@ def resolve_output(out):
     if len(relative.parts) < 2 or relative.parts[0] in ("", ".", ".."):
         fail("output must name a path inside work/<your id>/, not work/ itself",
              output=str(out))
+    if os.environ.get("JOB_ID"):
+        # A path that is fine for an agent is still not a job's: its output is $OUT and nothing else, because $OUT is what is sealed
+        # (a file beside it is a file nobody seals, and work/ may be read-only there).
+        fail("%s must be a %s under $OUT in a job: nothing a job writes is kept anywhere else"
+             % (what or "output", "directory" if what == "extract_to" else "file"), **{what or "output": str(out)})
     return dest
 
 
@@ -681,7 +692,7 @@ def main():
             fail("extract_to is refused in a job that was not run as secret output: its slices would be sealed as ordinary "
                  "output. Run this as job_run tool=mem_carve (its manifest makes the job secret output). Nothing was written "
                  "and the image was not read.", extract_to="refused", written=False)
-        extract_to = resolve_output(extract_to)
+        extract_to = resolve_output(extract_to, "extract_to")
         if Path(out).resolve() not in extract_to.parents and extract_to != Path(out).resolve():
             fail("extract_to must be a directory under $OUT in a job", extract_to=str(args.get("extract_to")))
         make_private_dirs(extract_to)
@@ -697,7 +708,7 @@ def main():
         link = Path(results_to) if Path(results_to).is_absolute() else Path.cwd() / results_to
         if os.path.islink(link):
             fail("results_to is a symbolic link: it is not written through or replaced; name a file", output=str(results_to))
-        results_to = resolve_output(results_to)
+        results_to = resolve_output(results_to, "results_to")
         source = Path(path).resolve()
         if results_to == source or (results_to.exists() and os.path.samefile(results_to, source)):
             fail("results_to cannot name the source being scanned", output=str(results_to),
@@ -717,6 +728,7 @@ def main():
     result_bytes = 0
     extract_bytes = 0                # what the slices cut out so far take: counted with the hit list toward max_results_bytes
     results_digest = hashlib.sha256()
+    unsynced = 0                     # bytes of the explicit hit list written since its last fsync
 
     # Where every hit goes. An explicit results_to holds all of them; without one, a
     # page of `preview` hits is returned and, past it, the whole result is written to
@@ -897,6 +909,7 @@ def main():
                         result_bytes += len(line) + 1
                         if results:
                             results.write(line + "\n")
+                            unsynced += len(line) + 1
                             results_digest.update(line.encode("ascii") + b"\n")
                             if len(preview_hits) < preview:
                                 preview_hits.append(entry)
@@ -906,6 +919,12 @@ def main():
                         STATE["hits_so_far"] = hit_count
                     finally:
                         GUARD["depth"] -= 1
+                    if results and unsynced >= SYNC_EVERY:
+                        # Outside the hold and inside the clock's loop: what the end of the sweep would have flushed in one piece (up to the
+                        # 16 GiB cap) is flushed as it is written, and the clock sees the time it takes.
+                        results.flush()
+                        os.fsync(results.fileno())
+                        unsynced = 0
                     checkpoint()
                 if stop:
                     break
@@ -1086,4 +1105,17 @@ def run_guarded():
 
 
 if __name__ == "__main__":
-    run_guarded()
+    code = 0
+    try:
+        run_guarded()
+    except SystemExit as exit_:
+        code = exit_.code if isinstance(exit_.code, int) else (0 if exit_.code is None else 1)
+    # The answer is out and flushed. Leave here and not through the interpreter's own shutdown, which puts every signal's default action
+    # back before it is over: a stop that arrived in that time ended the process by the signal (exit status 128 plus it, or none at all)
+    # although the one complete document had been written.
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except (OSError, ValueError):
+        pass
+    os._exit(code)

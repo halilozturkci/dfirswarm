@@ -47,7 +47,10 @@ The tool stops by itself: timeout_seconds is at most 480, so the end of the call
 engine's stop, its unmount, the last file) stays inside the manifest's 600. A signal
 (SIGTERM, SIGINT, SIGHUP) ends it with one JSON answer (status interrupted, exit 128 plus
 the signal), after the engine is stopped and the mount released; the rows already kept in the results file are named (partial_results). A
-signal that arrives while that file is placed or the answer written is held until the answer is out.
+signal that arrives while that file is placed or the answer written is held until the answer is out. The process leaves without the
+interpreter's shutdown (os._exit after the flush), which would put the default action of every signal back first. What no script can answer
+is a stop that arrives before the interpreter has run this file's first lines, tens of milliseconds at the start of a process (longer on a
+loaded machine): it ends the process with no answer, and no engine had been started.
 """
 import json
 import os
@@ -1054,7 +1057,8 @@ def writable_mount(path):
     VM cannot run is run again as a job with work/<id>/x given as $OUT/x, and
     a mount refused there was a rerun that could never mount anything. As in
     mem_carve, resolving first (symlinks included) is what holds a path to
-    where it really lands."""
+    where it really lands. In a job the mount is under $OUT and nowhere else: the engine's two logs are written beside the mount, and
+    $OUT is the one place a job's files are sealed."""
     root = Path.cwd().resolve()
     dest = (root / path).resolve() if not Path(path).is_absolute() else Path(path).resolve()
     job_out = Path(os.environ["OUT"]).resolve() if os.environ.get("JOB_ID") and os.environ.get("OUT") else None
@@ -1071,6 +1075,9 @@ def writable_mount(path):
     if len(relative.parts) < 2 or relative.parts[0] in ("", ".", ".."):
         fail("mount must name a directory inside work/<your id>/, not work/ itself",
              mount=str(path))
+    if os.environ.get("JOB_ID"):
+        fail("mount must be a directory under $OUT in a job: the engine's logs are written beside it, and nothing a job writes is kept "
+             "anywhere else", mount=str(path))
     return dest
 
 
@@ -1323,7 +1330,7 @@ def main():
     page = LosslessPage("mem_fs", [str(mount), mode, requested, paths], limit)
     counts = {"requested": len(targets), "exported": 0, "failed": 0, "refused": 0, "not_exported": 0, "partial": 0,
               "not_attempted": 0}
-    names_info = {"withheld": 0, "file": None}
+    names_info = {"withheld": 0, "file": None, "errors": 0}
 
     def describe(exc):
         code = errno.errorcode.get(exc.errno, "") if getattr(exc, "errno", None) else ""
@@ -1512,6 +1519,8 @@ def main():
         names = sorted(os.listdir(source), key=os.fsencode) if source.is_dir() else [None]
         plain_rows, hidden_rows, originals = [], [], []
         for name in names:
+            if state["abandon"]:
+                return                     # the call has given up this read: no more work, and no file that nothing names
             child = source if name is None else source / name
             label = name or source.name
             printed = shown(label, "name")
@@ -1520,6 +1529,7 @@ def main():
                 st = os.lstat(child)
             except OSError as exc:
                 row["error"] = describe(exc)
+                names_info["errors"] += 1      # counted here, over every row: the inline page holds only the first of them
             else:
                 row["directory"] = stat.S_ISDIR(st.st_mode)
                 if not row["directory"]:
@@ -1545,8 +1555,12 @@ def main():
                 os.fsync(handle.fileno())
             names_info["file"] = shown(secret.shown_path(rel), "path")
         for row in plain_rows:
+            if state["abandon"]:
+                return
             page.add(sealed(row))
         for index in order:
+            if state["abandon"]:
+                return
             page.add(sealed(hidden_rows[index]))
 
     def describe_for_result(exc):
@@ -1646,8 +1660,8 @@ def main():
     paged = page.finish()
     items = {"items": page.page} if mode == "export" else {}
 
+    kept = {"partial_results": paged["all_results"], "partial_results_format": paged["all_results_format"]} if paged.get("all_results") else {}
     if interrupted is not None:
-        kept = {"partial_results": paged["all_results"], "partial_results_format": paged["all_results_format"]} if paged.get("all_results") else {}
         interrupted_answer(interrupted, mode=mode, mount=str(mount), logs=logs, phases=timings,
                            counts=counts if mode == "export" else None, secret_values=secret.summary(), **kept, **items)
         raise SystemExit(128 + interrupted)
@@ -1661,6 +1675,7 @@ def main():
              prerequisites=prerequisites(), phases=timings,
              counts=counts if mode == "export" else None,
              secret_values=secret.summary(),
+             **kept,
              note="Mounting needs FUSE, which a sandbox may refuse. That is a limit on the host, not a finding "
                   "about the evidence, and the report should say so. The engine's own output is in the log files named; "
                   "the lines shown here are judged as text.",
@@ -1684,7 +1699,7 @@ def main():
         answer["listed"] = shown(requested, "path")
         answer["entries"] = page.page
         answer["entry_count"] = paged["matched"]
-        row_errors = sum(1 for row in page.page if isinstance(row, dict) and "error" in row)
+        row_errors = names_info["errors"]
         answer["names"] = {"withheld_or_changed": names_info["withheld"], "originals_file": names_info["file"]}
         if names_info["withheld"] and not names_info["file"]:
             answer["names"]["originals"] = ("not written: ask with write_values: true in a job run as secret output to have the original names "
@@ -1754,4 +1769,17 @@ def run_guarded():
 
 
 if __name__ == "__main__":
-    run_guarded()
+    code = 0
+    try:
+        run_guarded()
+    except SystemExit as exit_:
+        code = exit_.code if isinstance(exit_.code, int) else (0 if exit_.code is None else 1)
+    # The answer is out and flushed. Leave here and not through the interpreter's own shutdown, which puts every signal's default action
+    # back before it is over: a stop that arrived in that time ended the process by the signal (exit status 128 plus it, or none at all)
+    # although the one complete document had been written.
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except (OSError, ValueError):
+        pass
+    os._exit(code)

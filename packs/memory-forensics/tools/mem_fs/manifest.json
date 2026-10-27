@@ -48,8 +48,8 @@
   "example": "{\"path\": \"inputs/memory.raw\", \"mount\": \"work/<your id>/mem\", \"mode\": \"export\", \"write_values\": true, \"paths\": [\"sys/proc/proc.txt\"]}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 7,
-  "sha256": "64d38e43346933bf246a206c719c089f98104eaec49e3adab8c0812c9019a927",
+  "version": 9,
+  "sha256": "639ea7734d383b247da6196c88e027d3c76c09f1f56833875fe599dd6b6f00a3",
   "secret_output": {
     "when_args": [
       "write_values"
