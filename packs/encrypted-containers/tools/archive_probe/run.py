@@ -41,6 +41,7 @@ Names, paths and header strings are printed through the SHARED NAMES block below
 part shaped like an identifier or a secret is withheld (by shape; see the block).
 """
 import heapq
+from array import array
 import json
 import mmap
 import os
@@ -53,7 +54,7 @@ import threading
 import zlib
 from datetime import datetime, timedelta, timezone
 
-PARSER = "archive_probe/4"
+PARSER = "archive_probe/5"
 
 
 # Lossless paging (the same in every library tool that pages): the page an
@@ -1507,31 +1508,38 @@ def directory_starts(fh, record, size):
     return fh.read(4) == b"PK\x01\x02"
 
 
-FRONT_BLOCK = 1 << 20
-FRONT_CANDIDATES = 20000        # signatures looked at in the bytes in front of the first member; more than that, and it is said that they were not all
-ZIP_METHODS = frozenset(list(range(0, 11)) + [12, 14, 18, 19, 20, 93, 94, 95, 96, 97, 98, 99])
-FRONT_SHAPE = re.compile(rb"PK\x03\x04|PK\x01\x02|PK\x05\x06|7z\xbc\xaf\x27\x1c|Rar!\x1a\x07")
+DARK_BLOCK = 1 << 20
+DARK_CANDIDATES = 20000         # signatures looked at in all the unclaimed bytes of a file together; more than that, and it is said that they were not all
+DARK_SHAPE = re.compile(rb"PK\x03\x04|PK\x01\x02|PK\x05\x06|7z\xbc\xaf\x27\x1c|Rar!\x1a\x07")
+RECORD_SIGNATURES = (b"PK\x03\x04", b"PK\x01\x02", b"PK\x05\x06", b"PK\x05\x05", b"PK\x06\x06", b"PK\x07\x08")
 
 
-def shaped(head, at, size):
-    """What archive-shaped thing begins at byte `at` of the file, from the first bytes of it (`head`, up to 64): a name, or None.
+def shaped(head, at, hi, size, fh):
+    """What archive-shaped thing begins at byte `at` of a region that ends at `hi`, from the first bytes of it (`head`, up to 64): a name, or None.
 
-    A signature alone is not enough (a program that reads ZIP files holds the signatures as constants): the fields after it must be those of
-    the record. A local header or a directory entry has a known method and a name and extra fields that fit the file; an End record has disks,
-    a comment and a directory that fit it, and is not the empty one (an empty End record is a constant of every ZIP library, and an empty archive
-    holds no member); a 7-Zip start header has its own CRC right; a RAR block has its header CRC right.
+    The shape is a structure, not a set of field values: a reader that falls back to the local headers accepts any version, method and name
+    length, so none of them is looked at. A local header or a directory entry counts when what its own sizes make of it ends exactly where
+    the region ends or where the next record of the format begins (a chain); a program that holds `PK\\3\\4` as a constant is followed by
+    anything but a chain. An End record has a directory that fits the file and is not the empty one (every ZIP library holds that as a
+    constant, and an empty archive holds no member). A 7-Zip start header has its own CRC right, a RAR block its header CRC.
     """
     sig = head[:4]
+
+    def chained(end):
+        if end == hi:
+            return True
+        if end > hi - 4:
+            return False
+        fh.seek(end)
+        return fh.read(4) in RECORD_SIGNATURES
+
     if sig == b"PK\x03\x04" and len(head) >= 30:
-        version, method, nlen, xlen = head[4], struct.unpack_from("<H", head, 8)[0], struct.unpack_from("<H", head, 26)[0], struct.unpack_from("<H", head, 28)[0]
-        if version <= 100 and method in ZIP_METHODS and nlen >= 1 and at + 30 + nlen + xlen <= size:
+        flags, csize, nlen, xlen = struct.unpack_from("<H", head, 6)[0], struct.unpack_from("<I", head, 18)[0], struct.unpack_from("<H", head, 26)[0], struct.unpack_from("<H", head, 28)[0]
+        if csize != 0xFFFFFFFF and chained(at + 30 + nlen + xlen + csize):
             return "a ZIP local header"
     elif sig == b"PK\x01\x02" and len(head) >= 46:
-        made_os, version, method = head[5], head[6], struct.unpack_from("<H", head, 10)[0]
         nlen, xlen, clen = struct.unpack_from("<HHH", head, 28)
-        disk, offset = struct.unpack_from("<H", head, 34)[0], struct.unpack_from("<I", head, 42)[0]
-        if made_os <= 20 and version <= 100 and method in ZIP_METHODS and nlen >= 1 and disk <= 255 and at + 46 + nlen + xlen + clen <= size \
-                and (offset < size or offset == 0xFFFFFFFF):
+        if chained(at + 46 + nlen + xlen + clen):
             return "a ZIP directory entry"
     elif sig == b"PK\x05\x06" and len(head) >= 22:
         disk, cd_disk, _n_disk, entries, cd_size, cd_offset, clen = struct.unpack_from("<HHHHIIH", head, 4)
@@ -1559,35 +1567,36 @@ def shaped(head, at, size):
     return None
 
 
-def scan_front(fh, size, end):
-    """Look through the first `end` bytes of the file for anything that is shaped like an archive (see `shaped`).
+def scan_dark(fh, size, lo, hi, budget):
+    """Look through the bytes [lo, hi) of the file, which no member, directory or End record claims, for anything shaped like an archive.
 
     Returns (what, None) for the first thing found, (None, why) when the bytes were not all looked at (the clock, a signal, or more candidates
-    than FRONT_CANDIDATES) and (None, None) when they hold nothing of the kind. Nothing of the archive in front is required to be sound: a
-    local header or a directory entry alone, or a damaged End record, is what a reader that falls back to the local headers lists.
+    than DARK_CANDIDATES in all the regions together: `budget` counts them) and (None, None) when they hold nothing of the kind. The archive
+    that is found need not be sound: a damaged or missing End record, or no directory, is what a reader that falls back to the local headers
+    lists.
     """
-    seen, pos = 0, 0
-    while pos < end:
+    pos = lo
+    while pos < hi:
         if stop_wanted():
             return None, stop_cause()
         fh.seek(pos)
-        block = fh.read(min(FRONT_BLOCK, end - pos) + 8)
-        limit = min(FRONT_BLOCK, end - pos)
-        for m in FRONT_SHAPE.finditer(block):
+        limit = min(DARK_BLOCK, hi - pos)
+        block = fh.read(min(limit + 8, hi - pos))
+        for m in DARK_SHAPE.finditer(block):
             if m.start() >= limit:
                 break
-            seen += 1
-            if seen > FRONT_CANDIDATES:
-                return None, "more than %d archive signatures lie in front of the first member" % FRONT_CANDIDATES
+            budget["seen"] += 1
+            if budget["seen"] > DARK_CANDIDATES:
+                return None, "more than %d archive signatures lie in the bytes no member claims" % DARK_CANDIDATES
             at = pos + m.start()
             head = block[m.start():m.start() + 64]
-            if len(head) < 64:
+            if len(head) < 64 and pos + m.start() + 64 <= size:
                 fh.seek(at)
                 head = fh.read(64)
-            found = shaped(head, at, size)
+            found = shaped(head, at, hi, size, fh)
             if found:
                 return {"kind": found, "at": at}, None
-        pos += FRONT_BLOCK
+        pos += DARK_BLOCK
     return None, None
 
 
@@ -1771,7 +1780,11 @@ def probe_zip(path, size, limit, max_metadata):
     # Bit 0 of the flags is in the central directory entry and again in the member's local header. A reader that takes the local one (7-Zip
     # does) can see a member encrypted that the directory calls plain, so each entry's local header is read (30 bytes, at the offset the
     # directory gives) and the two are compared; what cannot be compared is counted.
-    local = {"compared": 0, "conflicts": 0, "unreadable": 0, "examples": [], "first": None}
+    local = {"compared": 0, "conflicts": 0, "unreadable": 0, "examples": []}
+    # The bytes each member takes in the file, from its local header and the directory's compressed size: [start, end), and whether a data
+    # descriptor follows (bit 0) and whether its sizes are 8 bytes (bit 1). Everything the members, the directory and the End record do not
+    # take is "dark", and is searched.
+    starts, ends, kinds = array("Q"), array("Q"), bytearray()
     with open(path, "rb") as fh:
         cd = CentralDirectory(fh, cd_start, eocd["cd_bytes"])
         while consumed < eocd["cd_bytes"]:
@@ -1793,6 +1806,7 @@ def probe_zip(path, size, limit, max_metadata):
                 break
             consumed += 46 + nlen + xlen + clen
             fields = extra_fields(extra)
+            wide = 0xFFFFFFFF in (usize, csize)
             usize, csize, offset, extra_problem = zip64_values(fields, usize, csize, offset)
             if flags & ZIP_UTF8_NAME:
                 name, encoding = name_raw.decode("utf-8", "surrogateescape"), "UTF-8 (flag 0x800)"
@@ -1807,8 +1821,10 @@ def probe_zip(path, size, limit, max_metadata):
                 local["unreadable"] += 1
             else:
                 local["compared"] += 1
-                if local["first"] is None or offset + concat < local["first"]:
-                    local["first"] = offset + concat
+                lflags = struct.unpack_from("<H", head, 6)[0]
+                starts.append(offset + concat)
+                ends.append(offset + concat + 30 + struct.unpack_from("<H", head, 26)[0] + struct.unpack_from("<H", head, 28)[0] + csize)
+                kinds.append((1 if lflags & 8 else 0) | (2 if wide else 0))
                 if bool(struct.unpack_from("<H", head, 6)[0] & ZIP_ENCRYPTED) != is_encrypted:
                     local["conflicts"] += 1
                     if len(local["examples"]) < 5:
@@ -1866,23 +1882,14 @@ def probe_zip(path, size, limit, max_metadata):
     # same members as this tool read. The first member is the lowest local header the directory names, so offsets that count from the start of
     # the file (`zip -A`) and offsets that count from the start of the archive give the same bound.
     account = []
-    if not problem:
-        bound = local["first"] if local["first"] is not None else (cd_start if count == 0 else None)
-        if bound:
-            with open(path, "rb") as fh:
-                found, why = scan_front(fh, size, bound)
-            if found:
-                out["archive_in_front"] = {"found": found["kind"], "at": found["at"], "first_member_at": bound}
-                account.append("%s lies at byte %d, in front of the first member (byte %d): another archive, whole or damaged, shares this file, and "
-                               "this list is not the file's" % (found["kind"], found["at"], bound))
-            elif why:
-                out["front_unsearched"] = {"bytes": bound, "why": why}
-                account.append("the %d bytes in front of the first member were not all searched for another archive (%s)" % (bound, why))
+    if not problem and not local["unreadable"]:
+        account = account_for_file(path, size, starts, ends, kinds, cd_start, eocd["eocd_at"] + 22 + eocd["comment_bytes"], out)
     if not problem and not doubts and not flag_doubts and not account and page["matched"] == eocd["entries"]:
-        differs = cross_check_7z(path, count, encrypted, local["first"])
-        if differs:
-            out["seven_zip_cross_check"] = differs
-            account.append(differs["why"])
+        out["cross_check"] = cross_check_7z(path, count, encrypted, starts)
+        if out["cross_check"]["result"] == "differs":
+            account.append(out["cross_check"]["why"])
+    elif not problem:
+        out["cross_check"] = {"ran": False, "result": "skipped", "why": "an earlier doubt already makes the answer partial"}
     out["schemes"] = sorted(schemes)
     out["names_readable"] = True
     out["entry_count_matches_declared"] = page["matched"] == eocd["entries"]
@@ -1906,9 +1913,14 @@ def probe_zip(path, size, limit, max_metadata):
         out["protected"] = True if encrypted else (False if sure else None)
         out["status"] = "complete" if sure else "partial"
         if sure:
+            checked = out.get("cross_check", {}).get("result")
+            second = {"agrees": "7-Zip, read as a second reader, lists the same members and the same number of encrypted ones",
+                      "not_installed": "7-Zip is not installed, so no second reader compared the list: this answer rests on the structural account of the file alone",
+                      "not_compared": "7-Zip could not be compared with (%s): this answer rests on the structural account of the file alone"
+                                      % out.get("cross_check", {}).get("why", "")}.get(checked, "no second reader compared the list")
             out["status_basis"] = ("every central directory entry was read, the count agrees with the End record, every member's local header "
-                                   "agrees with the directory about encryption, nothing archive-shaped lies in front of the first member, and "
-                                   "7-Zip, where it reads the file as a ZIP, lists the same members")
+                                   "agrees with the directory about encryption, every byte of the file is a member, the directory, the End record, "
+                                   "padding, or holds nothing shaped like an archive; " + second)
         else:
             reasons = list(doubts) + flag_doubts + account
             if not matches:
@@ -1923,6 +1935,78 @@ def probe_zip(path, size, limit, max_metadata):
         if account:
             out["not_determined"].insert(0, "whether the file holds another archive besides the one read, and so whether this is the file's whole list")
     return out
+
+
+def account_for_file(path, size, starts, ends, kinds, cd_start, records_end, out):
+    """Account for every byte of a ZIP: what the members, the directory and the End record take, and what is left.
+
+    The members take [start, end) each (read from their local headers, with the compressed size the directory gives, and a data descriptor
+    where the header says there is one); the directory, the Zip64 records and the End record, with its comment, take [cd_start, records_end).
+    Every other byte is dark, wherever it is: in front of the first member (a stub, or an archive), between two members, between the last
+    member and the directory (the signing block of an APK is there), behind the End record. The dark bytes are searched for anything shaped like
+    an archive, so that what the file's author puts first in the directory (or leaves out of it) does not decide what is looked at. Returns the
+    doubts, in words; the findings are in `out`.
+    """
+    n = len(starts)
+    order = range(n)
+    if any(starts[i] < starts[i - 1] for i in range(1, n)):
+        order = sorted(range(n), key=starts.__getitem__)
+    doubts, budget = [], {"seen": 0}
+    stats = {"member_bytes": 0, "dark_bytes": 0, "dark_regions": 0, "overlaps": 0}
+    findings = {}
+    unsearched = []
+
+    def dark(fh, lo, hi, where, previous_kind, previous_wide_bytes=None):
+        if previous_kind & 1 and hi > lo:                    # the data descriptor of the member before: 12 bytes, 16 with its signature, 8-byte sizes 8 more
+            fh.seek(lo)
+            has_sig = fh.read(4) == b"PK\x07\x08"
+            lo += min(hi - lo, (16 if has_sig else 12) + (8 if previous_kind & 2 else 0))
+        if hi <= lo:
+            return
+        stats["dark_bytes"] += hi - lo
+        stats["dark_regions"] += 1
+        if where in findings or unsearched:
+            return
+        found, why = scan_dark(fh, size, lo, hi, budget)
+        if found:
+            findings[where] = {"found": found["kind"], "at": found["at"], "region": [lo, hi]}
+        elif why:
+            unsearched.append({"why": why, "region": [lo, hi]})
+
+    with open(path, "rb") as fh:
+        prev_end, prev_kind = 0, 0
+        for k, i in enumerate(order):
+            if k & 1023 == 0 and stop_wanted():
+                unsearched.append({"why": stop_cause(), "region": [prev_end, cd_start]})
+                break
+            st, en = starts[i], ends[i]
+            stats["member_bytes"] += en - st
+            if st < prev_end:
+                stats["overlaps"] += 1
+            elif st > prev_end or k == 0:
+                dark(fh, prev_end, st, "archive_in_front" if k == 0 else "archive_in_gap", prev_kind)
+            if en > cd_start:
+                stats["overlaps"] += 1
+            prev_end, prev_kind = max(prev_end, en), kinds[i]
+        else:
+            if n == 0:
+                dark(fh, 0, cd_start, "archive_in_front", 0)
+            elif prev_end < cd_start:
+                dark(fh, prev_end, cd_start, "archive_in_gap", prev_kind)
+            if records_end < size:
+                dark(fh, records_end, size, "archive_behind", 0)
+    for where, found in findings.items():
+        out[where] = found
+        doubts.append("%s lies at byte %d, in bytes that no member, directory or End record claims (%s): another archive, whole or damaged, shares "
+                      "this file, and this list is not the file's" % (found["found"][0].upper() + found["found"][1:], found["at"], where.replace("archive_", "").replace("_", " ")))
+    if unsearched:
+        out["dark_unsearched"] = unsearched[0]
+        doubts.append("the bytes no member claims were not all searched for another archive (%s)" % unsearched[0]["why"])
+    if stats["overlaps"]:
+        doubts.append("%d member%s take bytes that another member, or the directory, takes: the offsets are not those of an ordinary archive"
+                      % (stats["overlaps"], "" if stats["overlaps"] == 1 else "s"))
+    out["accounted"] = stats
+    return doubts
 
 
 class CountedPage:
@@ -1942,31 +2026,37 @@ class CountedPage:
 SEVENZIP_PROGRAM_TYPES = frozenset(["pe", "elf", "macho", "te", "coff", "mub", "mach-o"])
 
 
-def cross_check_7z(path, count, encrypted, first_member_at):
-    """Ask 7-Zip, where it is installed, what it lists in a file this tool has read as a ZIP: None when it agrees or cannot say, else a dict
-    whose `why` says how it differs. 7-Zip is a second reader, not an oracle: it is not asked about a file it cannot open, or reads as a
-    program (a self-extracting stub), and it is asked only for counts (nothing is kept). A different archive format, a different member count
-    or a different number of encrypted members, and a listing that did not finish, all end in partial."""
+def cross_check_7z(path, count, encrypted, starts):
+    """Ask 7-Zip, where it is installed, what it lists in a file this tool has read as a ZIP, and compare. Returns a dict that says whether the
+    second reader ran and what it said: `result` is "agrees", "differs" (with `why`), "not_installed", or "not_compared" (7-Zip could not open
+    the file or read it as a program). 7-Zip is asked only for counts (nothing is kept), and whatever its exit code was: it exits 2 on a header
+    error and still prints a listing, which is compared. A different archive format, a different count of members or of encrypted members, a
+    listing that did not finish, and output that is not one archive's all differ."""
     listing, _ = list_with_7z(path, 1, counts_only=True)
     status = listing["status"]
-    if status in ("unavailable", "failed", "header_encrypted"):
-        return None
+    if status == "unavailable":
+        return {"ran": False, "result": "not_installed", "why": listing.get("reason", "no 7z on PATH")}
     kind = str((listing.get("archive") or {}).get("Type", ""))
-    if status == "timed_out":
-        return {"why": "7-Zip's listing of this file did not finish, so the members it sees were not compared with the ones read here"}
-    if kind.lower() in SEVENZIP_PROGRAM_TYPES:
-        return None
     seen = listing.get("members_seen") or {}
+    if status == "timed_out":
+        return {"ran": True, "result": "differs", "why": "7-Zip's listing of this file did not finish, so the members it sees were not compared with the ones read here"}
+    if status == "listing_not_one_archive":
+        return {"ran": True, "result": "differs", "why": "7-Zip's output is not the listing of one archive, so it was not compared with the members read here"}
+    if not kind or status in ("failed", "header_encrypted"):
+        return {"ran": True, "result": "not_compared", "why": "7-Zip could not open the file (exit %s)" % listing.get("exit_code")}
+    if kind.lower() in SEVENZIP_PROGRAM_TYPES:
+        return {"ran": True, "result": "not_compared", "why": "7-Zip reads the file as a program (%s), as it does a self-extracting stub" % kind}
     if kind.lower() != "zip":
-        return {"why": "7-Zip reads this file as %s, not as the ZIP this tool read: it lists %d members, %d of them encrypted"
-                       % (kind or "something else", seen.get("members", 0), seen.get("encrypted", 0)), "type": kind}
+        return {"ran": True, "result": "differs", "type": kind, "why": "7-Zip reads this file as %s, not as the ZIP this tool read: it lists %d members, %d of them encrypted"
+                % (kind, seen.get("members", 0), seen.get("encrypted", 0))}
     offset = str((listing.get("archive") or {}).get("Offset", "")).strip()
-    if seen.get("members") == 0 and offset.isdigit() and first_member_at is not None and int(offset) < first_member_at:
-        return None         # an empty archive in front (the End record a ZIP library holds as a constant): it lists no member, so it hides none
+    if seen.get("members") == 0 and offset.isdigit() and len(starts) and int(offset) < min(starts):
+        return {"ran": True, "result": "not_compared", "why": "7-Zip reads an empty archive in front of the members (a constant of a ZIP library)"}
     if seen.get("members") != count or seen.get("encrypted") != encrypted:
-        return {"why": "7-Zip lists %s members, %s of them encrypted, where this tool read %d, %d of them encrypted"
-                       % (seen.get("members"), seen.get("encrypted"), count, encrypted), "members": seen.get("members"), "encrypted": seen.get("encrypted")}
-    return None
+        return {"ran": True, "result": "differs", "members": seen.get("members"), "encrypted": seen.get("encrypted"),
+                "why": "7-Zip lists %s members, %s of them encrypted, where this tool read %d, %d of them encrypted"
+                       % (seen.get("members"), seen.get("encrypted"), count, encrypted)}
+    return {"ran": True, "result": "agrees"}
 
 
 def find_7z():
@@ -2094,6 +2184,9 @@ def list_with_7z(path, limit, counts_only=False):
     if code in (0, 1) and archive.get("Type"):
         # Exit 0 can still come with a warning (data after the end of the archive: a second archive appended, or junk): not "without warnings".
         return {**info, "status": "listed" if code == 0 and not warned else "listed_with_warnings"}, members
+    if archive.get("Type") and seen["members"]:
+        # 7z exits 2 on a header error and still prints a listing: it is a listing with errors, to be compared and never believed whole.
+        return {**info, "status": "listed_with_errors", "reason": "7z listed %d members and exited with %s" % (seen["members"], code)}, members
     if encrypted_message:
         return {**info, "status": "header_encrypted",
                 "reason": "7z reports that it cannot open the archive without a password"}, None
@@ -2161,6 +2254,19 @@ def probe_7z(view, fd, path, limit, max_metadata):
         listing, members = {"status": "not attempted", "reason": out["header_read_cut"]}, None
     else:
         listing, members = list_with_7z(path, limit)
+    # What 7-Zip read must be the 7z this tool took the file for, all of it. A header it cannot open (encrypted, damaged) makes it fall over to
+    # whatever it finds at the end of the file (a ZIP that follows), and list that without a warning.
+    wrong_format = None
+    atype = str((listing.get("archive") or {}).get("Type", "")).lower()
+    if members is not None and atype and atype != "7z":
+        wrong_format = "7-Zip read the file as %s, not as the 7-Zip archive this tool took it for" % (atype or "something else")
+    elif members is not None and listing["status"] == "listed":
+        covered = str((listing.get("archive") or {}).get("Physical Size", "")).strip(), str((listing.get("archive") or {}).get("Offset", "0") or "0").strip()
+        if covered[0].isdigit() and covered[1].isdigit() and int(covered[0]) + int(covered[1]) != os.path.getsize(path):
+            wrong_format = "7-Zip's archive (%s bytes from byte %s) does not cover the file's %d" % (covered[0], covered[1], os.path.getsize(path))
+    if wrong_format:
+        listing = {**listing, "status": "not_the_whole_7z", "reason": wrong_format}
+        members = None
     # 7z's "cannot open without a password" is believed only where the start header agrees: an encoded header whose coder list names AES.
     # A truncated or damaged plain archive makes 7z fail as well, and the message can be a file name's echo.
     if listing["status"] == "header_encrypted" and not hint.get("header_encrypted"):
@@ -2196,6 +2302,8 @@ def probe_7z(view, fd, path, limit, max_metadata):
         out["protection"] = "7z cannot open the archive without a password"
     else:
         out["protection"] = "heuristic: 7z gave no listing (%s)" % status
+        if status == "not_the_whole_7z" and hint.get("header_encrypted"):
+            out["protected"] = True                         # the start header shows an encrypted header: 7-Zip could not open it and read the rest
         out["hints"] = hint
         strings = SealedPage("archive_probe", [os.path.realpath(path), "7z header strings (hint)"], limit)
         # Both patterns are walked lazily over the mapped header and merged by

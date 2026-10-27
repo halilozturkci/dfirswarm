@@ -16,9 +16,10 @@ a separate finding from any member being encrypted. A name that is not valid tex
 is shown escaped; a directory over `max_metadata_bytes`, or larger than the file, is not listed (`partial`). A comment can hold an End
 record of its own, bytes can follow the archive, and a second archive can be appended (7-Zip lists the first,
 `zipfile` the last). When End records disagree (`end_records_disagree`), bytes that are not zeros follow the
-comment, anything shaped like an archive lies before the first member (`archive_in_front`, whatever shape its
-End record has), 7-Zip lists other members (`seven_zip_cross_check`), or a member's flags differ between the
-directory and its local header (`local_header_flags`), the answer is `partial` and `protected` is not `false`.
+comment, anything shaped like an archive lies in bytes no member claims (`archive_in_front`, `archive_in_gap`,
+`archive_behind`), 7-Zip lists other members (`cross_check`), or a member's flags differ between the directory
+and its local header (`local_header_flags`), the answer is `partial` and `protected` is not `false`. Without
+7-Zip a `complete` ZIP answer is weaker: `cross_check.result` says `not_installed`.
 
 **7-Zip and RAR.** Separate data encryption from header encryption. Printable strings
 in a header are not a member list: confirm names, sizes and encryption with a reader
@@ -42,7 +43,7 @@ password: say "encrypted, opens without a supplied password", and record permiss
 restrictions apart. An `/Encrypt` string, or any `/V` or `/R`, is a marker, not a
 parse.
 
-**Does not show.** That a readable ZIP directory means no member is encrypted; that a header's printable strings are a member list; that a ZIP time is UTC or the time of collection or transfer; that a missing `EncryptionInfo` means a file is plain; that an `/Encrypt` string is a parse.
+**Does not show.** That a readable ZIP directory means no member is encrypted; that a header's printable strings are a member list; that a missing `EncryptionInfo` means a file is plain; that an `/Encrypt` string is a parse.
 
-Record: per member the flags and the variant, the raw time fields with their conflicts, the effective encryption dictionary.
+Record: per member the flags and variant, the raw time fields, the effective encryption dictionary.
 Sensitive output: `archive_probe` reads no secret value and withholds name parts shaped like identifiers or secrets, by shape; a job that handles a password or a decrypted derivative runs with `secret_output: true` (`archives/protected`).

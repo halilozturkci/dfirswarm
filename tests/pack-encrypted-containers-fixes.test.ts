@@ -242,7 +242,9 @@ test("archive_probe reads a Zip64 directory whose End record holds the 0xFFFF ma
     const out = answer(await tool(PROBE, cwd, { path: "work/z64.zip" }));
     assert.equal(out.entry_count, 1);
     assert.deepEqual([out.entries[0].name, out.entries[0].bytes, out.entries[0].compressed, out.entries[0].header_offset], ["big.bin", 5_000_000_000, 4_000_000_000, 77]);
-    assert.equal(out.status, "complete");
+    // The member says it holds 4,000,000,000 bytes in a file of a few hundred: its bytes run into the directory, which is not an ordinary archive.
+    assert.equal(out.status, "partial");
+    assert.match(out.status_basis, /offsets are not those of an ordinary archive/);
   });
 });
 

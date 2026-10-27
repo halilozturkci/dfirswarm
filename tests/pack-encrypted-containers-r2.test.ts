@@ -31,12 +31,13 @@ function answer(out: Run, code = 0): Json {
 const DOS_DATE = ((2026 - 1980) << 9) | (3 << 5) | 14;
 const DOS_TIME = (9 << 11) | (30 << 5) | 22;
 
-type Member = { name: string; flags?: number; localFlags?: number; data?: Buffer };
+type Member = { name: string; flags?: number; localFlags?: number; data?: Buffer; version?: number; method?: number; dd?: boolean; gapAfter?: Buffer };
+type Dummy = { name: string; offset: number; size: number };
 
 /** A ZIP from the APPNOTE's record layouts. `localFlags` is the local header's flags where they are not the directory's. */
 type Mutation = "sigflip" | "cdsize+1" | "cdsize-1" | "cdsize0" | "digsig" | "noEnd" | "noDir" | "commentOverrun";
 
-function buildZip(members: Member[], opts: { disk?: number; cdDisk?: number; dropLocal?: boolean; zip64Extensible?: number; base?: number; mutate?: Mutation } = {}): Buffer {
+function buildZip(members: Member[], opts: { disk?: number; cdDisk?: number; dropLocal?: boolean; zip64Extensible?: number; base?: number; mutate?: Mutation; extraEntries?: Dummy[]; gapBeforeDirectory?: Buffer } = {}): Buffer {
   const parts: Buffer[] = [];
   const central: Buffer[] = [];
   let at = opts.base ?? 0; // the offsets count from the start of the file (`zip -A`) when a base is given
@@ -45,17 +46,20 @@ function buildZip(members: Member[], opts: { disk?: number; cdDisk?: number; dro
     const data = m.data ?? Buffer.from("x");
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);
-    local.writeUInt16LE(20, 4);
-    local.writeUInt16LE(m.localFlags ?? m.flags ?? 0, 6);
-    local.writeUInt32LE(data.length, 18);
-    local.writeUInt32LE(data.length, 22);
+    local.writeUInt16LE(m.version ?? 20, 4);
+    local.writeUInt16LE((m.localFlags ?? m.flags ?? 0) | (m.dd ? 8 : 0), 6);
+    local.writeUInt16LE(m.method ?? 0, 8);
+    local.writeUInt32LE(m.dd ? 0 : data.length, 18);
+    local.writeUInt32LE(m.dd ? 0 : data.length, 22);
     local.writeUInt16LE(name.length, 26);
-    const record = opts.dropLocal ? Buffer.alloc(30 + name.length + data.length) : Buffer.concat([local, name, data]);
+    const descriptor = m.dd ? Buffer.concat([Buffer.from("PK\x07\x08", "latin1"), Buffer.alloc(4), (() => { const b = Buffer.alloc(8); b.writeUInt32LE(data.length, 0); b.writeUInt32LE(data.length, 4); return b; })()]) : Buffer.alloc(0);
+    const record = opts.dropLocal ? Buffer.alloc(30 + name.length + data.length) : Buffer.concat([local, name, data, descriptor, m.gapAfter ?? Buffer.alloc(0)]);
     const c = Buffer.alloc(46);
     c.writeUInt32LE(0x02014b50, 0);
     c.writeUInt16LE(20, 4);
-    c.writeUInt16LE(20, 6);
-    c.writeUInt16LE(m.flags ?? 0, 8);
+    c.writeUInt16LE(m.version ?? 20, 6);
+    c.writeUInt16LE((m.flags ?? 0) | (m.dd ? 8 : 0), 8);
+    c.writeUInt16LE(m.method ?? 0, 10);
     c.writeUInt16LE(DOS_TIME, 12);
     c.writeUInt16LE(DOS_DATE, 14);
     c.writeUInt32LE(data.length, 20);
@@ -66,13 +70,32 @@ function buildZip(members: Member[], opts: { disk?: number; cdDisk?: number; dro
     parts.push(record);
     at += record.length;
   }
+  if (opts.gapBeforeDirectory) {
+    parts.push(opts.gapBeforeDirectory);
+    at += opts.gapBeforeDirectory.length;
+  }
+  for (const d of opts.extraEntries ?? []) {
+    const name = Buffer.from(d.name, "utf8");
+    const c = Buffer.alloc(46);
+    c.writeUInt32LE(0x02014b50, 0);
+    c.writeUInt16LE(20, 4);
+    c.writeUInt16LE(20, 6);
+    c.writeUInt16LE(DOS_TIME, 12);
+    c.writeUInt16LE(DOS_DATE, 14);
+    c.writeUInt32LE(d.size, 20);
+    c.writeUInt32LE(d.size, 24);
+    c.writeUInt16LE(name.length, 28);
+    c.writeUInt32LE(d.offset, 42);
+    central.push(Buffer.concat([c, name]));
+  }
+  const total = members.length + (opts.extraEntries?.length ?? 0);
   const cd = Buffer.concat(central);
   const eocd = Buffer.alloc(22);
   eocd.writeUInt32LE(opts.mutate === "sigflip" ? 0x06054b51 : 0x06054b50, 0);
   eocd.writeUInt16LE(opts.disk ?? 0, 4);
   eocd.writeUInt16LE(opts.cdDisk ?? 0, 6);
-  eocd.writeUInt16LE(members.length, 8);
-  eocd.writeUInt16LE(members.length, 10);
+  eocd.writeUInt16LE(total, 8);
+  eocd.writeUInt16LE(total, 10);
   eocd.writeUInt32LE(opts.mutate === "cdsize+1" ? cd.length + 1 : opts.mutate === "cdsize-1" ? cd.length - 1 : opts.mutate === "cdsize0" ? 0 : cd.length, 12);
   eocd.writeUInt32LE(at, 16);
   if (opts.mutate === "commentOverrun") eocd.writeUInt16LE(4000, 20);
@@ -86,8 +109,8 @@ function buildZip(members: Member[], opts: { disk?: number; cdDisk?: number; dro
   rec.writeBigUInt64LE(BigInt(44 + opts.zip64Extensible), 4);
   rec.writeUInt16LE(45, 12);
   rec.writeUInt16LE(45, 14);
-  rec.writeBigUInt64LE(BigInt(members.length), 24);
-  rec.writeBigUInt64LE(BigInt(members.length), 32);
+  rec.writeBigUInt64LE(BigInt(total), 24);
+  rec.writeBigUInt64LE(BigInt(total), 32);
   rec.writeBigUInt64LE(BigInt(cd.length), 40);
   rec.writeBigUInt64LE(BigInt(at), 48);
   rec.fill(0x41, 56);
@@ -129,7 +152,8 @@ exit 0
 
 async function sevenArchive(cwd: string, name: string): Promise<void> {
   // The start header of a 7z whose next header is empty (only the signature matters for the dispatch).
-  const start = Buffer.alloc(32);
+  // 100 bytes, as the stand-ins' listings say ("Physical Size = 100"): the archive must cover the file.
+  const start = Buffer.alloc(100);
   Buffer.from([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c, 0x00, 0x04]).copy(start, 0);
   await writeFile(join(cwd, "work", name), start);
 }
@@ -239,7 +263,7 @@ test("archive_probe: a second archive appended, larger than the last 64 KiB, is 
     assert.equal(out.status, "partial");
     assert.notEqual(out.protected, false);
     assert.equal(out.archive_in_front.at, 0);
-    assert.equal(out.archive_in_front.first_member_at, first.length);
+    assert.deepEqual(out.archive_in_front.region, [0, first.length]);
     assert.match(out.status_basis, /another archive, whole or damaged, shares this file/);
   });
 });
@@ -292,7 +316,7 @@ test("archive_probe: an archive in front of one whose offsets are absolute is fo
         const out = answer(await tool(PROBE, cwd, { path: `work/abs-${pn}-${n}.bin` }));
         assert.notEqual(out.status, "complete", `${pn} ${n}`);
         assert.notEqual(out.protected, false, `${pn} ${n}`);
-        assert.equal(out.archive_in_front.first_member_at, prefix.length + first.length, `${pn} ${n}`);
+        assert.equal(out.archive_in_front.region[1], prefix.length + first.length, `${pn} ${n}`);
         assert.equal(out.entry_count, n);
       }
     }
@@ -350,20 +374,20 @@ test("archive_probe: self-extracting stubs, executables and polyglots in front o
         assert.equal(out.status, "complete", `${name} ${label}: ${out.status_basis}`);
         assert.equal(out.protected, protectedWant, `${name} ${label}`);
         assert.equal(out.archive_in_front, undefined, abs ? `${name} ${label}` : label);
-        assert.equal(out.front_unsearched, undefined);
+        assert.equal(out.dark_unsearched, undefined);
       }
     }
   });
 });
 
-test("archive_probe: bytes in front of the first member that hold more archive signatures than can be checked are named as not searched, and the answer is partial", async () => {
+test("archive_probe: bytes no member claims that hold more archive signatures than can be checked are named as not searched, and the answer is partial", async () => {
   await withCwd(async (cwd) => {
     const stub = Buffer.concat([Buffer.from("MZ"), ...Array.from({ length: 20_500 }, () => Buffer.from("PK\x05\x06xxxxxxxxxxxxxxxxxx"))]);
     await writeFile(join(cwd, "work", "many.bin"), Buffer.concat([stub, buildZip(plain(10))]));
     const out = answer(await tool(PROBE, cwd, { path: "work/many.bin" }));
     assert.equal(out.status, "partial");
     assert.notEqual(out.protected, false);
-    assert.match(out.front_unsearched.why, /more than 20000 archive signatures/);
+    assert.match(out.dark_unsearched.why, /more than 20000 archive signatures/);
   });
 });
 
@@ -626,5 +650,159 @@ test("archive_probe: a truncated plain 7z called 'wrong password.7z' is not a he
       assert.notEqual(out.protected, true, name);
       assert.doesNotMatch(out.status_basis, /header is encrypted/, name);
     }
+  });
+});
+
+// --- The third verification: the bytes of the file are accounted for, whatever the author puts in the directory or in the headers ------------
+
+/** The environment in which no 7-Zip program is on the PATH of the tool (python's shutil.which is told so). */
+async function withoutSeven(cwd: string): Promise<Record<string, string>> {
+  await mkdir(join(cwd, "site"), { recursive: true });
+  await writeFile(join(cwd, "site", "sitecustomize.py"), "import shutil\n_w = shutil.which\nshutil.which = lambda c, *a, **k: None if str(c) in ('7z','7zz','7za') else _w(c, *a, **k)\n");
+  return { PYTHONPATH: join(cwd, "site") };
+}
+
+/** A local header and its data and nothing else (an archive made of local headers only), with the fields a filter on the values would reject. */
+function localOnly(f: { version?: number; method?: number; name?: string; flags?: number }): Buffer {
+  const name = Buffer.from(f.name ?? "s.txt", "utf8");
+  const data = Buffer.from("SECRETSECRET");
+  const h = Buffer.alloc(30);
+  h.writeUInt32LE(0x04034b50, 0);
+  h.writeUInt16LE(f.version ?? 20, 4);
+  h.writeUInt16LE(f.flags ?? 1, 6);
+  h.writeUInt16LE(f.method ?? 0, 8);
+  h.writeUInt16LE(DOS_TIME, 10);
+  h.writeUInt16LE(DOS_DATE, 12);
+  h.writeUInt32LE(data.length, 18);
+  h.writeUInt32LE(data.length, 22);
+  h.writeUInt16LE(name.length, 26);
+  return Buffer.concat([h, name, data]);
+}
+
+test("archive_probe: an archive in front made of local headers with a field no filter on values would accept is found, with and without 7-Zip", async () => {
+  await withCwd(async (cwd) => {
+    const hidden = await withoutSeven(cwd);
+    const odd: Record<string, Buffer> = {
+      version101: localOnly({ version: 101 }), version255: localOnly({ version: 255 }), method11: localOnly({ method: 11 }), method13: localOnly({ method: 13 }),
+      method1000: localOnly({ method: 1000 }), methodFFFF: localOnly({ method: 0xffff }), nameLength0: localOnly({ name: "" }), plain20: localOnly({}),
+    };
+    const prefixes: Record<string, Buffer> = { none: Buffer.alloc(0), mz: MZ_STUB, elf: Buffer.concat([Buffer.from("\x7fELF"), Buffer.alloc(3000, 0x07)]) };
+    let cases = 0;
+    for (const [fn, front] of Object.entries(odd)) {
+      for (const [pn, prefix] of Object.entries(prefixes)) {
+        for (const [bn, back] of [["small", buildZip(plain(1))], ["big", buildZip(plain(3000))]] as const) {
+          await writeFile(join(cwd, "work", "x.bin"), Buffer.concat([prefix, front, back]));
+          for (const [label, env] of [["7-Zip as installed", {}], ["no 7-Zip", hidden]] as const) {
+            const out = answer(await tool(PROBE, cwd, { path: "work/x.bin" }, env));
+            cases++;
+            assert.notEqual(out.status, "complete", `${fn} ${pn} ${bn} ${label}`);
+            assert.notEqual(out.protected, false, `${fn} ${pn} ${bn} ${label}`);
+          }
+        }
+      }
+    }
+    assert.equal(cases, 96);
+  });
+});
+
+test("archive_probe: one more directory entry that names the first member of an archive in front does not hide that archive", async () => {
+  await withCwd(async (cwd) => {
+    const hidden = await withoutSeven(cwd);
+    const front = buildZip([{ name: "readme.txt" }, { name: "s0.txt", flags: 1 }, { name: "s1.txt", flags: 1 }]);
+    // The second archive counts its offsets from the start of the file, and its directory names the first member of the first archive as well.
+    const back = buildZip(plain(3), { base: front.length, extraEntries: [{ name: "readme.txt", offset: 0, size: 1 }] });
+    await writeFile(join(cwd, "work", "dummy.zip"), Buffer.concat([front, back]));
+    for (const env of [{}, hidden]) {
+      const out = answer(await tool(PROBE, cwd, { path: "work/dummy.zip" }, env));
+      assert.notEqual(out.status, "complete");
+      assert.notEqual(out.protected, false);
+      assert.ok(out.archive_in_gap || out.archive_in_front, "A's other members, its directory or its End record are named");
+    }
+  });
+});
+
+test("archive_probe: an archive between two members, or between the last member and the directory, is found; a block that holds no archive there is not", async () => {
+  await withCwd(async (cwd) => {
+    const hidden = await withoutSeven(cwd);
+    const secret = buildZip([{ name: "s0.txt", flags: 1 }, { name: "s1.txt", flags: 1 }]);
+    const apkBlock = Buffer.concat([Buffer.alloc(8), Buffer.from(Array.from({ length: 300 }, (_, i) => (i * 131 + 7) & 0xff)), Buffer.alloc(8), Buffer.from("APK Sig Block 42")]);
+    const layouts: Record<string, [Buffer, boolean]> = {
+      "an archive between two members": [buildZip([{ name: "m0.txt", gapAfter: secret }, { name: "m1.txt" }]), true],
+      "an archive before the directory": [buildZip([{ name: "m0.txt" }, { name: "m1.txt" }], { gapBeforeDirectory: secret }), true],
+      "an APK signing block before the directory": [buildZip([{ name: "m0.txt" }, { name: "m1.txt" }], { gapBeforeDirectory: apkBlock }), false],
+      "zero padding between members": [buildZip([{ name: "m0.txt", gapAfter: Buffer.alloc(4096) }, { name: "m1.txt" }]), false],
+      "members with data descriptors": [buildZip([{ name: "m0.txt", dd: true }, { name: "m1.txt", dd: true }, { name: "m2.txt" }]), false],
+    };
+    for (const [label, [zip, found]] of Object.entries(layouts)) {
+      await writeFile(join(cwd, "work", "g.zip"), zip);
+      for (const env of [{}, hidden]) {
+        const out = answer(await tool(PROBE, cwd, { path: "work/g.zip" }, env));
+        if (found) {
+          assert.notEqual(out.status, "complete", label);
+          assert.notEqual(out.protected, false, label);
+          assert.ok(out.archive_in_gap, label);
+        } else {
+          assert.equal(out.status, "complete", `${label}: ${out.status_basis}`);
+          assert.equal(out.protected, false, label);
+        }
+      }
+    }
+  });
+});
+
+test("archive_probe says whether a second reader compared the list, and answers differently when it did not", async () => {
+  await withCwd(async (cwd, bin) => {
+    const hidden = await withoutSeven(cwd);
+    await writeFile(join(cwd, "work", "one.zip"), buildZip([{ name: "a.txt" }]));
+    const none = answer(await tool(PROBE, cwd, { path: "work/one.zip" }, hidden));
+    assert.equal(none.status, "complete");
+    assert.equal(none.cross_check.result, "not_installed");
+    assert.match(none.status_basis, /7-Zip is not installed, so no second reader compared the list/);
+    const listing = (members: number, encrypted: number) => {
+      const rows = Array.from({ length: members }, (_, i) => `Path = m${i}\\nSize = 1\\nEncrypted = ${i < encrypted ? "+" : "-"}\\n\\n`).join("");
+      return `\\n--\\nPath = one.zip\\nType = zip\\n\\n----------\\n${rows}`;
+    };
+    await writeFile(join(bin, "7z"), `#!/bin/sh\nprintf '${listing(1, 0)}'\nexit 0\n`);
+    await chmod(join(bin, "7z"), 0o755);
+    const agrees = answer(await tool(PROBE, cwd, { path: "work/one.zip" }, {}, bin));
+    assert.equal(agrees.status, "complete");
+    assert.equal(agrees.cross_check.result, "agrees");
+    assert.match(agrees.status_basis, /second reader, lists the same members/);
+    // 7-Zip exits with 2 on a header error and still prints a listing: it is compared, not set aside as "could not open".
+    await writeFile(join(bin, "7z"), `#!/bin/sh\nprintf '${listing(2, 1)}'\nexit 2\n`);
+    const differs = answer(await tool(PROBE, cwd, { path: "work/one.zip" }, {}, bin));
+    assert.equal(differs.status, "partial");
+    assert.notEqual(differs.protected, false);
+    assert.equal(differs.cross_check.result, "differs");
+  });
+});
+
+test("archive_probe: a 7z with an encrypted header followed by a clean ZIP is not the listing of the ZIP", async () => {
+  await withCwd(async (cwd, bin) => {
+    // A start header that points at an encoded header whose coder list names AES, then the ZIP.
+    const header = Buffer.concat([Buffer.from([0x17, 0x06, 0xf1, 0x07, 0x01]), Buffer.alloc(15, 0x11)]);
+    const start = Buffer.alloc(32);
+    Buffer.from([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c, 0x00, 0x04]).copy(start, 0);
+    start.writeBigUInt64LE(0n, 12);
+    start.writeBigUInt64LE(BigInt(header.length), 20);
+    start.writeUInt32LE(crc32(header), 28);
+    start.writeUInt32LE(crc32(start.subarray(12, 32)), 8);
+    const zip = buildZip([{ name: "z.txt" }]);
+    await writeFile(join(cwd, "work", "eh.7z"), Buffer.concat([start, header, zip]));
+    // 7-Zip cannot open the 7z without a password, falls over to the ZIP at the end of the file, and lists that without a warning.
+    await writeFile(join(bin, "7z"), `#!/bin/sh\nprintf '\\n--\\nPath = eh.7z\\nType = zip\\nPhysical Size = ${zip.length}\\n\\n----------\\nPath = z.txt\\nSize = 1\\nEncrypted = -\\n\\n'\nexit 0\n`);
+    await chmod(join(bin, "7z"), 0o755);
+    const out = answer(await tool(PROBE, cwd, { path: "work/eh.7z" }, {}, bin));
+    assert.equal(out.status, "partial");
+    assert.equal(out.protected, true, "the start header shows an encrypted header");
+    assert.equal(out.listing.status, "not_the_whole_7z");
+    assert.notEqual(out.member_count, 1, "the ZIP's member is not listed as the 7z's");
+    // A damaged start header gives the same: the format 7-Zip read is not the one the tool took the file for.
+    const damaged = Buffer.from(start);
+    damaged.writeUInt32LE(0, 8);
+    await writeFile(join(cwd, "work", "bad.7z"), Buffer.concat([damaged, header, zip]));
+    const bad = answer(await tool(PROBE, cwd, { path: "work/bad.7z" }, {}, bin));
+    assert.equal(bad.status, "partial");
+    assert.notEqual(bad.protected, false);
   });
 });

@@ -1,7 +1,7 @@
 [
- ["archives/protected", "zip: read structurally from the central directory,"],
+ ["archives/protected", "zip: read from the central directory, per member;"],
  ["archives/protected", "this pack has no structural document reader"],
- ["archives/protected", "do not treat an unknown or false"],
+ ["archives/protected", "an unknown and a false differ"],
  ["archives/protected", "it does not show what the contents"],
  ["archives/protected", "time. a zip member's modified is an"],
  ["archives/protected", "ooxml encryption sits in encryptioninfo and encryptedpackage"],

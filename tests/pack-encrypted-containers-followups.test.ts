@@ -133,17 +133,18 @@ function zipOf(members: Member[], opts: { comment?: Buffer; tail?: Buffer; decla
     local.writeUInt32LE(0x04034b50, 0);
     local.writeUInt16LE(20, 4);
     local.writeUInt16LE(flags, 6);
-    local.writeUInt32LE(1, 18);
-    local.writeUInt32LE(1, 22);
+    const data = m.data ?? Buffer.from("x");
+    local.writeUInt32LE(data.length, 18);
+    local.writeUInt32LE(data.length, 22);
     local.writeUInt16LE(name.length, 26);
-    const record = Buffer.concat([local, name, m.data ?? Buffer.from("x")]);
+    const record = Buffer.concat([local, name, data]);
     const c = Buffer.alloc(46);
     c.writeUInt32LE(0x02014b50, 0);
     c.writeUInt16LE(20, 4);
     c.writeUInt16LE(20, 6);
     c.writeUInt16LE(flags, 8);
-    c.writeUInt32LE(1, 20);
-    c.writeUInt32LE(1, 24);
+    c.writeUInt32LE(data.length, 20);
+    c.writeUInt32LE(data.length, 24);
     c.writeUInt16LE(name.length, 28);
     c.writeUInt32LE(at, 42);
     central.push(Buffer.concat([c, name]));
@@ -357,7 +358,7 @@ test("archive_probe does not read an archive's members as a header message becau
     await writeFile(join(bin, "7z"), "#!/bin/sh\nprintf 'Path = x.7z\\nType = 7z\\n\\n----------\\nPath = Wrong password.txt\\nSize = 3\\nEncrypted = -\\n\\n'\nexit 2\n");
     await chmod(join(bin, "7z"), 0o755);
     const out = answer(await tool(PROBE, cwd, { path: "work/x.7z" }, {}, bin));
-    assert.equal(out.listing.status, "failed");
+    assert.equal(out.listing.status, "listed_with_errors"); // 7z exits 2 on a header error and still prints a listing: compared, never believed whole
     assert.notEqual(out.header_encrypted, true);
     assert.equal(out.status, "partial");
   });

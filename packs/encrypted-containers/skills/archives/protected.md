@@ -16,7 +16,7 @@ damage, unsupported features, and nested containers left unopened.
 
 `archive_probe` is a triage reader, and what it can establish differs by format:
 
-- ZIP: read structurally from the central directory, per member.
+- ZIP: read from the central directory, per member; the file's other bytes are searched for archives, and 7-Zip is a second reader (`cross_check`; weaker if it is not installed).
 - 7-Zip: the member list and each member's flag come from the installed `7z` where
   there is one, and `header_encrypted` is true when 7z cannot open the archive
   without a password. Without `7z`, only hints from the start header remain.
@@ -25,11 +25,10 @@ damage, unsupported features, and nested containers left unopened.
   offsets. This pack has no structural document reader, so protection stays
   undetermined here; `doc_structure` in the reverse-engineering pack reads the PDF
   trailer's encryption dictionary and the Office encryption structures, and this pack
-  does not depend on it: look for it in the run's tool inventory. Do not read "no
-  marker" as "not encrypted".
+  does not depend on it: look in the run's tool inventory. "No marker" is not "not encrypted".
 
 Check any consequential finding with a reader that supports the format and the
-version. Do not treat an unknown or false as the same thing: they differ.
+version. An unknown and a false differ.
 
 Only if you read a ZIP, 7-Zip, RAR, Office or PDF structure for its protection or its times: `archives/formats`.
 
