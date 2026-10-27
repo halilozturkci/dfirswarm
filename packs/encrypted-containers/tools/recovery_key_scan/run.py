@@ -955,6 +955,11 @@ def emit(answer):
     sys.stdout.flush()
     if STOP["signal"] is not None:
         os._exit(128 + STOP["signal"])
+
+
+# The handlers are in as soon as the module has run as far as this block (a hard stop with the generic last word, until main() installs the
+# tool's own): only the start of the interpreter and the compiling of the file come before it.
+install_stop(lambda signum: interrupted_answer(signum))
 # END SHARED STOP
 
 
