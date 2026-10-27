@@ -10,8 +10,9 @@ holding its modules, handles, memory map and the regions MemProcFS can read, and
 the parsed artefacts it builds. All of it is files, for the length of the call.
 
 This tool starts MemProcFS, does one thing with the tree and stops it, so nothing
-is left holding the evidence open. The mount is gone when the call returns: what
-survives is the files an export wrote. Three modes:
+is left holding the evidence open. The mount is released when the call returns: what
+survives is the files an export wrote (a clean-up that fails is a named problem of the
+cleanup phase, and the mount may then remain). Three modes:
 
     list     names, kinds and sizes of a directory (or one file): metadata, no content
     text     one file that is UTF-8 text, written to a file under $OUT/mem_fs
@@ -86,7 +87,7 @@ from pathlib import Path  # noqa: E402
 CHUNK = 1 << 20
 DEFAULT_TIMEOUT = 300
 MIN_TIMEOUT = 2
-MAX_TIMEOUT = 480          # 480 s + the engine's stop and unmount (at most 65 s) stays inside the manifest's 600
+MAX_TIMEOUT = 480          # 480 s + the engine's stop and unmount (at most 95 s) stays inside the manifest's 600
 DEFAULT_MAX_BYTES = 4 << 30
 MAX_PATHS = 1000
 PAGE = 200
@@ -823,16 +824,25 @@ class LosslessPage:
         return result
 
     def abort(self) -> None:
-        """Drop the hidden temporary file of a run that failed part way."""
-        if self._out is not None:
-            self._out.close()
-            self._out = None
-        if self._tmp is not None:
-            try:
-                os.unlink(self._tmp)
-            except FileNotFoundError:
-                pass
-            self._tmp = None
+        """Drop the hidden temporary file of a run that failed part way. Closing the file flushes what is buffered, and on a full disk
+        (or past a quota) that raises: the file is unlinked all the same, and the error is not the caller's to meet while it is
+        already giving up the page."""
+        out, tmp = self._out, self._tmp
+        self._out = None
+        try:
+            if out is not None:
+                out.close()
+        except OSError:
+            pass
+        finally:
+            if tmp is not None:
+                try:
+                    os.unlink(tmp)
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    pass
+                self._tmp = None
 
     def keep_partial(self):
         """Close the temporary file and give it a visible name ending in .partial (never replacing a file); returns the
@@ -905,6 +915,8 @@ def emit(answer):
 
 
 def fail(message, **extra):
+    for page in list(PAGES):    # a page that was being written is dropped with its hidden temporary file, whatever ended the call
+        page.abort()
     emit({"error": message, "status": "failed",
           "status_basis": "the call was refused or ended before an answer; nothing in this document is a finding about the evidence", **extra})
     raise SystemExit(1)
@@ -1190,6 +1202,64 @@ def _pdeathsig():
         pass
 
 
+def process_table():
+    """{pid: parent pid} for every process, from /proc where there is one, else from ps (given 10 seconds); {} when neither answers."""
+    table = {}
+    try:
+        if os.path.isdir("/proc/self"):
+            for entry in os.listdir("/proc"):
+                if entry.isdigit():
+                    try:
+                        with open("/proc/%s/stat" % entry, "rb") as fh:
+                            table[int(entry)] = int(fh.read().rsplit(b")", 1)[1].split()[1])
+                    except (OSError, IndexError, ValueError):
+                        continue
+        else:
+            listing = subprocess.run(["ps", "-A", "-o", "pid=,ppid="], capture_output=True, text=True, timeout=10).stdout
+            for line in listing.splitlines():
+                parts = line.split()
+                if len(parts) == 2 and all(part.isdigit() for part in parts):
+                    table[int(parts[0])] = int(parts[1])
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    return table
+
+
+def below(table, root):
+    """Every process below `root` in the table (never one beside it)."""
+    kids = {}
+    for pid, parent in table.items():
+        kids.setdefault(parent, []).append(pid)
+    found, stack = set(), [root]
+    while stack:
+        for child in kids.get(stack.pop(), []):
+            if child not in found:
+                found.add(child)
+                stack.append(child)
+    return found
+
+
+def end_what_the_engine_left(listed):
+    """End the processes that were listed below the engine while it ran and are still there once it has stopped, with their parent gone
+    (init has adopted them; they can hold the engine's pipes for as long as they live). Only a pid seen below the engine is signalled,
+    never anything else in the tool's group or session, and not one that is below the tool again or has a live parent that is not init
+    (a pid reused since the listing)."""
+    if not listed:
+        return
+    table = process_table()
+    mine = below(table, os.getpid())
+    for pid in listed:
+        parent = table.get(pid)
+        if parent is None or pid in mine or pid == os.getpid():
+            continue
+        if parent in table and parent != 1 and parent not in listed:
+            continue
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+
+
 def is_mounted(mount):
     """Whether the path is a mount point, a dead one included: os.path.ismount says no for a FUSE mount whose engine has died (ENOTCONN)."""
     try:
@@ -1220,7 +1290,7 @@ def main():
     mount = writable_mount(mount_arg)
     timeout = args.get("timeout_seconds", DEFAULT_TIMEOUT)
     if not isinstance(timeout, int) or isinstance(timeout, bool) or not MIN_TIMEOUT <= timeout <= MAX_TIMEOUT:
-        fail("timeout_seconds must be an integer from %d to %d: the engine's stop and unmount after it need up to 65 s, "
+        fail("timeout_seconds must be an integer from %d to %d: the engine's stop and unmount after it need up to 95 s, "
              "and the tool's own limit is 600" % (MIN_TIMEOUT, MAX_TIMEOUT))
     mode = args.get("mode", "list")
     if mode not in ("list", "text", "export"):
@@ -1594,29 +1664,60 @@ def main():
             # Stop the engine, then release a FUSE mount: a successful return must not leave
             # a mount holding evidence. A blocked read ends when the engine does.
             state["abandon"] = state["abandon"] or interrupted is not None
-            proc.terminate()
+            # Every step is bounded and none can end the others: a helper that hangs, or an engine that cannot be reaped, is a named
+            # problem of the cleanup, and the steps after it still run.
+            def cleanup_problem(message):
+                nonlocal problem
+                if not problem:
+                    problem = ("cleanup", message)
+
+            try:
+                listed = below(process_table(), proc.pid)    # what the engine has started, while it is still the engine's parent
+            except Exception:  # noqa: BLE001 - a listing is best effort
+                listed = set()
+            try:
+                proc.terminate()
+            except OSError:
+                pass
             try:
                 proc.wait(timeout=CLEANUP_WAIT)
             except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait(timeout=CLEANUP_WAIT)
+                try:
+                    proc.kill()
+                    proc.wait(timeout=CLEANUP_WAIT)
+                except (subprocess.TimeoutExpired, OSError):
+                    cleanup_problem("memprocfs did not end within %ds of being killed" % CLEANUP_WAIT)
+            # What the engine started and left (it holds the engine's pipes for as long as it lives) is ended with it.
+            end_what_the_engine_left(listed)
             if is_mounted(mount):
                 unmount = shutil.which("fusermount3") or shutil.which("fusermount")
                 if unmount:
                     for flags in (["-u"], ["-u", "-z"]):
-                        subprocess.run([unmount, *flags, str(mount)], stdout=subprocess.DEVNULL,
-                                       stderr=subprocess.DEVNULL, timeout=CLEANUP_WAIT, check=False)
+                        try:
+                            subprocess.run([unmount, *flags, str(mount)], stdout=subprocess.DEVNULL,
+                                           stderr=subprocess.DEVNULL, timeout=CLEANUP_WAIT, check=False)
+                        except (subprocess.TimeoutExpired, OSError) as exc:
+                            cleanup_problem("the unmount helper did not finish within %ds" % CLEANUP_WAIT
+                                            if isinstance(exc, subprocess.TimeoutExpired) else "the unmount helper could not be run")
                         if not is_mounted(mount):
                             break
             if is_mounted(mount) and not problem:
                 problem = ("cleanup", "memprocfs stopped but the FUSE mount remained")
             for drain in drains:
                 drain.finish(5)
-            for handle in (stdout_file, stderr_file, proc.stdout, proc.stderr):
+            # A stream a drain thread is still reading is not closed here: close() waits for the read that thread is blocked in, which
+            # ends only when the last holder of the pipe lets go. The thread is a daemon and the handle goes with the process.
+            for handle in (stdout_file, stderr_file):
                 try:
                     handle.close()
                 except (OSError, ValueError):
                     pass
+            for drain, stream in zip(drains, (proc.stdout, proc.stderr)):
+                if not drain.thread.is_alive():
+                    try:
+                        stream.close()
+                    except (OSError, ValueError):
+                        pass
             if state["abandon"] and worker is not None:
                 worker.join(5)
             secret.close()
@@ -1747,6 +1848,8 @@ def run_guarded():
     except SystemExit:
         raise
     except Terminated as stopped:   # a signal before the engine started, or while the answer was being made
+        for page in list(PAGES):
+            page.abort()
         interrupted_answer(stopped.signum, logs=STATE["logs"])
         raise SystemExit(128 + stopped.signum)
     except Exception as exc:  # never an empty or clean answer for a failure

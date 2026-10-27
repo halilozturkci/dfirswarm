@@ -41,6 +41,6 @@
   "example": "{\"root\": \"work/extracted/Users\"}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 3,
-  "sha256": "012094289922d3a6e0f2cd76393fb85efb1c4b4a546530b1e8b6842338856a8b"
+  "version": 4,
+  "sha256": "ac159fdf50fa2c58a576a90e42673a9d1df8b3f070d6fa5be68f0cf9e030e9ab"
 }

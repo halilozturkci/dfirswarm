@@ -105,7 +105,8 @@ UUID_TEXT = re.compile(r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f
 # wherever the signal lands; a write that must be whole (a row of a result file, the answer) is made under held(), and the signal is delivered when
 # it ends, and hold_signals() holds them for good once the answer is being written; a signal that arrives meanwhile is found by pending_stop_signal() before the
 # answer is printed, and the answer says so. The first signal counts: later ones do nothing while the tool cleans up. STOP["hooks"] run first (a database connection's
-# interrupt, the kill of the reader process this tool started and of its descendants: its own, never a search by name).
+# interrupt, the kill of the reader process this tool started and of its descendants: its own, never a search by name). Until install_stop_handlers
+# runs (at the end of the module) _early_stop answers a signal with one document that says nothing was read.
 import signal
 
 STOP = {"signal": None, "hooks": []}
@@ -190,6 +191,21 @@ def hold_signals():
         signal.pthread_sigmask(signal.SIG_BLOCK, set(STOP_SIGNALS))
     except (AttributeError, ValueError, OSError):
         pass
+
+
+def _early_stop(signum, _frame):
+    """The handler of the time before install_stop_handlers: this block runs near the top of the module, and the tool's own handlers are
+    installed when the module has run to its end. A stop signal in between ends the tool with one answer that says nothing was read."""
+    for other in STOP_SIGNALS:
+        signal.signal(other, signal.SIG_IGN)
+    print(json.dumps({"error": "the tool was stopped by %s before it had read anything" % signal_name(signum), "status": "failed",
+                      "status_basis": "stopped by %s during start-up: nothing was read" % signal_name(signum), "interrupted": signal_name(signum)}),
+          flush=True)
+    os._exit(128 + signum)
+
+
+for _early in STOP_SIGNALS:
+    signal.signal(_early, _early_stop)
 # END SHARED STOP
 
 
