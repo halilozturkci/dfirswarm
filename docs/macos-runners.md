@@ -34,10 +34,12 @@ The Linux jobs are not affected.
    that GitHub sent, which a pull request cannot change, and fails the job
    before any step runs unless the job is a push to `main` or a pull request
    opened by the owner from a branch of this repository.
-3. **The repository asks first.** In Settings → Actions → General, set "Fork
-   pull request workflows from outside collaborators" to **Require approval
-   for all outside collaborators**. A fork's run then waits for the owner. Read
-   any change it makes under `.github/` before approving it.
+3. **The repository asks first.** In Settings → Actions → General, under
+   "Approval for running fork pull request workflows from contributors",
+   choose **Require approval for all external contributors** and click Save.
+   A fork's run then waits for the owner. Read any change it makes under
+   `.github/` before approving it. (The section "Fork pull request workflows"
+   on the same page is for private repositories and does not apply here.)
 
 The job itself is contained as well. This is what limits the harm if the
 owner's own branch carries a bad dependency:
@@ -84,7 +86,7 @@ Google Drive. The script refuses to run from inside those folders.
 
    The supervisor needs this token to register a new runner for every job,
    because a registration token lasts only one hour. The script stores the
-   token in `/Library/Application Support/dfirswarm-runner/token`, readable by
+   token in `/Library/dfirswarm-runner/token`, readable by
    root only. The job user cannot read it.
 
 3. Install:
@@ -104,7 +106,12 @@ Google Drive. The script refuses to run from inside those folders.
    - Downloads the pinned actions/runner release and checks it against the
      SHA-256 that the release states.
    - Installs the hook, the supervisor, and the LaunchDaemon
-     `com.dfirswarm.actions-runner`.
+     `com.dfirswarm.actions-runner`, all under `/Library/dfirswarm-runner`.
+     The path holds no space on purpose: the runner calls the job-started
+     hook by its path unquoted, and the first version of this script, under
+     `/Library/Application Support`, failed every job at that call. Running
+     `install` again on a Mac set up by that version moves its token to the
+     new directory and removes the old one; there is nothing to paste again.
 
    Options: `--name NAME` sets the runner name (the default is
    `dfirswarm-<LocalHostName>`). `--user USER` sets the job user.
