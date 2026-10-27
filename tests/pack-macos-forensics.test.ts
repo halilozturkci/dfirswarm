@@ -518,7 +518,7 @@ test("fsevents_parse reads version 1 and 2 pages across two gzip members and cou
     assert.equal(answer.records[2].member, 1);
     assert.equal(answer.records[0].page_offset, 0);
     assert.equal(answer.records[0].record_offset, 12);
-    assert.equal(answer.records[0].parser, "fsevents_parse/4");
+    assert.equal(answer.records[0].parser, "fsevents_parse/5");
   });
 });
 
@@ -801,7 +801,7 @@ test("knowledgec_query joins ZSTRUCTUREDMETADATA and ZSOURCE and exports the typ
     assert.equal(focus.stream, "/app/inFocus");
     assert.equal(focus.value_string, "com.apple.Terminal");
     assert.equal(focus.source_table, "ZOBJECT");
-    assert.equal(focus.parser, "knowledgec_query/4");
+    assert.equal(focus.parser, "knowledgec_query/5");
     assert.equal(focus.start_raw, 760000000.25);
     assert.equal(focus.start, "2025-01-31T07:06:40.250000Z");
     assert.equal(focus.end, "2025-01-31T07:07:40.250000Z");

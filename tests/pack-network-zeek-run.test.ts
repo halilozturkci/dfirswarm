@@ -11,6 +11,7 @@
  * what it hashes, is a thing the logs of that build show.
  */
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -590,5 +591,74 @@ test("every answer carries status and status_basis, a reporter message over 500 
     assert.match(out.engine_diagnostics.reporter.first_messages[0], /400 characters not shown; the whole message is in reporter\.log/);
     const err = refused(await tool(ZEEK, cwd, { path: "work/missing.pcap", out_dir: "work/y" }, env(cwd), bin));
     assert.equal(err.status, "failed");
+  });
+});
+
+function conn(rows: number): string {
+  return tsvLog("conn", CONN_FIELDS, CONN_TYPES, Array.from({ length: rows }, (_, i) => [`1700000000.${String(i % 1000000).padStart(6, "0")}`, `C${i}xAbCdEfGhIjKl`, "10.0.0.5", "50000", "203.0.113.7", "443", "tcp", "0.25", "120", "3400", "T", "(empty)"]));
+}
+
+test("the logs are read under the tool's own clock: a log still being read when it runs out is read in part and said so, a log never reached is named, and both are whole on disk", async () => {
+  await withCwd(async (cwd, bin) => {
+    const text = conn(150_000);
+    await stage(cwd, bin, { "conn.log": text, "dns.log": tsvLog("dns", ["ts", "uid"], ["time", "string"], [["1700000000.1", "CabcdefGHIJKLMNOP"]]) });
+    const cut = body(await tool(ZEEK, cwd, { path: await capture(cwd), out_dir: "work/z" }, { ...env(cwd), ZEEK_RUN_READ_SECONDS: "0.05" }, bin));
+    assert.equal(cut.status, "partial");
+    assert.equal(cut.ok, false);
+    assert.equal(cut.reading_cut_by_its_clock, true);
+    assert.match(cut.status_basis, /own clock for reading the logs ran out/);
+    assert.equal(cut.logs.conn.read_to_the_end, false);
+    assert.ok(cut.logs.conn.total > 0 && cut.logs.conn.total < 150_000, `${cut.logs.conn.total} records`);
+    assert.equal(cut.logs_read_in_part.conn.lines_read > 0, true);
+    assert.ok(cut.problems.some((p: Json) => p.log === "conn" && /read only to line/.test(p.why)));
+    assert.equal(cut.logs_empty.includes("conn"), false);
+    assert.equal((await readFile(join(cwd, "work/z/conn.log"), "utf8")), text, "the log is whole on disk");
+    const none = body(await tool(ZEEK, cwd, { path: await capture(cwd), out_dir: "work/z2" }, { ...env(cwd), ZEEK_RUN_READ_SECONDS: "0" }, bin));
+    assert.equal(none.status, "partial");
+    assert.deepEqual([...(none.logs_not_read as string[])].sort(), ["conn", "dns"]);
+    assert.ok(none.problems.some((p: Json) => p.log === "dns" && /not read/.test(p.why)));
+    assert.deepEqual(none.logs, {}, "a log never read has no entry of records");
+    // without the test hook the clock is the manifest's, and a small log is read whole
+    const whole = body(await tool(ZEEK, cwd, { path: await capture(cwd), out_dir: "work/z3" }, env(cwd), bin));
+    assert.equal(whole.status, "complete");
+    assert.equal(whole.reading_cut_by_its_clock, false);
+    assert.equal(whole.logs.conn.read_to_the_end, true);
+    assert.equal(whole.logs_not_read, null);
+  });
+});
+
+test("an inline url field over 64 KiB has its query withheld whole by length", async () => {
+  await withCwd(async (cwd, bin) => {
+    const uri = "http://h.example.test/p?" + "&".repeat(300_000);
+    await stage(cwd, bin, { "http.log": tsvLog("http", ["ts", "uid", "uri"], ["time", "string", "string"], [["1700000000.1", "CabcdefGHIJKLMNOP", uri]]) });
+    const out = body(await tool(ZEEK, cwd, { path: await capture(cwd), out_dir: "work/z" }, env(cwd), bin));
+    assert.equal(out.logs.http.records[0].uri, "http://h.example.test/p?<over-long query or fragment withheld 300000 characters>");
+  });
+});
+
+test("a stop signal that arrives while the answer is being written adds no second document: the answer is whole and the exit is 128 plus the signal", async () => {
+  await withCwd(async (cwd, bin) => {
+    await stage(cwd, bin, { "conn.log": tsvLog("conn", CONN_FIELDS, CONN_TYPES, [CONN_ROW]) });
+    // the signal is sent from inside the write of the answer, which is the last moment a tool can be stopped before the answer is whole
+    const code = [
+      "import os, signal, sys, runpy",
+      "class Out:",
+      "    def __init__(self, real): self.real, self.sent = real, False",
+      "    def write(self, text):",
+      "        n = self.real.write(text)",
+      "        if not self.sent and text.startswith('{') and '\"tool\"' in text:",
+      "            self.sent = True",
+      "            os.kill(os.getpid(), signal.SIGTERM)",
+      "        return n",
+      "    def __getattr__(self, name): return getattr(self.real, name)",
+      "sys.stdout = Out(sys.stdout)",
+      "runpy.run_path(sys.argv[1], run_name='__main__')",
+    ].join("\n");
+    const run = spawnSync("python3", ["-c", code, ZEEK], { cwd, input: JSON.stringify({ path: await capture(cwd), out_dir: "work/z4" }), encoding: "utf8", maxBuffer: 1 << 26,
+      env: { ...process.env, AGENT_ID: "s1", PATH: `${bin}:${process.env.PATH}`, ...env(cwd) } });
+    assert.equal(run.status, 143, run.stderr);
+    const answer = JSON.parse(run.stdout);
+    assert.equal(answer.tool.name, "zeek_run");
+    assert.equal(answer.interrupted_by_signal, undefined, "one document: the answer, not a last word after it");
   });
 });

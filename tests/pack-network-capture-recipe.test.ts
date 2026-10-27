@@ -390,3 +390,28 @@ test("the field-list step is running while tshark -G fields runs: a kill during 
     }
   });
 });
+
+test("the counting of a finished listing is under the recipe's own clock: a count it could not finish is null, never a number that looks whole, and the status says so", async () => {
+  await withCwd(async (cwd, bin) => {
+    const packets = [PACKETS.split("\n")[0], ...Array.from({ length: 5000 }, (_, i) => `"${i + 1}"\t"1700000000.1"\t"${i % 2 ? 54 : 96}"\t"${i % 2 ? 54 : 1500}"\t"TCP"`)].join("\n") + "\n";
+    await stage(cwd, bin, { tables: { packets, dns: TABLE(["frame.number"], 2), http: TABLE(["frame.number"], 3), tls: TABLE(["frame.number"], 1) } });
+    const cut = await recipe(cwd, bin, ["run", "--target", target(await capture(cwd)), "--out", "work/cut"], { NETWORK_CAPTURE_COUNT_SECONDS: "0" });
+    assert.equal(cut.code, 0, cut.stderr + cut.stdout);
+    const c = await coverage(cwd, "work/cut");
+    assert.equal(c.status, "partial");
+    assert.match(c.status_basis, /own clock ran out while it counted .*packets\.tsv/);
+    const steps = Object.fromEntries(c.steps.map((s: Json) => [s.step, s]));
+    assert.equal(steps["packets.tsv"].rows, null);
+    assert.equal(c.limits_on_what_the_listings_show.truncated_packets, null);
+    assert.equal(c.limits_on_what_the_listings_show.packets, null);
+    assert.equal((await readFile(join(cwd, "work/cut/packets.tsv"), "utf8")).trimEnd().split("\n").length, 5001, "the listing is whole on disk");
+    const index = (await readFile(join(cwd, "work/cut/index.tsv"), "utf8")).trimEnd().split("\n").find((l) => l.startsWith("packets.tsv")) ?? "";
+    assert.equal(index.split("\t")[2], "", "an unknown count is blank in the index, not the text None");
+    const whole = await recipe(cwd, bin, ["run", "--target", target(await capture(cwd)), "--out", "work/whole"]);
+    assert.equal(whole.code, 0, whole.stderr);
+    const w = await coverage(cwd, "work/whole");
+    assert.equal(w.status, "complete");
+    assert.equal(Object.fromEntries(w.steps.map((s: Json) => [s.step, s]))["packets.tsv"].rows, 5000);
+    assert.equal(w.limits_on_what_the_listings_show.truncated_packets, 2500);
+  });
+});
