@@ -79,7 +79,11 @@ MAX_SCAN_CHARS = 1 << 20          # a string longer than this is withheld whole,
 MAX_DEPTH = 200                   # a value nested deeper than this is withheld whole
 INLINE_BUDGET = 4 << 20           # bytes of rows an answer carries inline; the rest of a page is in its file
 MAX_DISTINCT = 1000000            # distinct values a summary table counts; beyond it they are counted as uncounted
-MAX_FIELD_BYTES = 64 << 20        # one CSV line (a field may span lines) longer than this stops the file, named
+MAX_FIELD_BYTES = 16 << 20        # one CSV line (a field may span lines) longer than this stops the file, named
+MAX_SPANS_PER_TEXT = 2000         # a text with more credential-shaped stretches than this has the rest of it withheld as one stretch, counted
+MAX_INT_DIGITS = 4000             # an integer written with more digits is kept as the text it was written as (Python cannot print one past 4300)
+DEFAULT_SECONDS = 420             # the time a read may take unless the call says otherwise
+MAX_SECONDS = 480                 # the most it may be given: the manifest's 600 seconds must hold for the work that follows the deadline
 FIRST_REJECTS = 1000              # a file whose first records are all rejected is not an export this tool reads: it stops after this many
 LIST_REJECTS = 100000             # rejected records one file lists; the rest are counted
 MAX_FILTER_CHARS = 1024           # a caller's regular expression is matched against at most this many characters of a value
@@ -116,7 +120,7 @@ def fail(message, **extra):
 
 def read_args():
     try:
-        args = json.load(sys.stdin)
+        args = loads_strict(sys.stdin.read())
     except (ValueError, RecursionError) as exc:
         fail("arguments are not valid JSON", reason=type(exc).__name__)
     if not isinstance(args, dict):
@@ -161,8 +165,9 @@ def want_str_list(args, key):
 
 
 def unsafe_regex(pattern):
-    """Why a caller's pattern is refused, or None: a group that repeats and itself repeats or branches, or a back reference,
-    can take time that grows exponentially with the text; the tool cannot interrupt a match, so it does not start one."""
+    """Why a caller's pattern is refused, or None: a group that repeats without a bound and itself repeats or branches, or a back
+    reference, takes time that grows exponentially with the text, so it is not started. This is a first filter for the shapes
+    that are known, not the guard: every test of every pattern is timed (Filter), whatever its shape."""
     stack, i, n, repeats, in_class = [], 0, len(pattern), 0, False
     quant = re.compile(r"[*+?]|\{\d*,?\d*\}")
 
@@ -233,45 +238,51 @@ class FilterTooSlow(Exception):
     pass
 
 
+_ARMED = [False]
+
+
 def _filter_alarm(_signum, _frame):
-    raise FilterTooSlow()
+    if _ARMED[0]:                 # a timer that fires after its test has ended is not a slow test
+        _ARMED[0] = False
+        raise FilterTooSlow()
 
 
 class Filter:
-    """A caller's regular expression. Its text is limited, a pattern that can take exponential time is refused before it is
-    compiled, and every test of it against a value is timed: the re module checks for signals while it matches, so a pattern that
-    takes polynomial time on a long value (`.*.*.*.*x`) is stopped at FILTER_SECONDS and the call fails, named, instead of hanging."""
+    """A caller's regular expression. Its text is limited, a pattern of a known exponential shape is refused before it is
+    compiled, and EVERY test of ANY pattern against a value is timed, whatever the pattern's shape (a bounded repeat such as
+    `(a?){30}a{30}` or `(\\w{1,20}){1,10}@` is as slow as an unbounded one): the re module checks for signals while it matches, so
+    a test that takes more than FILTER_SECONDS is stopped and the call fails, named, instead of hanging."""
 
     def __init__(self, rx, key):
         self.rx, self.key = rx, key
-        self.timed = hasattr(signal, "setitimer") and len(re.findall(r"(?<!\\)(?:[*+]|\{\d*,\})", rx.pattern)) > 1
 
     def __bool__(self):
         return True
 
     def test(self, text):
-        if not self.timed:
-            return self.rx.search(text) is not None
         try:
+            _ARMED[0] = True
             signal.setitimer(signal.ITIMER_REAL, FILTER_SECONDS)
             found = self.rx.search(text) is not None
-            signal.setitimer(signal.ITIMER_REAL, 0)
-            return found
         except FilterTooSlow:
             fail("the %s pattern took longer than %s seconds to test one value (%d characters); use a simpler pattern" % (self.key, FILTER_SECONDS, len(text)))
         finally:
+            _ARMED[0] = False
             signal.setitimer(signal.ITIMER_REAL, 0)
+        return found
 
 
 def want_regex(args, key):
     text = want_str(args, key)
     if text is None:
         return None
+    if not hasattr(signal, "setitimer"):
+        fail("%s needs interval timers to bound a pattern's time, which this platform does not have" % key)
     if len(text) > 200:
         fail("%s is longer than 200 characters" % key)
     why = unsafe_regex(text)
     if why:
-        fail("%s is refused (%s): a pattern that can take exponential time cannot be interrupted. Use a simpler one." % (key, why))
+        fail("%s is refused (%s): a pattern of that shape takes exponential time. Use a simpler one." % (key, why))
     try:
         return Filter(re.compile(text, re.I), key)
     except re.error as exc:
@@ -291,7 +302,7 @@ def refuse_unknown(args, allowed):
         fail("unknown argument(s): %s. This tool takes: %s" % (", ".join(extra), ", ".join(sorted(allowed))))
 
 
-def start_clock(args, default=540, maximum=580):
+def start_clock(args, default=DEFAULT_SECONDS, maximum=MAX_SECONDS):
     seconds = args.get("time_limit_seconds", default)
     if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) or seconds < 1 or seconds > maximum:
         fail("time_limit_seconds must be a number from 1 to %d" % maximum)
@@ -301,6 +312,64 @@ def start_clock(args, default=540, maximum=580):
 
 def out_of_time():
     return DEADLINE[0] is not None and time.monotonic() > DEADLINE[0]
+
+
+class TimeUp(Exception):
+    """The time limit passed inside a record (a long string, a row of many cells): the record is abandoned, counted and listed as
+    cut by the limit, and the read ends. A record's work is checked against the deadline, not only the gaps between records."""
+
+
+_TICKS = [0]
+
+
+def check_deadline(weight=1):
+    """Raise TimeUp when the deadline has passed. The clock is read once per 2048 units of work (a unit is about 256 characters of text
+    or one withheld stretch), so the check costs nothing against the work it guards."""
+    _TICKS[0] += weight
+    if _TICKS[0] >= 2048:
+        _TICKS[0] = 0
+        if out_of_time():
+            raise TimeUp()
+
+
+def dumps_deep(value, **kwargs):
+    """json.dumps for a value that may be nested very deeply. The decoder admits a document nested nearly as deep as the interpreter's
+    recursion limit, and the encoder then needs more than the frames left (Python 3.11 counts the C encoder's levels against the same
+    limit): the limit is raised for this one call, by more than any document the decoder admits."""
+    try:
+        return json.dumps(value, **kwargs)
+    except RecursionError:
+        old = sys.getrecursionlimit()
+        sys.setrecursionlimit(old + 5000)
+        try:
+            return json.dumps(value, **kwargs)
+        finally:
+            sys.setrecursionlimit(old)
+
+
+def shown_text(value):
+    """A value as the one line of text a table key, a filter or a reason carries. A string is scrubbed. A number or a boolean is its
+    own text. A list or an object is what it is (its kind and size) and never its content: it reaches the answer, field by field and
+    cleaned, in the record, and str() of it would print a name and its value side by side."""
+    if isinstance(value, str):
+        return scrub(value)
+    if isinstance(value, (bool, int, float)):
+        return str(value)
+    if isinstance(value, dict):
+        return "(object with %d keys)" % len(value)
+    if isinstance(value, (list, tuple)):
+        return "(list of %d items)" % len(value)
+    return "(%s)" % type(value).__name__
+
+
+def failed_record(exc):
+    """The reason listed for a record that could not be processed: the kind of failure, and the message when it is short. One
+    malformed record never ends the run: it is counted, located and listed, and the next is read."""
+    if isinstance(exc, TimeUp):
+        return "the time limit ended the read inside this record: it was not processed"
+    message = scrub(str(exc))
+    return "the record could not be processed (%s%s); it is counted and listed here and the read went on" % (
+        type(exc).__name__, ": " + message if message and len(message) <= 200 else "")
 
 
 _PAGINATION = re.compile(r"(?i)next.?(page.?)?(token|link|uri|url)|continuation")
@@ -505,12 +574,12 @@ class LosslessPage:
             fail("the whole result could not be written to %s: %s" % (shown_output(self.path), describe(exc)))
 
     def add(self, row):
-        text = json.dumps(row, default=str)
+        text = dumps_deep(row, default=str, allow_nan=False)      # a number JSON cannot hold raises here, before the row is counted
         self.total += 1
         if self._out is None and (len(self.page) >= self.limit or self.bytes + len(text) > self.budget):
             self._open_tmp(self.path.parent)
             for kept in self.page:
-                self._write(json.dumps(kept, default=str))
+                self._write(dumps_deep(kept, default=str, allow_nan=False))
         if self._out is not None:
             self._write(text)
         if len(self.page) < self.limit and self.bytes + len(text) <= self.budget:
@@ -586,7 +655,7 @@ class SecretValues:
     def add(self, finding_id, locator, value):
         if not self.enabled:
             return
-        self._fh.write(json.dumps({"finding_id": finding_id, **locator, "value": value}, default=str))
+        self._fh.write(dumps_deep({"finding_id": finding_id, **locator, "value": value}, default=str))
         self._fh.write("\n")
         self.written += 1
 
@@ -676,6 +745,7 @@ _SEPS = r"""(?:\\*["']|["'])?(?:\s*(?:=|%3[dD])\s*|:(?=\S))"""
 _NAME = r"(?:(?:%s)%s|%s%s)" % (_STRONG, _SEP, _SHORT, _SEPS)
 ARN_TAIL = re.compile(r"arn:[A-Za-z0-9-]+:[A-Za-z0-9-]+:[A-Za-z0-9-]*:[0-9]*:$")
 SCHEMES = ("bearer", "basic", "digest", "negotiate", "ntlm")
+PAIR_WHY = "a value paired with a credential name"
 TOKEN_RULES = [
     # anchored at the start of a run and possessive, so that a megabyte of `eyJ` is read once, not once per `eyJ`
     ("a JSON Web Token", re.compile(r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{6,}+\.[A-Za-z0-9_-]{2,}+(?:\.[A-Za-z0-9_-]*+)?"), 0),
@@ -688,6 +758,9 @@ TOKEN_RULES = [
         r"""(?i)authorization["']?\s*[:=]\s*(?:\\*["'])?(?:(?:bearer|basic|digest|negotiate|ntlm|token)\s+)?([^\s"'&,;\\]{1,4096})"""), 1),
     ("a cookie header value", re.compile(r"""(?i)cookie["']?\s*[:=]\s*(?:\\*["'])?([^\r\n"'\\]{1,4096})"""), 1),
     ("a scheme and its credential", re.compile(r"(?i)\b(?:bearer|basic)\s+([A-Za-z0-9._~+/=-]{3,4096})|\b(?:negotiate|ntlm|digest)\s+([A-Za-z0-9._~+/=-]{24,4096})"), -2),
+    # a Name/Value pair written as JSON text inside a string (an AuditData in a column of another name, a parameter list in a cell): the
+    # structural rule of Withheld.clean cannot see it, so the text rule reads the pair, and the name decides as it does there
+    (PAIR_WHY, re.compile(r"""(?i)\b(?:name|key)\\*"\s*:\s*\\*"([^"\\]{1,64})\\*"\s*,\s*\\*"(?:new|old)?value\\*"\s*:\s*\\*"((?:[^"\\]|\\.){1,4096}?)(?=\\*")"""), 2),
     ("a value assigned to a credential name (quoted)", re.compile(
         r"""(?i)%s\\*(["'])(.{1,4096}?)(?=\\*\1)""" % _NAME), 2),
     ("a value assigned to a credential name", re.compile(
@@ -725,20 +798,21 @@ def _random_like(run):
 # alternative is a necessary condition of at least one rule; tests/pack-cloud-shared.test.ts holds the two paths equal.
 _QUICK = re.compile(r"eyJ|-----BEGIN|\n|authorization|cookie|bearer|basic|digest|negotiate|ntlm|pass|pwd|secret|token|key|signature|sig|"
                     r"plaintext|hash|pin|otp|sas|securestring|gh[pousr]_|github_pat_|xox|AIza|ya29\.|1//0|IQoJb|FQoG|FwoG|Q~|[01]\.A|[sr]k_|"
-                    r"://|gocspx|functions|code=|"
+                    r"://|gocspx|functions|code=|credential|assertion|mfacode|saml|"
                     r"[A-Za-z0-9+/]{32}|[A-Za-z0-9+/_-]{128}", re.I)
 
 
 _CLEAN = set()                    # short texts already judged to hold nothing (names, addresses and ids repeat across a log)
-LONG_TEXT = 1 << 16               # a text this long is scanned with the deadline in view
+SCAN_GATE = 4096                  # a text longer than this is scanned with the deadline in view, rule by rule
 
 
-def token_spans(text, shapes=True):
+def token_spans(text, shapes=True, strict=False):
     """(start, end, why) of each stretch of `text` shaped like a credential, in order and not overlapping. `shapes` False leaves
-    out the rules that recognise a key by its length alone (a value that is named a checksum or a digest is not scanned for them)."""
+    out the rules that recognise a key by its length alone (a value that is named a checksum or a digest is not scanned for them).
+    With `strict` a scan that meets the deadline raises TimeUp (a record is being read); without it the text is withheld whole."""
     if shapes and text in _CLEAN:
         return []
-    spans = _spans(text, shapes) if _QUICK.search(text) else []
+    spans = _spans(text, shapes, strict) if _QUICK.search(text) else []
     if shapes and not spans and len(text) <= 256 and len(_CLEAN) < 100000:
         _CLEAN.add(text)
     return spans
@@ -749,13 +823,19 @@ def _name_before(text, start, at):
     return re.sub(r"[^a-z0-9]", "", text[max(0, at - 64):at].lower())
 
 
-def _spans(text, shapes=True):
+def _spans(text, shapes=True, strict=False):
     spans = []
-    big = len(text) > LONG_TEXT
+    big = len(text) > SCAN_GATE
     for why, rx, group in TOKEN_RULES:
         if big and out_of_time():
+            if strict:
+                raise TimeUp()
             return [(0, len(text), "text not scanned: the time limit ended the scan")]      # fail closed
         for m in rx.finditer(text):
+            if big and strict:
+                check_deadline()
+            if why == PAIR_WHY and not name_is_sensitive(m.group(1)):
+                continue
             if "assigned to a credential name" in why:
                 if ARN_TAIL.search(text[max(0, m.start() - 120):m.start()]):
                     continue                              # arn:aws:secretsmanager:...:secret:NAME is a name, not a value
@@ -774,6 +854,10 @@ def _spans(text, shapes=True):
                 if g == 1 and group == -1 and len(m.groups()) >= 2 and m.group(1) in ("'", '"'):
                     continue                              # group 1 of the switch rules is the quote
                 spans.append((start, end, why))
+    if big and out_of_time():
+        if strict:
+            raise TimeUp()
+        return [(0, len(text), "text not scanned: the time limit ended the scan")]
     for m in _B64_RUN.finditer(text):
         if _random_like(m.group(0)):
             spans.append((m.start(), m.end(), "a long unbroken base64-like run"))
@@ -813,6 +897,32 @@ def scrub(text):
     return "".join(out)
 
 
+_SEGMENTS = {}
+
+
+def shown_pointer(pointer):
+    """A JSON pointer as it may be printed. A key in it is text the record chose, and can be shaped like a credential (a URL with a
+    password in it, a name of 40 base64 characters): each key is withheld like any other text, before the pointer is joined. (The
+    values file holds the real pointer; the "~" and "/" escapes of a key would otherwise break the shape a rule looks for.)"""
+    if not pointer:
+        return pointer
+    tail = ""
+    m = re.search(r"@\d+$", pointer)
+    if m:
+        pointer, tail = pointer[:m.start()], m.group(0)
+    parts = []
+    for part in pointer.split("/"):
+        hit = _SEGMENTS.get(part)
+        if hit is None:
+            key = part.replace("~1", "/").replace("~0", "~")
+            safe = scrub(key)
+            hit = part if safe == key else safe.replace("~", "~0").replace("/", "~1")
+            if len(_SEGMENTS) < 20000:
+                _SEGMENTS[part] = hit
+        parts.append(hit)
+    return "/".join(parts) + tail
+
+
 def shown_path(path):
     """A path as it may be printed: a component shaped like a credential (a file named after a token) is withheld."""
     if not isinstance(path, str):
@@ -841,14 +951,15 @@ class Withheld:
         self.reasons = {}
         self.page = None if quiet else LosslessPage("withheld", limit)
 
-    def note(self, locator, pointer, why, length, original):
+    def note(self, locator, pointer, why, length, original, shown_ptr=None):
         if self.quiet:
             return
+        check_deadline()
         self.count += 1
         self.reasons[why] = self.reasons.get(why, 0) + 1
         fid = "W%06d" % self.count
         shown = {k: (shown_path(v) if k == "file" else v) for k, v in locator.items()}
-        self.page.add({"finding_id": fid, **shown, "pointer": scrub(pointer), "why": why, "length": length})
+        self.page.add({"finding_id": fid, **shown, "pointer": shown_ptr if shown_ptr is not None else shown_pointer(pointer), "why": why, "length": length})
         if self.vault is not None:
             self.vault.add(fid, {**locator, "pointer": pointer, "why": why}, original)
 
@@ -865,8 +976,9 @@ class Withheld:
     def clean(self, value, locator, pointer="", depth=0, shapes=True):
         if isinstance(value, str):
             return self.clean_text(value, locator, pointer, shapes)
+        check_deadline()
         if depth > MAX_DEPTH and isinstance(value, (dict, list)):
-            self.note(locator, pointer, "nested deeper than %d levels" % MAX_DEPTH, len(json.dumps(value, default=str)), value)
+            self.note(locator, pointer, "nested deeper than %d levels" % MAX_DEPTH, len(dumps_deep(value, default=str)), value)
             return "[withheld: nested deeper than %d levels, %s]" % (MAX_DEPTH, self.size_of(value))
         if isinstance(value, dict):
             named = None
@@ -885,8 +997,8 @@ class Withheld:
                 sensitive = name_is_sensitive(ks) or (pair_secret and ks in self.VALUE_KEYS)
                 if sensitive and is_container_name(ks) and isinstance(v, (dict, list)):
                     sensitive = False
-                if sensitive and v not in (None, "", True, False) and not (isinstance(v, str) and (REDACTED.match(v) or v.lower() in NOT_A_VALUE)):
-                    self.note(locator, point, "credential-named field", len(v) if isinstance(v, str) else len(json.dumps(v, default=str)), v)
+                if sensitive and not (v is None or isinstance(v, bool) or v == "") and not (isinstance(v, str) and (REDACTED.match(v) or v.lower() in NOT_A_VALUE)):
+                    self.note(locator, point, "credential-named field", len(v) if isinstance(v, str) else len(dumps_deep(v, default=str)), v)
                     out[safe_key] = "[withheld: credential-named field, %s]" % self.size_of(v)
                 else:
                     out[safe_key] = self.clean(v, locator, point, depth + 1, shapes and not CHECKSUM_NAME.search(ks))
@@ -901,14 +1013,21 @@ class Withheld:
         if len(text) > MAX_SCAN_CHARS:
             self.note(locator, pointer, "text longer than 1 MiB", len(text), text)
             return WITHHELD_TEXT % ("text longer than 1 MiB", len(text))
-        spans = token_spans(text, shapes)
+        check_deadline(1 + len(text) // 256)
+        spans = token_spans(text, shapes, strict=True)
         if not spans:
             return text
+        if len(spans) > MAX_SPANS_PER_TEXT:
+            # a text with thousands of stretches would write a note, and a line of the values file, for each: past the cap the rest
+            # of the text is withheld as one stretch (counted as one, and the values file holds all of it)
+            first = spans[MAX_SPANS_PER_TEXT - 1][0]
+            spans = spans[:MAX_SPANS_PER_TEXT - 1] + [(first, len(text), "the rest of a text that holds more than %d credential-shaped stretches" % MAX_SPANS_PER_TEXT)]
         out, at = [], 0
+        base = shown_pointer(pointer) if not self.quiet else pointer
         for start, end, why in spans:
             out.append(text[at:start])
             out.append(WITHHELD_TEXT % (why, end - start))
-            self.note(locator, "%s@%d" % (pointer, start), why, end - start, text[start:end])
+            self.note(locator, "%s@%d" % (pointer, start), why, end - start, text[start:end], "%s@%d" % (base, start))
             at = end
         out.append(text[at:])
         return "".join(out)
@@ -1033,6 +1152,10 @@ class Tally:
         self.uncounted = 0
 
     def add(self, key):
+        try:
+            hash(key)
+        except TypeError:                 # a list or an object is counted as what it is, never as a table key
+            key = shown_text(key)
         if key in self.counts:
             self.counts[key] += 1
         elif len(self.counts) < MAX_DISTINCT:
@@ -1161,7 +1284,20 @@ def _no_constant(name):
     raise json.JSONDecodeError("%s is not JSON" % name, "", 0)
 
 
-_DEC = json.JSONDecoder(parse_constant=_no_constant)
+def _number(text):
+    """A number written with a decimal point or an exponent. One that does not fit a float (1e999) is kept as the text it was written as,
+    not turned into an infinity that no JSON answer can hold."""
+    value = float(text)
+    return text if value in (_INF, -_INF) else value
+
+
+def _integer(text):
+    """An integer. One of more than MAX_INT_DIGITS digits is kept as its text: Python refuses to print one past 4300 digits."""
+    return int(text) if len(text) <= MAX_INT_DIGITS else text
+
+
+_INF = float("inf")
+_DEC = json.JSONDecoder(parse_constant=_no_constant, parse_float=_number, parse_int=_integer)
 DECODE_ERRORS = [0]
 
 
@@ -1194,6 +1330,9 @@ def walk_inputs(top, wanted, skipped):
     stack = [top]
     found = []
     while stack:
+        if out_of_time():
+            skipped.append({"path": shown_path(stack[-1]), "reason": "the time limit ended the listing of directories: this one and the rest were not listed"})
+            return found
         directory = stack.pop()
         try:
             with os.scandir(directory) as it:
@@ -1202,7 +1341,10 @@ def walk_inputs(top, wanted, skipped):
             skipped.append({"path": shown_path(directory), "reason": "the directory could not be listed", "error": describe(exc)})
             continue
         subdirs = []
-        for entry in entries:
+        for n, entry in enumerate(entries):
+            if n % 4096 == 4095 and out_of_time():
+                skipped.append({"path": shown_path(directory), "reason": "the time limit ended the listing of this directory: its entries from %s on were not examined" % shown_path(entry.name)})
+                return found
             try:
                 if entry.is_symlink():
                     skipped.append({"path": shown_path(entry.path), "reason": "a symbolic link: links are not followed"})
@@ -1659,6 +1801,16 @@ def read_units(src, envelope_keys, record_cap=MAX_RECORD_BYTES, document_cap=MAX
                             src.stopped = "the time limit ended the read"
                             yield "reject", info(start_line, start_off, None, key), "the last record is cut off where the read ended (the time limit)"
                             return
+                        if exc.msg == "nested too deeply":
+                            # a record the decoder cannot hold is valid JSON as far as can be told: it is skipped without parsing it (by counting
+                            # its brackets), rejected, and the records after it are read
+                            skip_end = _skip_value(src, start_pos, record_cap)
+                            if skip_end is not None:
+                                src.advance(skip_end)
+                                yield "reject", info(start_line, start_off, skip_end - start_pos, key), "a record nested too deeply to be read (deeper than the JSON decoder holds)"
+                                expecting_item = False
+                                src.skip_ws()
+                                continue
                         src.stopped = "the JSON stopped being valid at line %d (%s): the rest was not read" % (start_line, exc.msg)
                         yield "reject", info(start_line, start_off, None, key), "malformed JSON: %s" % exc.msg
                         return
@@ -1763,30 +1915,32 @@ def _expand(value, envelope_keys, info, line, offset, src, extra):
 # ---- CSV and what both CSV and JSON rows need ------------------------------------------------------------------------
 
 
-def csv_lines(src):
-    """The lines of a CSV file, newline kept, one at a time (a quoted field may span several)."""
+def csv_lines(src, cap=MAX_FIELD_BYTES):
+    """The lines of a CSV file, newline kept, one at a time (a quoted field may span several). A line longer than `cap` (the call's
+    max_record_bytes, 16 MiB unless it is raised, as for a JSON record) stops the file, named."""
     while True:
         i = src.buf.find("\n", src.pos)
-        while i < 0 and not src.eof and len(src.buf) - src.pos <= MAX_FIELD_BYTES:
+        while i < 0 and not src.eof and len(src.buf) - src.pos <= cap:
             src.fill()
             i = src.buf.find("\n", src.pos)
         if i < 0 and src.pos >= len(src.buf):
             return
         end = i + 1 if i >= 0 else len(src.buf)
-        if end - src.pos > MAX_FIELD_BYTES:
+        if end - src.pos > cap:
             raise TooLong()
         line = src.buf[src.pos:end]
         src.advance(end)
         yield line
 
 
-def csv_rows(src, delimiter, field_limit):
+def csv_rows(src, delimiter, field_limit, record_cap=MAX_FIELD_BYTES):
     """Yield ("row", info, dict) / ("reject", info, reason) for a CSV file; a bad row is rejected and the next is read; a failure
     of the reader itself stops the file, says where, and keeps what was read. A header name that repeats keeps every column
     (the second is `name#2`)."""
     src.mode, src.stopped, src.extra_keys, src.envelope, src.header = "csv", None, [], None, None
     csv.field_size_limit(field_limit)
-    reader = csv.reader(csv_lines(src), delimiter=delimiter)
+    line_cap = record_cap
+    reader = csv.reader(csv_lines(src, line_cap), delimiter=delimiter)
     header, count = None, 0
     while True:
         before = reader.line_num
@@ -1795,7 +1949,7 @@ def csv_rows(src, delimiter, field_limit):
         except StopIteration:
             break
         except TooLong:
-            src.stopped = "a line longer than %d characters at line %d: the rest of the file was not read" % (MAX_FIELD_BYTES, before + 1)
+            src.stopped = "a line longer than %d characters at line %d: the rest of the file was not read" % (line_cap, before + 1)
             yield "reject", {"record": count + 1, "line": before + 1, "offset": src.offset(), "chars": None, "envelope": None}, src.stopped
             return
         except csv.Error as exc:
@@ -1872,6 +2026,7 @@ CODES = {
 }
 SUCCESS_WORDS = ("success", "succeeded", "login_success", "login_successful")
 FAILURE_WORDS = ("failure", "failed", "login_failure")
+import hashlib
 import itertools
 import math
 
@@ -1958,6 +2113,29 @@ def flatten(row):
     return out
 
 
+def coordinates(lat, lon):
+    """(latitude, longitude) as numbers when both are finite and on the globe, else (None, None): a place that cannot be on Earth is no
+    place to measure a distance from (the event keeps the values as written)."""
+    try:
+        a, b = float(lat), float(lon)
+    except (TypeError, ValueError, OverflowError):
+        return None, None
+    return (a, b) if math.isfinite(a) and math.isfinite(b) and abs(a) <= 90 and abs(b) <= 180 else (None, None)
+
+
+def account_key(uid, upn, display, sp):
+    """(label, key) of the account an event is analysed under: the object id, else the user name folded to lower case, else the display
+    name, else the service principal. The label is the text that is printed (a value shaped like a credential is withheld before it is
+    lower-cased); the key tells accounts apart and holds a digest of the value, never the value, so the temporary database holds nothing
+    the answer would not print. The label comes first in the key, so accounts are taken in the order of their labels."""
+    for prefix, value in (("id", uid), ("upn", upn), ("name", display), ("sp", sp)):
+        if value:
+            raw = value if isinstance(value, str) else dumps_deep(value, default=str, sort_keys=True)
+            label = prefix + ":" + shown_text(value).lower()
+            return label, label + "\x01" + hashlib.sha256(raw.lower().encode("utf-8", "backslashreplace")).hexdigest()[:24]
+    return None, None
+
+
 def place_of(flat):
     """(city, country) of a record. A Graph location names its parts; the portal's CSV writes one string, `City, State, Country`,
     and a string with no comma is taken as a country. A city is never compared as a country."""
@@ -1989,8 +2167,9 @@ def events_of(item):
         merged["event_name"] = event.get("name")
         merged["event_type"] = event.get("type")
         params = {}
-        for p in event.get("parameters") or []:
-            if isinstance(p, dict) and p.get("name"):
+        listed = event.get("parameters")
+        for p in listed if isinstance(listed, list) else []:
+            if isinstance(p, dict) and isinstance(p.get("name"), str) and p["name"]:
                 params[p["name"]] = next((p.get(k) for k in ("value", "intValue", "boolValue", "multiValue") if p.get(k) is not None), None)
         yield i, flatten(merged), params
 
@@ -2010,7 +2189,7 @@ def outcome(flat):
     know is null. Nothing is a failure by default."""
     word = val(flat, "Status", "resultType")
     code_raw, code_key = get(flat, "errorcode", "Sign-in error code")
-    code = str(code_raw).strip() if code_raw is not None else None
+    code = shown_text(code_raw).strip() if code_raw is not None else None
     if isinstance(word, str) and word.strip():
         w = word.strip().lower()
         if w == "interrupted":
@@ -2033,7 +2212,7 @@ def outcome(flat):
         if code.lower() in FAILURE_WORDS:
             return code, False, "the %s is a failure word" % code_key, None
         return code, None, "the %s value is neither a success nor a failure value this tool knows (kept as written)" % code_key, None
-    name = re.sub(r"[\s_-]+", "_", str(val(flat, "event_name", "Event Name") or "").strip().lower())
+    name = re.sub(r"[\s_-]+", "_", shown_text(val(flat, "event_name", "Event Name") or "").strip().lower())
     if name in SUCCESS_WORDS or name.endswith("_success"):
         return name, True, "the event name is a success name", None
     if "failure" in name or name.endswith("_failed"):
@@ -2060,17 +2239,20 @@ def survey(path, fmt_arg, delimiter, max_expanded, field_limit, record_cap):
                 break
             if kind == "reject" or not isinstance(item, dict):
                 continue
-            for _idx, flat, _p in events_of(item):
-                if flat is None:
-                    continue
-                raw, _key, named_utc = time_of(flat)
-                st = parse_stamp(raw, None, named_utc)
-                state.statuses[st["status"]] = state.statuses.get(st["status"], 0) + 1
-                if st["status"] in ("no_zone", "ambiguous_date_order"):
-                    state.first_bad.setdefault(st["status"], (info["record"], info["line"], raw))
-                got = proven_order(raw) if isinstance(raw, str) else None
-                if got in state.order:
-                    state.order[got] += 1
+            try:
+                for _idx, flat, _p in events_of(item):
+                    if flat is None:
+                        continue
+                    raw, _key, named_utc = time_of(flat)
+                    st = parse_stamp(raw, None, named_utc)
+                    state.statuses[st["status"]] = state.statuses.get(st["status"], 0) + 1
+                    if st["status"] in ("no_zone", "ambiguous_date_order"):
+                        state.first_bad.setdefault(st["status"], (info["record"], info["line"], raw))
+                    got = proven_order(raw) if isinstance(raw, str) else None
+                    if got in state.order:
+                        state.order[got] += 1
+            except Exception:             # the read that follows lists a record that cannot be processed; this pass only looks at times
+                continue
     finally:
         src.close()
     return state
@@ -2087,7 +2269,7 @@ def open_rows(path, fmt_arg, delimiter, max_expanded, field_limit, record_cap):
     basis = "the content" if fmt_arg == "auto" else "the format argument, and the content agrees"
     if seen == "json":
         return src, read_units(src, ENVELOPE_KEYS, record_cap, MAX_DOCUMENT_BYTES), seen, basis
-    return src, csv_rows(src, delimiter, field_limit), seen, basis
+    return src, csv_rows(src, delimiter, field_limit, record_cap), seen, basis
 
 
 def main():
@@ -2124,7 +2306,7 @@ def main():
         fail("delimiter must be one character")
     max_expanded = want_int(args, "max_expanded_bytes", MAX_EXPANDED_BYTES, 1024)
     record_cap = want_int(args, "max_record_bytes", MAX_RECORD_BYTES, 1024, 1 << 30)
-    field_limit = MAX_FIELD_BYTES
+    field_limit = record_cap          # a CSV field may be as large as the record the call allows
     write_values = want_bool(args, "write_values")
     seconds = start_clock(args)
     if out_file is not None:
@@ -2161,7 +2343,7 @@ def main():
                "record INTEGER, line INTEGER, eidx INTEGER)")
     row = {"file": shown_path(path), "status": "read", "format": None, "compressed": False, "records": 0, "rejected": 0, "bytes_read": 0}
     counts = {"records_read": 0, "events": 0, "records_rejected": 0, "events_without_user": 0, "events_filtered_out": 0, "successes": 0, "failures": 0,
-              "unknown_outcome": 0, "interrupts": 0, "events_without_a_decoded_time": 0}
+              "unknown_outcome": 0, "interrupts": 0, "events_without_a_decoded_time": 0, "records_not_sign_ins": 0}
     time_statuses = {}
     assumed = {"assume_utc_applied_to": 0, "column_named_utc": 0}
     problems, pagination = [], []
@@ -2187,8 +2369,8 @@ def main():
                         break
                     continue
                 app_name = item.get("id", {}).get("applicationName") if isinstance(item.get("id"), dict) else None
-                if app_name is not None and str(app_name) != "login":
-                    reason = "a Workspace activity of the application %s, not a login activity" % scrub(str(app_name))
+                if app_name is not None and app_name != "login":
+                    reason = "a Workspace activity of the application %s, not a login activity" % shown_text(app_name)
                     counts["records_rejected"] += 1
                     first_reject = first_reject or (info["record"], info["line"], reason)
                     if rejected.reject({"file": row["file"], "record": info["record"], "line": info["line"], "reason": reason}):
@@ -2196,101 +2378,122 @@ def main():
                         break
                     continue
                 counts["records_read"] += 1
-                for idx, flat, params in events_of(item):
-                    if flat is None:
-                        counts["records_rejected"] += 1
-                        rejected.reject({"file": row["file"], "record": info["record"], "line": info["line"], "event_index": idx, "reason": params})
-                        first_reject = first_reject or (info["record"], info["line"], params)
-                        continue
-                    upn = val(flat, *UPN_NAMES)
-                    display = val(flat, *DISPLAY_NAMES)
-                    uid = val(flat, "userId", "User ID")
-                    if isinstance(uid, str) and not uid.strip("0-{} "):
-                        uid = None            # the nil id is "no id", not an account that every such record shares
-                    sp = val(flat, *SP_NAMES)
-                    account = upn or display or (("service principal " + str(sp)) if sp else None)
-                    raw_time, time_key, named_utc = time_of(flat)
-                    code, success, success_basis, klass = outcome(flat)
-                    address = val(flat, "ipAddress", "IP address", "ip", "sourceIP", "ip_address")
-                    if account is None and uid is None and raw_time is None and address is None and code is None:
-                        counts["records_rejected"] += 1
-                        reason = "not a sign-in record: none of a user, a time, an address or a result"
-                        first_reject = first_reject or (info["record"], info["line"], reason)
-                        if rejected.reject({"file": row["file"], "record": info["record"], "line": info["line"], "event_index": idx, "reason": reason}):
-                            stopped_all_rejected = True
-                            break
-                        continue
-                    rejected.accept()
-                    # the analysis key: the account's object id, else its user name folded to lower case; never a display name
-                    shown_account = scrub(str(account)) if account is not None else None
-                    shown_display = scrub(str(display)) if display is not None else None
-                    key = ("id:" + str(uid).lower()) if uid else (("upn:" + str(upn).lower()) if upn else (("name:" + str(display).lower()) if display else
-                                                                                                          (("sp:" + str(sp).lower()) if sp else None)))
-                    if pattern and not ((shown_account and hits(pattern, shown_account)) or (shown_display and hits(pattern, shown_display))):
-                        counts["events_filtered_out"] += 1
-                        continue
-                    st = parse_stamp(raw_time, order, assume_utc or named_utc)
-                    basis_note = st["basis"]
-                    if named_utc and st["status"] == "assumed_utc":
-                        basis_note = "the column is named Date (UTC)"
-                        assumed["column_named_utc"] += 1
-                    elif st["status"] == "assumed_utc":
-                        assumed["assume_utc_applied_to"] += 1
-                    time_statuses[st["status"]] = time_statuses.get(st["status"], 0) + 1
-                    if st["ns"] is None:
-                        counts["events_without_a_decoded_time"] += 1
-                    loc = {**locator, "event_index": idx}
-                    lat, lon = val(flat, "latitude"), val(flat, "longitude")
-                    try:
-                        flat_lat, flat_lon = (float(lat), float(lon)) if lat is not None and lon is not None else (None, None)
-                    except (TypeError, ValueError):
-                        flat_lat = flat_lon = None
-                    authentication = val(flat, "authenticationRequirement", "Authentication requirement")
-                    ca_status = val(flat, "conditionalAccessStatus", "Conditional Access")
-                    app = val(flat, "appDisplayName", "Application", "resourceDisplayName", "application_name")
-                    city, country = place_of(flat)
-                    client = val(flat, "clientAppUsed", "Client app", "userAgent", "User agent", "browser", "login_type") or params.get("login_type")
-                    event_id = val(flat, "id", "Request ID", "requestId")
-                    corr_id = val(flat, "correlationId", "Correlation ID")
-                    event = {
-                        "time": raw_time, "time_utc": st["utc"], "time_status": st["status"], "time_basis": basis_note,
-                        "user": account, "user_display_name": display if display != account else None, "user_id": uid, "analysis_account": key,
-                        "application": app, "application_id": val(flat, "appId", "Application ID"),
-                        "resource": val(flat, "resourceDisplayName", "Resource"), "resource_id": val(flat, "resourceId", "Resource ID"),
-                        "address": address, "country": country, "city": city, "location_as_written": val(flat, "Location", "location") if isinstance(val(flat, "Location", "location"), str) else None,
-                        "latitude": lat, "longitude": lon,
-                        "client": client, "user_agent": val(flat, "userAgent", "User agent"), "device": val(flat, "device", "deviceDetail"),
-                        "device_detail": item.get("deviceDetail") if isinstance(item.get("deviceDetail"), dict) else None,
-                        "is_interactive": val(flat, "isInteractive", "Interactive"),
-                        "authentication": authentication, "conditional_access": ca_status,
-                        "conditional_access_policies": maybe_json(val(flat, "appliedConditionalAccessPolicies", "Applied Conditional Access Policies", "Conditional Access Policies")),
-                        "authentication_details": maybe_json(val(flat, "authenticationDetails", "Authentication Details")),
-                        "token_issuer_type": val(flat, "tokenIssuerType", "Token issuer type"), "unique_token_identifier": val(flat, "uniqueTokenIdentifier"),
-                        "risk_level": val(flat, "riskLevelAggregated"), "risk_state": val(flat, "riskState"), "risk_detail": val(flat, "riskDetail"),
-                        "result_code": code, "result": CODES.get(code, "code %s" % code) if code is not None else "outcome not present",
-                        "failure_reason": val(flat, "failure_reason", "Failure reason"), "additional_details": val(flat, "additional_details", "Additional Details"),
-                        "success": success, "outcome_class": klass, "outcome_basis": success_basis,
-                        "event_id": event_id, "correlation_id": corr_id,
-                        "activity_id": flat.get("activity_id"), "event_parameters": params or None,
-                        "source_file": row["file"], "record": info["record"], "line": info["line"], "event_index": idx, "parser": PARSER,
-                    }
-                    event = withheld.clean(event, loc, "")
-                    event["raw_record"] = withheld.clean(item, loc, "/raw_record")
-                    counts["events"] += 1
-                    counts["successes" if success is True else "failures" if success is False else "interrupts" if klass == "interrupt" else "unknown_outcome"] += 1
-                    if key is None:
-                        counts["events_without_user"] += 1
-                    events_page.add(compact(event))
-                    ordinal += 1
-                    shown = lambda v: scrub(str(v)) if v not in (None, "") else None
-                    batch.append(tuple(dbtext(v) for v in (
-                        ordinal, key, shown_account, shown(app), st["ns"], st["utc"], None if success is None else int(success), klass, shown(address), shown(country),
-                        shown(city), flat_lat, flat_lon, shown(client), shown(authentication), shown(ca_status), shown(code), event["result"],
-                        shown(event_id) if isinstance(event_id, (str, int)) else None, shown(corr_id) if isinstance(corr_id, (str, int)) else None,
-                        info["record"], info["line"], idx)))
-                    if len(batch) >= 5000:
-                        db.executemany("INSERT INTO ev VALUES (%s)" % ",".join("?" * 23), batch)
-                        batch = []
+                try:
+                    for idx, flat, params in events_of(item):
+                        if flat is None:
+                            counts["records_rejected"] += 1
+                            rejected.reject({"file": row["file"], "record": info["record"], "line": info["line"], "event_index": idx, "reason": params})
+                            first_reject = first_reject or (info["record"], info["line"], params)
+                            continue
+                        upn = val(flat, *UPN_NAMES)
+                        display = val(flat, *DISPLAY_NAMES)
+                        uid = val(flat, "userId", "User ID")
+                        if isinstance(uid, str) and not uid.strip("0-{} "):
+                            uid = None            # the nil id is "no id", not an account that every such record shares
+                        sp = val(flat, *SP_NAMES)
+                        account = upn or display or (("service principal " + (sp if isinstance(sp, str) else shown_text(sp))) if sp else None)
+                        raw_time, time_key, named_utc = time_of(flat)
+                        code, success, success_basis, klass = outcome(flat)
+                        address = val(flat, "ipAddress", "IP address", "ip", "sourceIP", "ip_address")
+                        authentication = val(flat, "authenticationRequirement", "Authentication requirement")
+                        ca_status = val(flat, "conditionalAccessStatus", "Conditional Access")
+                        app = val(flat, "appDisplayName", "Application", "resourceDisplayName", "application_name")
+                        city, country = place_of(flat)
+                        client = val(flat, "clientAppUsed", "Client app", "userAgent", "User agent", "browser", "login_type") or params.get("login_type")
+                        # A sign-in is told by two independent things it says: who tried, a result, an address, an application, an
+                        # authentication requirement or conditional access status, a client, a place. A time alone, or a time and one more,
+                        # is what any log has, and a record that has no more is another provider's.
+                        evidence = sum(1 for group in (account is not None or uid is not None, code is not None, address is not None, app is not None,
+                                                       authentication is not None or ca_status is not None, client is not None, city is not None or country is not None) if group)
+                        if evidence < 2:
+                            counts["records_rejected"] += 1
+                            counts["records_not_sign_ins"] += 1
+                            reason = ("not a sign-in record: it says fewer than two of who tried, a result, an address, an application, an authentication requirement "
+                                      "or conditional access status, a client and a place")
+                            first_reject = first_reject or (info["record"], info["line"], reason)
+                            if rejected.reject({"file": row["file"], "record": info["record"], "line": info["line"], "event_index": idx, "reason": reason}):
+                                stopped_all_rejected = True
+                                break
+                            continue
+                        rejected.accept()
+                        # the analysis account: the account's object id, else its user name folded to lower case; never a display name unless the
+                        # record carries nothing else. `label` is what is printed (withheld like any text: an id can be shaped like a credential),
+                        # `key` only tells accounts apart and holds a digest of the value, never the value.
+                        label, key = account_key(uid, upn, display, sp)
+                        shown_account = shown_text(account) if account is not None else None
+                        shown_display = shown_text(display) if display is not None else None
+                        if pattern and not ((shown_account and hits(pattern, shown_account)) or (shown_display and hits(pattern, shown_display))):
+                            counts["events_filtered_out"] += 1
+                            continue
+                        st = parse_stamp(raw_time, order, assume_utc or named_utc)
+                        basis_note = st["basis"]
+                        utc_kind = None
+                        if named_utc and st["status"] == "assumed_utc":
+                            basis_note = "the column is named Date (UTC)"
+                            utc_kind = "column_named_utc"
+                        elif st["status"] == "assumed_utc":
+                            utc_kind = "assume_utc_applied_to"
+                        loc = {**locator, "event_index": idx}
+                        lat, lon = val(flat, "latitude"), val(flat, "longitude")
+                        flat_lat, flat_lon = coordinates(lat, lon)
+                        event_id = val(flat, "id", "Request ID", "requestId")
+                        corr_id = val(flat, "correlationId", "Correlation ID")
+                        event = {
+                            "time": raw_time, "time_utc": st["utc"], "time_status": st["status"], "time_basis": basis_note,
+                            "user": account, "user_display_name": display if display != account else None, "user_id": uid, "analysis_account": label,
+                            "application": app, "application_id": val(flat, "appId", "Application ID"),
+                            "resource": val(flat, "resourceDisplayName", "Resource"), "resource_id": val(flat, "resourceId", "Resource ID"),
+                            "address": address, "country": country, "city": city, "location_as_written": val(flat, "Location", "location") if isinstance(val(flat, "Location", "location"), str) else None,
+                            "latitude": lat, "longitude": lon,
+                            "client": client, "user_agent": val(flat, "userAgent", "User agent"), "device": val(flat, "device", "deviceDetail"),
+                            "device_detail": item.get("deviceDetail") if isinstance(item.get("deviceDetail"), dict) else None,
+                            "is_interactive": val(flat, "isInteractive", "Interactive"),
+                            "authentication": authentication, "conditional_access": ca_status,
+                            "conditional_access_policies": maybe_json(val(flat, "appliedConditionalAccessPolicies", "Applied Conditional Access Policies", "Conditional Access Policies")),
+                            "authentication_details": maybe_json(val(flat, "authenticationDetails", "Authentication Details")),
+                            "token_issuer_type": val(flat, "tokenIssuerType", "Token issuer type"), "unique_token_identifier": val(flat, "uniqueTokenIdentifier"),
+                            "risk_level": val(flat, "riskLevelAggregated"), "risk_state": val(flat, "riskState"), "risk_detail": val(flat, "riskDetail"),
+                            "result_code": code, "result": CODES.get(code, "code %s" % code) if code is not None else "outcome not present",
+                            "failure_reason": val(flat, "failure_reason", "Failure reason"), "additional_details": val(flat, "additional_details", "Additional Details"),
+                            "success": success, "outcome_class": klass, "outcome_basis": success_basis,
+                            "event_id": event_id, "correlation_id": corr_id,
+                            "activity_id": flat.get("activity_id"), "event_parameters": params or None,
+                            "source_file": row["file"], "record": info["record"], "line": info["line"], "event_index": idx, "parser": PARSER,
+                        }
+                        event = withheld.clean(event, loc, "")
+                        event["raw_record"] = withheld.clean(item, loc, "/raw_record")
+                        events_page.add(compact(event))
+                        shown = lambda v: shown_text(v) if v not in (None, "") else None
+                        pending = tuple(dbtext(v) for v in (
+                            ordinal + 1, key, shown_account or label, shown(app), st["ns"], st["utc"], None if success is None else int(success), klass, shown(address), shown(country),
+                            shown(city), flat_lat, flat_lon, shown(client), shown(authentication), shown(ca_status), shown(code), event["result"],
+                            shown(event_id) if isinstance(event_id, (str, int)) else None, shown(corr_id) if isinstance(corr_id, (str, int)) else None,
+                            info["record"], info["line"], idx))
+                        # the event is in the answer: it is counted from here, and nothing below can fail
+                        if utc_kind:
+                            assumed[utc_kind] += 1
+                        time_statuses[st["status"]] = time_statuses.get(st["status"], 0) + 1
+                        if st["ns"] is None:
+                            counts["events_without_a_decoded_time"] += 1
+                        counts["events"] += 1
+                        counts["successes" if success is True else "failures" if success is False else "interrupts" if klass == "interrupt" else "unknown_outcome"] += 1
+                        if key is None:
+                            counts["events_without_user"] += 1
+                        ordinal += 1
+                        batch.append(pending)
+                        if len(batch) >= 5000:
+                            db.executemany("INSERT INTO ev VALUES (%s)" % ",".join("?" * 23), batch)
+                            batch = []
+                except Exception as exc:               # one record never ends the run: it is counted, located and listed, and the next is read
+                    counts["records_read"] -= 1
+                    counts["records_rejected"] += 1
+                    reason = failed_record(exc)
+                    first_reject = first_reject or (info["record"], info["line"], reason)
+                    rejected.note({"file": row["file"], "record": info["record"], "line": info["line"], "reason": reason})
+                    if isinstance(exc, TimeUp):
+                        src.timed_out = True
+                        break
+                    continue
                 if stopped_all_rejected:
                     break
         finally:
@@ -2299,7 +2502,7 @@ def main():
         if batch:
             db.executemany("INSERT INTO ev VALUES (%s)" % ",".join("?" * 23), batch)
         db.commit()
-        envelope_markers = [k for k in getattr(src, "extra_keys", []) if pagination_key(k)]
+        envelope_markers = [scrub(k) for k in getattr(src, "extra_keys", []) if pagination_key(k)]
         if envelope_markers:
             pagination.append({"file": row["file"], "keys": envelope_markers})
         if src.error:
@@ -2423,7 +2626,7 @@ def analyse(db, limit, ceiling, window, min_failures, min_prompts):
     for ukey, group in itertools.groupby(cur, key=lambda r: r[0]):
         series = list(itertools.islice(group, SERIES_CAP + 1))
         users += 1
-        user = series[0][1] or ukey
+        user = series[0][1]
         if len(series) > SERIES_CAP:
             over_cap += 1
             if len(over_named) < FIRST_PROBLEMS:

@@ -197,12 +197,13 @@ test("what the tool flags names the operation and does not say what it means", a
   });
 });
 
-test("files are read in a stable order, and a link and a file with another name are named, not followed", async () => {
+test("files are read in a stable order, and a link and a file with another name are named, not followed, and make the read partial", async () => {
   await withDir(async (cwd) => {
     const out = await run(cwd, { "b.json": JSON.stringify([audit({ Id: "b" })]), "a.json": JSON.stringify([audit({ Id: "a" })]), "z/in.json": JSON.stringify([audit({ Id: "z" })]), "m/in.json": JSON.stringify([audit({ Id: "m" })]), "readme.txt": "hello" });
     assert.deepEqual(out.records.map((r: Json) => r.record_id), ["a", "b", "m", "z"]);
     assert.equal(out.skipped_by_name_count, 1);
-    assert.equal(out.status, "complete", "a file with another name is named and counted, and does not make the read partial");
+    assert.equal(out.status, "partial", "a file with another name was not read: it is named, counted, and the status says partial, not complete");
+    assert.match(out.status_basis, /skipped/);
   });
 });
 
