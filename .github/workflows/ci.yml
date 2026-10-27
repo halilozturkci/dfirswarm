@@ -219,7 +219,23 @@ jobs:
     # half. Herdr is not either: swarm-preflight skips its keyless-kickoff
     # check and says so.
     name: macOS · ${{ matrix.part }}
-    runs-on: macos-latest
+    # The owner's own Macs, when the repository variable MACOS_RUNNER names
+    # their labels (a JSON array, '["self-hosted","macOS","ARM64","dfirswarm"]'),
+    # and only for code the owner wrote: a push to main, or a pull request the
+    # owner opened from a branch of this repository. A fork's pull request, a
+    # Dependabot one and everything else stay on GitHub's hosted runner, and
+    # deleting the variable sends every run back there. A fork can edit this
+    # line in its own pull request, so the Mac does not trust it: its job-started
+    # hook checks the same rule from the event GitHub sent and fails any other
+    # job before a step runs (docs/macos-runners.md).
+    runs-on: >-
+      ${{ vars.MACOS_RUNNER
+          && ((github.event_name == 'push' && github.ref == 'refs/heads/main')
+              || (github.event_name == 'pull_request'
+                  && github.event.pull_request.head.repo.full_name == github.repository
+                  && github.event.pull_request.user.login == github.repository_owner))
+          && fromJSON(vars.MACOS_RUNNER)
+          || 'macos-latest' }}
     # One job of four, run side by side. The one job that did all of it took
     # 44 minutes of the 55 (typecheck and node tests 12, shell suites 31, over
     # three pushes to main), and a grown suite had already needed reruns. Now
@@ -264,6 +280,14 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
+      # The Python the suites run, named rather than taken from the host: the
+      # hosted runner's python3 is 3.14, a Mac's own may be the 3.9 of the
+      # command line tools. The Linux jobs run Ubuntu 24.04's 3.12, so the two
+      # supported ends are both tested. On a self-hosted Mac this needs
+      # /Users/runner/hostedtoolcache (scripts/macos-runner-setup.sh makes it).
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
       - name: Tools the shell suites use
         run: |
           command -v jq >/dev/null || brew install jq

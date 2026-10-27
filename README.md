@@ -295,6 +295,7 @@ Each agent runs in its own microVM unless the run says `--isolation host`; the g
 | The vocabulary | [CONTEXT.md](CONTEXT.md) |
 | The licence, the name, contributions | [LICENSE](LICENSE), [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md), [TRADEMARK.md](TRADEMARK.md), [CLA.md](CLA.md), [NOTICE](NOTICE) |
 | Contributing, conduct, changes | [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), [CHANGELOG.md](CHANGELOG.md) |
+| The macOS CI jobs on the owner's own Macs | [docs/macos-runners.md](docs/macos-runners.md) |
 
 ## License
 
