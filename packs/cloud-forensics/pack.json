@@ -1,7 +1,7 @@
 {
   "id": "cloud-forensics",
   "name": "Cloud and SaaS Forensics Pack",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "description": "Method and tooling for logs that belong to somebody else's computer, examined as supplied exports: what a cloud or SaaS export covers and what its silence can show, the Microsoft 365 unified audit log, Entra sign-ins, AWS CloudTrail, Google Workspace, and the tokens, grants and mailbox rules behind a cloud account.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -43,12 +43,12 @@
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
       "README.md": "1343dfb9780cff60a5c664b17af8796d7d65b16d446dec0b8c715d51fa5798f1",
-      "tools/ual_parse/manifest.json": "14f85b9d45568668b606cb5dd4c94fe2394a215a78fdf87dccb3940236863d17",
-      "tools/ual_parse/run.py": "44b1065e1f3efab680d2b3476d79886fb08bc25a6210ee901e7b3c2083a83bdb",
-      "tools/signin_analyse/manifest.json": "19c57c2da89ef547c73623fb43accc03e9f83078767c3aab99108667deb82410",
-      "tools/signin_analyse/run.py": "5e37e150160819ea97126cb7a2a2707eb7c09c7cb079bf6da1626ec1331c2af9",
-      "tools/cloudtrail_parse/manifest.json": "39dabf7de5ae09b1ed3e8f947bab0c991ceb760707570e1b9a40575ea2285a12",
-      "tools/cloudtrail_parse/run.py": "baeaa3d1e302d9493734dcad5c295d746c5c678ee7eda9548726b69b06fd4733",
+      "tools/ual_parse/manifest.json": "a8780c94ab15fdbefae909fdd6a00fad2ab28cb6ba7f38425c6ea20e46b00433",
+      "tools/ual_parse/run.py": "807797df3ad264c7a758b852e1ee504bcca503c638c66f614b56fd3b8c9d49b2",
+      "tools/signin_analyse/manifest.json": "9b5aca0c8048ceb1726758f0be1e51a02ba4279002427046f61a028a490d8e38",
+      "tools/signin_analyse/run.py": "9adf831aaedf18d38801896298c2732d88ae818b6ca933ae47f34ac73780abac",
+      "tools/cloudtrail_parse/manifest.json": "f633f1aaec5a829c9f493ac13c89c75445573e4b138b9c142fa1b71c368a0ef2",
+      "tools/cloudtrail_parse/run.py": "6ac7256f674e0d8130de3e72ec23ea04e77c952522a7305cd17e676d96c69df8",
       "goals/tenant-compromise.md": "52bb72bead930eaf3e4a0f01f76162aaf30feae7ca44a5a7aa7307f2ee9dc0d8",
       "skills/identity/grants.md": "971e2b10faf46f0da0b6a493f6b715b100ce6effa68eb6838988c9ea022f14dc",
       "skills/identity/tokens.md": "0ec4e60540a503476d7f5dcb10032116b5b6de7433b54f4180c45abc05598325",
