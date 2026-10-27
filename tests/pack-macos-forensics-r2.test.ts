@@ -400,23 +400,33 @@ m.main()
 
 // ---- knowledgec_query: P3, the dead-copy sweep never takes an agent's own directory ------------------------------------------------------------------
 
-test("knowledgec_query's sweep of dead private copies leaves a directory an agent made under the same name pattern", async () => {
+test("knowledgec_query's sweep of dead private copies removes a dead copy with the tool's lock file and leaves everything an agent made, whatever its shape", async () => {
+  // The shape alone (a 0700 directory of 0600 files, a dead pid in the name) is what an agent working under umask 077 makes too: such a directory of its own
+  // findings was deleted. Every copy the tool makes carries its lock file from the moment after mkdtemp; that file is the marker.
   const code = LOAD + `
-import os, subprocess, tempfile
+import os, subprocess, tempfile, time
 root = tempfile.mkdtemp(prefix="kc-sweep-")
 parent = os.path.join(root, "stage")
 os.mkdir(parent)
 dead = subprocess.Popen([sys.executable, "-c", "pass"]); dead.wait()
-# an agent's own directory: default mode, a file of its own, a subdirectory
-mine = os.path.join(parent, "knowledgec-%d-abc" % dead.pid)
-os.mkdir(mine)
-open(os.path.join(mine, "notes.txt"), "w").write("x")
-sub = os.path.join(parent, "knowledgec-%d-sub" % dead.pid)
-os.mkdir(sub, 0o700); os.mkdir(os.path.join(sub, "inner"))
-# a dead private copy as this tool makes it: mode 0700, files 0600
-ours = os.path.join(parent, "knowledgec-%d-ours1234" % dead.pid)
-os.mkdir(ours, 0o700)
-fd = os.open(os.path.join(ours, "k.db"), os.O_WRONLY | os.O_CREAT, 0o600); os.write(fd, b"x"); os.close(fd)
+def make(name, mode=0o700, files=(), lock=False):
+    path = os.path.join(parent, name)
+    os.mkdir(path, mode)
+    os.chmod(path, mode)
+    for f in files:
+        fd = os.open(os.path.join(path, f), os.O_WRONLY | os.O_CREAT, 0o600); os.write(fd, b"x"); os.close(fd)
+    if lock:
+        lk = os.path.join(path, ".lock")
+        os.close(os.open(lk, os.O_WRONLY | os.O_CREAT, 0o600)); os.utime(lk, (time.time() - 60, time.time() - 60))
+    return path
+# an agent's own directories: default mode and a file; and, under umask 077, 0700 with a 0600 file (the exact shape of a copy), with a dead pid in the name
+make("knowledgec-%d-abc" % dead.pid, 0o755, ["notes.txt"])
+make("knowledgec-99999999-notes", 0o700, ["findings.md"])
+make("knowledgec-2026-notes", 0o700, ["findings.md"])
+sub = make("knowledgec-%d-sub" % dead.pid, 0o700, ["f"], lock=True); os.mkdir(os.path.join(sub, "inner"))
+# the tool's own, dead: the lock file and the copy; and the gap between mkdtemp and the lock (empty)
+make("knowledgec-%d-ours1234" % dead.pid, 0o700, ["k.db", "k.db-wal"], lock=True)
+make("knowledgec-%d-gap00001" % dead.pid, 0o700)
 m.remove_dead_stages(parent)
 print("left", sorted(os.listdir(parent)))
 `;
@@ -424,8 +434,24 @@ print("left", sorted(os.listdir(parent)))
   assert.equal(run.code, 0, run.stderr);
   const left = /left (\[.*\])/.exec(run.stdout)?.[1] ?? "";
   assert.ok(left.includes("-abc"), `an agent's directory with its own file stays: ${left}`);
+  assert.ok(left.includes("knowledgec-99999999-notes"), `an agent's 0700 directory of 0600 files, with no lock file, stays: ${left}`);
+  assert.ok(left.includes("knowledgec-2026-notes"), left);
   assert.ok(left.includes("-sub"), `a directory with a subdirectory stays: ${left}`);
-  assert.ok(!left.includes("ours1234"), `the copy this tool made is removed: ${left}`);
+  assert.ok(!left.includes("ours1234"), `the copy this tool made (its lock file, free) is removed: ${left}`);
+  assert.ok(!left.includes("gap00001"), `an empty directory (the gap before the lock) is removed: ${left}`);
+});
+
+test("knowledgec_query run on a WAL database leaves the agent's own knowledgec-2026-notes directory (0700, 0600 file) in work/<id>", async () => {
+  await withCwd(async (cwd) => {
+    const db = await kcDb(cwd, "wal.db", 10, 0, {}, "wal");
+    const mine = join(cwd, "work", "s1", "knowledgec-99999999-notes");
+    await mkdir(mine, { recursive: true, mode: 0o700 });
+    await chmod(mine, 0o700);
+    await writeFile(join(mine, "findings.md"), "my findings\n", { mode: 0o600 });
+    const answer = ok(await tool(KC, cwd, { db }));
+    assert.equal(answer.entry_count, 11);
+    assert.equal(await exists(join(mine, "findings.md")), true, "the agent's own file was deleted by the sweep");
+  });
 });
 
 // ---- unified_log: P3 ------------------------------------------------------------------------------------------------------------------------------

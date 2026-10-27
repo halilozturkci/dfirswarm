@@ -2127,21 +2127,25 @@ def stage_is_live(entry):
 
 
 def made_by_this_tool(entry):
-    """Whether the directory `entry` has the shape of a private copy this tool makes: a real directory of ours with mode 0700 that holds only regular files
-    of mode 0600 (mkdtemp and sha256_copy make exactly that). A directory an agent made itself under a name of the same pattern (default mode, other
-    files, a subdirectory) is not ours, and nothing here removes it."""
+    """Whether the directory `entry` is a private copy this tool made. A shape is not enough (an agent working under umask 077 makes 0700 directories of
+    0600 files too): every copy the tool makes gets the lock file (STAGE_LOCK) right after mkdtemp, so that file is the marker. The directory must be a real
+    directory of ours, mode 0700, hold the lock file as a regular file and nothing but regular files of mode 0600. A directory with no lock file is the tool's
+    only when it is empty (a run killed between mkdtemp and the lock); anything else is an agent's and is left alone."""
     try:
         info = entry.stat(follow_symlinks=False)
         if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
             return False
+        names = []
         with os.scandir(entry.path) as inside:
             for item in inside:
                 detail = item.stat(follow_symlinks=False)
                 if not stat.S_ISREG(detail.st_mode) or stat.S_IMODE(detail.st_mode) != 0o600:
                     return False
+                names.append(item.name)
+        # (a directory with files but without the marker is not ours, whatever its shape; an empty one is the gap between mkdtemp and the lock)
+        return STAGE_LOCK in names or not names
     except OSError:
         return False
-    return True
 
 
 def remove_dead_stages(parent):
