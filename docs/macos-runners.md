@@ -68,7 +68,7 @@ Google Drive. The script refuses to run from inside those folders.
 1. Install the tools the jobs and the script use:
 
    ```bash
-   brew install jq gh
+   brew install jq gh python@3.14
    ```
 
    ```bash
@@ -76,7 +76,9 @@ Google Drive. The script refuses to run from inside those folders.
    ```
 
    The job user cannot install anything with Homebrew. The workflow's
-   `brew install jq` fallback only works when jq is already there.
+   `brew install jq` fallback only works when jq is already there, and the
+   macOS job runs Homebrew's `python@3.14` on this Mac (see "Differences from
+   the hosted runner"); `install` refuses to go on without it.
 
 2. Create a fine-grained personal access token in GitHub → Settings →
    Developer settings:
@@ -101,8 +103,8 @@ Google Drive. The script refuses to run from inside those folders.
    Then it does the following:
    - Creates the hidden, standard user `runner`, with a random password that
      nobody keeps.
-   - Creates `/Users/runner/hostedtoolcache`. actions/setup-python's macOS
-     builds work only at that path.
+   - Creates `/Users/runner/hostedtoolcache`, the hosted runner's tool cache
+     path, where actions/setup-node keeps the Node it downloads.
    - Downloads the pinned actions/runner release and checks it against the
      SHA-256 that the release states.
    - Installs the hook, the supervisor, and the LaunchDaemon
@@ -164,9 +166,12 @@ Then revoke the token in GitHub.
 
 ## Differences from the hosted runner
 
-- **Python.** The job installs Python 3.14 with actions/setup-python on both
-  kinds of runner, so the two are comparable. The Linux jobs run Ubuntu
-  24.04's Python 3.12.
+- **Python.** Both kinds of runner run Python 3.14, but not the same build.
+  The hosted runner gets it from actions/setup-python. On the owner's Mac the
+  job puts Homebrew's `python@3.14` first on `PATH` instead: setup-python
+  installs a macOS Python with `sudo`, which the job user does not have and
+  must not get (the first run on the Mac mini failed there with "sudo: a
+  password is required"). The Linux jobs run Ubuntu 24.04's Python 3.12.
 - **Docker and Herdr.** They are not on the hosted runner, and the suites
   skip what needs them. If a Mac has Docker Desktop, its socket belongs to the
   owner. The job user cannot reach it.

@@ -21,7 +21,7 @@
 # install asks for a fine-grained personal access token (this repository only,
 # "Administration: Read and write"): the supervisor needs one to register a new
 # runner for every job. It is stored root-only and the job user cannot read it.
-# Before install: `brew install jq gh` and `gh auth login` in the owner's account
+# Before install: `brew install jq gh python@3.14` and `gh auth login` in the owner's account
 # (gh is used once, from the owner's account, to check access).
 #
 # bash 3.2 (macOS's own) is enough.
@@ -41,8 +41,11 @@ BASE="/Library/dfirswarm-runner"
 OLD_BASE="/Library/Application Support/dfirswarm-runner"
 PLIST="/Library/LaunchDaemons/$LABEL.plist"
 LOG="/Library/Logs/dfirswarm-runner.log"
-# actions/setup-python's macOS builds are not relocatable: they work only here.
+# Where setup actions cache what they download (setup-node's Node), at the
+# hosted runner's path.
 TOOLCACHE="/Users/runner/hostedtoolcache"
+# The Python the macOS job runs here, the path ci.yml names.
+PY314="/opt/homebrew/opt/python@3.14/libexec/bin/python3"
 
 RUNNER_VERSION="2.338.2"
 RUNNER_SHA256="25a065af409ffa317ab4d5a3b614dd15fc9c40f2172bc1b35a1b1258e919a388"
@@ -175,6 +178,10 @@ cmd_install() {
   [ -n "$GH" ] || die "gh is not installed: brew install gh, then gh auth login"
   JQ="$(PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" command -v jq || true)"
   [ -n "$JQ" ] || die "jq is not installed: brew install jq (the job user cannot brew install)"
+  # The macOS job's Python on this Mac (ci.yml): actions/setup-python installs
+  # a macOS Python with sudo, which the job user must not have.
+  "$PY314" -c 'import sys; assert sys.version_info[:2] == (3, 14)' 2>/dev/null \
+    || die "Python 3.14 is not at $PY314: brew install python@3.14 (the macOS job runs it; the job user cannot brew install)"
 
   # gh, from the owner's own login, only to check that the repository is there
   # and that the owner may manage its runners.
