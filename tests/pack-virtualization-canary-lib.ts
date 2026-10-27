@@ -254,7 +254,7 @@ export async function sweep(script: string, shapeName: string, shape: Shape, cal
       for (const call of calls) await plant(cwd, call.files);
       for (const call of calls) {
         jobSeq += 1;
-        const env: Record<string, string> = mode.job ? { JOB_ID: `j${String(900000 + jobSeq).padStart(6, "0")}`, OUT: join(cwd, `out${jobSeq}`) } : {};
+        const env: Record<string, string> = mode.job ? { JOB_ID: `j${String(900000 + jobSeq).padStart(6, "0")}`, OUT: join(cwd, `out${jobSeq}`), SECRET_OUTPUT: "1" } : {};
         if (mode.job) await mkdir(env.OUT, { recursive: true });
         const args = { ...call.args, limit: mode.limit, ...(mode.job ? { write_text: true } : {}) };
         const run = await tool(script, cwd, args, env);
