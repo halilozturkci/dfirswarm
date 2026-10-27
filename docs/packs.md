@@ -755,7 +755,7 @@ import each other), and holds to this:
   class the expression matches. So the time never reaches the answer: the
   expression has a work budget in sizes the answer shows, a part past it is marked
   undecided and the status is partial, and the clock of `max_seconds` does not run
-  while it does). None of this hides the file from an agent, and it is not meant to
+  while it does, for 12 seconds at most in all). None of this hides the file from an agent, and it is not meant to
   ([ADR 0018](adr/0018-sensitive-outputs-are-used-by-agents-and-every-access-is-recorded.md)):
   the sandbox's `store/` is mounted read-only in an agent's VM, an agent that opens a
   values file reads every row, and a later job is given the file to use it. The file
