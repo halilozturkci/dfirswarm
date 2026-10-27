@@ -32,7 +32,7 @@ import sys
 import time
 from pathlib import Path
 
-PARSER = "unified_log/4"
+PARSER = "unified_log/5"
 DEFAULT_TIMEOUT = 900
 MAX_TIMEOUT = 1100            # the manifest's outer limit is 1200; this covers staging, the census and the reader, then counting gets COUNT_SECONDS
 COUNT_SECONDS = 70            # counting the reader's output may take this long after the budget (MAX_TIMEOUT at most) is used; its sha256 gets until DIGEST_SECONDS
@@ -53,6 +53,7 @@ KEEP = ["timestamp", "time", "processImagePath", "process", "subsystem", "catego
 ENTRY_KEYS = {"timestamp", "time", "eventMessage", "message", "raw_message", "process", "subsystem"}
 OUTPUT_NAMES = ("unifiedlogs.jsonl", "unifiedlogs.ndjson", "unifiedlog.stderr", ".logarchive-input")
 FIRST = 10
+DEFAULT_INLINE_BYTES = 1 << 20  # the preview holds at most this many bytes of entries as well as `limit` of them
 PREDICATE_TEXT = re.compile(r"(?i)\b(?:event|composed)?message\b|formatstring")     # the fields of a predicate that hold the text of a message
 UNREADABLE_KEPT = 10000       # unreadable directories kept to list the first FIRST of them in the order printed (they are all counted)
 
@@ -1688,7 +1689,7 @@ def emit_answer(doc, interrupted=None, **dumps_kwargs):
 
 OWN_NAMES.update((
     "path", "parser", "engine", "reader", "version", "platform", "status", "status_basis", "interrupted", "exit_code", "timed_out", "command", "output",
-    "output_sha256", "entry_count", "entries", "entries_inline", "unparsed_lines", "decoded_coverage", "staging", "problems", "warnings", "stderr",
+    "output_sha256", "entry_count", "entries", "entries_inline", "entries_bounded_by_bytes", "inline_byte_limit", "preview_bounded_by_bytes", "unparsed_lines", "decoded_coverage", "staging", "problems", "warnings", "stderr",
     "stderr_bytes", "timeout_seconds_used", "timeout_clamped", "timeout_requested", "note", "error", "type", "reason", "lines", "json_records",
     "entry_records", "records_without_entry_fields", "array_delimiter_lines", "first_unparsed_lines", "first_records_without_entry_fields", "line", "keys",
     "support_files", "tracev3_files", "timesync_files", "uuidtext_files", "dsc_files", "other_files", "directories_unreadable", "first_directories_unreadable",
@@ -1874,12 +1875,18 @@ def reader_version(argv_first):
         return None
 
 
-def count_output(path, limit, deadline):
-    """Read the whole output once, in a stream. Only the preview is held. Past `deadline` the counting stops, says at which line, and what
-    was counted is a prefix."""
+def preview_bytes(row):
+    """What the preview of `row` weighs, without building it: the length of its text fields, the keys, a few bytes for the rest."""
+    return sum(len(k) + (len(row[k]) if isinstance(row.get(k), str) else 16) + 8 for k in KEEP if row.get(k) is not None) + 2
+
+
+def count_output(path, limit, deadline, inline_bytes=DEFAULT_INLINE_BYTES):
+    """Read the whole output once, in a stream. Only the preview is held, bounded by `limit` entries and by `inline_bytes`. Past `deadline` the counting stops,
+    says at which line, and what was counted is a prefix."""
     cov = {"lines": 0, "json_records": 0, "entry_records": 0, "unparsed_lines": 0, "records_without_entry_fields": 0,
-           "array_delimiter_lines": 0}
+           "array_delimiter_lines": 0, "preview_bounded_by_bytes": False}
     entries, first_unparsed, first_without = [], [], []
+    held_bytes = 0
     with open(path, "rb") as fh:
         for number, raw in enumerate(fh, 1):
             if number % 4096 == 0 and time.monotonic() > deadline:
@@ -1908,7 +1915,12 @@ def count_output(path, limit, deadline):
                     first_without.append({"line": number, "keys": print_order_until(list(row), "name", until=deadline)[0][:20]})
                 continue
             cov["entry_records"] += 1
-            if len(entries) < limit:
+            if len(entries) < limit and not cov["preview_bounded_by_bytes"]:
+                weight = preview_bytes(row)
+                if held_bytes + weight > inline_bytes:
+                    cov["preview_bounded_by_bytes"] = True     # (an entry that does not fit is not cut: the preview ends before it, every entry is in the output file)
+                    continue
+                held_bytes += weight
                 kept = {k: (guard_text(row[k], k) if isinstance(row.get(k), str) else row[k]) for k in KEEP if row.get(k) is not None}
                 entries.append(kept or {"keys": print_order_until(list(row), "name", until=deadline)[0][:20]})
     cov["first_unparsed_lines"] = first_unparsed
@@ -1997,6 +2009,8 @@ def run_log(args):
     if not os.path.exists(path):
         fail("no such file or directory", path=path)
     OWN_NAMES.add(path)
+    if stat.S_ISFIFO(os.stat(path).st_mode) or stat.S_ISSOCK(os.stat(path).st_mode):
+        fail("path is a FIFO or a socket, not a .logarchive or a directory: the reader would wait on it until timeout_seconds", path=path)
     out_dir = args.get("out_dir")
     if not isinstance(out_dir, str) or not out_dir:
         fail("out_dir is required: a directory under work/ for the reader's complete output")
@@ -2005,6 +2019,9 @@ def run_log(args):
     limit = args.get("limit", 500)
     if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
         fail("limit must be a positive integer")
+    inline_bytes = args.get("max_inline_bytes", DEFAULT_INLINE_BYTES)
+    if not isinstance(inline_bytes, int) or isinstance(inline_bytes, bool) or inline_bytes < 1:
+        fail("max_inline_bytes must be a positive integer", max_inline_bytes=inline_bytes)
     requested = args.get("timeout_seconds", DEFAULT_TIMEOUT)
     if not isinstance(requested, int) or isinstance(requested, bool) or requested < 1:
         fail("timeout_seconds must be a positive integer")
@@ -2133,8 +2150,16 @@ def run_log(args):
         except Interrupted as stop:
             interrupted = stop.signum
     finally:
+        # The staged copy (up to 16 GiB, a million files: seconds to tens of seconds to remove) is removed with the stop signals held. A signal that landed
+        # in this removal used to escape every handler: the answer then said the tool was stopped before the reader had run, with no counts, and the
+        # copy stayed half removed (and the next run in the directory refused to start). Held, the signal waits for the removal and is named in the answer.
+        hold_signals()
         if staging:
             shutil.rmtree(scratch, ignore_errors=True)
+    if interrupted is None:
+        late = pending_stop_signal()
+        if late is not None:
+            interrupted = late                  # it arrived while the reader's work was being closed: the count below is given the short time a stop leaves
 
     count_deadline = (time.monotonic() + INTERRUPT_COUNT_SECONDS) if interrupted is not None else budget_end + COUNT_SECONDS
     stderr_bytes = os.path.getsize(stderr_path) if os.path.isfile(stderr_path) else 0
@@ -2146,10 +2171,10 @@ def run_log(args):
         stderr_path = None
     output_exists = os.path.isfile(output_path)
     if output_exists:
-        coverage, entries = count_output(output_path, limit, count_deadline)
+        coverage, entries = count_output(output_path, limit, count_deadline, inline_bytes)
     else:
         coverage, entries = {"lines": 0, "json_records": 0, "entry_records": 0, "unparsed_lines": 0,
-                             "records_without_entry_fields": 0, "array_delimiter_lines": 0,
+                             "records_without_entry_fields": 0, "array_delimiter_lines": 0, "preview_bounded_by_bytes": False,
                              "first_unparsed_lines": [], "first_records_without_entry_fields": []}, []
     coverage["support_files"] = census
     got = coverage["entry_records"]
@@ -2157,8 +2182,11 @@ def run_log(args):
 
     if interrupted is not None:
         status = "partial" if got else "failed"
-        problems.append("the tool was stopped by %s; the reader was ended and what it had written is kept and counted%s" % (
-            signal_name(interrupted), " (the count may be short: it was given %d s)" % INTERRUPT_COUNT_SECONDS if coverage.get("counting_stopped_at_line") else ""))
+        problems.append("the tool was stopped by %s%s; what the reader had written is kept and counted%s" % (
+            signal_name(interrupted),
+            (" after the reader had already finished (while the staged copy was being removed or the answer made ready)" if returncode is not None or timed_out
+             else "; the reader was ended"),
+            " (the count may be short: it was given %d s)" % INTERRUPT_COUNT_SECONDS if coverage.get("counting_stopped_at_line") else ""))
     elif timed_out:
         status = "partial" if got else "failed"
         problems.append("the reader did not finish in the %d second(s) left of the budget and was stopped; what it had written is kept and counted" % round(reader_seconds))
@@ -2224,6 +2252,8 @@ def run_log(args):
         "entry_count": got,
         "entries": entries,
         "entries_inline": len(entries),
+        "entries_bounded_by_bytes": bool(coverage.get("preview_bounded_by_bytes")),
+        "inline_byte_limit": inline_bytes,
         "unparsed_lines": coverage["unparsed_lines"],
         "decoded_coverage": coverage,
         "staging": staging,
