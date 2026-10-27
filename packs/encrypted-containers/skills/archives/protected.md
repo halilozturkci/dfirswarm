@@ -4,6 +4,7 @@ title: Examining encrypted archives and protected documents
 when: An archive or document may require a password.
 needs: []
 tools: [archive_probe, file_type]
+mentions: [doc_structure]
 requires_host: [7z]
 ---
 
@@ -21,9 +22,11 @@ damage, unsupported features, and nested containers left unopened.
   without a password. Without `7z`, only hints from the start header remain.
 - RAR: identified; protection and names are not determined.
 - PDF and Office (OLE): a byte search for markers, reported as `heuristic` with
-  offsets. The structural document reader is not provided by this pack, so
-  protection stays undetermined for them; say that, and do not read "no marker" as
-  "not encrypted".
+  offsets. This pack has no structural document reader, so protection stays
+  undetermined here; `doc_structure` in the reverse-engineering pack reads the PDF
+  trailer's encryption dictionary and the Office encryption structures, and this pack
+  does not depend on it: look for it in the run's tool inventory. Do not read "no
+  marker" as "not encrypted".
 
 Check any consequential finding with a reader that supports the format and the
 version. Do not treat an unknown or false as the same thing: they differ.

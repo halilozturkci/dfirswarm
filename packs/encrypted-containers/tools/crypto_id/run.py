@@ -936,13 +936,15 @@ def identify(head, sample):
                 "not_determined": ["whether the data or the header is encrypted"]}
     if head[0:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
         return {"scheme": "OLE compound file", "basis": "the compound file signature at offset 0",
-                "next_reader": "archive_probe reports encryption markers as a heuristic; a structural document "
-                               "reader is not provided by this pack",
+                "next_reader": "archive_probe reports encryption markers as a heuristic; doc_structure, in the "
+                               "reverse-engineering pack (which this pack does not depend on: look for it in the run's tool "
+                               "inventory), reads the encryption structures",
                 "not_determined": ["whether the document is encrypted", "which scheme it uses"]}
     if head[0:5] == b"%PDF-":
         return {"scheme": "PDF", "basis": "\"%PDF-\" at offset 0",
-                "next_reader": "archive_probe reports encryption markers as a heuristic; a structural document "
-                               "reader is not provided by this pack",
+                "next_reader": "archive_probe reports encryption markers as a heuristic; doc_structure, in the "
+                               "reverse-engineering pack (which this pack does not depend on: look for it in the run's tool "
+                               "inventory), reads the encryption structures",
                 "not_determined": ["whether the document is encrypted", "whether an opening password is required",
                                    "its permission restrictions"]}
     value = entropy(sample)
@@ -982,10 +984,12 @@ def main():
         fail("arguments must be a JSON object")
     path = args.get("path")
     if not isinstance(path, str) or not path:
-        fail("path is required: a volume image, a partition or a file")
+        fail("path is required: a volume image (a file made from a disk or a partition) or a file")
     if os.path.isdir(path):
         fail("path is a directory, not a file or an image", path=shown(path))
     if not os.path.isfile(path):
+        if os.path.exists(path):
+            fail("not a regular file (a device, a pipe or a socket): this tool reads a file, so read an image made from the device", path=shown(path))
         fail("no such file", path=shown(path))
     offset = args.get("offset", 0) or 0
     if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:

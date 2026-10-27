@@ -964,6 +964,13 @@ class SealedPage(NoReplacePage):
     def add(self, row: object) -> None:
         super().add(seal(row))
 
+    def _cannot_write(self, exc: BaseException) -> None:
+        # The error document this prints is the answer: it is taken like any other (the stop is disarmed, a signal is held back until the
+        # tool is out), and the temporary pages are removed, so that nothing else is printed after it.
+        claim_answer()
+        remove_pending_pages()
+        super()._cannot_write(exc)
+
 
 class SecretValuesRefused(Exception):
     pass
@@ -1453,8 +1460,15 @@ def main():
             for item in unentered:
                 counters["directories_not_entered"] += 1
                 exceptions.add({"path": shown(item), "status": "not started", "what": "directory", "reason": "%s before this directory was entered: nothing under it was read" % stopped_why})
-    finally:
-        values.close()
+    except BaseException:
+        # An answer is on its way out (the error a page that could not be written printed, or a stop): a values file that cannot be flushed
+        # either must not replace it with a second document. The rows that could not be flushed are not an answer.
+        try:
+            values.close()
+        except OSError:
+            pass
+        raise
+    values.close()
 
     pages = {"findings": findings.finish(), "files_worth_opening": named.finish(), "exceptions": exceptions.finish()}
     problems = [name for name, count in (("files failed", counters["files_failed"]), ("directories failed", counters["directories_failed"]),

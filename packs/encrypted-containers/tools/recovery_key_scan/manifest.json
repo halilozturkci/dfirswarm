@@ -34,8 +34,8 @@
   "example": "{\"path\": \"work/extracted/Users\"}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 4,
-  "sha256": "e962dc394c3509896f13194c37d6828f717466bacd6172700d50356d5e36887f",
+  "version": 6,
+  "sha256": "f1c7454ac2958a0d482ea718f636f408323aea03e2c1113f7707ed17d3efed80",
   "use": {
     "extensions": [
       ".bek"

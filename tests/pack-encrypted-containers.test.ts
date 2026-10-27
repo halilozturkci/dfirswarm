@@ -780,7 +780,10 @@ test("archive_probe never turns a byte search over a PDF into a verdict", async 
     assert.equal(probe.encrypt_marker.count, 1);
     assert.deepEqual(probe.encrypt_marker.first_offsets, [PDF_OLD_REVISION.indexOf("/Encrypt")]);
     assert.ok(probe.not_determined.some((n: string) => /current trailer/.test(n)));
-    assert.match(probe.next_reader, /not available yet/);
+    // The reader that exists is named, and not as absent or planned (it ships in the reverse-engineering pack, which this pack does not depend on).
+    assert.match(probe.next_reader, /doc_structure/);
+    assert.match(probe.next_reader, /reverse-engineering pack/);
+    assert.doesNotMatch(probe.next_reader, /not available yet|planned/);
     assert.doesNotMatch(out.stdout, /opens with nothing|not protected|not encrypted|do not report/i);
     // The first /V /R /P are offered only as unresolved hints.
     assert.equal(probe.unresolved_hints.r, 3);
@@ -944,8 +947,9 @@ test("archive_probe lists a 7-Zip archive through 7z: members, each one's flag, 
     const args = (await readFile(join(bin, "7z-args.txt"), "utf8")).trimEnd().split("\n");
     assert.deepEqual(args.slice(0, 3), ["l", "-slt", "-y"]);
     assert.match(args[3], /^-pdfirswarm-no-password$/);
-    assert.equal(args[4], "--");
-    assert.equal(args[5], "work/plain.7z");
+    assert.equal(args[4], "-spd", "7-Zip must not expand wildcards in the archive's name");
+    assert.equal(args[5], "--");
+    assert.equal(args[6], "work/plain.7z");
 
     const none = body<Probe>(await tool(PROBE, cwd, { path: "work/none.7z" }, {}, bin));
     assert.equal(none.payload_encrypted, false);

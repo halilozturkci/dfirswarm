@@ -38,7 +38,7 @@ key exists; anything about an APFS volume's encryption from a reader that does n
 support it.
 
 **Sensitive output.** `cryptsetup luksDump`'s volume-key option prints key material:
-leave it off for a metadata job. `crypto_id` prints none of the file's bytes.
+leave it off for a metadata job. `crypto_id` prints no raw bytes of the file; it does print header facts (the LUKS UUID, cipher names from a closed list, a LUKS2 label, slot states, the sample's entropy), none of them key material.
 
 **Both routes.** Use material the case supplies, within the recorded authority. Jobs
 that handle secret material run with `secret_output: true`; the ledger and the report

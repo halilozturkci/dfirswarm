@@ -1,6 +1,6 @@
 [
  ["archives/protected", "zip: read structurally from the central directory,"],
- ["archives/protected", "the structural document reader is not provided"],
+ ["archives/protected", "this pack has no structural document reader"],
  ["archives/protected", "do not treat an unknown or false"],
  ["archives/protected", "it does not show what the contents"],
  ["archives/protected", "time. a zip member's modified is an"],
