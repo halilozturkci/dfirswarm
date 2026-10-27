@@ -44,6 +44,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import struct
 import sys
 import tempfile
@@ -59,7 +60,7 @@ except ImportError:                                  # Python before 3.11
     import sre_constants
     import sre_parse
 
-PARSER = "fsevents_parse/4"
+PARSER = "fsevents_parse/5"
 SUPPORTED = {b"1SLD": 1, b"2SLD": 2}
 SHAPE = re.compile(rb"[0-9A-Za-z]SLD")
 CHUNK = 1 << 20
@@ -77,6 +78,9 @@ MAX_CONTAINS_PRODUCT = 16             # repeats inside repeats: the counts along
 DEFAULT_INLINE_BYTES = 1 << 20
 FIRST_BYTES = 256 << 10
 FIRST_PROBLEMS = 100
+PROBLEM_ROWS_PER_KIND = 100           # of one kind in one file, this many are listed one by one; the later ones are counted exactly and folded into one row (the file is the whole)
+PROBLEM_ROWS_TOTAL = 5000             # problem rows in all (one by one and folded); what comes after is folded by kind across the files
+MEMBER_CLOCK_EVERY = 4096             # the clock is looked at once in this many gzip members, also for members that produce nothing
 FLAGS = [
     (0x00000001, "FolderEvent"), (0x00000002, "Mount"), (0x00000004, "Unmount"),
     (0x00000020, "EndOfTransaction"), (0x00000800, "LastHardLinkRemoved"),
@@ -1826,7 +1830,7 @@ def emit_answer(doc, interrupted=None, **dumps_kwargs):
 OWN_NAMES.update((
     "path", "parser", "status", "status_basis", "interrupted", "files", "gzip_files", "files_by_state", "per_file", "per_file_pages", "log_identity",
     "records", "record_count", "records_inline", "complete_records", "records_before_filter", "event_id_range", "inline_limited", "inline_bounded_by_bytes",
-    "inline_byte_limit", "kept_earlier_larger_result", "coverage", "problems", "problems_total", "problems_pages", "filters", "limits", "directory", "note",
+    "inline_byte_limit", "kept_earlier_larger_result", "coverage", "problems", "problems_total", "problem_occurrences", "problems_folded", "occurrences", "folded", "first_offset", "last_offset", "listed_per_kind_and_file", "listed_in_all", "files", "problems_pages", "filters", "limits", "directory", "note",
     "error", "type", "reason", "out_file", "compressed_bytes", "expanded_bytes", "members", "pages", "bytes_skipped", "padding_bytes", "bytes_not_decoded",
     "complete", "truncated", "failed", "parsed", "unsupported", "invalid_length", "decoded", "empty_path", "incomplete", "before_filter", "kept",
     "contains", "flags", "flags_unknown", "max_expanded_bytes", "max_page_bytes", "max_inline_bytes", "max_seconds", "max_seconds_requested", "links_not_followed", "names_not_examined", "files_not_listed",
@@ -1899,14 +1903,38 @@ class FileScan:
         self.padding_bytes = 0
         self.not_decoded_bytes = 0
         self.magic_seen = None
-        self.problems = []
+        self.problems = []                # the first PROBLEM_ROWS_PER_KIND problems of each kind, one row each
+        self.problem_total = 0            # every problem, counted (a crafted file has millions: a list of them was minutes of judging and gigabytes)
+        self.kind_listed = {}
+        self.folded = {}                  # kind -> the later problems of that kind folded into one row (occurrences, first and last offset, bytes)
         self.state = None
         self.error = None
         self.stopped = None               # "time" or "signal" when the file was not read to its end for that reason
         self.last_offset = 0              # decompressed offset of the last page begun
 
     def problem(self, kind, why, **extra):
-        self.problems.append({"file": self.shown, "kind": kind, "why": why, **extra})
+        self.problem_total += 1
+        listed = self.kind_listed.get(kind, 0)
+        if listed < PROBLEM_ROWS_PER_KIND:
+            self.kind_listed[kind] = listed + 1
+            self.problems.append({"file": self.shown, "kind": kind, "why": why, **extra})
+            return
+        at = extra.get("offset", extra.get("compressed_offset"))
+        fold = self.folded.get(kind)
+        if fold is None:
+            fold = self.folded[kind] = {"occurrences": 0, "first_offset": at, "last_offset": at, "bytes": 0}
+        fold["occurrences"] += 1
+        fold["last_offset"] = at
+        if isinstance(extra.get("bytes"), int):
+            fold["bytes"] += extra["bytes"]
+
+    def folded_rows(self):
+        """One row per kind for the problems after the first PROBLEM_ROWS_PER_KIND of it: how many, between which offsets, how many bytes."""
+        return [{"file": self.shown, "kind": kind, "folded": True, "occurrences": fold["occurrences"], "first_offset": fold["first_offset"],
+                 "last_offset": fold["last_offset"], "bytes": fold["bytes"],
+                 "why": "%d further problem(s) of this kind in this file, between offset %s and offset %s, are counted here and not listed one by one "
+                        "(the first %d are above); the counts in coverage and per_file are exact" % (fold["occurrences"], fold["first_offset"], fold["last_offset"], PROBLEM_ROWS_PER_KIND)}
+                for kind, fold in self.folded.items()]
 
     def expanded_to_here(self):
         return self.last_offset
@@ -1928,6 +1956,13 @@ def inflate(fh, scan, cap):
     offset = 0                            # compressed offset of `pending`'s first byte
     index = 0
     while pending:
+        while len(pending) < 2:           # a member's header split by the end of a read: the rest of it comes first
+            more = fh.read(CHUNK)
+            if not more:
+                break
+            pending += more
+        if index % MEMBER_CLOCK_EVERY == 0:
+            check_time()                  # members that inflate to nothing never reach the page loop's clock
         if pending[:2] != b"\x1f\x8b":
             rest = len(pending)
             while True:
@@ -1940,8 +1975,7 @@ def inflate(fh, scan, cap):
                          compressed_offset=offset, bytes=rest, first_bytes_hex=guard_hex(pending[:8].hex(), "first_bytes_hex"))
             return
         engine = zlib.decompressobj(16 + zlib.MAX_WBITS)
-        scan.member_starts.append((scan.expanded, index))
-        scan.member_offsets.append(scan.expanded)
+        listed_member = False             # a member that produces no output starts no page and is not listed (12 million empty ones were 1.3 GB)
         fed = 0
         buf = pending
         status, unused, why = None, b"", None
@@ -1950,6 +1984,10 @@ def inflate(fh, scan, cap):
                 out = engine.decompress(buf, CHUNK)
                 fed += len(buf) - len(engine.unconsumed_tail) - (len(engine.unused_data) if engine.eof else 0)
                 if out:
+                    if not listed_member:
+                        listed_member = True
+                        scan.member_starts.append((scan.expanded, index))
+                        scan.member_offsets.append(scan.expanded)
                     room = cap - scan.expanded
                     if len(out) > room:
                         if room > 0:
@@ -2185,8 +2223,23 @@ def parse_pages(src, scan, emit, max_page):
 def scan_file(scan, emit, max_expanded, max_page):
     path = scan.path
     try:
-        size = os.path.getsize(path)
-        fh = open(path, "rb")
+        # O_NONBLOCK: opening a FIFO that no one writes to would wait for a writer for ever; the file is checked to be a regular one before it is read
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode):
+                os.close(fd)
+                scan.state, scan.error = "failed", "not a regular file"
+                scan.problem("file not readable", "not a regular file (a FIFO, a socket or a device): it is not opened for reading")
+                return scan
+            size = info.st_size
+            fh = os.fdopen(fd, "rb")
+        except BaseException:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            raise
     except OSError as exc:
         scan.state, scan.error = "failed", "%s: %s" % (type(exc).__name__, exc.strerror or "error")
         scan.problem("file not readable", scan.error)
@@ -2231,7 +2284,7 @@ def finish_state(scan):
     decoded = scan.records["decoded"] + scan.records["empty_path"]
     if scan.pages["unsupported"] and not decoded:
         scan.state = "unsupported"
-    elif scan.problems:
+    elif scan.problem_total:
         scan.state = "partial" if decoded else "failed"
     elif scan.expanded == 0 and not scan.pages["parsed"]:
         scan.state = "empty"
@@ -2410,6 +2463,13 @@ def run_scan(args):
             else:
                 notes["not_regular_files"] += 1
     else:
+        try:
+            regular = stat.S_ISREG(os.stat(path).st_mode)
+        except OSError:
+            regular = False
+        if not regular:
+            # a FIFO, a socket or a device: opening it can wait for ever (a FIFO until a writer comes), and the manifest's time is the harness's kill
+            fail("path is neither a directory nor a regular file (a FIFO, a socket or a device is not opened)", path=path)
         targets = [path]
         identity = log_identity(os.path.dirname(os.path.abspath(path)))
     if not targets:
@@ -2501,6 +2561,7 @@ def run_scan(args):
                     "bytes_skipped": 0, "padding_bytes": 0, "bytes_not_decoded": 0}
         per_file = SealedPage("fsevents_parse_files", [path], 200, FIRST_BYTES)
         problems = SealedPage("fsevents_parse_problems", [path], FIRST_PROBLEMS, FIRST_BYTES)
+        problem_book = {"rows": 0, "occurrences": 0, "across": {}}      # rows in the problems page; every problem counted; what is folded across files
         gzip_files = 0
         stopped_in = None
         not_attempted = []
@@ -2519,14 +2580,23 @@ def run_scan(args):
             coverage["bytes_not_decoded"] += scan.not_decoded_bytes
             row = {"file": scan.shown, "state": scan.state, "gzip": scan.compressed, "compressed_bytes": scan.compressed_bytes,
                    "expanded_bytes": scan.expanded, "members": scan.members, "pages": scan.pages, "records": scan.records,
-                   "problems": len(scan.problems)}
+                   "problems": scan.problem_total}
             if scan.magic_seen:
                 row["magic_seen"] = scan.magic_seen
             if scan.error:
                 row["error"] = scan.error
             per_file.add(row)
-            for p in scan.problems:
-                problems.add(p)
+            problem_book["occurrences"] += scan.problem_total
+            for p in scan.problems + scan.folded_rows():
+                # at most PROBLEM_ROWS_PER_KIND of a kind per file and PROBLEM_ROWS_TOTAL rows in all are sealed and listed (sealing is 50-80 microseconds a row, and
+                # a crafted file had millions); the rest is counted, by kind, across the files
+                if problem_book["rows"] < PROBLEM_ROWS_TOTAL:
+                    problem_book["rows"] += 1
+                    problems.add(p)
+                else:
+                    gone = problem_book["across"].setdefault(p["kind"], {"occurrences": 0, "files": 0, "first_file": p["file"]})
+                    gone["occurrences"] += p.get("occurrences", 1)
+                    gone["files"] += 1
 
         try:
             for index, target in enumerate(targets):
@@ -2579,6 +2649,10 @@ def run_scan(args):
         else:
             page = paging.finish()
             shown, complete, limited = paging.page, page.get("all_results"), page["truncated"]
+        for kind, gone in problem_book["across"].items():
+            problems.add({"file": gone["first_file"], "kind": kind, "folded": True, "occurrences": gone["occurrences"], "files": gone["files"],
+                          "why": "%d problem(s) of this kind in %d further file-kind group(s), first in this file, are counted here and not listed: %d rows were listed "
+                                 "already (problems_folded); the counts in coverage are exact" % (gone["occurrences"], gone["files"], PROBLEM_ROWS_TOTAL)})
         files_page, problems_page = per_file.finish(), problems.finish()
     readable = states["parsed"] + states["partial"] + states["empty"]
     reasons = []
@@ -2603,6 +2677,11 @@ def run_scan(args):
                        % (totals["contains_timeouts"], REGEX_SECONDS, "; the filter was then given up" if regex_given_up[0] else ""))
     if not reasons and states["parsed"] + states["empty"] == len(targets):
         status, basis = "complete", "every one of the %d file(s) was parsed or empty and every page and record was read" % len(targets)
+        if notes["links_not_followed"] or notes["not_regular_files"]:
+            # (by design, and counted under directory: a link in the directory is not followed and a FIFO, a socket or a directory is not a record file)
+            basis += "; %d link(s) in the directory were not followed and %d entr%s that %s not a regular file %s not read (directory)" % (
+                notes["links_not_followed"], notes["not_regular_files"], "y" if notes["not_regular_files"] == 1 else "ies",
+                "is" if notes["not_regular_files"] == 1 else "are", "was" if notes["not_regular_files"] == 1 else "were")
     elif readable:
         status, basis = "partial", "; ".join(reasons) or "not every file was read to its end"
     else:
@@ -2635,6 +2714,11 @@ def run_scan(args):
         "coverage": coverage,
         "problems": problems.page,
         "problems_total": problems_page["matched"],
+        "problem_occurrences": problem_book["occurrences"],
+        **({"problems_folded": {"listed_per_kind_and_file": PROBLEM_ROWS_PER_KIND, "listed_in_all": PROBLEM_ROWS_TOTAL,
+                                "note": "problem_occurrences counts every problem; past the bounds the later ones of a kind are folded into one row with their number, "
+                                        "first and last offset (kind, folded: true); coverage and per_file hold the exact counts"}}
+           if problem_book["occurrences"] > problems_page["matched"] else {}),
         "problems_pages": problems_page,
         "filters": {"contains": bool(contains), "flags": sorted(wanted), **({"flags_unknown": unknown_flags} if unknown_flags else {}),
                     **({"contains_blind_records": totals["contains_blind"], "contains_timeouts": totals["contains_timeouts"]} if pattern is not None else {})},

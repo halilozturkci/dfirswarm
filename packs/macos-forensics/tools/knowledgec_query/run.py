@@ -21,7 +21,7 @@ Unix time it lands in 1970; add the wrong constant and it lands somewhere plausi
 and wrong. The conversion is +978307200 and is applied here, with the raw value kept
 beside the converted one.
 
-What one entry carries (parser knowledgec_query/4): the ZOBJECT row it came from
+What one entry carries (parser knowledgec_query/5): the ZOBJECT row it came from
 (`z_pk`, `source_table`), the typed values (`value_string`, `value_integer`,
 `value_double`, `value_type_code`), the raw and converted start, end and creation
 times, the UUID, every other non-null ZOBJECT column, and, joined on the row's own
@@ -67,6 +67,7 @@ import os
 import re
 import shutil
 import sqlite3
+import stat
 import struct
 import sys
 import tempfile
@@ -74,7 +75,7 @@ import time
 import urllib.parse
 from pathlib import Path
 
-PARSER = "knowledgec_query/4"
+PARSER = "knowledgec_query/5"
 APPLE_EPOCH = 978307200
 DEFAULT_MAX_STAGE = 2 << 30
 VALUE_CAP = 4096
@@ -2141,15 +2142,40 @@ def stage_is_live(entry):
         return False
 
 
+def made_by_this_tool(entry):
+    """Whether the directory `entry` is a private copy this tool made. A shape is not enough (an agent working under umask 077 makes 0700 directories of
+    0600 files too): every copy the tool makes gets the lock file (STAGE_LOCK) right after mkdtemp, so that file is the marker. The directory must be a real
+    directory of ours, mode 0700, hold the lock file as a regular file and nothing but regular files of mode 0600. A directory with no lock file is the tool's
+    only when it is empty (a run killed between mkdtemp and the lock); anything else is an agent's and is left alone."""
+    try:
+        info = entry.stat(follow_symlinks=False)
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
+            return False
+        names = []
+        with os.scandir(entry.path) as inside:
+            for item in inside:
+                detail = item.stat(follow_symlinks=False)
+                if not stat.S_ISREG(detail.st_mode) or stat.S_IMODE(detail.st_mode) != 0o600:
+                    return False
+                names.append(item.name)
+        # (a directory with files but without the marker is not ours, whatever its shape; an empty one is the gap between mkdtemp and the lock)
+        return STAGE_LOCK in names or not names
+    except OSError:
+        return False
+
+
 def remove_dead_stages(parent):
     """Remove the private copies an earlier run of this tool left behind when it was killed without a chance to clean up (SIGKILL): a directory of
-    `parent` named for a run that is over (its lock is free). A live run's directory, a link and anything else are left alone."""
+    `parent` named for a run that is over (its lock is free) and shaped like a copy this tool makes (made_by_this_tool). A live run's directory, a link,
+    anything an agent made itself and anything else are left alone."""
     try:
         entries = list(os.scandir(parent))
     except OSError:
         return
     for entry in entries:
         if re.fullmatch(r"knowledgec-([0-9]+)-[A-Za-z0-9_]+", entry.name) is None or entry.is_symlink() or not entry.is_dir(follow_symlinks=False):
+            continue
+        if not made_by_this_tool(entry):
             continue
         if not stage_is_live(entry):
             shutil.rmtree(entry.path, ignore_errors=True)
@@ -2347,7 +2373,7 @@ def run_query(args):
           "fingerprint": None, "applied": [], "unapplied": [], "reasons": [], "problems": [], "count": 0, "unconverted": 0, "stopped": None,
           "interrupted": None, "last": {"z_pk": None, "start_raw": None}, "inline": [], "inline_state": {"bytes": 0, "full": False, "bounded_by_bytes": False},
           "source": {"database": db, "staged": False, "sidecars": sidecars}, "abort": None, "until": deadline, "schema_read": False, "opener": None,
-          "inventory": None, "stream_blind": None, "streams_in_file": None, "streams_listed_from": 0, "tables_total": 0}
+          "inventory": None, "stream_blind": None, "streams_in_file": None, "streams_listed_from": 0, "tables_total": 0, "schema_unread": False}
     problems = st["problems"]
     source = st["source"]
 
@@ -2401,6 +2427,9 @@ def run_query(args):
         connection.row_factory = sqlite3.Row
         # Text that is not UTF-8 comes back with its bytes escaped, every byte still said.
         connection.text_factory = lambda b: b.decode("utf-8", "backslashreplace")
+        # The clock and the stop signals are installed before the first statement: SQLite parses the whole schema (every row of sqlite_master) when the
+        # first statement runs, and a crafted file with a few hundred thousand schema rows takes minutes there (a prepared one: 142-150 s of the manifest's 120).
+        connection.set_progress_handler(progress, PROGRESS_STEPS)
         try:
             # (listed in the order the answer prints them: by the text printed, the withheld names in an order that is new every run, never by the bytes of a name)
             tables, tables_total, own_present = list_tables(connection, deadline)
@@ -2408,7 +2437,14 @@ def run_query(args):
             # SQLite's own error message can hold a name that is not UTF-8, and Python then cannot even build the exception
             fail("this file is not a usable SQLite database: its schema holds text that is not UTF-8 and SQLite refused to read it", db=db, reason=type(exc).__name__)
         except sqlite3.Error as exc:
-            fail("this file is not a SQLite database", db=db, reason=str(exc))
+            check_stop()
+            if st["abort"] is None:
+                fail("this file is not a SQLite database", db=db, reason=str(exc))
+            st["stopped"] = st["abort"]       # the clock (or a signal) ended the read of the schema: nothing was listed, nothing was read
+            st["schema_unread"] = True
+            problems.append("the schema of the file (sqlite_master) was still being read when the time ran out: nothing in it was listed and no row was read; a file whose "
+                            "schema is this large cannot be read in the time max_seconds allows")
+            return
         st["tables"], st["tables_total"] = tables, tables_total
         if "ZOBJECT" not in own_present:
             fail("this is not a knowledgeC database: there is no ZOBJECT table", db=db, tables=tables, **({"tables_not_listed": tables_total - len(tables)} if tables_total > len(tables) else {}))
@@ -2439,13 +2475,21 @@ def run_query(args):
             connection.execute("PRAGMA query_only=ON")
         except sqlite3.Error:
             pass
-        connection.set_progress_handler(progress, PROGRESS_STEPS)
+        if st["abort"] is not None:
+            st["stopped"] = st["abort"]       # the clock ran out in the journal or WAL step above: say so rather than fail on the statements after it
+            problems.append("the time ran out while the private copy was being opened: no row was read")
+            return
+
+        class SchemaTimeUp(Exception):
+            pass
 
         def info(table, required):
             try:
                 return [(r["name"], r["type"]) for r in connection.execute("PRAGMA table_info(%s)" % quote(table))]
             except (sqlite3.Error, UnicodeError) as exc:
                 check_stop()
+                if st["abort"] is not None:
+                    raise SchemaTimeUp()               # the clock ended the statement: that is a stop, not a schema that cannot be read
                 # (a schema error names a table, a column or a module of the file, never a cell value; a name that is not UTF-8 is only a class)
                 why = type(exc).__name__ if isinstance(exc, UnicodeError) else str(exc)
                 if required:
@@ -2453,10 +2497,15 @@ def run_query(args):
                 problems.append("the schema of %s could not be read (%s): its rows are not joined" % (table, why))
                 return []
 
-        zobject = st["zobject"] = info("ZOBJECT", True)
-        columns = {n for n, _t in zobject}
-        meta_cols = info("ZSTRUCTUREDMETADATA", False) if "ZSTRUCTUREDMETADATA" in own_present else []
-        src_cols = info("ZSOURCE", False) if "ZSOURCE" in own_present else []
+        try:
+            zobject = st["zobject"] = info("ZOBJECT", True)
+            columns = {n for n, _t in zobject}
+            meta_cols = info("ZSTRUCTUREDMETADATA", False) if "ZSTRUCTUREDMETADATA" in own_present else []
+            src_cols = info("ZSOURCE", False) if "ZSOURCE" in own_present else []
+        except SchemaTimeUp:
+            st["stopped"] = st["abort"]
+            problems.append("the time ran out while the columns of the tables were being read: no row was read")
+            return
         joins = st["joins"] = {"ZSTRUCTUREDMETADATA": bool(meta_cols) and "ZSTRUCTUREDMETADATA" in columns and any(n == "Z_PK" for n, _ in meta_cols),
                                "ZSOURCE": bool(src_cols) and "ZSOURCE" in columns and any(n == "Z_PK" for n, _ in src_cols)}
         st["fingerprint"] = hashlib.sha256("\n".join(
@@ -2707,6 +2756,10 @@ def run_query(args):
             st["interrupted"] = stop.signum
             st["stopped"] = "signal"
     finally:
+        # From here the stop signals wait: the clean-up runs whole (an Interrupted raised from inside it used to escape the answer, which then said the
+        # tool was stopped before it had read anything while the private copy stayed half removed). A signal that arrives meanwhile is found
+        # before the answer is printed and the answer names it (emit_answer).
+        hold_signals()
         # Close what was opened before the private copy goes: Python 3.13 and later warn (ResourceWarning) about a connection left to the garbage collector.
         for opened in (st["shaper"] and st["shaper"].handles, st["connection"]):
             try:
@@ -2772,6 +2825,9 @@ def run_query(args):
             resume["to_go_on"] = ("run again with after_start_raw and after_z_pk set to these two values (and the same db, stream, since and until, and a larger max_seconds "
                                   "if the database is large): the read goes on with the next row of the order (start, then Z_PK), no row twice and none skipped, "
                                   "also when many rows share one start. resume_since, a microsecond before the last start, is the older way: it reads the rows of that start again")
+        elif st["schema_unread"]:
+            resume["to_go_on"] = ("the schema of the file was not read in the time (it has more tables, views or triggers than max_seconds allows to parse): a larger max_seconds "
+                                  "(at most %d) reads it if it can be read at all; sqlite_query on this file parses the same schema" % MAX_SECONDS_LIMIT)
         elif count == 0:
             resume["to_go_on"] = ("no entry was read before the stop (the database was being copied, or the statement was still sorting the rows by start time): run again "
                                   "with a larger max_seconds (at most %d), or narrow the read with stream, since and until" % MAX_SECONDS_LIMIT)

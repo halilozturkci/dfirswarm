@@ -490,7 +490,7 @@ sys.stderr.write("RETURNED=%r\\n" % got)
 
 test("knowledgec_query's private copy is created 0600, and a copy a killed run left is removed by the next run; a live run's is not", async () => {
   const snippet = LOAD + `
-import os, stat, subprocess, tempfile
+import os, stat, subprocess, tempfile, time
 root = tempfile.mkdtemp(prefix="kc-stage-")
 src = os.path.join(root, "src.bin")
 open(src, "wb").write(b"x" * 3000000)
@@ -501,7 +501,13 @@ parent = os.path.join(root, "stage")
 os.mkdir(parent)
 names = {"dead": "knowledgec-%d-abcd1234" % dead.pid, "live": "knowledgec-%d-abcd1234" % os.getpid(), "other": "keep-%d-abcd1234" % dead.pid}
 for n in names.values():
-    os.mkdir(os.path.join(parent, n)); open(os.path.join(parent, n, "k.db"), "w").write("x")
+    os.mkdir(os.path.join(parent, n), 0o700)            # (a private copy as the tool makes it: 0700 with 0600 files)
+    fd = os.open(os.path.join(parent, n, "k.db"), os.O_WRONLY | os.O_CREAT, 0o600); os.write(fd, b"x"); os.close(fd)
+    if n == names["live"]:
+        keep = m.lock_stage(os.path.join(parent, n))        # a run that is alive holds its lock
+    else:
+        lock = os.path.join(parent, n, ".lock")           # the marker every copy of the tool carries, free and old
+        os.close(os.open(lock, os.O_WRONLY | os.O_CREAT, 0o600)); os.utime(lock, (time.time() - 60, time.time() - 60))
 os.symlink(root, os.path.join(parent, "knowledgec-%d-link" % dead.pid))
 m.remove_dead_stages(parent)
 print("left", sorted(os.listdir(parent)))

@@ -539,8 +539,8 @@ def dig(tree, path):
     for part in path.split("."):
         if isinstance(cursor, dict) and part in cursor:
             cursor = cursor[part]
-        elif isinstance(cursor, list) and part.isdigit() and int(part) < len(cursor):
-            cursor = cursor[int(part)]
+        elif isinstance(cursor, list) and part.isascii() and part.isdigit() and len(part) <= 18 and int(part) < len(cursor):
+            cursor = cursor[int(part)]      # ASCII digits only, and 18 at most: more cannot index a list, and int() of 5,000 digits raises
         else:
             return None, "no key %r at that level" % part
     return cursor, None
@@ -707,7 +707,7 @@ def main():
                   "files_with_withheld_values": 0, "binary_values": 0, "withheld_values": 0}
         first = {"failed": [], "skipped": [], "not_attempted": []}
         notes = {"links_not_followed": 0, "files_not_matched": 0, "not_regular_files": 0, "directories_unreadable": 0,
-                 "walk_stopped_by_time_limit": False}
+                 "entries_unreadable": 0, "walk_stopped_by_time_limit": False}
         problems = []
         rows_total = [0]
 
@@ -785,8 +785,13 @@ def main():
                             continue
                         try:
                             regular = stat.S_ISREG(os.lstat(full).st_mode)
-                        except OSError:
-                            regular = False
+                        except OSError as exc:
+                            # a directory that can be listed but not searched: the name is there, the file cannot be reached. That is not a
+                            # special file; it is a file this run could not look at, and the status says so
+                            notes["entries_unreadable"] += 1
+                            if len(problems) < FIRST_FAILURES:
+                                problems.append({"path": full, "why": describe(exc)})
+                            continue
                         if not regular:
                             notes["not_regular_files"] += 1
                             continue
@@ -834,10 +839,27 @@ def main():
         reasons.append("%d matched file(s) were not attempted before max_seconds (%s)" % (totals["not_attempted"], max_seconds))
     if totals["failed"] or totals["skipped"]:
         reasons.append("%d file(s) failed to parse and %d were skipped over a bound (named under first_problems)" % (totals["failed"], totals["skipped"]))
-    if interrupted is None and done == matched and not notes["walk_stopped_by_time_limit"]:
+    unread_places = notes["directories_unreadable"] + notes["entries_unreadable"]
+    if unread_places:
+        parts = []
+        if notes["directories_unreadable"]:
+            parts.append("%d director%s could not be listed" % (notes["directories_unreadable"], "y" if notes["directories_unreadable"] == 1 else "ies"))
+        if notes["entries_unreadable"]:
+            parts.append("%d .plist/.btm-named entr%s could not be looked at (the directory cannot be searched)"
+                         % (notes["entries_unreadable"], "y" if notes["entries_unreadable"] == 1 else "ies"))
+        first_places = "; ".join("%s (%s)" % (p["path"], p["why"]) for p in problems[:3])
+        reasons.append("%s, so files in or under them were not seen: %s%s" % (" and ".join(parts), first_places, " ... (more under walk.problems)" if len(problems) > 3 else ""))
+    left_out = []
+    if notes["links_not_followed"]:
+        left_out.append("%d link(s) were not followed" % notes["links_not_followed"])
+    if notes["not_regular_files"]:
+        left_out.append("%d .plist/.btm-named entr%s that %s not a regular file were not read"
+                        % (notes["not_regular_files"], "y" if notes["not_regular_files"] == 1 else "ies", "is" if notes["not_regular_files"] == 1 else "are"))
+    left_out_text = ("; " + "; ".join(left_out) + " (by design; counted under walk)") if left_out else ""
+    if interrupted is None and done == matched and not notes["walk_stopped_by_time_limit"] and not unread_places:
         status = "complete"
-        basis = ("every one of the %d matched file(s) was read" % matched) if matched else "no .plist or .btm file was found under the path: nothing was read"
-    elif done == 0 and matched and interrupted is None:
+        basis = (("every one of the %d matched file(s) was read" % matched) if matched else "no .plist or .btm file was found under the path: nothing was read") + left_out_text
+    elif done == 0 and (matched or unread_places) and interrupted is None:
         status = "failed"
         basis = "no matched file could be read: " + "; ".join(reasons)
     else:
