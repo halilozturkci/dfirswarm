@@ -33,7 +33,7 @@
       "why": "The same for Android: app data, accounts, usage, and the protobuf-heavy newer artefacts.",
       "install": {
         "brew": "https://github.com/abrignoni/ALEAPP (not on PyPI; run aleapp.py from a checkout)",
-        "apt": "pinned source 2026.4.1 (install.source)",
+        "apt": "pinned source 2026.4.1 (install.source). Its pip is the lines of the tag's requirements.txt, pinned as it pins them, but mister_skinnylegs, which names ccl_mozilla_reader and ccl_chromium_reader by an unpinned git URL that pip will not let another URL replace (ccl_mozilla_reader's head of 2026-10-27 has a pyproject.toml that does not parse). It and its dependencies are pip_after, with --no-deps, each git one at a commit: the readers at their last commit before that head, and Brotli at 1.2.1 over the readers' old bound of 1.2.0 (GHSA-9v8h-qqgm-4m35, an out-of-bounds write in the decoder, which reads the examined profile's cache; the readers' heads now ask for 1.2.1 themselves).",
         "source": {
           "version": "2026.4.1",
           "url": "https://github.com/abrignoni/ALEAPP/archive/refs/tags/v2026.4.1.tar.gz",
@@ -41,8 +41,32 @@
           "entry": "aleapp.py",
           "run": "python",
           "pip": [
-            "-r",
-            "requirements.txt"
+            "bcrypt==3.2.0",
+            "beautifulsoup4==4.8.2",
+            "bencoding",
+            "fitdecode==0.10.0",
+            "folium==0.14.0",
+            "packaging>=24.0",
+            "pillow==12.3.0",
+            "polyline==2.0.0",
+            "protobuf==5.29.6",
+            "sqlcipher3==0.6.2",
+            "PyCryptodome",
+            "pytz",
+            "simplekml",
+            "wheel",
+            "xlsxwriter==3.1.1",
+            "xmltodict"
+          ],
+          "pip_after": [
+            "--no-deps",
+            "mister_skinnylegs @ git+https://github.com/cclgroupltd/mister-skinnylegs.git@v0.0.18",
+            "ccl_mozilla_reader @ git+https://github.com/cclgroupltd/ccl_mozilla_reader.git@b3d0627f747a718e1e30ac02b92e82bdde354eb2",
+            "ccl_chromium_reader @ git+https://github.com/cclgroupltd/ccl_chrome_indexeddb.git@cc9edbc1fcc774d3009bc4b4555c27fa79ee3e3a",
+            "ccl_simplesnappy @ git+https://github.com/cclgroupltd/ccl_simplesnappy.git@3d085230baa8c46cf2090ebba29bf6e8eab31087",
+            "Brotli==1.2.1",
+            "lz4==4.3.3",
+            "zstd==1.5.7.2"
           ],
           "skip": [
             "admin/test"

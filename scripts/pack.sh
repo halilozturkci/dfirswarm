@@ -353,7 +353,7 @@ if os.path.isfile(hj):
                 if not src.get(bin_key):
                     errors.append("%s needs %s: the program's path inside it" % (where, bin_key))
                 pinned(where, src, bin_key)
-                for key in ("pip", "skip", "configure", "apt_deps", "build_deps", "arches"):
+                for key in ("pip", "pip_after", "skip", "configure", "apt_deps", "build_deps", "arches"):
                     if key in src and not (isinstance(src[key], list) and all(isinstance(x, str) for x in src[key])):
                         errors.append("%s: %s must be a list of strings" % (where, key))
                 if "env" in src and not (isinstance(src["env"], dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in src["env"].items())):

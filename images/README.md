@@ -236,7 +236,12 @@ anything is unpacked, installed or built.
   tool library's; `entry` goes on PATH as the pack names the program, run
   with the checkout on `PYTHONPATH`, as from a clone. Zircolite, mac_apt,
   UnifiedLogReader, iLEAPP and ALEAPP come this way; `build_deps` are there
-  for the build only, `apt_deps` stay. `env` is the environment of its pip:
+  for the build only, `apt_deps` stay. `pip_after` is a second `pip install`
+  into the same venv, after `pip`: ALEAPP's `mister_skinnylegs` names its
+  readers by an unpinned git URL, which pip will not let another URL replace,
+  so ALEAPP's other requirements go in `pip` and `mister_skinnylegs` with its
+  dependencies go in `pip_after` with `--no-deps`, each git one at a commit.
+  `env` is the environment of its pip:
   mac_apt pins pytsk3 20230125, an sdist whose bundled Sleuth Kit finds the
   libbfio headers the image has for libewf and is then built against libbfio
   without being linked to it, so it would not import; its pack sets
