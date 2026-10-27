@@ -156,7 +156,7 @@ test("write_text keeps each event's message and the originals of what was withhe
     assert.ok(rows.some((r) => String(r.message).includes(CANARY.github) && String(r.message).includes("S3cr3tPassw0rd")), "the original, whole, is in the values file");
     const rest = await everythingBut(cwd, run.stdout + run.stderr, ["inputs/task.log", "out/audit-values.jsonl"]);
     assert.equal(rest.includes(CANARY.github) || rest.includes("S3cr3tPassw0rd") || rest.includes("is not online"), false);
-    assert.match(refused(await tool(AUDIT, cwd, { path: "inputs/task.log", write_text: true }, { JOB_ID: "j000001", OUT: join(cwd, "out") })).error, /values file already exists/);
+    assert.match(refused(await tool(AUDIT, cwd, { path: "inputs/task.log", write_text: true }, { JOB_ID: "j000001", OUT: join(cwd, "out"), SECRET_OUTPUT: "1" })).error, /values file already exists/);
   });
 });
 

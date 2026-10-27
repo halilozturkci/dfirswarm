@@ -275,7 +275,8 @@ test("a text file is read a line at a time with a cap: a line over 64 KiB is cou
     const out = body(await tool(INVENTORY, cwd, { root: "inputs/x" }));
     assert.equal(out.vms[0].name, "ok");
     assert.equal(out.vms[0].guest_os, "linux");
-    assert.equal(out.status, "complete");
+    assert.equal(out.status, "partial", "a line that was not read is a gap, not a complete read (the R2 review)");
+    assert.match(out.sources[0].reason, /1 line\(s\) of 65536 bytes or more were not read \(the first is line 2\)/);
     const lines = Array.from({ length: 600_000 }, (_, i) => `k${i} = "v"`).join("\n");
     await put(cwd, "inputs/y/big.vmx", `displayName = "big"\n${lines}\n`);
     const big = body(await tool(INVENTORY, cwd, { root: "inputs/y" }));
@@ -358,7 +359,7 @@ test("names and values the answer shows are shape-checked: a token, a key, user-
     assert.ok(values.includes(C.github) && values.includes(C.aws) && values.includes("S3cr3tPassw0rd"));
     const rest = await everythingBut(cwd, job.stdout + job.stderr, [...skip, "out/inventory-values.jsonl"]);
     for (const needle of [C.github, C.aws, C.hex, "S3cr3tPassw0rd"]) assert.equal(rest.includes(needle), false, "only the values file holds the originals");
-    const second = await tool(INVENTORY, cwd, { root: "inputs", write_text: true }, { JOB_ID: "j000001", OUT: join(cwd, "out") });
+    const second = await tool(INVENTORY, cwd, { root: "inputs", write_text: true }, { JOB_ID: "j000001", OUT: join(cwd, "out"), SECRET_OUTPUT: "1" });
     assert.match(refused(second).error, /values file already exists/);
     assert.equal(await readFile(join(cwd, "out", "inventory-values.jsonl"), "utf8"), values, "an earlier values file is not overwritten");
     const rows = await rowsOf(cwd, out, "vms");

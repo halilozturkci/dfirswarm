@@ -36,11 +36,15 @@ export async function tool(script: string, cwd: string, args: unknown, env: Reco
 }
 
 let jobs = 0;
-/** The tool as a job runs it: JOB_ID and OUT set, OUT inside the run directory (`out`, or the directory named). */
+/**
+ * The tool as a job runs it: JOB_ID and OUT set, OUT inside the run directory (`out`, or the directory named), and
+ * SECRET_OUTPUT=1, which the job service gives the process of a job run with secret_output (pass `SECRET_OUTPUT: ""` in
+ * `env` for a job that was not: write_text is refused there).
+ */
 export async function asJob(script: string, cwd: string, args: unknown, bin?: string, env: Record<string, string> = {}, outName = "out"): Promise<Run> {
   await mkdir(join(cwd, outName), { recursive: true });
   jobs += 1;
-  return tool(script, cwd, args, { JOB_ID: `j${String(jobs).padStart(6, "0")}`, OUT: join(cwd, outName), ...env }, bin);
+  return tool(script, cwd, args, { JOB_ID: `j${String(jobs).padStart(6, "0")}`, OUT: join(cwd, outName), SECRET_OUTPUT: "1", ...env }, bin);
 }
 
 export function body(out: Run): Json {

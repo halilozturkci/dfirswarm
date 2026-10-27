@@ -605,7 +605,7 @@ test("names the answer shows are shape-checked: a token, a key, user-info and a 
     for (const secret of [C.github, C.aws, C.hex, "S3cr3tPassw0rd"]) assert.equal(rest.includes(secret), false, "only the values file holds the originals");
     // a second run in the same job is refused by name; the file is not overwritten
     jobs2: {
-      const again = await tool(CHAIN, cwd, { root: "inputs/vm", write_text: true }, { JOB_ID: "j000001", OUT: join(cwd, "out") });
+      const again = await tool(CHAIN, cwd, { root: "inputs/vm", write_text: true }, { JOB_ID: "j000001", OUT: join(cwd, "out"), SECRET_OUTPUT: "1" });
       assert.match(refused(again).error, /values file already exists/);
       assert.equal(await readFile(valuesPath, "utf8"), values);
       break jobs2;

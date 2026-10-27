@@ -56,7 +56,7 @@
     },
     "limit": {
       "type": "integer",
-      "description": "Rows shown inline per list (default 200); every row is counted and, when there are more, the whole list is written as JSON Lines and named in pages.<list>.all_results"
+      "description": "Rows shown inline per list (default 200); every row is counted and, when there are more, the whole list is written as JSON Lines and named in pages.<list>.all_results; the rows shown inline also stop at about 1 MiB per list whatever limit says (pages.<list>.inline_cut_by_size), so that the answer is written within max_seconds and keeps its status: the rest is in the file"
     },
     "max_line_bytes": {
       "type": "integer",
@@ -81,7 +81,7 @@
   "example": "{\"path\": \"work/extracted/pve/tasks/index\", \"format\": \"pve_task_index\"}",
   "by": "maintainer",
   "at": "2026-10-15T09:00:00.000Z",
-  "version": 1,
+  "version": 2,
   "use": {
     "names": [
       "UPID:*",
@@ -91,5 +91,5 @@
       "*jobs*.csv"
     ]
   },
-  "sha256": "660eda1c73b07958e789852ec92596d4a1fcd53d8d3ecbfdf6ce43e69f5aec26"
+  "sha256": "292c907ff9a5e61b78ca8bd1ed3043ca0b445e9fff18386fb9178f7618803e10"
 }

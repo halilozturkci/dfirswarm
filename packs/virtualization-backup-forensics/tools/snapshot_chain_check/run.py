@@ -554,6 +554,12 @@ def decode(data):
 # digest of anything asked for (sixteen decimal digits), and the way out shows this exact name, registered here, as it is. Every row is sealed
 # (the one way out, below) as it is written. A write that fails is an error answer naming the file, never a loss that
 # goes unsaid.
+# The rows an answer shows inline are cut by size as well as by count: the answer is judged, serialised and read back within
+# the run's clock, and a `limit` of 100000 over rows of a few hundred bytes would make that take longer than max_seconds
+# (and leave the answer without its keys). The cut is lossless: every row is in the paging file, named by all_results.
+INLINE_BYTES = 1 << 20
+
+
 class LosslessPage:
     def __init__(self, tool, key, limit):
         if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
@@ -562,6 +568,7 @@ class LosslessPage:
         self.key = re.sub(r"[^A-Za-z0-9_.-]", "_", key)
         self.limit = limit
         self.page = []
+        self.page_bytes = 0
         self.total = 0
         self._out = None
         self._tmp = None
@@ -586,8 +593,9 @@ class LosslessPage:
 
     def add(self, row):
         self.total += 1
-        if len(self.page) < self.limit:
+        if len(self.page) < self.limit and self.page_bytes < INLINE_BYTES:
             self.page.append(row)
+            self.page_bytes += len(repr(row))
             return
         if self._out is None:
             stops = {signal.SIGTERM, signal.SIGINT, signal.SIGHUP}
@@ -628,6 +636,8 @@ class LosslessPage:
 
     def finish(self):
         result = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
+        if self.total > len(self.page) and len(self.page) < self.limit:
+            result["inline_cut_by_size"] = "the rows shown inline stop at about %d bytes whatever limit says; the whole list is in all_results" % INLINE_BYTES
         if self._out is not None:
             try:
                 self._out.flush()
@@ -653,7 +663,8 @@ class TextFile:
     The secret-safe output pattern of recovery_key_scan's SecretValues, for rows. With `enabled` false it writes
     nothing and `summary()` says so. Enabled, it is refused outside a job; inside one the file is created before
     anything is read (mode 0600, exclusively: a file or a link already at that name is refused by name) under $OUT, and
-    the answer names it and says it may hold secrets. With nothing to keep it stays an empty file and says written: 0.
+    the answer names it and says it may hold secrets. A job that was not run as secret output (the harness gives its process
+    SECRET_OUTPUT=1 when it was) is refused too: the file would be sealed as an ordinary output. With nothing to keep it stays an empty file and says written: 0.
     """
 
     def __init__(self, name, enabled, what, flag="write_text"):
@@ -671,6 +682,10 @@ class TextFile:
             raise TextRefused("%s is refused outside a job: the originals written here would be an ordinary file, not a "
                               "sealed output. Run this as job_run tool=%s with secret_output: true, and ask again there. "
                               "Nothing was written." % (flag, TOOL))
+        if os.environ.get("SECRET_OUTPUT") != "1":
+            raise TextRefused("%s is refused in a job that was not run as secret output: the originals would be sealed as ordinary "
+                              "output. The harness sets SECRET_OUTPUT=1 for a secret job's process and it is not set here. Run this as "
+                              "job_run tool=%s with secret_output: true, and ask again there. Nothing was written." % (flag, TOOL))
         self.path = Path(out) / name
         self.shown = "store/jobs/%s/out/%s" % (re.sub(r"[^A-Za-z0-9_.-]", "_", job), name)
         OWN_NAMES.update((self.shown, str(self.path)))
@@ -2541,6 +2556,7 @@ def crc32c(data):
 # ---- VMDK ------------------------------------------------------------------------------------------------------------
 
 EXTENT = re.compile(r'^(RW|RDONLY|NOACCESS)\s+(\d+)\s+([A-Za-z0-9_]+)(?:\s+"((?:[^"\\]|\\.)*)")?(?:\s+(\d+))?\s*(?:#.*)?$')
+EXTENT_LIKE = re.compile(r"^(?:RW|RDONLY|NOACCESS)(?:\s|$)", re.I)      # a line that says it is an extent and that EXTENT did not match
 DESC_KV = re.compile(r'^([A-Za-z][A-Za-z0-9_.]*)\s*=\s*(.*)$')
 CID_HEX = re.compile(r"^[0-9a-fA-F]{1,8}$")      # a 32-bit value in hexadecimal; qemu-img writes it without leading zeros
 KNOWN_EXTENT_TYPES = {"FLAT", "SPARSE", "ZERO", "VMFS", "VMFSSPARSE", "VMFSRDM", "VMFSRAW", "VMFSPASSTHRU", "SESPARSE"}
@@ -2561,7 +2577,8 @@ def unquote(value):
 
 def parse_descriptor(text):
     """The fields of a VMDK descriptor, its extents (up to MAX_EXTENTS) and the counts of what was not kept."""
-    d = {"fields": {}, "extents": [], "extents_total": 0, "ddb": {}, "ddb_other": 0, "lines_over_cap": False, "other_lines": 0}
+    d = {"fields": {}, "extents": [], "extents_total": 0, "ddb": {}, "ddb_other": 0, "lines_over_cap": False, "other_lines": 0,
+         "extent_like_unread": 0, "extent_like_first": None, "over_read_cap": False}
     for number, raw in enumerate(text.split("\n"), 1):
         if number > MAX_DESC_LINES:
             d["lines_over_cap"] = True
@@ -2580,6 +2597,10 @@ def parse_descriptor(text):
         m = DESC_KV.match(line)
         if not m:
             d["other_lines"] += 1
+            if EXTENT_LIKE.match(line):                    # an extent the tool could not read is an extent the chain does not know
+                d["extent_like_unread"] += 1
+                if d["extent_like_first"] is None:
+                    d["extent_like_first"] = number
             continue
         key, value = m.group(1), unquote(m.group(2))
         if key.lower().startswith("ddb."):
@@ -2594,6 +2615,36 @@ def parse_descriptor(text):
     return d
 
 
+def descriptor_problems(d):
+    """What the descriptor says that cannot be followed: the texts are this tool's own, never the evidence's."""
+    f = d["fields"]
+    cid, pcid, hint = f.get("cid"), f.get("parentcid"), f.get("parentfilenamehint")
+    out = []
+    if cid and not CID_HEX.match(cid):
+        out.append("CID is not 1 to 8 hexadecimal digits")
+    if pcid and not CID_HEX.match(pcid):
+        out.append("parentCID is not 1 to 8 hexadecimal digits")
+    if cid_value(pcid) not in (None, "ffffffff") and not hint:
+        out.append("a parentCID is recorded and no parentFileNameHint names the parent")
+    return out
+
+
+def descriptor_gaps(d):
+    """Why a descriptor does not tell the whole story of its disk: a cap that cut it, an extent line it could not read, no extent line
+    at all, or a record that cannot be followed. Each is a gap in the chain, never a quiet `complete`."""
+    gaps = []
+    if d["lines_over_cap"]:
+        gaps.append("the descriptor has more than %d lines: the lines after them (a parent, an extent) were not read" % MAX_DESC_LINES)
+    if d["over_read_cap"]:
+        gaps.append("the descriptor is longer than %d bytes: what lies after them (a parent, an extent) was not read" % MAX_DESCRIPTOR)
+    if d["extent_like_unread"]:
+        gaps.append("%d line(s) begin like an extent line (RW, RDONLY or NOACCESS; the first is line %d) and are not in the shape this tool reads: those extents were not checked" % (
+            d["extent_like_unread"], d["extent_like_first"]))
+    if d["extents_total"] == 0:
+        gaps.append("the descriptor lists no extent line: what the disk is made of is not known")
+    return gaps + descriptor_problems(d)
+
+
 def descriptor_node(d, source, shown, fid):
     f = d["fields"]
     cid, pcid = f.get("cid"), f.get("parentcid")
@@ -2603,16 +2654,18 @@ def descriptor_node(d, source, shown, fid):
             "cid_note": "a CID is a 32-bit number written in hexadecimal (qemu-img writes it without leading zeros); it is shown as eight digits and compared as a number",
             "has_parent": cid_value(pcid) not in (None, "ffffffff"),
             "parent_hint": shown(f.get("parentfilenamehint"), fid, "parentFileNameHint"), "native_snapshot": shown(f.get("isnativesnapshot"), fid, "isNativeSnapshot"),
-            "extents_total": d["extents_total"], "capacity_sectors_by_extents": sum(e["sectors"] for e in d["extents"]) if d["extents_total"] == len(d["extents"]) else None, "ddb": {k: shown(v, fid, k) for k, v in d["ddb"].items()}, "ddb_other_keys": d["ddb_other"], "descriptor_source": source}
-    if cid and not CID_HEX.match(cid):
-        node["problem"] = "CID is not 1 to 8 hexadecimal digits"
-    if pcid and not CID_HEX.match(pcid):
-        node["problem"] = "parentCID is not 1 to 8 hexadecimal digits"
-    if node["has_parent"] and not node["parent_hint"]:
-        node["problem"] = "a parentCID is recorded and no parentFileNameHint names the parent"
+            "other_lines": d["other_lines"], "extents_total": d["extents_total"], "capacity_sectors_by_extents": sum(e["sectors"] for e in d["extents"]) if d["extents_total"] == len(d["extents"]) else None, "ddb": {k: shown(v, fid, k) for k, v in d["ddb"].items()}, "ddb_other_keys": d["ddb_other"], "descriptor_source": source}
+    problems = descriptor_problems(d)
+    if problems:
+        node["problem"] = problems[-1]
     if not node["has_parent"] and f.get("parentfilenamehint"):
         node["parent_hint_not_followed"] = "a parentFileNameHint is written and parentCID records no parent (ffffffff or none): the hint is not followed and no parent is looked for"
     return node
+
+
+def capacity_is_zero(res):
+    """True for a sparse extent whose header says capacity 0: qemu-img then reads the embedded descriptor as a descriptor file."""
+    return (res.get("row") or {}).get("info", {}).get("capacity_sectors") == 0 or (res.get("info") or {}).get("capacity_sectors") == 0
 
 
 def parse_vmdk_text(fh, size, head):
@@ -2620,6 +2673,7 @@ def parse_vmdk_text(fh, size, head):
     over = size > MAX_DESCRIPTOR
     text = raw[:MAX_DESCRIPTOR].replace(b"\x00", b"\n").decode("utf-8", "replace")
     d = parse_descriptor(text)
+    d["over_read_cap"] = over
     return d, over
 
 
@@ -2649,7 +2703,8 @@ def parse_vmdk_sparse(fh, size, head):
         data = read_at(fh, start, min(want, size - start))
         text = data.split(b"\x00", 1)[0].decode("utf-8", "replace")
         desc = parse_descriptor(text)
-        info["descriptor_over_read_cap"] = dsize * 512 > MAX_DESCRIPTOR
+        desc["over_read_cap"] = dsize * 512 > MAX_DESCRIPTOR
+        info["descriptor_over_read_cap"] = desc["over_read_cap"]
     return {"state": "parsed", "info": info, "descriptor": desc, "markers": markers}
 
 
@@ -2935,10 +2990,13 @@ def parse_qcow2(fh, size, head, snapshot_sink, max_snapshots, clock):
     cluster = 1 << cbits
     window = read_at(fh, ext_start, min(max(0, cluster - ext_start), 1 << 20)) if ext_start < size else b""
     pos, n = 0, 0
+    gaps = []                          # what the header says that this reading did not take in: each one keeps the chain from being called complete
     while pos + 8 <= len(window) and n < 64:
         etype, elen = struct.unpack(">II", window[pos:pos + 8])
         if etype == 0:
             break
+        if pos + 8 + elen > len(window) and not any("runs past" in g for g in gaps):
+            gaps.append("a header extension runs past the end of the header area read (the first cluster): its content, a backing format or an external data file name, is cut")
         data = window[pos + 8:pos + 8 + elen]
         name = QCOW_EXT_NAMES.get(etype, "0x%08x" % etype)
         exts.append(name)
@@ -2948,6 +3006,8 @@ def parse_qcow2(fh, size, head, snapshot_sink, max_snapshots, clock):
             ext_data = data.decode("utf-8", "surrogateescape")
         pos += 8 + ((elen + 7) & ~7)
         n += 1
+    if n >= 64 and pos + 8 <= len(window) and struct.unpack(">I", window[pos:pos + 4])[0] != 0:
+        gaps.append("the header lists more than 64 extensions: those after the 64th (an external data file name, a backing format) were not read")
     info["header_extensions"] = exts
     if backing_format is not None:
         info["backing_format"] = backing_format
@@ -2957,9 +3017,11 @@ def parse_qcow2(fh, size, head, snapshot_sink, max_snapshots, clock):
     if boff:
         if bsize > 1023:
             info["problem"] = "the backing file name is declared %d bytes; the format allows 1023" % bsize
+            gaps.append(info["problem"])
         raw = read_at(fh, boff, min(bsize, 4096)) if boff < size else b""
         if len(raw) < min(bsize, 4096):
             info["problem"] = "the backing file name lies outside the file"
+            gaps.append(info["problem"])
         else:
             name = decode(raw)
             info["backing_file"] = name
@@ -2995,7 +3057,11 @@ def parse_qcow2(fh, size, head, snapshot_sink, max_snapshots, clock):
                 snaps["stopped"] = "max_snapshots (%d) was reached" % max_snapshots
     info["internal_snapshots"] = snaps
     data_file = {"named": ext_data, "feature_bit": bool(version == 3 and "external_data_file" in info.get("incompatible_feature_names", []))}
-    out = {"state": "parsed", "info": info, "markers": markers, "qcow2": {"hints": hints, "backing_format": backing_format, "data_file": data_file}}
+    if data_file["feature_bit"] and not ext_data:
+        gaps.append("the header sets the external data file bit and no external data file name was read: the guest data lives in a file this set does not name")
+    if gaps:
+        info["record_gaps"] = gaps
+    out = {"state": "parsed", "info": info, "markers": markers, "gaps": gaps, "qcow2": {"hints": hints, "backing_format": backing_format, "data_file": data_file}}
     if snaps["read"] < nsnap:
         # the table declares more snapshots than were read: the image is not read whole, whatever stopped the read
         out["state"] = "partial"
@@ -3031,25 +3097,58 @@ def read_config(fh, size):
             yield n, m.group(1), m.group(2)
 
 
+class ConfigGaps:
+    """The lines of a .vmx or .vmsd that were not read: a line over MAX_CONFIG_LINE bytes, and everything after line MAX_CONFIG_LINES."""
+
+    def __init__(self):
+        self.long = 0
+        self.first_long = None
+        self.capped = False
+
+    def note(self, n, why):
+        if why == "line cap":
+            self.capped = True
+        else:
+            self.long += 1
+            if self.first_long is None:
+                self.first_long = n
+
+    def reasons(self):
+        out = []
+        if self.long:
+            out.append("%d line(s) over %d bytes were not read (the first is line %d)" % (self.long, MAX_CONFIG_LINE, self.first_long))
+        if self.capped:
+            out.append("the file has more than %d lines: the lines after them were not read" % MAX_CONFIG_LINES)
+        return out
+
+    def settle(self, result):
+        """The result of a parser, made partial with the reasons when any line was not read."""
+        reasons = self.reasons()
+        if reasons:
+            result["state"] = "partial"
+            result["reason"] = "; ".join(reasons)
+        return result
+
+
 def parse_vmx(fh, size):
-    disks, problems, keys = [], [], 0
+    disks, problems, keys, gaps = [], [], 0, ConfigGaps()
     for n, key, value in read_config(fh, size):
         if key is None:
-            problems.append(value)
+            gaps.note(n, value)
             continue
         keys += 1
         if DISK_KEY.match(key):
             disks.append({"key": key, "file": value, "line": n})
-    return {"state": "parsed", "info": {"format": "vmx", "keys_read": keys, "disk_entries": len(disks), "note": WITHHELD_CONFIG_NOTE},
-            "vmx": {"disks": disks, "problems": problems}}
+    return gaps.settle({"state": "parsed", "info": {"format": "vmx", "keys_read": keys, "disk_entries": len(disks), "note": WITHHELD_CONFIG_NOTE},
+                        "vmx": {"disks": disks, "problems": gaps.reasons()}})
 
 
 def parse_vmsd(fh, size):
     entries = collections.OrderedDict()
-    top, over, problems = {}, 0, []
+    top, over, gaps = {}, 0, ConfigGaps()
     for n, key, value in read_config(fh, size):
         if key is None:
-            problems.append(value)
+            gaps.note(n, value)
             continue
         low = key.lower()
         if low in ("snapshot.numsnapshots", "snapshot.current", "snapshot.lastuid"):
@@ -3072,9 +3171,9 @@ def parse_vmsd(fh, size):
                 e["disks"][int(dm.group(1))] = value
         elif sl in ("uid", "filename", "displayname", "parent", "numdisks", "createtimehigh", "createtimelow", "type", "description", "id"):
             e[sl] = value
-    return {"state": "parsed", "info": {"format": "vmsd", "snapshots_listed": len(entries), "snapshot_entries_over_cap": over,
-                                          "numsnapshots": top.get("numsnapshots"), "current": top.get("current"), "lastuid": top.get("lastuid")},
-            "vmsd": {"entries": list(entries.values()), "over": over, "top": top, "problems": problems}}
+    return gaps.settle({"state": "parsed", "info": {"format": "vmsd", "snapshots_listed": len(entries), "snapshot_entries_over_cap": over,
+                                                    "numsnapshots": top.get("numsnapshots"), "current": top.get("current"), "lastuid": top.get("lastuid")},
+                        "vmsd": {"entries": list(entries.values()), "over": over, "top": top, "problems": gaps.reasons()}})
 
 
 # ---- classification --------------------------------------------------------------------------------------------------
@@ -3120,6 +3219,8 @@ QEMU_FORMAT_NAMES = {"vpc": "vhd", "vmdk": "vmdk", "vhdx": "vhdx", "qcow2": "qco
 
 def run_qemu(path, kind, seconds):
     fmt = qemu_format(kind)
+    if not path.startswith("/"):
+        path = "./" + path                  # a relative name that begins with json:, nbd: or - must not be read as a protocol or an option
     argv = ["qemu-img", "info", "--output=json", "-f", fmt, path]
     code, out, err, timed_out = preflight(argv, seconds)
     result = {"command_format": fmt, "exit_code": code, "timed_out": timed_out}
@@ -3141,9 +3242,10 @@ def run_qemu(path, kind, seconds):
     return result
 
 
-CHAIN_ORDER = ("cycle", "too_deep", "broken", "parent_unreadable", "identity_not_compared", "identity_mismatch", "extent_missing", "data_file_missing")
+CHAIN_ORDER = ("cycle", "too_deep", "broken", "record_incomplete", "parent_unreadable", "identity_not_compared", "identity_mismatch", "extent_missing", "data_file_missing")
 CHAIN_DETAIL = {
     "broken": "the parent %s names is not in the set",
+    "record_incomplete": "the descriptor or header of %s was not read whole or is inconsistent as written (see its markers): the parent and the extents it names are not all known",
     "parent_unreadable": "the parent of %s is in the set and could not be read as a disk (failed, unsupported, a bare extent or another kind of file): its identity was not compared",
     "identity_not_compared": "the identity of %s's parent could not be compared: one side records none, a value that is not one, or the parent is a disk of another format",
     "identity_mismatch": "the identity %s records for its parent is not the identity the parent file carries",
@@ -3246,8 +3348,14 @@ def main():
                 node["sparse_header"] = res["row"]["info"]
             d.update(format="vmdk", has_identity=node["cid"] is not None, own_id=node["cid"], parent_id=node["parent_cid"] if node["has_parent"] else None,
                      hints=[desc["fields"]["parentfilenamehint"]] if desc["fields"].get("parentfilenamehint") else [], has_parent=node["has_parent"], detail=node)
-            if node.get("problem"):
-                marker("descriptor_problem", [fid], node["problem"], "the descriptor is inconsistent as written; the chain through it is not read further than it says")
+            gaps = res.get("gaps") or []
+            if gaps:
+                node["record_gaps"] = gaps
+                node_issue[fid].setdefault("record_incomplete", fid)
+                for gap in gaps:
+                    marker("descriptor_problem", [fid], gap, "the descriptor was not read whole or is inconsistent as written; the chain through it is not read further than it says")
+            # a sparse VMDK of capacity 0 is read by qemu-img through its embedded descriptor, which names its extents (any file): see names_other_files
+            names_other = kind == "vmdk_sparse" and (capacity_is_zero(res) or bool(gaps) or desc["extents_total"] > len(desc["extents"]))
             for i, ext in enumerate(desc["extents"]):
                 clock.check(256)
                 target, how = (None, "no_name")
@@ -3257,6 +3365,8 @@ def main():
                         "type": ext["type"] if ext["type"] in KNOWN_EXTENT_TYPES else shown(ext["type_raw"], fid, "extent type"),
                         "file": shown(ext["name"], fid, "extent file name") if ext["name"] is not None else None, "offset_sectors": ext["offset"],
                         "found": target["id"] if target else None, "resolution": how}
+                if ext["name"] is not None and ext["type"] not in NOT_A_FILE_EXTENT and not (target is not None and target["id"] == fid and how == "relative_exact"):
+                    names_other = True                      # an extent that is not, as written, this very file: qemu-img would open the name as it is
                 if ext["name"] is None or ext["type"] in NOT_A_FILE_EXTENT:
                     erow["state"] = "not_a_file_extent"
                 elif target is None:
@@ -3283,6 +3393,7 @@ def main():
             if desc["extents_total"] > len(desc["extents"]):
                 node_issue[fid].setdefault("extent_missing", fid)
                 extents_over.append(fid)
+            d["names_other_files"] = names_other
         elif kind == "vhd":
             v = res.get("vhd")
             if v:
@@ -3296,6 +3407,9 @@ def main():
             v = res.get("qcow2")
             if v:
                 d.update(format="qcow2", has_identity=False, hints=v["hints"], has_parent=bool(v["hints"]), detail=res["row"]["info"], backing_format=v.get("backing_format"))
+                for gap in res.get("gaps") or []:
+                    node_issue[fid].setdefault("record_incomplete", fid)
+                    marker("descriptor_problem", [fid], gap, "the header was not read whole or is inconsistent as written; the backing file and the data file it names are not all known")
                 data_file = v.get("data_file") or {}
                 d["external_data_file"] = bool(data_file.get("named") or data_file.get("feature_bit"))
                 if data_file.get("named"):
@@ -3333,9 +3447,6 @@ def main():
                     elif kind == "vmdk_descriptor":
                         d, over = parse_vmdk_text(fh, rec["size"], head)
                         res = {"state": "parsed", "info": {"format": "vmdk"}, "descriptor": d}
-                        if over:
-                            res["state"] = "partial"
-                            res["reason"] = "the descriptor file is over %d bytes: read to that point" % MAX_DESCRIPTOR
                     elif kind == "vmdk_cowd":
                         res = {"state": "parsed", "info": {"format": "vmdk_cowd_extent", "header_read": False,
                                                           "note": "a COWD sparse extent (the delta of a VMFS sparse snapshot) is recognised by its first four bytes; its header is not read, because the chain is in the descriptor that names it"}}
@@ -3362,6 +3473,15 @@ def main():
                     res = {"state": "failed", "reason": "the structure could not be read (%s)" % describe(exc)}
                 except OSError as exc:
                     res = {"state": "failed", "reason": "a read failed (%s)" % describe(exc)}
+            gaps = descriptor_gaps(res["descriptor"]) if res.get("descriptor") is not None else (res.get("gaps") or [])
+            if gaps and res["state"] in ("parsed", "partial"):
+                res["gaps"] = gaps
+                if res["state"] == "parsed":
+                    res["state"], res["reason"] = "partial", "; ".join(gaps)
+                elif not res.get("reason"):
+                    res["reason"] = "; ".join(gaps)
+                else:
+                    res["reason"] += "; " + "; ".join(gaps)
             state_counts[res["state"]] += 1
             row["state"] = res["state"]
             if res.get("reason"):
@@ -3678,9 +3798,10 @@ def main():
     qemu_report = {"mode": qemu_mode, "checked": 0, "available": None, "note": "qemu-img was not run (qemu_img: off); the reading above is the tool's own"}
     if qemu_mode != "off":
         qemu_report["note"] = ("qemu-img info was run once per image of the set with the format fixed and without --backing-chain; its answer sits beside the "
-                               "native reading in `qemu_img` of the disk row and replaces nothing. A VMDK text descriptor and a QCOW2 image with an external "
-                               "data file are not given to it (qemu-img would open the files they name, which can lie outside the set), nor an extent "
-                               "another descriptor names (the disk is that descriptor)")
+                               "native reading in `qemu_img` of the disk row and replaces nothing. A VMDK text descriptor, a sparse VMDK of capacity 0 or whose "
+                               "embedded descriptor names a file other than itself, and a QCOW2 image with an external data file are not given to it (qemu-img "
+                               "would open the files they name, which can lie outside the set), nor an extent another descriptor names (the disk is that "
+                               "descriptor)")
         cross, failed_runs = [], []
         skipped = collections.Counter()
         skipped_first = {}
@@ -3692,6 +3813,8 @@ def main():
             why = None
             if d["format"] == "vmdk" and nodes[fid]["row"]["kind"] != "vmdk_sparse":
                 why = "text_descriptor"           # qemu-img would open its extents by the names it holds
+            elif d["format"] == "vmdk" and d.get("names_other_files"):
+                why = "sparse_vmdk_names_other_files"  # capacity 0 (qemu-img reads the embedded descriptor as a descriptor file) or an embedded descriptor that names a file other than itself
             elif fid in extent_targets:
                 why = "extent_of_another_descriptor"   # a split disk's extent: the disk is its descriptor, which qemu-img is not given
             elif d.get("external_data_file"):
@@ -3795,8 +3918,12 @@ def main():
         "markers": pages["markers"].page, "pages": result_pages,
         "chain_summary": dict(chain_summary),
         "chain_note": ("A chain is complete when every parent a disk names is in the set, can be read, and carries the identity the child recorded where the format "
-                       "records one, and every extent and data file its disks name is in the set. Otherwise its status names the first problem from the leaf "
-                       "(cycle, too_deep, broken, parent_unreadable, identity_mismatch, extent_missing, data_file_missing) and `issues` lists each kind found. "
+                       "records one, every extent and data file its disks name is in the set, and every descriptor and header on it was read whole and says nothing "
+                       "that cannot be followed. Otherwise its status names the first problem from the leaf "
+                       "(cycle, too_deep, broken, record_incomplete, parent_unreadable, identity_not_compared, identity_mismatch, extent_missing, data_file_missing) and `issues` lists each kind found. "
+                       "record_incomplete: a descriptor or header the tool did not read whole (a line, size or extension cap, an extent line it could not read, no extent line, "
+                       "a backing file name or external data file name it could not take) or a record it cannot follow (a CID that is not a number, a parent CID with no parent file name): "
+                       "what that file names as a parent or an extent is not all known, whatever the rest of the chain looks like. "
                        "It is not a disk that boots, and it says nothing about the parent's content when the child was made. A QCOW2 child that declares its backing "
                        "format as qcow2 over a file that is raw (or any file this tool does not read as a disk) is `parent_unreadable`: the file found is not the format the child "
                        "declares, and no identity of it is compared."),

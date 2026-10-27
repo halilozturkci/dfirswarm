@@ -198,7 +198,7 @@ async function campaign(label: string, script: string, build: (r: R) => Case): P
         await writeFile(full, data).catch(() => undefined);        // a name the file system cannot hold is skipped
       }
       const job = r() < 0.4;
-      const env: Record<string, string> = job ? { JOB_ID: `j${String(100000 + i).padStart(6, "0")}`, OUT: join(dir, "out") } : {};
+      const env: Record<string, string> = job ? { JOB_ID: `j${String(100000 + i).padStart(6, "0")}`, OUT: join(dir, "out"), SECRET_OUTPUT: "1" } : {};
       if (job) await mkdir(env.OUT, { recursive: true });
       const args: Record<string, unknown> = { ...c.args, ...(job && r() < 0.5 ? { write_text: true } : {}) };
       const tag = `${label} case ${i} (seed ${SEED})`;
