@@ -4,7 +4,7 @@
   "params": {
     "path": {
       "type": "string",
-      "description": "A volume image, a partition, or a file"
+      "description": "A volume image (a file made from a disk or a partition), or a file; a device node, a pipe or a socket is refused"
     },
     "offset": {
       "type": "integer",
@@ -21,6 +21,6 @@
   "example": "{\"path\": \"inputs/disk.raw\", \"offset\": 1048576}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 4,
-  "sha256": "3b90bffde9adfedb3031b2310a7d422b6a438101cf4d628a2c6b8ebfbd775f1d"
+  "version": 5,
+  "sha256": "366a68da4fc0273eb47b7ca9f6028c69a2df5cdf0705e610874597fb720a73c8"
 }

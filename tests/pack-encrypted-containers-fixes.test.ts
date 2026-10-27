@@ -230,12 +230,21 @@ test("archive_probe reads a Zip64 directory whose End record holds the 0xFFFF ma
     z64.writeBigUInt64LE(77n, 16); // local header offset
     const extra = Buffer.concat([Buffer.from([1, 0, 24, 0]), z64]);
     const entry = Buffer.concat([centralEntry({ name: "big.bin", extra }, 0, [0xffffffff, 0xffffffff, 0xffffffff])]);
-    const tail = zip64Tail(1n, BigInt(entry.length), 0n, { entries: 0xffff, bytes: 0xffffffff, offset: 0xffffffff });
-    await writeFile(join(cwd, "work", "z64.zip"), Buffer.concat([entry, tail]));
+    // The member's local header is where the Zip64 extra field says (77), so that its flags can be compared with the directory's.
+    const local = Buffer.alloc(30 + 7);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(7, 26);
+    local.write("big.bin", 30, "latin1");
+    const before = Buffer.concat([Buffer.alloc(77), local]);
+    const tail = zip64Tail(1n, BigInt(entry.length), BigInt(before.length), { entries: 0xffff, bytes: 0xffffffff, offset: 0xffffffff });
+    await writeFile(join(cwd, "work", "z64.zip"), Buffer.concat([before, entry, tail]));
     const out = answer(await tool(PROBE, cwd, { path: "work/z64.zip" }));
     assert.equal(out.entry_count, 1);
     assert.deepEqual([out.entries[0].name, out.entries[0].bytes, out.entries[0].compressed, out.entries[0].header_offset], ["big.bin", 5_000_000_000, 4_000_000_000, 77]);
-    assert.equal(out.status, "complete");
+    // The member says it holds 4,000,000,000 bytes in a file of a few hundred: its bytes run into the directory, which is not an ordinary archive.
+    assert.equal(out.status, "partial");
+    assert.match(out.status_basis, /offsets are not those of an ordinary archive/);
   });
 });
 
