@@ -479,15 +479,19 @@ def fetch_source(d: dict, apt: list) -> tuple:
         archive.unlink(missing_ok=True)
         return None, f"could not unpack: {e}"
     venv = None
-    if d.get("pip"):
+    if d.get("pip") or d.get("pip_after"):
         # Its own venv: one program's pins (an old beautifulsoup4, an exact
         # numpy) must not move what another program or the tool library imports.
         venv = dest / ".venv"
         if not run([sys.executable, "-m", "venv", str(venv)]):
             return None, "its venv could not be made"
         # `env` reaches what pip builds: an sdist's own configure reads it.
-        if not run([str(venv / "bin" / "pip"), "install", "--no-cache-dir", *d["pip"]], cwd=dest, env=d.get("env")):
-            return None, f"its Python requirements (pip install {' '.join(d['pip'])}) did not install"
+        # `pip_after` is a second install into the same venv, for what one
+        # resolve cannot say: a dependency installed with --no-deps at a pinned
+        # commit, over the unpinned URL a requirement names for it.
+        for key in ("pip", "pip_after"):
+            if d.get(key) and not run([str(venv / "bin" / "pip"), "install", "--no-cache-dir", *d[key]], cwd=dest, env=d.get("env")):
+                return None, f"its Python requirements (pip install {' '.join(d[key])}) did not install"
     program = dest / d["entry"]
     if not program.is_file():
         return None, f"{d['entry']} is not in the archive"

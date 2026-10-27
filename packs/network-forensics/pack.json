@@ -1,7 +1,7 @@
 {
   "id": "network-forensics",
   "name": "Network Forensics Pack",
-  "version": "1.6.5",
+  "version": "1.6.6",
   "description": "Method and tooling for packet captures and web, proxy and firewall logs: what a capture can and cannot show, transaction and object reconstruction, DNS and TLS metadata when the payload is encrypted, periodicity and volume as leads to test, and tying the wire to host evidence. No flow-record reader (NetFlow, IPFIX) is bundled.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -48,7 +48,7 @@
       "skills/metadata/dns-tls.md": "b582678d575ee247fd85c60583156a4e1e776c32d05ba1df4767c99087cd6f4d",
       "skills/metadata/fingerprints.md": "7fc9786942def4a443011873fd2a9e7b2b9b58cee512db22af110aae51cdeda9",
       "skills/beacons/periodicity.md": "82ad96c0851e7f01a3620f3716a72d6da1ed4c1e66c8f460d392c2a67baeb5a2",
-      "requires/host.json": "fd0cbce4384b7a9bd958378e086d08c55e38c5fbb5868858a0a4d939462ac48c",
+      "requires/host.json": "b398baec46692166324855509b91b6a3549b47a8cdf1603a254f65842901ce04",
       "requires/python.txt": "d5768d4bec0bea8ec8e736e2710a757309af18fa3f862dae2db201e154d45a4a",
       "skills/INDEX.md": "8589b8b32eacbbc5a7836a99ed2824e2743fc519eed7c748ad9bbda7574e96a5"
     }

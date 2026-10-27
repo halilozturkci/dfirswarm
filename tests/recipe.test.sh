@@ -694,6 +694,12 @@ got, why = install.fetch_source(src, apt)
 out["source"] = [bool(got), why, (got or {}).get("kind")]
 got, why = install.fetch_source({**src, "name": "src-venv", "pip": ["--no-index", "-r", "requirements.txt"]}, apt)
 out["source_venv"] = [bool(got), why, (got or {}).get("venv")]
+got, why = install.fetch_source({**src, "name": "src-after", "pip": ["--no-index", "-r", "requirements.txt"],
+                                 "pip_after": ["--no-index", "--no-deps", "-r", "requirements.txt"]}, apt)
+out["source_after"] = [bool(got), why, (got or {}).get("venv")]
+got, why = install.fetch_source({**src, "name": "src-after-bad", "pip": ["--no-index", "-r", "requirements.txt"],
+                                 "pip_after": ["--no-index", "--no-deps", "no-such-dist-for-the-test"]}, apt)
+out["source_after_bad"] = [bool(got), why]
 got, why = install.fetch_source({**src, "name": "src-bad", "sha256": "0" * 64}, apt)
 out["source_bad_sha"] = [bool(got), why]
 got, why = install.fetch_source({**src, "name": "src-shell", "entry": "helper.py", "run": "no-such-runtime"}, apt)
@@ -729,6 +735,9 @@ res="$(tail -1 <<<"$res")"
 [[ ! -e "$K/opt-src/src-tool/tests/data" ]] || fail "a path the pack skips was unpacked"
 [[ "$(jq -r '.source_venv[0]' <<<"$res")" == true && -x "$K/opt-src/src-venv/.venv/bin/python" ]] || fail "a source with pip arguments did not get a venv of its own: $res"
 grep -q 'opt-src/src-venv/.venv/bin/python" ' "$TMP/bin/src-venv" || fail "a source with its own venv is not run by that venv's python: $(cat "$TMP/bin/src-venv")"
+[[ "$(jq -r '.source_after[0]' <<<"$res")" == true && -x "$K/opt-src/src-after/.venv/bin/python" ]] || fail "a source with pip_after was not installed into its venv: $res"
+[[ "$(jq -r '.source_after_bad[0]' <<<"$res")" == false ]] && jq -r '.source_after_bad[1]' <<<"$res" | grep -q 'no-such-dist-for-the-test' \
+  || fail "a pip_after that failed was not the named reason the source failed: $res"
 [[ "$(jq -r '.source_bad_sha[0]' <<<"$res")" == false ]] && jq -r '.source_bad_sha[1]' <<<"$res" | grep -q 'is not the pinned' || fail "a source with other bytes was unpacked: $res"
 [[ ! -e "$K/opt-src/src-bad/helper.py" ]] || fail "a source whose sha256 failed left its files"
 jq -r '.no_runtime[1]' <<<"$res" | grep -q 'its runtime no-such-runtime is not in the image' || fail "a program whose interpreter the image lacks was linked: $res"
@@ -996,6 +1005,7 @@ u='"url": "https://example.org/t.tar.gz", "sha256": "'"$sha"'"'
 # Data pins its size too: a download stops past it.
 ud='"url": "https://example.org/t.tar.gz", "sha256": "'"$sha"'", "bytes": 9'
 for good in '{'"$e"', "install": {"source": {"version": "1", '"$u"', "entry": "bin/t.py", "run": "python", "pip": ["-r", "requirements.txt"], "skip": ["tests"]}}}' \
+            '{'"$e"', "install": {"source": {"version": "1", '"$u"', "entry": "bin/t.py", "run": "python", "pip": ["x==1"], "pip_after": ["--no-deps", "y @ git+https://example.org/y.git@0123abcd"]}}}' \
             '{'"$e"', "install": {"build": {"version": "1", '"$u"', "bin": "bin/t", "configure": ["--disable-x"], "build_deps": ["gcc"], "apt_deps": ["zlib1g"], "env": {"CFLAGS": "-O2"}}}}' \
             '{'"$e"', "install": {"download": {"version": "1", "arm64": {"url": "https://example.org/t_1_arm64.deb", "sha256": "'"$sha"'", "bin": "/opt/t/bin/t"}}}}' \
             '{'"$e"', "install": {"apt": "x", "build": {"version": "1", '"$u"', "bin": "bin/t", "patches": [{'"$u"'}], "commands": [["make"], ["install", "-D", "t", "{prefix}/bin/t"]]}}}' \
@@ -1008,6 +1018,7 @@ for bad in '{'"$e"', "install": {"source": {"version": "1", '"$u"'}}}' \
            '{'"$e"', "install": {"source": {"version": "1", "url": "http://example.org/t.tar.gz", "sha256": "'"$sha"'", "entry": "t.py"}}}' \
            '{'"$e"', "install": {"source": {"version": "1", '"$u"', "entry": "../t.py"}}}' \
            '{'"$e"', "install": {"source": {"version": "1", '"$u"', "entry": "t.py", "pip": "-r requirements.txt"}}}' \
+           '{'"$e"', "install": {"source": {"version": "1", '"$u"', "entry": "t.py", "pip_after": "--no-deps y"}}}' \
            '{'"$e"', "install": {"source": {"version": "1", '"$u"', "entry": "t.py", "env": {"X": 1}}}}' \
            '{'"$e"', "install": {"build": {'"$u"', "bin": "bin/t"}}}' \
            '{'"$e"', "install": {"build": {"version": "1", '"$u"', "bin": "/usr/bin/t"}}}' \
