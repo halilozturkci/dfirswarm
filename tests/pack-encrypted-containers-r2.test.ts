@@ -4,7 +4,7 @@
  */
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { ROOT, runPy, withCwd } from "./tool-library-harness.ts";
@@ -180,7 +180,7 @@ exit 0
   });
 });
 
-test("archive_probe lists a real file called ?.7z through the installed 7-Zip as itself alone", { skip: REAL_7Z ? false : "no 7z on PATH" }, async () => {
+test("archive_probe lists a real file called ?.7z through the installed 7-Zip as itself alone", { skip: REAL_7Z ? false : "no 7z on PATH" }, async (t) => {
   await withCwd(async (cwd) => {
     const ev = join(cwd, "ev");
     await mkdir(ev, { recursive: true });
@@ -189,6 +189,8 @@ test("archive_probe lists a real file called ?.7z through the installed 7-Zip as
     const sz = (args: string[]) => spawnSync(REAL_7Z!, args, { cwd, stdio: "ignore" });
     sz(["a", "-y", "-psecret1", join(ev, "a.7z"), "enc.txt"]);
     sz(["a", "-y", join(ev, "?.7z"), "plain.txt"]);
+    // Not every 7-Zip build writes an archive under a name with a wildcard in it; where it does not, there is no such file to list.
+    if (!(await stat(join(ev, "?.7z")).then(() => true, () => false)) || !(await stat(join(ev, "a.7z")).then(() => true, () => false))) return t.skip("this 7z did not create the archives");
     const out = answer(await tool(PROBE, cwd, { path: "ev/?.7z" }));
     assert.equal(out.member_count, 1);
     assert.deepEqual(out.members.map((m: Json) => m.name), ["plain.txt"]);
