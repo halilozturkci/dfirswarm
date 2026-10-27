@@ -43,6 +43,7 @@ const FREESPACE = join(TOOLS, "sqlite_freespace", "run.py");
 const MANIFEST = join(TOOLS, "manifest_db", "run.py");
 const PROTOBUF = join(TOOLS, "protobuf_peek", "run.py");
 const AGENT = { AGENT_ID: "s1" };
+const FRAGMENT_STEPS = 1000;      // what sqlite_freespace charges the work budget for every fragment its expression is called on
 const RECOVERY_NAME = "123456-654321-111111-222222-333333-444444-555555-666666";
 
 type Run = { code: number | null; stdout: string; stderr: string };
@@ -777,8 +778,8 @@ test("sqlite_freespace marks a fragment its expression could not be decided on i
 
 /**
  * The real tool, with `timed_search` (the one call that runs the caller's expression) slowed by `argv[4]` seconds for every fragment,
- * and with the work budget replaced by `argv[5]` steps when that is given: an expression that takes time on text of one class and
- * none on text of another, without depending on how fast the machine is.
+ * and with the work budget replaced by `argv[5]` steps and the most the clock skips by `argv[6]` seconds when those are given: an
+ * expression that takes time on text of one class and none on text of another, without depending on how fast the machine is.
  */
 const FREESPACE_SLOW_EXPRESSION = String.raw`
 import importlib.util, os, sys, time
@@ -792,6 +793,8 @@ def slow(pattern, text, seconds):
 fs.timed_search = slow
 if len(sys.argv) > 5 and hasattr(fs, "STEP_BUDGET"):
     fs.STEP_BUDGET = int(sys.argv[5])
+if len(sys.argv) > 6 and hasattr(fs, "EXPRESSION_ALLOWANCE"):
+    fs.EXPRESSION_ALLOWANCE = float(sys.argv[6])
 os.chdir(sys.argv[2])
 os.environ.update(JOB_ID="j-1", OUT=sys.argv[3], SECRET_OUTPUT="1", AGENT_ID="s1")
 os.makedirs(sys.argv[3], exist_ok=True)
@@ -853,17 +856,17 @@ db.close()
       await build(TEXTS, db, kind);
       if (!budget) {
         const probe = await freespace(cwd, db, { min_length: 20 }, "probe");
-        const total = probe.answer.fragments.reduce((n, f) => n + f.characters, 0);
-        budget = Math.floor(total / 2) * 40;      // about half of the fragments fit
+        const total = probe.answer.fragments.reduce((n, f) => n + f.characters * 40 + FRAGMENT_STEPS, 0);
+        budget = Math.floor(total / 2);      // about half of the fragments fit
       }
       const out = join(cwd, `budget-${kind}`);
       const run = await runPySnippet(FREESPACE_SLOW_EXPRESSION, [FREESPACE, cwd, out, "0", String(budget)], { db, write_values: true, contains: pattern, min_length: 20 });
       const answer = body<Free>(run);
       results.push({ answer, rows: await jsonl<Value>(join(out, "sqlite-freespace-values.jsonl")) });
     }
-    // What the visible sizes say: fragments in order, a running total of characters times 40, and everything past the budget is undecided.
+    // What the visible sizes say: fragments in order, a running total of FRAGMENT_STEPS and characters times 40, and everything past the budget is undecided.
     let running = 0;
-    const expected = results[0].answer.fragments.map((f) => { running += f.characters * 40; return running > budget; });
+    const expected = results[0].answer.fragments.map((f) => { running += FRAGMENT_STEPS + f.characters * 40; return running > budget; });
     const overBudget = expected.filter(Boolean).length;
     assert.ok(overBudget > 3 && overBudget < expected.length - 3, `the budget splits the fragments (${overBudget} of ${expected.length})`);
     for (const { answer, rows } of results) {
@@ -2102,7 +2105,7 @@ test("manifest_db does not read a keyed-archive cell above 1 MiB, and says so fo
     assert.equal(rows["Library/c.db"].metadata_status, "ok");
     assert.equal(answer.counts.metadata.too_large, 1);
     assert.equal(answer.status, "partial", "a cell the tool did not read is metadata left out of the answer");
-    assert.match(answer.status_basis ?? "", /the metadata of 1 listed row\(s\) was not read/);
+    assert.match(answer.status_basis ?? "", /the metadata of 1 listed row\(s\) is not in the answer/);
     assert.ok(answer.observations.some((o) => /^1 listed row\(s\) have no readable metadata/.test(o)), answer.observations.join("\n"));
     const base = await baseline(MANIFEST, cwd).catch(() => null);
     const tiny = await measured(MANIFEST, cwd, { path: await backup(cwd, "tinycell", { entries: [{ id: ID_A, path: "Library/a.db" }] }) });
@@ -2125,7 +2128,7 @@ con.commit()
     assert.equal(rows["Library/a.db"].metadata_status, "malformed");
     assert.equal(rows["Library/a.db"].metadata_reason, "the file column is a str, not a blob");
     assert.equal(answer.status, "partial", "a cell the tool could not use is metadata left out of the answer");
-    assert.match(answer.status_basis ?? "", /the metadata of 1 listed row\(s\) was not read \(over the size limit\) or is malformed/);
+    assert.match(answer.status_basis ?? "", /the metadata of 2 listed row\(s\) is not in the answer/, "a NULL cell is metadata left out too");
     assert.equal(rows["Library/b.db"].metadata_status, "absent");
   });
 });
@@ -2394,7 +2397,7 @@ test("the three tools say status_basis, and protobuf_peek says status", async ()
     await build(FREEBLOCK_DB, db, "BASIS-MARKER", "utf-8");
     const free = (await freespace(cwd, db, { min_length: 4 }, "basis")).answer as unknown as { status: string; status_basis: string };
     assert.equal(free.status, "complete");
-    assert.match(free.status_basis, /every page was examined/);
+    assert.match(free.status_basis, /every page was accounted for/);
     const stopped = (await freespace(cwd, db, { min_length: 4, max_seconds: 1e-9 }, "basis2")).answer as unknown as { status: string; status_basis: string };
     assert.equal(stopped.status, "partial");
     assert.match(stopped.status_basis, /the time limit stopped the scan before page 1/);
@@ -2749,5 +2752,387 @@ t.run_main(main)
       assert.doesNotMatch(r.stderr, /Traceback/);
       assert.match(r.stderr, /the reader took nothing for 1 seconds/);
     }
+  });
+});
+
+
+// --- the second review round: a clock that includes the tool's overhead, a statement SQLite does not end, wrong `complete`s ---
+
+/**
+ * A database whose freed pages are overwritten with `abc\x80` repeated: a fragment of three characters every four bytes, 1,024 to a page.
+ * Argv: path, the number of freelist leaf pages to fill (0: all of them).
+ */
+const SHORT_FRAGMENTS_DB = String.raw`
+import sqlite3, struct, sys
+path, fill = sys.argv[1], int(sys.argv[2])
+db = sqlite3.connect(path)
+db.execute("PRAGMA page_size = 4096")
+db.execute("PRAGMA secure_delete = OFF")
+db.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, b BLOB)")
+db.execute("INSERT INTO t VALUES (1, zeroblob(110000))")
+db.commit()
+db.execute("DELETE FROM t")
+db.commit()
+db.close()
+raw = bytearray(open(path, "rb").read())
+size = struct.unpack_from(">H", raw, 16)[0]
+leaves, trunk = [], struct.unpack_from(">I", raw, 32)[0]
+while trunk:
+    base = (trunk - 1) * size
+    following, count = struct.unpack_from(">II", raw, base)
+    leaves += [struct.unpack_from(">I", raw, base + 8 + 4 * i)[0] for i in range(count)]
+    trunk = following
+for leaf in leaves[:fill or len(leaves)]:
+    raw[(leaf - 1) * size:leaf * size] = b"abc\x80" * (size // 4)
+open(path, "wb").write(raw)
+`;
+
+test("sqlite_freespace charges every fragment its expression is called on, so fragments of three characters cannot run past the work budget", async () => {
+  // A fragment of three characters under a cost bound of 1 was 3 steps of a budget of 10^9, which never bound: the calls (2.85 us each against
+  // 0.12 us for the search) ran for as long as there were fragments, with the clock of max_seconds skipping all of it: a run with max_seconds 270
+  // took 327 s against a tool timeout of 300.
+  await withCwd(async (cwd) => {
+    const db = join(cwd, "work", "short.db");
+    await build(SHORT_FRAGMENTS_DB, db, "0");
+    const budget = 3_000_000;
+    const out = join(cwd, "short");
+    const run = await runPySnippet(FREESPACE_SLOW_EXPRESSION, [FREESPACE, cwd, out, "0", String(budget)], { db, write_values: true, contains: "a", min_length: 3, limit: 1 });
+    const answer = body<Free>(run);
+    const rows = await jsonl<Value>(join(out, "sqlite-freespace-values.jsonl"));
+    assert.equal(rows.length, answer.fragment_count);
+    assert.ok(answer.fragment_count > 20000, `${answer.fragment_count} fragments`);
+    assert.ok(rows.every((r) => r.characters === 3));
+    let running = 0;
+    const expected = rows.map((r) => { running += FRAGMENT_STEPS + r.characters; return running > budget; });
+    const decided = expected.filter((late) => !late).length;
+    assert.equal(decided, Math.floor(budget / (FRAGMENT_STEPS + 3)), "the budget is spent at FRAGMENT_STEPS and the characters a fragment");
+    assert.deepEqual(rows.map((r) => r.match === 2), expected);
+    assert.equal(answer.scanned.contains_not_decided, answer.fragment_count - decided);
+    assert.equal(answer.status, "partial");
+  });
+});
+
+test("sqlite_freespace's clock skips at most EXPRESSION_ALLOWANCE for the time its expression takes, whatever the work budget says", async () => {
+  // The whole call of the expression was taken off the clock with no bound but the work budget, which a run of short fragments never reached:
+  // a starved machine, or a slow call, ran for as long as it liked past max_seconds and the manifest's timeout.
+  await withCwd(async (cwd) => {
+    const db = join(cwd, "work", "slow.db");
+    await build(SHORT_FRAGMENTS_DB, db, "2");          // 2,048 fragments; at 5 ms a call, 10 s of expression
+    const out = join(cwd, "slow");
+    const started = Date.now();
+    const run = await runPySnippet(FREESPACE_SLOW_EXPRESSION, [FREESPACE, cwd, out, "0.005", "1000000000000", "0.3"],
+      { db, write_values: true, contains: "a", min_length: 3, max_seconds: 0.5, limit: 1 });
+    const answer = body<Free>(run);
+    assert.equal(answer.status, "partial", answer.status_basis);
+    assert.notEqual(answer.stopped_before_page, null, "the time limit stopped the scan");
+    assert.equal(answer.problem_kinds["time limit"], 1);
+    assert.ok(Date.now() - started < 8000, `took ${Date.now() - started} ms`);
+  });
+});
+
+test("sqlite_freespace finds the runs of a region of thousands of fragments in linear time", async () => {
+  // covered_by summed over every run accepted so far for each candidate: a 64 KiB page of 8,191 fragments took 7.4 s, and the deadline is not read inside.
+  await withCwd(async (cwd) => {
+    const code = String.raw`
+import importlib.util, json, sys, time
+spec = importlib.util.spec_from_file_location("fs", sys.argv[1]); fs = importlib.util.module_from_spec(spec); spec.loader.exec_module(fs)
+region = b"a\0b\0c\0\0\0" * 8191
+patterns = fs.compile_runs(3)
+began = time.perf_counter()
+found, dropped = fs.runs_in(region, patterns, ["utf-16le"], 8)
+print(json.dumps({"found": len(found), "dropped": dropped, "seconds": time.perf_counter() - began}))
+`;
+    const r = await runPySnippet(code, [FREESPACE], null);
+    assert.equal(r.code, 0, r.stderr);
+    const result = JSON.parse(r.stdout) as { found: number; dropped: number; seconds: number };
+    assert.equal(result.found, 8191);
+    assert.ok(result.seconds < 2, `${result.seconds} s for one region`);
+  });
+});
+
+/** Deleted rows whose text is on overflow pages: 40 messages of 14 KB in 4 KiB pages (the freed pages are a freelist trunk and leaves). */
+const BIG_ROWS_DB = String.raw`
+import sqlite3, sys
+path, marker = sys.argv[1:3]
+db = sqlite3.connect(path)
+db.execute("PRAGMA page_size = 4096")
+db.execute("PRAGMA secure_delete = OFF")
+db.execute("CREATE TABLE m (id INTEGER PRIMARY KEY, body TEXT)")
+db.executemany("INSERT INTO m VALUES (?, ?)", [(i, (marker + "-%03d " % i) * 800) for i in range(1, 41)])
+db.commit()
+db.execute("DELETE FROM m")
+db.commit()
+db.close()
+`;
+
+test("sqlite_freespace is not complete when the header's freelist fields are zeroed, and reads the pages it no longer leads to", async () => {
+  // Zeroing bytes 32 to 39 of the header (the freelist's first trunk page and its length) made 120 freed pages `pages_not_btree`, and the answer was
+  // `complete`, "every page was examined", with 12 fragments of 167: eight bytes edited hid the deleted text.
+  await withCwd(async (cwd) => {
+    for (const [name, builder, count] of [["rows", BIG_ROWS_DB, 40], ["leaves", FREELIST_DB, 40]] as const) {
+      const db = join(cwd, "work", `${name}.db`);
+      await build(builder, db, "ZEROED-MARKER");
+      const intact = await freespace(cwd, db, { min_length: 12 }, `${name}-intact`);
+      assert.equal(intact.answer.status, "complete", intact.answer.status_basis);
+      const marked = (rows: Value[]): number => rows.filter((v) => v.value.includes("ZEROED-MARKER")).length;
+      assert.ok(marked(intact.rows) >= count / 2, `${marked(intact.rows)} fragments with the marker`);
+      const bytes = await readFile(db);
+      bytes.fill(0, 32, 40);
+      const zeroed = join(cwd, "work", `${name}-zeroed.db`);
+      await writeFile(zeroed, bytes);
+      const hidden = await freespace(cwd, zeroed, { min_length: 12 }, `${name}-zeroed`);
+      assert.notEqual(hidden.answer.status, "complete", `${name}: ${hidden.answer.status_basis}`);
+      assert.equal(hidden.answer.status, "corrupt");
+      assert.ok((hidden.answer.problem_kinds["pages in no structure"] ?? 0) >= 1, JSON.stringify(hidden.answer.problem_kinds));
+      assert.ok(hidden.answer.scanned.pages_in_no_structure > 0);
+      assert.doesNotMatch(hidden.answer.status_basis ?? "", /every page was/);
+      assert.equal(marked(hidden.rows), marked(intact.rows), `${name}: the deleted text is found without the freelist`);
+      // Only the count zeroed was already corrupt, and stays so.
+      const countOnly = await readFile(db);
+      countOnly.fill(0, 36, 40);
+      await writeFile(join(cwd, "work", `${name}-count.db`), countOnly);
+      assert.equal((await freespace(cwd, join(cwd, "work", `${name}-count.db`), { min_length: 12 }, `${name}-count`)).answer.status, "corrupt");
+    }
+  });
+});
+
+/** A live database whose rows spill onto overflow pages, in tables, indexes and a WITHOUT ROWID table. Argv: path, page size, auto_vacuum. */
+const OVERFLOW_DB = String.raw`
+import sqlite3, sys
+path, page_size, auto_vacuum = sys.argv[1:4]
+db = sqlite3.connect(path)
+db.execute("PRAGMA page_size = " + page_size)
+db.execute("PRAGMA auto_vacuum = " + auto_vacuum)
+db.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, a TEXT, b BLOB)")
+db.execute("CREATE INDEX ta ON t (a)")
+db.execute("CREATE TABLE w (k TEXT PRIMARY KEY, v BLOB) WITHOUT ROWID")
+for i in range(60):
+    db.execute("INSERT INTO t (a, b) VALUES (?, ?)", ("row-%d-" % i + "q" * (200 + 700 * i), bytes([i]) * (3000 * (i % 7))))
+    db.execute("INSERT INTO w VALUES (?, ?)", ("key-%d-" % i + "z" * (50 * i), bytes([i]) * (500 * i)))
+db.commit()
+db.close()
+`;
+
+test("sqlite_freespace accounts for the overflow pages of live rows and is complete, in every page size and with auto-vacuum", async () => {
+  await withCwd(async (cwd) => {
+    for (const [pageSize, vacuum] of [["512", "0"], ["1024", "1"], ["4096", "0"], ["4096", "2"], ["16384", "0"], ["65536", "0"]]) {
+      const db = join(cwd, "work", `live-${pageSize}-${vacuum}.db`);
+      await build(OVERFLOW_DB, db, pageSize, vacuum);
+      const { answer } = await freespace(cwd, db, {}, `live-${pageSize}-${vacuum}`);
+      assert.equal(answer.status, "complete", `${pageSize}/${vacuum}: ${answer.status_basis} ${JSON.stringify(answer.problem_kinds)}`);
+      assert.ok(answer.scanned.overflow_pages > 0, `${pageSize}/${vacuum}: ${JSON.stringify(answer.scanned)}`);
+      assert.equal(answer.scanned.pages_in_no_structure, 0);
+    }
+    // And a table that was dropped without its pages being freed (as a damaged file leaves it) is pages no structure owns.
+    const db = join(cwd, "work", "orphan.db");
+    await build(OVERFLOW_DB, db, "4096", "0");
+    const bytes = await readFile(db);
+    const master = bytes.subarray(100);        // sqlite_master is page 1 after the 100-byte header; make it list no table: zero its cell count
+    master.writeUInt16BE(0, 3);
+    master.writeUInt16BE(4096 - 100, 5);       // the cell content area is empty, as in a database without tables
+    await writeFile(join(cwd, "work", "orphan-schema.db"), bytes);
+    const answer = (await freespace(cwd, join(cwd, "work", "orphan-schema.db"), {}, "orphan")).answer;
+    assert.notEqual(answer.status, "complete");
+    assert.ok(answer.scanned.pages_in_no_structure > 10, JSON.stringify(answer.scanned));
+  });
+});
+
+/** A Manifest.db whose table b-tree is a graph: 19 interior pages of 4 cells that all point at the next page, ending in one leaf (4^18 leaf visits). */
+const DAG_DB = String.raw`
+import os, sqlite3, struct, sys
+dest, fan, levels, ps = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), 512
+def varint(n):
+    out = [n & 0x7f]
+    n >>= 7
+    while n:
+        out.append((n & 0x7f) | 0x80)
+        n >>= 7
+    return bytes(reversed(out))
+os.makedirs(dest, exist_ok=True)
+path = os.path.join(dest, "Manifest.db")
+con = sqlite3.connect(path)
+con.execute("PRAGMA page_size = %d" % ps)
+con.execute("CREATE TABLE Files (fileID TEXT, domain TEXT, relativePath TEXT, flags INTEGER, file BLOB)")
+con.execute("INSERT INTO Files VALUES ('0123456789abcdef0123456789abcdef01234567', 'HomeDomain', 'Library/x', 1, NULL)")
+con.commit()
+con.close()
+data = bytearray(open(path, "rb").read())
+leaf = bytearray(data[ps:2 * ps])
+leaf_no = levels + 2
+pages = []
+for i in range(levels):
+    child = 2 + i + 1 if i < levels - 1 else leaf_no
+    page = bytearray(ps)
+    page[0] = 5
+    content, pointers = ps, []
+    for j in range(fan):
+        cell = struct.pack(">I", child) + varint(j + 1)
+        content -= len(cell)
+        page[content:content + len(cell)] = cell
+        pointers.append(content)
+    struct.pack_into(">H", page, 3, fan)
+    struct.pack_into(">H", page, 5, content)
+    struct.pack_into(">I", page, 8, child)
+    for j, pointer in enumerate(pointers):
+        struct.pack_into(">H", page, 12 + 2 * j, pointer)
+    pages.append(page)
+out = bytearray(data[:ps])
+for page in pages:
+    out += page
+out += leaf
+struct.pack_into(">I", out, 28, leaf_no)
+struct.pack_into(">I", out, 24, struct.unpack_from(">I", out, 92)[0])
+open(path, "wb").write(out)
+`;
+
+/** The tool run for at most `killMs`, with a signal sent after `after` ms when one is given. `killed` says the harness had to end it. */
+async function guarded(script: string, cwd: string, args: unknown, killMs: number, signal?: { name: NodeJS.Signals; after: number }): Promise<Run & { killed: boolean; ms: number }> {
+  return new Promise((resolve, reject) => {
+    const began = Date.now();
+    const child = spawn("python3", [script], { cwd, env: { ...process.env, ...AGENT } });
+    const out: Buffer[] = [], err: Buffer[] = [];
+    let killed = false;
+    const guard = setTimeout(() => { killed = true; child.kill("SIGKILL"); }, killMs);
+    if (signal) setTimeout(() => child.kill(signal.name), signal.after);
+    child.stdout.on("data", (c: Buffer) => out.push(c));
+    child.stderr.on("data", (c: Buffer) => err.push(c));
+    child.on("error", reject);
+    child.on("close", (code) => {
+      clearTimeout(guard);
+      resolve({ code, killed, ms: Date.now() - began, stdout: Buffer.concat(out).toString("utf8"), stderr: Buffer.concat(err).toString("utf8") });
+    });
+    child.stdin.on("error", () => {});
+    child.stdin.end(JSON.stringify(args));
+  });
+}
+
+test("manifest_db ends a statement SQLite will not end: a table b-tree that points at itself, at max_seconds and on a stop signal", async () => {
+  // `SELECT count(*) FROM Files` ran before the deadline loop with no limit: a 10 KB Manifest.db hung the tool for ever, and SIGTERM did nothing
+  // (Python runs its handler only when the C call returns).
+  await withCwd(async (cwd) => {
+    const dir = join(cwd, "work", "dag");
+    await build(DAG_DB, dir, "4", "19");
+    const r = await guarded(MANIFEST, cwd, { path: dir, max_seconds: 2 }, 40000);
+    assert.equal(r.killed, false, "the tool had to be killed after 40 s");
+    assert.equal(r.code, 0, r.stderr + r.stdout);
+    const answer = JSON.parse(r.stdout) as Manifest;
+    assert.equal(answer.status, "partial");
+    assert.notEqual(answer.stopped_at_row, null);
+    assert.equal(answer.files_in_manifest, null, "the count was not finished and is not made up");
+    assert.ok(answer.observations.some((o) => /were not all counted in the time given to the count/.test(o)), answer.observations.join("\n"));
+    assert.ok(answer.observations.some((o) => /max_seconds \(2\) passed after \d+ rows/.test(o)), answer.observations.join("\n"));
+    assert.ok(r.ms < 20000, `${r.ms} ms`);
+    // A stop signal while SQLite runs: one JSON, exit 128 + 15.
+    const s = await guarded(MANIFEST, cwd, { path: dir, max_seconds: 120 }, 40000, { name: "SIGTERM", after: 1500 });
+    assert.equal(s.killed, false, "SIGTERM was not answered");
+    assert.equal(s.code, 143, s.stderr + s.stdout);
+    const stopped = JSON.parse(s.stdout) as Record<string, unknown>;
+    assert.equal(stopped.interrupted, "SIGTERM");
+    assert.equal(stopped.status, "failed");
+    assert.doesNotMatch(s.stderr, /Traceback/);
+  });
+});
+
+test("manifest_db reads a name column to its first 8,193 characters, so a cell of tens of megabytes does not become a string of that size", async () => {
+  // The whole TEXT cell was read into Python, decoded, and kept (the domain as a key): a 50 MB path was 187 MB resident, a 200 MB one 659 MB.
+  await withCwd(async (cwd) => {
+    const dir = await backup(cwd, "hugenames", { entries: [{ id: ID_A, path: "Library/a.db" }, { id: ID_B, path: "x" }, { id: ID_C, path: "Library/c.db", domain: "AppDomain-x" }] });
+    const make = String.raw`
+import sqlite3, sys
+con = sqlite3.connect(sys.argv[1])
+con.execute("UPDATE Files SET relativePath = ? WHERE fileID = ?", ("a" * 24000000, sys.argv[2]))
+con.execute("UPDATE Files SET domain = ? WHERE fileID = ?", ("d" * 24000000, sys.argv[2]))
+con.execute("UPDATE Files SET domain = ? WHERE fileID = ?", ("d" * 24000001, sys.argv[3]))
+con.commit()
+`;
+    assert.equal((await runPySnippet(make, [join(dir, "Manifest.db"), ID_B, ID_C], null)).code, 0);
+    const run = await measured(MANIFEST, cwd, { path: dir });
+    const answer = body<Manifest>(run.run);
+    const tiny = await measured(MANIFEST, cwd, { path: await backup(cwd, "tinynames", { entries: [{ id: ID_A, path: "Library/a.db" }] }) });
+    assert.ok(run.traced - tiny.traced < 2 * 1024 * 1024, `${run.traced - tiny.traced} bytes more allocated by Python than for a small backup, for two cells of 24 MB`);
+    const rows = Object.fromEntries(answer.entries.map((e) => [e.file_id, e]));
+    assert.equal(rows[ID_B].relative_path, "<name too long to judge withheld>");
+    assert.equal(rows[ID_B].domain, "<name too long to judge withheld>");
+    assert.equal(rows[ID_C].domain, "<name too long to judge withheld>");
+    assert.equal(rows[ID_A].relative_path, "Library/a.db");
+    // Two domains of different lengths are two, as they were when they were read whole.
+    assert.equal((answer as unknown as { domain_count: number }).domain_count, 3);
+  });
+});
+
+test("manifest_db does not read a plain plist of more than 4 MiB, and says so", async () => {
+  // Three nested-array plists of 28 MB were 1.1 GB resident and 8 s: the plain plists of a backup are a few dozen kilobytes.
+  await withCwd(async (cwd) => {
+    const dir = await backup(cwd, "bigplist", { entries: many(2), info_extra: { "Padding": "p".repeat(5 << 20) } });
+    const answer = (await manifest(cwd, dir)).answer;
+    assert.equal(answer.info_plist.status, "too_large");
+    assert.match(String(answer.info_plist.reason), /over 4194304/);
+    assert.equal(answer.manifest_plist.status, "ok");
+    assert.equal(answer.entry_count, 2);
+  });
+});
+
+test("manifest_db says the working copy holds every name, because it does", async () => {
+  // paths_note said a recovery-password-shaped component was withheld "from every path in this answer and in the files it names", and the working copy
+  // it names beside a -wal is a byte copy of Manifest.db.
+  await withCwd(async (cwd) => {
+    const withWal = await backup(cwd, "notecopy", { entries: [{ id: ID_A, path: `Library/${RECOVERY_NAME}/a.db` }], wal: many(2, (i) => ({ id: (i + 100).toString(16).padStart(40, "0") })) });
+    const answer = (await manifest(cwd, withWal)).answer as unknown as { paths_withheld: number; paths_note: string; manifest_db_file: { working_copy?: string } };
+    assert.equal(answer.paths_withheld, 1);
+    assert.ok(answer.manifest_db_file.working_copy);
+    assert.match(answer.paths_note, /except the working copy named under manifest_db_file\.working_copy, a byte copy of Manifest\.db that holds every name as the database has it|the one exception is the working copy named under manifest_db_file\.working_copy, a byte copy of Manifest\.db/);
+    const plain = await backup(cwd, "notenocopy", { entries: [{ id: ID_A, path: `Library/${RECOVERY_NAME}/a.db` }] });
+    const without = (await manifest(cwd, plain)).answer as unknown as { paths_note: string };
+    assert.doesNotMatch(without.paths_note, /working copy/);
+  });
+});
+
+test("manifest_db is partial for every row whose metadata is not in the answer, not only the two states it listed", async () => {
+  // not_keyed_archive and absent rows were listed with their path and blob state only, and the status stayed complete.
+  await withCwd(async (cwd) => {
+    const dir = await backup(cwd, "nokeyed", { entries: many(3) });
+    const make = String.raw`
+import plistlib, sqlite3, sys
+con = sqlite3.connect(sys.argv[1])
+con.execute("UPDATE Files SET file = ? WHERE fileID = ?", (plistlib.dumps({"just": "a plist"}), sys.argv[2]))
+con.commit()
+`;
+    assert.equal((await runPySnippet(make, [join(dir, "Manifest.db"), many(3)[0].id as string], null)).code, 0);
+    const answer = (await manifest(cwd, dir)).answer;
+    assert.equal(answer.counts.metadata.not_keyed_archive, 1);
+    assert.equal(answer.status, "partial");
+    assert.match(answer.status_basis ?? "", /the metadata of 1 listed row\(s\) is not in the answer/);
+    const absent = await backup(cwd, "absentmeta", { entries: many(3, (i) => (i === 1 ? { nometa: true } : {})) });
+    const a = (await manifest(cwd, absent)).answer;
+    assert.equal(a.counts.metadata.absent, 1);
+    assert.equal(a.status, "partial");
+  });
+});
+
+test("protobuf_peek is partial when bytes lie after the window it parsed whole, however the window ended", async () => {
+  // A window that ended on a field boundary was `complete` with 12,582,912 bytes after it undecoded (the note and next_offset were right, the headline was not).
+  await withCwd(async (cwd) => {
+    const record = Buffer.concat([Buffer.from([0x0a, 0xfd, 0x01]), Buffer.alloc(253)]);        // 256 bytes: field 1, 253 zero bytes
+    const file = join(cwd, "work", "records.pb");
+    await writeFile(file, Buffer.concat(Array.from({ length: (9 << 20) / 256 }, () => record)));    // 9 MiB; the default window is 8 MiB, which ends on a record
+    const whole = (await peek(cwd, { path: "work/records.pb", limit: 3 })).answer as unknown as { status: string; status_basis: string } & Pb;
+    assert.equal(whole.structure.status, "valid");
+    assert.equal(whole.structure.consistent_with_protobuf_wire_format, true, "the window itself is consistent");
+    assert.equal(whole.window.bytes_after_window, 1 << 20);
+    assert.equal(whole.status, "partial", whole.status_basis);
+    assert.match(whole.status_basis, /not the whole input/);
+    assert.match(whole.status_basis, /Bytes after the window are not decoded/);
+    // An aimed window that ends on a record, and one that reaches the end of the file (complete: nothing after it).
+    const aimed = (await peek(cwd, { path: "work/records.pb", offset: 256, length: 4096, limit: 3 })).answer as unknown as { status: string } & Pb;
+    assert.equal(aimed.structure.status, "valid");
+    assert.equal(aimed.status, "partial");
+    const small = join(cwd, "work", "small.pb");
+    await writeFile(small, Buffer.concat([record, record]));
+    const all = (await peek(cwd, { path: "work/small.pb", limit: 3 })).answer as unknown as { status: string } & Pb;
+    assert.equal(all.window.bytes_after_window, 0);
+    assert.equal(all.status, "complete");
+    const tail = (await peek(cwd, { path: "work/small.pb", offset: 256, limit: 3 })).answer as unknown as { status: string } & Pb;
+    assert.equal(tail.window.bytes_after_window, 0);
+    assert.equal(tail.structure.status === "valid" ? tail.status : "complete", "complete");
   });
 });

@@ -66,6 +66,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import struct
 import subprocess
 import sys
@@ -306,10 +307,14 @@ def target_of(value):
 # --- tar watch: begin ----------------------------------------------------------------------------
 # Held byte for byte equal in the four recipes that read a tar (a test compares the copies). The watch
 # follows a tar header by header, apart from the library that lists it, and says what that library does
-# not: whether the end-of-archive block came, whether a header would be refused (a checksum that does not
+# not: whether the end-of-archive blocks came, whether a header would be refused (a checksum that does not
 # match, a number that does not parse), how many members there are, and whether an extended header declares
 # more than the library should be allowed to hold in memory (it reads a GNU long name or a pax header whole).
+# The end of an archive is TWO zero blocks. One zero block with a header after it is not an end: GNU tar and bsdtar
+# warn ("lone zero block") and read on, and so does the listing (the library is opened with ignore_zeros); the watch
+# counts such blocks, and the run is partial for them.
 EXTENDED_HEADER_LIMIT = 16 << 20
+ZERO_BLOCK = b"\0" * 512
 NO_DATA_TYPES = set(b"123456")        # hard link, symbolic link, character and block device, directory, fifo: the size is not followed by data
 
 
@@ -370,7 +375,11 @@ class TarWatch:
         self.acc = bytearray()
         self.position = 0
         self.ended = False
-        self.end_at = None           # where the end-of-archive block starts
+        self.end_at = None           # where the end-of-archive blocks start
+        self.zero_at = None          # a zero block just met, the first of the two that end the archive unless a header follows
+        self.lone_zeros = 0          # zero blocks that a header followed: not an end
+        self.lone_first = None       # where the first of them is
+        self.tail_at = None          # the first byte that is not zero after the end-of-archive blocks
         self.violation = None        # the size an extended header declares, over the limit
         self.violation_at = None     # where that header starts
         self.bad_at = None           # where a header starts that the tar library would refuse
@@ -418,6 +427,10 @@ class TarWatch:
                 self.header(bytes(self.block))
                 self.block.clear()
         if self.stopped():
+            if self.ended and self.tail_at is None and i < n:
+                rest = data[i:]
+                if rest.count(0) != len(rest):
+                    self.tail_at = self.position + len(rest) - len(rest.lstrip(b"\0"))
             self.position += n - i
 
     def walk(self, fh, size, until=None):
@@ -449,6 +462,22 @@ class TarWatch:
             self.position += 512
             self.header(block)
 
+    def look_past_end(self, fh, size):
+        """For a tar on disk whose end blocks came: where the first byte that is not zero lies after them (padding to a record is zeros)."""
+        if not self.ended or self.tail_at is not None:
+            return
+        at = self.end_at + 1024
+        while at < size:
+            fh.seek(at)
+            chunk = fh.read(min(1 << 20, size - at))
+            if not chunk:
+                return
+            data = chunk.lstrip(b"\0")
+            if data:
+                self.tail_at = at + len(chunk) - len(data)
+                return
+            at += len(chunk)
+
     def finish_pax(self):
         size = pax_size(bytes(self.acc))
         if self.collecting in (ord("x"), ord("X")):
@@ -468,9 +497,17 @@ class TarWatch:
                 self.in_ext = False
                 self.skip = self.after_ext
             return
-        if block == b"\0" * 512:
-            self.ended, self.end_at = True, start
+        if block == ZERO_BLOCK:
+            if self.zero_at is None:
+                self.zero_at = start
+            else:
+                self.ended, self.end_at = True, self.zero_at
             return
+        if self.zero_at is not None:
+            self.lone_zeros += 1
+            if self.lone_first is None:
+                self.lone_first = self.zero_at
+            self.zero_at = None
         size = tar_header(block)
         if size is None or size < 0:
             self.bad_at = start
@@ -508,7 +545,7 @@ class TarWatch:
 def tar_verdict(watch, listed, cut_short=False):
     """What the watch saw, set against the `listed` members the library returned: (tar_end, limits, errors).
 
-    `cut_short`: the bytes were stopped by a budget, so neither the end block nor the count is judged.
+    `cut_short`: the bytes were stopped by a budget, so neither the end blocks nor the count is judged.
     """
     limits, errors = [], []
     if watch.violation is not None:
@@ -525,7 +562,18 @@ def tar_verdict(watch, listed, cut_short=False):
         tar_end = "not_reached"
     else:
         tar_end = "missing"
-        errors.append("the tar ends without its end-of-archive block (%d bytes read): the archive is cut short or damaged, and the listing is what came before the cut" % watch.position)
+        if watch.zero_at is not None:
+            errors.append("the tar ends after one zero block at offset %d, and an archive ends with two (%d bytes read): it is cut short or damaged, and the listing is what came before"
+                          % (watch.zero_at, watch.position))
+        else:
+            errors.append("the tar ends without its end-of-archive blocks (%d bytes read): the archive is cut short or damaged, and the listing is what came before the cut" % watch.position)
+    if watch.lone_zeros:
+        errors.append("%d lone zero block(s) inside the tar, the first at offset %d: an archive ends with two zero blocks, and this one goes on after each. GNU tar and bsdtar "
+                      "warn and read on, and so does this listing, but the archive was written or damaged in a way a clean one is not"
+                      % (watch.lone_zeros, watch.lone_first))
+    if watch.tail_at is not None and not cut_short:
+        errors.append("data follows the tar's end-of-archive blocks (the first byte that is not zero is at offset %d of the tar): tar stops at the blocks and so does this listing, "
+                      "so an archive appended to this one, or anything else after them, is not listed" % watch.tail_at)
     if not cut_short and listed != watch.members:
         errors.append("the tar reader listed %d members and a header-by-header walk counted %d: the two disagree, so the listing may be missing members" % (listed, watch.members))
     return tar_end, limits, errors
@@ -535,7 +583,10 @@ def tar_verdict(watch, listed, cut_short=False):
 # --- tar listing: begin --------------------------------------------------------------------------
 # Held byte for byte equal in the three recipes that open a tar by its path (a test compares the copies).
 # A plain tar is read through Guarded and a gzip, bzip2 or xz one through Decoded; both keep the watch
-# just ahead of the library and give it an end of data where the watch stops it.
+# just ahead of the library and give it an end of data where the watch stops it. The library is opened with
+# ignore_zeros, so that a zero block with a header after it is read past, as GNU tar does (the watch has already
+# cut the data at the two zero blocks that end the archive, so nothing past the end is read). Decoded has an
+# output budget: a compressed tar that expands past it stops the listing, and the run says partial.
 def compression_of(head):
     if head[:2] == b"\x1f\x8b":
         return "gz"
@@ -584,6 +635,7 @@ class Guarded(io.RawIOBase):
     def finish(self):
         """The rest of the headers, so that the watch has its whole answer."""
         self.watch.walk(self.walker, self.size)
+        self.watch.look_past_end(self.walker, self.size)
 
 
 class Decoded(io.RawIOBase):
@@ -592,8 +644,11 @@ class Decoded(io.RawIOBase):
 
     PIECE = 1 << 20
 
-    def __init__(self, source, kind, watch):
+    def __init__(self, source, kind, watch, budget=None):
         self.source, self.kind, self.watch = source, kind, watch
+        self.budget = budget          # at most this many decoded bytes, or None
+        self.produced = 0
+        self.exceeded = False         # the stream held more than the budget
         self.errors = (zlib.error, ValueError, OSError)
         if kind == "gz":
             self.decoder = zlib.decompressobj(31)
@@ -614,6 +669,20 @@ class Decoded(io.RawIOBase):
         return True
 
     def piece(self):
+        """The next decoded piece, or None at the end of the stream or of the budget."""
+        if self.exceeded:
+            return None
+        out = self._piece()
+        if out is None or self.budget is None:
+            return out
+        room = self.budget - self.produced
+        if len(out) > room:
+            self.exceeded = True
+            out = out[:max(room, 0)]
+        self.produced += len(out)
+        return out
+
+    def _piece(self):
         d = self.decoder
         if self.kind == "gz":
             if not self.pending:
@@ -694,7 +763,7 @@ class TarList:
     would refuse; `finish()` lets the watch follow the rest, and `watch` then says whether the end block came.
     """
 
-    def __init__(self, path):
+    def __init__(self, path, budget=None):
         self.watch = TarWatch()
         self.handle = open(path, "rb")
         self.walker = None
@@ -707,10 +776,12 @@ class TarList:
                 self.source = Guarded(self.handle, self.walker, os.fstat(self.handle.fileno()).st_size, self.watch)
                 mode = "r:"
             else:
-                self.source = Decoded(self.handle, kind, self.watch)
+                self.source = Decoded(self.handle, kind, self.watch, budget)
                 mode = "r|"
                 self.source = io.BufferedReader(self.source)
-            self.archive = tarfile.open(fileobj=self.source, mode=mode, encoding="utf-8", errors="surrogateescape")
+            self.archive = tarfile.open(fileobj=self.source, mode=mode, encoding="utf-8", errors="surrogateescape", ignore_zeros=True)
+            if (self.watch.ended and self.watch.end_at == 0) or self.watch.zero_at == 0:
+                raise tarfile.ReadError("empty file")        # only zero blocks: the library, which skips them, would list nothing and say nothing
         except tarfile.TarError:
             if self.watch.violation is not None:
                 self.archive = NoMembers()
@@ -726,6 +797,11 @@ class TarList:
     def finish(self):
         source = self.source.raw if isinstance(self.source, io.BufferedReader) else self.source
         source.finish()
+
+    def exceeded(self):
+        """Whether a compressed tar held more than the budget (the listing stopped there)."""
+        source = self.source.raw if isinstance(self.source, io.BufferedReader) else self.source
+        return bool(getattr(source, "exceeded", False))
 
     def trouble(self):
         """For a compressed tar, what is wrong with the stream itself (cut before its end marker, a checksum that does not hold); otherwise None."""
@@ -861,7 +937,49 @@ def child_files(directory):
     return count
 
 
-def run(path, kind, out):
+LEAPP_SECONDS = 14100      # recipe.json limits.seconds (14400) less the time to write the account of the run
+STOP_SIGNALS = [getattr(signal, n) for n in ("SIGTERM", "SIGINT", "SIGHUP") if hasattr(signal, n)]
+
+
+def end_group(child):
+    """End the program and everything it started (it runs in a process group of its own): a request to stop, then, after ten seconds, a kill."""
+    for number in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(child.pid, number)
+        except (ProcessLookupError, PermissionError):
+            return
+        try:
+            child.wait(timeout=10)
+            return
+        except subprocess.TimeoutExpired:
+            continue
+
+
+def run_program(command, stdout, stderr, cwd, env, seconds):
+    """(exit code, whether the time ran out) of the program, run in a process group of its own. At `seconds` the group is ended and what the
+    program wrote stays. A stop signal ends the group too and then the recipe (exit 128 plus the signal): the account written before the program
+    started already says partial, and nothing is left running after the recipe."""
+    child = subprocess.Popen(command, stdout=stdout, stderr=stderr, cwd=cwd, env=env, start_new_session=True)
+
+    def stop(signum, frame):
+        for number in STOP_SIGNALS:
+            signal.signal(number, signal.SIG_IGN)
+        end_group(child)
+        raise SystemExit(128 + signum)
+
+    before = {number: signal.signal(number, stop) for number in STOP_SIGNALS}
+    try:
+        try:
+            return child.wait(timeout=seconds), False
+        except subprocess.TimeoutExpired:
+            end_group(child)
+            return child.wait(), True
+    finally:
+        for number, handler in before.items():
+            signal.signal(number, handler)
+
+
+def run(path, kind, out, seconds=LEAPP_SECONDS):
     out = os.path.abspath(out)       # the program runs from a directory under out: nothing here may be relative
     report = os.path.join(out, "aleapp")
     if os.path.lexists(report) or os.path.lexists(os.path.join(out, "coverage.json")):
@@ -885,7 +1003,7 @@ def run(path, kind, out):
         os.makedirs(directory, exist_ok=True)
     env = dict(os.environ, TMPDIR=temp)
     with open(os.path.join(out, "aleapp.stdout"), "wb") as so, open(os.path.join(out, "aleapp.stderr"), "wb") as se:
-        rc = subprocess.run([prog, "-t", kind, "-i", path, "-o", scratch], stdout=so, stderr=se, cwd=cwd, env=env).returncode
+        rc, timed_out = run_program([prog, "-t", kind, "-i", path, "-o", scratch], so, se, cwd, env, seconds)
     made = [d for d in sorted(os.listdir(scratch)) if os.path.isdir(os.path.join(scratch, d)) and not os.path.islink(os.path.join(scratch, d))]
     layout, siblings = "whole output directory", False
     if len(made) == 1:
@@ -936,6 +1054,8 @@ def run(path, kind, out):
                     "report_layout": layout, **({"files_beside_the_report": "aleapp-run-files/"} if siblings else {}),
                     **({"files_left_in_program_directories": kept} if kept else {})}
     errors = [] if rc == 0 else ["ALEAPP exited %d; its output is kept whole in aleapp.stdout and aleapp.stderr" % rc]
+    if timed_out:
+        errors = ["ALEAPP did not finish in the %g seconds this recipe gives it: it was ended with everything it started, and what it wrote is kept whole in aleapp.stdout, aleapp.stderr and the report folder" % seconds]
     problems = []
     named = lambda status: [m["artefact"] for m in modules if m["status"] == status][:5]
     if counts["errored"]:
@@ -960,7 +1080,7 @@ def run(path, kind, out):
     if rc == 0 and tsvs and not recognised:
         problems.append("the log has no module lines this recipe reads: per-module outcome is unknown for all of them")
     gated = counts["unsupported"]
-    if rc == 0 and tsvs and not problems:
+    if rc == 0 and tsvs and not problems and not timed_out:
         write_coverage(out, "complete", "ALEAPP exited 0 over the %s and its log accounts for %d module(s): %d completed, %d with no record (no source file or no data)%s; %d TSV report(s)"
                        % (kind, len(modules), counts["completed"], counts["no_record"],
                           ", %d that do not take this operating-system version (see modules.tsv)" % gated if gated else "", tsvs), errors, modules=receipt_json)
@@ -970,7 +1090,7 @@ def run(path, kind, out):
                        (errors + problems) or ["ALEAPP wrote no TSV report"], modules=receipt_json)
     else:
         write_coverage(out, "failed", "nothing parsed", (errors + problems) or ["ALEAPP wrote no report"], modules=receipt_json)
-    return 0 if rc == 0 else 1
+    return 0 if rc == 0 and not timed_out else 1
 
 
 def main():
@@ -980,6 +1100,7 @@ def main():
     parser.add_argument("--out")
     # The census asks every detect step with --probe-out DIR; detect keeps nothing there.
     parser.add_argument("--probe-out")
+    parser.add_argument("--max-seconds", type=float, default=LEAPP_SECONDS)
     args = parser.parse_args()
     try:
         _, path = target_of(args.target)
@@ -996,7 +1117,7 @@ def main():
     if not applies:
         print(json.dumps({"ok": False, "status": "unsupported", "why": why}))
         return 2
-    rc = run(path, kind, args.out)
+    rc = run(path, kind, args.out, args.max_seconds)
     if rc == 2:
         return rc
     status = json.load(open(os.path.join(os.path.abspath(args.out), "coverage.json"), encoding="utf-8")).get("status")

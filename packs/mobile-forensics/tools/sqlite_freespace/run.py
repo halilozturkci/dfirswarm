@@ -46,12 +46,15 @@ which no expression changes.
 WHAT THE RUN TIME AND THE STATUS DO NOT SAY. An accepted expression costs a little more on text its first element matches than
 on text it does not, so the time `contains` takes still follows the hidden text (measured: `\\d{250}x` on 22 fragments of 60,000
 characters took 1.4 s of CPU on digits and 0.16 s on letters). That time is not allowed to reach the answer: the expression is given
-a WORK BUDGET (STEP_BUDGET steps, fewer for a short max_seconds, one step being one character of a fragment times the expression's cost bound, both of which the
-answer shows), a fragment that would exceed it is marked `match` 2 and counted, and the clock of `max_seconds` does not run while
-the expression does. So `status`, `pages_not_reached` and `contains_not_decided` are functions of the visible sizes, the expression
+a WORK BUDGET (STEP_BUDGET steps, fewer for a short max_seconds, one step being one character of a fragment times the expression's cost bound,
+and FRAGMENT_STEPS more for every fragment it is called on, whatever its length: calling it costs time on a fragment of three characters
+too; both are sizes the answer shows), a fragment that would exceed it is marked `match` 2 and counted, and the clock of `max_seconds` does
+not run while the expression does. So `status`, `pages_not_reached` and `contains_not_decided` are functions of the visible sizes, the expression
 and `max_seconds` against the tool's own work, never of the characters of the hidden text. What remains is the duration of the job
-itself, which a requester can see: it follows the class composition of the hidden text, by at most the time STEP_BUDGET takes
-(about 7 s).
+itself, which a requester can see: it follows the class composition of the hidden text, by at most the time the clock skips. That is
+bounded: the work budget bounds it where the machine is as fast as measured (about 7 s of CPU, 10.5 s on a loaded one), and
+EXPRESSION_ALLOWANCE bounds it where it is not, whatever the budget says: past it the clock runs again. A run with `contains` therefore
+ends at max_seconds plus at most that allowance plus the time to write the answer, and the manifest's timeout leaves room for it.
 
 The file is read-only to this tool: it is opened for reading, as bytes, and never written.
 
@@ -75,6 +78,7 @@ import tempfile
 import time
 import unicodedata
 import warnings
+from array import array
 from pathlib import Path
 
 try:  # Python 3.11 and later; the module was sre_parse before
@@ -583,16 +587,25 @@ MAGIC = b"SQLite format 3\x00"
 LOCK_BYTE_OFFSET = 1 << 30
 DEFAULT_LIMIT = 200
 DEFAULT_MAX_SECONDS = 240
-MAX_SECONDS_CAP = 270       # manifest.json timeout_seconds (300) less the time to write the answer
+MAX_SECONDS_CAP = 270       # manifest.json timeout_seconds (300) less EXPRESSION_ALLOWANCE and the time to write the answer
 INLINE_BYTES = 1 << 20
 REGEX_SECONDS = 2.0         # one fragment: a pattern inside the cost bound below never gets near it (0.12 s at most on a whole page)
-# The work `contains` may do in one run, in steps: a fragment of n characters under an expression whose cost bound is c is n*c steps
-# (the sizes the answer shows). A fragment that would take the total over it is not matched: it is marked 2 and counted under
-# contains_not_decided, the same on any text of the same sizes. The cost bound is an upper bound: the slowest accepted expression measured
-# 7.3 ns a step, so the budget is about 7 s of CPU at the most on this kind of machine. A short max_seconds lowers it (STEPS_PER_SECOND of
-# max_seconds, at 20 ns a step), so that the run stays about as long as it was asked to be.
+# The work `contains` may do in one run, in steps: a fragment of n characters under an expression whose cost bound is c is
+# FRAGMENT_STEPS + n*c steps (the sizes the answer shows). A fragment that would take the total over it is not matched: it is marked 2
+# and counted under contains_not_decided, the same on any text of the same sizes. The cost bound is an upper bound: the slowest accepted
+# expression measured 7.3 ns a step, so the budget is about 7 s of CPU at the most on this kind of machine (10.5 s on a loaded one).
+# FRAGMENT_STEPS is what calling the expression costs on a fragment of any length (the timer around it, the call, the search: 2.85 us
+# measured, against 0.12 us for the bare search of a short fragment), 2.85 ns a step at 1,000 steps. Without it the characters of a
+# fragment of three characters were 3 steps, the budget never bound, and a run of such fragments with max_seconds 270 took 327 s, the
+# clock having skipped all the time of the calls. A short max_seconds lowers the budget (STEPS_PER_SECOND of max_seconds, at 20 ns a step), so that the run stays
+# about as long as it was asked to be.
 STEP_BUDGET = 1_000_000_000
 STEPS_PER_SECOND = 50_000_000
+FRAGMENT_STEPS = 1000
+# The most the clock of max_seconds skips in all, whatever the work budget says and however slow the machine: a starved machine takes
+# longer per step than the budget assumes, and the tool must still answer before the manifest's timeout (MAX_SECONDS_CAP is that
+# timeout less this and the time to write the answer). Past it the clock runs while the expression does.
+EXPRESSION_ALLOWANCE = 12.0
 # `contains` runs only on text nobody can see, so how long it takes must not depend on that text. Python's re backtracks, and
 # a pattern with nested repeats, a lookahead or a back reference can be made to run for seconds on a fragment that holds a
 # guess and for microseconds on one that does not: one bit per call. Only patterns of a cost the tool can bound are accepted
@@ -763,9 +776,19 @@ def decode(raw, encoding):
     return raw.decode("utf-16-le" if encoding == "utf-16le" else "utf-16-be", "replace")
 
 
-def covered_by(accepted, start, end):
-    inside = sum(max(0, min(end, e) - max(start, s)) for s, e in accepted)
-    return inside * 2 >= end - start
+ONE_MORE = bytes((i + 1) & 0xFF for i in range(256))
+
+
+def take(taken, start, end):
+    """Count the bytes of [start, end) as taken once more. `taken` holds, for every byte of the region, how many accepted runs
+    contain it: runs of one encoding at one parity never overlap, so a byte is in at most one run per parity and one UTF-8 run."""
+    taken[start:end] = taken[start:end].translate(ONE_MORE)
+
+
+def covered_by(taken, start, end):
+    """Whether half or more of the bytes of [start, end) are in runs already accepted (a byte in two of them counts twice, as it did
+    when the runs were a list). A sum over a slice, not over every run accepted so far: a region of 8,191 fragments cost 7.4 s."""
+    return sum(taken[start:end]) * 2 >= end - start
 
 
 def runs_in(region, patterns, encodings, wide_minimum):
@@ -776,10 +799,10 @@ def runs_in(region, patterns, encodings, wide_minimum):
     of its bytes are already in a run taken: printable ASCII read at the wrong parity is a run of wide
     units, and a UTF-8 text read as UTF-16 is the same.
     """
-    found, accepted = [], []
+    found, taken = [], bytearray(len(region))
     for run in patterns["utf-8"].finditer(region):
         found.append((run.start(), run.end(), "utf-8"))
-        accepted.append((run.start(), run.end()))
+        take(taken, run.start(), run.end())
     narrow, wide = [], []
     for encoding in encodings:
         for parity in (0, 1):
@@ -794,13 +817,123 @@ def runs_in(region, patterns, encodings, wide_minimum):
                     narrow.append(candidate)
     dropped = 0
     for candidate in sorted(narrow) + sorted(wide):
-        if covered_by(accepted, candidate[0], candidate[1]):
+        if covered_by(taken, candidate[0], candidate[1]):
             dropped += 1
             continue
         found.append(candidate)
-        accepted.append((candidate[0], candidate[1]))
+        take(taken, candidate[0], candidate[1])
     found.sort(key=lambda f: (f[0], f[2]))
     return found, dropped
+
+
+def varint(data, at, end):
+    """(value, length) of the SQLite varint at `at`, or (None, 0) when it runs past `end`."""
+    value = 0
+    for i in range(9):
+        if at + i >= end:
+            return None, 0
+        byte = data[at + i]
+        if i == 8:
+            return (value << 8) | byte, 9
+        value = (value << 7) | (byte & 0x7F)
+        if not byte & 0x80:
+            return value, i + 1
+    return None, 0
+
+
+def overflow_of(page, offset, kind, cells, usable):
+    """([(first overflow page, pages in its chain)], cells that could not be read) for the cells of one b-tree page whose payload does
+    not fit on it (the file format's "cell payload overflow pages"). A table leaf holds up to X = U-35 bytes of a payload of P bytes,
+    an index page up to X = ((U-12)*64/255)-23; past X the cell keeps K = M+((P-M)%(U-4)) bytes if that is at most X, else M =
+    ((U-12)*32/255)-23, and ends with the number of the first overflow page. A table interior page holds no payload.
+    Most cells are told apart by their first byte, so a page of small rows costs one comparison a cell."""
+    if kind == 5 or not cells:
+        return [], 0
+    maximum = usable - 35 if kind == 13 else (usable - 12) * 64 // 255 - 23
+    minimum = (usable - 12) * 32 // 255 - 23
+    skip = 4 if kind == 2 else 0                    # an index interior cell starts with its left child's page number
+    spills, unreadable = [], 0
+    for cell in struct.unpack_from(">%dH" % cells, page, offset + (12 if kind in (2, 5) else 8)):
+        at = cell + skip
+        if at >= usable:
+            unreadable += 1
+            continue
+        if page[at] < 0x80 and page[at] <= maximum:
+            continue
+        size, length = varint(page, at, usable)
+        if size is None:
+            unreadable += 1
+            continue
+        if size <= maximum:
+            continue
+        at += length
+        if kind == 13:                              # the row id follows the payload size in a table leaf
+            _, length = varint(page, at, usable)
+            if not length:
+                unreadable += 1
+                continue
+            at += length
+        local = minimum + (size - minimum) % (usable - 4)
+        if local > maximum:
+            local = minimum
+        at += local
+        if at + 4 > usable:
+            unreadable += 1
+            continue
+        spills.append((int.from_bytes(page[at:at + 4], "big"), -(-(size - local) // (usable - 4))))
+    return spills, unreadable
+
+
+SERIAL_SIZES = {0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 6, 6: 8, 7: 8, 8: 0, 9: 0}
+
+
+def schema_root(page, at, usable):
+    """The `rootpage` of the sqlite_master row whose cell starts at `at` in a table leaf (0 for a view, a trigger or a virtual table), or
+    None when the record cannot be read as far as that column (it is the fourth: type, name, tbl_name, rootpage, sql)."""
+    size, length = varint(page, at, usable)
+    if size is None:
+        return None
+    at += length
+    _, length = varint(page, at, usable)
+    if not length:
+        return None
+    at += length
+    if size > usable - 35:                       # only the part of the record that is on the page is here
+        minimum = (usable - 12) * 32 // 255 - 23
+        local = minimum + (size - minimum) % (usable - 4)
+        size = local if local <= usable - 35 else minimum
+    end = min(at + size, usable)
+    header, length = varint(page, at, end)
+    if header is None or header > size:
+        return None
+    types, position = [], at + length
+    while position < at + header and len(types) < 4:
+        kind, length = varint(page, position, end)
+        if kind is None:
+            return None
+        types.append(kind)
+        position += length
+    if len(types) < 4:
+        return None
+
+    def width(kind):
+        if kind in SERIAL_SIZES:
+            return SERIAL_SIZES[kind]
+        return None if kind < 12 else (kind - 12) // 2 if kind % 2 == 0 else (kind - 13) // 2
+
+    body = at + header
+    for kind in types[:3]:
+        if width(kind) is None:
+            return None
+        body += width(kind)
+    kind = types[3]
+    if kind in (0, 8):
+        return 0
+    if kind == 9:
+        return 1
+    if kind not in (1, 2, 3, 4, 5, 6) or body + width(kind) > end:
+        return None
+    return int.from_bytes(page[body:body + width(kind)], "big", signed=True)
 
 
 # Problems that say the file's structure disagrees with itself. Any of them makes the status `corrupt`
@@ -809,7 +942,7 @@ CORRUPT_KINDS = {
     "file shorter than its header says", "partial last page", "freelist cycle", "freelist page outside the file",
     "freelist trunk page truncated", "freelist trunk count too large", "freelist page listed twice",
     "freelist count differs from the header", "b-tree page header inconsistent", "freeblock chain corrupt",
-    "fragment not found at its offset",
+    "fragment not found at its offset", "pages in no structure", "b-tree cell outside its page", "b-tree links inconsistent",
 }
 
 
@@ -1004,7 +1137,8 @@ def main():
                   "pages_partial": 0, "lock_byte_pages_skipped": 0, "pointer_map_pages_skipped": 0,
                   "freelist_trunk_pages": 0, "freelist_leaf_pages": 0, "freeblocks": 0, "unallocated_gaps": 0,
                   "regions_scanned": 0, "bytes_scanned": 0, "fragments_found": 0,
-                  "fragments_unverified": 0, "candidates_dropped_as_overlapping": 0, "pages_not_reached": 0}
+                  "fragments_unverified": 0, "candidates_dropped_as_overlapping": 0, "pages_not_reached": 0,
+                  "overflow_pages": 0, "pages_in_no_structure": 0}
         undecided = [0]            # fragments contains could not be decided on: marked 2 in the values file, said in the answer
 
         spent_in_expression = [0.0]     # the clock of max_seconds does not run while contains does: see STEP_BUDGET
@@ -1012,9 +1146,28 @@ def main():
         step_budget = min(STEP_BUDGET, int(max_seconds * STEPS_PER_SECOND))
 
         def out_of_time():
-            return time.monotonic() - spent_in_expression[0] > deadline
+            return time.monotonic() - min(spent_in_expression[0], EXPRESSION_ALLOWANCE) > deadline
         stopped_at = None
         serial = 0
+        # A page that is not a b-tree page and not on the freelist is live content only if a cell names it as an overflow page.
+        # One bit a page says which are named; `loose` lists the pages that are neither, to be set against it when the scan ends.
+        named = bytearray((in_file >> 3) + 1)
+        loose = array("I")
+        unreadable_cells = 0
+
+        def name_chain(head, pages):
+            """Mark the pages of one overflow chain (each begins with the number of the next, 0 at the end)."""
+            while head and pages:
+                if not 2 <= head <= in_file or named[head >> 3] & (1 << (head & 7)):
+                    return
+                named[head >> 3] |= 1 << (head & 7)
+                counts["overflow_pages"] += 1
+                pages -= 1
+                walk.seek((head - 1) * page_size)
+                following = walk.read(4)
+                if len(following) < 4:
+                    return
+                head = int.from_bytes(following, "big")
 
         def region_fragments(number, base_in_page, region, where, extra):
             nonlocal serial
@@ -1035,7 +1188,7 @@ def main():
                 # few hundred calls rebuild a token.
                 hit = 1
                 if pattern is not None:
-                    work[0] += characters * cost
+                    work[0] += FRAGMENT_STEPS + characters * cost
                     if work[0] > step_budget:
                         hit = 2         # over the work budget: not decided, and the same for any text of these sizes
                         undecided[0] += 1
@@ -1063,9 +1216,91 @@ def main():
                 values.add(finding, {"file": os.path.realpath(db), "page": number, "where": where, "encoding": encoding,
                                      "offset": absolute, "bytes": len(raw), "characters": characters, "match": hit}, text)
 
+        def survey():
+            """(reached, links) once the b-trees are walked from the roots sqlite_master lists: `reached` is one bit a page, set for every page a
+            walk arrives at (page 1 and the roots, then each interior page's children), or None when the schema cannot be read and nothing can be
+            said of which pages are in use; `links` counts the child pointers that leave the file and the pages two parents claim. Only interior
+            pages are read for the links, in one pass over the file; the leaves are marked, not read."""
+            interior, bad_cells = {}, 0
+            scan.seek(0)
+            for page_number in range(1, in_file + 1):
+                if not page_number & 0x3FF and out_of_time():
+                    raise OutOfTime()
+                raw = scan.read(page_size)
+                if len(raw) < page_size:
+                    break
+                if (page_number in free or page_number in pointer_maps or (page_number == lock_page and file_bytes > LOCK_BYTE_OFFSET)
+                        or (h["declared_size_valid"] and page_number > h["pages_declared"])):
+                    continue
+                start = 100 if page_number == 1 else 0
+                if raw[start] not in (2, 5):
+                    continue
+                count = struct.unpack_from(">H", raw, start + 3)[0]
+                if start + 12 + count * 2 > usable:
+                    continue
+                children = array("I")
+                for cell in struct.unpack_from(">%dH" % count, raw, start + 12):
+                    if cell + 4 <= usable:
+                        children.append(int.from_bytes(raw[cell:cell + 4], "big"))
+                    else:
+                        bad_cells += 1
+                children.append(int.from_bytes(raw[start + 8:start + 12], "big"))     # the right-most child
+                interior[page_number] = children
+            # The roots: the rootpage column of every row of sqlite_master, a table b-tree that starts on page 1.
+            leaves, stack, seen = [], [1], set()
+            while stack:
+                n = stack.pop()
+                if n in seen or not 1 <= n <= in_file:
+                    return None, 0
+                seen.add(n)
+                if n in interior:
+                    stack.extend(interior[n])
+                else:
+                    leaves.append(n)
+            roots = set()
+            for n in leaves:
+                walk.seek((n - 1) * page_size)
+                raw = walk.read(page_size)
+                start = 100 if n == 1 else 0
+                if len(raw) < page_size or raw[start] != 13:
+                    return None, 0
+                count = struct.unpack_from(">H", raw, start + 3)[0]
+                if start + 8 + count * 2 > usable:
+                    return None, 0
+                for cell in struct.unpack_from(">%dH" % count, raw, start + 8):
+                    root = schema_root(raw, cell, usable)
+                    if root is None:
+                        return None, 0
+                    if root:
+                        roots.add(root)
+            bits, links = bytearray((in_file >> 3) + 1), bad_cells
+            stack = [1, *sorted(roots, reverse=True)]
+            while stack:
+                n = stack.pop()
+                if not 1 <= n <= in_file:
+                    links += 1
+                    continue
+                if bits[n >> 3] & (1 << (n & 7)):
+                    links += 1
+                    continue
+                bits[n >> 3] |= 1 << (n & 7)
+                stack.extend(interior.get(n, ()))
+            return bits, links
+
         scan.seek(0)
         number = 0
+        stray = array("I")        # pages no structure owns
         try:
+            number = 1
+            reached, links = survey()
+            if reached is None:
+                problems.add("b-tree reachability not established",
+                             "sqlite_master could not be read to its end (a row, or a page of its b-tree, is damaged): which pages the b-trees own "
+                             "is not known, so a page that looks like a b-tree page is read as one and an orphaned page cannot be told", False)
+            if links:
+                problems.add("b-tree links inconsistent", "%d child pointer(s) of interior pages leave the file or name a page another pointer "
+                             "already names" % links, True)
+            scan.seek(0)
             for number in range(1, in_file + 1):
                 if out_of_time():
                     raise OutOfTime()
@@ -1093,6 +1328,13 @@ def main():
                 kind = page[offset]
                 if kind not in (2, 5, 10, 13):
                     counts["pages_not_btree"] += 1
+                    loose.append(number)
+                    continue
+                if reached is not None and not reached[number >> 3] & (1 << (number & 7)):
+                    # Looks like a b-tree page and no b-tree has it: a freed page the freelist does not list (its cells are as readable as
+                    # a listed one's), or what is left of a b-tree whose parent is gone. The whole page is free space.
+                    stray.append(number)
+                    region_fragments(number, 0, page[:usable], "page in no structure (not reached by a b-tree, not listed free)", {})
                     continue
                 first_free = struct.unpack_from(">H", page, offset + 1)[0]
                 cells = struct.unpack_from(">H", page, offset + 3)[0]
@@ -1103,6 +1345,10 @@ def main():
                     counts["pages_corrupt"] += 1
                     problems.add("b-tree page header inconsistent", "page %d: %d cells end at %d, the cell content area starts at %d, the usable size is %d: not examined" % (number, cells, gap_from, content, usable), False, page=number)
                     continue
+                spills, bad = overflow_of(page, offset, kind, cells, usable)
+                unreadable_cells += bad
+                for head, pages in spills:
+                    name_chain(head, pages)
                 if content > gap_from:
                     counts["unallocated_gaps"] += 1
                     region_fragments(number, gap_from, page[gap_from:content], "unallocated space in page", {})
@@ -1124,21 +1370,47 @@ def main():
                     # deleted cell's bytes start after it, and so does the offset reported.
                     region_fragments(number, block + 4, page[block + 4:block + size], "freeblock in page", {"block_offset": block})
                     block = following
+            # What no structure owns: a page that is not a b-tree page, not on the freelist and named by no cell as an overflow page.
+            # A freelist whose head and count are zeroed in the header hides every freed page this way.
+            unowned = [n for n in loose if not named[n >> 3] & (1 << (n & 7))]
+            for index, n in enumerate(unowned):
+                stray.append(n)
+                if out_of_time():
+                    problems.add("time limit", "max_seconds (%s) passed while the pages no structure owns were being read: %d of the %d are not examined"
+                                 % (max_seconds, len(unowned) - index, len(unowned)), False)
+                    stopped_at = in_file
+                    break
+                walk.seek((n - 1) * page_size)
+                try:
+                    region_fragments(n, 0, walk.read(page_size)[:usable], "page in no structure (not a b-tree page, not listed free, not overflow)", {})
+                except OutOfTime:
+                    problems.add("time limit", "max_seconds (%s) passed in page %d, one of the pages no structure owns: %d of the %d are not fully examined"
+                                 % (max_seconds, n, len(unowned) - index, len(unowned)), False, page=n)
+                    stopped_at = in_file
+                    break
+            counts["pages_in_no_structure"] = len(stray)
+            if unreadable_cells:
+                problems.add("b-tree cell outside its page", "%d cell(s) of b-tree pages have a pointer or a length that leaves the page: "
+                             "their overflow pages, if they have any, are not accounted for" % unreadable_cells, True)
+            if stray:
+                # Beside a -wal or a -journal that holds bytes the main file is a state between two checkpoints, and such pages are
+                # expected: the status is partial for the companion already, and this is not read as the file disagreeing with itself.
+                beside = any(suffix != "-shm" and info["bytes"] > 0 for suffix, info in companions.items())
+                problems.add("pages in no structure" + (" beside a companion" if beside else ""),
+                             "%d page(s) (the first: %s) are not owned by any structure: not on the freelist the header leads to, not reached by a "
+                             "b-tree walked from sqlite_master, and not named by a cell as an overflow page. A freelist the header no longer leads to "
+                             "(or a table dropped without its pages being freed) leaves pages like this. They are read as free space"
+                             % (len(stray), ", ".join(str(n) for n in sorted(stray)[:5])), True)
         except OutOfTime:
             stopped_at = number
             counts["pages_not_reached"] = in_file - number + 1
             problems.add("time limit", "max_seconds (%s) passed in page %d: that page may be partly read, and pages %d to %d are not examined" % (max_seconds, number, number, in_file), False, page=number)
         if undecided[0]:
             problems.add("contains not decided", "contains was not decided on %d fragment(s) because the work its expression may do in one run was used up "
-                         "(%d steps, a step being one character of a fragment times the expression's cost bound): they are rows of the values "
-                         "file marked match 2, as if they might have matched" % (undecided[0], step_budget), False)
+                         "(%d steps, a step being one character of a fragment times the expression's cost bound, and %d for every fragment the "
+                         "expression is called on): they are rows of the values file marked match 2, as if they might have matched"
+                         % (undecided[0], step_budget, FRAGMENT_STEPS), False)
             counts["contains_not_decided"] = undecided[0]
-        if counts["pages_not_btree"] and any(k.startswith("freelist") for k in problems.kinds):
-            problems.add("pages not read after a freelist problem",
-                         "%d pages are neither b-tree pages nor on the freelist as walked. Overflow pages hold live content "
-                         "and are not read; after the freelist problem above some of them may be free pages whose text is "
-                         "not examined" % counts["pages_not_btree"], False)
-
     values.close()
     paging = {"fragments": fragments.finish(), "problems": problems.page.finish()}
     corrupt = any(kind in CORRUPT_KINDS for kind in problems.kinds)
@@ -1147,7 +1419,8 @@ def main():
     if corrupt:
         status_basis = "the file's structure disagreed with itself where problems says; the fragments found are still reported"
     elif complete:
-        status_basis = "every page was examined, nothing in the structure was inconsistent and no companion was left unread"
+        status_basis = ("every page was accounted for (b-tree and free pages were read; the others are overflow pages that a cell names, pointer-map "
+                        "pages or the lock-byte page), nothing in the structure was inconsistent and no companion was left unread")
     else:
         why = []
         if stopped_at is not None:
@@ -1207,10 +1480,12 @@ def main():
                 "of bounded cost (no unbounded repeat, no nested repeat, no lookaround, no back reference, at most 256 steps): how long "
                 "it runs on text you cannot see should not tell you about the text; the bound keeps what remains small, and does not make it zero: the "
                 "duration of the job still follows how much of the hidden text is of a class the expression matches (1.4 s of CPU against 0.16 s on "
-                "1.3 MB of digits against letters for one expression, and more at larger volumes, up to the time the work budget takes, about 7 s), "
+                "1.3 MB of digits against letters for one expression, and more at larger volumes, up to the time the work budget takes, about 7 s of CPU), "
                 "and the page, the sizes and the status do not. The expression is given a work budget (a step is a character of a fragment times the "
-                "expression's cost bound, both visible here), and the clock of max_seconds does not run while it runs; a fragment over the budget is marked 2 "
-                "and counted under contains_not_decided, and the status is partial: the same for any text of these sizes. Status is complete (every page examined, nothing inconsistent, no companion left unread), "
+                "expression's cost bound, and " + str(FRAGMENT_STEPS) + " for every fragment it is called on, all visible here), and the clock of max_seconds does "
+                "not run while it runs, for " + str(EXPRESSION_ALLOWANCE) + " seconds at most in all; a fragment over the budget is marked 2 "
+                "and counted under contains_not_decided, and the status is partial: the same for any text of these sizes. Status is complete (every page accounted for: "
+                "b-tree and free pages read, the rest overflow pages that a cell names, nothing inconsistent, no companion left unread), "
                 "partial (a limit, a companion not read, or pages or regions not examined) or corrupt (the file's "
                 "structure disagreed with itself where problems says; the fragments found are still reported, and "
                 "a corrupt chain means text beyond it was not reached). A fragment is a candidate to corroborate, "
