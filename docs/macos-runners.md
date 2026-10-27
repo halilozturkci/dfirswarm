@@ -172,6 +172,11 @@ Then revoke the token in GitHub.
   installs a macOS Python with `sudo`, which the job user does not have and
   must not get (the first run on the Mac mini failed there with "sudo: a
   password is required"). The Linux jobs run Ubuntu 24.04's Python 3.12.
+- **Test concurrency.** `node --test` runs as many files at once as the host
+  has cores less one: two on the hosted runner, nine on a ten-core Mac mini.
+  At nine, timing-bound suites ran past their 300-second limit and the UI
+  server's trace collector did not come up in time, so on a self-hosted
+  runner the node tests run with `--test-concurrency=3`.
 - **Docker and Herdr.** They are not on the hosted runner, and the suites
   skip what needs them. If a Mac has Docker Desktop, its socket belongs to the
   owner. The job user cannot reach it.

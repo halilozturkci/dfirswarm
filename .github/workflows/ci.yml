@@ -309,9 +309,13 @@ jobs:
       - name: Typecheck
         if: matrix.typecheck
         run: npm run typecheck
+      # node --test runs as many files at once as the host has cores less one:
+      # two on the hosted runner (three vCPU), nine on a ten-core Mac mini, where
+      # the timing-bound suites then ran past their limits. Three on the
+      # owner's Mac keeps the two comparable.
       - name: Node tests ${{ matrix.node }}
         if: matrix.node
-        run: npm test -- --test-shard=${{ matrix.node }}
+        run: npm test -- --test-shard=${{ matrix.node }} ${{ runner.environment == 'self-hosted' && '--test-concurrency=3' || '' }}
       - name: Shell suites ${{ matrix.shard }}
         if: matrix.shard
         run: npm run test:bash -- --shard ${{ matrix.shard }}
