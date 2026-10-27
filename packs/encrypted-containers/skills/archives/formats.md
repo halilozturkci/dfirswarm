@@ -17,7 +17,7 @@ is shown escaped and does not hide the other members; a directory larger than
 `max_metadata_bytes`, or declared larger than the file, is not listed (`partial`). A comment can hold an End
 record of its own, bytes can follow the archive, and a second archive can be appended (7-Zip lists the first,
 `zipfile` the last). When End records disagree (`end_records_disagree`), bytes that are not zeros follow the
-comment, a ZIP signature at byte 0 shows an archive in front (`archive_in_front`), or a member's flags differ
+comment, an End record or a ZIP signature at byte 0 shows an archive in front (`archive_in_front`), or a member's flags differ
 between the directory and its local header (`local_header_flags`), the answer is `partial` and `protected`
 is not `false`.
 

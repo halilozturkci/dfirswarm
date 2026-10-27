@@ -377,3 +377,127 @@ test("recovery_key_scan prints exactly one JSON document when the page file cann
     }
   });
 });
+
+// --- Verification of the first fixes (PR #216): the same bugs through variants ------------------------------------------------
+
+// N1: the first archive does not start with a ZIP signature (a stub, junk, a spanning marker), and the second one has a big directory.
+test("archive_probe: an archive in front that does not start with a ZIP signature is found from its End record, beyond the last 64 KiB", async () => {
+  await withCwd(async (cwd) => {
+    const first = buildZip([{ name: "a.txt", flags: 1 }, { name: "b.txt", flags: 1 }, { name: "c.txt" }]);
+    const second = buildZip(plain(3000));
+    assert.ok(second.length > 200_000);
+    const front: Record<string, Buffer> = {
+      mz_stub: Buffer.concat([Buffer.from("MZ"), Buffer.alloc(2000, 0x90)]),
+      junk: Buffer.from(Array.from({ length: 50 }, (_, i) => (i * 37 + 11) & 0xff)),
+      spanning_marker: Buffer.from("PK\x07\x08", "latin1"),
+    };
+    for (const [name, prefix] of Object.entries(front)) {
+      await writeFile(join(cwd, "work", `${name}.bin`), Buffer.concat([prefix, first, second]));
+      const out = answer(await tool(PROBE, cwd, { path: `work/${name}.bin` }));
+      assert.equal(out.status, "partial", name);
+      assert.notEqual(out.protected, false, name);
+      assert.equal(out.archive_in_front.found_by, "an End record before the archive read", name);
+      assert.equal(out.archive_in_front.chosen_archive_begins, prefix.length + first.length, name);
+      assert.equal(out.archive_in_front.offset, prefix.length, name);
+      assert.match(out.status_basis, /another archive lies at byte|End record of another archive/, name);
+    }
+  });
+});
+
+test("archive_probe: self-extracting stubs, executables and polyglots in front of one archive stay complete", async () => {
+  await withCwd(async (cwd) => {
+    const zip = buildZip(plain(3000));
+    const enc = buildZip([{ name: "a.txt", flags: 1 }, { name: "b.txt" }]);
+    // An unzip stub holds the record signatures as constants, and nothing that follows them is a directory.
+    const unzipStub = Buffer.concat([Buffer.from("MZ"), Buffer.alloc(300, 0x90), Buffer.from("PK\x05\x06"), Buffer.from("PK\x03\x04PK\x01\x02PK\x06\x06PK\x06\x07"), Buffer.alloc(5000, 0x41), Buffer.from("PK\x05\x06\x00\x00\x00\x00\x03\x00\x03\x00"), Buffer.alloc(2000, 0x42)]);
+    const stubs: Record<string, Buffer> = {
+      unzip_stub: unzipStub,
+      elf: Buffer.concat([Buffer.from("\x7fELF"), Buffer.alloc(4000, 0x07)]),
+      shell: Buffer.from("#!/bin/sh\nexec java -jar \"$0\" \"$@\"\n"),
+      png_polyglot: Buffer.concat([Buffer.from("\x89PNG\r\n\x1a\n"), Buffer.alloc(100_000, 0x5a)]),
+    };
+    for (const [name, stub] of Object.entries(stubs)) {
+      for (const [label, archive, protectedWant] of [["plain", zip, false], ["encrypted", enc, true]] as const) {
+        await writeFile(join(cwd, "work", `${name}-${label}.bin`), Buffer.concat([stub, archive]));
+        const out = answer(await tool(PROBE, cwd, { path: `work/${name}-${label}.bin` }));
+        assert.equal(out.status, "complete", `${name} ${label}: ${out.status_basis}`);
+        assert.equal(out.protected, protectedWant, `${name} ${label}`);
+        assert.equal(out.archive_in_front, undefined);
+        assert.equal(out.front_unsearched, undefined);
+      }
+    }
+  });
+});
+
+test("archive_probe: bytes in front of the archive that hold too many End record signatures to check are named as not searched, and the answer is partial", async () => {
+  await withCwd(async (cwd) => {
+    const stub = Buffer.concat([Buffer.from("MZ"), ...Array.from({ length: 2500 }, () => Buffer.from("PK\x05\x06xxxxxxxxxxxxxxxxxx"))]);
+    await writeFile(join(cwd, "work", "many.bin"), Buffer.concat([stub, buildZip(plain(10))]));
+    const out = answer(await tool(PROBE, cwd, { path: "work/many.bin" }));
+    assert.equal(out.status, "partial");
+    assert.notEqual(out.protected, false);
+    assert.match(out.front_unsearched.why, /more than 2000 End record signatures/);
+  });
+});
+
+// The Zip64 end record with extensible data in a file whose stub's offsets were not adjusted, and a fake End record in the comment.
+test("archive_probe: a Zip64 end record with extensible data behind an unadjusted stub is read, and a fake End record in its comment is named", async () => {
+  await withCwd(async (cwd) => {
+    const base = buildZip([{ name: "a.txt", flags: 1 }, { name: "b.txt" }], { zip64Extensible: 8 });
+    const stub = Buffer.concat([Buffer.from("MZ"), Buffer.alloc(500, 0x90)]);
+    await writeFile(join(cwd, "work", "raw.exe"), Buffer.concat([stub, base]));
+    const honest = answer(await tool(PROBE, cwd, { path: "work/raw.exe" }));
+    assert.equal(honest.entry_count, 2);
+    assert.equal(honest.status, "complete");
+    assert.equal(honest.protected, true);
+    // The same record with a comment that holds an empty End record.
+    const eocdAt = base.length - 22;
+    const withComment = Buffer.from(base);
+    withComment.writeUInt16LE(22, eocdAt + 20);
+    await writeFile(join(cwd, "work", "fake.exe"), Buffer.concat([stub, withComment, Buffer.concat([Buffer.from("PK\x05\x06"), Buffer.alloc(18)])]));
+    const fake = answer(await tool(PROBE, cwd, { path: "work/fake.exe" }));
+    assert.notEqual(fake.protected, false);
+    assert.notEqual(fake.status, "complete");
+  });
+});
+
+// N2: a warning that 7-Zip prints is decided from every line of its output, not from the five that are kept for display.
+test("archive_probe: a 7-Zip warning is seen after more than five diagnostics, and a record line that is no key = value makes the listing not the archive's", async () => {
+  await withCwd(async (cwd, bin) => {
+    await sevenArchive(cwd, "a.7z");
+    const footer = "\n--\nPath = a.7z\nType = 7z\nPhysical Size = 100\n\n----------\nPath = plain.txt\nSize = 1\nEncrypted = -\n\n";
+    const cases: Record<string, { body: string; listing: string }> = {
+      // six errors, then the warnings footer: the first five fill the display list
+      errors_then_warning: { body: `${footer}${Array.from({ length: 6 }, (_, i) => `ERROR: ${i}\n`).join("")}\nWarnings: 1\n`, listing: "listed_with_warnings" },
+      // an archive property that says data follows the archive, and no footer line at all
+      tail_size: { body: "\n--\nPath = a.7z\nType = 7z\nPhysical Size = 100\nTail Size = 64\n\n----------\nPath = plain.txt\nSize = 1\nEncrypted = -\n\n", listing: "listed_with_warnings" },
+      // p7zip 16.02: a member name with line breaks is printed as it is
+      forged_name: { body: `\n--\nPath = a.7z\nType = 7z\n\n----------\nPath = x\n${Array.from({ length: 6 }, (_, i) => `ERROR: ${i}\n`).join("")}Size = 4\nEncrypted = -\n\nWarnings: 1\n`, listing: "listing_not_one_archive" },
+    };
+    for (const [name, c] of Object.entries(cases)) {
+      await writeFile(join(bin, "7z"), `#!/bin/sh\nprintf '${c.body}'\nexit 0\n`);
+      await chmod(join(bin, "7z"), 0o755);
+      const out = answer(await tool(PROBE, cwd, { path: "work/a.7z" }, {}, bin));
+      assert.equal(out.listing.status, c.listing, name);
+      assert.equal(out.status, "partial", name);
+      assert.notEqual(out.protected, false, name);
+      assert.doesNotMatch(out.status_basis, /without warnings/, name);
+    }
+  });
+});
+
+test("archive_probe lists a plain 7-Zip archive with an encrypted one appended as partial, protected not false (the installed 7-Zip)", { skip: REAL_7Z ? false : "no 7z on PATH" }, async (t) => {
+  await withCwd(async (cwd) => {
+    await writeFile(join(cwd, "plain.txt"), "p".repeat(50));
+    await writeFile(join(cwd, "secret.txt"), "s".repeat(50));
+    const sz = (args: string[]) => spawnSync(REAL_7Z!, args, { cwd, stdio: "ignore" });
+    sz(["a", "-y", "plain.7z", "plain.txt"]);
+    sz(["a", "-y", "-psecret1", "enc.7z", "secret.txt"]);
+    const [a, b] = await Promise.all([readFile(join(cwd, "plain.7z")), readFile(join(cwd, "enc.7z"))]).catch(() => [null, null] as const);
+    if (!a || !b) return t.skip("this 7z did not create the archives");
+    await writeFile(join(cwd, "work", "both.7z"), Buffer.concat([a, b]));
+    const out = answer(await tool(PROBE, cwd, { path: "work/both.7z" }));
+    assert.notEqual(out.status, "complete");
+    assert.notEqual(out.protected, false);
+  });
+});

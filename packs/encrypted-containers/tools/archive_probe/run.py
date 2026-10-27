@@ -1156,6 +1156,10 @@ SEVENZIP_TIMEOUT = 60
 NO_PASSWORD = "dfirswarm-no-password"
 ASCII_RUN = re.compile(rb"[\x20-\x7e]{6,}")
 WIDE_RUN = re.compile(rb"(?:[\x20-\x7e]\x00){3,}")
+# A line of 7z's output that is a warning or an error (the footers `Warnings: n`, `WARNINGS:`, `ERROR: ...`), and an archive property that says
+# the file is not just the archive (`Tail Size` is data after its end, `Headers Error`, `Unexpected End`, ...).
+SEVENZIP_ISSUE = re.compile(r"(?i)^(warnings?|errors?)\b")
+SEVENZIP_ARCHIVE_ISSUE = re.compile(r"(?i)^(tail size|headers? error|data error|unexpected end|unavailable|is not archive|warnings?|errors?)")
 ENCRYPTED_ARCHIVE = re.compile(r"(?i)(can ?not|can't) open encrypted archive|wrong password")
 MARKER_OFFSETS = 20
 MARKER_COUNT_CAP = 10000
@@ -1272,13 +1276,17 @@ def end_record_at(tail, at, tail_start):
     if at >= 20 and tail[at - 20:at - 16] == b"PK\x06\x07":
         out["zip64_locator"] = True
         # The Zip64 end record is 56 bytes when it holds no extensible data. With some (legal: its size field is then above 44) it is longer,
-        # and only the locator says where it starts: it is taken from there when what the locator points at is a Zip64 end record that ends
-        # exactly at the locator and whose size field says so.
+        # and its start is not at a fixed distance from the locator. It is then the last Zip64 signature before the locator whose size field
+        # says that the record ends exactly at the locator (not the locator's own offset field: a self-extracting stub whose offsets were not
+        # adjusted makes that one wrong).
         record_len = 56
-        located = struct.unpack_from("<Q", tail, at - 20 + 8)[0] - tail_start
-        longer = at - 20 - located
-        if 56 < longer <= at and tail[located:located + 4] == b"PK\x06\x06" and struct.unpack_from("<Q", tail, located + 4)[0] == longer - 12:
-            record_len = longer
+        if at - 20 - 56 < 0 or tail[at - 20 - 56:at - 20 - 52] != b"PK\x06\x06":
+            q, tries = tail.rfind(b"PK\x06\x06", 0, max(0, at - 76 + 4)), 0
+            while q >= 0 and tries < 16:
+                if q + 12 <= len(tail) and struct.unpack_from("<Q", tail, q + 4)[0] == at - 20 - q - 12 and at - 20 - q > 56:
+                    record_len = at - 20 - q
+                    break
+                q, tries = tail.rfind(b"PK\x06\x06", 0, q + 3), tries + 1
         rec = tail[at - 20 - record_len:at - 20] if at - 20 - record_len >= 0 else b""
         if len(rec) == record_len and rec[:4] == b"PK\x06\x06":
             out["entries"], out["cd_bytes"], out["cd_offset"] = struct.unpack_from("<QQQ", rec, 32)
@@ -1302,6 +1310,43 @@ def directory_starts(fh, record, size):
         return False
     fh.seek(start)
     return fh.read(4) == b"PK\x01\x02"
+
+
+FRONT_BLOCK = 1 << 20
+FRONT_CANDIDATES = 2000         # End record signatures looked at in the bytes in front of an archive; more than that, and it is said that they were not all
+FRONT_BEFORE = 512              # bytes read before a signature, for a Zip64 record and locator (and some extensible data) that go with it
+
+
+def archive_before(fh, size, end):
+    """A sound End record, comment included, wholly in the first `end` bytes of the file, or (None, why) when the search did not cover them.
+
+    Searched from `end` backwards, a block at a time: the End record of an archive that was followed by another is right before it, so it is
+    the first one met. Sound means the same as for the last 64 KiB: its directory starts with a directory signature. Each signature found
+    is read through end_record_at, and the search is under the tool's clock; with nothing found the answer is (None, None).
+    """
+    examined, hi = 0, end
+    while hi > 0:
+        if stop_wanted():
+            return None, stop_cause()
+        lo = max(0, hi - FRONT_BLOCK)
+        fh.seek(lo)
+        block = fh.read(min(hi + 3, end) - lo)      # three bytes more: a signature that begins in this block may end in the next
+        at = block.rfind(EOCD_SIGNATURE)
+        while at >= 0:
+            p = lo + at
+            if p < hi and p + 22 <= end:
+                examined += 1
+                if examined > FRONT_CANDIDATES:
+                    return None, "more than %d End record signatures lie in front of the archive" % FRONT_CANDIDATES
+                w = max(0, p - FRONT_BEFORE)
+                fh.seek(w)
+                window = fh.read(p + 22 - w)
+                record = end_record_at(window, p - w, w)
+                if record is not None and record["eocd_at"] + 22 + record["comment_bytes"] <= end and directory_starts(fh, record, size):
+                    return record, None
+            at = block.rfind(EOCD_SIGNATURE, 0, at + 3)
+        hi = lo
+    return None, None
 
 
 def read_eocd(path, size):
@@ -1367,11 +1412,27 @@ def read_eocd(path, size):
     # An archive in front that no End record shows: the chosen archive begins at `begins`, and a ZIP local header (or an empty archive's End
     # record) is at byte 0. A self-extracting stub starts with its own program, never with a ZIP signature, so a ZIP at 0 and the chosen
     # archive further on are two archives, and the first one's End record may lie beyond the last 64 KiB, where it is not looked for.
-    chosen["archive_in_front"] = None
+    # When byte 0 is no ZIP signature (a stub, junk, an executable of the first archive), the bytes in front of the chosen archive are searched
+    # for a sound End record of their own, from the chosen archive back: a self-extracting stub holds none (an unzip stub holds the four
+    # signature bytes as constants, which no directory follows), and the first archive's own End record is right before the chosen one.
+    chosen["archive_in_front"], chosen["front_unsearched"] = None, None
     if begins > 0 and not separate:
         with open(path, "rb") as fh:
             if fh.read(4) in (b"PK\x03\x04", b"PK\x05\x06"):
-                chosen["archive_in_front"] = {"offset": 0, "chosen_archive_begins": begins}
+                chosen["archive_in_front"] = {"offset": 0, "chosen_archive_begins": begins, "found_by": "a ZIP signature at byte 0"}
+            else:
+                front, why = archive_before(fh, size, begins)
+                if front is not None:
+                    first = front["eocd_at"] - front["zip64_bytes"] - front["cd_bytes"] - front["cd_offset"]
+                    chosen["archive_in_front"] = {"offset": first if first >= 0 else None, "end_record_at": front["eocd_at"],
+                                                  "entries": front["entries"], "central_directory_bytes": front["cd_bytes"],
+                                                  "chosen_archive_begins": begins, "found_by": "an End record before the archive read"}
+                elif why:
+                    chosen["front_unsearched"] = {"bytes": begins, "why": why}
+    # A record that ends the file and cannot be checked (its Zip64 values are not found), with the chosen record inside its comment: the chosen
+    # one may be a fake in a comment, and the real one's directory is not known. Named like any other record that disagrees.
+    others += [r for r in records if r is not chosen and not any(r is q for q in sound) and r["after_comment"] == 0
+               and r["eocd_at"] + 22 < chosen["eocd_at"] <= r["eocd_at"] + 22 + r["comment_bytes"]]
     chosen["other_record_count"] = len(others)
     chosen["other_records"] = [{"offset": r["eocd_at"], "entries": r["entries"], "central_directory_bytes": r["cd_bytes"],
                                 "comment_bytes": r["comment_bytes"]} for r in others[:8]]
@@ -1450,9 +1511,17 @@ def probe_zip(path, size, limit, max_metadata):
                       "the one that declares the most entries was read" % (eocd["other_record_count"], "" if eocd["other_record_count"] == 1 else "s"))
     if eocd["archive_in_front"]:
         out["archive_in_front"] = eocd["archive_in_front"]
-        doubts.append("a ZIP signature is at byte 0 but the archive read begins at byte %d: another archive lies in front of it, and its End record "
-                      "was not found (End records are looked for in the last 64 KiB only), so this list is the later archive's and not the file's"
-                      % eocd["archive_in_front"]["chosen_archive_begins"])
+        if eocd["archive_in_front"]["found_by"].startswith("a ZIP"):
+            doubts.append("a ZIP signature is at byte 0 but the archive read begins at byte %d: another archive lies in front of it, and its End "
+                          "record was not found (End records are looked for in the last 64 KiB, and in front of the archive read only where one "
+                          "is at byte 0), so this list is the later archive's and not the file's" % eocd["archive_in_front"]["chosen_archive_begins"])
+        else:
+            doubts.append("the End record of another archive lies at byte %d, in front of the archive read, which begins at byte %d: this list is "
+                          "the later archive's and not the file's" % (eocd["archive_in_front"]["end_record_at"], eocd["archive_in_front"]["chosen_archive_begins"]))
+    elif eocd["front_unsearched"]:
+        out["front_unsearched"] = eocd["front_unsearched"]
+        doubts.append("the %d bytes in front of the archive read were not searched for another archive (%s)"
+                      % (eocd["front_unsearched"]["bytes"], eocd["front_unsearched"]["why"]))
     if eocd["after_comment"] > 0 and eocd["after_comment_zero"]:
         out["trailing_zero_bytes"] = eocd["after_comment"]
     elif eocd["after_comment"] > 0:
@@ -1654,7 +1723,10 @@ def list_with_7z(path, limit):
     # What is not how 7z prints one archive: a second `----------` (a second archive listed: the archive name matched more than one
     # file), a line of a member's record with no Path before it, or a key twice in one record (a name with a line break in it, from a
     # build that prints the break as it is, can forge lines). Counted; any of them and the listing is not taken as the archive's.
-    odd = {"sections": 0, "orphan_lines": 0, "repeated_keys": 0}
+    odd = {"sections": 0, "orphan_lines": 0, "repeated_keys": 0, "stray_lines": 0}
+    # A warning or an error anywhere in 7z's output, judged on every line: the lines kept for display are capped at five, and a member name
+    # (from a build that prints a line break as it is) can fill the cap before the real footer (`Warnings: 1`, `Tail Size`).
+    warned = False
 
     def flush():
         nonlocal current
@@ -1680,8 +1752,10 @@ def list_with_7z(path, limit):
             line = raw.rstrip("\r\n")
             if not in_members and ENCRYPTED_ARCHIVE.search(line):       # 7z's own message, not a member name that says the same
                 encrypted_message = True
-            if re.match(r"^(ERROR|WARNING|Errors|Warnings)\b", line) and len(diagnostics) < 5:
-                diagnostics.append(withhold(line))
+            if SEVENZIP_ISSUE.match(line):
+                warned = True
+                if len(diagnostics) < 5:
+                    diagnostics.append(withhold(line))
             if line == "----------":
                 in_members = True
                 odd["sections"] += 1
@@ -1694,9 +1768,13 @@ def list_with_7z(path, limit):
                 continue
             key, sep, value = line.partition(" = ")
             if not sep:
+                if in_members and current.get("Path") is not None:
+                    odd["stray_lines"] += 1         # a line inside a member's record that is no `key = value`
                 continue
             if not in_members:
                 archive.setdefault(key, value)
+                if SEVENZIP_ARCHIVE_ISSUE.match(key):
+                    warned = True
             else:
                 if key == "Path" and current.get("Path") is not None:
                     flush()
@@ -1720,13 +1798,13 @@ def list_with_7z(path, limit):
         info["archive"] = {k: withhold(archive[k]) for k in ("Type", "Physical Size", "Headers Size", "Method", "Solid", "Blocks") if k in archive}
     if timed_out:
         return {**info, "status": "timed_out", "reason": "7z was stopped after %d seconds or at the tool's own time limit; %d members were read before it" % (seconds, members.total)}, members
-    if odd["sections"] > 1 or odd["orphan_lines"] or odd["repeated_keys"]:
+    if odd["sections"] > 1 or odd["orphan_lines"] or odd["repeated_keys"] or odd["stray_lines"]:
         return {**info, "status": "listing_not_one_archive", "odd_output": odd,
-                "reason": "7z's output is not the listing of one archive (%d member sections, %d lines outside a member's record, %d repeated keys): "
-                          "the members are not taken as this archive's" % (odd["sections"], odd["orphan_lines"], odd["repeated_keys"])}, members
+                "reason": "7z's output is not the listing of one archive (%d member sections, %d lines outside a member's record, %d repeated keys, "
+                          "%d lines in a record that are no key = value): the members are not taken as this archive's"
+                          % (odd["sections"], odd["orphan_lines"], odd["repeated_keys"], odd["stray_lines"])}, members
     if code in (0, 1) and archive.get("Type"):
         # Exit 0 can still come with a warning (data after the end of the archive: a second archive appended, or junk): not "without warnings".
-        warned = any(d.startswith(("Warning", "WARNING")) for d in diagnostics)
         return {**info, "status": "listed" if code == 0 and not warned else "listed_with_warnings"}, members
     if encrypted_message:
         return {**info, "status": "header_encrypted",
