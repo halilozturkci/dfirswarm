@@ -76,7 +76,7 @@ try:
 except ImportError:  # pragma: no cover
     ctypes = None
 
-TOOL = {"name": "pcap_extract", "version": 5}
+TOOL = {"name": "pcap_extract", "version": 6}
 PARSER = "pcap_extract/5"
 DEFAULT_PROTOCOLS = ["http", "ftp-data", "smb", "smb2", "tftp", "imf"]
 DEFAULT_DEADLINE = 3000

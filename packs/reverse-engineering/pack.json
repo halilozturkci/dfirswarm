@@ -29,8 +29,8 @@
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
       "README.md": "9850fb684a11046ed19187dc3b09b83d42c5d2dd59ced78e698dce76ddfdd1b6",
-      "tools/fuzzy_hash/manifest.json": "49c0e3aba7829499747dfd556b72c59d80a929351afe2f409ba9d9aad4c2d673",
-      "tools/fuzzy_hash/run.py": "0efdd5c7b5771cfd13ef51d799db6418a66eae7c533d3a13ffc4c9a8eb3b51bd",
+      "tools/fuzzy_hash/manifest.json": "252be854b325c38bb7872e9c06f09feb0dbfa27217d90af5077257dc000f5852",
+      "tools/fuzzy_hash/run.py": "3e3a3d04c814386ddc1bb873aff82ef39e4aaf9a81cabe31a88da10a9c257d87",
       "tools/pe_directories/manifest.json": "b49780cb06ed6bd1d6440640c0ef5547a2b9b4d644f5db991c8561a40d91afb8",
       "tools/pe_directories/run.py": "69def8962f91c17f7d07250a9dfb33ef479ba9e2a42c027c69cc2a67c6ee6558",
       "tools/doc_structure/manifest.json": "ec2f39515f05e24ac29de258e0c5024249f1146420a34f4e2db290e8eaf2f777",
