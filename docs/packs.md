@@ -1010,3 +1010,10 @@ they are. `pack.sh seal` reads it by pack id and refuses a listed leaf only once
 grown past its ceiling; a pack of another id has no listed findings, and a leaf
 over 1,000 tokens in it is refused. New and changed skills
 are written to the budget; a finding is not added to the list to get a change in.
+
+### Closing a pack's review
+
+A pack's review ends by one rule, stated once in full in `AGENTS.md`, "Pack
+review and closing": a pack is closed when an independent verification of its
+head finds no P1, the remaining P2 and P3 findings are listed rather than
+re-reviewed, and every verifier says CLOSED or NOT CLOSED.

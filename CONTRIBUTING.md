@@ -117,6 +117,8 @@ against real runs; refresh them when the design changes.
   a live run, which swarm id proved it (`scripts/swarm.sh status <id>`).
 - Do not commit anything from `runs/`, `.pi-sessions/` or a real
   provider key. `.gitignore` covers the usual places; look anyway.
+- A change to a pack is reviewed, fixed and verified by the rule in
+  `AGENTS.md`, "Pack review and closing".
 
 ### The changelog
 
