@@ -546,3 +546,64 @@ test("write_values is refused as JSON, before anything is opened or written, in 
     assert.equal(body(await asJob(LOGS, cwd, { path: "inputs/l.log", out_dir: "out/p", write_values: true })).secret_values.requested, true);
   });
 });
+
+test("a target or referer over 64 KiB keeps its host and path and has its query withheld whole, by its length: the line stays in the table, and no megabyte of & costs seconds", async () => {
+  await withCwd(async (cwd) => {
+    const query = "&".repeat(900_000);
+    await put(cwd, "inputs/amp.log", `10.0.0.1 - - [10/Oct/2026:13:55:36 +0000] "GET /index.html?${query} HTTP/1.1" 200 5 "http://ref.example.test/p?${"a&".repeat(40_000)}#frag" "ua"\n`);
+    const began = Date.now();
+    const out = body(await tool(LOGS, cwd, { path: "inputs/amp.log", out_dir: "work/o" }, {}));
+    assert.ok(Date.now() - began < 20_000, "a megabyte of & in one line is not seconds of work");
+    assert.equal(out.lines, 1);
+    assert.equal(out.parsed, 1);
+    const [row] = await table(cwd, "work/o");
+    assert.equal(row.target, "/index.html?<over-long query or fragment withheld 900000 characters>");
+    assert.equal(row.referer, "http://ref.example.test/p?<over-long query or fragment withheld 80005 characters>", "the host and path stay, the query and fragment are named by length");
+    assert.equal(Number(row.byte_length) > 900_000, true, "the line is in the table with its offset and its length");
+    assert.ok(out.withheld.urls >= 2, "the withholding is counted");
+    // A query under the limit is still read pair by pair: names stay, values go.
+    await put(cwd, "inputs/small.log", '10.0.0.1 - - [10/Oct/2026:13:55:36 +0000] "GET /a?x=1&y=2 HTTP/1.1" 200 5 "-" "ua"\n');
+    const small = body(await tool(LOGS, cwd, { path: "inputs/small.log", out_dir: "work/p" }, {}));
+    assert.equal(small.parsed, 1);
+    assert.match((await table(cwd, "work/p"))[0].target, /^\/a\?x=<withheld 1 characters>&y=<withheld 1 characters>$/);
+  });
+});
+
+test("the clock is read after every 64 KiB of lines, not only every 256 lines: long slow lines end the read at max_seconds", async () => {
+  await withCwd(async (cwd) => {
+    // A firewall line of a megabyte of A=" costs about a tenth of a second to try against the three grammars; 60 of them are 6 seconds and 60 MB.
+    const line = "Nov 14 fw DROP " + 'A="'.repeat(349_000);
+    await put(cwd, "inputs/slow.log", (line.slice(0, 1_048_000) + "\n").repeat(60));
+    const began = Date.now();
+    const out = body(await tool(LOGS, cwd, { path: "inputs/slow.log", out_dir: "work/o", max_seconds: 1 }, {}));
+    assert.equal(out.read_error?.error, "time_limit", JSON.stringify(out.read_error));
+    assert.equal(out.status, "partial");
+    assert.ok(out.lines < 60 && out.lines > 0, `lines ${out.lines}`);
+    assert.equal(out.read_error.last_complete_line, out.lines);
+    assert.ok(Date.now() - began < 30_000);
+  });
+});
+
+test("a gzip stream of empty members is read under the clock: the members are walked inside one read of Python's gzip, so the file under it looks at the clock", async () => {
+  await withCwd(async (cwd) => {
+    const empty = gzipSync(Buffer.alloc(0));
+    const log = gzipSync(Buffer.from(WEB + "\n"));
+    await put(cwd, "inputs/members.gz", Buffer.concat([...Array.from({ length: 30 }, () => Buffer.concat(Array.from({ length: 100_000 }, () => empty))), log]));
+    const began = Date.now();
+    const out = body(await tool(LOGS, cwd, { path: "inputs/members.gz", out_dir: "work/o", max_seconds: 1 }, {}));
+    const took = Date.now() - began;
+    assert.equal(out.read_error?.error, "time_limit", JSON.stringify(out.read_error));
+    assert.equal(out.status, "failed", "no line was read before the clock ran out");
+    assert.ok(took < 10_000, `3,000,000 empty members took ${took} ms: the read did not look at the clock`);
+  });
+});
+
+test("a line over max_line_bytes is skipped whole and counted once (the skip loop now looks at the clock too)", async () => {
+  await withCwd(async (cwd) => {
+    await put(cwd, "inputs/endless.log", Buffer.alloc(1 << 20, 0x41));
+    const out = body(await tool(LOGS, cwd, { path: "inputs/endless.log", out_dir: "work/o", max_line_bytes: 4096 }, {}));
+    assert.equal(out.lines_over_limit, 1);
+    assert.equal(out.lines, 1);
+    assert.equal(out.read_error, null);
+  });
+});

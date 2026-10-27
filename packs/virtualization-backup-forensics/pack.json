@@ -1,7 +1,7 @@
 {
   "id": "virtualization-backup-forensics",
   "name": "Virtualization and Backup Forensics Pack",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "description": "Method and tooling for the control plane of virtualization and backup: what hypervisor management records and VM configuration files say, whether a snapshot or disk chain is complete and which markers a consolidation or an unclean close may leave, what a backup catalogue, job record and retention setting show, and which recovery points survive. It reads exports and configuration files offline; it never runs hypervisor or backup software, reads no guest content, and supports only the products its tools list.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -21,8 +21,8 @@
       "README.md": "f6164fecf48dc52c673627ebfa043d4c8c1498e55c7c7ae991efdcc97d36f05b",
       "tools/backup_audit_normalise/manifest.json": "371b54b523142f2bd3694d01678ebdfdbedc0860f2908e435e64f78652248d6c",
       "tools/backup_audit_normalise/run.py": "f404cdadae77f8cb1d8a73eb26aa0501675d27238e4d0dc8a501021059934b47",
-      "tools/snapshot_chain_check/manifest.json": "c2dc6cb69a12e061e48d0bbd9ee4a9333c100481ee8dc621d9973452e09b777c",
-      "tools/snapshot_chain_check/run.py": "f63f5f9e6f6a2abee9e4921fadff9ca76265e6ae581410e5266a357aa03241bb",
+      "tools/snapshot_chain_check/manifest.json": "e2c3319090f2e03058b9bae5d9898f68a65ddbd6d0327f1613f441447efc72c1",
+      "tools/snapshot_chain_check/run.py": "36bc52d5f55b2a3925e1987d139d77146b1908cd670f6140fb80125ff1ec3265",
       "tools/virtualization_inventory/manifest.json": "4f2dbafba6f26509153ea5d4d6e75a8ff2e0c12c5a1ede1bc3e8776228fc3576",
       "tools/virtualization_inventory/run.py": "a1b75de45a06a19c9afe675da96c90c04ca026324fac2b4b55af7fd5502f4a1e",
       "goals/what-recovery-survives.md": "f3900b9667ad619f3efa79f0deecdc3c5a654ca5108a06e50a9ce83865c62c5f",

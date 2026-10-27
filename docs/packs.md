@@ -755,7 +755,7 @@ import each other), and holds to this:
   class the expression matches. So the time never reaches the answer: the
   expression has a work budget in sizes the answer shows, a part past it is marked
   undecided and the status is partial, and the clock of `max_seconds` does not run
-  while it does). None of this hides the file from an agent, and it is not meant to
+  while it does, for 12 seconds at most in all). None of this hides the file from an agent, and it is not meant to
   ([ADR 0018](adr/0018-sensitive-outputs-are-used-by-agents-and-every-access-is-recorded.md)):
   the sandbox's `store/` is mounted read-only in an agent's VM, an agent that opens a
   values file reads every row, and a later job is given the file to use it. The file
@@ -1010,3 +1010,10 @@ they are. `pack.sh seal` reads it by pack id and refuses a listed leaf only once
 grown past its ceiling; a pack of another id has no listed findings, and a leaf
 over 1,000 tokens in it is refused. New and changed skills
 are written to the budget; a finding is not added to the list to get a change in.
+
+### Closing a pack's review
+
+A pack's review ends by one rule, stated once in full in `AGENTS.md`, "Pack
+review and closing": a pack is closed when an independent verification of its
+head finds no P1, the remaining P2 and P3 findings are listed rather than
+re-reviewed, and every verifier says CLOSED or NOT CLOSED.

@@ -27,9 +27,14 @@ header the library would refuse (a checksum that does not match, a number that
 does not parse) stops the listing and is said, the number of members listed is
 compared with the number of headers counted, and an extended header (a GNU long
 name, a pax header) that declares more than 16 MiB is not read, since the library
-would hold it whole in memory. A compressed tar (gzip, bzip2 or xz, by its magic)
-is decoded in pieces. A run never writes over an earlier run's output: if the
-output directory already holds one of its files, it refuses.
+would hold it whole in memory. The end of an archive is two zero blocks: a zero
+block with a header after it is read past, as GNU tar and bsdtar do, and said
+(partial); data after the two blocks is not read and is said. A compressed tar
+(gzip, bzip2 or xz, by its magic) is decoded in pieces, with an output budget
+(`--max-decompressed-bytes`, default 32 GiB): a tar that expands past it stops the
+listing, and the run says partial, names the budget and the number of members
+listed. A run never writes over an earlier run's output: if the output directory
+already holds one of its files, it refuses.
 
 The database families are grouped in a scratch SQLite file under the output
 (deleted when the run ends), so a very large archive does not hold them in
@@ -45,6 +50,7 @@ import sqlite3
 import struct
 import sys
 import tarfile
+import time
 import zlib
 
 
@@ -53,6 +59,8 @@ IOS_MARKERS = (
     "private/var/containers/",
     "system/library/coreservices/systemversion.plist",
 )
+DEFAULT_BUDGET = 32 << 30      # decoded bytes of a compressed tar; the same as the Android backup recipe's
+DEFAULT_SECONDS = 900          # for the listing: recipe.json limits.seconds is 1800, and the families are grouped and written after it (time that grows with the members)
 SQLITE_SUFFIXES = (".db", ".sqlite", ".sqlite3", ".sqlitedb", ".storedata")
 ROLES = ("db", "wal", "shm", "journal")
 OUTPUTS = ("artifacts.tsv", "sqlite.tsv", "index.tsv", "coverage.json")
@@ -70,10 +78,14 @@ def target_of(value):
 # --- tar watch: begin ----------------------------------------------------------------------------
 # Held byte for byte equal in the four recipes that read a tar (a test compares the copies). The watch
 # follows a tar header by header, apart from the library that lists it, and says what that library does
-# not: whether the end-of-archive block came, whether a header would be refused (a checksum that does not
+# not: whether the end-of-archive blocks came, whether a header would be refused (a checksum that does not
 # match, a number that does not parse), how many members there are, and whether an extended header declares
 # more than the library should be allowed to hold in memory (it reads a GNU long name or a pax header whole).
+# The end of an archive is TWO zero blocks. One zero block with a header after it is not an end: GNU tar and bsdtar
+# warn ("lone zero block") and read on, and so does the listing (the library is opened with ignore_zeros); the watch
+# counts such blocks, and the run is partial for them.
 EXTENDED_HEADER_LIMIT = 16 << 20
+ZERO_BLOCK = b"\0" * 512
 NO_DATA_TYPES = set(b"123456")        # hard link, symbolic link, character and block device, directory, fifo: the size is not followed by data
 
 
@@ -134,7 +146,12 @@ class TarWatch:
         self.acc = bytearray()
         self.position = 0
         self.ended = False
-        self.end_at = None           # where the end-of-archive block starts
+        self.end_at = None           # where the end-of-archive blocks start
+        self.zero_at = None          # a zero block just met, the first of the two that end the archive unless a header follows
+        self.lone_zeros = 0          # zero blocks that a header followed: not an end
+        self.lone_first = None       # where the first of them is
+        self.tail_at = None          # the first byte that is not zero after the end-of-archive blocks
+        self.zeroed_data = 0         # GNU long-name, long-link and pax headers whose data starts with a zero byte: a name block that was wiped
         self.violation = None        # the size an extended header declares, over the limit
         self.violation_at = None     # where that header starts
         self.bad_at = None           # where a header starts that the tar library would refuse
@@ -182,6 +199,10 @@ class TarWatch:
                 self.header(bytes(self.block))
                 self.block.clear()
         if self.stopped():
+            if self.ended and self.tail_at is None and i < n:
+                rest = data[i:]
+                if rest.count(0) != len(rest):
+                    self.tail_at = self.position + len(rest) - len(rest.lstrip(b"\0"))
             self.position += n - i
 
     def walk(self, fh, size, until=None):
@@ -213,7 +234,29 @@ class TarWatch:
             self.position += 512
             self.header(block)
 
+    def look_past_end(self, fh, size):
+        """For a tar on disk whose end blocks came: where the first byte that is not zero lies after them (padding to a record is zeros)."""
+        if not self.ended or self.tail_at is not None:
+            return
+        at = self.end_at + 1024
+        while at < size:
+            fh.seek(at)
+            chunk = fh.read(min(1 << 20, size - at))
+            if not chunk:
+                return
+            data = chunk.lstrip(b"\0")
+            if data:
+                self.tail_at = at + len(chunk) - len(data)
+                return
+            at += len(chunk)
+
     def finish_pax(self):
+        if self.acc[:1] == b"\0":
+            self.zeroed_data += 1        # a name or a pax record never starts with a zero byte
+        if self.collecting in (ord("L"), ord("K")):
+            self.acc.clear()             # only its first byte was read: the library reads the name itself
+            self.skip = self.collect_padding
+            return
         size = pax_size(bytes(self.acc))
         if self.collecting in (ord("x"), ord("X")):
             # The library starts from the global records and lets this header's override them.
@@ -232,9 +275,17 @@ class TarWatch:
                 self.in_ext = False
                 self.skip = self.after_ext
             return
-        if block == b"\0" * 512:
-            self.ended, self.end_at = True, start
+        if block == ZERO_BLOCK:
+            if self.zero_at is None:
+                self.zero_at = start
+            else:
+                self.ended, self.end_at = True, self.zero_at
             return
+        if self.zero_at is not None:
+            self.lone_zeros += 1
+            if self.lone_first is None:
+                self.lone_first = self.zero_at
+            self.zero_at = None
         size = tar_header(block)
         if size is None or size < 0:
             self.bad_at = start
@@ -252,7 +303,11 @@ class TarWatch:
             if size > EXTENDED_HEADER_LIMIT:
                 self.violation, self.violation_at = size, start
                 return
-            self.skip = -(-size // 512) * 512
+            padded = -(-size // 512) * 512
+            if size:
+                self.collecting, self.collect, self.collect_padding = flag, 1, padded - 1       # its first byte is looked at: a wiped name starts with zero
+            else:
+                self.skip = padded
             return
         self.members += 1
         if flag in NO_DATA_TYPES:
@@ -272,7 +327,7 @@ class TarWatch:
 def tar_verdict(watch, listed, cut_short=False):
     """What the watch saw, set against the `listed` members the library returned: (tar_end, limits, errors).
 
-    `cut_short`: the bytes were stopped by a budget, so neither the end block nor the count is judged.
+    `cut_short`: the bytes were stopped by a budget, so neither the end blocks nor the count is judged.
     """
     limits, errors = [], []
     if watch.violation is not None:
@@ -289,7 +344,21 @@ def tar_verdict(watch, listed, cut_short=False):
         tar_end = "not_reached"
     else:
         tar_end = "missing"
-        errors.append("the tar ends without its end-of-archive block (%d bytes read): the archive is cut short or damaged, and the listing is what came before the cut" % watch.position)
+        if watch.zero_at is not None:
+            errors.append("the tar ends after one zero block at offset %d, and an archive ends with two (%d bytes read): it is cut short or damaged, and the listing is what came before"
+                          % (watch.zero_at, watch.position))
+        else:
+            errors.append("the tar ends without its end-of-archive blocks (%d bytes read): the archive is cut short or damaged, and the listing is what came before the cut" % watch.position)
+    if watch.lone_zeros:
+        errors.append("%d lone zero block(s) inside the tar, the first at offset %d: an archive ends with two zero blocks, and this one goes on after each. GNU tar and bsdtar "
+                      "warn and read on, and so does this listing, but the archive was written or damaged in a way a clean one is not"
+                      % (watch.lone_zeros, watch.lone_first))
+    if watch.zeroed_data:
+        errors.append("%d GNU long-name, long-link or pax header(s) whose data starts with a zero byte: the data block was wiped, and the member that follows carries a name "
+                      "the archive does not hold" % watch.zeroed_data)
+    if watch.tail_at is not None and not cut_short:
+        errors.append("data follows the tar's end-of-archive blocks (the first byte that is not zero is at offset %d of the tar): tar stops at the blocks and so does this listing, "
+                      "so an archive appended to this one, or anything else after them, is not listed" % watch.tail_at)
     if not cut_short and listed != watch.members:
         errors.append("the tar reader listed %d members and a header-by-header walk counted %d: the two disagree, so the listing may be missing members" % (listed, watch.members))
     return tar_end, limits, errors
@@ -299,7 +368,10 @@ def tar_verdict(watch, listed, cut_short=False):
 # --- tar listing: begin --------------------------------------------------------------------------
 # Held byte for byte equal in the three recipes that open a tar by its path (a test compares the copies).
 # A plain tar is read through Guarded and a gzip, bzip2 or xz one through Decoded; both keep the watch
-# just ahead of the library and give it an end of data where the watch stops it.
+# just ahead of the library and give it an end of data where the watch stops it. The library is opened with
+# ignore_zeros, so that a zero block with a header after it is read past, as GNU tar does (the watch has already
+# cut the data at the two zero blocks that end the archive, so nothing past the end is read). Decoded has an
+# output budget: a compressed tar that expands past it stops the listing, and the run says partial.
 def compression_of(head):
     if head[:2] == b"\x1f\x8b":
         return "gz"
@@ -348,6 +420,7 @@ class Guarded(io.RawIOBase):
     def finish(self):
         """The rest of the headers, so that the watch has its whole answer."""
         self.watch.walk(self.walker, self.size)
+        self.watch.look_past_end(self.walker, self.size)
 
 
 class Decoded(io.RawIOBase):
@@ -356,8 +429,11 @@ class Decoded(io.RawIOBase):
 
     PIECE = 1 << 20
 
-    def __init__(self, source, kind, watch):
+    def __init__(self, source, kind, watch, budget=None):
         self.source, self.kind, self.watch = source, kind, watch
+        self.budget = budget          # at most this many decoded bytes, or None
+        self.produced = 0
+        self.exceeded = False         # the stream held more than the budget
         self.errors = (zlib.error, ValueError, OSError)
         if kind == "gz":
             self.decoder = zlib.decompressobj(31)
@@ -378,6 +454,20 @@ class Decoded(io.RawIOBase):
         return True
 
     def piece(self):
+        """The next decoded piece, or None at the end of the stream or of the budget."""
+        if self.exceeded:
+            return None
+        out = self._piece()
+        if out is None or self.budget is None:
+            return out
+        room = self.budget - self.produced
+        if len(out) > room:
+            self.exceeded = True
+            out = out[:max(room, 0)]
+        self.produced += len(out)
+        return out
+
+    def _piece(self):
         d = self.decoder
         if self.kind == "gz":
             if not self.pending:
@@ -458,7 +548,7 @@ class TarList:
     would refuse; `finish()` lets the watch follow the rest, and `watch` then says whether the end block came.
     """
 
-    def __init__(self, path):
+    def __init__(self, path, budget=None):
         self.watch = TarWatch()
         self.handle = open(path, "rb")
         self.walker = None
@@ -471,10 +561,12 @@ class TarList:
                 self.source = Guarded(self.handle, self.walker, os.fstat(self.handle.fileno()).st_size, self.watch)
                 mode = "r:"
             else:
-                self.source = Decoded(self.handle, kind, self.watch)
+                self.source = Decoded(self.handle, kind, self.watch, budget)
                 mode = "r|"
                 self.source = io.BufferedReader(self.source)
-            self.archive = tarfile.open(fileobj=self.source, mode=mode, encoding="utf-8", errors="surrogateescape")
+            self.archive = tarfile.open(fileobj=self.source, mode=mode, encoding="utf-8", errors="surrogateescape", ignore_zeros=True)
+            if (self.watch.ended and self.watch.end_at == 0) or self.watch.zero_at == 0:
+                raise tarfile.ReadError("empty file")        # only zero blocks: the library, which skips them, would list nothing and say nothing
         except tarfile.TarError:
             if self.watch.violation is not None:
                 self.archive = NoMembers()
@@ -490,6 +582,11 @@ class TarList:
     def finish(self):
         source = self.source.raw if isinstance(self.source, io.BufferedReader) else self.source
         source.finish()
+
+    def exceeded(self):
+        """Whether a compressed tar held more than the budget (the listing stopped there)."""
+        source = self.source.raw if isinstance(self.source, io.BufferedReader) else self.source
+        return bool(getattr(source, "exceeded", False))
 
     def trouble(self):
         """For a compressed tar, what is wrong with the stream itself (cut before its end marker, a checksum that does not hold); otherwise None."""
@@ -592,11 +689,11 @@ def sqlite_base(path):
     return None, None
 
 
-def detect(path):
+def detect(path, budget=DEFAULT_BUDGET):
     if not os.path.isfile(path):
         return False, "not a readable file"
     try:
-        with TarList(path) as listing:
+        with TarList(path, budget) as listing:
             for member in listing.archive:
                 low = member.name.lower()
                 if any(marker in low for marker in IOS_MARKERS):
@@ -609,12 +706,19 @@ def detect(path):
     return False, "tar has no iOS full file-system marker"
 
 
-def run(path, out):
+def run(path, out, budget=DEFAULT_BUDGET, seconds=DEFAULT_SECONDS):
     if any(os.path.lexists(os.path.join(out, name)) for name in OUTPUTS):
         # Before anything is written: an earlier run's files stay as they are.
         print(json.dumps({"ok": False, "status": "refused", "why": "the output directory already holds a file of an earlier run (%s): the recipe does not write over it" % ", ".join(n for n in OUTPUTS if os.path.lexists(os.path.join(out, n)))}))
         return None
     os.makedirs(out, exist_ok=True)
+    # Said before the listing starts: a run the harness stops at its limit leaves this, and is read as partial.
+    with open(os.path.join(out, "coverage.json"), "w", encoding="utf-8") as handle:
+        json.dump({"recipe": "ios-filesystem", "status": "partial", "covered": "started; the listing did not finish (stopped before its end)",
+                   "limits_hit": [], "errors": ["the run ended before the listing did"]}, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    deadline = time.monotonic() + seconds
+    timed_out = False
     artifacts_path = os.path.join(out, "artifacts.tsv")
     sqlite_path = os.path.join(out, "sqlite.tsv")
     scratch = os.path.join(out, "sqlite-families.work.db")
@@ -634,9 +738,12 @@ def run(path, out):
         with open(artifacts_path, "w", encoding="utf-8", newline="\n") as artifacts:
             artifacts.write("category\tpath\tbytes\tmtime_utc\ttype\tn\tpath_b64\n")
             try:
-                with TarList(path) as listing:
+                with TarList(path, budget) as listing:
                     try:
                         for member in listing.archive:
+                            if not members % 256 and time.monotonic() > deadline:
+                                timed_out = True
+                                break
                             name = member.name
                             kind = member_type(member)
                             category = classify(name)
@@ -657,14 +764,20 @@ def run(path, out):
                     except (tarfile.TarError, EOFError, OSError) as exc:
                         errors.append("tar traversal stopped: %s" % exc)
                     try:
-                        listing.finish()
+                        if not timed_out:
+                            listing.finish()
                     except (tarfile.TarError, EOFError, OSError):
                         pass
                     if listing.trouble():
                         errors.append("the compressed tar is cut short or damaged: %s" % listing.trouble())
-                    tar_end, found_limits, found_errors = tar_verdict(listing.watch, members)
+                    cut_short = listing.exceeded() or timed_out
+                    tar_end, found_limits, found_errors = tar_verdict(listing.watch, members, cut_short)
                     limits += found_limits
                     errors += found_errors
+                    if timed_out:
+                        limits.append("time limit of %g seconds for the listing (the recipe's own is longer): the listing stopped after %d members" % (seconds, members))
+                    if listing.exceeded():
+                        limits.append("decompressed output budget of %d bytes (the listing stopped after %d members)" % (budget, members))
             except (tarfile.TarError, EOFError, OSError) as exc:
                 errors.append("tar traversal stopped: %s" % exc)
         work.execute("CREATE INDEX a_name ON a (name)")
@@ -729,24 +842,29 @@ def main():
     # tar was catalogued as a member list only. Detect reads tar headers
     # and keeps nothing, so the directory is taken and left empty.
     parser.add_argument("--probe-out")
+    parser.add_argument("--max-decompressed-bytes", type=int, default=DEFAULT_BUDGET)
+    parser.add_argument("--max-seconds", type=float, default=DEFAULT_SECONDS)
     args = parser.parse_args()
+    if args.max_decompressed_bytes < 1:
+        print(json.dumps({"ok": False, "error": "--max-decompressed-bytes must be positive"}))
+        return 2
     try:
         _, path = target_of(args.target)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 2
     if args.command == "detect":
-        applies, why = detect(path)
+        applies, why = detect(path, args.max_decompressed_bytes)
         print(json.dumps({"applies": applies, "why": why}))
         return 0 if applies else 1
     if not args.out:
         print(json.dumps({"ok": False, "error": "run needs --out DIR"}))
         return 2
-    applies, why = detect(path)
+    applies, why = detect(path, args.max_decompressed_bytes)
     if not applies:
         print(json.dumps({"ok": False, "status": "unsupported", "why": why}))
         return 2
-    coverage = run(path, args.out)
+    coverage = run(path, args.out, args.max_decompressed_bytes, args.max_seconds)
     if coverage is None:
         return 2
     print(json.dumps({"ok": True, "status": coverage["status"], "artifacts": sum(coverage["categories"].values())}))

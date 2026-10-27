@@ -9,10 +9,11 @@
  * The series are built here from arithmetic (a start, a step, an offset), not from another tool's output.
  */
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { BEACON, asJob, body, drop, filesUnder, refused, tool, withCwd } from "./pack-network-harness.ts";
+import { runPySnippet } from "./tool-library-harness.ts";
 
 const T0 = 1_771_070_000;
 const step = (n: number, every: number, from = T0): number[] => Array.from({ length: n }, (_, i) => from + i * every);
@@ -322,5 +323,77 @@ test("a series passed inline is held to 500,000 events and 32 MiB of arguments, 
     assert.match(one.status_basis, /1 of the 9 values supplied was not scored \(1 unparseable\) and is not in the measurements/);
     const edge = body(await tool(BEACON, cwd, { timestamps: Array.from({ length: 500_000 }, (_, i) => T0 + i * 60) }));
     assert.equal(edge.events, 500_000);
+  });
+});
+
+test("timestamps_file must be a regular file: /dev/zero is refused at once instead of being read for ever", async () => {
+  await withCwd(async (cwd) => {
+    const run = startDetached(BEACON, cwd, { timestamps_file: "/dev/zero" });
+    try {
+      const watchdog = new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), 20_000));
+      const ended = await Promise.race([run.closed.then(() => "ended" as const), watchdog]);
+      assert.equal(ended, "ended", "the tool never returned for /dev/zero");
+    } finally {
+      try { run.killGroup(); } catch { /* already gone */ }
+    }
+    const answer = JSON.parse(run.stdout());
+    assert.equal(answer.status, "failed");
+    assert.match(answer.error, /timestamps_file must name a regular file/);
+    // a directory is refused the same way
+    await mkdir(join(cwd, "work", "d"), { recursive: true });
+    assert.match(refused(await tool(BEACON, cwd, { timestamps_file: "work/d" })).error, /regular file/);
+  });
+});
+
+test("the skip of a line too long to be a time is under the clock: values_of raises when the deadline has passed inside such a line", async () => {
+  await withCwd(async (cwd) => {
+    await drop(cwd, "work/long.txt", "1\n" + "9".repeat(50_000) + "\n2\n");
+    const code = [
+      "import importlib.util, sys, time",
+      "spec = importlib.util.spec_from_file_location('beacon', sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)",
+      "counters = {'long_lines': 0}",
+      "seen = [v for _, v in m.values_of(sys.argv[2], None, counters, time.monotonic() + 3600)]",
+      "print('open', seen, counters['long_lines'])",
+      "try:",
+      "    list(m.values_of(sys.argv[2], None, counters, time.monotonic() - 1))",
+      "    print('no stop')",
+      "except m.ReadTimeUp as up:",
+      "    print('stopped at', up.index)",
+    ].join("\n");
+    const run = await runPySnippet(code, [BEACON, join(cwd, "work/long.txt")], null);
+    assert.equal(run.code, 0, run.stderr);
+    assert.match(run.stdout, /^open \['1', None, '2'\]|^open \['1', '2'\]/m);
+    assert.match(run.stdout, /stopped at 1/);
+  });
+});
+
+test("a series nested 100,000 deep is a JSON answer on every Python, not an unexpected failure: no text is built from it (Python 3.14 parses it)", async () => {
+  const found = spawnSync("sh", ["-c", "command -v python3.14 python3.13 | head -1"], { encoding: "utf8" }).stdout.trim();
+  await withCwd(async (cwd, bin) => {
+    // The interpreters that parse a document this deep without a RecursionError are the new ones; on the others the parse is refused as JSON already.
+    const deep = "[".repeat(100_000) + "]".repeat(100_000);
+    for (const body_ of [`{"timestamps":[1,2,3,4,5,6,7,${deep}]}`, `{"timestamps":[1,2,3,4,5,6,7],"window_end":${deep}}`]) {
+      for (const python of ["python3", ...(found ? [found] : [])]) {
+        const dir = join(cwd, "py-" + python.replace(/\W/g, ""));
+        await mkdir(dir, { recursive: true });
+        if (python !== "python3") await symlink(python, join(dir, "python3")).catch((e: NodeJS.ErrnoException) => { if (e.code !== "EEXIST") throw e; });
+        const run = spawnSync("python3", [BEACON], { cwd, input: body_, encoding: "utf8", env: { ...process.env, AGENT_ID: "s1", PATH: `${dir}:${process.env.PATH}` }, maxBuffer: 1 << 26 });
+        assert.doesNotMatch(run.stderr, /Traceback/);
+        const answer = JSON.parse(run.stdout);
+        assert.doesNotMatch(answer.error ?? "", /unexpected failure|RecursionError/, `${python}: ${run.stdout.slice(0, 300)}`);
+        assert.equal(answer.status === "failed" || answer.status === "partial" || answer.status === "complete", true);
+      }
+    }
+  });
+});
+
+test("a tool-output that is a symbolic link is refused before anything is read (the results of a long list would land where it points)", async () => {
+  await withCwd(async (cwd) => {
+    await mkdir(join(cwd, "elsewhere"), { recursive: true });
+    await mkdir(join(cwd, "work", "s1"), { recursive: true });
+    await symlink(join(cwd, "elsewhere"), join(cwd, "work", "s1", "tool-output"));
+    const err = refused(await tool(BEACON, cwd, { timestamps: Array.from({ length: 50 }, (_, i) => 1_700_000_000 + 60 * i) }));
+    assert.match(err.error, /tool-output is a symbolic link/);
+    assert.deepEqual(await readdir(join(cwd, "elsewhere")), [], "nothing was written where the link points");
   });
 });

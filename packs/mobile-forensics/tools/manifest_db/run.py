@@ -587,10 +587,13 @@ FILE_ID = re.compile(r"[0-9a-fA-F]{40}")
 DEFAULT_LIMIT = 200
 INLINE_BYTES = 1 << 20
 DEFAULT_MAX_SECONDS = 240
-MAX_SECONDS_CAP = 270       # manifest.json timeout_seconds (300) less the time to write the answer
+MAX_SECONDS_CAP = 255       # manifest.json timeout_seconds (300) less the work after the row loop (about 7 % of it) and the time to write the answer
+LOOK_EVERY = 1000           # SQLite virtual-machine steps between two looks at the clock and at the stop flag, inside a statement
+COUNT_SHARE = 0.1           # the share of max_seconds the count of the Files table may take; the listing is the answer, the count is a convenience
+CELL_CHARS = JUDGE_CHARS + 1   # the first characters of a domain or path that are read: one past what is judged, so a longer name is known to be longer
 BACKUP_FILES = ("Manifest.plist", "Info.plist", "Status.plist")
 UNIX_2007 = 1167609600      # 2007-01-01T00:00:00Z: before the first iPhone
-MAX_PLIST_BYTES = 32 << 20
+MAX_PLIST_BYTES = 4 << 20     # Manifest.plist, Info.plist and Status.plist hold a few dozen kilobytes; plistlib held 13 times their size in memory for nested arrays
 MAX_ARCHIVE_BYTES = 1 << 20   # the keyed archive in a `file` cell; a real one is a few hundred bytes. A larger cell is never read
 MAX_REF_DEPTH = 12
 KINDS = {1: "file", 2: "directory", 4: "symlink"}
@@ -842,6 +845,67 @@ def blob_state(root, root_real, file_id, kind, valid):
     return "missing", None, None
 
 
+class Guard:
+    """Ends a long SQLite statement at the deadline or at a stop signal. A statement is one call into SQLite that Python does not see
+    into: a b-tree whose pages point at each other, or a table of hundreds of millions of rows, keeps a count(*) or one step of a
+    scan going for as long as it likes, past the deadline, and a signal waits (Python runs its handler between its own bytecodes). SQLite
+    calls `look` every LOOK_EVERY steps of its virtual machine and a true answer ends the statement with an `interrupted` error.
+    A stop signal that arrives while SQLite runs is taken as a flag (a handler that raised there would be swallowed by SQLite's
+    callback) and ends the statement; one that arrives anywhere else raises Interrupted at once, as the tool's own handler does."""
+
+    def __init__(self):
+        self.until = None           # the monotonic time past which a statement is ended
+        self.expired = False        # a statement was ended because `until` passed
+        self.signum = None
+        self.inside = False         # SQLite is running
+        self.before = {}
+
+    def run(self, call, *args):
+        """call(*args), a call into SQLite."""
+        self.inside = True
+        try:
+            return call(*args)
+        finally:
+            self.inside = False
+
+    def look(self):
+        if self.signum is not None:
+            return 1
+        if self.until is not None and time.monotonic() > self.until:
+            self.expired = True
+            return 1
+        return 0
+
+    def caught(self, signum, frame):
+        for number in STOP_SIGNALS:
+            signal.signal(number, signal.SIG_IGN)
+        self.signum = signum
+        if not self.inside:
+            raise Interrupted(signum)
+
+    def start(self):
+        for number in STOP_SIGNALS:
+            self.before[number] = signal.signal(number, self.caught)
+
+    def finish(self):
+        """Give the stop signals back to the tool's own handler; a signal taken meanwhile is raised now."""
+        if self.signum is not None:
+            raise Interrupted(self.signum)
+        for number, handler in self.before.items():
+            signal.signal(number, handler)
+        self.before = {}
+
+    def check(self):
+        if self.signum is not None:
+            raise Interrupted(self.signum)
+
+
+def capped(column):
+    """The first CELL_CHARS characters of a cell that is text or a blob, and any other cell as it is: a name is judged on its first
+    JUDGE_CHARS characters, so what follows is not read into Python (a 650 MB path was 2 GB resident there)."""
+    return "CASE WHEN typeof(%s) IN ('text', 'blob') THEN substr(%s, 1, %d) ELSE %s END" % (column, column, CELL_CHARS, column)
+
+
 def main():
     started = time.monotonic()
     args = read_args()
@@ -893,6 +957,7 @@ def main():
     status_m, manifest, why_m = read_plist(os.path.join(root, "Manifest.plist"))
     status_i, info, why_i = read_plist(os.path.join(root, "Info.plist"))
     status_s, snapshot, why_s = read_plist(os.path.join(root, "Status.plist"))
+    plists_over_limit = [name for name, got in (("Manifest.plist", status_m), ("Info.plist", status_i), ("Status.plist", status_s)) if got == "too_large"]
     manifest_out = {"status": status_m, **({"reason": why_m} if why_m else {})}
     flag = None
     if status_m == "ok" and isinstance(manifest, dict):
@@ -986,6 +1051,7 @@ def main():
     stopped_at_row = None
     read_error = None
     work_dir = None
+    guard = Guard()
 
     if head != SQLITE_MAGIC:
         listing["reason"] = ("Manifest.db is not a plaintext SQLite database (its first 16 bytes are not the SQLite header "
@@ -1008,11 +1074,17 @@ def main():
             uri = "file:%s?%s" % (opened.replace("%", "%25").replace("?", "%3f").replace("#", "%23"),
                                   "mode=rw" if companions else "mode=ro&immutable=1")
             connection = sqlite3.connect(uri, uri=True)
+            guard.until = deadline
+            guard.start()
+            connection.set_progress_handler(guard.look, LOOK_EVERY)
             # A TEXT cell that is not UTF-8 is read with its bytes as lone surrogates (JSON escapes them) and
             # does not stop the listing.
             connection.text_factory = lambda raw: raw.decode("utf-8", "surrogateescape")
-            tables = [r[0] for r in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")]
+            tables = [r[0] for r in guard.run(lambda: list(connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")))]
         except (sqlite3.Error, OSError) as exc:
+            guard.check()
+            if guard.expired:
+                fail("max_seconds passed while Manifest.db was being opened: nothing is listed. This is not an empty backup.", db=shown(db), encryption=state)
             fail("Manifest.db would not open as SQLite", db=shown(db), reason=describe(exc) if isinstance(exc, OSError) else scrub(str(exc)),
                  encryption=state, note="Nothing is listed. This is not an empty backup.")
         db_file["snapshot"] = snapshot_kind
@@ -1021,41 +1093,72 @@ def main():
         if "Files" not in tables:
             fail("Manifest.db has no Files table", tables=tables[:50], encryption=state)
         # The table b-tree in row order, never through the fileID index: a damaged index page must not cost the listing.
+        # The count is a convenience beside the listing: it is given a tenth of max_seconds (and the stop signals) through the guard, and an
+        # answer without it says so. It is a sum of ones and not count(*): SQLite counts a table in one step of its virtual machine, which
+        # does not look up, and a table b-tree whose pages point at each other (a 10 KB file) kept that one step going for ever.
+        guard.until = min(deadline, time.monotonic() + max_seconds * COUNT_SHARE)
         try:
-            counts["files_in_manifest"] = connection.execute("SELECT count(*) FROM Files NOT INDEXED").fetchone()[0]
+            counts["files_in_manifest"] = guard.run(lambda: connection.execute("SELECT coalesce(sum(1), 0) FROM Files NOT INDEXED").fetchone()[0])
         except sqlite3.Error as exc:
-            observations.append("the rows of the Files table could not be counted (%s): the listing goes as far as the table can be read" % type(exc).__name__)
+            guard.check()
+            if guard.expired:
+                observations.append("the rows of the Files table were not all counted in the time given to the count (a tenth of max_seconds, %g s): "
+                                    "files_in_manifest is unknown, and the listing goes on" % (max_seconds * COUNT_SHARE))
+            else:
+                observations.append("the rows of the Files table could not be counted (%s): the listing goes as far as the table can be read" % type(exc).__name__)
+        guard.expired = False
+        guard.until = deadline
         # The `file` cell is read only when it is a BLOB of at most MAX_ARCHIVE_BYTES: its type and its length are
         # taken from the record's header, so a cell of any size costs no memory when it is not read.
         file_cell = ("typeof(file), CASE typeof(file) WHEN 'blob' THEN length(file) END, "
                      "CASE WHEN typeof(file) = 'blob' AND length(file) <= %d THEN file END" % MAX_ARCHIVE_BYTES)
+        # The name columns come back capped (see capped): a name is judged on its first JUDGE_CHARS characters, and the length of a
+        # domain is asked for beside it so that two long domains are still two.
+        names = "%s, %s, CASE WHEN typeof(domain) = 'text' THEN length(domain) END, %s, flags, %s FROM Files NOT INDEXED" % (
+            capped("fileID"), capped("domain"), capped("relativePath"), file_cell)
+        rows = iter(())
+        with_rowid = True
         try:
-            cursor = connection.execute("SELECT rowid, fileID, domain, relativePath, flags, %s FROM Files NOT INDEXED" % file_cell)
-            with_rowid = True
-        except sqlite3.OperationalError:
-            cursor = connection.execute("SELECT fileID, domain, relativePath, flags, %s FROM Files NOT INDEXED" % file_cell)
-            with_rowid = False
-        listing = {"available": True, "reason": None}
-        rows = iter(cursor)
-        while True:
             try:
-                row = next(rows)
+                rows = iter(guard.run(connection.execute, "SELECT rowid, " + names))
+            except sqlite3.OperationalError:
+                guard.check()
+                if guard.expired:
+                    raise
+                with_rowid = False
+                rows = iter(guard.run(connection.execute, "SELECT " + names))
+        except sqlite3.Error as exc:
+            guard.check()
+            if not guard.expired:
+                raise
+            stopped_at_row = 0
+        listing = {"available": True, "reason": None}
+        while stopped_at_row is None:
+            try:
+                row = guard.run(next, rows)
             except StopIteration:
                 break
             except sqlite3.Error as exc:
+                guard.check()
+                if guard.expired:
+                    stopped_at_row = counts["rows_read"]
+                    break
                 # A damaged page: what was read is kept, and the rest is not listed.
                 read_error = "%s%s after %d rows" % (type(exc).__name__, " (" + exc.sqlite_errorname + ")" if getattr(exc, "sqlite_errorname", None) else "", counts["rows_read"])
                 break
+            guard.check()
             if time.monotonic() > deadline:
                 stopped_at_row = counts["rows_read"]
                 break
             counts["rows_read"] += 1
             rowid = row[0] if with_rowid else None
-            file_id, domain, relative, flags, file_type, file_length, blob = (row[1:] if with_rowid else row)
+            file_id, domain, domain_length, relative, flags, file_type, file_length, blob = (row[1:] if with_rowid else row)
             file_id = file_id if isinstance(file_id, str) else ("" if file_id is None else str(file_id))
             domain = domain if isinstance(domain, str) else ("" if domain is None else str(domain))
             relative = relative if isinstance(relative, str) else ("" if relative is None else str(relative))
-            domains[domain] = domains.get(domain, 0) + 1
+            # A domain past the cap is one of those printed as the same placeholder; its length keeps two of them two.
+            domains[domain if len(domain) <= JUDGE_CHARS else "%s\0%s" % (domain, domain_length)] = domains.get(
+                domain if len(domain) <= JUDGE_CHARS else "%s\0%s" % (domain, domain_length), 0) + 1
             # Both filters look at the text the answer prints: a path component shaped like a recovery password is already
             # withheld there. A filter on the real text would tell, one call at a time, whether the withheld component matches.
             if domain_filter and shown(domain, False) != domain_filter:
@@ -1096,6 +1199,7 @@ def main():
                       "parser": PARSER}
             entries.add(record)
         connection.close()
+        guard.finish()
 
     # --- the answer ------------------------------------------------------------------------
     domain_page = LosslessPage(TOOL, [shown(os.path.realpath(db), False), "domains", domain_filter or ""], limit, INLINE_BYTES)
@@ -1114,13 +1218,14 @@ def main():
     if contains_timeouts:
         observations.append("contains ran past its time on %d path(s): those rows are counted and were not matched" % contains_timeouts)
     unreadable = sum(n for k, n in counts["metadata"].items() if k != "ok")
-    # A cell the tool did not read (over its size limit) or could not make sense of (malformed) is metadata left out of the answer.
-    metadata_left_out = sum(counts["metadata"].get(k, 0) for k in ("too_large", "malformed"))
+    # A row whose metadata is not in the answer, whatever the reason (a cell over its size limit, a cell that is not a blob, a blob that is not a
+    # property list or not a keyed archive, a NULL cell, an archive that could not be followed) is a row listed with less than the manifest holds.
+    metadata_left_out = unreadable
     if unreadable:
         observations.append("%d listed row(s) have no readable metadata (counts.metadata says why, and each row carries metadata_status): "
                             "they are listed with their path and blob state only" % unreadable)
     complete = (listing["available"] and stopped_at_row is None and read_error is None and not skipped_companions
-                and not cut and not contains_timeouts and not metadata_left_out and completion["state"] != "not_finished")
+                and not cut and not contains_timeouts and not metadata_left_out and completion["state"] != "not_finished" and not plists_over_limit)
     if listing["available"] and (extra["checks"]["after_backup_date"] or extra["checks"]["before_2007"]):
         observations.append("under epoch %s some times fall after the backup's own date or before 2007: see epoch.consistency. "
                             "That can be a wrong epoch (a 31-year shift between the two), a phone clock, or the case; it is for the examiner to settle." % epoch)
@@ -1130,7 +1235,8 @@ def main():
         complete = False
     status = "complete" if complete else "partial"
     if complete:
-        status_basis = "the Files table was read to its end, the backup finished, and nothing in the file or its companions was left out"
+        status_basis = ("the Files table was read to its end, %s, and nothing in the file or its companions was left out"
+                        % ("the backup finished" if completion["state"] == "finished" else "the backup's completion is unknown (%s)" % completion["basis"]))
     else:
         reasons = []
         if not listing["available"]:
@@ -1146,9 +1252,11 @@ def main():
         if contains_timeouts:
             reasons.append("contains ran out of time on a path")
         if metadata_left_out:
-            reasons.append("the metadata of %d listed row(s) was not read (over the size limit) or is malformed" % metadata_left_out)
+            reasons.append("the metadata of %d listed row(s) is not in the answer (over the size limit, NULL, not a keyed archive or malformed)" % metadata_left_out)
         if completion["state"] == "not_finished":
             reasons.append("the backup did not finish")
+        if plists_over_limit:
+            reasons.append("%s is over %d bytes and was not read" % (" and ".join(plists_over_limit), MAX_PLIST_BYTES))
         status_basis = "partial because " + ("; ".join(reasons) if reasons else "the encryption state or the listing is not settled") + " (see observations)"
     result = {
         "path": shown(path),
@@ -1194,7 +1302,9 @@ def main():
         "truncated": any(p["truncated"] for p in paging.values()),
         "paths_withheld": PATHS_WITHHELD[0],
         **({"paths_note": "A path component shaped like a recovery password (a key split across components included), or a path "
-                          "too long to judge, is withheld from every path in this answer and in the files it names."} if PATHS_WITHHELD[0] else {}),
+                          "too long to judge, is withheld from every path in this answer and in the files it names%s."
+                          % ("; the one exception is the working copy named under manifest_db_file.working_copy, a byte copy of Manifest.db "
+                             "that holds every name as the database has it" if work_dir else "")} if PATHS_WITHHELD[0] else {}),
         "note": "This lists a backup's map; it is not the phone's file system. Cite the relative path (what the phone called "
                 "the file), the domain and the file id (what was opened), and the Manifest.db row. `encryption.state` "
                 "is unknown when Manifest.plist is missing, unreadable or without IsEncrypted: do not read it as "

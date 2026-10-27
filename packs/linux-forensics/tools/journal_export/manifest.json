@@ -56,8 +56,8 @@
   "example": "{\"path\": \"work/extracted/var/log/journal\", \"grep\": \"sudo\", \"write_text\": true}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 6,
-  "sha256": "07c2b5fa16e388c256d85c0f0ff566863814a8f7386018645273449b54e2abbe",
+  "version": 7,
+  "sha256": "f8a88f51907bb006918cd50a3b9e9d17b6a39197ace3bbdfa7a0bf4aa2e5e175",
   "use": {
     "extensions": [
       ".journal",

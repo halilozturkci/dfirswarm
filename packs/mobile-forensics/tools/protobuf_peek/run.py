@@ -985,13 +985,23 @@ def main():
     structure["consistent_with_protobuf_wire_format"] = bool(window_accepted and state == "ok")
     if window_accepted and ctx.depth_limited:
         structure["fields_not_tried_as_nested_at_max_depth"] = ctx.depth_limited
+    # The answer is about the window it read. A window that is not the whole input leaves the rest undecoded, whatever the window itself
+    # parsed as (structure says that, and consistent_with_protobuf_wire_format stays about the window): the status is complete only
+    # when nothing lies after the window.
+    after = window["bytes_after_window"]
+    # No number in these words, and none for a window that is not shown: that answer is the same wherever the window lies (window says where).
+    unread = " Bytes after the window are not decoded (window.bytes_after_window says how many, window.next_offset where the next window starts)." if after > 0 else ""
     if structure["status"] == "valid":
-        status, status_basis = "complete", "the whole window parsed as protobuf wire format and meets the acceptance rule"
+        if after > 0:
+            status, status_basis = "partial", "this window parsed as protobuf wire format and meets the acceptance rule, but it is not the whole input." + unread
+        else:
+            status, status_basis = "complete", "the whole window parsed as protobuf wire format and meets the acceptance rule, and nothing lies after it"
     elif structure["status"] == "partial":
-        status, status_basis = "partial", "a budget or the clock stopped the parse (resume_offset says where): " + structure["reason"]
+        status, status_basis = "partial", "a budget or the clock stopped the parse (resume_offset says where): " + structure["reason"] + unread
     elif structure["status"] == "empty":
-        status, status_basis = "partial", "the window holds no bytes, so nothing was read"
+        status, status_basis = "partial", "the window holds no bytes, so nothing was read" + unread
     else:
+        # Not shown: the same words wherever the window lies, so nothing here depends on how far from the end of the input it is.
         status, status_basis = "partial", "no row is printed for this window (structure.status %s): " % structure["status"] + structure["reason"]
     send({
         "source": source,

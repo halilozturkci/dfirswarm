@@ -53,8 +53,8 @@
   "example": "{\"path\": \"inputs/memory.raw\", \"kinds\": [\"registry hive\"], \"extract_to\": \"work/<your id>/carved\", \"write_values\": true, \"results_to\": \"work/<your id>/memory-hits.jsonl\"}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 7,
-  "sha256": "429a619651ee4b26a3eecd3f9459b2f8596fd77eac4946e96538414df85fb097",
+  "version": 8,
+  "sha256": "70034ed33a89f3548f7290043db4b30078b034df95ada7b0151f1168210ff2cc",
   "use": {
     "extensions": [
       ".vmem",

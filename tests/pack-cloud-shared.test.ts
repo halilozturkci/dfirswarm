@@ -101,7 +101,7 @@ test("every manifest says what its tool reads, carries its script's sha256, decl
     assert.equal(manifest.sha256, createHash("sha256").update(script).digest("hex"), `${name} sha256`);
     assert.ok(manifest.version >= 4, `${name} version raised`);
     assert.ok(manifest.timeout_seconds > 580, `${name}: the most time_limit_seconds allows (580) is under the tool's timeout, so the tool stops itself before it is killed`);
-    assert.match(manifest.params.time_limit_seconds.description, /default 540, at most 580/);
+    assert.match(manifest.params.time_limit_seconds.description, /default 420, at most 480/);
     assert.ok(manifest.use?.names?.length > 0, `${name} says what it reads`);
     assert.equal(manifest.use.extensions, undefined, `${name}: a bare .json or .csv would hint it for every such file`);
     const keys = new Set([...script.matchAll(read)].map((m) => m[1] ?? m[2]));
