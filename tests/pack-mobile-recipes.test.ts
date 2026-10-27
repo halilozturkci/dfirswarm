@@ -1085,6 +1085,85 @@ test("ios-filesystem and android-backup read on past a lone zero block as GNU ta
   });
 });
 
+test("ios-filesystem and android-backup stop their listing at their own time limit, and leave an account of a run that is stopped before it", async () => {
+  // Neither had a clock: 67 million members of 512 bytes are about 2,850 s at the measured speed, against a limit of 1,800, with no coverage.json at all.
+  await withCwd(async (cwd) => {
+    const names = Array.from({ length: 600 }, (_, i) => `${IOS}/Other/f${i}/data.db`);
+    const tar = join(cwd, "work", "many.tar");
+    await build(TARX, tar, JSON.stringify({ members: names.map((name) => ({ name, size: 0 })) }));
+    const out = join(cwd, "slow-ios");
+    const r = await recipe("ios-filesystem", ["run", "--target", target(tar), "--out", out, "--max-seconds", "1e-9"], cwd);
+    assert.equal(r.code, 0, r.stdout + r.stderr);
+    const cov = await coverage(out);
+    assert.equal(cov.status, "partial", JSON.stringify(cov));
+    assert.ok(cov.limits_hit.some((l) => /^time limit of 1e-09 seconds for the listing .*stopped after \d+ members$/.test(l)), JSON.stringify(cov.limits_hit));
+    assert.ok(Number(/^(\d+) tar members/.exec(cov.covered)?.[1]) < 600, cov.covered);
+    assert.equal(cov.tar_end, "not_reached");
+    const ab = join(cwd, "work", "many.ab");
+    await build(AB, ab, JSON.stringify({ members: names.map((n) => [n, 0]) }));
+    const o2 = join(cwd, "slow-ab");
+    assert.equal((await recipe("android-backup", ["run", "--target", target(ab), "--out", o2, "--max-seconds", "1e-9"], cwd)).code, 0);
+    const c2 = await coverage(o2);
+    assert.equal(c2.status, "partial", JSON.stringify(c2));
+    assert.ok(c2.limits_hit.some((l) => /^time limit of 1e-09 seconds for the listing/.test(l)), JSON.stringify(c2.limits_hit));
+    assert.equal(c2.payload_stream, "not_reached");
+    // Inside the limit both are whole.
+    const o3 = join(cwd, "fast-ab");
+    await recipe("android-backup", ["run", "--target", target(ab), "--out", o3], cwd);
+    assert.equal((await coverage(o3)).status, "complete");
+  });
+});
+
+test("android-backup lists an archive of no member as complete: two zero blocks are a valid tar", async () => {
+  // The change that reads past a lone zero block made `empty file` an error for a payload that is only the two end blocks.
+  await withCwd(async (cwd) => {
+    for (const compress of [true, false]) {
+      const ab = join(cwd, "work", `empty-${compress}.ab`);
+      await build(AB, ab, JSON.stringify({ compress, members: [] }));
+      const out = join(cwd, `empty-${compress}`);
+      assert.equal((await recipe("android-backup", ["run", "--target", target(ab), "--out", out], cwd)).code, 0);
+      const cov = await coverage(out);
+      assert.equal(cov.status, "complete", `${compress}: ${JSON.stringify(cov)}`);
+      assert.equal(cov.covered, "0 embedded tar members");
+      assert.equal(cov.tar_end, "reached");
+    }
+    // One zero block and nothing else is not an end.
+    const one = join(cwd, "work", "one.ab");
+    await build(AB, one, JSON.stringify({ members: [], end_blocks: 1 }));
+    await recipe("android-backup", ["run", "--target", target(one), "--out", join(cwd, "one")], cwd);
+    assert.equal((await coverage(join(cwd, "one"))).status, "partial");
+  });
+});
+
+test("the tar recipes say a GNU long-name, long-link or pax header whose data block was wiped, and are partial", async () => {
+  // A zeroed name block renamed the member after it, and the run was complete: 4 of 206 runs that zeroed one block of an archive.
+  await withCwd(async (cwd) => {
+    const code = String.raw`
+import io, sys, tarfile
+path, kind = sys.argv[1:3]
+b = io.BytesIO()
+fmt = tarfile.GNU_FORMAT if kind == "gnu" else tarfile.PAX_FORMAT
+with tarfile.open(fileobj=b, mode="w", format=fmt) as t:
+    for name in ("private/var/mobile/Library/Other/" + "n" * 140 + "/a.db", "private/var/mobile/Library/Other/b.db"):
+        info = tarfile.TarInfo(name)
+        info.size = 0
+        t.addfile(info, io.BytesIO(b""))
+raw = bytearray(b.getvalue())
+raw[512:1024] = bytes(512)          # the data block of the first long-name (or pax) header
+open(path, "wb").write(raw)
+`;
+    for (const kind of ["gnu", "pax"]) {
+      const tar = join(cwd, "work", `wiped-${kind}.tar`);
+      await build(code, tar, kind);
+      const out = join(cwd, `wiped-${kind}`);
+      assert.equal((await recipe("ios-filesystem", ["run", "--target", target(tar), "--out", out], cwd)).code, 0);
+      const cov = await coverage(out);
+      assert.equal(cov.status, "partial", `${kind}: ${JSON.stringify(cov)}`);
+      assert.ok(cov.errors.some((e) => /1 GNU long-name, long-link or pax header\(s\) whose data starts with a zero byte/.test(e)), JSON.stringify(cov.errors));
+    }
+  });
+});
+
 test("ios-filesystem stops a compressed tar that expands past its budget, says partial, and keeps the members it listed", async () => {
   // A gzip, bzip2 or xz tar was decoded without a bound (android-backup has one): time and output were as large as the stream made them.
   await withCwd(async (cwd) => {

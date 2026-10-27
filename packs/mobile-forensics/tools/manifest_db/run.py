@@ -587,7 +587,7 @@ FILE_ID = re.compile(r"[0-9a-fA-F]{40}")
 DEFAULT_LIMIT = 200
 INLINE_BYTES = 1 << 20
 DEFAULT_MAX_SECONDS = 240
-MAX_SECONDS_CAP = 270       # manifest.json timeout_seconds (300) less the time to write the answer
+MAX_SECONDS_CAP = 255       # manifest.json timeout_seconds (300) less the work after the row loop (about 7 % of it) and the time to write the answer
 LOOK_EVERY = 1000           # SQLite virtual-machine steps between two looks at the clock and at the stop flag, inside a statement
 COUNT_SHARE = 0.1           # the share of max_seconds the count of the Files table may take; the listing is the answer, the count is a convenience
 CELL_CHARS = JUDGE_CHARS + 1   # the first characters of a domain or path that are read: one past what is judged, so a longer name is known to be longer
@@ -957,6 +957,7 @@ def main():
     status_m, manifest, why_m = read_plist(os.path.join(root, "Manifest.plist"))
     status_i, info, why_i = read_plist(os.path.join(root, "Info.plist"))
     status_s, snapshot, why_s = read_plist(os.path.join(root, "Status.plist"))
+    plists_over_limit = [name for name, got in (("Manifest.plist", status_m), ("Info.plist", status_i), ("Status.plist", status_s)) if got == "too_large"]
     manifest_out = {"status": status_m, **({"reason": why_m} if why_m else {})}
     flag = None
     if status_m == "ok" and isinstance(manifest, dict):
@@ -1224,7 +1225,7 @@ def main():
         observations.append("%d listed row(s) have no readable metadata (counts.metadata says why, and each row carries metadata_status): "
                             "they are listed with their path and blob state only" % unreadable)
     complete = (listing["available"] and stopped_at_row is None and read_error is None and not skipped_companions
-                and not cut and not contains_timeouts and not metadata_left_out and completion["state"] != "not_finished")
+                and not cut and not contains_timeouts and not metadata_left_out and completion["state"] != "not_finished" and not plists_over_limit)
     if listing["available"] and (extra["checks"]["after_backup_date"] or extra["checks"]["before_2007"]):
         observations.append("under epoch %s some times fall after the backup's own date or before 2007: see epoch.consistency. "
                             "That can be a wrong epoch (a 31-year shift between the two), a phone clock, or the case; it is for the examiner to settle." % epoch)
@@ -1234,7 +1235,8 @@ def main():
         complete = False
     status = "complete" if complete else "partial"
     if complete:
-        status_basis = "the Files table was read to its end, the backup finished, and nothing in the file or its companions was left out"
+        status_basis = ("the Files table was read to its end, %s, and nothing in the file or its companions was left out"
+                        % ("the backup finished" if completion["state"] == "finished" else "the backup's completion is unknown (%s)" % completion["basis"]))
     else:
         reasons = []
         if not listing["available"]:
@@ -1253,6 +1255,8 @@ def main():
             reasons.append("the metadata of %d listed row(s) is not in the answer (over the size limit, NULL, not a keyed archive or malformed)" % metadata_left_out)
         if completion["state"] == "not_finished":
             reasons.append("the backup did not finish")
+        if plists_over_limit:
+            reasons.append("%s is over %d bytes and was not read" % (" and ".join(plists_over_limit), MAX_PLIST_BYTES))
         status_basis = "partial because " + ("; ".join(reasons) if reasons else "the encryption state or the listing is not settled") + " (see observations)"
     result = {
         "path": shown(path),

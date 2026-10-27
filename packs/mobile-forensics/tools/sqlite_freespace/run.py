@@ -587,7 +587,7 @@ MAGIC = b"SQLite format 3\x00"
 LOCK_BYTE_OFFSET = 1 << 30
 DEFAULT_LIMIT = 200
 DEFAULT_MAX_SECONDS = 240
-MAX_SECONDS_CAP = 270       # manifest.json timeout_seconds (300) less EXPRESSION_ALLOWANCE and the time to write the answer
+MAX_SECONDS_CAP = 255       # manifest.json timeout_seconds (300) less EXPRESSION_ALLOWANCE, the lag of one fragment or page and the time to write the answer
 INLINE_BYTES = 1 << 20
 REGEX_SECONDS = 2.0         # one fragment: a pattern inside the cost bound below never gets near it (0.12 s at most on a whole page)
 # The work `contains` may do in one run, in steps: a fragment of n characters under an expression whose cost bound is c is
@@ -621,6 +621,7 @@ MAX_PATTERN_CHARS = 256
 MAX_PATTERN_COST = 256
 MAX_REPEAT_COUNT = 4096
 PROBLEMS_INLINE = 200
+PROBLEM_ROWS_PER_KIND = 100     # rows of one kind written one by one; the rest of that kind is one folded row (exact count, first and last place)
 TEXT_ENCODINGS = {1: "UTF-8", 2: "UTF-16LE", 3: "UTF-16BE"}
 WIDE_MINIMUM = 8
 
@@ -943,6 +944,8 @@ CORRUPT_KINDS = {
     "freelist trunk page truncated", "freelist trunk count too large", "freelist page listed twice",
     "freelist count differs from the header", "b-tree page header inconsistent", "freeblock chain corrupt",
     "fragment not found at its offset", "pages in no structure", "b-tree cell outside its page", "b-tree links inconsistent",
+    "pointer-map page not a pointer map",
+    "pointer-map page not a pointer map",
 }
 
 
@@ -954,12 +957,30 @@ class Problems:
         self.page = page
         self.unexamined = 0
         self.kinds = {}
+        self.written = {}
+        self.folded = {}
 
     def add(self, kind, detail, examined, **where):
         self.kinds[kind] = self.kinds.get(kind, 0) + 1
         if not examined:
             self.unexamined += 1
+        if self.written.get(kind, 0) >= PROBLEM_ROWS_PER_KIND:
+            # A file can make millions of problems of one kind (a leaf pointer outside the file, three thousand times a trunk page): the first rows
+            # of a kind are written whole, and the rest is counted here, with where the first and the last of them were.
+            fold = self.folded.setdefault(kind, {"count": 0, "first": where, "last": where, "examined": True})
+            fold["count"] += 1
+            fold["last"] = where
+            fold["examined"] = fold["examined"] and examined
+            return
+        self.written[kind] = self.written.get(kind, 0) + 1
         self.page.add({"kind": kind, "detail": detail, "region_or_page_examined": examined, **where})
+
+    def fold_rows(self):
+        """One row for each kind that went past PROBLEM_ROWS_PER_KIND: how many more there were and the first and last place; problem_kinds has the exact total."""
+        for kind, fold in self.folded.items():
+            self.page.add({"kind": kind, "detail": "%d more problems of this kind are folded into this row (the first %d of the kind are above; problem_kinds has the total): "
+                           "the first folded one at %s, the last at %s" % (fold["count"], PROBLEM_ROWS_PER_KIND, fold["first"] or "the file", fold["last"] or "the file"),
+                           "folded": fold["count"], "first_folded_at": fold["first"], "last_folded_at": fold["last"], "region_or_page_examined": fold["examined"]})
 
 
 def entropy(data):
@@ -1088,6 +1109,7 @@ def main():
         # outside the file and a count the header does not agree with are said, not walked past.
         free = {}
         trunks = 0
+        freelist_stopped = False
         trunk, seen = h["freelist_head"], set()
         max_leaves = usable // 4 - 2
         while trunk:
@@ -1096,6 +1118,9 @@ def main():
                 break
             if trunk < 2 or trunk > in_file:
                 problems.add("freelist page outside the file", "the chain names page %d, and the file has %d pages" % (trunk, in_file), False, page=trunk)
+                break
+            if not trunks % 64 and time.monotonic() > deadline:
+                freelist_stopped = True       # the scan below is stopped by the same clock at its first page, and says so (time limit, pages not reached)
                 break
             seen.add(trunk)
             walk.seek((trunk - 1) * page_size)
@@ -1118,7 +1143,7 @@ def main():
                 else:
                     free[leaf] = (0, "freelist leaf page")
             trunk = following
-        if len(free) != h["freelist_declared"]:
+        if not freelist_stopped and len(free) != h["freelist_declared"]:
             problems.add("freelist count differs from the header", "the header declares %d freelist pages and the chain holds %d" % (h["freelist_declared"], len(free)), True)
 
         # Pages that are neither b-tree pages nor free: the lock-byte page of a file past 1 GiB and, in an
@@ -1132,6 +1157,19 @@ def main():
             while page_no <= in_file + 1:
                 pointer_maps.add(page_no + 1 if page_no == lock_page else page_no)
                 page_no += span
+
+        # A page at a pointer-map position holds 5-byte entries whose first byte is a type from 1 to 5 (0 for a page the file does not have): a header
+        # that says auto-vacuum (bytes 52-55) over a page of anything else is not a pointer map, and skipping it would hide whatever the page holds.
+        for position in sorted(pointer_maps):
+            if position > in_file:
+                continue
+            walk.seek((position - 1) * page_size)
+            raw = walk.read(page_size)
+            if len(raw) == page_size and max(raw[0:(usable // 5) * 5:5]) > 5:
+                pointer_maps.discard(position)
+                problems.add("pointer-map page not a pointer map",
+                             "page %d is where the header's auto-vacuum field puts a pointer map, and its entries are not (a type over 5): it is read as an ordinary page" % position,
+                             True, page=position)
 
         counts = {"pages_in_file": in_file, "pages_examined": 0, "pages_not_btree": 0, "pages_corrupt": 0,
                   "pages_partial": 0, "lock_byte_pages_skipped": 0, "pointer_map_pages_skipped": 0,
@@ -1217,14 +1255,18 @@ def main():
                                      "offset": absolute, "bytes": len(raw), "characters": characters, "match": hit}, text)
 
         def survey():
-            """(reached, links) once the b-trees are walked from the roots sqlite_master lists: `reached` is one bit a page, set for every page a
-            walk arrives at (page 1 and the roots, then each interior page's children), or None when the schema cannot be read and nothing can be
-            said of which pages are in use; `links` counts the child pointers that leave the file and the pages two parents claim. Only interior
-            pages are read for the links, in one pass over the file; the leaves are marked, not read."""
-            interior, bad_cells = {}, 0
+            """(reached, links, fan_out): the b-trees walked from the roots sqlite_master lists. `reached` is one bit a page, set for every page a
+            walk arrives at (page 1 and the roots, then each interior page's children), or None when the schema cannot be read (or the walk is
+            stopped by fan_out) and nothing can be said of which pages are in use; `links` counts the child pointers that leave the file and the
+            pages two parents claim; `fan_out` says a b-tree held more child pointers than the file has pages, which no b-tree can: a page that
+            is a child of two, or a cycle, and the walk stopped there.
+
+            Nothing is kept per child: one pass over the file sets a bit for each interior page, and the walks read only those pages, each once
+            (a page is marked when it is first named, and a page named again is a link problem, not another visit), under the clock."""
+            interior = bytearray((in_file >> 3) + 1)
             scan.seek(0)
             for page_number in range(1, in_file + 1):
-                if not page_number & 0x3FF and out_of_time():
+                if not page_number & 0xFF and out_of_time():
                     raise OutOfTime()
                 raw = scan.read(page_size)
                 if len(raw) < page_size:
@@ -1233,70 +1275,90 @@ def main():
                         or (h["declared_size_valid"] and page_number > h["pages_declared"])):
                     continue
                 start = 100 if page_number == 1 else 0
-                if raw[start] not in (2, 5):
-                    continue
-                count = struct.unpack_from(">H", raw, start + 3)[0]
-                if start + 12 + count * 2 > usable:
-                    continue
-                children = array("I")
-                for cell in struct.unpack_from(">%dH" % count, raw, start + 12):
-                    if cell + 4 <= usable:
-                        children.append(int.from_bytes(raw[cell:cell + 4], "big"))
-                    else:
-                        bad_cells += 1
-                children.append(int.from_bytes(raw[start + 8:start + 12], "big"))     # the right-most child
-                interior[page_number] = children
+                if raw[start] in (2, 5) and start + 12 + struct.unpack_from(">H", raw, start + 3)[0] * 2 <= usable:
+                    interior[page_number >> 3] |= 1 << (page_number & 7)
+            seen = bytearray((in_file >> 3) + 1)
+            links = 0
+            budget = in_file               # a b-tree page has one parent: the child pointers of all the trees together are fewer than the pages
+            stack = array("I")
+            leaves = array("I")
+
+            def name(child, collect):
+                nonlocal links
+                if not 1 <= child <= in_file or seen[child >> 3] & (1 << (child & 7)):
+                    links += 1
+                    return
+                seen[child >> 3] |= 1 << (child & 7)
+                if interior[child >> 3] & (1 << (child & 7)):
+                    stack.append(child)
+                elif collect:
+                    leaves.append(child)
+
+            def climb(collect):
+                """Read the interior pages on the stack, naming their children. False when the pointers outnumber the pages."""
+                nonlocal budget
+                while stack:
+                    n = stack.pop()
+                    if out_of_time():
+                        raise OutOfTime()
+                    walk.seek((n - 1) * page_size)
+                    raw = walk.read(page_size)
+                    if len(raw) < page_size:
+                        return True
+                    start = 100 if n == 1 else 0
+                    count = struct.unpack_from(">H", raw, start + 3)[0]
+                    budget -= count + 1
+                    if budget < 0:
+                        return False
+                    for cell in struct.unpack_from(">%dH" % count, raw, start + 12):
+                        if cell + 4 <= usable:
+                            name(int.from_bytes(raw[cell:cell + 4], "big"), collect)
+                        else:
+                            name(0, collect)       # a pointer that leaves the page: counted as a link outside the file
+                    name(int.from_bytes(raw[start + 8:start + 12], "big"), collect)     # the right-most child
+                return True
+
             # The roots: the rootpage column of every row of sqlite_master, a table b-tree that starts on page 1.
-            leaves, stack, seen = [], [1], set()
-            while stack:
-                n = stack.pop()
-                if n in seen or not 1 <= n <= in_file:
-                    return None, 0
-                seen.add(n)
-                if n in interior:
-                    stack.extend(interior[n])
-                else:
-                    leaves.append(n)
-            roots = set()
+            name(1, True)
+            if not climb(True):
+                return None, links, True
+            roots = array("I")
             for n in leaves:
+                if out_of_time():
+                    raise OutOfTime()
                 walk.seek((n - 1) * page_size)
                 raw = walk.read(page_size)
                 start = 100 if n == 1 else 0
                 if len(raw) < page_size or raw[start] != 13:
-                    return None, 0
+                    return None, links, False
                 count = struct.unpack_from(">H", raw, start + 3)[0]
                 if start + 8 + count * 2 > usable:
-                    return None, 0
+                    return None, links, False
                 for cell in struct.unpack_from(">%dH" % count, raw, start + 8):
                     root = schema_root(raw, cell, usable)
                     if root is None:
-                        return None, 0
+                        return None, links, False
                     if root:
-                        roots.add(root)
-            bits, links = bytearray((in_file >> 3) + 1), bad_cells
-            stack = [1, *sorted(roots, reverse=True)]
-            while stack:
-                n = stack.pop()
-                if not 1 <= n <= in_file:
-                    links += 1
-                    continue
-                if bits[n >> 3] & (1 << (n & 7)):
-                    links += 1
-                    continue
-                bits[n >> 3] |= 1 << (n & 7)
-                stack.extend(interior.get(n, ()))
-            return bits, links
+                        roots.append(root)
+            for root in roots:
+                name(root, False)
+            if not climb(False):
+                return None, links, True
+            return seen, links, False
 
         scan.seek(0)
         number = 0
         stray = array("I")        # pages no structure owns
         try:
             number = 1
-            reached, links = survey()
+            reached, links, fan_out = survey()
+            if fan_out:
+                problems.add("b-tree links inconsistent", "the interior pages name more child pointers than the file has pages (%d), which no b-tree can: a page that two "
+                             "pages name, or a cycle. The walk stopped there" % in_file, True)
             if reached is None:
                 problems.add("b-tree reachability not established",
-                             "sqlite_master could not be read to its end (a row, or a page of its b-tree, is damaged): which pages the b-trees own "
-                             "is not known, so a page that looks like a b-tree page is read as one and an orphaned page cannot be told", False)
+                             "sqlite_master could not be read to its end (a row, or a page of its b-tree, is damaged) or the walk was stopped: which pages "
+                             "the b-trees own is not known, so a page that looks like a b-tree page is read as one and an orphaned page cannot be told", False)
             if links:
                 problems.add("b-tree links inconsistent", "%d child pointer(s) of interior pages leave the file or name a page another pointer "
                              "already names" % links, True)
@@ -1412,6 +1474,7 @@ def main():
                          % (undecided[0], step_budget, FRAGMENT_STEPS), False)
             counts["contains_not_decided"] = undecided[0]
     values.close()
+    problems.fold_rows()
     paging = {"fragments": fragments.finish(), "problems": problems.page.finish()}
     corrupt = any(kind in CORRUPT_KINDS for kind in problems.kinds)
     complete = problems.unexamined == 0 and stopped_at is None

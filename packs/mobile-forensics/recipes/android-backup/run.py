@@ -54,10 +54,12 @@ import re
 import struct
 import sys
 import tarfile
+import time
 import zlib
 
 MAGIC = b"ANDROID BACKUP\n"
 SUPPORTED_VERSIONS = (1, 2, 3, 4, 5)
+DEFAULT_SECONDS = 1500         # recipe.json limits.seconds is 1800; what follows the listing is a few small files
 DEFAULT_BUDGET = 32 << 30
 PIECE = 1 << 20
 SCHEME_WORD = re.compile(r"[A-Za-z0-9._-]{1,16}\Z")
@@ -140,6 +142,7 @@ class TarWatch:
         self.lone_zeros = 0          # zero blocks that a header followed: not an end
         self.lone_first = None       # where the first of them is
         self.tail_at = None          # the first byte that is not zero after the end-of-archive blocks
+        self.zeroed_data = 0         # GNU long-name, long-link and pax headers whose data starts with a zero byte: a name block that was wiped
         self.violation = None        # the size an extended header declares, over the limit
         self.violation_at = None     # where that header starts
         self.bad_at = None           # where a header starts that the tar library would refuse
@@ -239,6 +242,12 @@ class TarWatch:
             at += len(chunk)
 
     def finish_pax(self):
+        if self.acc[:1] == b"\0":
+            self.zeroed_data += 1        # a name or a pax record never starts with a zero byte
+        if self.collecting in (ord("L"), ord("K")):
+            self.acc.clear()             # only its first byte was read: the library reads the name itself
+            self.skip = self.collect_padding
+            return
         size = pax_size(bytes(self.acc))
         if self.collecting in (ord("x"), ord("X")):
             # The library starts from the global records and lets this header's override them.
@@ -285,7 +294,11 @@ class TarWatch:
             if size > EXTENDED_HEADER_LIMIT:
                 self.violation, self.violation_at = size, start
                 return
-            self.skip = -(-size // 512) * 512
+            padded = -(-size // 512) * 512
+            if size:
+                self.collecting, self.collect, self.collect_padding = flag, 1, padded - 1       # its first byte is looked at: a wiped name starts with zero
+            else:
+                self.skip = padded
             return
         self.members += 1
         if flag in NO_DATA_TYPES:
@@ -331,6 +344,9 @@ def tar_verdict(watch, listed, cut_short=False):
         errors.append("%d lone zero block(s) inside the tar, the first at offset %d: an archive ends with two zero blocks, and this one goes on after each. GNU tar and bsdtar "
                       "warn and read on, and so does this listing, but the archive was written or damaged in a way a clean one is not"
                       % (watch.lone_zeros, watch.lone_first))
+    if watch.zeroed_data:
+        errors.append("%d GNU long-name, long-link or pax header(s) whose data starts with a zero byte: the data block was wiped, and the member that follows carries a name "
+                      "the archive does not hold" % watch.zeroed_data)
     if watch.tail_at is not None and not cut_short:
         errors.append("data follows the tar's end-of-archive blocks (the first byte that is not zero is at offset %d of the tar): tar stops at the blocks and so does this listing, "
                       "so an archive appended to this one, or anything else after them, is not listed" % watch.tail_at)
@@ -560,13 +576,20 @@ def detect(path):
         return False, str(exc)
 
 
-def run(path, out, budget):
+def run(path, out, budget, seconds=DEFAULT_SECONDS):
     present = [name for name in OUTPUTS if os.path.lexists(os.path.join(out, name))]
     if present:
         # Before anything is written: an earlier run's files stay as they are.
         print(json.dumps({"ok": False, "status": "refused", "why": "the output directory already holds a file of an earlier run (%s): the recipe does not write over it" % ", ".join(present)}))
         return None
     os.makedirs(out, exist_ok=True)
+    # Said before the listing starts: a run the harness stops at its limit leaves this, and is read as partial.
+    with open(os.path.join(out, "coverage.json"), "w", encoding="utf-8") as handle:
+        json.dump({"recipe": "android-backup", "status": "partial", "covered": "started; the listing did not finish (stopped before its end)",
+                   "limits_hit": [], "errors": ["the run ended before the listing did"]}, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    deadline = time.monotonic() + seconds
+    timed_out = False
     errors, limits_hit = [], []
     member_count = 0
     stream, tar_end = "not_applicable", "not_applicable"
@@ -587,9 +610,10 @@ def run(path, out, budget):
                 payload = io.BufferedReader(reader if reader is not None else tap)
                 try:
                     with tarfile.open(fileobj=payload, mode="r|", encoding="utf-8", errors="surrogateescape", ignore_zeros=True) as archive:
-                        if (watch.ended and watch.end_at == 0) or watch.zero_at == 0:
-                            raise tarfile.ReadError("empty file")        # only zero blocks: the library, which skips them, would list nothing and say nothing
                         for member in archive:
+                            if not member_count % 256 and time.monotonic() > deadline:
+                                timed_out = True
+                                break
                             listing.write("%d\t%s\t%s\t%d\t%s\t%o\t%s\t%s\n" % (
                                 member_count, member_type(member), escaped(member.name), member.size,
                                 utc(member.mtime), member.mode, escaped(member.linkname or ""), b64(member.name)))
@@ -600,18 +624,23 @@ def run(path, out, budget):
                         reader.damaged = True
                     errors.append("the zlib stream is damaged: %s" % exc)
                 except (tarfile.TarError, EOFError, OSError) as exc:
-                    errors.append("embedded tar traversal stopped: %s" % exc)
-                if watch.violation is None and not (reader and reader.damaged):
+                    if not (str(exc) == "empty file" and watch.ended and watch.end_at == 0):      # two zero blocks and nothing else are a valid archive of no member
+                        errors.append("embedded tar traversal stopped: %s" % exc)
+                if watch.violation is None and not (reader and reader.damaged) and not timed_out:
                     try:
                         (reader or tap).drain()
                     except zlib.error as exc:
                         reader.damaged = True
                         errors.append("the zlib stream is damaged after the tar's end: %s" % exc)
-                cut_short = False
+                cut_short = timed_out
+                if timed_out:
+                    limits_hit.append("time limit of %g seconds for the listing (the recipe's own is longer): the listing stopped after %d members" % (seconds, member_count))
                 if reader is not None:
                     produced = reader.produced
                     if reader.damaged:
                         stream, cut_short = "damaged", True
+                    elif timed_out:
+                        stream = "not_reached"
                     elif reader.exceeded:
                         stream, cut_short = "not_reached", True
                         limits_hit.append("decompressed output budget of %d bytes (the listing stopped after %d members)" % (budget, member_count))
@@ -678,6 +707,7 @@ def main():
     # and keeps nothing, so the directory is taken and left empty.
     parser.add_argument("--probe-out")
     parser.add_argument("--max-decompressed-bytes", type=int, default=DEFAULT_BUDGET)
+    parser.add_argument("--max-seconds", type=float, default=DEFAULT_SECONDS)
     args = parser.parse_args()
     try:
         path = target_of(args.target)
@@ -699,7 +729,7 @@ def main():
         print(json.dumps({"ok": False, "status": "unsupported", "why": why}))
         return 2
     try:
-        answer = run(path, args.out, args.max_decompressed_bytes)
+        answer = run(path, args.out, args.max_decompressed_bytes, args.max_seconds)
     except (OSError, UnicodeError, ValueError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 2

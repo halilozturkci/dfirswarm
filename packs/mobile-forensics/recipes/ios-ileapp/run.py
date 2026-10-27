@@ -376,6 +376,7 @@ class TarWatch:
         self.lone_zeros = 0          # zero blocks that a header followed: not an end
         self.lone_first = None       # where the first of them is
         self.tail_at = None          # the first byte that is not zero after the end-of-archive blocks
+        self.zeroed_data = 0         # GNU long-name, long-link and pax headers whose data starts with a zero byte: a name block that was wiped
         self.violation = None        # the size an extended header declares, over the limit
         self.violation_at = None     # where that header starts
         self.bad_at = None           # where a header starts that the tar library would refuse
@@ -475,6 +476,12 @@ class TarWatch:
             at += len(chunk)
 
     def finish_pax(self):
+        if self.acc[:1] == b"\0":
+            self.zeroed_data += 1        # a name or a pax record never starts with a zero byte
+        if self.collecting in (ord("L"), ord("K")):
+            self.acc.clear()             # only its first byte was read: the library reads the name itself
+            self.skip = self.collect_padding
+            return
         size = pax_size(bytes(self.acc))
         if self.collecting in (ord("x"), ord("X")):
             # The library starts from the global records and lets this header's override them.
@@ -521,7 +528,11 @@ class TarWatch:
             if size > EXTENDED_HEADER_LIMIT:
                 self.violation, self.violation_at = size, start
                 return
-            self.skip = -(-size // 512) * 512
+            padded = -(-size // 512) * 512
+            if size:
+                self.collecting, self.collect, self.collect_padding = flag, 1, padded - 1       # its first byte is looked at: a wiped name starts with zero
+            else:
+                self.skip = padded
             return
         self.members += 1
         if flag in NO_DATA_TYPES:
@@ -567,6 +578,9 @@ def tar_verdict(watch, listed, cut_short=False):
         errors.append("%d lone zero block(s) inside the tar, the first at offset %d: an archive ends with two zero blocks, and this one goes on after each. GNU tar and bsdtar "
                       "warn and read on, and so does this listing, but the archive was written or damaged in a way a clean one is not"
                       % (watch.lone_zeros, watch.lone_first))
+    if watch.zeroed_data:
+        errors.append("%d GNU long-name, long-link or pax header(s) whose data starts with a zero byte: the data block was wiped, and the member that follows carries a name "
+                      "the archive does not hold" % watch.zeroed_data)
     if watch.tail_at is not None and not cut_short:
         errors.append("data follows the tar's end-of-archive blocks (the first byte that is not zero is at offset %d of the tar): tar stops at the blocks and so does this listing, "
                       "so an archive appended to this one, or anything else after them, is not listed" % watch.tail_at)

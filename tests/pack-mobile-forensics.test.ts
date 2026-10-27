@@ -951,11 +951,11 @@ test("sqlite_freespace's time limit is finite and below the tool's own, and says
   await withCwd(async (cwd) => {
     const db = join(cwd, "work", "limit.db");
     await build(FREELIST_DB, db, "LIMIT-MARKER");
-    for (const bad of ["NaN", "Infinity", "-Infinity", "1e308", "100000", "271", "0", "-1", "\"5\"", "true"]) {
+    for (const bad of ["NaN", "Infinity", "-Infinity", "1e308", "100000", "256", "0", "-1", "\"5\"", "true"]) {
       const r = await rawTool(FREESPACE, cwd, `{"db":${JSON.stringify(db)},"max_seconds":${bad}}`);
       assert.match(refused(r).error, /max_seconds/, bad);
     }
-    const edge = await rawTool(FREESPACE, cwd, `{"db":${JSON.stringify(db)},"max_seconds":270}`);
+    const edge = await rawTool(FREESPACE, cwd, `{"db":${JSON.stringify(db)},"max_seconds":255}`);
     assert.equal(edge.code, 0, edge.stdout + edge.stderr);
   });
 });
@@ -1022,8 +1022,9 @@ if spec.get("info", True):
         info = {"Device Name": "Fixture Phone", "Product Version": "17.4", "Serial Number": "SERIAL-FIXTURE", "Installed Applications": ["com.example.a"]}
         info.update({k: conv(v) for k, v in spec.get("info_extra", {}).items()})
         plistlib.dump(info, fh)
-with open(os.path.join(dest, "Status.plist"), "wb") as fh:
-    plistlib.dump({"BackupState": "new", "IsFullBackup": True, "SnapshotState": spec.get("snapshot", "finished"), "UUID": "FIXTURE-UUID"}, fh)
+if spec.get("status_plist", True):
+    with open(os.path.join(dest, "Status.plist"), "wb") as fh:
+        plistlib.dump({"BackupState": "new", "IsFullBackup": True, "SnapshotState": spec.get("snapshot", "finished"), "UUID": "FIXTURE-UUID"}, fh)
 
 db_path = os.path.join(dest, "Manifest.db")
 if spec.get("manifest_db") == "notsqlite":
@@ -3134,5 +3135,191 @@ test("protobuf_peek is partial when bytes lie after the window it parsed whole, 
     const tail = (await peek(cwd, { path: "work/small.pb", offset: 256, limit: 3 })).answer as unknown as { status: string } & Pb;
     assert.equal(tail.window.bytes_after_window, 0);
     assert.equal(tail.structure.status === "valid" ? tail.status : "complete", "complete");
+  });
+});
+
+
+// --- the third pass: a walk that held a pointer for every child, a freelist walk with no clock, a forged pointer-map flag, a ceiling that left no room ---
+
+/** The tool with `time.monotonic` replaced by a clock that moves `argv[4]` seconds at every call, so that a deadline falls after a number of looks at the clock, not of seconds. */
+const FREESPACE_FAKE_CLOCK = String.raw`
+import importlib.util, os, sys, time
+sys.dont_write_bytecode = True
+step = float(sys.argv[4])
+real = time.monotonic
+calls = [0]
+def fake():
+    calls[0] += 1
+    return real() + calls[0] * step
+time.monotonic = fake
+spec = importlib.util.spec_from_file_location("fs", sys.argv[1]); fs = importlib.util.module_from_spec(spec); spec.loader.exec_module(fs)
+os.chdir(sys.argv[2])
+os.environ.update(JOB_ID="j-1", OUT=sys.argv[3], SECRET_OUTPUT="1", AGENT_ID="s1")
+os.makedirs(sys.argv[3], exist_ok=True)
+fs.run_main(fs.main)
+`;
+
+/** A database whose page 1 is valid and whose pages 2..n are interior b-tree pages: `cells` cells each (a child pointer per cell, to a random page), or a chain (cells 0, the right-most child the next page). Argv: path, n, cells, page size. */
+const INTERIOR_DB = String.raw`
+import random, sqlite3, struct, sys
+path, n, cells, ps = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
+db = sqlite3.connect(path)
+db.execute("PRAGMA page_size = %d" % ps)
+db.execute("CREATE TABLE t (a)")
+db.execute("INSERT INTO t VALUES (1)")
+db.commit()
+db.close()
+data = bytearray(open(path, "rb").read())
+rnd = random.Random(1)
+out = bytearray(data[:ps])
+for number in range(2, n + 1):
+    page = bytearray(ps)
+    page[0] = 5 if number < n or cells == 0 and number < n else 13
+    if number < n:
+        page[0] = 5
+        struct.pack_into(">H", page, 3, cells)
+        struct.pack_into(">H", page, 5, ps - 4 * max(cells, 1) if cells else ps)
+        struct.pack_into(">I", page, 8, number + 1 if not cells else rnd.randint(2, n))
+        for j in range(cells):
+            struct.pack_into(">H", page, 12 + 2 * j, ps - 4 * (j + 1))
+            struct.pack_into(">I", page, ps - 4 * (j + 1), rnd.randint(2, n))
+    else:
+        struct.pack_into(">H", page, 5, ps)
+    out += page
+struct.pack_into(">I", out, 28, n)
+struct.pack_into(">I", out, 24, struct.unpack_from(">I", out, 92)[0])
+open(path, "wb").write(out)
+`;
+
+test("sqlite_freespace keeps no pointer per child of an interior page, and stops at once on more child pointers than the file has pages", async () => {
+  // survey() kept every child of every interior page (an array a page, then a stack of Python ints): 196 MB of interior pages took 44 s and
+  // 3.08 GB, and an OOM kill under 2 GB left no JSON, where the previous code answered in 0.3 s.
+  await withCwd(async (cwd) => {
+    const tiny = join(cwd, "work", "tiny.db");
+    await build(INTERIOR_DB, tiny, "3", "0", "4096");
+    const base = await measured(FREESPACE, cwd, { db: tiny, limit: 1 });
+    const big = join(cwd, "work", "fan.db");
+    await build(INTERIOR_DB, big, "400", "600", "4096");
+    const run = await measured(FREESPACE, cwd, { db: big, limit: 1 });
+    const answer = body<Free>(run.run);
+    assert.equal(answer.status, "corrupt");
+    assert.ok(answer.problems.some((p) => p.kind === "b-tree links inconsistent" && /more child pointers than the file has pages \(400\)/.test(p.detail)), JSON.stringify(answer.problems.map((p) => p.detail)));
+    assert.ok(run.traced - base.traced < 2 * 1024 * 1024, `${run.traced - base.traced} bytes more allocated than for a tiny database, for 400 interior pages of 600 cells`);
+  });
+});
+
+test("sqlite_freespace reads the clock inside both walks of the b-trees and ends partial at the deadline", async () => {
+  // The two walks of survey() never read the clock: 3,000 interior pages with max_seconds 16 ran 17 s past it.
+  await withCwd(async (cwd) => {
+    const db = join(cwd, "work", "chain.db");
+    await build(INTERIOR_DB, db, "30000", "0", "512");        // a valid chain of 29,998 interior pages ending in a leaf: no fan-out, a long walk
+    const out = join(cwd, "chain");
+    const run = await runPySnippet(FREESPACE_FAKE_CLOCK, [FREESPACE, cwd, out, "0.002"], { db, max_seconds: 2, limit: 1 });
+    const answer = body<Free>(run);
+    assert.equal(answer.status, "partial", answer.status_basis);
+    assert.equal(answer.stopped_before_page, 1, "the walk of the trees was stopped, before any page was scanned");
+    assert.equal(answer.scanned.pages_not_reached, answer.database.pages_in_file);
+    assert.equal(answer.problem_kinds["time limit"], 1);
+  });
+});
+
+/** A freelist of trunk pages 3..n, each naming `1022` leaves that are all page 0 (outside the file); sparse. Argv: path, n. */
+const TRUNKS_DB = String.raw`
+import sqlite3, struct, sys
+path, n, ps = sys.argv[1], int(sys.argv[2]), 4096
+db = sqlite3.connect(path)
+db.execute("PRAGMA page_size = %d" % ps)
+db.execute("CREATE TABLE t (a)")
+db.execute("INSERT INTO t VALUES (1)")
+db.commit()
+db.close()
+with open(path, "r+b") as f:
+    f.seek(ps * n - 1)
+    f.write(b"\0")
+    for number in range(3, n + 1):
+        f.seek((number - 1) * ps)
+        f.write(struct.pack(">II", number + 1 if number < n else 0, ps // 4 - 2))
+    f.seek(32)
+    f.write(struct.pack(">II", 3, n - 2))
+    f.seek(28)
+    f.write(struct.pack(">I", n))
+    f.seek(24)
+    f.write(struct.pack(">I", 7))
+    f.seek(92)
+    f.write(struct.pack(">I", 7))
+`;
+
+test("sqlite_freespace writes the first problems of a kind and folds the rest with an exact count, and reads the clock in the freelist walk", async () => {
+  // 3,000 trunk pages of 1,022 leaves outside the file wrote 3.06 million problem rows (465 MB) and ran 10 s at max_seconds 2; about 86,000 pages pass 300 s.
+  await withCwd(async (cwd) => {
+    const db = join(cwd, "work", "trunks.db");
+    await build(TRUNKS_DB, db, "800");
+    const answer = (await freespace(cwd, db, { limit: 1 }, "trunks")).answer;
+    assert.equal(answer.problem_kinds["freelist page outside the file"], 798 * 1022, "the count is exact");
+    assert.ok(answer.pages.problems.matched <= 400, `${answer.pages.problems.matched} problem rows`);
+    const folded = answer.problems.find((p) => (p as { folded?: number }).folded);
+    assert.ok(folded, "one folded row for the kind");
+    assert.equal((folded as unknown as { folded: number }).folded, 798 * 1022 - 100);
+    assert.match(folded.detail, /more problems of this kind are folded into this row/);
+    // The clock: a deadline that falls inside the walk stops it.
+    const bigger = join(cwd, "work", "trunks-more.db");
+    await build(TRUNKS_DB, bigger, "1200");
+    const out = join(cwd, "trunks-clock");
+    const run = await runPySnippet(FREESPACE_FAKE_CLOCK, [FREESPACE, cwd, out, "0.05"], { db: bigger, max_seconds: 0.5, limit: 1 });
+    const stopped = body<Free>(run);
+    assert.notEqual(stopped.status, "complete", stopped.status_basis);
+    assert.equal(stopped.stopped_before_page, 1);
+    assert.ok((stopped.problem_kinds["freelist page outside the file"] ?? 0) < 1100 * 1022, "the walk did not run to the end of the chain");
+  });
+});
+
+test("sqlite_freespace reads a page at a pointer-map position that holds no pointer map, and is corrupt", async () => {
+  // Bytes 52-55 of the header (auto-vacuum) put pointer-map pages at 2, 2+span, ...; they were skipped without a look, and the answer was complete
+  // with eight fewer fragments: a forged flag hid the page.
+  await withCwd(async (cwd) => {
+    const db = join(cwd, "work", "ptrmap.db");
+    await build(FREELIST_DB, db, "PTRMAP-MARKER");
+    const marked = (rows: Value[]): number => rows.filter((v) => v.value.includes("PTRMAP-MARKER")).length;
+    const intact = await freespace(cwd, db, { min_length: 12 }, "pm-intact");
+    assert.equal(intact.answer.status, "complete");
+    const bytes = await readFile(db);
+    bytes.writeUInt32BE(1, 52);
+    await writeFile(join(cwd, "work", "ptrmap-forged.db"), bytes);
+    const forged = await freespace(cwd, join(cwd, "work", "ptrmap-forged.db"), { min_length: 12 }, "pm-forged");
+    assert.equal(forged.answer.status, "corrupt", forged.answer.status_basis);
+    assert.ok((forged.answer.problem_kinds["pointer-map page not a pointer map"] ?? 0) >= 1, JSON.stringify(forged.answer.problem_kinds));
+    assert.equal(marked(forged.rows), marked(intact.rows), "the page is read");
+  });
+});
+
+test("sqlite_freespace and manifest_db keep max_seconds at 255, so the allowance and the tail stay inside the manifest's 300 seconds", async () => {
+  await withCwd(async (cwd) => {
+    const db = join(cwd, "work", "cap.db");
+    await build(FREELIST_DB, db, "CAP-MARKER");
+    assert.match(refused(await rawTool(FREESPACE, cwd, `{"db":${JSON.stringify(db)},"max_seconds":256}`)).error, /max_seconds is at most 255/);
+    const dir = await backup(cwd, "capbk", { entries: many(2) });
+    assert.match(refused(await rawTool(MANIFEST, cwd, `{"path":${JSON.stringify(dir)},"max_seconds":256}`)).error, /max_seconds is at most 255/);
+    for (const name of ["sqlite_freespace", "manifest_db"]) {
+      const m = JSON.parse(await readFile(join(TOOLS, name, "manifest.json"), "utf8")) as { params: { max_seconds: { description: string } } };
+      assert.match(m.params.max_seconds.description, /at most 255/, name);
+    }
+  });
+});
+
+test("manifest_db is not complete when a plain plist was too large to read, and does not say the backup finished when it cannot tell", async () => {
+  // A Manifest.plist over the limit gave encryption `unknown` and a `complete` status; and a missing Status.plist gave "the backup finished".
+  await withCwd(async (cwd) => {
+    const dir = await backup(cwd, "bigmanifest", { entries: many(2), manifest_extra: { Padding: "p".repeat(6 << 20) } });
+    const answer = (await manifest(cwd, dir)).answer;
+    assert.equal(answer.manifest_plist.status, "too_large");
+    assert.equal(answer.encryption.state, "unknown");
+    assert.equal(answer.status, "partial");
+    assert.match(answer.status_basis ?? "", /Manifest\.plist is over 4194304 bytes and was not read/);
+    const nostatus = (await manifest(cwd, await backup(cwd, "nostatus", { entries: many(2), status_plist: false }))).answer;
+    assert.equal(nostatus.status, "complete");
+    assert.doesNotMatch(nostatus.status_basis ?? "", /the backup finished/);
+    assert.match(nostatus.status_basis ?? "", /completion is unknown \(Status\.plist is missing\)/);
+    const done = (await manifest(cwd, await backup(cwd, "finished", { entries: many(2) }))).answer;
+    assert.match(done.status_basis ?? "", /the backup finished/);
   });
 });
