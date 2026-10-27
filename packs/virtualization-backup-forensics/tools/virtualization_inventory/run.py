@@ -3010,7 +3010,7 @@ def main():
     result_pages = {k: v.finish() for k, v in sink.pages.items()}
     unsupported = sum(c for k, c in kinds.items() if k.startswith("unsupported") or k == "xml_other")
     complete = not problems and not partial and not files.skipped_counts["unreadable"] and not files.skipped_counts["too_deep"]
-    outcome = status_of(complete, bool(files.files) and not sum(sink.counts.values()) and problems and not unsupported,
+    outcome = status_of(complete, bool(files.files) and not sum(sink.counts.values()) and problems and not unsupported and not partial,
                         "every file of a kind this tool reads was read and nothing was left out" + ("; %d file(s) of a recognised kind it does not read are listed as unsupported" % unsupported if unsupported else ""),
                         "%d file(s) were not read whole, %d unreadable, %d directory(ies) too deep%s: the answer names them" % (
                             problems, files.skipped_counts["unreadable"], files.skipped_counts["too_deep"], ("; " + "; ".join(partial)) if partial else ""),

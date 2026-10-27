@@ -268,9 +268,9 @@ test("a Proxmox .conf of a hundred thousand sections stops at max_seconds inside
     for (let i = 0; i < 150000; i++) parts.push(`[s${i}]`, "snaptime: 1700000000", `parent: s${i - 1}`, `vmstate: local:vm-state-${i}`, "scsi0: local:100/vm.qcow2,size=1G");
     await put(cwd, "inputs/pve/qemu-server/100.conf", parts.join("\n") + "\n");
     const started = Date.now();
-    const out = body(await tool(INVENTORY, cwd, { root: "inputs/pve", max_seconds: 1, max_file_bytes: 268435456 }));
+    const out = json(await tool(INVENTORY, cwd, { root: "inputs/pve", max_seconds: 1, max_file_bytes: 268435456 }));
     const seconds = (Date.now() - started) / 1000;
-    assert.equal(out.status, "partial");
+    assert.equal(out.status, "partial", "a stop by the clock is partial, also when no record had been made yet (a slow machine)");
     assert.equal(out.states.partial, 1);
     assert.match(JSON.stringify(out.sources), /max_seconds \(1\.0\) was reached while this file was read/);
     assert.ok(seconds < 6, `the call took ${seconds}s for max_seconds 1`);
