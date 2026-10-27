@@ -45,6 +45,8 @@ import time
 
 MAGICS = {b"\xd4\xc3\xb2\xa1", b"\xa1\xb2\xc3\xd4", b"\x4d\x3c\xb2\xa1",
           b"\xa1\xb2\x3c\x4d", b"\x0a\x0d\x0d\x0a"}
+RECIPE_SECONDS = 3600.0        # the recipe's limit
+COUNT_MARGIN = 30.0            # counting the rows of a finished listing ends this long before it
 DEADLINE = min(float(os.environ.get("NETWORK_CAPTURE_SECONDS", "3300")), 3500.0)   # under the recipe's 3600-second limit, so that it stops its own steps
 RECIPE = "network-capture"
 
@@ -488,33 +490,51 @@ class Receipt:
     def _index(self):
         lines = ["path\tdescription\trows"]
         for item in self.data["files"]:
-            lines.append("%s\t%s\t%s" % (item["path"], item["description"], item.get("rows", "")))
+            lines.append("%s\t%s\t%s" % (item["path"], item["description"], item["rows"] if item.get("rows") is not None else ""))
         return "\n".join(lines) + "\n"
 
 
-def count_rows(path):
+def count_rows(path, deadline=None):
+    """The lines of a listing less its header line; (count, True), or (the lines counted so far, False) when `deadline` ran out first.
+    Counted in blocks of a MiB, with the clock looked at after each."""
+    lines = 0
+    last = b"\n"
     with open(path, "rb") as fh:
-        return max(0, sum(1 for _ in fh) - 1)
+        while True:
+            if deadline is not None and time.monotonic() > deadline:
+                return max(0, lines - 1), False
+            block = fh.read(1 << 20)
+            if not block:
+                break
+            lines += block.count(b"\n")
+            last = block[-1:]
+    if last != b"\n":
+        lines += 1
+    return max(0, lines - 1), True
 
 
-def truncated_packets(path):
+def truncated_packets(path, deadline=None):
     """How many packets were captured shorter than they were on the wire, from packets.tsv's cap_len and len columns;
-    (count or None when the columns are absent, rows whose lengths could not be read)."""
-    cut = unreadable = 0
+    (count or None when the columns are absent, rows whose lengths could not be read, whether the whole file was read).
+    The clock is looked at every 4,096 rows: when `deadline` has run out the count is None, not the number so far."""
+    cut = unreadable = seen = 0
     with open(path, "r", encoding="utf-8", errors="replace") as fh:
         header = [c.strip('"') for c in fh.readline().rstrip("\n").split("\t")]
         try:
             i, j = header.index("frame.cap_len"), header.index("frame.len")
         except ValueError:
-            return None, 0
+            return None, 0, True
         for line in fh:
+            seen += 1
+            if deadline is not None and seen & 4095 == 0 and time.monotonic() > deadline:
+                return None, 0, False
             cells = [c.strip('"') for c in line.rstrip("\n").split("\t")]
             try:
                 if int(cells[i]) < int(cells[j]):
                     cut += 1
             except (ValueError, IndexError):
                 unreadable += 1
-    return cut, unreadable
+    return cut, unreadable, True
 
 
 def describe(exc):
@@ -622,6 +642,15 @@ def main():
         return 2
     started = time.monotonic()
     deadline = started + DEADLINE
+    uncounted = []
+
+    def count_deadline():
+        """The end of the counting of a finished listing: RECIPE_SECONDS less COUNT_MARGIN from the start, so the answer still prints inside the recipe's limit.
+        NETWORK_CAPTURE_COUNT_SECONDS (seconds from the call) exists for the tests."""
+        try:
+            return time.monotonic() + float(os.environ["NETWORK_CAPTURE_COUNT_SECONDS"])
+        except (KeyError, ValueError):
+            return started + RECIPE_SECONDS - COUNT_MARGIN
     data["steps"] = ([{"step": "capinfos", "status": "not_attempted", "reason": "planned"}, {"step": "tshark -G fields", "status": "not_attempted", "reason": "planned"}]
                      + [{"step": name, "status": "not_attempted", "reason": "planned"} for name, *_ in LISTINGS])
     receipt.write()
@@ -735,10 +764,16 @@ def main():
             continue
         complete = entry["status"] == "ok"
         listed = {"path": name, "description": "complete %s listing of the selected fields%s" % (name[:-4], "" if complete else " (PARTIAL: the step did not finish)")}
-        listed["rows"] = rows[name] = entry["rows"] = count_rows(output)
+        counted, counted_all = count_rows(output, count_deadline())
+        # A count the recipe's own clock cut short is not a count: the listing is whole on disk, its row count is null and the status says so.
+        listed["rows"] = rows[name] = entry["rows"] = counted if counted_all else None
+        if not counted_all:
+            uncounted.append(name)
         data["files"].append(listed)
         if name == "packets.tsv" and complete:
-            cut, unreadable = truncated_packets(output)
+            cut, unreadable, read_all = truncated_packets(output, count_deadline())
+            if not read_all:
+                uncounted.append("%s (truncated packets)" % name)
             data["limits_on_what_the_listings_show"] = {
                 "packets": rows[name], "truncated_packets": cut, "packets_whose_lengths_could_not_be_read": unreadable,
                 "meaning": "a truncated packet was captured shorter than it was on the wire: the fields past the captured bytes are not in any listing"}
@@ -747,10 +782,12 @@ def main():
     unfinished = [s["step"] for s in data["steps"] if s["status"] in ("not_attempted", "running", "failed", "timed_out")]
     # A listing made without a field the installed tshark lacks is a listing with a column fewer than asked for: that is not a complete answer.
     narrowed = {s["step"]: s["fields_missing"] for s in data["steps"] if s.get("fields_missing") and s["status"] == "ok"}
-    data.update(status="complete" if not data["errors"] and not unfinished and not narrowed else "partial", finished=True, elapsed_seconds=round(time.monotonic() - started, 3))
+    data.update(status="complete" if not data["errors"] and not unfinished and not narrowed and not uncounted else "partial", finished=True, elapsed_seconds=round(time.monotonic() - started, 3))
     reasons = []
     if data["errors"] or unfinished:
         reasons.append("%d error(s) and %d step(s) that did not finish (coverage.json names each)" % (len(data["errors"]), len(unfinished)))
+    if uncounted:
+        reasons.append("the recipe's own clock ran out while it counted %s: those listings are whole on disk and their counts are null, not zero" % ", ".join(uncounted))
     if narrowed:
         reasons.append("%d listing(s) were made without a field the installed tshark does not list (%s): a column of each is missing"
                        % (len(narrowed), "; ".join("%s: %s" % (name, ", ".join(fields)) for name, fields in sorted(narrowed.items()))))

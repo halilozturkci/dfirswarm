@@ -19,10 +19,12 @@
  *                 named values of Root\InventoryApplicationFile.
  */
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { closeSync, constants, openSync, readSync } from "node:fs";
+import { mkdir, open, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
+import { setTimeout as sleep } from "node:timers/promises";
 import { ROOT, withCwd } from "./tool-library-harness.ts";
 import { WIN, body, failed, stubModule, tool } from "./windows-pack-harness.ts";
 import {
@@ -347,15 +349,40 @@ test("regkv without regipy answers in JSON that the library is missing, and does
 
 // --- a pipe is not a hive -------------------------------------------------------------
 
-function withFifo(path: string, fn: () => Promise<void>): Promise<void> {
+async function withFifo(path: string, fn: () => Promise<void>): Promise<void> {
   const made = spawnSync("mkfifo", [path]);
-  if (made.status !== 0) return Promise.resolve();
+  if (made.status !== 0) return;
   // A writer feeds the pipe some zeros and closes it when a reader has come, so that a tool that opens the pipe anyway reads to
-  // the end and fails, instead of waiting for ever; the writer itself waits at open() until then and is killed after the test.
-  const writer = spawn("sh", ["-c", 'head -c 20000 /dev/zero > "$0"', path], { stdio: "ignore" });
-  return fn().finally(() => {
-    writer.kill("SIGKILL");
-  });
+  // the end and fails, instead of waiting for ever. The writer lives in this process, not in a child: its open() waits for a
+  // reader on a libuv thread, and that thread dies with the process, whatever kills it (a SIGKILL, a timeout, a crash). A child
+  // `sh` stuck at open() was left behind, for good, whenever the runner died before the cleanup below ran.
+  const writer = (async () => {
+    const handle = await open(path, constants.O_WRONLY);
+    try {
+      await handle.write(Buffer.alloc(20000));
+    } finally {
+      await handle.close();
+    }
+  })().then(() => true, () => true); // a reader that goes away early is an EPIPE, not a failure of the test
+  try {
+    await fn();
+  } finally {
+    // Nothing opened the pipe, which is the expected case: be the reader ourselves (non-blocking, so this cannot wait) and drain
+    // what the writer sends, so that its open() returns and the thread is free again.
+    const reader = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
+    try {
+      const sink = Buffer.alloc(65536);
+      let done = false;
+      void writer.then(() => { done = true; });
+      for (const deadline = Date.now() + 5000; !done && Date.now() < deadline; ) {
+        try { readSync(reader, sink); } catch { /* EAGAIN: nothing to read yet */ }
+        await sleep(5);
+      }
+      assert.ok(done, "the FIFO writer did not finish after a reader came");
+    } finally {
+      closeSync(reader);
+    }
+  }
 }
 
 for (const [name, args] of [

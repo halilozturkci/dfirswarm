@@ -59,6 +59,9 @@ TOOL = {"name": "zeek_run", "version": 7}
 PARSER = "zeek_run/5"
 DEFAULT_TIMEOUT = 900
 MAX_TIMEOUT = 1100            # the manifest's outer limit is 1200
+MANIFEST_SECONDS = 1200       # the manifest's limit: the tool's own clock for reading the logs ends READ_MARGIN seconds before it
+READ_MARGIN = 30              # kept for building and printing the answer after the last log was read
+CLOCK_BYTES = 1 << 20         # the reading clock is also looked at after this many bytes of log
 DEFAULT_POLICIES = ["policy/frameworks/files/hash-all-files"]
 SCRIPT_NAME = "network-forensics.local.zeek"
 MAX_LINE = 16 << 20            # a log line longer than this is located, not read
@@ -830,6 +833,10 @@ class BadValue(Exception):
     pass
 
 
+class ReadTimeLimit(Exception):
+    """The tool's own clock for reading the logs ran out."""
+
+
 INTEGER = re.compile(r"-?[0-9]+")
 COUNT = re.compile(r"[0-9]+")
 DECIMAL = re.compile(r"-?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?|-?inf|nan")
@@ -875,8 +882,10 @@ def convert(value, typ, set_separator, empty, unset):
 class LogReader:
     """One Zeek log, read as a stream: records that fit the header, and a locator for those that do not."""
 
-    def __init__(self, path, stem, limit, malformed_path, hook):
+    def __init__(self, path, stem, limit, malformed_path, hook, deadline=None):
         self.path, self.stem, self.limit, self.malformed_path, self.hook = path, stem, limit, malformed_path, hook
+        self.deadline = deadline
+        self.cut = None                     # where the tool's own clock stopped the read: {"lines_read", "stopped_at_byte"}
         self.format = None
         self.fields = None
         self.types = None
@@ -906,14 +915,35 @@ class LogReader:
             row["raw"] = raw
         self._bad.write(json.dumps(row) + "\n")
 
+    def _clock(self, offset, mid_line=False):
+        """Raises when the tool's own clock for reading the logs has run out; the line being read is not counted."""
+        if self.deadline is not None and time.monotonic() > self.deadline:
+            self.cut = {"lines_read": self.lines - (1 if mid_line else 0), "stopped_at_byte": offset}
+            raise ReadTimeLimit()
+
     def read(self):
+        try:
+            self._read()
+        finally:
+            if self._bad is not None:
+                self._bad.flush()
+                os.fsync(self._bad.fileno())
+                self._bad.close()
+                self._bad = None
+
+    def _read(self):
         separator, set_separator, empty, unset = "\t", ",", "(empty)", "-"
         offset = 0
+        since = 0
         with open(self.path, "rb") as fh:
             while True:
                 raw = fh.readline(MAX_LINE + 1)
                 if not raw:
                     break
+                since += len(raw)
+                if since >= CLOCK_BYTES or self.lines & 1023 == 0:
+                    since = 0
+                    self._clock(offset)
                 start = offset
                 offset += len(raw)
                 self.lines += 1
@@ -923,6 +953,7 @@ class LogReader:
                         offset += len(more)
                         if not more or more.endswith(b"\n"):
                             break
+                        self._clock(offset, True)
                     self._flag(self.lines, start, "a line longer than %d bytes was not read" % MAX_LINE)
                     continue
                 line = raw.rstrip(b"\n").decode("utf-8", "surrogateescape")
@@ -1012,10 +1043,6 @@ class LogReader:
                 self.hook(self.stem, record, self)
                 if len(self.records) < self.limit:
                     self.records.append(record)
-        if self._bad is not None:
-            self._bad.flush()
-            os.fsync(self._bad.fileno())
-            self._bad.close()
 
 
 def withheld_text(length):
@@ -1062,6 +1089,11 @@ def kept_as_written(stem, key, value):
 def shown_url(url):
     """A URL as printed: the block's own rule for user-info, token-shaped path text, query values and fragment, and the
     authority through the same host rule as every other string (a token in a sub-domain is withheld)."""
+    # Over TEXT_LIMIT the query and fragment are withheld whole, by their length (the block's own rule for a text over the limit): the block
+    # splits a query pair by pair, so a megabyte of `&` there costs seconds a URL. What is kept is the scheme, host and path part.
+    cut = min((i for i in (url.find("?"), url.find("#")) if i >= 0), default=len(url)) if len(url) > TEXT_LIMIT else len(url)
+    if cut < len(url):
+        return shown_url(url[:cut]) + url[cut] + _withheld("over-long query or fragment", len(url) - cut - 1, "urls")
     out = redact_url(url)
     m = re.match(r"^((?:[A-Za-z][A-Za-z0-9+.-]*:)?//)([^/?#]*)(.*)$", out, re.S)
     if not m:
@@ -1126,6 +1158,18 @@ def last_word(signum):
     print(json.dumps({"tool": TOOL, "parser": PARSER, "status": "partial", "ok": False,
                       "status_basis": "the tool was stopped by signal %d while it was %s; Zeek, if it was running, was killed with what it had started, and the logs it had written are whole files only up to the point it was stopped" % (signum, PROGRESS["stage"]),
                       "interrupted_by_signal": signum, "stage": PROGRESS["stage"], "out_dir": out_dir, "logs_written_so_far": logs}), flush=True)
+
+
+def answer_out(text):
+    """Print the final answer as one unit a stop signal cannot cut or follow: signals are held while it is written and there is no last
+    word to add to it, so a signal that arrives during or after it ends the tool (exit 128 plus the signal) with this one document."""
+    held = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+    signal.pthread_sigmask(signal.SIG_BLOCK, held)
+    try:
+        STATE["last_word"] = None
+        print(text, flush=True)
+    finally:
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, held)
 
 
 def main():
@@ -1233,6 +1277,14 @@ def main():
             pass
 
     PROGRESS["stage"] = "reading the logs"
+    # Reading the logs has its own end, the same for every log: the manifest's limit less READ_MARGIN, counted from the start of the tool, so
+    # what the preflight and the engine used is already out of it. ZEEK_RUN_READ_SECONDS (seconds from here) exists for the tests.
+    try:
+        read_seconds = float(os.environ.get("ZEEK_RUN_READ_SECONDS", ""))
+    except ValueError:
+        read_seconds = None
+    read_deadline = (time.monotonic() + read_seconds) if read_seconds is not None else started + MANIFEST_SECONDS - READ_MARGIN
+    logs_not_read, logs_cut = [], {}
     withheld = {"fields": 0, "urls": 0, "text": 0, "short_hashes": 0}
     diagnostics = {"reporter": {"records": 0, "levels": {}, "first_messages": []},
                    "weird": {"records": 0, "by_name": {}, "names_over_cap": 0},
@@ -1279,9 +1331,18 @@ def main():
         stem = name[:-4]
         log_path = os.path.join(out_dir, name)
         inline = (not wanted) or stem in wanted
-        reader = LogReader(log_path, stem, limit if inline else 0, os.path.join(out_dir, "malformed-%s.jsonl" % re.sub(r"[^A-Za-z0-9_.-]", "_", stem)), hook)
+        if time.monotonic() > read_deadline:
+            logs_not_read.append(stem)
+            problems.append({"log": stem, "why": "not read: the tool's own clock for reading the logs ran out before it; the file is whole in out_dir"})
+            continue
+        reader = LogReader(log_path, stem, limit if inline else 0, os.path.join(out_dir, "malformed-%s.jsonl" % re.sub(r"[^A-Za-z0-9_.-]", "_", stem)), hook,
+                           read_deadline)
         try:
             reader.read()
+        except ReadTimeLimit:
+            logs_cut[stem] = reader.cut
+            problems.append({"log": stem, "why": "read only to line %d (stopped at byte %d): the tool's own clock for reading the logs ran out; the file is whole in out_dir, "
+                                                 "and the records, counts and diagnostics here are those of the lines read" % (reader.cut["lines_read"], reader.cut["stopped_at_byte"])})
         except OSError as exc:
             problems.append({"log": stem, "why": describe(exc)})
             continue
@@ -1292,13 +1353,14 @@ def main():
         if reader.malformed_total:
             malformed.extend(reader.malformed)
             malformed_files[stem] = "malformed-%s.jsonl" % re.sub(r"[^A-Za-z0-9_.-]", "_", stem)
-        if reader.parsed == 0 and not reader.malformed_total:
+        if reader.parsed == 0 and not reader.malformed_total and reader.cut is None:
             empty.append(stem)
         if inline:
             logs[stem] = {"file": log_path, "format": reader.format, "fields": reader.fields, "types": reader.types,
                           "records": [inline_copy(stem, r, withheld) for r in reader.records],
                           "returned": len(reader.records), "total": reader.parsed, "omitted": reader.parsed - len(reader.records),
                           "malformed": reader.malformed_total, "lines": reader.lines,
+                          "read_to_the_end": reader.cut is None,
                           **({"header_problem": reader.header_problem} if reader.header_problem else {})}
     not_written = sorted(n for n in wanted if n + ".log" not in written)
     hashes_produced = files["records_with_a_hash"] > 0
@@ -1314,6 +1376,8 @@ def main():
             reasons.append("Zeek exited %s" % code)
         if problems:
             reasons.append("%d problem(s) (problems names each)" % len(problems))
+        if logs_cut or logs_not_read:
+            reasons.append("the tool's own clock for reading the logs ran out (%d log(s) read in part, %d not read)" % (len(logs_cut), len(logs_not_read)))
         if total_malformed:
             reasons.append("%d record(s) did not fit their header (each is kept raw in a malformed-<log>.jsonl file)" % total_malformed)
         basis = "; ".join(reasons) + ": the logs are whole in out_dir and the records that were read are in the answer"
@@ -1335,6 +1399,9 @@ def main():
         "logs_written": [n[:-4] for n in written],
         "logs_requested_not_written": not_written,
         "logs_empty": empty,
+        "reading_cut_by_its_clock": bool(logs_cut or logs_not_read),
+        "logs_read_in_part": logs_cut or None,
+        "logs_not_read": logs_not_read or None,
         "logs": logs,
         "problems": problems,
         "malformed_records": total_malformed,
@@ -1367,7 +1434,7 @@ def main():
                  "none. Zeek's own stdout and stderr are kept beside the logs; reporter, weird and capture_loss are summarised under "
                  "engine_diagnostics."),
     }
-    print(json.dumps(answer, indent=2))
+    answer_out(json.dumps(answer, indent=2))
     return 0
 
 

@@ -23,6 +23,7 @@ import { test } from "node:test";
 import type { Pkt } from "./pack-network-harness.ts";
 import { EXTRACT, asJob, body, drop, everythingUnder, exists, filesUnder, frameTcp4, gone, ngBlock, ngInterface, ngPacket, ngSection, pcapClassic, pidFile, refused, startDetached, stub, ticks, tool, TCP, u32, withCwd } from "./pack-network-harness.ts";
 import type { Json } from "./pack-network-harness.ts";
+import { runPySnippet } from "./tool-library-harness.ts";
 
 const sha = (b: Buffer | string): string => createHash("sha256").update(b).digest("hex");
 const BODY_A = Buffer.from("A".repeat(200));
@@ -922,4 +923,48 @@ test("write_values is refused as JSON, before anything is written, in a job whos
     }
     assert.equal(body(await asJob(EXTRACT, cwd, { path: await capture(cwd), out_dir: "out/y", protocols: ["http"], write_values: true }, bin, env(cwd))).secret_values.requested, true);
   });
+});
+
+test("a stop signal during the tshark preflight still ends in the partial JSON the README promises: the last word is set before the first program is started", async () => {
+  await withCwd(async (cwd, bin) => {
+    await stage(cwd, bin, { slowVersion: true });
+    const run = startDetached(EXTRACT, cwd, { path: await capture(cwd), out_dir: "work/x", protocols: ["http"] }, env(cwd), bin);
+    try {
+      // the stand-in logs its arguments before it sleeps: waiting for the --version line is waiting for the state the signal is meant to land in
+      for (let i = 0; i < 600 && !(await readFile(join(cwd, "tshark-calls.txt"), "utf8")).includes("--version"); i++) await new Promise((r) => setTimeout(r, 50));
+      assert.match(await readFile(join(cwd, "tshark-calls.txt"), "utf8"), /--version/, "the preflight started");
+      run.signal("SIGTERM");
+      const code = await run.closed;
+      assert.equal(code, 143);
+      const last = JSON.parse(run.stdout());
+      assert.equal(last.status, "partial");
+      assert.equal(last.ok, false);
+      assert.equal(last.interrupted_by_signal, 15);
+      assert.match(last.stage, /checking what tshark offers/);
+      assert.match(last.status_basis, /no export pass had started/);
+      assert.match(last.status_basis, /output directory was not written/);
+      assert.equal(await exists(join(cwd, "work/x")), false, "out_dir was not touched");
+    } finally {
+      try { run.killGroup(); } catch { /* gone */ }
+    }
+  });
+});
+
+test("a request URI over 64 KiB keeps its host and path and has its query withheld whole by length, so a megabyte of & is not seconds of work per object", async () => {
+  const code = [
+    "import importlib.util, sys, time",
+    "spec = importlib.util.spec_from_file_location('extract', sys.argv[1]); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)",
+    "began = time.monotonic()",
+    "print(m.shown_url('http://h.example.test/a/b?' + '&' * 1_000_000 + '#frag'))",
+    "print(m.shown_url('http://h.example.test/a?x=1&y=2'))",
+    "print(m.shown_url('/p' + 'q' * 70_000))",
+    "print('fast' if time.monotonic() - began < 5 else 'slow')",
+  ].join("\n");
+  const run = await runPySnippet(code, [EXTRACT], null);
+  assert.equal(run.code, 0, run.stderr);
+  const [big, small, longPath, speed] = run.stdout.trimEnd().split("\n");
+  assert.equal(big, "http://h.example.test/a/b?<over-long query or fragment withheld 1000005 characters>");
+  assert.equal(small, "http://h.example.test/a?x=<withheld 1 characters>&y=<withheld 1 characters>");
+  assert.match(longPath, /^<over-long text withheld 70002 characters>$/);
+  assert.equal(speed, "fast");
 });

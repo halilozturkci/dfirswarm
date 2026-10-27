@@ -9,7 +9,7 @@
  * handshake and its basis said, and a host filter written in a different IPv6 spelling still matches.
  */
 import assert from "node:assert/strict";
-import { readFile, rm } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import {
@@ -643,10 +643,79 @@ test("with group endpoint the summing of the tuples is under the same end: cut, 
     assert.equal(cut.listing_cut_by_its_own_clock.endpoint_aggregation.written, 255);
     assert.equal(cut.listing_cut_by_its_own_clock.endpoint_aggregation.of, 1000);
     assert.match(cut.status_basis, /endpoint_aggregation: 255 of 1000 tuples summed \(no endpoint row is listed\)/);
-    assert.equal(cut.endpoint_aggregate_count, 0);
+    // no endpoint row was built: the counts of rows are not known, which is not zero
+    assert.equal(cut.endpoint_aggregate_count, null);
+    assert.equal(cut.endpoint_aggregates_returned, null);
+    assert.equal(cut.endpoint_aggregates_omitted, null);
     assert.equal(cut.packets, 1000);
     const whole = body(await tool(SUMMARY, cwd, { path, top: 5, group: "endpoint" }));
     assert.equal(whole.status, "complete");
     assert.ok(whole.endpoint_aggregate_count > 0);
   });
 });
+
+/** `count` pcapng blocks of 12 bytes (a header, no body, the length again), each of the type `type(i)`. */
+function emptyBlocks(count: number, type: (i: number) => number): Buffer {
+  const out = Buffer.alloc(12 * count);
+  for (let i = 0; i < count; i++) {
+    out.writeUInt32LE(type(i) >>> 0, 12 * i);
+    out.writeUInt32LE(12, 12 * i + 4);
+    out.writeUInt32LE(12, 12 * i + 8);
+  }
+  return out;
+}
+
+test("pcapng block types this tool does not know are tallied in bounded memory: fifty inline, every type in a file the answer names, and the answer stays small", async () => {
+  await withCwd(async (cwd) => {
+    const n = 100_000;
+    const cap = Buffer.concat([ngSection(), ngInterface(), emptyBlocks(n, (i) => 0x10000 + i), ngBlock(0x7f000001, Buffer.alloc(4)), ngBlock(0x7f000001, Buffer.alloc(8))]);
+    const out = body(await tool(SUMMARY, cwd, { path: await drop(cwd, "work/many-types.pcapng", cap) }));
+    assert.equal(out.status, "complete");
+    assert.equal(out.unsupported_blocks, n + 2);
+    assert.equal(out.unsupported_block_types_total, n + 1, "the repeated type is one type");
+    assert.ok(Object.keys(out.unsupported_block_types).length <= 50, `${Object.keys(out.unsupported_block_types).length} types inline`);
+    assert.equal(out.unsupported_block_types_not_listed, n + 1 - Object.keys(out.unsupported_block_types).length);
+    assert.ok(JSON.stringify(out).length < 40_000, "the answer does not grow with the number of types");
+    assert.ok(out.notes.some((x: string) => /block types are not listed inline/.test(x)));
+    const file = (await readFile(join(cwd, out.unsupported_block_types_file), "utf8")).trimEnd().split("\n").map((l) => JSON.parse(l));
+    assert.equal(file.length, n + 1, "every type is in the file");
+    assert.equal(file.reduce((sum: number, r: Json) => sum + r.blocks, 0), n + 2, "and every block is counted in it");
+    assert.deepEqual(file.find((r: Json) => r.block_type === "0x7f000001"), { block_type: "0x7f000001", blocks: 2 });
+    assert.deepEqual(file[0], { block_type: "0x00010000", blocks: 1 }, "by type");
+    // A capture with a few unknown types is the same as it was: all inline, no file.
+    const few = body(await tool(SUMMARY, cwd, { path: await drop(cwd, "work/few.pcapng", Buffer.concat([ngSection(), ngInterface(), emptyBlocks(4, (i) => 0x7f000010 + (i % 2))])) }));
+    assert.deepEqual(few.unsupported_block_types, { "0x7f000010": 2, "0x7f000011": 2 });
+    assert.equal(few.unsupported_block_types_total, 2);
+    assert.equal(few.unsupported_block_types_not_listed, 0);
+    assert.equal(few.unsupported_block_types_file, null);
+  });
+});
+
+test("blocks that yield no packet are under the clock: five million blocks of a type the tool does not know end at max_seconds, partial, with the blocks counted so far", async () => {
+  await withCwd(async (cwd) => {
+    const cap = Buffer.concat([ngSection(), ngInterface(), Buffer.alloc(12 * 5_000_000).fill(emptyBlocks(1, () => 0x7f000002))]);
+    const began = Date.now();
+    const out = body(await tool(SUMMARY, cwd, { path: await drop(cwd, "work/skipped.pcapng", cap), max_seconds: 1 }));
+    assert.equal(out.status, "partial", JSON.stringify(out.stopped_reading));
+    assert.equal(out.capture_read_to_the_end, false);
+    assert.equal(out.stopped_reading.kind, "time_limit");
+    assert.equal(out.packets, 0);
+    assert.ok(out.unsupported_blocks > 0 && out.unsupported_blocks < 5_000_000, `${out.unsupported_blocks} blocks`);
+    assert.ok(Date.now() - began < 30_000);
+  });
+});
+
+test("a tool-output that is a symbolic link is refused before anything is read: the whole results would be written where it points", async () => {
+  await withCwd(async (cwd) => {
+    await mkdir(join(cwd, "elsewhere"), { recursive: true });
+    await mkdir(join(cwd, "work", "s1"), { recursive: true });
+    await symlink(join(cwd, "elsewhere"), join(cwd, "work", "s1", "tool-output"));
+    const cap = await drop(cwd, "work/c.pcap", pcapClassic([{ sec: 1, frame: frameTcp4({ src: C, dst: S, sport: 50000, dport: 443, flags: TCP.SYN, seq: 1 }) }]));
+    const err = refused(await tool(SUMMARY, cwd, { path: cap }));
+    assert.match(err.error, /tool-output is a symbolic link/);
+    assert.equal(err.status, "failed");
+    assert.deepEqual(await readdirNames(join(cwd, "elsewhere")), [], "nothing was written where the link points");
+  });
+});
+
+const readdirNames = (dir: string): Promise<string[]> => readdir(dir).then((n) => n.sort());

@@ -56,6 +56,7 @@ COLUMNS = ["line", "byte_offset", "byte_length", "format", "parse_status", "time
            "user_agent", "elapsed_ms", "hierarchy", "mime", "in_if", "out_if", "nat_src", "nat_dst", "tcp_flags", "unparsed_tail", "decoding"]
 UNPARSED_COLUMNS = ["line", "byte_offset", "byte_length", "parse_status", "reason", "decoding"]
 DEFAULT_MAX_LINE = 1 << 20
+CLOCK_BYTES = 1 << 16  # the clock is also read after this many bytes of lines
 DEFAULT_MAX_EXPANDED = 4 << 30
 DEFAULT_MAX_DISTINCT = 200_000
 DEFAULT_SECONDS = 540          # the tool's own clock; the manifest's limit is 600, so this tool stops and answers first
@@ -646,7 +647,13 @@ def shown_host(host):
 
 
 def redact_target(url):
-    """A request target or referer: the block's own URL rule, and the authority of an absolute one through the host rule."""
+    """A request target or referer: the block's own URL rule, and the authority of an absolute one through the host rule.
+    A target over TEXT_LIMIT keeps its scheme, host and path part as the rule has them and has its query and fragment
+    withheld whole, by their length (the block's own rule for a text over the limit): the block splits a query pair by pair,
+    so a megabyte of `&` there costs seconds a line. The line stays in the table with its offset and length."""
+    cut = min((i for i in (url.find("?"), url.find("#")) if i >= 0), default=len(url)) if len(url) > TEXT_LIMIT else len(url)
+    if cut < len(url):
+        return redact_target(url[:cut]) + url[cut] + _withheld("over-long query or fragment", len(url) - cut - 1, "urls")
     out = redact_url(url)
     m = re.match(r"^((?:[A-Za-z][A-Za-z0-9+.-]*:)?//)([^/?#]*)(.*)$", out, re.S)
     if not m:
@@ -717,15 +724,33 @@ def _stop(signum, _frame):
     raise Stopped(signum)
 
 
+class ClockedFile:
+    """The file under a gzip stream, read through the tool's clock. Python's gzip reader walks the members of a stream inside one
+    read: a stream of a few hundred thousand empty members returns nothing for seconds, and the tool's line loop never gets
+    to look at the clock. Each read of the file under it (8 KiB of the stream) looks at it instead."""
+
+    def __init__(self, fh, deadline):
+        self.fh, self.deadline = fh, deadline
+
+    def read(self, size=-1):
+        if time.monotonic() > self.deadline:
+            raise TimeLimit()
+        return self.fh.read(size)
+
+    def __getattr__(self, name):
+        return getattr(self.fh, name)
+
+
 class Source:
     """The log as a stream of bytes: plain, or gzip with a cap on what it may expand to."""
 
-    def __init__(self, path, cap):
+    def __init__(self, path, cap, deadline):
         with open(path, "rb") as fh:
             magic = fh.read(2)
         self.gzip = magic == b"\x1f\x8b"
         self.cap = cap
-        self.fh = gzip.open(path, "rb") if self.gzip else open(path, "rb")
+        self.raw = open(path, "rb")
+        self.fh = gzip.GzipFile(fileobj=ClockedFile(self.raw, deadline), mode="rb") if self.gzip else self.raw
         self.read_total = 0
 
     def readline(self, limit):
@@ -736,7 +761,10 @@ class Source:
         return raw
 
     def close(self):
-        self.fh.close()
+        try:
+            self.fh.close()
+        finally:
+            self.raw.close()
 
 
 def optional_int(args, key, default, minimum):
@@ -797,7 +825,7 @@ def main():
     try:
         os.makedirs(out_dir, mode=0o700, exist_ok=True)
         os.chmod(out_dir, 0o700)
-        source = Source(path, max_expanded)
+        source = Source(path, max_expanded, deadline)
     except (OSError, EOFError, zlib.error) as exc:
         values.discard()
         fail("the log or the output directory could not be opened (%s)" % describe(exc), out_dir=out_dir)
@@ -812,6 +840,7 @@ def main():
     read_error = None
     stopped = None
     in_long_line = False
+    since_clock = 0
     offset = 0
     try:
         with open(normal_path, "x", encoding="utf-8", newline="\n") as normal, open(bad_path, "x", encoding="utf-8", newline="\n") as bad:
@@ -824,8 +853,12 @@ def main():
                     raw = source.readline(max_line + 1)
                     if not raw:
                         break
-                    if stats["lines"] % 256 == 0 and time.monotonic() > deadline:
-                        raise TimeLimit()
+                    # The clock is read every 256 lines and after every CLOCK_BYTES of lines, so a few long lines cannot outrun it.
+                    since_clock += len(raw)
+                    if since_clock >= CLOCK_BYTES or stats["lines"] % 256 == 0:
+                        since_clock = 0
+                        if time.monotonic() > deadline:
+                            raise TimeLimit()
                     with LINE:
                         stats["lines"] += 1
                         number, start = stats["lines"], offset
@@ -836,6 +869,8 @@ def main():
                             while True:
                                 more = source.readline(max_line)
                                 length += len(more)
+                                if time.monotonic() > deadline:
+                                    raise TimeLimit()
                                 if not more or more.endswith(b"\n"):
                                     break
                             LINE.held = True
@@ -908,7 +943,7 @@ def main():
                               "last_complete_line": stats["lines"] - (1 if in_long_line else 0), "stream_offset": offset}
             except TimeLimit:
                 read_error = {"error": "time_limit", "message": "max_seconds (%d) ran out: the tool stopped reading and answers with what it read" % max_seconds,
-                              "last_complete_line": stats["lines"], "stream_offset": offset}
+                              "last_complete_line": stats["lines"] - (1 if in_long_line else 0), "stream_offset": offset}
             except ExpansionLimit:
                 read_error = {"error": "expansion_limit", "message": "the decompressed stream passed max_expanded_bytes (%d)" % max_expanded,
                               "last_complete_line": stats["lines"] - (1 if in_long_line else 0), "stream_offset": offset}

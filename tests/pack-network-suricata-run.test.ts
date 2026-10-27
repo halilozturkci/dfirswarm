@@ -11,6 +11,7 @@
  * uses, or produces a JA4 fingerprint, is a thing that build's own output shows.
  */
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -466,5 +467,54 @@ test("a bad home_net entry is named by its position and length, never echoed", a
     assert.equal(err.home_net_entry_length, secret.length);
     assert.equal(JSON.stringify(err).includes(secret), false);
     assert.equal(err.status, "failed");
+  });
+});
+
+test("eve.json is read under the tool's own clock: it is read in part when the clock runs out, and says so (partial, eve_read_to_the_end false), the file whole on disk", async () => {
+  await withCwd(async (cwd, bin) => {
+    const eve = Array.from({ length: 120_000 }, (_, i) => ALERT(i % 100)).join("\n") + "\n";
+    await stage(cwd, bin, { eve, loadTest: "<Info> - 2 rules successfully loaded, 0 rules failed\n", loadRun: "<Info> - 2 rules successfully loaded, 0 rules failed\n" });
+    const { path, rules } = await inputs(cwd);
+    const cut = body(await tool(SURICATA, cwd, { path, rules, out_dir: "work/s" }, { ...env(cwd), SURICATA_RUN_READ_SECONDS: "0.05" }, bin));
+    assert.equal(cut.status, "partial");
+    assert.equal(cut.ok, false);
+    assert.equal(cut.eve_read_to_the_end, false);
+    assert.ok(cut.eve_reading_cut_by_its_clock.lines_read > 0 && cut.eve_reading_cut_by_its_clock.lines_read < 120_000);
+    assert.equal(cut.eve_lines, cut.eve_reading_cut_by_its_clock.lines_read);
+    assert.ok(cut.alert_count < 120_000, "the counts are those of the lines read");
+    assert.match(cut.status_basis, /eve\.json was read only to line/);
+    assert.equal((await readFile(join(cwd, "work/s/eve.json"), "utf8")), eve, "eve.json is whole on disk");
+    const whole = body(await tool(SURICATA, cwd, { path, rules, out_dir: "work/s2" }, env(cwd), bin));
+    assert.equal(whole.eve_read_to_the_end, true);
+    assert.equal(whole.eve_reading_cut_by_its_clock, null);
+    assert.equal(whole.alert_count, 120_000);
+    assert.equal(whole.status, "complete");
+  });
+});
+
+test("a stop signal that arrives while the answer is being written adds no second document: the answer is whole and the exit is 128 plus the signal", async () => {
+  await withCwd(async (cwd, bin) => {
+    await stage(cwd, bin, { eve: ALERT(1) + "\n", loadTest: "<Info> - 2 rules successfully loaded, 0 rules failed\n", loadRun: "<Info> - 2 rules successfully loaded, 0 rules failed\n" });
+    const { path, rules } = await inputs(cwd);
+    const code = [
+      "import os, signal, sys, runpy",
+      "class Out:",
+      "    def __init__(self, real): self.real, self.sent = real, False",
+      "    def write(self, text):",
+      "        n = self.real.write(text)",
+      "        if not self.sent and text.startswith('{') and '\"tool\"' in text:",
+      "            self.sent = True",
+      "            os.kill(os.getpid(), signal.SIGTERM)",
+      "        return n",
+      "    def __getattr__(self, name): return getattr(self.real, name)",
+      "sys.stdout = Out(sys.stdout)",
+      "runpy.run_path(sys.argv[1], run_name='__main__')",
+    ].join("\n");
+    const run = spawnSync("python3", ["-c", code, SURICATA], { cwd, input: JSON.stringify({ path, rules, out_dir: "work/s" }), encoding: "utf8", maxBuffer: 1 << 26,
+      env: { ...process.env, AGENT_ID: "s1", PATH: `${bin}:${process.env.PATH}`, ...env(cwd) } });
+    assert.equal(run.status, 143, run.stderr);
+    const answer = JSON.parse(run.stdout);
+    assert.equal(answer.tool.name, "suricata_run");
+    assert.equal(answer.interrupted_by_signal, undefined, "one document: the answer, not a last word after it");
   });
 });

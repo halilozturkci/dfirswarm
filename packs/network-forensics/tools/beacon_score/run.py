@@ -72,6 +72,18 @@ def in_job():
     return bool(os.environ.get("JOB_ID") and os.environ.get("OUT"))
 
 
+def refuse_followed_page_dir():
+    """The whole results of a long list are written under tool-output (in a job, $OUT/tool-output). If that name is already a symbolic link
+    the results would land where it points, outside the place the tool is allowed to write: refuse before anything is read."""
+    job, out = os.environ.get("JOB_ID"), os.environ.get("OUT")
+    if job and out:
+        directory = os.path.join(out, "tool-output")
+    else:
+        directory = os.path.join("work", re.sub(r"[^A-Za-z0-9_.-]", "_", os.environ.get("AGENT_ID") or "tool"), "tool-output")
+    if os.path.islink(directory):
+        fail("tool-output is a symbolic link: the whole results would be written where it points. Remove it, or give the run a directory of its own", tool_output=directory)
+
+
 def resolve_output(out, what="output"):
     """Where `out` really lands, as a path under the run directory; a place
     outside it, the run directory itself, or anything under inputs/ is refused.
@@ -267,9 +279,30 @@ def check_label(label):
     return label
 
 
-def values_of(file_arg, raw, counters):
+class ReadTimeUp(Exception):
+    """The clock ran out inside a line too long to be a time: the rest of it is not read."""
+
+    def __init__(self, index):
+        super().__init__(index)
+        self.index = index
+
+
+def length_of(value):
+    """The length of a value's text as the series gave it, for the record of a value that was not scored; None when it has none
+    (null) or when the text of a structure nested too deep to be written is not built (a list nested 100,000 deep overflows the
+    stack on Python 3.14)."""
+    if value is None:
+        return None
+    try:
+        return len(str(value))
+    except RecursionError:
+        return None
+
+
+def values_of(file_arg, raw, counters, deadline=None):
     """The series as (input position, value) pairs, one at a time: a file is read line by line and never held. A line too long to
-    be a time is counted and yields None; a blank line and a comment are not positions."""
+    be a time is counted and yields None; a blank line and a comment are not positions. A line the rest of which is skipped is
+    skipped under the clock (`deadline`): a file with no line break in it is as long as the disk."""
     if file_arg is not None:
         with open(file_arg, "r", encoding="utf-8", errors="replace") as fh:
             index = 0
@@ -280,6 +313,8 @@ def values_of(file_arg, raw, counters):
                 if len(line) > MAX_VALUE_CHARS and not line.endswith("\n"):
                     while line and not line.endswith("\n"):
                         line = fh.readline(MAX_VALUE_CHARS)
+                        if deadline is not None and time.monotonic() > deadline:
+                            raise ReadTimeUp(index)
                     counters["long_lines"] += 1
                     yield index, None
                     index += 1
@@ -356,6 +391,9 @@ def main():
     if file_arg is not None:
         if not isinstance(file_arg, str) or not file_arg:
             fail("timestamps_file must be a path")
+        if not os.path.isfile(file_arg):
+            # /dev/zero, a pipe or a directory is not a series: opening one would block, or never end
+            fail("timestamps_file must name a regular file", timestamps_file=file_arg)
     else:
         if not isinstance(raw, list) or not raw:
             fail("timestamps is required: a non-empty list of event times, epoch seconds or ISO 8601 with a zone")
@@ -363,6 +401,7 @@ def main():
             fail("timestamps holds %d events, more than the %d a series passed inline may have: give it as timestamps_file (one time per line, up to %d events)"
                  % (len(raw), MAX_INLINE_EVENTS, MAX_EVENTS))
 
+    refuse_followed_page_dir()
     PROGRESS["stage"] = "reading the series"
     counters = {"long_lines": 0}
     # The series is parsed once, as it is read: seconds in a packed array (8 bytes an event), the position of each in the input
@@ -375,7 +414,7 @@ def main():
     supplied, in_order, previous = 0, True, None
     timed_out_at = None
     try:
-        for index, value in values_of(file_arg, raw, counters):
+        for index, value in values_of(file_arg, raw, counters, read_deadline):
             supplied += 1
             if supplied > MAX_EVENTS:
                 fail("the series has more than %d events: split it by destination or by window" % MAX_EVENTS, **({"timestamps_file": file_arg} if file_arg else {}))
@@ -393,7 +432,7 @@ def main():
                 assumed += 1
             elif reason:
                 rejected[reason] += 1
-                rejected_page.add({"index": index, "reason": reason, "length": len(str(value)) if value is not None else None})
+                rejected_page.add({"index": index, "reason": reason, "length": length_of(value)})
                 continue
             seconds = round(seconds, 6)
             if previous is not None and seconds < previous:
@@ -401,6 +440,8 @@ def main():
             previous = seconds
             secs.append(seconds)
             positions.append(index)
+    except ReadTimeUp as up:
+        timed_out_at = up.index
     except OSError as exc:
         fail("timestamps_file could not be read (%s)" % describe(exc), timestamps_file=file_arg)
     except Stopped:
@@ -416,7 +457,7 @@ def main():
         window_end, why = read_time(args["window_end"], assume_utc)
         if window_end is None:
             fail("window_end could not be read as a time (%s): epoch seconds or ISO 8601 with a zone" % why,
-                 window_end_length=len(str(args["window_end"])))
+                 window_end_length=length_of(args["window_end"]))
 
     PROGRESS["stage"] = "ordering the series"
     count = len(secs)

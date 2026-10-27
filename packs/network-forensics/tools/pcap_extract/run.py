@@ -1102,6 +1102,11 @@ def shown_number(text):
 def shown_url(url):
     """A request URI as printed: user-info, token-shaped path text, query values and fragment withheld by the block, and
     the authority through the same host rule as the host column."""
+    # Over TEXT_LIMIT the query and fragment are withheld whole, by their length (the block's own rule for a text over the limit): the block
+    # splits a query pair by pair, so a megabyte of `&` there costs seconds a URL. What is kept is the scheme, host and path part.
+    cut = min((i for i in (url.find("?"), url.find("#")) if i >= 0), default=len(url)) if len(url) > TEXT_LIMIT else len(url)
+    if cut < len(url):
+        return shown_url(url[:cut]) + url[cut] + _withheld("over-long query or fragment", len(url) - cut - 1, "urls")
     out = redact_url(url)
     m = re.match(r"^((?:[A-Za-z][A-Za-z0-9+.-]*:)?//)([^/?#]*)(.*)$", out, re.S)
     if not m:
@@ -1693,8 +1698,23 @@ def basis_of(status, why=None):
     return why or ""
 
 
+PROGRESS = {"stage": "reading the arguments", "out_dir": None}
+
+
+def early_word(signum):
+    """What a run stopped before its receipt exists says on stdout: partial, the stage it was in, and that no export pass had begun.
+    The receipt (and the last word that writes it) takes over once the output directory is ready; until then the two tshark
+    preflights and the checks run, and a signal in them must still end in the partial JSON the README promises."""
+    print(json.dumps({"tool": TOOL, "parser": PARSER, "status": "partial", "ok": False, "receipt_status": None,
+                      "status_basis": "the tool was stopped by signal %d while it was %s; no export pass had started, so no object was exported, and %s" %
+                                      (signum, PROGRESS["stage"], "the output directory may hold the files the tool had begun to write there"
+                                       if PROGRESS["stage"] == "preparing the output directory" else "the output directory was not written"),
+                      "interrupted_by_signal": signum, "stage": PROGRESS["stage"], "out_dir": PROGRESS["out_dir"]}), flush=True)
+
+
 def main():
     started = time.monotonic()
+    STATE["last_word"] = early_word
     install_signal_handlers()
     try:
         args = json.load(sys.stdin)
@@ -1708,6 +1728,7 @@ def main():
     if not isinstance(out_dir, str) or not out_dir:
         fail("out_dir is required: an empty directory under work/ (in a job, under $OUT)")
     out_dir = resolve_output(out_dir, "out_dir")
+    PROGRESS["out_dir"] = out_dir
     try:
         if os.path.exists(out_dir) and os.listdir(out_dir):
             fail("out_dir already holds files", out_dir=out_dir)
@@ -1744,6 +1765,7 @@ def main():
         fail("tshark is not on PATH")
     os.umask(0o077)
     deadline = started + timeout
+    PROGRESS["stage"] = "checking what tshark offers (--version, --export-objects help)"
     version_code, version_out, version_err, _ = preflight([binary, "--version"], min(PREFLIGHT_SECONDS, deadline - time.monotonic()))
     _, help_out, help_err, _ = preflight([binary, "--export-objects", "help"], min(PREFLIGHT_SECONDS, deadline - time.monotonic()))
     version_line = ""
@@ -1770,6 +1792,7 @@ def main():
                  exporters_supported=supported, tshark_version=version_line or None)
 
     # Everything that can refuse has refused. From here on the tool writes, and the values file comes first.
+    PROGRESS["stage"] = "preparing the output directory"
     try:
         values = SecretValues(write_values)
     except SecretValuesRefused as exc:

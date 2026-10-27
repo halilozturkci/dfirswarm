@@ -52,12 +52,16 @@ import shutil
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 TOOL = {"name": "suricata_run", "version": 7}
 PARSER = "suricata_run/5"
 TEST_SECONDS = 120
 MAX_TIMEOUT = 1000            # the manifest's limit is 1200: --build-info (30 s) and the configuration test (120 s) come first
+MANIFEST_SECONDS = 1200       # the manifest's limit: the tool's own clock for reading eve.json ends READ_MARGIN seconds before it, counted from the start
+READ_MARGIN = 30              # kept for building and printing the answer after the last line was read
+CLOCK_BYTES = 1 << 20         # the reading clock is also looked at after this many bytes of EVE
 DEFAULT_HOME_NET = ["192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12"]
 PREFLIGHT_SECONDS = 30
 MAX_LINE = 16 << 20
@@ -934,7 +938,20 @@ def configuration(out_dir, home_net):
     )
 
 
+def answer_out(text):
+    """Print the final answer as one unit a stop signal cannot cut or follow: signals are held while it is written and there is no last
+    word to add to it, so a signal that arrives during or after it ends the tool (exit 128 plus the signal) with this one document."""
+    held = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+    signal.pthread_sigmask(signal.SIG_BLOCK, held)
+    try:
+        STATE["last_word"] = None
+        print(text, flush=True)
+    finally:
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, held)
+
+
 def main():
+    started = time.monotonic()
     STATE["last_word"] = last_word
     install_signal_handlers()
     try:
@@ -1062,6 +1079,15 @@ def main():
         fail("suricata wrote no eve.json", exit_code=code, command=argv, stdout=stdout_path, stderr=stderr_path, out_dir=out_dir)
 
     PROGRESS["stage"] = "reading eve.json"
+    # Reading eve.json has its own end: the manifest's limit less READ_MARGIN, counted from the start of the tool, so the build information, the
+    # configuration test and the engine's own time are already out of it. SURICATA_RUN_READ_SECONDS (seconds from here) exists for the tests.
+    try:
+        read_seconds = float(os.environ.get("SURICATA_RUN_READ_SECONDS", ""))
+    except ValueError:
+        read_seconds = None
+    read_deadline = (time.monotonic() + read_seconds) if read_seconds is not None else started + MANIFEST_SECONDS - READ_MARGIN
+    read_cut = None
+    since_clock = 0
     event_types, signatures = collections.Counter(), collections.Counter()
     alerts, bad_lines, not_objects, no_type, too_long = [], [], 0, 0, []
     problem_total = 0
@@ -1076,12 +1102,24 @@ def main():
             raw = fh.readline(MAX_LINE + 1)
             if not raw:
                 break
+            since_clock += len(raw)
+            if since_clock >= CLOCK_BYTES or lines & 1023 == 0:
+                since_clock = 0
+                if time.monotonic() > read_deadline:
+                    read_cut = {"lines_read": lines, "stopped_at_byte": fh.tell() - len(raw)}
+                    break
             lines += 1
             if len(raw) > MAX_LINE and not raw.endswith(b"\n"):
                 while True:
                     more = fh.readline(MAX_LINE)
                     if not more or more.endswith(b"\n"):
                         break
+                    if time.monotonic() > read_deadline:
+                        read_cut = {"lines_read": lines - 1, "stopped_at_byte": fh.tell()}
+                        break
+                if read_cut:
+                    lines -= 1        # the line being skipped was not finished: it is not a line read
+                    break
                 if len(too_long) < 10:
                     too_long.append(lines)
                 problem_total += 1
@@ -1155,10 +1193,13 @@ def main():
         problems.append("Suricata reported 0 rules loaded though the rules file has %d rule lines: an empty detection run is not a run with no alerts" % rule_lines)
     if invalid or not_objects or too_long or no_type:
         problems.append("%d EVE lines were not read as events" % (invalid + not_objects + len(too_long) + no_type))
+    if read_cut:
+        problems.append("eve.json was read only to line %d (stopped at byte %d): the tool's own clock for reading it ran out; the file is whole in out_dir, "
+                        "and the events, alerts and counts here are those of the lines read" % (read_cut["lines_read"], read_cut["stopped_at_byte"]))
     ok = not problems
     basis = ("the engine exited 0, its configuration test passed, every rule loaded and every EVE line was read as an event" if ok else
              "; ".join(problems[:6]) + (" (and %d more, all in problems)" % (len(problems) - 6) if len(problems) > 6 else "") + ": eve.json is whole in out_dir")
-    print(json.dumps({
+    answer_out(json.dumps({
         "tool": TOOL, "parser": PARSER,
         "status": "complete" if ok else "partial", "status_basis": basis,
         "path": path, "out_dir": out_dir, "eve_json": eve,
@@ -1192,6 +1233,7 @@ def main():
                     "the build lacks the feature, and a build may ignore a key it does not know.",
         },
         "tls_with_ja3": tls_ja3, "tls_with_ja4": tls_ja4,
+        "eve_read_to_the_end": read_cut is None, "eve_reading_cut_by_its_clock": read_cut,
         "eve_lines": lines, "invalid_eve_lines": invalid, "eve_lines_not_objects": not_objects, "events_without_event_type": no_type,
         "eve_lines_over_limit": too_long, "eve_line_problems": bad_lines,
         "eve_problem_lines_total": problem_total, "eve_problems_file": "eve-problems.jsonl" if problem_total else None,
