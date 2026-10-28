@@ -7,6 +7,12 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Every night, everything (the select job below says so for any run that is
+  # not a pull request): what a pull request's narrow run left out is run
+  # within a day, on main as it is.
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
 
 # A new push to a pull request cancels the runs the older push left behind (a
 # queued run stops costing a macOS slot, a running one stops at once). Runs on
@@ -20,23 +26,87 @@ permissions:
   contents: read
 
 jobs:
-  test:
-    name: typecheck · node tests · shell suites · ui build
+  select:
+    # Which suites this run needs. A pull request runs the suites that read
+    # what it changed (scripts/test-select.ts: narrow only where the change
+    # plainly is, everything for the harness, the workflow, images, package
+    # files, two packs' tools and any path it does not know); a push to main,
+    # the nightly run, a run by hand and a pull request labelled full-ci run
+    # everything. What a narrow run leaves out runs on main once it merges and
+    # every night. vm says whether the microVM job is needed: everything, or a
+    # pack's requirements (the images are built from them).
+    name: which suites this change needs
     runs-on: ubuntu-latest
-    # The node and shell suites together took 19 min on the limits branch and
-    # 20 min 15 s on the next push, which the old 20 cut off mid-suite: a limit
-    # is there to stop a hang, not a suite that has grown. The pack tests since
-    # (windows, reverse engineering, virtualization) made it 30 to 35 min (the
-    # slowest success 34 min 54 s of the 35, and 14 runs cut off at 35 min 18 s),
-    # so the limit is 60: a hang is still stopped, a grown suite is not.
-    #
-    # Hosted runners vary in speed. Over the last 60 runs (41 successes) this
-    # job took 36 to 59 min 54 s (median 53.5), four runs were cut off at the
-    # limit, and on a slow host `npm test` alone took about 23 minutes and
-    # `npm run test:bash` was cut off. 60 left no room for a slow host, so the
-    # limit is 90, the same as the macOS node parts. A hang is still stopped:
-    # every test has its own 5-minute limit (scripts/test-node.ts).
-    timeout-minutes: 90
+    timeout-minutes: 5
+    outputs:
+      all: ${{ steps.s.outputs.all }}
+      vm: ${{ steps.s.outputs.vm }}
+      node: ${{ steps.s.outputs.node }}
+      shell: ${{ steps.s.outputs.shell }}
+    steps:
+      - run: git config --global init.defaultBranch main
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The change is read as base...head, so the history is needed.
+          fetch-depth: 0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+      - id: s
+        env:
+          EVENT: ${{ github.event_name }}
+          FULL_LABEL: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$EVENT" != pull_request ] || [ "$FULL_LABEL" = true ]; then
+            why="$([ "$EVENT" != pull_request ] && echo "a $EVENT run" || echo "the full-ci label")"
+            { echo "all=true"; echo "vm=true"; echo "node="; echo "shell="; } >> "$GITHUB_OUTPUT"
+            echo "**Everything** ($why)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          node --experimental-strip-types --no-warnings scripts/test-select.ts --base "$BASE" --json > "$RUNNER_TEMP/select.json"
+          q() { node -e "const s = require(process.argv[1]); process.stdout.write(String($1))" "$RUNNER_TEMP/select.json"; }
+          all="$(q 's.all')"
+          vm="$(q "s.all || s.changed.some((p) => /^packs\/[^/]+\/requires\//.test(p))")"
+          { echo "all=$all"; echo "vm=$vm"
+            echo "node<<SELECT_EOF"; q 's.node.join("\n")'; echo; echo "SELECT_EOF"
+            echo "shell<<SELECT_EOF"; q 's.shell.join("\n")'; echo; echo "SELECT_EOF"; } >> "$GITHUB_OUTPUT"
+          { echo "**$( [ "$all" = true ] && echo Everything || echo "$(q 's.node.length') node suites, $(q 's.shell.length') shell suites")** for $(q 's.changed.length') changed file(s); microVM job: $vm."
+            echo; q 's.reasons.map((r) => "- " + r).join("\n")'; echo; } >> "$GITHUB_STEP_SUMMARY"
+
+  test:
+    name: linux · ${{ matrix.part }}
+    needs: select
+    runs-on: ubuntu-latest
+    # One job of six, run side by side. As one job it was the longest of the
+    # run and the one every pull request waited for: 67 min 12 s on a green run
+    # of 2026-10-27 (npm test 31 min 36 s, test:bash 24 min 6 s, the browser 8
+    # min 36 s, the tools 2 min 12 s), 36 to 59 min 54 s over 60 runs before
+    # that, cut off four times. Now the node suites are three parts (node's own
+    # --test-shard), the shell suites two (dealt out by tests/shell-suites.weights),
+    # and the UI build and the tracked-files check one of their own;
+    # tests/ci-shards.test.ts holds the parts to cover every node suite and every
+    # shell suite exactly once, as it does the macOS job's. A limit is there to
+    # stop a hang: every test has its own 5-minute limit (scripts/test-node.ts).
+    timeout-minutes: ${{ matrix.node && 60 || 45 }}
+    strategy:
+      # A failing part does not cancel the others: their verdicts are wanted.
+      fail-fast: false
+      matrix:
+        include:
+          - part: typecheck · node tests 1/3
+            node: "1/3"
+            typecheck: true
+          - part: node tests 2/3
+            node: "2/3"
+          - part: node tests 3/3
+            node: "3/3"
+          - part: shell suites 1/2
+            shard: "1/2"
+          - part: shell suites 2/2
+            shard: "2/2"
+          - part: ui build · nothing from a run is tracked
+            ui: true
     steps:
       # actions/checkout runs `git init` on the runner, and git prints its
       # init.defaultBranch hint unless one is configured.
@@ -47,6 +117,7 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - name: Tools the shell suites use
+        if: ${{ !matrix.ui }}
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q jq python3 zsh bubblewrap util-linux iproute2 sqlite3
@@ -57,6 +128,7 @@ jobs:
       # CI exercises the namespace modes; the second job below covers the
       # Landlock-only host on purpose.
       - name: What this host can enforce
+        if: ${{ !matrix.ui }}
         run: |
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           echo "userns: $(unshare -rm true 2>/dev/null && echo yes || echo no)"
@@ -66,17 +138,65 @@ jobs:
           bash scripts/fsguard.sh --rw "$PWD" --dry-run -- true | head -4
       - run: npm ci
       # The Playwright tool test drives a real browser and skips its browser
-      # half without one. The headless shell is what it launches.
+      # half without one. The headless shell is what it launches. The browser
+      # is a 3-second download; --with-deps' apt fetch of its libraries is what
+      # took 8 min 28 s (25.9 MB at 51 kB/s on 2026-10-27), and the hosted image
+      # already holds what the shell links. So the browser alone, a launch to
+      # prove it, and --with-deps only when that launch fails.
       - name: Chromium for the Playwright tool test
-        run: npx playwright install --with-deps --only-shell chromium
-      - run: npm run typecheck
-      # The browser is installed here, so its tests may not skip.
-      - run: npm test
+        if: matrix.node
+        run: |
+          npx playwright install --only-shell chromium
+          launch() { node -e "require('playwright').chromium.launch().then((b) => b.close()).catch((e) => { console.error(e.message); process.exit(1); })"; }
+          if launch; then echo "the headless shell starts with the image's own libraries"; else
+            echo "the headless shell does not start: installing its libraries"
+            npx playwright install --with-deps --only-shell chromium
+            launch
+          fi
+      - name: Typecheck
+        if: matrix.typecheck
+        run: npm run typecheck
+      # A pull request's narrow run: the select job's lists, as the files the
+      # node and shell steps below are handed.
+      - name: The suites this change needs
+        if: needs.select.outputs.all != 'true'
+        env:
+          NODE_LIST: ${{ needs.select.outputs.node }}
+          SHELL_LIST: ${{ needs.select.outputs.shell }}
+        run: |
+          printf '%s\n' "$NODE_LIST" | grep . > "$RUNNER_TEMP/node.list" || true
+          printf '%s\n' "$SHELL_LIST" | grep . > "$RUNNER_TEMP/shell.list" || true
+          echo "narrow: $(wc -l < "$RUNNER_TEMP/node.list") node suite(s), $(wc -l < "$RUNNER_TEMP/shell.list") shell suite(s) in all"
+      # The browser is installed in every node part, so its tests may not skip.
+      - name: Node tests ${{ matrix.node }}
+        if: matrix.node
+        run: npm test -- --test-shard=${{ matrix.node }} --timings=${{ runner.temp }}/timings.json ${{ needs.select.outputs.all != 'true' && format('--files-from={0}/node.list', runner.temp) || '' }}
         env:
           SWARM_REQUIRE_BROWSER: "1"
-      - run: npm run test:bash
-      - run: npm run ui:build
+      - name: The slowest node suites of this part
+        if: always() && matrix.node
+        run: |
+          [ -s "$RUNNER_TEMP/timings.json" ] || exit 0
+          node --experimental-strip-types --no-warnings scripts/test-timings.ts summary "$RUNNER_TEMP/timings.json" --top 15 | tee -a "$GITHUB_STEP_SUMMARY"
+      # The whole timings document, for scripts/test-timings.ts and the deep
+      # list: a job's summary page is not readable through the API, an
+      # artifact is (gh run download).
+      - name: Keep this part's timings
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: node-timings-${{ github.job }}-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/timings.json
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Shell suites ${{ matrix.shard }}
+        if: matrix.shard
+        run: npm run test:bash -- --shard ${{ matrix.shard }} ${{ needs.select.outputs.all != 'true' && format('--within={0}/shell.list', runner.temp) || '' }}
+      - name: UI build
+        if: matrix.ui
+        run: npm run ui:build
       - name: Nothing from a run is tracked
+        if: matrix.ui
         run: |
           if git ls-files | grep -E '^(runs/|sandbox-runs/|sandbox/\.pi|sandbox/traces/)' ; then
             echo "run state is tracked" >&2; exit 1
@@ -89,14 +209,19 @@ jobs:
     # 22.6.0: undici calls webidl.util.markAsUncloneable, which that Node has
     # not got, and every test that loads Pi fails). .nvmrc's 22 above is the
     # newest 22; this is the floor, so the claim is tested, not assumed.
-    name: typecheck · node tests · Node 22.19 (the engines floor)
+    name: node tests ${{ matrix.node }} · Node 22.19 (the engines floor)
+    needs: select
     runs-on: ubuntu-latest
-    # The node suites alone take 13 to 20 min now (the slowest success 20 min 0 s
-    # of the 20): 35, the same step up as the job above. Over the last 60 runs
-    # the 43 successes took 20 to 34 min (the slowest 33 min 54 s of the 35) and
-    # two runs were cut off at the limit on a slow host, so now 55 (1.6 times
-    # the slowest success).
-    timeout-minutes: 55
+    # Two parts (node's own --test-shard): as one job the node suites took 20 to
+    # 34 min over 60 runs and 35 min 30 s on a green run of 2026-10-27, the
+    # longest job of the run once the Linux job was split. The typecheck runs
+    # in the first. A limit is there to stop a hang: every test has its own
+    # 5-minute limit (scripts/test-node.ts).
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["1/2", "2/2"]
     steps:
       - run: git config --global init.defaultBranch main
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -111,20 +236,48 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           test "$(node --version)" = v22.19.0 || { echo "wanted Node v22.19.0, got $(node --version)" >&2; exit 1; }
       - run: npm ci
-      - run: npm run typecheck
-      - run: npm test
+      - name: Typecheck
+        if: matrix.node == '1/2'
+        run: npm run typecheck
+      - name: The suites this change needs
+        if: needs.select.outputs.all != 'true'
+        env:
+          NODE_LIST: ${{ needs.select.outputs.node }}
+        run: printf '%s\n' "$NODE_LIST" | grep . > "$RUNNER_TEMP/node.list" || true
+      - name: Node tests ${{ matrix.node }}
+        run: npm test -- --test-shard=${{ matrix.node }} --timings=${{ runner.temp }}/timings.json ${{ needs.select.outputs.all != 'true' && format('--files-from={0}/node.list', runner.temp) || '' }}
+      - name: The slowest node suites of this part
+        if: always()
+        run: |
+          [ -s "$RUNNER_TEMP/timings.json" ] || exit 0
+          node --experimental-strip-types --no-warnings scripts/test-timings.ts summary "$RUNNER_TEMP/timings.json" --top 15 | tee -a "$GITHUB_STEP_SUMMARY"
+      # The whole timings document, for scripts/test-timings.ts and the deep
+      # list: a job's summary page is not readable through the API, an
+      # artifact is (gh run download).
+      - name: Keep this part's timings
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: node-timings-${{ github.job }}-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/timings.json
+          if-no-files-found: ignore
+          retention-days: 14
 
   node-24:
     # Two Nodes run this harness. The host runs .nvmrc's 22 (package.json
     # engines >=22.19; the job above runs that floor exactly); inside a VM, Pi
     # runs the extensions on the image's Node, and images/base.Dockerfile
     # builds on node:24. The node suites again, on 24.
-    name: node tests · Node 24 (the VM image's)
+    name: node tests ${{ matrix.node }} · Node 24 (the VM image's)
+    needs: select
     runs-on: ubuntu-latest
-    # 14 to 19 min now (the slowest success 19 min 12 s of the 20): 35. Over the
-    # last 60 runs the 48 successes took 19 to 32 min (the slowest 32 min 24 s of
-    # the 35, none cut off yet), so the same 55 as the Node 22.19 job.
-    timeout-minutes: 55
+    # Two parts, as the Node 22.19 job: one job took 19 to 32 min over 60 runs
+    # and 34 min 36 s on a green run of 2026-10-27.
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["1/2", "2/2"]
     steps:
       - run: git config --global init.defaultBranch main
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -139,7 +292,29 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           node --version
       - run: npm ci
-      - run: npm test
+      - name: The suites this change needs
+        if: needs.select.outputs.all != 'true'
+        env:
+          NODE_LIST: ${{ needs.select.outputs.node }}
+        run: printf '%s\n' "$NODE_LIST" | grep . > "$RUNNER_TEMP/node.list" || true
+      - name: Node tests ${{ matrix.node }}
+        run: npm test -- --test-shard=${{ matrix.node }} --timings=${{ runner.temp }}/timings.json ${{ needs.select.outputs.all != 'true' && format('--files-from={0}/node.list', runner.temp) || '' }}
+      - name: The slowest node suites of this part
+        if: always()
+        run: |
+          [ -s "$RUNNER_TEMP/timings.json" ] || exit 0
+          node --experimental-strip-types --no-warnings scripts/test-timings.ts summary "$RUNNER_TEMP/timings.json" --top 15 | tee -a "$GITHUB_STEP_SUMMARY"
+      # The whole timings document, for scripts/test-timings.ts and the deep
+      # list: a job's summary page is not readable through the API, an
+      # artifact is (gh run download).
+      - name: Keep this part's timings
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: node-timings-${{ github.job }}-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/timings.json
+          if-no-files-found: ignore
+          retention-days: 14
 
   replay-impact:
     # A pull request's impact line (scripts/replay-impact.ts): every contract
@@ -219,6 +394,7 @@ jobs:
     # half. Herdr is not either: swarm-preflight skips its keyless-kickoff
     # check and says so.
     name: macOS · ${{ matrix.part }}
+    needs: select
     # The owner's own Macs, when the repository variable MACOS_RUNNER names
     # their labels (a JSON array, '["self-hosted","macOS","ARM64","dfirswarm"]'),
     # and only for code the owner wrote: a push to main, or a pull request the
@@ -283,11 +459,19 @@ jobs:
       # The Python the suites run, named rather than taken from the host: the
       # hosted runner's python3 is 3.14, a Mac's own may be the 3.9 of the
       # command line tools. The Linux jobs run Ubuntu 24.04's 3.12, so the two
-      # supported ends are both tested. On a self-hosted Mac this needs
-      # /Users/runner/hostedtoolcache (scripts/macos-runner-setup.sh makes it).
+      # supported ends are both tested. On the owner's Mac it is Homebrew's
+      # python@3.14 (scripts/macos-runner-setup.sh requires it): setup-python
+      # installs a macOS Python with sudo, which the job user does not have.
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        if: runner.environment == 'github-hosted'
         with:
           python-version: "3.14"
+      - name: Python 3.14 from Homebrew (self-hosted)
+        if: runner.environment == 'self-hosted'
+        run: |
+          bin=/opt/homebrew/opt/python@3.14/libexec/bin
+          "$bin/python3" -c 'import sys; assert sys.version_info[:2] == (3, 14), sys.version'
+          echo "$bin" >> "$GITHUB_PATH"
       - name: Tools the shell suites use
         run: |
           command -v jq >/dev/null || brew install jq
@@ -301,12 +485,40 @@ jobs:
       - name: Typecheck
         if: matrix.typecheck
         run: npm run typecheck
+      - name: The suites this change needs
+        if: needs.select.outputs.all != 'true'
+        env:
+          NODE_LIST: ${{ needs.select.outputs.node }}
+          SHELL_LIST: ${{ needs.select.outputs.shell }}
+        run: |
+          printf '%s\n' "$NODE_LIST" | grep . > "$RUNNER_TEMP/node.list" || true
+          printf '%s\n' "$SHELL_LIST" | grep . > "$RUNNER_TEMP/shell.list" || true
+      # node --test runs as many files at once as the host has cores less one:
+      # two on the hosted runner (three vCPU), nine on a ten-core Mac mini, where
+      # the timing-bound suites then ran past their limits. Three on the
+      # owner's Mac keeps the two comparable.
       - name: Node tests ${{ matrix.node }}
         if: matrix.node
-        run: npm test -- --test-shard=${{ matrix.node }}
+        run: npm test -- --test-shard=${{ matrix.node }} --timings=${{ runner.temp }}/timings.json ${{ needs.select.outputs.all != 'true' && format('--files-from={0}/node.list', runner.temp) || '' }} ${{ runner.environment == 'self-hosted' && '--test-concurrency=3' || '' }}
+      - name: The slowest node suites of this part
+        if: always() && matrix.node
+        run: |
+          [ -s "$RUNNER_TEMP/timings.json" ] || exit 0
+          node --experimental-strip-types --no-warnings scripts/test-timings.ts summary "$RUNNER_TEMP/timings.json" --top 15 | tee -a "$GITHUB_STEP_SUMMARY"
+      # The whole timings document, for scripts/test-timings.ts and the deep
+      # list: a job's summary page is not readable through the API, an
+      # artifact is (gh run download).
+      - name: Keep this part's timings
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: node-timings-${{ github.job }}-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/timings.json
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Shell suites ${{ matrix.shard }}
         if: matrix.shard
-        run: npm run test:bash -- --shard ${{ matrix.shard }}
+        run: npm run test:bash -- --shard ${{ matrix.shard }} ${{ needs.select.outputs.all != 'true' && format('--within={0}/shell.list', runner.temp) || '' }}
 
   microvm:
     # Agents in microVMs (--isolation microvm), on real VMs: GitHub's Linux
@@ -317,6 +529,11 @@ jobs:
     # from the inside; this job boots base and disk on every pull request, and
     # image-boot.yml boots every profile once a week.
     name: microVM · integration tests (KVM)
+    # Every run that runs everything, and a pull request that changes a pack's
+    # requirements (the disk image is built from them); a narrow one that does
+    # not change what the VMs boot leaves it out (the select job's vm).
+    needs: select
+    if: needs.select.outputs.vm == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:
@@ -340,16 +557,37 @@ jobs:
           sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
           ls -la /dev/kvm
       - run: npm ci
+      # Building the two images took 4 min 24 s of the job's 6 min 54 s
+      # (2026-10-27), and what goes into them is images/ and the packs'
+      # requirements: no pack's tools are copied in (images/recipe.py). So
+      # the saved images are kept under a key of those files, and of the ISO
+      # week, because the base installs Debian's current packages: a week-old
+      # build is rebuilt, and an upstream change is met within a week here and
+      # at once in images.yml, which builds every profile from scratch.
+      - name: The week the image cache is keyed by
+        id: week
+        run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: images
+        with:
+          path: |
+            ${{ runner.temp }}/base.tar
+            ${{ runner.temp }}/disk.tar
+          key: vm-images-amd64-${{ hashFiles('images/**', 'packs/*/requires/**') }}-${{ steps.week.outputs.week }}
       - name: The base and disk images, built and loaded into msb
         run: |
-          docker build -f images/base.Dockerfile -t dfirswarm-base:dev-amd64 images
-          # disk as well: the catalog test needs The Sleuth Kit, and a pack
-          # image that is only ever built and never booted is untested. Not
-          # published, so the licence flag is for this runner only.
-          python3 images/recipe.py build disk --out "$RUNNER_TEMP/disk" --base dfirswarm-base:dev-amd64 --allow-nonredistributable
-          docker build -t dfirswarm-disk:dev-amd64 "$RUNNER_TEMP/disk"
-          docker save dfirswarm-base:dev-amd64 -o "$RUNNER_TEMP/base.tar"
-          docker save dfirswarm-disk:dev-amd64 -o "$RUNNER_TEMP/disk.tar"
+          if [ "${{ steps.images.outputs.cache-hit }}" = true ]; then
+            echo "the base and disk images of this week and these files, from the cache"
+          else
+            docker build -f images/base.Dockerfile -t dfirswarm-base:dev-amd64 images
+            # disk as well: the catalog test needs The Sleuth Kit, and a pack
+            # image that is only ever built and never booted is untested. Not
+            # published, so the licence flag is for this runner only.
+            python3 images/recipe.py build disk --out "$RUNNER_TEMP/disk" --base dfirswarm-base:dev-amd64 --allow-nonredistributable
+            docker build -t dfirswarm-disk:dev-amd64 "$RUNNER_TEMP/disk"
+            docker save dfirswarm-base:dev-amd64 -o "$RUNNER_TEMP/base.tar"
+            docker save dfirswarm-disk:dev-amd64 -o "$RUNNER_TEMP/disk.tar"
+          fi
           msb="$(node --experimental-strip-types --no-warnings scripts/vm.ts msb-path)"
           "$msb" doctor
           "$msb" load -i "$RUNNER_TEMP/base.tar"
