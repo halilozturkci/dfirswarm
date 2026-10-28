@@ -10,6 +10,9 @@
 #   scripts/test-bash.sh reap inputs   only these (by file stem)
 #   scripts/test-bash.sh --shard 1/2   the first of two shards of every suite
 #   scripts/test-bash.sh --shard 2/2 --list   the stems of the second, run nothing
+#   scripts/test-bash.sh --shard 1/2 --within FILE   of the first shard, only the
+#                                   suites FILE names (one stem per line: a
+#                                   pull request's narrow run, scripts/test-select.ts)
 #
 # A shard is for a CI job that runs part of the suites: they are dealt out by
 # the time each takes (tests/shell-suites.weights, longest first onto the
@@ -43,9 +46,16 @@ for f in "$ROOT"/tests/*.test.sh; do
   name="${f##*/}"
   ALL+=("${name%.test.sh}")
 done
-SHARD="" LIST_ONLY=0 NAMED=()
+SHARD="" LIST_ONLY=0 NAMED=() WITHIN=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --within)
+      [[ $# -ge 2 && -f "$2" ]] || { echo "test-bash: --within needs a file of suite stems" >&2; exit 2; }
+      WITHIN="$2"; shift 2 ;;
+    --within=*)
+      WITHIN="${1#--within=}"
+      [[ -f "$WITHIN" ]] || { echo "test-bash: --within needs a file of suite stems" >&2; exit 2; }
+      shift ;;
     --shard)
       [[ $# -ge 2 && -n "$2" ]] || { echo "test-bash: --shard needs I/N" >&2; exit 2; }
       SHARD="$2"; shift 2 ;;
@@ -89,6 +99,19 @@ elif [[ ${#NAMED[@]} -gt 0 ]]; then
   SUITES=("${NAMED[@]}")
 else
   SUITES=(${ALL[@]+"${ALL[@]}"})
+fi
+# --within: of what was chosen, only the suites the file names. A shard may
+# then have nothing to run, which is said and passes.
+if [[ -n "$WITHIN" ]]; then
+  KEPT=()
+  for s in ${SUITES[@]+"${SUITES[@]}"}; do
+    grep -Fxq -- "$s" "$WITHIN" && KEPT+=("$s")
+  done
+  if [[ ${#KEPT[@]} -eq 0 ]]; then
+    [[ $LIST_ONLY -eq 1 ]] || echo "test-bash: ${SHARD:+shard $SHARD: }none of these suites is in $WITHIN: nothing to run"
+    exit 0
+  fi
+  SUITES=("${KEPT[@]}")
 fi
 if [[ $LIST_ONLY -eq 1 ]]; then
   printf '%s\n' ${SUITES[@]+"${SUITES[@]}"}

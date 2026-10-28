@@ -1210,7 +1210,9 @@ def _pdeathsig():
 
 
 def process_table():
-    """{pid: parent pid} for every process, from /proc where there is one, else from ps (given 10 seconds); {} when neither answers."""
+    """{pid: (parent pid, start)} for every process, from /proc where there is one, else from ps (given 10 seconds); {} when neither
+    answers. `start` is when the process started (the kernel's clock ticks since boot, or the time ps prints): a pid whose start has
+    changed is another process."""
     table = {}
     try:
         if os.path.isdir("/proc/self"):
@@ -1218,15 +1220,16 @@ def process_table():
                 if entry.isdigit():
                     try:
                         with open("/proc/%s/stat" % entry, "rb") as fh:
-                            table[int(entry)] = int(fh.read().rsplit(b")", 1)[1].split()[1])
+                            fields = fh.read().rsplit(b")", 1)[1].split()
+                        table[int(entry)] = (int(fields[1]), int(fields[19]))   # fields 4 and 22 of stat: ppid, starttime
                     except (OSError, IndexError, ValueError):
                         continue
         else:
-            listing = subprocess.run(["ps", "-A", "-o", "pid=,ppid="], capture_output=True, text=True, timeout=10).stdout
+            listing = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,lstart="], capture_output=True, text=True, timeout=10).stdout
             for line in listing.splitlines():
-                parts = line.split()
-                if len(parts) == 2 and all(part.isdigit() for part in parts):
-                    table[int(parts[0])] = int(parts[1])
+                parts = line.split(None, 2)
+                if len(parts) == 3 and parts[0].isdigit() and parts[1].isdigit():
+                    table[int(parts[0])] = (int(parts[1]), parts[2].strip())
     except (OSError, subprocess.SubprocessError):
         return {}
     return table
@@ -1235,7 +1238,7 @@ def process_table():
 def below(table, root):
     """Every process below `root` in the table (never one beside it)."""
     kids = {}
-    for pid, parent in table.items():
+    for pid, (parent, _start) in table.items():
         kids.setdefault(parent, []).append(pid)
     found, stack = set(), [root]
     while stack:
@@ -1247,19 +1250,18 @@ def below(table, root):
 
 
 def end_what_the_engine_left(listed):
-    """End the processes that were listed below the engine while it ran and are still there once it has stopped, with their parent gone
-    (init has adopted them; they can hold the engine's pipes for as long as they live). Only a pid seen below the engine is signalled,
-    never anything else in the tool's group or session, and not one that is below the tool again or has a live parent that is not init
-    (a pid reused since the listing)."""
+    """End the processes that were listed below the engine while it ran ({pid: start}) and are still there once it has stopped (they
+    can hold the engine's pipes for as long as they live). Whoever adopted them is not asked: init, or a subreaper that is alive and is
+    not pid 1 (a service manager, WSL's relay, a container's init). Only a pid seen below the engine is signalled, and only while it is
+    the process that was seen (its start is the one listed: a pid reused since the listing started later); never anything else in the
+    tool's group or session, and not one that is below the tool again."""
     if not listed:
         return
     table = process_table()
     mine = below(table, os.getpid())
-    for pid in listed:
-        parent = table.get(pid)
-        if parent is None or pid in mine or pid == os.getpid():
-            continue
-        if parent in table and parent != 1 and parent not in listed:
+    for pid, start in listed.items():
+        now = table.get(pid)
+        if now is None or now[1] != start or pid in mine or pid == os.getpid():
             continue
         try:
             os.kill(pid, signal.SIGKILL)
@@ -1686,9 +1688,10 @@ def main():
                     problem = ("cleanup", message)
 
             try:
-                listed = below(process_table(), proc.pid)    # what the engine has started, while it is still the engine's parent
+                table = process_table()
+                listed = {pid: table[pid][1] for pid in below(table, proc.pid)}    # what the engine has started, while it is still the engine's parent
             except Exception:  # noqa: BLE001 - a listing is best effort
-                listed = set()
+                listed = {}
             try:
                 proc.terminate()
             except OSError:
