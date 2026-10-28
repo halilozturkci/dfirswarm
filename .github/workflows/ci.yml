@@ -7,8 +7,8 @@ on:
   push:
     branches: [main]
   pull_request:
-  # Every night, everything (the select job below says so for any run that is
-  # not a pull request): what a pull request's narrow run left out is run
+  # Every night, everything (the select job below says so for a scheduled
+  # run): what the narrow runs of pull requests and pushes left out is run
   # within a day, on main as it is.
   schedule:
     - cron: "17 2 * * *"
@@ -30,11 +30,15 @@ jobs:
     # Which suites this run needs. A pull request runs the suites that read
     # what it changed (scripts/test-select.ts: narrow only where the change
     # plainly is, everything for the harness, the workflow, images, package
-    # files, two packs' tools and any path it does not know); a push to main,
-    # the nightly run, a run by hand and a pull request labelled full-ci run
-    # everything. What a narrow run leaves out runs on main once it merges and
-    # every night. vm says whether the microVM job is needed: everything, or a
-    # pack's requirements (the images are built from them).
+    # files, two packs' tools and any path it does not know), and so does a
+    # push to main, for what the push brought (before...after: the merged
+    # pull requests together). The nightly run, a run by hand and a pull
+    # request labelled full-ci run everything: what a narrow run leaves out is
+    # run within a day. A push to main used to run everything too; three
+    # merges in a row then held about 60 jobs, and the pull request behind
+    # them waited 10 to 23 minutes for a runner (2026-10-28). vm says whether
+    # the microVM job is needed: everything, or a pack's requirements (the
+    # images are built from them).
     name: which suites this change needs
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -56,10 +60,14 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           FULL_LABEL: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-ci') }}
-          BASE: ${{ github.event.pull_request.base.sha }}
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
         run: |
-          if [ "$EVENT" != pull_request ] || [ "$FULL_LABEL" = true ]; then
-            why="$([ "$EVENT" != pull_request ] && echo "a $EVENT run" || echo "the full-ci label")"
+          # A push whose before is not a commit here (a branch's first push,
+          # a force-push) has no range to read: everything.
+          narrow_push=false
+          if [ "$EVENT" = push ] && [ -n "$BASE" ] && git cat-file -e "$BASE^{commit}" 2>/dev/null; then narrow_push=true; fi
+          if { [ "$EVENT" != pull_request ] && [ "$narrow_push" != true ]; } || [ "$FULL_LABEL" = true ]; then
+            why="$([ "$FULL_LABEL" = true ] && echo "the full-ci label" || echo "a $EVENT run")"
             { echo "all=true"; echo "vm=true"; echo "node="; echo "shell="; } >> "$GITHUB_OUTPUT"
             echo "**Everything** ($why)." >> "$GITHUB_STEP_SUMMARY"
             exit 0
