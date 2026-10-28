@@ -1,0 +1,4 @@
+# The deep node suites: the long hardening ones (canaries planted in every
+# slot, structure-aware fuzz, worst-case inputs, growth ratios). npm test runs
+# them as always; `npm test -- --tier=fast` leaves them out and `--tier=deep`
+# runs only them (scripts/test-node.ts). One path per line, with the reason.
