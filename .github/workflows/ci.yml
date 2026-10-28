@@ -7,6 +7,12 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Every night, everything (the select job below says so for any run that is
+  # not a pull request): what a pull request's narrow run left out is run
+  # within a day, on main as it is.
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
 
 # A new push to a pull request cancels the runs the older push left behind (a
 # queued run stops costing a macOS slot, a running one stops at once). Runs on
@@ -20,8 +26,57 @@ permissions:
   contents: read
 
 jobs:
+  select:
+    # Which suites this run needs. A pull request runs the suites that read
+    # what it changed (scripts/test-select.ts: narrow only where the change
+    # plainly is, everything for the harness, the workflow, images, package
+    # files, two packs' tools and any path it does not know); a push to main,
+    # the nightly run, a run by hand and a pull request labelled full-ci run
+    # everything. What a narrow run leaves out runs on main once it merges and
+    # every night. vm says whether the microVM job is needed: everything, or a
+    # pack's requirements (the images are built from them).
+    name: which suites this change needs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      all: ${{ steps.s.outputs.all }}
+      vm: ${{ steps.s.outputs.vm }}
+      node: ${{ steps.s.outputs.node }}
+      shell: ${{ steps.s.outputs.shell }}
+    steps:
+      - run: git config --global init.defaultBranch main
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The change is read as base...head, so the history is needed.
+          fetch-depth: 0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+      - id: s
+        env:
+          EVENT: ${{ github.event_name }}
+          FULL_LABEL: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$EVENT" != pull_request ] || [ "$FULL_LABEL" = true ]; then
+            why="$([ "$EVENT" != pull_request ] && echo "a $EVENT run" || echo "the full-ci label")"
+            { echo "all=true"; echo "vm=true"; echo "node="; echo "shell="; } >> "$GITHUB_OUTPUT"
+            echo "**Everything** ($why)." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          node --experimental-strip-types --no-warnings scripts/test-select.ts --base "$BASE" --json > "$RUNNER_TEMP/select.json"
+          q() { node -e "const s = require(process.argv[1]); process.stdout.write(String($1))" "$RUNNER_TEMP/select.json"; }
+          all="$(q 's.all')"
+          vm="$(q "s.all || s.changed.some((p) => /^packs\/[^/]+\/requires\//.test(p))")"
+          { echo "all=$all"; echo "vm=$vm"
+            echo "node<<SELECT_EOF"; q 's.node.join("\n")'; echo; echo "SELECT_EOF"
+            echo "shell<<SELECT_EOF"; q 's.shell.join("\n")'; echo; echo "SELECT_EOF"; } >> "$GITHUB_OUTPUT"
+          { echo "**$( [ "$all" = true ] && echo Everything || echo "$(q 's.node.length') node suites, $(q 's.shell.length') shell suites")** for $(q 's.changed.length') changed file(s); microVM job: $vm."
+            echo; q 's.reasons.map((r) => "- " + r).join("\n")'; echo; } >> "$GITHUB_STEP_SUMMARY"
+
   test:
     name: linux · ${{ matrix.part }}
+    needs: select
     runs-on: ubuntu-latest
     # One job of six, run side by side. As one job it was the longest of the
     # run and the one every pull request waited for: 67 min 12 s on a green run
@@ -101,15 +156,42 @@ jobs:
       - name: Typecheck
         if: matrix.typecheck
         run: npm run typecheck
+      # A pull request's narrow run: the select job's lists, as the files the
+      # node and shell steps below are handed.
+      - name: The suites this change needs
+        if: needs.select.outputs.all != 'true'
+        env:
+          NODE_LIST: ${{ needs.select.outputs.node }}
+          SHELL_LIST: ${{ needs.select.outputs.shell }}
+        run: |
+          printf '%s\n' "$NODE_LIST" | grep . > "$RUNNER_TEMP/node.list" || true
+          printf '%s\n' "$SHELL_LIST" | grep . > "$RUNNER_TEMP/shell.list" || true
+          echo "narrow: $(wc -l < "$RUNNER_TEMP/node.list") node suite(s), $(wc -l < "$RUNNER_TEMP/shell.list") shell suite(s) in all"
       # The browser is installed in every node part, so its tests may not skip.
       - name: Node tests ${{ matrix.node }}
         if: matrix.node
-        run: npm test -- --test-shard=${{ matrix.node }}
+        run: npm test -- --test-shard=${{ matrix.node }} --timings=${{ runner.temp }}/timings.json ${{ needs.select.outputs.all != 'true' && format('--files-from={0}/node.list', runner.temp) || '' }}
         env:
           SWARM_REQUIRE_BROWSER: "1"
+      - name: The slowest node suites of this part
+        if: always() && matrix.node
+        run: |
+          [ -s "$RUNNER_TEMP/timings.json" ] || exit 0
+          node --experimental-strip-types --no-warnings scripts/test-timings.ts summary "$RUNNER_TEMP/timings.json" --top 15 | tee -a "$GITHUB_STEP_SUMMARY"
+      # The whole timings document, for scripts/test-timings.ts and the deep
+      # list: a job's summary page is not readable through the API, an
+      # artifact is (gh run download).
+      - name: Keep this part's timings
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: node-timings-${{ github.job }}-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/timings.json
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Shell suites ${{ matrix.shard }}
         if: matrix.shard
-        run: npm run test:bash -- --shard ${{ matrix.shard }}
+        run: npm run test:bash -- --shard ${{ matrix.shard }} ${{ needs.select.outputs.all != 'true' && format('--within={0}/shell.list', runner.temp) || '' }}
       - name: UI build
         if: matrix.ui
         run: npm run ui:build
@@ -128,6 +210,7 @@ jobs:
     # not got, and every test that loads Pi fails). .nvmrc's 22 above is the
     # newest 22; this is the floor, so the claim is tested, not assumed.
     name: node tests ${{ matrix.node }} · Node 22.19 (the engines floor)
+    needs: select
     runs-on: ubuntu-latest
     # Two parts (node's own --test-shard): as one job the node suites took 20 to
     # 34 min over 60 runs and 35 min 30 s on a green run of 2026-10-27, the
@@ -156,8 +239,29 @@ jobs:
       - name: Typecheck
         if: matrix.node == '1/2'
         run: npm run typecheck
+      - name: The suites this change needs
+        if: needs.select.outputs.all != 'true'
+        env:
+          NODE_LIST: ${{ needs.select.outputs.node }}
+        run: printf '%s\n' "$NODE_LIST" | grep . > "$RUNNER_TEMP/node.list" || true
       - name: Node tests ${{ matrix.node }}
-        run: npm test -- --test-shard=${{ matrix.node }}
+        run: npm test -- --test-shard=${{ matrix.node }} --timings=${{ runner.temp }}/timings.json ${{ needs.select.outputs.all != 'true' && format('--files-from={0}/node.list', runner.temp) || '' }}
+      - name: The slowest node suites of this part
+        if: always()
+        run: |
+          [ -s "$RUNNER_TEMP/timings.json" ] || exit 0
+          node --experimental-strip-types --no-warnings scripts/test-timings.ts summary "$RUNNER_TEMP/timings.json" --top 15 | tee -a "$GITHUB_STEP_SUMMARY"
+      # The whole timings document, for scripts/test-timings.ts and the deep
+      # list: a job's summary page is not readable through the API, an
+      # artifact is (gh run download).
+      - name: Keep this part's timings
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: node-timings-${{ github.job }}-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/timings.json
+          if-no-files-found: ignore
+          retention-days: 14
 
   node-24:
     # Two Nodes run this harness. The host runs .nvmrc's 22 (package.json
@@ -165,6 +269,7 @@ jobs:
     # runs the extensions on the image's Node, and images/base.Dockerfile
     # builds on node:24. The node suites again, on 24.
     name: node tests ${{ matrix.node }} · Node 24 (the VM image's)
+    needs: select
     runs-on: ubuntu-latest
     # Two parts, as the Node 22.19 job: one job took 19 to 32 min over 60 runs
     # and 34 min 36 s on a green run of 2026-10-27.
@@ -187,8 +292,29 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           node --version
       - run: npm ci
+      - name: The suites this change needs
+        if: needs.select.outputs.all != 'true'
+        env:
+          NODE_LIST: ${{ needs.select.outputs.node }}
+        run: printf '%s\n' "$NODE_LIST" | grep . > "$RUNNER_TEMP/node.list" || true
       - name: Node tests ${{ matrix.node }}
-        run: npm test -- --test-shard=${{ matrix.node }}
+        run: npm test -- --test-shard=${{ matrix.node }} --timings=${{ runner.temp }}/timings.json ${{ needs.select.outputs.all != 'true' && format('--files-from={0}/node.list', runner.temp) || '' }}
+      - name: The slowest node suites of this part
+        if: always()
+        run: |
+          [ -s "$RUNNER_TEMP/timings.json" ] || exit 0
+          node --experimental-strip-types --no-warnings scripts/test-timings.ts summary "$RUNNER_TEMP/timings.json" --top 15 | tee -a "$GITHUB_STEP_SUMMARY"
+      # The whole timings document, for scripts/test-timings.ts and the deep
+      # list: a job's summary page is not readable through the API, an
+      # artifact is (gh run download).
+      - name: Keep this part's timings
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: node-timings-${{ github.job }}-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/timings.json
+          if-no-files-found: ignore
+          retention-days: 14
 
   replay-impact:
     # A pull request's impact line (scripts/replay-impact.ts): every contract
@@ -268,6 +394,7 @@ jobs:
     # half. Herdr is not either: swarm-preflight skips its keyless-kickoff
     # check and says so.
     name: macOS · ${{ matrix.part }}
+    needs: select
     # The owner's own Macs, when the repository variable MACOS_RUNNER names
     # their labels (a JSON array, '["self-hosted","macOS","ARM64","dfirswarm"]'),
     # and only for code the owner wrote: a push to main, or a pull request the
@@ -358,16 +485,40 @@ jobs:
       - name: Typecheck
         if: matrix.typecheck
         run: npm run typecheck
+      - name: The suites this change needs
+        if: needs.select.outputs.all != 'true'
+        env:
+          NODE_LIST: ${{ needs.select.outputs.node }}
+          SHELL_LIST: ${{ needs.select.outputs.shell }}
+        run: |
+          printf '%s\n' "$NODE_LIST" | grep . > "$RUNNER_TEMP/node.list" || true
+          printf '%s\n' "$SHELL_LIST" | grep . > "$RUNNER_TEMP/shell.list" || true
       # node --test runs as many files at once as the host has cores less one:
       # two on the hosted runner (three vCPU), nine on a ten-core Mac mini, where
       # the timing-bound suites then ran past their limits. Three on the
       # owner's Mac keeps the two comparable.
       - name: Node tests ${{ matrix.node }}
         if: matrix.node
-        run: npm test -- --test-shard=${{ matrix.node }} ${{ runner.environment == 'self-hosted' && '--test-concurrency=3' || '' }}
+        run: npm test -- --test-shard=${{ matrix.node }} --timings=${{ runner.temp }}/timings.json ${{ needs.select.outputs.all != 'true' && format('--files-from={0}/node.list', runner.temp) || '' }} ${{ runner.environment == 'self-hosted' && '--test-concurrency=3' || '' }}
+      - name: The slowest node suites of this part
+        if: always() && matrix.node
+        run: |
+          [ -s "$RUNNER_TEMP/timings.json" ] || exit 0
+          node --experimental-strip-types --no-warnings scripts/test-timings.ts summary "$RUNNER_TEMP/timings.json" --top 15 | tee -a "$GITHUB_STEP_SUMMARY"
+      # The whole timings document, for scripts/test-timings.ts and the deep
+      # list: a job's summary page is not readable through the API, an
+      # artifact is (gh run download).
+      - name: Keep this part's timings
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: node-timings-${{ github.job }}-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/timings.json
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Shell suites ${{ matrix.shard }}
         if: matrix.shard
-        run: npm run test:bash -- --shard ${{ matrix.shard }}
+        run: npm run test:bash -- --shard ${{ matrix.shard }} ${{ needs.select.outputs.all != 'true' && format('--within={0}/shell.list', runner.temp) || '' }}
 
   microvm:
     # Agents in microVMs (--isolation microvm), on real VMs: GitHub's Linux
@@ -378,6 +529,11 @@ jobs:
     # from the inside; this job boots base and disk on every pull request, and
     # image-boot.yml boots every profile once a week.
     name: microVM · integration tests (KVM)
+    # Every run that runs everything, and a pull request that changes a pack's
+    # requirements (the disk image is built from them); a narrow one that does
+    # not change what the VMs boot leaves it out (the select job's vm).
+    needs: select
+    if: needs.select.outputs.vm == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:
