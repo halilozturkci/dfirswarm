@@ -1,7 +1,7 @@
 {
   "id": "memory-forensics",
   "name": "Memory Forensics Pack",
-  "version": "1.7.4",
+  "version": "1.7.5",
   "description": "Method and tooling for a memory image: what the container is before anything else, what can be read with no framework at all, processes and injection, network state, credential material, and the discipline that keeps a string in memory from becoming a claim about behaviour.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -33,8 +33,8 @@
       "tools/mem_carve/run.py": "ec512361715f80ab20c37c4b453bc786602622e024595abfb1595316e15efbe2",
       "tools/mem_profile/manifest.json": "7ffa5876043c46a6ed52d5966fb878a5c4d9b0134708b0439bd4f2b41363f318",
       "tools/mem_profile/run.py": "6b46792eb80a63bcf35411e8460cb10c71c72810f4fe49bc33dab58f0a55b96e",
-      "tools/mem_fs/manifest.json": "a9ce23fb5b04df8d9bf7b353607dea7dbd98ea4e2ed48a8052e13a865c973d6b",
-      "tools/mem_fs/run.py": "7555bbe866aacdb338792fe816b45882a6fea3b502e95c2bea5a85c0315b35a5",
+      "tools/mem_fs/manifest.json": "04c7dbd133b02928aa48d4c70a9cf321aece13478d611a0937eabc84da444c05",
+      "tools/mem_fs/run.py": "8da0d230904843d11c0f953ad360495e53ff7fd020fb066743b0a91a62d3267e",
       "goals/memory-triage.md": "1be2dc25f56a47512ea498c817c8bc6f42cd8e132f6dd7267465e7d69d15d152",
       "skills/strings/discipline.md": "c33bacce4c1586a72a3894f674ef5622ce67bc1ffe9685b1c21bf24bb6bb29a6",
       "skills/memory/router.md": "d4db11f8423442b29f33a5c55890808eb0c6c7d3bcad22110149a60eb6f5cc65",

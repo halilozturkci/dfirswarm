@@ -8,6 +8,8 @@
  *    descendant, which is in the tool's own group, is ended; a process outside the tool is not;
  *  - the program is ended whether the tool leads its group or not, and wherever it was put (a session of its own), because it was seen below
  *    the engine while the engine ran; a process beside the tool is never ended;
+ *  - the program is ended whoever adopts it: init, or a live subreaper that is not pid 1 (WSL's relay, a service manager), which the
+ *    clean-up took for a parent of a pid reused since the listing and so left the program running;
  *  - an unmount helper that does not answer is a named problem of the clean-up, and the clean-up goes on (it raised, and the answer was
  *    "unexpected failure: TimeoutExpired" with the drains, the files and the secret file still open).
  */
@@ -22,11 +24,15 @@ import { gone, pidFile } from "./pack-network-harness.ts";
 
 type Ended = { code: number | null; stdout: string; ms: number; endGroup: () => void };
 
-function start(script: string, cwd: string, args: unknown, env: Record<string, string>, bin: string, leader: boolean): Promise<Ended> {
+// The tool started below a live subreaper that is not pid 1 (WSL's relay, a service manager, a container's init): what the engine
+// leaves is adopted by it, not by init.
+const SUBREAPER = "import ctypes, subprocess, sys\nctypes.CDLL(None).prctl(36, 1)\nsys.exit(subprocess.call([sys.executable, sys.argv[1]]))";
+
+function start(script: string, cwd: string, args: unknown, env: Record<string, string>, bin: string, leader: boolean, subreaper = false): Promise<Ended> {
   const began = Date.now();
   const e: NodeJS.ProcessEnv = { ...process.env, AGENT_ID: "s1", ...env, PATH: `${bin}:${process.env.PATH ?? ""}` };
   delete e.JOB_ID; delete e.OUT; delete e.SECRET_OUTPUT;
-  const child = spawn("python3", [script], { cwd, env: e, detached: leader, stdio: ["pipe", "pipe", "ignore"] });
+  const child = spawn("python3", subreaper ? ["-c", SUBREAPER, script] : [script], { cwd, env: e, detached: leader, stdio: ["pipe", "pipe", "ignore"] });
   const chunks: Buffer[] = [];
   child.stdout.on("data", (c: Buffer) => chunks.push(c));
   child.stdin.end(JSON.stringify(args));
@@ -91,6 +97,28 @@ for (const [name, leader, ownSession] of [["a tool that does not lead its group"
     });
   });
 }
+
+test("adopted by a live subreaper that is not init: the program the engine left is still ended, and a process beside the tool is not", { skip: process.platform !== "linux" && "PR_SET_CHILD_SUBREAPER is Linux's" }, async () => {
+  await withCwd(async (cwd, bin) => {
+    const holdPid = join(cwd, "hold.pid");
+    const env = await fsStub(cwd, bin, { tree: { "proc/a.txt": "alpha\n", "sys/x": "" }, hold: { seconds: 40, pidFile: holdPid } });
+    await writeFile(join(cwd, "inputs", "memory.raw"), Buffer.alloc(4096));
+    const decoy = bystander();
+    let holder = 0;
+    let ran: Ended | undefined;
+    try {
+      ran = await start(FS, cwd, { path: "inputs/memory.raw", mount: join(cwd, "work", "s1", "m"), mode: "list", timeout_seconds: 30 }, env, bin, true, true);
+      holder = await pidFile(holdPid, 5000);
+      assert.ok(ran.ms < 25_000, `took ${ran.ms} ms: the call waited for the program the engine left`);
+      assert.equal(JSON.parse(ran.stdout).status, "complete", ran.stdout);
+      assert.equal(await gone(holder, 10_000), true, "the program the engine left, adopted by the subreaper, was not ended");
+      assert.equal(await gone(decoy, 300), false, "a process outside the tool was signalled");
+    } finally {
+      ran?.endGroup();
+      for (const pid of [holder, decoy]) if (pid) end(pid);
+    }
+  });
+});
 
 test("an unmount helper that does not answer is a named problem of the clean-up, and the clean-up goes on", async () => {
   await withCwd(async (cwd, bin) => {
