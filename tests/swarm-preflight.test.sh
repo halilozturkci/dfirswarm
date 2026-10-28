@@ -25,6 +25,7 @@ TMP="$(mktemp -d "${TMPDIR:-/tmp}/swarm-preflight.XXXXXX")"
 # the gate, the nudge broker) leaves them running; stop them with the
 # script's own helper before the directory goes.
 eval "$(sed -n '/^stop_sandbox_daemons()/,/^}/p' "$ROOT/scripts/swarm.sh")"
+eval "$(sed -n '/^herdr_server_state()/,/^}/p' "$ROOT/scripts/swarm.sh")"
 cleanup() {
   local d
   for d in "$TMP"/runs/*/; do [[ -d "$d" ]] && stop_sandbox_daemons "${d%/}" 2>/dev/null; done
@@ -471,7 +472,10 @@ if command -v pi >/dev/null 2>&1; then
 
   # Unguarded on purpose (--no-write-guard): the operator's own signing keys
   # may exist, so the run says it accepts that (--accept-signer-exposure).
-  if command -v herdr >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+  # The kickoff asks the Herdr server before Pi's credentials: a Herdr that
+  # is installed and not running (a CI Mac with Herdr in Homebrew) stops it
+  # first, so the case needs a running server, not only the program.
+  if command -v herdr >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 && [[ "$(herdr_server_state)" != "not running" ]]; then
     out="$(PI_CODING_AGENT_DIR="$local_dir" SWARM_RUNS_DIR="$TMP/runs" SWARM_LOCAL_PROBE_TIMEOUT=2 \
       bash "$ROOT/scripts/swarm.sh" start --model localmock/qwen3:8b --n 1 --cap-tokens 1000 --no-write-guard --accept-signer-exposure \
       --goal-file "$ROOT/prompts/goals/hello.md" --label keyless --env "PI_CODING_AGENT_DIR=$local_dir" 2>&1)"
@@ -482,7 +486,7 @@ if command -v pi >/dev/null 2>&1; then
     grep -q 'pi /login' <<<"$out" && fail "a local server must not be sent to pi /login: $out"
     pass "the kickoff tells a keyless local provider to add a placeholder apiKey, not to log in"
   else
-    echo "skip - the keyless kickoff BLOCKER (herdr or jq is not installed)"
+    echo "skip - the keyless kickoff BLOCKER (herdr or jq is not installed, or the Herdr server is not running)"
   fi
 else
   echo "skip - keyless local provider cases (pi is not installed)"

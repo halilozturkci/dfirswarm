@@ -296,6 +296,14 @@ jobs:
           bin=/opt/homebrew/opt/python@3.14/libexec/bin
           "$bin/python3" -c 'import sys; assert sys.version_info[:2] == (3, 14), sys.version'
           echo "$bin" >> "$GITHUB_PATH"
+      # The runner's supervisor starts every job with a clean environment, so
+      # TMPDIR is unset and macOS's mktemp falls back to the job user's
+      # /var/folders/<hash>/T, a path with a random-looking component that a
+      # tool's secret check may withhold. The job's own temp directory, as the
+      # hosted runner's TMPDIR is a plain per-user directory.
+      - name: TMPDIR for the job (self-hosted)
+        if: runner.environment == 'self-hosted'
+        run: echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Tools the shell suites use
         run: |
           command -v jq >/dev/null || brew install jq
