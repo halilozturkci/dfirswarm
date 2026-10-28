@@ -98,6 +98,22 @@ test("the Linux job's parts together run every node suite and every shell suite,
   assert.match(job, /run: npm test -- --test-shard=\$\{\{ matrix\.node \}\}\n\s+env:\n\s+SWARM_REQUIRE_BROWSER: "1"\n/, "the Linux node parts must require the browser they install");
 });
 
+test("the Node 22.19 and Node 24 jobs' parts are node shards 1..N each, and Node 22.19's first typechecks", () => {
+  for (const name of ["node-floor", "node-24"]) {
+    const job = WORKFLOW.match(new RegExp(String.raw`^ {2}${name}:\n([\s\S]*?)(?=^ {2}[a-z][\w-]*:\n|(?![\s\S]))`, "m"))?.[1];
+    assert.ok(job, `ci.yml has no ${name} job`);
+    const listed = job.match(/^\s+node: \[([^\]]*)\]$/m)?.[1];
+    assert.ok(listed, `${name}: no node: [..] matrix`);
+    const parts = listed.split(",").map((s) => s.trim().replace(/^"|"$/g, "")).map((p) => p.split("/").map(Number));
+    const n = parts[0][1];
+    assert.ok(parts.every(([, m]) => m === n), `${name}: the parts name different shard counts`);
+    assert.deepEqual(parts.map(([i]) => i).sort(), Array.from({ length: n }, (_, k) => k + 1), `${name}: the parts must be shards 1..N, each once`);
+    assert.match(job, /- name: Node tests \$\{\{ matrix\.node \}\}\n\s+run: npm test -- --test-shard=\$\{\{ matrix\.node \}\}\n/, `${name}: the node step must pass the part's own shard and no filter`);
+  }
+  const floor = WORKFLOW.match(/^ {2}node-floor:\n([\s\S]*?)(?=^ {2}[a-z][\w-]*:\n)/m)?.[1] ?? "";
+  assert.match(floor, /- name: Typecheck\n\s+if: matrix\.node == '1\/\d+'\n\s+run: npm run typecheck\n/, "the floor's typecheck must run in its first part");
+});
+
 /** The node parts are shards 1..N of one N, each once, with no filter; one node part typechecks; the shell parts are shards 1..M, which together hold every shell suite. */
 function coversEverySuite(job: string, where: string, nodeExtra: RegExp | null): void {
   // Node: the matrix names every shard 1..N of one N, each once, and the step
