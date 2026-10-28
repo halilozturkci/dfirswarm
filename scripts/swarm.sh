@@ -60,7 +60,14 @@ VM_HOST_WAY_ON="Or run the agents unisolated with --isolation host: each is then
 # daemon's pid.
 #
 # macOS has no setsid(1), and a macOS run is started from a terminal the
-# examiner keeps open; there it stays as it was.
+# examiner keeps open; there it stays as it was. But macOS's nohup also moves
+# the process out of the login session ("detach from console"), and where
+# there is none to leave it refuses and starts nothing: measured under a
+# LaunchDaemon (the self-hosted CI runner), "nohup: can't detach from console:
+# Inappropriate ioctl for device", so the trace collector, the nudge broker,
+# the netguard proxy and the hub never came up. Where nohup cannot run, the
+# daemon ignores SIGHUP itself, which is the part a run needs (an ignored
+# signal stays ignored across exec).
 # Always called backgrounded or as the last stage of a pipeline: it *replaces*
 # the process it runs in. Backgrounding a shell function forks a subshell, and
 # without the exec that subshell is what `$!` names — measured: every daemon's
@@ -70,8 +77,11 @@ VM_HOST_WAY_ON="Or run the agents unisolated with --isolation host: each is then
 detach_exec() {
   if command -v setsid >/dev/null 2>&1; then
     exec setsid "$@"
-  else
+  elif nohup true >/dev/null 2>&1; then
     exec nohup "$@"
+  else
+    trap '' HUP
+    exec "$@"
   fi
 }
 TEMPLATE="$ROOT/prompts/swarm.md.template"

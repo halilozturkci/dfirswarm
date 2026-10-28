@@ -682,7 +682,17 @@ ensure_hub() {
   [[ -f "$HUB_DIR/hub-input.json" ]] || return 0
   script="$ROOT/scripts/vm-hub.ts"
   [[ -f "$HUB_DIR/host/scripts/vm-hub.ts" ]] && script="$HUB_DIR/host/scripts/vm-hub.ts"
-  nohup node --experimental-strip-types --no-warnings "$script" --resume "$HUB_DIR" >>"$SANDBOX/traces/vm-hub.log" 2>&1 </dev/null &
+  # macOS's nohup refuses where there is no login session to leave (a
+  # LaunchDaemon: "can't detach from console") and starts nothing; there the
+  # hub ignores SIGHUP itself (swarm.sh, detach_exec). The exec keeps $! the
+  # hub's own pid.
+  (
+    if nohup true >/dev/null 2>&1; then
+      exec nohup node --experimental-strip-types --no-warnings "$script" --resume "$HUB_DIR"
+    fi
+    trap '' HUP
+    exec node --experimental-strip-types --no-warnings "$script" --resume "$HUB_DIR"
+  ) >>"$SANDBOX/traces/vm-hub.log" 2>&1 </dev/null &
   echo $! > "$SANDBOX/hub.pid"
   local i
   for ((i = 0; i < 50; i++)); do
