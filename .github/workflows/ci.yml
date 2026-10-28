@@ -177,7 +177,18 @@ jobs:
         if: always() && matrix.node
         run: |
           [ -s "$RUNNER_TEMP/timings.json" ] || exit 0
-          node --experimental-strip-types --no-warnings scripts/test-timings.ts summary "$RUNNER_TEMP/timings.json" --top 15 >> "$GITHUB_STEP_SUMMARY"
+          node --experimental-strip-types --no-warnings scripts/test-timings.ts summary "$RUNNER_TEMP/timings.json" --top 15 | tee -a "$GITHUB_STEP_SUMMARY"
+      # The whole timings document, for scripts/test-timings.ts and the deep
+      # list: a job's summary page is not readable through the API, an
+      # artifact is (gh run download).
+      - name: Keep this part's timings
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: node-timings-${{ github.job }}-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/timings.json
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Shell suites ${{ matrix.shard }}
         if: matrix.shard
         run: npm run test:bash -- --shard ${{ matrix.shard }} ${{ needs.select.outputs.all != 'true' && format('--within={0}/shell.list', runner.temp) || '' }}
@@ -239,7 +250,18 @@ jobs:
         if: always()
         run: |
           [ -s "$RUNNER_TEMP/timings.json" ] || exit 0
-          node --experimental-strip-types --no-warnings scripts/test-timings.ts summary "$RUNNER_TEMP/timings.json" --top 15 >> "$GITHUB_STEP_SUMMARY"
+          node --experimental-strip-types --no-warnings scripts/test-timings.ts summary "$RUNNER_TEMP/timings.json" --top 15 | tee -a "$GITHUB_STEP_SUMMARY"
+      # The whole timings document, for scripts/test-timings.ts and the deep
+      # list: a job's summary page is not readable through the API, an
+      # artifact is (gh run download).
+      - name: Keep this part's timings
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: node-timings-${{ github.job }}-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/timings.json
+          if-no-files-found: ignore
+          retention-days: 14
 
   node-24:
     # Two Nodes run this harness. The host runs .nvmrc's 22 (package.json
@@ -281,7 +303,18 @@ jobs:
         if: always()
         run: |
           [ -s "$RUNNER_TEMP/timings.json" ] || exit 0
-          node --experimental-strip-types --no-warnings scripts/test-timings.ts summary "$RUNNER_TEMP/timings.json" --top 15 >> "$GITHUB_STEP_SUMMARY"
+          node --experimental-strip-types --no-warnings scripts/test-timings.ts summary "$RUNNER_TEMP/timings.json" --top 15 | tee -a "$GITHUB_STEP_SUMMARY"
+      # The whole timings document, for scripts/test-timings.ts and the deep
+      # list: a job's summary page is not readable through the API, an
+      # artifact is (gh run download).
+      - name: Keep this part's timings
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: node-timings-${{ github.job }}-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/timings.json
+          if-no-files-found: ignore
+          retention-days: 14
 
   replay-impact:
     # A pull request's impact line (scripts/replay-impact.ts): every contract
@@ -471,7 +504,18 @@ jobs:
         if: always() && matrix.node
         run: |
           [ -s "$RUNNER_TEMP/timings.json" ] || exit 0
-          node --experimental-strip-types --no-warnings scripts/test-timings.ts summary "$RUNNER_TEMP/timings.json" --top 15 >> "$GITHUB_STEP_SUMMARY"
+          node --experimental-strip-types --no-warnings scripts/test-timings.ts summary "$RUNNER_TEMP/timings.json" --top 15 | tee -a "$GITHUB_STEP_SUMMARY"
+      # The whole timings document, for scripts/test-timings.ts and the deep
+      # list: a job's summary page is not readable through the API, an
+      # artifact is (gh run download).
+      - name: Keep this part's timings
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: node-timings-${{ github.job }}-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/timings.json
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Shell suites ${{ matrix.shard }}
         if: matrix.shard
         run: npm run test:bash -- --shard ${{ matrix.shard }} ${{ needs.select.outputs.all != 'true' && format('--within={0}/shell.list', runner.temp) || '' }}
