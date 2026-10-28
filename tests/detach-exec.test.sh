@@ -28,8 +28,10 @@ mkpath() { # <dir>
   ln -s "$(command -v bash)" "$1/bash"
   ln -s "$(command -v sleep)" "$1/sleep"
 }
-# The daemon: says how SIGHUP stands in it, then lives until it is killed.
-DAEMON='trap -p HUP > "$1/hup"; echo $$ > "$1/self"; exec sleep 60'
+# The daemon: says its pid, then lives until it is killed. Whether it ignores
+# SIGHUP is checked by sending it one: `trap -p` would not do, since bash 3.2
+# (macOS's) does not list a signal that was ignored when it started.
+DAEMON='echo $$ > "$1/self"; exec sleep 60'
 
 start() { # <path dir> <out dir>: runs the daemon through detach_exec, backgrounded
   mkdir -p "$2"
@@ -46,7 +48,6 @@ printf '#!%s\necho "nohup: can'"'"'t detach from console: Inappropriate ioctl fo
 chmod +x "$P/nohup"
 start "$P" "$TMP/refuses"
 [[ "$(cat "$TMP/refuses/self")" == "$STARTED" ]] || fail "\$! is not the daemon's pid: $STARTED vs $(cat "$TMP/refuses/self")"
-grep -q "trap -- '' SIGHUP" "$TMP/refuses/hup" || fail "the daemon does not ignore SIGHUP: $(cat "$TMP/refuses/hup")"
 kill -HUP "$STARTED"
 sleep 0.3
 kill -0 "$STARTED" 2>/dev/null || fail "a SIGHUP ended the daemon"
