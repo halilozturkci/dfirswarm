@@ -1,5 +1,5 @@
 /**
- * The macOS CI job is split in parts that run side by side: some run the node
+ * The macOS and the Linux CI jobs are split in parts that run side by side: some run the node
  * suites, `--test-shard I/N` each (node's own, handed through `npm test`; the
  * first of them also runs the typecheck), the others the shell suites,
  * `--shard I/N` each (scripts/test-bash.sh). Splitting must not lose a test, so
@@ -77,25 +77,62 @@ test("the weights file names only suites that exist, once each", () => {
   assert.equal(new Set(names).size, names.length, "a suite is weighed twice");
 });
 
+/** The text of the `test:` job (the Linux parts) in ci.yml, up to the next job. */
+function linuxJob(): string {
+  const m = WORKFLOW.match(/^ {2}test:\n([\s\S]*?)(?=^ {2}[a-z][\w-]*:\n|(?![\s\S]))/m);
+  assert.ok(m, "ci.yml has no `test:` job");
+  return m[1];
+}
+
 test("the macOS job's parts together run every node suite and every shell suite", () => {
-  const job = macosJob();
+  // A self-hosted Mac may hold the concurrency down (a count, not a filter).
+  coversEverySuite(macosJob(), "macOS", / \$\{\{ runner\.environment == 'self-hosted' && '--test-concurrency=\d+' \|\| '' \}\}/);
+});
+
+test("the Linux job's parts together run every node suite and every shell suite, and the UI build once", () => {
+  const job = linuxJob();
+  coversEverySuite(job, "Linux", null);
+  assert.equal((job.match(/^\s+ui: true$/gm) ?? []).length, 1, "exactly one Linux part builds the UI");
+  assert.match(job, /- name: UI build\n\s+if: matrix\.ui\n\s+run: npm run ui:build\n/, "the UI build step must run for the part that names it");
+  assert.match(job, /- name: Nothing from a run is tracked\n\s+if: matrix\.ui\n/, "the tracked-files check must run in the UI part");
+  assert.match(job, /run: npm test -- --test-shard=\$\{\{ matrix\.node \}\}\n\s+env:\n\s+SWARM_REQUIRE_BROWSER: "1"\n/, "the Linux node parts must require the browser they install");
+});
+
+test("the Node 22.19 and Node 24 jobs' parts are node shards 1..N each, and Node 22.19's first typechecks", () => {
+  for (const name of ["node-floor", "node-24"]) {
+    const job = WORKFLOW.match(new RegExp(String.raw`^ {2}${name}:\n([\s\S]*?)(?=^ {2}[a-z][\w-]*:\n|(?![\s\S]))`, "m"))?.[1];
+    assert.ok(job, `ci.yml has no ${name} job`);
+    const listed = job.match(/^\s+node: \[([^\]]*)\]$/m)?.[1];
+    assert.ok(listed, `${name}: no node: [..] matrix`);
+    const parts = listed.split(",").map((s) => s.trim().replace(/^"|"$/g, "")).map((p) => p.split("/").map(Number));
+    const n = parts[0][1];
+    assert.ok(parts.every(([, m]) => m === n), `${name}: the parts name different shard counts`);
+    assert.deepEqual(parts.map(([i]) => i).sort(), Array.from({ length: n }, (_, k) => k + 1), `${name}: the parts must be shards 1..N, each once`);
+    assert.match(job, /- name: Node tests \$\{\{ matrix\.node \}\}\n\s+run: npm test -- --test-shard=\$\{\{ matrix\.node \}\}\n/, `${name}: the node step must pass the part's own shard and no filter`);
+  }
+  const floor = WORKFLOW.match(/^ {2}node-floor:\n([\s\S]*?)(?=^ {2}[a-z][\w-]*:\n)/m)?.[1] ?? "";
+  assert.match(floor, /- name: Typecheck\n\s+if: matrix\.node == '1\/\d+'\n\s+run: npm run typecheck\n/, "the floor's typecheck must run in its first part");
+});
+
+/** The node parts are shards 1..N of one N, each once, with no filter; one node part typechecks; the shell parts are shards 1..M, which together hold every shell suite. */
+function coversEverySuite(job: string, where: string, nodeExtra: RegExp | null): void {
   // Node: the matrix names every shard 1..N of one N, each once, and the step
   // passes the part's own shard to node. The suites themselves are all found
   // by scripts/test-node.ts, with no filter, so a new one is in some shard.
   const nodeShards = [...job.matchAll(/^\s+node: "(\d+)\/(\d+)"$/gm)].map((m) => [Number(m[1]), Number(m[2])]);
-  assert.ok(nodeShards.length >= 1, "no node part in the macOS job");
+  assert.ok(nodeShards.length >= 1, `no node part in the ${where} job`);
   const nn = nodeShards[0][1];
   assert.deepEqual(nodeShards.map(([i]) => i).sort(), Array.from({ length: nn }, (_, k) => k + 1), "the node parts must be shards 1..N, each once");
   assert.ok(nodeShards.every(([, m]) => m === nn), "the node parts name different shard counts");
-  // A self-hosted Mac may hold the concurrency down (a count, not a filter).
-  assert.match(job, /- name: Node tests[^\n]*\n\s+if: matrix\.node\n\s+run: npm test -- --test-shard=\$\{\{ matrix\.node \}\}(?: \$\{\{ runner\.environment == 'self-hosted' && '--test-concurrency=\d+' \|\| '' \}\})?\n/, "the node step must run `npm test` with the part's own --test-shard and no filter");
+  const extra = nodeExtra ? `(?:${nodeExtra.source})?` : "";
+  assert.match(job, new RegExp(String.raw`- name: Node tests[^\n]*\n\s+if: matrix\.node\n\s+run: npm test -- --test-shard=\$\{\{ matrix\.node \}\}` + extra + String.raw`\n`), "the node step must run `npm test` with the part's own --test-shard and no filter");
   // The typecheck is done once: in exactly one part, which is a node part.
   assert.equal((job.match(/^\s+typecheck: true$/gm) ?? []).length, 1, "exactly one part runs the typecheck");
   assert.match(job, /- name: Typecheck\n\s+if: matrix\.typecheck\n\s+run: npm run typecheck\n/, "the typecheck step must run for the part that names it");
   assert.match(job, /node: "\d+\/\d+"\n\s+typecheck: true\n/, "the typecheck belongs to a node part");
   // Shell: the matrix names every shard 1..N of one N, and the step passes it on.
   const shards = [...job.matchAll(/^\s+shard: "(\d+)\/(\d+)"$/gm)].map((m) => [Number(m[1]), Number(m[2])]);
-  assert.ok(shards.length >= 1, "no shell part in the macOS job");
+  assert.ok(shards.length >= 1, `no shell part in the ${where} job`);
   const n = shards[0][1];
   assert.deepEqual(shards.map(([i]) => i).sort(), Array.from({ length: n }, (_, k) => k + 1), "the shell parts must be shards 1..N, each once");
   assert.ok(shards.every(([, m]) => m === n), "the shell parts name different shard counts");
@@ -103,7 +140,7 @@ test("the macOS job's parts together run every node suite and every shell suite"
   // And that shard count, applied by the script, covers all of them.
   const ran = Array.from({ length: n }, (_, k) => shardOf(k + 1, n)).flat();
   assert.deepEqual([...ran].sort(), allShellSuites());
-});
+}
 
 test("node's --test-shard, as the node parts use it, runs every suite file exactly once", () => {
   // Measured on this Node, not assumed: five tiny suites, every shard of 1..4

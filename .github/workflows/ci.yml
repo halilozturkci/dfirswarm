@@ -21,22 +21,37 @@ permissions:
 
 jobs:
   test:
-    name: typecheck · node tests · shell suites · ui build
+    name: linux · ${{ matrix.part }}
     runs-on: ubuntu-latest
-    # The node and shell suites together took 19 min on the limits branch and
-    # 20 min 15 s on the next push, which the old 20 cut off mid-suite: a limit
-    # is there to stop a hang, not a suite that has grown. The pack tests since
-    # (windows, reverse engineering, virtualization) made it 30 to 35 min (the
-    # slowest success 34 min 54 s of the 35, and 14 runs cut off at 35 min 18 s),
-    # so the limit is 60: a hang is still stopped, a grown suite is not.
-    #
-    # Hosted runners vary in speed. Over the last 60 runs (41 successes) this
-    # job took 36 to 59 min 54 s (median 53.5), four runs were cut off at the
-    # limit, and on a slow host `npm test` alone took about 23 minutes and
-    # `npm run test:bash` was cut off. 60 left no room for a slow host, so the
-    # limit is 90, the same as the macOS node parts. A hang is still stopped:
-    # every test has its own 5-minute limit (scripts/test-node.ts).
-    timeout-minutes: 90
+    # One job of six, run side by side. As one job it was the longest of the
+    # run and the one every pull request waited for: 67 min 12 s on a green run
+    # of 2026-10-27 (npm test 31 min 36 s, test:bash 24 min 6 s, the browser 8
+    # min 36 s, the tools 2 min 12 s), 36 to 59 min 54 s over 60 runs before
+    # that, cut off four times. Now the node suites are three parts (node's own
+    # --test-shard), the shell suites two (dealt out by tests/shell-suites.weights),
+    # and the UI build and the tracked-files check one of their own;
+    # tests/ci-shards.test.ts holds the parts to cover every node suite and every
+    # shell suite exactly once, as it does the macOS job's. A limit is there to
+    # stop a hang: every test has its own 5-minute limit (scripts/test-node.ts).
+    timeout-minutes: ${{ matrix.node && 60 || 45 }}
+    strategy:
+      # A failing part does not cancel the others: their verdicts are wanted.
+      fail-fast: false
+      matrix:
+        include:
+          - part: typecheck · node tests 1/3
+            node: "1/3"
+            typecheck: true
+          - part: node tests 2/3
+            node: "2/3"
+          - part: node tests 3/3
+            node: "3/3"
+          - part: shell suites 1/2
+            shard: "1/2"
+          - part: shell suites 2/2
+            shard: "2/2"
+          - part: ui build · nothing from a run is tracked
+            ui: true
     steps:
       # actions/checkout runs `git init` on the runner, and git prints its
       # init.defaultBranch hint unless one is configured.
@@ -47,6 +62,7 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - name: Tools the shell suites use
+        if: ${{ !matrix.ui }}
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q jq python3 zsh bubblewrap util-linux iproute2 sqlite3
@@ -57,6 +73,7 @@ jobs:
       # CI exercises the namespace modes; the second job below covers the
       # Landlock-only host on purpose.
       - name: What this host can enforce
+        if: ${{ !matrix.ui }}
         run: |
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           echo "userns: $(unshare -rm true 2>/dev/null && echo yes || echo no)"
@@ -66,17 +83,38 @@ jobs:
           bash scripts/fsguard.sh --rw "$PWD" --dry-run -- true | head -4
       - run: npm ci
       # The Playwright tool test drives a real browser and skips its browser
-      # half without one. The headless shell is what it launches.
+      # half without one. The headless shell is what it launches. The browser
+      # is a 3-second download; --with-deps' apt fetch of its libraries is what
+      # took 8 min 28 s (25.9 MB at 51 kB/s on 2026-10-27), and the hosted image
+      # already holds what the shell links. So the browser alone, a launch to
+      # prove it, and --with-deps only when that launch fails.
       - name: Chromium for the Playwright tool test
-        run: npx playwright install --with-deps --only-shell chromium
-      - run: npm run typecheck
-      # The browser is installed here, so its tests may not skip.
-      - run: npm test
+        if: matrix.node
+        run: |
+          npx playwright install --only-shell chromium
+          launch() { node -e "require('playwright').chromium.launch().then((b) => b.close()).catch((e) => { console.error(e.message); process.exit(1); })"; }
+          if launch; then echo "the headless shell starts with the image's own libraries"; else
+            echo "the headless shell does not start: installing its libraries"
+            npx playwright install --with-deps --only-shell chromium
+            launch
+          fi
+      - name: Typecheck
+        if: matrix.typecheck
+        run: npm run typecheck
+      # The browser is installed in every node part, so its tests may not skip.
+      - name: Node tests ${{ matrix.node }}
+        if: matrix.node
+        run: npm test -- --test-shard=${{ matrix.node }}
         env:
           SWARM_REQUIRE_BROWSER: "1"
-      - run: npm run test:bash
-      - run: npm run ui:build
+      - name: Shell suites ${{ matrix.shard }}
+        if: matrix.shard
+        run: npm run test:bash -- --shard ${{ matrix.shard }}
+      - name: UI build
+        if: matrix.ui
+        run: npm run ui:build
       - name: Nothing from a run is tracked
+        if: matrix.ui
         run: |
           if git ls-files | grep -E '^(runs/|sandbox-runs/|sandbox/\.pi|sandbox/traces/)' ; then
             echo "run state is tracked" >&2; exit 1
@@ -89,14 +127,18 @@ jobs:
     # 22.6.0: undici calls webidl.util.markAsUncloneable, which that Node has
     # not got, and every test that loads Pi fails). .nvmrc's 22 above is the
     # newest 22; this is the floor, so the claim is tested, not assumed.
-    name: typecheck · node tests · Node 22.19 (the engines floor)
+    name: node tests ${{ matrix.node }} · Node 22.19 (the engines floor)
     runs-on: ubuntu-latest
-    # The node suites alone take 13 to 20 min now (the slowest success 20 min 0 s
-    # of the 20): 35, the same step up as the job above. Over the last 60 runs
-    # the 43 successes took 20 to 34 min (the slowest 33 min 54 s of the 35) and
-    # two runs were cut off at the limit on a slow host, so now 55 (1.6 times
-    # the slowest success).
-    timeout-minutes: 55
+    # Two parts (node's own --test-shard): as one job the node suites took 20 to
+    # 34 min over 60 runs and 35 min 30 s on a green run of 2026-10-27, the
+    # longest job of the run once the Linux job was split. The typecheck runs
+    # in the first. A limit is there to stop a hang: every test has its own
+    # 5-minute limit (scripts/test-node.ts).
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["1/2", "2/2"]
     steps:
       - run: git config --global init.defaultBranch main
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -111,20 +153,26 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           test "$(node --version)" = v22.19.0 || { echo "wanted Node v22.19.0, got $(node --version)" >&2; exit 1; }
       - run: npm ci
-      - run: npm run typecheck
-      - run: npm test
+      - name: Typecheck
+        if: matrix.node == '1/2'
+        run: npm run typecheck
+      - name: Node tests ${{ matrix.node }}
+        run: npm test -- --test-shard=${{ matrix.node }}
 
   node-24:
     # Two Nodes run this harness. The host runs .nvmrc's 22 (package.json
     # engines >=22.19; the job above runs that floor exactly); inside a VM, Pi
     # runs the extensions on the image's Node, and images/base.Dockerfile
     # builds on node:24. The node suites again, on 24.
-    name: node tests · Node 24 (the VM image's)
+    name: node tests ${{ matrix.node }} · Node 24 (the VM image's)
     runs-on: ubuntu-latest
-    # 14 to 19 min now (the slowest success 19 min 12 s of the 20): 35. Over the
-    # last 60 runs the 48 successes took 19 to 32 min (the slowest 32 min 24 s of
-    # the 35, none cut off yet), so the same 55 as the Node 22.19 job.
-    timeout-minutes: 55
+    # Two parts, as the Node 22.19 job: one job took 19 to 32 min over 60 runs
+    # and 34 min 36 s on a green run of 2026-10-27.
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["1/2", "2/2"]
     steps:
       - run: git config --global init.defaultBranch main
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -139,7 +187,8 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           node --version
       - run: npm ci
-      - run: npm test
+      - name: Node tests ${{ matrix.node }}
+        run: npm test -- --test-shard=${{ matrix.node }}
 
   replay-impact:
     # A pull request's impact line (scripts/replay-impact.ts): every contract
@@ -352,16 +401,37 @@ jobs:
           sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
           ls -la /dev/kvm
       - run: npm ci
+      # Building the two images took 4 min 24 s of the job's 6 min 54 s
+      # (2026-10-27), and what goes into them is images/ and the packs'
+      # requirements: no pack's tools are copied in (images/recipe.py). So
+      # the saved images are kept under a key of those files, and of the ISO
+      # week, because the base installs Debian's current packages: a week-old
+      # build is rebuilt, and an upstream change is met within a week here and
+      # at once in images.yml, which builds every profile from scratch.
+      - name: The week the image cache is keyed by
+        id: week
+        run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: images
+        with:
+          path: |
+            ${{ runner.temp }}/base.tar
+            ${{ runner.temp }}/disk.tar
+          key: vm-images-amd64-${{ hashFiles('images/**', 'packs/*/requires/**') }}-${{ steps.week.outputs.week }}
       - name: The base and disk images, built and loaded into msb
         run: |
-          docker build -f images/base.Dockerfile -t dfirswarm-base:dev-amd64 images
-          # disk as well: the catalog test needs The Sleuth Kit, and a pack
-          # image that is only ever built and never booted is untested. Not
-          # published, so the licence flag is for this runner only.
-          python3 images/recipe.py build disk --out "$RUNNER_TEMP/disk" --base dfirswarm-base:dev-amd64 --allow-nonredistributable
-          docker build -t dfirswarm-disk:dev-amd64 "$RUNNER_TEMP/disk"
-          docker save dfirswarm-base:dev-amd64 -o "$RUNNER_TEMP/base.tar"
-          docker save dfirswarm-disk:dev-amd64 -o "$RUNNER_TEMP/disk.tar"
+          if [ "${{ steps.images.outputs.cache-hit }}" = true ]; then
+            echo "the base and disk images of this week and these files, from the cache"
+          else
+            docker build -f images/base.Dockerfile -t dfirswarm-base:dev-amd64 images
+            # disk as well: the catalog test needs The Sleuth Kit, and a pack
+            # image that is only ever built and never booted is untested. Not
+            # published, so the licence flag is for this runner only.
+            python3 images/recipe.py build disk --out "$RUNNER_TEMP/disk" --base dfirswarm-base:dev-amd64 --allow-nonredistributable
+            docker build -t dfirswarm-disk:dev-amd64 "$RUNNER_TEMP/disk"
+            docker save dfirswarm-base:dev-amd64 -o "$RUNNER_TEMP/base.tar"
+            docker save dfirswarm-disk:dev-amd64 -o "$RUNNER_TEMP/disk.tar"
+          fi
           msb="$(node --experimental-strip-types --no-warnings scripts/vm.ts msb-path)"
           "$msb" doctor
           "$msb" load -i "$RUNNER_TEMP/base.tar"
