@@ -87,7 +87,8 @@ test("the macOS job's parts together run every node suite and every shell suite"
   const nn = nodeShards[0][1];
   assert.deepEqual(nodeShards.map(([i]) => i).sort(), Array.from({ length: nn }, (_, k) => k + 1), "the node parts must be shards 1..N, each once");
   assert.ok(nodeShards.every(([, m]) => m === nn), "the node parts name different shard counts");
-  assert.match(job, /- name: Node tests[^\n]*\n\s+if: matrix\.node\n\s+run: npm test -- --test-shard=\$\{\{ matrix\.node \}\}\n/, "the node step must run `npm test` with the part's own --test-shard and no filter");
+  // A self-hosted Mac may hold the concurrency down (a count, not a filter).
+  assert.match(job, /- name: Node tests[^\n]*\n\s+if: matrix\.node\n\s+run: npm test -- --test-shard=\$\{\{ matrix\.node \}\}(?: \$\{\{ runner\.environment == 'self-hosted' && '--test-concurrency=\d+' \|\| '' \}\})?\n/, "the node step must run `npm test` with the part's own --test-shard and no filter");
   // The typecheck is done once: in exactly one part, which is a node part.
   assert.equal((job.match(/^\s+typecheck: true$/gm) ?? []).length, 1, "exactly one part runs the typecheck");
   assert.match(job, /- name: Typecheck\n\s+if: matrix\.typecheck\n\s+run: npm run typecheck\n/, "the typecheck step must run for the part that names it");
