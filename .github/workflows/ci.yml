@@ -198,15 +198,19 @@ jobs:
     # 22.6.0: undici calls webidl.util.markAsUncloneable, which that Node has
     # not got, and every test that loads Pi fails). .nvmrc's 22 above is the
     # newest 22; this is the floor, so the claim is tested, not assumed.
-    name: typecheck · node tests · Node 22.19 (the engines floor)
+    name: node tests ${{ matrix.node }} · Node 22.19 (the engines floor)
     needs: select
     runs-on: ubuntu-latest
-    # The node suites alone take 13 to 20 min now (the slowest success 20 min 0 s
-    # of the 20): 35, the same step up as the job above. Over the last 60 runs
-    # the 43 successes took 20 to 34 min (the slowest 33 min 54 s of the 35) and
-    # two runs were cut off at the limit on a slow host, so now 55 (1.6 times
-    # the slowest success).
-    timeout-minutes: 55
+    # Two parts (node's own --test-shard): as one job the node suites took 20 to
+    # 34 min over 60 runs and 35 min 30 s on a green run of 2026-10-27, the
+    # longest job of the run once the Linux job was split. The typecheck runs
+    # in the first. A limit is there to stop a hang: every test has its own
+    # 5-minute limit (scripts/test-node.ts).
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["1/2", "2/2"]
     steps:
       - run: git config --global init.defaultBranch main
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -221,15 +225,17 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
           test "$(node --version)" = v22.19.0 || { echo "wanted Node v22.19.0, got $(node --version)" >&2; exit 1; }
       - run: npm ci
-      - run: npm run typecheck
+      - name: Typecheck
+        if: matrix.node == '1/2'
+        run: npm run typecheck
       - name: The suites this change needs
         if: needs.select.outputs.all != 'true'
         env:
           NODE_LIST: ${{ needs.select.outputs.node }}
         run: printf '%s\n' "$NODE_LIST" | grep . > "$RUNNER_TEMP/node.list" || true
-      - name: Node tests
-        run: npm test -- --timings=${{ runner.temp }}/timings.json ${{ needs.select.outputs.all != 'true' && format('--files-from={0}/node.list', runner.temp) || '' }}
-      - name: The slowest node suites
+      - name: Node tests ${{ matrix.node }}
+        run: npm test -- --test-shard=${{ matrix.node }} --timings=${{ runner.temp }}/timings.json ${{ needs.select.outputs.all != 'true' && format('--files-from={0}/node.list', runner.temp) || '' }}
+      - name: The slowest node suites of this part
         if: always()
         run: |
           [ -s "$RUNNER_TEMP/timings.json" ] || exit 0
@@ -240,13 +246,16 @@ jobs:
     # engines >=22.19; the job above runs that floor exactly); inside a VM, Pi
     # runs the extensions on the image's Node, and images/base.Dockerfile
     # builds on node:24. The node suites again, on 24.
-    name: node tests · Node 24 (the VM image's)
+    name: node tests ${{ matrix.node }} · Node 24 (the VM image's)
     needs: select
     runs-on: ubuntu-latest
-    # 14 to 19 min now (the slowest success 19 min 12 s of the 20): 35. Over the
-    # last 60 runs the 48 successes took 19 to 32 min (the slowest 32 min 24 s of
-    # the 35, none cut off yet), so the same 55 as the Node 22.19 job.
-    timeout-minutes: 55
+    # Two parts, as the Node 22.19 job: one job took 19 to 32 min over 60 runs
+    # and 34 min 36 s on a green run of 2026-10-27.
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["1/2", "2/2"]
     steps:
       - run: git config --global init.defaultBranch main
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -266,9 +275,9 @@ jobs:
         env:
           NODE_LIST: ${{ needs.select.outputs.node }}
         run: printf '%s\n' "$NODE_LIST" | grep . > "$RUNNER_TEMP/node.list" || true
-      - name: Node tests
-        run: npm test -- --timings=${{ runner.temp }}/timings.json ${{ needs.select.outputs.all != 'true' && format('--files-from={0}/node.list', runner.temp) || '' }}
-      - name: The slowest node suites
+      - name: Node tests ${{ matrix.node }}
+        run: npm test -- --test-shard=${{ matrix.node }} --timings=${{ runner.temp }}/timings.json ${{ needs.select.outputs.all != 'true' && format('--files-from={0}/node.list', runner.temp) || '' }}
+      - name: The slowest node suites of this part
         if: always()
         run: |
           [ -s "$RUNNER_TEMP/timings.json" ] || exit 0
