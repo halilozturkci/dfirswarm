@@ -21,7 +21,7 @@
 # install asks for a fine-grained personal access token (this repository only,
 # "Administration: Read and write"): the supervisor needs one to register a new
 # runner for every job. It is stored root-only and the job user cannot read it.
-# Before install: `brew install jq gh` and `gh auth login` in the owner's account
+# Before install: `brew install jq gh python@3.14` and `gh auth login` in the owner's account
 # (gh is used once, from the owner's account, to check access).
 #
 # bash 3.2 (macOS's own) is enough.
@@ -33,11 +33,19 @@ REPO="halilozturkci/dfirswarm"
 OWNER="${REPO%%/*}"
 LABELS="self-hosted,macOS,ARM64,dfirswarm"
 LABEL="com.dfirswarm.actions-runner"
-BASE="/Library/Application Support/dfirswarm-runner"
+# No space anywhere in this path: the runner runs the job-started hook as
+# `/bin/bash ... <path>` without quoting it, so a hook under "Application
+# Support" was split at the space and failed every job before its first step.
+BASE="/Library/dfirswarm-runner"
+# Where the first installs put it; install moves the token from there.
+OLD_BASE="/Library/Application Support/dfirswarm-runner"
 PLIST="/Library/LaunchDaemons/$LABEL.plist"
 LOG="/Library/Logs/dfirswarm-runner.log"
-# actions/setup-python's macOS builds are not relocatable: they work only here.
+# Where setup actions cache what they download (setup-node's Node), at the
+# hosted runner's path.
 TOOLCACHE="/Users/runner/hostedtoolcache"
+# The Python the macOS job runs here, the path ci.yml names.
+PY314="/opt/homebrew/opt/python@3.14/libexec/bin/python3"
 
 RUNNER_VERSION="2.338.2"
 RUNNER_SHA256="25a065af409ffa317ab4d5a3b614dd15fc9c40f2172bc1b35a1b1258e919a388"
@@ -71,11 +79,16 @@ while [ $# -gt 0 ]; do
 done
 case "$RUNNER_USER" in ''|*[!a-z0-9_]*) die "--user must be a short lowercase name" ;; esac
 case "$RUNNER_NAME" in ''|*[!A-Za-z0-9._-]*) die "--name may hold letters, digits, '.', '_' and '-' only" ;; esac
-# An installed runner keeps the name and user it was installed with.
-if [ "$CMD" != install ] && [ -r "$BASE/config" ]; then
-  RUNNER_NAME="$(sed -n 's/^RUNNER_NAME=//p' "$BASE/config")"
-  RUNNER_USER="$(sed -n 's/^RUNNER_USER=//p' "$BASE/config")"
-fi
+case "$BASE" in *[[:space:]]*) die "the install directory ($BASE) must hold no space: the runner does not quote the hook's path" ;; esac
+# An installed runner keeps the name and user it was installed with (an
+# install under the old directory included).
+for conf in "$BASE/config" "$OLD_BASE/config"; do
+  if [ "$CMD" != install ] && [ -r "$conf" ]; then
+    RUNNER_NAME="$(sed -n 's/^RUNNER_NAME=//p' "$conf")"
+    RUNNER_USER="$(sed -n 's/^RUNNER_USER=//p' "$conf")"
+    break
+  fi
+done
 RUNNER_HOME="/Users/$RUNNER_USER"
 
 [ "$(uname -s)" = Darwin ] || die "this is for macOS"
@@ -107,14 +120,31 @@ stop_daemon() {
 # Delete this Mac's runner registration (an idle ephemeral runner stays
 # registered until it takes a job).
 deregister() {
-  [ -r "$BASE/token" ] || return 0
+  local tokfile="$BASE/token"
+  [ -r "$tokfile" ] || tokfile="$OLD_BASE/token"
+  [ -r "$tokfile" ] || return 0
   local id
-  id="$(GH_TOKEN="$(cat "$BASE/token")" "$GH" api "repos/$REPO/actions/runners?per_page=100" \
+  id="$(GH_TOKEN="$(cat "$tokfile")" "$GH" api "repos/$REPO/actions/runners?per_page=100" \
         --jq ".runners[] | select(.name == \"$RUNNER_NAME\") | .id" 2>/dev/null || true)"
   if [ -n "$id" ]; then
     say "removing runner $RUNNER_NAME (id $id) from $REPO"
-    GH_TOKEN="$(cat "$BASE/token")" "$GH" api -X DELETE "repos/$REPO/actions/runners/$id" >/dev/null || true
+    GH_TOKEN="$(cat "$tokfile")" "$GH" api -X DELETE "repos/$REPO/actions/runners/$id" >/dev/null || true
   fi
+}
+
+# An install under the old directory: stop its supervisor, keep its token,
+# remove the rest. The install that follows writes everything else again.
+migrate_old_base() {
+  [ -d "$OLD_BASE" ] || return 0
+  say "moving the install from $OLD_BASE to $BASE"
+  stop_daemon
+  mkdir -p "$BASE"; chown root:wheel "$BASE"; chmod 755 "$BASE"
+  if [ ! -e "$BASE/token" ] && [ -r "$OLD_BASE/token" ]; then
+    mv "$OLD_BASE/token" "$BASE/token"
+    chown root:wheel "$BASE/token"; chmod 600 "$BASE/token"
+    say "kept the stored token"
+  fi
+  rm -rf "$OLD_BASE"
 }
 
 GH="$(PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" command -v gh || true)"
@@ -134,7 +164,7 @@ cmd_uninstall() {
   stop_daemon
   [ -n "$GH" ] && deregister
   rm -f "$PLIST"
-  rm -rf "$BASE"
+  rm -rf "$BASE" "$OLD_BASE"
   if [ "$DELETE_USER" = 1 ] && user_exists "$RUNNER_USER"; then
     say "deleting user $RUNNER_USER and its home"
     sysadminctl -deleteUser "$RUNNER_USER" 2>&1 | grep -v '^$' || true
@@ -148,12 +178,18 @@ cmd_install() {
   [ -n "$GH" ] || die "gh is not installed: brew install gh, then gh auth login"
   JQ="$(PATH="/opt/homebrew/bin:/usr/local/bin:$PATH" command -v jq || true)"
   [ -n "$JQ" ] || die "jq is not installed: brew install jq (the job user cannot brew install)"
+  # The macOS job's Python on this Mac (ci.yml): actions/setup-python installs
+  # a macOS Python with sudo, which the job user must not have.
+  "$PY314" -c 'import sys; assert sys.version_info[:2] == (3, 14)' 2>/dev/null \
+    || die "Python 3.14 is not at $PY314: brew install python@3.14 (the macOS job runs it; the job user cannot brew install)"
 
   # gh, from the owner's own login, only to check that the repository is there
   # and that the owner may manage its runners.
   say "checking access to $REPO with the owner's gh login"
   as_owner "$GH" api "repos/$REPO" --jq '.permissions.admin' 2>/dev/null | grep -qx true \
     || say "warning: could not confirm admin access with the owner's gh login (gh auth status); the token below is checked either way"
+
+  migrate_old_base
 
   # The token the supervisor registers each new runner with.
   if [ -r "$BASE/token" ]; then
@@ -240,7 +276,7 @@ EOF
 write_hook() {
   cat <<'EOF'
 #!/bin/bash
-. "/Library/Application Support/dfirswarm-runner/config"
+. /Library/dfirswarm-runner/config
 ev() { "$JQ" -r "$1 // empty" "$GITHUB_EVENT_PATH" 2>/dev/null; }
 refuse() { echo "::error::this self-hosted runner refuses the job: $*"; exit 1; }
 [ "${GITHUB_REPOSITORY:-}" = "$REPO" ] || refuse "repository ${GITHUB_REPOSITORY:-?} is not $REPO"
@@ -264,8 +300,8 @@ write_supervisor() {
   cat <<'EOF'
 #!/bin/bash
 set -u
-. "/Library/Application Support/dfirswarm-runner/config"
-BASE="/Library/Application Support/dfirswarm-runner"
+. /Library/dfirswarm-runner/config
+BASE=/Library/dfirswarm-runner
 DIR="$RUNNER_HOME/actions-runner"
 log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 clean() {

@@ -34,10 +34,12 @@ The Linux jobs are not affected.
    that GitHub sent, which a pull request cannot change, and fails the job
    before any step runs unless the job is a push to `main` or a pull request
    opened by the owner from a branch of this repository.
-3. **The repository asks first.** In Settings → Actions → General, set "Fork
-   pull request workflows from outside collaborators" to **Require approval
-   for all outside collaborators**. A fork's run then waits for the owner. Read
-   any change it makes under `.github/` before approving it.
+3. **The repository asks first.** In Settings → Actions → General, under
+   "Approval for running fork pull request workflows from contributors",
+   choose **Require approval for all external contributors** and click Save.
+   A fork's run then waits for the owner. Read any change it makes under
+   `.github/` before approving it. (The section "Fork pull request workflows"
+   on the same page is for private repositories and does not apply here.)
 
 The job itself is contained as well. This is what limits the harm if the
 owner's own branch carries a bad dependency:
@@ -66,7 +68,7 @@ Google Drive. The script refuses to run from inside those folders.
 1. Install the tools the jobs and the script use:
 
    ```bash
-   brew install jq gh
+   brew install jq gh python@3.14
    ```
 
    ```bash
@@ -74,7 +76,9 @@ Google Drive. The script refuses to run from inside those folders.
    ```
 
    The job user cannot install anything with Homebrew. The workflow's
-   `brew install jq` fallback only works when jq is already there.
+   `brew install jq` fallback only works when jq is already there, and the
+   macOS job runs Homebrew's `python@3.14` on this Mac (see "Differences from
+   the hosted runner"); `install` refuses to go on without it.
 
 2. Create a fine-grained personal access token in GitHub → Settings →
    Developer settings:
@@ -84,7 +88,7 @@ Google Drive. The script refuses to run from inside those folders.
 
    The supervisor needs this token to register a new runner for every job,
    because a registration token lasts only one hour. The script stores the
-   token in `/Library/Application Support/dfirswarm-runner/token`, readable by
+   token in `/Library/dfirswarm-runner/token`, readable by
    root only. The job user cannot read it.
 
 3. Install:
@@ -99,12 +103,17 @@ Google Drive. The script refuses to run from inside those folders.
    Then it does the following:
    - Creates the hidden, standard user `runner`, with a random password that
      nobody keeps.
-   - Creates `/Users/runner/hostedtoolcache`. actions/setup-python's macOS
-     builds work only at that path.
+   - Creates `/Users/runner/hostedtoolcache`, the hosted runner's tool cache
+     path, where actions/setup-node keeps the Node it downloads.
    - Downloads the pinned actions/runner release and checks it against the
      SHA-256 that the release states.
    - Installs the hook, the supervisor, and the LaunchDaemon
-     `com.dfirswarm.actions-runner`.
+     `com.dfirswarm.actions-runner`, all under `/Library/dfirswarm-runner`.
+     The path holds no space on purpose: the runner calls the job-started
+     hook by its path unquoted, and the first version of this script, under
+     `/Library/Application Support`, failed every job at that call. Running
+     `install` again on a Mac set up by that version moves its token to the
+     new directory and removes the old one; there is nothing to paste again.
 
    Options: `--name NAME` sets the runner name (the default is
    `dfirswarm-<LocalHostName>`). `--user USER` sets the job user.
@@ -157,9 +166,17 @@ Then revoke the token in GitHub.
 
 ## Differences from the hosted runner
 
-- **Python.** The job installs Python 3.14 with actions/setup-python on both
-  kinds of runner, so the two are comparable. The Linux jobs run Ubuntu
-  24.04's Python 3.12.
+- **Python.** Both kinds of runner run Python 3.14, but not the same build.
+  The hosted runner gets it from actions/setup-python. On the owner's Mac the
+  job puts Homebrew's `python@3.14` first on `PATH` instead: setup-python
+  installs a macOS Python with `sudo`, which the job user does not have and
+  must not get (the first run on the Mac mini failed there with "sudo: a
+  password is required"). The Linux jobs run Ubuntu 24.04's Python 3.12.
+- **Test concurrency.** `node --test` runs as many files at once as the host
+  has cores less one: two on the hosted runner, nine on a ten-core Mac mini.
+  At nine, timing-bound suites ran past their 300-second limit and the UI
+  server's trace collector did not come up in time, so on a self-hosted
+  runner the node tests run with `--test-concurrency=3`.
 - **Docker and Herdr.** They are not on the hosted runner, and the suites
   skip what needs them. If a Mac has Docker Desktop, its socket belongs to the
   owner. The job user cannot reach it.
