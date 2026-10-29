@@ -6949,7 +6949,7 @@ pi_env_credential() { # <provider>
 # business plan of another provider may be one), never for customer data.
 subscription_words() { # <provider>
   case "$1" in
-    openai-codex|anthropic) printf 'consumer plan; not for customer data' ;;
+    openai-codex|anthropic|openai) printf 'consumer plan; not for customer data' ;;
     cursor) printf 'Cursor plan login (cursor-agent); not for customer data' ;;
     *) printf 'subscription login; not for customer data' ;;
   esac
@@ -7089,7 +7089,9 @@ provider_known_hosts() {
         echo ""
       fi
       ;;
-    openai) echo "api.openai.com" ;;
+    # Pi 1.4 keeps a "Sign in with ChatGPT" login under openai: the calls go to the API,
+    # and the token, which lives about an hour, is refreshed at auth.openai.com.
+    openai) if model_is_subscription "$model"; then echo "api.openai.com,auth.openai.com"; else echo "api.openai.com"; fi ;;
     deepseek) echo "api.deepseek.com" ;;
     xai) echo "api.x.ai" ;;
     google) echo "generativelanguage.googleapis.com" ;;

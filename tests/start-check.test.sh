@@ -196,7 +196,9 @@ echo "# the check says what the start would set up"
 run "$TMP/runs-plan" --check "${base[@]}" --isolation host --no-start
 [[ $rc -eq 0 ]] || fail "a host check exited $rc: $out"
 grep -q "^Isolation:    host, unisolated" <<<"$out" || fail "the check does not say the run would be unisolated: $out"
-run "$TMP/runs-plan" --check --isolation microvm --model openai/gpt-5.4-mini --n 1 --cap-usd 1 --goal-file "$GOAL" --toolbox off --no-start --model-gateway --image dfirswarm-base:dev-test
+# An empty Pi store: the operator's own may hold a ChatGPT login under openai, which a VM refuses.
+mkdir -p "$TMP/pi-empty"
+PI_CODING_AGENT_DIR="$TMP/pi-empty" run "$TMP/runs-plan" --check --isolation microvm --model openai/gpt-5.4-mini --n 1 --cap-usd 1 --goal-file "$GOAL" --toolbox off --no-start --model-gateway --image dfirswarm-base:dev-test
 grep -q "^Isolation:    one microVM per agent (dfirswarm-base:dev-test" <<<"$out" || fail "the check does not name the VMs' image: $out"
 grep -q "^Gateway:      every call to openai would go through the model gateway" <<<"$out" || fail "the check does not say the gateway fronts openai: $out"
 nothing_written "$TMP/runs-plan" "the plan check"

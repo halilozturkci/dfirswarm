@@ -85,6 +85,9 @@ HELPERS="$TMP/helpers.sh"
   sed -n '/^provider_is_local() {/,/^}/p' "$ROOT/scripts/swarm.sh"
   sed -n '/^model_is_metered() {/,/^}/p' "$ROOT/scripts/swarm.sh"
   sed -n '/^provider_hosts_for_models() {/,/^}/p' "$ROOT/scripts/swarm.sh"
+  sed -n '/^pi_auth_file() {/,/^}/p' "$ROOT/scripts/swarm.sh"
+  sed -n '/^provider_is_cursor() {/,/^}/p' "$ROOT/scripts/swarm.sh"
+  sed -n '/^model_is_subscription() {/,/^}/p' "$ROOT/scripts/swarm.sh"
 } > "$HELPERS"
 
 hosts_for() { # hosts_for <spec>
@@ -109,7 +112,17 @@ got="$(hosts_for "anthropic/claude-sonnet-5=2")"
 [[ "$got" == "api.anthropic.com,platform.claude.com" ]] || fail "anthropic hosts: $got"
 pass "a subscription provider brings its OAuth token endpoint"
 
-got="$(hosts_for "openai/gpt-5.4=1,openai/gpt-5.5=1")"
+# Pi 1.4 keeps "Sign in with ChatGPT" under openai: its token is refreshed at auth.openai.com.
+mkdir -p "$TMP/pi-chatgpt" "$TMP/pi-openai-key"
+printf '{"openai":{"type":"oauth"}}\n' > "$TMP/pi-chatgpt/auth.json"
+printf '{"openai":{"type":"api_key","key":"x"}}\n' > "$TMP/pi-openai-key/auth.json"
+got="$(PI_CODING_AGENT_DIR="$TMP/pi-chatgpt" hosts_for "openai/gpt-6.1-sol=2")"
+[[ "$got" == "api.openai.com,auth.openai.com" ]] || fail "a ChatGPT login under openai needs its token endpoint: $got"
+got="$(PI_CODING_AGENT_DIR="$TMP/pi-openai-key" hosts_for "openai/gpt-6.1-sol=2")"
+[[ "$got" == "api.openai.com" ]] || fail "an OpenAI API key reaches the API only: $got"
+pass "a ChatGPT login under openai brings auth.openai.com; an API key does not"
+
+got="$(PI_CODING_AGENT_DIR="$TMP/pi-openai-key" hosts_for "openai/gpt-5.4=1,openai/gpt-5.5=1")"
 [[ "$got" == "api.openai.com" ]] || fail "duplicate hosts should collapse: $got"
 pass "two models from one provider do not duplicate the host"
 
@@ -245,9 +258,9 @@ got="$(jq -r '.. | objects | select(.["label"]? == "permodel") | "\(.self_compac
 grep -q "summaries by beta/two" <<<"$out" || fail "kickoff should say which model writes the summaries: $out"
 got="$(jq -r '.. | objects | select(.["label"]? == "uniform") | .inbox_page_chars' "$TMP/runs/registry.json")"
 [[ "$got" == "40000" ]] || fail "registry should record the default inbox page, got $got"
-got="$(compact_model="deepseek/deepseek-v4-pro" hosts_for "openai/gpt-5.4=1")"
+got="$(PI_CODING_AGENT_DIR="$TMP/pi-openai-key" compact_model="deepseek/deepseek-v4-pro" hosts_for "openai/gpt-5.4=1")"
 [[ "$got" == "api.openai.com,api.deepseek.com" ]] || fail "the summary model's host should join the allowlist: $got"
-got="$(compact_model="openai/gpt-5.4-nano" hosts_for "openai/gpt-5.4=1")"
+got="$(PI_CODING_AGENT_DIR="$TMP/pi-openai-key" compact_model="openai/gpt-5.4-nano" hosts_for "openai/gpt-5.4=1")"
 [[ "$got" == "api.openai.com" ]] || fail "a summary model on a seat's provider adds no host: $got"
 refuses "a per-model entry with a bad value is refused" "a compact threshold is a token count" \
   --model solo/model --n 2 --cap-usd 1 --no-start --compact-at "60%,solo/model=lots" --goal-file "$ROOT/prompts/goals/hello.md"

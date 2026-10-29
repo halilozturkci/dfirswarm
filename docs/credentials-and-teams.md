@@ -287,7 +287,7 @@ What it is, measured on `cursor-agent` 2026.10.22:
   before relying on it.
 
 A Cursor seat opens in the swarm like any other: `--models
-cursor/grok-4.7-medium:2,cursor/kimi-k3-high:1`. The kickoff loads the
+cursor/grok-4.7-medium=2,cursor/kimi-k3-high=1`. The kickoff loads the
 extension into every seat (and the probe) when the team has one, and checks
 the CLI instead of `pi auth`: that `cursor-agent` is installed (or named by
 `CURSOR_AGENT_BIN`), logged in (or given `CURSOR_API_KEY`), and serves each
