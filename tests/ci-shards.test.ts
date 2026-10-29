@@ -127,8 +127,11 @@ test("a suite list narrows a run only through the select job, and never on a run
   assert.ok(narrowing > 0, "no job reads the select job's lists");
   assert.equal(narrowing, guarded, "a --files-from, --within or --tier in ci.yml that is not the select job's guarded list");
   const select = WORKFLOW.match(/^ {2}select:\n([\s\S]*?)(?=^ {2}[a-z][\w-]*:\n)/m)?.[1] ?? "";
-  assert.match(select, /if \[ "\$EVENT" != pull_request \] \|\| \[ "\$FULL_LABEL" = true \]; then[\s\S]*?echo "all=true"/, "a run that is not a pull request, or a pull request labelled full-ci, must run everything");
-  assert.match(select, /scripts\/test-select\.ts --base "\$BASE" --json/, "a pull request's lists must come from scripts/test-select.ts against its base");
+  assert.match(select, /if \{ \[ "\$EVENT" != pull_request \] && \[ "\$narrow_push" != true \]; \} \|\| \[ "\$FULL_LABEL" = true \]; then[\s\S]*?echo "all=true"/, "a run that is neither a pull request nor a push with a range (the nightly run, a run by hand), and a pull request labelled full-ci, must run everything");
+  assert.match(select, /narrow_push=false\n\s+if \[ "\$EVENT" = push \] && \[ -n "\$BASE" \] && git cat-file -e "\$BASE\^\{commit\}" 2>\/dev\/null; then narrow_push=true; fi/, "only a push whose before is a commit here may run narrow");
+  assert.match(select, /BASE: \$\{\{ github\.event_name == 'pull_request' && github\.event\.pull_request\.base\.sha \|\| github\.event\.before \}\}/, "a pull request reads its base, a push what it brought");
+  assert.match(select, /scripts\/test-select\.ts --base "\$BASE" --json/, "the lists must come from scripts/test-select.ts against that base");
+  assert.match(WORKFLOW, /^ {2}schedule:\n {4}- cron: "[^"]+"$/m, "the nightly run, which runs everything, must stay");
   for (const job of ["test", "node-floor", "node-24", "macos", "microvm"]) {
     const text = WORKFLOW.match(new RegExp(String.raw`^ {2}${job}:\n([\s\S]*?)(?=^ {2}[a-z][\w-]*:\n|(?![\s\S]))`, "m"))?.[1] ?? "";
     assert.match(text, /^ {4}needs: select$/m, `the ${job} job must wait for the select job`);

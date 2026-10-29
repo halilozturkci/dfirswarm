@@ -2,3 +2,33 @@
 # slot, structure-aware fuzz, worst-case inputs, growth ratios). npm test runs
 # them as always; `npm test -- --tier=fast` leaves them out and `--tier=deep`
 # runs only them (scripts/test-node.ts). One path per line, with the reason.
+#
+# Chosen from measurement, not by name: the files that took 60 s or more on
+# the hosted Linux runner (concurrency 3) in the CI run of 2026-10-28 for
+# #232, 15 files and 40 % of the node suites' time there, less ui-server (a
+# core suite), plus the suites that import the two helpers whose tests took
+# longest (pack-virtualization-canary-lib.ts 283 s, windows-boundary-block-cases.ts
+# 129 s). Linux seconds, then hosted macOS seconds, where measured.
+tests/pack-virtualization-boundary.test.ts            # 243 / 126, and the canary library
+tests/pack-virtualization-canary.test.ts              # the canary library (283 / 238 over its suites)
+tests/pack-virtualization-canary-audit-1.test.ts      # the canary library; cut off at 300 s on the Mac mini
+tests/pack-virtualization-canary-audit-2.test.ts      # the canary library
+tests/pack-virtualization-canary-audit-3.test.ts      # the canary library; cut off at 300 s on the Mac mini
+tests/pack-virtualization-canary-audit-4.test.ts      # the canary library
+tests/pack-virtualization-canary-backstop.test.ts     # the canary library
+tests/pack-virtualization-canary-backstop-audit.test.ts # the canary library; cut off at 300 s on the Mac mini
+tests/pack-virtualization-followups.test.ts           # 131 / 60, and the canary library
+tests/pack-virtualization-followups-2.test.ts         # the canary library
+tests/pack-virtualization-review5.test.ts             # 236 / 126
+tests/pack-virtualization-chain.test.ts               # 80 / 42
+tests/pack-windows-forensics-boundary-block.test.ts   # the boundary block cases (129 / 80 over its suites)
+tests/pack-windows-forensics-boundary-block-2.test.ts # the boundary block cases
+tests/pack-windows-forensics-boundary-block-3.test.ts # the boundary block cases
+tests/pack-triage-slots.test.ts                       # 223 / 112
+tests/pack-triage-slots-index.test.ts                 # 87 / 56; cut off at 300 s on the Mac mini
+tests/pack-mobile-forensics.test.ts                   # 109 / 92
+tests/pack-encrypted-containers-r2.test.ts            # 78 / 42
+tests/pack-re-doc-structure-round3.test.ts            # 73 / 33
+tests/pack-cloud-shared.test.ts                       # 67 / 39
+tests/pack-re-delta9.test.ts                          # 62 / 37
+tests/pack-re-one-way-out.test.ts                     # 61 / 29
