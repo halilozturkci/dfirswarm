@@ -18,6 +18,11 @@
  * minutes, rather than holding the run until CI's job limit cancels it with
  * no word of which test it was.
  *
+ * The deep suites (tests/node-tests.deep) run apart, in a second `node
+ * --test` after the others, under DEEP_TIMEOUT_MS: Node 22 holds a whole
+ * file to the timeout, and a deep file that takes two minutes alone can take
+ * three times that on a loaded runner.
+ *
  * Its own options, taken out before the rest go to node:
  *
  *   --tier=fast|deep|all  tests/node-tests.deep names the deep suites (the
@@ -34,9 +39,16 @@
  *                         at a time) and said to have passed or failed so.
  *                         Exit 3 when every failure passed alone: green under
  *                         no load only, which is named, never taken for 0.
+ *   --test-shard=I/N      shard I of N, cut here rather than by node: the
+ *                         others and the deep suites are each dealt out
+ *                         round-robin in sorted order (node's own rule), so
+ *                         every suite is in one shard and the deep ones are
+ *                         spread evenly over the shards.
+ *   --list                print the suites the run would run, one per line,
+ *                         in the order it runs them, and run nothing.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -60,6 +72,16 @@ export function readSkipList(text: string): string[] {
  * about 75 s on macOS.
  */
 export const TEST_TIMEOUT_MS = 300_000;
+
+/**
+ * The `--test-timeout` the deep suites run under, apart from the others. In
+ * #233's run on the hosted macOS runner, pack-triage-slots and
+ * pack-virtualization-boundary (112 s and 126 s in other runs) were cut off at
+ * 300 s with no test failed, and on the owner's Mac mini at concurrency 3
+ * four more were. Fifteen minutes is past the slowest of them slowed five
+ * times over, and a hang still fails by name well inside the node jobs' limits.
+ */
+export const DEEP_TIMEOUT_MS = 900_000;
 
 /** The options handed to `node --test`: the caller's, led by the per-test timeout unless they set one. */
 export function nodeTestOptions(argv: string[], timeoutMs: number = TEST_TIMEOUT_MS): string[] {
@@ -91,12 +113,32 @@ export function deepSuites(root: string = ROOT): string[] {
   return deep;
 }
 
-export type OwnOptions = { tier: "all" | "fast" | "deep"; filesFrom: string | null; timings: string | null; retryAlone: boolean; rest: string[] };
+export type Shard = { index: number; total: number };
+
+export type OwnOptions = {
+  tier: "all" | "fast" | "deep";
+  filesFrom: string | null;
+  timings: string | null;
+  retryAlone: boolean;
+  shard: Shard | null;
+  list: boolean;
+  rest: string[];
+};
+
+/** `I/N` as node reads `--test-shard`: whole numbers, 1 <= I <= N. Throws on anything else. */
+function parseShard(v: string | undefined): Shard {
+  const m = /^(\d+)\/(\d+)$/.exec(v ?? "");
+  const index = m ? Number(m[1]) : 0;
+  const total = m ? Number(m[2]) : 0;
+  if (!m || index < 1 || index > total) throw new Error(`--test-shard takes I/N with 1 <= I <= N, not '${v ?? ""}'`);
+  return { index, total };
+}
 
 /** This script's own options, out of argv; the rest is for node. Throws on a bad value. */
 export function ownOptions(argv: string[]): OwnOptions {
-  const o: OwnOptions = { tier: "all", filesFrom: null, timings: null, retryAlone: false, rest: [] };
-  for (const a of argv) {
+  const o: OwnOptions = { tier: "all", filesFrom: null, timings: null, retryAlone: false, shard: null, list: false, rest: [] };
+  for (let k = 0; k < argv.length; k++) {
+    const a = argv[k];
     if (a.startsWith("--tier=")) {
       const t = a.slice("--tier=".length);
       if (t !== "all" && t !== "fast" && t !== "deep") throw new Error(`--tier takes fast, deep or all, not '${t}'`);
@@ -104,6 +146,9 @@ export function ownOptions(argv: string[]): OwnOptions {
     } else if (a.startsWith("--files-from=")) o.filesFrom = a.slice("--files-from=".length);
     else if (a.startsWith("--timings=")) o.timings = a.slice("--timings=".length);
     else if (a === "--retry-alone") o.retryAlone = true;
+    else if (a === "--list") o.list = true;
+    else if (a.startsWith("--test-shard=")) o.shard = parseShard(a.slice("--test-shard=".length));
+    else if (a === "--test-shard") o.shard = parseShard(argv[++k]);
     else o.rest.push(a);
   }
   return o;
@@ -122,6 +167,37 @@ export function chooseSuites(run: string[], deep: string[], tier: OwnOptions["ti
   return chosen;
 }
 
+export type Pass = { name: "others" | "deep"; files: string[]; timeoutMs: number };
+
+/**
+ * The chosen suites as the runs they go in, in order: the others under
+ * TEST_TIMEOUT_MS, then the deep ones under DEEP_TIMEOUT_MS, each cut to the
+ * shard (round-robin over the sorted list, as node's --test-shard does). A
+ * run left with no file is dropped.
+ */
+export function passes(chosen: string[], deep: string[], shard: Shard | null): Pass[] {
+  const cut = (files: string[]) => (shard ? [...files].sort().filter((_, k) => k % shard.total === shard.index - 1) : files);
+  const all: Pass[] = [
+    { name: "others", files: cut(chosen.filter((p) => !deep.includes(p))), timeoutMs: TEST_TIMEOUT_MS },
+    { name: "deep", files: cut(chosen.filter((p) => deep.includes(p))), timeoutMs: DEEP_TIMEOUT_MS },
+  ];
+  return all.filter((p) => p.files.length);
+}
+
+/** Timings documents of runs one after another as one: every file, slowest first, and every failed file. */
+export function mergeTimings(docs: string[]): string {
+  const parsed = docs.map((d) => JSON.parse(d) as { files?: { ms: number }[]; failed?: string[] });
+  const files = parsed.flatMap((d) => d.files ?? []).sort((a, b) => b.ms - a.ms);
+  return JSON.stringify({ files, failed: parsed.flatMap((d) => d.failed ?? []) }, null, 1) + "\n";
+}
+
+/** The status of runs one after another: any failure over passed-alone (3) over 0. */
+export function worse(a: number, b: number): number {
+  if (a === 0) return b;
+  if (b === 0) return a;
+  return a === 3 ? b : a;
+}
+
 /** The suites a timings document says failed, relative to the repository. */
 export function failedSuites(timingsJson: string, root: string = ROOT): string[] {
   const doc = JSON.parse(timingsJson) as { failed?: string[] };
@@ -131,48 +207,68 @@ export function failedSuites(timingsJson: string, root: string = ROOT): string[]
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   let own: OwnOptions;
   let chosen: string[];
+  let runs: Pass[];
   try {
     own = ownOptions(process.argv.slice(2));
     const suites = nodeSuites();
     if (!suites.run.length) throw new Error("no node suites found under tests/");
     const listed = own.filesFrom === null ? null : readFileSync(own.filesFrom, "utf8").split("\n").map((l) => l.trim()).filter(Boolean);
-    chosen = chooseSuites(suites.run, deepSuites(), own.tier, listed);
+    const deep = deepSuites();
+    chosen = chooseSuites(suites.run, deep, own.tier, listed);
+    runs = passes(chosen, deep, own.shard);
   } catch (err) {
     console.error(`test-node: ${(err as Error).message}`);
     process.exit(2);
   }
-  if (!chosen.length) {
-    console.log(`test-node: no suite to run (tier ${own.tier}${own.filesFrom ? `, ${own.filesFrom}` : ""})`);
+  if (own.list) {
+    for (const run of runs) for (const f of run.files) console.log(f);
     process.exit(0);
   }
-  const scratch = own.retryAlone && !own.timings ? mkdtempSync(join(tmpdir(), "test-node-")) : null;
-  const timingsFile = own.timings ?? (scratch ? join(scratch, "timings.json") : null);
-  // A reporter named replaces node's default, so the default is named too.
-  const reporters = timingsFile
-    ? [`--test-reporter=${process.stdout.isTTY ? "spec" : "tap"}`, "--test-reporter-destination=stdout",
-       `--test-reporter=${join(ROOT, "scripts", "test-timings-reporter.ts")}`, `--test-reporter-destination=${timingsFile}`]
-    : [];
-  const options = nodeTestOptions(own.rest);
-  const r = spawnSync(process.execPath, ["--experimental-strip-types", "--test", ...reporters, ...options, ...chosen], { cwd: ROOT, stdio: "inherit" });
-  if (r.error) {
-    console.error(`test-node: ${r.error.message}`);
-    process.exit(2);
+  if (!runs.length) {
+    const shard = own.shard ? `, shard ${own.shard.index}/${own.shard.total} of ${chosen.length}` : "";
+    console.log(`test-node: no suite to run (tier ${own.tier}${own.filesFrom ? `, ${own.filesFrom}` : ""}${shard})`);
+    process.exit(0);
   }
-  let status = r.status ?? 1;
-  if (own.retryAlone && status !== 0 && timingsFile && existsSync(timingsFile)) {
-    const failed = failedSuites(readFileSync(timingsFile, "utf8"));
-    const alone: string[] = [];
-    const still: string[] = [];
-    for (const file of failed) {
-      console.log(`\ntest-node: ${file} failed with others; running it alone`);
-      const again = spawnSync(process.execPath, ["--experimental-strip-types", "--test", "--test-concurrency=1", ...nodeTestOptions(own.rest.filter((a) => !a.startsWith("--test-shard") && !a.startsWith("--test-concurrency"))), file], { cwd: ROOT, stdio: "inherit" });
-      (again.status === 0 ? alone : still).push(file);
+  const scratch = own.retryAlone || own.timings ? mkdtempSync(join(tmpdir(), "test-node-")) : null;
+  const docs: string[] = [];
+  let status = 0;
+  for (const run of runs) {
+    const options = nodeTestOptions(own.rest, run.timeoutMs);
+    if (run.name === "deep") {
+      const limit = options.find((a) => a.startsWith("--test-timeout=")) ?? "the --test-timeout given";
+      console.log(`\ntest-node: the ${run.files.length} deep suite(s) of tests/node-tests.deep, apart, under ${limit}`);
     }
-    console.log("\ntest-node: retried alone");
-    for (const f of alone) console.log(`  passed alone (load-sensitive): ${f}`);
-    for (const f of still) console.log(`  failed alone too: ${f}`);
-    if (failed.length && !still.length) status = 3;
+    const timingsFile = scratch ? join(scratch, `${run.name}.json`) : null;
+    // A reporter named replaces node's default, so the default is named too.
+    const reporters = timingsFile
+      ? [`--test-reporter=${process.stdout.isTTY ? "spec" : "tap"}`, "--test-reporter-destination=stdout",
+         `--test-reporter=${join(ROOT, "scripts", "test-timings-reporter.ts")}`, `--test-reporter-destination=${timingsFile}`]
+      : [];
+    const r = spawnSync(process.execPath, ["--experimental-strip-types", "--test", ...reporters, ...options, ...run.files], { cwd: ROOT, stdio: "inherit" });
+    if (r.error) {
+      console.error(`test-node: ${r.error.message}`);
+      process.exit(2);
+    }
+    let runStatus = r.status ?? 1;
+    const doc = timingsFile && existsSync(timingsFile) ? readFileSync(timingsFile, "utf8") : null;
+    if (doc) docs.push(doc);
+    if (own.retryAlone && runStatus !== 0 && doc) {
+      const failed = failedSuites(doc);
+      const alone: string[] = [];
+      const still: string[] = [];
+      for (const file of failed) {
+        console.log(`\ntest-node: ${file} failed with others; running it alone`);
+        const again = spawnSync(process.execPath, ["--experimental-strip-types", "--test", "--test-concurrency=1", ...nodeTestOptions(own.rest.filter((a) => !a.startsWith("--test-concurrency")), run.timeoutMs), file], { cwd: ROOT, stdio: "inherit" });
+        (again.status === 0 ? alone : still).push(file);
+      }
+      console.log("\ntest-node: retried alone");
+      for (const f of alone) console.log(`  passed alone (load-sensitive): ${f}`);
+      for (const f of still) console.log(`  failed alone too: ${f}`);
+      if (failed.length && !still.length) runStatus = 3;
+    }
+    status = worse(status, runStatus);
   }
+  if (own.timings && docs.length) writeFileSync(own.timings, mergeTimings(docs));
   if (scratch) rmSync(scratch, { recursive: true, force: true });
   process.exit(status);
 }
