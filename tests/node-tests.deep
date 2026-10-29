@@ -1,7 +1,9 @@
 # The deep node suites: the long hardening ones (canaries planted in every
 # slot, structure-aware fuzz, worst-case inputs, growth ratios). npm test runs
-# them as always; `npm test -- --tier=fast` leaves them out and `--tier=deep`
-# runs only them (scripts/test-node.ts). One path per line, with the reason.
+# them apart, after the others, under a longer time limit (DEEP_TIMEOUT_MS),
+# and a shard holds its even share of them; `npm test -- --tier=fast` leaves
+# them out and `--tier=deep` runs only them (scripts/test-node.ts). One path
+# per line, with the reason.
 #
 # Chosen from measurement, not by name: the files that took 60 s or more on
 # the hosted Linux runner (concurrency 3) in the CI run of 2026-10-28 for
