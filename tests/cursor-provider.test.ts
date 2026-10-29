@@ -20,6 +20,7 @@ import {
   CURSOR_PROVIDER,
   cursorArgs,
   cursorSandbox,
+  contextTokens,
   cursorEnv,
   DENY_ALL,
   fullPrompt,
@@ -242,7 +243,10 @@ test("a plain answer streams as text and ends the turn; the run was headless, it
   assert.deepEqual(events.map((e) => e.type), ["start", "text_start", "text_delta", "text_delta", "text_end", "done"]);
   assert.equal(message.stopReason, "stop");
   assert.deepEqual(message.content, [{ type: "text", text: "Hello there" }]);
-  assert.deepEqual([message.usage.input, message.usage.output, message.usage.cacheRead, message.usage.cacheWrite, message.usage.totalTokens], [1200, 9, 300, 2, 1511]);
+  assert.deepEqual([message.usage.input, message.usage.output, message.usage.cacheRead, message.usage.cacheWrite], [1200, 9, 300, 2]);
+  // The context is the transcript's, not the sum of the CLI's steps: the self-compaction reads it.
+  assert.ok(message.usage.totalTokens >= contextTokens([user("hello")], message), `the context ${message.usage.totalTokens} holds the transcript and the reply`);
+  assert.ok(message.usage.totalTokens < 1511, `the context ${message.usage.totalTokens} is not the run's spend`);
   const [r] = runs();
   assert.deepEqual(r.args.slice(0, 9), ["-p", "--output-format", "stream-json", "--stream-partial-output", "--mode", "ask", "--sandbox", "enabled", "--trust"]);
   assert.equal(r.args[r.args.indexOf("--workspace") + 1], r.cwd);

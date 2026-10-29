@@ -40,7 +40,11 @@
  *
  * Token usage is the CLI's own report. Cursor publishes no per-token price for
  * a subscription, so the models carry a cost of zero: a dollar cap does not
- * hold a Cursor seat, a token or call cap does.
+ * hold a Cursor seat, a token or call cap does. The report is a sum over the
+ * CLI's own steps in the run (each sends the whole chat again), so it says what
+ * the run spent, not what the conversation holds: `totalTokens`, which Pi
+ * reads as the context, is the transcript's estimate (`contextTokens`), and the
+ * four counts, which a budget adds up, are the CLI's.
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
@@ -808,6 +812,15 @@ async function runCli(
   return run;
 }
 
+/**
+ * What the conversation holds after this reply, in tokens: the whole transcript as it is sent
+ * to a new chat, and the reply, at four characters a token (Pi's own estimate). The CLI's
+ * count cannot say it: it adds up every step of the run.
+ */
+export function contextTokens(messages: readonly Message[], reply: AssistantMessage): number {
+  return Math.ceil((fullPrompt(messages).length + renderMessage(reply).length) / 4);
+}
+
 /** Why a run gave no answer, or nothing when it gave one. */
 function runFailure(run: CliRun, timeoutMs: number): string | undefined {
   if (run.refused) return run.refused;
@@ -868,7 +881,6 @@ export function streamCursor(model: Model<Api>, context: TranscriptContext, opti
     output.usage.output += u.outputTokens ?? 0;
     output.usage.cacheRead += u.cacheReadTokens ?? 0;
     output.usage.cacheWrite += u.cacheWriteTokens ?? 0;
-    output.usage.totalTokens = output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
     output.usage.cost = calculateCost(model, output.usage);
   };
   const fail = (reason: "error" | "aborted", message: string) => {
@@ -945,6 +957,7 @@ export function streamCursor(model: Model<Api>, context: TranscriptContext, opti
       stream.push({ type: "toolcall_end", contentIndex: index, toolCall: call, partial: output });
     }
     output.stopReason = parsed.calls.length ? "toolUse" : "stop";
+    output.usage.totalTokens = contextTokens(messages, output);
     if (chatId) {
       output.responseId = chatId;
       keepIdle({ chatId, ws, model: model.id, sent: messages.length, prefixHash: hashOf(messages), replyHash: hashOf([output]), lastUsed: Date.now() });

@@ -295,8 +295,15 @@ id, with the ids it does serve when one is not. A plan login counts as a
 subscription: not for `--customer-case`, and a team of Cursor seats only must
 name `--cap-tokens`. The network allow-list gets Cursor's hosts, and the
 write guard lets the CLI write `~/.cursor` and `~/.config/cursor`, where it
-keeps its login and its chats; those chats are Cursor's copy of the
-conversation and sit outside the run's record. The CLI also connects to every
+keeps its login and its chats, and `/tmp/cursor-agent-persist-<uid>`, where it
+locks a chat it resumes (a fixed path, not taken from `TMPDIR`); those chats
+are Cursor's copy of the conversation and sit outside the run's record. The
+CLI's own sandbox does not start inside the panes' kernel guard, so under
+that guard the CLI runs without it (`PI_CURSOR_SANDBOX=disabled`, said at
+kickoff), held by the guard and its deny-all permissions. A seat's context is
+the transcript's estimate, not the CLI's count, which adds up every step of a
+run: the count goes to the budget, the estimate to the self-compaction. The
+CLI also connects to every
 MCP server the account has, which the network guard blocks unless their hosts
 are allowed. Cursor seats run with `--isolation host` for now: the agents'
 image has no `cursor-agent`, so a microVM run (the default) with a Cursor

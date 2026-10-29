@@ -5424,12 +5424,17 @@ console.log(r.ok ? "" : r.reason);' "$_gp" "$_gk" 2>/dev/null || echo "could not
       fi
       # A Cursor seat's model is cursor-agent, which keeps its chats under ~/.cursor
       # and refreshes its login in ~/.config/cursor: both stay writable for it.
+      # A resumed chat is locked under /tmp/cursor-agent-persist-<uid> (a path the CLI does
+      # not take from TMPDIR); without it every resume failed, measured.
       if run_uses_cursor; then
         local cursor_dir
         for cursor_dir in "$HOME/.cursor" "$HOME/.config/cursor"; do
           mkdir -p "$cursor_dir" 2>/dev/null || true
           [[ -d "$cursor_dir" ]] && guard_args+=(--rw "$cursor_dir")
         done
+        cursor_dir="/tmp/cursor-agent-persist-$(id -u)"
+        (umask 077 && mkdir -p "$cursor_dir") 2>/dev/null || true
+        [[ -d "$cursor_dir" && ! -L "$cursor_dir" && -O "$cursor_dir" ]] && guard_args+=(--rw "$cursor_dir")
       fi
     else
       write_guard_mode="none"
