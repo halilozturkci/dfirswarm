@@ -248,21 +248,31 @@ What it is, measured on `cursor-agent` 2026.10.22:
 
 - **The CLI is an agent of its own.** Its ask mode still read `/etc/hostname`
   outside its workspace, and the account's MCP plugins (Gmail among them) are
-  listed to its model. Each call therefore runs in a workspace of its own
-  whose `.cursor/cli.json` denies shell, read, write, web fetch and every MCP
-  tool; the CLI refused each such call when tried. Pi's tools are offered to
-  the model under the names `pi__<tool>` and asked for in a text block the
-  extension parses: a model told to use "your read tool" took the CLI's own
-  Read when the names were the same. A model that still reaches for the CLI's
-  tools and asks Pi for nothing is told so once, in the same chat. Even so,
-  turn the account's MCP plugins off, or use an account without them, for a
-  seat that reads evidence.
+  listed to its model. Each chat therefore has a workspace of its own whose
+  `.cursor/cli.json` denies shell, read, write, web fetch and every MCP tool;
+  the CLI refused each such call when tried. One of its tools that ran anyway
+  (anything but an empty search of the empty workspace, or a list of tool
+  names) stops the turn as an error. A tool the permissions have no name for,
+  such as the CLI's web search, is not refused by them, and its request has
+  left by the time the turn stops.
+- **Pi's tools are offered as `pi__<tool>`**, asked for in text blocks that
+  end the model's reply, which the extension parses; a block quoted anywhere
+  else (an injection the model reports) is text, and a block cut off is never
+  run. A model told to use "your read tool" took the CLI's own Read when the
+  names were the same, and DeepSeek still reached for it with the names apart;
+  a model that reaches for the CLI's tools and asks Pi for nothing is told
+  so once, in the same chat, which costs a second run. Even so, turn the
+  account's MCP plugins off, or use an account without them, for a seat that
+  reads evidence.
 - **The CLI leaves processes behind** (a node process and a TypeScript
   language server it starts through npx): each call runs in a process group
-  of its own, ended with the call.
+  of its own, killed when the call ends however it ends, and every live group
+  when Pi exits. A group a killed Pi left is killed at the next start.
 - **A conversation is one Cursor chat**, resumed so that only what is new is
   sent. Cursor keeps a chat's history per workspace, so a chat keeps its
-  workspace; a changed history (a compaction, an edit) starts a new chat.
+  workspace. A chat is resumed only for the exact history it holds and the
+  reply it gave, by one call at a time; a changed history (a compaction, an
+  edit) starts a new chat.
   DeepSeek's turns after the first were read mostly from Cursor's cache;
   Grok's and Kimi's were counted whole every turn.
 - **Usage is the CLI's token count; the cost is zero.** Cursor publishes no
