@@ -218,3 +218,18 @@ test("the node suites npm test runs are found by scripts/test-node.ts, none lost
   const onDisk = (readdirSync(join(ROOT, "tests"), { recursive: true }) as string[]).filter((p) => p.endsWith(".test.ts") && !p.split("/").includes("fixtures")).length;
   assert.equal(run.length + skipped.length, onDisk);
 });
+
+test("the CI green job, the check main requires, needs every other job, always runs, and passes on success or skipped only", () => {
+  const jobs = WORKFLOW.slice(WORKFLOW.search(/^jobs:\n/m));
+  const ids = [...jobs.matchAll(/^ {2}([a-z][\w-]*):\n/gm)].map((m) => m[1]);
+  const green = jobs.match(/^ {2}green:\n([\s\S]*?)(?=^ {2}[a-z][\w-]*:\n|(?![\s\S]))/m)?.[1];
+  assert.ok(green, "ci.yml has no green job");
+  assert.match(green, /^ {4}name: CI green$/m, "its name is what main's ruleset requires: renaming it leaves the ruleset waiting for a check that never comes");
+  // A required check that is skipped counts as passed: a green job skipped
+  // because a job it needs failed would let the pull request merge.
+  assert.match(green, /^ {4}if: always\(\)$/m, "it must run whatever the jobs it needs did");
+  const needs = green.match(/^ {4}needs: \[([^\]\n]*)\]$/m)?.[1].split(",").map((s) => s.trim()) ?? [];
+  assert.deepEqual([...needs].sort(), ids.filter((id) => id !== "green").sort(), "it must need every other job, or a job it leaves out could fail and the pull request still merge");
+  assert.match(green, /NEEDS: \$\{\{ toJSON\(needs\) \}\}/, "it reads every result it needs");
+  assert.match(green, /jq -e 'all\(\.\[\]; \.result == "success" or \.result == "skipped"\)'/, "anything but success or skipped (failure, cancelled) must fail it");
+});
