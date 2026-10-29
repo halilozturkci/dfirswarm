@@ -1197,7 +1197,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   async function buildSystemPrompt(
-    event: { systemPrompt: string; systemPromptOptions?: { cwd?: string } },
+    event: { systemPrompt: string; systemPromptOptions?: { cwd?: string }; messageType?: string },
     ctx: { cwd: string },
   ): Promise<{ systemPrompt: string } | undefined> {
     const cwd = event.systemPromptOptions?.cwd ?? ctx.cwd;
@@ -1237,11 +1237,14 @@ export default function (pi: ExtensionAPI) {
       }
     }
     // The rule is the run's; what this pane measured about its guard is the pane's, said to the first run.
+    // Since Pi 1.2 this handler also runs for a run an extension starts (a hand-off's, messageType
+    // "custom"), which is not the first: it gets the rule alone.
     let inputsLine = "";
     if (inputs) {
       const rule = inputsPromptLine(inputs);
-      const measured = measuredInputsLine(inputsEnforced, inputs.held);
-      inputsLine = carries(rule) ? `\n\n${measured}` : `\n\n${rule} ${measured}`;
+      const measured = event.messageType === "custom" ? "" : measuredInputsLine(inputsEnforced, inputs.held);
+      const said = carries(rule) ? measured : `${rule} ${measured}`.trim();
+      inputsLine = said ? `\n\n${said}` : "";
     }
     let forgeLine = "";
     if (forging) {

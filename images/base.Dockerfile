@@ -25,7 +25,7 @@ RUN gcc -O2 -Wall -Wextra -Werror -shared -fPIC -o /seekfix.so /src/seekfix.c -l
 
 FROM node:24-bookworm-slim
 
-ARG PI_VERSION=0.87.1
+ARG PI_VERSION=1.4.0
 RUN npm install -g --no-audit --no-fund "@earendil-works/pi-coding-agent@${PI_VERSION}" \
  && npm cache clean --force
 

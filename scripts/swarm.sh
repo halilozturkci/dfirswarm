@@ -1505,7 +1505,7 @@ provider_key_var() {
     google) printf 'GEMINI_API_KEY\n'; return ;;
     bedrock) printf 'AWS_BEARER_TOKEN_BEDROCK\n'; return ;;
     huggingface) printf 'HF_TOKEN\n'; return ;;
-    azure-openai-responses) printf 'AZURE_OPENAI_API_KEY\n'; return ;;
+    azure) printf 'AZURE_OPENAI_API_KEY\n'; return ;;
   esac
   if [[ ! "$provider" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]]; then
     printf '\n'
@@ -6369,12 +6369,12 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
     fi
   elif [[ "$use_netguard" -eq 1 ]]; then
     netguard_allow="$(provider_hosts_for_models)"
-    if distinct_models | grep -q '^azure-openai-responses/' && [[ -z "$(provider_hosts_for_model azure-openai-responses/x)" && -z "$allow_hosts" ]]; then
+    if distinct_models | grep -q '^azure/' && [[ -z "$(provider_hosts_for_model azure/x)" && -z "$allow_hosts" ]]; then
       echo "WARN: the Azure OpenAI host is not known (no AZURE_OPENAI_BASE_URL or AZURE_OPENAI_RESOURCE_NAME in the shell or in Pi's credential store); pass --allow-host <resource>.openai.azure.com or the panes cannot reach it." >&2
     fi
     local nm
     while IFS= read -r nm; do
-      [[ -n "$nm" && "${nm%%/*}" != azure-openai-responses ]] || continue
+      [[ -n "$nm" && "${nm%%/*}" != azure ]] || continue
       provider_is_local "$nm" && continue
       if [[ -z "$(provider_hosts_for_model "$nm")" && -z "$allow_hosts" ]]; then
         echo "WARN: no host is known for $nm; pass --provider-host ${nm%%/*}=<host> or the panes cannot reach it." >&2
@@ -7044,7 +7044,7 @@ provider_known_hosts() {
       ;;
   esac
   case "${model%%/*}" in
-    azure-openai-responses)
+    azure)
       # The host is the customer's own resource. Pi takes it from the shell
       # (AZURE_OPENAI_BASE_URL or AZURE_OPENAI_RESOURCE_NAME) or from the env
       # block of the provider's entry in its credential store; look in the
@@ -7052,8 +7052,8 @@ provider_known_hosts() {
       local base="${AZURE_OPENAI_BASE_URL:-}" name="${AZURE_OPENAI_RESOURCE_NAME:-}" store
       store="$(pi_agent_dir)/auth.json"
       if [[ -z "$base" && -z "$name" && -f "$store" ]] && command -v jq >/dev/null 2>&1; then
-        base="$(jq -r '."azure-openai-responses".env.AZURE_OPENAI_BASE_URL // empty' "$store" 2>/dev/null || true)"
-        name="$(jq -r '."azure-openai-responses".env.AZURE_OPENAI_RESOURCE_NAME // empty' "$store" 2>/dev/null || true)"
+        base="$(jq -r '."azure".env.AZURE_OPENAI_BASE_URL // empty' "$store" 2>/dev/null || true)"
+        name="$(jq -r '."azure".env.AZURE_OPENAI_RESOURCE_NAME // empty' "$store" 2>/dev/null || true)"
       fi
       if [[ -n "$base" ]]; then
         allow_entry_of_url "$base"
@@ -7094,7 +7094,7 @@ provider_base_url() {
   local provider="${1%%/*}"
   case "$provider" in
     llama.cpp) printf '%s\n' "${LLAMA_BASE_URL:-http://127.0.0.1:8080}" ;;
-    openai|deepseek|xai|google|anthropic|openai-codex|openrouter|azure-openai-responses) echo "" ;;
+    openai|deepseek|xai|google|anthropic|openai-codex|openrouter|azure) echo "" ;;
     *)
       local store="$(pi_agent_dir)/models.json"
       if [[ -f "$store" ]] && command -v jq >/dev/null 2>&1; then
@@ -7195,7 +7195,7 @@ model_is_metered() {
   local provider="${1%%/*}" id="${1#*/}"
   case "$provider" in
     llama.cpp) return 1 ;;
-    openai|deepseek|xai|google|anthropic|openai-codex|openrouter|azure-openai-responses) return 0 ;;
+    openai|deepseek|xai|google|anthropic|openai-codex|openrouter|azure) return 0 ;;
   esac
   local store="$(pi_agent_dir)/models.json"
   [[ -f "$store" ]] || return 0

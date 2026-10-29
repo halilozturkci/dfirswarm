@@ -2068,8 +2068,8 @@ test("readiness says what a VM kickoff would refuse: a subscription, a signing p
     assert.deepEqual(await vmProviderHosts("my-gw/m1", opts), ["llm.example.org:8443"], "a models.json provider brings its base URL's host");
     assert.deepEqual(await vmReadiness("lab/qwen", undefined, opts), { vm_hosts: [], vm_blockers: [] }, "a local server goes through the host gateway");
     // Azure's resource comes from the shell, as the kickoff reads it.
-    assert.deepEqual(await vmProviderHosts("azure-openai-responses/gpt", { ...opts, env: { AZURE_OPENAI_RESOURCE_NAME: "Contoso" } }), ["contoso.openai.azure.com"]);
-    assert.equal((await vmReadiness("azure-openai-responses/gpt", undefined, opts)).vm_blockers[0]?.kind, "unknown_host");
+    assert.deepEqual(await vmProviderHosts("azure/gpt", { ...opts, env: { AZURE_OPENAI_RESOURCE_NAME: "Contoso" } }), ["contoso.openai.azure.com"]);
+    assert.equal((await vmReadiness("azure/gpt", undefined, opts)).vm_blockers[0]?.kind, "unknown_host");
     assert.equal(allowEntryOfUrl("http://127.0.0.1:8080/v1"), "127.0.0.1:8080");
     assert.equal(allowEntryOfUrl("https://api.example.org/v1"), "api.example.org");
   } finally {
