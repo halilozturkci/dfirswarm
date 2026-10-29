@@ -345,6 +345,9 @@ def _on_signal(signum, _frame):
         STATE["pending"] = signum
         return
     STATE["answering"] = True       # the last word is the answer now: a second signal does not start another
+    if hasattr(signal, "setitimer"):
+        signal.setitimer(signal.ITIMER_REAL, 0)     # the regex clock stops first: its alarm inside the last word left a paging file unnamed
+        signal.signal(signal.SIGALRM, signal.SIG_IGN)
     kept = {}
     for page in STATE["pages"]:
         try:
@@ -440,8 +443,8 @@ class TextFile:
     def add(self, row):
         if self._fh is None:
             return
-        self._put(json.dumps(row, ensure_ascii=False, default=str).encode("utf-8", "backslashreplace") + b"\n")
         self.written += 1
+        self._put(json.dumps(row, ensure_ascii=False, default=str).encode("utf-8", "backslashreplace") + b"\n")
 
     def add_bytes_raw(self, data):
         """A piece of a source's own bytes, written as it came; the record it belongs to is counted by count_record."""
@@ -456,8 +459,8 @@ class TextFile:
         """One record exactly as its source wrote it (a native export's line, newline included)."""
         if self._fh is None:
             return
-        self._put(data)
         self.written += 1
+        self._put(data)
 
     def close(self):
         if self._fh is not None:

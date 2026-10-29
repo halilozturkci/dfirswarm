@@ -34,7 +34,7 @@
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
   "version": 8,
-  "sha256": "abb4def25c0aae53ea51b46bf52d003784c791464b9224040b7f384c96c913f4",
+  "sha256": "e86963134d11802f4ec3322cceb2ae8a9b23bb13d64bd23eca874e95fad60333",
   "use": {
     "names": [
       "crontab",

@@ -507,7 +507,8 @@ test("utmp_parse ends on SIGTERM with a last word, and keeps the paging file it 
 // cut an answer that was being printed. This harness makes it happen every time: under the paging file, or under stdout, it puts a
 // file whose first write sends the process SIGTERM, so the handler runs while the buffered layer above is in the middle of its flush.
 const INSIDE_A_WRITE = String.raw`
-import importlib.util, io, os, signal, sys
+import importlib.util, io, os, signal, sys, time
+sys.dont_write_bytecode = True          # a __pycache__ beside the tool would be a file the sealed pack does not list
 script, cwd, case = sys.argv[1:4]
 for name in ("JOB_ID", "OUT"):
     os.environ.pop(name, None)
@@ -541,7 +542,35 @@ def inside_a_write(fd):
     return io.TextIOWrapper(io.BufferedWriter(SignalInsideWrite(fd), buffer_size=64), encoding="utf-8", write_through=True)
 
 
-if case == "page":
+class SlowFlush(io.RawIOBase):
+    def __init__(self, fd):
+        self.fd = fd
+
+    def writable(self):
+        return True
+
+    def fileno(self):
+        return self.fd
+
+    def write(self, b):
+        time.sleep(0.5)                 # the last word's flush outlasts what the regex clock has left
+        return os.write(self.fd, b)
+
+
+if case == "clock":
+    # A stop that comes during a slow match: the match's clock is still running when the last word begins.
+    page = tool.LosslessPage(tool.TOOL, "records", 1)
+    page.add({"n": 0})
+    page.add({"n": 1})
+    page._out.flush()
+    held = page._out
+    page._out = io.TextIOWrapper(io.BufferedWriter(SlowFlush(held.fileno()), buffer_size=1 << 16), encoding="utf-8")
+    for n in range(2, 20):
+        page.add({"n": n})
+    tool.arm_regex_clock()
+    signal.setitimer(signal.ITIMER_REAL, 0.1)
+    os.kill(os.getpid(), signal.SIGTERM)
+elif case == "page":
     page = tool.LosslessPage(tool.TOOL, "records", 1)
     page.add({"n": 0})
     page.add({"n": 1})                  # past the limit: the paging file is begun
@@ -573,6 +602,20 @@ for (const [name, script] of [["utmp_parse", UTMP], ["cron_dump", CRON], ["shell
       const ns = kept.trimEnd().split("\n").map((l) => (JSON.parse(l) as { n: number }).n);
       assert.deepEqual(ns, ns.map((_, i) => i), "the rows in order from the first, none lost and none cut");
       assert.ok(ns.length >= 3, `${ns.length} rows kept: the one being written when the signal came is among them`);
+    });
+  });
+
+  test(`${name}: a signal during a slow match keeps the paging file under its name, though the match's clock runs out in the last word`, async () => {
+    await withCwd(async (cwd) => {
+      const r = await runPySnippet(INSIDE_A_WRITE, [script, cwd, "clock"], null);
+      assert.equal(r.code, 143, `exit status of a SIGTERM: ${r.stdout}${r.stderr}`);
+      const word = JSON.parse(r.stdout.trim().split("\n").at(-1) as string);
+      const names = await readdir(join(cwd, "work", "s1", "tool-output"));
+      assert.deepEqual(names.filter((n) => n.startsWith(".")), [], "no unfinished temporary file is left");
+      const shown: string = word.paging_files_kept.records;
+      assert.ok(shown, `the last word names the paging file: ${JSON.stringify(word.paging_files_kept)}`);
+      const ns = (await readFile(join(cwd, shown), "utf8")).trimEnd().split("\n").map((l) => (JSON.parse(l) as { n: number }).n);
+      assert.deepEqual(ns, Array.from({ length: 20 }, (_, i) => i), "every row written before the stop is in it");
     });
   });
 
