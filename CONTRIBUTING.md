@@ -54,6 +54,10 @@ every profile, boots each as an agent's VM under KVM (the probe, its verdict
 and Pi end to end), checks it against its packs with the kickoff's
 `imageFit`, and does the same for base on arm64 where that runner has KVM;
 it pushes nothing. Actions are pinned by commit, with the tag beside each.
+One check of `ci.yml`, `CI green`, passes when every other job there passed
+or was skipped; it is the check `main` requires, so a pull request with
+auto-merge on merges by itself once it is green (`images.yml` and
+`image-boot.yml` are not part of it).
 The `spikes/` directory is neither typechecked (`tsconfig.json` covers
 `extensions/`, `scripts/` and `tests/`) nor re-run: its scripts record
 measurements made once, and they can go stale. The host suites run on

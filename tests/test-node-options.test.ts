@@ -1,7 +1,8 @@
 /**
  * scripts/test-node.ts's own options (the tier, a list of suites, timings,
- * retrying a failed file alone) and the timings reporter they use, which is run
- * here on two small suites so that a change in what node reports fails by name.
+ * retrying a failed file alone, the shard), the deep suites run apart under
+ * their own timeout, and the timings reporter they use, which is run here on
+ * two small suites so that a change in what node reports fails by name.
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -10,16 +11,51 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { chooseSuites, deepSuites, failedSuites, nodeSuites, ownOptions } from "../scripts/test-node.ts";
+import { chooseSuites, DEEP_TIMEOUT_MS, deepSuites, failedSuites, mergeTimings, nodeSuites, ownOptions, passes, TEST_TIMEOUT_MS, worse } from "../scripts/test-node.ts";
 
 const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 
 test("its own options come out of argv; the rest is left for node in order", () => {
-  const o = ownOptions(["--tier=fast", "--test-shard=1/2", "--files-from=/tmp/x", "--retry-alone", "--timings=/tmp/t.json", "--test-concurrency=3"]);
-  assert.deepEqual(o, { tier: "fast", filesFrom: "/tmp/x", timings: "/tmp/t.json", retryAlone: true, rest: ["--test-shard=1/2", "--test-concurrency=3"] });
+  const o = ownOptions(["--tier=fast", "--test-shard=1/2", "--files-from=/tmp/x", "--retry-alone", "--test-name-pattern=a", "--timings=/tmp/t.json", "--list", "--test-concurrency=3"]);
+  assert.deepEqual(o, { tier: "fast", filesFrom: "/tmp/x", timings: "/tmp/t.json", retryAlone: true, shard: { index: 1, total: 2 }, list: true, rest: ["--test-name-pattern=a", "--test-concurrency=3"] });
   assert.deepEqual(ownOptions([]).rest, []);
   assert.equal(ownOptions([]).tier, "all");
+  assert.equal(ownOptions([]).shard, null);
+  assert.deepEqual(ownOptions(["--test-shard", "3/3", "--test-only"]), { ...ownOptions([]), shard: { index: 3, total: 3 }, rest: ["--test-only"] });
   assert.throws(() => ownOptions(["--tier=slow"]), /fast, deep or all/);
+  for (const bad of [["--test-shard=0/2"], ["--test-shard=3/2"], ["--test-shard=1/0"], ["--test-shard=x"], ["--test-shard=1/2/3"], ["--test-shard="], ["--test-shard"]]) {
+    assert.throws(() => ownOptions(bad), /--test-shard takes I\/N/, bad.join(" "));
+  }
+});
+
+test("the deep suites run apart, after the others, under the longer timeout; a shard cuts each list round-robin", () => {
+  const chosen = ["tests/a.test.ts", "tests/b.test.ts", "tests/c.test.ts", "tests/d.test.ts", "tests/e.test.ts"];
+  const deep = ["tests/b.test.ts", "tests/d.test.ts", "tests/e.test.ts"];
+  assert.deepEqual(passes(chosen, deep, null), [
+    { name: "others", files: ["tests/a.test.ts", "tests/c.test.ts"], timeoutMs: TEST_TIMEOUT_MS },
+    { name: "deep", files: ["tests/b.test.ts", "tests/d.test.ts", "tests/e.test.ts"], timeoutMs: DEEP_TIMEOUT_MS },
+  ]);
+  assert.deepEqual(passes(chosen, deep, { index: 1, total: 2 }).map((p) => p.files), [["tests/a.test.ts"], ["tests/b.test.ts", "tests/e.test.ts"]]);
+  assert.deepEqual(passes(chosen, deep, { index: 2, total: 2 }).map((p) => p.files), [["tests/c.test.ts"], ["tests/d.test.ts"]]);
+  // A run with no file is not started: no deep suite chosen, or none in this shard.
+  assert.deepEqual(passes(["tests/a.test.ts"], deep, null).map((p) => p.name), ["others"]);
+  assert.deepEqual(passes(["tests/b.test.ts"], deep, null).map((p) => p.name), ["deep"]);
+  assert.deepEqual(passes(["tests/a.test.ts", "tests/b.test.ts"], deep, { index: 2, total: 2 }), []);
+  assert.deepEqual(passes([], deep, null), []);
+  // The order the list came in does not move a suite to another shard.
+  assert.deepEqual(passes([...chosen].reverse(), deep, { index: 1, total: 3 }), passes(chosen, deep, { index: 1, total: 3 }));
+  assert.ok(DEEP_TIMEOUT_MS >= 2 * TEST_TIMEOUT_MS && DEEP_TIMEOUT_MS <= 20 * 60_000, "longer than the others', and a hang still fails well inside a node job's limit");
+});
+
+test("the two runs' timings are one document, and their statuses one status", () => {
+  const a = JSON.stringify({ files: [{ file: "/r/tests/a.test.ts", ms: 10 }, { file: "/r/tests/c.test.ts", ms: 5 }], failed: ["/r/tests/c.test.ts"] });
+  const b = JSON.stringify({ files: [{ file: "/r/tests/b.test.ts", ms: 7 }], failed: [] });
+  assert.deepEqual(JSON.parse(mergeTimings([a, b])), { files: [{ file: "/r/tests/a.test.ts", ms: 10 }, { file: "/r/tests/b.test.ts", ms: 7 }, { file: "/r/tests/c.test.ts", ms: 5 }], failed: ["/r/tests/c.test.ts"] });
+  assert.deepEqual(JSON.parse(mergeTimings([b])), JSON.parse(b));
+  // A failure is never hidden by a later run that passed, or passed only alone.
+  for (const [x, y, want] of [[0, 0, 0], [0, 3, 3], [3, 0, 3], [1, 0, 1], [0, 1, 1], [3, 1, 1], [1, 3, 1], [3, 3, 3], [2, 1, 2]]) {
+    assert.equal(worse(x, y), want, `${x} then ${y}`);
+  }
 });
 
 test("a tier and a list cut the suites; a listed path that is no suite is refused", () => {

@@ -1,7 +1,8 @@
 /**
  * The macOS and the Linux CI jobs are split in parts that run side by side: some run the node
- * suites, `--test-shard I/N` each (node's own, handed through `npm test`; the
- * first of them also runs the typecheck), the others the shell suites,
+ * suites, `--test-shard I/N` each (cut by scripts/test-node.ts, which runs the
+ * deep suites apart after the others; the first part also runs the
+ * typecheck), the others the shell suites,
  * `--shard I/N` each (scripts/test-bash.sh). Splitting must not lose a test, so
  * this suite reads the workflow and the shard assignment and fails if any shell
  * suite is in no shard or in two, or if the node parts are not shards 1..N of
@@ -14,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { nodeSuites } from "../scripts/test-node.ts";
+import { deepSuites, nodeSuites } from "../scripts/test-node.ts";
 
 const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const WORKFLOW = readFileSync(join(ROOT, ".github/workflows/ci.yml"), "utf8");
@@ -182,27 +183,28 @@ function coversEverySuite(job: string, where: string, nodeExtra: RegExp | null):
   assert.deepEqual([...ran].sort(), allShellSuites());
 }
 
-test("node's --test-shard, as the node parts use it, runs every suite file exactly once", () => {
-  // Measured on this Node, not assumed: five tiny suites, every shard of 1..4
-  // run with `--test-shard` and the files that ran collected from the output.
+test("npm test's --test-shard, as the node parts use it, runs every suite file exactly once, the deep ones last", () => {
+  // From the script itself (`--list` runs nothing), as a part would run it:
+  // every shard of 1..4, and a list of suites the way the select job hands one.
+  const { run } = nodeSuites(ROOT);
+  const deep = deepSuites(ROOT);
   const dir = mkdtempSync(join(tmpdir(), "ci-node-shard-"));
-  // Inside a test run, node reports a nested `node --test` to its parent
-  // instead of printing: take the marker out so the child prints its own.
-  const childEnv = { ...process.env };
-  delete childEnv.NODE_TEST_CONTEXT;
   try {
-    const files = ["a", "b", "c", "d", "e"].map((k) => {
-      const f = join(dir, `${k}.test.mjs`);
-      writeFileSync(f, `import { test } from "node:test";\ntest("t", () => { console.log("RAN-${k}"); });\n`);
-      return f;
-    });
-    for (const n of [1, 2, 3, 4]) {
-      const ran: string[] = [];
-      for (let i = 1; i <= n; i++) {
-        const out = execFileSync(process.execPath, ["--test", `--test-shard=${i}/${n}`, ...files], { encoding: "utf8", env: childEnv });
-        ran.push(...[...out.matchAll(/RAN-([a-e])/g)].map((m) => m[1]));
+    const list = join(dir, "node.list");
+    const listed = [...new Set([run[0], run[run.length - 1], ...deep.slice(0, 3)])];
+    writeFileSync(list, listed.join("\n") + "\n");
+    for (const [want, extra] of [[run, []], [listed, [`--files-from=${list}`]]] as const) {
+      for (const n of [1, 2, 3, 4]) {
+        const shards = Array.from({ length: n }, (_, k) =>
+          execFileSync(process.execPath, ["--experimental-strip-types", "--no-warnings", join(ROOT, "scripts/test-node.ts"), `--test-shard=${k + 1}/${n}`, ...extra, "--list"], { encoding: "utf8" }).split("\n").filter(Boolean));
+        assert.deepEqual(shards.flat().sort(), [...want].sort(), `${n} node shards: their union is not every suite, or a suite is in two`);
+        for (const [k, s] of shards.entries()) {
+          const first = s.findIndex((f) => deep.includes(f));
+          assert.ok(first === -1 || s.slice(first).every((f) => deep.includes(f)), `${n} shards: shard ${k + 1} runs a deep suite before another`);
+        }
+        const deepCounts = shards.map((s) => s.filter((f) => deep.includes(f)).length);
+        assert.ok(Math.max(...deepCounts) - Math.min(...deepCounts) <= 1, `${n} shards: the deep suites are not spread evenly (${deepCounts.join(", ")})`);
       }
-      assert.deepEqual([...ran].sort(), ["a", "b", "c", "d", "e"], `${n} node shards: their union is not every suite, or a suite ran twice`);
     }
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -215,4 +217,19 @@ test("the node suites npm test runs are found by scripts/test-node.ts, none lost
   // The only node suites left out are the ones tests/node-tests.skip names.
   const onDisk = (readdirSync(join(ROOT, "tests"), { recursive: true }) as string[]).filter((p) => p.endsWith(".test.ts") && !p.split("/").includes("fixtures")).length;
   assert.equal(run.length + skipped.length, onDisk);
+});
+
+test("the CI green job, the check main requires, needs every other job, always runs, and passes on success or skipped only", () => {
+  const jobs = WORKFLOW.slice(WORKFLOW.search(/^jobs:\n/m));
+  const ids = [...jobs.matchAll(/^ {2}([a-z][\w-]*):\n/gm)].map((m) => m[1]);
+  const green = jobs.match(/^ {2}green:\n([\s\S]*?)(?=^ {2}[a-z][\w-]*:\n|(?![\s\S]))/m)?.[1];
+  assert.ok(green, "ci.yml has no green job");
+  assert.match(green, /^ {4}name: CI green$/m, "its name is what main's ruleset requires: renaming it leaves the ruleset waiting for a check that never comes");
+  // A required check that is skipped counts as passed: a green job skipped
+  // because a job it needs failed would let the pull request merge.
+  assert.match(green, /^ {4}if: always\(\)$/m, "it must run whatever the jobs it needs did");
+  const needs = green.match(/^ {4}needs: \[([^\]\n]*)\]$/m)?.[1].split(",").map((s) => s.trim()) ?? [];
+  assert.deepEqual([...needs].sort(), ids.filter((id) => id !== "green").sort(), "it must need every other job, or a job it leaves out could fail and the pull request still merge");
+  assert.match(green, /NEEDS: \$\{\{ toJSON\(needs\) \}\}/, "it reads every result it needs");
+  assert.match(green, /jq -e 'all\(\.\[\]; \.result == "success" or \.result == "skipped"\)'/, "anything but success or skipped (failure, cancelled) must fail it");
 });

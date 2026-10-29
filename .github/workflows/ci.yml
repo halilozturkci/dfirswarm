@@ -613,3 +613,25 @@ jobs:
           DFIRSWARM_VM_TESTS: "1"
           VM_TEST_CATALOG_IMAGE: dfirswarm-disk:dev-amd64
         run: npm run test:vm
+
+  green:
+    # The one check main's ruleset requires, so that a pull request with
+    # auto-merge on merges once it is green, without the ruleset naming every
+    # part: the parts change with the shard counts, this name does not. It
+    # passes when every job above passed or was skipped (the microVM job when
+    # no image or pack requirement changed, the replay on a push) and fails on
+    # anything else, a cancelled run included. A required check that is
+    # skipped counts as passed, so this one always runs.
+    # tests/ci-shards.test.ts holds it to need every other job here.
+    name: CI green
+    if: always()
+    needs: [select, test, node-floor, node-24, replay-impact, pack-versions, guards-without-namespaces, macos, microvm]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every job passed or was skipped
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          printf '%s' "$NEEDS" | jq -r 'to_entries[] | "\(.value.result)\t\(.key)"'
+          printf '%s' "$NEEDS" | jq -e 'all(.[]; .result == "success" or .result == "skipped")' > /dev/null
