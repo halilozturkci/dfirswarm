@@ -1,0 +1,5 @@
+### Fixed: a run's daemons start on a Mac where nohup cannot detach
+
+On macOS, where there is no setsid, a run's daemons (the trace collector, the nudge broker, the netguard proxy, the VM hub) were started through `nohup`. macOS's `nohup` also moves the process out of the login session, and where there is none to leave it refuses and starts nothing: under a LaunchDaemon (the owner's self-hosted CI runner) it stopped with "nohup: can't detach from console: Inappropriate ioctl for device", and every kickoff warned that the trace collector did not come up. `detach_exec` in `scripts/swarm.sh`, and the hub restart in `scripts/idle-nudge.sh`, now ask whether `nohup` runs at all and, where it does not, start the daemon with SIGHUP ignored, which is what a run needs from `nohup`; `$!` stays the daemon's own pid. Where `nohup` works nothing changes, and setsid still comes first wherever there is one.
+
+Tests: `tests/detach-exec.test.sh` (a stand-in nohup that refuses, one that works, and setsid).
