@@ -15,7 +15,8 @@
  * 2026.10.22: `--mode ask` alone still read /etc/hostname outside its
  * workspace. So every chat has a workspace of its own whose
  * `.cursor/cli.json` denies shell, read, write, web fetch and every MCP tool,
- * in ask mode with the sandbox on; the model is told that Pi runs the tools
+ * in ask mode with the sandbox on (off only under a guard that holds Pi
+ * itself: `cursorSandbox`); the model is told that Pi runs the tools
  * and asks for them in text blocks at the end of its reply (`<pi_tool_call>`),
  * which this module parses. A call of the CLI's own tools that the CLI
  * refused is counted; one that ran (anything but an empty search of the empty
@@ -383,10 +384,20 @@ export function cursorBinary(env: NodeJS.ProcessEnv = process.env): string {
   return existsSync(local) ? local : "cursor-agent";
 }
 
-export function cursorArgs(model: string, workspace: string, chatId?: string): string[] {
+/**
+ * The CLI's own sandbox: on, unless Pi runs under a guard of its own that says otherwise
+ * (`PI_CURSOR_SANDBOX=disabled`). The swarm says so for a seat it holds at the kernel: the
+ * CLI's sandbox does not start inside another (a user namespace in Landlock's, a seatbelt
+ * in a seatbelt), and the swarm's guard and the deny-all permissions then hold the CLI.
+ */
+export function cursorSandbox(env: NodeJS.ProcessEnv = process.env): "enabled" | "disabled" {
+  return env.PI_CURSOR_SANDBOX === "disabled" ? "disabled" : "enabled";
+}
+
+export function cursorArgs(model: string, workspace: string, chatId?: string, sandbox: "enabled" | "disabled" = cursorSandbox()): string[] {
   return [
     "-p", "--output-format", "stream-json", "--stream-partial-output",
-    "--mode", "ask", "--sandbox", "enabled", "--trust",
+    "--mode", "ask", "--sandbox", sandbox, "--trust",
     "--workspace", workspace, "--model", model,
     ...(chatId ? ["--resume", chatId] : []),
   ];

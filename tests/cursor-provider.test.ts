@@ -19,6 +19,7 @@ import {
   CURSOR_API,
   CURSOR_PROVIDER,
   cursorArgs,
+  cursorSandbox,
   cursorEnv,
   DENY_ALL,
   fullPrompt,
@@ -224,6 +225,11 @@ test("Cursor's model list is read with its zero-width marks taken out; auto is n
 test("the CLI is run headless, in ask mode, sandboxed, in its workspace, with none of Pi's keys", () => {
   assert.deepEqual(cursorArgs("kimi-k3-low", "/w"), ["-p", "--output-format", "stream-json", "--stream-partial-output", "--mode", "ask", "--sandbox", "enabled", "--trust", "--workspace", "/w", "--model", "kimi-k3-low"]);
   assert.deepEqual(cursorArgs("m", "/w", "c9").slice(-2), ["--resume", "c9"]);
+  // Off only when the guard Pi runs under says so, and only by that exact word.
+  assert.equal(cursorSandbox({}), "enabled");
+  assert.equal(cursorSandbox({ PI_CURSOR_SANDBOX: "off" }), "enabled");
+  assert.equal(cursorSandbox({ PI_CURSOR_SANDBOX: "disabled" }), "disabled");
+  assert.deepEqual(cursorArgs("m", "/w", undefined, "disabled").slice(6, 8), ["--sandbox", "disabled"]);
   const env = cursorEnv({ HOME: "/h", PATH: "/p", OPENAI_API_KEY: "sk-x", AZURE_OPENAI_API_KEY: "k", CURSOR_API_KEY: "cur", HTTPS_PROXY: "http://proxy:3128" });
   assert.deepEqual(Object.keys(env).sort(), ["CURSOR_API_KEY", "HOME", "HTTPS_PROXY", "NO_OPEN_BROWSER", "PATH"]);
 });

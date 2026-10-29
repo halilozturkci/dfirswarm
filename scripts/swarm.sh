@@ -6310,6 +6310,14 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
   if [[ "$forging" -eq 1 ]]; then
     provider_env+=(--env "SWARM_TOOL_FORGING=1" --env "SWARM_TOOLS=$PI_TOOLS")
   fi
+  # cursor-agent's own sandbox does not start inside the panes' kernel guard (a user
+  # namespace in Landlock's, a seatbelt in a seatbelt): it failed every call, measured.
+  # Under that guard the CLI runs without its own, held by the guard and the deny-all
+  # permissions; with no guard on the pane it keeps its sandbox.
+  if [[ "$isolation" == "host" ]] && run_uses_cursor && { [[ "$write_guard_mode" != "none" ]] || [[ -n "$inputs_dir" && "$inputs_enforce" == "on" ]]; }; then
+    provider_env+=(--env "PI_CURSOR_SANDBOX=disabled")
+    echo "Cursor:       cursor-agent runs without its own sandbox: the panes' kernel guard holds it (one does not start inside the other), with its tools denied"
+  fi
   # Self-compaction reaches the pane the way every other option does. Only
   # the specs the operator set travel; an unset one is the extension's default.
   if [[ "$self_compact" -eq 1 ]]; then
