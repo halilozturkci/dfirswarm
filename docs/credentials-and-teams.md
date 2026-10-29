@@ -286,6 +286,22 @@ What it is, measured on `cursor-agent` 2026.10.22:
 - **Whether a plan may be used this way is Cursor's to say.** Read its terms
   before relying on it.
 
+A Cursor seat opens in the swarm like any other: `--models
+cursor/grok-4.7-medium:2,cursor/kimi-k3-high:1`. The kickoff loads the
+extension into every seat (and the probe) when the team has one, and checks
+the CLI instead of `pi auth`: that `cursor-agent` is installed (or named by
+`CURSOR_AGENT_BIN`), logged in (or given `CURSOR_API_KEY`), and serves each
+id, with the ids it does serve when one is not. A plan login counts as a
+subscription: not for `--customer-case`, and a team of Cursor seats only must
+name `--cap-tokens`. The network allow-list gets Cursor's hosts, and the
+write guard lets the CLI write `~/.cursor` and `~/.config/cursor`, where it
+keeps its login and its chats; those chats are Cursor's copy of the
+conversation and sit outside the run's record. The CLI also connects to every
+MCP server the account has, which the network guard blocks unless their hosts
+are allowed. Cursor seats run with `--isolation host` for now: the agents'
+image has no `cursor-agent`, so a microVM run (the default) with a Cursor
+seat is refused at kickoff.
+
 ### What a subscription will not do
 
 A login is not the same as an entitlement. Anthropic answered a third-party

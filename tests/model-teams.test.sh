@@ -380,4 +380,78 @@ out="$(PI_CODING_AGENT_DIR="$TMP/pi-local" start --model ollama/qwen3:8b --n 1 -
 grep -q -- '--compact-model deepseek/deepseek-v4-pro is not served from this machine' <<<"$out" || fail "the refusal should name the summary model: $out"
 pass "--local-only is recorded as a network mode, refused with a cloud model or a cloud summary model, and needs netguard"
 
+# --- Cursor's models: the provider extension, the CLI's gate, its hosts, its brake ---
+# cursor/<id> is served by extensions/cursor-provider.ts through Cursor's CLI. Pi's own
+# auth check cannot see the provider, so the kickoff asks the CLI; the seats load the
+# extension; the allowlist names Cursor's hosts and not the MCP servers the CLI also
+# reached for; and a team whose dollars are zero is braked by tokens.
+got="$(hosts_for "cursor/grok-4.7-medium=2")"
+case ",$got," in
+  *",api2.cursor.sh,"*) ;;
+  *) fail "a Cursor seat needs Cursor's API host: $got" ;;
+esac
+case "$got" in
+  *mcp*|*googleapis*|*npmjs*|*microsoftonline*) fail "the allowlist must not open what cursor-agent reached for beyond Cursor: $got" ;;
+esac
+pass "a Cursor seat's allowlist is Cursor's own hosts, not the account's MCP servers"
+
+CURSOR_HELPERS="$TMP/cursor-helpers.sh"
+{
+  sed -n '/^with_timeout() {/,/^}/p' "$ROOT/scripts/swarm.sh"
+  sed -n '/^env_given() {/,/^}/p' "$ROOT/scripts/swarm.sh"
+  sed -n '/^provider_is_cursor() {/,/^}/p' "$ROOT/scripts/swarm.sh"
+  sed -n '/^cursor_agent_bin() {/,/^}/p' "$ROOT/scripts/swarm.sh"
+  sed -n '/^run_uses_cursor() {/,/^}/p' "$ROOT/scripts/swarm.sh"
+  sed -n '/^cursor_ext_args() {/,/^}/p' "$ROOT/scripts/swarm.sh"
+  sed -n '/^cursor_preflight() {/,/^}/p' "$ROOT/scripts/swarm.sh"
+} > "$CURSOR_HELPERS"
+grep -q '^cursor_preflight() {' "$CURSOR_HELPERS" || fail "the Cursor helpers were not found in swarm.sh"
+
+ext_for() { # ext_for <spec> -> the seats' extra Pi arguments
+  bash -c 'set -u; ROOT="$1"; source "$2"; source "$3"; parse_model_teams "$4"; cursor_ext_args' _ "$ROOT" "$HELPERS" "$CURSOR_HELPERS" "$1"
+}
+[[ "$(ext_for "cursor/kimi-k3-low=1,deepseek/deepseek-v4-pro=1" | tr '\n' ' ')" == "-e $ROOT/extensions/cursor-provider.ts " ]] \
+  || fail "a team with a Cursor seat must load the provider: $(ext_for "cursor/kimi-k3-low=1,deepseek/deepseek-v4-pro=1")"
+[[ -z "$(ext_for "deepseek/deepseek-v4-pro=2")" ]] || fail "a team without one must not"
+pass "the seats load the Cursor provider when, and only when, a seat runs on Cursor"
+
+# A stand-in for cursor-agent's status and models commands.
+FAKE_CURSOR="$TMP/cursor-agent"
+cat > "$FAKE_CURSOR" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+  status) [[ "${FAKE_LOGGED_IN:-1}" == 1 ]] && echo "✓ Logged in as someone" || echo "Not logged in" ;;
+  models) printf 'Available models\n\nauto - Auto (default)\ngrok-4.7-medium - Grok 4.7  Medium\ngrok-4.7-high - Grok 4.7  High\nkimi-k3-low - Kimi K3 Low\n' ;;
+esac
+EOF
+chmod +x "$FAKE_CURSOR"
+gate() { # gate <model> [VAR=value...] -> the gate's output and its status
+  local model="$1"; shift
+  env "$@" bash -c 'set -u; extra_env=(); provider_env=(); source "$1"; cursor_preflight "$2"; echo "status=$?"' _ "$CURSOR_HELPERS" "$model" 2>&1
+}
+out="$(gate cursor/grok-4.7-medium CURSOR_AGENT_BIN="$TMP/nowhere/cursor-agent")"
+grep -q 'not installed on this host' <<<"$out" && grep -q 'status=1' <<<"$out" || fail "a missing CLI should be refused: $out"
+out="$(gate cursor/grok-4.7-medium CURSOR_AGENT_BIN="$FAKE_CURSOR" FAKE_LOGGED_IN=0 CURSOR_API_KEY=)"
+grep -q 'needs cursor-agent logged in' <<<"$out" && grep -q 'status=1' <<<"$out" || fail "a CLI that is not logged in should be refused: $out"
+out="$(gate cursor/grok-4.7-medium CURSOR_AGENT_BIN="$FAKE_CURSOR" FAKE_LOGGED_IN=0 CURSOR_API_KEY=k)"
+grep -q 'status=0' <<<"$out" || fail "CURSOR_API_KEY stands for a login: $out"
+out="$(gate cursor/grok-4.7 CURSOR_AGENT_BIN="$FAKE_CURSOR" CURSOR_API_KEY=)"
+grep -q "serves no model 'grok-4.7'" <<<"$out" && grep -q 'cursor/grok-4.7-high' <<<"$out" && grep -q 'status=1' <<<"$out" \
+  || fail "an id Cursor does not serve should be refused with the nearest ones: $out"
+out="$(gate cursor/kimi-k3-low CURSOR_AGENT_BIN="$FAKE_CURSOR" CURSOR_API_KEY=)"
+grep -q 'status=0' <<<"$out" || fail "a logged-in CLI serving the id should pass: $out"
+pass "the Cursor gate asks the CLI: installed, logged in (or CURSOR_API_KEY), and serving the id"
+
+out="$(start --models "cursor/grok-4.7-medium=2" --no-start --goal-file "$ROOT/prompts/goals/hello.md" --label cursor-nocap)"
+grep -q 'run on a subscription' <<<"$out" && grep -q -- '--cap-tokens N' <<<"$out" || fail "a Cursor team without a token cap should be refused: $out"
+out="$(start --models "cursor/grok-4.7-medium=2" --cap-tokens 5000000 --no-start --goal-file "$ROOT/prompts/goals/hello.md" --label cursor-tokens)"
+sb="$(sandbox_of "$out")"
+[[ -n "$sb" ]] || fail "a Cursor team with a token cap should start: $out"
+[[ "$(jq -r '.metered == false and .cap_tokens == 5000000' "$sb/budget.json")" == "true" ]] || fail "a Cursor team is braked by tokens: $(jq -c . "$sb/budget.json")"
+pass "a Cursor team's dollars are zero, so it is braked by a token cap it must name"
+
+out="$(start --isolation microvm --models "cursor/grok-4.7-medium=2" --cap-tokens 5000000 --no-start --goal-file "$ROOT/prompts/goals/hello.md" --label cursor-vm)"
+grep -q 'Cursor seats run on the host for now' <<<"$out" && [[ -z "$(sandbox_of "$out")" ]] || fail "a Cursor seat in a microVM should be refused before anything is written: $out"
+pass "a Cursor seat is refused in a microVM, whose image has no cursor-agent"
+
 echo "all model-team cases passed"
