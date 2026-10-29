@@ -2045,7 +2045,7 @@ export function anchoredCredentials(raw: unknown): AnchoredCredentials | null {
 export function credentialsWords(c: AnchoredCredentials): string {
   const groups = new Map<string, number>();
   for (const s of c.seats) {
-    const kind = s.credential === "oauth" ? `subscription (OAuth: ${s.plan ?? "subscription login; not for customer data"})` : s.credential === "api_key" ? "API key" : s.credential === "local" ? "local model, no key" : s.credential === "env" ? `key from ${s.variable ?? "the environment"}` : s.credential === "cursor-cli" ? `Cursor CLI login (${s.plan ?? "Cursor plan login (cursor-agent); not for customer data"})` : "key from models.json";
+    const kind = s.credential === "oauth" ? `subscription (OAuth: ${s.plan ?? "subscription login; not for customer data"})` : s.credential === "api_key" ? "API key" : s.credential === "local" ? "local model, no key" : s.credential === "env" ? `key from ${s.variable ?? "the environment"}` : "key from models.json";
     const key = `${s.provider} ${kind}${s.owner ? `, the key of ${s.owner}` : s.credential === "local" ? "" : ", owner not named"}`;
     groups.set(key, (groups.get(key) ?? 0) + 1);
   }

@@ -94,7 +94,6 @@ test("custody reads whose credential each seat used from the anchor, and says it
   assert.equal(credentialsWords(c), "credentials: openai-codex subscription (OAuth: consumer plan; not for customer data), owner not named (2 seats); anthropic API key, the key of ACME Ltd (1 seat); llama.cpp local model, no key (1 seat)");
   assert.equal(credentialsWords({ customer_case: true, seats: [{ seat: "s0", model: "openai/gpt-x", provider: "openai", credential: "api_key", owner: "the customer" }] }), "credentials (a customer's case: API keys only): openai API key, the key of the customer (1 seat)");
   assert.equal(credentialsWords({ customer_case: false, seats: [{ seat: "s0", model: "anthropic/claude-x", provider: "anthropic", credential: "env", owner: null, variable: "ANTHROPIC_API_KEY" }, { seat: "s1", model: "x/m", provider: "x", credential: "other", owner: null }] }), "credentials: anthropic key from ANTHROPIC_API_KEY, owner not named (1 seat); x key from models.json, owner not named (1 seat)");
-  assert.equal(credentialsWords({ customer_case: false, seats: [{ seat: "s0", model: "cursor/kimi-k3-high", provider: "cursor", credential: "cursor-cli", owner: null, plan: "Cursor plan login (cursor-agent); not for customer data" }] }), "credentials: cursor Cursor CLI login (Cursor plan login (cursor-agent); not for customer data), owner not named (1 seat)");
   assert.equal(anchoredCredentials(undefined), null);
   assert.equal(anchoredCredentials({ seats: "no" }), null);
 });

@@ -3267,10 +3267,6 @@ start_check_credentials() {
     if provider_is_local "$one_model"; then
       preflight_local_model "$one_model" "$models_json" || exit 1
     fi
-    if provider_is_cursor "$one_model"; then
-      cursor_preflight "$one_model" || exit 1
-      continue
-    fi
     auth_report="$(pi_auth_report "$one_model")"
     auth_status="$(printf '%s' "$auth_report" | cut -f1)"
     auth_type="$(printf '%s' "$auth_report" | cut -f2)"
@@ -4496,11 +4492,6 @@ sys.exit(0 if t(sys.argv[1]) < t(sys.argv[2]) else 1)' "$_have" "$_ship" 2>/dev/
   # refused here, before anything is written, whatever the isolation.
   provider_credentials_check || exit 2
   model_slug_warnings
-  # A Cursor seat runs Cursor's CLI beside Pi; the agents' image has none.
-  if [[ "$isolation" == "microvm" ]] && run_uses_cursor; then
-    echo "BLOCKER: Cursor seats run on the host for now: the agents' image has no cursor-agent. Pass --isolation host." >&2
-    exit 2
-  fi
   if [[ "$isolation" == "microvm" && "$allow_oauth_in_vm" -eq 0 ]]; then
     # A subscription token is a bearer token for the operator's whole
     # account at the provider, and a VM that holds its placeholder can send
@@ -5422,20 +5413,6 @@ console.log(r.ok ? "" : r.reason);' "$_gp" "$_gk" 2>/dev/null || echo "could not
           fi
         fi
       fi
-      # A Cursor seat's model is cursor-agent, which keeps its chats under ~/.cursor
-      # and refreshes its login in ~/.config/cursor: both stay writable for it.
-      # A resumed chat is locked under /tmp/cursor-agent-persist-<uid> (a path the CLI does
-      # not take from TMPDIR); without it every resume failed, measured.
-      if run_uses_cursor; then
-        local cursor_dir
-        for cursor_dir in "$HOME/.cursor" "$HOME/.config/cursor"; do
-          mkdir -p "$cursor_dir" 2>/dev/null || true
-          [[ -d "$cursor_dir" ]] && guard_args+=(--rw "$cursor_dir")
-        done
-        cursor_dir="/tmp/cursor-agent-persist-$(id -u)"
-        (umask 077 && mkdir -p "$cursor_dir") 2>/dev/null || true
-        [[ -d "$cursor_dir" && ! -L "$cursor_dir" && -O "$cursor_dir" ]] && guard_args+=(--rw "$cursor_dir")
-      fi
     else
       write_guard_mode="none"
     fi
@@ -6315,14 +6292,6 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
   if [[ "$forging" -eq 1 ]]; then
     provider_env+=(--env "SWARM_TOOL_FORGING=1" --env "SWARM_TOOLS=$PI_TOOLS")
   fi
-  # cursor-agent's own sandbox does not start inside the panes' kernel guard (a user
-  # namespace in Landlock's, a seatbelt in a seatbelt): it failed every call, measured.
-  # Under that guard the CLI runs without its own, held by the guard and the deny-all
-  # permissions; with no guard on the pane it keeps its sandbox.
-  if [[ "$isolation" == "host" ]] && run_uses_cursor && { [[ "$write_guard_mode" != "none" ]] || [[ -n "$inputs_dir" && "$inputs_enforce" == "on" ]]; }; then
-    provider_env+=(--env "PI_CURSOR_SANDBOX=disabled")
-    echo "Cursor:       cursor-agent runs without its own sandbox: the panes' kernel guard holds it (one does not start inside the other), with its tools denied"
-  fi
   # Self-compaction reaches the pane the way every other option does. Only
   # the specs the operator set travel; an unset one is the extension's default.
   if [[ "$self_compact" -eq 1 ]]; then
@@ -6521,9 +6490,6 @@ EOF
   echo "Layout:       tabs=${tab_count} split_failures=${split_failures} extra_workspaces=${extra_workspaces}"
 
   local EXT="$ROOT/extensions/agent-swarm.ts"
-  # Cursor's models come from a provider extension, loaded only when a seat runs on one.
-  local cursor_ext=() arg
-  while IFS= read -r arg; do [[ -n "$arg" ]] && cursor_ext+=("$arg"); done < <(cursor_ext_args)
   # Pi's --tools is an allowlist by name, so a tool an agent forges at
   # runtime could never pass it. With forging on, the list goes to the
   # extension through the environment and the extension enforces it.
@@ -6541,7 +6507,7 @@ EOF
       --approve --no-skills --name "${agent_ids[$idx]}" \
       "${SEAT_PROMPT_ARGS[@]}" \
       --session-dir "$sandbox/.pi-sessions/${agent_ids[$idx]}" \
-      -e "$EXT" ${cursor_ext[@]+"${cursor_ext[@]}"} \
+      -e "$EXT" \
       ${tool_args[@]+"${tool_args[@]}"} \
       --model "${AGENT_MODELS[$idx]}"
   done
@@ -6570,7 +6536,7 @@ EOF
       --approve --no-skills --name "$probe_id" \
       "${SEAT_PROMPT_ARGS[@]}" \
       --session-dir "$sandbox/.pi-sessions/$probe_id" \
-      -e "$EXT" ${cursor_ext[@]+"${cursor_ext[@]}"} \
+      -e "$EXT" \
       --tools "$probe_tools" \
       --model "${AGENT_MODELS[0]}"
     probe_prompt="You are a probe, not a team member. Do not join the goal. Do two things and stop. First, call write on work/probe.txt with a short line of text: you do not have claim_file, so the harness must block it. Second, run bash: echo probe >> work/probe.txt — the harness cannot block that one, so it must detect and announce it instead. Then post what happened on threads/main with tag ask and call done with reason probe_complete and output_file work/probe.txt."
@@ -6916,8 +6882,8 @@ provider_credentials_check() {
       continue
     fi
     [[ "$customer_case" -eq 1 ]] || continue
-    if [[ "$provider" == openai-codex || "$provider" == cursor || "$kind" == oauth ]]; then
-      echo "BLOCKER: --customer-case: $model runs on a subscription ($(case "$provider" in openai-codex) echo "openai-codex is a ChatGPT login by design" ;; cursor) echo "cursor is a Cursor plan login by design" ;; *) echo "an OAuth login in Pi's store" ;; esac)). A consumer plan's terms carry no processor commitments, and may let the provider train on what it is sent: a customer's evidence goes only through an API key under business terms (the customer's own, or yours with the customer told). Use an API-key provider for it (openai/…, anthropic/…), logged in to Pi with a key." >&2
+    if [[ "$provider" == openai-codex || "$kind" == oauth ]]; then
+      echo "BLOCKER: --customer-case: $model runs on a subscription ($([[ "$provider" == openai-codex ]] && echo "openai-codex is a ChatGPT login by design" || echo "an OAuth login in Pi's store")). A consumer plan's terms carry no processor commitments, and may let the provider train on what it is sent: a customer's evidence goes only through an API key under business terms (the customer's own, or yours with the customer told). Use an API-key provider for it (openai/…, anthropic/…), logged in to Pi with a key." >&2
       bad=1
       continue
     fi
@@ -6963,7 +6929,6 @@ pi_env_credential() { # <provider>
 subscription_words() { # <provider>
   case "$1" in
     openai-codex|anthropic|openai) printf 'consumer plan; not for customer data' ;;
-    cursor) printf 'Cursor plan login (cursor-agent); not for customer data' ;;
     *) printf 'subscription login; not for customer data' ;;
   esac
 }
@@ -6987,10 +6952,6 @@ credentials_json() { # <agent ids...>
     provider="${model%%/*}"
     var=""
     if provider_is_local "$model"; then kind=local
-    elif provider_is_cursor "$model"; then
-      # cursor-agent holds the login, or reads CURSOR_API_KEY: Pi's store has nothing for it.
-      kind=cursor-cli
-      env_given CURSOR_API_KEY && var=CURSOR_API_KEY
     else
       kind="$(pi_store_kind "$provider")"
       if [[ -z "$kind" ]]; then var="$(pi_env_credential "$provider")"; if [[ -n "$var" ]]; then kind=env; else kind=other; fi; fi
@@ -6999,7 +6960,7 @@ credentials_json() { # <agent ids...>
     jq -nc --arg seat "$id" --arg model "$model" --arg provider "$provider" --arg kind "$kind" --arg owner "$owner" --arg var "$var" --arg plan "$(subscription_words "$provider")" \
       '{seat: $seat, model: $model, provider: $provider, credential: $kind, owner: (if $owner == "" then null else $owner end)}
        + (if $var != "" then {variable: $var} else {} end)
-       + (if $kind == "oauth" or $kind == "cursor-cli" then {plan: $plan} else {} end)'
+       + (if $kind == "oauth" then {plan: $plan} else {} end)'
   done | jq -sc .
 }
 
@@ -7111,10 +7072,6 @@ provider_known_hosts() {
     anthropic) echo "api.anthropic.com,platform.claude.com" ;;
     openai-codex) echo "chatgpt.com,auth.openai.com" ;;
     openrouter) echo "openrouter.ai" ;;
-    # What cursor-agent 2026.10.22 reached for a one-word answer, Cursor's own hosts only.
-    # It also reached for every MCP server of the account (Gmail, Slack, Linear, …), Microsoft's
-    # login and npm's registry: none of those is allowed, and the answer did not need them.
-    cursor) echo "api2.cursor.sh,api3.cursor.sh,api.cursor.com,repo42.cursor.sh,*.api5.cursor.sh" ;;
     *)
       # A provider Pi knows only from models.json — a gateway, a local server,
       # an Azure AI Foundry resource — and Pi's own llama.cpp provider bring
@@ -7229,79 +7186,7 @@ provider_is_local() {
 # list, not a charge, and not comparable across models: on the BelkaCTF #6 run a
 # GPT-6-Luna seat with ten million tokens read $0.13 beside a Daybreak Blue
 # seat's $14. Such a seat is braked by tokens, as a local one is.
-# Cursor's models: served by extensions/cursor-provider.ts, which runs Cursor's
-# CLI (cursor-agent) as the model, logged in on this host or reading
-# CURSOR_API_KEY (docs/credentials-and-teams.md). Pi alone does not know the
-# provider: its auth check loads no extension, so the CLI is asked instead.
-provider_is_cursor() { # <provider/id>
-  [[ "${1%%/*}" == cursor ]]
-}
-
-cursor_agent_bin() {
-  if [[ -n "${CURSOR_AGENT_BIN:-}" ]]; then
-    printf '%s' "$CURSOR_AGENT_BIN"
-  elif [[ -x "$HOME/.local/bin/cursor-agent" ]]; then
-    printf '%s' "$HOME/.local/bin/cursor-agent"
-  else
-    command -v cursor-agent 2>/dev/null || true
-  fi
-}
-
-# Whether any seat, or the summary model, runs on Cursor: then every seat's Pi loads the provider.
-run_uses_cursor() {
-  distinct_models | grep -q '^cursor/' && return 0
-  [[ "${compact_model:-}" == cursor/* ]]
-}
-
-# The arguments that load the Cursor provider into a seat's Pi (nothing when no seat needs it).
-cursor_ext_args() {
-  run_uses_cursor && printf '%s\n' -e "$ROOT/extensions/cursor-provider.ts"
-  return 0
-}
-
-# The Cursor gate, in place of `pi auth check`: the CLI is there, it is logged
-# in (or CURSOR_API_KEY is given), and Cursor serves the id to this account.
-cursor_preflight() { # <cursor/id>
-  local model="$1" id="${1#*/}" bin status_out list
-  bin="$(cursor_agent_bin)"
-  if [[ -z "$bin" || ! -x "$bin" ]]; then
-    {
-      echo "BLOCKER: $model is served through Cursor's CLI, cursor-agent, which is not installed on this host."
-      echo
-      echo "Install it (https://cursor.com/cli) and log it in with 'cursor-agent login', or point"
-      echo "CURSOR_AGENT_BIN at it."
-    } >&2
-    return 1
-  fi
-  if ! env_given CURSOR_API_KEY; then
-    status_out="$(with_timeout 30 env NO_OPEN_BROWSER=1 "$bin" status 2>&1 || true)"
-    if ! grep -qi 'logged in as' <<<"$status_out"; then
-      {
-        echo "BLOCKER: $model needs cursor-agent logged in on this host, and it is not ($(head -1 <<<"$status_out" | tr -d '\r' | cut -c1-80))."
-        echo
-        echo "  cursor-agent login        # or export CURSOR_API_KEY"
-      } >&2
-      return 1
-    fi
-  fi
-  list="$(with_timeout 45 env NO_OPEN_BROWSER=1 "$bin" models 2>/dev/null || true)"
-  if [[ -n "$list" ]] && ! awk -v id="$id" '$1 == id && $2 == "-" { found = 1 } END { exit !found }' <<<"$list"; then
-    {
-      echo "BLOCKER: Cursor serves no model '$id' to this account."
-      echo
-      echo "Its ids carry the reasoning effort (grok-4.7-high, kimi-k3-low); the nearest:"
-      awk -v stem="${id%%-*}" 'index($1, stem) == 1 && $2 == "-" { print "  cursor/" $1 }' <<<"$list" | head -8
-      echo
-      echo "  $bin models"
-    } >&2
-    return 1
-  fi
-  return 0
-}
-
 model_is_subscription() { # <provider/id>
-  # A Cursor seat runs on the account's Cursor plan: its dollars are zero, not a charge.
-  provider_is_cursor "$1" && return 0
   local auth_file provider="${1%%/*}"
   auth_file="$(pi_auth_file)"
   [[ -f "$auth_file" ]] || return 1
@@ -9126,9 +9011,6 @@ launch_vm_agents() {
   echo "Layout:       tabs=${tab_count} split_failures=${split_failures} extra_workspaces=${extra_workspaces}"
 
   local msb ext="$ROOT/extensions/agent-swarm.ts" launch panes_json='{}' idx
-  # The guest mounts the frozen extensions at their host path: the Cursor provider's included.
-  local cursor_ext=() arg
-  while IFS= read -r arg; do [[ -n "$arg" ]] && cursor_ext+=("$arg"); done < <(cursor_ext_args)
   msb="$(vm_cli msb-path)"
   local vm_tools=(--tools "$PI_TOOLS")
   [[ "$forging" -eq 1 ]] && vm_tools=()
@@ -9139,7 +9021,7 @@ launch_vm_agents() {
       seat_prompt_args "$sandbox" "${agent_ids[$idx]}"
       printf ' %q' /.msb/scripts/dfirswarm-pi --approve --no-skills --name "${agent_ids[$idx]}" \
         "${SEAT_PROMPT_ARGS[@]}" \
-        --session-dir "$sandbox/.pi-sessions/${agent_ids[$idx]}" -e "$ext" ${cursor_ext[@]+"${cursor_ext[@]}"} \
+        --session-dir "$sandbox/.pi-sessions/${agent_ids[$idx]}" -e "$ext" \
         ${vm_tools[@]+"${vm_tools[@]}"} --model "${AGENT_MODELS[$idx]}"
       printf '\n'
     } > "$launch"

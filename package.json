@@ -61,7 +61,6 @@
     "microsandbox": "0.7.2"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "1.4.0",
     "@earendil-works/pi-coding-agent": "1.4.0",
     "@radix-ui/react-dialog": "^1.2.0",
     "@radix-ui/react-label": "^2.1.17",
