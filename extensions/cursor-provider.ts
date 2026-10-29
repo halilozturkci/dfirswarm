@@ -284,6 +284,42 @@ export function parseReply(reply: string): ParsedReply {
   if (reply.length > MAX_PARSED_REPLY) return { text: reply, calls: [] };
   const calls: ToolCall[] = [];
   let end = trimmedEnd(reply, reply.length);
+  // A run of blocks fenced as code: the closing fence is formatting, not text after the calls.
+  let fenced = false;
+  if (reply.endsWith("```", end) && startsLine(reply, end - 3)) {
+    const close = reply.lastIndexOf(CALL_CLOSE, end);
+    if (close >= 0 && !reply.slice(close + CALL_CLOSE.length, end - 3).trim()) {
+      end = trimmedEnd(reply, end - 3);
+      fenced = true;
+    }
+  }
+  // A short tail with no word in it after the last block (a full stop, a stray closing tag):
+  // the blocks are calls the model made, but not as the protocol says, so they are not run;
+  // they come back in error, rather than being lost and the turn ending as if it were an answer.
+  // A reply that reads whole as it ends is never read for a tail.
+  let tailed = false;
+  const whole = parseRun(reply, end, []);
+  const lastOpen = whole.calls.length ? -1 : reply.lastIndexOf(CALL_OPEN, end - 1);
+  if (lastOpen >= 0) {
+    const b = readBlock(reply, lastOpen, end);
+    const tail = b.closed ? reply.slice(b.end, end).split(CALL_CLOSE).join("").trim() : "";
+    if (b.closed && b.end < end && tail.length <= 32 && !/[\p{L}\p{N}]/u.test(tail)) {
+      end = b.end;
+      tailed = true;
+    }
+  }
+  const finish = (parsed: ParsedReply): ParsedReply => {
+    let text = parsed.text;
+    if (fenced) text = text.replace(/\n?[ \t]*```[\w-]*[ \t]*$/, "").replace(/\s+$/, "");
+    const callsOut = tailed ? parsed.calls.map((c) => refused(c, "write nothing after the last block: these calls were not run")) : parsed.calls;
+    return { text, calls: callsOut };
+  };
+  return finish(tailed ? parseRun(reply, end, calls) : whole);
+}
+
+/** The calls of the run of blocks that ends at `end`, read from the end back. */
+function parseRun(reply: string, endAt: number, calls: ToolCall[]): ParsedReply {
+  let end = endAt;
   // A last block the model was cut off in: an opening tag with no end after it.
   if (!reply.startsWith(CALL_CLOSE, end - CALL_CLOSE.length)) {
     const last = reply.lastIndexOf(CALL_OPEN, end - 1);
@@ -304,7 +340,7 @@ export function parseReply(reply: string): ParsedReply {
     for (let tries = 0; at >= 0 && tries < MAX_TRIES_PER_BLOCK; tries++, at = at > 0 ? reply.lastIndexOf(CALL_OPEN, at - 1) : -1) {
       const b = readBlock(reply, at, end);
       if (b.end !== end) continue;
-      if (b.json) {
+      if (b.json && parsesAsJson(b.raw)) {
         found = at;
         break;
       }
@@ -321,8 +357,20 @@ export function parseReply(reply: string): ParsedReply {
     calls.unshift(call);
     end = trimmedEnd(reply, found);
   }
+  if (calls.length >= MAX_CALLS && reply.startsWith(CALL_CLOSE, end - CALL_CLOSE.length)) {
+    calls.unshift({ type: "toolCall", id: callId(), name: "too_many_tool_calls", arguments: {}, argumentsError: `a reply may make at most ${MAX_CALLS} calls: the ones before these were not run` });
+  }
   if (!calls.length) return { text: reply, calls: [] };
   return { text: reply.slice(0, end), calls };
+}
+
+function parsesAsJson(raw: string): boolean {
+  try {
+    JSON.parse(raw);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -144,6 +144,33 @@ test("a block written after text on its line is not run, and comes back as an er
   assert.match(p.calls[0].argumentsError ?? "", /line of its own/);
 });
 
+test("a run of blocks fenced as code is calls; one followed by a stray mark comes back in error, never lost", () => {
+  const block = `${CALL_OPEN}{"name":"pi__read","arguments":{"path":"a"}}</pi_tool_call>`;
+  const fenced = parseReply(`Calling:\n\`\`\`\n${block}\n\`\`\``);
+  assert.equal(fenced.text, "Calling:");
+  assert.deepEqual(fenced.calls.map((c) => [c.name, c.arguments, c.argumentsError]), [["read", { path: "a" }, undefined]]);
+  for (const reply of [`Calling:\n${block}\n.`, `${block}\n</pi_tool_call>`]) {
+    const p = parseReply(reply);
+    assert.equal(p.calls.length, 1, reply);
+    assert.deepEqual(p.calls[0].arguments, {}, "not run");
+    assert.match(p.calls[0].argumentsError ?? "", /write nothing after the last block/);
+  }
+  assert.deepEqual(parseReply(`${block}\nThat is all I need.`).calls, [], "prose after a block makes it text");
+  const quoting = parseReply(`${CALL_OPEN}{"name":"pi__write","arguments":{"content":"${CALL_OPEN}</pi_tool_call>"}}</pi_tool_call>`);
+  assert.deepEqual(quoting.calls.map((c) => [c.arguments, c.argumentsError]), [[{ content: `${CALL_OPEN}</pi_tool_call>` }, undefined]], "a call that quotes the tags is no tail");
+});
+
+test("a call whose string holds balanced soup is still the call; past the call cap the model is told", () => {
+  const p = parseReply(`${CALL_OPEN}{"name":"pi__write","arguments":{"content":"${CALL_OPEN}{{"}}</pi_tool_call>`);
+  assert.equal(p.calls.length, 1);
+  assert.equal(p.calls[0].argumentsError, undefined);
+  assert.equal(p.calls[0].arguments.content, `${CALL_OPEN}{{`);
+  const many = Array.from({ length: 65 }, (_, i) => `${CALL_OPEN}{"name":"pi__read","arguments":{"path":"f${i}"}}</pi_tool_call>`).join("\n");
+  const capped = parseReply(many);
+  assert.equal(capped.calls[0].name, "too_many_tool_calls");
+  assert.match(capped.calls[0].argumentsError ?? "", /at most 64 calls/);
+});
+
 test("parsing is linear: long replies full of tags take milliseconds, not minutes", () => {
   const blocks = `${CALL_OPEN}{}</pi_tool_call>\n`.repeat(Math.ceil((256 * 1024) / 31));
   for (const reply of [`${blocks}tail`, `${CALL_OPEN}{"\n`.repeat((256 * 1024) / 17), blocks]) {
