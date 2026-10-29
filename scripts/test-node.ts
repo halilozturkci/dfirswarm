@@ -220,14 +220,20 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     console.error(`test-node: ${(err as Error).message}`);
     process.exit(2);
   }
-  if (own.list) {
-    for (const run of runs) for (const f of run.files) console.log(f);
-    process.exit(0);
-  }
+  // The process ends by itself, with this status, rather than by
+  // process.exit(): to a pipe stdout is written asynchronously, and an exit
+  // straight after a long write cuts it short (the --list of a loaded CI
+  // runner was, at 184 of 353 lines).
+  if (own.list) process.stdout.write(runs.flatMap((run) => run.files).map((f) => `${f}\n`).join(""));
+  else process.exitCode = runAll(own, chosen, runs);
+}
+
+/** Each run in turn, with its retries; the status of them all. */
+function runAll(own: OwnOptions, chosen: string[], runs: Pass[]): number {
   if (!runs.length) {
     const shard = own.shard ? `, shard ${own.shard.index}/${own.shard.total} of ${chosen.length}` : "";
     console.log(`test-node: no suite to run (tier ${own.tier}${own.filesFrom ? `, ${own.filesFrom}` : ""}${shard})`);
-    process.exit(0);
+    return 0;
   }
   const scratch = own.retryAlone || own.timings ? mkdtempSync(join(tmpdir(), "test-node-")) : null;
   const docs: string[] = [];
@@ -247,7 +253,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     const r = spawnSync(process.execPath, ["--experimental-strip-types", "--test", ...reporters, ...options, ...run.files], { cwd: ROOT, stdio: "inherit" });
     if (r.error) {
       console.error(`test-node: ${r.error.message}`);
-      process.exit(2);
+      if (scratch) rmSync(scratch, { recursive: true, force: true });
+      return 2;
     }
     let runStatus = r.status ?? 1;
     const doc = timingsFile && existsSync(timingsFile) ? readFileSync(timingsFile, "utf8") : null;
@@ -270,5 +277,5 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   }
   if (own.timings && docs.length) writeFileSync(own.timings, mergeTimings(docs));
   if (scratch) rmSync(scratch, { recursive: true, force: true });
-  process.exit(status);
+  return status;
 }
