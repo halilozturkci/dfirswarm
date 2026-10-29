@@ -233,6 +233,44 @@ nothing and claim nothing rather than fail loudly; and prompt-cache fields
 stay zero, so a local run's token total is not comparable with a cloud run's.
 Measure a candidate on `prompts/goals/hello.md` before trusting it with a case.
 
+### Cursor's models, through `cursor-agent`
+
+`extensions/cursor-provider.ts` registers a provider, `cursor`, that serves
+the models of a Cursor account to Pi: `pi -e extensions/cursor-provider.ts
+--model cursor/grok-4.7-medium`. Pi stays the agent (its loop, its tools, the
+swarm's guards and record); the model is reached through Cursor's own CLI,
+`cursor-agent`, in its headless mode. Install the CLI and log it in on the
+host (`cursor-agent login`, or `CURSOR_API_KEY`); `cursor-agent models` lists
+the ids, the reasoning effort part of each (`grok-4.7-high`,
+`deepseek-v41-flash-1017-none`, `kimi-k3-low`).
+
+What it is, measured on `cursor-agent` 2026.10.22:
+
+- **The CLI is an agent of its own.** Its ask mode still read `/etc/hostname`
+  outside its workspace, and the account's MCP plugins (Gmail among them) are
+  listed to its model. Each call therefore runs in a workspace of its own
+  whose `.cursor/cli.json` denies shell, read, write, web fetch and every MCP
+  tool; the CLI refused each such call when tried. Pi's tools are offered to
+  the model under the names `pi__<tool>` and asked for in a text block the
+  extension parses: a model told to use "your read tool" took the CLI's own
+  Read when the names were the same. A model that still reaches for the CLI's
+  tools and asks Pi for nothing is told so once, in the same chat. Even so,
+  turn the account's MCP plugins off, or use an account without them, for a
+  seat that reads evidence.
+- **The CLI leaves processes behind** (a node process and a TypeScript
+  language server it starts through npx): each call runs in a process group
+  of its own, ended with the call.
+- **A conversation is one Cursor chat**, resumed so that only what is new is
+  sent. Cursor keeps a chat's history per workspace, so a chat keeps its
+  workspace; a changed history (a compaction, an edit) starts a new chat.
+  DeepSeek's turns after the first were read mostly from Cursor's cache;
+  Grok's and Kimi's were counted whole every turn.
+- **Usage is the CLI's token count; the cost is zero.** Cursor publishes no
+  per-token price for a plan, so a dollar cap does not hold a Cursor seat: cap
+  it by tokens or calls.
+- **Whether a plan may be used this way is Cursor's to say.** Read its terms
+  before relying on it.
+
 ### What a subscription will not do
 
 A login is not the same as an entitlement. Anthropic answered a third-party
