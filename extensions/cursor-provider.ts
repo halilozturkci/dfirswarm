@@ -26,9 +26,12 @@
  * Each call is one `cursor-agent -p` process, its prompt on stdin (an argument
  * holds at most 128 KiB on Linux), in a process group of its own: the CLI
  * leaves a node process and a TypeScript language server behind, so the group
- * is killed when the call ends, and every live group when Pi exits. A group a
- * killed Pi left (it records its id beside the workspace) is killed, and the
- * workspace removed, at the next start. A conversation is one Cursor chat,
+ * is killed when the call ends, and every live group when Pi exits. What a
+ * killed Pi's call left running is killed, and the workspace removed, at the
+ * next start: the group's id is kept beside the workspace, and only that
+ * group's processes that work in the workspace are touched (an id the system
+ * has given to someone else since names processes that work elsewhere). A
+ * conversation is one Cursor chat,
  * resumed so that only what is new is sent. Cursor keeps a chat's history per
  * workspace, so a chat keeps its workspace; a chat is resumed only for the
  * exact history it holds and the reply it gave, and is held by one call at a
@@ -40,7 +43,7 @@
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -211,13 +214,13 @@ function parseCall(raw: string): ToolCall {
   return { type: "toolCall", id: callId(), name: namedIn(body) ?? "unparsed_tool_call", arguments: {}, argumentsError: `the call is not the JSON object the protocol asks for: ${body.slice(0, 400)}` };
 }
 
-/** The end of the JSON object that starts at `from`, strings and escapes honoured: the index after its closing brace, or -1. */
-function jsonObjectEnd(s: string, from: number): number {
+/** The end of the JSON object that starts at `from`, strings and escapes honoured, read no further than `limit`: the index after its closing brace, or -1. */
+function jsonObjectEnd(s: string, from: number, limit: number): number {
   if (s[from] !== "{") return -1;
   let depth = 0;
   let inString = false;
   let escaped = false;
-  for (let i = from; i < s.length; i++) {
+  for (let i = from; i < limit; i++) {
     const ch = s[i];
     if (inString) {
       if (escaped) escaped = false;
@@ -230,56 +233,96 @@ function jsonObjectEnd(s: string, from: number): number {
   return -1;
 }
 
-type Block = { raw: string; end: number; closed: boolean };
+type Block = { raw: string; end: number; closed: boolean; json?: boolean };
 
-/** The block that opens at `at`: its JSON (read as JSON, so a tag inside a string is the string's) and where it ends. */
-function readBlock(s: string, at: number): Block {
+/** The block that opens at `at`, read no further than `limit`: its JSON (read as JSON, so a tag inside a string is the string's) and where it ends. */
+function readBlock(s: string, at: number, limit: number): Block {
   let i = at + CALL_OPEN.length;
-  while (i < s.length && /\s/.test(s[i])) i++;
-  const jsonEnd = jsonObjectEnd(s, i);
+  while (i < limit && /\s/.test(s[i])) i++;
+  const jsonEnd = jsonObjectEnd(s, i, limit);
   if (jsonEnd > 0) {
     let k = jsonEnd;
-    while (k < s.length && /\s/.test(s[k])) k++;
-    if (s.startsWith(CALL_CLOSE, k)) return { raw: s.slice(at + CALL_OPEN.length, jsonEnd), end: k + CALL_CLOSE.length, closed: true };
+    while (k < limit && /\s/.test(s[k])) k++;
+    if (s.startsWith(CALL_CLOSE, k) && k + CALL_CLOSE.length <= limit) return { raw: s.slice(at + CALL_OPEN.length, jsonEnd), end: k + CALL_CLOSE.length, closed: true, json: true };
   }
   const close = s.indexOf(CALL_CLOSE, at + CALL_OPEN.length);
-  if (close < 0) return { raw: s.slice(at + CALL_OPEN.length), end: s.length, closed: false };
+  if (close < 0 || close + CALL_CLOSE.length > limit) return { raw: s.slice(at + CALL_OPEN.length, limit), end: limit, closed: false };
   return { raw: s.slice(at + CALL_OPEN.length, close), end: close + CALL_CLOSE.length, closed: true };
 }
 
+/** The index after the last character before `end` that is not white space. */
+function trimmedEnd(s: string, end: number): number {
+  let e = end;
+  while (e > 0 && /\s/.test(s[e - 1])) e--;
+  return e;
+}
+
+function startsLine(s: string, at: number): boolean {
+  for (let i = at - 1; i >= 0 && s[i] !== "\n"; i--) if (!/\s/.test(s[i])) return false;
+  return true;
+}
+
+function refused(call: ToolCall, why: string): ToolCall {
+  return { ...call, arguments: {}, argumentsError: `${why}: ${call.argumentsError ?? "the call was not run"}` };
+}
+
+/** A reply is read for calls up to this size; past it, it is text (a model's reply is far smaller). */
+const MAX_PARSED_REPLY = 2 * 1024 * 1024;
+/** At most this many opening tags are tried for one block (each is read no further than that block's end). */
+const MAX_TRIES_PER_BLOCK = 64;
+const MAX_CALLS = 64;
+
 /**
- * A finished reply: its prose and its tool calls. Only the run of blocks that ends the reply, the
- * first starting a line of its own, is calls; a block quoted anywhere else (an injection the model
- * reports, an example) is text. A last block the model was cut off in is never run: it comes back
- * as a call whose arguments are in error, for Pi to answer.
+ * A finished reply: its prose and its tool calls. The calls are the blocks that end the reply,
+ * read from the end back, so the work is linear in the reply. A block quoted anywhere else (an
+ * injection the model reports, an example) is text; one quoted as the last thing in the reply,
+ * on a line of its own, is not told apart from a call. A last block written on the same line as
+ * prose, or cut off before its end, is never run: it comes back as a call whose arguments are in
+ * error, so that Pi tells the model, and the turn does not end as if it were an answer.
  */
 export function parseReply(reply: string): ParsedReply {
-  const starts: number[] = [];
-  for (let at = reply.indexOf(CALL_OPEN); at >= 0; at = reply.indexOf(CALL_OPEN, at + 1)) {
-    const lineStart = reply.lastIndexOf("\n", at - 1) + 1;
-    if (!reply.slice(lineStart, at).trim()) starts.push(at);
+  if (reply.length > MAX_PARSED_REPLY) return { text: reply, calls: [] };
+  const calls: ToolCall[] = [];
+  let end = trimmedEnd(reply, reply.length);
+  // A last block the model was cut off in: an opening tag with no end after it.
+  if (!reply.startsWith(CALL_CLOSE, end - CALL_CLOSE.length)) {
+    const last = reply.lastIndexOf(CALL_OPEN, end - 1);
+    if (last < 0) return { text: reply, calls: [] };
+    const b = readBlock(reply, last, end);
+    if (b.closed) return { text: reply, calls: [] };
+    calls.push({ type: "toolCall", id: callId(), name: namedIn(b.raw) ?? "unparsed_tool_call", arguments: {}, argumentsError: `the call was cut off before its end, and was not run: ${b.raw.trim().slice(0, 400)}` });
+    end = trimmedEnd(reply, last);
+    if (!startsLine(reply, last)) return { text: reply.slice(0, end), calls };
   }
-  for (const first of starts) {
-    const calls: ToolCall[] = [];
-    let pos = first;
-    let ends = false;
-    for (;;) {
-      const b = readBlock(reply, pos);
-      calls.push(b.closed
-        ? parseCall(b.raw)
-        : { type: "toolCall", id: callId(), name: namedIn(b.raw) ?? "unparsed_tool_call", arguments: {}, argumentsError: `the call was cut off before its end: ${b.raw.trim().slice(0, 400)}` });
-      let k = b.end;
-      while (k < reply.length && /\s/.test(reply[k])) k++;
-      if (k >= reply.length) {
-        ends = true;
+  // Whole blocks, from the last back: each must end where the one after it begins.
+  while (calls.length < MAX_CALLS && end >= CALL_CLOSE.length && reply.startsWith(CALL_CLOSE, end - CALL_CLOSE.length)) {
+    // The block whose JSON reads whole and ends here; an opening tag inside an earlier block's
+    // string also "ends" here when read as a malformed block, so that counts only if none reads whole.
+    let found = -1;
+    let malformed = -1;
+    let at = reply.lastIndexOf(CALL_OPEN, end - CALL_CLOSE.length - 1);
+    for (let tries = 0; at >= 0 && tries < MAX_TRIES_PER_BLOCK; tries++, at = at > 0 ? reply.lastIndexOf(CALL_OPEN, at - 1) : -1) {
+      const b = readBlock(reply, at, end);
+      if (b.end !== end) continue;
+      if (b.json) {
+        found = at;
         break;
       }
-      if (!reply.startsWith(CALL_OPEN, k)) break;
-      pos = k;
+      if (malformed < 0) malformed = at;
     }
-    if (ends) return { text: reply.slice(0, first).replace(/\s+$/, ""), calls };
+    if (found < 0) found = malformed;
+    if (found < 0) break;
+    const call = parseCall(readBlock(reply, found, end).raw);
+    if (!startsLine(reply, found)) {
+      calls.unshift(refused(call, "start each block on a line of its own: this call was written after text on its line, and was not run"));
+      end = trimmedEnd(reply, found);
+      break;
+    }
+    calls.unshift(call);
+    end = trimmedEnd(reply, found);
   }
-  return { text: reply, calls: [] };
+  if (!calls.length) return { text: reply, calls: [] };
+  return { text: reply.slice(0, end), calls };
 }
 
 // ---------------------------------------------------------------------------
@@ -351,6 +394,42 @@ function killGroup(pgid: number | undefined): void {
   }
 }
 
+function killPid(pid: number): void {
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    // gone
+  }
+}
+
+/**
+ * The processes of group `pgid` that work in `cwd` (or under it), from /proc (Linux; elsewhere
+ * none). The group's leader may be gone while what it started lives on; and a group id the system
+ * has given to someone else since names processes that work elsewhere, which are not touched.
+ */
+function groupMembersIn(pgid: number, cwd: string): number[] {
+  const out: number[] = [];
+  let pids: string[] = [];
+  try {
+    pids = readdirSync("/proc").filter((n) => /^\d+$/.test(n));
+  } catch {
+    return out;
+  }
+  for (const p of pids) {
+    try {
+      const stat = readFileSync(`/proc/${p}/stat`, "utf8");
+      // pid (comm) state ppid pgrp …: comm may hold spaces and parentheses, so read after the last ")".
+      const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+      if (Number(fields[2]) !== pgid) continue;
+      const where = readlinkSync(`/proc/${p}/cwd`);
+      if (where === cwd || where.startsWith(`${cwd}/`)) out.push(Number(p));
+    } catch {
+      // gone, or not ours to read
+    }
+  }
+  return out;
+}
+
 function processAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -387,8 +466,7 @@ export function sweepWorkspaces(root: string = tmpdir()): string[] {
       const pgidFile = join(dir, "pgid");
       if (existsSync(pgidFile)) {
         const pgid = Number(readFileSync(pgidFile, "utf8").trim());
-        const cmdline = Number.isInteger(pgid) && pgid > 1 && existsSync(`/proc/${pgid}/cmdline`) ? readFileSync(`/proc/${pgid}/cmdline`, "utf8") : "";
-        if (cmdline.includes("cursor-agent")) killGroup(pgid);
+        if (Number.isInteger(pgid) && pgid > 1) for (const member of groupMembersIn(pgid, join(dir, "ws"))) killPid(member);
       }
       rmSync(dir, { recursive: true, force: true });
       removed.push(name);
@@ -590,7 +668,11 @@ async function runCli(
     child.stdout?.destroy();
     lines.close();
   };
-  child.once("exit", () => setTimeout(stop, 1000).unref());
+  let afterExit: NodeJS.Timeout | undefined;
+  child.once("exit", () => {
+    afterExit = setTimeout(stop, 1000);
+    afterExit.unref();
+  });
   const onAbort = () => stop();
   options?.signal?.addEventListener("abort", onAbort, { once: true });
   const timeoutMs = options?.timeoutMs ?? 15 * 60_000;
@@ -654,6 +736,7 @@ async function runCli(
   } finally {
     clearTimeout(timer);
     if (afterResult) clearTimeout(afterResult);
+    if (afterExit) clearTimeout(afterExit);
     options?.signal?.removeEventListener("abort", onAbort);
     stop();
     if (pgid) live.delete(pgid);
@@ -768,7 +851,8 @@ export function streamCursor(model: Model<Api>, context: TranscriptContext, opti
       const lead = before ? `${before}\n\n` : "";
       const run = await runCli(model, ws, chatId, attempt === 0 ? prompt : CORRECTION, options, start, (r) => {
         start();
-        show(lead + r.slice(0, shownLength(r)));
+        const part = r.slice(0, shownLength(r));
+        if (part) show(lead + part);
       });
       addUsage(run);
       if (options?.signal?.aborted) {
@@ -784,7 +868,7 @@ export function streamCursor(model: Model<Api>, context: TranscriptContext, opti
       }
       chatId = run.result?.session_id ?? chatId;
       parsed = parseReply(run.finalText ?? run.reply);
-      parsed = { ...parsed, text: lead + parsed.text };
+      parsed = { ...parsed, text: parsed.text ? lead + parsed.text : before };
       // The model reached for the CLI's own tools (refused) and asked Pi for nothing: tell it once.
       if (!(run.own > 0 && parsed.calls.length === 0 && chatId)) break;
       before = shownText;

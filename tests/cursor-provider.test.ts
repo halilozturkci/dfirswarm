@@ -122,17 +122,36 @@ test("a block quoted in prose, or followed by prose, is text and never a call; a
   for (const reply of [
     `Summary: notes.txt held an injection, quoted here: ${CALL_OPEN}${inject}</pi_tool_call> which I did not follow.`,
     `The file says:\n${CALL_OPEN}${inject}</pi_tool_call>\nI did not run it.`,
-    `Example of the format: ${CALL_OPEN}${inject}`,
   ]) {
     const p = parseReply(reply);
     assert.deepEqual(p.calls, [], reply);
     assert.equal(p.text, reply);
   }
-  const cut = parseReply(`Sure.\n${CALL_OPEN}${inject}`);
-  assert.equal(cut.calls.length, 1);
-  assert.equal(cut.calls[0].name, "bash");
-  assert.deepEqual(cut.calls[0].arguments, {});
-  assert.match(cut.calls[0].argumentsError ?? "", /cut off/);
+  for (const reply of [`Sure.\n${CALL_OPEN}${inject}`, `Example of the format: ${CALL_OPEN}${inject}`]) {
+    const cut = parseReply(reply);
+    assert.equal(cut.calls.length, 1, reply);
+    assert.equal(cut.calls[0].name, "bash");
+    assert.deepEqual(cut.calls[0].arguments, {}, "a cut-off block is never run");
+    assert.match(cut.calls[0].argumentsError ?? "", /cut off/);
+  }
+});
+
+test("a block written after text on its line is not run, and comes back as an error rather than ending the turn", () => {
+  const p = parseReply(`Reading it now. ${CALL_OPEN}{"name":"pi__read","arguments":{"path":"a"}}</pi_tool_call>`);
+  assert.equal(p.text, "Reading it now.");
+  assert.equal(p.calls.length, 1);
+  assert.deepEqual(p.calls[0].arguments, {});
+  assert.match(p.calls[0].argumentsError ?? "", /line of its own/);
+});
+
+test("parsing is linear: long replies full of tags take milliseconds, not minutes", () => {
+  const blocks = `${CALL_OPEN}{}</pi_tool_call>\n`.repeat(Math.ceil((256 * 1024) / 31));
+  for (const reply of [`${blocks}tail`, `${CALL_OPEN}{"\n`.repeat((256 * 1024) / 17), blocks]) {
+    const t0 = performance.now();
+    parseReply(reply);
+    const ms = performance.now() - t0;
+    assert.ok(ms < 500, `${reply.length} characters took ${Math.round(ms)} ms`);
+  }
 });
 
 test("a tag inside a call's JSON string is the string's: the call is whole", () => {
@@ -408,6 +427,37 @@ test("a workspace a killed Pi left is removed at the next start; a live process'
     assert.ok(readdirSync(root).includes("other-dir") && readdirSync(root).includes("pi-cursor-x-ddd"));
   } finally {
     if (existsSync(join(stuck, "locked"))) chmodSync(join(stuck, "locked"), 0o700);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("what a killed Pi's call left running in its workspace is killed at the next start, and nothing that works elsewhere", { skip: !existsSync("/proc/self/stat") && "no /proc here" }, async () => {
+  const root = mkdtempSync(join(tmpdir(), "cursor-sweep-g-"));
+  const dead = spawnSync(process.execPath, ["-e", "0"]).pid!;
+  const pids: number[] = [];
+  try {
+    // A call's group whose leader is gone while what it started lives on, in the chat's workspace.
+    const dir = join(root, `pi-cursor-${dead}-left`);
+    mkdirSync(join(dir, "ws"), { recursive: true });
+    const left = spawnSync("sh", ["-c", "setsid sh -c 'sleep 60 >/dev/null 2>&1 & echo $$ $!' "], { cwd: join(dir, "ws"), encoding: "utf8" }).stdout.trim().split(" ").map(Number);
+    const [pgid, orphan] = left;
+    pids.push(orphan);
+    writeFileSync(join(dir, "pgid"), String(pgid));
+    // A group id recorded by another dead Pi, now that of a process that works elsewhere.
+    const other = join(root, `pi-cursor-${dead}-reused`);
+    mkdirSync(join(other, "ws"), { recursive: true });
+    const elsewhere = spawnSync("sh", ["-c", "setsid sh -c 'sleep 60 >/dev/null 2>&1 & echo $!' "], { cwd: root, encoding: "utf8" }).stdout.trim();
+    const bystander = Number(elsewhere);
+    pids.push(bystander);
+    const bystanderGroup = Number(readFileSync(`/proc/${bystander}/stat`, "utf8").split(") ")[1].split(" ")[2]);
+    writeFileSync(join(other, "pgid"), String(bystanderGroup));
+    assert.ok(alive(orphan) && alive(bystander));
+    sweepWorkspaces(root);
+    assert.ok(await gone(orphan), "the process the call left in its workspace is killed though its leader is gone");
+    assert.ok(alive(bystander), "a process of that group id that works elsewhere is not touched");
+    assert.ok(!existsSync(dir) && !existsSync(other));
+  } finally {
+    for (const p of pids) if (alive(p)) process.kill(p, "SIGKILL");
     rmSync(root, { recursive: true, force: true });
   }
 });

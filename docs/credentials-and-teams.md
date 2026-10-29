@@ -256,9 +256,13 @@ What it is, measured on `cursor-agent` 2026.10.22:
   such as the CLI's web search, is not refused by them, and its request has
   left by the time the turn stops.
 - **Pi's tools are offered as `pi__<tool>`**, asked for in text blocks that
-  end the model's reply, which the extension parses; a block quoted anywhere
-  else (an injection the model reports) is text, and a block cut off is never
-  run. A model told to use "your read tool" took the CLI's own Read when the
+  end the model's reply, each on a line of its own, which the extension
+  parses. A block quoted anywhere else (an injection the model reports) is
+  text; one written after text on its line, or cut off, is never run and
+  comes back to the model as an error. A text protocol has one limit: a block
+  the model quotes as the very last thing in its reply, on a line of its own,
+  cannot be told from a call, and Pi runs it under the same guards as any
+  other call. A model told to use "your read tool" took the CLI's own Read when the
   names were the same, and DeepSeek still reached for it with the names apart;
   a model that reaches for the CLI's tools and asks Pi for nothing is told
   so once, in the same chat, which costs a second run. Even so, turn the
@@ -267,7 +271,8 @@ What it is, measured on `cursor-agent` 2026.10.22:
 - **The CLI leaves processes behind** (a node process and a TypeScript
   language server it starts through npx): each call runs in a process group
   of its own, killed when the call ends however it ends, and every live group
-  when Pi exits. A group a killed Pi left is killed at the next start.
+  when Pi exits. What a killed Pi's call left running in its workspace is
+  killed at the next start (on Linux, which has /proc).
 - **A conversation is one Cursor chat**, resumed so that only what is new is
   sent. Cursor keeps a chat's history per workspace, so a chat keeps its
   workspace. A chat is resumed only for the exact history it holds and the
