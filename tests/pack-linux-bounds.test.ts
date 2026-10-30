@@ -722,9 +722,21 @@ test("the tools that read files refuse a disk image with the routes that read on
         assert.equal(out.status, "failed");
       }
     }
+    // A dynamic VHD says so in its first bytes.
+    await writeFile(join(cwd, "inputs", "disk.vhd"), Buffer.concat([Buffer.from("conectix", "latin1"), Buffer.alloc(600)]));
+    assert.match(refused(await tool(CRON, cwd, { root: "inputs/disk.vhd" })).error, /^root is a disk image/);
     // A name is not enough: a copied wtmp called .raw, with no boot-sector signature, is read as what it is.
     await writeFile(join(cwd, "inputs", "wtmp.raw"), Buffer.alloc(384 * 2));
     const wtmp = await tool(UTMP, cwd, { path: "inputs/wtmp.raw" });
     assert.doesNotMatch(wtmp.stdout, /is a disk image/, wtmp.stdout);
+    // A path the system cannot take (a NUL in it, a lone surrogate) is answered in JSON, as before the check: the first
+    // version of it let os.stat's ValueError out as a traceback with no JSON from four of the five tools.
+    for (const [script, key] of [[CRON, "root"], [SHELL, "root"], [UTMP, "path"], [AUTH, "path"], [JOURNAL, "path"]] as const) {
+      for (const odd of ["inputs/a\u0000b", "inputs/\ud800x"]) {
+        const out = refused(await tool(script, cwd, { [key]: odd }));
+        assert.equal(out.status, "failed", `${script} ${JSON.stringify(odd)}`);
+        assert.doesNotMatch(out.error, /disk image/);
+      }
+    }
   });
 });

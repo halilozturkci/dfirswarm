@@ -528,7 +528,8 @@ is left as it is and said on the trace, `secrets_renewed`). A run with a wall
 clock mints for the wall clock and an hour. A subscription whose token cannot
 be minted for that long but can for 50 minutes (a "Sign in with ChatGPT" login
 under `openai`, whose token lives about an hour) brings the run's floor down to
-50 minutes, renewed every 25, and the kickoff says so on a `Tokens:` line.
+50 minutes, renewed at half that like any other, and the kickoff says so on a
+`Tokens:` line.
 
 How the seats share the work and end it ([ADR 0015](adr/0015-one-seat-finishes-and-work-is-offered.md)):
 one seat coordinates the finish (normally the one that published the report

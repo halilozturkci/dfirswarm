@@ -8696,7 +8696,8 @@ check_spec_network() { # <vm spec file>
 # to 50 minutes, renewed every 25, and the kickoff says so on stderr. One that
 # cannot be minted for 50 minutes either is left to fail where the VMs are
 # made, in Pi's words. No token is kept or printed: only Pi's exit status.
-# Each provider is asked at most twice, within a minute each.
+# Each provider is asked at most twice, within a minute each (with_timeout:
+# macOS has no coreutils timeout).
 vm_token_validity() { # <providers json> <wall minutes> <until solved: 0|1>
   local providers="$1" wall="$2" until="$3" floor p short="50m" dir
   if [[ -n "${SWARM_TOKEN_MIN_VALIDITY:-}" ]]; then echo "$SWARM_TOKEN_MIN_VALIDITY"; return 0; fi
@@ -8704,9 +8705,9 @@ vm_token_validity() { # <providers json> <wall minutes> <until solved: 0|1>
   dir="$(pi_agent_dir)"
   while IFS= read -r p; do
     [[ -n "$p" ]] || continue
-    PI_CODING_AGENT_DIR="$dir" timeout 60 pi auth print-bearer-token --provider "$p" --min-expiry "$floor" >/dev/null 2>&1 < /dev/null && continue
-    if PI_CODING_AGENT_DIR="$dir" timeout 60 pi auth print-bearer-token --provider "$p" --min-expiry "$short" >/dev/null 2>&1 < /dev/null; then
-      echo "Tokens:       $p's subscription token cannot be minted for $floor (a ChatGPT sign-in's lives about an hour): the run's tokens are minted for $short and renewed on the host every 25 minutes (SWARM_TOKEN_MIN_VALIDITY sets it)" >&2
+    with_timeout 60 env PI_CODING_AGENT_DIR="$dir" pi auth print-bearer-token --provider "$p" --min-expiry "$floor" >/dev/null 2>&1 < /dev/null && continue
+    if with_timeout 60 env PI_CODING_AGENT_DIR="$dir" pi auth print-bearer-token --provider "$p" --min-expiry "$short" >/dev/null 2>&1 < /dev/null; then
+      echo "Tokens:       $p's subscription token cannot be minted for $floor (a ChatGPT sign-in's lives about an hour): the run's tokens are minted for $short and renewed on the host at half that, within ten minutes of it (SWARM_TOKEN_MIN_VALIDITY sets it)" >&2
       floor="$short"
     fi
   done < <(jq -r '.[] | select(.kind == "oauth") | .provider' <<<"$providers")

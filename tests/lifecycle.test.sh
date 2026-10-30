@@ -193,11 +193,11 @@ case "\$provider:\$floor" in
 esac
 EOF
 chmod +x "$TMP/fakepi/pi"
-eval "$(fn vm_token_validity)"
+eval "$(fn vm_token_validity)"; eval "$(fn with_timeout)"
 both='[{"provider":"openai-codex","kind":"oauth"},{"provider":"openai","kind":"oauth"},{"provider":"anthropic","kind":"api_key"}]'
 out="$(PATH="$TMP/fakepi:$PATH" vm_token_validity "$both" 240 0 2>"$TMP/fakepi/err")"
 [[ "$out" == 50m ]] || fail "a ChatGPT sign-in that lives an hour did not bring the floor down to 50m: $out"
-grep -q "openai's subscription token cannot be minted for 300m.*minted for 50m and renewed on the host every 25 minutes" "$TMP/fakepi/err" || fail "the kickoff does not say why the floor came down: $(cat "$TMP/fakepi/err")"
+grep -q "openai's subscription token cannot be minted for 300m.*minted for 50m and renewed on the host at half that" "$TMP/fakepi/err" || fail "the kickoff does not say why the floor came down: $(cat "$TMP/fakepi/err")"
 grep -q "tok-not-for-the-log" "$TMP/fakepi/err" && fail "a token reached stderr"
 [[ "$out" != *tok-not-for-the-log* ]] || fail "a token reached the floor's output"
 grep -q -- "--provider anthropic" "$TMP/fakepi/calls" && fail "an API key provider was asked for a token"
