@@ -26,3 +26,15 @@ A pack tool run directly and rerun as a job had its output path in the agent's o
 ### Fixed: a ChatGPT sign-in no longer stops a microVM kickoff
 
 The seats' subscription tokens are minted for the wall clock and an hour, and a "Sign in with ChatGPT" token under `openai` lives about an hour, so the kickoff stopped with "pi could not produce a openai subscription token valid for the run" unless `SWARM_TOKEN_MIN_VALIDITY` was set. A subscription that cannot be minted for the run's floor but can for 50 minutes now brings the floor down to 50 minutes, renewed on the host at half that (within the ten minutes between the watchdog's checks), and the kickoff says so; the error, where it still comes, names the floor and the variable.
+
+### Fixed: `check_inputs` runs as a job (computer-forensics-base)
+
+A job sees the run's directories, not the run's `inputs.json`, and a share is a directory: the first microVM case run's `check_inputs` job answered "inputs.json not found". A job that sees all of `inputs/` (its `inputs` left out, or `["all"]`) now gets a copy of the run's `inputs.json` in its control directory, named by `SWARM_INPUTS_MANIFEST` and listed among what it could reach, up to 16 MiB; never a link, so what the job writes there is not the run's baseline. `check_inputs` reads that copy in a job, and says why when there is none.
+
+### Changed: work over a whole source leaves the agents a worker
+
+The kickoff's recipes, a recipe an agent asks for with `catalog_request` (a super-timeline) and the derived catalogue's work now hold at most every worker the agents' longer jobs take but one (one, with the default two workers). In the second microVM case run the kickoff's `linux-target` and an asked-for `disk-timeline` held both workers, and the agents' jobs waited up to 505 s (p90 291 s, against 14 s the run before); the super-timeline then held one of the two for 94 minutes.
+
+### Changed: the route to a Linux file by path is where agents look (linux-forensics)
+
+The second microVM case run's agents reached files inside LVM with `fls` and `icat` at the logical volume's offset and never met `target-fs`: the note that named it (`triage/system-profile`) was not loaded. `filesystem/storage-lvm-luks`, which they did load, now says how to read a logical volume's files: what the catalogue parsed first, The Sleuth Kit by inode at a linear volume's offset (which keeps the record's identity), and `target-fs` by path for anything else. `linux-target`'s receipt (`coverage.json`), which the agents read first, names the same route in `files_by_path`.

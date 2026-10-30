@@ -28,7 +28,7 @@ import tempfile
 import time
 from pathlib import Path
 
-TOOL = {"name": "check_inputs", "version": 5}
+TOOL = {"name": "check_inputs", "version": 6}
 MANIFEST = "inputs.json"
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 SPECIALS = {"fifo": stat.S_ISFIFO, "socket": stat.S_ISSOCK, "char": stat.S_ISCHR, "block": stat.S_ISBLK}
@@ -115,8 +115,17 @@ class Receipts:
                 self.error = "the receipts were not synced (%s)" % (exc.strerror or exc)
 
 
+# A job sees the run's directories, not the run's inputs.json: the job service gives a job that sees all of inputs/ a copy
+# of it, named by SWARM_INPUTS_MANIFEST. A job with a narrower scope gets none (it sees part of the evidence, and the
+# comparison would call the rest missing).
+IN_JOB = bool(os.environ.get("JOB_ID"))
+if IN_JOB and os.environ.get("SWARM_INPUTS_MANIFEST"):
+    MANIFEST = os.environ["SWARM_INPUTS_MANIFEST"]
 if not os.path.isfile(MANIFEST):
-    done({"status": "FAIL", "ok": False, "error": "inputs.json not found", "tool": TOOL}, 1)
+    done({"status": "FAIL", "ok": False, "tool": TOOL,
+          "error": "inputs.json not found" + (": a job is given a copy of it only when it sees all of inputs/ (inputs left out, or "
+                                              "[\"all\"]) and the manifest is within the job service's size limit; otherwise run "
+                                              "check_inputs in your own VM" if IN_JOB else "")}, 1)
 try:
     args = json.load(sys.stdin) if not sys.stdin.isatty() else {}
 except (ValueError, RecursionError):

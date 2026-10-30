@@ -1,7 +1,7 @@
 {
   "id": "linux-forensics",
   "name": "Linux Forensics Pack",
-  "version": "1.5.8",
+  "version": "1.5.9",
   "description": "Artefact-by-artefact method and tooling for a Linux host: the system profile and its clocks, authentication and journal records, accounts and authorization, scheduling and systemd candidates, ext metadata and storage layers, container evidence locations, and package verification against local and independently trusted baselines. Each tool says what it read, what it did not, and where the whole result is kept.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -53,8 +53,8 @@
       "README.md": "8b8d0eb2fbb2d6342f8a1317148853e010bddb5327a37ff21ed8eecf4923fc58",
       "goals/server-compromise.md": "74d0f48af166fc4dfa856a0871b232715be4e6e5026638499db47d73c848bc8d",
       "goals/what-was-scheduled.md": "52389a312d07d57dc4f76c6b274dcccd6d88952a494e2750c93693a2240a1820",
-      "recipes/linux-target/recipe.json": "af7282282c006f58fac7f4638b3930a21f27b711a288af2194d3ad3656b2c3a6",
-      "recipes/linux-target/run.py": "3de83092cddb44ac3bd8bd4a610805f2129b08d94286310759c23383caf97bd5",
+      "recipes/linux-target/recipe.json": "330be85c306753f41446f41d482622e95e2cb439a888e5f63f7a629f8e29d0f3",
+      "recipes/linux-target/run.py": "d2da8e9daf0d914f65800c5ec6c10e0b462f78ef6bc33b93b81cbb19f711ce79",
       "requires/host.json": "06d80978bfdd4d598008d832df114c76243767d9e5763ad39cc9a0286816b941",
       "requires/python.txt": "2a8f433b1779c884ea3307bd9d0dbf04fa2d9f909e19d0ab32c4b81a14ddb22f",
       "skills/accounts/sessions-histories.md": "dcc62a72f4a19402a07d48b2de88324e10fe37bbd12b2263df398d628584c69c",
@@ -64,10 +64,10 @@
       "skills/containers/removed-logs.md": "768cc0eb88fe9dc30b7a6785b5d531fc7db0d00e8cadcdff452f6e4e15a8f954",
       "skills/filesystem/ext-deleted.md": "7c68012a210d6f67fae4d0c3483b42fee57f0f2d45181913e45039034cc75ae4",
       "skills/filesystem/ext.md": "92eee28206383e2b50732ab538953eabe5228834487c89033783fe3eee86eacb",
-      "skills/filesystem/storage-lvm-luks.md": "e8b643c7f7ff01657e33c7f946210999aff7f6bf96a44054d1f43fac1a415893",
+      "skills/filesystem/storage-lvm-luks.md": "323d7d45e42aba5bf624c7edcc60f46e14ebd7ed4359931434bca26f283da0a2",
       "skills/filesystem/storage-xfs-btrfs-virtual.md": "16a41d0e53282305b2468043b91d12d8acc5a4686703253b2ca27d1c4b108b74",
       "skills/filesystem/storage.md": "f83bdfc85857c9e444120cd04a5bc12954c40968feebfd56e51f9c35022fbe0f",
-      "skills/linux/router.md": "bc6d60764f8d36ea0b17027a54cdcc7dc823bfe4887c45e52f73a0042d1b38f1",
+      "skills/linux/router.md": "40bda0f1019934ee3eb7a89ea798cd93280a28d3f1bfb4e6672fcb236543c9f9",
       "skills/logs/auth-lines.md": "ff4cdf94de154f9940d86324e8e6851b1afb20302263892f672e43098cf78485",
       "skills/logs/auth-time.md": "6ba5db0ff000e78f26a7a38b3b19afd38f83a967756ae4edaab9356c9bc883fd",
       "skills/logs/auth.md": "13779ab155531bd64d6859c1ae4d7568492c7fcbbdad6033ef63d61f84cb1f0f",
@@ -95,7 +95,7 @@
       "tools/shell_history/run.py": "99294c2bc04df9b80a7dbd3f284b14ed9b7cc106af98c3015df9d1ff42c19c97",
       "tools/utmp_parse/manifest.json": "8af80306f426268819963583174ad6afca0c48deba067218f71884eba6e2e5f0",
       "tools/utmp_parse/run.py": "1a9085362ebaefacb80f37355170115a534f91d97cd2db58af23a19de3a900fe",
-      "skills/INDEX.md": "4bc385fa780e2520f27307d80d273a64c554fbb110abb28c9ecc50f3fb7b995a"
+      "skills/INDEX.md": "4d9ff8d33343c0316236c6e5e1bf2f9ec2f7f5beef09c11170befc24f4f8e1fc"
     }
   },
   "tools": [

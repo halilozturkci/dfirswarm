@@ -255,6 +255,10 @@ test("the linux-target recipe's coverage follows what each function produced, no
     const done = JSON.parse(await readFile(join(cwd, "recipe-out2", "coverage.json"), "utf8"));
     assert.equal(done.status, "complete");
     assert.match(done.not_covered, /deleted/);
+    // The receipt agents read first names the route to a file no function parses, and when icat by inode is the better one:
+    // the first runs with this catalogue reached files by icat at the logical volume's offset and never saw target-fs.
+    assert.match(done.files_by_path, /target-fs -q <image> cp <path> -o "\$OUT\/root<dir>"/);
+    assert.match(done.files_by_path, /icat by inode keeps the record's identity/);
   });
 });
 

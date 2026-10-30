@@ -73,7 +73,9 @@ export const SHORT_LANE_FROM_WORKERS = 3;
  * parses; an agent's other jobs and the kickoff's recipes take the rest; the
  * derived catalogue's work is the lowest lane (one at a time, only when no
  * other job waits, within its budget). Neither the kickoff's recipes nor the
- * derived catalogue ever take the worker kept for short jobs.
+ * derived catalogue ever take the worker kept for short jobs, and whole-source
+ * work (the kickoff's recipes, a recipe an agent asked for, the derived
+ * catalogue's) holds every worker the agents' longer jobs take but one.
  */
 export type Lane = "short" | "general" | "kickoff" | "derived";
 
@@ -457,6 +459,26 @@ export type JobServiceOptions = {
 const JOB_ID = /^j\d{6}$/;
 export const TIMEOUT_MAX_SECONDS = 4 * 3600;
 const DETECT_FILES_MAX = 200;
+/** Where a broad job finds its copy of the run's inputs.json (the control directory, /job), and the most that is copied. */
+export const JOB_INPUTS_MANIFEST = "/job/inputs.json";
+export const JOB_INPUTS_MANIFEST_MAX = 16 * 1024 * 1024;
+
+/**
+ * Copy the run's inputs.json into a job's control directory, never a link:
+ * the control directory is the job's to write, and the run's baseline is not.
+ * Only a regular file within JOB_INPUTS_MANIFEST_MAX is copied (a collection
+ * of a million files has one of hundreds of megabytes, and every broad job
+ * would copy it); false when nothing was copied.
+ */
+export async function copyInputsManifest(S: string, ctl: string): Promise<boolean> {
+  const src = join(S, "inputs.json");
+  const st = await lstat(src).catch(() => null);
+  if (!st?.isFile() || st.size > JOB_INPUTS_MANIFEST_MAX) return false;
+  // What an earlier attempt's worker left under that name (it may write /job) is unlinked, not written through.
+  const dest = join(ctl, "inputs.json");
+  await rm(dest, { force: true }).catch(() => undefined);
+  return copyFile(src, dest, constants.COPYFILE_EXCL).then(() => true, () => false);
+}
 
 function canonical(v: unknown): string {
   if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
@@ -1135,6 +1157,28 @@ export class JobService {
   }
 
   /**
+   * Work over a whole source: the kickoff's recipes, a recipe an agent asked
+   * for (a broad extraction, a super-timeline) and the derived catalogue's.
+   * It runs for minutes to hours, whatever an agent's job may.
+   */
+  heavy(job: JobRecord): boolean {
+    const lane = this.laneOf(job);
+    return lane === "kickoff" || lane === "derived" || job.spec.kind === "recipe";
+  }
+
+  /**
+   * The workers whole-source work may hold at once: every one an agent's
+   * longer jobs take but one, and one at least. With two workers that is one,
+   * so an agent's job always has a worker no parse of a whole disk holds: the
+   * first microVM case run's kickoff recipe and an asked-for super-timeline
+   * held both, and its agents' jobs waited up to 505 s (p90 291 s, against
+   * 14 s in the run before).
+   */
+  heavySlots(): number {
+    return Math.max(1, this.o.workers - this.shortSlots() - 1);
+  }
+
+  /**
    * Whether a queued job may take a free worker now. Counted over the jobs
    * the queue has handed a worker and that are not done (this.running), not
    * over those whose job_started line is written: a job picked a moment ago
@@ -1149,6 +1193,7 @@ export class JobService {
     const short = running.filter((j) => this.laneOf(j) === "short").length;
     // The worker kept for short jobs is never a longer one's, even when idle.
     if (lane !== "short" && running.length - short >= this.o.workers - this.shortSlots()) return false;
+    if (this.heavy(job) && running.filter((j) => this.heavy(j)).length >= this.heavySlots()) return false;
     if (lane === "derived") return !running.some((j) => this.laneOf(j) === "derived");
     if (lane === "kickoff") return true;
     // Each agent so many at once in each lane: its own long parses do not hold back its quick look.
@@ -1280,7 +1325,12 @@ export class JobService {
     const strip = (list: Array<Mount & { note?: string }>) => list.map(({ note: _note, ...m }) => m);
     if (kind !== "declared") {
       const all = [...this.broadMounts(), ...tail];
-      return { mounts: strip(all), accessible: accessOf(all), manifest: null, view: null };
+      const accessible = accessOf(all);
+      // The run's inputs.json, which a broad job's brain sees beside inputs/:
+      // a share is a directory, so a copy is put in the control directory.
+      // The first microVM case run's check_inputs job found none and failed.
+      if (await copyInputsManifest(this.S, st.ctl)) accessible.push({ path: JOB_INPUTS_MANIFEST, access: `read-write, no-exec; a copy of the run's inputs.json taken when the job started (SWARM_INPUTS_MANIFEST): the run's own is not changed by the job` });
+      return { mounts: strip(all), accessible, manifest: null, view: null };
     }
     const resolved = await resolveScope(this.S, job.spec.inputs, { collections: this.collections(), targets: targetPaths(job.spec) });
     if (!resolved.ok) throw new ScopeError(resolved.reason);
@@ -1494,7 +1544,7 @@ export class JobService {
       maxDurationSec: job.spec.timeout_seconds + 120,
       workdir: this.S,
       mounts: placed.mounts,
-      env: { JOB_ID: job.id, OUT: this.outPath(job), AGENT_ID: job.requester.agent, SWARM_SANDBOX: this.S, TZ: "UTC", LANG: "C.UTF-8", PYTHONDONTWRITEBYTECODE: "1", NO_COLOR: "1", ...(job.spec.secret_output === true ? { SECRET_OUTPUT: "1" } : {}), ...(net?.env ?? {}) },
+      env: { JOB_ID: job.id, OUT: this.outPath(job), AGENT_ID: job.requester.agent, SWARM_SANDBOX: this.S, TZ: "UTC", LANG: "C.UTF-8", PYTHONDONTWRITEBYTECODE: "1", NO_COLOR: "1", ...(job.spec.secret_output === true ? { SECRET_OUTPUT: "1" } : {}), ...(placed.accessible.some((a) => a.path === JOB_INPUTS_MANIFEST) ? { SWARM_INPUTS_MANIFEST: JOB_INPUTS_MANIFEST } : {}), ...(net?.env ?? {}) },
       network,
       ...(net ? { hostPorts: [net.port] } : {}),
       command: ["bash", "/job/run.sh"],

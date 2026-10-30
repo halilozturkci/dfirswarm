@@ -12,7 +12,7 @@ Router: `linux/router`
 - `filesystem/ext` ext metadata and timestamps: Interpreting ext inode times and their relationships, with explicit limits.
 - `filesystem/ext-deleted` ext deleted files and journal recovery: Deciding what an inode, the ext journal and listings say about a deleted file.
 - `filesystem/storage` Linux storage layers and parser coverage: Identifying volume dependencies and parser coverage before examining a filesystem.
-- `filesystem/storage-lvm-luks` LVM and LUKS on evidence copies: Mapping logical volumes and inspecting LUKS headers without activating or unlocking.
+- `filesystem/storage-lvm-luks` LVM and LUKS on evidence copies: Mapping logical volumes and their files, and LUKS headers, without activating or unlocking.
 - `filesystem/storage-xfs-btrfs-virtual` XFS, Btrfs and virtual disk images: A volume is XFS or Btrfs, or the disk is a VDI, VMDK, QCOW2 or VHD file.
 - `linux/router` Linux notes by question: Pick one when none is listed, or you cannot choose.
 - `logs/auth` Authentication and privilege-use records: Reading retained auth logs, their timestamp assumptions and attribution limits.

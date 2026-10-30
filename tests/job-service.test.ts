@@ -13,7 +13,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlink
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { boundInputSets, DERIVED, JobService, missingOf, SHORT_JOB_SECONDS, type JobServiceOptions } from "../scripts/job-service.ts";
+import { boundInputSets, copyInputsManifest, DERIVED, JOB_INPUTS_MANIFEST, JOB_INPUTS_MANIFEST_MAX, JobService, missingOf, SHORT_JOB_SECONDS, type JobServiceOptions } from "../scripts/job-service.ts";
 import { storePaths, verifyJournalText } from "../scripts/evidence-store.ts";
 import { listInputs, localWorker, mountedWorker } from "./job-service-worker.ts";
 import type { WorkerSpec } from "../scripts/vm.ts";
@@ -564,6 +564,75 @@ test("a long job on every general worker does not delay a short one; the worker 
   w2.release();
   for (const r of [a, b]) await until(two.svc, r.job.id);
   await two.svc.stop("over");
+});
+
+test("a job that sees all of inputs/ gets a copy of the run's inputs.json, named by SWARM_INPUTS_MANIFEST; a declared scope gets none", async () => {
+  // The first microVM case run's check_inputs job: the broad view shares inputs/, store/ and the rest, a share is a
+  // directory, and the run's inputs.json was not there.
+  const S = sandbox();
+  writeFileSync(join(S, "inputs.json"), JSON.stringify({ files: [{ path: "inputs/x", bytes: 1, sha256: "ab".repeat(32) }] }));
+  const seen: Array<{ env: Record<string, string>; copy: string | null }> = [];
+  const { svc } = service(S, {
+    runWorker: async (spec: WorkerSpec) => {
+      const ctl = spec.mounts.find((m) => m.guest === "/job")!.host;
+      const copy = existsSync(join(ctl, "inputs.json")) ? readFileSync(join(ctl, "inputs.json"), "utf8") : null;
+      seen.push({ env: spec.env, copy });
+      writeFileSync(join(ctl, "inputs.json"), "a job may write its copy");
+      writeFileSync(join(ctl, "exit"), "0\n");
+      return { code: 0, fenced: true };
+    },
+  });
+  await svc.start();
+  const broad = await svc.submit("a1", { kind: "command", command: "true", inputs: ["all"] });
+  assert.ok(broad.ok);
+  const done = await until(svc, broad.job.id);
+  assert.equal(seen[0]!.env.SWARM_INPUTS_MANIFEST, JOB_INPUTS_MANIFEST);
+  assert.equal(seen[0]!.copy, readFileSync(join(S, "inputs.json"), "utf8"), "the copy is the run's inputs.json as it is");
+  assert.ok((done.accessible ?? []).some((a: { path: string }) => a.path === JOB_INPUTS_MANIFEST), "the record says the job had it");
+  assert.match(readFileSync(join(S, "inputs.json"), "utf8"), /inputs\/x/, "what the job wrote into its copy is not the run's");
+  const declared = await svc.submit("a1", { kind: "command", command: "true", inputs: [] });
+  assert.ok(declared.ok);
+  await until(svc, declared.job.id);
+  assert.equal(seen[1]!.env.SWARM_INPUTS_MANIFEST, undefined);
+  assert.equal(seen[1]!.copy, null);
+  await svc.stop("over");
+  // Past the bound nothing is copied.
+  const big = sandbox();
+  writeFileSync(join(big, "inputs.json"), Buffer.alloc(JOB_INPUTS_MANIFEST_MAX + 1, 0x20));
+  const ctl = mkdtempSync(join(tmpdir(), "ctl-"));
+  assert.equal(await copyInputsManifest(big, ctl), false);
+  assert.equal(existsSync(join(ctl, "inputs.json")), false);
+});
+
+test("whole-source work holds every worker but one: with two, an agent's job runs beside the kickoff's recipe, and the derived catalogue's waits", async () => {
+  // The first microVM case run: the kickoff's linux-target and a disk-timeline an agent asked for held both workers, and
+  // the agents' jobs waited up to 505 s.
+  const S = sandbox();
+  const w = heldWorker();
+  const { svc } = service(S, { workers: 2, runWorker: w.runWorker });
+  await svc.start();
+  assert.equal(svc.heavySlots(), 1, "two workers: whole-source work holds one");
+  assert.equal(svc.heavy({ requester: { agent: "a1" }, spec: { kind: "recipe", timeout_seconds: 14400 } } as never), true, "a recipe an agent asked for is whole-source work");
+  assert.equal(svc.heavy({ requester: { agent: "a1" }, spec: { kind: "command", timeout_seconds: 14400 } } as never), false, "an agent's long command is not: its limit is not its run time");
+  const kickoff = await svc.submit("system", { kind: "command", command: "hold k", inputs: [] });
+  assert.ok(kickoff.ok);
+  await until(svc, kickoff.job.id, ["running"]);
+  // A second worker is free, and the kickoff's next recipe and the derived catalogue's work still wait for the first.
+  const kickoff2 = await svc.submit("system", { kind: "command", command: "hold k2", inputs: [] });
+  const derived = await svc.submit(DERIVED, { kind: "command", command: "hold d", inputs: [], timeout_seconds: 60 });
+  assert.ok(derived.ok && kickoff2.ok);
+  await new Promise((res) => setTimeout(res, 300));
+  for (const r of [derived, kickoff2]) assert.equal(svc.jobs.get(r.job.id)!.state, "accepted", `${r.job.id} waits for the whole-source worker`);
+  const mine = await svc.submit("a1", { kind: "command", command: "hold a", inputs: [] });
+  assert.ok(mine.ok);
+  await until(svc, mine.job.id, ["running"]);
+  w.release();
+  for (const r of [kickoff, kickoff2, derived, mine]) await until(svc, r.job.id);
+  await svc.stop("over");
+  // Four workers, one kept for short jobs: whole-source work holds two.
+  const four = service(sandbox(), { workers: 4, runWorker: heldWorker().runWorker });
+  assert.equal(four.svc.heavySlots(), 2);
+  assert.equal(service(sandbox(), { workers: 1, runWorker: heldWorker().runWorker }).svc.heavySlots(), 1, "one worker: it is the only one there is");
 });
 
 test("without room on the host a job waits, said once on the journal, and starts when there is room, its wait on job_started", async () => {

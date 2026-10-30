@@ -53,6 +53,11 @@ UNIDENTIFIED = {"default", "unknown", "none", "null", "unidentified", "n/a"}
 # `unix` or a distribution name may be a Linux this reader did not name so.
 NOT_LINUX = {"windows", "osx", "macos", "darwin", "esxi", "bsd", "freebsd", "openbsd", "netbsd", "dragonfly", "android", "ios"}
 NOT_COVERED = "deleted/unallocated carving, arbitrary application files, memory, encrypted content without a key"
+# Where the receipt is read (agents read coverage.json first): the route to a file of this root that no function parses.
+FILES_BY_PATH = ("a file of this root that no function parses (a configuration, a script, a binary) comes out by path in a job, through the "
+                 "same reader and without mounting: target-fs -q <image> cp <path> -o \"$OUT/root<dir>\". Where The Sleuth Kit reads the file "
+                 "system (one linear logical volume at its offset, ext), icat by inode keeps the record's identity, which a copy by path does "
+                 "not; a copy carries the time of extraction as its modification time")
 
 
 def answer(value, code=0):
@@ -581,6 +586,7 @@ def coverage_from(summary, proc_code, shown, state):
         "covered": "the dissect.target functions selected for this recipe (counted under functions, named in artefacts/summary.json) over "
                    + shown + "; `complete` says every selected function ran and produced records or nothing, not that the artefacts exist or were all read",
         "not_covered": NOT_COVERED,
+        "files_by_path": FILES_BY_PATH,
         "functions": counts,
         "limits_hit": limits,
         "errors": errors,

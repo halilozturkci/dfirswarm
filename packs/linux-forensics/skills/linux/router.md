@@ -14,7 +14,7 @@ Start
 
 Storage and files
 `filesystem/storage` volume layers, parser coverage
-`filesystem/storage-lvm-luks` LVM, LUKS headers
+`filesystem/storage-lvm-luks` LVM, files from a volume, LUKS headers
 `filesystem/storage-xfs-btrfs-virtual` XFS, VDI, VMDK, QCOW2, VHD
 `filesystem/ext` ext inode times
 `filesystem/ext-deleted` deleted inode, ext journal
