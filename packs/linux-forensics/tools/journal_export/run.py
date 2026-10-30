@@ -950,6 +950,34 @@ def first_lines(path, count=20):
         return []
 
 
+# ---- A disk image given where this tool reads a file or an extracted root (the same in every such tool of this pack) ----
+
+# What linux_triage takes as an image: these first bytes, or one of its names with a boot sector's signature at 510.
+IMAGE_MAGIC = ((0, b"EVF\x09\x0d\x0a\xff\x00"), (0, b"EVF2\x0d\x0a\x81\x00"), (0, b"vhdxfile"), (0, b"KDMV"), (0, b"QFI\xfb"))
+IMAGE_SUFFIXES = (".e01", ".ex01", ".dd", ".img", ".raw", ".vhd", ".vhdx", ".vmdk", ".qcow2")
+IMAGE_ROUTES = ("this tool reads the files of an extracted file system, not a disk image. For a Linux image: the catalogue's "
+                "linux-target artefacts (catalog/README.md says where) hold what dissect.target parsed from it, LVM included; "
+                "linux_triage reads the image itself as a job; and to give this tool the files, extract them first in a job, a "
+                "directory at a time, with target-fs -q <image> cp <dir> -o \"$OUT/root<dir>\" (for example /etc, /var/log, "
+                "/var/spool/cron, /home and /root), then pass the extracted path under store/jobs/<id>/out/root/. The copies "
+                "carry the time of extraction as their modification time, and links are not copied as links.")
+
+
+def refuse_disk_image(path, key):
+    """A regular file whose first bytes, or whose name and boot-sector signature, say disk image is refused with the routes
+    that read one; anything else goes on to this tool's own checks. It reads 512 bytes and nothing else."""
+    try:
+        if os.path.islink(path) or not stat.S_ISREG(os.stat(path).st_mode):
+            return
+        with open(path, "rb") as fh:
+            head = fh.read(512)
+    except OSError:
+        return
+    named = path.lower().endswith(IMAGE_SUFFIXES)
+    if any(head[o:o + len(m)] == m for o, m in IMAGE_MAGIC) or (named and head[510:512] == b"\x55\xaa"):
+        fail("%s is a disk image: %s" % (key, IMAGE_ROUTES), **{key: path})
+
+
 def main():
     args = read_args()
     path = want_str(args, "path", "path is required: journalctl with no path reads this machine's own journal, which is never the evidence")
@@ -960,6 +988,7 @@ def main():
         mode_bits = os.stat(path).st_mode if present else 0
     except OSError as exc:
         fail("the path cannot be examined", path=path, reason=describe(exc))
+    refuse_disk_image(path, "path")
     if not present:
         fail("no such file or directory", path=path)
     if not (stat.S_ISREG(mode_bits) or stat.S_ISDIR(mode_bits)):

@@ -371,7 +371,7 @@ export async function resolveSecrets(spec: VmSpec): Promise<ResolvedSecret[]> {
     let accountId: string | undefined;
     if (p.kind === "oauth") {
       const r = await run(pi, ["auth", "print-bearer-token", "--provider", p.provider, "--min-expiry", spec.min_token_validity || "2h"], { env });
-      if (r.code !== 0 || !r.stdout.trim()) throw new Error(`pi could not produce a ${p.provider} subscription token valid for the run: ${r.stderr.trim() || `exit ${r.code}`}`);
+      if (r.code !== 0 || !r.stdout.trim()) throw new Error(`pi could not produce a ${p.provider} subscription token valid for ${spec.min_token_validity || "2h"} (the run's floor; SWARM_TOKEN_MIN_VALIDITY sets it, and the host renews at half of it): ${r.stderr.trim() || `exit ${r.code}`}`);
       value = r.stdout.trim();
       if (p.provider === "openai-codex") accountId = codexAccountId(value, spec.pi_agent_dir);
     } else {

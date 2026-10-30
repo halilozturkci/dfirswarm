@@ -82,7 +82,7 @@ else
 fi
 
 # --- the harness a VM run started with ---------------------------------------------
-for f in freeze_harness vm_build_spec vm_providers_json pi_agent_dir pi_auth_file credential_models distinct_models; do
+for f in freeze_harness vm_build_spec vm_token_validity vm_providers_json pi_agent_dir pi_auth_file credential_models distinct_models; do
   eval "$(fn "$f")"
 done
 mkdir -p "$TMP/hub/runs" "$TMP/sandbox/.pi-sessions"
@@ -165,7 +165,7 @@ jq -e --slurpfile t "$tokens_file" '.input.seat_tokens == $t[0] and .input.token
 pass "the keeper, the hub's stop and the watchdog run from the frozen copy; the hub gets one 32-hex token per seat (0600, in its own directory) beside the collector's"
 
 # The spec names the tokens file and never holds a token.
-for f in vm_build_spec vm_providers_json pi_agent_dir pi_auth_file credential_models distinct_models; do eval "$(fn "$f")"; done
+for f in vm_build_spec vm_token_validity vm_providers_json pi_agent_dir pi_auth_file credential_models distinct_models; do eval "$(fn "$f")"; done
 extra_env=() agent_ids=() AGENT_MODELS=()
 sandbox="$TMP/sandbox" swarm_id=s1 hard=0 wall=10 n=0 vm_image=img vm_cpus=1 vm_memory=1024 vm_disk=8192 \
   playwright=0 pack_dirs="" compact_prompt="" self_compact=0 forging=0 inbox_page_chars="" quarantine=0 local_only=0 \
@@ -177,6 +177,35 @@ for tok in $(jq -r '.[]' "$tokens_file"); do
   grep -q "$tok" "$TMP/spec-tokens.json" && fail "a seat's token is in the spec"
 done
 pass "the VM spec names the seats' tokens file and holds no token"
+
+# The seats' token floor. A stand-in pi: openai (a ChatGPT sign-in, about an
+# hour) can be minted for 50 minutes and no longer; openai-codex for any
+# floor; anthropic for none. Its calls are kept, its token is not.
+mkdir -p "$TMP/fakepi"
+cat > "$TMP/fakepi/pi" <<EOF
+#!/usr/bin/env bash
+echo "\$*" >> "$TMP/fakepi/calls"
+provider="" floor=""
+while [[ \$# -gt 0 ]]; do case "\$1" in --provider) provider="\$2"; shift ;; --min-expiry) floor="\$2"; shift ;; esac; shift; done
+case "\$provider:\$floor" in
+  openai:50m|openai-codex:*) echo "tok-not-for-the-log"; exit 0 ;;
+  *) echo "token expires in 59m, less than \$floor" >&2; exit 1 ;;
+esac
+EOF
+chmod +x "$TMP/fakepi/pi"
+eval "$(fn vm_token_validity)"
+both='[{"provider":"openai-codex","kind":"oauth"},{"provider":"openai","kind":"oauth"},{"provider":"anthropic","kind":"api_key"}]'
+out="$(PATH="$TMP/fakepi:$PATH" vm_token_validity "$both" 240 0 2>"$TMP/fakepi/err")"
+[[ "$out" == 50m ]] || fail "a ChatGPT sign-in that lives an hour did not bring the floor down to 50m: $out"
+grep -q "openai's subscription token cannot be minted for 300m.*minted for 50m and renewed on the host every 25 minutes" "$TMP/fakepi/err" || fail "the kickoff does not say why the floor came down: $(cat "$TMP/fakepi/err")"
+grep -q "tok-not-for-the-log" "$TMP/fakepi/err" && fail "a token reached stderr"
+[[ "$out" != *tok-not-for-the-log* ]] || fail "a token reached the floor's output"
+grep -q -- "--provider anthropic" "$TMP/fakepi/calls" && fail "an API key provider was asked for a token"
+[[ "$(PATH="$TMP/fakepi:$PATH" vm_token_validity '[{"provider":"openai-codex","kind":"oauth"}]' 240 0 2>/dev/null)" == 300m ]] || fail "a token that meets the run's floor changed it"
+[[ "$(PATH="$TMP/fakepi:$PATH" vm_token_validity '[{"provider":"openai-codex","kind":"oauth"}]' 240 1 2>/dev/null)" == 12h ]] || fail "a run only the operator stops is not minted for 12 h"
+[[ "$(PATH="$TMP/fakepi:$PATH" SWARM_TOKEN_MIN_VALIDITY=90m vm_token_validity "$both" 240 0 2>/dev/null)" == 90m ]] || fail "SWARM_TOKEN_MIN_VALIDITY is not the operator's word"
+[[ "$(PATH="$TMP/fakepi:$PATH" vm_token_validity '[{"provider":"anthropic","kind":"oauth"}]' 240 0 2>/dev/null)" == 300m ]] || fail "a provider that cannot meet 50 minutes either should keep the floor, to fail in Pi's words where the VMs are made"
+pass "the seats' token floor: a ChatGPT sign-in's hour brings it down to 50 minutes (said), any other keeps the run's, the operator's word wins, and no token is printed"
 
 # An unpacked `git archive` (how the Linux host is synced) knows its commit
 # from scripts/HARNESS_COMMIT, which the archive fills in; git itself is

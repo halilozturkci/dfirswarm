@@ -8686,6 +8686,33 @@ check_spec_network() { # <vm spec file>
   fi
 }
 
+# The validity the seats' subscription tokens are minted for (vm.ts
+# resolveSecrets), and renewed at half of on the host (idle-nudge.sh checks
+# every ten minutes): SWARM_TOKEN_MIN_VALIDITY, else 12 h for a run only the
+# operator stops, else the wall clock and an hour. A "Sign in with ChatGPT"
+# token under openai lives about an hour and no refresh gives it more, so the
+# first microVM case run could not start: a subscription provider that cannot
+# be minted for that floor but can for 50 minutes brings the run's floor down
+# to 50 minutes, renewed every 25, and the kickoff says so on stderr. One that
+# cannot be minted for 50 minutes either is left to fail where the VMs are
+# made, in Pi's words. No token is kept or printed: only Pi's exit status.
+# Each provider is asked at most twice, within a minute each.
+vm_token_validity() { # <providers json> <wall minutes> <until solved: 0|1>
+  local providers="$1" wall="$2" until="$3" floor p short="50m" dir
+  if [[ -n "${SWARM_TOKEN_MIN_VALIDITY:-}" ]]; then echo "$SWARM_TOKEN_MIN_VALIDITY"; return 0; fi
+  if [[ "$until" -eq 1 ]]; then floor="12h"; else floor="$((wall + 60))m"; fi
+  dir="$(pi_agent_dir)"
+  while IFS= read -r p; do
+    [[ -n "$p" ]] || continue
+    PI_CODING_AGENT_DIR="$dir" timeout 60 pi auth print-bearer-token --provider "$p" --min-expiry "$floor" >/dev/null 2>&1 < /dev/null && continue
+    if PI_CODING_AGENT_DIR="$dir" timeout 60 pi auth print-bearer-token --provider "$p" --min-expiry "$short" >/dev/null 2>&1 < /dev/null; then
+      echo "Tokens:       $p's subscription token cannot be minted for $floor (a ChatGPT sign-in's lives about an hour): the run's tokens are minted for $short and renewed on the host every 25 minutes (SWARM_TOKEN_MIN_VALIDITY sets it)" >&2
+      floor="$short"
+    fi
+  done < <(jq -r '.[] | select(.kind == "oauth") | .provider' <<<"$providers")
+  echo "$floor"
+}
+
 vm_build_spec() { # <hub dir> <out file>
   local hub_dir="$1" spec="$2"
 
@@ -8834,10 +8861,15 @@ vm_build_spec() { # <hub dir> <out file>
   local providers
   providers="$(vm_providers_json)"
   if [[ "$local_only" -eq 1 ]]; then providers="$(jq -c 'map(select(.kind == "local"))' <<<"$providers")"; fi
+  # Pi is asked for a token only by a run that makes its VMs: a prepared
+  # spec says what they would be given, and its start builds the spec again.
+  local token_validity minting='[]'
+  [[ "${start_agents:-1}" -eq 1 ]] && minting="$providers"
+  token_validity="$(vm_token_validity "$minting" "$wall" "${until_solved:-0}")"
   jq -n \
     --arg run "$swarm_id" --arg sandbox "$sandbox" --arg image "$vm_image" --arg hub "$hub_dir" \
     --argjson cpus "$vm_cpus" --argjson mem "$vm_memory" --argjson disk "$vm_disk" --argjson wall "$wall" \
-    --argjson until "${until_solved:-0}" --arg token_validity "${SWARM_TOKEN_MIN_VALIDITY:-}" \
+    --argjson until "${until_solved:-0}" --arg token_validity "$token_validity" \
     --argjson mounts "$(printf '%s\n' ${mounts[@]+"${mounts[@]}"} | jq -s -c .)" \
     --argjson late "$(printf '%s\n' ${late[@]+"${late[@]}"} | jq -s -c .)" \
     --argjson env "$env_json" --argjson agents "$agents_json" --argjson allow "$allow_json" \
@@ -8850,7 +8882,7 @@ vm_build_spec() { # <hub dir> <out file>
       env: $env, agents: $agents, allow_hosts: $allow, open_net: $open, providers: $providers,
       pack_secrets: $pack_secrets,
       pi_bin: $pi, pi_agent_dir: $pidir,
-      min_token_validity: (if $token_validity != "" then $token_validity elif $until == 1 then "12h" else "\($wall + 60)m" end),
+      min_token_validity: $token_validity,
       records_dir: ($sandbox + "/vm"), registry: $registry}
      + (if $digest == "" then {} else {image_digest: $digest} end)
      + (if $seat_tokens == "" then {} else {seat_tokens_file: $seat_tokens} end)' > "$spec"

@@ -12,7 +12,9 @@ it could not identify the system, or it printed a name this recipe does not reco
 with other words in it) and the route is NOT closed: the census records a detect step that failed, with why,
 rather than "does not apply". A reader that is not in the image, or that timed out, is a missing observation
 and never a negative. The name is read as one value: the `os` field if the output is a JSON object, the string
-if it is a JSON string, the whole line otherwise; a word found among other words is not a name.
+if it is a JSON string, the whole line otherwise; a word found among other words is not a name. The prefix by which
+dissect.target names the target it read (`<Target /path/disk.E01> linux`) is taken off first when it names this image
+exactly: until it was, every image read as could-not-tell and the census never planned this recipe.
 
 Every answer carries `status` (complete, partial or failed) and `status_basis`, the pair coverage.json carries.
 For detect, `complete` says the OS was identified (either way) and `failed` says it was not.
@@ -469,10 +471,23 @@ def detect(image):
         undetermined(f"the OS probe failed ({type(exc).__name__}: {exc}): the OS was not identified, so this route is not closed")
 
 
-def os_name(text):
+def target_prefixes(image):
+    """How dissect.target names the target it read before a plain value (`<Target /path/disk.E01> linux`): the path as given, made
+    absolute, and with its links resolved, longest first."""
+    paths = {image, os.path.abspath(image), os.path.realpath(image)}
+    return sorted({f"<Target {p}>" for p in paths if p}, key=len, reverse=True)
+
+
+def os_name(text, image=None):
     """The one value `os` printed, or None: the `os` field of a JSON object, a JSON string, or the whole line. A word among other
-    words is not a name (`{"os":"windows","hostname":"linux"}` names windows, and `a linux box` names nothing)."""
+    words is not a name (`{"os":"windows","hostname":"linux"}` names windows, and `a linux box` names nothing). The prefix by which
+    dissect.target names the target it read (`<Target /path/disk.E01> linux`, as 3.25 in the linux image prints it) is not a word of the value:
+    it is taken off when it names this image exactly, and any other text before the value still makes it no name."""
     text = text.strip()
+    for prefix in target_prefixes(image) if image else []:
+        if text.startswith(prefix + " ") or text.startswith(prefix + "\t"):
+            text = text[len(prefix):].strip()
+            break
     if not text:
         return None
     try:
@@ -501,7 +516,7 @@ def detect_os(image):
         undetermined(f"target-query could not be started ({stderr.strip()[-300:]}): the OS was not identified, so this route is not closed")
     text = stdout.strip()
     first = (text.splitlines() or [""])[0][:80]
-    name = os_name(text) if code == 0 else None
+    name = os_name(text, image) if code == 0 else None
     if name == "linux":
         answer({"applies": True, "status": "complete", "status_basis": "dissect.target's os function named the target; that is its own identification, not checked here against files in the image",
                 "why": "dissect.target's os function named the target 'linux' (unverified here against the image's files)"})

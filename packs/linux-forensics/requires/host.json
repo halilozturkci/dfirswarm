@@ -131,6 +131,18 @@
       },
       "licence": "GPL-2.0-or-later AND LGPL-2.0-or-later AND LGPL-2.0-only AND BSD-3-Clause AND MIT (e2fsprogs, as Homebrew's formula metadata gives it)",
       "redistributable": false
+    },
+    {
+      "name": "target-fs",
+      "package": "dissect.target",
+      "optional": true,
+      "why": "Copy a directory or a file out of a disk image's file systems, a root inside LVM included, without mounting the evidence: target-fs -q IMAGE cp PATH -o DIR, one path a call, in a job into $OUT, so that the tools that read an extracted root (cron_dump, shell_history, utmp_parse, auth_log, journal_export) can read it (triage/system-profile). The copies carry the time of extraction as their modification time.",
+      "install": {
+        "brew": "python3 -m pip install dissect",
+        "apt": "python3 -m pip install dissect"
+      },
+      "licence": "AGPL-3.0-or-later",
+      "redistributable": false
     }
   ]
 }

@@ -79,6 +79,7 @@ import {
   lacksProgram,
   ownPathsToOut,
   heldOwnPaths,
+  toolArgsForJob,
   writtenToOf,
   stagedPaths,
   stagedPathsIn,
@@ -2603,9 +2604,16 @@ export default function (pi: ExtensionAPI) {
         await logEvent(toolCtx.cwd, agentId, "job_run", params, refused, Date.now() - started);
         return { content: [{ type: "text" as const, text: refused.reason }], details: refused, isError: true };
       }
+      // A tool's output path in the agent's own directories (work/<id>/x, as
+      // its manifest asks for) becomes a place under {OUT}, as it does when a
+      // direct call is run again as a job: a worker writes only its $OUT. The
+      // agents of the first microVM case run gave work/<id>/triage, and all
+      // three linux_triage jobs were refused before anything ran. What those
+      // places already hold is what the tool reads, and stays as given.
+      const toolArgs = params.tool ? await toolArgsForJob(toolCtx.cwd, (params.args ?? {}) as Record<string, unknown>, agentId) : undefined;
       const spec: Record<string, unknown> = {
         ...(params.command ? { command: params.command } : {}),
-        ...(params.tool ? { tool: params.tool, args: params.args ?? {} } : {}),
+        ...(params.tool ? { tool: params.tool, args: toolArgs } : {}),
         ...(params.import ? { import: params.import } : {}),
         ...(params.inputs ? { inputs: params.inputs } : {}),
         ...(params.timeout_seconds ? { timeout_seconds: params.timeout_seconds } : {}),
@@ -2626,8 +2634,10 @@ export default function (pi: ExtensionAPI) {
       // A command that runs or evaluates code from an evidence-derived place is flagged, never refused (extensions/evidence-code.ts).
       const flagged = typeof params.command === "string" ? evidenceCodeRun(params.command, Array.isArray(params.inputs) ? params.inputs : []) : null;
       const code = flagged ? await withOwnJobOutputs(toolCtx.cwd, flagged, agentId).catch(() => flagged) : null;
-      const result = { ok: true, ...res.result, ...(code ? { evidence_code: { ...code, note: evidenceCodeNote(code, "job") } } : {}) };
-      await logEvent(toolCtx.cwd, agentId, "job_run", params, { ok: true, job: res.job, state: res.result.state, status: res.result.status, ...(res.result.lead ? { lead: res.result.lead } : {}), ...(Array.isArray(res.result.similar) ? { similar: (res.result.similar as Array<{ job?: unknown }>).map((x) => x.job) } : {}), ...(code ? { evidence_code: code } : {}) }, Date.now() - started);
+      // Where each output path the agent gave was written instead: the job's sealed output, read and cited from there.
+      const moved = toolArgs ? writtenToOf(params.args ?? {}, toolArgs, res.job) : {};
+      const result = { ok: true, ...(Object.keys(moved).length ? { written_to: moved } : {}), ...res.result, ...(code ? { evidence_code: { ...code, note: evidenceCodeNote(code, "job") } } : {}) };
+      await logEvent(toolCtx.cwd, agentId, "job_run", params, { ok: true, job: res.job, state: res.result.state, status: res.result.status, ...(Object.keys(moved).length ? { written_to: moved } : {}), ...(res.result.lead ? { lead: res.result.lead } : {}), ...(Array.isArray(res.result.similar) ? { similar: (res.result.similar as Array<{ job?: unknown }>).map((x) => x.job) } : {}), ...(code ? { evidence_code: code } : {}) }, Date.now() - started);
       return okResult(result);
     },
   });

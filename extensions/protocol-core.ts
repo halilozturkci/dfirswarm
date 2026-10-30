@@ -7058,6 +7058,16 @@ export async function heldOwnPaths(root: string, args: Record<string, unknown>, 
 }
 
 /**
+ * A tool's arguments as job_run submits them: what a direct call run again
+ * as a job gets (ownPathsToOut over heldOwnPaths), so a manifest that asks
+ * for work/<id>/x is right whichever way the tool reaches a worker.
+ */
+export async function toolArgsForJob(root: string, args: Record<string, unknown>, agentId: string | undefined): Promise<Record<string, unknown>> {
+  const held = await heldOwnPaths(root, args, agentId).catch(() => new Set<string>());
+  return ownPathsToOut(args, agentId, { root, held });
+}
+
+/**
  * For the answer of a tool rerun as a job: each path the agent gave that was
  * mapped under {OUT}, and where it is now that the job is sealed,
  * store/jobs/<id>/out/<rest>. The agent reads and cites it from there.

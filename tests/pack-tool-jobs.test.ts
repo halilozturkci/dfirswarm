@@ -10,7 +10,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { heldOwnPaths, lacksProgram, ownPathsToOut, stagedPaths, stagedPathsIn, writtenToOf } from "../extensions/protocol.ts";
+import { heldOwnPaths, lacksProgram, ownPathsToOut, stagedPaths, stagedPathsIn, toolArgsForJob, writtenToOf } from "../extensions/protocol.ts";
 import { LIB, ROOT, runPy, withCwd } from "./tool-library-harness.ts";
 
 const run = (stderr: string, exit_code: number | null = 1, stdout = "") => ({ exit_code, stdout, stderr });
@@ -138,6 +138,36 @@ test("icat_extract, rerun as a job with the output it was given, writes it to $O
       await chmod(join(cwd, "work", "extracted", "s01"), 0o755);
     }
   });
+});
+
+test("job_run maps a tool's output path as a rerun does: linux_triage's out_dir under work/<id>/ is written to $OUT", async () => {
+  // The first microVM case run: three job_run calls of linux_triage with
+  // out_dir work/<id>/triage, as its manifest asks, were each refused before
+  // anything ran, since job_run passed the path through unmapped.
+  await withCwd(async (cwd, bin) => {
+    const out = join(cwd, ".jobs", "j000013");
+    await mkdir(out, { recursive: true });
+    await writeFile(join(bin, "target-query"), "#!/bin/sh\nexit 0\n", "utf8");
+    await chmod(join(bin, "target-query"), 0o755);
+    await chmod(join(cwd, "work"), 0o555);
+    try {
+      const given = { source: "inputs/Webserver.E01", out_dir: "work/s02/triage", groups: ["identity"], timeout_seconds: 30, total_timeout_seconds: 60 };
+      const mapped = await toolArgsForJob(cwd, given, "s02");
+      assert.equal(mapped.out_dir, "{OUT}/triage");
+      assert.deepEqual(writtenToOf(given, mapped, "j000013"), { "work/s02/triage": "store/jobs/j000013/out/triage" });
+      const script = join(ROOT, "packs", "linux-forensics", "tools", "linux_triage", "run.py");
+      const env = { AGENT_ID: "s02", JOB_ID: "j000013", OUT: out };
+      const unmapped = await runPy(script, cwd, given, bin, env);
+      assert.match(unmapped.stdout, /in a job out_dir must be a new directory/, "unmapped: what the run saw");
+      const r = await runPy(script, cwd, JSON.parse(JSON.stringify(mapped).split("{OUT}").join(out)) as Record<string, unknown>, bin, env);
+      assert.doesNotMatch(r.stdout, /in a job out_dir must be/, r.stdout);
+      assert.ok(JSON.parse(await readFile(join(out, "triage", "summary.json"), "utf8")), "its summary is under $OUT/triage");
+    } finally {
+      await chmod(join(cwd, "work"), 0o755);
+    }
+  });
+  const src = await readFile(join(ROOT, "extensions", "agent-swarm.ts"), "utf8");
+  assert.match(src, /tool: params\.tool, args: toolArgs/, "job_run submits the mapped arguments");
 });
 
 test("the places a rerun's output names under its staging directory are mapped to where the job sealed them", async () => {

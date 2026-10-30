@@ -184,6 +184,22 @@ test("the linux-target recipe says it could not tell, with exit 2, where it did 
       assert.equal(answer(r).applies, "unknown", text);
       assert.equal(answer(r).status, "failed", text);
     }
+    // dissect.target 3.25 (the linux image's) names the target before the value: `<Target /path> linux`. Until the
+    // prefix was taken off, every image read as could-not-tell and the census of the first microVM case run never
+    // planned this recipe; the LVM root it reads went uncatalogued. Only the prefix that names this image comes off.
+    const image = join(cwd, "inputs", "x.E01");
+    await stub(`print(${JSON.stringify(`<Target ${image}> linux`)})`);
+    r = recipe(cwd, bin, {}, "detect", "--target", join(cwd, "target.json"));
+    assert.equal(r.status, 0, String(r.stdout));
+    assert.equal(answer(r).applies, true);
+    await stub(`print(${JSON.stringify(`<Target ${image}> windows`)})`);
+    assert.equal(recipe(cwd, bin, {}, "detect", "--target", join(cwd, "target.json")).status, 1, "a prefixed other system is a no");
+    for (const text of [`<Target /elsewhere/y.E01> linux`, `<Target ${image}> a linux box`, `<Target ${image}>linux`, `see <Target ${image}> linux`]) {
+      await stub(`print(${JSON.stringify(text)})`);
+      r = recipe(cwd, bin, {}, "detect", "--target", join(cwd, "target.json"));
+      assert.equal(r.status, 2, text);
+      assert.equal(answer(r).applies, "unknown", text);
+    }
     // The name is read as a value, not as a word among others: a hostname called linux is not the OS.
     await stub(`import json\nprint(json.dumps({"os": "windows", "hostname": "linux"}))`);
     r = recipe(cwd, bin, {}, "detect", "--target", join(cwd, "target.json"));

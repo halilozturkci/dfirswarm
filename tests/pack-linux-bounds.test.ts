@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { runPySnippet } from "./tool-library-harness.ts";
-import { CRON, JOURNAL, RECIPE, SHELL, UTMP, asJob, body, filesUnder, lines, put, refused, rowsOf, startDetached, tool, withCwd } from "./linux-pack-harness.ts";
+import { AUTH, CRON, JOURNAL, RECIPE, SHELL, UTMP, asJob, body, filesUnder, lines, put, refused, rowsOf, startDetached, tool, withCwd } from "./linux-pack-harness.ts";
 import type { Json } from "./linux-pack-harness.ts";
 
 /** A tool that must come back: a case whose tool is still running after `ms` is killed and fails by name (the old code ran for minutes). */
@@ -702,5 +702,29 @@ test("journal_export walks a directory for links within max_seconds and a cap, a
     await put(cwd, "work/real/1.journal", "x");
     const real = await answer(JOURNAL, cwd, { path: "work/real" }, bin);
     assert.notEqual(real.json.status, "failed", JSON.stringify(real.json).slice(0, 300));
+  });
+});
+
+test("the tools that read files refuse a disk image with the routes that read one, and a file named like one goes on", async () => {
+  // The first microVM case run: cron_dump given root=inputs/Webserver.E01 said "no such directory", and the agents fell
+  // back to raw fls and icat for the files a pack tool reads. A disk image is refused with the routes that do read it.
+  await withCwd(async (cwd) => {
+    await writeFile(join(cwd, "inputs", "server.E01"), Buffer.concat([Buffer.from("EVF\x09\x0d\x0a\xff\x00", "latin1"), Buffer.alloc(600)]));
+    const mbr = Buffer.alloc(1024);
+    mbr[510] = 0x55;
+    mbr[511] = 0xaa;
+    await writeFile(join(cwd, "inputs", "disk.dd"), mbr);
+    for (const [script, key] of [[CRON, "root"], [SHELL, "root"], [UTMP, "path"], [AUTH, "path"], [JOURNAL, "path"]] as const) {
+      for (const image of ["inputs/server.E01", "inputs/disk.dd"]) {
+        const out = refused(await tool(script, cwd, { [key]: image }));
+        assert.match(out.error, new RegExp(`^${key} is a disk image: .*linux-target.*linux_triage.*target-fs -q <image> cp <dir>`), `${script} ${image}`);
+        assert.equal(out[key], image);
+        assert.equal(out.status, "failed");
+      }
+    }
+    // A name is not enough: a copied wtmp called .raw, with no boot-sector signature, is read as what it is.
+    await writeFile(join(cwd, "inputs", "wtmp.raw"), Buffer.alloc(384 * 2));
+    const wtmp = await tool(UTMP, cwd, { path: "inputs/wtmp.raw" });
+    assert.doesNotMatch(wtmp.stdout, /is a disk image/, wtmp.stdout);
   });
 });
