@@ -7052,9 +7052,10 @@ export function ownPathsToOut(
  * entries. Taken before the tool runs in the agent's VM, so what a failed
  * attempt there created (an empty output file, an output directory made
  * before the missing program was called) is still a place to write. With
- * `existing`, anything there at all is held: job_run's tool has made
- * nothing yet, so what is there (an empty btmp, an empty directory) is the
- * agent's, to be read.
+ * `existing`, a file is held whatever its size: job_run's tool has made
+ * nothing yet, so a file there (an empty btmp) is the agent's, to be read.
+ * An empty directory is still a place to write, as the packs' manifests say
+ * of an out_dir made beforehand (it holds nothing to read).
  */
 export async function heldOwnPaths(root: string, args: Record<string, unknown>, agentId: string | undefined, o: { existing?: boolean } = {}): Promise<Set<string>> {
   const held = new Set<string>();
@@ -7068,7 +7069,7 @@ export async function heldOwnPaths(root: string, args: Record<string, unknown>, 
   for (const rel of places) {
     const st = await stat(join(root, rel)).catch(() => null);
     if (!st) continue;
-    if (o.existing || (st.isFile() ? st.size > 0 : st.isDirectory() && (await readdir(join(root, rel)).catch(() => [])).length > 0)) held.add(rel);
+    if (st.isFile() ? o.existing || st.size > 0 : st.isDirectory() && (await readdir(join(root, rel)).catch(() => [])).length > 0) held.add(rel);
   }
   return held;
 }
@@ -7108,8 +7109,11 @@ export function writtenToOf(given: unknown, mapped: unknown, job: string): Recor
  * job wrote, once it is done; `not_written`, each whose place holds nothing
  * (a tool that failed or did not make that output); `writes_to` while the
  * job is under way. Whether a place holds something is read from the job's
- * output list when the list is whole, and from the sealed tree otherwise.
- * Before, `written_to` named a place whether or not anything was there.
+ * output list when the list is whole. When it is cut short, a listed file
+ * or the sealed tree this VM sees says written, and nothing is said not
+ * written: a place neither shows is `unconfirmed` (this VM's view of a tree
+ * just sealed may lag). Before, `written_to` named a place whether or not
+ * anything was there.
  */
 export function placedOutputs(root: string, moved: Record<string, string>, job: { state?: unknown; outputs?: unknown }): Record<string, Record<string, string>> {
   if (!Object.keys(moved).length) return {};
@@ -7117,14 +7121,15 @@ export function placedOutputs(root: string, moved: Record<string, string>, job: 
   const out = (job.outputs && typeof job.outputs === "object" ? job.outputs : {}) as { files?: unknown; list?: unknown };
   const list = Array.isArray(out.list) ? out.list.map((f) => String((f as { path?: unknown })?.path ?? "")) : null;
   const whole = list !== null && typeof out.files === "number" && out.files <= list.length;
-  const written: Record<string, string> = {};
-  const none: Record<string, string> = {};
+  const sorted: Record<"written_to" | "not_written" | "unconfirmed", Record<string, string>> = { written_to: {}, not_written: {}, unconfirmed: {} };
   for (const [given, place] of Object.entries(moved)) {
     const rest = place.replace(/^store\/jobs\/[^/]+\/out\/?/, "");
-    const holds = whole ? list.some((p) => rest === "" || p === rest || p.startsWith(`${rest}/`)) : existsSync(join(root, place));
-    (holds ? written : none)[given] = place;
+    const listed = (list ?? []).some((p) => rest === "" || p === rest || p.startsWith(`${rest}/`));
+    // A job that failed or was cancelled in the job service sealed nothing; a committed one with a whole list or no file wrote only what it lists.
+    const kind = listed ? "written_to" : whole || out.files === 0 || job.state !== "committed" ? "not_written" : existsSync(join(root, place)) ? "written_to" : "unconfirmed";
+    sorted[kind][given] = place;
   }
-  return { ...(Object.keys(written).length ? { written_to: written } : {}), ...(Object.keys(none).length ? { not_written: none } : {}) };
+  return Object.fromEntries(Object.entries(sorted).filter(([, v]) => Object.keys(v).length));
 }
 
 /**

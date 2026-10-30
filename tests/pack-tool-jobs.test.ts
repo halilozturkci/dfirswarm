@@ -170,27 +170,34 @@ test("job_run maps a tool's output path as a rerun does: linux_triage's out_dir 
   assert.match(src, /tool: params\.tool, args: toolArgs/, "job_run submits the mapped arguments");
 });
 
-test("job_run reads what is already there, empty or not, leaves text to match alone, and says only of a place that holds something that it was written", async () => {
+test("job_run reads a file already there, empty or not, writes into an empty directory, leaves text to match alone, and says only of a place that holds something that it was written", async () => {
   await withCwd(async (cwd) => {
-    // An empty extracted btmp and an empty directory are the agent's, to be read: job_run's tool has made nothing yet.
+    // An empty extracted btmp is the agent's, to be read: job_run's tool has made nothing yet. An empty directory made
+    // beforehand is still a place to write, as six network-forensics manifests say of an out_dir; one with entries is read.
     await mkdir(join(cwd, "work", "s01", "empty-dir"), { recursive: true });
+    await mkdir(join(cwd, "work", "s01", "hives"), { recursive: true });
+    await writeFile(join(cwd, "work", "s01", "hives", "SYSTEM"), "regf");
     await writeFile(join(cwd, "work", "s01", "btmp"), "");
-    const given = { path: "work/s01/btmp", dir: "work/s01/empty-dir", out_dir: "work/s01/new", contains: "work/s01/x", name_filter: "work/s01/y", patterns: ["work/s01/z"] };
+    const given = { path: "work/s01/btmp", dir: "work/s01/hives", made: "work/s01/empty-dir", out_dir: "work/s01/new", contains: "work/s01/x", name_filter: "work/s01/y", patterns: ["work/s01/z"] };
     const mapped = await toolArgsForJob(cwd, given, "s01");
-    assert.deepEqual(mapped, { path: "work/s01/btmp", dir: "work/s01/empty-dir", out_dir: "{OUT}/new", contains: "work/s01/x", name_filter: "work/s01/y", patterns: ["work/s01/z"] });
+    assert.deepEqual(mapped, { path: "work/s01/btmp", dir: "work/s01/hives", made: "{OUT}/empty-dir", out_dir: "{OUT}/new", contains: "work/s01/x", name_filter: "work/s01/y", patterns: ["work/s01/z"] });
     // A direct call rerun as a job still writes where its failed attempt left an empty file (that path is unchanged).
     assert.equal(ownPathsToOut({ output: "work/s01/btmp" }, "s01", { root: cwd, held: await heldOwnPaths(cwd, { output: "work/s01/btmp" }, "s01") }).output, "{OUT}/btmp");
-    const moved = writtenToOf(given, mapped, "j000031");
-    assert.deepEqual(moved, { "work/s01/new": "store/jobs/j000031/out/new" });
+    assert.deepEqual(writtenToOf(given, mapped, "j000031"), { "work/s01/empty-dir": "store/jobs/j000031/out/empty-dir", "work/s01/new": "store/jobs/j000031/out/new" });
+    const moved = { "work/s01/new": "store/jobs/j000031/out/new" };
     // Under way: where it writes. Done, with its whole output list: written only where a file is under the place.
     assert.deepEqual(placedOutputs(cwd, moved, { state: "running" }), { writes_to: moved });
     assert.deepEqual(placedOutputs(cwd, moved, { state: "committed", outputs: { files: 1, list: [{ path: "new/summary.json" }] } }), { written_to: moved });
     assert.deepEqual(placedOutputs(cwd, moved, { state: "committed", outputs: { files: 0, list: [] } }), { not_written: moved }, "a tool that failed before writing");
     assert.deepEqual(placedOutputs(cwd, { "work/s01/n": "store/jobs/j000031/out/n" }, { state: "committed", outputs: { files: 1, list: [{ path: "new" }] } }), { not_written: { "work/s01/n": "store/jobs/j000031/out/n" } }, "a name that only starts like it is not it");
-    // A list cut short is read from the sealed tree instead.
-    assert.deepEqual(placedOutputs(cwd, moved, { state: "committed", outputs: { files: 40, list: [{ path: "other" }] } }), { not_written: moved });
+    // A list cut short: a listed file or the sealed tree says written, and what neither shows is unconfirmed, never not
+    // written (this VM's view of a tree just sealed may lag).
+    assert.deepEqual(placedOutputs(cwd, moved, { state: "committed", outputs: { files: 40, list: [{ path: "other" }] } }), { unconfirmed: moved });
+    assert.deepEqual(placedOutputs(cwd, moved, { state: "committed", outputs: { files: 40, list: [{ path: "new/a.json" }] } }), { written_to: moved });
     await mkdir(join(cwd, "store", "jobs", "j000031", "out", "new"), { recursive: true });
     assert.deepEqual(placedOutputs(cwd, moved, { state: "committed", outputs: { files: 40, list: [{ path: "other" }] } }), { written_to: moved });
+    // A job the job service failed or cancelled sealed nothing.
+    assert.deepEqual(placedOutputs(cwd, { "work/s01/q": "store/jobs/j000031/out/q" }, { state: "failed" }), { not_written: { "work/s01/q": "store/jobs/j000031/out/q" } });
     assert.deepEqual(placedOutputs(cwd, {}, { state: "committed" }), {});
   });
 });

@@ -1,7 +1,7 @@
 {
   "id": "linux-forensics",
   "name": "Linux Forensics Pack",
-  "version": "1.5.10",
+  "version": "1.5.11",
   "description": "Artefact-by-artefact method and tooling for a Linux host: the system profile and its clocks, authentication and journal records, accounts and authorization, scheduling and systemd candidates, ext metadata and storage layers, container evidence locations, and package verification against local and independently trusted baselines. Each tool says what it read, what it did not, and where the whole result is kept.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -64,7 +64,7 @@
       "skills/containers/removed-logs.md": "768cc0eb88fe9dc30b7a6785b5d531fc7db0d00e8cadcdff452f6e4e15a8f954",
       "skills/filesystem/ext-deleted.md": "7c68012a210d6f67fae4d0c3483b42fee57f0f2d45181913e45039034cc75ae4",
       "skills/filesystem/ext.md": "92eee28206383e2b50732ab538953eabe5228834487c89033783fe3eee86eacb",
-      "skills/filesystem/storage-lvm-luks.md": "573db30e612b76f2a0a5b586a1e6cdc79397bb6ca0f58305caf7a107eff0f935",
+      "skills/filesystem/storage-lvm-luks.md": "a8c445df538073c5c326da8e398361879b475648aab0f7b31730feb1beb75db0",
       "skills/filesystem/storage-xfs-btrfs-virtual.md": "16a41d0e53282305b2468043b91d12d8acc5a4686703253b2ca27d1c4b108b74",
       "skills/filesystem/storage.md": "f83bdfc85857c9e444120cd04a5bc12954c40968feebfd56e51f9c35022fbe0f",
       "skills/linux/router.md": "40bda0f1019934ee3eb7a89ea798cd93280a28d3f1bfb4e6672fcb236543c9f9",
