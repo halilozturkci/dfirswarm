@@ -250,6 +250,7 @@ test("check_inputs diffs inputs.json instead of always reporting OK", async () =
     const ok = await runPy(join(LIB, "check_inputs", "run.py"), cwd, {});
     assert.equal(ok.code, 0, ok.stderr);
     assert.equal((JSON.parse(ok.stdout) as { status: string }).status, "OK");
+    assert.equal((JSON.parse(ok.stdout) as { baseline: string }).baseline, "the run's inputs.json");
 
     // In a job the run's inputs.json is not in the run directory the job sees: the job service gives a copy, named by
     // SWARM_INPUTS_MANIFEST (the first microVM case run's check_inputs job found none and failed).
@@ -261,7 +262,9 @@ test("check_inputs diffs inputs.json instead of always reporting OK", async () =
     await mkdir(out, { recursive: true });
     const inJob = await runPy(join(LIB, "check_inputs", "run.py"), cwd, {}, undefined, { JOB_ID: "j000006", OUT: out, SWARM_INPUTS_MANIFEST: join(copy, "inputs.json") });
     assert.equal(inJob.code, 0, inJob.stdout + inJob.stderr);
-    assert.equal((JSON.parse(inJob.stdout) as { status: string }).status, "OK");
+    const inJobBody = JSON.parse(inJob.stdout) as { status: string; baseline: string };
+    assert.equal(inJobBody.status, "OK");
+    assert.match(inJobBody.baseline, /a copy of the run.s inputs.json the job service gave this job when it started/, "the answer says its baseline was the job's copy");
     const none = await runPy(join(LIB, "check_inputs", "run.py"), cwd, {}, undefined, { JOB_ID: "j000007", OUT: out });
     assert.notEqual(none.code, 0);
     assert.match(none.stdout, /inputs\.json not found: a job is given a copy of it only when it sees all of inputs\//);

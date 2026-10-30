@@ -971,8 +971,12 @@ def refuse_disk_image(path, key):
     try:
         if os.path.islink(path) or not stat.S_ISREG(os.stat(path).st_mode):
             return
-        with open(path, "rb") as fh:
-            head = fh.read(512)
+        # Without blocking: a regular file whose read waits (/proc/kmsg, read as root) answers at once, and is no image.
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+        try:
+            head = os.read(fd, 512)
+        finally:
+            os.close(fd)
     except (OSError, ValueError):
         return
     named = path.lower().endswith(IMAGE_SUFFIXES)
@@ -990,7 +994,6 @@ def main():
         mode_bits = os.stat(path).st_mode if present else 0
     except OSError as exc:
         fail("the path cannot be examined", path=path, reason=describe(exc))
-    refuse_disk_image(path, "path")
     if not present:
         fail("no such file or directory", path=path)
     if not (stat.S_ISREG(mode_bits) or stat.S_ISDIR(mode_bits)):
@@ -1011,6 +1014,7 @@ def main():
             if os.path.islink(walked):
                 fail("refusing a path that goes through a link (%s): pass the journal's real location inside the evidence" % walked, path=path, link=walked)
     refuse_root_directory(path)
+    refuse_disk_image(path, "path")
     mode = args.get("mode", "export")
     if mode not in ("export", "verify"):
         fail("mode must be export or verify")

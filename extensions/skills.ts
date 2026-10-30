@@ -406,14 +406,16 @@ export async function locateSkill(packs: PackRef[], wanted: Wanted): Promise<{ f
   if (carrying.length) return { found: { pack: carrying[0]!, id: wanted.id, others: carrying.slice(1) } };
   // The id with its pack in front, slash separated ("windows/execution/prefetch", 17 of 143 calls; the
   // first microVM case run asked for "linux/accounts/users"): a leading segment that is a pack id of
-  // this run, or the start of one (three letters at least), is taken off, and the rest is looked up in
-  // those packs only. Carried by exactly one of them, it is that note; otherwise there is none.
+  // this run, or its words up to a dash ("linux" of linux-forensics, "computer-forensics" of
+  // computer-forensics-base), is taken off, and the rest is looked up in those packs only. Carried by
+  // exactly one of them, it is that note; otherwise there is none. A part of a word ("lin", "comp") is
+  // no pack's name: a misspelt id is not sent to some other pack's note.
   const cut = wanted.id.indexOf("/");
   if (cut >= 3) {
     const prefix = wanted.id.slice(0, cut);
     const rest = wanted.id.slice(cut + 1);
     const named: PackRef[] = [];
-    for (const pack of packs) if (pack.id.startsWith(prefix) && (await has(pack, rest))) named.push(pack);
+    for (const pack of packs) if ((pack.id === prefix || pack.id.startsWith(`${prefix}-`)) && (await has(pack, rest))) named.push(pack);
     if (named.length === 1) return { found: { pack: named[0]!, id: rest, others: [], prefix } };
   }
   return { missing: "no such skill" };

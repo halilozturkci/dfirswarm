@@ -861,8 +861,12 @@ def refuse_disk_image(path, key):
     try:
         if os.path.islink(path) or not stat.S_ISREG(os.stat(path).st_mode):
             return
-        with open(path, "rb") as fh:
-            head = fh.read(512)
+        # Without blocking: a regular file whose read waits (/proc/kmsg, read as root) answers at once, and is no image.
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+        try:
+            head = os.read(fd, 512)
+        finally:
+            os.close(fd)
     except (OSError, ValueError):
         return
     named = path.lower().endswith(IMAGE_SUFFIXES)

@@ -38,3 +38,11 @@ The kickoff's recipes, a recipe an agent asks for with `catalog_request` (a supe
 ### Changed: the route to a Linux file by path is where agents look (linux-forensics)
 
 The second microVM case run's agents reached files inside LVM with `fls` and `icat` at the logical volume's offset and never met `target-fs`: the note that named it (`triage/system-profile`) was not loaded. `filesystem/storage-lvm-luks`, which they did load, now says how to read a logical volume's files: what the catalogue parsed first, The Sleuth Kit by inode at a linear volume's offset (which keeps the record's identity), and `target-fs` by path for anything else. `linux-target`'s receipt (`coverage.json`), which the agents read first, names the same route in `files_by_path`.
+
+### Fixed: small findings of the verifications above
+
+- `job_run` reads a place under `work/<id>/` that is there at all, empty or not (an empty extracted btmp was sent to `$OUT` and not found), and never maps the text of a parameter that matches (`contains`, `pattern`, `grep`, a name filter). Its answer, and a rerun's, says `written_to` only of a place that holds what the job wrote, `not_written` of one that holds nothing, and `writes_to` while the job is under way.
+- A pack-prefixed skill id is taken only with the pack's whole id or its words up to a dash in front (`linux/…`), not a part of a word (`lin/…`).
+- The kickoff's `Tokens:` line names a ChatGPT sign-in only for `openai`.
+- linux-forensics: the disk-image check reads without blocking (a regular file whose read waits, such as `/proc/kmsg`, is not held); `journal_export` makes it after its own refusals of a link in the path and of this machine's journal; `linux-target` knows `./disk.E01` as dissect.target prints it (`<Target disk.E01>`); `filesystem/storage-lvm-luks` counts a linear volume's offset from the start of the disk (partition, PV data start, segment).
+- computer-forensics-base: `check_inputs` says which baseline it compared against (`baseline`: the run's `inputs.json`, or the copy a job was given).

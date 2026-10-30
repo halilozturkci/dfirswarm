@@ -45,8 +45,8 @@
   "example": "{\"path\": \"work/extracted/var/log\", \"kinds\": [\"ssh_accepted\", \"sudo\"]}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 9,
-  "sha256": "31f18db57ed39c94c23c0a1671b835fddc68f4e4b5e4189a8ce71b2829cc4e9f",
+  "version": 10,
+  "sha256": "bff4f918ceb6185fa58fd5c39f7695e25c1d687abcb7b2d0afd38c92614df104",
   "use": {
     "names": [
       "auth.log*",

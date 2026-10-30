@@ -194,6 +194,10 @@ test("the linux-target recipe says it could not tell, with exit 2, where it did 
     assert.equal(answer(r).applies, true);
     await stub(`print(${JSON.stringify(`<Target ${image}> windows`)})`);
     assert.equal(recipe(cwd, bin, {}, "detect", "--target", join(cwd, "target.json")).status, 1, "a prefixed other system is a no");
+    // A target named `./inputs/x.E01` is printed as dissect.target normalises it: `<Target inputs/x.E01>`.
+    await writeFile(join(cwd, "target-rel.json"), JSON.stringify({ paths: ["./inputs/x.E01"], name: "x" }));
+    await stub(`print("<Target inputs/x.E01> linux")`);
+    assert.equal(recipe(cwd, bin, {}, "detect", "--target", join(cwd, "target-rel.json")).status, 0, "a ./ path, normalised as dissect.target prints it");
     for (const text of [`<Target /elsewhere/y.E01> linux`, `<Target ${image}> a linux box`, `<Target ${image}>linux`, `see <Target ${image}> linux`]) {
       await stub(`print(${JSON.stringify(text)})`);
       r = recipe(cwd, bin, {}, "detect", "--target", join(cwd, "target.json"));

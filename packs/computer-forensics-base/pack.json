@@ -1,7 +1,7 @@
 {
   "id": "computer-forensics-base",
   "name": "Computer Forensics Base Pack",
-  "version": "1.11.8",
+  "version": "1.11.9",
   "description": "Method and tooling every examination needs, whatever the platform: read the container and find the volume, verify the evidence, read the catalogue, extract and carve, tell an encrypted volume from an unreadable one, keep a timeline, cite what you claim.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -87,8 +87,8 @@
       "tools/archive_extract/run.py": "054bc20837624d40a78ee3c4a7734f004cf56c7f6ea4bcd2e2b4ea72b97c3759",
       "tools/catalog_search/manifest.json": "455f70e79855dee74d3948c174562071faf64a8975b53364ffbc06d29f61f125",
       "tools/catalog_search/run.py": "e206154821cf3e14a9389ebb2f5196a142cd17c673bededd4842ecce7441e517",
-      "tools/check_inputs/manifest.json": "68285c40bdd7ba0a90b156568c64de3447621e09330bbb20fbf8903a859c70dd",
-      "tools/check_inputs/run.py": "ece5c9cc4eb7ed7f5e607817ef0d105d0aafa7a89679ed7152764232577ed5e0",
+      "tools/check_inputs/manifest.json": "0ef42dbb685fc5009115890f3ba1ea1886d71ab7741c91b634879fb87640bc83",
+      "tools/check_inputs/run.py": "0830b910c90af5657b78af8fa34e2628cee6280e798ab57690341002a06891eb",
       "tools/chunk_needles/manifest.json": "b459b628f99fb7b07de3b4b1ab3d8f45942d3077df63c62c7d3a4b91c617bd1d",
       "tools/chunk_needles/run.py": "53c906c75dc86e6c189f7297329111b9ed9806ee8bcea1e58642df022673de32",
       "tools/feature_scan/manifest.json": "4fbeb5bc27aa7206c9f49c74e20d31293dd90df5a07161fe2798dd56b64d7873",

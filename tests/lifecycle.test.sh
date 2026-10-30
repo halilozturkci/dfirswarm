@@ -188,7 +188,7 @@ echo "\$*" >> "$TMP/fakepi/calls"
 provider="" floor=""
 while [[ \$# -gt 0 ]]; do case "\$1" in --provider) provider="\$2"; shift ;; --min-expiry) floor="\$2"; shift ;; esac; shift; done
 case "\$provider:\$floor" in
-  openai:50m|openai-codex:*) echo "tok-not-for-the-log"; exit 0 ;;
+  openai:50m|solo:50m|openai-codex:*) echo "tok-not-for-the-log"; exit 0 ;;
   *) echo "token expires in 59m, less than \$floor" >&2; exit 1 ;;
 esac
 EOF
@@ -205,6 +205,9 @@ grep -q -- "--provider anthropic" "$TMP/fakepi/calls" && fail "an API key provid
 [[ "$(PATH="$TMP/fakepi:$PATH" vm_token_validity '[{"provider":"openai-codex","kind":"oauth"}]' 240 1 2>/dev/null)" == 12h ]] || fail "a run only the operator stops is not minted for 12 h"
 [[ "$(PATH="$TMP/fakepi:$PATH" SWARM_TOKEN_MIN_VALIDITY=90m vm_token_validity "$both" 240 0 2>/dev/null)" == 90m ]] || fail "SWARM_TOKEN_MIN_VALIDITY is not the operator's word"
 [[ "$(PATH="$TMP/fakepi:$PATH" vm_token_validity '[{"provider":"anthropic","kind":"oauth"}]' 240 0 2>/dev/null)" == 300m ]] || fail "a provider that cannot meet 50 minutes either should keep the floor, to fail in Pi's words where the VMs are made"
+PATH="$TMP/fakepi:$PATH" vm_token_validity '[{"provider":"solo","kind":"oauth"}]' 240 0 >/dev/null 2>"$TMP/fakepi/err-solo"
+grep -q "solo's subscription token cannot be minted for 300m: the run's tokens are minted for 50m" "$TMP/fakepi/err-solo" || fail "another provider's short token is not said plainly: $(cat "$TMP/fakepi/err-solo")"
+grep -q ChatGPT "$TMP/fakepi/err-solo" && fail "the ChatGPT note is given for a provider that is not openai"
 pass "the seats' token floor: a ChatGPT sign-in's hour brings it down to 50 minutes (said), any other keeps the run's, the operator's word wins, and no token is printed"
 
 # An unpacked `git archive` (how the Linux host is synced) knows its commit

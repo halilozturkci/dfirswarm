@@ -477,9 +477,9 @@ def detect(image):
 
 
 def target_prefixes(image):
-    """How dissect.target names the target it read before a plain value (`<Target /path/disk.E01> linux`): the path as given, made
-    absolute, and with its links resolved, longest first."""
-    paths = {image, os.path.abspath(image), os.path.realpath(image)}
+    """How dissect.target names the target it read before a plain value (`<Target /path/disk.E01> linux`): the path as given, as
+    normalised (`./disk.E01` is printed `disk.E01`), made absolute, and with its links resolved, longest first."""
+    paths = {image, os.path.normpath(image), os.path.abspath(image), os.path.realpath(image)}
     return sorted({f"<Target {p}>" for p in paths if p}, key=len, reverse=True)
 
 

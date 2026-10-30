@@ -833,6 +833,9 @@ test("the ids a seat guesses under a pack's name are not answered with a note ab
     await withSeat(t, [win, lin], async (seat) => {
       assert.match((await seat.skill("linux/accounts/users")).text, /^Skill `accounts\/users` \(pack linux-forensics/);
       assert.match((await seat.skill("windows/accounts/users")).text, /^No skill "windows\/accounts\/users"/, "windows-forensics does not carry it");
+      // A part of a word is no pack's name: a misspelt prefix is not sent to another pack's note.
+      assert.match((await seat.skill("lin/accounts/users")).text, /^No skill "lin\/accounts\/users"/);
+      assert.match((await seat.skill("linuxf/accounts/users")).text, /^No skill "linuxf\/accounts\/users"/);
     });
     await withSeat(t, [lin, lin2], async (seat) => {
       assert.match((await seat.skill("linux/accounts/users")).text, /^No skill "linux\/accounts\/users"/, "two packs the prefix names carry it: none is chosen");

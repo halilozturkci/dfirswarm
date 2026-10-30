@@ -7,7 +7,7 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, open, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, readdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -725,6 +725,10 @@ test("the tools that read files refuse a disk image with the routes that read on
     // A dynamic VHD says so in its first bytes.
     await writeFile(join(cwd, "inputs", "disk.vhd"), Buffer.concat([Buffer.from("conectix", "latin1"), Buffer.alloc(600)]));
     assert.match(refused(await tool(CRON, cwd, { root: "inputs/disk.vhd" })).error, /^root is a disk image/);
+    // journal_export refuses a path through a link before it reads a byte: the image check does not say what lies beyond.
+    await symlink(join(cwd, "inputs"), join(cwd, "work", "via"));
+    const linked = refused(await tool(JOURNAL, cwd, { path: "work/via/server.E01" }));
+    assert.match(linked.error, /goes through a link/, linked.error);
     // A name is not enough: a copied wtmp called .raw, with no boot-sector signature, is read as what it is.
     await writeFile(join(cwd, "inputs", "wtmp.raw"), Buffer.alloc(384 * 2));
     const wtmp = await tool(UTMP, cwd, { path: "inputs/wtmp.raw" });

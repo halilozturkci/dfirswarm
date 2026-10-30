@@ -28,7 +28,7 @@ import tempfile
 import time
 from pathlib import Path
 
-TOOL = {"name": "check_inputs", "version": 6}
+TOOL = {"name": "check_inputs", "version": 7}
 MANIFEST = "inputs.json"
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 SPECIALS = {"fifo": stat.S_ISFIFO, "socket": stat.S_ISSOCK, "char": stat.S_ISCHR, "block": stat.S_ISBLK}
@@ -289,6 +289,8 @@ result = {
     "bytes_hashed": bytes_hashed,
     "receipts_file": receipts.shown if receipts.created else None,
     "receipts": receipts.count,
+    "baseline": ("a copy of the run's inputs.json the job service gave this job when it started (SWARM_INPUTS_MANIFEST)"
+                 if MANIFEST != "inputs.json" else "the run's inputs.json"),
     "does_not_show": "that the evidence is authentic or complete, or that the manifest was right when it was made: a pass is agreement with the baseline",
 }
 if receipts.error:
