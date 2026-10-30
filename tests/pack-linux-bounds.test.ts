@@ -500,6 +500,136 @@ test("utmp_parse ends on SIGTERM with a last word, and keeps the paging file it 
   });
 });
 
+// ---- a signal that comes while a file is being written -------------------------------------------------------------
+
+// Python can run a signal handler inside a buffered file's own flush, where the file refuses a second flush: the last word then
+// left the paging file it was writing unfinished and unnamed (the SIGTERM tests above met it now and then on a loaded runner), and
+// cut an answer that was being printed. This harness makes it happen every time: under the paging file, or under stdout, it puts a
+// file whose first write sends the process SIGTERM, so the handler runs while the buffered layer above is in the middle of its flush.
+const INSIDE_A_WRITE = String.raw`
+import importlib.util, io, os, signal, sys, time
+sys.dont_write_bytecode = True          # a __pycache__ beside the tool would be a file the sealed pack does not list
+script, cwd, case = sys.argv[1:4]
+for name in ("JOB_ID", "OUT"):
+    os.environ.pop(name, None)
+os.environ["AGENT_ID"] = "s1"
+spec = importlib.util.spec_from_file_location("tool_under_test", script)
+tool = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(tool)
+os.chdir(cwd)
+tool.install_signal_handlers()
+
+
+class SignalInsideWrite(io.RawIOBase):
+    def __init__(self, fd):
+        self.fd, self.sent = fd, False
+
+    def writable(self):
+        return True
+
+    def fileno(self):
+        return self.fd
+
+    def write(self, b):
+        n = os.write(self.fd, b)
+        if not self.sent:
+            self.sent = True
+            os.kill(os.getpid(), signal.SIGTERM)     # answered at the next instruction: here, inside the flush above
+        return n
+
+
+def inside_a_write(fd):
+    return io.TextIOWrapper(io.BufferedWriter(SignalInsideWrite(fd), buffer_size=64), encoding="utf-8", write_through=True)
+
+
+class SlowFlush(io.RawIOBase):
+    def __init__(self, fd):
+        self.fd = fd
+
+    def writable(self):
+        return True
+
+    def fileno(self):
+        return self.fd
+
+    def write(self, b):
+        time.sleep(0.5)                 # the last word's flush outlasts what the regex clock has left
+        return os.write(self.fd, b)
+
+
+if case == "clock":
+    # A stop that comes during a slow match: the match's clock is still running when the last word begins.
+    page = tool.LosslessPage(tool.TOOL, "records", 1)
+    page.add({"n": 0})
+    page.add({"n": 1})
+    page._out.flush()
+    held = page._out
+    page._out = io.TextIOWrapper(io.BufferedWriter(SlowFlush(held.fileno()), buffer_size=1 << 16), encoding="utf-8")
+    for n in range(2, 20):
+        page.add({"n": n})
+    tool.arm_regex_clock()
+    signal.setitimer(signal.ITIMER_REAL, 0.1)
+    os.kill(os.getpid(), signal.SIGTERM)
+elif case == "page":
+    page = tool.LosslessPage(tool.TOOL, "records", 1)
+    page.add({"n": 0})
+    page.add({"n": 1})                  # past the limit: the paging file is begun
+    page._out.flush()
+    held = page._out                    # keeps the descriptor open
+    page._out = inside_a_write(held.fileno())
+    for n in range(2, 200):
+        page.add({"n": n, "pad": "x" * 40})
+else:
+    sys.stdout.flush()
+    sys.stdout = inside_a_write(1)
+    tool.fail("an error answer longer than the buffer " + "y" * 400)
+print("the signal was never answered")
+`;
+
+for (const [name, script] of [["utmp_parse", UTMP], ["cron_dump", CRON], ["shell_history", SHELL]] as const) {
+  test(`${name}: a signal while a row is being written still keeps the paging file under its name, every row in it whole`, async () => {
+    await withCwd(async (cwd) => {
+      const r = await runPySnippet(INSIDE_A_WRITE, [script, cwd, "page"], null);
+      assert.equal(r.code, 143, `exit status of a SIGTERM: ${r.stdout}${r.stderr}`);
+      const word = JSON.parse(r.stdout.trim().split("\n").at(-1) as string);
+      assert.equal(word.stopped_by_signal, 15);
+      const names = await readdir(join(cwd, "work", "s1", "tool-output"));
+      assert.deepEqual(names.filter((n) => n.startsWith(".")), [], "no unfinished temporary file is left");
+      const shown: string = word.paging_files_kept.records;
+      assert.ok(shown, `the last word names the paging file: ${JSON.stringify(word.paging_files_kept)}`);
+      const kept = await readFile(join(cwd, shown), "utf8");
+      assert.ok(kept.endsWith("\n"), "the file ends at a whole row");
+      const ns = kept.trimEnd().split("\n").map((l) => (JSON.parse(l) as { n: number }).n);
+      assert.deepEqual(ns, ns.map((_, i) => i), "the rows in order from the first, none lost and none cut");
+      assert.ok(ns.length >= 3, `${ns.length} rows kept: the one being written when the signal came is among them`);
+    });
+  });
+
+  test(`${name}: a signal during a slow match keeps the paging file under its name, though the match's clock runs out in the last word`, async () => {
+    await withCwd(async (cwd) => {
+      const r = await runPySnippet(INSIDE_A_WRITE, [script, cwd, "clock"], null);
+      assert.equal(r.code, 143, `exit status of a SIGTERM: ${r.stdout}${r.stderr}`);
+      const word = JSON.parse(r.stdout.trim().split("\n").at(-1) as string);
+      const names = await readdir(join(cwd, "work", "s1", "tool-output"));
+      assert.deepEqual(names.filter((n) => n.startsWith(".")), [], "no unfinished temporary file is left");
+      const shown: string = word.paging_files_kept.records;
+      assert.ok(shown, `the last word names the paging file: ${JSON.stringify(word.paging_files_kept)}`);
+      const ns = (await readFile(join(cwd, shown), "utf8")).trimEnd().split("\n").map((l) => (JSON.parse(l) as { n: number }).n);
+      assert.deepEqual(ns, Array.from({ length: 20 }, (_, i) => i), "every row written before the stop is in it");
+    });
+  });
+
+  test(`${name}: a signal while an answer is being written leaves that answer whole, with nothing after it`, async () => {
+    await withCwd(async (cwd) => {
+      const r = await runPySnippet(INSIDE_A_WRITE, [script, cwd, "answer"], null);
+      assert.equal(r.code, 1, `the error answer's own exit status: ${r.stdout}${r.stderr}`);
+      const doc = JSON.parse(r.stdout);
+      assert.match(doc.error, /^an error answer longer than the buffer y{400}$/);
+      assert.equal(doc.status, "failed");
+    });
+  });
+}
+
 // ---- journal_export: the walk for links ---------------------------------------------------------------------------
 
 async function journalStub(bin: string): Promise<void> {

@@ -49,7 +49,7 @@ import time
 from pathlib import Path
 
 TOOL = "shell_history"
-PARSER = "shell_history/6"
+PARSER = "shell_history/7"
 DEFAULT_LIMIT = 200
 FIRST_FAILURES = 20
 MAX_PIECE = 8 << 20          # a physical line longer than this is read in pieces, none dropped
@@ -79,6 +79,7 @@ SKIP_TOP = ("proc", "sys", "dev")
 
 def fail(message, **extra):
     """An error answer: JSON, exit 1, and the same `status` every answer of this pack carries."""
+    STATE["answering"] = True       # a signal from here on is not answered: this answer stands alone
     print(json.dumps({"error": message, "status": "failed", "status_basis": "the tool stopped with an error (see error)", **extra}))
     raise SystemExit(1)
 
@@ -249,12 +250,17 @@ class LosslessPage:
             agent = re.sub(r"[^A-Za-z0-9_.-]", "_", os.environ.get("AGENT_ID") or "tool")
             self.path = Path("work") / agent / "tool-output" / name
             self.shown = str(self.path)
+        self._done = False
+        STATE["pages"].append(self)     # every page is the last word's to name, from the moment it exists
 
     def _write(self, row):
+        _writing()
         try:
             self._out.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")     # one write: a stop never leaves half a row
         except OSError as exc:
             fail("the whole result could not be written to %s: %s" % (self.path, describe(exc)), paging_file=str(self.path))
+        finally:
+            _written()
 
     def add(self, row):
         self.total += 1
@@ -278,6 +284,8 @@ class LosslessPage:
         """The rows written so far, kept under the final name (a signal ended the tool): the path as shown, or None where nothing was written."""
         if self._tmp is None:
             return None
+        if self._done:
+            return self.shown           # finish() had put it under its name: it holds every row
         out, self._out = self._out, None
         if out is not None:
             out.flush()
@@ -291,13 +299,17 @@ class LosslessPage:
     def finish(self):
         result = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
         if self._out is not None:
+            _writing()
             try:
                 self._out.flush()
                 os.fsync(self._out.fileno())
                 self._out.close()
                 os.replace(self._tmp, self.path)
+                self._done = True
             except OSError as exc:
                 fail("the whole result could not be written to %s: %s" % (self.path, describe(exc)), paging_file=str(self.path))
+            finally:
+                _written()
             result["all_results"] = self.shown
             result["all_results_format"] = "JSON Lines, one complete result per line"
         return result
@@ -306,10 +318,36 @@ class LosslessPage:
 # A signal ends the tool with a last word. The harness ends a tool that runs too long with SIGTERM before it kills the group, and a
 # tool that ignored it left its paging files as unfinished temporary files nobody could name. The rows written so far are kept under
 # their final names and the text file is closed, so the last word can say where they are; the answer itself was never built.
-STATE = {"pages": [], "text": None}
+#
+# Two moments are not the handler's. Python can run a handler inside a buffered file's own write (its flush looks for signals between
+# writes), and there the file refuses the last word's flush: a signal that came while a row was being written left that paging file
+# unfinished and unnamed. So while a file the last word closes is being written, the handler only notes the signal, and the write
+# gives the last word once it is done. And while the answer, or an error answer, is being written, a signal is not answered: the
+# answer stands, and no second document follows it.
+STATE = {"pages": [], "text": None, "writing": 0, "pending": None, "answering": False}
+
+
+def _writing():
+    STATE["writing"] += 1
+
+
+def _written():
+    STATE["writing"] -= 1
+    if not STATE["writing"] and STATE["pending"] is not None:
+        signum, STATE["pending"] = STATE["pending"], None
+        _on_signal(signum, None)
 
 
 def _on_signal(signum, _frame):
+    if STATE["answering"]:
+        return
+    if STATE["writing"]:
+        STATE["pending"] = signum
+        return
+    STATE["answering"] = True       # the last word is the answer now: a second signal does not start another
+    if hasattr(signal, "setitimer"):
+        signal.setitimer(signal.ITIMER_REAL, 0)     # the regex clock stops first: its alarm inside the last word left a paging file unnamed
+        signal.signal(signal.SIGALRM, signal.SIG_IGN)
     kept = {}
     for page in STATE["pages"]:
         try:
@@ -394,16 +432,19 @@ class TextFile:
         self._fh = os.fdopen(fd, "wb")
 
     def _put(self, data):
+        _writing()
         try:
             self._fh.write(data)
         except OSError as exc:
             fail("the text file could not be written: %s (%s)" % (self.path, describe(exc)), text_file=str(self.path))
+        finally:
+            _written()
 
     def add(self, row):
         if self._fh is None:
             return
-        self._put(json.dumps(row, ensure_ascii=False, default=str).encode("utf-8", "backslashreplace") + b"\n")
         self.written += 1
+        self._put(json.dumps(row, ensure_ascii=False, default=str).encode("utf-8", "backslashreplace") + b"\n")
 
     def add_bytes_raw(self, data):
         """A piece of a source's own bytes, written as it came; the record it belongs to is counted by count_record."""
@@ -418,18 +459,21 @@ class TextFile:
         """One record exactly as its source wrote it (a native export's line, newline included)."""
         if self._fh is None:
             return
-        self._put(data)
         self.written += 1
+        self._put(data)
 
     def close(self):
         if self._fh is not None:
+            _writing()
             try:
                 self._fh.flush()
                 os.fsync(self._fh.fileno())
                 self._fh.close()
+                self._fh = None
             except OSError as exc:
                 fail("the text file could not be closed: %s (%s)" % (self.path, describe(exc)), text_file=str(self.path))
-            self._fh = None
+            finally:
+                _written()
 
     def summary(self, preview=False):
         """What the answer says about text. `preview` is true when the answer itself carries it (preview_text)."""
@@ -792,7 +836,6 @@ def main():
     except TextRefused as exc:
         fail(str(exc))
     page = LosslessPage(TOOL, "records", limit)
-    STATE["pages"].append(page)
     STATE["text"] = text
     preview_rows = []
     special = []
@@ -950,6 +993,7 @@ def main():
             len(read_failures), len(walk_errors), len(special), "; the read stopped at max_seconds or at the contains expression's time" if partial_reason else "",
             "; " + none_found if not files else ""),
         "no history file could be read")
+    STATE["answering"] = True
     print(json.dumps({
         "parser": PARSER,
         **outcome,
