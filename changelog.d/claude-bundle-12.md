@@ -22,3 +22,30 @@ the handler removes it. Where `signal.pthread_sigmask` is missing the call is a
 no-op. The shared STOP block is unchanged. New cases in
 `tests/pack-ransomware-stop.test.ts` signal from inside `tempfile.mkstemp`, for
 each page and for the census, with each of the three signals.
+
+### Changed: ransomware-response manifests state the remaining residuals
+
+No tool code changed; the two manifests now say what stays open, so that a
+caller is not told more than is true:
+
+- Start-up window (both tools): the stop handlers are installed when the module
+  code reaches the stop block, so a stop signal in the first moments of the run
+  (interpreter start, compiling the file, the module code above the block) can
+  end the tool with no JSON answer. The early answer's status word is not
+  stated here: it belongs to the shared stop text.
+- `ransom_note_scan` lists five residual classes: the whole-file sha256 of a
+  note of 128 bytes or more whose only variable part is a short identifier; UTF-16
+  without a byte-order mark, found only when ASCII dominates; the value rule
+  that withholds a name is a literal substring test; the name pattern's `help`
+  alternative (2.0% of 600,000 real names); derived quantities (the length of
+  an occurrence, its validation, counts per kind). It also says that a path
+  holding more than 64 distinct 8-character windows makes the first pass match
+  its note in full, which costs more of the first pass's time.
+- `encrypted_survey` states the census's cost, up to about 0.75 KB per entry
+  (73 MB per 100,000 files), in its `census` parameter, so that a caller can
+  choose `census: false` for a large tree. `tests/pack-ransomware-census-size.test.ts`
+  pins it against trees the test builds.
+- Stay stated as they were, and are now held by `tests/pack-ransomware-prose.test.ts`:
+  the raw tail bytes (`tail_bytes` text and the two skill lines), and the job
+  residuals (SIGKILL leaves the hidden temporary files; the job's timeout is
+  not passed to the tool).
