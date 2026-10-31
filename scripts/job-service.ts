@@ -314,6 +314,13 @@ export type JobRecord = {
    * a tool's own.
    */
   exec_refused?: ExecRefused;
+  /** What the worker found when it probed itself before the job ran (worker-probe.json in the job's control directory). */
+  worker_probe?: { fuse: boolean };
+  /**
+   * The tool's manifest says it needs something (`needs: ["fuse"]`) the worker's probe says it lacks. The job ran anyway and the tool answers for
+   * itself; this names the cause where the agent reads the job, and says it is a limit of the worker, not a finding about the evidence.
+   */
+  needs_unmet?: { need: string; tool: string | null; image: string; profile: string | null };
   /** Its outputs are sensitive, decided when they were sealed (output-hygiene.ts): run with secret_output, or made from a sensitive output. */
   sensitive?: Sensitivity;
   /** Derived and known when the job started: what it declared, or its text, already reaches a sensitive output (job_started's `sensitive_at_start`; the seal decides again, from what it read). */
@@ -856,9 +863,9 @@ export class JobService {
   }
 
   /** A pack or forged tool, sealed as its manifest says, and its arguments checked against the manifest's params. */
-  private async toolCheck(name: string, args: Record<string, unknown>): Promise<{ ok: true; runtime: string; entry: string; sha256: string; secret: boolean } | { ok: false; reason: string }> {
+  private async toolCheck(name: string, args: Record<string, unknown>): Promise<{ ok: true; runtime: string; entry: string; sha256: string; secret: boolean; needs: string[] } | { ok: false; reason: string }> {
     if (!/^[a-z0-9_]{1,64}$/.test(name)) return { ok: false, reason: `${name} is not a tool name` };
-    let man: { runtime?: string; entry?: string; sha256?: string; secret_output?: unknown; params?: Record<string, { type?: string; required?: boolean; enum?: string[] }> };
+    let man: { runtime?: string; entry?: string; sha256?: string; needs?: unknown; secret_output?: unknown; params?: Record<string, { type?: string; required?: boolean; enum?: string[] }> };
     try {
       man = JSON.parse(await readFile(join(this.S, "tools", name, "manifest.json"), "utf8"));
     } catch {
@@ -892,7 +899,9 @@ export class JobService {
     const declared = parseSecretDeclaration(man.secret_output, man.params, Object.hasOwn(man, "secret_output"));
     if (!declared.ok) return { ok: false, reason: `tool ${name}: ${declared.reason}` };
     const secret = declaredSecretOutput(declared.declaration as SecretDeclaration | null, args);
-    return { ok: true, runtime: man.runtime === "python3" ? "python3" : man.runtime === "node" ? "node" : "bash", entry, sha256: sha, secret };
+    // What the tool needs of its worker, as its manifest names it (`needs: ["fuse"]`): the harness reads the words, it knows no tool.
+    const needs = Array.isArray(man.needs) ? man.needs.filter((n): n is string => typeof n === "string") : [];
+    return { ok: true, runtime: man.runtime === "python3" ? "python3" : man.runtime === "node" ? "node" : "bash", entry, sha256: sha, secret, needs };
   }
 
   /**
@@ -1399,7 +1408,7 @@ export class JobService {
     return join(this.S, ".jobs", job.id);
   }
 
-  private async script(job: JobRecord, ctl: string, observe: { mounts: string[]; canary: string } | null = null): Promise<{ lines: string[]; tool_sha256?: string }> {
+  private async script(job: JobRecord, ctl: string, observe: { mounts: string[]; canary: string } | null = null): Promise<{ lines: string[]; tool_sha256?: string; needs?: string[] }> {
     const q = shQuote;
     const out = this.outPath(job);
     const box = job.spec.timeout_seconds;
@@ -1415,7 +1424,7 @@ export class JobService {
         ? [...pip, ...HEARTBEAT_LINES, ...observedRun({ mounts: observe.mounts, canary: observe.canary, cmd: `timeout --kill-after=10 ${box} ${cmd} > /job/stdout.log 2> /job/stderr.log` }), HEARTBEAT_STOP, ...pipAfter]
         : [...pip, ...HEARTBEAT_LINES, `timeout --kill-after=10 ${box} ${cmd} > /job/stdout.log 2> /job/stderr.log`, "echo $? > /job/exit", HEARTBEAT_STOP, ...pipAfter];
     // SECRET_OUTPUT=1 for a job run as secret output (the agent's flag, or its tool's manifest), so a tool can refuse a values mode in a job that is not; unset for any other, whatever the image carries.
-    const head = ["#!/bin/bash", "set -u", `cd ${q(this.S)} 2>/dev/null || cd /`, `export OUT=${q(out)}`, job.spec.secret_output === true ? "export SECRET_OUTPUT=1" : "unset SECRET_OUTPUT"];
+    const head = ["#!/bin/bash", "set -u", `cd ${q(this.S)} 2>/dev/null || cd /`, `export OUT=${q(out)}`, job.spec.secret_output === true ? "export SECRET_OUTPUT=1" : "unset SECRET_OUTPUT", WORKER_PROBE_LINE];
     if (job.spec.kind === "tool") {
       const checked = await this.toolCheck(job.spec.tool ?? "", job.spec.args ?? {});
       if (!checked.ok) throw new Error(checked.reason);
@@ -1426,7 +1435,7 @@ export class JobService {
       const out = this.outPath(job);
       const sub = (v: unknown): unknown => (typeof v === "string" ? v.split("{OUT}").join(out) : Array.isArray(v) ? v.map(sub) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, sub(x)])) : v);
       await writeFile(join(ctl, "args.json"), JSON.stringify(sub(job.spec.args ?? {})));
-      return { lines: [...head, ...run(`${checked.runtime} ${q(checked.entry)} < /job/args.json`)], tool_sha256: checked.sha256 };
+      return { lines: [...head, ...run(`${checked.runtime} ${q(checked.entry)} < /job/args.json`)], tool_sha256: checked.sha256, needs: checked.needs };
     }
     if (job.spec.kind === "command") {
       await writeFile(join(ctl, "command.sh"), `${job.spec.command ?? ""}\n`);
@@ -1653,6 +1662,12 @@ export class JobService {
     } catch {
       exit = null;
     }
+    // The worker's own probe, and what the tool's manifest needs of it.
+    const probe = await readFile(join(st.ctl, "worker-probe.json"), "utf8").then((x) => JSON.parse(x) as { fuse?: unknown }).catch(() => null);
+    if (probe && typeof probe.fuse === "boolean") job.worker_probe = { fuse: probe.fuse };
+    if (probe?.fuse === false && script.needs?.includes("fuse")) {
+      job.needs_unmet = { need: "fuse", tool: job.spec.tool ?? null, image: chosen.ref, profile: chosen.profile ?? job.spec.profile ?? null };
+    }
     const cancelled = job.cancel_requested ? `cancelled by ${job.cancel_requested}` : undefined;
     const stopped = (job as JobRecord & { stopped?: string }).stopped;
     const failed = !cancelled && !stopped && exit !== null && exit !== 0 && exit !== 124 && exit !== 137;
@@ -1695,6 +1710,8 @@ export class JobService {
                 ? `exit ${exit}: a program it runs is not in its image${job.program_missing?.profile ? ` (profile ${job.program_missing.profile})` : ""}: ${missing === "?" ? "exit 127" : missing}`
                 : refused
                   ? `exit ${exit}: ${writeRefusedWords(refused, { job: job.id, out: this.outPath(job) })}`
+                  : exit !== 0 && job.needs_unmet
+                    ? `exit ${exit}: the tool needs a FUSE mount and this worker VM (image ${job.needs_unmet.image}${job.needs_unmet.profile ? `, profile ${job.needs_unmet.profile}` : ""}) has no /dev/fuse: that is a limit of the worker, not a finding about the evidence; run it where /dev/fuse exists`
                   : exit !== 0
                     ? `exit ${exit}`
                     : undefined);
@@ -2849,6 +2866,12 @@ export async function jobView(S: string, job: JobRecord, o: { files?: number } =
   return view;
 }
 
+/**
+ * The worker probes itself before the job runs: whether /dev/fuse is there (a tool whose manifest says `needs: ["fuse"]` mounts). One line of
+ * JSON in the job's control directory; the hub reads it after the run. DFIRSWARM_FUSE_DEVICE names another device for a test.
+ */
+export const WORKER_PROBE_LINE = "{ if [ -c \"${DFIRSWARM_FUSE_DEVICE:-/dev/fuse}\" ]; then echo '{\"fuse\":true}'; else echo '{\"fuse\":false}'; fi; } > /job/worker-probe.json 2>/dev/null || true";
+
 /** What workerSpecFor gives: the worker's spec, what it could reach, a declared scope's manifest, and how the image was chosen. */
 export type WorkerPlan = {
   spec: WorkerSpec;
@@ -2856,7 +2879,7 @@ export type WorkerPlan = {
   manifest: Record<string, unknown> | null;
   view: { objects: number; files: number; bound: number } | null;
   chosen: { profile: string | null; ref: string; choice: ImageChoice };
-  script: { lines: string[]; tool_sha256?: string };
+  script: { lines: string[]; tool_sha256?: string; needs?: string[] };
 };
 
 export { targetPaths };

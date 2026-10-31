@@ -1129,8 +1129,21 @@ def output_name(virtual):
     return "/".join(parts) or "_"
 
 
+# The device a FUSE mount needs; a test points it at a path that is not there.
+FUSE_DEVICE = os.environ.get("DFIRSWARM_FUSE_DEVICE", "/dev/fuse")
+
+
+def no_fuse_answer(missing):
+    """The one form of "no FUSE here" every tool that mounts gives (memory-forensics mem_fs, windows-forensics vss_stores): a `no_fuse`
+    object with a reason, what the host lacks, and what to do. It is a limit of the host, not a finding about the evidence."""
+    return {"no_fuse": {"reason": "no_fuse", "blocked_by": list(missing),
+                        "what_to_do": "Run this job where /dev/fuse exists and fusermount3 or fusermount is installed (the image record, /etc/dfirswarm/image.json, says under `fuse` "
+                                      "whether the image has fusermount; the VM must also expose /dev/fuse). Until then say that no FUSE mount was possible here, "
+                                      "never that the evidence holds nothing."}}
+
+
 def prerequisites():
-    device = "/dev/fuse"
+    device = FUSE_DEVICE
     return {
         "dev_fuse_present": os.path.exists(device),
         "dev_fuse_usable": os.access(device, os.R_OK | os.W_OK),
@@ -1143,9 +1156,9 @@ def blocked_by():
     have = prerequisites()
     missing = []
     if not have["dev_fuse_present"]:
-        missing.append("/dev/fuse is not present")
+        missing.append("%s is not present" % FUSE_DEVICE)
     elif not have["dev_fuse_usable"]:
-        missing.append("/dev/fuse cannot be opened by this process")
+        missing.append("%s cannot be opened by this process" % FUSE_DEVICE)
     if not have["unmount_helper"]:
         missing.append("neither fusermount3 nor fusermount is installed")
     return missing
@@ -1775,7 +1788,7 @@ def main():
         blocked = blocked_by() if phase == "startup" else None
         fail(message, phase=phase, command=" ".join(argv), mount=str(mount), logs=logs,
              engine_stderr=engine_lines(stderr_log), engine_stdout=engine_lines(stdout_log),
-             engine_exit_status=proc.returncode, blocked_by=blocked,
+             engine_exit_status=proc.returncode, blocked_by=blocked, **(no_fuse_answer(blocked) if blocked and any("fuse" in b for b in blocked) else {}),
              prerequisites=prerequisites(), phases=timings,
              counts=counts if mode == "export" else None,
              secret_values=secret.summary(),

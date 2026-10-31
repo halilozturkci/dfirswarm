@@ -85,18 +85,6 @@
       "redistributable": false
     },
     {
-      "name": "idevicebackup2",
-      "package": "libimobiledevice",
-      "optional": true,
-      "why": "A libimobiledevice tool that talks to a device and reads or restores its backups. It is declared and unused: no skill, recipe or tool of this pack runs it, and nothing here shows it opens an encrypted backup offline, which is not provided. Whether to keep it is the owner's decision.",
-      "install": {
-        "brew": "brew install libimobiledevice",
-        "apt": "apt-get install -y libimobiledevice-utils"
-      },
-      "licence": "LGPL-2.1-or-later",
-      "redistributable": false
-    },
-    {
       "name": "heif-convert",
       "package": "libheif-examples",
       "optional": true,

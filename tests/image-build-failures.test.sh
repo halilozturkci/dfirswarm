@@ -139,6 +139,65 @@ jq -e '(.binaries | to_entries | map(select(.value == null) | .key) | sort) == [
   || fail "a program left out on purpose is not the only kind missing: $(jq -c '.binaries' "$TMP/etc/image.json")"
 pass "the install fails when a program the packs name is missing for any reason but a planned one, names each, and goes on only when the build allows it, recording what is missing"
 
+# --- facts: what a program says about itself is kept, and recorded -------------------
+# An entry's `facts` are commands whose output the build keeps, one file each
+# under /etc/dfirswarm/facts/, with its sha256 in image.json. A command that
+# fails or hangs is recorded as failed; an output past the cap is cut and said
+# to be; a program that is not there has no fact. None of these fails the build
+# of an optional program; a required one whose own command fails does.
+cat > "$TMP/venv/bin/ibr-facts" <<'SH'
+#!/bin/sh
+case "$1 $2" in
+  "--version ") echo "ibr-facts 9.9.9" ;;
+  "-G fields") printf 'field.one\nfield.two\n' ;;
+  "--fail ") echo "no luck" >&2; exit 3 ;;
+  "--long ") head -c 5000 /dev/zero | tr '\0' x ;;
+  "--hang ") exec sleep 30 ;;
+esac
+SH
+chmod +x "$TMP/venv/bin/ibr-facts"
+write_facts_spec() { # <file> <required: true|false>
+  cat > "$1" <<JSON
+{"profile": "network", "packs": ["p"], "pack_versions": {}, "redistributable": true, "nonredistributable": [],
+ "apt": {}, "apt_release": {}, "pip": {}, "requirements": [],
+ "binaries": [
+  {"name": "ibr-facts", "pack": "p", "required": $2, "why": "A stand-in.",
+   "facts": [["ibr-facts", "--version"], ["ibr-facts", "-G", "fields"], ["ibr-facts", "--fail"], ["ibr-facts", "--long"], ["ibr-facts", "--hang"]]},
+  {"name": "ibr-gone", "pack": "p", "required": false, "facts": [["ibr-gone", "--version"]]}],
+ "downloads": [], "sources": [], "builds": [], "data": [], "manual": [{"name": "ibr-gone", "pack": "p", "how": "by hand"}], "not_applicable": [], "python_notes": []}
+JSON
+}
+write_facts_spec "$TMP/spec-facts.json" false
+rm -rf "$TMP/etc/facts"
+DFIRSWARM_FACTS_MAX_BYTES=1000 DFIRSWARM_FACTS_TIMEOUT=2 timeout 120 python3 "$I" "$TMP/spec-facts.json" >"$TMP/facts.out" 2>&1; rc=$?
+[[ $rc -eq 0 ]] || fail "failing facts of an optional program failed the build (rc $rc): $(cat "$TMP/facts.out")"
+F="$TMP/etc/facts"
+[[ "$(cat "$F/ibr-facts-version.txt")" == "ibr-facts 9.9.9" ]] || fail "the version fact is not the program's output: $(ls "$F")"
+[[ "$(cat "$F/ibr-facts-G-fields.txt")" == $'field.one\nfield.two' ]] || fail "the field-list fact is not the program's output"
+for f in ibr-facts-version ibr-facts-G-fields; do
+  want="$(sha256sum "$F/$f.txt" | cut -d' ' -f1)"
+  jq -e --arg f "$f.txt" --arg s "$want" '.facts[$f].sha256 == $s and .facts[$f].status == "recorded" and .facts[$f].program == "ibr-facts"' "$TMP/etc/image.json" >/dev/null \
+    || fail "image.json does not carry $f's sha256 and status: $(jq -c '.facts' "$TMP/etc/image.json")"
+done
+jq -e '.facts["ibr-facts-fail.txt"] | .status == "failed" and (.why | test("^exit 3: no luck"))' "$TMP/etc/image.json" >/dev/null \
+  || fail "a command that failed is not recorded as failed with why: $(jq -c '.facts["ibr-facts-fail.txt"]' "$TMP/etc/image.json")"
+jq -e '.facts["ibr-facts-hang.txt"] | .status == "failed" and (.why | test("^timed out after 2 s"))' "$TMP/etc/image.json" >/dev/null \
+  || fail "a command that hung is not recorded as failed: $(jq -c '.facts["ibr-facts-hang.txt"]' "$TMP/etc/image.json")"
+jq -e '.facts["ibr-facts-long.txt"] | .status == "capped" and .bytes == 1000 and .bytes_seen == 5000' "$TMP/etc/image.json" >/dev/null \
+  || fail "an over-long output is not capped and said to be: $(jq -c '.facts["ibr-facts-long.txt"]' "$TMP/etc/image.json")"
+[[ "$(wc -c < "$F/ibr-facts-long.txt")" -eq 1000 ]] || fail "the capped fact's file is not the cap"
+jq -e '.facts["ibr-gone-version.txt"] | .status == "failed" and (.why | test("not on PATH"))' "$TMP/etc/image.json" >/dev/null \
+  || fail "a fact of a program that is not there is not recorded as failed"
+[[ ! -e "$F/ibr-gone-version.txt" ]] || fail "a program that is not there left a fact file"
+grep -q 'ibr-facts-G-fields.txt`, recorded' "$TMP/etc/tools.md" && grep -q 'ibr-facts-fail.txt`, failed (exit 3' "$TMP/etc/tools.md" \
+  || fail "tools.md does not name the facts beside the program: $(grep -n 'ibr-facts' "$TMP/etc/tools.md")"
+write_facts_spec "$TMP/spec-facts-req.json" true
+DFIRSWARM_FACTS_MAX_BYTES=1000 DFIRSWARM_FACTS_TIMEOUT=2 timeout 120 python3 "$I" "$TMP/spec-facts-req.json" >"$TMP/facts-req.out" 2>&1; rc=$?
+[[ $rc -eq 1 ]] || fail "a required program whose fact command failed did not fail the build (rc $rc)"
+grep -q 'a command that records a fact about a required program failed' "$TMP/facts-req.out" || fail "the failure does not say what failed: $(tail -3 "$TMP/facts-req.out")"
+rm -f "$TMP/venv/bin/ibr-facts"
+pass "a program's facts are kept as files with their sha256 in image.json and named in tools.md; a failing, hanging or missing one is recorded as failed, an over-long one capped and said to be"
+
 # --- the build context: a stage allowed to fail is never taken from the cache ---------
 mkdir -p "$TMP/packs/network-forensics/requires"
 printf '{"id": "network-forensics", "name": "f", "version": "1.0.0", "description": "f", "licence": "MIT", "depends": []}\n' > "$TMP/packs/network-forensics/pack.json"

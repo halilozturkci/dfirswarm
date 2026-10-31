@@ -34,7 +34,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        profile: [base, core, re, memory, disk, network, linux, mobile, macos, cloud, triage, web, full]
+        profile: [base, core, re, ransomware, memory, disk, network, linux, mobile, macos, cloud, triage, web, full]
         arch: [amd64]
         include:
           - { profile: base, arch: arm64 }
@@ -81,6 +81,29 @@ jobs:
             docker build -t "$IMAGE" ctx
           fi
           docker run --rm "$IMAGE" cat /etc/dfirswarm/image.json > "$RUNNER_TEMP/image.json"
+      # The image's own acceptance (scripts/image-acceptance.sh): every program
+      # its record names is on PATH and prints the version its pack pinned, and
+      # every tool of its packs answers one JSON document on an empty file and
+      # on the smallest valid one. The receipts go to the job summary; a missing
+      # program, a differing pin or a tool with no answer fails the job. It runs
+      # in the image itself, so it needs no KVM.
+      - name: Acceptance receipts (programs, pins, each pack's tools on a fixture)
+        run: |
+          packs="$(python3 - "${{ matrix.profile }}" <<'PY'
+          import sys
+          sys.path.insert(0, "images")
+          import recipe
+          table = recipe.profiles()
+          members = recipe.resolve(recipe.PACKS, table[sys.argv[1]]["packs"]) if sys.argv[1] in table else []
+          print(":".join("/packs/" + p for p in members))
+          PY
+          )"
+          echo "packs: ${packs:-none}"
+          docker run --rm -v "$PWD/scripts:/s:ro" -v "$PWD/packs:/packs:ro" "$IMAGE" \
+            sh /s/image-acceptance.sh ${packs:+--packs "$packs"} > "$RUNNER_TEMP/acceptance.md" || status=$?
+          cat "$RUNNER_TEMP/acceptance.md"
+          cat "$RUNNER_TEMP/acceptance.md" >> "$GITHUB_STEP_SUMMARY"
+          exit "${status:-0}"
       - name: Load into msb
         if: steps.kvm.outputs.available == '1'
         run: |
@@ -88,6 +111,12 @@ jobs:
           msb="$(node --experimental-strip-types --no-warnings scripts/vm.ts msb-path)"
           "$msb" doctor
           "$msb" load -i "$RUNNER_TEMP/image.tar"
+      # The tools that mount (a manifest's `needs: ["fuse"]`) need /dev/fuse in the
+      # VM. Asserted on amd64, where the runner has KVM; the arm64 check is the
+      # owner's, on the owner's Mac (docs/packs.md, "Requires and images").
+      - name: /dev/fuse in the booted VM (amd64)
+        if: steps.kvm.outputs.available == '1' && matrix.arch == 'amd64'
+        run: node --experimental-strip-types --no-warnings scripts/vm.ts fuse-check --image "$IMAGE"
       - name: Boot it as an agent's VM (probe, verdict, Pi end to end)
         if: steps.kvm.outputs.available == '1'
         env:

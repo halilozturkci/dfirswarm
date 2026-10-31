@@ -99,7 +99,8 @@
         }
       },
       "licence": "MIT",
-      "redistributable": false
+      "redistributable": false,
+      "not_in_image": "A live-memory acquirer, run on the source host whose memory it captures; run in an analysis VM it would capture that VM, not the subject. The pinned download stays declared so the operator has the exact binary and checksum to take to the source."
     },
     {
       "name": "strings",

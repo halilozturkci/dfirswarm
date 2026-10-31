@@ -103,8 +103,9 @@ one included (`images/README.md`).
 Debian's patches under GPL-2.0-or-later; Debian packages it for amd64 and i386
 only, so the image builds it from Debian's source and patches on every
 architecture), and `gcc` and `make` are there for a scanner a case needs that no
-library provides. `avml` is declared so the operator has the pinned binary to take
-to the source host: run in an analysis VM it captures that VM, not the subject.
+library provides. `avml` is declared, with its pinned download, so the operator has the exact binary to take
+to the source host; it is not installed in the image (`not_in_image`), because run in an
+analysis VM it captures that VM, not the subject.
 Volatility's YARA plugins need a YARA Python binding that no requirement here
 installs; `patterns/yara` says how to check.
 

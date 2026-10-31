@@ -1,7 +1,7 @@
 {
   "id": "cloud-forensics",
   "name": "Cloud and SaaS Forensics Pack",
-  "version": "1.4.4",
+  "version": "1.4.5",
   "description": "Method and tooling for logs that belong to somebody else's computer, examined as supplied exports: what a cloud or SaaS export covers and what its silence can show, the Microsoft 365 unified audit log, Entra sign-ins, AWS CloudTrail, Google Workspace, and the tokens, grants and mailbox rules behind a cloud account.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -44,7 +44,7 @@
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
       "README.md": "1343dfb9780cff60a5c664b17af8796d7d65b16d446dec0b8c715d51fa5798f1",
       "goals/tenant-compromise.md": "52bb72bead930eaf3e4a0f01f76162aaf30feae7ca44a5a7aa7307f2ee9dc0d8",
-      "requires/host.json": "fa29166ae2652d2a487c863b8e2e4cf4b52dc41750356fb424f0a4e42e261a2e",
+      "requires/host.json": "67f5c2ace76741baaa57edafda54a79edf0305a0645de2493f3c6c6e5b11ab2b",
       "requires/python.txt": "eb9148a62031d80af4795335b759dbe15552ed2df3b5b97648fbcda6b32b64de",
       "skills/INDEX.md": "dc5c072ff20da259b4b316a3a6e96ea5a87cf52040ece8099efd635a00f0f89a",
       "skills/aws/cloudtrail.md": "fd40e09cdff829feed25a5a53e6b45c7ff783baf1bb91719f1ce1583bf6e4988",

@@ -1,7 +1,7 @@
 {
   "id": "network-forensics",
   "name": "Network Forensics Pack",
-  "version": "1.6.7",
+  "version": "1.6.9",
   "description": "Method and tooling for packet captures and web, proxy and firewall logs: what a capture can and cannot show, transaction and object reconstruction, DNS and TLS metadata when the payload is encrypted, periodicity and volume as leads to test, and tying the wire to host evidence. No flow-record reader (NetFlow, IPFIX) is bundled.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -22,7 +22,7 @@
       "goals/what-left-the-network.md": "8e6dd6ae10d2bd8380b567e8bffb3bc644ac90602eed83edbd3773fd8ebdc811",
       "recipes/network-capture/recipe.json": "d9192105ee0abcc5d00a6da5aa8db8fc1a55e408e51530d267f4e93c83e4af14",
       "recipes/network-capture/run.py": "47a15df67f775956715f5369312abb2779c57e7e8efc3310d04016a455fabf1f",
-      "requires/host.json": "b398baec46692166324855509b91b6a3549b47a8cdf1603a254f65842901ce04",
+      "requires/host.json": "0157c345706a969bf277202f7a9bfc3399a28c2878c8502e1dbe789981670365",
       "requires/python.txt": "d5768d4bec0bea8ec8e736e2710a757309af18fa3f862dae2db201e154d45a4a",
       "skills/INDEX.md": "8589b8b32eacbbc5a7836a99ed2824e2743fc519eed7c748ad9bbda7574e96a5",
       "skills/beacons/periodicity.md": "82ad96c0851e7f01a3620f3716a72d6da1ed4c1e66c8f460d392c2a67baeb5a2",
@@ -37,8 +37,8 @@
       "skills/metadata/fingerprints.md": "7fc9786942def4a443011873fd2a9e7b2b9b58cee512db22af110aae51cdeda9",
       "skills/network/router.md": "e0837ac164fe9cb9eecceb526e27bdf6c37ff50f540863264bea70674a76a416",
       "skills/sessions/objects.md": "22b63e82da1ecc6eda1ddf41b2e7e9d4ac801b3d9d154f5bd76e29b635265f36",
-      "skills/sessions/reconstruct.md": "1931ded643632ac33c077c59a7f27e3b8ccf8cf4eac60b247a14ca422a77021d",
-      "tests/pack.test.sh": "a1667c1a9f711835df444ba784f2d17b98869c279afa0a5eedeefe8b03cf3b6b",
+      "skills/sessions/reconstruct.md": "f2026e30fc6beea3eacc26d87d2e47c7f417430799f3b4f51e8abff35bd066a0",
+      "tests/pack.test.sh": "f83730891c6dc137fa0aa1ddd26b6d1d3ba9bc9609ff6a277ffb7ed9a3d7d372",
       "tools/beacon_score/manifest.json": "53de76e2d4431a7817a59bf8455e02fe3b7e1e71a2a36ec0a2d81cd1266e6ab5",
       "tools/beacon_score/run.py": "b2e1ac3f109f4dc55ccece07626eff2d54a51bef66ff43a6ffd45fd48e4a0a64",
       "tools/network_log_summary/manifest.json": "e9054402efcc608ca438b541f658e0317dff632e15f9d4f5d2715dc1e2e75217",

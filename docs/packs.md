@@ -601,6 +601,18 @@ memory filesystem) mounts it under `work/<agent id>/`, which is where
 `vss_stores` and `mem_fs` put theirs; the mount is that VM's alone, and what
 is derived from it counts once it is a file there.
 
+A tool that mounts through FUSE says so in its manifest, `"needs": ["fuse"]`
+(`mem_fs` and `vss_stores` do). The harness reads the word and knows no tool:
+a VM whose probe found no `/dev/fuse` (`fuse: false`, read by `imageFit`), an
+image whose record has `fuse.fusermount: false`, and a job worker that probed
+itself without `/dev/fuse` (`worker_probe` on the job's record; `needs_unmet`
+and the reason of a failed job) each name the tool that needs it, and no other.
+A tool that cannot mount for want of FUSE answers in one form: a `no_fuse`
+object (`reason: "no_fuse"`, `blocked_by`: what the host lacks, `what_to_do`),
+beside its `status`. It is a limit of the VM, never a finding about the
+evidence. `vm.ts fuse-check --image REF` says whether a VM of an image has the
+device.
+
 Run again as a job, a tool writes only the job's `$OUT`. Each path it was
 given in the agent's own directories (`work/<id>/`, `work/extracted/<id>/`,
 `work/quarantine/<id>/`, `tool-output/<id>/`, written relative or absolute)
@@ -902,6 +914,16 @@ Every tool a pack bundles holds to this.
    build refuses a lock whose file changed, and names the program when pip
    refuses a hash. `/etc/dfirswarm/image.json` lists what was installed from a
    lock under `locked` (a set is listed only after pip succeeded).
+   An entry can name **facts** the build records about its program:
+   `"facts": [["tshark", "--version"], ["tshark", "-G", "fields"]]`, a list of
+   argument lists whose first item is the entry's own program (the seal
+   refuses any other shape). The build runs each once, with a time limit, and
+   keeps its output as a file under `/etc/dfirswarm/facts/` (named after the
+   program and its arguments, `tshark-version.txt`), with the file's sha256
+   and its status (`recorded`, `capped` when the output was cut at the cap,
+   `failed` with why) under `facts` in `image.json`; `tools.md` names the files
+   beside the program. A failing command does not fail the build of an optional
+   program; it does for a required one.
 2. **A program a skill tells the agent to run is in the pack's `requires`, or
    in a dependency's.** A program or Python package in `requires` that no skill
    names needs either a skill that names it, or a reason in `pack.json`:
