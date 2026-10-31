@@ -33,7 +33,6 @@ A tool that fails loudly: a file it cannot open or read to its end is a named, p
 empty one; a line no rule places is counted, located and kept; `all_lines_parsed` is true only when every
 line matched a syslog shape and every file was read through.
 """
-import array
 import datetime
 import gzip
 import ipaddress
@@ -50,9 +49,21 @@ import zlib
 from pathlib import Path
 
 TOOL = "auth_log"
-PARSER = "auth_log/6"
+PARSER = "auth_log/11"
 DEFAULT_LIMIT = 200
 FIRST_FAILURES = 20
+# The year of a traditional line is inferred (see the manifest). A forward step between two consecutive in-order lines of more
+# than STEP_DAYS days is reported, because the year is assumed to advance by the least the months allow across it; and the
+# modification time that anchors the year is flagged as possibly the time of a copy when it is more than COPY_DAYS after the last
+# dated line, when every file of the call shares one time to within SAME_MTIME_SECONDS, or when a gzip header time differs from it
+# by more than GZ_AGREE_SECONDS (FAT keeps two-second times).
+STEP_DAYS = 62
+STEP_INLINE = 20            # forward steps shown inline per file; the whole list is in pages.forward_steps
+COPY_DAYS = 7
+SAME_MTIME_SECONDS = 10
+GZ_AGREE_SECONDS = 2
+MAX_YEARS = 1000            # entries of the `years` argument
+YEAR_MIN, YEAR_MAX = 1970, 2200
 MAX_LINE = 64 << 10         # a physical line longer than this is located, not parsed
 DEFAULT_EXPANDED = 1 << 30  # a gzip stream is read to at most this many decompressed bytes
 DEFAULT_SECONDS = 100.0     # the manifest allows 120
@@ -427,7 +438,7 @@ def pam_rhost_last(rest):
 
 # Fields a line's text can never set: they are the tool's own.
 RESERVED = {"user_bytes", "user_withheld", "id", "parser", "file", "line", "byte_offset", "time", "time_raw", "time_zone", "time_utc", "year", "host",
-            "process", "pid", "kind", "reordered", "time_error", "text_bytes", "command_bytes", "raw", "line_text"}
+            "process", "pid", "kind", "reordered", "time_error", "text_bytes", "command_bytes", "raw", "line_text", "year_assumed"}
 # What is the text of a line and not a field of it: held back from the answer, kept in the text file.
 TEXT_FIELDS = ("raw", "command")
 
@@ -628,47 +639,115 @@ def circular(a, b):
     return min((a - b) % 12, (b - a) % 12)
 
 
-def classify_months(months):
-    """How each line's month relates to the lines before and after it: (a bytearray of FIRST, SAME, FORWARD, ROLLOVER or
-    REORDERED, the number of rollovers, the indexes of the first few).
+MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
-    A month that goes up is the log moving on, however long the gap (a machine that was off for eight months wrote
-    January and then September of one year). A month that goes down is a year end when it comes within six months
-    after the last one (Dec to Jan), and a step back in time otherwise. And a line that the next line contradicts is
-    out of order whichever way it points: one that is further from the last in-order month than the line after it is
-    (January, March, January: the March line is the stray; January, December, January: the December one). The last
-    line has no next line, so a downward step of more than six months is all it can show.
 
-    A line out of order does not move the place the next one is compared with. Only lines whose date and clock exist
-    are given to this."""
-    n = len(months)
-    out = bytearray(n)
-    prev, rollovers, where = None, 0, []
-    for i in range(n):
-        m = months[i]
+def packed_parts(packed):
+    """(month, day, hour, minute, second) of a date packed as ((((month * 32 + day) * 24 + h) * 60 + m) * 61 + s)."""
+    v, sec = divmod(packed, 61)
+    v, minute = divmod(v, 60)
+    v, hour = divmod(v, 24)
+    month, day = divmod(v, 32)
+    return month, day, hour, minute, sec
+
+
+def stamp_of(packed):
+    """A packed date as a traditional syslog stamp reads."""
+    month, day, hour, minute, sec = packed_parts(packed)
+    return "%s %2d %02d:%02d:%02d" % (MONTH_NAMES[month - 1], day, hour, minute, sec)
+
+
+def step_days(before, after, year_end):
+    """Whole days from one packed date to the next, as the dating rule reads the step: the same year, or the next one
+    when the step crosses a year end. Year 2000 is the leap one, so every date that exists is a date here; a 29 February
+    that falls in the following year is read as the 28th."""
+    m1, d1, h1, i1, s1 = packed_parts(before)
+    m2, d2, h2, i2, s2 = packed_parts(after)
+    start = datetime.datetime(2000, m1, d1, h1, i1, min(s1, 59))
+    try:
+        end = datetime.datetime(2001 if year_end else 2000, m2, d2, h2, i2, min(s2, 59))
+    except ValueError:
+        end = datetime.datetime(2001 if year_end else 2000, m2, 28, h2, i2, min(s2, 59))
+    return (end - start).days
+
+
+class MonthScan:
+    """Pass one: how each dated line's month relates to the lines before and after it, found as the lines go by, so that
+    a dated line costs one byte (its class). `push` takes a line's month, its packed date and its line number; `finish`
+    settles the last one. Afterwards: `classes` (a bytearray of FIRST, SAME, FORWARD, ROLLOVER or REORDERED), `rollovers`,
+    `rollover_lines` (the line numbers of the first few), `reordered`, `last_ok` (the packed date and line number of the
+    last line in order) and the forward steps longer than STEP_DAYS days: `step_count`, `steps` (the first STEP_INLINE) and
+    `last_step_line` (the line that ended the last one); each step is also given to `on_step`, which keeps the whole list.
+
+    The rule. A month that goes up is the log moving on, however long the gap (a machine that was off for eight months
+    wrote January and then September of one year): the year does not change, and a step longer than STEP_DAYS is reported
+    so that nobody takes it for a certainty. A month that goes down is a year end when it comes within six months after the
+    last one (Dec to Jan), and a step back in time otherwise. A line that the next line contradicts is out of order
+    whichever way it points: one that is further from the last in-order month than the line after it is (January, March,
+    January: the March line is the stray; January, December, January: the December one). The last line has no next line,
+    so a downward step of more than six months is all it can show. A line out of order does not move the place the next
+    one is compared with. Only lines whose date and clock exist are given to this."""
+
+    def __init__(self, on_step=None):
+        self.classes = bytearray()
+        self.rollovers = 0
+        self.rollover_lines = []
+        self.reordered = 0
+        self.last_ok = None
+        self.step_count = 0
+        self.steps = []
+        self.last_step_line = None
+        self._on_step = on_step
+        self._prev = None
+        self._held = None
+
+    def push(self, month, packed, number):
+        held, self._held = self._held, (month, packed, number)
+        if held is not None:
+            self._settle(held, month)
+
+    def finish(self):
+        if self._held is not None:
+            held, self._held = self._held, None
+            self._settle(held, None)
+
+    def _settle(self, held, nx):
+        m, packed, number = held
+        prev = self._prev
         if prev is None:
-            out[i], prev = FIRST, m
-            continue
-        if m == prev:
-            out[i] = SAME
-            continue
-        if i + 1 < n:
-            nx = months[i + 1]
-            stray = nx != m and circular(prev, nx) < circular(prev, m)
+            cls = FIRST
+        elif m == prev:
+            cls = SAME
         else:
-            stray = m < prev and (m - prev) % 12 > 6
-        if stray or (m < prev and (m - prev) % 12 > 6):
-            out[i] = REORDERED
-            continue
-        if m < prev:
-            out[i] = ROLLOVER
-            rollovers += 1
-            if len(where) < 20:
-                where.append(i)
-        else:
-            out[i] = FORWARD
-        prev = m
-    return out, rollovers, where
+            if nx is not None:
+                stray = nx != m and circular(prev, nx) < circular(prev, m)
+            else:
+                stray = m < prev and (m - prev) % 12 > 6
+            if stray or (m < prev and (m - prev) % 12 > 6):
+                cls = REORDERED
+            else:
+                cls = ROLLOVER if m < prev else FORWARD
+        self.classes.append(cls)
+        if cls == REORDERED:
+            self.reordered += 1
+            return
+        if cls == ROLLOVER:
+            self.rollovers += 1
+            if len(self.rollover_lines) < 20:
+                self.rollover_lines.append(number)
+        if cls in (FORWARD, ROLLOVER):
+            days = step_days(self.last_ok[0], packed, cls == ROLLOVER)
+            if days > STEP_DAYS:
+                step = {"line": number, "from": stamp_of(self.last_ok[0]), "to": stamp_of(packed), "days": days,
+                        "from_line": self.last_ok[1]}
+                self.step_count += 1
+                self.last_step_line = number
+                if len(self.steps) < STEP_INLINE:
+                    self.steps.append(step)
+                if self._on_step is not None:
+                    self._on_step(step)
+        self._prev = m
+        self.last_ok = (packed, number)
 
 
 def valid_clock(day_time):
@@ -800,6 +879,57 @@ def refuse_disk_image(path, key):
         fail("%s is a disk image: %s" % (key, IMAGE_ROUTES), **{key: path})
 
 
+def gzip_header_time(path):
+    """(present, epoch seconds or None) of a gzip file's header MTIME (RFC 1952: bytes 4 to 7, little-endian; 0 means the
+    compressor recorded none). (False, None) for a file that is not gzip or cannot be read."""
+    try:
+        with open(path, "rb") as handle:
+            head = handle.read(10)
+    except OSError:
+        return False, None
+    if len(head) < 10 or head[:2] != b"\x1f\x8b":
+        return False, None
+    value = int.from_bytes(head[4:8], "little")
+    return True, (value or None)
+
+
+def want_years(args, targets):
+    """The `years` argument as {file path: [[from_line, year, counters], ...]}, in the order given, which must be ascending
+    by line within a file. Every refusal is JSON and happens before anything is read."""
+    given = args.get("years")
+    if given is None:
+        return {}
+    if not isinstance(given, list):
+        fail("years must be a list of {file, from_line, year}")
+    if len(given) > MAX_YEARS:
+        fail("years has %d entries: at most %d are read" % (len(given), MAX_YEARS))
+    by_name = {}
+    for target in targets:
+        by_name.setdefault(os.path.normpath(target), target)
+    ranges, last_line = {}, {}
+    for index, entry in enumerate(given):
+        where = "years[%d]" % index
+        if not isinstance(entry, dict) or set(entry) != {"file", "from_line", "year"}:
+            fail("%s must be an object with exactly file, from_line and year" % where)
+        name, line, year = entry["file"], entry["from_line"], entry["year"]
+        if not isinstance(name, str) or not name:
+            fail("%s: file must be a string, one of the call's files" % where)
+        target = name if name in targets else by_name.get(os.path.normpath(name))
+        if target is None:
+            fail("%s: %s is not one of the files of this call" % (where, name if len(name) <= 200 else name[:200] + "..."),
+                 files=sorted(targets)[:50])
+        if isinstance(line, bool) or not isinstance(line, int) or not 1 <= line <= 1 << 50:
+            fail("%s: from_line must be a whole number of 1 or more" % where)
+        if isinstance(year, bool) or not isinstance(year, int) or not YEAR_MIN <= year <= YEAR_MAX:
+            fail("%s: year must be a whole year between %d and %d" % (where, YEAR_MIN, YEAR_MAX))
+        if target in last_line and line <= last_line[target]:
+            fail("%s: the ranges of %s must be ascending by from_line and may not overlap (from_line %d does not come after %d)"
+                 % (where, target, line, last_line[target]))
+        last_line[target] = line
+        ranges.setdefault(target, []).append([line, year, {"lines": 0, "first_dated": None}])
+    return ranges
+
+
 def main():
     args = read_args()
     path = want_str(args, "path", "path is required: an auth.log or secure file, or a directory holding them")
@@ -876,6 +1006,7 @@ def main():
              skipped_special=skipped_special, walk_errors=walk_errors)
     ranked = sorted(((rotation_basis(t), t) for t in targets), key=lambda row: (row[0][0], row[0][1], row[1]))
     schemes = {basis for (rank, _k, basis), _t in ranked if rank == 1}
+    years_by_file = want_years(args, targets)
 
     try:
         text = TextFile(TEXT_NAME, write_text, "JSON Lines, mode 0600: the record's id, locator and fields as in the answer, "
@@ -884,7 +1015,9 @@ def main():
         fail(str(exc))
     page = LosslessPage(TOOL, "records", limit)
     unparsed_page = LosslessPage(TOOL, "unparsed", limit)
+    steps_page = LosslessPage(TOOL, "forward_steps", limit)
     preview_rows = []
+    mtimes, anchor_whens = {}, {}
 
     files, read_errors, by_kind = [], [], {}
     counts = {"physical": 0, "blank": 0, "read": 0, "unparsed": 0, "time_errors": 0, "invalid_utf8": 0}
@@ -909,11 +1042,17 @@ def main():
             info["size"] = os.path.getsize(target)
             mtime = datetime.datetime.fromtimestamp(os.path.getmtime(target), datetime.timezone.utc).replace(tzinfo=None)
             info["modified"] = mtime.isoformat() + "Z"
+            mtimes[target] = os.path.getmtime(target)
         except (OSError, ValueError, OverflowError):
             mtime = None
-        # Pass one: the months of every line whose date exists, and the packed date of each, so that the year of the
-        # last in-order line can be worked back through the year ends the months show.
-        months, packed, numbers = array.array("b"), array.array("q"), array.array("q")
+
+        def note_step(step, target=target):
+            steps_page.add({"file": target, **step})
+
+        # Pass one: the class of every line whose date exists (one byte each, settled as the lines go by), the year ends,
+        # the forward steps longer than STEP_DAYS, and the last line in order, so that the year of that line can be worked
+        # back through the year ends the months show.
+        scan = MonthScan(note_step)
         try:
             for n, (_n, _o, chunk, _l) in enumerate(physical_lines(target, state, expand_cap, deadline)):
                 tick(n)
@@ -931,40 +1070,47 @@ def main():
                 if not valid:
                     continue            # a date that does not exist says nothing about which way the months run
                 h, m, sec = (int(x) for x in found.group("time").split(":"))
-                months.append(month)
-                numbers.append(_n)
-                packed.append((((month * 32 + day) * 24 + h) * 60 + m) * 61 + sec)
+                scan.push(month, (((month * 32 + day) * 24 + h) * 60 + m) * 61 + sec, _n)
+            scan.finish()
         except Overtime:
             hit_deadline = True
             read_errors.append({"file": target, "error": "max_seconds (%s) passed while reading this file: it was not read further" % seconds, "line": None, "byte_offset": None})
             info["partial"] = True
             files.append(info)
             continue
-        classes, rollovers, where = classify_months(months)
-        info["rollovers"], info["rollover_lines"] = rollovers, [numbers[i] for i in where]
-        info["reordered_lines"] = sum(1 for c in classes if c == REORDERED)
-        last_valid = None
-        for i in range(len(classes) - 1, -1, -1):
-            if classes[i] != REORDERED:
-                v = packed[i]
-                v, sec = divmod(v, 61)
-                v, m = divmod(v, 60)
-                v, h = divmod(v, 24)
-                month, day = divmod(v, 32)
-                last_valid = (month, day, h, m, sec)
-                break
+        classes, rollovers = scan.classes, scan.rollovers
+        info["rollovers"], info["rollover_lines"] = rollovers, scan.rollover_lines
+        info["reordered_lines"] = scan.reordered
+        last_valid = packed_parts(scan.last_ok[0]) if scan.last_ok else None
+        anchor = anchor_year(last_valid, mtime) if mtime is not None and last_valid is not None else None
+        mtime_basis = "file mtime (UTC, with 26 hours allowed for the log's unknown zone; on a copied tree it is the time of the copy)"
         if year_arg is not None:
             first_year, info["year_basis"] = year_arg, "argument"
             info["year_argument_spans_rollover"] = rollovers > 0
         elif mtime is not None and last_valid is not None:
-            anchor = anchor_year(last_valid, mtime)
             first_year = None if anchor is None else anchor - rollovers
-            info["year_basis"] = "file mtime (UTC, with 26 hours allowed for the log's unknown zone; on a copied tree it is the time of the copy)"
+            info["year_basis"] = mtime_basis
         else:
             first_year, info["year_basis"] = None, "none: no readable modification time or no dated line"
+        ranges = years_by_file.get(target, [])
+        if ranges:
+            info["year_basis"] = ("years argument for the lines from line %s on (%d range%s); the other lines: %s"
+                                  % (ranges[0][0], len(ranges), "" if len(ranges) == 1 else "s", info["year_basis"]))
+        info["forward_steps"] = scan.steps
+        info["forward_step_count"] = scan.step_count
+        info["forward_step_days_over"] = STEP_DAYS
+        info["year_assumed_before_line"] = scan.last_step_line
+        info["year_anchor"] = None
+        if scan.last_ok:
+            info["year_anchor"] = {"line": scan.last_ok[1], "stamp": stamp_of(scan.last_ok[0]), "mtime": info["modified"],
+                                   "year": anchor, "used_for_dating": year_arg is None}
+            if anchor is not None:
+                anchor_whens[target] = datetime.datetime(anchor, *last_valid[:4], min(last_valid[4], 59))
         # Pass two: the records.
         state = FileState(target)
-        year, cursor, valid_index = first_year, None, 0
+        year, cursor, valid_index, range_at = first_year, None, 0, -1
+        last_step_line = scan.last_step_line
+        spans_rollover = False
         try:
             for number, offset, chunk, length in physical_lines(target, state, expand_cap, deadline):
                 tick(number)
@@ -1020,13 +1166,25 @@ def main():
                         cls = classes[valid_index] if valid_index < len(classes) else SAME
                         valid_index += 1
                     reordered = cls == REORDERED
-                    when, error, use = None, None, None
-                    if year_arg is not None:
+                    when, error, use, assumed = None, None, None, False
+                    if cls == ROLLOVER and year is not None and year_arg is None:
+                        year += 1       # the anchored year goes on through the year ends whichever year a range gives a line
+                    while range_at + 1 < len(ranges) and ranges[range_at + 1][0] <= number:
+                        range_at += 1
+                    if range_at >= 0:
+                        counters = ranges[range_at][2]
+                        counters["lines"] += 1
+                        if counters["first_dated"] is None:
+                            counters["first_dated"] = number
+                        elif cls == ROLLOVER:
+                            spans_rollover = True
+                        use = ranges[range_at][1]
+                        when, error = traditional_time(use, month, day, parts["time"])
+                    elif year_arg is not None:
                         use = year_arg
                         when, error = traditional_time(use, month, day, parts["time"])
                     else:
-                        if cls == ROLLOVER and year is not None:
-                            year += 1
+                        assumed = last_step_line is not None and number < last_step_line
                         if year is None:
                             error = "no year could be applied (%s)" % info["year_basis"]
                         elif not exists:
@@ -1054,6 +1212,8 @@ def main():
                     time_fields = {"time": when.isoformat() if when else None,
                                    "time_raw": line[:found.start("host")].rstrip(),
                                    "time_zone": "unknown", "time_utc": None, "year": use if when else None}
+                    if assumed and when is not None:
+                        time_fields["year_assumed"] = True
                     if error:
                         time_fields["time_error"] = error
                     if parts["time"].endswith(":60") and when is not None:
@@ -1109,18 +1269,47 @@ def main():
             read_errors.append({"file": target, "error": "max_seconds (%s) passed while reading this file: it was not read further" % seconds, "line": None, "byte_offset": None})
             info["partial"] = True
         info["compression"] = state.compression
+        if ranges:
+            info["years_applied"] = [{"from_line": r[0], "year": r[1], "dated_lines": r[2]["lines"]} for r in ranges]
+            info["years_span_rollover"] = spans_rollover
         for err in state.errors:
             read_errors.append(err)
             info["partial"] = True
         files.append(info)
     text.close()
+    # The time the files carry, which anchors the year and is not always the time the log was written.
+    stamps = [mtimes[f["path"]] for f in files if f["path"] in mtimes]
+    shared = len(files) > 1 and len(stamps) == len(files) and max(stamps) - min(stamps) <= SAME_MTIME_SECONDS
+    for f in files:
+        why = []
+        last_line = anchor_whens.get(f["path"])
+        if last_line is not None and f["path"] in mtimes:
+            after = (datetime.datetime.fromtimestamp(mtimes[f["path"]], datetime.timezone.utc).replace(tzinfo=None) - last_line).total_seconds() / 86400
+            if after > COPY_DAYS:
+                why.append("the modification time is %d days after the last dated line (more than %d)" % (after, COPY_DAYS))
+        if shared:
+            why.append("every file of this call has the same modification time, to within %d seconds" % SAME_MTIME_SECONDS)
+        present, header = gzip_header_time(f["path"]) if f["compression"] == "gzip" else (False, None)
+        if f["compression"] == "gzip":
+            f["gzip_header_time"] = None if not present or header is None else datetime.datetime.fromtimestamp(header, datetime.timezone.utc).replace(tzinfo=None).isoformat() + "Z"
+            f["gzip_header_time_recorded"] = bool(present and header is not None)
+            if present and header is not None and f["path"] in mtimes:
+                agree = abs(mtimes[f["path"]] - header) <= GZ_AGREE_SECONDS
+                f["gzip_header_agrees_with_modified"] = agree
+                if not agree:
+                    why.append("the gzip header time (%s) differs from the modification time by more than %d seconds" % (f["gzip_header_time"], GZ_AGREE_SECONDS))
+            else:
+                f["gzip_header_agrees_with_modified"] = None
+        f["mtime_may_be_copy_time"] = bool(why)
+        if why:
+            f["mtime_may_be_copy_time_why"] = why
 
     # Do the files' own time ranges agree with the order they were read in?
     overlaps = []
     for earlier, later in zip(files, files[1:]):
         if earlier["last_time"] and later["first_time"] and later["first_time"] < earlier["last_time"]:
             overlaps.append({"earlier": earlier["path"], "later": later["path"], "earlier_last": earlier["last_time"], "later_first": later["first_time"]})
-    pages = {"records": page.finish(), "unparsed": unparsed_page.finish()}
+    pages = {"records": page.finish(), "unparsed": unparsed_page.finish(), "forward_steps": steps_page.finish()}
     all_parsed = counts["unparsed"] == 0 and not read_errors and not walk_errors and not skipped_special and not not_reached
     outcome = status_of(
         all_parsed, not files or all(f["partial"] and f["physical_lines"] == 0 for f in files),
@@ -1160,12 +1349,16 @@ def main():
         "skipped_special": skipped_special,
         "truncated": any(p["truncated"] for p in pages.values()),
         "note": "A traditional syslog stamp carries no year and no zone: each file says the year basis applied "
-                "(its modification time, which on a copied tree is the time of the copy, or your `year`) and each "
+                "(its modification time, which on a copied tree is the time of the copy, or your `year` or `years`) and each "
                 "record keeps its stamp as written in time_raw, with `time` the clock reading as written and "
                 "`time_utc` set only where the stamp carries its zone. A month that goes up is the log moving on "
                 "however long the gap; a month that goes down is a year end only within six months after the last one, "
                 "and a line the next line contradicts is flagged reordered and placed by nearness; rollover_lines "
-                "names each year end that was read. all_lines_parsed says that every line matched a syslog shape "
+                "names each year end that was read. The year is an inference: a gap of more than %d days between two "
+                "lines is a forward step (forward_steps, whole in pages.forward_steps) across which any number of years "
+                "may have passed, every record before the last one carries year_assumed, and a file's modification "
+                "time may be the time of a copy (mtime_may_be_copy_time): fix the year from a source with full dates "
+                "and pass `year` or `years` before a conclusion rests on a date. all_lines_parsed says that every line matched a syslog shape " % STEP_DAYS +
                 "and every file was read through; it is not coverage of the host's authentication events. An "
                 "ssh_accepted line says sshd accepted an authentication: its fingerprint names a key, not a person, "
                 "and not when the key was installed. A PAM session is the named service's, not necessarily a login. A "

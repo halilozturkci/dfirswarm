@@ -54,7 +54,7 @@ import time
 from pathlib import Path
 
 TOOL = "linux_triage"
-PARSER = "linux_triage/4"
+PARSER = "linux_triage/7"
 DEFAULT_FUNCTION_SECONDS = 1800
 DEFAULT_TOTAL_SECONDS = 13800
 MAX_TOTAL_SECONDS = 14100       # the most a caller may ask for (the manifest allows 14400)
@@ -73,7 +73,7 @@ GROUPS = {
                  "covers": "classic wtmp, btmp and lastlog records",
                  "does_not_cover": "wtmpdb or lastlog2 (SQLite) databases, utmp, audit login records or the journal"},
     "authentication": {"functions": ["authlog"],
-                       "covers": "auth.log or secure lines as dissect.target's authlog function parses them",
+                       "covers": "auth.log or secure lines as dissect.target's authlog function parses them; a traditional line has no year, and dissect.target (3.25) takes the year of the newest line from the file's modification time, which on a copied tree is the time of the copy, and steps back one year at each month that rises as it reads the file backwards, so a gap of a year or more is not seen",
                        "does_not_cover": "the journal, the audit log, or a log kept under another name or place"},
     "history": {"functions": ["bashhistory"],
                 "covers": "bash history files only",
@@ -88,7 +88,7 @@ GROUPS = {
             "covers": "authorized_keys, known_hosts and public keys as the functions read them",
             "does_not_cover": "sshd_config, certificates' authorities or private keys"},
     "logs": {"functions": ["journal", "syslog"],
-             "covers": "the journal and syslog as the two functions parse them",
+             "covers": "the journal and syslog as the two functions parse them; the journal carries full times, a traditional syslog line has no year and is dated as authlog's are (the file's modification time, then one year back at each rising month)",
              "does_not_cover": "the audit log, application logs, or entries the journal reader does not decode"},
     "web": {"functions": ["webserver.logs"],
             "covers": "access and error logs of the web servers dissect.target knows",
