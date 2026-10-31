@@ -2878,6 +2878,8 @@ MAX_PATTERNS_PER_QUESTION = 8
 MAX_PATTERNS = 200
 MAX_PATTERN_CHARS = 300
 MAX_VERIFICATION_ROWS = 5000000
+MAX_VERIFICATION_LINE = 1 << 20           # a line of the verification table longer than this (1 MiB) is not parsed; it is counted under rows_not_used
+VERIFICATION_ROWS_ENV = "COLLECTION_COVERAGE_MAX_VERIFICATION_ROWS"
 EXAMPLES = 5
 
 
@@ -2966,29 +2968,63 @@ class CoverageSink(Sink):
             self.matches.add(row)
 
 
+def verification_row_cap():
+    """MAX_VERIFICATION_ROWS, or less when COLLECTION_COVERAGE_MAX_VERIFICATION_ROWS is a positive whole number (a test lowers the cap this way)."""
+    try:
+        value = int(os.environ.get(VERIFICATION_ROWS_ENV, ""))
+    except ValueError:
+        return MAX_VERIFICATION_ROWS
+    return min(MAX_VERIFICATION_ROWS, value) if value > 0 else MAX_VERIFICATION_ROWS
+
+
 def read_verification(path):
-    """delivered path -> the worst status the verify tool gave it, from its checks table (a JSON Lines file inside the run directory)."""
+    """(delivered path -> the worst status the verify tool gave it, rows, rows not used, how the reading ended). The table is a JSON Lines file inside the
+    run directory, read in binary with a bound on a line (a longer line is skipped to its end and counted as not used) and a bound on the rows, the time
+    and the memory; where it ends before the table does, the rest is counted (as far as the clock allows) and the answer says so."""
     root = os.path.realpath(os.getcwd())
     real = os.path.realpath(path)
     if not (real == root or real.startswith(root + os.sep)):
         fail("verification must be a file inside the run directory (the checks table collection_manifest_verify wrote)", verification=path)
     order = {"matched": 0, "unverifiable": 1, "ambiguous": 2, "missing": 3, "read_failed": 4, "mismatch": 5}
-    states, rows, bad = {}, 0, 0
+    states, rows, bad, over = {}, 0, 0, 0
+    cap = verification_row_cap()
     try:
         fd = os.open(real, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
         if not stat.S_ISREG(os.fstat(fd).st_mode):
             os.close(fd)
             fail("verification is not a regular file", verification=path)
-        fh = os.fdopen(fd, "r", encoding="utf-8", errors="surrogateescape")
+        fh = os.fdopen(fd, "rb")
     except OSError as exc:
         fail("verification could not be opened (%s)" % describe(exc), verification=path)
+    stopped = None
     with fh:
-        for line in fh:
-            if rows >= MAX_VERIFICATION_ROWS or out_of_time():
+        while True:
+            if out_of_time():
+                stopped = "the time limit"
+                break
+            if rows >= cap:
+                stopped = "the cap of %d rows" % cap
+                break
+            if (rows % 1024) == 0 and over_memory():
+                stopped = over_memory()
+                break
+            line = fh.readline(MAX_VERIFICATION_LINE + 1)
+            if not line:
                 break
             rows += 1
+            if len(line) > MAX_VERIFICATION_LINE:
+                # a line longer than the bound: read on to its end in small pieces, not parsed, counted as not used
+                bad += 1
+                over += 1
+                while not line.endswith(b"\n"):
+                    if out_of_time():
+                        break
+                    line = fh.readline(1 << 16)
+                    if not line:
+                        break
+                continue
             try:
-                row = json.loads(line)
+                row = json.loads(line.decode("utf-8", "surrogateescape"))
             except (ValueError, RecursionError):
                 bad += 1
                 continue
@@ -2998,7 +3034,23 @@ def read_verification(path):
             old = states.get(row["delivered"])
             if old is None or order[row["status"]] > order[old]:
                 states[row["delivered"]] = row["status"]
-    return states, rows, bad
+        not_read, lower, last = 0, False, b"\n"
+        if stopped is not None:
+            while True:
+                if out_of_time():
+                    lower = True
+                    break
+                chunk = fh.read(1 << 20)
+                if not chunk:
+                    break
+                not_read += chunk.count(b"\n")
+                last = chunk
+            if not lower and not last.endswith(b"\n"):
+                not_read += 1
+    cut = stopped is not None and (not_read > 0 or lower)
+    info = {"truncated": cut, "truncated_because": stopped if cut else None, "rows_not_read": not_read if cut else 0,
+            "rows_not_read_is_a_lower_bound": bool(cut and lower), "lines_over_the_bound": over, "line_bound_bytes": MAX_VERIFICATION_LINE}
+    return states, rows, bad, info
 
 
 def census_gaps(census):
@@ -3016,7 +3068,7 @@ def census_gaps(census):
     return gaps
 
 
-def statement_for(q, outcomes_unknown, integrity_given, examined_given, gaps=()):
+def statement_for(q, outcomes_unknown, integrity_given, examined_given, gaps=(), verification_cut=False):
     parts = []
     head = "Question %s%s: " % (q.id, " (%s)" % q.what if q.what else "")
     if q.files:
@@ -3037,6 +3089,8 @@ def statement_for(q, outcomes_unknown, integrity_given, examined_given, gaps=())
         parts.append("%d matching delivered file(s) are named by no record" % q.without_record)
     if integrity_given and q.files:
         parts.append("integrity from the verification table: %s" % (", ".join("%d %s" % (n, s) for s, n in sorted(q.integrity.items())) or "none of the matching files is in it"))
+        if verification_cut:
+            parts.append("the verification table was cut before its end: a file shown as not in the table may be in the rows that were not read")
     elif q.files:
         parts.append("integrity was not assessed here (collection_manifest_verify checks the claims against the delivered bytes)")
     if examined_given and q.files:
@@ -3119,8 +3173,8 @@ def main():
     verification, verification_info = None, None
     if args.get("verification") is not None:
         vpath = want_str(args, "verification")
-        verification, vrows, vbad = read_verification(vpath)
-        verification_info = {"rows_read": vrows, "rows_not_used": vbad, "files": len(verification)}
+        verification, vrows, vbad, vinfo = read_verification(vpath)
+        verification_info = {"rows_read": vrows, "rows_not_used": vbad, "files": len(verification), **vinfo}
     problems = Table(TOOL + "-problems", FIRST_PROBLEMS)
     matches = Table(TOOL + "-matches", limit, always=True)
     census = Census()
@@ -3207,6 +3261,8 @@ def main():
             state.append("no_file_and_no_record_read" if outcomes_unknown else "no_file_and_no_record")
         if not census.complete:
             state.append("census_incomplete")
+        if verification_info and verification_info["truncated"]:
+            state.append("verification_table_cut")
         if outcomes_unknown:
             state.append("some_records_unreadable")
         out_questions.append({"id": q.id, "what": q.what, "patterns": {"source_paths": q.source_patterns, "delivered_paths": q.delivered_patterns},
@@ -3215,7 +3271,7 @@ def main():
                               "copied_but_not_in_the_delivery": q.copied_but_absent, "delivered_without_a_record": q.without_record if q.files else 0,
                               "first_failed": q.failed_examples, "integrity": dict(sorted(q.integrity.items())) if verification is not None else None,
                               "not_among_examined": q.unexamined if examined else None, "state": state,
-                              "statement": statement_for(q, outcomes_unknown, verification is not None, bool(examined), gaps)})
+                              "statement": statement_for(q, outcomes_unknown, verification is not None, bool(examined), gaps, bool(verification_info and verification_info["truncated"]))})
     out_requested = [{"pattern": q.source_patterns[0], "delivered_files": q.files, "records_copied_or_uploaded": q.copied,
                       "records_failed_or_skipped": q.failed,
                       "state": requested_state(q, census.complete, outcomes_unknown)}
@@ -3228,6 +3284,10 @@ def main():
         problem_lines.append("%d walk or read error(s)" % census.errors_total)
     if census.capped:
         problem_lines.append("the census reached its cap of %d entries" % census.cap)
+    if verification_info and verification_info["truncated"]:
+        problem_lines.append("the verification table was cut (%s): %s%d row(s) were not read, so the integrity counts cover only the rows read"
+                             % (verification_info["truncated_because"], "at least " if verification_info["rows_not_read_is_a_lower_bound"] else "",
+                                verification_info["rows_not_read"]))
     problem_lines += ["%s is %s" % (s["log"], s["status"]) for s in sources if s["status"] != "parsed"]
     status = "complete" if not problem_lines else "partial"
     basis = ("every directory was listed and every recognised record was read whole" if status == "complete" else
