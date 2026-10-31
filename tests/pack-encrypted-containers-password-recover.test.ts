@@ -267,7 +267,7 @@ test("SIGTERM while john is running ends the tool with one JSON answer and the c
     // The stand-in john (slept 30s) must be gone well before its sleep would have ended on its own.
     await new Promise((r) => setTimeout(r, 300));
     const ps = await new Promise<string>((resolve) => {
-      const p = spawn("pgrep", ["-f", "sleep 30"]);
+      const p = spawn("pgrep", ["-f", join(bin, "john")]);
       let o = "";
       p.stdout.on("data", (c: Buffer) => (o += c));
       p.on("close", () => resolve(o));
