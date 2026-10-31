@@ -24,7 +24,7 @@ import sys
 import time
 from pathlib import Path
 
-TOOL = {"name": "fuzzy_hash", "version": 6}
+TOOL = {"name": "fuzzy_hash", "version": 7}
 PARSER = "fuzzy_hash/3"
 DEFAULT_ENGINE_TIMEOUT = 120
 TOTAL_BUDGET = 270                       # seconds for the whole call: the manifest's own limit is 300
@@ -420,6 +420,19 @@ def install_signal_handlers():
     for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(signum, _on_signal)
 # END SHARED PROCESS
+
+def _first_word(signum):
+    """The last word of a stop signal that comes before main() has set the tool's own: one answer that says it was stopped and had produced
+    nothing yet. main() replaces it, and installs the handlers again."""
+    print(json.dumps({"error": "stopped by signal %d before the tool had begun its work" % signum, "status": "failed",
+                      "status_basis": "the tool was stopped by signal %d before it had begun its work: nothing it read is an answer" % signum,
+                      "tool": TOOL, "stopped_by_signal": signum}))
+    sys.stdout.flush()
+
+
+STATE["last_word"] = _first_word
+install_signal_handlers()
+# the stop handlers are installed here, at module level
 
 
 def file_problem(path):

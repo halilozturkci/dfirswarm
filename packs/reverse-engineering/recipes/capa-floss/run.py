@@ -692,6 +692,19 @@ def install_signal_handlers():
         signal.signal(signum, _on_signal)
 # END SHARED PROCESS
 
+def _first_word(signum):
+    """The last word of a stop signal that comes before main() has set the recipe's own: one answer that says it was stopped and had produced
+    nothing yet. main() replaces it, and installs the handlers again."""
+    print(json.dumps({"error": "stopped by signal %d before the recipe had begun its work" % signum, "status": "interrupted",
+                      "status_basis": "the recipe was stopped by signal %d before it had begun its work: nothing it read is an answer" % signum,
+                      "ok": False, "recipe": "capa-floss", "stopped_by_signal": signum}))
+    sys.stdout.flush()
+
+
+STATE["last_word"] = _first_word
+install_signal_handlers()
+# the stop handlers are installed here, at module level
+
 
 # -- new code of the capa-floss recipe --
 
@@ -1535,20 +1548,27 @@ def make_out_dir(out_dir):
     return None
 
 
+RECEIPT_TMP = []                    # temporary files of a receipt being written: a stop signal removes them before it writes the last receipt
+
+
 def write_receipt(out_dir, name, text):
     """`text` into this run's own receipt file, whole or not at all: a temporary file beside it, then a rename over it."""
     import tempfile
     fd, tmp = tempfile.mkstemp(prefix=".receipt-", suffix=".tmp", dir=out_dir)
+    RECEIPT_TMP.append(tmp)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(text)
         os.chmod(tmp, 0o644)
         os.replace(tmp, os.path.join(out_dir, name))
+        RECEIPT_TMP.remove(tmp)
     except BaseException:
         try:
             os.unlink(tmp)
         except OSError:
             pass
+        if tmp in RECEIPT_TMP:
+            RECEIPT_TMP.remove(tmp)
         raise
 
 
@@ -1587,10 +1607,19 @@ def run(path, out_dir, fmt, budget):
 
     def last_word(signum):
         state["errors"].append("the recipe was stopped by signal %d; the program that was running was ended" % signum)
+        for tmp in list(RECEIPT_TMP):
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            RECEIPT_TMP.remove(tmp)
         try:
             write_results(state)
         except OSError:
             pass
+        print(json.dumps({"ok": False, "status": "interrupted", "status_basis": state.get("status_basis") or "the recipe was stopped by signal %d" % signum,
+                          "format": fmt, "coverage": state["coverage_name"], "index": state["index_name"]}))
+        sys.stdout.flush()
 
     STATE["last_word"] = last_word
     install_signal_handlers()

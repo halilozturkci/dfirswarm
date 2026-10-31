@@ -32,7 +32,75 @@ import time
 from collections import Counter
 from pathlib import Path
 
-TOOL = {"name": "entropy_map", "version": 4}
+PAGES = []                          # the pagers of this call: the stop block removes a temporary file of each (these write none)
+
+# BEGIN SHARED STOP
+# The same text is in regkv, shellbags and amcache_apps (held equal by a windows-forensics test). SIGTERM, SIGINT and SIGHUP end the tool with JSON (status
+# interrupted, exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
+# The handlers are in as soon as the module has run as far as this block, with a minimal last word until main() installs the tool's own (only
+# the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
+# first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
+# (the ransomware tools print through it; the windows tools hold the signals in the emit of their boundary block, and carry this text unused).
+import signal
+import time
+
+STOP = {"last_word": None, "deadline": None}
+
+
+def set_deadline(seconds):
+    STOP["deadline"] = time.monotonic() + seconds
+
+
+def out_of_time():
+    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"]
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    for page in list(globals().get("PAGES", ())):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    last_word = STOP["last_word"]
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers(last_word=None):
+    STOP["last_word"] = last_word
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+
+
+def interrupted_answer(signum, **extra):
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "interrupted",
+                      "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
+                      "signal": signum, **extra}), flush=True)
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back: a signal that came in the middle of the write would end the process there, with the
+    answer cut. The tool ends by itself right after, so a signal that is held is not lost for good."""
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    STOP["last_word"] = None
+    print(json.dumps(answer, **dumps_kwargs))
+
+
+install_signal_handlers(lambda signum: interrupted_answer(signum))
+# END SHARED STOP
+
+TOOL = {"name": "entropy_map", "version": 5}
 PARSER = "entropy_map/3"
 SCHEMA_VERSION = 2
 MAX_WINDOW = 1 << 26                    # 64 MiB: one window is held in memory at a time
@@ -52,8 +120,8 @@ def describe(exc):
 
 
 def fail(message, **extra):
-    print(json.dumps({"error": message, "status": extra.pop("status", "failed"), "status_basis": extra.pop("status_basis", message), "tool": TOOL,
-                      "problems": [], "limits_hit": [], **extra}))
+    print_answer({"error": message, "status": extra.pop("status", "failed"), "status_basis": extra.pop("status_basis", message), "tool": TOOL,
+                  "problems": [], "limits_hit": [], **extra})
     raise SystemExit(1)
 
 
@@ -126,6 +194,7 @@ def create_unique(directory, name):
 
 
 def main():
+    install_signal_handlers(lambda signum: interrupted_answer(signum, tool=TOOL))
     try:
         args = json.load(sys.stdin)
     except ValueError as exc:
@@ -179,11 +248,13 @@ def main():
     except OSError as exc:
         source.close()
         fail("the complete profile could not be created in %s: %s" % (directory, describe(exc)), path=path)
-    profile.write("offset\tbytes\tentropy\n")
-
     preview = []
     totals = Counter()
     windows = high_windows = processed = 0
+    profile.write("offset\tbytes\tentropy\n")
+    # from here a stop signal names the profile it leaves and how far the pass got (the variables are read when the signal arrives)
+    install_signal_handlers(lambda signum: interrupted_answer(signum, tool=TOOL, path=path, profile_file=profile_name, bytes_processed=processed, windows_measured=windows, profile_complete=False))
+
     last_bytes = 0
     problems = []
     run_count = 0
@@ -333,7 +404,7 @@ def main():
         result["runs_file_format"] = "tab-separated: start, end, bytes, peak entropy; every run, in the order found"
     if not complete:
         result["error"] = problems[0] if problems else "the pass did not finish"
-    print(json.dumps(result, indent=2))
+    print_answer(result, indent=2)
     if not processed:
         raise SystemExit(1)
 

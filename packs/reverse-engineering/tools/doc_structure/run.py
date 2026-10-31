@@ -48,7 +48,7 @@ from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-TOOL = {"name": "doc_structure", "version": 2}
+TOOL = {"name": "doc_structure", "version": 3}
 PARSER = "doc_structure/1"
 NOTE = ("Static structure only. A structure shows what the file holds, not what an application would do with it: an action, a macro, "
         "a field or an external target does not show that anything ran or was fetched. Record what was read and what was not before "
@@ -6096,6 +6096,10 @@ HARD_SECONDS = 105                  # the manifest's 120 s less 15: the answer i
 PRINTING = [False]                  # the answer has begun to be written: a signal after that must not write a second one
 
 
+PARTIAL_BUILDING = [False]          # the partial answer of the hard limit is being built
+PARTIAL_WRITING = [False]           # and has begun to be written: no other document may follow it
+
+
 def _stopped_by_signal(signum, frame):
     """SIGINT, SIGTERM and SIGHUP end the call with one JSON answer and the exit code 128 + the signal, not a traceback and not silence. A signal
     while the partial answer of the hard limit is being built (not yet being written) is answered by a minimal failed document; one while a
@@ -6108,9 +6112,19 @@ def _stopped_by_signal(signum, frame):
     raise SystemExit(128 + signum)
 
 
+# The stop signals are answered from here on: _stopped_by_signal needs only TOOL, json, sys and the flags above, all defined before this line. The
+# SIGALRM hard limit is not armed here: only main() arms it, with its deadline.
+def install_stop_handlers():
+    for name in ("SIGINT", "SIGTERM", "SIGHUP"):
+        if hasattr(signal, name):
+            signal.signal(getattr(signal, name), _stopped_by_signal)
+
+
+install_stop_handlers()
+# the stop handlers are installed here, at module level
+
+
 HARD_GRACE = 5                      # seconds the partial answer of the hard limit has, before the failed one
-PARTIAL_BUILDING = [False]          # the partial answer of the hard limit is being built
-PARTIAL_WRITING = [False]           # and has begun to be written: no other document may follow it
 
 
 def _hard_limit_last(signum, frame):
@@ -6169,9 +6183,7 @@ def _hard_limit(signum, frame):
 
 
 def install_signal_handlers():
-    for name in ("SIGINT", "SIGTERM", "SIGHUP"):
-        if hasattr(signal, name):
-            signal.signal(getattr(signal, name), _stopped_by_signal)
+    install_stop_handlers()
     if hasattr(signal, "setitimer") and hasattr(signal, "SIGALRM"):
         signal.signal(signal.SIGALRM, _hard_limit)
         signal.setitimer(signal.ITIMER_REAL, HARD_SECONDS)

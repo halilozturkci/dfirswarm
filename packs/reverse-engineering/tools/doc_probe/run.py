@@ -50,7 +50,75 @@ import xml.parsers.expat
 import zipfile
 from pathlib import Path
 
-TOOL = {"name": "doc_probe", "version": 6}
+PAGES = []                          # the pagers of this call: the stop block removes a temporary file of each (these write none)
+
+# BEGIN SHARED STOP
+# The same text is in regkv, shellbags and amcache_apps (held equal by a windows-forensics test). SIGTERM, SIGINT and SIGHUP end the tool with JSON (status
+# interrupted, exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
+# The handlers are in as soon as the module has run as far as this block, with a minimal last word until main() installs the tool's own (only
+# the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
+# first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
+# (the ransomware tools print through it; the windows tools hold the signals in the emit of their boundary block, and carry this text unused).
+import signal
+import time
+
+STOP = {"last_word": None, "deadline": None}
+
+
+def set_deadline(seconds):
+    STOP["deadline"] = time.monotonic() + seconds
+
+
+def out_of_time():
+    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"]
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    for page in list(globals().get("PAGES", ())):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    last_word = STOP["last_word"]
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers(last_word=None):
+    STOP["last_word"] = last_word
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+
+
+def interrupted_answer(signum, **extra):
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "interrupted",
+                      "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
+                      "signal": signum, **extra}), flush=True)
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back: a signal that came in the middle of the write would end the process there, with the
+    answer cut. The tool ends by itself right after, so a signal that is held is not lost for good."""
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    STOP["last_word"] = None
+    print(json.dumps(answer, **dumps_kwargs))
+
+
+install_signal_handlers(lambda signum: interrupted_answer(signum))
+# END SHARED STOP
+
+TOOL = {"name": "doc_probe", "version": 7}
 PARSER = "doc_probe/4"
 NOTE = ("Static container triage only. Markers, procedure names and external relationships do not prove execution or "
         "retrieval. Record parser coverage before drawing an absence conclusion.")
@@ -445,7 +513,7 @@ def fail(message, **extra):
     answer = {"error": scrub(message), "status": status, "tool": TOOL, **shown_deep(extra)}
     if VALUES[0] is not None:
         answer["secret_values"] = VALUES[0].summary()
-    print(json.dumps(answer))
+    print_answer(answer)
     raise SystemExit(1)
 
 
@@ -495,6 +563,7 @@ class LosslessPage:
     that cannot be written whole says so."""
 
     def __init__(self, tool, key, limit):
+        PAGES.append(self)
         self.tool = re.sub(r"[^A-Za-z0-9_.-]", "_", tool)
         self.limit = limit
         self.page = []
@@ -1477,6 +1546,7 @@ def file_problem(path):
 
 
 def main():
+    install_signal_handlers(lambda signum: interrupted_answer(signum, tool=TOOL))
     try:
         args = json.load(sys.stdin)
     except ValueError as exc:
@@ -1585,9 +1655,9 @@ def main():
     unread = bool(members and (members["encrypted"] or members["unsupported"] or members["failed"] or members["over_budget"] or members["not_attempted"]))
     head_out = {"tool": TOOL, "parser": PARSER, "path": shown, "bytes": size, "extension": scrub(extension, "names") or None}
     if stop is not None:
-        print(json.dumps({**head_out, **stop.partial, "status": "failed", "status_basis": stop.message, "error": stop.message,
+        print_answer({**head_out, **stop.partial, "status": "failed", "status_basis": stop.message, "error": stop.message,
                           "problems": ctx.problems, "limits_hit": ctx.limits, "withheld": COUNTS, "secret_values": values.summary(), "note": NOTE,
-                          **({"notes": notes} if notes else {})}, indent=2))
+                          **({"notes": notes} if notes else {})}, indent=2)
         raise SystemExit(1)
     status = "partial" if (ctx.problems or ctx.limits or unread) else "complete"
     basis = ("every structure this tool reads was read in full" if status == "complete" else
@@ -1608,7 +1678,7 @@ def main():
     if values.enabled or COUNTS["urls"] or COUNTS["names"] or COUNTS["text"]:
         result["withheld_note"] = ("Credentials and token-shaped text in a URL or a name are withheld from this answer; the URL's length is kept. "
                                    "The whole target is in the values file when write_values was asked for in a secret_output job.")
-    print(json.dumps(result, indent=2))
+    print_answer(result, indent=2)
 
 
 if __name__ == "__main__":

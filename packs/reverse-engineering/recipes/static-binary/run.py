@@ -487,6 +487,19 @@ def install_signal_handlers():
         signal.signal(signum, _on_signal)
 # END SHARED PROCESS
 
+def _first_word(signum):
+    """The last word of a stop signal that comes before main() has set the recipe's own: one answer that says it was stopped and had produced
+    nothing yet. main() replaces it, and installs the handlers again."""
+    print(json.dumps({"error": "stopped by signal %d before the recipe had begun its work" % signum, "status": "interrupted",
+                      "status_basis": "the recipe was stopped by signal %d before it had begun its work: nothing it read is an answer" % signum,
+                      "ok": False, "recipe": "static-binary", "stopped_by_signal": signum}))
+    sys.stdout.flush()
+
+
+STATE["last_word"] = _first_word
+install_signal_handlers()
+# the stop handlers are installed here, at module level
+
 
 def run_child(script, args, stdout_path, stderr_path, env, timeout):
     """Run a tool with its arguments on stdin and its output going straight to files, in THIS recipe's process group.
@@ -714,6 +727,9 @@ def run(path, out_dir, fmt, budget):
             write_results(state)
         except OSError:
             pass
+        print(json.dumps({"ok": False, "status": "interrupted", "status_basis": "the recipe was stopped by signal %d; the passes that were running were ended" % signum,
+                          "format": fmt, "coverage": "coverage.json", "index": "index.tsv"}))
+        sys.stdout.flush()
 
     STATE["last_word"] = last_word
     install_signal_handlers()
