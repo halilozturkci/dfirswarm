@@ -1242,6 +1242,12 @@ def program_version(path, seconds):
 def run_recover(john, helper, helper_name, fmt, source, hash_file, candidates, rule_name, deadline, out_dir):
     """The one attempt: a helper (unless `hash_file` was given) then john, each bounded by what is left of
     `deadline`. Returns the answer's variable fields; raises nothing a caller must catch, only sets them."""
+    # Nothing a helper or john writes without being told where (a default ~/.john/, a helper's own scratch file) may
+    # land in the real HOME: this process's own HOME is moved under $OUT first, and every program spawned below
+    # inherits it, since none of them is given its own environment.
+    home = Path(out_dir) / "password_recover-home"
+    home.mkdir(parents=True, exist_ok=True)
+    os.environ["HOME"] = str(home)
     versions = {"john": program_version(john, PREFLIGHT_SECONDS) or "not reported by this build",
                 "helper": (program_version(helper, PREFLIGHT_SECONDS) or "bundled with the pinned john build") if helper else None}
 
@@ -1266,9 +1272,8 @@ def run_recover(john, helper, helper_name, fmt, source, hash_file, candidates, r
     pot_path = sealed_path(out_dir, "password_recover-john.pot")
     john_log = sealed_path(out_dir, "password_recover-john-stdout.txt")
     john_err = sealed_path(out_dir, "password_recover-john-stderr.txt")
-    home = Path(out_dir) / "password_recover-home"
-    home.mkdir(parents=True, exist_ok=True)
-    argv = [john, "--wordlist=%s" % candidates, "--pot=%s" % pot_path]
+    session_path = Path(out_dir) / "password_recover-john-session"
+    argv = [john, "--wordlist=%s" % candidates, "--pot=%s" % pot_path, "--session=%s" % session_path]
     if rule_name != "none":
         argv.append("--rules=%s" % RULE_NAMES[rule_name])
     argv.append(str(hash_path))

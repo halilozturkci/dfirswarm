@@ -62,8 +62,8 @@
       "tools/archive_probe/run.py": "f08bf651b9d4ee395f19e91046ac303743790b2416a13f39ea0f0568ac6994c5",
       "tools/crypto_id/manifest.json": "0b2d7fd4f39b16b9ace93695049924901c325f10f07d4ad1bfd51f7bac7906a6",
       "tools/crypto_id/run.py": "366a68da4fc0273eb47b7ca9f6028c69a2df5cdf0705e610874597fb720a73c8",
-      "tools/password_recover/manifest.json": "d008551ebc0c4633a86551e87ba8e2fdae59474c535aa3a1bcb44b47305d6e95",
-      "tools/password_recover/run.py": "d6715379102083e2d84b30dfc6d53b5f9c05f4ea84dd919ee309c3f6310457df",
+      "tools/password_recover/manifest.json": "87dd6e838fee703931de93a3684748b88f1241abfa6899f0105e7b3491bf568f",
+      "tools/password_recover/run.py": "126a8dc52d143a6eecaad057eefa061747fd2502bfe39c25974436c8dd7174a3",
       "tools/recovery_key_scan/manifest.json": "f3893640995eedcd2082f3e7b3e24f69b07732c33650bf9ff973639091a3b679",
       "tools/recovery_key_scan/run.py": "229b994d02c2ef96709c465bbdb836cec3361bc7f3dd0de0bfe8d23f1f388573"
     }
