@@ -6,6 +6,10 @@ auth_log, cron_dump, journal_export, shell_history and utmp_parse had five drift
 
 auth_log, cron_dump, journal_export, shell_history and utmp_parse now declare `secret_output` for their text flags (`write_text` and `preview_text`; `write_commands` and `preview_commands` for shell_history), so a job that sets one is sealed as secret output without the agent saying so, and each tool refuses such a flag as JSON, before it opens or creates anything, when `SECRET_OUTPUT` is not `1`. linux_triage does not declare it.
 
+### Fixed: linux-forensics journal_export keeps journalctl's stderr in its file and tells its own journal by machine id
+
+The answer gives the name, size and sha256 of journalctl's stderr file and no longer quotes its first lines (they can carry paths and entry text). A journal is this machine's own when the machine id in the header of its files is the one in `/etc/machine-id`, or the directory is named by it, wherever it is and however it is spelled; a path under `/var/log/journal` that carries another machine's id is no longer refused for its place. The place is used only where this machine's id cannot be read.
+
 ### Fixed: linux-forensics linux_triage refuses the analysis machine's root, holds out_dir to work/<agent>/ and counts on the clock
 
 `source` is refused when it resolves to the root directory (`/`, `//`, `/..`, a link to it) or lies outside the run directory, before target-query is started. Outside a job, in a run directory, `out_dir` must resolve under `work/<agent id>/` (`work/ag/../../escape` and a link out are refused). The counting of each function's records and the hashing of the files it wrote read the clock and stop at the total deadline: what they did not do is listed in `not_hashed`, a stopped count is marked `records_counted_to_the_end: false`, and the run is partial.

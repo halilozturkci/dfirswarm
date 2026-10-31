@@ -37,6 +37,7 @@ running after the tool is gone. The deadline (max_seconds, at most 270 of the ma
 and SIGHUP end journalctl and what it started.
 """
 import datetime
+import hashlib
 import json
 import math
 import os
@@ -53,7 +54,7 @@ import time
 from pathlib import Path
 
 TOOL = "journal_export"
-PARSER = "journal_export/12"
+PARSER = "journal_export/13"
 DEFAULT_LIMIT = 200
 DEFAULT_SECONDS = 240.0
 MAX_SECONDS = 270.0           # the most a caller may ask for (the manifest allows 300)
@@ -883,14 +884,76 @@ def _written():
     pass
 
 
-def is_own_journal(path, own_journals=None):
-    """Whether `path`, or the place it really is once every link in it is followed, is under where this machine keeps its own
-    journal (the directory itself, or either spelling of it: a link in /var may lead /var/log elsewhere). A path that is only
-    spelled differently (/var/log/../log/journal, /tmp/x -> /var/log/journal, /proc/self/root/var/log/journal) is the same place."""
-    own_journals = OWN_JOURNALS if own_journals is None else own_journals
-    spellings = {os.path.abspath(path), os.path.realpath(path)}
-    homes = set(own_journals) | {os.path.realpath(o) for o in own_journals}
-    return any(spelling == home or spelling.startswith(home.rstrip(os.sep) + os.sep) for spelling in spellings for home in homes)
+MACHINE_ID_FILES = ("/etc/machine-id", "/var/lib/dbus/machine-id")
+JOURNAL_MAGIC = b"LPKSHHRH"
+JOURNAL_MACHINE_ID_AT = 40          # the machine_id field of the journal file header (systemd's journal file format: 16 bytes at offset 40)
+MAX_OWN_CHECK_FILES = 200           # how many journal files are read for their machine id
+MAX_OWN_CHECK_ENTRIES = 5000        # how many directory entries are looked at to find them (no link is followed)
+
+
+def this_machines_id():
+    """The 32 hex digits of this machine's id, or None where it cannot be read."""
+    for name in MACHINE_ID_FILES:
+        try:
+            with open(name, "rb") as fh:
+                text = fh.read(64).decode("ascii", "replace").strip().lower()
+        except OSError:
+            continue
+        if re.fullmatch(r"[0-9a-f]{32}", text):
+            return text
+    return None
+
+
+def journal_machine_ids(path):
+    """The machine ids (32 hex digits) that the journal files at `path` carry in their headers: `path` is a journal file or a directory,
+    searched below for files that begin with the journal signature, without following a link, within MAX_OWN_CHECK_FILES files and
+    MAX_OWN_CHECK_ENTRIES entries. An all-zero id is no id."""
+    found, files, entries = set(), 0, 0
+    stack = [path]
+    while stack and files < MAX_OWN_CHECK_FILES and entries < MAX_OWN_CHECK_ENTRIES:
+        here = stack.pop()
+        try:
+            if os.path.isdir(here) and not os.path.islink(here):
+                with os.scandir(here) as listing:
+                    for entry in listing:
+                        entries += 1
+                        if entries >= MAX_OWN_CHECK_ENTRIES:
+                            break
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(entry.path)
+                        elif entry.is_file(follow_symlinks=False):
+                            stack.append(entry.path)
+                continue
+            if os.path.islink(here) or not os.path.isfile(here):
+                continue
+            files += 1
+            fd = os.open(here, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+            try:
+                head = os.read(fd, JOURNAL_MACHINE_ID_AT + 16)
+            finally:
+                os.close(fd)
+        except (OSError, ValueError):
+            continue
+        if head[:8] == JOURNAL_MAGIC and len(head) >= JOURNAL_MACHINE_ID_AT + 16:
+            ident = head[JOURNAL_MACHINE_ID_AT:JOURNAL_MACHINE_ID_AT + 16]
+            if any(ident):
+                found.add(ident.hex())
+    return found
+
+
+def is_own_journal(path, own_journals=None, machine_id="this machine"):
+    """Whether the journal at `path` (a file, or a directory with journal files below it) is this machine's own: the machine id its files
+    carry in their headers is the id in this machine's /etc/machine-id, or the directory is named by that id (/var/log/journal/<id>).
+    The place is not the test: a run directory under /var/log/journal holds evidence whatever its prefix, and a copy of this machine's own
+    journal is found wherever it was put. Only where this machine's id cannot be read is the old test used, the place (`own_journals`
+    and the places the path is a link to), since nothing else can tell. `machine_id` is this machine's id for a caller that knows it."""
+    mine = this_machines_id() if machine_id == "this machine" else machine_id
+    if mine is None:
+        own_journals = OWN_JOURNALS if own_journals is None else own_journals
+        spellings = {os.path.abspath(path), os.path.realpath(path)}
+        homes = set(own_journals) | {os.path.realpath(o) for o in own_journals}
+        return any(spelling == home or spelling.startswith(home.rstrip(os.sep) + os.sep) for spelling in spellings for home in homes)
+    return os.path.basename(os.path.realpath(path)).lower() == mine or mine in journal_machine_ids(path)
 
 
 def refuse_root_directory(path):
@@ -1109,12 +1172,18 @@ def run_journalctl(argv, raw_sink, line_sink, oversized_sink, stderr_path, secon
     return proc.returncode, timed_out
 
 
-def first_lines(path, count=20):
+def size_and_sha256(path):
+    """(bytes, sha256 hex) of journalctl's stderr file: the answer names the file and says how long it is and which bytes it holds, and never quotes
+    its lines (they can carry paths and the text of entries). (None, None) where the file cannot be read."""
+    digest, size = hashlib.sha256(), 0
     try:
         with open(path, "rb") as fh:
-            return [l.decode("utf-8", "replace").rstrip("\n") for _, l in zip(range(count), fh)]
+            for block in iter(lambda: fh.read(1 << 20), b""):
+                digest.update(block)
+                size += len(block)
     except OSError:
-        return []
+        return None, None
+    return size, digest.hexdigest()
 
 
 # BEGIN LINUX IMAGE
@@ -1240,7 +1309,7 @@ def main():
         print(json.dumps({
             "parser": PARSER, "mode": "verify", **outcome, "path": path, "argv": argv, "exit_code": code, "timed_out": timed_out,
             "verify": {"output_file": out_shown, "output_bytes": os.path.getsize(out_path), "stderr_file": err_shown,
-                       "stderr_bytes": os.path.getsize(err_path), "stderr_first_lines": first_lines(err_path)},
+                       "stderr_bytes": size_and_sha256(err_path)[0], "stderr_sha256": size_and_sha256(err_path)[1]},
             "claims": "journalctl --verify checks the internal, structural consistency of the journal files it was given, and, "
                       "for a sealed journal with the verification key, the seal. The exit code and the whole output are kept.",
             "does_not_show": "that no journal file or entry is missing or was removed, that the host kept a persistent journal, "
@@ -1334,7 +1403,8 @@ def main():
     text.close()
     stderr_bytes = os.path.getsize(err_path)
     if code != 0 and not timed_out and st["entries"] == 0:
-        fail("journalctl refused this journal", exit_code=code, stderr_file=err_shown, stderr_first_lines=first_lines(err_path), argv=argv)
+        stderr_size, stderr_digest = size_and_sha256(err_path)
+        fail("journalctl refused this journal", exit_code=code, stderr_file=err_shown, stderr_bytes=stderr_size, stderr_sha256=stderr_digest, argv=argv)
     pages = {"records": page.finish()}
     capped = capped_why(pages, text)
     complete = code == 0 and not timed_out and st["bad_count"] == 0 and not capped
@@ -1366,7 +1436,7 @@ def main():
         "parse_errors": {"count": st["bad_count"], "first": st["bad"], "oversized_lines": st["oversized"]},
         "entries_with_a_boot_id_that_is_not_text": st["boot_not_text"],
         "entries_with_a_boot_id_over_%d_characters" % MAX_BOOT_ID: st["boot_overlong"],
-        "stderr": {"file": err_shown, "bytes": stderr_bytes, "first_lines": first_lines(err_path)},
+        "stderr": {"file": err_shown, "bytes": stderr_bytes, "sha256": size_and_sha256(err_path)[1]},
         "records": preview_rows if preview_text else page.page,
         "record_count": pages["records"]["matched"],
         "pages": pages,
