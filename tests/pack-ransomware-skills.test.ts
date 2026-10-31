@@ -304,3 +304,25 @@ test("a run that carries this pack with others is over the run's index budget, a
   const bare = await section(family, FAMILY);
   assert.ok(bare.shown_tokens > SKILL_BUDGET.run, `without the family's routers the section is ${bare.shown_tokens} tokens, over the run's ${SKILL_BUDGET.run}`);
 });
+
+test("the README no longer says there is no method for hypervisors or network storage, and backup-infrastructure points to the virtualization pack conditionally, by mentions only", async () => {
+  const readme = flat(await readFile(join(PACK, "README.md"), "utf8"));
+  assert.doesNotMatch(readme, /no examination method for hypervisors or network storage/);
+  assert.match(readme, /`encryptor\/backup-infrastructure` skill/);
+  assert.match(readme, /read by the virtualization-backup-forensics pack when it is loaded/);
+  const leaf = (await load(SKILLS)).get("encryptor/backup-infrastructure");
+  assert.ok(leaf, "the leaf exists");
+  assert.deepEqual(leaf.meta.mentions, ["virtualization_inventory", "snapshot_chain_check", "backup_audit_normalise"]);
+  assert.deepEqual(leaf.meta.tools, []);
+  assert.deepEqual(leaf.meta.needs, []);
+  const text = flat(leaf.body);
+  assert.match(text, /If the virtualization-backup-forensics pack is loaded \(check the run's tool inventory\)/);
+  for (const tool of ["virtualization_inventory", "snapshot_chain_check", "backup_audit_normalise"]) assert.ok(text.includes(`\`${tool}\``), `${tool} is named`);
+  assert.ok(TOKENS(leaf.text) <= 800, `the leaf is ${TOKENS(leaf.text).toFixed(0)} tokens`);
+  // no dependency edge: the pack depends on the base pack only, and the leaf is still method only, with its reason saying the tools are another pack's
+  const pack = JSON.parse(await readFile(join(PACK, "pack.json"), "utf8")) as { depends: string[]; method_only: Array<{ path: string; why: string }> };
+  assert.deepEqual(pack.depends.map((d) => d.split(/[<>=]/)[0]), ["computer-forensics-base"]);
+  const entry = pack.method_only.find((m) => m.path === "skills/encryptor/backup-infrastructure.md");
+  assert.ok(entry, "the leaf stays method_only");
+  assert.match(entry.why, /belong to the virtualization-backup-forensics pack and are only mentioned/);
+});

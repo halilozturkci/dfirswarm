@@ -1,7 +1,7 @@
 {
   "id": "ransomware-response",
   "name": "Ransomware Response Pack",
-  "version": "1.4.7",
+  "version": "1.4.8",
   "description": "Evidence-led ransomware examination: preserve and scope the incident, reconstruct its phases, assess possible exfiltration and recovery impairment, identify supported family candidates, validate recovery options, and prepare qualified findings for notification and response decisions.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -17,7 +17,7 @@
   "method_only": [
     {
       "path": "skills/encryptor/backup-infrastructure.md",
-      "why": "a method leaf about backup servers, immutable storage, hypervisors and boot recovery; it names no tool or program"
+      "why": "a method leaf about backup servers, immutable storage, hypervisors and boot recovery; the three tools it points to belong to the virtualization-backup-forensics pack and are only mentioned, if that pack is loaded"
     },
     {
       "path": "skills/encryptor/destroyed-backups.md",
@@ -68,12 +68,12 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "9684278c9556adaa81a14eb9e899884215c0233559338a642b184cc8dae19a18",
+      "README.md": "32bb0ea27789b3b12a0f6ee54393ced1cdaba29b28b45ea1905bc6f2246ee357",
       "goals/ransomware-case.md": "bb889a729a06a1633e49284a99cf333aab899c57cbe5f0d8748e43ec02b78d62",
       "requires/host.json": "e9738f0296f8c734625a6a03a3d771737bd62a83432aae3bb7c0b0f82e10374c",
       "requires/python.txt": "5a396319de276d1ea51953493ef8e4f2dd0d7cb87c67aac6fbd0e63c096d63b6",
       "skills/INDEX.md": "0c96f21e287894d8530c426eb9b754036e6bdcb60dc2f23d6bd803902bc9afe9",
-      "skills/encryptor/backup-infrastructure.md": "0d5e2fcb8e95110d49ea5a9a1c31a59266374129c9aa4f42ec86e29142cff574",
+      "skills/encryptor/backup-infrastructure.md": "86ea2dacf22978f02d34307d1e1ca4ebeabafcd4ab83bc8bbc0e52d8c670418c",
       "skills/encryptor/destroyed-backups.md": "25145bd5dcb74d38767b35275f8f7c6d7ccc945d4c84ee077ee79602b7de857d",
       "skills/encryptor/samples-and-notes.md": "c474223e2b99b52de74fa9f91c89342c6422a8e439c01ed7c0ec719b22554c3c",
       "skills/encryptor/traces.md": "fba0be38a774b1776d5e0ae683ebf2ef1e78dc906f8d88d6ff58aaca29058cb8",

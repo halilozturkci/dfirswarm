@@ -5,6 +5,7 @@ when: A backup server, immutable store, hypervisor or recovery setting was affec
 needs: []
 tools: []
 requires_host: []
+mentions: [virtualization_inventory, snapshot_chain_check, backup_audit_normalise]
 ---
 
 Use only if a backup server, an immutable or versioned store, a hypervisor, network storage or a boot-recovery setting was affected. Not for the recovery inventory (`encryptor/destroyed-backups`).
@@ -26,7 +27,13 @@ the storage and snapshot inventories, the replication history and task outcomes.
 Separate a guest's compromise from the host's or the storage's. A virtual-machine
 snapshot is not an independent backup, and the loss of a base or dependent disk can
 invalidate a chain. A share that became unavailable does not show that its data or
-snapshots were destroyed.
+snapshots were destroyed. If the virtualization-backup-forensics pack is loaded
+(check the run's tool inventory), its `virtualization_inventory` lists the virtual
+machines, disk files and snapshots that hypervisor configuration files name,
+`snapshot_chain_check` tests whether a disk or snapshot chain is whole, and
+`backup_audit_normalise` turns a backup or hypervisor job record into events;
+check that each answer says what it did not read, and say so where it does not.
+Where it is not loaded, say that no tool read this evidence.
 
 **Boot recovery and stopped services.** Record changes to the recovery
 configuration (the boot manager's recovery and boot-status settings, the recovery

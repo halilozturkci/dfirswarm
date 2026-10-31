@@ -52,8 +52,15 @@ And preserve before you restore. Every hour of restoration changes the sources.
 ## Not in this pack
 
 No family rules or reference data ship with it, no public-decryptor catalogue, and
-no examination method for hypervisors or network storage yet. `yara` is declared for
-rules the case supplies.
+no tool of its own for hypervisor or backup records. `yara` is declared for rules the
+case supplies.
+
+For hypervisors and network storage the pack carries the method, in the
+`encryptor/backup-infrastructure` skill: what to preserve, how to separate a guest's
+compromise from the host's, and why a snapshot is not an independent backup. The
+artefacts themselves (virtual-machine configuration, disk and snapshot chains, backup
+job records) are read by the virtualization-backup-forensics pack when it is loaded;
+the skill points to its tools without depending on it.
 
 ## Install and use
 

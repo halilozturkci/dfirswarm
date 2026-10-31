@@ -49,3 +49,14 @@ caller is not told more than is true:
   the raw tail bytes (`tail_bytes` text and the two skill lines), and the job
   residuals (SIGKILL leaves the hidden temporary files; the job's timeout is
   not passed to the tool).
+
+### Changed: ransomware-response points to the virtualization pack
+
+The README's "Not in this pack" no longer says there is no examination method
+for hypervisors or network storage: it says the pack carries the method
+(`encryptor/backup-infrastructure`) and that the artefacts are read by the
+virtualization-backup-forensics pack when it is loaded. The leaf says so
+conditionally ("check the run's tool inventory") and lists
+`virtualization_inventory`, `snapshot_chain_check` and `backup_audit_normalise`
+under `mentions:`. It stays `method_only` (its reason now says the tools belong
+to another pack and are only mentioned) and adds no dependency edge.
