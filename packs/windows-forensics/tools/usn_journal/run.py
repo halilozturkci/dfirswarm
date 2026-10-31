@@ -166,6 +166,145 @@ class LosslessPage:
             result["all_results_format"] = "JSON Lines, one complete result per line"
         return result
 
+# BEGIN SHARED PLACE
+# The same text is in every windows-forensics tool that keeps a result file (a windows-forensics test holds the copies equal).
+# A result file that is there is never replaced by another result: a file of the same bytes is named again, any other result takes the next free
+# <stem>-<n><suffix>. The name is taken first, with an exclusive create, so a result written at the same moment cannot be replaced either.
+def same_bytes(a, b):
+    """Whether two files hold the same bytes (read in blocks, never whole)."""
+    try:
+        if os.path.getsize(a) != os.path.getsize(b):
+            return False
+        with open(a, "rb") as fa, open(b, "rb") as fb:
+            while True:
+                x, y = fa.read(1 << 20), fb.read(1 << 20)
+                if x != y:
+                    return False
+                if not x:
+                    return True
+    except OSError:
+        return False
+
+
+def place_without_replacing(tmp, path):
+    """Move the finished `tmp` to `path` and never replace what is there. The name is taken first, with an exclusive create, so a
+    result written at the same moment cannot be replaced either. Returns the path that holds it."""
+    for n in range(1, 1000):
+        candidate = path if n == 1 else path.with_name("%s-%d%s" % (path.stem, n, path.suffix))
+        try:
+            fd = os.open(str(candidate), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        except FileExistsError:
+            if not os.path.islink(candidate) and same_bytes(tmp, candidate):
+                os.unlink(tmp)
+                return candidate
+            continue
+        os.close(fd)
+        os.replace(tmp, candidate)             # only replaces the empty file this call just made
+        return candidate
+    raise OSError("no free name beside %s" % path)
+# END SHARED PLACE
+
+
+# BEGIN SHARED PAGE
+# The same text is in every windows-forensics tool that pages through LosslessPage (held equal by a windows-forensics test): LosslessPage replaces a file of the
+# same name; this one places its finished file with place_without_replacing, and registers itself so that a stop can remove its temporary file.
+PAGES = []
+
+
+class NoReplacePage(LosslessPage):
+    """LosslessPage whose finished file is placed without replacing an earlier file of the same name (a rerun with other limits, or one
+    the time limit stopped, must not leave a smaller file where a larger one was)."""
+
+    def __init__(self, tool, key, limit):
+        super().__init__(tool, key, limit)
+        PAGES.append(self)
+
+    def finish(self) -> dict:
+        result = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
+        if self._out is not None:
+            try:
+                self._out.flush()
+                os.fsync(self._out.fileno())
+                self._out.close()
+                assert self._tmp is not None
+                placed = place_without_replacing(self._tmp, self.path)
+            except OSError as exc:
+                self._cannot_write(exc)
+            self._tmp = None
+            self.path = placed
+            self.shown = self.shown[: len(self.shown) - len(Path(self.shown).name)] + placed.name
+            result["all_results"] = self.shown
+            result["all_results_format"] = "JSON Lines, one complete result per line"
+        return result
+# END SHARED PAGE
+
+
+# BEGIN SHARED STOP
+# The same text is in regkv, shellbags and amcache_apps (held equal by a windows-forensics test). SIGTERM, SIGINT and SIGHUP end the tool with JSON (status
+# interrupted, exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
+# The handlers are in as soon as the module has run as far as this block, with a minimal last word until main() installs the tool's own (only
+# the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
+# first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
+# (the ransomware tools print through it; the windows tools hold the signals in the emit of their boundary block, and carry this text unused).
+import signal
+import time
+
+STOP = {"last_word": None, "deadline": None}
+
+
+def set_deadline(seconds):
+    STOP["deadline"] = time.monotonic() + seconds
+
+
+def out_of_time():
+    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"]
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    for page in list(globals().get("PAGES", ())):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    last_word = STOP["last_word"]
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers(last_word=None):
+    STOP["last_word"] = last_word
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+
+
+def interrupted_answer(signum, **extra):
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "interrupted",
+                      "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
+                      "signal": signum, **extra}), flush=True)
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back: a signal that came in the middle of the write would end the process there, with the
+    answer cut. The tool ends by itself right after, so a signal that is held is not lost for good."""
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    STOP["last_word"] = None
+    print(json.dumps(answer, **dumps_kwargs))
+
+
+install_signal_handlers(lambda signum: interrupted_answer(signum))
+# END SHARED STOP
+
 
 FILETIME_EPOCH = datetime.datetime(1601, 1, 1, tzinfo=datetime.timezone.utc)
 
@@ -196,9 +335,57 @@ MAX_RECORD = 0x10000
 ZERO_STEP = 1 << 20
 
 
+PARSER = "usn_journal/5"
+DEADLINE_SECONDS = 114            # the manifest allows 120: the sweep stops here, so that the pages are placed and the answer printed before the harness ends it
+MAX_LIMIT = 10000                 # the largest inline page; the whole result is in the file the answer names
+MAX_NAME = 500                    # the longest name filter
+PATTERN_SECONDS = 0.5             # one name is tested against the caller's expression for at most this long
+PROGRESS = {"read": 0, "offset": 0}
+
+
+class PatternTooSlow(Exception):
+    pass
+
+
+def _pattern_alarm(_signum, _frame):
+    raise PatternTooSlow()
+
+
+def matches(pattern, text):
+    """Whether the caller's expression matches `text`, for at most PATTERN_SECONDS (the re module looks at signals while it matches, so an
+    expression that takes exponential time on a name is stopped instead of outrunning the tool's clock)."""
+    signal.signal(signal.SIGALRM, _pattern_alarm)
+    signal.setitimer(signal.ITIMER_REAL, PATTERN_SECONDS)
+    try:
+        return pattern.search(text) is not None
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+
+
+class ClockStop(Exception):
+    """The tool's own clock ran out inside a skip over bytes that are not a record."""
+
+
+def drop_pages():
+    """Remove the temporary files of the pages that were being written (the STOP block does the same on a signal)."""
+    for page in list(PAGES):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            page._tmp = None
+
+
 def fail(message, **extra):
-    print(json.dumps({"error": message, **extra}))
+    drop_pages()
+    print_answer({"error": message, "status": "failed", "status_basis": "the tool stopped with an error and read no result (see error)", **extra})
     raise SystemExit(1)
+
+
+def last_word(signum):
+    interrupted_answer(signum, records_read=PROGRESS["read"], offset_reached=PROGRESS["offset"])
 
 
 def flags(value, table):
@@ -223,6 +410,8 @@ def next_nonzero(data, offset, end):
     gigabytes, would take minutes 8 bytes at a time."""
     step = 64
     while offset < end:
+        if out_of_time():
+            raise ClockStop(offset)
         chunk = data[offset:min(offset + step, end)]
         rest = chunk.lstrip(b"\0")
         if rest:
@@ -302,6 +491,8 @@ def unsupported_header(data, offset, end):
 
 
 def main():
+    set_deadline(DEADLINE_SECONDS)
+    install_signal_handlers(last_word)
     try:
         args = json.load(sys.stdin)
     except ValueError as exc:
@@ -313,12 +504,11 @@ def main():
     if not isinstance(path, str) or not path:
         fail("path is required: the $J stream, extracted with icat")
     limit = args.get("limit", 500)
-    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
-        fail("limit must be a positive integer", limit=args.get("limit"))
-    limit = min(limit, 100000)
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_LIMIT:
+        fail("limit must be a whole number from 1 to %d (the inline page; the whole result is in the file the answer names)" % MAX_LIMIT)
     name_filter = args.get("name")
-    if name_filter is not None and not isinstance(name_filter, str):
-        fail("name must be a string: a case-insensitive regex over the file name")
+    if name_filter is not None and (not isinstance(name_filter, str) or len(name_filter) > MAX_NAME):
+        fail("name must be a string of at most %d characters: a case-insensitive regex over the file name" % MAX_NAME)
     include_nameless = args.get("include_nameless", False)
     if not isinstance(include_nameless, bool):
         fail("include_nameless must be true or false")
@@ -327,7 +517,7 @@ def main():
         try:
             pattern = re.compile(name_filter, re.I)
         except re.error as exc:
-            fail("name is not a valid regex", name=name_filter, reason=str(exc))
+            fail("name is not a valid regex", reason=str(exc))
 
     try:
         if not stat.S_ISREG(os.stat(path).st_mode):
@@ -343,9 +533,9 @@ def main():
     except (OSError, ValueError) as exc:
         fail("could not map the journal", path=path, reason=str(exc))
 
-    records = LosslessPage("usn_journal", [path, name_filter, include_nameless], limit)
-    unrecognised = LosslessPage("usn_journal-unrecognised", [path], 40)
-    unsupported = LosslessPage("usn_journal-unsupported", [path], 40)
+    records = NoReplacePage("usn_journal", [path, name_filter, include_nameless], limit)
+    unrecognised = NoReplacePage("usn_journal-unrecognised", [path], 40)
+    unsupported = NoReplacePage("usn_journal-unsupported", [path], 40)
     unsupported_by_major = {}
     unsupported_bytes = 0
     versions = {}
@@ -354,9 +544,20 @@ def main():
     unrecognised_bytes = prefix_unrecognised = nameless_excluded = 0
     open_range = None
     offset = 0
+    stopped = None
     while offset < size:
+        if out_of_time():
+            stopped = "the tool's own clock (%d s) ran out" % DEADLINE_SECONDS
+            break
+        PROGRESS["read"], PROGRESS["offset"] = read, offset
         # The sparse front, and the zeros that pad the end of each page.
-        ahead = next_nonzero(data, offset, size)
+        try:
+            ahead = next_nonzero(data, offset, size)
+        except ClockStop as stop:
+            zeros += stop.args[0] - offset
+            offset = stop.args[0]
+            stopped = "the tool's own clock (%d s) ran out" % DEADLINE_SECONDS
+            break
         zeros += ahead - offset
         offset = ahead
         if offset >= size:
@@ -399,15 +600,22 @@ def main():
                 records.add(row)
             else:
                 nameless_excluded += 1
-        elif pattern.search(row["name"]):
-            records.add(row)
+        else:
+            try:
+                hit = matches(pattern, row["name"])
+            except PatternTooSlow:
+                stopped = ("the name expression took more than %s s on the name of the record at byte %d, so the sweep stopped there; use a simpler expression"
+                           % (PATTERN_SECONDS, offset))
+                break
+            if hit:
+                records.add(row)
         offset += found["length"]
     if open_range is not None:
         unrecognised.add({"offset": open_range[0], "bytes": open_range[1]})
     data.close()
     fh.close()
 
-    if start is None:
+    if start is None and not stopped:
         fail("no USN record (v2, v3 or v4) found", bytes=size, zero_bytes=zeros,
              unsupported_version_records=sum(unsupported_by_major.values()), unsupported_versions=unsupported_by_major,
              hint="is this the $J stream rather than $Max? A record of another major version is listed under unsupported_versions, not read.")
@@ -415,8 +623,16 @@ def main():
     page = records.finish()
     unsupported_page = unsupported.finish()
     unrecognised_page = unrecognised.finish()
+    if stopped:
+        basis = "%s at byte %d of %d, after %d records: the rest of the journal was not read" % (stopped, offset, size, read)
+    else:
+        basis = ("every byte of the %d-byte journal was read (%d records, %d zero bytes skipped, %d bytes that are not a record counted under unrecognised_bytes)"
+                 % (size, read, zeros, unrecognised_bytes + prefix_unrecognised))
     result = {
         "path": path,
+        "status": "partial" if stopped else "complete",
+        "status_basis": basis,
+        "stopped_by_time_limit": bool(stopped),
         "bytes": size,
         "first_record_offset": start,
         "zero_bytes_skipped": zeros,
@@ -435,18 +651,26 @@ def main():
         "unsupported_version_bytes": unsupported_bytes,
         "unsupported_versions": unsupported_by_major,
         "unsupported_version_list": unsupported.page,
-        "parser": "usn_journal/4",
+        "parser": PARSER,
         **page,
     }
     if unrecognised_page.get("all_results"):
         result["all_unrecognised_ranges"] = unrecognised_page["all_results"]
     if unsupported_page.get("all_results"):
         result["all_unsupported_version_list"] = unsupported_page["all_results"]
-    if pattern is not None and not page["matched"]:
+    if pattern is not None and not page["matched"] and not stopped:
         result["note"] = ("%d records were read and none has a file name matching %r "
                           "(a case-insensitive regex); the journal is not empty" % (read, name_filter))
-    print(json.dumps(result, indent=2))
+    print_answer(result, indent=2)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Exception as exc:                                  # whatever hostile input does, the answer is JSON
+        drop_pages()
+        print_answer({"error": "the read failed", "status": "failed", "status_basis": "the tool stopped with an unexpected error",
+                      "reason": "%s: %s" % (type(exc).__name__, exc)})
+        sys.exit(1)

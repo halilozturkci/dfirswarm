@@ -1,6 +1,6 @@
 {
   "name": "recyclebin_i",
-  "description": "Parse $Recycle.Bin $I metadata (version 1 and 2 records, unsigned fields): the original path, original size and deletion time (raw FILETIME and ISO 8601 UTC with seven fractional digits), for one file or every $I under a directory in sorted order. Every length is checked against the bytes the file has: a record shorter than its layout needs is reported truncated with the bytes it has and the path decoded from them as far as it goes, never as a complete one; a longer one carries trailing_bytes; a file over 1 MiB is not read (it is not a $I); an unknown header is not guessed at. Every candidate is checked as it is found and opened without blocking and without following a link: a $I that is a link, a FIFO, a device, a socket or a directory is not opened and is counted in not_attempted (each with its entry and the reason, status partial), a directory that cannot be listed is an entry too, and a link to a directory is not followed (a path that is itself a link to a directory is refused). Nothing here can hang on a FIFO or lose the rest of the bin. The whole record is read, not a fixed 4096 bytes. Each entry names its $R counterpart where present and the SID of the bin directory it sits in. The bin's SID is the account whose bin received the item; it does not say who deleted the file or from where.",
+  "description": "Parse $Recycle.Bin $I metadata (version 1 and 2 records, unsigned fields): the original path, original size and deletion time (raw FILETIME and ISO 8601 UTC with seven fractional digits), for one file or every $I under a directory in sorted order. Every length is checked against the bytes the file has: a record shorter than its layout needs is reported truncated with the bytes it has and the path decoded from them as far as it goes, never as a complete one; a longer one carries trailing_bytes; a file over 1 MiB is not read (it is not a $I); an unknown header is not guessed at. Every candidate is checked as it is found and opened without blocking and without following a link: a $I that is a link, a FIFO, a device, a socket or a directory is not opened and is counted in not_attempted (each with its entry and the reason, status partial), a directory that cannot be listed is an entry too, and a link to a directory is not followed (a path that is itself a link to a directory is refused). Nothing here can hang on a FIFO or lose the rest of the bin. The whole record is read, not a fixed 4096 bytes. Each entry names its $R counterpart where present and the SID of the bin directory it sits in. The bin's SID is the account whose bin received the item; it does not say who deleted the file or from where. The tool has its own clock (54 s of the manifest's 60): when it runs out the sweep stops, the pages written so far are placed and named, and the answer is partial with a status_basis that says where it stopped and how many names were walked and $I files read; every answer carries status and status_basis (complete only for an input read to its end), a wrong-type argument is refused as JSON (status failed), and SIGTERM, SIGINT and SIGHUP end it with one JSON document (status interrupted, exit 128 plus the signal) and no temporary file. A result file is never replaced: the same result keeps its name, another takes the next free -n name. The directory walk is inside the clock too.",
   "params": {
     "path": {
       "type": "string",
@@ -8,7 +8,7 @@
     },
     "limit": {
       "type": "integer",
-      "description": "Entries shown inline (default 500, an inline page size); every entry is kept, and when there are more the whole list is written as JSON Lines and named in all_results"
+      "description": "Entries shown inline (default 500, 1 to 10000, an inline page size); every $I file is read, and when more match the whole list is written as JSON Lines and named in all_results"
     }
   },
   "runtime": "python3",
@@ -17,8 +17,8 @@
   "example": "{\"path\": \"work/extracted/$Recycle.Bin\"}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 3,
-  "sha256": "822c73b2b5e9ae538155be7d7c1eef9c5c5ab8c4b22e4c3c516d7cc2248bf20a",
+  "version": 4,
+  "sha256": "f53e4a875897c113286fa7c65624870a716812078b8002e9c458a7342b3d336c",
   "use": {
     "names": [
       "$I*"
