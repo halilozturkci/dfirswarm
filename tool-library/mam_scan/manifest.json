@@ -1,6 +1,6 @@
 {
   "name": "mam_scan",
-  "description": "Scan a raw dump or image region for MAM-compressed Prefetch records (the signature MAM\\x04 and a declared size from min_uncomp to max_uncomp) and read each by the SCCA layout of its version, as prefetch_mam does (the same code). A candidate is a candidate until it inflates to a Prefetch structure: every candidate is accounted for (candidates, parsed, failed with failed_by_reason and the first failures, size_out_of_range, filtered_by_name, and MAM\\x84 signatures seen and not read), and failures are counted before the name filter, so a record that could not be read is never lost to it. Each candidate is read from the file at its own offset up to its declared size plus the format's worst-case expansion and decoded until it holds the declared size (output is bounded by the declared size; the stream's end is not guessed from cut sizes), with four zero bytes after the bytes read so a stream that ends at the end of the dump, without padding, is still decoded to its last byte. Each window is read into one buffer, so a window costs about its own size in memory; a source that cannot be read, at the start or part way, is a JSON failure that says how far the scan got. The run count is read where the file information size puts it, as prefetch_mam does (hits carry file_information_size). A hit is a Prefetch structure in raw bytes and carries no file name, owner or path of the file it came from; an unsupported version is a hit with supported false and no version-dependent field.",
+  "description": "Scan a raw dump or image region for MAM-compressed Prefetch records (the signature MAM\\x04 and a declared size from min_uncomp to max_uncomp) and read each by the SCCA layout of its version, as prefetch_mam does (the same code). A candidate is a candidate until it inflates to a Prefetch structure: every candidate is accounted for (candidates, parsed, failed with failed_by_reason and the first failures, size_out_of_range, filtered_by_name, and MAM\\x84 signatures seen and not read), and failures are counted before the name filter, so a record that could not be read is never lost to it. Each candidate is read from the file at its own offset up to its declared size plus the format's worst-case expansion and decoded until it holds the declared size (output is bounded by the declared size; the stream's end is not guessed from cut sizes), with four zero bytes after the bytes read so a stream that ends at the end of the dump, without padding, is still decoded to its last byte. Each window is read into one buffer, so a window costs about its own size in memory; a source that cannot be read, at the start or part way, is a JSON failure that says how far the scan got. The run count is read where the file information size puts it, as prefetch_mam does (hits carry file_information_size). A hit is a Prefetch structure in raw bytes and carries no file name, owner or path of the file it came from; an unsupported version is a hit with supported false and no version-dependent field. The tool has its own clock (114 s of the manifest's 120), and the pure-Python decompressor (about 2 seconds a megabyte of output) looks at it every 256 symbols, so it stops within a match: when it runs out the answer is partial with a status_basis that says where it stopped and how many bytes of the stream had been inflated out of the declared size, and no field is read from a short inflate. Every answer carries status and status_basis, a wrong-type argument or a missing path is refused as JSON (status failed, a non-zero exit), and SIGTERM, SIGINT and SIGHUP end the tool with one JSON document (status interrupted, exit 128 plus the signal). A candidate the clock cuts is counted as neither parsed nor failed, and the scan says where it reached. A result file is never replaced: the same result keeps its name, another takes the next free -n name.",
   "params": {
     "path": {
       "type": "string",
@@ -16,7 +16,7 @@
     },
     "max_hits": {
       "type": "integer",
-      "description": "MAM records shown inline (default 80, an inline page size); every hit is kept, and when there are more the whole list is written as JSON Lines and named in all_results"
+      "description": "MAM records shown inline (default 80, 1 to 10000, an inline page size); every hit is kept, and when there are more the whole list is written as JSON Lines and named in all_results"
     },
     "chunk": {
       "type": "integer",
@@ -28,7 +28,7 @@
     },
     "name_filter": {
       "type": "string",
-      "description": "Keep parsed hits whose executable name or filename strings contain this (case-insensitive); the records it leaves out are counted under filtered_by_name, and failures are counted regardless"
+      "description": "Keep parsed hits whose executable name or filename strings contain this (case-insensitive, a string of at most 256 characters); the records it leaves out are counted under filtered_by_name, and failures are counted regardless"
     },
     "min_uncomp": {
       "type": "integer",
@@ -45,8 +45,8 @@
   "example": "{\"path\": \"work/extracted/unallocated.bin\", \"start\": 0, \"length\": 2000000, \"max_hits\": 20}",
   "by": "s183901",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 2,
-  "sha256": "42f1fe6c482a0fd24f9f2dae5e8a70b7b59d9d5529ab08319af955fe14e9e804",
+  "version": 3,
+  "sha256": "c0bb032894db3a913612d84f63ab41dd65d90f49b9c361c1d582a5bdc943cd06",
   "requires": [],
   "use": {
     "extensions": [
