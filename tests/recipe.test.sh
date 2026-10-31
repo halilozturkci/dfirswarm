@@ -114,8 +114,10 @@ NEW_PACKS = {"macos-forensics", "cloud-forensics", "triage-collection"}
 BASE_PACK = "computer-forensics-base"
 # Documented in the changelog and images/README.md: no profile but full holds
 # these pairs, which a smaller one used to serve by chance.
-BY_HOLDING = {"encrypted-containers+ransomware-response", "memory-forensics+ransomware-response",
-              "ransomware-response+windows-forensics"}
+# The `ransomware` profile holds two of the three (it is disk plus ransomware-response,
+# and no bigger than disk in programs); only full holds the third.
+BY_HOLDING = {"encrypted-containers+ransomware-response": "ransomware", "memory-forensics+ransomware-response": "full",
+              "ransomware-response+windows-forensics": "ransomware"}
 # Where the base pack's own jobs run (the third value of each entry). The set
 # of images a run boots does not change for a run without a pack of the new
 # profiles, but the base pack, which every profile holds, runs in another image
@@ -148,7 +150,7 @@ def booted(run, base_job=False):
 
 frozen = json.loads((root / "tests" / "fixtures" / "job-images-main.json").read_text())
 assert len(frozen) >= 90, len(frozen)
-assert BY_HOLDING <= set(frozen) and BASE_PACK in frozen, "the frozen table lacks a documented run"
+assert set(BY_HOLDING) <= set(frozen) and BASE_PACK in frozen, "the frozen table lacks a documented run"
 differing, placed = set(), set()
 for key, (old_default, old_images, old_base) in frozen.items():
     new_default, new_images, new_base = booted(key.split("+"), base_job=True)
@@ -165,7 +167,7 @@ for key, (old_default, old_images, old_base) in frozen.items():
         continue
     differing.add(key)
     if key in BY_HOLDING:
-        assert new_default == "full" and new_images == sorted(set(old_images) | {"full"}), (key, old_default, old_images, new_default, new_images)
+        assert new_default == BY_HOLDING[key] and new_images == sorted(set(old_images) | {BY_HOLDING[key]}), (key, old_default, old_images, new_default, new_images)
     elif key == BASE_PACK:
         assert (new_default, new_images) == ("core", ["core"]), (key, new_default, new_images)
     elif NEW_PACKS & set(key.split("+")):
@@ -173,7 +175,7 @@ for key, (old_default, old_images, old_base) in frozen.items():
             (key, "may differ only by a new profile", old_default, old_images, new_default, new_images)
     else:
         raise AssertionError(f"{key}: booted {old_default} {old_images} before the new profiles, {new_default} {new_images} now")
-assert BY_HOLDING | {BASE_PACK} <= differing, "a documented difference no longer differs: " + str(sorted((BY_HOLDING | {BASE_PACK}) - differing))
+assert set(BY_HOLDING) | {BASE_PACK} <= differing, "a documented difference no longer differs: " + str(sorted((set(BY_HOLDING) | {BASE_PACK}) - differing))
 assert placed == set(PLACED), "a documented move of the base pack's jobs no longer happens, or a new one does: " + str(sorted(placed ^ set(PLACED)))
 # What the table cannot say for the runs that name a new profile's pack.
 assert booted(["mobile-forensics"]) == ("mobile", ["mobile"]), booted(["mobile-forensics"])
@@ -190,14 +192,33 @@ assert booted(["cloud-forensics"]) == ("cloud", ["cloud"]) and booted(["triage-c
 assert table["core"]["packs"] == [BASE_PACK] and members["core"] == {BASE_PACK}, members["core"]
 # The tie rule: of the profiles that hold what the run needs, full last, then
 # the fewest packs, then the fewest programs those packs name, then the name.
-# The base pack alone is held by ten profiles of one to three packs. Pinned:
+# The base pack alone is held by eleven profiles of one to five packs. Pinned:
 # a change of the result is a decision (change this, images/README.md and the
 # changelog together), not an accident of the order of profiles.json.
 named = lambda n: len(recipe.needs_of(recipe.PACKS, sorted(members[n]))[1])
 holders = sorted(n for n, m in members.items() if n not in ("full", "base") and BASE_PACK in m)
-assert len(holders) == 10 and "core" in holders, holders
+assert len(holders) == 11 and "core" in holders, holders
 expected = min(holders, key=lambda n: (len(members[n]), named(n), n))
 assert chosen[BASE_PACK] == expected == "core", (chosen[BASE_PACK], expected)
+
+# A smaller image for ransomware with windows artefacts: ransomware-response and
+# windows-forensics together resolve to `ransomware`, which holds fewer packs and
+# names fewer programs than `full`; the `re` profile keeps ransomware-response,
+# and windows-forensics alone stays on `disk`. Every pair of packs still resolves
+# to a profile that holds it, and fewer of them fall to `full` (61 of 66 before).
+import itertools
+assert "ransomware" in members and {"ransomware-response", "windows-forensics"} <= members["ransomware"], members.get("ransomware")
+assert recipe.profile_for(recipe.PACKS, ["ransomware-response", "windows-forensics"]) == "ransomware"
+assert len(members["ransomware"]) < len(members["full"]), "the ransomware profile is no smaller than full"
+assert len(recipe.needs_of(recipe.PACKS, sorted(members["ransomware"]))[1]) < len(recipe.needs_of(recipe.PACKS, sorted(members["full"]))[1])
+assert "ransomware-response" in members["re"] and chosen["ransomware-response"] == "re" and chosen["windows-forensics"] == "disk"
+by_pair = {}
+non_base = [p for p in packs if p != BASE_PACK]
+for a, b in itertools.combinations(non_base, 2):
+    got = recipe.profile_for(recipe.PACKS, [a, b])
+    assert got in members and {a, b} <= members[got], (a, b, got)
+    by_pair[got] = by_pair.get(got, 0) + 1
+assert sum(by_pair.values()) == 66 and by_pair.get("full", 0) < 61 and by_pair.get("ransomware", 0) >= 3, by_pair
 # Unlisted packs (an installed pro or third-party pack that no profile lists)
 # are matched by what they name, and `core`, the smallest profile, covers
 # what the base pack covers:

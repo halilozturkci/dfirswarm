@@ -13,3 +13,11 @@ A `requires/host.json` entry can name `facts`: commands about its program whose 
 ### Added: pinned-download check
 
 `.github/workflows/pins.yml` runs weekly (and by hand) `scripts/check-pins.ts`: a HEAD request for every URL a pack pins, and a fetch with the sha256 compared for a URL that names no version (Eric Zimmerman's `net/<tool>.zip`). It fails and names a pin that rotted, changed or did not answer. `images/README.md` says how to re-pin a download.
+
+### Added: images
+
+A `ransomware` image profile (the packs of `disk` and `ransomware-response`, no bigger than `disk` in programs and far below `full`): a run of ransomware-response with windows-forensics or with encrypted-containers resolves to it instead of `full`. `images.yml` and `image-boot.yml` build and boot it.
+
+### Changed: images
+
+`images.yml` and `images/README.md` say that the private publishing path (prebuilt images, signing, the images lock) is planned and not in place: no workflow runs in the private repository and no `images.lock.json` exists.

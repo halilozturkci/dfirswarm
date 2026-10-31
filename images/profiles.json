@@ -17,6 +17,12 @@
       "ransomware-response",
       "reverse-engineering"
     ],
+    "ransomware": [
+      "encrypted-containers",
+      "ransomware-response",
+      "virtualization-backup-forensics",
+      "windows-forensics"
+    ],
     "network": [
       "network-forensics"
     ],
