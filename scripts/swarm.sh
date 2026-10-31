@@ -155,6 +155,7 @@ Tools the agents write:
   --allow-install        Let them pip-install from pypi.org; --no-pypi keeps it off the allowlist
   --tools-from DIR       Start with a library of tools from earlier runs
   --pack ID[,ID]         Installed packs: their skills, tools and host checks
+  --pack-tools-as-jobs ID[,ID]   Their tools run as job_run(tool, args), not as Pi tools
 
 Network, closed by default (--network dynamic: bounded lookups the hub decides by --policy PRESET):
   --allow-host HOST  Add one host to the allowlist; repeatable (--no-netguard opens it entirely)
@@ -194,6 +195,7 @@ swarm.sh start — prepare a sandbox, write the contract, launch the agents.
       [--key-from-env] [--env KEY=VALUE]... [--customer-case] [--key-owner [PROVIDER=]OWNER]...
       [--isolation host|microvm] [--image REF] [--vm-cpus N] [--vm-memory MIB] [--vm-disk MIB] [--no-vm-snapshot] [--vm-snapshot-dir DIR] [--allow-oauth-in-vm]
       [--workers N] [--worker-cpus N] [--worker-memory MIB] [--no-jobs] [--no-derived-catalog] [--derived-limit N]
+      [--pack-tools-as-jobs ID[,ID]]
 
 The team
   --model P/ID        One model for every agent.
@@ -514,6 +516,15 @@ Tools the agents write
                       added to the toolbox check. Dependencies resolve first and
                       every pack is verified against its checksums before the run
                       starts. Without --pack a run carries no pack at all.
+  --pack-tools-as-jobs ID[,ID]
+                      The tools of these packs (named in --pack or needed by
+                      one) are not registered as Pi tools. SWARM.md lists each
+                      with its description and parameters, and a seat runs one
+                      as job_run(tool: NAME, args: {...}), in a worker VM of
+                      its pack's image. Needs the job service: refused in a
+                      host run and with --no-jobs, and for a pack that declares
+                      secrets. A resume keeps the run's mode. The run record
+                      carries pack_tools_as_jobs.
   --tools-from DIR    Seed tools/ from a library of tools forged in earlier runs,
                       each a directory with manifest.json and its script. They are
                       in every agent's list from the first turn, author and version
@@ -2633,6 +2644,65 @@ pack_secrets_plan() { # <pack dirs, one per line> <isolation> <allow 0|1> [local
   done <<< "$pack_dirs"
 }
 
+# --pack-tools-as-jobs: the packs whose tools are not registered as Pi tools. A
+# seat calls one as job_run(tool, args), in the job image of its pack, and the
+# contract (SWARM.md, "Pack tools run as jobs") lists each with its parameters.
+# Everything that would leave a tool unreachable is refused here, before
+# anything is written: the option names packs the run carries, needs the job
+# service, and refuses a pack that declares secrets (a pack tool is handed its
+# secrets in its own environment, which a job does not carry). A resume keeps
+# the mode the run was started in: a tool left unregistered by a resume of a
+# run that listed it as a Pi tool would be lost to the seats. Sets
+# PACK_TOOLS_AS_JOBS_IDS: the ids, sorted, comma-separated, or empty.
+pack_tools_as_jobs_plan() { # <ids as given> <pack dirs, one per line> <isolation> <jobs 0|1> <recorded ids> <resumed run or empty>
+  local given="$1" pack_dirs="$2" isolation="$3" jobs="$4" recorded="${5:-}" resumed="${6:-}" ids="" id pd found
+  PACK_TOOLS_AS_JOBS_IDS=""
+  if [[ -n "$given" && ! "$given" =~ ^[a-z0-9][a-z0-9-]*(,[a-z0-9][a-z0-9-]*)*$ ]]; then
+    echo "BLOCKER: --pack-tools-as-jobs takes pack ids, comma-separated (lower-case letters, digits and -), got: $given" >&2
+    exit 2
+  fi
+  [[ -n "$given" ]] && ids="$(printf '%s\n' "${given//,/$'\n'}" | sort -u | paste -sd, -)"
+  if [[ -n "$resumed" ]]; then
+    if [[ -n "$recorded" && -n "$ids" && "$ids" != "$recorded" ]]; then
+      echo "BLOCKER: run $resumed was started with --pack-tools-as-jobs $recorded and these options give $ids: a resume keeps the way the run's tools are called." >&2
+      exit 2
+    fi
+    if [[ -z "$recorded" && -n "$ids" ]]; then
+      echo "BLOCKER: run $resumed was started with its pack tools as Pi tools, and its seats are told so: --pack-tools-as-jobs $ids would leave them without those tools. Drop it, or start a new run." >&2
+      exit 2
+    fi
+    [[ -n "$recorded" ]] && ids="$recorded"
+  fi
+  [[ -n "$ids" ]] || return 0
+  if [[ "$isolation" != "microvm" ]]; then
+    echo "BLOCKER: --pack-tools-as-jobs runs the tools through the job service, which only a microVM run has; this is a host run. Drop the option, or run in microVMs." >&2
+    exit 2
+  fi
+  if [[ "$jobs" -ne 1 ]]; then
+    echo "BLOCKER: --pack-tools-as-jobs runs the tools through the job service, and --no-jobs turns it off. Drop one of them." >&2
+    exit 2
+  fi
+  for id in ${ids//,/ }; do
+    found=""
+    while read -r pd; do
+      [[ -n "$pd" && "$(basename "$pd")" == "$id" ]] && found="$pd"
+    done <<< "$pack_dirs"
+    if [[ -z "$found" ]]; then
+      echo "BLOCKER: --pack-tools-as-jobs names $id, which is not one of the packs of this run (--pack, and what they need)." >&2
+      exit 2
+    fi
+    if [[ "$(jq -r '(.secrets // []) | length' "$found/pack.json" 2>/dev/null || echo 1)" != "0" ]]; then
+      echo "BLOCKER: --pack-tools-as-jobs names $id, which declares secrets: its tools are handed them in their own environment, and a job does not carry them. Its tools stay Pi tools." >&2
+      exit 2
+    fi
+    if ! compgen -G "$found/tools/*/manifest.json" >/dev/null; then
+      echo "BLOCKER: --pack-tools-as-jobs names $id, which carries no tool." >&2
+      exit 2
+    fi
+  done
+  PACK_TOOLS_AS_JOBS_IDS="$ids"
+}
+
 install_tools_from() { # sandbox library-dir [pack-id]
   # The pack id, when given, is written into the copy's manifest so the console
   # can say which method a tool call came from rather than attributing it to an
@@ -2832,6 +2902,54 @@ render_contract() {
   SWARM_CONTRACT_CAP_TOKENS="${cap_tokens:-}" \
   node --experimental-strip-types --no-warnings "$ROOT/scripts/render-contract.ts" "$TEMPLATE" "$tmp" "$goal_file" "$id_list" "$cap" "$wall" "$n" "$swarm_id" "$sandbox"
   mv "$tmp" "$sandbox/SWARM.md"
+  if [[ -n "${pack_tools_as_jobs:-}" ]]; then
+    pack_tools_contract_section "$sandbox" "$pack_tools_as_jobs"
+  fi
+}
+
+# The contract's section on the tools --pack-tools-as-jobs left out of Pi's
+# tool list: each with its one-line description and its parameters (the
+# summary the extension's paramSummary gives), after the "Tool jobs" section.
+# A contract that cannot name them would leave the seats without those tools,
+# so the kickoff stops instead.
+pack_tools_contract_section() { # <sandbox> <pack ids, comma-separated>
+  local sandbox="$1" packs="$2"
+  SWARM_SECTION_PACKS="$packs" node --no-warnings -e '
+const fs = require("fs");
+const path = require("path");
+const [file, tools] = process.argv.slice(1);
+const packs = new Set(process.env.SWARM_SECTION_PACKS.split(",").filter(Boolean));
+const rows = [];
+for (const dir of fs.readdirSync(tools).sort()) {
+  let m;
+  try { m = JSON.parse(fs.readFileSync(path.join(tools, dir, "manifest.json"), "utf8")); } catch { continue; }
+  if (!m || m.name !== dir || !m.pack || !packs.has(m.pack)) continue;
+  const params = Object.entries(m.params || {}).map(([k, p]) => `${k}${p && p.required ? "" : "?"}: ${(p && p.type) || "string"}`);
+  rows.push(`- \`${m.name}\` (${m.pack}): ${String(m.description || "").replace(/\s+/g, " ").trim()} Parameters: ${params.length ? params.join(", ") : "no params"}.`);
+}
+if (!rows.length) { console.error("no tool of " + [...packs].join(", ") + " is in the run"); process.exit(1); }
+const text = fs.readFileSync(file, "utf8");
+const section =
+  "## Pack tools run as jobs\n\n" +
+  `The tools of the packs ${[...packs].sort().join(", ")} are not in your tool list; a skill of those packs that names one means this call. ` +
+  "Run one with `job_run(tool: <name>, args: {...})`: it runs sealed in a worker VM of its pack'"'"'s image, what it writes under `{OUT}/<name>` is sealed " +
+  "in the store and cited as `job:<id>/<path>`, and `args` are the parameters below (a name ending in `?` is optional). " +
+  "A wrong or missing one is refused, naming the tool'"'"'s parameters.\n\n" +
+  rows.join("\n") + "\n\n";
+let at = text.indexOf("\n## Job images\n");
+if (at < 0) {
+  const start = text.indexOf("## Tool jobs\n");
+  if (start < 0) { console.error("the contract has no Tool jobs section"); process.exit(1); }
+  const next = text.indexOf("\n## ", start + 1);
+  at = next < 0 ? text.length : next;
+}
+at += 1;
+fs.writeFileSync(file + ".tmp", text.slice(0, at) + section + text.slice(at));
+fs.renameSync(file + ".tmp", file);
+' "$sandbox/SWARM.md" "$sandbox/tools" || {
+    echo "BLOCKER: --pack-tools-as-jobs: SWARM.md could not list the tools of $packs as jobs (see above); the seats would be left without them." >&2
+    exit 1
+  }
 }
 
 # A swarm with no definition of done is the failure mode the incident write-up
@@ -3463,6 +3581,7 @@ cmd_start() {
   # are checked, each one's name under inputs/. inputs_dir is the first (the
   # only one, for one set), and says whether there is evidence at all.
   local inputs_dirs=() inputs_names=()
+  local pack_tools_as_jobs=""
   local allow_hosts="" tools_from="" catalog=0 toolbox="off" toolbox_required=0 quarantine=0 cap_per_agent="" cap_per_agent_tokens="" case_id="" examiner=""
   # The run's operator (--operator ID): a person enrolled on this install,
   # recorded with the run; `--as operator` on the run's acts names them.
@@ -3611,6 +3730,7 @@ cmd_start() {
       # Repeated, the packs add up (as in image-for): a second --pack used to
       # replace the first without a word.
       --pack) packs="${packs:+$packs,}$2"; shift 2 ;;
+      --pack-tools-as-jobs) pack_tools_as_jobs="${pack_tools_as_jobs:+$pack_tools_as_jobs,}${2:-}"; shift 2 ;;
       --toolbox-required) toolbox_required=1; shift ;;
       --quarantine) quarantine=1; shift ;;
       --no-write-guard) write_guard=0; shift ;;
@@ -4809,6 +4929,11 @@ sys.exit(0 if t(sys.argv[1]) < t(sys.argv[2]) else 1)' "$_have" "$_ship" 2>/dev/
   else
     swarm_id="$(alloc_prefix)"
   fi
+  pack_tools_as_jobs_plan "$pack_tools_as_jobs" "$pack_dirs" "$isolation" "$jobs" "$([[ -n "$resume_rec" ]] && jq -r '(.pack_tools_as_jobs // []) | join(",")' <<<"$resume_rec")" "$resume_of"
+  pack_tools_as_jobs="$PACK_TOOLS_AS_JOBS_IDS"
+  if [[ -n "$pack_tools_as_jobs" ]]; then
+    echo "Pack tools:   $pack_tools_as_jobs: run as jobs (job_run tool=), not registered as Pi tools"
+  fi
   if [[ -z "$label" ]]; then
     label="swarm-${swarm_id}"
   fi
@@ -5851,6 +5976,7 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
     --argjson local_only "$local_only" \
     --argjson packs "$packs_json" \
     --argjson pack_secrets "$PACK_SECRETS_RECORD" \
+    --arg pack_tools_as_jobs "$pack_tools_as_jobs" \
     --argjson providers "$(providers_json)" \
     --argjson agents "$(printf '%s\n' "${agent_ids[@]}" | jq -R . | jq -s .)" \
     --argjson agent_models "$(printf '%s\n' ${AGENT_MODELS[@]+"${AGENT_MODELS[@]}"} | jq -R . | jq -s .)" \
@@ -5962,7 +6088,7 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
       hold: null,
       started_at: (now | strftime("%Y-%m-%dT%H:%M:%SZ")),
       state: "prepared"
-    }')"
+    } + (if $pack_tools_as_jobs == "" then {} else {pack_tools_as_jobs: ($pack_tools_as_jobs | split(","))} end)')"
   # A resumed run is the same record: its start, its hold and what it was
   # given stay; what this start set comes on top, with the resume beside it.
   if [[ -n "$resume_of" ]]; then
@@ -6226,10 +6352,15 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
   # Seeded tools by name, when forging is off: with forging on the extension
   # enforces the list itself and --tools is dropped.
   if [[ "$forging" -eq 0 && -d "$sandbox/tools" ]]; then
-    local _tm _tn
+    local _tm _tn _tp
     for _tm in "$sandbox"/tools/*/manifest.json; do
       [[ -f "$_tm" ]] || continue
       _tn="$(jq -r '.name // empty' "$_tm" 2>/dev/null || true)"
+      # A pack named by --pack-tools-as-jobs: its tools are called through job_run, not named to Pi.
+      if [[ -n "$pack_tools_as_jobs" ]]; then
+        _tp="$(jq -r '.pack // empty' "$_tm" 2>/dev/null || true)"
+        [[ -n "$_tp" && ",$pack_tools_as_jobs," == *",$_tp,"* ]] && continue
+      fi
       [[ "$_tn" =~ ^[a-z][a-z0-9_]{2,31}$ ]] && PI_TOOLS+=",$_tn"
     done
   fi
@@ -8804,6 +8935,7 @@ vm_build_spec() { # <hub dir> <out file>
     [[ -n "$job_image" ]] && add_env SWARM_PACK_PROGRAMS_IN_JOBS "$(jq -r 'keys | join(",")' <<<"$job_images_json")"
   fi
   [[ "$forging" -eq 1 ]] && { add_env SWARM_TOOL_FORGING 1; add_env SWARM_TOOLS "$PI_TOOLS"; }
+  [[ -n "$pack_tools_as_jobs" ]] && add_env SWARM_PACK_TOOLS_AS_JOBS "$pack_tools_as_jobs"
   if [[ "$self_compact" -eq 1 ]]; then
     add_env SWARM_SELF_COMPACT 1
     [[ -n "$compact_notice_at" ]] && add_env SWARM_COMPACT_NOTICE_AT "$compact_notice_at"

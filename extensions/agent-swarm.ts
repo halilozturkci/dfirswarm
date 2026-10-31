@@ -2630,7 +2630,11 @@ export default function (pi: ExtensionAPI) {
       const wait = Math.min(Math.max(params.wait_seconds ?? 12, 0), 100);
       const res = await submitAndWait(toolCtx.cwd, spec, wait, signal as AbortSignal | undefined);
       if (!res.job) {
-        const refused = { ok: false as const, reason: String(res.result.reason ?? "the job was not accepted") };
+        let reason = String(res.result.reason ?? "the job was not accepted");
+        // A tool's arguments the manifest refuses (needs, takes no, must be): the refusal names the manifest's parameters,
+        // for a tool that is not a Pi tool has no schema to read them from.
+        if (params.tool && [" needs ", " takes no ", ": "].some((tail) => reason.startsWith(`tool ${params.tool}${tail}`))) reason += await toolParamsNote(toolCtx.cwd, params.tool);
+        const refused = { ok: false as const, reason };
         await logEvent(toolCtx.cwd, agentId, "job_run", params, refused, Date.now() - started);
         return { content: [{ type: "text" as const, text: refused.reason }], details: refused, isError: true };
       }
@@ -2883,6 +2887,27 @@ export default function (pi: ExtensionAPI) {
     return parts.length ? parts.join(", ") : "no params";
   }
 
+  // Packs whose tools are not Pi tools (the start option --pack-tools-as-jobs):
+  // the contract (SWARM.md, "Pack tools run as jobs") lists each one, and a
+  // seat calls it as job_run(tool: <name>, args: {...}). Only a seat that has
+  // a hub to take the job skips them: with none (a host run) a tool left
+  // unregistered would be a tool lost, so it is registered as ever.
+  const packsAsJobs = new Set(
+    (process.env.SWARM_PACK_TOOLS_AS_JOBS ?? "")
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean),
+  );
+  const jobOnlyTools = new Map<string, string>();
+  function runsAsJob(manifest: ForgedToolManifest): boolean {
+    return Boolean(manifest.pack) && packsAsJobs.has(manifest.pack as string) && Boolean(boardSocket());
+  }
+  /** What job_run's refusal of a tool's arguments adds: the manifest's own parameters, so a seat with no schema can reach them. */
+  async function toolParamsNote(cwd: string, name: string): Promise<string> {
+    const manifest = (await listForgedTools(cwd).catch(() => [] as ForgedToolManifest[])).find((m) => m.name === name);
+    return manifest ? ` Parameters of ${name}: ${paramSummary(manifest)} (a name ending in ? is optional).` : "";
+  }
+
   function registerForged(manifest: ForgedToolManifest): void {
     pi.registerTool({
       name: manifest.name,
@@ -3030,6 +3055,14 @@ export default function (pi: ExtensionAPI) {
     for (const manifest of await listForgedTools(cwd).catch(() => [] as ForgedToolManifest[])) {
       const key = `${manifest.version}:${manifest.sha256}`;
       if (loadedTools.get(manifest.name) === key) continue;
+      if (runsAsJob(manifest)) {
+        // Not a Pi tool: a job_run(tool, args) call, as SWARM.md says. On the trace once per version.
+        if (jobOnlyTools.get(manifest.name) !== key) {
+          jobOnlyTools.set(manifest.name, key);
+          await logEvent(cwd, agentId, "tool_loaded", { name: manifest.name, version: manifest.version, by: manifest.by }, { ok: true, forged: true, as_job: true });
+        }
+        continue;
+      }
       try {
         registerForged(manifest);
         fresh.push(manifest);
@@ -3161,7 +3194,7 @@ export default function (pi: ExtensionAPI) {
         const all = await listForgedTools(toolCtx.cwd);
         await logEvent(toolCtx.cwd, agentId, "tools", {}, { ok: true, n: all.length, loaded: fresh.length }, Date.now() - started);
         return okResult({
-          forged: all.map((m) => ({ name: m.name, description: m.description, params: paramSummary(m), runtime: m.runtime, by: m.by, version: m.version, ...(m.example ? { example: m.example } : {}) })),
+          forged: all.map((m) => ({ name: m.name, description: m.description, params: paramSummary(m), runtime: m.runtime, by: m.by, version: m.version, ...(m.example ? { example: m.example } : {}), ...(runsAsJob(m) ? { call: `job_run(tool: "${m.name}", args: {...})` } : {}) })),
           ...newToolsNote(fresh),
           hint: all.length ? "Call a forged tool by its name, like any other tool." : "Nothing forged yet. make_tool writes one and shares it.",
         });
