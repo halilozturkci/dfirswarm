@@ -72,13 +72,30 @@ function temporary(prefix: string): string {
   return dir;
 }
 
+/** Whether a process is running: a process that has been killed and not yet reaped (a zombie) is gone. */
 function alive(pid: number): boolean {
   try {
     process.kill(pid, 0);
-    return true;
   } catch {
     return false;
   }
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    return stat.slice(stat.lastIndexOf(")") + 2, stat.lastIndexOf(")") + 3) !== "Z";
+  } catch {
+    return true; // no /proc here: the signal test above is all there is
+  }
+}
+
+/** The pids among `pids` still running after up to `graceMs` (a process that was just killed is given a moment to go). */
+function stillAlive(pids: number[], graceMs = 3000): number[] {
+  const stop = Date.now() + graceMs;
+  let left = pids.filter(alive);
+  while (left.length > 0 && Date.now() < stop) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+    left = left.filter(alive);
+  }
+  return left;
 }
 
 async function until<T>(what: string, waitMs: number, probe: () => T | undefined | false): Promise<T> {
@@ -290,7 +307,7 @@ export async function stopAt(tool: ToolRef, args: unknown, env: Env, moment: Mom
 export function assertStopped(run: StopRun, signal: StopSignal = run.sent): { answered: boolean; answer: Record<string, unknown> } {
   const where = `[${run.moment} ${signal}]`;
   const left = hiddenFiles(run.dirs);
-  const kids = run.children.filter(alive);
+  const kids = stillAlive(run.children);
   for (const pid of kids) {
     try {
       process.kill(pid, "SIGKILL");
