@@ -48,7 +48,7 @@ from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-TOOL = {"name": "doc_structure", "version": 1}
+TOOL = {"name": "doc_structure", "version": 2}
 PARSER = "doc_structure/1"
 NOTE = ("Static structure only. A structure shows what the file holds, not what an application would do with it: an action, a macro, "
         "a field or an external target does not show that anything ran or was fetched. Record what was read and what was not before "
@@ -3024,7 +3024,9 @@ PROTECTION_ELEMENTS = {"documentProtection", "writeProtection", "workbookProtect
 SECRETISH = re.compile(r"hash|salt|password|digest|verifier", re.I)
 VBA_CONTENT_TYPE = "application/vnd.ms-office.vbaproject"
 VBA_RELS = re.compile(r"(?:^|/)_rels/[^/]*\.rels$", re.I)
-LISTING_SHARE = 0.6                 # of max_seconds: the lists of a ZIP (names check, member rows, repeated names); the rest is for its content types, relationships and VBA project
+RELATIONSHIPS_SHARE = 0.9           # of max_seconds: the relationship parts that can declare a VBA project stop here; the scans after them keep the rest
+SIGNATURE_SCAN_SHARE = 0.95         # of max_seconds: the check of members for the compound file signature stops here; reading the VBA projects keeps the last 5%
+LISTING_SHARE = 0.6                # of max_seconds: the lists of a ZIP (names check, member rows, repeated names); the rest is for its content types, relationships and VBA project
 CONTENT_TYPE_ROWS_SHARE = 0.75      # of max_seconds: the rows of [Content_Types].xml, which cost a sanitising of every name, stop here
 CONTENT_TYPE_DECLARATIONS_SHARE = 0.85  # of max_seconds: what [Content_Types].xml declares (cheap to read) stops here; the last 15% is for the relationships and the VBA project
 DUPLICATES_LISTED = 100             # repeated part names listed in the answer (all are counted)
@@ -3092,6 +3094,70 @@ def probe_zip(path, size, ctx, extractor):
     return out
 
 
+DIRECTORY_BLOCK = 1 << 20           # bytes of a central directory read at a time when it is read in parts
+
+
+def directory_in_parts(fh, end, ctx, parts):
+    """List the entries of a central directory too big to open the package with, reading it from the file a block at a time (never more than a
+    block and one entry in memory): one row per member in the parts table, with the name as the sanitiser shows it, the sizes, the method, the
+    DOS time and the flags, none of it opened. Returns (entries listed, why the listing stopped before the end or None, bytes the entries use).
+    It stops at the declared member count, at the end of the directory, at bytes that are no entry, and at the clock."""
+    total, cd_off, cd_size = end["total"], end["cd_off"], end["cd_size"]
+    fh.seek(cd_off)
+    buf, off, left = b"", 0, cd_size
+    listed = used = 0
+    shown_cache = {}
+
+    def need(n):
+        nonlocal buf, off, left
+        if len(buf) - off >= n or left <= 0:
+            return len(buf) - off >= n
+        chunk = fh.read(min(DIRECTORY_BLOCK, left)) if n <= DIRECTORY_BLOCK else fh.read(min(n - (len(buf) - off), left))
+        if not chunk:
+            left = 0
+            return False
+        left -= len(chunk)
+        buf = buf[off:] + chunk
+        off = 0
+        return need(n)
+
+    stopped = None
+    while listed < total:
+        if ctx.expired("the central directory read in parts"):
+            stopped = "the clock ended the listing"
+            break
+        if not need(46):
+            stopped = "the directory ends inside entry %d" % (listed + 1)
+            break
+        if buf[off:off + 4] != b"PK\x01\x02":
+            stopped = "bytes that are no entry follow entry %d" % listed
+            break
+        flags, method, mtime, mdate, _crc, csize, usize, nlen, xlen, clen = struct.unpack_from("<HHHHIIIHHH", buf, off + 8)
+        entry = 46 + nlen + xlen + clen
+        if not need(entry):
+            stopped = "the directory ends inside entry %d" % (listed + 1)
+            break
+        raw = buf[off + 46:off + 46 + nlen]
+        name = raw.decode("utf-8", "replace") if flags & 0x800 else raw.decode("cp437", "replace")
+        shown = shown_cache.get(name)
+        if shown is None:
+            shown = shown_name(name)
+            if len(shown_cache) < 100000:
+                shown_cache[name] = shown
+        row = {"name": shown, "bytes": usize, "compressed": csize, "method": method,
+               "modified": "%04d-%02d-%02dT%02d:%02d:%02d" % ((mdate >> 9) + 1980, (mdate >> 5) & 15, mdate & 31, mtime >> 11, (mtime >> 5) & 63, (mtime & 31) * 2)}
+        if shown != name:
+            row["name_withheld"] = True
+            ctx.names.add(name, shown, "part_name")
+        if flags & 0x1:
+            row["encrypted"] = True
+        parts.add(row)
+        off += entry
+        used += entry
+        listed += 1
+    return listed, stopped, used
+
+
 def _probe_zip(path, size, ctx, extractor, out):
     members = {"declared": 0, "listed": 0, "read": 0, "flagged_encrypted": 0, "encrypted": 0, "unsupported": 0, "failed": 0, "over_budget": 0, "not_attempted": 0}
     out["members"] = members
@@ -3111,10 +3177,19 @@ def _probe_zip(path, size, ctx, extractor, out):
                         "a reader that chooses another lists another directory. This tool lists the directory of the chosen one"
                         % (", ".join(str(o) for o in end["others"][:5]), end["eocd_at"]))
         if total > MAX_DIRECTORY_ENTRIES or cd_size > MAX_DIRECTORY_BYTES or cd_size // MIN_ENTRY > MAX_DIRECTORY_ENTRIES:
-            ctx.limit_hit("the central directory declares %d members in %d bytes (it can hold up to %d): over the %d-member and %d-byte limits for opening it; "
-                          "no member was listed or read" % (total, cd_size, cd_size // MIN_ENTRY, MAX_DIRECTORY_ENTRIES, MAX_DIRECTORY_BYTES))
+            # Past the limits for opening the package the directory is read in parts, entry by entry, from the file: every member is listed in
+            # the parts table (the first `limit` in the answer, the whole in its file) and counted, and none is opened. A directory padded
+            # past a limit no longer hides its members.
+            listed, stopped, used = directory_in_parts(fh, end, ctx, parts)
+            members["listed"] = listed
             members["not_attempted"] = total
-            out["coverage"] = {"structures_read": ["the end of central directory record"], "structures_not_read": ZIP_READ + ZIP_NOT_READ}
+            ctx.limit_hit("the central directory declares %d members in %d bytes (it can hold up to %d): over the %d-member and %d-byte limits for opening the package, "
+                          "so no member was opened or read; the directory was read in parts instead: %d member%s listed in the parts table (name, sizes, method, "
+                          "time, flags), %d of the declared members not listed%s; %d of its %d bytes are entries"
+                          % (total, cd_size, cd_size // MIN_ENTRY, MAX_DIRECTORY_ENTRIES, MAX_DIRECTORY_BYTES, listed, "" if listed == 1 else "s", max(0, total - listed),
+                             " (%s)" % stopped if stopped else "", used, cd_size))
+            out["coverage"] = {"structures_read": ["the end of central directory record", "the central directory entries (listed in parts, none opened)"],
+                               "structures_not_read": ZIP_READ + ZIP_NOT_READ}
             return out
         # A name the directory marks UTF-8 (flag bit 11) that is not UTF-8 would stop the standard library's reader for the whole archive:
         # that member's flag is shown to the reader without the bit, so its name is read as CP437, every other member is listed, and it is said.
@@ -3192,6 +3267,15 @@ def _probe_zip(path, size, ctx, extractor, out):
                     return False
                 ctx.limit_hit("time: %s stopped at max_seconds (%d) less the %g s kept for reading the content types, the relationships and the VBA project; "
                               "what was listed is reported, and the counts are lower bounds" % (where, ctx.seconds, (1 - LISTING_SHARE) * ctx.seconds))
+                return True
+
+            def scan_over(where, share, after):
+                """The scans after the listing each have a share of max_seconds of their own, so that one cannot use the time another needs: this
+                one stops at `share` of it, says which scan stopped and what keeps the time that is left."""
+                if time.monotonic() <= ctx.deadline - (1 - share) * ctx.seconds:
+                    return False
+                ctx.limit_hit("time: %s stopped at %g%% of max_seconds (%d); %s keep%s the last %g s; what was read is reported, and the counts are lower bounds"
+                              % (where, share * 100, ctx.seconds, after, "" if after.endswith("s") else "s", (1 - share) * ctx.seconds))
                 return True
 
             # Each distinct name goes through the sanitiser once: the check, the row and the list of repeated names all take it from here.
@@ -3399,7 +3483,8 @@ def _probe_zip(path, size, ctx, extractor, out):
             # a problem: the answer is partial.
             listed = scan                    # every member the package index holds, listed or not: the listing's time does not decide what is looked for
             for rels in [info for info in listed if VBA_RELS.search(info.filename)]:
-                if ctx.expired("the relationship parts"):
+                if scan_over("the relationship parts", RELATIONSHIPS_SHARE, "the compound file signature check and the VBA project parts"):
+                    ctx.problem("the relationship parts were not all read, so a VBA project that a relationship declares may not be among those read")
                     break
                 base = rels.filename[:VBA_RELS.search(rels.filename).start()]
 
@@ -3444,7 +3529,8 @@ def _probe_zip(path, size, ctx, extractor, out):
             for info in listed:
                 if id(info) in vba_ids or info.flag_bits & 0x1 or info.compress_type not in METHODS_READ:
                     continue
-                if ctx.expired("the compound file signature check"):
+                if scan_over("the compound file signature check", SIGNATURE_SCAN_SHARE, "the VBA project parts"):
+                    ctx.problem("the compound file signature check did not reach every member, so whether the members it did not reach hold a VBA project is not known")
                     break
                 try:
                     with archive.open(info) as fh_member:
