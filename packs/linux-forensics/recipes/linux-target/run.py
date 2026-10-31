@@ -57,7 +57,8 @@ NOT_COVERED = "deleted/unallocated carving, arbitrary application files, memory,
 FILES_BY_PATH = ("a file of this root that no function parses (a configuration, a script, a binary) comes out by path in a job, through the "
                  "same reader and without mounting: target-fs -q <image> cp <path> -o \"$OUT/root<dir>\". Where The Sleuth Kit reads the file "
                  "system (one linear logical volume at its offset, ext), icat by inode keeps the record's identity, which a copy by path does "
-                 "not; a copy carries the time of extraction as its modification time")
+                 "not; the offset is the partition start plus the PV's data start plus the volume's first extent times the extent size, all in "
+                 "sectors (skills filesystem/storage-lvm-luks names the command for each); a copy carries the time of extraction as its modification time")
 
 
 def answer(value, code=0):

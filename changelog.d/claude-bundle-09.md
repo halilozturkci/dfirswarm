@@ -6,6 +6,10 @@ auth_log, cron_dump, journal_export, shell_history and utmp_parse had five drift
 
 auth_log, cron_dump, journal_export, shell_history and utmp_parse now declare `secret_output` for their text flags (`write_text` and `preview_text`; `write_commands` and `preview_commands` for shell_history), so a job that sets one is sealed as secret output without the agent saying so, and each tool refuses such a flag as JSON, before it opens or creates anything, when `SECRET_OUTPUT` is not `1`. linux_triage does not declare it.
 
+### Fixed: linux-forensics storage-lvm-luks names every term of a logical volume's offset
+
+The leaf said a linear volume is read at the partition's start plus the PV's data start plus "the segment's start, in sectors". `seg_start` is an offset within the volume (0 for a first segment), and LVM gives a segment's place on the PV in extents. The leaf now adds the partition start (`mmls`), `pe_start` (`pvs --units s -o+pe_start`) and the first extent times the extent size (`lvs -o+devices` or `seg_pe_ranges`; `vgs --units s -o+vg_extent_size`), in sectors, and the linux-target receipt's text agrees; a skills test holds the three terms. Checked on an LVM image with two volumes, the second beginning at extent 10: `fls` at the sum lists the second volume's root, and at the old sum lists the first's.
+
 ### Fixed: linux-forensics journal_export keeps journalctl's stderr in its file and tells its own journal by machine id
 
 The answer gives the name, size and sha256 of journalctl's stderr file and no longer quotes its first lines (they can carry paths and entry text). A journal is this machine's own when the machine id in the header of its files is the one in `/etc/machine-id`, or the directory is named by it, wherever it is and however it is spelled; a path under `/var/log/journal` that carries another machine's id is no longer refused for its place. The place is used only where this machine's id cannot be read.
