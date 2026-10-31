@@ -45,7 +45,9 @@ bytes of its stream (a thread always reads the pipe, so a verbose engine neither
 pipe nor fills the disk); the answer counts what was read after that and discarded.
 
 The tool stops by itself: timeout_seconds is at most 480, so the end of the call (the
-engine's stop, its unmount, the last file) stays inside the manifest's 600. A signal
+engine's stop, its unmount, the last file) stays inside the manifest's 600. Those steps have their own bounded waits: terminate 20 s,
+kill 20 s, two unmount calls 20 s each, two drains 5 s each and the worker 5 s, which is 95 s where /proc is read; where it is not,
+process_table() runs ps (10 s at most) twice in the clean-up, so the bound is 115 s, and 480 + 115 = 595 is inside the 600. A signal
 (SIGTERM, SIGINT, SIGHUP) ends it with one JSON answer (status interrupted, exit 128 plus
 the signal), after the engine is stopped and the mount released; the rows already kept in the results file are named (partial_results). A
 signal that arrives while that file is placed or the answer written is held until the answer is out. The process leaves without the
@@ -90,7 +92,7 @@ from pathlib import Path  # noqa: E402
 CHUNK = 1 << 20
 DEFAULT_TIMEOUT = 300
 MIN_TIMEOUT = 2
-MAX_TIMEOUT = 480          # 480 s + the engine's stop and unmount (at most 95 s) stays inside the manifest's 600
+MAX_TIMEOUT = 480          # 480 s + the engine's stop and unmount (at most 95 s with /proc, 115 s with ps) stays inside the manifest's 600
 DEFAULT_MAX_BYTES = 4 << 30
 MAX_PATHS = 1000
 PAGE = 200

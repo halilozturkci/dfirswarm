@@ -21,8 +21,9 @@ rule every claim here has to survive.
    the output used, and what it shows where it can.
 5. Credential exposure: what a process could have taken, with the artefact that
    shows it. Do not put recovered secrets in the report.
-6. Structures carved out of the image that a disk parser could read, and what
-   each one said.
+6. Structures carved out of the image: when the windows-forensics pack is loaded,
+   those a disk parser could read and what each one said; otherwise the hits,
+   their validation, and that no parser read them.
 7. The timeline in UTC, and what you could not establish.
 
 ## How to divide the work
@@ -51,7 +52,9 @@ not be established and why (the run may then end and the defect stays counted; a
 limitation does not fix it), and the critic, who wrote none of them, has recorded
 `attest` or `dispute` on each answer, saying what they verified. Evidence that is
 not there is stated as a supported partial, bounded-negative or not-determinable
-answer, not as a finding.
+answer, not as a finding. Question 6 asks for what a disk parser read only when the
+windows-forensics pack is loaded; otherwise it is answered with the hits, their
+validation, and that no parser read them.
 `inputs/` is unchanged.
 
 ## Checks

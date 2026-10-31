@@ -11,7 +11,9 @@ Use only if you will argue from a process's memory or read MemProcFS's file tree
 
 **With MemProcFS** the tree is files: processes, memory maps, handles and modules.
 `mem_fs` starts `memprocfs` for one call, does one thing with the tree and stops it,
-so the mount is gone when the call returns and nothing later can read it. Use its
+so the mount is released when the call returns and nothing later can read it, unless
+the clean-up failed: the answer then names a `cleanup` problem and the mount may remain.
+Use its
 list mode to see the virtual paths the image and the MemProcFS version actually
 expose, and its export mode to copy chosen files byte for byte into the job's
 `$OUT/mem_fs`:

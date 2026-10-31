@@ -858,3 +858,31 @@ test("mem_fs answers once, per item, for a link that leaves the mount or loops, 
     assert.equal(list.phase, "read");
   });
 });
+
+const memText = async (...parts: string[]): Promise<string> => readFile(join(ROOT, "packs", "memory-forensics", ...parts), "utf8");
+
+test("each memory tool's manifest names the start-up window in which a stop ends it with no answer", async () => {
+  for (const tool of ["mem_carve", "mem_profile", "mem_fs"]) {
+    const { description } = JSON.parse(await memText("tools", tool, "manifest.json")) as { description: string };
+    assert.match(description, /before the interpreter has run the tool's first lines \(tens of milliseconds/, `${tool}: no start-up window sentence`);
+    assert.match(description, /ends it with no answer/, tool);
+  }
+});
+
+test("mem_fs states its clean-up bound with /proc and with the ps fallback, and the total inside the manifest's timeout", async () => {
+  const manifest = JSON.parse(await memText("tools", "mem_fs", "manifest.json")) as { description: string; params: Record<string, { description: string }>; timeout_seconds: number };
+  assert.match(manifest.description, /at most 95 s where \/proc is read, 115 s where the process table falls back to ps/);
+  assert.match(manifest.params.timeout_seconds.description, /95 s \(115 s where the process table falls back to ps\)/);
+  assert.ok(480 + 115 <= manifest.timeout_seconds);
+  assert.match((await memText("tools", "mem_fs", "run.py")).replace(/\s+/g, " "), /so the bound is 115 s, and 480 \+ 115 = 595/);
+});
+
+test("the README and the preserve-regions leaf say a failed clean-up may leave the mount, and the goal's Q6 depends on the windows pack", async () => {
+  for (const file of [["README.md"], ["skills", "processes", "preserve-regions.md"]]) {
+    const text = (await memText(...file)).replace(/\s+/g, " ");
+    assert.match(text, /unless (the|a) clean-up failed.{0,160}`cleanup` problem and the mount may remain/, file.join("/"));
+    assert.doesNotMatch(text, /the mount is gone/, file.join("/"));
+  }
+  const goal = (await memText("goals", "memory-triage.md")).replace(/\s+/g, " ");
+  assert.match(goal, /when the windows-forensics pack is loaded.{0,120}otherwise the hits, their validation, and that no parser read them/);
+});
