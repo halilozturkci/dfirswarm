@@ -1,7 +1,7 @@
 {
   "id": "encrypted-containers",
   "name": "Encrypted Containers Pack",
-  "version": "1.6.6",
+  "version": "1.6.7",
   "description": "Telling one kind of encryption from another: volume headers and their key protectors, LUKS key slots, the container that has no signature at all, password-protected archives and documents, and where key material the case supplies may already be.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -18,7 +18,7 @@
   "unreferenced_ok": [
     {
       "name": "john",
-      "why": "declared for a recovery capability the owner has not decided on; no skill instructs its use (archives/protected states only the recovery gate, without a program)"
+      "why": "the pack's password-recovery route, used only in secret_output jobs; the tool and the skill that name it come next (archives/protected states only the recovery gate, without a program)"
     },
     {
       "name": "gpg",
