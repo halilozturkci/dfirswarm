@@ -1,7 +1,7 @@
 {
   "id": "ransomware-response",
   "name": "Ransomware Response Pack",
-  "version": "1.4.4",
+  "version": "1.4.5",
   "description": "Evidence-led ransomware examination: preserve and scope the incident, reconstruct its phases, assess possible exfiltration and recovery impairment, identify supported family candidates, validate recovery options, and prepare qualified findings for notification and response decisions.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -70,7 +70,7 @@
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
       "README.md": "9684278c9556adaa81a14eb9e899884215c0233559338a642b184cc8dae19a18",
       "goals/ransomware-case.md": "bb889a729a06a1633e49284a99cf333aab899c57cbe5f0d8748e43ec02b78d62",
-      "requires/host.json": "d5e732d918bec998617a63372b8e801afef1a3b20e842c233d29bdec92261d77",
+      "requires/host.json": "e9738f0296f8c734625a6a03a3d771737bd62a83432aae3bb7c0b0f82e10374c",
       "requires/python.txt": "5a396319de276d1ea51953493ef8e4f2dd0d7cb87c67aac6fbd0e63c096d63b6",
       "skills/INDEX.md": "0c96f21e287894d8530c426eb9b754036e6bdcb60dc2f23d6bd803902bc9afe9",
       "skills/encryptor/backup-infrastructure.md": "0d5e2fcb8e95110d49ea5a9a1c31a59266374129c9aa4f42ec86e29142cff574",

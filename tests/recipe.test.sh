@@ -1164,4 +1164,32 @@ grep -q '^stale: optional_python names numpy, which it never imports' <<<"$got" 
 grep -q '^guarded' <<<"$got" && fail "the guarded tool was refused beside the others: $got"
 pass "the library check sees imports by name, refuses a computed one, and holds a declared optional module to a guard that catches ImportError"
 
+# --- an apt-installed program is pinned the way the image pin policy says -------
+# The apt lines of the packs are not edited: every image installs from the
+# Debian snapshot dated in images/debian-snapshot. So an entry with an apt line
+# must not say that its version is unpinned, and the yara entry of the
+# ransomware pack must say how it is pinned.
+python3 - "$ROOT" <<'PYEOF' || fail "a host.json entry with an apt line says it is unpinned, or the yara entry does not say how the snapshot pins it"
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+bad = []
+for f in sorted(root.glob("packs/*/requires/host.json")):
+    for b in json.loads(f.read_text(encoding="utf-8")).get("binaries", []):
+        if (b.get("install") or {}).get("apt") and "not pinned here" in b.get("why", ""):
+            bad.append(f"{f.parent.parent.name}/{b['name']}: says its version is not pinned")
+yara = next(b for b in json.loads((root / "packs/ransomware-response/requires/host.json").read_text(encoding="utf-8"))["binaries"] if b["name"] == "yara")
+if "images/debian-snapshot" not in yara["why"]:
+    bad.append("ransomware-response/yara: does not name the snapshot that pins it")
+if "Homebrew" not in yara["why"]:
+    bad.append("ransomware-response/yara: does not say Homebrew stays unpinned")
+if yara.get("optional") is not True or yara.get("redistributable") is not False:
+    bad.append("ransomware-response/yara: optional or redistributable changed")
+if bad:
+    print("\n".join(bad), file=sys.stderr)
+    sys.exit(1)
+PYEOF
+python3 "$R" build re --out "$TMP/re-ctx" --allow-nonredistributable >/dev/null 2>&1 || fail "the re profile did not build a context"
+jq -e '.apt | has("yara")' "$TMP/re-ctx/spec.json" >/dev/null || fail "yara is not in the re profile's spec"
+pass "yara is pinned by the image's apt snapshot, said in its entry, and no apt entry claims to be unpinned"
+
 echo "recipe: all checks passed"
