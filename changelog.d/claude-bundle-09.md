@@ -6,6 +6,10 @@ auth_log, cron_dump, journal_export, shell_history and utmp_parse had five drift
 
 auth_log, cron_dump, journal_export, shell_history and utmp_parse now declare `secret_output` for their text flags (`write_text` and `preview_text`; `write_commands` and `preview_commands` for shell_history), so a job that sets one is sealed as secret output without the agent saying so, and each tool refuses such a flag as JSON, before it opens or creates anything, when `SECRET_OUTPUT` is not `1`. linux_triage does not declare it.
 
+### Fixed: linux-forensics linux-target re-checks a pid before its stop handler kills it
+
+The recipe's stop handler listed the wrapper's descendants, waited up to 8 seconds for the wrapper to stop, and then sent SIGKILL to every pid of that list, so a process that ended in those seconds and whose pid was reused could be killed. Each pid is now listed with its start time and parent (`/proc/<pid>/stat`, or `ps` where there is no `/proc`) and signalled only if that is still true.
+
 ### Fixed: linux-forensics storage-lvm-luks names every term of a logical volume's offset
 
 The leaf said a linear volume is read at the partition's start plus the PV's data start plus "the segment's start, in sectors". `seg_start` is an offset within the volume (0 for a first segment), and LVM gives a segment's place on the PV in extents. The leaf now adds the partition start (`mmls`), `pe_start` (`pvs --units s -o+pe_start`) and the first extent times the extent size (`lvs -o+devices` or `seg_pe_ranges`; `vgs --units s -o+vg_extent_size`), in sectors, and the linux-target receipt's text agrees; a skills test holds the three terms. Checked on an LVM image with two volumes, the second beginning at extent 10: `fls` at the sum lists the second volume's root, and at the old sum lists the first's.

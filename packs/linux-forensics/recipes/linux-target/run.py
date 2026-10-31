@@ -61,6 +61,37 @@ FILES_BY_PATH = ("a file of this root that no function parses (a configuration, 
                  "sectors (skills filesystem/storage-lvm-luks names the command for each); a copy carries the time of extraction as its modification time")
 
 
+def process_identity(pid):
+    """What identifies the process that has this pid right now: its start time (field 22 of /proc/<pid>/stat, in clock ticks since boot) and
+    its parent (field 4), or, where there is no /proc, the start time and parent `ps` reports. A pid that is reused is another process with
+    another start time. None where the process is gone or cannot be read."""
+    try:
+        with open("/proc/%d/stat" % pid, "rb") as fh:
+            data = fh.read()
+        fields = data[data.rindex(b")") + 2:].split()      # the name (field 2) may hold spaces and brackets: the rest follows the last ")"
+        return ("proc", int(fields[19]), int(fields[1]))
+    except (OSError, ValueError, IndexError):
+        pass
+    code, out, _err, timed_out = preflight(["ps", "-o", "lstart=,ppid=", "-p", str(pid)], 5)
+    text = out.decode("utf-8", "replace").strip()
+    return ("ps", text) if code == 0 and not timed_out and text else None
+
+
+def same_process(pid, listed):
+    """Whether `pid` is still the process that was listed with the identity `listed` (process_identity at the time): a pid that has gone, or
+    that another process has taken since, is not. A process whose identity could not be read when it was listed (`listed` is None) is not
+    vouched for either: it is signalled only if it can be read now and is in this process's own group."""
+    now = process_identity(pid)
+    if now is None:
+        return False
+    if listed is None:
+        try:
+            return os.getpgid(pid) == os.getpgrp()
+        except OSError:
+            return False
+    return now == listed
+
+
 def answer(value, code=0):
     if value.get("ok") is False and "status" not in value:
         value = {**value, "status": "failed", "status_basis": value.get("error", "the recipe stopped with an error")}
@@ -663,7 +694,9 @@ def run(image, shown, out):
         if child is not None and child.poll() is None:
             # The wrapper is in this process's group, not a session of its own. It is asked to stop first, so that it ends the
             # dissect.target it started and says `terminated` in its summary; whatever is left of its tree is then killed.
-            victims = descendants(child.pid)
+            # Each pid is listed with what identifies the process behind it, and killed only if that is still true: the wrapper is given 8
+            # seconds to stop, and a process of the list that ended in them may have had its pid taken by another.
+            victims = {pid: process_identity(pid) for pid in descendants(child.pid)}
             try:
                 child.terminate()
             except OSError:
@@ -673,7 +706,9 @@ def run(image, shown, out):
             except subprocess.TimeoutExpired:
                 pass
             kill_tree(child)
-            for pid in victims:
+            for pid, listed in victims.items():
+                if not same_process(pid, listed):
+                    continue
                 try:
                     os.kill(pid, signal.SIGKILL)
                 except OSError:

@@ -315,3 +315,42 @@ print(sorted(found))
     assert.equal(r.stdout.trim(), "[11, 12, 13]", path);
   }
 });
+
+test("the linux-target recipe's stop handler signals a pid only while it is the process it listed: a changed start time is not killed, the listed one is", () => {
+  // The identity check is called directly. A process is listed with process_identity; a pid whose identity has changed since (another
+  // process took the number, here simulated by a listed identity with another start time) is not signalled, a pid that is gone is not,
+  // and the process that was listed is.
+  const program = String.raw`
+import importlib.util, os, signal, subprocess, sys, time
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("recipe_under_test", sys.argv[1])
+recipe = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(recipe)
+sleeper = subprocess.Popen(["sleep", "60"])
+try:
+    listed = recipe.process_identity(sleeper.pid)
+    assert listed is not None, "the identity of a running process can be read"
+    moved = (listed[0], listed[1] + 1) + tuple(listed[2:])          # the same pid with another start time: the pid was taken by another process
+    results = {
+        "listed": recipe.same_process(sleeper.pid, listed),
+        "start time changed": recipe.same_process(sleeper.pid, moved),
+        "parent changed": recipe.same_process(sleeper.pid, listed[:2] + (listed[2] + 1,)),
+        "unreadable when listed, in our group": recipe.same_process(sleeper.pid, None),
+    }
+    sleeper.kill()
+    sleeper.wait()
+    results["gone"] = recipe.same_process(sleeper.pid, listed)
+    results["never existed"] = recipe.same_process(2 ** 22 + 12345, listed)
+    print(results)
+finally:
+    if sleeper.poll() is None:
+        sleeper.kill()
+        sleeper.wait()
+`;
+  const r = spawnSync("python3", ["-c", program, RECIPE], { encoding: "utf8", timeout: 60_000 });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(
+    r.stdout.trim(),
+    "{'listed': True, 'start time changed': False, 'parent changed': False, 'unreadable when listed, in our group': True, 'gone': False, 'never existed': False}",
+  );
+});
