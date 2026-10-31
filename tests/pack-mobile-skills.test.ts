@@ -241,3 +241,37 @@ routerChecks({
   ],
   profiles: ["mobile", "full"],
 });
+
+// A leaf must not present decryption as something a job does while the pack has no tool that decrypts.
+
+/** The clauses of a text that say a job, a tool or a recipe decrypts, and do not say that it does not. */
+function decryptionClaims(text: string): string[] {
+  const found: string[] = [];
+  for (const clause of text.split(/[.;:\n]/)) {
+    const actor = /\b(job|jobs|tool|tools|recipe|recipes|run|runs)\b[^.;]*\bdecrypt(s|ed|ing)?\b|\bdecrypt(s|ed|ing)?\b[^.;]*\b(job|jobs|tool|tools|recipe|recipes)\b/i.test(clause);
+    const denied = /\b(no|not|never|cannot|can't|nor|without|neither|nothing|none)\b/i.test(clause);
+    if (actor && !denied) found.push(clause.trim());
+  }
+  return found;
+}
+
+test("no leaf of the pack presents decryption as something a job does, unless a tool of the pack declares a decrypting mode", async () => {
+  // backup-detail ended "A job that decrypts or reads keychain content runs with `secret_output: true`": the pack decrypts nothing (README: no decryption),
+  // so read with the rest of the leaf the sentence could be taken as a route. The rule turns itself off when a tool declares a decrypting parameter.
+  const decrypting: string[] = [];
+  for (const entry of await readdir(join(PACK, "tools"), { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const manifest = JSON.parse(await readFile(join(PACK, "tools", entry.name, "manifest.json"), "utf8")) as { params?: Record<string, unknown> };
+    for (const param of Object.keys(manifest.params ?? {})) if (/decrypt|password|passcode|keybag|unlock/i.test(param)) decrypting.push(`${entry.name}.${param}`);
+  }
+  // The rule itself: it finds the old sentence, and it lets a denial and an unrelated mention through.
+  assert.equal(decryptionClaims("A job that decrypts or reads keychain content runs with `secret_output: true`.").length, 1);
+  assert.equal(decryptionClaims("The recipe decrypts the payload. A tool decrypted it.").length, 2);
+  assert.equal(decryptionClaims("No job here decrypts; one that reads keychain content runs with `secret_output: true`.").length, 0);
+  assert.equal(decryptionClaims("This tool does not decrypt anything. Decryption is for the operator.").length, 0);
+  if (decrypting.length) return;      // a tool of the pack decrypts: what a leaf says about it is for that tool's own tests
+  const skills = await load(SKILLS);
+  for (const s of skills.values()) {
+    assert.deepEqual(decryptionClaims(s.body), [], `${s.id} presents decryption as a job's action, and no tool of the pack decrypts`);
+  }
+});
