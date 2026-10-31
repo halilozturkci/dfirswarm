@@ -27,6 +27,7 @@ four bytes that spell one somewhere near the end. A tar that holds a zip as a me
 zip record it also ends in.
 """
 import base64
+import bz2
 import datetime
 import json
 import lzma
@@ -273,18 +274,274 @@ def tar_type(m):
     return "other"
 
 
+def gzip_header_length(data):
+    """The length of the gzip member header at the start of `data` (RFC 1952: ten bytes, then the optional extra field, name, comment and
+    header CRC the flags name), or None when `data` ends inside it. Raises ValueError when it is not a gzip member header."""
+    if len(data) >= 3 and (data[:2] != b"\x1f\x8b" or data[2] != 8):
+        raise ValueError("not a gzip member (bad magic or an unknown compression method)")
+    if len(data) < 10:
+        return None
+    flags, at = data[3], 10
+    if flags & 4:
+        if len(data) < at + 2:
+            return None
+        at += 2 + int.from_bytes(data[at:at + 2], "little")
+    for bit in (8, 16):
+        if flags & bit:
+            end = data.find(b"\0", at)
+            if end < 0:
+                return None
+            at = end + 1
+    if flags & 2:
+        at += 2
+    return at if len(data) >= at else None
+
+
+class TarStream:
+    """The decompressed bytes of a gzip, bzip2 or xz file, every stream of it in turn (read by tarfile in stream mode, and then by
+    `read_rest`). tarfile stops at a tar's end blocks and reads nothing further, so a second archive in the same stream, a further
+    compressed stream, bytes after the last stream and a trailer that does not match (the gzip CRC-32 and ISIZE) are never seen:
+    the same bytes uncompressed are partial, and a compressed tar was listed complete. The text of this class is archive_extract's
+    Decomp for the three kinds a tar comes in (a script does not import another): the decompressors are called with a maximum
+    output of CHUNK, so a bomb costs one piece of memory, never more.
+
+    read(n) returns at most n bytes and b"" only at the end of the last stream. `streams` counts the streams, `consumed` the compressed
+    bytes read, `delivered` the decompressed bytes handed out, `trailing` the bytes after the last stream that are not another one
+    (`trailing_nonzero` when any is not a zero, the padding some writers leave)."""
+
+    CHUNK = 1 << 20
+    MARKERS = {"gzip": b"\x1f\x8b", "bzip2": b"BZh", "xz": b"\xfd7zXZ\x00"}
+
+    def __init__(self, path, kind):
+        self.kind = kind
+        self.fh = open(path, "rb")
+        self.consumed = 0
+        self.delivered = 0
+        self.buf = b""
+        self.eof = False
+        self.streams = 0
+        self.trailing = 0
+        self.trailing_nonzero = False
+        self.pending = None        # an error from the decompressor, raised once the bytes before it have been read
+        self.gen = self._pieces()
+
+    def close(self):
+        try:
+            self.fh.close()
+        except OSError:
+            pass
+
+    def _new(self):
+        if self.kind == "gzip":
+            return zlib.decompressobj(31)
+        if self.kind == "bzip2":
+            return bz2.BZ2Decompressor()
+        return lzma.LZMADecompressor()
+
+    def _step(self, dec, data):
+        """(output, input left over, finished) after one call bounded to CHUNK bytes of output."""
+        if self.kind == "gzip":
+            out = dec.decompress(data, self.CHUNK)
+            return out, (dec.unused_data if dec.eof else dec.unconsumed_tail), dec.eof
+        out = dec.decompress(data, max_length=self.CHUNK)
+        return out, (dec.unused_data if dec.eof else b""), dec.eof
+
+    def _gzip_pieces(self):
+        """gzip members back to back, framed here (header, raw deflate, CRC-32 and ISIZE trailer) rather than by zlib's gzip mode: zlib
+        raises at the trailer and gives up the output of the call that reached it, so a member whose trailer does not match would
+        have lost its last piece. Here every byte of a member is handed out first, and the trailer's mismatch is raised after them."""
+        data = self.fh.read(self.CHUNK)
+        self.consumed += len(data)
+        if not data:
+            raise EOFError("the gzip file is empty")
+        while True:
+            self.streams += 1
+            while True:
+                head = gzip_header_length(data)
+                if head is not None:
+                    break
+                more = self.fh.read(self.CHUNK)
+                self.consumed += len(more)
+                if not more:
+                    raise EOFError("the gzip stream ends inside its header (a truncated archive)")
+                data += more
+            data = data[head:]
+            dec = zlib.decompressobj(-15)
+            crc = size = 0
+            while True:
+                out = dec.decompress(data, self.CHUNK)
+                data = dec.unused_data if dec.eof else dec.unconsumed_tail
+                if out:
+                    crc = zlib.crc32(out, crc)
+                    size += len(out)
+                    yield out
+                if dec.eof:
+                    break
+                if not data and len(out) < self.CHUNK:
+                    data = self.fh.read(self.CHUNK)
+                    self.consumed += len(data)
+                    if not data:
+                        raise EOFError("the gzip stream ends before its end marker (a truncated archive)")
+            while len(data) < 8:
+                more = self.fh.read(self.CHUNK)
+                self.consumed += len(more)
+                if not more:
+                    raise EOFError("the gzip stream ends inside its trailer (a truncated archive)")
+                data += more
+            want_crc, want_size = struct.unpack("<II", data[:8])
+            data = data[8:]
+            if want_crc != crc & 0xFFFFFFFF:
+                raise zlib.error("Error -3 while decompressing data: incorrect data check")
+            if want_size != size & 0xFFFFFFFF:
+                raise zlib.error("Error -3 while decompressing data: incorrect length check")
+            rest = data
+            while not rest:
+                rest = self.fh.read(self.CHUNK)
+                self.consumed += len(rest)
+                if not rest:
+                    return
+            if rest.startswith(b"\x1f\x8b"):
+                data = rest
+                continue
+            # What follows the last stream is not another one: counted and said, not decompressed.
+            self.trailing = len(rest)
+            self.trailing_nonzero = bool(rest.strip(b"\0"))
+            while True:
+                more = self.fh.read(self.CHUNK)
+                if not more:
+                    return
+                self.trailing += len(more)
+                self.consumed += len(more)
+                if more.strip(b"\0"):
+                    self.trailing_nonzero = True
+
+    def _pieces(self):
+        if self.kind == "gzip":
+            yield from self._gzip_pieces()
+            return
+        marker = self.MARKERS[self.kind]
+        dec = self._new()
+        self.streams = 1
+        data = b""
+        while True:
+            if not data:
+                data = self.fh.read(self.CHUNK)
+                self.consumed += len(data)
+                if not data:
+                    if not getattr(dec, "eof", False):
+                        raise EOFError("the %s stream ends before its end marker (a truncated archive)" % self.kind)
+                    return
+            while True:
+                out, data, finished = self._step(dec, data)
+                if out:
+                    yield out
+                if finished:
+                    break
+                if self.kind == "gzip":
+                    if not data and len(out) < self.CHUNK:
+                        break                      # all the input is used and nothing more is pending: more input is read above
+                elif dec.needs_input:
+                    break
+                else:
+                    data = b""                     # the decompressor holds output it has not given yet: ask again with no input
+            if not finished:
+                data = b""
+                continue
+            rest = data
+            while not rest:
+                rest = self.fh.read(self.CHUNK)
+                self.consumed += len(rest)
+                if not rest:
+                    return
+            if rest.startswith(marker):
+                dec = self._new()
+                self.streams += 1
+                data = rest
+                continue
+            # What follows the last stream is not another one: counted and said, not decompressed.
+            self.trailing = len(rest)
+            self.trailing_nonzero = bool(rest.strip(b"\0"))
+            while True:
+                more = self.fh.read(self.CHUNK)
+                if not more:
+                    return
+                self.trailing += len(more)
+                self.consumed += len(more)
+                if more.strip(b"\0"):
+                    self.trailing_nonzero = True
+
+    def read(self, n=-1):
+        if n is None or n < 0:
+            n = 1 << 62
+        while len(self.buf) < n and not self.eof and self.pending is None:
+            try:
+                piece = next(self.gen)
+            except StopIteration:
+                self.eof = True
+                break
+            except (EOFError, OSError, zlib.error, lzma.LZMAError, ValueError) as exc:
+                self.pending = exc               # the bytes decompressed before the break are read first, then this is raised
+                break
+            self.buf += piece
+        if not self.buf and self.pending is not None:
+            raise self.pending
+        out, self.buf = self.buf[:n], self.buf[n:]
+        self.delivered += len(out)
+        return out
+
+
+def read_rest(stream, leftover, deadline, n, cov):
+    """A compressed tar is complete only when its whole stream has been read: everything after the tar's end blocks is read here, under
+    the clock, and must be zeros (a tar ends in two zero blocks and zero padding to its record size). A byte that is not, a stream whose
+    trailer does not match or that does not end, and bytes after the last stream that are not a stream go to cov["errors"] with their
+    offset, as the plain tar's tail check puts its finding there (the listing is then partial); a rest the clock cut short says so in
+    cov["limits_hit"]. `leftover` is what tarfile read from the stream beyond the end blocks and did not use."""
+    pos = stream.delivered - len(leftover)        # the decompressed offset of the first byte tarfile did not use
+    chunk = leftover
+    while True:
+        if chunk.strip(b"\0"):
+            at = pos + len(chunk) - len(chunk.lstrip(b"\0"))
+            cov["errors"].append("bytes after member %d are not zeros: a further tar header or other data starts at decompressed offset %d "
+                                 "(compressed stream %d, %d compressed bytes read); the listing holds only the first archive of the stream"
+                                 % (n - 1, at, stream.streams, stream.consumed))
+            return
+        pos += len(chunk)
+        if time.monotonic() > deadline:
+            cov["limits_hit"].append("seconds: the compressed stream was not read to its end (%d decompressed bytes read; the rest was not checked)" % pos)
+            return
+        try:
+            chunk = stream.read(TarStream.CHUNK)
+        except (EOFError, OSError, zlib.error, lzma.LZMAError, ValueError) as e:
+            cov["errors"].append("the compressed stream does not end cleanly after the last member (decompressed offset %d): %s" % (pos, e))
+            return
+        if not chunk:
+            break
+    if stream.trailing_nonzero:
+        cov["errors"].append("%d bytes after the last compressed stream are not another stream and not zero padding (compressed offset %d)"
+                             % (stream.trailing, stream.consumed - stream.trailing))
+
+
 def list_tar(path, w, deadline, max_members, cov):
     compressed = False
+    kind = None
     with open(path, "rb") as fh:
         magic = fh.read(6)
-    if magic[:2] == b"\x1f\x8b" or magic[:3] == b"BZh" or magic[:6] == b"\xfd7zXZ\x00":
-        compressed = True
+    if magic[:2] == b"\x1f\x8b":
+        compressed, kind = True, "gzip"
+    elif magic[:3] == b"BZh":
+        compressed, kind = True, "bzip2"
+    elif magic[:6] == b"\xfd7zXZ\x00":
+        compressed, kind = True, "xz"
     cov["format"] = "tar" + (" (compressed)" if compressed else "")
-    # A plain tar is walked header to header, seeking over the data; a
-    # compressed one is read once, front to back, in stream mode.
-    tf = tarfile.open(path, mode="r|*" if compressed else "r:", tarinfo=BoundedInfo)
+    # A plain tar is walked header to header, seeking over the data; a compressed one is read once, front to back, in stream mode over
+    # a reader that sees every compressed stream of the file (tarfile's own "r|*" reads no trailer and stops at the end blocks), and its
+    # rest is read after the loop.
+    stream = TarStream(path, kind) if compressed else None
+    tf = tarfile.open(fileobj=stream, mode="r|", tarinfo=BoundedInfo) if compressed else tarfile.open(path, mode="r:", tarinfo=BoundedInfo)
     n = 0
     last = None
+    leftover = b""
+    clean = False
     try:
         for m in tf:
             raw = m.name.encode("utf-8", "surrogateescape")
@@ -303,11 +560,22 @@ def list_tar(path, w, deadline, max_members, cov):
             if time.monotonic() > deadline:
                 cov["limits_hit"].append("seconds: stopped after %d members" % n)
                 break
+        else:
+            clean = True       # the loop ended at the tar's end, not at a limit
+            if compressed:
+                # What tarfile read from the stream beyond the end blocks and did not use is part of the rest to be checked.
+                leftover = bytes(getattr(getattr(tf, "fileobj", None), "buf", b"") or b"")
     except (tarfile.TarError, EOFError, OSError, zlib.error, lzma.LZMAError) as e:
         cov["errors"].append("the archive ended or broke after %d members: %s" % (n, e))
     finally:
         tf.close()
-    if not compressed and not cov["limits_hit"]:
+    if compressed:
+        try:
+            if clean and not cov["limits_hit"] and not cov["errors"]:
+                read_rest(stream, leftover, deadline, n, cov)
+        finally:
+            stream.close()
+    elif not cov["limits_hit"]:
         tar_tail(path, last, n, cov)
     return n
 
