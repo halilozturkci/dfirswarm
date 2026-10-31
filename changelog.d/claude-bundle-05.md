@@ -65,3 +65,19 @@ the interpreter's default action, no JSON answer; moving the block first
 narrows it. A structural test holds the block's position in every
 carrier, and fails on the previous head, where STOP still sits after
 those blocks.
+
+### Fixed: encrypted-containers: password_recover and tcrypt_header no longer answer `complete` for an attempt that did not happen
+
+`password_recover` answers `failed`, with `recovered: 0`, when the hash file
+holds no hash line, when the candidate list holds no line, or when john loads
+no hash (`--show` reports nothing loaded, or john says "No password hashes
+loaded"); before, a john that exited 0 on a file of blank lines gave
+`complete` with "john tried every candidate line". Its budget sentence now
+carries the call's real `max_seconds`, not the default; `versions.helper` says
+"not reported by this build" when the helper reports no version (no john build
+is pinned for the image yet, so it no longer claims one); `format` is required
+with `hash_file`, as the manifest says. `tcrypt_header` answers about the
+password only for cryptsetup's exit 0 (decrypted) and exit 2 (bad passphrase,
+`decrypted: false`); any other exit, or exit 0 with none of the header fields,
+answers `failed` naming the exit code, and a `password_file` readable by group
+or other is refused, so the manifest's "0600" is enforced.

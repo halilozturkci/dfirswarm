@@ -1244,7 +1244,7 @@ def program_version(path, seconds):
     return text[0].strip() if text else ""
 
 
-def run_recover(john, helper, helper_name, fmt, source, hash_file, candidates, rule_name, deadline, out_dir):
+def run_recover(john, helper, helper_name, fmt, source, hash_file, candidates, rule_name, deadline, out_dir, seconds):
     """The one attempt: a helper (unless `hash_file` was given) then john, each bounded by what is left of
     `deadline`. Returns the answer's variable fields; raises nothing a caller must catch, only sets them."""
     # Nothing a helper or john writes without being told where (a default ~/.john/, a helper's own scratch file) may
@@ -1254,7 +1254,7 @@ def run_recover(john, helper, helper_name, fmt, source, hash_file, candidates, r
     home.mkdir(parents=True, exist_ok=True)
     os.environ["HOME"] = str(home)
     versions = {"john": program_version(john, PREFLIGHT_SECONDS) or "not reported by this build",
-                "helper": (program_version(helper, PREFLIGHT_SECONDS) or "bundled with the pinned john build") if helper else None}
+                "helper": (program_version(helper, PREFLIGHT_SECONDS) or "not reported by this build") if helper else None}
 
     if hash_file is not None:
         hash_path, hash_shown = hash_file, shown(hash_file)
@@ -1273,6 +1273,12 @@ def run_recover(john, helper, helper_name, fmt, source, hash_file, candidates, r
 
     hash_count = count_lines(hash_path)
     candidate_count = count_lines(candidates)
+    if hash_count == 0:
+        return {"status": "failed", "status_basis": "the hash file at %s holds no hash line: john was not run" % hash_shown,
+                "versions": versions, "hash_file": hash_shown, "hash_count": 0, "candidate_count": candidate_count, "recovered": 0}
+    if candidate_count == 0:
+        return {"status": "failed", "status_basis": "the candidate list holds no line: no attempt was made",
+                "versions": versions, "hash_file": hash_shown, "hash_count": hash_count, "candidate_count": 0, "recovered": 0}
 
     pot_path = sealed_path(out_dir, "password_recover-john.pot")
     john_log = sealed_path(out_dir, "password_recover-john-stdout.txt")
@@ -1293,12 +1299,23 @@ def run_recover(john, helper, helper_name, fmt, source, hash_file, candidates, r
         text = show_log.read_text("utf-8", "replace")
     except OSError:
         text = ""
-    m = re.search(r"(\d+)\s+password hash(?:es)? cracked", text)
+    try:
+        text += john_log.read_text("utf-8", "replace") + john_err.read_text("utf-8", "replace")
+    except OSError:
+        pass
+    m = re.search(r"(\d+)\s+password hash(?:es)? cracked,\s*(\d+)\s+left", text)
+    loaded = 0
     if m:
         recovered = int(m.group(1))
+        loaded = recovered + int(m.group(2))
+    base = {"versions": versions, "hash_file": hash_shown, "hash_count": hash_count, "candidate_count": candidate_count,
+            "recovered": recovered}
+    if not timed_out and (loaded == 0 or re.search(r"No password hashes loaded", text)):
+        return {**base, "status": "failed", "recovered": 0,
+                "status_basis": "john loaded no hash from %s (a format it does not take, or lines that are no hash): no candidate was tried" % hash_shown}
 
     if timed_out:
-        status, basis = "partial", "the time budget (%s) was reached before every candidate was tried" % DEFAULT_SECONDS
+        status, basis = "partial", "the time budget (%s seconds) was reached before every candidate was tried" % seconds
     elif code not in (0, None):
         status, basis = "partial", "john exited %s before finishing; what it tried is in the sealed pot file" % code
     else:
@@ -1342,6 +1359,8 @@ def main():
             fail("hash_file must name a file", hash_file=shown(hash_file) if isinstance(hash_file, str) else None)
         if os.path.islink(hash_file):
             fail("hash_file is a symbolic link: name the file it resolves to", hash_file=shown(hash_file))
+        if fmt is None:
+            fail("format is required with hash_file: there is no source to infer it from (one of %s)" % ", ".join(FORMATS))
 
     candidates = args.get("candidates")
     if not isinstance(candidates, str) or not candidates:
@@ -1370,8 +1389,8 @@ def main():
                   "format": fmt, "parser": PARSER}))
         return
 
-    result = run_recover(john, helper, helper_name, fmt, source, hash_file, candidates, rule_name, deadline, out_dir)
-    answer = {"parser": PARSER, "format": fmt, **result,
+    result = run_recover(john, helper, helper_name, fmt, source, hash_file, candidates, rule_name, deadline, out_dir, seconds)
+    answer ={"parser": PARSER, "format": fmt, **result,
               "note": "A recovered password lives only in the sealed pot file named above (store/jobs/<job>/out/...), mode 0600. "
                       "This answer carries no value, no hash, no salt and no length of either. Report in the ledger WHERE the "
                       "candidate list and the authority to try it came from, and hand any recovered value to the operator "

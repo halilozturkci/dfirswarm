@@ -1271,6 +1271,13 @@ def main():
         fail("password_file is required: a file holding the one candidate password this attempt tries (never a value given inline)")
     if os.path.islink(password_file):
         fail("password_file is a symbolic link: name the file it resolves to", password_file=shown(password_file))
+    try:
+        pmode = os.stat(password_file).st_mode
+    except OSError as exc:
+        fail("password_file could not be read: %s" % describe(exc), password_file=shown(password_file))
+    if pmode & 0o077:
+        fail("password_file must be mode 0600 (no access for group or other): chmod it, or write it as a sealed file in the job",
+             password_file=shown(password_file))
     password = read_small_file(password_file, 4096, "password_file")
     if password.endswith(b"\n"):
         password = password[:-1]
@@ -1343,7 +1350,19 @@ def main():
 
     text = out.decode("utf-8", "replace")
     fields = parse_fields(text)
-    decrypted = proc.returncode == 0 and bool(fields)
+    code = proc.returncode
+    # cryptsetup's exit codes: 0 success, 2 no permission or bad passphrase (the answer for a password that does not
+    # open a header); any other code (1 wrong parameters, 3 out of memory, 4 wrong device specified, 5 device
+    # already exists or busy, a signal's negative code) is not a statement about the password at all.
+    if code not in (0, 2) or (code == 0 and not fields):
+        emit(seal({"status": "failed", "parser": PARSER, "source": shown(source), "header": header, "offset": offset,
+                   "versions": {"cryptsetup": version or "not reported by this build"}, "decrypted": None, "fields": {},
+                   "exit_code": code, "stderr_present": bool(err.strip()),
+                   "status_basis": ("cryptsetup exited %s: that is not the answer for a password that does not open a header (2), so "
+                                    "nothing is said about the password" % code) if code != 0 else
+                                   "cryptsetup exited 0 but printed none of the header fields this tool reads: nothing is said about the header"}))
+        return
+    decrypted = code == 0
     answer = {
         "parser": PARSER, "source": shown(source), "header": header, "offset": offset,
         "versions": {"cryptsetup": version or "not reported by this build"},

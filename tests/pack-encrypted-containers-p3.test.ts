@@ -166,7 +166,7 @@ test("recovery_key_scan walks 600,000 files in one directory with bounded memory
     // RSS stays far below the ~208 MB a whole sorted(scandir()) of 600,000 entries held (the historical finding this fixes).
     assert.ok(max_rss_kb < 120_000, `max RSS was ${max_rss_kb} KB`);
   });
-}, 150_000);
+});
 
 // --- ENC-09: limit has a ceiling -----------------------------------------------------------------------------------
 
@@ -174,9 +174,14 @@ test("limit is refused past its ceiling, in both manifests", async () => {
   await withCwd(async (cwd) => {
     await mkdir(join(cwd, "work", "ev"), { recursive: true });
     await writeFile(join(cwd, "work", "ev", "a.txt"), "nothing here\n");
-    for (const [script, args] of [[SCAN, { path: "work/ev", limit: 10 ** 9 }], [SCAN, { path: "work/ev", limit: 1000 }]] as const) {
+    await writeFile(join(cwd, "work", "ev", "z.7z"), Buffer.from("7z\xbc\xaf\x27\x1c" + "\0".repeat(26), "binary"));
+    const cases: Array<[string, { path: string; limit: number }]> = [
+      [SCAN, { path: "work/ev", limit: 10 ** 9 }], [SCAN, { path: "work/ev", limit: 1000 }],
+      [PROBE, { path: "work/ev/z.7z", limit: 10 ** 9 }],
+    ];
+    for (const [script, args] of cases) {
       const out = await tool(script, cwd, args, {});
-      if ((args as { limit: number }).limit > 1000) {
+      if (args.limit > 1000) {
         assert.notEqual(out.code, 0, out.stdout);
         const e = JSON.parse(out.stdout) as Json;
         assert.match(e.error, /limit must be an integer from 1 to 1000/);
@@ -262,4 +267,4 @@ test("archive_probe's 7z listing ends when 7z itself ends, not when a forked gra
     }
     assert.equal(alive, false, "the grandchild that held the pipe was reaped with the tool, not left running");
   });
-}, 60_000);
+});

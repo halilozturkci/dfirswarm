@@ -215,7 +215,7 @@ test("hash_file skips the helper entirely", async () => {
     await writeFile(join(cwd, "candidates.txt"), "password1\n");
     const env = { JOB_ID: "j1", OUT: out, SECRET_OUTPUT: "1", PATH: `${bin}:${process.env.PATH}` };
     const a = answer<{ status: string; hash_file: string }>(await runTool(cwd, {
-      hash_file: "existing.hash", candidates: "candidates.txt",
+      hash_file: "existing.hash", format: "zip", candidates: "candidates.txt",
     }, env));
     assert.equal(a.status, "complete");
     assert.match(a.hash_file, /existing\.hash$/);
@@ -237,7 +237,7 @@ test("a budget hit while john is running answers partial, not complete", async (
       source: "evidence.zip", candidates: "candidates.txt", max_seconds: 1,
     }, env));
     assert.equal(a.status, "partial");
-    assert.match(a.status_basis, /time budget/);
+    assert.match(a.status_basis, /time budget \(1 seconds\)/, "the real max_seconds, not the default");
   });
 });
 
@@ -273,5 +273,90 @@ test("SIGTERM while john is running ends the tool with one JSON answer and the c
       p.on("close", () => resolve(o));
     });
     assert.equal(ps.trim(), "", "the stand-in john (and its sleep) was killed with the tool");
+  });
+});
+
+// --- fix round: nothing tried is never `complete` -----------------------------------------------------------------------
+
+const JOHN_NONE_LOADED = JOHN.replace('echo "1 password hash cracked, 0 left"', 'echo "No password hashes loaded (see FAQ)"');
+const HELPER_NO_VERSION = 'case "$1" in --version) exit 1 ;; esac\necho \'$pkzip$0*fakehash*file.zip:::file.zip\'';
+
+async function jobEnv(out: string, bin: string, extra: Record<string, string> = {}): Promise<Record<string, string>> {
+  return { JOB_ID: "j1", OUT: out, SECRET_OUTPUT: "1", PATH: `${bin}:${process.env.PATH}`, ...extra };
+}
+
+test("a hash file of blank lines answers failed with hash_count 0, and john is not run", async () => {
+  await scratch(async ({ cwd, out, bin, argvLog }) => {
+    await stub(bin, "john", argvLog, JOHN);
+    await writeFile(join(cwd, "blank.hash"), "\n   \n\n");
+    await writeFile(join(cwd, "candidates.txt"), "password1\n");
+    const a = answer<{ status: string; hash_count: number; status_basis: string }>(await runTool(cwd, {
+      hash_file: "blank.hash", format: "zip", candidates: "candidates.txt",
+    }, await jobEnv(out, bin)));
+    assert.equal(a.status, "failed");
+    assert.equal(a.hash_count, 0);
+    assert.doesNotMatch(a.status_basis, /tried every candidate/);
+    assert.doesNotMatch(await readFile(argvLog, "utf8"), /--wordlist/);
+  });
+});
+
+test("a helper that writes only a blank line answers failed, not complete", async () => {
+  await scratch(async ({ cwd, out, bin, argvLog }) => {
+    await stub(bin, "john", argvLog, JOHN);
+    await stub(bin, "zip2john", argvLog, "echo");
+    await writeFile(join(cwd, "evidence.zip"), "PK\x03\x04fake");
+    await writeFile(join(cwd, "candidates.txt"), "password1\n");
+    const a = answer<{ status: string; hash_count: number }>(await runTool(cwd, { source: "evidence.zip", candidates: "candidates.txt" }, await jobEnv(out, bin)));
+    assert.equal(a.status, "failed");
+    assert.equal(a.hash_count, 0);
+  });
+});
+
+test("john that loads no hash (exit 0, 'No password hashes loaded') answers failed", async () => {
+  await scratch(async ({ cwd, out, bin, argvLog }) => {
+    await stub(bin, "john", argvLog, JOHN_NONE_LOADED);
+    await writeFile(join(cwd, "h.hash"), "notahash:xyz\n");
+    await writeFile(join(cwd, "candidates.txt"), "password1\n");
+    const a = answer<{ status: string; status_basis: string; recovered: number }>(await runTool(cwd, {
+      hash_file: "h.hash", format: "zip", candidates: "candidates.txt",
+    }, await jobEnv(out, bin, { JOHN_RECOVERED: "1" })));
+    assert.equal(a.status, "failed");
+    assert.match(a.status_basis, /loaded no hash/);
+    assert.equal(a.recovered, 0);
+  });
+});
+
+test("an empty candidate list answers failed, not a vacuous complete", async () => {
+  await scratch(async ({ cwd, out, bin, argvLog }) => {
+    await stub(bin, "john", argvLog, JOHN);
+    await writeFile(join(cwd, "h.hash"), "$pkzip$0*x\n");
+    await writeFile(join(cwd, "candidates.txt"), "\n\n");
+    const a = answer<{ status: string; status_basis: string }>(await runTool(cwd, {
+      hash_file: "h.hash", format: "zip", candidates: "candidates.txt",
+    }, await jobEnv(out, bin)));
+    assert.equal(a.status, "failed");
+    assert.match(a.status_basis, /candidate list holds no line/);
+  });
+});
+
+test("versions.helper says 'not reported by this build' when the helper reports none, never a claim of a pin", async () => {
+  await scratch(async ({ cwd, out, bin, argvLog }) => {
+    await stub(bin, "john", argvLog, JOHN);
+    await stub(bin, "zip2john", argvLog, HELPER_NO_VERSION);
+    await writeFile(join(cwd, "evidence.zip"), "PK\x03\x04fake");
+    await writeFile(join(cwd, "candidates.txt"), "password1\n");
+    const a = answer<{ status: string; versions: { helper: string } }>(await runTool(cwd, { source: "evidence.zip", candidates: "candidates.txt" }, await jobEnv(out, bin)));
+    assert.equal(a.status, "complete");
+    assert.equal(a.versions.helper, "not reported by this build");
+  });
+});
+
+test("hash_file without format is refused (there is no source to infer it from)", async () => {
+  await scratch(async ({ cwd, out, bin, argvLog }) => {
+    await stub(bin, "john", argvLog, JOHN);
+    await writeFile(join(cwd, "h.hash"), "$pkzip$0*x\n");
+    await writeFile(join(cwd, "candidates.txt"), "password1\n");
+    const a = answer<{ error: string }>(await runTool(cwd, { hash_file: "h.hash", candidates: "candidates.txt" }, await jobEnv(out, bin)), 1);
+    assert.match(a.error, /format is required with hash_file/);
   });
 });

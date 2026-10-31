@@ -75,7 +75,7 @@ const CRYPTSETUP_DECRYPTS = [
   '  exit 0',
   'else',
   '  echo "Device /dev/stub is not a valid TCRYPT device." >&2',
-  '  exit 1',
+  '  exit 2',
   'fi',
 ].join("\n");
 
@@ -103,7 +103,7 @@ test("a symbolic link named as source or as a keyfile is refused", async () => {
     await stub(bin, "cryptsetup", argvLog, CRYPTSETUP_DECRYPTS);
     await writeFile(join(cwd, "real.img"), "volume bytes");
     await symlink(join(cwd, "real.img"), join(cwd, "link.img"));
-    await writeFile(join(cwd, "password.txt"), "whatever\n");
+    await writeFile(join(cwd, "password.txt"), "whatever\n", { mode: 0o600 });
     const env = { JOB_ID: "j1", OUT: out, SECRET_OUTPUT: "1", PATH: `${bin}:${process.env.PATH}` };
     const a = answer<{ error: string }>(await runTool(cwd, { source: "link.img", password_file: "password.txt" }, env), 1);
     assert.match(a.error, /source is a symbolic link/);
@@ -114,7 +114,7 @@ test("offset must be a multiple of 512, and pim is refused, named", async () => 
   await scratch(async ({ cwd, out, bin, argvLog }) => {
     await stub(bin, "cryptsetup", argvLog, CRYPTSETUP_DECRYPTS);
     await writeFile(join(cwd, "real.img"), "volume bytes");
-    await writeFile(join(cwd, "password.txt"), "whatever\n");
+    await writeFile(join(cwd, "password.txt"), "whatever\n", { mode: 0o600 });
     const env = { JOB_ID: "j1", OUT: out, SECRET_OUTPUT: "1", PATH: `${bin}:${process.env.PATH}` };
     const bad = answer<{ error: string }>(await runTool(cwd, { source: "real.img", password_file: "password.txt", offset: 100 }, env), 1);
     assert.match(bad.error, /multiple of 512/);
@@ -128,7 +128,7 @@ test("offset must be a multiple of 512, and pim is refused, named", async () => 
 test("a missing cryptsetup answers unavailable, naming the program", async () => {
   await scratch(async ({ cwd, out }) => {
     await writeFile(join(cwd, "real.img"), "volume bytes");
-    await writeFile(join(cwd, "password.txt"), "whatever\n");
+    await writeFile(join(cwd, "password.txt"), "whatever\n", { mode: 0o600 });
     // /usr/bin:/bin holds python3 (so the tool itself starts) but not cryptsetup, which a non-root PATH does not
     // usually carry even when cryptsetup-bin is installed (it lands in a sbin directory).
     const env = { JOB_ID: "j1", OUT: out, SECRET_OUTPUT: "1", PATH: "/usr/bin:/bin" };
@@ -144,7 +144,7 @@ test("a gated run with a stand-in cryptsetup: the password is on stdin only, nev
   await scratch(async ({ cwd, out, bin, argvLog }) => {
     await stub(bin, "cryptsetup", argvLog, CRYPTSETUP_DECRYPTS);
     await writeFile(join(cwd, "real.img"), "volume bytes");
-    await writeFile(join(cwd, "password.txt"), `${CANARY}\n`);
+    await writeFile(join(cwd, "password.txt"), `${CANARY}\n`, { mode: 0o600 });
     const env = { JOB_ID: "j1", OUT: out, SECRET_OUTPUT: "1", PATH: `${bin}:${process.env.PATH}`, EXPECT_PASSWORD: CANARY };
     const run = await runTool(cwd, { source: "real.img", password_file: "password.txt" }, env);
     const a = answer<{
@@ -185,7 +185,7 @@ test("a wrong password does not decrypt, and the answer never claims the volume 
   await scratch(async ({ cwd, out, bin, argvLog }) => {
     await stub(bin, "cryptsetup", argvLog, CRYPTSETUP_DECRYPTS);
     await writeFile(join(cwd, "real.img"), "volume bytes");
-    await writeFile(join(cwd, "password.txt"), "wrong-guess\n");
+    await writeFile(join(cwd, "password.txt"), "wrong-guess\n", { mode: 0o600 });
     const env = { JOB_ID: "j1", OUT: out, SECRET_OUTPUT: "1", PATH: `${bin}:${process.env.PATH}`, EXPECT_PASSWORD: CANARY };
     const a = answer<{ status: string; decrypted: boolean; note: string }>(await runTool(cwd, {
       source: "real.img", password_file: "password.txt",
@@ -200,7 +200,7 @@ test("header selects --tcrypt-hidden or --tcrypt-backup, and keyfiles are passed
   await scratch(async ({ cwd, out, bin, argvLog }) => {
     await stub(bin, "cryptsetup", argvLog, CRYPTSETUP_DECRYPTS);
     await writeFile(join(cwd, "real.img"), "volume bytes");
-    await writeFile(join(cwd, "password.txt"), "x\n");
+    await writeFile(join(cwd, "password.txt"), "x\n", { mode: 0o600 });
     await writeFile(join(cwd, "key1.bin"), "keyfile bytes");
     const env = { JOB_ID: "j1", OUT: out, SECRET_OUTPUT: "1", PATH: `${bin}:${process.env.PATH}` };
     await runTool(cwd, { source: "real.img", password_file: "password.txt", header: "hidden", keyfiles: ["key1.bin"] }, env);
@@ -216,7 +216,7 @@ test("a timeout while cryptsetup is running answers partial", async () => {
   await scratch(async ({ cwd, out, bin, argvLog }) => {
     await stub(bin, "cryptsetup", argvLog, CRYPTSETUP_DECRYPTS);
     await writeFile(join(cwd, "real.img"), "volume bytes");
-    await writeFile(join(cwd, "password.txt"), "x\n");
+    await writeFile(join(cwd, "password.txt"), "x\n", { mode: 0o600 });
     const env = { JOB_ID: "j1", OUT: out, SECRET_OUTPUT: "1", PATH: `${bin}:${process.env.PATH}`, SLOW_CS: "5" };
     const a = answer<{ status: string; status_basis: string }>(await runTool(cwd, {
       source: "real.img", password_file: "password.txt", max_seconds: 1,
@@ -232,7 +232,7 @@ test("SIGTERM while cryptsetup is running ends the tool with one JSON answer and
   await scratch(async ({ cwd, out, bin, argvLog }) => {
     await stub(bin, "cryptsetup", argvLog, CRYPTSETUP_DECRYPTS);
     await writeFile(join(cwd, "real.img"), "volume bytes");
-    await writeFile(join(cwd, "password.txt"), "x\n");
+    await writeFile(join(cwd, "password.txt"), "x\n", { mode: 0o600 });
     const env = {
       ...process.env, ...AGENT, JOB_ID: "j1", OUT: out, SECRET_OUTPUT: "1", PATH: `${bin}:${process.env.PATH}`, SLOW_CS: "30",
     } as Record<string, string>;
@@ -269,4 +269,43 @@ test("a real gated run against a header built from the TCRYPT format, when this 
   // A VeraCrypt header built from the format specification (PBKDF2 by hashlib, AES-XTS by the cryptography package
   // when present) would go here, run against the real cryptsetup. Not reached on a host without cryptsetup.
   assert.ok(true);
+});
+
+// --- fix round: only cryptsetup's exit 0 and 2 are answers about the password ------------------------------------------
+
+test("cryptsetup exit 1, 3 and 4 answer failed naming the exit code; exit 2 is complete and not decrypted; exit 0 decrypts", async () => {
+  await scratch(async ({ cwd, out, bin, argvLog }) => {
+    await stub(bin, "cryptsetup", argvLog, CRYPTSETUP_DECRYPTS);
+    await writeFile(join(cwd, "real.img"), "volume bytes");
+    await writeFile(join(cwd, "password.txt"), `${CANARY}\n`, { mode: 0o600 });
+    const base = { JOB_ID: "j1", OUT: out, SECRET_OUTPUT: "1", PATH: `${bin}:${process.env.PATH}`, EXPECT_PASSWORD: CANARY };
+    for (const code of ["1", "3", "4"]) {
+      const a = answer<{ status: string; status_basis: string; decrypted: boolean | null; exit_code: number }>(
+        await runTool(cwd, { source: "real.img", password_file: "password.txt" }, { ...base, CS_EXIT: code }));
+      assert.equal(a.status, "failed", `exit ${code}`);
+      assert.match(a.status_basis, new RegExp(`cryptsetup exited ${code}`));
+      assert.equal(a.exit_code, Number(code));
+      assert.notEqual(a.decrypted, false, "a failure says nothing about the password");
+    }
+    const bad = answer<{ status: string; decrypted: boolean }>(await runTool(cwd, { source: "real.img", password_file: "password.txt" }, { ...base, CS_EXIT: "2" }));
+    assert.equal(bad.status, "complete");
+    assert.equal(bad.decrypted, false);
+    const good = answer<{ status: string; decrypted: boolean }>(await runTool(cwd, { source: "real.img", password_file: "password.txt" }, base));
+    assert.equal(good.status, "complete");
+    assert.equal(good.decrypted, true);
+    const empty = answer<{ status: string }>(await runTool(cwd, { source: "real.img", password_file: "password.txt" }, { ...base, CS_EXIT: "0" }));
+    assert.equal(empty.status, "failed", "exit 0 with none of the header fields is not a decryption");
+  });
+});
+
+test("a password_file readable by group or other is refused, as the manifest says it must be 0600", async () => {
+  await scratch(async ({ cwd, out, bin, argvLog }) => {
+    await stub(bin, "cryptsetup", argvLog, CRYPTSETUP_DECRYPTS);
+    await writeFile(join(cwd, "real.img"), "volume bytes");
+    await writeFile(join(cwd, "open.txt"), "x\n");
+    await chmod(join(cwd, "open.txt"), 0o644);
+    const env = { JOB_ID: "j1", OUT: out, SECRET_OUTPUT: "1", PATH: `${bin}:${process.env.PATH}` };
+    const a = answer<{ error: string }>(await runTool(cwd, { source: "real.img", password_file: "open.txt" }, env), 1);
+    assert.match(a.error, /password_file must be mode 0600/);
+  });
 });
