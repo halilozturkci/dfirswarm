@@ -574,6 +574,30 @@ test("when the clock is out before the first file, the answer is partial and nam
   });
 });
 
+test("a limit of the tool's own that ends the read before any event (max_expanded_bytes, max_record_bytes) is named with its value, never blamed on the input", async () => {
+  await withDir(async (cwd) => {
+    const many = Array.from({ length: 2000 }, (_, i) => ct({ eventID: `x-${i}`, requestParameters: { pad: "p".repeat(1500) } }));
+    await put(cwd, "inputs/exp.json.gz", gz(trail(...many)));
+    const exp = await tool(TRAIL, cwd, { path: "inputs/exp.json.gz", max_expanded_bytes: 1024 });
+    const e = body(exp);
+    assert.equal(e.status, "partial");
+    assert.equal(e.error, undefined, "no error that blames the input");
+    assert.match(e.status_basis, /max_expanded_bytes \(1024\) stopped the read/);
+    assert.doesNotMatch(JSON.stringify(e), /no CloudTrail event could be read from what was supplied/);
+    assert.equal(e.coverage.records_read, 0);
+
+    const big = Array.from({ length: 2000 }, (_, i) => JSON.stringify(ct({ eventID: `y-${i}`, requestParameters: { pad: "p".repeat(1700) } }))).join("\n") + "\n";
+    await put(cwd, "inputs/big.jsonl", big);
+    const rec = await tool(TRAIL, cwd, { path: "inputs/big.jsonl", max_record_bytes: 1024 });
+    const r = body(rec);
+    assert.equal(r.status, "partial");
+    assert.equal(r.error, undefined);
+    assert.match(r.status_basis, /max_record_bytes \(1024\) rejected every record/);
+    assert.doesNotMatch(JSON.stringify(r), /this is not an export this tool reads/, "the first-rejects sentence is for rejects the limit did not cause");
+    assert.match(JSON.stringify(r.file_problems), /each larger than max_record_bytes \(1024\)/);
+  });
+});
+
 test("failed, with 'no CloudTrail event could be read', is still given when the clock did not stop the read", async () => {
   await withDir(async (cwd) => {
     await put(cwd, "work/ev/a.json", "this is not a CloudTrail file at all\n");

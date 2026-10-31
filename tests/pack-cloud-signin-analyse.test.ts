@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
+import { gzipSync } from "node:zlib";
 import { fileURLToPath } from "node:url";
 import { SIGNIN, asJob, body, everythingBut, exists, filesUnder, put, refused, rowsOf, tool, withDir } from "./cloud-pack-harness.ts";
 import type { Json } from "./cloud-pack-harness.ts";
@@ -68,6 +69,25 @@ test("when the clock is out before the read, the partial basis names the clock (
     assert.equal(out.coverage.stopped_by_time_limit, true);
     assert.match(out.status_basis, /^the time limit \(30 s\) ended the read after \d+ event\(s\)/);
     assert.doesNotMatch(out.status_basis, /^part of the file was not read/);
+  });
+});
+
+test("a limit of the tool's own that ends the read before any event (max_expanded_bytes, max_record_bytes) is named with its value, never blamed on the input", async () => {
+  await withDir(async (cwd) => {
+    const many = Array.from({ length: 2000 }, (_, i) => signIn(i, "2026-02-14T09:00:00Z", 0));
+    await put(cwd, "work/ev/exp.json.gz", gzipSync(Buffer.from(graph(...many))));
+    const exp = body(await tool(SIGNIN, cwd, { path: "work/ev/exp.json.gz", max_expanded_bytes: 1024 }));
+    assert.equal(exp.status, "partial");
+    assert.equal(exp.error, undefined);
+    assert.match(exp.status_basis, /max_expanded_bytes \(1024\) stopped the read/);
+    assert.doesNotMatch(JSON.stringify(exp), /no sign-in record could be read from the file/);
+
+    const lines = Array.from({ length: 50 }, (_, i) => JSON.stringify(signIn(i, "2026-02-14T09:00:00Z", 0, { pad: "p".repeat(1700) }))).join("\n") + "\n";
+    await put(cwd, "work/ev/big.jsonl", lines);
+    const rec = body(await tool(SIGNIN, cwd, { path: "work/ev/big.jsonl", max_record_bytes: 1024 }));
+    assert.equal(rec.status, "partial");
+    assert.equal(rec.error, undefined);
+    assert.match(rec.status_basis, /max_record_bytes \(1024\) rejected every record/);
   });
 });
 

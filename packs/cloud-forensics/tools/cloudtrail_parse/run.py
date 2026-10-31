@@ -2340,6 +2340,7 @@ class Census:
                        "records_rejected": 0, "records_not_cloudtrail_events": 0, "replacement_characters": 0, "bytes_read": 0}
         self.digest_files = []
         self.pagination = []
+        self.limit_stops = []      # a limit of the tool's own (max_expanded_bytes, max_record_bytes) ended a file before an event was read
         self.versions = Tally()
         self.unknown_version = 0
         self.cut = False
@@ -2358,6 +2359,7 @@ def scan_file(path, census, record_problems, per_record, max_expanded, record_ca
     events = rejected = digests = foreign = 0
     first_reject = None
     run = 0
+    size_rejects = 0
     stopped_all_rejected = False
     if record_problems:
         census.rejected.start_file()
@@ -2380,6 +2382,8 @@ def scan_file(path, census, record_problems, per_record, max_expanded, record_ca
                     foreign += 1 if kind != "reject" else 0
                     run += 1
                     first_reject = first_reject or (info["record"], info["line"], reason)
+                    if kind == "reject" and "larger than max_record_bytes" in str(reason):
+                        size_rejects += 1
                     stop = run >= FIRST_REJECTS and events == 0
                     if record_problems:
                         stop = census.rejected.reject({"file": shown, "record": info["record"], "line": info["line"], "chars": info["chars"], "reason": scrub(reason)}) or stop
@@ -2418,7 +2422,15 @@ def scan_file(path, census, record_problems, per_record, max_expanded, record_ca
         problems.append("the expansion reached max_expanded_bytes (%d): the rest of the file was not read" % max_expanded)
     if getattr(src, "stopped", None):
         problems.append(src.stopped)
-    if stopped_all_rejected:
+    # A limit of the tool's own that ended the file before any event was read is the limit's doing, never a verdict on the input.
+    limit_stop = None
+    if events == 0 and src.capped:
+        limit_stop = "max_expanded_bytes (%d) stopped the read of %s before any event" % (max_expanded, shown)
+    elif events == 0 and size_rejects and size_rejects == rejected:
+        limit_stop = "max_record_bytes (%d) rejected every record of %s (%d of them), so no event was read" % (record_cap, shown, size_rejects)
+    if stopped_all_rejected and size_rejects == rejected:
+        problems.append("the first %d records were each larger than max_record_bytes (%d), so none was read: raise it; the rest of the file was not examined" % (FIRST_REJECTS, record_cap))
+    elif stopped_all_rejected:
         problems.append("the first %d records were all rejected: this is not an export this tool reads, and the rest of the file was not examined" % FIRST_REJECTS)
     if rejected:
         problems.append("%d record(s) were not read as events (the first, record %d at line %s: %s); %s" % (
@@ -2453,6 +2465,8 @@ def scan_file(path, census, record_problems, per_record, max_expanded, record_ca
         row["digest_entries"] = digests
     if src.archive:
         row["archive"] = src.archive
+    if record_problems and limit_stop:
+        census.limit_stops.append(limit_stop)
     if record_problems:
         census.cut = census.cut or bool(src.error or src.capped or getattr(src, "stopped", None) or stopped_early or stopped_all_rejected)
         census.counts["replacement_characters"] += src.replaced
@@ -2704,13 +2718,19 @@ def main():
         if c["files_failed"] or c["files_unsupported"] or c["files_empty"]:
             clock_basis += "; before the stop %d file(s) could not be read, %d were unsupported and %d were empty (see file_problems)" % (
                 c["files_failed"], c["files_unsupported"], c["files_empty"])
-    status = status_of((not stop_all) and nothing_read and (c["files_failed"] or c["files_unsupported"] or c["files_empty"] or c["files_not_attempted"]), complete,
+    # The same rule for the tool's other limits: when max_expanded_bytes or max_record_bytes ended every file before an event was read,
+    # the answer is partial and names the limit and its value; it does not say that nothing could be read from what was supplied.
+    limit_basis = None
+    if census.limit_stops and nothing_read and not stop_all:
+        limit_basis = ("a limit of this tool's own stopped the read before any event: %s; raise it (max_expanded_bytes, max_record_bytes) and run again; "
+                       "nothing in the supplied files was judged (see coverage.limit_stops and file_problems)" % "; ".join(census.limit_stops[:3]))
+    status = status_of((not stop_all) and not limit_basis and nothing_read and (c["files_failed"] or c["files_unsupported"] or c["files_empty"] or c["files_not_attempted"]), complete,
                        "every record of every supplied file was read and nothing was left out; that says nothing about whether the export holds everything the account logged",
-                       clock_basis or "some of what was supplied was not read as events or not read at all: a record that is not a CloudTrail event, a file skipped (by its name too: see skipped), a file or a record cut short, or a next page not supplied (see coverage, file_census, rejected_records, file_problems, skipped and pagination_markers)",
+                       clock_basis or limit_basis or "some of what was supplied was not read as events or not read at all: a record that is not a CloudTrail event, a file skipped (by its name too: see skipped), a file or a record cut short, or a next page not supplied (see coverage, file_census, rejected_records, file_problems, skipped and pagination_markers)",
                        "no CloudTrail event could be read from what was supplied (see file_problems)")
     answer = {
         "parser": PARSER, **status, "path": shown_path(path),
-        "coverage": {**c, "time_limit_seconds": seconds, "stopped_by_time_limit": stop_all, "max_expanded_bytes": max_expanded,
+        "coverage": {**c, "time_limit_seconds": seconds, "stopped_by_time_limit": stop_all, "max_expanded_bytes": max_expanded, "max_record_bytes": record_cap, "limit_stops": census.limit_stops[:20],
                      "records_matched": matched, "time_statuses": zone_counts,
                      "event_versions": census.versions.counts, "events_with_an_unknown_version": census.unknown_version,
                      "rejected_records_not_listed": census.rejected.total_unlisted},

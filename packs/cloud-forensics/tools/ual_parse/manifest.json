@@ -82,8 +82,8 @@
   "example": "{\"path\": \"inputs/ual.csv\", \"notable_only\": true}",
   "by": "maintainer",
   "at": "2026-10-27T12:00:00.000Z",
-  "version": 7,
-  "sha256": "0d6427339cb219c3e4b1ddc3461d6c925889efd24403fed5ddae5b53dbf5be6c",
+  "version": 8,
+  "sha256": "97e3764035f9d9f607e7210e8e98bd1fa31d7476d77158ad18d861bb0a72e192",
   "use": {
     "names": [
       "AuditLog*.csv",

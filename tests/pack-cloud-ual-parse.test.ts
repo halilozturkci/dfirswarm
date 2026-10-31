@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
+import { gzipSync } from "node:zlib";
 import { fileURLToPath } from "node:url";
 import { UAL, asJob, body, everythingBut, exists, filesUnder, put, refused, rowsOf, tool, withDir } from "./cloud-pack-harness.ts";
 import type { Json } from "./cloud-pack-harness.ts";
@@ -419,6 +420,23 @@ test("when the clock is out before the first file, the answer is partial and nam
     assert.equal(out.coverage.stopped_by_time_limit, true);
     assert.equal(out.coverage.files_not_attempted, 2);
     assert.doesNotMatch(JSON.stringify(out), /no audit record could be read/);
+  });
+});
+
+test("a limit of the tool's own that ends the read before any record (max_record_bytes, max_expanded_bytes) is named with its value, never blamed on the input", async () => {
+  await withDir(async (cwd) => {
+    const rows = Array.from({ length: 20 }, (_, i) => ({ id: `rec-${i}`, date: "2026-02-14T09:00:00.0000000Z", type: "ExchangeItemAggregated", op: "MailItemsAccessed", user: "alice@example.org", data: JSON.stringify(audit({ Id: `a-${i}`, pad: "p".repeat(1700) })) }));
+    const csv = await run(cwd, { "big.csv": portalCsv(rows) }, { max_record_bytes: 1024 });
+    assert.equal(csv.status, "partial");
+    assert.equal(csv.error, undefined);
+    assert.match(csv.status_basis, /max_record_bytes \(1024\) rejected every record/);
+    assert.doesNotMatch(JSON.stringify(csv), /no audit record could be read from what was supplied/);
+
+    await put(cwd, "work/ev2/exp.json.gz", Buffer.from(gzipSync(Buffer.from(JSON.stringify(Array.from({ length: 2000 }, (_, i) => audit({ Id: `e-${i}`, pad: "p".repeat(1500) })))))));
+    const cap = body(await tool(UAL, cwd, { path: "work/ev2/exp.json.gz", max_expanded_bytes: 1024 }));
+    assert.equal(cap.status, "partial");
+    assert.equal(cap.error, undefined);
+    assert.match(cap.status_basis, /max_expanded_bytes \(1024\) stopped the read/);
   });
 });
 

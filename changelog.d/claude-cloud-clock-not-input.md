@@ -11,3 +11,5 @@ exit code is 0. `failed` is given only when the clock did not stop the read.
 signin_analyse's partial basis names the clock when the clock cut the read.
 `tests/cloud-clock-inject.py` runs a tool with its clock already out, so the
 tests no longer depend on how much a runner reads in a second.
+
+The same rule holds for the tool's other limits. When `max_expanded_bytes`, or `max_record_bytes` (every record of a file larger than it, including the first-1000-rejects stop it causes), ended the read before any event or record was read, cloudtrail_parse, ual_parse and signin_analyse answered `failed` with "no ... could be read from what was supplied" and a first-rejects sentence saying the file "is not an export this tool reads". They now answer `partial` with a basis that names the limit and its value ("max_expanded_bytes (1024) stopped the read ... before any event; raise it; nothing was judged"), no `error`, exit 0, and `coverage.limit_stops` / `limit_stop` carry the same text; the first-rejects sentence is kept for rejects the limit did not cause.

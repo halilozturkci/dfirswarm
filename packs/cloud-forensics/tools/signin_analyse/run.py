@@ -2349,6 +2349,8 @@ def main():
     problems, pagination = [], []
     first_reject = None
     stopped_all_rejected = False
+    size_rejects = 0
+    limit_stop = None      # a limit of the tool's own that ended the file before any event was read
     ordinal = 0
     batch = []
     try:
@@ -2364,6 +2366,8 @@ def main():
                     reason = item if kind == "reject" else "a JSON %s, not a record" % type(item).__name__
                     counts["records_rejected"] += 1
                     first_reject = first_reject or (info["record"], info["line"], reason)
+                    if kind == "reject" and ("larger than max_record_bytes" in str(reason) or "a line longer than" in str(reason)):
+                        size_rejects += 1
                     if rejected.reject({"file": row["file"], "record": info["record"], "line": info["line"], "reason": scrub(reason)}):
                         stopped_all_rejected = True
                         break
@@ -2511,7 +2515,14 @@ def main():
             problems.append("the expansion reached max_expanded_bytes (%d): the rest of the file was not read" % max_expanded)
         if getattr(src, "stopped", None):
             problems.append(src.stopped)
-        if stopped_all_rejected:
+        # A limit of the tool's own that ended the file before any event was read is the limit's doing, never a verdict on the input.
+        if counts["events"] == 0 and src.capped:
+            limit_stop = "max_expanded_bytes (%d) stopped the read before any event" % max_expanded
+        elif counts["events"] == 0 and size_rejects and size_rejects == counts["records_rejected"]:
+            limit_stop = "max_record_bytes (%d) rejected every record (%d of them), so no event was read" % (record_cap, size_rejects)
+        if stopped_all_rejected and size_rejects == counts["records_rejected"]:
+            problems.append("the first %d records were each larger than max_record_bytes (%d), so none was read: raise it; the rest of the file was not examined" % (FIRST_REJECTS, record_cap))
+        elif stopped_all_rejected:
             problems.append("the first %d records were all rejected: this is not an export this tool reads, and the rest of the file was not examined" % FIRST_REJECTS)
         if counts["records_rejected"]:
             problems.append("%d record(s) were not read (the first, record %d at line %s: %s); %s" % (
@@ -2556,17 +2567,22 @@ def main():
     withheld_summary = withheld.summary()
     replaced = row.get("replacement_characters", 0)
     complete = (row["status"] == "read" and not pagination and replaced == 0)
-    status = status_of(row["status"] in ("failed", "unsupported", "empty") and counts["events"] == 0, complete,
+    limit_basis = None
+    if limit_stop and not stopped_early:
+        limit_basis = ("a limit of this tool's own stopped the read before any event: %s; raise it (max_expanded_bytes, max_record_bytes) and run again; "
+                       "nothing in the file was judged (see coverage.limit_stop and file_problems)" % limit_stop)
+    status = status_of(row["status"] in ("failed", "unsupported", "empty") and counts["events"] == 0 and not limit_basis, complete,
                        "every record of the supplied file was read and nothing was left out; that says nothing about whether the export holds every sign-in the tenant logged",
                        ("the time limit (%s s) ended the read after %d event(s); what was read is kept and the rest of the file was not examined (see coverage.stopped_by_time_limit); "
                         "also, if any, part of the file that was not read as sign-in records, a next page that was not supplied, or events with a time that could not be decoded "
                         "(see coverage, file_problems, rejected_records and pagination_markers)" % (seconds, counts["events"])) if stopped_early else
+                       limit_basis or
                        "part of the file was not read as sign-in records, or the export names a next page that was not supplied, or events have a time that could not be decoded "
                        "(see coverage, file_problems, rejected_records and pagination_markers)",
                        "no sign-in record could be read from the file (see file_problems)")
     answer = {
         "parser": PARSER, **status, "path": shown_path(path),
-        "coverage": {**counts, "files_found": 1, "time_limit_seconds": seconds, "stopped_by_time_limit": stopped_early, "max_expanded_bytes": max_expanded,
+        "coverage": {**counts, "files_found": 1, "time_limit_seconds": seconds, "stopped_by_time_limit": stopped_early, "max_expanded_bytes": max_expanded, "max_record_bytes": record_cap, "limit_stop": limit_stop,
                      "time_statuses": time_statuses, "bytes_read": row["bytes_read"], "replacement_characters": replaced,
                      "analysis_kept_in": db_where, "users_analysed": analysis["users"], "users_not_analysed_over_cap": analysis["over_cap"],
                      "users_not_analysed_named": analysis["over_named"], "rejected_records_not_listed": rejected.total_unlisted},
