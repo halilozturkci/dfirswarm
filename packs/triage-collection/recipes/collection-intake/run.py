@@ -57,55 +57,6 @@ WITHHELD = {"count": 0}
 VALUES = [None]
 
 
-def memory_ceiling():
-    """The bytes this process may hold, as far as it can be known: COLLECTION_INTAKE_MEMORY_BYTES, else the smallest of the cgroup limit and
-    the address-space and data limits. None when nothing limits it that this can see."""
-    try:
-        if os.environ.get("COLLECTION_INTAKE_MEMORY_BYTES"):
-            return int(os.environ["COLLECTION_INTAKE_MEMORY_BYTES"])
-    except ValueError:
-        pass
-    found = []
-    for path in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
-        try:
-            with open(path) as fh:
-                text = fh.read().strip()
-            if text.isdigit() and int(text) < (1 << 60):
-                found.append(int(text))
-        except OSError:
-            pass
-    try:
-        import resource
-        for which in (resource.RLIMIT_AS, resource.RLIMIT_DATA):
-            soft = resource.getrlimit(which)[0]
-            if soft != resource.RLIM_INFINITY:
-                found.append(soft)
-    except (ImportError, ValueError, OSError):
-        pass
-    return min(found) if found else None
-
-
-MEMORY_CEILING = [None, False]         # (bytes, looked up)
-
-
-def over_memory():
-    """A sentence when the process holds more than 60% of what it may hold (the per-member state of a delivery of millions of members is the
-    one thing that grows with the input), else None: the pass stops there and says so, instead of being killed with nothing written."""
-    if not MEMORY_CEILING[1]:
-        MEMORY_CEILING[0], MEMORY_CEILING[1] = memory_ceiling(), True
-    ceiling = MEMORY_CEILING[0]
-    if not ceiling:
-        return None
-    try:
-        import resource
-        peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * (1 if sys.platform == "darwin" else 1024)
-    except (ImportError, OSError):
-        return None
-    if peak > ceiling * 0.6:
-        return "the memory bound (%d MB held of the %d MB this process may hold)" % (peak >> 20, ceiling >> 20)
-    return None
-
-
 def out_of_time():
     return DEADLINE[0] is not None and time.monotonic() > DEADLINE[0]
 
@@ -131,7 +82,71 @@ import json
 import os
 import re
 import stat
+import sys
+import unicodedata
 
+MEMORY_ENV = ("COLLECTION_MEMORY_BYTES", "COLLECTION_INTAKE_MEMORY_BYTES")      # the bytes this process may hold, set by hand (the second name is the recipe's own, still read)
+
+
+def memory_ceiling():
+    """The bytes this process may hold, as far as it can be known: COLLECTION_MEMORY_BYTES (or the recipe's COLLECTION_INTAKE_MEMORY_BYTES) when
+    it is a positive whole number, else the smallest of the cgroup limit and the address-space and data limits. None when nothing limits it that
+    this can see."""
+    for name in MEMORY_ENV:
+        try:
+            if os.environ.get(name) and int(os.environ[name]) > 0:
+                return int(os.environ[name])
+        except ValueError:
+            pass
+    found = []
+    for path in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        try:
+            with open(path) as fh:
+                text = fh.read().strip()
+            if text.isdigit() and int(text) < (1 << 60):
+                found.append(int(text))
+        except OSError:
+            pass
+    try:
+        import resource
+        for which in (resource.RLIMIT_AS, resource.RLIMIT_DATA):
+            soft = resource.getrlimit(which)[0]
+            if soft != resource.RLIM_INFINITY:
+                found.append(soft)
+    except (ImportError, ValueError, OSError):
+        pass
+    return min(found) if found else None
+
+
+MEMORY_CEILING = [None, False]         # (bytes, looked up)
+
+
+def over_memory():
+    """A sentence when the process holds more than 60% of what it may hold (the census and the per-member state of a delivery of millions of
+    entries are what grow with the input), else None: the census and the pass stop there, partial, and say so, instead of being killed with
+    nothing written."""
+    if not MEMORY_CEILING[1]:
+        MEMORY_CEILING[0], MEMORY_CEILING[1] = memory_ceiling(), True
+    ceiling = MEMORY_CEILING[0]
+    if not ceiling:
+        return None
+    try:
+        import resource
+        peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * (1 if sys.platform == "darwin" else 1024)
+    except (ImportError, OSError):
+        return None
+    if peak * 10 > ceiling * 6:
+        return "the memory bound (%d MB held of the %d MB this process may hold)" % (peak >> 20, ceiling >> 20)
+    return None
+
+
+def fold_name(text):
+    """The key a name is joined by: NFC-normalised, then case-folded, so a name written in decomposed form (as macOS writes it) is the same name
+    as its precomposed record."""
+    return unicodedata.normalize("NFC", text).casefold()
+
+
+MEMORY_CHECK_EVERY = 1024          # the census asks for the memory this many entries apart (one getrusage call each)
 MAX_CENSUS = 2000000              # entries held for the join; past it the census is partial and no record is called missing
 REC_LINE = 1 << 20                # a log line longer than this is read in part; the whole line stays in the evidence at its locator
 REC_CHUNK = 1 << 20
@@ -207,14 +222,23 @@ class Census:
 
     @staticmethod
     def key(rel):
-        return rel.replace(os.sep, "/").casefold()
+        return fold_name(rel.replace(os.sep, "/"))
 
     def add(self, rel, size, kind):
         if self.total >= self.cap:
             self.capped = True
             self.complete = False
             return
+        if self.stopped is not None and self.stopped.get("memory"):
+            self.complete = False
+            return
         self.total += 1
+        if self.total % MEMORY_CHECK_EVERY == 0:
+            held = over_memory()
+            if held:
+                self.stopped = {"reason": held, "memory": True, "entries_held": self.total}
+                self.complete = False
+                return
         if kind == "f":
             self.files += 1
         elif kind == "l":
@@ -248,6 +272,8 @@ def walk_census(root, census, skip=None):
             census.stopped = {"reason": "the time limit ended the walk", "directories_not_listed": len(stack)}
             census.complete = False
             return
+        if census.stopped is not None and census.stopped.get("memory"):
+            return
         directory = stack.pop()
         rel_dir = directory[len(prefix):] if directory.startswith(prefix) else ""
         try:
@@ -259,6 +285,8 @@ def walk_census(root, census, skip=None):
         census.dirs += 1
         for entry in entries:
             seen += 1
+            if census.stopped is not None and census.stopped.get("memory"):
+                return
             if (seen & 1023) == 0 and out_of_time():
                 census.stopped = {"reason": "the time limit ended the walk", "directories_not_listed": len(stack)}
                 census.complete = False
@@ -1185,7 +1213,7 @@ def hash_file(src, rel, algorithms):
 
 
 def norm_text(text):
-    return text.replace("\\", "/").casefold()
+    return fold_name(text.replace("\\", "/"))
 
 
 def glob_match(pattern, text):
