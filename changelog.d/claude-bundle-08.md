@@ -21,3 +21,7 @@ A `ransomware` image profile (the packs of `disk` and `ransomware-response`, no 
 ### Changed: images
 
 `images.yml` and `images/README.md` say that the private publishing path (prebuilt images, signing, the images lock) is planned and not in place: no workflow runs in the private repository and no `images.lock.json` exists.
+
+### Added: images
+
+`scripts/image-acceptance.sh` is the image's own acceptance, run by the weekly `image-boot` workflow inside each profile's image: it records, in the job summary, a receipt for every program the image's record names (found on PATH, the first line of its version command, the version its pack pinned) and for every tool of the profile's packs run on an empty file and, where a format can be built from its specification, on the smallest valid one. A missing program, a version that differs from its pin, or a tool that gives no JSON answer fails the job.
