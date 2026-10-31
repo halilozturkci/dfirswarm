@@ -3,8 +3,8 @@ id: identify/by-format
 title: Encryption signs by format, and their limits
 when: You name BitLocker, LUKS, Apple, VeraCrypt, archive, Office or PDF protection from a signature.
 needs: []
-tools: [crypto_id]
-requires_host: []
+tools: [crypto_id, tcrypt_header]
+requires_host: [cryptsetup]
 ---
 
 Use only if you name a particular format's protection from what the first pass showed. Not for the first pass (`identify/headers`).
@@ -18,8 +18,9 @@ Use only if you name a particular format's protection from what the first pass s
   signature does not show that every volume is encrypted.
 - VeraCrypt and TrueCrypt: high entropy, an aligned size and no signature do not
   identify them. Keep other ciphertext, compressed or random data, wiped space,
-  damaged metadata and a wrong offset or storage layer as the alternatives. This
-  pack provides no reader for them.
+  damaged metadata and a wrong offset or storage layer as the alternatives. Once
+  the case supplies a candidate password, `tcrypt_header` reads a header with it
+  over cryptsetup's tcrypt mode.
 - Archives: identify the container, each member's protection and the header's
   protection as separate facts (`archives/protected`). A supported container is not
   necessarily encrypted.
@@ -31,4 +32,4 @@ Use only if you name a particular format's protection from what the first pass s
 
 **Does not show.** That an APFS signature means every volume is encrypted; that high entropy and no signature identify VeraCrypt or TrueCrypt; that a supported archive container is encrypted; that an `MSWIN4.1` OEM string alone makes a volume BitLocker To Go.
 
-Sensitive output: `crypto_id` prints no raw bytes of the file, so a possible key file is never shown (`identify/headers`).
+Sensitive output: `crypto_id` prints no raw bytes of the file, so a possible key file is never shown (`identify/headers`). `tcrypt_header` takes the password from a sealed file and runs only in a `secret_output` job; it never prints the volume key, a salt or the password.

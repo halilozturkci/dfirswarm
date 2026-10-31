@@ -28,3 +28,6 @@ Key material the case supplies
 `keys/where-they-hide` where to look, and under what authority
 `keys/recovery-key-scan` reporting a key scan's result
 `keys/other-sources` stores, memory, escrow, shell history
+
+Password recovery
+`recovery/authorised` authorising an attempt to recover a password

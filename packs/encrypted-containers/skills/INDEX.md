@@ -12,6 +12,7 @@ Router: `encrypted/router`
 - `keys/other-sources` Password stores, memory, escrow and shell history: Key material may sit in a store, keychain, memory image, escrow record or shell history.
 - `keys/recovery-key-scan` What recovery_key_scan shows and does not show: You run recovery_key_scan over files, an image or a capture and report what it found.
 - `keys/where-they-hide` Locating and safeguarding authorised key material: A case question requires access to encrypted evidence.
+- `recovery/authorised` Authorising and running password_recover: The case contract authorises an attempt to recover a password from evidence or an extracted hash.
 - `volumes/bitlocker` BitLocker protectors and authorised examination: A Windows volume may use BitLocker.
 - `volumes/bitlocker-opening` Opening a BitLocker volume with supplied material: The case supplies a recovery password, key file or escrow export to open the volume.
 - `volumes/filevault-apfs` FileVault and APFS volumes: An Apple volume is encrypted: legacy Core Storage FileVault 2 or APFS.

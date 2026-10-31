@@ -10,16 +10,17 @@ know it is the encrypted one.
 
 ## What it carries
 
-**Twelve skills**: five decision leaves and six second-level leaves they point to
+**Thirteen skills**: six decision leaves and six second-level leaves they point to
 ("only if X"); every leaf is at most 800 tokens. `identify/headers`
 (`identify/by-format`), `volumes/bitlocker` (`volumes/bitlocker-opening`),
 `volumes/luks-filevault` (`volumes/filevault-apfs`), `archives/protected`
 (`archives/formats`), `keys/where-they-hide` (`keys/recovery-key-scan`,
-`keys/other-sources`). The twelfth is the pack's router, `encrypted/router` (at
-most 400 tokens): it names the other eleven by the question each answers, holds no
+`keys/other-sources`), and `recovery/authorised`, which has no second-level leaf
+of its own. The thirteenth is the pack's router, `encrypted/router` (at
+most 400 tokens): it names the other twelve by the question each answers, holds no
 rule, and is the one line a run shows for the pack when its skills index is over budget.
 
-**Three tools.**
+**Five tools.**
 `crypto_id` names the scheme from the first bytes of a volume or file and reads
 what a header holds without a key: the LUKS1 key-slot fields, the LUKS2 binary
 header (version, label, UUID). It prints no raw bytes of the file, and header text
@@ -32,19 +33,32 @@ result from a byte search is marked a heuristic, never "not encrypted".
 private-key headers and the file names key files are saved under. It returns
 where each is (file, offset, length, a structure check), never the value, a
 fragment of it or a hash of it, and lists every file it could not read in full or
-did not reach before its own time limit. Names, paths and header strings the three
-tools print have parts shaped like identifiers or secrets withheld, by shape.
+did not reach before its own time limit. `tcrypt_header` reads a VeraCrypt or
+TrueCrypt header with cryptsetup's tcrypt mode, for a password (and, optionally,
+keyfiles) the case supplies on a sealed file; it reports whether a header
+decrypted and, if so, its non-secret fields (cipher chain and mode, PBKDF, key
+size, sizes and offsets), never the volume key or a salt. `password_recover` is
+this pack's one password-recovery route: inside a `secret_output` job, it
+extracts a hash with the matching `*2john` helper (or takes one from another
+sealed job) and runs john against a case-supplied candidate list; the hash,
+john's pot, session and log sit only under `$OUT`, and the answer carries
+counts and versions, never a value. Names, paths and header strings the tools
+print have parts shaped like identifiers or secrets withheld, by shape.
 
 **One goal template**: `what-is-locked.md`.
 
 ## Secrets
 
 A tool that can reach secret material answers with presence, kind, location,
-length and offsets. A value is written only when the caller asks for it, only in
-a job run with `secret_output: true`, and only to a file under `$OUT`.
-`recovery_key_scan` is the reference implementation of this; `docs/packs.md`
-("Secrets and sensitive output") has the pattern in full. No skill or report
-writes a password, a PIN, a recovery value, a fragment of one, or a hash of one.
+length and offsets, never the value itself; `password_recover` and
+`tcrypt_header`, whose job is a password attempt rather than a locator, answer
+with counts, versions and whether a header decrypted, and the same rule: never
+a value, a hash, a salt or a length of either. A value is written only when
+the caller asks for it, only in a job run with `secret_output: true`, and only
+to a file under `$OUT`. `recovery_key_scan` is the reference implementation of
+the locator pattern; `docs/packs.md` ("Secrets and sensitive output") has it in
+full. No skill or report writes a password, a PIN, a recovery value, a
+fragment of one, or a hash of one.
 
 ## Three things the skills insist on
 

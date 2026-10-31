@@ -59,9 +59,12 @@ const SECOND: Record<string, string> = {
 // The pack's one router: shown alone when a run's index is over budget, and names every other skill once (routerChecks below).
 const ROUTER = "encrypted/router";
 
+// New leaves added after the split (not part of its id lineage): recovery/authorised (PKG-ENC-04, john's governance leaf).
+const ADDED_AFTER_SPLIT = ["recovery/authorised"];
+
 test("every skill is a leaf within the budget, opens with Use when ... Not for ..., and has a short index entry", async () => {
   const skills = await load(SKILLS);
-  assert.equal(skills.size, OLD_IDS.length + Object.keys(SECOND).length + 1);
+  assert.equal(skills.size, OLD_IDS.length + Object.keys(SECOND).length + 1 + ADDED_AFTER_SPLIT.length);
   for (const s of skills.values()) {
     assert.ok(TOKENS(s.text) <= (s.id === ROUTER ? 400 : 800), `${s.id} is ${Math.round(TOKENS(s.text))} tokens`);
     assert.ok(s.text.split("\n").length <= 300, `${s.id} lines`);
@@ -207,6 +210,7 @@ routerChecks({
   before: [
     "archives/formats", "archives/protected", "identify/by-format", "identify/headers", "keys/other-sources", "keys/recovery-key-scan",
     "keys/where-they-hide", "volumes/bitlocker", "volumes/bitlocker-opening", "volumes/filevault-apfs", "volumes/luks-filevault",
+    "recovery/authorised",
   ],
   profiles: ["disk", "full"],
 });

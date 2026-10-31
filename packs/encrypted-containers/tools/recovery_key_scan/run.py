@@ -59,6 +59,7 @@ values file, and prints one answer that says it is partial, names the files it d
 read and the directories it did not enter, and exits (128 + the signal for a signal).
 """
 import errno
+import itertools
 import json
 import os
 import re
@@ -74,6 +75,193 @@ import tempfile
 from pathlib import Path
 
 
+# BEGIN SHARED STOP
+# The same text is in recovery_key_scan, archive_probe and crypto_id (a pack test holds the copies equal). SIGTERM, SIGINT and SIGHUP end the
+# tool with ONE JSON answer and the exit status 128 + the signal, with no traceback and no temporary file left. A tool that scans
+# (cooperative) only notes the signal: the scan reads stop_wanted() between windows and files, finishes its pages and prints a partial
+# answer. If it is not finished GRACE_SECONDS later (a read that never returns), or a second signal comes, the stop is hard: the cleanup
+# steps run (a program the tool started is killed, a values file is closed), the temporary files of the pages are removed, the last word
+# is printed and the process ends. The tool's own clock (set_deadline) is below the manifest's timeout and is backed by the same hard stop:
+# GRACE_SECONDS after the deadline a read that has not returned (a file on a volume that is not there, a pipe nobody writes) no longer holds
+# the tool. SIGALRM ends it when the read can be interrupted, and a watchdog thread, which needs neither a signal nor the read to return,
+# ends it when not; either prints ONE JSON answer, status partial, and exits 0. A page fault in a mapped file can be ended by neither (it
+# holds the interpreter): a tool that maps a file reads the part it maps through a descriptor first, where the thread can run.
+import signal
+import threading
+import time
+
+GRACE_SECONDS = 5
+STOP = {"signal": None, "deadline": None, "limit": None, "last_word": None, "cooperative": False, "cleanup": [], "answered": False,
+        "owner": None, "hard_due": None}
+_STOP_LOCK = threading.RLock()
+_STOP_DONE = threading.Event()
+
+
+def set_deadline(seconds):
+    STOP["limit"] = seconds
+    STOP["deadline"] = time.monotonic() + seconds
+    arm_hard_stop(seconds + GRACE_SECONDS)
+    threading.Thread(target=_watchdog, name="hard-stop", daemon=True).start()
+
+
+def arm_hard_stop(seconds):
+    """The hard stop is due in `seconds` at the latest (an earlier one stays): as SIGALRM, and as the time the watchdog waits for."""
+    due = time.perf_counter() + seconds
+    if STOP["hard_due"] is None or due < STOP["hard_due"]:
+        STOP["hard_due"] = due
+    left = signal.getitimer(signal.ITIMER_REAL)[0]
+    signal.setitimer(signal.ITIMER_REAL, seconds if left <= 0 else min(seconds, left))
+
+
+def disarm_stop():
+    """No hard stop is wanted any more (the answer is going out, or the tool ends with an error): the timer and the watchdog stand down."""
+    STOP["hard_due"] = None
+    _STOP_DONE.set()
+    signal.setitimer(signal.ITIMER_REAL, 0)
+
+
+def _watchdog():
+    while not _STOP_DONE.wait(0.2):
+        due = STOP["hard_due"]
+        if due is not None and time.perf_counter() >= due:
+            hard_stop(STOP["signal"])
+
+
+def stand_by():
+    """When another thread is ending the tool, wait for it to do so: nothing else may print."""
+    if STOP["owner"] not in (None, threading.get_ident()):
+        while True:
+            time.sleep(3600)
+
+
+def out_of_time():
+    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"]
+
+
+def stop_wanted():
+    return STOP["signal"] is not None or out_of_time()
+
+
+def stop_cause():
+    if STOP["signal"] is not None:
+        return "stopped by signal %d" % STOP["signal"]
+    return "the time limit (max_seconds %s) was reached" % STOP["limit"]
+
+
+def remove_pending_pages():
+    """Remove the temporary file of every page that is still being written."""
+    for page in list(globals().get("PAGES", [])):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+def hard_stop(signum):
+    """End the tool now. `signum` is the signal that asked for it; None when the clock did: the answer is then partial and the exit status 0."""
+    with _STOP_LOCK:
+        if signum is None and STOP["answered"]:     # the answer is being written: let it be written
+            STOP["hard_due"] = None
+            return
+        if STOP["owner"] in (None, threading.get_ident()):
+            STOP["owner"] = threading.get_ident()
+            mine = True
+        else:
+            mine = False
+    if not mine:
+        stand_by()
+    for step in list(STOP["cleanup"]):
+        try:
+            step()
+        except Exception:  # noqa: BLE001 - a cleanup step is best effort
+            pass
+    remove_pending_pages()
+    if STOP["last_word"] and not STOP["answered"]:
+        try:
+            STOP["last_word"](signum)
+        except Exception:  # noqa: BLE001
+            pass
+    os._exit(128 + signum if signum else 0)
+
+
+def _on_stop_signal(signum, _frame):
+    if STOP["cooperative"] and STOP["signal"] is None:
+        STOP["signal"] = signum
+        arm_hard_stop(GRACE_SECONDS)
+        return
+    hard_stop(STOP["signal"] or signum)
+
+
+def _on_stop_alarm(_signum, _frame):
+    hard_stop(STOP["signal"])
+
+
+def install_stop(last_word=None, cooperative=False):
+    STOP["last_word"], STOP["cooperative"] = last_word, cooperative
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_stop_signal)
+    signal.signal(signal.SIGALRM, _on_stop_alarm)
+
+
+def interrupted_answer(signum, **extra):
+    if signum is None:       # the clock ran out, and then GRACE_SECONDS more, with a read that had not returned
+        print(json.dumps({"status": "partial", "partial": True, "interrupted": True, "hard_stopped": True,
+                          "stopped_by": "the tool's time limit (%s seconds) was reached" % STOP["limit"],
+                          "status_basis": "the tool's time limit (%s seconds) and %d seconds more passed while a read had not returned (a file on a "
+                                          "volume or share that is not available, or a pipe); the tool was ended there, and nothing it had read is "
+                                          "an answer" % (STOP["limit"], GRACE_SECONDS), **extra}), flush=True)
+        return
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "interrupted",
+                      "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
+                      "signal": signum, **extra}), flush=True)
+
+
+def claim_answer():
+    """Take the one answer (an answer or an error): the stop is disarmed, the stop signals are held back, and `answered` is set under the
+    lock, so that a watchdog that has read its due time but not yet taken the lock finds the answer claimed and prints nothing. When the
+    stop was claimed first, wait for the thread that has it to end the tool."""
+    disarm_stop()
+    held = {signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGALRM}
+    signal.pthread_sigmask(signal.SIG_BLOCK, held)
+    with _STOP_LOCK:
+        mine = STOP["owner"] in (None, threading.get_ident())
+        if mine:
+            STOP["answered"] = True
+    if not mine:
+        stand_by()
+
+
+def emit(answer):
+    """Print the answer once, with the stop signals held back until it is out, and leave with 128 + the signal if one was noted."""
+    claim_answer()
+    text = json.dumps(seal(answer), indent=2, ensure_ascii=True)
+    sys.stdout.write(text + "\n")
+    sys.stdout.flush()
+    if STOP["signal"] is not None:
+        os._exit(128 + STOP["signal"])
+
+
+# The handlers are in as soon as the module has run as far as this block (a hard stop with the generic last word, until main() installs the
+# tool's own): only the start of the interpreter and the compiling of the file come before it.
+install_stop(lambda signum: interrupted_answer(signum))
+# END SHARED STOP
+
+
+def own_dir(path):
+    """Create the tool-output directory and return None, or say why it is not used: a symbolic link anywhere on the way (the directory itself,
+    or work/ or the agent's directory under it) would send the tables and the private names file somewhere else, and O_NOFOLLOW guards only
+    the last name of a file. In a job only the part under $OUT is checked ($OUT is the job service's)."""
+    path = Path(path)
+    out = os.environ.get("OUT")
+    start = len(Path(out).parts) if out and path.parts[:len(Path(out).parts)] == Path(out).parts else 0
+    for i in range(max(start, 1), len(path.parts) + 1):
+        step = Path(*path.parts[:i])
+        if os.path.islink(step):
+            return "%s is a symbolic link: refused, nothing written through it" % step
+    path.mkdir(parents=True, exist_ok=True)
+    return None
 
 
 class LosslessPage:
@@ -135,7 +323,9 @@ class LosslessPage:
             return
         if self._out is None:
             try:
-                self.path.parent.mkdir(parents=True, exist_ok=True)
+                reason = own_dir(self.path.parent)
+                if reason is not None:
+                    self._cannot_write(OSError(reason))
                 fd, name = tempfile.mkstemp(
                     dir=self.path.parent, prefix=f".{self.path.name}-"
                 )
@@ -789,178 +979,7 @@ def seal(value, key=None):
 # END SHARED NAMES
 
 
-# BEGIN SHARED STOP
-# The same text is in recovery_key_scan, archive_probe and crypto_id (a pack test holds the copies equal). SIGTERM, SIGINT and SIGHUP end the
-# tool with ONE JSON answer and the exit status 128 + the signal, with no traceback and no temporary file left. A tool that scans
-# (cooperative) only notes the signal: the scan reads stop_wanted() between windows and files, finishes its pages and prints a partial
-# answer. If it is not finished GRACE_SECONDS later (a read that never returns), or a second signal comes, the stop is hard: the cleanup
-# steps run (a program the tool started is killed, a values file is closed), the temporary files of the pages are removed, the last word
-# is printed and the process ends. The tool's own clock (set_deadline) is below the manifest's timeout and is backed by the same hard stop:
-# GRACE_SECONDS after the deadline a read that has not returned (a file on a volume that is not there, a pipe nobody writes) no longer holds
-# the tool. SIGALRM ends it when the read can be interrupted, and a watchdog thread, which needs neither a signal nor the read to return,
-# ends it when not; either prints ONE JSON answer, status partial, and exits 0. A page fault in a mapped file can be ended by neither (it
-# holds the interpreter): a tool that maps a file reads the part it maps through a descriptor first, where the thread can run.
-import signal
-import threading
-import time
 
-GRACE_SECONDS = 5
-STOP = {"signal": None, "deadline": None, "limit": None, "last_word": None, "cooperative": False, "cleanup": [], "answered": False,
-        "owner": None, "hard_due": None}
-_STOP_LOCK = threading.RLock()
-_STOP_DONE = threading.Event()
-
-
-def set_deadline(seconds):
-    STOP["limit"] = seconds
-    STOP["deadline"] = time.monotonic() + seconds
-    arm_hard_stop(seconds + GRACE_SECONDS)
-    threading.Thread(target=_watchdog, name="hard-stop", daemon=True).start()
-
-
-def arm_hard_stop(seconds):
-    """The hard stop is due in `seconds` at the latest (an earlier one stays): as SIGALRM, and as the time the watchdog waits for."""
-    due = time.perf_counter() + seconds
-    if STOP["hard_due"] is None or due < STOP["hard_due"]:
-        STOP["hard_due"] = due
-    left = signal.getitimer(signal.ITIMER_REAL)[0]
-    signal.setitimer(signal.ITIMER_REAL, seconds if left <= 0 else min(seconds, left))
-
-
-def disarm_stop():
-    """No hard stop is wanted any more (the answer is going out, or the tool ends with an error): the timer and the watchdog stand down."""
-    STOP["hard_due"] = None
-    _STOP_DONE.set()
-    signal.setitimer(signal.ITIMER_REAL, 0)
-
-
-def _watchdog():
-    while not _STOP_DONE.wait(0.2):
-        due = STOP["hard_due"]
-        if due is not None and time.perf_counter() >= due:
-            hard_stop(STOP["signal"])
-
-
-def stand_by():
-    """When another thread is ending the tool, wait for it to do so: nothing else may print."""
-    if STOP["owner"] not in (None, threading.get_ident()):
-        while True:
-            time.sleep(3600)
-
-
-def out_of_time():
-    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"]
-
-
-def stop_wanted():
-    return STOP["signal"] is not None or out_of_time()
-
-
-def stop_cause():
-    if STOP["signal"] is not None:
-        return "stopped by signal %d" % STOP["signal"]
-    return "the time limit (max_seconds %s) was reached" % STOP["limit"]
-
-
-def remove_pending_pages():
-    """Remove the temporary file of every page that is still being written."""
-    for page in list(globals().get("PAGES", [])):
-        tmp = getattr(page, "_tmp", None)
-        if tmp is not None:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-
-
-def hard_stop(signum):
-    """End the tool now. `signum` is the signal that asked for it; None when the clock did: the answer is then partial and the exit status 0."""
-    with _STOP_LOCK:
-        if signum is None and STOP["answered"]:     # the answer is being written: let it be written
-            STOP["hard_due"] = None
-            return
-        if STOP["owner"] in (None, threading.get_ident()):
-            STOP["owner"] = threading.get_ident()
-            mine = True
-        else:
-            mine = False
-    if not mine:
-        stand_by()
-    for step in list(STOP["cleanup"]):
-        try:
-            step()
-        except Exception:  # noqa: BLE001 - a cleanup step is best effort
-            pass
-    remove_pending_pages()
-    if STOP["last_word"] and not STOP["answered"]:
-        try:
-            STOP["last_word"](signum)
-        except Exception:  # noqa: BLE001
-            pass
-    os._exit(128 + signum if signum else 0)
-
-
-def _on_stop_signal(signum, _frame):
-    if STOP["cooperative"] and STOP["signal"] is None:
-        STOP["signal"] = signum
-        arm_hard_stop(GRACE_SECONDS)
-        return
-    hard_stop(STOP["signal"] or signum)
-
-
-def _on_stop_alarm(_signum, _frame):
-    hard_stop(STOP["signal"])
-
-
-def install_stop(last_word=None, cooperative=False):
-    STOP["last_word"], STOP["cooperative"] = last_word, cooperative
-    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
-        signal.signal(signum, _on_stop_signal)
-    signal.signal(signal.SIGALRM, _on_stop_alarm)
-
-
-def interrupted_answer(signum, **extra):
-    if signum is None:       # the clock ran out, and then GRACE_SECONDS more, with a read that had not returned
-        print(json.dumps({"status": "partial", "partial": True, "interrupted": True, "hard_stopped": True,
-                          "stopped_by": "the tool's time limit (%s seconds) was reached" % STOP["limit"],
-                          "status_basis": "the tool's time limit (%s seconds) and %d seconds more passed while a read had not returned (a file on a "
-                                          "volume or share that is not available, or a pipe); the tool was ended there, and nothing it had read is "
-                                          "an answer" % (STOP["limit"], GRACE_SECONDS), **extra}), flush=True)
-        return
-    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "interrupted",
-                      "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
-                      "signal": signum, **extra}), flush=True)
-
-
-def claim_answer():
-    """Take the one answer (an answer or an error): the stop is disarmed, the stop signals are held back, and `answered` is set under the
-    lock, so that a watchdog that has read its due time but not yet taken the lock finds the answer claimed and prints nothing. When the
-    stop was claimed first, wait for the thread that has it to end the tool."""
-    disarm_stop()
-    held = {signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGALRM}
-    signal.pthread_sigmask(signal.SIG_BLOCK, held)
-    with _STOP_LOCK:
-        mine = STOP["owner"] in (None, threading.get_ident())
-        if mine:
-            STOP["answered"] = True
-    if not mine:
-        stand_by()
-
-
-def emit(answer):
-    """Print the answer once, with the stop signals held back until it is out, and leave with 128 + the signal if one was noted."""
-    claim_answer()
-    text = json.dumps(seal(answer), indent=2, ensure_ascii=True)
-    sys.stdout.write(text + "\n")
-    sys.stdout.flush()
-    if STOP["signal"] is not None:
-        os._exit(128 + STOP["signal"])
-
-
-# The handlers are in as soon as the module has run as far as this block (a hard stop with the generic last word, until main() installs the
-# tool's own): only the start of the interpreter and the compiling of the file come before it.
-install_stop(lambda signum: interrupted_answer(signum))
-# END SHARED STOP
 
 
 class SealedPage(NoReplacePage):
@@ -1024,7 +1043,9 @@ class SecretValues:
         # instead of failing, or writing through it, after the scan. With nothing found it
         # stays as an empty file, mode 0600, and the answer says written: 0.
         try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
+            reason = own_dir(self.path.parent)
+            if reason is not None:
+                raise SecretValuesRefused(reason)
             fd = os.open(str(self.path), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
         except FileExistsError:
             raise SecretValuesRefused("the values file already exists: %s" % self.shown)
@@ -1058,6 +1079,7 @@ class SecretValues:
 
 
 PARSER = "recovery_key_scan/4"
+LIMIT_CEILING = 1000   # as archive_extract's: a page kept in memory is bounded, whatever the caller asks
 CHUNK = 4 << 20
 # Longer than the longest thing matched (110 bytes of UTF-16LE text), so a match
 # across a read boundary is whole in the next window.
@@ -1230,18 +1252,26 @@ def scan_stream(fh, budget, stats):
         carry, data = keep, nxt
 
 
-class Walk:
-    """The regular files under `top`, in name order, following no link; what it has not reached is known at any moment.
+WALK_CHUNK = 10_000   # entries held and name-sorted at once; bounds memory on a huge flat directory
 
-    A directory that cannot be listed, a link and a file that is not a regular
-    file are reported as exceptions and counted; none is ever dropped quietly.
-    `entries` and `next` are the directory being read and the index of its next
-    entry, `stack` the directories not yet entered: what a stop leaves unread.
+
+class Walk:
+    """The regular files under `top`, following no link; what it has not reached is known at any moment.
+
+    A directory is read in chunks of WALK_CHUNK entries (each chunk is the only one held in memory, and sorted
+    by name within itself, so a flat directory of any size is bounded RSS, not loaded whole): the order across
+    chunk boundaries is the order `os.scandir` gave (stable for an unchanged directory), not a global name sort.
+    A directory that cannot be listed, a link and a file that is not a regular file are reported as exceptions
+    and counted; none is ever dropped quietly. `entries` and `next` are the chunk being read and the index of
+    its next entry, `stack` the directories not yet entered, `_more` whether the directory being read has more
+    entries beyond the chunk in hand (known the moment a chunk comes up short of WALK_CHUNK, at no extra read):
+    together they are what a stop leaves unread.
     """
 
     def __init__(self, top, exceptions, counters):
         self.stack = [(top, True)]
         self.entries, self.next, self.found_dirs = [], 0, []
+        self._current_dir, self._more = None, False
         self._files = self._generate(exceptions, counters)
 
     def __iter__(self):
@@ -1250,47 +1280,59 @@ class Walk:
     def _generate(self, exceptions, counters):
         while self.stack:
             directory, is_top = self.stack.pop()
+            self._current_dir, self._more = directory, False
             try:
-                with os.scandir(directory) as it:
-                    self.entries, self.next = sorted(it, key=lambda e: e.name), 0
+                scan = os.scandir(directory)
             except OSError as exc:
-                self.entries, self.next = [], 0
                 counters["directories_failed"] += 1
                 exceptions.add({"path": shown(directory), "status": "failed", "what": "directory", "reason": "the directory could not be listed", "error": describe(exc)})
                 continue
             subdirs = self.found_dirs = []
-            while self.next < len(self.entries):
-                entry = self.entries[self.next]
-                self.next += 1
-                try:
-                    if entry.is_symlink():
-                        counters["entries_skipped"] += 1
-                        exceptions.add({"path": shown(entry.path), "status": "skipped", "reason": "a symbolic link: links are not followed, and the target is read where it lies if it is in the tree"})
-                        continue
-                    if entry.is_dir(follow_symlinks=False):
-                        if is_top and entry.name in SKIP_TOP_DIRS:
-                            counters["entries_skipped"] += 1
-                            exceptions.add({"path": shown(entry.path), "status": "skipped", "reason": "a top-level %s directory of a Linux root: its contents were not scanned; name it as the path to scan it" % entry.name})
+            try:
+                while True:
+                    chunk = list(itertools.islice(scan, WALK_CHUNK))
+                    if not chunk:
+                        break
+                    chunk.sort(key=lambda e: e.name)
+                    self.entries, self.next = chunk, 0
+                    self._more = len(chunk) == WALK_CHUNK   # might be more: unknown until the next chunk is tried
+                    while self.next < len(self.entries):
+                        entry = self.entries[self.next]
+                        self.next += 1
+                        try:
+                            if entry.is_symlink():
+                                counters["entries_skipped"] += 1
+                                exceptions.add({"path": shown(entry.path), "status": "skipped", "reason": "a symbolic link: links are not followed, and the target is read where it lies if it is in the tree"})
+                                continue
+                            if entry.is_dir(follow_symlinks=False):
+                                if is_top and entry.name in SKIP_TOP_DIRS:
+                                    counters["entries_skipped"] += 1
+                                    exceptions.add({"path": shown(entry.path), "status": "skipped", "reason": "a top-level %s directory of a Linux root: its contents were not scanned; name it as the path to scan it" % entry.name})
+                                    continue
+                                subdirs.append(entry.path)
+                                continue
+                            mode = entry.stat(follow_symlinks=False).st_mode
+                        except OSError as exc:
+                            counters["files_attempted"] += 1
+                            counters["files_failed"] += 1
+                            exceptions.add({"path": shown(entry.path), "status": "failed", "reason": "the entry could not be examined", "error": describe(exc)})
                             continue
-                        subdirs.append(entry.path)
-                        continue
-                    mode = entry.stat(follow_symlinks=False).st_mode
-                except OSError as exc:
-                    counters["files_attempted"] += 1
-                    counters["files_failed"] += 1
-                    exceptions.add({"path": shown(entry.path), "status": "failed", "reason": "the entry could not be examined", "error": describe(exc)})
-                    continue
-                if not stat.S_ISREG(mode):
-                    counters["entries_skipped"] += 1
-                    exceptions.add({"path": shown(entry.path), "status": "skipped", "reason": "not a regular file (%s)" % kind_of(mode)})
-                    continue
-                yield entry.path, entry.stat(follow_symlinks=False).st_size
-            self.entries, self.next, self.found_dirs = [], 0, []
+                        if not stat.S_ISREG(mode):
+                            counters["entries_skipped"] += 1
+                            exceptions.add({"path": shown(entry.path), "status": "skipped", "reason": "not a regular file (%s)" % kind_of(mode)})
+                            continue
+                        yield entry.path, entry.stat(follow_symlinks=False).st_size
+                    self.entries, self.next = [], 0
+            finally:
+                scan.close()
+            self.found_dirs, self._current_dir, self._more = [], None, False
             self.stack.extend((d, False) for d in reversed(subdirs))
 
     def unreached(self):
-        """(the entries of the directory being read that were not looked at, the directories found but not yet entered), as paths."""
-        return [e.path for e in self.entries[self.next:]], list(self.found_dirs) + [d for d, _top in reversed(self.stack)]
+        """(the entries of the chunk being read that were not looked at, the directories found but not yet entered, the
+        directory being read when it may hold more entries beyond the chunk in hand), as paths (None for the third)."""
+        return ([e.path for e in self.entries[self.next:]], list(self.found_dirs) + [d for d, _top in reversed(self.stack)],
+                self._current_dir if self._more else None)
 
 
 def kind_of(mode):
@@ -1346,8 +1388,8 @@ def main():
     if not isinstance(budget, int) or isinstance(budget, bool) or budget < 1024:
         fail("max_bytes_per_file must be an integer of at least 1024")
     limit = args.get("limit", 200)
-    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
-        fail("limit must be a positive integer")
+    if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= LIMIT_CEILING:
+        fail("limit must be an integer from 1 to %d" % LIMIT_CEILING)
     seconds = args.get("max_seconds", DEFAULT_SECONDS)
     if not isinstance(seconds, int) or isinstance(seconds, bool) or not 1 <= seconds <= MAX_SECONDS:
         fail("max_seconds must be an integer from 1 to %d (the tool's own time limit; the manifest allows 600)" % MAX_SECONDS)
@@ -1462,15 +1504,21 @@ def main():
                 exceptions.add({"path": shown(target), "status": "partial", "reason": "read up to max_bytes_per_file; the rest was not read",
                                 "bytes": size, "bytes_read": stats.bytes_read, "bytes_unread": size - stats.bytes_read})
         if stopped_why and walker is not None:
-            # What the walk had not reached, named: the rest of the directory being read, and the directories not yet entered
-            # (everything under those is unread, and how many files that is is not known).
-            rest, unentered = walker.unreached()
+            # What the walk had not reached, named: the rest of the chunk being read, the directories not yet entered
+            # (everything under those is unread, and how many files that is is not known), and, when the directory being
+            # read may hold more entries beyond that chunk, the directory itself (how many more is not known either,
+            # without a read this stop is meant to avoid).
+            rest, unentered, maybe_more = walker.unreached()
             for item in rest:
                 counters["entries_not_started"] += 1
                 exceptions.add({"path": shown(item), "status": "not started", "reason": "%s before this entry was looked at" % stopped_why})
             for item in unentered:
                 counters["directories_not_entered"] += 1
                 exceptions.add({"path": shown(item), "status": "not started", "what": "directory", "reason": "%s before this directory was entered: nothing under it was read" % stopped_why})
+            if maybe_more is not None:
+                counters["directories_not_entered"] += 1
+                exceptions.add({"path": shown(maybe_more), "status": "not started", "what": "directory (partially read)",
+                                "reason": "%s: this directory may hold more entries beyond the %d already read in this chunk; how many is not known" % (stopped_why, WALK_CHUNK)})
     except BaseException:
         # An answer is on its way out (the error a page that could not be written printed, or a stop): a values file that cannot be flushed
         # either must not replace it with a second document. The rows that could not be flushed are not an answer.

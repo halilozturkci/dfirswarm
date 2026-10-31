@@ -38,7 +38,7 @@
       "name": "cryptsetup",
       "package": "cryptsetup",
       "optional": true,
-      "why": "Read a LUKS header (luksDump: version, UUID, data offset, cipher, keyslots) and, where a key is supplied, open the volume. Reading metadata and opening through the device mapper are different runtime capabilities; opening needs facilities a worker may not have. No macOS install route is declared.",
+      "why": "Read a LUKS header (luksDump: version, UUID, data offset, cipher, keyslots) and, where a key is supplied, open the volume; and, in its tcrypt mode (tcryptDump), read a VeraCrypt or TrueCrypt header for a password the case supplies, through tcrypt_header. Reading metadata and opening through the device mapper are different runtime capabilities; opening needs facilities a worker may not have. No macOS install route is declared.",
       "install": {
         "apt": "apt-get install -y cryptsetup-bin"
       },
@@ -60,7 +60,7 @@
       "name": "john",
       "package": "john-the-ripper",
       "optional": true,
-      "why": "Turn a header into a hash a password attempt can be made against, with the *2john helpers. Only where the operator has authorised it; no skill instructs its use. Whether a governed recovery capability exists is the owner's decision; apt's john and brew's john-jumbo are not shown to be the same feature set, and the *2john helpers are not checked here.",
+      "why": "The pack's password-recovery route: turn a header into a hash with the *2john helpers, then make password attempts against it, used only in secret_output jobs and only where the case authorises recovery. The image's Debian john (1.9.0-2) is the core build and ships none of the *2john helpers (its files are john, mailer, unafs, unique and unshadow), so on Linux the helper inventory is not met until a jumbo build is pinned for the image; brew's john-jumbo is the jumbo build, and its helper inventory is not checked here.",
       "install": {
         "brew": "brew install john-jumbo",
         "apt": "apt-get install -y john"

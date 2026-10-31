@@ -12,7 +12,7 @@
     },
     "limit": {
       "type": "integer",
-      "description": "Findings, name hints and coverage exceptions shown inline (default 200 each); all of them are counted, and when there are more the whole list is written as JSON Lines and named in pages.<list>.all_results"
+      "description": "Findings, name hints and coverage exceptions shown inline (default 200 each, at most 1000); all of them are counted, and when there are more the whole list is written as JSON Lines and named in pages.<list>.all_results"
     },
     "write_values": {
       "type": "boolean",
@@ -34,8 +34,8 @@
   "example": "{\"path\": \"work/extracted/Users\"}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 7,
-  "sha256": "229b994d02c2ef96709c465bbdb836cec3361bc7f3dd0de0bfe8d23f1f388573",
+  "version": 9,
+  "sha256": "dcb3c29389e0b32b096d25b90658804a4782770f62244608fc027b6a72d2e0d0",
   "use": {
     "extensions": [
       ".bek"
