@@ -13,6 +13,7 @@ const TOOLS = join(ROOT, "packs", "encrypted-containers", "tools");
 const RKS = join(TOOLS, "recovery_key_scan", "run.py");
 const AP = join(TOOLS, "archive_probe", "run.py");
 const CID = join(TOOLS, "crypto_id", "run.py");
+const PR = join(TOOLS, "password_recover", "run.py");
 const NETWORK = join(ROOT, "packs", "network-forensics", "tools", "pcap_summary", "run.py");
 const WINDOWS = join(ROOT, "packs", "windows-forensics", "tools", "regkv", "run.py");
 
@@ -29,7 +30,7 @@ async function block(path: string, name: string): Promise<string> {
 
 test("the tools carry the same blocks, byte for byte", async () => {
   for (const name of ["WITHHOLDING", "NAMES", "STOP"]) {
-    const copies = await Promise.all([RKS, AP, CID].map((p) => block(p, name)));
+    const copies = await Promise.all([RKS, AP, CID, PR].map((p) => block(p, name)));
     for (const other of copies.slice(1)) assert.equal(other, copies[0], `${name} differs between the tools`);
     assert.ok(copies[0].length > 1000);
   }
@@ -41,12 +42,13 @@ test("the tools carry the same blocks, byte for byte", async () => {
   // archive_probe 7z child) and the windows no-replace paging blocks. Their owners converge them later; until then they are copies.
   assert.equal(await block(RKS, "WITHHOLDING"), await block(NETWORK, "WITHHOLDING"));
   assert.equal(await block(AP, "PROCESS"), await block(join(ROOT, "packs", "network-forensics", "tools", "pcap_extract", "run.py"), "PROCESS"));
+  assert.equal(await block(PR, "PROCESS"), await block(AP, "PROCESS"));
   assert.equal(await block(RKS, "PLACE"), await block(WINDOWS, "PLACE"));
   assert.equal(await block(RKS, "PAGE"), await block(WINDOWS, "PAGE"));
 });
 
 test("no tool starts a program in a session of its own", async () => {
-  for (const path of [RKS, AP, CID]) {
+  for (const path of [RKS, AP, CID, PR]) {
     const text = await readFile(path, "utf8");
     assert.doesNotMatch(text.replace(/^\s*#.*$/gm, "").replace(/"""[\s\S]*?"""/g, ""), /start_new_session|setsid|process_group/, path);
   }
@@ -259,7 +261,7 @@ print(json.dumps(rows))
 `;
 
 test("names: no regular expression of the blocks takes more than a second on 4,096 or 32,768 adversarial characters", async () => {
-  for (const path of [RKS, AP, CID]) {
+  for (const path of [RKS, AP, CID, PR]) {
     const run = await runPySnippet(HUNT, [path], null);
     assert.equal(run.code, 0, run.stderr);
     for (const [n, worst] of JSON.parse(run.stdout) as Array<[number, number]>) assert.ok(worst < 1, `${n} characters took ${worst} s in ${path}`);
@@ -290,7 +292,7 @@ test("the output check replaces what the first layer would have let through (san
     `docs/${fullWidth(six("-"))}.txt`, `docs/${six("-").slice(0, 20)}\u200b${six("-").slice(20)}.txt`,
   ];
   const fine = ["README.txt", "docs/Quarterly Report 2024.docx", "e1f2a3b4-1111-4222-8333-444455556666", "dos_date=0x2e6e dos_time=0x4d96", "https://example.org/a/b?c=d"];
-  for (const path of [RKS, AP, CID]) {
+  for (const path of [RKS, AP, CID, PR]) {
     const run = await runPySnippet(BACKSTOP, [path], { strings: [...strings, ...fine] });
     assert.equal(run.code, 0, run.stderr);
     const got = JSON.parse(run.stdout) as { rows: Array<{ name: string }>; kept: string; replaced: number };
@@ -305,7 +307,7 @@ test("the output check replaces what the first layer would have let through (san
 
 test("the output check alone does not catch a number of 10 to 20 digits or an identifier of up to 23 characters: only the rule withholds them", async () => {
   const strings = [`docs/${pick(DIGITS, 12)}.bin`, `docs/${pick(DIGITS, 20)}.bin`, `docs/${pick(ALNUM, 12)}Qz1.bin`];
-  for (const path of [RKS, AP, CID]) {
+  for (const path of [RKS, AP, CID, PR]) {
     const run = await runPySnippet(BACKSTOP, [path], { strings });
     assert.equal(run.code, 0, run.stderr);
     const got = JSON.parse(run.stdout) as { rows: Array<{ name: string }>; replaced: number };
@@ -329,7 +331,7 @@ test("the output check alone passes a recovery password with a separator outside
   const passes = [`docs/${six(",")}.txt`, `docs/${six("\u2013")}.txt`, `docs/${six("|")}.txt`, `docs/${six("+")}.txt`,
                   `docs/${Array.from({ length: 4 }, () => groups(2, 6, "-", DIGITS)).join("/")}.txt`, `docs/${six("/")}.txt`];
   const caught = [`docs/${six("-")}.txt`, `docs/${pick(DIGITS, 1)}${six("-")}.txt`, `docs/${six(".")}${pick(DIGITS, 1)}.txt`, `docs/${six(" ")}.txt`];
-  for (const path of [RKS, AP, CID]) {
+  for (const path of [RKS, AP, CID, PR]) {
     const run = await runPySnippet(SEAL_ONLY, [path], { strings: [...passes, ...caught] });
     assert.equal(run.code, 0, run.stderr);
     const got = JSON.parse(run.stdout) as { rows: string[]; replaced: number };
@@ -378,7 +380,7 @@ print(json.dumps(rows))
 `;
 
 test("names: strings the token rule of the shared block would take quadratic time on are withheld whole, and nothing inside the bound takes long", async () => {
-  for (const path of [RKS, AP, CID]) {
+  for (const path of [RKS, AP, CID, PR]) {
     const run = await runPySnippet(BOUNDS, [path], null);
     assert.equal(run.code, 0, run.stderr);
     const rows = JSON.parse(run.stdout) as Record<string, [number, unknown]>;
@@ -406,7 +408,7 @@ print(json.dumps({"entries": len(ns["_CACHE"]), "bytes": ns["_CACHE_BYTES"][0]})
 `;
 
 test("names: the cache of judged strings is bounded by size, not only by the number of strings", async () => {
-  for (const path of [RKS, AP, CID]) {
+  for (const path of [RKS, AP, CID, PR]) {
     const run = await runPySnippet(CACHE, [path], null);
     assert.equal(run.code, 0, run.stderr);
     const got = JSON.parse(run.stdout) as { entries: number; bytes: number };

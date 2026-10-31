@@ -1,7 +1,7 @@
 {
   "id": "encrypted-containers",
   "name": "Encrypted Containers Pack",
-  "version": "1.6.7",
+  "version": "1.7.0",
   "description": "Telling one kind of encryption from another: volume headers and their key protectors, LUKS key slots, the container that has no signature at all, password-protected archives and documents, and where key material the case supplies may already be.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -16,10 +16,6 @@
   },
   "secrets": [],
   "unreferenced_ok": [
-    {
-      "name": "john",
-      "why": "the pack's password-recovery route, used only in secret_output jobs; the tool and the skill that name it come next (archives/protected states only the recovery gate, without a program)"
-    },
     {
       "name": "gpg",
       "why": "declared for agents' own offline OpenPGP work; the skill that names it (messages/openpgp) is planned for a later change to this pack"
@@ -48,15 +44,16 @@
       "goals/what-is-locked.md": "0c9e1377f093ab6fe998a9502df2c351ed6a150edce2029f02517173348f59f2",
       "requires/host.json": "566936cd3f9d8b1dba4bf5bc494c9bf593ec2f6f59c9db60f6acfa017eba5d44",
       "requires/python.txt": "5f0b11bd01ea0400f7948b789c74181bf5f9b226c5afe61733deb25e0287a239",
-      "skills/INDEX.md": "4ca9eb89a4cd46f80559c4d4a9f46121a7cd47d00649b81d6ebdefb62fb53d54",
+      "skills/INDEX.md": "cd573527a47dd034bd7df16d6f27f4ed9dffa06a87dfbb94caf47748ae303bb1",
       "skills/archives/formats.md": "29296400a2c8cb3655b8488cd77c83f1bf4c521ac59689439f131bfc8a1f6a83",
       "skills/archives/protected.md": "b41cdaa13f191b8ef3ae71c287c06c657a69e597d71ce686d66d339d6192905d",
-      "skills/encrypted/router.md": "441e76c7c90a11f1822c752476083e2f7da679ce91034546c80a846e42efbe89",
+      "skills/encrypted/router.md": "a9d1089b442f9aebb56b819e2b4ae2129c5d83a6bb766db640d9614c953ef42f",
       "skills/identify/by-format.md": "6cb24899bf2988d40466415b8c3d24e2fa8297a1459a5f23e5638757428046d8",
       "skills/identify/headers.md": "63589019145d78b8f67d6ee21c11bf893b844cc02d36553c4393d8a08d87ad51",
       "skills/keys/other-sources.md": "e29540952ad5b51a7e2b0ca0d27ce7dcdd1fd17144b92ad0a3dca91e522fee82",
       "skills/keys/recovery-key-scan.md": "20ef32793301e983b2877226fb0bcddec96f5e1f49098741e06bceb09211c3e2",
       "skills/keys/where-they-hide.md": "023f7e0071013f934b8618cb225170cca3c81a69c912007b237291c67c117947",
+      "skills/recovery/authorised.md": "8e6fc4d63958a31313fd538ed48885335315acfd6d8bbf9e02e6d7d70ac0ef61",
       "skills/volumes/bitlocker-opening.md": "3fd51f50d904a699e08215beebc30558ccc912f54d6f74907431010e198cf6ba",
       "skills/volumes/bitlocker.md": "fadc5aeb13dcff3ec61a6b997db9e411a40085a6ef26cec09e88fcc8bb466553",
       "skills/volumes/filevault-apfs.md": "7604310ad397d391651aef8d010788fb29079b25aa15f0c49b5383fd467b1764",
@@ -65,6 +62,8 @@
       "tools/archive_probe/run.py": "f08bf651b9d4ee395f19e91046ac303743790b2416a13f39ea0f0568ac6994c5",
       "tools/crypto_id/manifest.json": "0b2d7fd4f39b16b9ace93695049924901c325f10f07d4ad1bfd51f7bac7906a6",
       "tools/crypto_id/run.py": "366a68da4fc0273eb47b7ca9f6028c69a2df5cdf0705e610874597fb720a73c8",
+      "tools/password_recover/manifest.json": "d008551ebc0c4633a86551e87ba8e2fdae59474c535aa3a1bcb44b47305d6e95",
+      "tools/password_recover/run.py": "d6715379102083e2d84b30dfc6d53b5f9c05f4ea84dd919ee309c3f6310457df",
       "tools/recovery_key_scan/manifest.json": "f3893640995eedcd2082f3e7b3e24f69b07732c33650bf9ff973639091a3b679",
       "tools/recovery_key_scan/run.py": "229b994d02c2ef96709c465bbdb836cec3361bc7f3dd0de0bfe8d23f1f388573"
     }
@@ -72,9 +71,10 @@
   "tools": [
     "archive_probe",
     "crypto_id",
+    "password_recover",
     "recovery_key_scan"
   ],
-  "skills": 12,
+  "skills": 13,
   "method_only": [
     {
       "path": "skills/encrypted/router.md",
