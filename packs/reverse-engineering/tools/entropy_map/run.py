@@ -11,9 +11,13 @@ all read high.
 
 The whole profile is written to a file, one row per window, and never to a file another call wrote: the name
 is chosen from the source (or by the caller), and a name already taken gets a new one, with the earlier file
-named in the answer. The answer holds a preview of the profile, the high-entropy runs (the whole list in a
-file when there are more than the answer holds), the overall entropy, the bytes actually processed and
-whether the pass finished. A window counts as high when its UNROUNDED entropy is >= the threshold.
+named in the answer. The profile file is created exclusively, mode 0600. A window that would give the file
+more rows than MAX_PROFILE_ROWS is refused before anything is read, with the smallest window that fits named:
+nothing is cut. The answer holds a preview of the profile (at most MAX_PREVIEW windows), the high-entropy runs
+(the whole list in a file when there are more than the answer holds), the overall entropy, the bytes actually
+processed and whether the pass finished. A window counts as high when its UNROUNDED entropy is >= the
+threshold. The clock is looked at every MiB inside a window, so a 64 MiB window cannot run seconds past
+max_seconds; a window the clock stopped is not written, and the answer names the last whole one.
 """
 import errno
 import hashlib
@@ -28,12 +32,15 @@ import time
 from collections import Counter
 from pathlib import Path
 
-TOOL = {"name": "entropy_map", "version": 2}
-PARSER = "entropy_map/2"
+TOOL = {"name": "entropy_map", "version": 3}
+PARSER = "entropy_map/3"
 SCHEMA_VERSION = 2
 MAX_WINDOW = 1 << 26                    # 64 MiB: one window is held in memory at a time
+MIN_WINDOW = 64
 MAX_INLINE_RUNS = 1000                  # runs held in memory and in the answer; the whole list is a file past this
-MAX_PREVIEW = 1_000_000
+MAX_PREVIEW = 10_000                    # windows of the profile in the answer; the whole profile is in the file
+MAX_PROFILE_ROWS = 4_000_000            # rows the profile file may hold (about 120 MB): a window that would give more is refused, not cut
+READ_PIECE = 1 << 20                    # bytes read between two looks at the clock
 DEFAULT_SECONDS = 270                   # the tool's own clock, below the manifest's 300 s: a file too big for it is a partial answer, not a kill
 MAX_SECONDS = 280
 NAME_RX = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
@@ -45,7 +52,8 @@ def describe(exc):
 
 
 def fail(message, **extra):
-    print(json.dumps({"error": message, "status": extra.pop("status", "failed"), "tool": TOOL, "problems": [], "limits_hit": [], **extra}))
+    print(json.dumps({"error": message, "status": extra.pop("status", "failed"), "status_basis": extra.pop("status_basis", message), "tool": TOOL,
+                      "problems": [], "limits_hit": [], **extra}))
     raise SystemExit(1)
 
 
@@ -83,7 +91,7 @@ def output_dir():
 
 
 def create_unique(directory, name):
-    """Create a new file `name` in `directory`, exclusively; a name that is taken gets -2, -3, ... before its extension.
+    """Create a new file `name` in `directory`, exclusively, mode 0600; a name that is taken gets -2, -3, ... before its extension.
     Returns (path, file object, name used). Nothing that exists is replaced or followed."""
     directory.mkdir(parents=True, exist_ok=True)
     stem, dot, ext = name.rpartition(".")
@@ -93,7 +101,7 @@ def create_unique(directory, name):
     for n in range(1, 1000):
         candidate = name if n == 1 else "%s-%d%s" % (stem, n, "." + ext if ext else "")
         try:
-            fd = os.open(str(directory / candidate), flags, 0o644)
+            fd = os.open(str(directory / candidate), flags, 0o600)
         except FileExistsError:
             continue
         return directory / candidate, os.fdopen(fd, "w", encoding="utf-8"), candidate
@@ -114,14 +122,14 @@ def main():
     if why_not:
         fail(why_not, path=path)
     window = args.get("window", 4096)
-    if not isinstance(window, int) or isinstance(window, bool) or not 64 <= window <= MAX_WINDOW:
-        fail("window must be an integer from 64 to %d" % MAX_WINDOW)
+    if not isinstance(window, int) or isinstance(window, bool) or not MIN_WINDOW <= window <= MAX_WINDOW:
+        fail("window must be an integer from %d to %d" % (MIN_WINDOW, MAX_WINDOW))
     threshold = args.get("threshold", 7.2)
     if not isinstance(threshold, (int, float)) or isinstance(threshold, bool) or not 0 < threshold <= 8:
         fail("threshold must be a number above 0 and at most 8")
     max_windows = args.get("max_windows", 256)
     if not isinstance(max_windows, int) or isinstance(max_windows, bool) or not 1 <= max_windows <= MAX_PREVIEW:
-        fail("max_windows must be an integer from 1 to %d" % MAX_PREVIEW)
+        fail("max_windows must be an integer from 1 to %d (the windows shown in the answer; the whole profile is in the file)" % MAX_PREVIEW)
     seconds = args.get("max_seconds", DEFAULT_SECONDS)
     if isinstance(seconds, bool) or not isinstance(seconds, int) or not 1 <= seconds <= MAX_SECONDS:
         fail("max_seconds must be an integer from 1 to %d" % MAX_SECONDS)
@@ -135,6 +143,12 @@ def main():
         fail("the file could not be examined: %s" % describe(exc), path=path)
     if not size:
         fail("the file is empty", path=path)
+    rows = -(-size // window)
+    if rows > MAX_PROFILE_ROWS:
+        smallest = max(MIN_WINDOW, -(-size // MAX_PROFILE_ROWS))
+        fail("a window of %d bytes over this file of %d bytes would give %d rows, more than the %d the profile file may hold: nothing was read; the smallest window that fits is %d bytes"
+             % (window, size, rows, MAX_PROFILE_ROWS, smallest), path=path, bytes=size, window=window, rows_needed=rows, max_profile_rows=MAX_PROFILE_ROWS,
+             smallest_window_that_fits=smallest)
 
     try:
         source = open(path, "rb")
@@ -182,6 +196,20 @@ def main():
             first_runs.clear()
         runs_file.write("%d\t%d\t%d\t%.6f\n" % (run["start"], run["end"], run["bytes"], run["peak"]))
 
+    def read_window(fh):
+        """(counts, bytes) of the next window, read a MiB at a time with a look at the clock between the pieces. A window the clock stopped is
+        (None, bytes read of it): it is not measured, and the profile ends at the last whole window."""
+        counts, got = Counter(), 0
+        while got < window:
+            if got and time.monotonic() > deadline:
+                return None, got
+            piece = fh.read(min(READ_PIECE, window - got))
+            if not piece:
+                break
+            counts.update(piece)
+            got += len(piece)
+        return counts, got
+
     complete = True
     deadline = time.monotonic() + seconds
     try:
@@ -189,38 +217,42 @@ def main():
             offset = 0
             while True:
                 if time.monotonic() > deadline:
-                    problems.append("the pass stopped at max_seconds (%d) after %d of %d bytes: the profile holds the windows measured so far" % (seconds, processed, size))
+                    problems.append("the pass stopped at max_seconds (%d) after %d of %d bytes (%d whole windows): the profile holds the windows measured so far" % (seconds, processed, size, windows))
                     complete = False
                     break
                 try:
-                    block = fh.read(window)
+                    counts, got = read_window(fh)
                 except OSError as exc:
                     problems.append("a read failed after %d bytes: %s" % (processed, describe(exc)))
                     complete = False
                     break
-                if not block:
+                if counts is None:
+                    problems.append("the pass stopped at max_seconds (%d) inside the window at offset %d, after %d of its %d bytes: that window is not measured, "
+                                    "and the profile ends at the last whole window (%d windows, %d bytes)" % (seconds, offset, got, window, windows, processed))
+                    complete = False
                     break
-                counts = Counter(block)
+                if not got:
+                    break
                 totals.update(counts)
-                raw = entropy_of(counts, len(block))
+                raw = entropy_of(counts, got)
                 value = round(raw, 6)
                 windows += 1
-                processed += len(block)
-                last_bytes = len(block)
+                processed += got
+                last_bytes = got
                 if len(preview) < max_windows:
-                    preview.append({"offset": offset, "bytes": len(block), "entropy": value})
-                profile.write("%d\t%d\t%.6f\n" % (offset, len(block), raw))
+                    preview.append({"offset": offset, "bytes": got, "entropy": value})
+                profile.write("%d\t%d\t%.6f\n" % (offset, got, raw))
                 if raw >= threshold:
                     high_windows += 1
                     if current is None:
-                        current = {"start": offset, "end": offset + len(block), "peak": value}
+                        current = {"start": offset, "end": offset + got, "peak": value}
                     else:
-                        current["end"] = offset + len(block)
+                        current["end"] = offset + got
                         current["peak"] = max(current["peak"], value)
                 elif current is not None:
                     finish_run(current)
                     current = None
-                offset += len(block)
+                offset += got
             if current is not None:
                 finish_run(current)
     except OSError as exc:
@@ -244,6 +276,7 @@ def main():
 
     runs = [item[3] for item in sorted(biggest, key=lambda i: (-i[0], -i[1]))] if runs_name else sorted(first_runs, key=lambda r: (-r["bytes"], r["start"]))
     overall = entropy_of(totals, processed) if processed else 0.0
+    status = "complete" if complete else ("partial" if processed else "failed")
     result = {
         "tool": TOOL,
         "parser": PARSER,
@@ -251,7 +284,9 @@ def main():
         "path": path,
         "bytes": size,
         "bytes_processed": processed,
-        "status": "complete" if complete else ("partial" if processed else "failed"),
+        "status": status,
+        "status_basis": ("every window of the file was measured and written to the profile" if complete else
+                         problems[0] if problems else "the pass did not finish"),
         "problems": problems,
         "window": window,
         "threshold": threshold,
