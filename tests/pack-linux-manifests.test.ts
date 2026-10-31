@@ -31,6 +31,20 @@ test("every manifest says what its tool reads, the sha256 of its script, and a v
   }
 });
 
+test("every tool of the pack says its own manifest version in PARSER, so a record's provenance names the behaviour that made it", async () => {
+  // `docs/packs.md` asks a record's provenance to carry the parser's name and version. The tools are found by walking tools/.
+  const { readdir } = await import("node:fs/promises");
+  const names = (await readdir(TOOLS, { withFileTypes: true })).filter((e) => e.isDirectory()).map((e) => e.name).sort();
+  assert.ok(names.length >= 6, `${names.length} tools found`);
+  for (const name of names) {
+    const manifest = JSON.parse(await readFile(join(TOOLS, name, "manifest.json"), "utf8"));
+    const script = await readFile(join(TOOLS, name, "run.py"), "utf8");
+    const parsers = [...script.matchAll(/^PARSER = "([^"]*)"$/gm)].map((m) => m[1]);
+    assert.deepEqual(parsers, [`${manifest.name}/${manifest.version}`], `${name}: PARSER and the manifest's version`);
+    assert.equal(manifest.name, name);
+  }
+});
+
 test("shell_history's manifest names exactly the file names its script reads", async () => {
   // `use.names` is the hint the hub matches an input against: it must not promise a name the script skips, or skip one it reads.
   const script = await readFile(join(TOOLS, "shell_history", "run.py"), "utf8");

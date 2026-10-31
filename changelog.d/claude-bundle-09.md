@@ -6,6 +6,10 @@ auth_log, cron_dump, journal_export, shell_history and utmp_parse had five drift
 
 auth_log, cron_dump, journal_export, shell_history and utmp_parse now declare `secret_output` for their text flags (`write_text` and `preview_text`; `write_commands` and `preview_commands` for shell_history), so a job that sets one is sealed as secret output without the agent saying so, and each tool refuses such a flag as JSON, before it opens or creates anything, when `SECRET_OUTPUT` is not `1`. linux_triage does not declare it.
 
+### Fixed: linux-forensics records name the version of the tool that made them
+
+In all six linux tools `PARSER` (the `parser` of every record) lagged the manifest's version, so a record did not say which behaviour produced it. Each tool's `PARSER` now carries its manifest version and moves with it, and a test that walks the pack's tools holds the two equal.
+
 ### Changed: linux-forensics auth_log says how weak the year of a traditional syslog line is
 
 The dating rule and the status are unchanged. Per file the answer now lists every forward step of more than 62 days between two consecutive lines in order (`forward_steps`, the first 20 inline and all of them in `pages.forward_steps`) and marks every traditional-stamp record before the last such step `year_assumed`; `year_anchor` names the line and the modification time that dated the file; `mtime_may_be_copy_time` says when that time may be the time of a copy (more than 7 days after the last dated line, one modification time shared by every file of a call, or a gzip header time that differs), with the gzip header time beside it. A new `years` argument gives a year per file and line range. The first pass keeps one byte per dated line instead of seventeen. `logs/auth-time` and `triage/system-profile` say to fix the year from a source with full dates, and linux_triage's `authentication` and `logs` families say how dissect.target 3.25 dates a traditional line.
