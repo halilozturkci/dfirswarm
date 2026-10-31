@@ -219,7 +219,7 @@ test("the node suites npm test runs are found by scripts/test-node.ts, none lost
   assert.equal(run.length + skipped.length, onDisk);
 });
 
-test("the CI green job, the check main requires, needs every other job, always runs, and passes on success or skipped only", () => {
+test("the CI green job, the check main requires, needs every other job but macos, always runs, and decides through scripts/ci-green.ts", () => {
   const jobs = WORKFLOW.slice(WORKFLOW.search(/^jobs:\n/m));
   const ids = [...jobs.matchAll(/^ {2}([a-z][\w-]*):\n/gm)].map((m) => m[1]);
   const green = jobs.match(/^ {2}green:\n([\s\S]*?)(?=^ {2}[a-z][\w-]*:\n|(?![\s\S]))/m)?.[1];
@@ -229,7 +229,9 @@ test("the CI green job, the check main requires, needs every other job, always r
   // because a job it needs failed would let the pull request merge.
   assert.match(green, /^ {4}if: always\(\)$/m, "it must run whatever the jobs it needs did");
   const needs = green.match(/^ {4}needs: \[([^\]\n]*)\]$/m)?.[1].split(",").map((s) => s.trim()) ?? [];
-  assert.deepEqual([...needs].sort(), ids.filter((id) => id !== "green").sort(), "it must need every other job, or a job it leaves out could fail and the pull request still merge");
+  assert.deepEqual([...needs].sort(), ids.filter((id) => id !== "green" && id !== "macos").sort(), "it must need every other job but macos, or a job it leaves out could fail and the pull request still merge (the macOS parts are read from the run's job list by scripts/ci-green.ts, so a queued Mac does not hold it)");
   assert.match(green, /NEEDS: \$\{\{ toJSON\(needs\) \}\}/, "it reads every result it needs");
-  assert.match(green, /jq -e 'all\(\.\[\]; \.result == "success" or \.result == "skipped"\)'/, "anything but success or skipped (failure, cancelled) must fail it");
+  assert.match(green, /scripts\/ci-green\.ts[\s\S]*--needs-env NEEDS[\s\S]*--jobs-from-gh/,"it decides through scripts/ci-green.ts: the needed jobs pass on success or skipped only (tests/ci-green.test.ts), and the macOS parts are read from this run attempt's jobs");
+  assert.match(green, /^ {6}actions: read$/m, "it reads the run's jobs");
+  assert.doesNotMatch(green, /^ {4}needs:.*\bmacos\b/m, "it does not need the macOS job");
 });

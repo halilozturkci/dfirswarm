@@ -319,7 +319,7 @@
       "name": "ccl_indexeddb_dump",
       "package": "ccl_chromium_reader",
       "optional": true,
-      "why": "A Chromium or Electron IndexedDB (a chat client's, a web app's) read by database, object store and record; the ccl_chromium_reader library beside it, in /opt/dfir/src/ccl_indexeddb_dump/.venv/bin/python, also reads LevelDB, Local Storage, Session Storage and the cache.",
+      "why": "A Chromium or Electron IndexedDB (a chat client's, a web app's) read by database, object store and record; the ccl_chromium_reader library beside it, in /opt/dfir/src/ccl_indexeddb_dump/.venv/bin/python, also reads LevelDB, Local Storage, Session Storage and the cache. Brotli is held at 1.2.1 over the reader's old bound of 1.2.0, because before 1.2.1 the decoder (which reads content taken from the evidence) has an out-of-bounds write (GHSA-9v8h-qqgm-4m35).",
       "install": {
         "brew": "https://github.com/cclgroupltd/ccl_chromium_reader (not on PyPI)",
         "apt": "pinned source 0.3.18 (install.source)",
@@ -332,7 +332,7 @@
           "pip": [
             "--no-deps",
             ".",
-            "Brotli>=1.0.9,<=1.2.0",
+            "Brotli==1.2.1",
             "zstd==1.5.7.2",
             "https://github.com/cclgroupltd/ccl_simplesnappy/archive/3d085230baa8c46cf2090ebba29bf6e8eab31087.tar.gz"
           ]

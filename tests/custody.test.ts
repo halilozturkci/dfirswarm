@@ -927,3 +927,31 @@ test("the model gateway's log: its chain is checked, its hash anchored with the 
   const partial = verdictOf({ phase: "the ledger", sandbox: root, inputsDone: true, ledgerDone: true, vmsDone: true, artifactsDone: true }, "the deadline passed");
   assert.ok(partial.not_reached.includes("the model gateway log"));
 });
+
+test("a trace record that holds raw U+2028 and U+2029 verifies intact in custody, and a record edited to end in CRLF is reported edited", async () => {
+  const root = await sandbox();
+  const chain = (records: Array<Record<string, unknown>>): string[] => {
+    const lines: string[] = [];
+    let prev = "";
+    for (const r of records) {
+      const line = JSON.stringify({ ...r, prev });
+      lines.push(line);
+      prev = createHash("sha256").update(line).digest("hex");
+    }
+    return lines;
+  };
+  const lines = chain([
+    { ts: "t", agent: "a0", tool: "bash", args: { text: "before after" }, result: { ok: true } },
+    { ts: "t", agent: "a0", tool: "read", args: { text: "x y" }, result: { ok: true } },
+    { ts: "t", agent: "a0", tool: "bash", args: {}, result: { ok: true } },
+  ]);
+  assert.ok(lines[0]!.includes(" ") && lines[1]!.includes(" "), "JSON.stringify writes both raw");
+  await writeFile(join(root, "traces", "events.jsonl"), `${lines.join("\n")}\n`);
+  const intact = await takeCustody(root);
+  assert.equal(intact.trace.intact, true, intact.trace.detail);
+  assert.equal(intact.trace.lines, 3, "three records, not five pieces");
+  // The same records with the first line edited to end in CRLF: the CR is part of the record, so the chain breaks there.
+  await writeFile(join(root, "traces", "events.jsonl"), `${lines[0]}\r\n${lines.slice(1).join("\n")}\n`);
+  const edited = await takeCustody(root);
+  assert.equal(edited.trace.intact, false, "an added CR is an edit");
+});

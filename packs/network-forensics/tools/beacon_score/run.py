@@ -46,7 +46,7 @@ import tempfile
 import time
 from pathlib import Path
 
-TOOL = {"name": "beacon_score", "version": 4}
+TOOL = {"name": "beacon_score", "version": 5}
 MAX_EPOCH = 4_102_444_800        # 2100-01-01: a number above it is not epoch seconds (milliseconds, microseconds, nanoseconds)
 MAX_EVENTS = 3_000_000          # measured: 336 MB resident at this many events (it was 1.19 GB for the same 3 million before the series was packed)
 MAX_INLINE_EVENTS = 500_000     # a series passed in `timestamps`: the arguments are parsed whole (about 50 MB resident at this many), so a longer one belongs in timestamps_file

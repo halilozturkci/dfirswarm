@@ -48,8 +48,10 @@ job, with the digest going only to the sealed values file; and a distribution of
 modification times that puts most files on one date, reported with its counts and no
 cause, because a copy that reset times and real activity look alike. Both write the whole
 of a long result to a file and name it, withhold strings shaped like a credential from
-every channel (run them as jobs with `secret_output: true`: the tools cannot see whether
-the job was run so), and put the summary first and the long pages last.
+every channel (withholding by shape applies in every call, and `write_values` is refused
+unless the job runs as secret output, which the tools check: run them as jobs with
+`secret_output: true` where the real strings are wanted), and put the summary first and
+the long pages last.
 
 **One goal template**: `collection-intake.md`.
 

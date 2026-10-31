@@ -11,7 +11,7 @@ Use only if you run `recovery_key_scan` and report what it found. Not for decidi
 
 **recovery_key_scan.** Shows where text in the BitLocker recovery-password format
 sits (file, offset, length, ASCII or UTF-16LE, and whether its eight groups pass
-the divisible-by-11 check), where a PEM private-key header sits (type and offset),
+the divisible-by-11 check), where a PEM or armored OpenPGP private-key header sits (type and offset; an unknown type of up to two words is `other`, a type of three or more words is not located),
 and which file names are conventional for key files and credential stores. Does
 not show: that a value opens anything, what is in a key store, or anything in an
 image, an archive or a container (no OCR, no unpacking). It reads the first 8 MiB

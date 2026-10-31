@@ -1,0 +1,16 @@
+{
+  "_comment": "The router limits, read by scripts/skill-budgets.py and by tests/pack-index-budgets.test.ts. A router is at most router_max tokens, or router_max_by_pack[pack id] where the pack is named. A pack in index_router_only may have an index over the harness budget (extensions/skills.ts SKILL_BUDGET.pack, 1,000), and is then shown by its router line alone; every other pack keeps its index within that budget.",
+  "router_max": 400,
+  "router_max_by_pack": {
+    "windows-forensics": 500,
+    "linux-forensics": 500,
+    "memory-forensics": 500,
+    "macos-forensics": 500
+  },
+  "index_router_only": [
+    "windows-forensics",
+    "linux-forensics",
+    "memory-forensics",
+    "macos-forensics"
+  ]
+}

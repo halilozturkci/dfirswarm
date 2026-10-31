@@ -79,7 +79,7 @@ import { appendFileSync, chmodSync, closeSync, createReadStream, existsSync, lst
 import { stat } from "node:fs/promises";
 import { connect, createServer, type Server, type Socket } from "node:net";
 import { basename, dirname, join, relative, resolve } from "node:path";
-import { createInterface } from "node:readline";
+import { jsonlLines } from "../extensions/jsonl-lines.ts";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import * as P from "../extensions/protocol.ts";
 import * as F from "../extensions/finish.ts";
@@ -2305,7 +2305,7 @@ export class Hub {
     return (this.accessLoaded ??= (async () => {
       for (const file of [join(this.cfg.sandbox, P.EVENTS_REL), this.spillFile()]) {
         if (!existsSync(file)) continue;
-        const lines = createInterface({ input: createReadStream(file, { encoding: "utf8" }), crlfDelay: Infinity });
+        const lines = jsonlLines(createReadStream(file));
         for await (const line of lines) {
           if (!line.includes('"tool":"sensitive_access"')) continue;
           let r: unknown;

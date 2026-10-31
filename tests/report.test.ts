@@ -19,7 +19,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { chainLine, escapeHtml, gatewayLine, gatewayRecordOf, heldRows, hostClockLine, hostEvidenceLine, lintReport, markdownToHtml, renderReport, reproducibilityLine, sourceCheckedLine, vmRows, vmSpendNote } from "../scripts/report.ts";
+import { chainLine, streamedChain, escapeHtml, gatewayLine, gatewayRecordOf, heldRows, hostClockLine, hostEvidenceLine, lintReport, markdownToHtml, renderReport, reproducibilityLine, sourceCheckedLine, vmRows, vmSpendNote } from "../scripts/report.ts";
 import { summarize } from "../scripts/summary.ts";
 import { takeCustody } from "../scripts/custody.ts";
 import { recordEntry, createContext, initSandbox } from "../extensions/protocol.ts";
@@ -991,4 +991,28 @@ test("a long line of table or link punctuation renders in linear time", () => {
   assert.doesNotMatch(markdownToHtml("A | B\n---\n"), /<table>/);
   assert.doesNotMatch(markdownToHtml("| A | B |\n|---|x|\n"), /<table>/);
   assert.match(markdownToHtml("See [the log](https://example.org/a) now."), /See the log <span class="url">\(https:\/\/example\.org\/a\)<\/span> now\./);
+});
+
+test("the report's chain check reads a trace record that holds raw U+2028 and U+2029 whole, and an added CR is a break", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "report-chain-"));
+  try {
+    const lines: string[] = [];
+    let prev = "";
+    for (const r of [{ a: "before after" }, { b: "x y" }, { c: 3 }]) {
+      const line = JSON.stringify({ ts: "t", agent: "a0", tool: "bash", args: r, result: {}, prev });
+      lines.push(line);
+      prev = createHash("sha256").update(line).digest("hex");
+    }
+    const file = join(dir, "events.jsonl");
+    await writeFile(file, `${lines.join("\n")}\n`);
+    const intact = await streamedChain(file, null);
+    assert.equal(intact.unread, null);
+    assert.equal(intact.chain.ok, true, JSON.stringify(intact.chain));
+    assert.equal(intact.chain.total, 3, "three records");
+    await writeFile(file, `${lines[0]}\r\n${lines.slice(1).join("\n")}\n`);
+    const edited = await streamedChain(file, null);
+    assert.equal(edited.chain.ok, false, "a line edited to end in CRLF is reported edited");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

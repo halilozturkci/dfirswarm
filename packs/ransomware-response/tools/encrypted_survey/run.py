@@ -97,6 +97,12 @@ NAME_HINTS = re.compile(
 # written as JSON Lines under work/<agent>/tool-output and named.
 import hashlib
 
+# The rows a table shows inline are cut by size as well as by count: the answer is judged, serialised and read back within the run's
+# clock, and a `limit` of 1,000,000 over rows of a few hundred bytes would take longer than max_seconds (and leave the answer without
+# its keys). The cut is lossless: every row is in the paging file, named by all_results. The same text is in encrypted_survey, and a test
+# holds the two classes equal; the model is snapshot_chain_check's LosslessPage.
+INLINE_BYTES = 1 << 19
+
 
 class LosslessPage:
     def __init__(self, tool: str, key: object, limit: int):
@@ -105,6 +111,7 @@ class LosslessPage:
         self.tool = re.sub(r"[^A-Za-z0-9_.-]", "_", tool)
         self.limit = limit
         self.page: list[object] = []
+        self.page_bytes = 0
         self.total = 0
         self._out = None
         self._tmp: Path | None = None
@@ -152,8 +159,9 @@ class LosslessPage:
         the row as kept."""
         row = seal_row(row, evidence)
         self.total += 1
-        if len(self.page) < self.limit:
+        if len(self.page) < self.limit and self.page_bytes < INLINE_BYTES:
             self.page.append(row)
+            self.page_bytes += len(repr(row))
             return row
         if self._out is None:
             try:
@@ -176,6 +184,10 @@ class LosslessPage:
             "returned": len(self.page),
             "truncated": self.total > len(self.page),
         }
+        if self.total > len(self.page) and len(self.page) < self.limit:
+            result["inline_cut_by_size"] = (
+                "the rows shown inline stop at about %d bytes whatever limit says; the whole list is in all_results" % INLINE_BYTES
+            )
         if self._out is not None:
             try:
                 self._out.flush()
@@ -261,6 +273,17 @@ class NoReplacePage(LosslessPage):
             result["all_results_format"] = "JSON Lines, one complete result per line"
         return result
 # END SHARED PAGE
+
+
+def finish_page(page) -> dict:
+    """page.finish(), with the size cut named: NoReplacePage (the shared block above) replaces LosslessPage.finish, so the cut that
+    LosslessPage makes by INLINE_BYTES is said here, outside the block, for every table. The same text is in ransom_note_scan."""
+    result = page.finish()
+    if page.total > len(page.page) and len(page.page) < page.limit:
+        result["inline_cut_by_size"] = (
+            "the rows shown inline stop at about %d bytes whatever limit says; the whole list is in all_results" % INLINE_BYTES
+        )
+    return result
 
 
 # BEGIN SHARED STOP
@@ -1543,10 +1566,10 @@ def main():
                       "caveat": "every sampled tail ends with these bytes. Padding, an ordinary format trailer, duplicated "
                                 "content or one tool's output also do; this is not a finding about the family"}
 
-    pages = {"candidates": candidates.finish(), "low_entropy_tail_candidates": low_tail.finish(),
-             "note_name_candidates": note_names.finish(), "skipped": skipped.finish(), "exceptions": exceptions.finish(),
-             "all_files_mtime_hourly": all_page.finish(), "candidate_mtime_hourly": cand_page.finish(),
-             "appended_extension_observations": ext_page.finish(), "repeated_tails": tail_page.finish()}
+    pages = {"candidates": finish_page(candidates), "low_entropy_tail_candidates": finish_page(low_tail),
+             "note_name_candidates": finish_page(note_names), "skipped": finish_page(skipped), "exceptions": finish_page(exceptions),
+             "all_files_mtime_hourly": finish_page(all_page), "candidate_mtime_hourly": finish_page(cand_page),
+             "appended_extension_observations": finish_page(ext_page), "repeated_tails": finish_page(tail_page)}
     OWN_NAMES.update(page["all_results"] for page in pages.values() if page.get("all_results"))
 
     c = counters

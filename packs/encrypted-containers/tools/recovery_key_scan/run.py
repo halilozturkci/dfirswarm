@@ -1057,7 +1057,7 @@ class SecretValues:
         }
 
 
-PARSER = "recovery_key_scan/3"
+PARSER = "recovery_key_scan/4"
 CHUNK = 4 << 20
 # Longer than the longest thing matched (110 bytes of UTF-16LE text), so a match
 # across a read boundary is whole in the next window.
@@ -1079,7 +1079,7 @@ ASCII_TAIL = re.compile(rb"-([0-9]{6})-([0-9]{6})-([0-9]{6})-([0-9]{6})-([0-9]{6
 UTF16_GROUP = rb"((?:[0-9]\x00){6})"
 UTF16_TAIL = re.compile(rb"-\x00" + (rb"-\x00".join([UTF16_GROUP] * 7)) + rb"(?![0-9]\x00)")
 UTF16_FIRST = re.compile(rb"(?:[0-9]\x00){6}\Z")
-PEM = re.compile(rb"-----BEGIN ((?:[A-Z]{2,10} ){0,2}PRIVATE KEY)-----")
+PEM = re.compile(rb"-----BEGIN ((?:[A-Z]{2,10} ){0,2}PRIVATE KEY(?: BLOCK)?)-----")
 # The types a private key header is reported under; any other type is "other". The text is the evidence's, and is not echoed.
 PEM_KNOWN = {"", "RSA", "EC", "DSA", "OPENSSH", "ENCRYPTED", "PGP"}
 NAME_HINTS = [
@@ -1319,8 +1319,14 @@ def last_word(signum):
 
 
 def private_key_type(m):
+    """The header's own type for a type this tool knows (a PEM `RSA PRIVATE KEY`, an armored OpenPGP `PGP PRIVATE KEY BLOCK`), else
+    "other"; an unknown type's text is never echoed."""
     head = m.group(1).decode("ascii", "replace")
-    return head if head[:-len("PRIVATE KEY")].strip() in PEM_KNOWN else "other"
+    core = head[:-len(" BLOCK")] if head.endswith(" BLOCK") else head
+    kind = core[:-len("PRIVATE KEY")].strip()
+    if head.endswith(" BLOCK") and kind != "PGP":
+        return "other"                      # only RFC 4880's armor carries BLOCK
+    return head if kind in PEM_KNOWN else "other"
 
 
 def main():

@@ -9,7 +9,8 @@
  * open, blocked, waiting on the operator and uncited.
  */
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -120,6 +121,30 @@ test("the until-solved gate refuses a question with no disposition under the bar
   // Every question answered, nothing limited: it ends completed.
   const done = P.finishLineVerdict({ ...checks, gate: { defects: [], limited: [], questions: [{ id: "1", outcome: "answered", blocks: [] }, { id: "2", outcome: "answered", blocks: [] }], until_solved: true } }, false);
   assert.ok(done.proceed && done.outcome === "completed");
+});
+
+test("20,000 uncited input files give a regroup post under the bound that counts the rest and names the file holding all 20,000", async () => {
+  const { S } = await run();
+  const files = Array.from({ length: 20_000 }, (_, i) => ({ path: `inputs/case/dir${String(Math.floor(i / 100)).padStart(3, "0")}/file-${String(i).padStart(6, "0")}.bin`, bytes: 1000 + i, sha256: "c".repeat(64) }));
+  await writeFile(join(S, "inputs.json"), JSON.stringify({ files }));
+  const snap = await L.leadsSnapshot(S);
+  const since = await L.lastProgress(S, snap, new Date(Date.now() - 3_600_000).toISOString());
+  const text = await L.regroupMessage(S, snap, { minutes: 20, since, count: 1, nextMinutes: 30 });
+  assert.ok(text.length <= P.inboxPageChars(), `the post is ${text.length} characters, over the bound of ${P.inboxPageChars()}`);
+  const listed = (text.match(/^- inputs\/case\//gm) ?? []).length;
+  assert.ok(listed > 0 && listed <= 50, `${listed} files listed`);
+  assert.match(text, /Evidence no standing entry cites \(20000\):/);
+  const rest = 20_000 - listed;
+  assert.match(text, new RegExp(`- \\.\\.\\. and ${rest} more, not listed here \\(20000 in all\\): every list, whole, is in (tool-output/harness/\\S+) \\((\\d+) bytes, sha256 ([0-9a-f]{64})\\)`));
+  const m = /every list, whole, is in (tool-output\/harness\/\S+) \((\d+) bytes, sha256 ([0-9a-f]{64})\)/.exec(text)!;
+  const kept = await readFile(join(S, m[1]!));
+  assert.equal(kept.length, Number(m[2]));
+  assert.equal(createHash("sha256").update(kept).digest("hex"), m[3]);
+  assert.equal((kept.toString("utf8").match(/^- inputs\/case\//gm) ?? []).length, 20_000, "all 20,000 are in the file");
+  // A short regroup is unchanged: no file, no "more".
+  await writeFile(join(S, "inputs.json"), JSON.stringify({ files: files.slice(0, 3) }));
+  const small = await L.regroupMessage(S, await L.leadsSnapshot(S), { minutes: 20, since, count: 1, nextMinutes: 30 });
+  assert.doesNotMatch(small, /more, not listed here/);
 });
 
 test("the regroup lists the questions not answered, the leads open and blocked, what waits on the operator and the evidence no entry cites", async () => {

@@ -74,8 +74,8 @@
   "example": "{\"path\": \"inputs/signins.json\"}",
   "by": "maintainer",
   "at": "2026-10-27T12:00:00.000Z",
-  "version": 6,
-  "sha256": "9adf831aaedf18d38801896298c2732d88ae818b6ca933ae47f34ac73780abac",
+  "version": 8,
+  "sha256": "e3438531bfa81f997882d7be0c5a21cb3f90576ded0d163461370dc4033902af",
   "use": {
     "names": [
       "*signin*",

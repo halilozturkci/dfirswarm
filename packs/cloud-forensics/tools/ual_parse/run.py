@@ -2152,6 +2152,7 @@ class Census:
         self.problems = []
         self.conventions = []
         self.pagination = []
+        self.limit_stops = []      # a limit of the tool's own (max_expanded_bytes, max_record_bytes) ended a file before a record was read
         self.cut = False
         self.counts = {"files_found": 0, "files_read": 0, "files_partial": 0, "files_failed": 0, "files_unsupported": 0,
                        "files_empty": 0, "files_skipped": 0, "files_not_attempted": 0, "rows_read": 0, "rows_rejected": 0,
@@ -2252,6 +2253,8 @@ def main():
     if os.path.isdir(path):
         targets = walk_inputs(path, lambda n: n.lower().endswith((".csv", ".json", ".jsonl", ".ndjson", ".csv.gz", ".json.gz", ".jsonl.gz", ".ndjson.gz")), skipped)
         if not targets:
+            if out_of_time() or any("the time limit ended the listing" in str(s.get("reason", "")) for s in skipped.items):
+                fail("the time limit ended the listing of the directory before any CSV or JSON export was found; nothing was read or judged (see skipped)", path=shown_path(path), skipped=named(skipped.items))
             fail("no CSV or JSON export there", path=shown_path(path), skipped=named(skipped.items))
     elif os.path.isfile(path):
         targets = [path]
@@ -2290,7 +2293,7 @@ def main():
             census.rejected.start_file()
             order = {"value": date_order, "basis": "declared" if date_order else None, "tried": False, "seen": None, "contradicted": 0}
             result_count = max_index = None
-            records = rejected = payload_bad = 0
+            records = rejected = payload_bad = size_rejects = 0
             first_reject = None
             stopped_all_rejected = False
             try:
@@ -2303,6 +2306,8 @@ def main():
                         reason = item if kind == "reject" else "a JSON %s, not a record" % type(item).__name__
                         rejected += 1
                         first_reject = first_reject or (info["record"], info["line"], reason)
+                        if kind == "reject" and ("larger than max_record_bytes" in str(reason) or "a line longer than" in str(reason)):
+                            size_rejects += 1
                         if census.rejected.reject({"file": shown, "record": info["record"], "line": info["line"], "reason": scrub(reason)}):
                             stopped_all_rejected = True
                             break
@@ -2439,7 +2444,17 @@ def main():
                 problems.append("the expansion reached max_expanded_bytes (%d): the rest of the file was not read" % max_expanded)
             if getattr(src, "stopped", None):
                 problems.append(src.stopped)
-            if stopped_all_rejected:
+            # A limit of the tool's own that ended the file before any record was read is the limit's doing, never a verdict on the input.
+            limit_stop = None
+            if records == 0 and src.capped:
+                limit_stop = "max_expanded_bytes (%d) stopped the read of %s before any record" % (max_expanded, shown)
+            elif records == 0 and size_rejects and size_rejects == rejected:
+                limit_stop = "max_record_bytes (%d) rejected every record of %s (%d of them), so no record was read" % (record_cap, shown, size_rejects)
+            if limit_stop:
+                census.limit_stops.append(limit_stop)
+            if stopped_all_rejected and size_rejects == rejected:
+                problems.append("the first %d records were each larger than max_record_bytes (%d), so none was read: raise it; the rest of the file was not examined" % (FIRST_REJECTS, record_cap))
+            elif stopped_all_rejected:
                 problems.append("the first %d records were all rejected: this is not an export this tool reads, and the rest of the file was not examined" % FIRST_REJECTS)
             if rejected:
                 problems.append("%d record(s) were not read as audit records (the first, record %d at line %s: %s); %s" % (
@@ -2515,14 +2530,30 @@ def main():
                 and c["rows_rejected"] == 0 and c["payloads_rejected"] == 0 and not skipped.total and c["files_not_attempted"] == 0
                 and c["replacement_characters"] == 0 and not census.pagination and not excluded_unknown_time)
     nothing_read = c["rows_read"] == 0
-    status = status_of(nothing_read and (c["files_failed"] or c["files_unsupported"] or c["files_empty"] or c["files_not_attempted"]), complete,
+    # The tool's own clock ended the read: a stop by the tool, never a verdict on the input (see cloudtrail_parse).
+    clock_basis = None
+    if stop_all:
+        files_read = len(targets) - c["files_not_attempted"]
+        clock_basis = ("the time limit (%s s) ended the read after %d of the %d supplied files, with %d not attempted and %d audit rows read; "
+                       "what was read is kept and nothing in the files not read was judged (see coverage.stopped_by_time_limit and files_not_attempted_named)"
+                       % (seconds, files_read, len(targets), c["files_not_attempted"], c["rows_read"]))
+        if c["files_failed"] or c["files_unsupported"] or c["files_empty"]:
+            clock_basis += "; before the stop %d file(s) could not be read, %d were unsupported and %d were empty (see file_problems)" % (
+                c["files_failed"], c["files_unsupported"], c["files_empty"])
+    # The same rule for the tool's other limits: when max_expanded_bytes or max_record_bytes ended every file before a record was read,
+    # the answer is partial and names the limit and its value; it does not say that nothing could be read from what was supplied.
+    limit_basis = None
+    if census.limit_stops and nothing_read and not stop_all:
+        limit_basis = ("a limit of this tool's own stopped the read before any record: %s; raise it (max_expanded_bytes, max_record_bytes) and run again; "
+                       "nothing in the supplied files was judged (see coverage.limit_stops and file_problems)" % "; ".join(census.limit_stops[:3]))
+    status = status_of((not stop_all) and not limit_basis and nothing_read and (c["files_failed"] or c["files_unsupported"] or c["files_empty"] or c["files_not_attempted"]), complete,
                        "every row of every supplied file was read and nothing was left out; that says nothing about whether the export holds everything the tenant logged",
-                       "some of what was supplied was not read as audit records or not read at all (a file skipped for its name too: see skipped), an export names a next page or says it holds fewer records than matched, or a time filter excluded "
+                       clock_basis or limit_basis or "some of what was supplied was not read as audit records or not read at all (a file skipped for its name too: see skipped), an export names a next page or says it holds fewer records than matched, or a time filter excluded "
                        "rows whose time could not be read (see coverage, file_census, rejected_records, file_problems, skipped, pagination_markers)",
                        "no audit record could be read from what was supplied (see file_problems)")
     answer = {
         "parser": PARSER, **status, "path": shown_path(path),
-        "coverage": {**c, "time_limit_seconds": seconds, "stopped_by_time_limit": stop_all, "max_expanded_bytes": max_expanded,
+        "coverage": {**c, "time_limit_seconds": seconds, "stopped_by_time_limit": stop_all, "max_expanded_bytes": max_expanded, "max_record_bytes": record_cap, "limit_stops": census.limit_stops[:20],
                      "records_matched": matched, "excluded_for_unreadable_time": excluded_unknown_time, "time_statuses": time_statuses,
                      "rejected_records_not_listed": census.rejected.total_unlisted},
         "files": len(targets), "rows_read": c["rows_read"], "unreadable_audit_data": c["payloads_rejected"],

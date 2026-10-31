@@ -54,7 +54,7 @@ import threading
 import zlib
 from datetime import datetime, timedelta, timezone
 
-PARSER = "archive_probe/5"
+PARSER = "archive_probe/6"
 
 
 # Lossless paging (the same in every library tool that pages): the page an
@@ -1514,7 +1514,52 @@ DARK_SHAPE = re.compile(rb"PK\x03\x04|PK\x01\x02|PK\x05\x06|7z\xbc\xaf\x27\x1c|R
 RECORD_SIGNATURES = (b"PK\x03\x04", b"PK\x01\x02", b"PK\x05\x06", b"PK\x05\x05", b"PK\x06\x06", b"PK\x07\x08")
 
 
-def shaped(head, at, hi, size, fh):
+class DarkLimit(Exception):
+    """The search of the unclaimed bytes could not look at all of them (the clock, a signal, or its byte budget): the answer says so."""
+
+
+DESCRIPTOR_SEARCH = 16 << 20       # bytes looked through after one streamed local header for its data descriptor
+DESCRIPTOR_BUDGET = 256 << 20      # the same in all the regions of one file together
+DESCRIPTOR = re.compile(rb"PK\x07\x08")
+
+
+def streamed_end(fh, data_start, hi, budget, chained):
+    """Whether a local header whose sizes are not in it (bit 3 of the flags: the CRC and both sizes are zero, or 0xFFFFFFFF for Zip64, and a
+    data descriptor after the data carries them) is followed by data that its descriptor describes exactly: the descriptor's compressed size
+    is the distance from the data's start to the descriptor, and what follows the descriptor ends the region or begins the next record. The
+    descriptor is the 4-byte kind (CRC and two sizes) or the Zip64 kind (CRC and two 8-byte sizes), with its signature; a streaming writer
+    that leaves the signature out is not found this way. The search is bounded (DESCRIPTOR_SEARCH after one header, DESCRIPTOR_BUDGET in
+    all) and says so through DarkLimit when it was cut short."""
+    pos, looked = data_start, 0
+    while pos < hi - 15 and looked < DESCRIPTOR_SEARCH:
+        if stop_wanted():
+            raise DarkLimit(stop_cause())
+        fh.seek(pos)
+        block = fh.read(min(DARK_BLOCK, hi - pos) + 24)
+        if len(block) < 16:
+            return False
+        for m in DESCRIPTOR.finditer(block):
+            where = pos + m.start()
+            if where + 16 > hi:
+                continue
+            small = struct.unpack_from("<III", block, m.start() + 4) if m.start() + 16 <= len(block) else None
+            if small and small[1] == where - data_start and chained(where + 16):
+                return True
+            wide = struct.unpack_from("<IQQ", block, m.start() + 4) if m.start() + 24 <= len(block) else None
+            if wide and wide[1] == where - data_start and where + 24 <= hi and chained(where + 24):
+                return True
+        step = max(1, min(DARK_BLOCK, hi - pos) - 24)
+        pos += step
+        looked += step
+        budget["descriptor"] = budget.get("descriptor", 0) + step
+        if budget["descriptor"] > DESCRIPTOR_BUDGET:
+            raise DarkLimit("more than %d bytes were looked through for the data descriptors of streamed local headers in the bytes no member claims" % DESCRIPTOR_BUDGET)
+    if looked >= DESCRIPTOR_SEARCH:
+        raise DarkLimit("a streamed local header's data descriptor was not found within the next %d bytes" % DESCRIPTOR_SEARCH)
+    return False
+
+
+def shaped(head, at, hi, size, fh, budget=None):
     """What archive-shaped thing begins at byte `at` of a region that ends at `hi`, from the first bytes of it (`head`, up to 64): a name, or None.
 
     The shape is a structure, not a set of field values: a reader that falls back to the local headers accepts any version, method and name
@@ -1535,8 +1580,20 @@ def shaped(head, at, hi, size, fh):
 
     if sig == b"PK\x03\x04" and len(head) >= 30:
         flags, csize, nlen, xlen = struct.unpack_from("<H", head, 6)[0], struct.unpack_from("<I", head, 18)[0], struct.unpack_from("<H", head, 26)[0], struct.unpack_from("<H", head, 28)[0]
-        if csize != 0xFFFFFFFF and chained(at + 30 + nlen + xlen + csize):
+        data_start = at + 30 + nlen + xlen
+        if csize != 0xFFFFFFFF and chained(data_start + csize):
             return "a ZIP local header"
+        if flags & 8 and csize in (0, 0xFFFFFFFF) and streamed_end(fh, data_start, hi, budget if budget is not None else {}, chained):
+            return "a ZIP local header (streamed: its sizes are in a data descriptor)"
+        if csize == 0xFFFFFFFF and not flags & 8 and xlen >= 4:
+            # Zip64: the sizes are in the local header's extra field (id 0x0001: uncompressed size, then compressed size, 8 bytes each)
+            fh.seek(at + 30 + nlen)
+            extra, i = fh.read(xlen), 0
+            while i + 4 <= len(extra):
+                tag, n = struct.unpack_from("<HH", extra, i)
+                if tag == 1 and n >= 16 and i + 4 + 16 <= len(extra) and chained(data_start + struct.unpack_from("<Q", extra, i + 12)[0]):
+                    return "a ZIP local header (Zip64)"
+                i += 4 + n
     elif sig == b"PK\x01\x02" and len(head) >= 46:
         nlen, xlen, clen = struct.unpack_from("<HHH", head, 28)
         if chained(at + 46 + nlen + xlen + clen):
@@ -1554,6 +1611,12 @@ def shaped(head, at, hi, size, fh):
             hsize = struct.unpack_from("<H", head, 12)[0]
             if 13 <= hsize <= len(head) - 7 and zlib.crc32(head[9:7 + hsize]) & 0xFFFF == struct.unpack_from("<H", head, 7)[0]:
                 return "a RAR block"
+            if hsize > len(head) - 7 and at + 7 + hsize <= hi:
+                # A main header longer than the first bytes of the region hold (an archive comment, extra fields): read whole from the file.
+                fh.seek(at + 7)
+                whole = fh.read(hsize)
+                if len(whole) == hsize and zlib.crc32(whole[2:]) & 0xFFFF == struct.unpack_from("<H", whole, 0)[0]:
+                    return "a RAR block"
         elif head[6] == 1 and head[7] == 0 and len(head) >= 14:                  # RAR 5: marker, then a header with a CRC of 32 bits
             value, shift, i = 0, 0, 12
             while i < len(head) and shift < 35:
@@ -1593,7 +1656,10 @@ def scan_dark(fh, size, lo, hi, budget):
             if len(head) < 64 and pos + m.start() + 64 <= size:
                 fh.seek(at)
                 head = fh.read(64)
-            found = shaped(head, at, hi, size, fh)
+            try:
+                found = shaped(head, at, hi, size, fh, budget)
+            except DarkLimit as limit:
+                return None, str(limit)
             if found:
                 return {"kind": found, "at": at}, None
         pos += DARK_BLOCK

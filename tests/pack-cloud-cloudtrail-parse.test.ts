@@ -10,9 +10,13 @@ import assert from "node:assert/strict";
 import { chmod, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import { ALICE, TRAIL, assumedResponse, asJob, body, ct, everythingBut, exists, filesUnder, gz, lines, put, refused, rowsOf, session, tool, trail, withDir } from "./cloud-pack-harness.ts";
 import type { Ev, Json } from "./cloud-pack-harness.ts";
+
+/** The tool run with its clock already out (tests/cloud-clock-inject.py; INJECT_TOOL names the tool). */
+const CLOCK = fileURLToPath(new URL("./cloud-clock-inject.py", import.meta.url));
 
 const ROLE = "arn:aws:iam::111122223333:role/Admin";
 const SESSION_ARN = "arn:aws:sts::111122223333:assumed-role/Admin/alice-session";
@@ -533,8 +537,15 @@ test("the time limit ends the read, keeps what was read, and names the files tha
     await put(cwd, "work/ev/a-big.json", JSON.stringify({ Records: records }));
     await put(cwd, "work/ev/b-small.json", trail(ct({ eventID: "b-1" })));
     const out = body(await tool(TRAIL, cwd, { path: "work/ev", time_limit_seconds: 1, limit: 5 }));
+    // A runner that reads nothing of 150,000 records in one second still gets a partial answer that names the clock, never "failed".
     assert.equal(out.status, "partial");
     assert.equal(out.coverage.stopped_by_time_limit, true);
+    assert.equal(out.error, undefined, "a stop by the clock is not an error about the input");
+    assert.match(out.status_basis, /^the time limit \(1 s\) ended the read/);
+    if (out.coverage.records_read === 0) {
+      assert.equal(out.coverage.files_not_attempted, 2, "nothing was read: both files were not attempted");
+      return;
+    }
     assert.ok(out.coverage.records_read > 0 && out.coverage.records_read < 150000, `kept what was read: ${out.coverage.records_read}`);
     assert.equal(out.coverage.files_not_attempted, 1);
     assert.deepEqual(out.files_not_attempted_named.map((f: string) => f.split("/").pop()), ["b-small.json"]);
@@ -542,6 +553,59 @@ test("the time limit ends the read, keeps what was read, and names the files tha
     const census = await rowsOf(cwd, out, "file_census");
     assert.equal(census[0].status, "partial");
     assert.match(census[0].problems.join(" "), /the time limit ended the read/);
+  });
+});
+
+test("when the clock is out before the first file, the answer is partial and names the clock, never failed or blamed on the input (deterministic)", async () => {
+  await withDir(async (cwd) => {
+    await put(cwd, "work/ev/a.json", trail(ct({ eventID: "a-1" })));
+    await put(cwd, "work/ev/b.json", trail(ct({ eventID: "b-1" })));
+    const run = await tool(CLOCK, cwd, { path: "work/ev", time_limit_seconds: 30 }, { INJECT_TOOL: TRAIL });
+    const out = body(run);
+    assert.equal(run.code, 0);
+    assert.equal(out.status, "partial");
+    assert.match(out.status_basis, /^the time limit \(30 s\) ended the read after 0 of the 2 supplied files, with 2 not attempted and 0 event records read/);
+    assert.equal(out.error, undefined);
+    assert.equal(out.coverage.stopped_by_time_limit, true);
+    assert.equal(out.coverage.records_read, 0);
+    assert.equal(out.coverage.files_not_attempted, 2);
+    assert.deepEqual(out.files_not_attempted_named.map((f: string) => f.split("/").pop()).sort(), ["a.json", "b.json"]);
+    assert.doesNotMatch(JSON.stringify(out), /no CloudTrail event could be read/);
+  });
+});
+
+test("a limit of the tool's own that ends the read before any event (max_expanded_bytes, max_record_bytes) is named with its value, never blamed on the input", async () => {
+  await withDir(async (cwd) => {
+    const many = Array.from({ length: 2000 }, (_, i) => ct({ eventID: `x-${i}`, requestParameters: { pad: "p".repeat(1500) } }));
+    await put(cwd, "inputs/exp.json.gz", gz(trail(...many)));
+    const exp = await tool(TRAIL, cwd, { path: "inputs/exp.json.gz", max_expanded_bytes: 1024 });
+    const e = body(exp);
+    assert.equal(e.status, "partial");
+    assert.equal(e.error, undefined, "no error that blames the input");
+    assert.match(e.status_basis, /max_expanded_bytes \(1024\) stopped the read/);
+    assert.doesNotMatch(JSON.stringify(e), /no CloudTrail event could be read from what was supplied/);
+    assert.equal(e.coverage.records_read, 0);
+
+    const big = Array.from({ length: 2000 }, (_, i) => JSON.stringify(ct({ eventID: `y-${i}`, requestParameters: { pad: "p".repeat(1700) } }))).join("\n") + "\n";
+    await put(cwd, "inputs/big.jsonl", big);
+    const rec = await tool(TRAIL, cwd, { path: "inputs/big.jsonl", max_record_bytes: 1024 });
+    const r = body(rec);
+    assert.equal(r.status, "partial");
+    assert.equal(r.error, undefined);
+    assert.match(r.status_basis, /max_record_bytes \(1024\) rejected every record/);
+    assert.doesNotMatch(JSON.stringify(r), /this is not an export this tool reads/, "the first-rejects sentence is for rejects the limit did not cause");
+    assert.match(JSON.stringify(r.file_problems), /each larger than max_record_bytes \(1024\)/);
+  });
+});
+
+test("failed, with 'no CloudTrail event could be read', is still given when the clock did not stop the read", async () => {
+  await withDir(async (cwd) => {
+    await put(cwd, "work/ev/a.json", "this is not a CloudTrail file at all\n");
+    const run = await tool(TRAIL, cwd, { path: "work/ev" });
+    const out = refused(run);
+    assert.equal(out.status, "failed");
+    assert.match(out.status_basis, /no CloudTrail event could be read from what was supplied/);
+    assert.equal(out.coverage.stopped_by_time_limit, false);
   });
 });
 

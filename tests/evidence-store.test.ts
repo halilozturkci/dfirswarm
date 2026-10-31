@@ -285,3 +285,26 @@ test("a generation reads only the files of its job's sealed output: an index.tsv
   assert.equal((line.target as { sha256?: string }).sha256, "a".repeat(64), "the target's content is on the record");
   assert.equal(line.trigger, "derived");
 });
+
+test("traceLineBytes returns the exact bytes of a trace record that holds raw U+2028 and U+2029, and of one that ends in a CR", async () => {
+  const { traceLineBytes, TRACE_REL } = await import("../scripts/evidence-store.ts");
+  const dir = mkdtempSync(join(tmpdir(), "trace-bytes-"));
+  try {
+    await mkdir(join(dir, "traces"), { recursive: true });
+    const first = JSON.stringify({ ts: "t", agent: "a0", tool: "bash", args: { text: "before after end" }, result: {} });
+    const second = `${JSON.stringify({ ts: "t", agent: "a0", tool: "read", args: {}, result: {} })}\r`;
+    assert.ok(first.includes(" ") && first.includes(" "));
+    await writeFile(join(dir, TRACE_REL), `${first}\n${second}\n`);
+    const sha = (s: string) => createHash("sha256").update(s).digest("hex");
+    const got = await traceLineBytes(dir, sha(first));
+    assert.ok(got, "the record is found: readline would have split it in three and found none");
+    assert.equal(got!.toString("utf8"), first);
+    assert.deepEqual(got, Buffer.from(first, "utf8"), "its exact bytes");
+    const withCr = await traceLineBytes(dir, sha(second));
+    assert.ok(withCr, "a record that ends in a CR is its own bytes, CR included");
+    assert.equal(withCr!.toString("utf8"), second);
+    assert.equal(await traceLineBytes(dir, sha("not there")), null);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

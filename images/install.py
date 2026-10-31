@@ -106,6 +106,7 @@ TOOLS = Path(os.environ.get("DFIRSWARM_TOOLS_DIR", "/opt/dfir/tools"))
 SRC = Path(os.environ.get("DFIRSWARM_SRC_DIR", "/opt/dfir/src"))
 BIN = Path(os.environ.get("DFIRSWARM_BIN_DIR", "/usr/local/bin"))
 APT_SOURCES = Path(os.environ.get("DFIRSWARM_APT_SOURCES_DIR", "/etc/apt/sources.list.d"))
+PI_DIR = Path(os.environ.get("DFIRSWARM_PI_DIR", "/opt/pi"))
 # apt's package lists, emptied once the install is done; a test that runs the
 # whole install on a host points this at its own directory.
 APT_LISTS = Path(os.environ.get("DFIRSWARM_APT_LISTS_DIR", "/var/lib/apt/lists"))
@@ -120,6 +121,73 @@ os.environ.setdefault("DEBIAN_FRONTEND", "noninteractive")
 def run(cmd: list[str], cwd=None, env: dict | None = None) -> bool:
     print("+", " ".join(cmd), flush=True)
     return subprocess.run(cmd, cwd=cwd, env={**os.environ, **env} if env else None).returncode == 0
+
+
+LOCK_DIR = Path(os.environ.get("DFIRSWARM_LOCK_DIR", "/tmp/dfirswarm-build/locks"))
+# Every pip set this build installed from a hash lock, for image.json (`locked`).
+# An entry is added only after pip has installed the set with --require-hashes.
+LOCKED: list = []
+LOCK_LINE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)(\[[A-Za-z0-9,._-]+\])?==([A-Za-z0-9._+!]+)\s*(;[^-]*?)?((?:\s+--hash=sha256:[0-9a-fA-F]{64})+)$")
+
+
+def lock_problem(text: str) -> str | None:
+    """Why `text` is not a pip hash lock, or None. Every requirement is
+    name==version with at least one --hash=sha256:<64 hex>; any other option
+    (an index, a find-links, a pip flag) is refused, since it could let the lock
+    be met from somewhere else. Comments and blank lines are skipped; a
+    backslash continues a line, as pip-compile writes them."""
+    logical, cur, first = [], "", 0
+    for n, raw in enumerate(text.splitlines(), 1):
+        line = raw.strip()
+        if not cur and (not line or line.startswith("#")):
+            continue
+        if not cur:
+            first = n
+        if line.endswith("\\"):
+            cur += line[:-1].strip() + " "
+            continue
+        logical.append((first, (cur + line).strip()))
+        cur = ""
+    if cur.strip():
+        logical.append((first, cur.strip()))
+    if not logical:
+        return "it holds no requirement"
+    for n, entry in logical:
+        if entry.startswith("-"):
+            return f"line {n}: {entry.split()[0]} is an option, not a requirement (a hash lock holds requirements only)"
+        if LOCK_LINE.match(entry):
+            continue
+        word = entry.split()[0]
+        if "==" not in word.split(";")[0]:
+            return f"line {n}: {word} is not pinned with =="
+        if "--hash=sha256:" not in entry:
+            return f"line {n}: {word.split(';')[0]} has no --hash=sha256:<64 hex digits>"
+        return f"line {n}: {word} is not name==version followed by --hash=sha256:<64 hex digits> options"
+    return None
+
+
+def pip_locked(pip: list[str], ref: dict, what: str, cwd=None, env: dict | None = None) -> str | None:
+    """Install the set `ref` names ({name, sha256}: a file in LOCK_DIR, which
+    recipe.py copied into the build context) with pip's hash-checking mode.
+    Returns why not, or None. The lock is checked against the sha256 the build
+    recorded and against lock_problem first; --require-hashes is always on, so a
+    wheel whose hash is not in the lock does not install, and the set is
+    recorded as locked only after pip has succeeded."""
+    name = str(ref.get("name", ""))
+    path = LOCK_DIR / name
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return f"{what}: its lock {name or '(unnamed)'} is not in the build"
+    if hashlib.sha256(data).hexdigest() != str(ref.get("sha256", "")).lower():
+        return f"{what}: its lock {name} does not match the sha256 the build recorded"
+    why = lock_problem(data.decode("utf-8", "replace"))
+    if why:
+        return f"{what}: its lock {name} is not a hash lock: {why}"
+    if not run(pip + ["--require-hashes", "-r", str(path)], cwd=cwd, env=env):
+        return f"{what}: pip install --require-hashes -r {name} failed (a hash that does not match fails here)"
+    LOCKED.append({"for": what, "lock": name, "sha256": hashlib.sha256(data).hexdigest()})
+    return None
 
 
 def arch() -> str:
@@ -479,7 +547,7 @@ def fetch_source(d: dict, apt: list) -> tuple:
         archive.unlink(missing_ok=True)
         return None, f"could not unpack: {e}"
     venv = None
-    if d.get("pip") or d.get("pip_after"):
+    if d.get("pip") or d.get("pip_after") or d.get("pip_lock") or d.get("pip_after_lock"):
         # Its own venv: one program's pins (an old beautifulsoup4, an exact
         # numpy) must not move what another program or the tool library imports.
         venv = dest / ".venv"
@@ -489,7 +557,15 @@ def fetch_source(d: dict, apt: list) -> tuple:
         # `pip_after` is a second install into the same venv, for what one
         # resolve cannot say: a dependency installed with --no-deps at a pinned
         # commit, over the unpinned URL a requirement names for it.
+        # `pip_lock` / `pip_after_lock` name a hash lock for the set: it installs
+        # first, with --require-hashes, and the plain arguments (the source itself
+        # with --no-deps, say) follow. A venv shared by several programs needs one
+        # lock for all of them (docs/packs.md).
         for key in ("pip", "pip_after"):
+            if isinstance(d.get(key + "_lock"), dict):
+                why = pip_locked([str(venv / "bin" / "pip"), "install", "--no-cache-dir"], d[key + "_lock"], f"{d['name']} ({key}_lock)", cwd=dest, env=d.get("env"))
+                if why:
+                    return None, why
             if d.get(key) and not run([str(venv / "bin" / "pip"), "install", "--no-cache-dir", *d[key]], cwd=dest, env=d.get("env")):
                 return None, f"its Python requirements (pip install {' '.join(d[key])}) did not install"
     program = dest / d["entry"]
@@ -929,7 +1005,11 @@ def enable_release(release: str) -> str | None:
     # The image's own mirror (debian.sources), not the security one.
     uris = [line.split()[1] for f in sorted(APT_SOURCES.glob("*.sources")) for line in f.read_text().splitlines()
             if line.startswith("URIs:") and len(line.split()) > 1]
-    mirror = next((u for u in uris if not u.rstrip("/").endswith("-security")), "http://deb.debian.org/debian")
+    # (On a snapshot image the security URI is .../debian-security/<date>/, so the
+    # test is on the archive name, not on how the address ends.) A backports suite
+    # then comes from the snapshot at the image's own date.
+    mirror = next((u for u in uris if "debian-security" not in u and not u.rstrip("/").endswith("-security")),
+                  "http://deb.debian.org/debian")
     APT_SOURCES.mkdir(parents=True, exist_ok=True)
     (APT_SOURCES / f"dfirswarm-{release}.sources").write_text(
         f"Types: deb\nURIs: {mirror}\nSuites: {release}\nComponents: main\n"
@@ -969,12 +1049,23 @@ def source_venvs(record: dict) -> list:
 def npm_packages() -> list:
     """Every package under npm's global root, nested dependencies included:
     [name, version, licence]. Pi and what it pulls in live there."""
+    roots = []
     try:
         root = subprocess.run(["npm", "root", "-g"], capture_output=True, text=True, timeout=60).stdout.strip()
+        if root and os.path.isdir(root):
+            roots.append(root)
     except (OSError, subprocess.SubprocessError):
-        return []
-    if not root or not os.path.isdir(root):
-        return []
+        pass
+    # Pi is a project of its own (base.Dockerfile), not a global package.
+    if (PI_DIR / "node_modules").is_dir():
+        roots.append(str(PI_DIR / "node_modules"))
+    rows = set()
+    for root in roots:
+        rows |= _npm_rows(root)
+    return [list(r) for r in sorted(rows)]
+
+
+def _npm_rows(root: str) -> set:
     rows = set()
     top = Path(root)
 
@@ -1001,7 +1092,32 @@ def npm_packages() -> list:
         elif isinstance(lic, list):
             lic = " OR ".join(str(x.get("type", "")) if isinstance(x, dict) else str(x) for x in lic)
         rows.add((str(pj["name"]), str(pj["version"]), " ".join(str(lic).split()) or "licence not stated"))
-    return [list(r) for r in sorted(rows)]
+    return rows
+
+
+UNDICI_FLOOR = (8, 12, 2)
+
+
+def pi_undici_problems() -> list:
+    """Every undici under Pi's project that is older than UNDICI_FLOOR (8.12.2:
+    the release that fixes GHSA-xjj6-f33q-929c, GHSA-4qv8-2p9j-2685 and
+    GHSA-f72v-6w45-q472). Empty when Pi is not installed there."""
+    bad = []
+    top = PI_DIR / "node_modules"
+    if not top.is_dir():
+        return bad
+    for dirpath, dirs, files in os.walk(top):
+        dirs[:] = [d for d in dirs if d != ".bin"]
+        here = Path(dirpath)
+        if here.name == "undici" and "package.json" in files:
+            try:
+                version = str(json.loads((here / "package.json").read_text()).get("version", ""))
+            except (OSError, ValueError):
+                version = ""
+            m = re.match(r"(\d+)\.(\d+)\.(\d+)", version)
+            if not m or tuple(int(x) for x in m.groups()) < UNDICI_FLOOR:
+                bad.append(f"{here.relative_to(top)} is {version or 'of no version'}, older than {'.'.join(map(str, UNDICI_FLOOR))}")
+    return bad
 
 
 def dpkg_versions(names: list = ()) -> dict:
@@ -1274,10 +1390,27 @@ def on_path(path: str = IMAGE_PATH) -> list:
     return found
 
 
+def apt_snapshot() -> str | None:
+    """The snapshot.debian.org date this image's apt sources name
+    (images/debian-snapshot, written by base.Dockerfile), or None."""
+    try:
+        for f in sorted(APT_SOURCES.glob("*.sources")):
+            for line in f.read_text().splitlines():
+                m = re.match(r"URIs:\s*https?://snapshot\.debian\.org/archive/debian/(\d{8}T\d{6}Z)/?\s*$", line)
+                if m:
+                    return m.group(1)
+    except OSError:
+        pass
+    return None
+
+
 def write_record(record: dict, head: str, spec: dict | None = None) -> None:
     """image.json with the whole package inventory, every program on PATH,
     the NOTICE, the SBOM, and tools.md, the list an agent reads."""
     record["arch"] = arch()
+    record["apt_snapshot"] = apt_snapshot()
+    # The pip sets this build installed from a hash lock (pip --require-hashes).
+    record["locked"] = list(LOCKED)
     record["dpkg_all"] = dpkg_versions()
     record["pip"] = pip_versions()
     record["on_path"] = on_path()
@@ -1297,6 +1430,10 @@ def base() -> int:
     holds, in the fields a profile image has, so a VM booted from the base
     diffs against a whole baseline. Whether the base may be redistributed is
     the Dockerfile's to say (REDISTRIBUTABLE, NONREDISTRIBUTABLE)."""
+    old = pi_undici_problems()
+    if old:
+        print("Pi's undici is older than 8.12.2: " + "; ".join(old), file=sys.stderr)
+        return 1
     npm = {name: version for name, version, _ in npm_packages()}
     held = [x for x in os.environ.get("NONREDISTRIBUTABLE", "").replace(",", " ").split() if x]
     try:
@@ -1443,7 +1580,8 @@ def main(spec_path: str) -> int:
         return 1
 
     sources = spec.get("sources", [])
-    compiles = bool(spec["pip"] or spec["requirements"] or any(d.get("pip") for d in sources))
+    locks = list(spec.get("python_locks", [])) + list(spec.get("pip_locks", []))
+    compiles = bool(spec["pip"] or spec["requirements"] or locks or any(d.get("pip") or d.get("pip_lock") for d in sources))
     # Some wheels have no build for every architecture (flare-floss pulls
     # binary2strings, which arm64 has to compile), and some none at all
     # (dfvfs pulls libewf-python and libfvde-python, sdists only; a pinned
@@ -1457,10 +1595,26 @@ def main(spec_path: str) -> int:
     if compiles and not run(apt + build_deps):
         print(f"required build dependencies failed: {build_deps}", file=sys.stderr)
         return 1
-    if spec["pip"] or spec["requirements"]:
+    if spec["pip"] or spec["requirements"] or locks:
         if not run([sys.executable, "-m", "venv", str(VENV)]):
             return 1
         pip = [str(VENV / "bin" / "pip"), "install", "--no-cache-dir"]
+        # The sets a pack locks (requires/python.lock beside python.txt, a
+        # program's pip_lock): installed with hash checking. A lock that fails
+        # fails the build when its pack requires it, and names the program.
+        for ref in spec.get("python_locks", []):
+            why = pip_locked(pip, ref, f"{ref.get('pack', '?')} requires/python.lock")
+            if why:
+                print(f"required python packages failed: {why}", file=sys.stderr)
+                return 1
+        for ref in spec.get("pip_locks", []):
+            why = pip_locked(pip, ref, ref.get("program", "?"))
+            if why and ref.get("required", True):
+                print(f"required python packages failed: {why}", file=sys.stderr)
+                return 1
+            if why:
+                print(f"optional python packages failed: {why}", file=sys.stderr)
+                failed["pip"].extend(ref.get("packages") or [ref.get("program", "?")])
         required = [p for p, req in spec["pip"].items() if req] + spec["requirements"]
         if required and not run(pip + required):
             print(f"required python packages failed: {required}", file=sys.stderr)

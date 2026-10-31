@@ -4434,31 +4434,53 @@ export async function regroupMessage(sandboxRoot: string, snap: LeadsSnapshot, o
   const blocked = ranked.filter((v) => v.status === "blocked");
   const operator = ranked.filter((v) => v.disposition === "needs_operator");
   const uncited = await uncitedEvidence(sandboxRoot, snap);
-  const lines: string[] = [];
-  lines.push(`REGROUP ${o.count}: nothing has moved for ${o.minutes} minutes: no new standing entry, no lead closed and no job committed since ${new Date(o.since.at).toISOString()} (${o.since.what}). This run is until solved, so it goes on until every question has a disposition under the bar; find another route, or, where the evidence cannot answer a question, dispose of it under the bar (a coverage record over the routes searched, another seat's review, then not_determinable).`);
-  lines.push("", `Questions not answered (${qs.length}):`);
-  for (const q of qs) lines.push(`- question:${q.id}: ${q.why}${q.blocks.length ? `; ${q.blocks.join("; ")}` : "; no lead names it"}`);
-  if (!qs.length) lines.push("- none by the ledger: the finish line says what still holds done (call done, and read its refusal).");
-  lines.push("", `Leads open, held by nobody (${open.length}):`);
-  for (const v of open) lines.push(`- ${v.id} "${v.title}"${v.priority ? ` (${v.priority} waiting on it)` : ""}`);
-  if (!open.length) lines.push("- none");
-  lines.push("", `Leads blocked (${blocked.length}):`);
-  for (const v of blocked) lines.push(`- ${v.id} "${v.title}"${v.holder ? ` (${v.holder})` : ""} waiting on ${v.needs.filter((n) => !n.met).map((n) => `${n.need}: ${n.why}`).join("; ")}`);
-  if (!blocked.length) lines.push("- none");
-  lines.push("", `Waiting on the operator (${operator.length}):`);
-  for (const v of operator) lines.push(`- ${v.id} "${v.title}": ${v.ref}`);
-  if (!operator.length) lines.push("- none");
-  if (o.running?.length) {
-    lines.push("", `Jobs running under leads (${o.running.length}): each was nudged to its holder a window ago; a running job does not hold this off for ever:`);
-    for (const r of o.running) lines.push(`- ${r}`);
+  // Every list is bounded: the post is delivered whole whatever the inbox page bound is (readInbox hands a first post over entire), so the
+  // bound is in the post itself. A list over `n` items shows its first `n`, the count of the rest, and a file the harness wrote that holds
+  // every list whole, with its size and sha256: nothing is cut, every item stays reachable.
+  const lists: Array<{ title: string; none: string; items: string[]; note?: string }> = [
+    { title: `Questions not answered (${qs.length}):`, none: "- none by the ledger: the finish line says what still holds done (call done, and read its refusal).",
+      items: qs.map((q) => `- question:${q.id}: ${q.why}${q.blocks.length ? `; ${q.blocks.join("; ")}` : "; no lead names it"}`) },
+    { title: `Leads open, held by nobody (${open.length}):`, none: "- none", items: open.map((v) => `- ${v.id} "${v.title}"${v.priority ? ` (${v.priority} waiting on it)` : ""}`) },
+    { title: `Leads blocked (${blocked.length}):`, none: "- none",
+      items: blocked.map((v) => `- ${v.id} "${v.title}"${v.holder ? ` (${v.holder})` : ""} waiting on ${v.needs.filter((n) => !n.met).map((n) => `${n.need}: ${n.why}`).join("; ")}`) },
+    { title: `Waiting on the operator (${operator.length}):`, none: "- none", items: operator.map((v) => `- ${v.id} "${v.title}": ${v.ref}`) },
+    ...(o.running?.length ? [{ title: `Jobs running under leads (${o.running.length}): each was nudged to its holder a window ago; a running job does not hold this off for ever:`, none: "- none", items: o.running.map((r) => `- ${r}`) }] : []),
+    { title: `Evidence no standing entry cites (${uncited.length}):`, none: "- none", items: uncited.map((u) => `- ${u}`) },
+  ];
+  const head = `REGROUP ${o.count}: nothing has moved for ${o.minutes} minutes: no new standing entry, no lead closed and no job committed since ${new Date(o.since.at).toISOString()} (${o.since.what}). This run is until solved, so it goes on until every question has a disposition under the bar; find another route, or, where the evidence cannot answer a question, dispose of it under the bar (a coverage record over the routes searched, another seat's review, then not_determinable).`;
+  const tail = "Each of you: say on the board which route you take next. An artefact above that no entry cites, a lead nobody holds (lead_claim), a need that can be met another way (lead_link), a question with no lead (lead_open), a job whose output nobody read to its end, a question whose routes are searched and which is to be disposed of under the bar (coverage record, review, not_determinable), or what only the operator can give (lead_close needs_operator, saying what). " +
+    `If nothing moves, the next regroup comes in ${o.nextMinutes} minutes.`;
+  let ref: { path: string; bytes: number; sha256: string } | undefined;
+  let refError: string | undefined;
+  const whole = async () => {
+    if (ref || refError) return;
+    const text = lists.map((l) => [l.title, ...(l.items.length ? l.items : [l.none])].join("\n")).join("\n\n") + "\n";
+    const kept = await P.keepToolOutput(sandboxRoot, P.toolOutputRel("harness", "regroup", "text"), text);
+    if (kept.write_error) refError = kept.write_error;
+    else ref = { path: kept.path, bytes: kept.bytes, sha256: kept.sha256 };
+  };
+  const build = (n: number): string => {
+    const lines: string[] = [head];
+    for (const l of lists) {
+      lines.push("", l.title);
+      if (!l.items.length) lines.push(l.none);
+      else if (l.items.length <= n) lines.push(...l.items);
+      else {
+        lines.push(...l.items.slice(0, n));
+        const rest = l.items.length - n;
+        lines.push(`- ... and ${rest} more, not listed here (${l.items.length} in all)${ref ? `: every list, whole, is in ${ref.path} (${ref.bytes} bytes, sha256 ${ref.sha256})` : refError ? `; the file that was to hold them could not be written (${refError})` : ""}`);
+      }
+    }
+    lines.push("", tail);
+    return lines.join("\n");
+  };
+  const bound = P.inboxPageChars();
+  const longest = Math.max(0, ...lists.map((l) => l.items.length));
+  let text = "";
+  for (const n of [50, 25, 10, 5, 1]) {
+    if (longest > n) await whole();
+    text = build(n);
+    if (bound <= 0 || text.length <= bound) break;
   }
-  lines.push("", `Evidence no standing entry cites (${uncited.length}):`);
-  for (const u of uncited) lines.push(`- ${u}`);
-  if (!uncited.length) lines.push("- none");
-  lines.push(
-    "",
-    "Each of you: say on the board which route you take next. An artefact above that no entry cites, a lead nobody holds (lead_claim), a need that can be met another way (lead_link), a question with no lead (lead_open), a job whose output nobody read to its end, a question whose routes are searched and which is to be disposed of under the bar (coverage record, review, not_determinable), or what only the operator can give (lead_close needs_operator, saying what). " +
-      `If nothing moves, the next regroup comes in ${o.nextMinutes} minutes.`,
-  );
-  return lines.join("\n");
+  return text;
 }

@@ -49,7 +49,7 @@ import time
 import zlib
 from pathlib import Path
 
-TOOL = {"name": "network_log_summary", "version": 5}
+TOOL = {"name": "network_log_summary", "version": 6}
 PARSER = "network_log_summary/5"
 COLUMNS = ["line", "byte_offset", "byte_length", "format", "parse_status", "timestamp_raw", "timestamp_utc", "timezone_source",
            "src", "dst", "src_port", "dst_port", "protocol", "method", "target", "referer", "status", "bytes", "action", "user",

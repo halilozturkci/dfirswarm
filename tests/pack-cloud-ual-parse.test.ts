@@ -9,8 +9,13 @@ import assert from "node:assert/strict";
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
+import { gzipSync } from "node:zlib";
+import { fileURLToPath } from "node:url";
 import { UAL, asJob, body, everythingBut, exists, filesUnder, put, refused, rowsOf, tool, withDir } from "./cloud-pack-harness.ts";
 import type { Json } from "./cloud-pack-harness.ts";
+
+/** The tool run with its clock already out (tests/cloud-clock-inject.py; INJECT_TOOL names the tool). */
+const CLOCK = fileURLToPath(new URL("./cloud-clock-inject.py", import.meta.url));
 
 /** A native audit event as the audit schema writes it. */
 const audit = (over: Json = {}): Json => ({
@@ -399,6 +404,49 @@ test("an archive is named and not read, JSON that is not JSON (NaN) is rejected,
     await put(cwd, "work/ev/nan.json", '[{"Id":"1","Operation":"Send","UserId":NaN,"CreationTime":"2026-02-14T09:00:00Z"}]');
     const nan = refused(await tool(UAL, cwd, { path: "work/ev/nan.json" }));
     assert.match(nan.file_problems.join(" "), /NaN is not JSON/);
+  });
+});
+
+test("when the clock is out before the first file, the answer is partial and names the clock, never failed or blamed on the input (deterministic)", async () => {
+  await withDir(async (cwd) => {
+    await put(cwd, "work/ev/a.json", JSON.stringify([audit({ Id: "a-1" })]));
+    await put(cwd, "work/ev/b.json", JSON.stringify([audit({ Id: "b-1" })]));
+    const run = await tool(CLOCK, cwd, { path: "work/ev", time_limit_seconds: 30, assume_utc: true }, { INJECT_TOOL: UAL });
+    const out = body(run);
+    assert.equal(run.code, 0);
+    assert.equal(out.status, "partial");
+    assert.match(out.status_basis, /^the time limit \(30 s\) ended the read after 0 of the 2 supplied files, with 2 not attempted and 0 audit rows read/);
+    assert.equal(out.error, undefined);
+    assert.equal(out.coverage.stopped_by_time_limit, true);
+    assert.equal(out.coverage.files_not_attempted, 2);
+    assert.doesNotMatch(JSON.stringify(out), /no audit record could be read/);
+  });
+});
+
+test("a limit of the tool's own that ends the read before any record (max_record_bytes, max_expanded_bytes) is named with its value, never blamed on the input", async () => {
+  await withDir(async (cwd) => {
+    const rows = Array.from({ length: 20 }, (_, i) => ({ id: `rec-${i}`, date: "2026-02-14T09:00:00.0000000Z", type: "ExchangeItemAggregated", op: "MailItemsAccessed", user: "alice@example.org", data: JSON.stringify(audit({ Id: `a-${i}`, pad: "p".repeat(1700) })) }));
+    const csv = await run(cwd, { "big.csv": portalCsv(rows) }, { max_record_bytes: 1024 });
+    assert.equal(csv.status, "partial");
+    assert.equal(csv.error, undefined);
+    assert.match(csv.status_basis, /max_record_bytes \(1024\) rejected every record/);
+    assert.doesNotMatch(JSON.stringify(csv), /no audit record could be read from what was supplied/);
+
+    await put(cwd, "work/ev2/exp.json.gz", Buffer.from(gzipSync(Buffer.from(JSON.stringify(Array.from({ length: 2000 }, (_, i) => audit({ Id: `e-${i}`, pad: "p".repeat(1500) })))))));
+    const cap = body(await tool(UAL, cwd, { path: "work/ev2/exp.json.gz", max_expanded_bytes: 1024 }));
+    assert.equal(cap.status, "partial");
+    assert.equal(cap.error, undefined);
+    assert.match(cap.status_basis, /max_expanded_bytes \(1024\) stopped the read/);
+  });
+});
+
+test("failed, with 'no audit record could be read', is still given when the clock did not stop the read", async () => {
+  await withDir(async (cwd) => {
+    await put(cwd, "work/ev/nan.json", '[{"Id":"1","Operation":"Send","UserId":NaN,"CreationTime":"2026-02-14T09:00:00Z"}]');
+    const out = refused(await tool(UAL, cwd, { path: "work/ev" }));
+    assert.equal(out.status, "failed");
+    assert.match(out.status_basis, /no audit record could be read from what was supplied/);
+    assert.equal(out.coverage.stopped_by_time_limit, false);
   });
 });
 

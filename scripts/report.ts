@@ -52,7 +52,7 @@ import { hashArtifacts, type ArtifactIndex } from "./artifacts.ts";
 import { GROUNDED_VIA_JOB, humanReviewFrom, renderReportBody, type HumanReview } from "./report-body.ts";
 import { custodyAnchorPath, manifestMeta, sealedIndex, verdictAnchorLine, verdictAnchorState } from "./custody.ts";
 import { hashRegularFile, openRegular, readRegularText } from "./regular-file.ts";
-import { createInterface } from "node:readline";
+import { jsonlLines } from "../extensions/jsonl-lines.ts";
 import { loadRunContext, readJsonFile } from "./run-record.ts";
 import { coverageLine, coverageOf, type CoverageReport, type Grounding } from "./coverage.ts";
 import { ReviewFileError, dispositionsHead, isSandboxPath, ledgerHead, readReviews, reviewState, signoffCoverage, technicalReviewsOf, verifyReviewChain, type ReviewLine, type TechnicalReview } from "./review.ts";
@@ -1219,12 +1219,12 @@ async function readVmRecords(sandbox: string): Promise<VmRecordView[]> {
 }
 
 /** The trace's chain, read a line at a time from a regular file; why it was not read, when it is there and could not be. */
-async function streamedChain(file: string, anchor: Parameters<typeof eventChainVerifier>[0]): Promise<{ chain: ReturnType<ReturnType<typeof eventChainVerifier>["finish"]>; unread: string | null }> {
+export async function streamedChain(file: string, anchor: Parameters<typeof eventChainVerifier>[0]): Promise<{ chain: ReturnType<ReturnType<typeof eventChainVerifier>["finish"]>; unread: string | null }> {
   const verifier = eventChainVerifier(anchor);
   const opened = await openRegular(file);
   if ("why" in opened) return { chain: verifier.finish(), unread: opened.why === "missing" ? null : opened.why };
   try {
-    const rl = createInterface({ input: opened.handle.createReadStream({ autoClose: false, encoding: "utf8" }), crlfDelay: Infinity });
+    const rl = jsonlLines(opened.handle.createReadStream({ autoClose: false }));
     for await (const line of rl) verifier.push(line);
   } catch (err) {
     return { chain: verifier.finish(), unread: `unreadable (${(err as NodeJS.ErrnoException).code ?? (err as Error).message})` };

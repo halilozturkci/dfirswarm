@@ -56,7 +56,7 @@ import { isUtf8 } from "node:buffer";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { lstat, mkdtemp, readdir, readlink, realpath, rename, rm, unlink } from "node:fs/promises";
-import { createInterface } from "node:readline";
+import { jsonlLines } from "../extensions/jsonl-lines.ts";
 import { StringDecoder } from "node:string_decoder";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
@@ -158,7 +158,7 @@ async function eachLine(path: string, onLine: (line: string) => void): Promise<{
   if ("why" in opened) return opened;
   let lines = 0;
   try {
-    const rl = createInterface({ input: opened.handle.createReadStream({ autoClose: false, encoding: "utf8" }), crlfDelay: Infinity });
+    const rl = jsonlLines(opened.handle.createReadStream({ autoClose: false }));
     for await (const line of rl) {
       if (line === "") continue;
       lines += 1;

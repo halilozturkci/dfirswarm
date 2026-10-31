@@ -55,9 +55,14 @@ and Pi end to end), checks it against its packs with the kickoff's
 `imageFit`, and does the same for base on arm64 where that runner has KVM;
 it pushes nothing. Actions are pinned by commit, with the tag beside each.
 One check of `ci.yml`, `CI green`, passes when every other job there passed
-or was skipped; it is the check `main` requires, so a pull request with
-auto-merge on merges by itself once it is green (`images.yml` and
-`image-boot.yml` are not part of it).
+or was skipped, except the macOS parts, which it reads from the run's own job
+list (`scripts/ci-green.ts`): a macOS part that failed or was cancelled fails
+it, one still running is waited for up to its own limit, and one that has not
+started after a grace period of 15 minutes (the Mac is busy or off) does not
+block, and a notice names it. It is the check `main` requires, so a pull
+request with auto-merge on merges by itself once it is green (`images.yml` and
+`image-boot.yml` are not part of it). The Linux jobs run on `ubuntu-24.04`, not
+`ubuntu-latest`, until a deliberate move.
 The `spikes/` directory is neither typechecked (`tsconfig.json` covers
 `extensions/`, `scripts/` and `tests/`) nor re-run: its scripts record
 measurements made once, and they can go stale. The host suites run on

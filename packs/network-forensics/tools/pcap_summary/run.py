@@ -60,8 +60,8 @@ import tempfile
 import time
 from pathlib import Path
 
-TOOL = {"name": "pcap_summary", "version": 5}
-PARSER = "pcap_summary/5"
+TOOL = {"name": "pcap_summary", "version": 7}
+PARSER = "pcap_summary/6"
 LINKTYPES = {0: "null", 1: "Ethernet", 9: "PPP", 101: "raw IP", 105: "802.11",
              113: "Linux cooked", 127: "802.11 radiotap", 228: "IPv4", 229: "IPv6",
              276: "Linux cooked v2"}

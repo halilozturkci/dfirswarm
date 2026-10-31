@@ -19,7 +19,9 @@ included, as the pack tests have always done; this program has no tokenizer.
 
   leaf     a skill is at most 800 tokens. Over 800 is a warning; over 1,000 is
            a finding, and the one thing `seal` refuses;
-  router   a skill with `router: true` is at most 400 tokens;
+  router   a skill with `router: true` is at most 400 tokens (500 for windows-forensics,
+           linux-forensics, memory-forensics and macos-forensics; the limits are in
+           scripts/skill-budgets.json);
   lines    no skill file has more than 300 lines;
   entry    the skill's line in skills/INDEX.md is at most 40 tokens;
   depth    `needs` reaches at most 2 skills deep;
@@ -51,6 +53,29 @@ import sys
 
 BYTES_PER_TOKEN = 4.245
 LEAF_WARN, LEAF_REFUSE, ROUTER_MAX = 800, 1000, 400
+
+
+def _router_limits():
+    """The router limits, from scripts/skill-budgets.json beside this file (the one place both languages read)."""
+    default, by_pack = ROUTER_MAX, {}
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "skill-budgets.json"), encoding="utf-8") as fh:
+            data = json.load(fh)
+        default = int(data.get("router_max", default))
+        by_pack = {str(k): int(v) for k, v in (data.get("router_max_by_pack") or {}).items()}
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+    return default, by_pack
+
+
+ROUTER_MAX, ROUTER_MAX_BY_PACK = _router_limits()
+
+
+def router_max(pid):
+    """The most tokens a router of pack `pid` may have."""
+    return ROUTER_MAX_BY_PACK.get(pid, ROUTER_MAX)
+
+
 LINES_MAX, ENTRY_MAX, DEPTH_MAX = 300, 40, 2
 CHAIN_MAX, CHAIN_MARGIN = 1900, 150
 KINDS = ("leaf", "router", "lines", "entry", "depth", "chain")
@@ -193,8 +218,8 @@ class Budgets:
                 s = self.reg[pid]["skills"][sid]
                 size, lines = tokens(s["text"]), s["text"].count("\n") + 1
                 router = s["meta"].get("router") == "true"
-                if router and size > ROUTER_MAX:
-                    err(pid, "router", sid, size, "the router is %.0f tokens, over its budget of %d" % (size, ROUTER_MAX))
+                if router and size > router_max(pid):
+                    err(pid, "router", sid, size, "the router is %.0f tokens, over its budget of %d" % (size, router_max(pid)))
                 elif not router and size > LEAF_REFUSE:
                     err(pid, "leaf", sid, size, "%.0f tokens, over the %d a skill may have (budget %d): split it into leaves" % (size, LEAF_REFUSE, LEAF_WARN))
                 elif not router and size > LEAF_WARN:
@@ -371,7 +396,7 @@ def cmd_seal(args):
     for e in listed:
         if e["kind"] in ("leaf", "router"):
             warnings.append("%s: %s: %.0f tokens, over the %d a skill may have; it is on tests/skill-budgets.golden with a ceiling of %d, which it may not pass"
-                            % (e["pack"], e["id"], e["value"], LEAF_REFUSE if e["kind"] == "leaf" else ROUTER_MAX, golden[(e["pack"], e["kind"], e["id"])][0]))
+                            % (e["pack"], e["id"], e["value"], LEAF_REFUSE if e["kind"] == "leaf" else router_max(e["pack"]), golden[(e["pack"], e["kind"], e["id"])][0]))
     if listed:
         kinds = {}
         for e in listed:

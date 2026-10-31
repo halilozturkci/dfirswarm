@@ -867,6 +867,14 @@ Every tool a pack bundles holds to this.
    the parser, from the format's specification or a known-good sample, never
    from the parser's own output. A test that shares the parser's wrong
    assumption proves nothing.
+8. **A tool's version and its `PARSER` label move by one written rule.** The
+   tool's `version` (the manifest's, and `TOOL`'s in a script that carries one;
+   the two are always equal) moves with any change to the tool's script or
+   manifest. Its `PARSER` label (`<tool>/<n>`, in the script) moves when what a
+   record says changes: a field added, renamed, typed or read differently, or a
+   record newly kept, split or rejected, so that two answers with one label
+   were read the same way. A change only to what is withheld from printing, to
+   a bound, a clock or a message moves the version and leaves the label.
 
 ### Requires and images
 
@@ -874,6 +882,26 @@ Every tool a pack bundles holds to this.
    with its version; a download with its sha256. The licence label is read from
    the package's own metadata, not remembered. Each entry says whether it is
    redistributable, and whether it is available for arm64, amd64 or both.
+   An `apt` line is pinned by the image's snapshot date, not by a version in
+   the line: every image installs from snapshot.debian.org at the date in
+   `images/debian-snapshot`, and the base images are pinned to their digests
+   (`images/README.md`, "The apt snapshot and the base image digests").
+   A pip set can be **hash-locked**: the build then installs it with pip's
+   `--require-hashes`, from a lock file of the pack (every line `name==version`
+   with one or more `--hash=sha256:`; no other option, no index or find-links
+   line). The keys: `requires/python.lock` beside `python.txt` (it replaces
+   python.txt's lines for the image's venv); `install.pip_lock` in the entry of
+   a `python3 -m pip install` program (a path under `requires/`, e.g.
+   `requires/locks/<name>.txt`); `pip_lock` and `pip_after_lock` in a pinned
+   source's `install.source`, installed before its `pip` / `pip_after`
+   arguments. A lock holds the set and every dependency, since hash mode
+   refuses an unlisted one; **a venv shared by several programs needs one lock
+   for all of them** (the main venv is shared by every pip program and
+   python.txt line of the profile's packs). The seal refuses a lock outside
+   `requires/`, a missing one, and a line without `==` or without a hash; the
+   build refuses a lock whose file changed, and names the program when pip
+   refuses a hash. `/etc/dfirswarm/image.json` lists what was installed from a
+   lock under `locked` (a set is listed only after pip succeeded).
 2. **A program a skill tells the agent to run is in the pack's `requires`, or
    in a dependency's.** A program or Python package in `requires` that no skill
    names needs either a skill that names it, or a reason in `pack.json`:
@@ -961,13 +989,20 @@ tokenizer; the estimate is the one the harness's index budget uses).
 | Budget | Limit | What happens past it |
 |---|---|---|
 | a leaf (a skill) | 800 tokens | a warning from 800; **seal refuses** above 1,000 |
-| a router (`router: true`) | 400 tokens | a finding |
+| a router (`router: true`) | 400 tokens (500 for windows-forensics, linux-forensics, memory-forensics and macos-forensics; `scripts/skill-budgets.json`) | a finding |
 | a skill file | 300 lines | a finding |
 | an index entry (its line in `skills/INDEX.md`) | 40 tokens | a finding: shorten `title` or `when` |
 | `needs` depth | 2 | a finding (a loop in `needs` is one too) |
 | the needs chain | 1,900 tokens | a finding; a warning within 150 of it |
 
-At the seal only a skill over 1,000 tokens (or a router over 400) is refused;
+The four packs with the 500-token router may pass 1,000 tokens of index; the
+harness budget (1,000 a pack) is unchanged, so such a pack is shown by its
+router line alone in every run. Every other pack, the base pack included, keeps
+its index within 1,000. The limits are in `scripts/skill-budgets.json`, which
+`scripts/skill-budgets.py` and `tests/pack-index-budgets.test.ts` both read.
+
+At the seal only a skill over 1,000 tokens (or a router over its limit, 400 or
+500) is refused;
 every other finding and warning is printed as a `budget:` line, and it is
 `tests/skill-budgets.test.sh` that fails on a finding.
 

@@ -5,8 +5,11 @@ sparse file here, so the declared size is real to tarfile and costs the test no 
 by the standard library and then has one byte of a stored name changed, in both its local and its central header, as an archiver that
 stored the name would have.
 """
+import bz2
+import gzip
 import io
 import json
+import lzma
 import os
 import shutil
 import resource
@@ -19,6 +22,7 @@ import tarfile
 import time
 import unittest
 import zipfile
+import zlib
 
 from support import Case, recipe_path, stand_in
 
@@ -218,6 +222,124 @@ class ArchiveMembers(Case):
             self.assertEqual(json.loads(proc.stdout)["format"], "zip", name)
             self.assertEqual([m["path"] for m in self.members()], ["p.txt"], name)
             shutil.rmtree(self.path("out"))
+
+
+COMPRESSORS = {"gzip": lambda b: gzip.compress(b, mtime=0), "bzip2": bz2.compress, "xz": lzma.compress}
+
+
+def small_tar(*names):
+    """A plain tar of the given member names, ended as tarfile ends one: two zero blocks and zero padding to a 10240-byte record."""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tf:
+        for name in names:
+            data = (name.encode() + b"\n") * 20
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
+class CompressedTarTail(Case):
+    """A compressed tar is complete only when its whole stream has been read: after the end blocks, a further tar in the same stream, a
+    further compressed stream, bytes after the last stream, a trailer that does not match and a stream that does not end all make the
+    answer partial with the offset named, as the same bytes uncompressed do. Fixtures are built from the formats with tarfile, gzip,
+    bz2, lzma and zlib, never from the recipe's own output."""
+
+    run_recipe = ArchiveMembers.run_recipe
+    coverage = ArchiveMembers.coverage
+    members = ArchiveMembers.members
+
+    def listed(self, name, data, env=None):
+        path = self.write(name, data)
+        proc = self.run_recipe(path, env=env)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        return json.loads(proc.stdout), self.coverage(), [m["path"] for m in self.members()]
+
+    def assert_partial(self, name, data, needle, members=("a.txt",), env=None):
+        got, cov, paths = self.listed(name, data, env=env)
+        self.assertEqual(got["status"], "partial", (name, cov))
+        self.assertEqual(cov["status"], "partial", (name, cov))
+        self.assertEqual(paths, list(members), name)
+        text = " ".join(cov["errors"] + cov["limits_hit"])
+        self.assertIn(needle, text, (name, cov))
+        shutil.rmtree(self.path("out"))
+        return cov
+
+    def test_a_sound_compressed_tar_stays_complete_also_padded_to_a_record_and_followed_by_zeros(self):
+        for kind, compress in COMPRESSORS.items():
+            tar = small_tar("a.txt", "b.txt")
+            for label, payload in (("plain", tar), ("zero tail", tar + b"\0" * 3_000_000), ("padded stream", tar + b"\0" * 10240)):
+                got, cov, paths = self.listed("sound-%s-%s.tar" % (kind, label.replace(" ", "")), compress(payload))
+                self.assertEqual(got["status"], "complete", (kind, label, cov))
+                self.assertEqual(paths, ["a.txt", "b.txt"], (kind, label))
+                self.assertEqual((cov["errors"], cov["limits_hit"]), ([], []), (kind, label))
+                shutil.rmtree(self.path("out"))
+
+    def test_two_tars_in_one_compressed_stream_are_partial_with_the_offset_of_the_second(self):
+        first, second = small_tar("a.txt"), small_tar("b.txt")
+        for kind, compress in COMPRESSORS.items():
+            cov = self.assert_partial("cat-%s.tar" % kind, compress(first + second), "starts at decompressed offset %d" % len(first))
+            self.assertIn("compressed stream 1", " ".join(cov["errors"]), kind)
+
+    def test_a_second_compressed_stream_holding_a_tar_is_partial(self):
+        first, second = small_tar("a.txt"), small_tar("b.txt")
+        for kind, compress in COMPRESSORS.items():
+            cov = self.assert_partial("multi-%s.tar" % kind, compress(first) + compress(second), "starts at decompressed offset %d" % len(first))
+            self.assertIn("compressed stream 2", " ".join(cov["errors"]), kind)
+
+    def test_a_second_compressed_stream_of_zeros_only_is_still_complete(self):
+        tar = small_tar("a.txt")
+        for kind, compress in COMPRESSORS.items():
+            got, cov, paths = self.listed("zeros-%s.tar" % kind, compress(tar) + compress(b"\0" * 20480))
+            self.assertEqual((got["status"], paths), ("complete", ["a.txt"]), (kind, cov))
+            shutil.rmtree(self.path("out"))
+
+    def test_bytes_after_the_last_stream_are_partial_unless_they_are_zeros(self):
+        tar = small_tar("a.txt")
+        for kind, compress in COMPRESSORS.items():
+            self.assert_partial("tail-%s.tar" % kind, compress(tar) + b"garbage that is no stream", "after the last compressed stream")
+            got, cov, paths = self.listed("pad-%s.tar" % kind, compress(tar) + b"\0" * 512)
+            self.assertEqual(got["status"], "complete", (kind, cov))
+            shutil.rmtree(self.path("out"))
+
+    def test_a_gzip_trailer_that_does_not_match_is_partial_for_the_crc_and_for_the_length(self):
+        tar = small_tar("a.txt")
+        sound = gzip.compress(tar, mtime=0)
+        for label, index, needle in (("crc", -8, "incorrect data check"), ("isize", -4, "incorrect length check")):
+            bad = bytearray(sound)
+            bad[index] ^= 0xFF
+            self.assert_partial("bad-%s.tar.gz" % label, bytes(bad), needle)
+
+    def test_a_stream_that_does_not_end_is_partial(self):
+        tar = small_tar("a.txt")
+        for kind, cut in (("gzip", 8), ("bzip2", 10), ("xz", 12)):
+            whole = COMPRESSORS[kind](tar)
+            self.assert_partial("cut-%s.tar" % kind, whole[:-cut], "does not end cleanly")
+
+    def test_a_large_junk_rest_after_the_end_blocks_is_found_however_far_it_is(self):
+        tar = small_tar("a.txt")
+        for kind, compress in COMPRESSORS.items():
+            payload = tar + b"\0" * (4 << 20) + b"J" * 4096
+            self.assert_partial("far-%s.tar" % kind, compress(payload), "starts at decompressed offset %d" % (len(tar) + (4 << 20)))
+
+    def test_a_rest_longer_than_the_clock_allows_is_partial_and_says_it_was_not_read_to_its_end(self):
+        tar = small_tar("a.txt")
+        path = self.path("long.tar.gz")
+        comp = zlib.compressobj(1, zlib.DEFLATED, 31)
+        with open(path, "wb") as fh:
+            fh.write(comp.compress(tar))
+            zeros = b"\0" * (1 << 20)
+            for _ in range(3 * 1024):                         # 3 GiB of zeros after the end blocks, a few MiB compressed
+                fh.write(comp.compress(zeros))
+            fh.write(comp.flush())
+        began = time.monotonic()
+        proc = self.run_recipe(path, env={"RECIPE_SECONDS": "1"})
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertLess(time.monotonic() - began, 60, "the clock bounds the rest-read")
+        cov = self.coverage()
+        self.assertEqual(cov["status"], "partial", cov)
+        self.assertTrue([x for x in cov["limits_hit"] if "was not read to its end" in x], cov)
+        self.assertEqual([m["path"] for m in self.members()], ["a.txt"])
 
 
 if __name__ == "__main__":
