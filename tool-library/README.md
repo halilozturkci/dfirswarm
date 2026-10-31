@@ -162,7 +162,7 @@ or `tools/`.
 | `usn_journal` | python3 | `maintainer` | 5 | Parse an NTFS change journal ($UsnJrnl:$J) into records from v2, v3 and v4 entries: name, USN, timestamp (ISO… |
 | `utf16_urls` | python3 | `s5d1003` | 3 | String candidates for URLs, file: and Visited: entries and 192.168.x.x addresses in a file; not a browser par… |
 | `volrun` | python3 | `s69d306` | 2 | Run a Volatility 3 plugin against a memory image with typed arguments. Returns stdout/stderr. |
-| `yara_scan` | python3 | `maintainer` | 5 | Sweep a file or directory with a YARA rule file the caller names, and report where each rule matched: rule, f… |
+| `yara_scan` | python3 | `maintainer` | 6 | Sweep a file or directory with a YARA rule file the caller names, and report where each rule matched: rule, f… |
 
 ## Folded from later runs
 

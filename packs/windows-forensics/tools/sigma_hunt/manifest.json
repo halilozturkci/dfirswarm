@@ -1,6 +1,6 @@
 {
   "name": "sigma_hunt",
-  "description": "Run a Sigma ruleset over event logs with one engine the host has (Zircolite or Hayabusa; either is enough) and return normalised detections: rule, level, time, event id, channel, record id and the matching record. A detection is a hypothesis; the record it points at is the evidence. Each invocation writes to a directory of its own under out_dir (hunt-<UTC time>-<id>; out_dir itself must be a place the run can write, work/<your id>/... in a VM or $OUT in a job, else it is refused naming the places), so an earlier run's result is never read as this one's and nothing is replaced. The engine's exit status is judged: a non-zero status, a stop by timeout_seconds, or a line of its result that cannot be read makes the run PARTIAL (status, complete, exit_code, malformed_lines with the lines kept whole in a file). The result is read as a stream, line by line when its first line begins an object (so a damaged first line costs one line) and value by value otherwise, and what stops making sense is copied to the unreadable-lines file in chunks, never held in memory; it is normalised into detections.jsonl, sorted by level and time with a bounded-memory merge. The level words each engine writes are ranked (Hayabusa's crit, med and info among them); a detection whose level is not known is kept, shown first and counted under unknown_levels, never dropped by min_level. The ruleset you name is recorded by digest and the engine's version is recorded where it prints one; without a ruleset the engine's bundled rules are used and not recorded. The engine's whole stdout, stderr and logs are kept in files it names. SENSITIVE: every detection carries the whole record it matched, which can hold command lines, script text or other secrets; run it as a job with secret_output: true when the logs may. The program runs in the tool's own process group (never a session of its own), so the harness ending the tool ends it; the tool's own deadline kills it and what it started, and SIGTERM, SIGINT or SIGHUP do the same and the answer is then status interrupted.",
+  "description": "Run a Sigma ruleset over event logs with one engine the host has (Zircolite or Hayabusa; either is enough) and return normalised detections: rule, level, time, event id, channel, record id and the matching record. A detection is a hypothesis; the record it points at is the evidence. Each invocation writes to a directory of its own under out_dir (hunt-<UTC time>-<id>; out_dir itself must be a place the run can write, work/<your id>/... in a VM or $OUT in a job, else it is refused naming the places), so an earlier run's result is never read as this one's and nothing is replaced. The engine's exit status is judged: a non-zero status, a stop by timeout_seconds, or a line of its result that cannot be read makes the run PARTIAL (status, complete, exit_code, malformed_lines with the lines kept whole in a file). The result is read as a stream, line by line when its first line begins an object (so a damaged first line costs one line) and value by value otherwise, and what stops making sense is copied to the unreadable-lines file in chunks, never held in memory; it is normalised into detections.jsonl, sorted by level and time with a bounded-memory merge. The level words each engine writes are ranked (Hayabusa's crit, med and info among them); a detection whose level is not known is kept, shown first and counted under unknown_levels, never dropped by min_level. The ruleset you name is recorded by digest and the engine's version is recorded where it prints one; without a ruleset the engine's bundled rules are used and not recorded. The engine's whole stdout, stderr and logs are kept in files it names. SENSITIVE: every detection carries the whole record it matched, which can hold command lines, script text or other secrets. The manifest makes every job of this tool secret output, and a job that was not run that way (SECRET_OUTPUT is not 1) is refused as JSON before anything is created. The program runs in the tool's own process group (never a session of its own), so the harness ending the tool ends it; the tool's own deadline kills it and what it started, and SIGTERM, SIGINT or SIGHUP do the same and the answer is then status interrupted. One clock covers the whole run (1,170 s of the manifest's 1,200): the version probes, the count of .evtx files, the digest of the ruleset, the engine (given what is left less 120 s for what follows), the read of its result, the sort and the write; a phase the clock cuts makes the run partial and status_basis says which. A run with no .evtx file under the path, or whose engine's own output says it read none, is partial. A rule whose title is not text, a matches value that is not a list and a match that is not an object are counted as unreadable lines (malformed_lines), not raised; a field that holds a lone surrogate no longer stops the sort. rules_that_fired holds the first `limit` rules (rules_fired counts them all; the whole list is in rules-fired.jsonl in the run directory when there are more). Arguments of the wrong type are refused as JSON; SIGTERM, SIGINT and SIGHUP end the engine and what it started, remove the sort's temporary files and answer with one JSON document.",
   "params": {
     "path": {
       "type": "string",
@@ -24,7 +24,7 @@
     },
     "limit": {
       "type": "integer",
-      "description": "Detections to return inline (default 200, an inline page size); all of them, normalised, are in detections.jsonl in the run directory, named in all_detections"
+      "description": "Detections to return inline (default 200, 1 to 10000, an inline page size); all of them, normalised, are in detections.jsonl in the run directory, named in all_detections"
     },
     "timeout_seconds": {
       "type": "integer",
@@ -37,8 +37,8 @@
   "example": "{\"path\": \"work/extracted/winevt\", \"min_level\": \"high\", \"out_dir\": \"work/<your id>/hunt\"}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 7,
-  "sha256": "cc6f2556406e8725fae0a323a8418ec9ef669a9976d7208fd394422272db7986",
+  "version": 8,
+  "sha256": "4fc62bd0b798545cd9183b49bd839209c10acf8393a1df5d2cebcc66820751b0",
   "use": {
     "extensions": [
       ".evtx"
@@ -50,5 +50,6 @@
       }
     ]
   },
-  "requires": []
+  "requires": [],
+  "secret_output": "required"
 }

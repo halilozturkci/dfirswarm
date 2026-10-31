@@ -683,7 +683,7 @@ test("sigma_hunt's merge sort orders detections by level and time across runs of
         "rows = [(random.choice([None, 0, 1, 2, 3, 4]), '2026-09-01T10:%02d:00Z' % random.randrange(60), i) for i in range(400)]",
         "s = sh.Sorted(sys.argv[2])",
         "for lvl, t, i in rows: s.add({'rule': 'r%d' % i, 'time': t, 'level_rank': lvl}, lvl)",
-        "first, count = s.write(os.path.join(sys.argv[2], 'out.jsonl'), 5)",
+        "first, count, cut = s.write(os.path.join(sys.argv[2], 'out.jsonl'), 5)",
         "got = [json.loads(l) for l in open(os.path.join(sys.argv[2], 'out.jsonl'))]",
         "want = sorted(rows, key=lambda r: (0 if r[0] is None else 1 + (4 - r[0]), r[1], r[2]))",
         "assert count == 400 and len(got) == 400 and len(first) == 5",
@@ -723,7 +723,7 @@ test("sigma_hunt in a job writes under $OUT and refuses any other out_dir", asyn
     await writeFile(join(cwd, "work", "Security.evtx"), "evtx");
     const outDir = join(cwd, "joblab", "out");
     await mkdir(outDir, { recursive: true });
-    const job = { JOB_ID: "j1", OUT: outDir };
+    const job = { JOB_ID: "j1", OUT: outDir, SECRET_OUTPUT: "1" };
     const refused = failed(await tool("sigma_hunt", cwd, { path: "work/Security.evtx", out_dir: "work/s1/hunt", engine: "hayabusa" }, job, bin));
     assert.match(refused.error, /out_dir must be under \$OUT in a job/);
     const ok = body<HuntOut>(await tool("sigma_hunt", cwd, { path: "work/Security.evtx", out_dir: "joblab/out/hunt", engine: "hayabusa" }, job, bin));

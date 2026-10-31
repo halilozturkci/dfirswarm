@@ -133,6 +133,78 @@ class LosslessPage:
             result["all_results_format"] = "JSON Lines, one complete result per line"
         return result
 
+# BEGIN SHARED PLACE
+# The same text is in every windows-forensics tool that keeps a result file (a windows-forensics test holds the copies equal).
+# A result file that is there is never replaced by another result: a file of the same bytes is named again, any other result takes the next free
+# <stem>-<n><suffix>. The name is taken first, with an exclusive create, so a result written at the same moment cannot be replaced either.
+def same_bytes(a, b):
+    """Whether two files hold the same bytes (read in blocks, never whole)."""
+    try:
+        if os.path.getsize(a) != os.path.getsize(b):
+            return False
+        with open(a, "rb") as fa, open(b, "rb") as fb:
+            while True:
+                x, y = fa.read(1 << 20), fb.read(1 << 20)
+                if x != y:
+                    return False
+                if not x:
+                    return True
+    except OSError:
+        return False
+
+
+def place_without_replacing(tmp, path):
+    """Move the finished `tmp` to `path` and never replace what is there. The name is taken first, with an exclusive create, so a
+    result written at the same moment cannot be replaced either. Returns the path that holds it."""
+    for n in range(1, 1000):
+        candidate = path if n == 1 else path.with_name("%s-%d%s" % (path.stem, n, path.suffix))
+        try:
+            fd = os.open(str(candidate), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        except FileExistsError:
+            if not os.path.islink(candidate) and same_bytes(tmp, candidate):
+                os.unlink(tmp)
+                return candidate
+            continue
+        os.close(fd)
+        os.replace(tmp, candidate)             # only replaces the empty file this call just made
+        return candidate
+    raise OSError("no free name beside %s" % path)
+# END SHARED PLACE
+
+
+# BEGIN SHARED PAGE
+# The same text is in every windows-forensics tool that pages through LosslessPage (held equal by a windows-forensics test): LosslessPage replaces a file of the
+# same name; this one places its finished file with place_without_replacing, and registers itself so that a stop can remove its temporary file.
+PAGES = []
+
+
+class NoReplacePage(LosslessPage):
+    """LosslessPage whose finished file is placed without replacing an earlier file of the same name (a rerun with other limits, or one
+    the time limit stopped, must not leave a smaller file where a larger one was)."""
+
+    def __init__(self, tool, key, limit):
+        super().__init__(tool, key, limit)
+        PAGES.append(self)
+
+    def finish(self) -> dict:
+        result = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
+        if self._out is not None:
+            try:
+                self._out.flush()
+                os.fsync(self._out.fileno())
+                self._out.close()
+                assert self._tmp is not None
+                placed = place_without_replacing(self._tmp, self.path)
+            except OSError as exc:
+                self._cannot_write(exc)
+            self._tmp = None
+            self.path = placed
+            self.shown = self.shown[: len(self.shown) - len(Path(self.shown).name)] + placed.name
+            result["all_results"] = self.shown
+            result["all_results_format"] = "JSON Lines, one complete result per line"
+        return result
+# END SHARED PAGE
+
 
 class SecretValuesRefused(Exception):
     pass
@@ -212,7 +284,14 @@ class SecretValues:
         }
 
 
-PARSER = "yara_scan/4"
+PARSER = "yara_scan/5"
+DEADLINE_SECONDS = 112            # the manifest allows 120: one clock over the probes, the walk, yara, the digest and the answer
+RESERVE = 6                       # seconds of that clock kept for the pages, the digest of the rules and the answer
+MAX_LIMIT = 10000                 # the largest inline page; the whole result is in the file the answer names
+PROGRESS = {"phase": "starting"}
+HELD = {"values": None, "deadline": None}
+TEMPS = []                        # temporary files not yet placed (the standard error file)
+RULE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 # BEGIN SHARED PROCESS
@@ -577,15 +656,74 @@ SCAN_ERROR = re.compile(r"^error scanning (.+)$")
 STRING_LINE = re.compile(r"^0x([0-9a-fA-F]+):(?:(\d+):)?(\$[A-Za-z0-9_]*): ?")
 
 
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back (a signal in the middle of the write would end the process there, with the answer cut)
+    and the last word cleared (a signal that is held and then lets go must not print a second document). The tool ends by itself right after."""
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    STATE["last_word"] = None
+    print(json.dumps(answer, **dumps_kwargs))
+
+
+def drop_pages():
+    """Remove the temporary files of the pages that were being written, and the standard error file that was being filled."""
+    for page in list(PAGES):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            page._tmp = None
+    for name in list(TEMPS):
+        try:
+            os.unlink(name)
+        except OSError:
+            pass
+    del TEMPS[:]
+
+
+def close_values():
+    values = HELD.get("values")
+    if values is not None:
+        try:
+            values.close()
+        except (OSError, ValueError):
+            pass
+
+
+def last_word(signum):
+    """The tool's own last word: the programs are ended by the PROCESS handler before it runs; this removes the pages' temporary files, closes the values
+    file and answers with one document."""
+    drop_pages()
+    close_values()
+    print(json.dumps({"error": "stopped by signal %d before yara finished" % signum, "status": "interrupted", "signal": signum,
+                      "status_basis": "the tool was stopped by signal %d (yara and what it started were ended, the temporary files removed); nothing it had read is an answer, and what was "
+                                      "written to the values file, if one was asked for, is partial" % signum,
+                      "phase": PROGRESS["phase"]}), flush=True)
+
+
+# Installed as soon as the module has run as far as here, with a last word that needs nothing the tool has not made yet.
+STATE["last_word"] = last_word
+install_signal_handlers()
+
+
 def fail(message, **extra):
-    print(json.dumps({"error": message, **extra}))
+    drop_pages()
+    close_values()
+    print_answer({"error": message, "status": "failed", "status_basis": "the tool stopped with an error and returned no match (see error)", **extra})
     raise SystemExit(1)
 
 
-def sha256_of(path):
+def sha256_of(path, until=None):
+    """The file's digest, read in pieces with the clock looked at; None when the clock ran out."""
     h = hashlib.sha256()
     with open(path, "rb") as fh:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
+            if until is not None and time.monotonic() > until:
+                return None
             h.update(chunk)
     return h.hexdigest()
 
@@ -598,12 +736,18 @@ def tool_output_dir():
     return d, str(d)
 
 
+def left():
+    return HELD["deadline"] - time.monotonic()
+
+
 def main():
-    install_signal_handlers()
+    HELD["deadline"] = time.monotonic() + DEADLINE_SECONDS
     try:
         args = json.load(sys.stdin)
     except ValueError as exc:
         fail("arguments are not valid JSON", reason=str(exc))
+    if not isinstance(args, dict):
+        fail("the arguments must be a JSON object")
 
     rules = args.get("rules")
     target = args.get("target")
@@ -621,11 +765,14 @@ def main():
         fail("timeout_seconds must be a positive integer")
     timeout = min(timeout, 110)
     limit = args.get("limit", 200)
-    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
-        fail("limit must be a positive integer", limit=args.get("limit"))
+    if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= MAX_LIMIT:
+        fail("limit must be a whole number from 1 to %d (the inline page; the whole result is in the file the answer names)" % MAX_LIMIT)
     write_matches = args.get("write_matches", False)
     if not isinstance(write_matches, bool):
         fail("write_matches must be true or false")
+    if write_matches and os.environ.get("SECRET_OUTPUT") != "1":
+        fail("write_matches is refused: the matched bytes are written only in a job the harness runs as secret output (job_run with secret_output: true, which the "
+             "manifest declares for this parameter). Nothing was opened or created.")
 
     if shutil.which("yara") is None:
         fail("yara is not on PATH", hint="brew install yara; scripts/toolbox.sh reports it with the dfir set")
@@ -644,25 +791,30 @@ def main():
             fail(str(exc))
     if values is None:
         fail("no free name for the values file after 999 tries")
+    HELD["values"] = values
 
     # A target that is not a regular file or a directory (a FIFO, a socket, a device) is not opened: yara would wait
     # on it until the time limit. In a directory yara skips such entries itself; they are looked for here and said.
     if not (os.path.isdir(target) or os.path.isfile(target)):
-        values.close()
         fail("target is not a regular file or a directory (a FIFO, a socket or a device is not scanned)", target=target, not_attempted=1)
 
+    PROGRESS["phase"] = "asking yara for its version and flags"
     try:
-        version = subprocess.run(["yara", "--version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10).stdout.decode("utf-8", "replace").strip()
-        help_text = subprocess.run(["yara", "--help"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=10).stdout.decode("utf-8", "replace")
+        probe = max(1, min(10, int(left() - RESERVE)))
+        version = subprocess.run(["yara", "--version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=probe).stdout.decode("utf-8", "replace").strip()
+        probe = max(1, min(10, int(left() - RESERVE)))
+        help_text = subprocess.run(["yara", "--help"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=probe).stdout.decode("utf-8", "replace")
     except (OSError, subprocess.TimeoutExpired) as exc:
-        values.close()
         fail("yara could not be run", reason=str(exc))
 
     # -s prints the matching strings (read here, never returned), -L their lengths, -r recurses,
-    # -N does not follow links out of the scanned tree. A flag the installed yara lacks is left out.
+    # -N does not follow links out of the scanned tree, -q turns off a rule's console output (a rule can print any text to
+    # the same stream as its matches). A flag the installed yara lacks is left out.
     argv = ["yara", "-s"]
     if "--print-string-length" in help_text:
         argv.append("-L")
+    if "--disable-console-logs" in help_text:
+        argv.append("-q")
     if os.path.isdir(target):
         argv.append("-r")
         if "--no-follow-symlinks" in help_text:
@@ -670,11 +822,17 @@ def main():
     argv += [rules, target]
 
     # What yara will not scan, said before it runs: special files in a directory (it skips them without a word) and,
-    # when it does not follow links (-N), the links it passes over.
-    not_attempted = LosslessPage("yara_scan", [rules, target, "not_attempted"], limit)
+    # when it does not follow links (-N), the links it passes over. The walk has a share of the clock; past it the list is incomplete and said so.
+    PROGRESS["phase"] = "walking the target"
+    not_attempted = NoReplacePage("yara_scan", [rules, target, "not_attempted"], limit)
     skipped_links = "-N" in argv
+    walk_cut = False
+    walk_until = time.monotonic() + max(0.0, min(35.0, left() - RESERVE - 5))
     if os.path.isdir(target):
         for root, dirs, names in os.walk(target, followlinks=False):
+            if time.monotonic() > walk_until:
+                walk_cut = True
+                break
             for entry in sorted(dirs + names):
                 full = os.path.join(root, entry)
                 try:
@@ -692,80 +850,123 @@ def main():
     outdir, outshown = tool_output_dir()
     key = [rules, target, timeout, argv]
     digest = hashlib.sha256(json.dumps(key, sort_keys=True).encode("utf-8")).hexdigest()[:16]
-    rule_rows = LosslessPage("yara_scan", [rules, target, "rules"], limit)
-    string_rows = LosslessPage("yara_scan", [rules, target, "strings"], limit)
+    rule_rows = NoReplacePage("yara_scan", [rules, target, "rules"], limit)
+    string_rows = NoReplacePage("yara_scan", [rules, target, "strings"], limit)
 
+    # yara gets what is left of the whole run, less the reserve for the pages, the digest and the answer.
+    yara_seconds = min(timeout, int(left() - RESERVE))
     errfd, errname = tempfile.mkstemp(prefix=".yara-stderr-", dir=_ensure(outdir))
+    TEMPS.append(errname)
     timed_out = [False]
-    try:
-        proc = spawn(argv, stdout=subprocess.PIPE, stderr=errfd)
-    except OSError as exc:
-        os.close(errfd)
-        values.close()
-        fail("yara could not be started", reason=str(exc))
-    os.close(errfd)
-    ACTIVE.append(proc)
-
-    def interrupted(signum):
-        try:
-            values.close()
-        except OSError:
-            pass
-        print(json.dumps({"error": "stopped by signal %d before yara finished" % signum, "status": "interrupted", "signal": signum,
-                          "note": "No statement about matches follows from an interrupted run; what was written to the values file, if one was asked for, is partial."}), flush=True)
-
-    STATE["last_word"] = interrupted
-
-    def stop():
-        timed_out[0] = True
-        kill_tree(proc)
-
-    timer = threading.Timer(timeout, stop)
-    timer.start()
-    current = None            # [rule, file, string count]
+    never_ran = yara_seconds < 1
+    ignored = 0           # lines that are neither a rule line for a path of the target nor a string line: counted, never shown
+    current = None        # [rule, file, string count]
     files_with_matches = set()
     string_total = 0
     unparsed = 0          # string lines seen before any rule line: counted, never shown (a line holds matched bytes)
-    try:
-        for raw in proc.stdout:
+    rc = None
+    base = target.rstrip("/") + "/" if target not in ("/", "") else target
+    if never_ran:
+        os.close(errfd)
+    else:
+        PROGRESS["phase"] = "yara is running"
+        try:
+            proc = spawn(argv, stdout=subprocess.PIPE, stderr=errfd)
+        except OSError as exc:
+            os.close(errfd)
+            fail("yara could not be started", reason=str(exc))
+        os.close(errfd)
+        ACTIVE.append(proc)
+
+        def stop():
+            timed_out[0] = True
+            kill_tree(proc)
+
+        timer = threading.Timer(yara_seconds, stop)
+        timer.start()
+        # The output is read by a thread of its own and the main thread waits in short turns: a stop signal that arrives in the instant before a blocking read
+        # begins is then handled within half a second, where a main thread already blocked in the read would never run its handler.
+        box = {}
+
+        def consume():
+            nonlocal current, string_total, unparsed, ignored
+            try:
+                for raw in proc.stdout:
+                    line = raw.decode("utf-8", "replace").rstrip("\r\n")
+                    if not line.strip():
+                        continue
+                    m = STRING_LINE.match(line)
+                    if m:
+                        if current is None:
+                            unparsed += 1
+                            continue
+                        string_total += 1
+                        finding = "S%06d" % string_total
+                        offset = int(m.group(1), 16)
+                        length = int(m.group(2)) if m.group(2) is not None else None
+                        row = {"finding_id": finding, "rule": current[0], "file": current[1], "identifier": m.group(3),
+                               "offset": offset, "offset_hex": "0x%x" % offset, "length": length}
+                        string_rows.add(row)
+                        current[2] += 1
+                        # The matched bytes are the rest of the line. They go nowhere unless the caller asked, in a job.
+                        values.add(finding, {"rule": current[0], "file": current[1], "identifier": m.group(3), "offset": offset, "length": length},
+                                   line[m.end():])
+                        continue
+                    rule, _, path = line.partition(" ")
+                    rule, path = rule.strip(), path.strip()
+                    # A rule line is `<rule> <path>` with a path that is the target or lies under it. Any other line (a rule's console output that -q did
+                    # not silence, or text a yara of another version prints) is counted and not shown: it is not a rule name.
+                    if not RULE_NAME.match(rule) or not (path == target or path.startswith(base)):
+                        ignored += 1
+                        continue
+                    if current is not None:
+                        rule_rows.add({"rule": current[0], "file": current[1], "string_matches": current[2]})
+                    current = [rule, path, 0]
+                    files_with_matches.add(current[1])
+                if current is not None:
+                    rule_rows.add({"rule": current[0], "file": current[1], "string_matches": current[2]})
+            except BaseException as exc:  # noqa: BLE001 - handed to the main thread
+                box['error'] = exc
+
+        reader = threading.Thread(target=consume, daemon=True)
+        reader.start()
+        try:
+            while reader.is_alive():
+                reader.join(0.5)
+            if 'error' in box:
+                raise box['error']
+        finally:
+            timer.cancel()
+            rc = proc.wait()
+            if proc in ACTIVE:
+                ACTIVE.remove(proc)
+            values.close()
+    values.close()
+
+    PROGRESS["phase"] = "reading yara's standard error"
+    stderr_file = None
+    stderr_count = 0
+    warnings, first_errors = [], []
+    scan_errors = NoReplacePage("yara_scan", [rules, target, "scan_errors"], limit)
+    stderr_unread = False
+    with open(errname, "rb") as fh:
+        for raw in fh:
             line = raw.decode("utf-8", "replace").rstrip("\r\n")
             if not line.strip():
                 continue
-            m = STRING_LINE.match(line)
+            stderr_count += 1
+            if not (stderr_count & 4095) and left() < 2:
+                stderr_unread = True
+                break
+            if len(warnings) < 20:
+                warnings.append(line)
+            if "error" in line.lower() and len(first_errors) < 5:
+                first_errors.append(line)
+            m = SCAN_ERROR.match(line)
             if m:
-                if current is None:
-                    unparsed += 1
-                    continue
-                string_total += 1
-                finding = "S%06d" % string_total
-                offset = int(m.group(1), 16)
-                length = int(m.group(2)) if m.group(2) is not None else None
-                row = {"finding_id": finding, "rule": current[0], "file": current[1], "identifier": m.group(3),
-                       "offset": offset, "offset_hex": "0x%x" % offset, "length": length}
-                string_rows.add(row)
-                current[2] += 1
-                # The matched bytes are the rest of the line. They go nowhere unless the caller asked, in a job.
-                values.add(finding, {"rule": current[0], "file": current[1], "identifier": m.group(3), "offset": offset, "length": length},
-                           line[m.end():])
-                continue
-            if current is not None:
-                rule_rows.add({"rule": current[0], "file": current[1], "string_matches": current[2]})
-            rule, _, path = line.partition(" ")
-            current = [rule.strip(), path.strip(), 0]
-            files_with_matches.add(current[1])
-        if current is not None:
-            rule_rows.add({"rule": current[0], "file": current[1], "string_matches": current[2]})
-    finally:
-        timer.cancel()
-        rc = proc.wait()
-        if proc in ACTIVE:
-            ACTIVE.remove(proc)
-        values.close()
-
-    stderr_bytes = Path(errname).read_bytes()
-    stderr_file = None
-    stderr_lines = [l for l in stderr_bytes.decode("utf-8", "replace").splitlines() if l.strip()]
-    if stderr_lines:
+                path, _, reason = m.group(1).rpartition(": ")
+                scan_errors.add({"file": path if path else m.group(1), "reason": reason if path else None, "line": line})
+    if stderr_count:
         # Never over an earlier run's file: the next free number names this one.
         for number in range(1, 1000):
             final = outdir / ("yara_scan-%s.stderr.txt" % digest if number == 1 else "yara_scan-%s.stderr.%d.txt" % (digest, number))
@@ -784,28 +985,39 @@ def main():
         stderr_file = "%s/%s" % (outshown, final.name)
     else:
         os.unlink(errname)
+    del TEMPS[:]
 
-    # `error scanning <file>: <reason>` is yara's own word that it could not scan a file; it exits 0 all the same.
-    scan_errors = LosslessPage("yara_scan", [rules, target, "scan_errors"], limit)
-    for line in stderr_lines:
-        m = SCAN_ERROR.match(line)
-        if m:
-            path, _, reason = m.group(1).rpartition(": ")
-            scan_errors.add({"file": path if path else m.group(1), "reason": reason if path else None, "line": line})
-
+    PROGRESS["phase"] = "writing the answer"
     rule_page, string_page = rule_rows.finish(), string_rows.finish()
     error_page, skipped_page = scan_errors.finish(), not_attempted.finish()
-    complete = rc == 0 and not timed_out[0] and error_page["matched"] == 0 and skipped_page["matched"] == 0
-    errors = [l for l in stderr_lines if "error" in l.lower()]
+    rules_digest = sha256_of(rules, time.monotonic() + max(1.0, left() - 1))
+    complete = (not never_ran and rc == 0 and not timed_out[0] and error_page["matched"] == 0 and skipped_page["matched"] == 0 and not walk_cut
+                and not stderr_unread and rules_digest is not None)
     if complete:
         status = "complete"
-    elif (rc == 0 and not timed_out[0]) or timed_out[0] or rule_page["matched"] or string_page["matched"]:
+    elif never_ran or timed_out[0] or (rc == 0 and not timed_out[0]) or rule_page["matched"] or string_page["matched"]:
         status = "partial"
     else:
         status = "failed"
+    reasons = []
+    if never_ran:
+        reasons.append("the tool's own clock (%d s) left yara no time to run (the probes and the walk of the target used it): nothing was scanned" % DEADLINE_SECONDS)
+    if timed_out[0]:
+        reasons.append("yara was stopped after %d s (its share of the tool's %d s clock, or timeout_seconds): what it printed before is listed" % (yara_seconds, DEADLINE_SECONDS))
+    if walk_cut:
+        reasons.append("the walk of the target for files yara skips was cut by the clock: not_attempted is incomplete")
+    if rc not in (0, None) and not timed_out[0]:
+        reasons.append("yara exited %d" % rc)
+    if error_page["matched"]:
+        reasons.append("%d file(s) could not be scanned (scan_errors)" % error_page["matched"])
+    if skipped_page["matched"]:
+        reasons.append("%d entr(ies) yara does not scan (not_attempted)" % skipped_page["matched"])
+    if stderr_unread or rules_digest is None:
+        reasons.append("the tool's clock ran out while its standard error was read or the rules file hashed")
     answer = {
         "parser": PARSER,
         "status": status,
+        "status_basis": "; ".join(reasons) if reasons else "yara ran to its end over the target (exit 0), printed no scan error, skipped nothing, and its output was read whole",
         "complete": complete,
         "yara_version": version,
         "yara_argv": argv,
@@ -813,7 +1025,7 @@ def main():
         "timed_out": timed_out[0],
         "timeout_seconds": timeout,
         "rules": rules,
-        "rules_sha256": sha256_of(rules),
+        "rules_sha256": rules_digest,
         "target": target,
         "matches": rule_rows.page,
         "match_count": rule_page["matched"],
@@ -823,6 +1035,7 @@ def main():
         "string_matches_page": string_page,
         "files_with_matches": len(files_with_matches),
         "unparsed_string_lines": unparsed,
+        "ignored_lines": ignored,
         "scan_errors": scan_errors.page,
         "scan_error_count": error_page["matched"],
         "scan_errors_page": error_page,
@@ -830,15 +1043,15 @@ def main():
         "not_attempted_count": skipped_page["matched"],
         "not_attempted_page": skipped_page,
         "stderr_file": stderr_file,
-        "stderr_line_count": len(stderr_lines),
-        "warnings": stderr_lines[:20],
-        "first_errors": errors[:5],
+        "stderr_line_count": stderr_count,
+        "warnings": warnings,
+        "first_errors": first_errors,
         "matched_bytes": "not in this answer; write_matches: true, in a job run with secret_output: true, writes them to a file under $OUT",
         "secret_values": values.summary("JSON Lines, mode 0600: finding_id, rule, file, identifier, offset, length, value (as yara prints it)"),
         "note": "A rule match says the rule's condition held, not that the file is malicious. Rules that `include` other files are not hashed beyond the file named. "
                 + ("" if complete else "The run did not complete: what is listed is what was read before it stopped."),
     }
-    print(json.dumps(answer, indent=2))
+    print_answer(answer, indent=2)
     if status == "failed":
         raise SystemExit(1)
 
@@ -851,5 +1064,13 @@ def _ensure(path):
 if __name__ == "__main__":
     try:
         main()
+    except SystemExit:
+        raise
     except OSError as exc:
         fail("a file operation failed: %s" % describe(exc), reason=type(exc).__name__)
+    except Exception as exc:                                  # whatever hostile input does, the answer is JSON
+        drop_pages()
+        close_values()
+        print_answer({"error": "the scan failed", "status": "failed", "status_basis": "the tool stopped with an unexpected error",
+                      "reason": "%s: %s" % (type(exc).__name__, exc)})
+        sys.exit(1)
