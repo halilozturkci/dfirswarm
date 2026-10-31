@@ -59,6 +59,7 @@ values file, and prints one answer that says it is partial, names the files it d
 read and the directories it did not enter, and exits (128 + the signal for a signal).
 """
 import errno
+import itertools
 import json
 import os
 import re
@@ -74,6 +75,19 @@ import tempfile
 from pathlib import Path
 
 
+def own_dir(path):
+    """Create the tool-output directory and return None, or say why it is not used: a symbolic link anywhere on the way (the directory itself,
+    or work/ or the agent's directory under it) would send the tables and the private names file somewhere else, and O_NOFOLLOW guards only
+    the last name of a file. In a job only the part under $OUT is checked ($OUT is the job service's)."""
+    path = Path(path)
+    out = os.environ.get("OUT")
+    start = len(Path(out).parts) if out and path.parts[:len(Path(out).parts)] == Path(out).parts else 0
+    for i in range(max(start, 1), len(path.parts) + 1):
+        step = Path(*path.parts[:i])
+        if os.path.islink(step):
+            return "%s is a symbolic link: refused, nothing written through it" % step
+    path.mkdir(parents=True, exist_ok=True)
+    return None
 
 
 class LosslessPage:
@@ -135,7 +149,9 @@ class LosslessPage:
             return
         if self._out is None:
             try:
-                self.path.parent.mkdir(parents=True, exist_ok=True)
+                reason = own_dir(self.path.parent)
+                if reason is not None:
+                    self._cannot_write(OSError(reason))
                 fd, name = tempfile.mkstemp(
                     dir=self.path.parent, prefix=f".{self.path.name}-"
                 )
@@ -1024,7 +1040,9 @@ class SecretValues:
         # instead of failing, or writing through it, after the scan. With nothing found it
         # stays as an empty file, mode 0600, and the answer says written: 0.
         try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
+            reason = own_dir(self.path.parent)
+            if reason is not None:
+                raise SecretValuesRefused(reason)
             fd = os.open(str(self.path), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
         except FileExistsError:
             raise SecretValuesRefused("the values file already exists: %s" % self.shown)
@@ -1230,18 +1248,26 @@ def scan_stream(fh, budget, stats):
         carry, data = keep, nxt
 
 
-class Walk:
-    """The regular files under `top`, in name order, following no link; what it has not reached is known at any moment.
+WALK_CHUNK = 10_000   # entries held and name-sorted at once; bounds memory on a huge flat directory
 
-    A directory that cannot be listed, a link and a file that is not a regular
-    file are reported as exceptions and counted; none is ever dropped quietly.
-    `entries` and `next` are the directory being read and the index of its next
-    entry, `stack` the directories not yet entered: what a stop leaves unread.
+
+class Walk:
+    """The regular files under `top`, following no link; what it has not reached is known at any moment.
+
+    A directory is read in chunks of WALK_CHUNK entries (each chunk is the only one held in memory, and sorted
+    by name within itself, so a flat directory of any size is bounded RSS, not loaded whole): the order across
+    chunk boundaries is the order `os.scandir` gave (stable for an unchanged directory), not a global name sort.
+    A directory that cannot be listed, a link and a file that is not a regular file are reported as exceptions
+    and counted; none is ever dropped quietly. `entries` and `next` are the chunk being read and the index of
+    its next entry, `stack` the directories not yet entered, `_more` whether the directory being read has more
+    entries beyond the chunk in hand (known the moment a chunk comes up short of WALK_CHUNK, at no extra read):
+    together they are what a stop leaves unread.
     """
 
     def __init__(self, top, exceptions, counters):
         self.stack = [(top, True)]
         self.entries, self.next, self.found_dirs = [], 0, []
+        self._current_dir, self._more = None, False
         self._files = self._generate(exceptions, counters)
 
     def __iter__(self):
@@ -1250,47 +1276,59 @@ class Walk:
     def _generate(self, exceptions, counters):
         while self.stack:
             directory, is_top = self.stack.pop()
+            self._current_dir, self._more = directory, False
             try:
-                with os.scandir(directory) as it:
-                    self.entries, self.next = sorted(it, key=lambda e: e.name), 0
+                scan = os.scandir(directory)
             except OSError as exc:
-                self.entries, self.next = [], 0
                 counters["directories_failed"] += 1
                 exceptions.add({"path": shown(directory), "status": "failed", "what": "directory", "reason": "the directory could not be listed", "error": describe(exc)})
                 continue
             subdirs = self.found_dirs = []
-            while self.next < len(self.entries):
-                entry = self.entries[self.next]
-                self.next += 1
-                try:
-                    if entry.is_symlink():
-                        counters["entries_skipped"] += 1
-                        exceptions.add({"path": shown(entry.path), "status": "skipped", "reason": "a symbolic link: links are not followed, and the target is read where it lies if it is in the tree"})
-                        continue
-                    if entry.is_dir(follow_symlinks=False):
-                        if is_top and entry.name in SKIP_TOP_DIRS:
-                            counters["entries_skipped"] += 1
-                            exceptions.add({"path": shown(entry.path), "status": "skipped", "reason": "a top-level %s directory of a Linux root: its contents were not scanned; name it as the path to scan it" % entry.name})
+            try:
+                while True:
+                    chunk = list(itertools.islice(scan, WALK_CHUNK))
+                    if not chunk:
+                        break
+                    chunk.sort(key=lambda e: e.name)
+                    self.entries, self.next = chunk, 0
+                    self._more = len(chunk) == WALK_CHUNK   # might be more: unknown until the next chunk is tried
+                    while self.next < len(self.entries):
+                        entry = self.entries[self.next]
+                        self.next += 1
+                        try:
+                            if entry.is_symlink():
+                                counters["entries_skipped"] += 1
+                                exceptions.add({"path": shown(entry.path), "status": "skipped", "reason": "a symbolic link: links are not followed, and the target is read where it lies if it is in the tree"})
+                                continue
+                            if entry.is_dir(follow_symlinks=False):
+                                if is_top and entry.name in SKIP_TOP_DIRS:
+                                    counters["entries_skipped"] += 1
+                                    exceptions.add({"path": shown(entry.path), "status": "skipped", "reason": "a top-level %s directory of a Linux root: its contents were not scanned; name it as the path to scan it" % entry.name})
+                                    continue
+                                subdirs.append(entry.path)
+                                continue
+                            mode = entry.stat(follow_symlinks=False).st_mode
+                        except OSError as exc:
+                            counters["files_attempted"] += 1
+                            counters["files_failed"] += 1
+                            exceptions.add({"path": shown(entry.path), "status": "failed", "reason": "the entry could not be examined", "error": describe(exc)})
                             continue
-                        subdirs.append(entry.path)
-                        continue
-                    mode = entry.stat(follow_symlinks=False).st_mode
-                except OSError as exc:
-                    counters["files_attempted"] += 1
-                    counters["files_failed"] += 1
-                    exceptions.add({"path": shown(entry.path), "status": "failed", "reason": "the entry could not be examined", "error": describe(exc)})
-                    continue
-                if not stat.S_ISREG(mode):
-                    counters["entries_skipped"] += 1
-                    exceptions.add({"path": shown(entry.path), "status": "skipped", "reason": "not a regular file (%s)" % kind_of(mode)})
-                    continue
-                yield entry.path, entry.stat(follow_symlinks=False).st_size
-            self.entries, self.next, self.found_dirs = [], 0, []
+                        if not stat.S_ISREG(mode):
+                            counters["entries_skipped"] += 1
+                            exceptions.add({"path": shown(entry.path), "status": "skipped", "reason": "not a regular file (%s)" % kind_of(mode)})
+                            continue
+                        yield entry.path, entry.stat(follow_symlinks=False).st_size
+                    self.entries, self.next = [], 0
+            finally:
+                scan.close()
+            self.found_dirs, self._current_dir, self._more = [], None, False
             self.stack.extend((d, False) for d in reversed(subdirs))
 
     def unreached(self):
-        """(the entries of the directory being read that were not looked at, the directories found but not yet entered), as paths."""
-        return [e.path for e in self.entries[self.next:]], list(self.found_dirs) + [d for d, _top in reversed(self.stack)]
+        """(the entries of the chunk being read that were not looked at, the directories found but not yet entered, the
+        directory being read when it may hold more entries beyond the chunk in hand), as paths (None for the third)."""
+        return ([e.path for e in self.entries[self.next:]], list(self.found_dirs) + [d for d, _top in reversed(self.stack)],
+                self._current_dir if self._more else None)
 
 
 def kind_of(mode):
@@ -1462,15 +1500,21 @@ def main():
                 exceptions.add({"path": shown(target), "status": "partial", "reason": "read up to max_bytes_per_file; the rest was not read",
                                 "bytes": size, "bytes_read": stats.bytes_read, "bytes_unread": size - stats.bytes_read})
         if stopped_why and walker is not None:
-            # What the walk had not reached, named: the rest of the directory being read, and the directories not yet entered
-            # (everything under those is unread, and how many files that is is not known).
-            rest, unentered = walker.unreached()
+            # What the walk had not reached, named: the rest of the chunk being read, the directories not yet entered
+            # (everything under those is unread, and how many files that is is not known), and, when the directory being
+            # read may hold more entries beyond that chunk, the directory itself (how many more is not known either,
+            # without a read this stop is meant to avoid).
+            rest, unentered, maybe_more = walker.unreached()
             for item in rest:
                 counters["entries_not_started"] += 1
                 exceptions.add({"path": shown(item), "status": "not started", "reason": "%s before this entry was looked at" % stopped_why})
             for item in unentered:
                 counters["directories_not_entered"] += 1
                 exceptions.add({"path": shown(item), "status": "not started", "what": "directory", "reason": "%s before this directory was entered: nothing under it was read" % stopped_why})
+            if maybe_more is not None:
+                counters["directories_not_entered"] += 1
+                exceptions.add({"path": shown(maybe_more), "status": "not started", "what": "directory (partially read)",
+                                "reason": "%s: this directory may hold more entries beyond the %d already read in this chunk; how many is not known" % (stopped_why, WALK_CHUNK)})
     except BaseException:
         # An answer is on its way out (the error a page that could not be written printed, or a stop): a values file that cannot be flushed
         # either must not replace it with a second document. The rows that could not be flushed are not an answer.

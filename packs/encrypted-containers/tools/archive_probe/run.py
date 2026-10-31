@@ -66,6 +66,19 @@ import tempfile
 from pathlib import Path
 
 
+def own_dir(path):
+    """Create the tool-output directory and return None, or say why it is not used: a symbolic link anywhere on the way (the directory itself,
+    or work/ or the agent's directory under it) would send the tables and the private names file somewhere else, and O_NOFOLLOW guards only
+    the last name of a file. In a job only the part under $OUT is checked ($OUT is the job service's)."""
+    path = Path(path)
+    out = os.environ.get("OUT")
+    start = len(Path(out).parts) if out and path.parts[:len(Path(out).parts)] == Path(out).parts else 0
+    for i in range(max(start, 1), len(path.parts) + 1):
+        step = Path(*path.parts[:i])
+        if os.path.islink(step):
+            return "%s is a symbolic link: refused, nothing written through it" % step
+    path.mkdir(parents=True, exist_ok=True)
+    return None
 
 
 class LosslessPage:
@@ -127,7 +140,9 @@ class LosslessPage:
             return
         if self._out is None:
             try:
-                self.path.parent.mkdir(parents=True, exist_ok=True)
+                reason = own_dir(self.path.parent)
+                if reason is not None:
+                    self._cannot_write(OSError(reason))
                 fd, name = tempfile.mkstemp(
                     dir=self.path.parent, prefix=f".{self.path.name}-"
                 )
