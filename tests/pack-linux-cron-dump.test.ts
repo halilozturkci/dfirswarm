@@ -354,7 +354,7 @@ test("cron_dump declares secret_output for write_text and preview_text, and refu
       const before = await filesUnder(cwd);
       assert.match(refused(await tool(CRON, cwd, { root: "work/ev", [flag]: true })).error, /outside a job/, flag);
       for (const value of [undefined, "0", "true", ""]) {
-        const env = value === undefined ? {} : { SECRET_OUTPUT: value };
+        const env: Record<string, string> = value === undefined ? {} : { SECRET_OUTPUT: value };
         const answer = refused(await plainJob(CRON, cwd, { root: "work/ev", [flag]: true }, undefined, env, "out-plain"));
         assert.match(answer.error, /SECRET_OUTPUT/, `${flag} with SECRET_OUTPUT=${value}`);
         assert.match(answer.error, /Nothing was written/);
