@@ -153,7 +153,7 @@ for (const [name, tool] of [["ransom_note_scan", "ransom_note_scan"], ["encrypte
     try {
       await noteTree(cwd, 3000);
       const ran = await signalledDuringPrint(join(ROOT, "packs", "ransomware-response", "tools", tool, "run.py"), cwd, { root: "work/ev", limit: 1_000_000 });
-      assert.ok(ran.stdout.length > 1_000_000, `${ran.stdout.length} bytes`);
+      assert.ok(ran.stdout.length > 500_000, `${ran.stdout.length} bytes`);   // the rows shown inline stop at about 512 KiB (INLINE_BYTES), so the answer is no longer megabytes long
       const answer = JSON.parse(ran.stdout);
       assert.notEqual(answer.status, "interrupted");
       assert.equal(ran.code, 0, "the answer was written whole and the tool ended by itself");

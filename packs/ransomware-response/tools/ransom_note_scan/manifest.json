@@ -12,7 +12,7 @@
     },
     "limit": {
       "type": "integer",
-      "description": "Rows shown inline per table (default 100); every row is counted, and a table with more is written whole as JSON Lines and named in pages.<table>.all_results"
+      "description": "Rows shown inline per table (default 100); every row is counted, and a table with more is written whole as JSON Lines and named in pages.<table>.all_results. The rows shown inline also stop at about 512 KiB per table whatever limit says (pages.<table>.inline_cut_by_size names that cut); the whole table is then in pages.<table>.all_results"
     },
     "write_values": {
       "type": "boolean",
@@ -38,6 +38,6 @@
   "example": "{\"root\": \"work/extracted\"}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 4,
-  "sha256": "a33be855148dd4a4891a6306c3c0a985bf7f4e76939d2670019c7d8beb9a56fb"
+  "version": 5,
+  "sha256": "7be185e72b3da641c31eb77323abe5dd673515531f5d0a3bf1879f7e0f31f317"
 }
