@@ -97,7 +97,7 @@ test("both engines ran and exited 0: complete, with each engine's argv, version 
     assert.deepEqual(c.sensitive_outputs, ["capa.json", "floss.json"]);
     const index = await readFile(join(out, "index.tsv"), "utf8");
     assert.match(index, /^capa\.json\tcapa output, whole, exactly as the program wrote it \(status complete\)$/m);
-    assert.deepEqual(JSON.parse(r.stdout), { ok: true, status: "complete", format: "PE", coverage: "coverage.json", index: "index.tsv" });
+    assert.deepEqual(JSON.parse(r.stdout), { ok: true, status: "complete", status_basis: c.status_basis, format: "PE", coverage: "coverage.json", index: "index.tsv" });
   });
 });
 
@@ -465,5 +465,97 @@ test("an engine's JSON larger than the recipe reads (32 MiB: parsed JSON takes u
     assert.equal(c.engines.capa.status, "partial", JSON.stringify(c.engines.capa));
     assert.match(c.engines.capa.reason, /larger than 33554432 bytes: kept whole, not read here/);
     assert.ok(c.engines.capa.bytes > 33 << 20);
+  });
+});
+
+// --- status_basis on every path ---------------------------------------------------------------------------------------------------
+
+const oneSentence = (basis: unknown, where: string): void => {
+  assert.ok(typeof basis === "string" && basis.length > 10 && !basis.includes("\n"), `${where}: ${JSON.stringify(basis)}`);
+};
+
+test("coverage.json and the recipe's answer carry a status_basis that names the engine that decided: complete, one engine missing, both failed, one timed out", async () => {
+  await withCwd(async (cwd, bin) => {
+    await sample(cwd);
+    await engines(bin);
+    const run = (name: string, extra: string[] = [], env: Record<string, string> = {}) => {
+      const out = join(cwd, name);
+      const r = recipe(cwd, bin, ["run", "--target", "TARGET", "--out", out, ...extra], "inputs/s.exe", env);
+      return { out, r, answer: JSON.parse(r.stdout) as Json };
+    };
+    const complete = run("c-complete");
+    const cc = await coverage(complete.out);
+    oneSentence(cc.status_basis, "complete");
+    assert.match(cc.status_basis, /^every engine ran, exited 0 and printed output of the shape the recipe reads \(capa complete, floss complete\)$/);
+    assert.equal(complete.answer.status_basis, cc.status_basis, "the answer and the receipt say the same");
+    await rm(join(bin, "capa"));
+    const missing = run("c-missing");
+    const cm = await coverage(missing.out);
+    assert.equal(cm.status, "partial");
+    oneSentence(cm.status_basis, "missing");
+    assert.match(cm.status_basis, /capa unavailable: capa is not on PATH/);
+    assert.equal(missing.answer.status_basis, cm.status_basis);
+    await engines(bin, { capa: 'if [ "$1" = "--version" ]; then echo v; exit 0; fi\necho oops >&2\nexit 2', floss: 'if [ "$1" = "--version" ]; then echo v; exit 0; fi\necho nope >&2\nexit 3' });
+    const failed = run("c-failed");
+    const cf = await coverage(failed.out);
+    assert.equal(cf.status, "failed");
+    oneSentence(cf.status_basis, "failed");
+    assert.match(cf.status_basis, /capa failed: capa exited with status 2.*floss failed: floss exited with status 3/);
+    await engines(bin, { capa: `if [ "$1" = "--version" ]; then echo v; exit 0; fi\nsleep 60`, floss: null });
+    const slow = run("c-slow", ["--seconds", "2"]);
+    const cs = await coverage(slow.out);
+    oneSentence(cs.status_basis, "timeout");
+    assert.match(cs.status_basis, /capa failed: .*time limit/);
+  });
+});
+
+test("an unsupported format and every refusal carry a status and a status_basis, in the answer and, for a format, in the receipt", async () => {
+  await withCwd(async (cwd, bin) => {
+    await engines(bin);
+    await put(cwd, "inputs/mach", Buffer.concat([Buffer.from("cffaedfe", "hex"), Buffer.alloc(100)]));
+    const out = join(cwd, "catalog");
+    const r = recipe(cwd, bin, ["run", "--target", "TARGET", "--out", out], "inputs/mach");
+    const answer = JSON.parse(r.stdout) as Json;
+    assert.equal(answer.status, "unsupported");
+    oneSentence(answer.status_basis, "unsupported");
+    const c = await coverage(out);
+    assert.equal(c.status, "unsupported");
+    assert.equal(c.status_basis, answer.status_basis);
+    await sample(cwd);
+    const cases: [string[], string][] = [
+      [[], "usage"],
+      [["run"], "--target is required"],
+      [["run", "--target", "{not json", "--out", join(cwd, "o1")], ""],
+      [["run", "--target", JSON.stringify({ paths: ["inputs/none.exe"] }), "--out", join(cwd, "o2")], "not a readable file"],
+      [["run", "--target", JSON.stringify({ paths: ["inputs/s.exe"] })], "needs --out"],
+      [["run", "--target", JSON.stringify({ paths: ["inputs/s.exe"] }), "--out", join(cwd, "o3"), "--seconds", "0"], "--seconds is a whole number"],
+      [["run", "--target", JSON.stringify({ paths: ["inputs/s.exe"] }), "--out", join(cwd, "o4"), "--seconds", "x"], "--seconds is a whole number"],
+    ];
+    for (const [argv, wanted] of cases) {
+      const ran = spawnSync(PYTHON, [CAPA_FLOSS, ...argv], { cwd, encoding: "utf8", env: { ...process.env, PATH: `${bin}:/usr/bin:/bin` } });
+      const a = JSON.parse(ran.stdout) as Json;
+      assert.equal(a.status, "failed", JSON.stringify(argv));
+      assert.equal(a.ok, false);
+      oneSentence(a.status_basis, JSON.stringify(argv));
+      assert.ok(String(a.status_basis).includes(wanted), `${JSON.stringify(argv)}: ${a.status_basis}`);
+      assert.notEqual(ran.status, 0);
+    }
+  });
+});
+
+test("a stop by signal leaves a receipt whose status_basis says the recipe was stopped", async () => {
+  await withCwd(async (cwd, bin) => {
+    await sample(cwd);
+    await put(cwd, "pids/.keep", "");
+    await engines(bin, { capa: `if [ "$1" = "--version" ]; then echo v; exit 0; fi\necho $$ > "$PIDS/capa.pid"\nsleep 60`, floss: null });
+    const out = join(cwd, "catalog");
+    const run = startDetached(CAPA_FLOSS, cwd, {}, { PIDS: join(cwd, "pids") }, bin, ["run", "--target", JSON.stringify({ paths: [join(cwd, "inputs/s.exe")] }), "--out", out]);
+    await pidFile(join(cwd, "pids", "capa.pid"));
+    await new Promise((r) => setTimeout(r, 300));
+    run.signal("SIGTERM");
+    await run.closed;
+    const c = await coverage(out);
+    oneSentence(c.status_basis, "signal");
+    assert.match(c.status_basis, /the recipe was stopped by signal 15/);
   });
 });

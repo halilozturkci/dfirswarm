@@ -1453,11 +1453,18 @@ def assemble(state):
         status = "partial"
     else:
         status = "failed"
+    # One sentence saying which engine, or which stop of the recipe, decided the status.
+    if status == "complete":
+        basis = "every engine ran, exited 0 and printed output of the shape the recipe reads (%s)" % ", ".join("%s %s" % (e["id"], e["status"]) for e in engines.values())
+    else:
+        why = list(state["errors"]) + ["%s %s: %s" % (e["id"], e["status"], e["reason"]) for e in engines.values() if e["status"] != "complete"]
+        basis = "; ".join(why) if why else "an engine did not finish"
     coverage = {
         "recipe": "capa-floss",
         "target": state["shown"],
         "format": state["fmt"],
         "status": status,
+        "status_basis": basis,
         "covered": "what each engine that is installed wrote about the file, as the engine said it (see engines); a match is a hypothesis, a recovered string is derived",
         "not_covered": NOT_COVERED,
         "engines": {k: {kk: vv for kk, vv in v.items() if kk not in ("seconds",)} for k, v in engines.items()},
@@ -1530,6 +1537,8 @@ def write_results(state):
         coverage["errors"].append("the final check withheld %d field(s) the sanitiser had let through: each is given by its length; a fault of this recipe, not of the file" % FINAL["fields"])
         if coverage["status"] == "complete":
             coverage["status"] = status = "partial"
+            coverage["status_basis"] = "the final check withheld %d field(s) the sanitiser had let through: a fault of this recipe, never of the file" % FINAL["fields"]
+    state["status_basis"] = coverage["status_basis"]
     write_receipt(out_dir, state["coverage_name"], json.dumps(coverage, indent=2) + "\n")
     write_receipt(out_dir, state["index_name"], "".join(l + "\n" for l in lines))
     return status
@@ -1569,7 +1578,7 @@ def run(path, out_dir, fmt, budget):
         state["errors"].append("the recipe stopped on an unexpected error (%s): the engines' statuses are as far as it got" % scrub(describe(exc), "text"))
     sweep_orphans()
     final = write_results(state)
-    print(json.dumps({"ok": final == "complete", "status": final, "format": fmt, "coverage": state["coverage_name"], "index": state["index_name"]}))
+    print(json.dumps({"ok": final == "complete", "status": final, "status_basis": state["status_basis"], "format": fmt, "coverage": state["coverage_name"], "index": state["index_name"]}))
     return 0 if final in ("complete", "partial") else 2
 
 
@@ -1679,36 +1688,37 @@ def drop_if_empty(path):
     return False
 
 
+def refuse(message):
+    """An answer for a call the recipe did not start: a status and the one sentence that says why."""
+    print(json.dumps({"ok": False, "status": "failed", "status_basis": message, "error": message}))
+    return 2
+
+
 def main(argv):
     if len(argv) < 2 or argv[1] not in ("detect", "run"):
-        print(json.dumps({"ok": False, "error": "usage: run.py detect --target T | run --target T --out DIR [--seconds N]"}))
-        return 2
+        return refuse("usage: run.py detect --target T | run --target T --out DIR [--seconds N]")
     args = dict(zip(argv[2::2], argv[3::2]))
     if "--target" not in args:
-        print(json.dumps({"ok": False, "error": "--target is required"}))
-        return 2
+        return refuse("--target is required")
     try:
         _target, path = target_of(args["--target"])
     except (OSError, ValueError, RecursionError) as exc:
-        print(json.dumps({"ok": False, "error": scrub(str(exc) if not isinstance(exc, RecursionError) else "the target is nested too deeply")}))
-        return 2
+        return refuse(scrub(str(exc) if not isinstance(exc, RecursionError) else "the target is nested too deeply"))
     if not os.path.isfile(path):
-        print(json.dumps({"ok": False, "error": "the target is not a readable file"}))
-        return 2
+        return refuse("the target is not a readable file")
     fmt, why = detect(path)
     if argv[1] == "detect":
         print(json.dumps({"applies": fmt is not None, "format": fmt, "why": why}))
         return 0 if fmt else 1
     if "--out" not in args:
-        print(json.dumps({"ok": False, "error": "run needs --out DIR"}))
-        return 2
+        return refuse("run needs --out DIR")
     if fmt is None:
         os.makedirs(args["--out"], mode=0o700, exist_ok=True)
         name, index = receipt_names(args["--out"])
         if index != "index.tsv":
             os.unlink(os.path.join(args["--out"], index))
-        write_receipt(args["--out"], name, json.dumps({"recipe": "capa-floss", "status": "unsupported", "why": why, "limits_hit": [], "errors": []}, indent=2))
-        print(json.dumps({"ok": False, "status": "unsupported", "why": why, "coverage": name}))
+        write_receipt(args["--out"], name, json.dumps({"recipe": "capa-floss", "status": "unsupported", "status_basis": why, "why": why, "limits_hit": [], "errors": []}, indent=2))
+        print(json.dumps({"ok": False, "status": "unsupported", "status_basis": why, "why": why, "coverage": name}))
         return 2
     budget = BUDGET_SECONDS
     if "--seconds" in args:
@@ -1717,14 +1727,12 @@ def main(argv):
         except ValueError:
             budget = 0
         if not 1 <= budget <= BUDGET_SECONDS:
-            print(json.dumps({"ok": False, "error": "--seconds is a whole number from 1 to %d" % BUDGET_SECONDS}))
-            return 2
+            return refuse("--seconds is a whole number from 1 to %d" % BUDGET_SECONDS)
     try:
         return run(path, args["--out"], fmt, budget)
     except OSError as exc:
         # an --out that cannot be made or written (a hand run; the harness gives a writable $OUT): said as JSON, never a traceback
-        print(json.dumps({"ok": False, "status": "failed", "error": "the output directory cannot be written: %s" % scrub(describe(exc), "text")}))
-        return 2
+        return refuse("the output directory cannot be written: %s" % scrub(describe(exc), "text"))
 
 
 if __name__ == "__main__":

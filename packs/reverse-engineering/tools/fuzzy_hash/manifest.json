@@ -1,6 +1,6 @@
 {
   "name": "fuzzy_hash",
-  "description": "SHA-256 of a file (computed here: identity) and its ssdeep and TLSH digests (computed by the installed programs: byte similarity only), or a comparison of two files by TLSH distance. A digest is accepted only when it has the shape of that engine's digest. Each engine runs under a time limit with its whole output kept in a log file; an engine that fails, times out or prints something unrecognised is a per-engine status and the answer is partial; a comparison that cannot be made names the input that prevented it. Records each program's argv and what its version command printed. Requires ssdeep and tlsh. A similarity score is a lead: it does not establish a family.",
+  "description": "SHA-256 of a file (computed here: identity) and its ssdeep and TLSH digests (computed by the installed programs: byte similarity only), or a comparison of two files by TLSH distance. A digest is accepted only when it has the shape of that engine's digest. Each engine runs under a time limit with its whole output kept in a log file; an engine that fails, times out or prints something unrecognised is a per-engine status and the answer is partial; a comparison that cannot be made names the input that prevented it. Records each program's argv and what its version command printed. Requires ssdeep and tlsh. A similarity score is a lead: it does not establish a family. Every answer, a refusal and a stop by signal included, carries `status` and a one-sentence `status_basis` that names the engine, its status or the call's budget that decided it.",
   "params": {
     "path": {
       "type": "string",
@@ -25,6 +25,6 @@
   "example": "{\"path\": \"work/extracted/sample.exe\", \"compare_to\": \"work/extracted/variant.exe\"}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 4,
-  "sha256": "6c202d73388da7426f945f73a9270182a0b1f51fa4fb35dfac13f7169fc444e8"
+  "version": 5,
+  "sha256": "64ef85eb25908f7ed51030aeee5c8e61a444bff73985484c205df2a4ed906dff"
 }

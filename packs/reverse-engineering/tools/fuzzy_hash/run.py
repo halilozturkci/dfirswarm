@@ -24,7 +24,7 @@ import sys
 import time
 from pathlib import Path
 
-TOOL = {"name": "fuzzy_hash", "version": 4}
+TOOL = {"name": "fuzzy_hash", "version": 5}
 PARSER = "fuzzy_hash/3"
 DEFAULT_ENGINE_TIMEOUT = 120
 TOTAL_BUDGET = 270                       # seconds for the whole call: the manifest's own limit is 300
@@ -45,7 +45,7 @@ def describe(exc):
 
 
 def fail(message, **extra):
-    print(json.dumps({"error": message, "status": extra.pop("status", "failed"), "tool": TOOL, **extra}))
+    print(json.dumps({"error": message, "status": extra.pop("status", "failed"), "status_basis": extra.pop("status_basis", message), "tool": TOOL, **extra}))
     raise SystemExit(1)
 
 
@@ -695,8 +695,9 @@ def main():
 
     def last_word(signum):
         # A stop signal ends the engines (the handler did that) and the tool says it was stopped, with what it had.
-        print(json.dumps({"error": "stopped by signal %d before the engines finished" % signum, "status": "failed", "tool": TOOL,
-                          "stopped_by_signal": signum, "files": runner.partial, "problems": runner.problems,
+        print(json.dumps({"error": "stopped by signal %d before the engines finished" % signum, "status": "failed",
+                          "status_basis": "the tool was stopped by signal %d before the engines finished: the digests already computed are in `files`, and the engines were ended" % signum,
+                          "tool": TOOL, "stopped_by_signal": signum, "files": runner.partial, "problems": runner.problems,
                           "logs": logs.names if logs.kept else None}))
         sys.stdout.flush()
 
@@ -752,6 +753,10 @@ def main():
         "comparison": comparison,
         "engines": engines,
         "status": "partial" if runner.problems else "complete",
+        "status_basis": (("%d problem(s), the first of them: %s (each names the engine, its status or the call's %d-second budget; see `problems`)"
+                          % (len(runner.problems), runner.problems[0][:300], TOTAL_BUDGET)) if runner.problems else
+                         "ssdeep and tlsh each ran on every file within the call's %d-second budget and answered: a digest of the engine's own shape, "
+                         "or its own insufficient_input" % TOTAL_BUDGET),
         "problems": runner.problems,
         "engine_timeout_seconds": timeout,
         "logs": {**logs.names, "format": "each invocation is preceded by a '## label: argv' line; the engine's whole output follows"} if logs.kept else None,
