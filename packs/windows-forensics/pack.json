@@ -1,7 +1,7 @@
 {
   "id": "windows-forensics",
   "name": "Windows Forensics Pack",
-  "version": "1.7.6",
+  "version": "1.7.7",
   "description": "Artefact-by-artefact method and tooling for a Windows examination: the file system and its journals, the hives, execution evidence, the event logs and the records inside a cleared one, accounts and remote access, persistence, PowerShell, browsers, shadow copies, memory, and the traces anti-forensics leaves.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -42,7 +42,7 @@
   "checksums": {
     "sha256": {
       "LICENCE": "617dec43b30845a8c7d062db3f6d892400d96796b91f363586beacfbdffd1721",
-      "README.md": "355225b70c699b2d16687f29369fe709faa7450e9eb565ab58700af18bd2bac4",
+      "README.md": "528f7ef09a40839ac24868979baa46548752ab73207e6e8344a3134a8390ba62",
       "goals/data-left-the-building.md": "34c94782b1a636d54eac5d6d2397a482059374909b7f93ee96433f9c3668b68e",
       "goals/hidden-data.md": "14ee963bede22cf69b96033e483fad57ead72abd20e04ae7ccc1153de265fb78",
       "goals/intrusion-triage.md": "ef8e8936a146915f13d2330a59ad16d8ae9789999860dc7653e6e28d01248c1e",

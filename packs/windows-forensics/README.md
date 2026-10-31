@@ -8,7 +8,7 @@ true of any platform.
 
 ## What it carries
 
-**Fifty-three skills**: fifty-two leaves in ten families and the pack's router, `windows/router` (at most 400 tokens; the prompt shows this one line for the pack when the run's index is over its budget, and it names every leaf). Each leaf is short: it opens with when to use
+**Fifty-three skills**: fifty-two leaves in ten families and the pack's router, `windows/router` (at most 500 tokens; the prompt shows this one line for the pack when the run's index is over its budget, and it names every leaf). Each leaf is short: it opens with when to use
 it and when not, gives the decision rules, and ends with what the artefact shows,
 does not show and what to record. A topic that needs more has a second-level leaf
 that its parent opens "only if" the question calls for it. An agent reads the

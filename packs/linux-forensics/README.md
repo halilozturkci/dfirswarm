@@ -7,7 +7,7 @@ Depends on the Computer Forensics Base Pack, which carries the method that is tr
 
 ## What it carries
 
-**Ten skills, fifteen second-level leaves and the router `linux/router`** (at most 400 tokens; the prompt shows this one line for the pack when the run's index is over its budget, and it names every leaf), in eight families. Each skill opens with a decision-rule note; a
+**Ten skills, fifteen second-level leaves and the router `linux/router`** (at most 500 tokens; the prompt shows this one line for the pack when the run's index is over its budget, and it names every leaf), in eight families. Each skill opens with a decision-rule note; a
 second-level leaf (listed after it, opened only when its question arises) holds the reference material the first points to.
 
 | Family | Skills |

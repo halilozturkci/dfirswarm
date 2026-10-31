@@ -13,14 +13,23 @@
  *   2,500 tokens (measured by scripts/pack-index-budgets.ts, which prints the table).
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { test } from "node:test";
-import { BYTES_PER_TOKEN, readPackIndex, SKILL_BUDGET, splitSkill } from "../extensions/skills.ts";
+import { BYTES_PER_TOKEN, readPackIndex, renderSkillsSection, SKILL_BUDGET, splitSkill } from "../extensions/skills.ts";
 import { loadCorpus, measureCombinations, measureProfiles, ROOT } from "../scripts/pack-index-budgets.ts";
 
-const ROUTER_MAX_TOKENS = 400;
+// The router limits live in one file that scripts/skill-budgets.py reads too: 400 tokens, 500 for four packs, whose
+// index may then pass the harness's pack budget and is shown by its router line alone.
+const LIMITS = JSON.parse(readFileSync(join(ROOT, "scripts", "skill-budgets.json"), "utf8")) as {
+  router_max: number;
+  router_max_by_pack: Record<string, number>;
+  index_router_only: string[];
+};
+const routerMax = (pack: string): number => LIMITS.router_max_by_pack[pack] ?? LIMITS.router_max;
+const routerOnly = (pack: string): boolean => LIMITS.index_router_only.includes(pack);
 const tokensOf = (text: string): number => Buffer.byteLength(text) / BYTES_PER_TOKEN;
 
 /** Every skill of a pack: id (from the front matter) and file, INDEX.md apart. */
@@ -42,7 +51,7 @@ async function skillsOf(skillsDir: string): Promise<Map<string, { meta: Record<s
 }
 
 /** What is wrong with one pack's router and index, in words; empty when nothing is. */
-async function packProblems(packDir: string): Promise<string[]> {
+async function packProblems(packDir: string, packId: string = basename(packDir)): Promise<string[]> {
   const problems: string[] = [];
   const skillsDir = join(packDir, "skills");
   const skills = await skillsOf(skillsDir);
@@ -57,7 +66,7 @@ async function packProblems(packDir: string): Promise<string[]> {
   if (unlisted.length) problems.push(`INDEX.md does not list ${unlisted.join(", ")}`);
   if (unknown.length) problems.push(`INDEX.md lists ${unknown.join(", ")}, which no file carries`);
   if (new Set(listed).size !== listed.length) problems.push("INDEX.md lists a skill twice");
-  if (index.tokens > SKILL_BUDGET.pack) problems.push(`the index is ${index.tokens} tokens, over ${SKILL_BUDGET.pack}`);
+  if (index.tokens > SKILL_BUDGET.pack && !routerOnly(packId)) problems.push(`the index is ${index.tokens} tokens, over ${SKILL_BUDGET.pack}`);
 
   const marked = [...skills.values()].filter((s) => s.meta.router === "true").map((s) => String(s.meta.id));
   const router = index.router;
@@ -75,7 +84,7 @@ async function packProblems(packDir: string): Promise<string[]> {
   if (file.meta.router !== "true") problems.push(`${router} does not say router: true`);
   if (marked.length !== 1 || marked[0] !== router) problems.push(`the pack's routers are ${JSON.stringify(marked)}, the index names ${router}`);
   const size = tokensOf(file.text);
-  if (size > ROUTER_MAX_TOKENS) problems.push(`the router is ${Math.round(size)} tokens, over ${ROUTER_MAX_TOKENS}`);
+  if (size > routerMax(packId)) problems.push(`the router is ${Math.round(size)} tokens, over ${routerMax(packId)}`);
   const entry = index.entries.find((e) => e.id === router)!;
   if (entry.tokens > SKILL_BUDGET.entry) problems.push(`the router's index line is ${entry.tokens} tokens, over ${SKILL_BUDGET.entry}`);
 
@@ -92,7 +101,7 @@ async function packProblems(packDir: string): Promise<string[]> {
   return problems;
 }
 
-test("every pack under packs/ names a router that resolves, within 400 tokens, naming each leaf once, in an index within 1,000 tokens", async () => {
+test("every pack under packs/ names a router that resolves, within 400 tokens (500 for windows, linux, memory and macOS), naming each leaf once, in an index within 1,000 tokens (those four may pass it)", async () => {
   const corpus = await loadCorpus();
   const failures: string[] = [];
   for (const name of corpus.names) {
@@ -126,9 +135,9 @@ test("the base pack's index is at most 1,000 tokens, so it is never shortened to
 });
 
 // The checks above are only worth anything if they can fail: each rule is broken on a small pack of its own.
-async function fixturePack(files: Record<string, string>): Promise<string> {
+async function fixturePack(files: Record<string, string>, id = "fixture"): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "pack-index-budgets-"));
-  await writeFile(join(dir, "pack.json"), JSON.stringify({ id: "fixture", version: "1.0.0", skills: 0 }));
+  await writeFile(join(dir, "pack.json"), JSON.stringify({ id, version: "1.0.0", skills: 0 }));
   for (const [rel, text] of Object.entries(files)) {
     await mkdir(join(dir, "skills", rel, ".."), { recursive: true });
     await writeFile(join(dir, "skills", rel), text);
@@ -140,8 +149,8 @@ const indexFile = (router: string | null, ids: string[], pad = ""): string =>
   `# Skills in this pack\n\n${router ? `Router: \`${router}\`\n\n` : ""}${ids.map((id) => `- \`${id}\` ${id}: when it applies.${pad}`).join("\n")}\n`;
 const goodRouter = (leaves: string[]): string => skillFile("t/router", "router: true\n", `Use when you route. Not for rules.\n\n${leaves.map((l) => `\`${l}\` somewhere`).join("\n")}\n`);
 
-async function withFixture(files: Record<string, string>, run: (dir: string) => Promise<void>): Promise<void> {
-  const dir = await fixturePack(files);
+async function withFixture(files: Record<string, string>, run: (dir: string) => Promise<void>, id = "fixture"): Promise<void> {
+  const dir = await fixturePack(files, id);
   try {
     await run(dir);
   } finally {
@@ -202,4 +211,55 @@ test("the check fails an index that passes 1,000 tokens, lists a skill twice or 
   await withFixture({ "INDEX.md": indexFile("t/router", ["t/a", "t/a", "t/router"]), "t/a.md": skillFile("t/a"), "t/b.md": skillFile("t/b"), "t/router.md": goodRouter(["t/a", "t/b"]) }, async (dir) => {
     assert.deepEqual(await packProblems(dir), ["INDEX.md does not list t/b", "INDEX.md lists a skill twice"]);
   });
+});
+
+// A router's size is set so that its file is `target` tokens (the estimator is bytes / 4.245).
+const routerOf = (leaves: string[], target: number): string => {
+  const head = goodRouter(leaves);
+  const pad = Math.max(0, Math.ceil(target * BYTES_PER_TOKEN) - Buffer.byteLength(head));
+  return head + "x".repeat(pad);
+};
+
+test("the router limit is 500 for windows, linux, memory and macOS and 400 for every other pack", async () => {
+  assert.equal(LIMITS.router_max, 400);
+  assert.deepEqual(LIMITS.router_max_by_pack, { "windows-forensics": 500, "linux-forensics": 500, "memory-forensics": 500, "macos-forensics": 500 });
+  const files = { "INDEX.md": indexFile("t/router", ["t/a", "t/router"]), "t/a.md": skillFile("t/a") };
+  // 450 tokens: within 500, over 400.
+  await withFixture({ ...files, "t/router.md": routerOf(["t/a"], 450) }, async (dir) => {
+    assert.deepEqual(await packProblems(dir, "windows-forensics"), []);
+    const other = await packProblems(dir, "cloud-forensics");
+    assert.equal(other.length, 1);
+    assert.match(other[0]!, /^the router is \d+ tokens, over 400$/);
+  });
+  // 520 tokens: over 500 for the four as well.
+  await withFixture({ ...files, "t/router.md": routerOf(["t/a"], 520) }, async (dir) => {
+    for (const id of ["windows-forensics", "linux-forensics", "memory-forensics", "macos-forensics"]) {
+      const problems = await packProblems(dir, id);
+      assert.equal(problems.length, 1, `${id}: ${problems.join("; ")}`);
+      assert.match(problems[0]!, /^the router is \d+ tokens, over 500$/);
+    }
+  });
+});
+
+test("an index over 1,000 tokens fails every pack but the four, which are shown by their router line alone", async () => {
+  const many = Array.from({ length: 40 }, (_, i) => `t/leaf-${i}`);
+  const files: Record<string, string> = { "INDEX.md": indexFile("t/router", [...many, "t/router"], " More words to make the line cost something.".repeat(2)), "t/router.md": goodRouter(many) };
+  for (const id of many) files[`${id}.md`] = skillFile(id);
+  await withFixture(files, async (dir) => {
+    const problems = await packProblems(dir, "cloud-forensics");
+    assert.equal(problems.length, 1);
+    assert.match(problems[0]!, /^the index is \d+ tokens, over 1000$/);
+  });
+  for (const id of ["windows-forensics", "linux-forensics", "memory-forensics", "macos-forensics"]) {
+    await withFixture(files, async (dir) => {
+      assert.deepEqual(await packProblems(dir, id), [], id);
+      // The harness keeps the budget (SKILL_BUDGET.pack stays 1,000): a pack over it is rendered by its router line alone.
+      const index = await readPackIndex(dir);
+      assert.ok(index.tokens > SKILL_BUDGET.pack);
+      const { report } = renderSkillsSection([index]);
+      assert.equal(report.packs[0]!.shown, "router");
+      assert.deepEqual(report.no_router, []);
+    }, id);
+  }
+  assert.equal(SKILL_BUDGET.pack, 1_000);
 });

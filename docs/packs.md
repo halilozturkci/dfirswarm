@@ -961,13 +961,20 @@ tokenizer; the estimate is the one the harness's index budget uses).
 | Budget | Limit | What happens past it |
 |---|---|---|
 | a leaf (a skill) | 800 tokens | a warning from 800; **seal refuses** above 1,000 |
-| a router (`router: true`) | 400 tokens | a finding |
+| a router (`router: true`) | 400 tokens (500 for windows-forensics, linux-forensics, memory-forensics and macos-forensics; `scripts/skill-budgets.json`) | a finding |
 | a skill file | 300 lines | a finding |
 | an index entry (its line in `skills/INDEX.md`) | 40 tokens | a finding: shorten `title` or `when` |
 | `needs` depth | 2 | a finding (a loop in `needs` is one too) |
 | the needs chain | 1,900 tokens | a finding; a warning within 150 of it |
 
-At the seal only a skill over 1,000 tokens (or a router over 400) is refused;
+The four packs with the 500-token router may pass 1,000 tokens of index; the
+harness budget (1,000 a pack) is unchanged, so such a pack is shown by its
+router line alone in every run. Every other pack, the base pack included, keeps
+its index within 1,000. The limits are in `scripts/skill-budgets.json`, which
+`scripts/skill-budgets.py` and `tests/pack-index-budgets.test.ts` both read.
+
+At the seal only a skill over 1,000 tokens (or a router over its limit, 400 or
+500) is refused;
 every other finding and warning is printed as a `budget:` line, and it is
 `tests/skill-budgets.test.sh` that fails on a finding.
 

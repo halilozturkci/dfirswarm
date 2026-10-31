@@ -97,6 +97,10 @@ M = {
     "router-450": lambda: put("cp", "c/lone", tokens=450, router=True),
     # a router is held to 400, not to the leaf's 1,000
     "router-900": lambda: put("cp", "c/lone", tokens=900, router=True),
+    # windows-forensics, linux-forensics, memory-forensics and macos-forensics are held to 500 (scripts/skill-budgets.json)
+    "win-router-450": lambda: packs.__setitem__("windows-forensics", dict(depends=[], skills={"w/router": sk(450, router=True)})),
+    "win-router-495": lambda: packs.__setitem__("windows-forensics", dict(depends=[], skills={"w/router": sk(495, router=True)})),
+    "win-router-520": lambda: packs.__setitem__("windows-forensics", dict(depends=[], skills={"w/router": sk(520, router=True)})),
     "lines-300": lambda: put("cp", "c/lone", lines=300),
     "lines-301": lambda: put("cp", "c/lone", lines=301),
     "entry-long": lambda: put("cp", "c/lone", title="a title that goes on and on and on and on and on", when="and a when that is nothing like short, so the index line of this skill is longer than forty tokens are, and then some more words follow it to be sure of that"),
@@ -169,6 +173,9 @@ budget_case "999 tokens is no finding" 0 "warning: cp: c/lone: 999 tokens" - lea
 budget_case "over 1,000 tokens is a finding" 1 "cp: c/lone: 1002 tokens, over the 1000 a skill may have .budget 800.: split it into leaves .it is not on the golden list" - leaf-1001
 budget_case "a router is held to 400" 0 "" - router-390; absent "a router of 390" "router"
 budget_case "a router over 400 is a finding" 1 "cp: c/lone: the router is 450 tokens, over its budget of 400" - router-450
+budget_case "a 450-token router passes for windows-forensics (limit 500)" 0 "" - win-router-450; absent "a 450-token windows router" "router"
+budget_case "the same 450-token router fails for another pack (limit 400)" 1 "cp: c/lone: the router is 450 tokens, over its budget of 400" - router-450
+budget_case "a 520-token router fails for windows-forensics" 1 "windows-forensics: w/router: the router is 520 tokens, over its budget of 500" - win-router-520
 budget_case "a router of 900 tokens is a router finding, not a leaf one" 1 "the router is 900 tokens" - router-900; absent "a router of 900" "a skill may have"
 budget_case "300 lines is within the budget" 0 "" - lines-300
 budget_case "301 lines is a finding" 1 "cp: c/lone: 301 lines, over the 300 a skill file may have" - lines-301
@@ -243,6 +250,17 @@ grep -q 'BLOCKER: a skill is over its size budget' <<<"$LAST" || fail "the refus
 [[ "$(jq 'has("checksums")' "$LAST_DIR/cp/pack.json")" == false ]] || fail "a refused seal wrote the checksums"
 [[ ! -e "$LAST_DIR/cp/skills/INDEX.md" ]] || fail "a refused seal wrote the index"
 seal_case "a router over 400 tokens is refused" 1 "refused: cp: c/lone: the router is 450 tokens" router-450
+# The seal reads the same limits by pack id: windows-forensics seals a 495-token router and refuses a 520-token one.
+for case in "win-router-495 0 sealed:" "win-router-520 1 the.router.is.520.tokens"; do
+  set -- $case
+  case_n=$((case_n + 1)); dir="$WORK/sl$case_n"
+  mkdir "$dir" && "$PY" "$WORK/fx.py" "$dir" "$1" || fail "could not build the packs for the windows router case $1"
+  got="$(DFIRSWARM_HOME="$WORK/home" bash "$ROOT/scripts/pack.sh" seal "$dir/windows-forensics" 2>&1)"; rc=$?
+  [[ $rc -eq $2 ]] || fail "sealing windows-forensics with $1: expected exit $2, got $rc:
+$got"
+  grep -qE -- "$3" <<<"$got" || fail "sealing windows-forensics with $1: the output lacks /$3/:
+$got"
+done
 seal_case "the other budgets are warnings at the seal" 0 "budget: cp: c/a: .needs. reaches 3 deep, over 2 .tests/skill-budgets.test.sh fails on it." depth-3
 seal_case "a chain over the limit is a warning at the seal" 0 "budget: cp: c/one: its needs chain is [0-9]+ tokens, over 1900" chain-over
 seal_case "a chain near the limit warns, naming the skills" 0 "budget: cp: c/one: its needs chain is .*made of c/one \(650\), bp:b/two \(600\), bp:b/one \(600\)" chain-near

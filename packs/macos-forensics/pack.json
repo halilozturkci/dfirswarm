@@ -1,7 +1,7 @@
 {
   "id": "macos-forensics",
   "name": "macOS Forensics Pack",
-  "version": "1.5.3",
+  "version": "1.5.4",
   "description": "Artefact-by-artefact method and tooling for a macOS host: the system profile, property lists, the unified log, FSEvents, the KnowledgeC activity database, launch items and other persistence, accounts and the limits of attribution, and what APFS retains. TCC, Keychain, Gatekeeper and XProtect, Spotlight and Biome have no skill here yet.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -32,7 +32,7 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "abb2baf12135622e5e728745c3e0cf75d4880a076722889b3f966897909b7d2b",
+      "README.md": "3306d1e40bba64dd5571296fe3f58779127cf59110351f2921e940109f9e8194",
       "goals/mac-compromise.md": "0b36e3e2f088856b11f6b14f18c012b38dbfe1b3f3244b29fb7646cf76aaf469",
       "requires/host.json": "4f9dfec469045efdd9f69b1556d25d02f58471aebd843137a401df0dbaf8883b",
       "requires/python.txt": "b9fd9b97af3d66de786eb48c116a119308a6b2087411ef45b2cc1aa369dc6eba",

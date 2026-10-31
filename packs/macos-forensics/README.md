@@ -10,7 +10,7 @@ Depends on the Computer Forensics Base Pack.
 
 **Eighteen skills**, in six families: a decision-rule leaf for each question,
 second-level leaves a leaf points to ("only if") for the reference material, and the router
-`macos/router` (at most 400 tokens; the prompt shows this one line for the pack when the run's index is over its budget, and it names every leaf).
+`macos/router` (at most 500 tokens; the prompt shows this one line for the pack when the run's index is over its budget, and it names every leaf).
 
 | Family | Skills |
 | --- | --- |
