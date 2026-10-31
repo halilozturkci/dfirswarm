@@ -314,8 +314,12 @@ anything is unpacked, installed or built.
   nowhere else: Suricata.
 - `not_in_image` (with why) — a program that belongs to another system:
   Apple's `log` (macOS only; UnifiedLogReader.py reads the same archives in
-  the image) and CyLR (a collector, run on the host being collected). It is
-  listed under `not_applicable` in `image.json` and the NOTICE, and a VM's
+  the image), and the programs an operator runs where the evidence or the
+  credentials are, not in an analysis VM: CyLR, UAC and Velociraptor
+  (collectors, run on the host being collected), AVML (live memory
+  acquisition), PowerShell and the AWS CLI (cloud acquisition). Those with a
+  pinned download keep it declared, for the operator to take to the source. It
+  is listed under `not_applicable` in `image.json` and the NOTICE, and a VM's
   toolbox check lists it there too, never as missing; a pack may not require
   one.
 
@@ -539,3 +543,30 @@ sha256 in the spec; the build refuses a lock whose file differs, a line without
 installed from a lock is listed in `image.json` under `locked` (`for`, `lock`,
 `sha256`), only after pip has succeeded. A set with no lock installs as before.
 No pack carries a lock yet; the pins are other changes.
+
+## Re-pinning a download
+
+Every URL a pack pins is checked once a week (`.github/workflows/pins.yml`,
+`scripts/check-pins.ts`): a HEAD request for each, and for a URL that names no
+version, the bytes too, compared with the pinned sha256. A URL too large to
+fetch every week (Volatility's symbol bundle) is checked by the size it answers
+with. The run fails when a pin rotted (404), changed (other bytes, other size) or
+did not answer, and names it in the job summary; `node
+--experimental-strip-types scripts/check-pins.ts --list` prints the pins and
+`--head-only` skips the fetches. Nothing re-pins by itself.
+
+To re-pin **an Eric Zimmerman tool** (MFTECmd, EvtxECmd, RECmd in
+`packs/windows-forensics/requires/host.json`): upstream replaced the zip at the
+same address, so download it from the entry's URL, take its sha256, read the new
+version from the tool (`<tool> --version`, or the release notes), set the entry's
+`version` and `sha256`, and update the `why` and the notes that name the old
+version; then raise the pack's version, seal it, and build `disk`. The other
+entries of a pack re-pin the same way: new URL if it names a version, new sha256
+from the bytes you downloaded, never copied from a page you did not check.
+
+To re-pin **Zeek** (`packs/network-forensics/requires/host.json`): the Zeek
+project's build service keeps only the latest release, so the pinned `.deb`
+URLs go 404 when Zeek releases again. Download both `.deb` files (amd64 and
+arm64) of the current release from the entry's repository path, take their
+sha256, and set the two URLs, the version and the two sha256 values; then raise
+the pack's version, seal it, and build `network`.
