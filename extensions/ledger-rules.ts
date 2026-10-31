@@ -1962,11 +1962,15 @@ export function standingContradictions(entries: LedgerEntry[]): Array<{ from: nu
   return out;
 }
 
-export async function listLedger(sandboxRoot: string, filter: { kind?: string; limit?: number } = {}): Promise<LedgerEntry[]> {
+export async function listLedger(sandboxRoot: string, filter: { kind?: string; limit?: number; from?: number; ids?: number[] } = {}): Promise<LedgerEntry[]> {
   const all = await withAttestations(sandboxRoot, await readLedger(sandboxRoot));
   const kind = (filter.kind ?? "").trim().toLowerCase();
-  const picked = kind ? all.filter((e) => e.kind === kind) : all;
+  const byKind = kind ? all.filter((e) => e.kind === kind) : all;
   const limit = Math.max(1, Math.min(500, Number(filter.limit) || 200));
+  // `ids` reads exact entries, whatever their age or kind; `from` continues a listing from a seq a previous page named (entries appended
+  // since come after it, none shifts or repeats); otherwise the newest `limit`.
+  const wanted = filter.ids ? new Set(filter.ids) : null;
+  const picked = wanted ? all.filter((e) => wanted.has(e.seq)) : filter.from !== undefined ? byKind.filter((e) => e.seq >= filter.from!) : byKind.slice(-limit);
   // A corrected entry is listed with the entry that corrects it; every entry
   // with who re-derived it and who disputes it; an answer with what keeps it
   // from standing on its support, when anything does.
@@ -1975,7 +1979,7 @@ export async function listLedger(sandboxRoot: string, filter: { kind?: string; l
   const allDisputes = await readDisputes(sandboxRoot);
   const disputes = disputesInForce(all, allDisputes);
   const problems = all.some((e) => e.kind === "answer") ? answerProblems(all, allDisputes) : new Map<number, string[]>();
-  return picked.slice(-limit).map((e) => {
+  return picked.map((e) => {
     const h = e.hash ?? ledgerHash(e, "genesis");
     const by = [...new Set(attests.filter((a) => a.target === h).map((a) => a.by))];
     const against = disputes.filter((d) => d.target === h).map((d) => ({ by: d.by, why: d.why, ...(d.inherited_from !== undefined ? { inherited_from: d.inherited_from } : {}) }));

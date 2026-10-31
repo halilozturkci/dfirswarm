@@ -2375,6 +2375,41 @@ export function inboxPageChars(env: Record<string, string | undefined> = process
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : INBOX_PAGE_CHARS_DEFAULT;
 }
 
+/**
+ * What one item costs in a tool reply, in characters: `toolText` pretty-prints the payload with two spaces a level, so an item inside
+ * a list of the payload (two levels down) costs its own pretty text with every line indented four more spaces, and a comma.
+ */
+export function replyCost(item: unknown): number {
+  const text = JSON.stringify(item, null, 2) ?? "null";
+  return text.length + text.split("\n").length * 4 + 1;
+}
+
+/**
+ * One page of whole items, in order, under `budget` characters of reply: the rule the inbox, the leads view, the ledger and the inputs
+ * share. Always at least one item (an item larger than the bound comes whole, alone on its page), never a cut item. `remaining` is
+ * the number of items held back; the caller names where the next page starts and keeps the whole result. 0 means no bound.
+ */
+export function pageWholeItems<T>(items: readonly T[], budget: number, cost: (item: T) => number = replyCost): { page: T[]; remaining: number } {
+  if (budget <= 0) return { page: [...items], remaining: 0 };
+  const page: T[] = [];
+  let used = 0;
+  for (const item of items) {
+    const c = cost(item);
+    if (page.length > 0 && used + c > budget) break;
+    page.push(item);
+    used += c;
+  }
+  return { page, remaining: items.length - page.length };
+}
+
+/** The characters of a tool reply that are not the paged items (the envelope's keys, the notes): what a page leaves out of its budget. */
+export const REPLY_ENVELOPE_CHARS = 2_000;
+
+/** The budget for the items of one reply under the page bound, or 0 when there is no bound. */
+export function itemBudget(pageChars: number = inboxPageChars()): number {
+  return pageChars <= 0 ? 0 : Math.max(1_000, pageChars - REPLY_ENVELOPE_CHARS);
+}
+
 export async function readInbox(
   ctx: SwarmContext,
   args: { thread?: string; markSeen?: boolean; pageChars?: number } = {},

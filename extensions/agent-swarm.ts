@@ -43,6 +43,8 @@ import {
   stateRevision,
   FINISH_LINE_UNSETTLED,
   inboxPageChars,
+  itemBudget,
+  pageWholeItems,
   classifyTurnError,
   providerErrorPost,
   normalizeProviderError,
@@ -3441,17 +3443,54 @@ export default function (pi: ExtensionAPI) {
     name: "ledger",
     label: "Ledger",
     description:
-      "List the swarm's ledger: every event, indicator, finding, search that found nothing, hypothesis, limitation and answer recorded so far, with authors and evidence; a corrected entry carries superseded_by, an entry somebody re-derived attested_by, one somebody contests disputed_by, and an answer that no longer stands on what it cites its problems. Filter by kind; the rendered file is ledger/ledger.md.",
+      "List the swarm's ledger: every event, indicator, finding, search that found nothing, hypothesis, limitation and answer recorded so far, with authors and evidence; a corrected entry carries superseded_by, an entry somebody re-derived attested_by, one somebody contests disputed_by, and an answer that no longer stands on what it cites its problems. Filter by kind; the rendered file is ledger/ledger.md. A reply is one page of whole entries under the inbox page bound: when it holds entries back it names next (call again with from: that E-<seq>), remaining, and kept_as, the whole result on disk with its size and sha256; nothing is cut. ids reads exact entries (E-<seq>) whatever their age.",
     promptSnippet: "See what the swarm has recorded so far",
     parameters: Type.Object({
       kind: Type.Optional(Type.String({ description: "event | ioc | finding | absence | hypothesis | limitation | answer | coverage | external" })),
-      limit: Type.Optional(Type.Number({ description: "Newest N entries (default 200)" })),
+      limit: Type.Optional(Type.Number({ description: "Newest N entries (default 200, at most 500)" })),
+      from: Type.Optional(Type.String({ description: "The E-<seq> a previous page named as next: the listing continues from it (entries recorded since come after)" })),
+      ids: Type.Optional(Type.Array(Type.String(), { description: "Exact entries to read, as E-<seq>, each whole with its hash, supersession, attestations, disputes and answer review; ids that do not exist are named in not_found" })),
     }),
     async execute(_id, params, _signal, _onUpdate, toolCtx: ToolCtx) {
       const started = Date.now();
-      const entries = await listLedger(toolCtx.cwd, params ?? {});
-      await logEvent(toolCtx.cwd, agentId, "ledger", params ?? {}, { ok: true, n: entries.length }, Date.now() - started);
-      return okResult({ entries, rendered: LEDGER_MD });
+      const p = (params ?? {}) as { kind?: string; limit?: number; from?: string; ids?: string[] };
+      const seqOf = (s: unknown): number | null => {
+        const m = /^E-(\d+)$/i.exec(String(s ?? "").trim());
+        return m ? Number(m[1]) : null;
+      };
+      const ids = Array.isArray(p.ids) ? p.ids.map(seqOf) : undefined;
+      const from = p.from === undefined ? undefined : seqOf(p.from);
+      if ((ids && ids.some((x) => x === null)) || (p.from !== undefined && from === null)) {
+        const reason = "ids and from are exact ledger ids written E-<seq> (E-3); a page names the next one as next";
+        await logEvent(toolCtx.cwd, agentId, "ledger", p as Record<string, unknown>, { ok: false, reason }, Date.now() - started).catch(() => undefined);
+        return { content: [{ type: "text" as const, text: `ledger refused: ${reason}` }], details: { ok: false, reason }, isError: true };
+      }
+      const listed = await listLedger(toolCtx.cwd, {
+        ...(p.kind !== undefined ? { kind: p.kind } : {}),
+        ...(p.limit !== undefined ? { limit: p.limit } : {}),
+        ...(ids ? { ids: ids as number[] } : {}),
+        ...(from !== undefined && from !== null ? { from } : {}),
+      });
+      const notFound = ids ? (ids as number[]).filter((s) => !listed.some((e) => e.seq === s)).map((s) => `E-${s}`) : [];
+      // One page of whole entries under the page bound. What it holds back is named (next, remaining) and the whole result is kept
+      // on disk, so no entry is cut and none is out of reach.
+      const { page, remaining } = pageWholeItems(listed, itemBudget(inboxPageChars()));
+      const payload: Record<string, unknown> = { entries: page, n: page.length, remaining, ...(notFound.length ? { not_found: notFound } : {}) };
+      let keptAs: { path: string; bytes: number; sha256: string } | undefined;
+      let writeError: string | undefined;
+      if (remaining > 0) {
+        const next = `E-${listed[page.length]!.seq}`;
+        const kept = await keepToolOutput(toolCtx.cwd, toolOutputRel(agentId, "ledger", "text"), listed.map((e) => JSON.stringify(e)).join("\n") + "\n");
+        if (kept.write_error) writeError = kept.write_error;
+        else keptAs = { path: kept.path, bytes: kept.bytes, sha256: kept.sha256 };
+        payload.next = next;
+        payload.note = `${remaining} more entr${remaining === 1 ? "y was" : "ies were"} held back to keep this reply under ${inboxPageChars().toLocaleString("en-US")} characters; nothing was cut. Call ledger again with from: "${next}"${keptAs ? `, or read the whole result at ${keptAs.path}` : ""}.`;
+        if (keptAs) payload.kept_as = keptAs;
+        if (writeError) payload.write_error = writeError;
+      }
+      payload.rendered = LEDGER_MD;
+      await logEvent(toolCtx.cwd, agentId, "ledger", p as Record<string, unknown>, { ok: true, n: page.length, remaining, ...(keptAs ? { kept_as: keptAs } : {}) }, Date.now() - started);
+      return okResult(payload);
     },
   });
 
@@ -4055,24 +4094,50 @@ export default function (pi: ExtensionAPI) {
     name: "inputs",
     label: "Inputs",
     description:
-      "List this swarm's read-only inputs: every file under inputs/ with its size and hash, where they came from, and what guards them. Read them with read, grep or bash; never write there.",
+      "List this swarm's read-only inputs: every file under inputs/ with its size and hash, where they came from, and what guards them. Read them with read, grep or bash; never write there. The files are one page of whole rows under the inbox page bound: when it holds rows back it names next (call again with from: that path), remaining and kept_as, the whole list on disk with its size and sha256; the per-set counts and the totals are always whole.",
     promptSnippet: "See the read-only files the swarm was given",
-    parameters: Type.Object({}),
-    async execute(_id, _params, _signal, _onUpdate, toolCtx: ToolCtx) {
+    parameters: Type.Object({
+      from: Type.Optional(Type.String({ description: "The path a previous page named as next: the listing continues from it" })),
+    }),
+    async execute(_id, params, _signal, _onUpdate, toolCtx: ToolCtx) {
       const started = Date.now();
       const manifest = await readInputsManifest(toolCtx.cwd);
       if (!manifest) {
         await logEvent(toolCtx.cwd, agentId, "inputs", {}, { ok: true, inputs: false }, Date.now() - started);
         return okResult({ inputs: false, hint: "This swarm was given no read-only inputs. Everything you need is in the goal and on the board." });
       }
-      await logEvent(toolCtx.cwd, agentId, "inputs", {}, { ok: true, inputs: true, n: manifest.files.length, bytes: manifest.bytes }, Date.now() - started);
+      const fromPath = (params as { from?: string } | undefined)?.from;
+      const startAt = fromPath === undefined ? 0 : manifest.files.findIndex((f) => f.path === fromPath);
+      if (startAt < 0) {
+        const reason = `from names ${fromPath}, which is not a file of the inputs; a page names the next path as next`;
+        await logEvent(toolCtx.cwd, agentId, "inputs", { from: fromPath }, { ok: false, reason }, Date.now() - started).catch(() => undefined);
+        return { content: [{ type: "text" as const, text: `inputs refused: ${reason}` }], details: { ok: false, reason }, isError: true };
+      }
+      const rows = manifest.files.slice(startAt).map((f) => ({ path: f.path, bytes: f.bytes, sha256: f.sha256.slice(0, 12) }));
+      const { page, remaining } = pageWholeItems(rows, itemBudget(inboxPageChars()));
+      let keptAs: { path: string; bytes: number; sha256: string } | undefined;
+      let writeError: string | undefined;
+      let next: string | undefined;
+      if (remaining > 0) {
+        next = rows[page.length]!.path;
+        // The whole list, with the whole hashes, kept once under tool-output/<seat>/ (every seat reads its own).
+        const kept = await keepToolOutput(toolCtx.cwd, toolOutputRel(agentId, "inputs", "text"), manifest.files.slice(startAt).map((f) => JSON.stringify({ path: f.path, bytes: f.bytes, sha256: f.sha256 })).join("\n") + "\n");
+        if (kept.write_error) writeError = kept.write_error;
+        else keptAs = { path: kept.path, bytes: kept.bytes, sha256: kept.sha256 };
+      }
+      await logEvent(toolCtx.cwd, agentId, "inputs", fromPath === undefined ? {} : { from: fromPath }, { ok: true, inputs: true, n: page.length, remaining, total: manifest.files.length, bytes: manifest.bytes, ...(keptAs ? { kept_as: keptAs } : {}) }, Date.now() - started);
       return okResult({
         inputs: true,
         source: manifest.source,
         ...(manifest.sets?.length ? { sets: manifest.sets.map((set) => ({ name: set.name, path: `${set.path}/`, source: set.source, count: set.files, bytes: set.bytes })) } : {}),
         count: manifest.files.length,
         bytes: manifest.bytes,
-        files: manifest.files.map((f) => ({ path: f.path, bytes: f.bytes, sha256: f.sha256.slice(0, 12) })),
+        files: page,
+        n: page.length,
+        remaining,
+        ...(next ? { next, note: `${remaining} more file${remaining === 1 ? " was" : "s were"} held back to keep this reply under ${inboxPageChars().toLocaleString("en-US")} characters; nothing was cut. Call inputs again with from: "${next}"${keptAs ? `, or read the whole list at ${keptAs.path}` : ""}.` } : {}),
+        ...(keptAs ? { kept_as: keptAs } : {}),
+        ...(writeError ? { write_error: writeError } : {}),
         guard: { requested: manifest.enforce, kickoff: manifest.guard, in_this_pane: inputsEnforced },
         rule: "Read only. Writes under inputs/ are refused or undone and announced; put results in work/, copying an input there if you need a version you can change.",
       });
