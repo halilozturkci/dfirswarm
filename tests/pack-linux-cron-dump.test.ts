@@ -371,3 +371,83 @@ test("cron_dump declares secret_output for write_text and preview_text, and refu
     assert.match(JSON.stringify(preview.entries), /PLANTEDVALUE/);
   });
 });
+
+test("cron_dump keeps the answer within a byte budget, the whole in a page it names with its size and sha256, and the status as it was", async () => {
+  const { createHash } = await import("node:crypto");
+  await withCwd(async (cwd) => {
+    // 300 timers, each with 50 long OnCalendar values: about 15 MB of rows shown inline before the budget (22.9 MB for the same shape of input
+    // once shown whole).
+    const dir = join(cwd, "work", "ev", "etc", "systemd", "system");
+    await mkdir(dir, { recursive: true });
+    const { writeFile } = await import("node:fs/promises");
+    const longValue = (n: number): string => `*-*-* ${String(n).padStart(2, "0")}:00:00 ${"UTC ".repeat(240)}`.slice(0, 1000);
+    for (let t = 0; t < 300; t++) {
+      await writeFile(join(dir, `t${String(t).padStart(3, "0")}.timer`), "[Timer]\n" + Array.from({ length: 50 }, (_, i) => `OnCalendar=${longValue(i)}`).join("\n") + "\n");
+    }
+    const run = await tool(CRON, cwd, { root: "work/ev" });
+    const out = body(run);
+    assert.ok(run.stdout.length < 2 * 1024 * 1024, `the answer is ${run.stdout.length} bytes`);
+    assert.equal(out.answer_budget.reached, true);
+    assert.equal(out.truncated, true);
+    assert.ok(out.entries.length < 200 && out.entries.length > 0, `${out.entries.length} entries inline`);
+    assert.equal(out.pages.entries.matched, 300);
+    assert.doesNotMatch(out.status_basis, /budget/, "the budget does not change the status");
+    const rows = await rowsOf(cwd, out, "entries");
+    assert.equal(rows.length, 300, "the whole is on disk");
+    assert.deepEqual(rows.slice(0, out.entries.length).map((r) => r.id), out.entries.map((e: Json) => e.id), "the shown entries are the first of the page");
+    const { readFile: read } = await import("node:fs/promises");
+    const file = await read(join(cwd, out.pages.entries.all_results));
+    assert.equal(out.pages.entries.all_results_bytes, file.length);
+    assert.equal(out.pages.entries.all_results_sha256, createHash("sha256").update(file).digest("hex"));
+  });
+});
+
+test("cron_dump withholds a unit key or section that systemd does not define, with its length, and never prints it", async () => {
+  const { randomBytes } = await import("node:crypto");
+  const { readFile: read, readdir } = await import("node:fs/promises");
+  await withCwd(async (cwd) => {
+    const token = (): string => "q" + randomBytes(9).toString("hex");
+    const [key, dashed, section, valueKey] = [token(), `X-${token()}`, token(), token()];
+    const dir = join(cwd, "work", "ev", "etc", "systemd", "system");
+    await mkdir(dir, { recursive: true });
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(join(dir, "a.timer"), `[Timer]\nOnCalendar=daily\n${key}==\n${dashed}=x\n[${section}]\n${valueKey}=v\n`);
+    const run = await tool(CRON, cwd, { root: "work/ev" });
+    const out = body(run);
+    const [timer] = out.entries.filter((e: Json) => e.source === "systemd");
+    assert.equal(timer.assignment_count, 4);
+    assert.deepEqual(timer.assignments.map((a: Json) => a.key), ["OnCalendar", undefined, undefined, undefined]);
+    assert.deepEqual(timer.assignments.slice(1).map((a: Json) => [a.key_withheld, a.key_bytes]), [[true, key.length], [true, dashed.length], [true, valueKey.length]]);
+    assert.equal(timer.assignments[3].section_withheld, true);
+    assert.equal(timer.assignments[3].section_bytes, section.length);
+    assert.equal(timer.assignments[0].section, "Timer", "a section spelled as systemd spells it is shown");
+    // Nothing of it in the answer, stderr, the paths, or any file the call wrote.
+    const seen = [run.stdout, run.stderr, ...(await readdir(cwd, { recursive: true }).then((l) => l.filter((p) => !p.startsWith("work/ev"))))];
+    for (const f of await filesUnder(join(cwd, "work", "s1"))) seen.push(await read(join(cwd, "work", "s1", f), "utf8"));
+    for (const value of [key, dashed, section, valueKey]) assert.equal(seen.join("\n").includes(value), false, `${value.slice(0, 4)}... is printed`);
+    // The text file, in a job, holds them whole.
+    const job = await asJob(CRON, cwd, { root: "work/ev", write_text: true });
+    assert.equal(job.stdout.includes(key), false);
+    const kept = await read(join(cwd, "out", "cron-text.jsonl"), "utf8");
+    for (const value of [key, dashed, section, valueKey]) assert.ok(kept.includes(value), "the text file keeps it");
+  });
+});
+
+test("cron_dump reads cronie's L, W, # and ? and a numeric user as unparsed, and says so", async () => {
+  await withCwd(async (cwd) => {
+    await put(join(cwd, "work", "ev"), "etc/crontab", lines(
+      "0 0 L * * root /bin/a",
+      "0 0 * * 5#2 root /bin/b",
+      "0 0 * * ? root /bin/c",
+      "0 0 15W * * root /bin/d",
+      "0 0 * * * 1000 /bin/e",
+      "0 0 * * * root /bin/ok",
+    ));
+    const out = body(await tool(CRON, cwd, { root: "work/ev" }));
+    assert.equal(out.unparsed_lines, 5);
+    assert.equal(out.status, "partial");
+    assert.equal(out.entries.filter((e: Json) => e.source === "cron").length, 1);
+    const manifest = JSON.parse(await readFile(join(CRON, "..", "manifest.json"), "utf8"));
+    assert.match(manifest.description, /cronie's extensions[^.]*`L`, `W`, `#`[^.]*`\?`[^.]*numeric user/is);
+  });
+});

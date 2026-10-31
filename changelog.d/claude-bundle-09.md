@@ -6,6 +6,10 @@ auth_log, cron_dump, journal_export, shell_history and utmp_parse had five drift
 
 auth_log, cron_dump, journal_export, shell_history and utmp_parse now declare `secret_output` for their text flags (`write_text` and `preview_text`; `write_commands` and `preview_commands` for shell_history), so a job that sets one is sealed as secret output without the agent saying so, and each tool refuses such a flag as JSON, before it opens or creates anything, when `SECRET_OUTPUT` is not `1`. linux_triage does not declare it.
 
+### Fixed: linux-forensics cron_dump bounds its answer, names cronie's extensions and withholds odd keys
+
+The entries cron_dump shows inline now stop at 1 MiB of JSON (`answer_budget`, `truncated`); the rest, and the ones shown, are whole in `pages.entries.all_results`, named with its size and sha256, and the status is unchanged (300 timers with long `OnCalendar` values made a 22.9 MB answer). The manifest and `persistence/cron-timers` say that cronie's `L`, `W`, `#` and `?` and a numeric user read as unparsed. A timer's unit key or section name that systemd does not define is withheld with its length (`key_withheld`, `section_withheld`) instead of printed cut at 128 characters, so a pasted token that stands where a key goes is not shown.
+
 ### Fixed: linux-forensics records name the version of the tool that made them
 
 In all six linux tools `PARSER` (the `parser` of every record) lagged the manifest's version, so a record did not say which behaviour produced it. Each tool's `PARSER` now carries its manifest version and moves with it, and a test that walks the pack's tools holds the two equal.

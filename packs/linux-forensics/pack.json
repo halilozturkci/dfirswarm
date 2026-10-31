@@ -1,7 +1,7 @@
 {
   "id": "linux-forensics",
   "name": "Linux Forensics Pack",
-  "version": "1.5.15",
+  "version": "1.5.16",
   "description": "Artefact-by-artefact method and tooling for a Linux host: the system profile and its clocks, authentication and journal records, accounts and authorization, scheduling and systemd candidates, ext metadata and storage layers, container evidence locations, and package verification against local and independently trusted baselines. Each tool says what it read, what it did not, and where the whole result is kept.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -76,7 +76,7 @@
       "skills/logs/journal.md": "6aae05c94debde2d78ea9bc30d9c0b3283972b0f986bfbd18a308507e087bb8b",
       "skills/packages/baseline.md": "9251e2ef0b6ee968aa46654f7afa5847dce00cc236cd60e3add3ed62d6c7c61c",
       "skills/packages/integrity.md": "d334fd193932d1c02b972f43660397f5d67baf1dce829f91e4f33eb54dcee80d",
-      "skills/persistence/cron-timers.md": "8cfa7508065999f526c550843cafb3fdc23053cc6b3b085416e5372ae899a60d",
+      "skills/persistence/cron-timers.md": "964ca4e8d6f9e7eb6d2a3587492ee1ac8ac0b5995fb46341022b5a9efec92924",
       "skills/persistence/mechanisms.md": "05264ec5dffa15f9ed16eeb75fb79a8af73b3f6361f9edfb41c0ede05b637d08",
       "skills/persistence/quieter-routes.md": "212b50516460730da046661321781e0ea860e27c12df196258880a10d2c0bafd",
       "skills/timeline/linux-normalise.md": "49bdfa300db05ae5529a3c0f22d91c3c8051fb3d9029247660a7fb9d654dfc02",
@@ -86,8 +86,8 @@
       "skills/triage/system-profile.md": "6bed8235f9766e1a56a109108f055dce8b8b71159e9d5f5d2acfef231811a5f6",
       "tools/auth_log/manifest.json": "7b10144f8f87601187b4791779ed99d3a945073214910a204e5efd52fb6a435e",
       "tools/auth_log/run.py": "4c205aa709de471ccbcacf969e4a0a16e5c68779878e21c8003ebe68030cdc99",
-      "tools/cron_dump/manifest.json": "b9d3e733cb55f654794e2daa8ca422ae604f9b015ddd41fc8a014786fd6a6fc2",
-      "tools/cron_dump/run.py": "2e4d6d3c24575908966259612fb8691571e8ed003fd6fd23f943b3a1f594c2d3",
+      "tools/cron_dump/manifest.json": "c453b7898c92634949f5b346310601aa7582b15c1b6636cd6ba4315bf5ff0937",
+      "tools/cron_dump/run.py": "92a91b68afe0e65c011ed4200c2f01cd080719a46cb963f24c2542098cc41e20",
       "tools/journal_export/manifest.json": "828fe7dd38be7f9d9a64ac59be94765c2bf95774bbd052ebc20ccc70459ff274",
       "tools/journal_export/run.py": "51e34ff450d318aff858b5fd92aa42a7f1662ad24451f4782964182498e51e10",
       "tools/linux_triage/manifest.json": "d6a7071b8736e2d4bc54e25bf2fa9ebc71a3c39cdf04d2f60db4e68e9911efe9",

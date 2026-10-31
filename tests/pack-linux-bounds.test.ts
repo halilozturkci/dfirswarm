@@ -154,7 +154,8 @@ test("cron_dump keeps a timer of 300,000 assignments out of the answer: the row 
     const rows = await rowsOf(cwd, out, "assignments");
     assert.equal(rows.length, 299_951);
     assert.equal(rows[0].line, 52);
-    assert.equal(rows[0].key, "a");
+    assert.equal(rows[0].key, undefined, "a key systemd does not define is withheld");
+    assert.deepEqual([rows[0].key_withheld, rows[0].key_bytes], [true, 1]);
     assert.equal(rows[0].value_withheld, true);
   });
 });

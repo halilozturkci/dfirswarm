@@ -37,6 +37,7 @@ anything, so a filtered-out error still shows; a file or directory that could no
 not followed, a cron line that matches no table shape and a place that does not exist are each named.
 """
 import datetime
+import hashlib
 import json
 import math
 import os
@@ -50,7 +51,7 @@ import time
 from pathlib import Path
 
 TOOL = "cron_dump"
-PARSER = "cron_dump/13"
+PARSER = "cron_dump/14"
 
 
 # BEGIN LINUX STOP
@@ -145,6 +146,30 @@ MAX_CRON_LINE = 1 << 20      # a cron line longer than this is located, not pars
 MAX_NAMED = 500              # how many errors, links and special files are named inline (all are counted)
 MAX_SHOWN_ASSIGNMENTS = 50   # assignments of one timer shown in its row; the rest are paged under pages.assignments (all are counted)
 MAX_SHOWN_SCHEDULES = 50     # the timer keys of one timer listed in its row (the count says how many there are)
+ANSWER_BYTES = 1 << 20       # the entries shown inline hold at most this many bytes of JSON; the rest of them are in pages.entries (all_results)
+# The names of unit settings and sections that systemd defines. A name is shown only if it is one of these; any other is withheld with
+# its length, because a line that is no unit setting at all (a pasted token, `abc123=...`) puts its first word where a key goes, and a
+# secret can be spelled like a setting (`AKIA...`). The values are a separate rule (SHOWN_KEYS below).
+KNOWN_SECTIONS = {"Unit", "Timer", "Install", "Service", "Socket", "Path", "Mount", "Automount", "Swap", "Slice", "Scope"}
+KNOWN_KEYS = {
+    "Description", "Documentation", "Wants", "Requires", "Requisite", "BindsTo", "PartOf", "Upholds", "Conflicts", "Before", "After",
+    "OnFailure", "OnSuccess", "PropagatesReloadTo", "ReloadPropagatedFrom", "JoinsNamespaceOf", "RequiresMountsFor", "OnFailureJobMode",
+    "IgnoreOnIsolate", "StopWhenUnneeded", "RefuseManualStart", "RefuseManualStop", "AllowIsolate", "DefaultDependencies", "CollectMode",
+    "FailureAction", "SuccessAction", "JobTimeoutSec", "JobTimeoutAction", "JobRunningTimeoutSec", "StartLimitIntervalSec", "StartLimitBurst",
+    "StartLimitAction", "RebootArgument", "SourcePath",
+    "OnActiveSec", "OnBootSec", "OnStartupSec", "OnUnitActiveSec", "OnUnitInactiveSec", "OnCalendar", "AccuracySec", "RandomizedDelaySec",
+    "FixedRandomDelay", "OnClockChange", "OnTimezoneChange", "Unit", "Persistent", "WakeSystem", "RemainAfterElapse",
+    "Alias", "WantedBy", "RequiredBy", "UpheldBy", "Also", "DefaultInstance",
+    "Type", "ExitType", "RemainAfterExit", "GuessMainPID", "PIDFile", "BusName", "ExecStart", "ExecStartPre", "ExecStartPost", "ExecCondition",
+    "ExecReload", "ExecStop", "ExecStopPost", "RestartSec", "TimeoutStartSec", "TimeoutStopSec", "TimeoutSec", "RuntimeMaxSec", "WatchdogSec",
+    "Restart", "SuccessExitStatus", "NotifyAccess", "WorkingDirectory", "RootDirectory", "User", "Group", "Environment", "EnvironmentFile",
+    "StandardInput", "StandardOutput", "StandardError", "Nice", "UMask", "Slice",
+}
+
+
+def known_name(name, names):
+    """Whether a unit key or section name is one systemd defines (a Condition... or Assert... key included)."""
+    return name in names or (names is KNOWN_KEYS and re.fullmatch(r"(?:Condition|Assert)[A-Z][A-Za-z0-9]{0,63}", name) is not None)
 REGEX_SECONDS = 2.0          # the most one match of the caller's expression may take; Python's re has no clock of its own
 MAX_LOCATIONS = 200          # how many places of the census are shown inline (the whole is paged)
 DEFAULT_SECONDS = 50.0       # the manifest allows 60
@@ -633,6 +658,19 @@ def capped_why(pages, text=None):
 # END LINUX PARTS
 
 
+def file_size_and_sha256(path):
+    """(bytes, sha256 hex) of a paging file this tool wrote, so that the whole result a page names can be checked against what the answer said."""
+    digest, size = hashlib.sha256(), 0
+    try:
+        with open(path, "rb") as fh:
+            for block in iter(lambda: fh.read(1 << 20), b""):
+                digest.update(block)
+                size += len(block)
+    except OSError as exc:
+        return None, "not read back: %s" % describe(exc)
+    return size, digest.hexdigest()
+
+
 def mtime_of(path):
     try:
         return datetime.datetime.fromtimestamp(os.path.getmtime(path), datetime.timezone.utc).isoformat().replace("+00:00", "Z")
@@ -717,6 +755,8 @@ class Run:
         self.need_text = text.enabled or preview
         self.need_command = self.need_text or (pattern is not None and in_job())
         self.preview_rows = []
+        self.inline_bytes = self.preview_bytes = 0
+        self.budget_reached = False
         self.total = self.matched = self.at_reboot = self.unparsed_count = self.seq = self.nested = 0
         self.locations, self.read_errors, self.walk_errors = [], [], []
         self.skipped_symlinks, self.special, self.dropins = [], [], []
@@ -765,9 +805,21 @@ class Run:
         self.matched += 1
         self.at_reboot += 1 if row.get("at_reboot") else 0
         self.text.add({**row, **texts})
+        shown_before = len(self.page.page)
         self.page.add(row)
-        if self.preview and len(self.preview_rows) < self.limit:
-            self.preview_rows.append({**row, **{k: v for k, v in texts.items() if k != "assignments"}} if row["source"] == "cron" else row)
+        if len(self.page.page) > shown_before:
+            # The entries shown inline stop at ANSWER_BYTES: from the next one on the page is full, and every later entry goes only to the
+            # paging file (which holds the ones shown as well). A row is bounded (50 assignments and 50 schedules of 1,024 characters).
+            self.inline_bytes += len(json.dumps(row, ensure_ascii=False, default=str))
+            if self.inline_bytes >= ANSWER_BYTES:
+                self.page.limit = len(self.page.page)
+                self.budget_reached = True
+        if self.preview and len(self.preview_rows) < self.limit and self.preview_bytes < ANSWER_BYTES:
+            shown = {**row, **{k: v for k, v in texts.items() if k != "assignments"}} if row["source"] == "cron" else row
+            self.preview_rows.append(shown)
+            self.preview_bytes += len(json.dumps(shown, ensure_ascii=False, default=str))
+        elif self.preview and self.preview_bytes >= ANSWER_BYTES:
+            self.budget_reached = True
 
     def unparsed_line(self, path, number, offset, reason, line):
         self.unparsed_count += 1
@@ -954,15 +1006,21 @@ def timer_entry(run, path, manager):
         return bound(value, 1024)[0]
 
     def view(a):
-        """The assignment as the answer shows it: its key and section cut at 128 characters (with their lengths), its value only
-        where the key has scheduling semantics."""
-        key, key_whole = bound(a["key"], 128)
-        section, section_whole = bound(a["section"], 128)
-        item = {"line": a["line"], "section": section, "key": key}
-        if key_whole is not None:
-            item["key_bytes"] = key_whole
-        if section_whole is not None:
-            item["section_bytes"] = section_whole
+        """The assignment as the answer shows it: its key and section only where systemd defines the name (KNOWN_KEYS, KNOWN_SECTIONS:
+        `OnCalendar`, `Timer`); any other key or section name is withheld with its length, because a line that is no unit setting at
+        all (a pasted token, `abc123=...`) puts its first word where a key goes. Its value is shown only where the key has scheduling
+        semantics."""
+        item = {"line": a["line"]}
+        for field, names in (("section", KNOWN_SECTIONS), ("key", KNOWN_KEYS)):
+            name = a[field]
+            if name is None or known_name(name, names):
+                shown, whole = bound(name, 128)
+                item[field] = shown
+                if whole is not None:
+                    item[field + "_bytes"] = whole
+            else:
+                item[field + "_bytes"] = blen(name)
+                item[field + "_withheld"] = True
         if shown_value(a):
             value, whole = bound(a["value"], 1024)
             item["value"] = value
@@ -1296,6 +1354,9 @@ def main():
         key = loc["state"].split(":")[0].split(" (")[0]
         by_state[key] = by_state.get(key, 0) + 1
     pages = {"entries": page.finish(), "unparsed": unparsed_page.finish(), "assignments": assignments_page.finish(), "locations": locations_page.finish()}
+    for name, kept in (("entries", page), ("unparsed", unparsed_page), ("assignments", assignments_page), ("locations", locations_page)):
+        if pages[name].get("all_results"):
+            pages[name]["all_results_bytes"], pages[name]["all_results_sha256"] = file_size_and_sha256(kept.path)
     capped = capped_why(pages, text)
     if capped and run.partial_reason is None:
         run.partial_reason = capped
@@ -1344,7 +1405,10 @@ def main():
         "error_counts": run.counts,
         "unmerged_dropins": run.dropins,
         "unsupported": UNSUPPORTED,
-        "truncated": any(p["truncated"] for p in pages.values()),
+        "truncated": any(p["truncated"] for p in pages.values()) or run.budget_reached,
+        "answer_budget": {"used": run.preview_bytes if preview_text else run.inline_bytes, "reached": run.budget_reached,
+                          **({"why": "the entries shown inline stopped at the budget of 1 MiB; the rest are in pages.entries.all_results (whole, with its size "
+                                     "and sha256), which also holds the ones shown"} if run.budget_reached else {})},
         "coverage_note": "A candidate inventory of the places listed in locations, counted before `contains` filtered anything: "
                          "it is not every scheduling mechanism (see unsupported) and not the effective systemd configuration.",
         "note": "file_modified is a lead to explain, not a conclusion: an install, a copy and a restore set it as well as an edit, "
