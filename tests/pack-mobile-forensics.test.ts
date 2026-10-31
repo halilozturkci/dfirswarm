@@ -3323,3 +3323,82 @@ test("manifest_db is not complete when a plain plist was too large to read, and 
     assert.match(done.status_basis ?? "", /the backup finished/);
   });
 });
+
+// --- the shared block: handlers in at start, an answer clock that follows progress, versions with PARSER ---
+
+test("a stop signal at the end of the shared block, before main() installs the handlers, gives one JSON document and exit 128 plus the signal, in each tool", async () => {
+  // run_main installed the handlers, so a signal between the start of the module and main() killed the tool with no answer (SIGINT: a traceback).
+  // The gap is made deterministic as tests/pack-shared-stop.test.ts makes it: the source up to the end of the block is run, and the signal is sent
+  // there. The interpreter's own start-up and the imports above the block cannot be closed from inside the file and are not claimed.
+  const NUMBER = { SIGTERM: 15, SIGINT: 2, SIGHUP: 1 } as const;
+  await withCwd(async (cwd) => {
+    for (const script of [FREESPACE, MANIFEST, PROTOBUF]) {
+      const text = await readFile(script, "utf8");
+      const end = text.indexOf("# --- shared with the pack's other tools: end");
+      assert.ok(end > 0, script);
+      const prefix = text.slice(0, text.indexOf("\n", end) + 1);
+      for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
+        const file = join(cwd, `early-${sig}.py`);
+        await writeFile(file, `${prefix}\nimport os as _os, signal as _signal, time as _time\n_os.kill(_os.getpid(), _signal.${sig})\n_time.sleep(30)\nprint("survived")\n`);
+        const ran = spawnSync("python3", [file], { cwd, encoding: "utf8", timeout: 60_000, env: { ...process.env, ...AGENT } });
+        assert.equal(ran.status, 128 + NUMBER[sig], `${script} ${sig}: ${ran.stderr}`);
+        const answer = JSON.parse(ran.stdout) as { status: string; status_basis: string; interrupted: string; error: string };
+        assert.equal(answer.status, "failed", `${script} ${sig}`);
+        assert.equal(answer.interrupted, sig);
+        assert.match(answer.status_basis, /stopped by SIG/);
+        assert.doesNotMatch(ran.stderr, /Traceback/, `${script} ${sig}`);
+      }
+    }
+  });
+});
+
+test("the three tools deliver a whole answer to a reader that takes it steadily but slowly for longer than the stall clock", async () => {
+  // The clock was set once per os.write call, and one call on a blocking pipe returns only when all of it has gone in: a reader that took the
+  // data steadily for longer than WRITE_STALL_SECONDS ended the tool with exit 141 and a cut answer. The clock here is 1 second; the reader
+  // takes 64 KiB every 150 ms, so the answer (about 1.4 MB) takes about 3 seconds and no single wait comes near the clock.
+  await withCwd(async (cwd) => {
+    const code = String.raw`
+import importlib.util, sys
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("t", sys.argv[1]); t = importlib.util.module_from_spec(spec); spec.loader.exec_module(t)
+t.WRITE_STALL_SECONDS = 1
+def main():
+    t.send({"rows": ["row %d" % i for i in range(120000)], "tail": "the end"})
+t.run_main(main)
+`;
+    for (const script of [FREESPACE, MANIFEST, PROTOBUF]) {
+      const r = await new Promise<{ code: number | null; stdout: string; stderr: string; seconds: number }>((resolve, reject) => {
+        const child = spawn("python3", ["-c", code, script], { cwd, env: { ...process.env, ...AGENT } });
+        const out: Buffer[] = [], err: Buffer[] = [];
+        const began = Date.now();
+        const guard = setTimeout(() => child.kill("SIGKILL"), 60000);
+        child.stdout.on("data", (c: Buffer) => {
+          out.push(c);
+          child.stdout.pause();
+          setTimeout(() => child.stdout.resume(), 150);
+        });
+        child.stderr.on("data", (c: Buffer) => err.push(c));
+        child.on("error", reject);
+        child.on("close", (code2) => { clearTimeout(guard); resolve({ code: code2, stdout: Buffer.concat(out).toString("utf8"), stderr: Buffer.concat(err).toString("utf8"), seconds: (Date.now() - began) / 1000 }); });
+      });
+      assert.ok(r.seconds > 1.5, `${script}: the reader was not slow enough to prove anything (${r.seconds} s)`);
+      assert.equal(r.code, 0, `${script}: ${r.stderr}`);
+      const parsed = JSON.parse(r.stdout) as { rows: string[]; tail: string };
+      assert.equal(parsed.rows.length, 120000, script);
+      assert.equal(parsed.tail, "the end");
+    }
+  });
+});
+
+test("every tool of the pack names the version of its manifest in PARSER, which every record's provenance carries", async () => {
+  const names = (await readdir(TOOLS, { withFileTypes: true })).filter((e) => e.isDirectory()).map((e) => e.name).sort();
+  assert.deepEqual(names, ["manifest_db", "protobuf_peek", "sqlite_freespace"]);
+  for (const name of names) {
+    const manifestJson = JSON.parse(await readFile(join(TOOLS, name, "manifest.json"), "utf8")) as { version: number };
+    const match = /^PARSER = "([a-z_]+)\/(\d+)"$/m.exec(await readFile(join(TOOLS, name, "run.py"), "utf8"));
+    assert.ok(match, `${name} has a PARSER line`);
+    assert.equal(match[1], name);
+    assert.ok(manifestJson.version >= 3, `: the behaviour of #213 and later is version 3 or above`);
+    assert.equal(Number(match[2]), manifestJson.version, `${name}: PARSER says ${match[1]}/${match[2]}, the manifest says version ${manifestJson.version}`);
+  }
+});
