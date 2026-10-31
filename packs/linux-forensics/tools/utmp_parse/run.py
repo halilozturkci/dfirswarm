@@ -49,7 +49,7 @@ import time
 from pathlib import Path
 
 TOOL = "utmp_parse"
-PARSER = "utmp_parse/13"
+PARSER = "utmp_parse/14"
 
 
 # BEGIN LINUX STOP
@@ -577,6 +577,27 @@ def capped_why(pages, text=None):
     if not held:
         return None
     return "; ".join(held) + "; each is in the evidence at the file and line it names"
+
+
+INLINE_LIST = 200       # items of any list that grows with the evidence (files, homes, errors, links) kept inline in the answer
+
+
+class Listed(list):
+    """A list of the answer that grows with the evidence (one item per file, home, link or error): its first INLINE_LIST items are the list, and
+    every item, those too, is kept in a paging file that the answer names under pages.<key> (`page.total` is how many there were; `settle()`
+    finishes the file and returns the page's entry for the answer's `pages`)."""
+
+    def __init__(self, key):
+        super().__init__()
+        self.page = LosslessPage(TOOL, key, INLINE_LIST)
+
+    def append(self, item):
+        self.page.add(item)
+        if len(self) < INLINE_LIST:
+            super().append(item)
+
+    def settle(self):
+        return self.page.finish()
 # END LINUX PARTS
 
 
@@ -914,7 +935,9 @@ def parse_lastlog(path, size, layout, order, args, pattern, wanted, page, stats,
         try:
             for uid in sorted(set(selected)):
                 if uid >= total:
-                    stats["uids_beyond_file"].append(uid)
+                    stats["uids_beyond_file_count"] = stats.get("uids_beyond_file_count", 0) + 1
+                    if len(stats["uids_beyond_file"]) < INLINE_LIST:       # the caller gave them: the first INLINE_LIST are echoed, the rest counted
+                        stats["uids_beyond_file"].append(uid)
                     continue
                 slot = os.pread(fd, width, uid * width)
                 stats["slots_read"] += 1
@@ -1127,6 +1150,7 @@ def main():
             "stopped_because": stats.get("stopped_because"),
             "holes_skipped": stats.get("holes_skipped"),
             "uids_beyond_file": stats["uids_beyond_file"],
+            "uids_beyond_file_count": stats.get("uids_beyond_file_count", 0),
             "trailing_bytes": size % width,
             "trailing_offset": (size // width) * width if size % width else None,
             "all_records_read": whole,

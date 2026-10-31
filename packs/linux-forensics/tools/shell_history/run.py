@@ -49,7 +49,7 @@ import time
 from pathlib import Path
 
 TOOL = "shell_history"
-PARSER = "shell_history/13"
+PARSER = "shell_history/14"
 
 
 # BEGIN LINUX STOP
@@ -583,6 +583,27 @@ def capped_why(pages, text=None):
     if not held:
         return None
     return "; ".join(held) + "; each is in the evidence at the file and line it names"
+
+
+INLINE_LIST = 200       # items of any list that grows with the evidence (files, homes, errors, links) kept inline in the answer
+
+
+class Listed(list):
+    """A list of the answer that grows with the evidence (one item per file, home, link or error): its first INLINE_LIST items are the list, and
+    every item, those too, is kept in a paging file that the answer names under pages.<key> (`page.total` is how many there were; `settle()`
+    finishes the file and returns the page's entry for the answer's `pages`)."""
+
+    def __init__(self, key):
+        super().__init__()
+        self.page = LosslessPage(TOOL, key, INLINE_LIST)
+
+    def append(self, item):
+        self.page.add(item)
+        if len(self) < INLINE_LIST:
+            super().append(item)
+
+    def settle(self):
+        return self.page.finish()
 # END LINUX PARTS
 
 
@@ -1018,11 +1039,13 @@ def main():
     page = LosslessPage(TOOL, "records", limit)
     STATE["text"] = text
     preview_rows = []
-    special = []
+    special = Listed("skipped_special")
 
-    files, walk_errors, skipped_symlinks, excluded, not_parsed, read_failures = [], [], [], [], [], []
+    # Every list that grows with the tree (a file, a link, an error per home) keeps INLINE_LIST items inline and the whole in a paging file.
+    files, walk_errors, skipped_symlinks = Listed("files"), Listed("walk_errors"), Listed("skipped_symlinks")
+    excluded, not_parsed, read_failures = Listed("excluded_dirs"), Listed("not_parsed_files"), Listed("read_failures")
     seen, seq, matched, with_time, partial_reason = 0, 0, 0, 0, None
-    stop, filtered_out = False, 0
+    stop, filtered_out, records_in_files = False, 0, 0
 
     def on_error(exc):
         walk_errors.append({"path": getattr(exc, "filename", None), "error": describe(exc)})
@@ -1033,7 +1056,11 @@ def main():
         if time.monotonic() > deadline:
             partial_reason = partial_reason or "the walk stopped at max_seconds (%s); directories after %s were not visited" % (seconds, dirpath)
             break
-        for name in list(dirs):
+        for step, name in enumerate(list(dirs)):
+            if (step & 255) == 0 and time.monotonic() > deadline:
+                partial_reason = partial_reason or "the walk stopped at max_seconds (%s) in %s; the directories after %s were not visited" % (seconds, dirpath, name)
+                stop = True
+                break
             full = os.path.join(dirpath, name)
             if os.path.islink(full):
                 skipped_symlinks.append({"file": full, "target": os.readlink(full)})
@@ -1042,7 +1069,7 @@ def main():
                 excluded.append({"path": full, "reason": "the top of the tree's %s: a mounted root's, not evidence (only the top is left out; "
                                                           "a directory of that name deeper in the tree is read)" % name})
                 dirs.remove(name)
-        for name in sorted(names):
+        for name in sorted(names) if not stop else ():
             if time.monotonic() > deadline:
                 partial_reason = partial_reason or "the walk stopped at max_seconds (%s) in %s; the files after %s were not read" % (seconds, dirpath, name)
                 stop = True
@@ -1159,23 +1186,31 @@ def main():
             wrong = [k for k, v in counters["other_format"].items() if v]
             if wrong and fmt != "zsh":
                 info["looks_like_other_format"] = wrong[0]
+            records_in_files += info["records"]
             files.append(info)
             if stop:
                 break
     text.close()
     pages = {"records": page.finish()}
+    listed = {"files": files, "skipped_special": special, "read_failures": read_failures, "walk_errors": walk_errors,
+              "excluded_dirs": excluded, "skipped_symlinks": skipped_symlinks, "not_parsed_files": not_parsed}
+    for key, items in listed.items():
+        settled = items.settle()
+        if settled["matched"]:
+            pages[key] = settled      # a list with nothing in it has no page to name
     capped = capped_why(pages, text)
     if capped:
         partial_reason = partial_reason or capped
-    all_read = bool(files) and not read_failures and not walk_errors and partial_reason is None and not special
+    n_files, n_failures, n_walk, n_special = files.page.total, read_failures.page.total, walk_errors.page.total, special.page.total
+    all_read = n_files > 0 and not n_failures and not n_walk and partial_reason is None and not n_special
     none_found = "no history file was found under root%s" % (" (%d were left out by the user filter)" % filtered_out if filtered_out else "")
     outcome = status_of(
-        all_read, bool(files) is False and bool(walk_errors or read_failures),
+        all_read, n_files == 0 and bool(n_walk or n_failures),
         "every history file found was read through, no directory could not be opened and nothing was left unopened",
         "%d read failure(s), %d walk error(s), %d special file(s) not opened%s%s: the answer names each" % (
-            len(read_failures), len(walk_errors), len(special),
+            n_failures, n_walk, n_special,
             ("; " + capped if capped else "; the read stopped at max_seconds or at the contains expression's time") if partial_reason else "",
-            "; " + none_found if not files else ""),
+            "; " + none_found if not n_files else ""),
         "no history file could be read")
     STATE["answering"] = True
     print(json.dumps({
@@ -1183,11 +1218,11 @@ def main():
         **outcome,
         "root": root,
         "files": files,
-        "file_count": len(files),
+        "file_count": n_files,
         "passwd": {"file": passwd_path, "read_as_file_system_root": fs_root, "notes": passwd_notes},
         "contains_scope": None if pattern is None else ("the decoded command, in a job" if in_job() else "the fields the answer shows (outside a job a command is not matched)"),
         "filter_touched_withheld_text": touches_withheld_text(pattern is not None),
-        "records_in_files": sum(f["records"] for f in files),
+        "records_in_files": records_in_files,
         "record_count": matched,
         "with_timestamps": with_time,
         "records": preview_rows if preview else page.page,
@@ -1201,7 +1236,7 @@ def main():
         "excluded_dirs": excluded,
         "skipped_symlinks": skipped_symlinks,
         "not_parsed_files": not_parsed,
-        "truncated": pages["records"]["truncated"],
+        "truncated": any(p["truncated"] for p in pages.values()),
         "note": "Records are in the order the program wrote them, and each says how its boundaries were found "
                 "(boundary_basis). A record with no time has order only: say so, and do not imply a sequence in time; "
                 "stamps need not rise from one record to the next (concurrent sessions, a merge or a changed clock; "

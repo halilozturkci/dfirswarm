@@ -54,7 +54,7 @@ import time
 from pathlib import Path
 
 TOOL = "journal_export"
-PARSER = "journal_export/14"
+PARSER = "journal_export/15"
 DEFAULT_LIMIT = 200
 DEFAULT_SECONDS = 240.0
 MAX_SECONDS = 270.0           # the most a caller may ask for (the manifest allows 300)
@@ -498,6 +498,27 @@ def capped_why(pages, text=None):
     if not held:
         return None
     return "; ".join(held) + "; each is in the evidence at the file and line it names"
+
+
+INLINE_LIST = 200       # items of any list that grows with the evidence (files, homes, errors, links) kept inline in the answer
+
+
+class Listed(list):
+    """A list of the answer that grows with the evidence (one item per file, home, link or error): its first INLINE_LIST items are the list, and
+    every item, those too, is kept in a paging file that the answer names under pages.<key> (`page.total` is how many there were; `settle()`
+    finishes the file and returns the page's entry for the answer's `pages`)."""
+
+    def __init__(self, key):
+        super().__init__()
+        self.page = LosslessPage(TOOL, key, INLINE_LIST)
+
+    def append(self, item):
+        self.page.add(item)
+        if len(self) < INLINE_LIST:
+            super().append(item)
+
+    def settle(self):
+        return self.page.finish()
 # END LINUX PARTS
 
 

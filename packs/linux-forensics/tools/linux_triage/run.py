@@ -54,7 +54,7 @@ import time
 from pathlib import Path
 
 TOOL = "linux_triage"
-PARSER = "linux_triage/9"
+PARSER = "linux_triage/10"
 DEFAULT_FUNCTION_SECONDS = 1800
 DEFAULT_TOTAL_SECONDS = 13800
 MAX_TOTAL_SECONDS = 14100       # the most a caller may ask for (the manifest allows 14400)

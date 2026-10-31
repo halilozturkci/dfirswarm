@@ -51,7 +51,7 @@ import time
 from pathlib import Path
 
 TOOL = "cron_dump"
-PARSER = "cron_dump/15"
+PARSER = "cron_dump/16"
 
 
 # BEGIN LINUX STOP
@@ -655,6 +655,27 @@ def capped_why(pages, text=None):
     if not held:
         return None
     return "; ".join(held) + "; each is in the evidence at the file and line it names"
+
+
+INLINE_LIST = 200       # items of any list that grows with the evidence (files, homes, errors, links) kept inline in the answer
+
+
+class Listed(list):
+    """A list of the answer that grows with the evidence (one item per file, home, link or error): its first INLINE_LIST items are the list, and
+    every item, those too, is kept in a paging file that the answer names under pages.<key> (`page.total` is how many there were; `settle()`
+    finishes the file and returns the page's entry for the answer's `pages`)."""
+
+    def __init__(self, key):
+        super().__init__()
+        self.page = LosslessPage(TOOL, key, INLINE_LIST)
+
+    def append(self, item):
+        self.page.add(item)
+        if len(self) < INLINE_LIST:
+            super().append(item)
+
+    def settle(self):
+        return self.page.finish()
 # END LINUX PARTS
 
 
@@ -758,8 +779,12 @@ class Run:
         self.inline_bytes = self.preview_bytes = 0
         self.budget_reached = False
         self.total = self.matched = self.at_reboot = self.unparsed_count = self.seq = self.nested = 0
-        self.locations, self.read_errors, self.walk_errors = [], [], []
-        self.skipped_symlinks, self.special, self.dropins = [], [], []
+        # Every list that grows with the tree keeps INLINE_LIST items inline and the whole in a paging file; the places looked in go to their
+        # page as they are met (their inline part is MAX_LOCATIONS), counted by state.
+        self.read_errors, self.walk_errors = Listed("read_errors"), Listed("walk_errors")
+        self.skipped_symlinks, self.special, self.dropins = Listed("skipped_symlinks"), Listed("skipped_special"), Listed("unmerged_dropins")
+        self.locations_page = LosslessPage(TOOL, "locations", MAX_LOCATIONS)
+        self.by_state, self.looked = {}, 0
         self.counts = {"read_errors": 0, "walk_errors": 0, "skipped_symlinks": 0, "special": 0}
         self.seen_real = {}
         self.partial_reason = None
@@ -775,12 +800,14 @@ class Run:
 
     def keep(self, which, item):
         self.counts[which] += 1
-        target = getattr(self, which)
-        if len(target) < MAX_NAMED:
-            target.append(item)
+        getattr(self, which).append(item)
 
     def census(self, rel, state, **extra):
-        self.locations.append({"path": rel, "state": state, **extra})
+        self.locations_page.add({"path": rel, "state": state, **extra})
+        key = state.split(":")[0].split(" (")[0]
+        self.by_state[key] = self.by_state.get(key, 0) + 1
+        if state == "read":
+            self.looked += 1
 
     def error(self, path, exc):
         self.keep("read_errors", {"file": path, "error": describe(exc)})
@@ -1114,7 +1141,9 @@ def scan_dir(run, rel, handle):
 
     try:
         for dirpath, dirs, names in os.walk(full, onerror=on_error):
-            for name in list(dirs):
+            for step, name in enumerate(list(dirs)):
+                if (step & 255) == 0:
+                    run.check()
                 sub = os.path.join(dirpath, name)
                 if os.path.islink(sub):
                     run.keep("skipped_symlinks", {"file": sub, "target": os.readlink(sub)})
@@ -1166,6 +1195,25 @@ def read_passwd(run):
             run.known_users.add(name)
 
 
+MAX_LISTED_NAMES = 200000    # the names of one directory (home/, run/user/) that are looked in; past it the answer is partial, saying so
+
+
+def bounded_names(run, directory):
+    """The names in one directory, sorted: the clock is read as they are listed (Overtime past the deadline), and at most MAX_LISTED_NAMES are
+    taken. If the directory holds more, the rest are not looked in and the answer is partial, naming the directory."""
+    names = []
+    with os.scandir(directory) as entries:
+        for number, entry in enumerate(entries):
+            if (number & 1023) == 0:
+                run.check()
+            if len(names) >= MAX_LISTED_NAMES:
+                run.partial_reason = run.partial_reason or ("%s holds more than %d names: only the first %d were looked in" % (
+                    os.path.relpath(directory, run.root), MAX_LISTED_NAMES, MAX_LISTED_NAMES))
+                break
+            names.append(entry.name)
+    return sorted(names)
+
+
 def homes_of(run):
     """(homes relative to the root, where the list came from, how many the account database does not list, the home
     paths it gave that were not used): the accounts' homes from the evidence's etc/passwd, and every directory under home/
@@ -1187,7 +1235,7 @@ def homes_of(run):
     home_dir = os.path.join(run.root, "home")
     try:
         if os.path.isdir(home_dir) and not os.path.islink(home_dir):
-            homes += ["home/" + n for n in sorted(os.listdir(home_dir))]
+            homes += ["home/" + n for n in bounded_names(run, home_dir)]
     except OSError as exc:
         run.error(home_dir, exc)
     homes.append("root")
@@ -1338,7 +1386,7 @@ def main():
         run_user = os.path.join(root, "run", "user")
         if os.path.isdir(run_user) and not os.path.islink(run_user):
             try:
-                for uid in sorted(os.listdir(run_user)):
+                for uid in bounded_names(run, run_user):
                     for sub in RUN_USER_DIRS:
                         scan_dir(run, "run/user/%s/%s" % (uid, sub), handle_timer_dir(run, "user"))
             except OSError as exc:
@@ -1347,20 +1395,20 @@ def main():
         run.partial_reason = str(exc) or "the inventory stopped at max_seconds (%s): the places after the last one in locations were not looked in" % seconds
     homes, home_source, homes_beyond_passwd, homes_ignored = homes_info
     text.close()
-    locations_page = LosslessPage(TOOL, "locations", MAX_LOCATIONS)
-    by_state = {}
-    for loc in run.locations:
-        locations_page.add(loc)
-        key = loc["state"].split(":")[0].split(" (")[0]
-        by_state[key] = by_state.get(key, 0) + 1
+    locations_page, by_state = run.locations_page, run.by_state
     pages = {"entries": page.finish(), "unparsed": unparsed_page.finish(), "assignments": assignments_page.finish(), "locations": locations_page.finish()}
     for name, kept in (("entries", page), ("unparsed", unparsed_page), ("assignments", assignments_page), ("locations", locations_page)):
         if pages[name].get("all_results"):
             pages[name]["all_results_bytes"], pages[name]["all_results_sha256"] = file_size_and_sha256(kept.path)
+    for key, items in (("read_errors", run.read_errors), ("walk_errors", run.walk_errors), ("skipped_symlinks", run.skipped_symlinks),
+                       ("skipped_special", run.special), ("unmerged_dropins", run.dropins)):
+        settled = items.settle()
+        if settled["matched"]:
+            pages[key] = settled      # a list with nothing in it has no page to name
     capped = capped_why(pages, text)
     if capped and run.partial_reason is None:
         run.partial_reason = capped
-    looked = sum(1 for loc in run.locations if loc["state"] == "read")
+    looked = run.looked
     all_read = (looked > 0 and not run.counts["read_errors"] and not run.counts["walk_errors"] and not run.counts["skipped_symlinks"]
                 and not run.counts["special"] and run.partial_reason is None and run.unparsed_count == 0)
     outcome = status_of(
@@ -1369,7 +1417,7 @@ def main():
         "%d of %d place(s) listed were read (%s: see locations); %d line(s) of a cron table "
         "matched no table shape (see unparsed); %d read error(s), %d walk error(s), %d link(s) not followed, %d special file(s) not opened%s: "
         "the answer names each" % (
-            looked, len(run.locations),
+            looked, locations_page.total,
             "the others are missing, links or not directories, or the inventory stopped inside them" if run.partial_reason else "the others are missing, links or not directories",
             run.unparsed_count, run.counts["read_errors"], run.counts["walk_errors"], run.counts["skipped_symlinks"],
             run.counts["special"], "; the inventory stopped before the end, or a paging file was capped (partial_reason)" if run.partial_reason else ""),

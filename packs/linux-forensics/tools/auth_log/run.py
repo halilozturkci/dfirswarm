@@ -36,6 +36,7 @@ line matched a syslog shape and every file was read through.
 import datetime
 import gzip
 import ipaddress
+import itertools
 import json
 import math
 import os
@@ -50,7 +51,7 @@ import zlib
 from pathlib import Path
 
 TOOL = "auth_log"
-PARSER = "auth_log/14"
+PARSER = "auth_log/15"
 
 
 # BEGIN LINUX STOP
@@ -585,6 +586,27 @@ def capped_why(pages, text=None):
     if not held:
         return None
     return "; ".join(held) + "; each is in the evidence at the file and line it names"
+
+
+INLINE_LIST = 200       # items of any list that grows with the evidence (files, homes, errors, links) kept inline in the answer
+
+
+class Listed(list):
+    """A list of the answer that grows with the evidence (one item per file, home, link or error): its first INLINE_LIST items are the list, and
+    every item, those too, is kept in a paging file that the answer names under pages.<key> (`page.total` is how many there were; `settle()`
+    finishes the file and returns the page's entry for the answer's `pages`)."""
+
+    def __init__(self, key):
+        super().__init__()
+        self.page = LosslessPage(TOOL, key, INLINE_LIST)
+
+    def append(self, item):
+        self.page.add(item)
+        if len(self) < INLINE_LIST:
+            super().append(item)
+
+    def settle(self):
+        return self.page.finish()
 # END LINUX PARTS
 
 
@@ -1204,7 +1226,8 @@ def main():
     seconds = want_seconds(args, "max_seconds", DEFAULT_SECONDS, MAX_SECONDS)
     deadline = time.monotonic() + seconds
 
-    walk_errors, skipped_symlinks, skipped_special, targets = [], [], [], []
+    walk_errors, skipped_symlinks, skipped_special = Listed("walk_errors"), Listed("skipped_symlinks"), Listed("skipped_special")
+    targets = []
 
     def regular(candidate):
         try:
@@ -1227,20 +1250,26 @@ def main():
     if is_dir:
         def on_error(exc):
             walk_errors.append({"path": getattr(exc, "filename", None), "error": describe(exc)})
+        walk_stopped = False
         for root, dirs, names in os.walk(path, onerror=on_error):
-            if time.monotonic() > deadline:
-                # A directory tree of millions of entries (a whole file system passed by mistake) is looked through on the clock too.
-                walk_errors.append({"path": root, "error": "max_seconds (%s) passed while looking for log files: the walk stopped here, and the places after it were not looked in" % seconds})
-                break
-            for name in list(dirs):
-                if os.path.islink(os.path.join(root, name)):
-                    skipped_symlinks.append({"file": os.path.join(root, name), "target": os.readlink(os.path.join(root, name))})
-                    dirs.remove(name)
-            for name in names:
-                if re.match(r"^(auth\.log|secure)", name):
+            # A directory tree of millions of entries (a whole file system passed by mistake, or one directory of millions of files) is
+            # looked through on the clock: it is read every 256 entries, and at the end the answer says where the walk stopped.
+            ndirs = len(dirs)
+            for step, name in enumerate(itertools.chain(list(dirs), names)):
+                if (step & 255) == 0 and time.monotonic() > deadline:
+                    walk_stopped = True
+                    break
+                if step < ndirs:
+                    if os.path.islink(os.path.join(root, name)):
+                        skipped_symlinks.append({"file": os.path.join(root, name), "target": os.readlink(os.path.join(root, name))})
+                        dirs.remove(name)
+                elif re.match(r"^(auth\.log|secure)", name):
                     candidate = os.path.join(root, name)
                     if regular(candidate):
                         targets.append(candidate)
+            if walk_stopped:
+                walk_errors.append({"path": root, "error": "max_seconds (%s) passed while looking for log files: the walk stopped here, and the places after it were not looked in" % seconds})
+                break
     elif exists_:
         try:
             special = not stat.S_ISREG(os.lstat(path).st_mode)
@@ -1253,8 +1282,26 @@ def main():
         fail("no such file or directory", path=path)
     if not targets:
         fail("no auth.log or secure file found there", path=path, skipped_symlinks=skipped_symlinks,
-             skipped_special=skipped_special, walk_errors=walk_errors)
+             skipped_special=skipped_special, walk_errors=walk_errors,
+             pages={k: v.page.finish() for k, v in (("skipped_symlinks", skipped_symlinks), ("skipped_special", skipped_special), ("walk_errors", walk_errors))})
     ranked = sorted(((rotation_basis(t), t) for t in targets), key=lambda row: (row[0][0], row[0][1], row[1]))
+    # Whether every file of the call has one modification time to within seconds (a copy made in one go): known before the files are read.
+    shared_mtime = False
+    if len(targets) > 1:
+        lowest = highest = None
+        shared_mtime = True
+        for number, candidate in enumerate(targets):
+            if (number & 1023) == 0 and time.monotonic() > deadline:
+                shared_mtime = False
+                break
+            try:
+                stamp = os.path.getmtime(candidate)
+            except (OSError, ValueError, OverflowError):
+                shared_mtime = False
+                break
+            lowest = stamp if lowest is None else min(lowest, stamp)
+            highest = stamp if highest is None else max(highest, stamp)
+        shared_mtime = shared_mtime and highest - lowest <= SAME_MTIME_SECONDS
     schemes = {basis for (rank, _k, basis), _t in ranked if rank == 1}
     years_by_file = want_years(args, targets)
 
@@ -1268,19 +1315,51 @@ def main():
     unparsed_page = LosslessPage(TOOL, "unparsed", limit)
     steps_page = LosslessPage(TOOL, "forward_steps", limit)
     preview_rows = []
-    mtimes, anchor_whens = {}, {}
 
-    files, read_errors, by_kind = [], [], {}
+    files, read_errors, by_kind = Listed("files"), Listed("read_errors"), {}
+    overlaps, not_reached = Listed("cross_file_order_overlaps"), Listed("files_not_reached")
     counts = {"physical": 0, "blank": 0, "read": 0, "unparsed": 0, "time_errors": 0, "invalid_utf8": 0}
     seq = 0
-    not_reached = []
     hit_deadline = False
+    previous = {"path": None, "last_time": None}
+    only_dead = [True]      # every file so far was partial and had no line (nothing could be read)
+
+    def settle_file(f, mtime_ts, last_line):
+        """What a file's modification time may be (a copy's), then the file joins the list; the order against the file before it is checked here."""
+        why = []
+        if last_line is not None and mtime_ts is not None:
+            after = (datetime.datetime.fromtimestamp(mtime_ts, datetime.timezone.utc).replace(tzinfo=None) - last_line).total_seconds() / 86400
+            if after > COPY_DAYS:
+                why.append("the modification time is %d days after the last dated line (more than %d)" % (after, COPY_DAYS))
+        if shared_mtime:
+            why.append("every file of this call has the same modification time, to within %d seconds" % SAME_MTIME_SECONDS)
+        if f["compression"] == "gzip":
+            present, header = gzip_header_time(f["path"])
+            f["gzip_header_time"] = None if not present or header is None else datetime.datetime.fromtimestamp(header, datetime.timezone.utc).replace(tzinfo=None).isoformat() + "Z"
+            f["gzip_header_time_recorded"] = bool(present and header is not None)
+            if present and header is not None and mtime_ts is not None:
+                agree = abs(mtime_ts - header) <= GZ_AGREE_SECONDS
+                f["gzip_header_agrees_with_modified"] = agree
+                if not agree:
+                    why.append("the gzip header time (%s) differs from the modification time by more than %d seconds" % (f["gzip_header_time"], GZ_AGREE_SECONDS))
+            else:
+                f["gzip_header_agrees_with_modified"] = None
+        f["mtime_may_be_copy_time"] = bool(why)
+        if why:
+            f["mtime_may_be_copy_time_why"] = why
+        if previous["last_time"] and f["first_time"] and f["first_time"] < previous["last_time"]:
+            overlaps.append({"earlier": previous["path"], "later": f["path"], "earlier_last": previous["last_time"], "later_first": f["first_time"]})
+        previous["path"], previous["last_time"] = f["path"], f["last_time"]
+        only_dead[0] = only_dead[0] and f["partial"] and f["physical_lines"] == 0
+        files.append(f)
 
     def tick(n):
         if n % 4096 == 0 and time.monotonic() > deadline:
             raise Overtime()
 
     for (rank, _key, basis), target in ranked:
+        if not hit_deadline and time.monotonic() > deadline:
+            hit_deadline = True         # the clock is read for every file: a directory of many files with no line in them ends here too
         if hit_deadline:
             not_reached.append(target)
             continue
@@ -1289,13 +1368,15 @@ def main():
                 "physical_lines": 0, "unparsed_lines": 0, "records": 0, "formats": {}, "year_basis": None,
                 "first_year": None, "last_year": None, "rollovers": 0, "rollover_lines": [], "reordered_lines": 0,
                 "first_time": None, "last_time": None, "partial": False}
+        mtime_ts, anchor_when = None, None
         try:
             info["size"] = os.path.getsize(target)
-            mtime = datetime.datetime.fromtimestamp(os.path.getmtime(target), datetime.timezone.utc).replace(tzinfo=None)
+            mtime_ts = os.path.getmtime(target)
+            mtime = datetime.datetime.fromtimestamp(mtime_ts, datetime.timezone.utc).replace(tzinfo=None)
             info["modified"] = mtime.isoformat() + "Z"
-            mtimes[target] = os.path.getmtime(target)
         except (OSError, ValueError, OverflowError):
             mtime = None
+            mtime_ts = None
 
         def note_step(step, target=target):
             steps_page.add({"file": target, **step})
@@ -1327,7 +1408,7 @@ def main():
             hit_deadline = True
             read_errors.append({"file": target, "error": "max_seconds (%s) passed while reading this file: it was not read further" % seconds, "line": None, "byte_offset": None})
             info["partial"] = True
-            files.append(info)
+            settle_file(info, mtime_ts, None)
             continue
         classes, rollovers = scan.classes, scan.rollovers
         info["rollovers"], info["rollover_lines"] = rollovers, scan.rollover_lines
@@ -1356,7 +1437,7 @@ def main():
             info["year_anchor"] = {"line": scan.last_ok[1], "stamp": stamp_of(scan.last_ok[0]), "mtime": info["modified"],
                                    "year": anchor, "used_for_dating": year_arg is None}
             if anchor is not None:
-                anchor_whens[target] = datetime.datetime(anchor, *last_valid[:4], min(last_valid[4], 59))
+                anchor_when = datetime.datetime(anchor, *last_valid[:4], min(last_valid[4], 59))
         # Pass two: the records.
         state = FileState(target)
         year, cursor, valid_index, range_at = first_year, None, 0, -1
@@ -1526,48 +1607,23 @@ def main():
         for err in state.errors:
             read_errors.append(err)
             info["partial"] = True
-        files.append(info)
+        settle_file(info, mtime_ts, anchor_when)
     text.close()
-    # The time the files carry, which anchors the year and is not always the time the log was written.
-    stamps = [mtimes[f["path"]] for f in files if f["path"] in mtimes]
-    shared = len(files) > 1 and len(stamps) == len(files) and max(stamps) - min(stamps) <= SAME_MTIME_SECONDS
-    for f in files:
-        why = []
-        last_line = anchor_whens.get(f["path"])
-        if last_line is not None and f["path"] in mtimes:
-            after = (datetime.datetime.fromtimestamp(mtimes[f["path"]], datetime.timezone.utc).replace(tzinfo=None) - last_line).total_seconds() / 86400
-            if after > COPY_DAYS:
-                why.append("the modification time is %d days after the last dated line (more than %d)" % (after, COPY_DAYS))
-        if shared:
-            why.append("every file of this call has the same modification time, to within %d seconds" % SAME_MTIME_SECONDS)
-        present, header = gzip_header_time(f["path"]) if f["compression"] == "gzip" else (False, None)
-        if f["compression"] == "gzip":
-            f["gzip_header_time"] = None if not present or header is None else datetime.datetime.fromtimestamp(header, datetime.timezone.utc).replace(tzinfo=None).isoformat() + "Z"
-            f["gzip_header_time_recorded"] = bool(present and header is not None)
-            if present and header is not None and f["path"] in mtimes:
-                agree = abs(mtimes[f["path"]] - header) <= GZ_AGREE_SECONDS
-                f["gzip_header_agrees_with_modified"] = agree
-                if not agree:
-                    why.append("the gzip header time (%s) differs from the modification time by more than %d seconds" % (f["gzip_header_time"], GZ_AGREE_SECONDS))
-            else:
-                f["gzip_header_agrees_with_modified"] = None
-        f["mtime_may_be_copy_time"] = bool(why)
-        if why:
-            f["mtime_may_be_copy_time_why"] = why
-
-    # Do the files' own time ranges agree with the order they were read in?
-    overlaps = []
-    for earlier, later in zip(files, files[1:]):
-        if earlier["last_time"] and later["first_time"] and later["first_time"] < earlier["last_time"]:
-            overlaps.append({"earlier": earlier["path"], "later": later["path"], "earlier_last": earlier["last_time"], "later_first": later["first_time"]})
     pages = {"records": page.finish(), "unparsed": unparsed_page.finish(), "forward_steps": steps_page.finish()}
+    listed = {"files": files, "files_not_reached": not_reached, "cross_file_order_overlaps": overlaps, "read_errors": read_errors,
+              "walk_errors": walk_errors, "skipped_symlinks": skipped_symlinks, "skipped_special": skipped_special}
+    for key, items in listed.items():
+        settled = items.settle()
+        if settled["matched"]:
+            pages[key] = settled      # a list with nothing in it has no page to name
     capped = capped_why(pages, text)
-    all_parsed = counts["unparsed"] == 0 and not read_errors and not walk_errors and not skipped_special and not not_reached
+    n_read_errors, n_walk_errors, n_special, n_not_reached = (listed[k].page.total for k in ("read_errors", "walk_errors", "skipped_special", "files_not_reached"))
+    all_parsed = counts["unparsed"] == 0 and not n_read_errors and not n_walk_errors and not n_special and not n_not_reached
     outcome = status_of(
-        all_parsed and not capped, not files or all(f["partial"] and f["physical_lines"] == 0 for f in files),
+        all_parsed and not capped, files.page.total == 0 or only_dead[0],
         "every line of every file matched a syslog shape and every file was read through",
         "%d line(s) matched no syslog shape, %d read error(s), %d walk error(s), %d special file(s) not opened, %d file(s) not reached%s: "
-        "the answer names each" % (counts["unparsed"], len(read_errors), len(walk_errors), len(skipped_special), len(not_reached),
+        "the answer names each" % (counts["unparsed"], n_read_errors, n_walk_errors, n_special, n_not_reached,
                                    "; " + capped if capped else ""),
         "no file could be read")
     STATE["answering"] = True       # the answer is being written: a signal from here on does not start a second document
@@ -1576,11 +1632,11 @@ def main():
         **outcome,
         "path": path,
         "files": files,
-        "file_count": len(files),
+        "file_count": files.page.total,
         "files_not_reached": not_reached,
         "mixed_rotation_schemes": len(schemes) > 1,
         "cross_file_order": ("overlap" if overlaps else "not established: more than one rotation scheme" if len(schemes) > 1 else
-                             "not established: a file is ordered by its name only" if len(files) > 1 and any(r == 0 for (r, _k, _b), _t in ranked) else "consistent"),
+                             "not established: a file is ordered by its name only" if files.page.total > 1 and any(r == 0 for (r, _k, _b), _t in ranked) else "consistent"),
         "cross_file_order_overlaps": overlaps,
         "physical_lines": counts["physical"],
         "blank_lines": counts["blank"],

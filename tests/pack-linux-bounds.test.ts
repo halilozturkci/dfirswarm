@@ -8,6 +8,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdir, open, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { closeSync, mkdirSync, openSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -738,6 +739,81 @@ test("every parameter that becomes a regex, an argument or a number answers a ho
     assert.doesNotMatch(huge.stderr, /Traceback/, huge.stderr.slice(-300));
     assert.equal(JSON.parse(huge.stdout).status, "failed");
     assert.match(JSON.parse(huge.stdout).error, /start_record/);
+  });
+});
+
+// ---- a list that grows with the evidence is capped inline and kept whole on disk -------------------------------------------------
+
+const INLINE = 200;
+
+test("auth_log: a directory of 100,000 empty log files ends at max_seconds, lists 200 files inline, pages the rest and says partial", async () => {
+  await withCwd(async (cwd) => {
+    const dir = join(cwd, "work", "sec");
+    mkdirSync(dir, { recursive: true });
+    for (let i = 0; i < 100_000; i++) closeSync(openSync(join(dir, `secure.${i}`), "w"));
+    const started = Date.now();
+    const run = await tool(AUTH, cwd, { path: "work/sec", max_seconds: 1 });
+    const seconds = (Date.now() - started) / 1000;
+    assert.doesNotMatch(run.stderr, /Traceback/);
+    assert.ok(seconds < 20, `took ${seconds} s for max_seconds 1`);
+    assert.ok(run.stdout.length < 1_000_000, `the answer is ${run.stdout.length} bytes`);
+    const out = JSON.parse(run.stdout);
+    // The clock stopped it: partial, or failed where it stopped before a single file was read (the basis says which files were not reached).
+    assert.ok(out.status === "partial" || out.status === "failed", out.status_basis);
+    assert.ok(out.files.length <= INLINE && out.files_not_reached.length <= INLINE);
+    // On a loaded machine the walk itself may end at the clock before it has met every file (it says so in walk_errors).
+    const read = out.pages.files?.matched ?? 0;
+    const left = out.pages.files_not_reached?.matched ?? 0;
+    assert.ok(read + left > INLINE && read + left <= 100_000, `${read + left} files met`);
+    assert.ok(read + left === 100_000 || out.walk_errors.length > 0, "a file the walk did not meet is said in walk_errors");
+    assert.ok(left > 0 || out.walk_errors.length > 0, "what the clock left is counted");
+    if (left > INLINE) {
+      assert.equal((await rowsOf(cwd, out, "files_not_reached")).length, left, "the whole list is on disk");
+    }
+  });
+});
+
+test("shell_history: 100,000 homes each with a history file are listed 200 inline, whole in a page, in under a megabyte of answer", async () => {
+  await withCwd(async (cwd) => {
+    const root = join(cwd, "work", "homes");
+    for (let i = 0; i < 100_000; i++) {
+      mkdirSync(join(root, "home", `u${i}`), { recursive: true });
+      writeFileSync(join(root, "home", `u${i}`, ".bash_history"), "echo a\n");
+    }
+    const started = Date.now();
+    const run = await tool(SHELL, cwd, { root: "work/homes" });
+    const seconds = (Date.now() - started) / 1000;
+    assert.doesNotMatch(run.stderr, /Traceback/);
+    assert.ok(run.stdout.length < 1_000_000, `the answer is ${run.stdout.length} bytes`);
+    assert.ok(seconds < 60, `took ${seconds} s`);
+    const out = JSON.parse(run.stdout);
+    assert.equal(out.files.length, INLINE);
+    assert.equal(out.file_count, 100_000);
+    assert.equal(out.pages.files.matched, 100_000);
+    assert.equal(out.status, "complete", out.status_basis);
+    assert.equal((await rowsOf(cwd, out, "files")).length, 100_000, "the whole list is on disk");
+    // With a clock that cannot cover them, the answer is partial and still small.
+    const short = await tool(SHELL, cwd, { root: "work/homes", max_seconds: 1 });
+    assert.ok(short.stdout.length < 1_000_000, `the answer is ${short.stdout.length} bytes`);
+    assert.equal(JSON.parse(short.stdout).status, "partial");
+  });
+});
+
+test("cron_dump keeps every link, error and special file it met in a page, 200 inline, and utmp_parse echoes at most 200 UIDs beyond the file", async () => {
+  await withCwd(async (cwd) => {
+    const dir = join(cwd, "work", "ev", "etc", "cron.d");
+    mkdirSync(dir, { recursive: true });
+    for (let i = 0; i < 1000; i++) symlinkSync("/nonexistent", join(dir, `job${i}`));
+    const out = body(await tool(CRON, cwd, { root: "work/ev" }));
+    assert.ok(out.skipped_symlinks.length <= INLINE);
+    assert.equal(out.pages.skipped_symlinks.matched, 1000);
+    assert.equal((await rowsOf(cwd, out, "skipped_symlinks")).length, 1000, "all are on disk");
+    assert.equal(out.error_counts.skipped_symlinks, 1000);
+    await writeFile(join(cwd, "work", "lastlog"), Buffer.alloc(292 * 4));
+    const uids = Array.from({ length: 5000 }, (_, i) => 100 + i);
+    const last = body(await tool(UTMP, cwd, { path: "work/lastlog", layout: "lastlog-292", uids }));
+    assert.equal(last.uids_beyond_file.length, INLINE);
+    assert.equal(last.uids_beyond_file_count, 5000);
   });
 });
 

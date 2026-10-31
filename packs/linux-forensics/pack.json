@@ -1,7 +1,7 @@
 {
   "id": "linux-forensics",
   "name": "Linux Forensics Pack",
-  "version": "1.5.22",
+  "version": "1.5.23",
   "description": "Artefact-by-artefact method and tooling for a Linux host: the system profile and its clocks, authentication and journal records, accounts and authorization, scheduling and systemd candidates, ext metadata and storage layers, container evidence locations, and package verification against local and independently trusted baselines. Each tool says what it read, what it did not, and where the whole result is kept.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -84,18 +84,18 @@
       "skills/triage/clocks-boots.md": "11fca9cdd28bd835cead6cf16f25a1bad4f9ea941309184d84adf1d2d408d2b3",
       "skills/triage/identity-files.md": "0f543b9c5d39f7564db06be8a03ec459691a65d26ec3ff5b8a6436fed644a0a1",
       "skills/triage/system-profile.md": "6bed8235f9766e1a56a109108f055dce8b8b71159e9d5f5d2acfef231811a5f6",
-      "tools/auth_log/manifest.json": "6c06ef50ad1e09a29548ec77c165d39d9d1f6811e943d879ab87931a2a0ba681",
-      "tools/auth_log/run.py": "74a2d81f87c41bb5423e3012124c37737fc5bc369645e62417abfc5ac92fcb0e",
-      "tools/cron_dump/manifest.json": "4349e41144f149c51f63f366be0694045922eb3cab817c3ca9073d7cb2986744",
-      "tools/cron_dump/run.py": "3f44b4cd3e930cdad6b5a405ebbeba305462abb2898b962832f69d0a2bef2d3c",
-      "tools/journal_export/manifest.json": "c60ee0555de993b74edacdc60eff7a8bf9879c82dd8a0c8a7cd2aad335507ecd",
-      "tools/journal_export/run.py": "32c00db76bc939f5df4d7f25e3abcd1f053536c7e13c754a96607ac744ab9653",
-      "tools/linux_triage/manifest.json": "ef37286bfd9dac0fe17514c6559a8f375562201c220d1a3dd8de1cef6d5f2069",
-      "tools/linux_triage/run.py": "1e1b3fbd7ac20682ea9d9a7de504af2b01d34b6b3a52848acb35c76ae73748b4",
-      "tools/shell_history/manifest.json": "40c69f2972f399cbc19b32ae67f97e83dda318c1e137160ededfa009dc256bcd",
-      "tools/shell_history/run.py": "47a9c1e1285f55ea3c7fdec825c68660746d2262505e66bfcd4a50345bfc2681",
-      "tools/utmp_parse/manifest.json": "e2124af9356fe19067cc7bf5764c71510799fe81150d2c2fa38dbea183cbd11d",
-      "tools/utmp_parse/run.py": "749cd1a37b01e5e213033d547df3cea9dba76971e43969265faf58ef8890b88a"
+      "tools/auth_log/manifest.json": "1cc489bc7c144570a05030723c5514bc22a4f6d4fbe20ab0267ff89a5922cb24",
+      "tools/auth_log/run.py": "6d0fabff50d99290575064c77461ad22e19b1c99de6011e568839022670ae0db",
+      "tools/cron_dump/manifest.json": "eae6452a8ae6bb0dcf5a912911f746dbff5b6a735ac1fe88f200cc2384c1c1ab",
+      "tools/cron_dump/run.py": "5aa1716b3583b12d0efd401c3fcf2e2253b98533e5c119b380ca000b58c0120d",
+      "tools/journal_export/manifest.json": "dbf11c1326faf28d14bbda2bfe7e324647b47a811ad957ec45250307740ebfd4",
+      "tools/journal_export/run.py": "df11e1ed42eb7b97b23c9e92a91dadbea4d5fba011b43176f08c1d7e8a8d72da",
+      "tools/linux_triage/manifest.json": "b55ca6bdbaf1e777b15d74bcd2cc88043d69e37449dab50f062a295e1b78fbdf",
+      "tools/linux_triage/run.py": "f564e509f9e5043cea271a1ba3edf6de4885237395a53d78c532f07521d5348b",
+      "tools/shell_history/manifest.json": "b14514ef2f500d44cb8a9cbfe174ce880c050375e357a6a2f823121e1a82a102",
+      "tools/shell_history/run.py": "0f25d87b64b5a82f02cdb0b80ada6154cfd11f154f283604115f31f121a0ddbd",
+      "tools/utmp_parse/manifest.json": "291ee0bb9d37a2a779eea721cb1b944cda0247f2297faf638c9b84d26d44fd85",
+      "tools/utmp_parse/run.py": "3be4325c5384e536c6772dd87c93aaedd37852a57db7ba1fef324219a772f880"
     }
   },
   "tools": [
