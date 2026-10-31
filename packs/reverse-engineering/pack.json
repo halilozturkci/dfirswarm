@@ -1,7 +1,7 @@
 {
   "id": "reverse-engineering",
   "name": "Reverse Engineering Pack",
-  "version": "1.7.4",
+  "version": "1.8.0",
   "description": "Static triage of a binary or a document under quarantine: what the file actually is, PE and ELF structure, entropy and packing, obfuscated strings, capability mapping, macros and embedded objects, and rules. Nothing from the evidence is ever executed.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -28,7 +28,7 @@
   "checksums": {
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
-      "README.md": "9850fb684a11046ed19187dc3b09b83d42c5d2dd59ced78e698dce76ddfdd1b6",
+      "README.md": "6a8bfe86ddbe60334281c538c35fdf810642bd84b54a297e770253d6993bf0b3",
       "goals/sample-triage.md": "0f6798ec18204b277c9430d5a74359cf7c5142131ccfc5071293b3dd1bd0ad12",
       "recipes/capa-floss/recipe.json": "19d8a85f9884cf91b1bc71f639f2531b05a39457af181697601b21ec33dbef8b",
       "recipes/capa-floss/run.py": "c90d50e7e12ec4574bd949ce4632331d3b859eaaa6e752dcd8f788401bce0c5f",
@@ -52,7 +52,7 @@
       "skills/reverse-engineering/router.md": "733871064383e7b724fe7f0d79962b909d260a0e4729e8bcdd354e564f3513ac",
       "skills/rules/authoring.md": "69f5cc20f032ed367ef83cab58b64de51c135c217fc6aa9f4f224db71ceb2cb1",
       "skills/rules/yara.md": "8eadb83d84456b726ba99dff1c6e0d0547ace586aff7b47d4af58c8e2f16c3c9",
-      "skills/runtimes/go-rust.md": "dbfc7fcd68facc1279c7cb82c35897739a9d4e13d5612e857e1b309d823246e5",
+      "skills/runtimes/go-rust.md": "3b22b494d51add5fe92478e5fdc56b8676f8efc56997448a3c08ddb76df5c5b9",
       "skills/runtimes/python-packaged.md": "2fb8be1d1f0dea0686f8adfba9066873cf525c6b2e96fb0a48a09d77a2580623",
       "skills/scripts/static-analysis.md": "affbe7759e0b4f49c7613a603307edaef05d80b5e3bc55a992dad12a0a08ba99",
       "skills/strings/decoding-and-similarity.md": "8eb3df8b3a24f349e6c4a2bfa0921b501ab0522db12bcdc824c1030c70c0df5d",
@@ -66,6 +66,8 @@
       "tools/entropy_map/run.py": "05f6a4d51ce7ca715d8a3100b4e616eeab8353a5d73ed334e4e9862a98c650be",
       "tools/fuzzy_hash/manifest.json": "f9a4303461032b3287aa074574d2af8cf06a8730264e19db7e2e0ff207286265",
       "tools/fuzzy_hash/run.py": "6c202d73388da7426f945f73a9270182a0b1f51fa4fb35dfac13f7169fc444e8",
+      "tools/go_buildinfo/manifest.json": "669f4988a56a9018d9cba3bc65e4956298ac2f3d82a8985bc88acf221e01d001",
+      "tools/go_buildinfo/run.py": "de96d50bce42017b9b60719a38dd47d435f5bebdd33c63087c8e8ee4f045d784",
       "tools/pe_directories/manifest.json": "b49780cb06ed6bd1d6440640c0ef5547a2b9b4d644f5db991c8561a40d91afb8",
       "tools/pe_directories/run.py": "69def8962f91c17f7d07250a9dfb33ef479ba9e2a42c027c69cc2a67c6ee6558",
       "tools/pe_info/manifest.json": "ec275dfd9dbc663fec7b3aa7a1f6bb1948ad24c4637c33d983a57594aea5c057",
@@ -77,6 +79,7 @@
     "doc_structure",
     "entropy_map",
     "fuzzy_hash",
+    "go_buildinfo",
     "pe_directories",
     "pe_info"
   ],
