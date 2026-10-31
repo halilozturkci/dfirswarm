@@ -2558,6 +2558,9 @@ def main():
     complete = (row["status"] == "read" and not pagination and replaced == 0)
     status = status_of(row["status"] in ("failed", "unsupported", "empty") and counts["events"] == 0, complete,
                        "every record of the supplied file was read and nothing was left out; that says nothing about whether the export holds every sign-in the tenant logged",
+                       ("the time limit (%s s) ended the read after %d event(s); what was read is kept and the rest of the file was not examined (see coverage.stopped_by_time_limit); "
+                        "also, if any, part of the file that was not read as sign-in records, a next page that was not supplied, or events with a time that could not be decoded "
+                        "(see coverage, file_problems, rejected_records and pagination_markers)" % (seconds, counts["events"])) if stopped_early else
                        "part of the file was not read as sign-in records, or the export names a next page that was not supplied, or events have a time that could not be decoded "
                        "(see coverage, file_problems, rejected_records and pagination_markers)",
                        "no sign-in record could be read from the file (see file_problems)")

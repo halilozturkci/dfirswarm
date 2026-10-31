@@ -58,8 +58,8 @@
   "example": "{\"path\": \"inputs/cloudtrail\", \"notable_only\": true}",
   "by": "maintainer",
   "at": "2026-10-27T12:00:00.000Z",
-  "version": 6,
-  "sha256": "6ac7256f674e0d8130de3e72ec23ea04e77c952522a7305cd17e676d96c69df8",
+  "version": 7,
+  "sha256": "1c34b87c9ea4f2dc20f8d8f9434e43842abef44f953eb446868b49e1fa410c79",
   "use": {
     "names": [
       "*cloudtrail*",

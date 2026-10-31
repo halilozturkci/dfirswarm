@@ -10,8 +10,12 @@ import assert from "node:assert/strict";
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { SIGNIN, asJob, body, everythingBut, exists, filesUnder, put, refused, rowsOf, tool, withDir } from "./cloud-pack-harness.ts";
 import type { Json } from "./cloud-pack-harness.ts";
+
+/** The tool run with its clock already out (tests/cloud-clock-inject.py; INJECT_TOOL names the tool). */
+const CLOCK = fileURLToPath(new URL("./cloud-clock-inject.py", import.meta.url));
 
 /** A Graph signIn. */
 function signIn(i: number, time: string, code: number | null, over: Json = {}): Json {
@@ -53,6 +57,19 @@ const portalRow = (i: number, date: string, status: string, code: string, over: 
 const portalCsv = (...rows: string[][]): string => [csvLine(PORTAL), ...rows.map(csvLine)].join("\r\n") + "\r\n";
 
 // ---- outcome -----------------------------------------------------------------------------------------------------------------
+
+test("when the clock is out before the read, the partial basis names the clock (deterministic)", async () => {
+  await withDir(async (cwd) => {
+    await put(cwd, "work/ev/s.json", graph(signIn(1, "2026-02-14T09:00:00Z", 0), signIn(2, "2026-02-14T09:05:00Z", 0)));
+    const run = await tool(CLOCK, cwd, { path: "work/ev/s.json", time_limit_seconds: 30 }, { INJECT_TOOL: SIGNIN });
+    const out = body(run);
+    assert.equal(run.code, 0);
+    assert.equal(out.status, "partial");
+    assert.equal(out.coverage.stopped_by_time_limit, true);
+    assert.match(out.status_basis, /^the time limit \(30 s\) ended the read after \d+ event\(s\)/);
+    assert.doesNotMatch(out.status_basis, /^part of the file was not read/);
+  });
+});
 
 test("a status that is neither a success nor a failure is an unknown outcome, not a failure", async () => {
   await withDir(async (cwd) => {

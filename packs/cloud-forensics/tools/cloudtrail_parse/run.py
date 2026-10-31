@@ -2516,6 +2516,8 @@ def main():
     if os.path.isdir(path):
         targets = walk_inputs(path, lambda n: n.lower().endswith((".json", ".json.gz", ".gz", ".jsonl", ".ndjson", ".jsonl.gz", ".ndjson.gz")), skipped)
         if not targets:
+            if out_of_time() or any("the time limit ended the listing" in str(s.get("reason", "")) for s in skipped.items):
+                fail("the time limit ended the listing of the directory before any CloudTrail file was found; nothing was read or judged (see skipped)", path=shown_path(path), skipped=named(skipped.items))
             fail("no CloudTrail files there", path=shown_path(path), skipped=named(skipped.items))
     elif os.path.isfile(path):
         targets = [path]
@@ -2690,9 +2692,21 @@ def main():
                 and c["records_rejected"] == 0 and not skipped.total and not census.pagination
                 and c["files_not_attempted"] == 0 and c["replacement_characters"] == 0 and not census.unknown_version)
     nothing_read = c["records_read"] == 0
-    status = status_of(nothing_read and (c["files_failed"] or c["files_unsupported"] or c["files_empty"] or c["files_not_attempted"]), complete,
+    # The tool's own clock ended the read: that is a stop by the tool, never a verdict on the input. A read the clock cut is
+    # partial, whatever it had read by then, and its basis begins with the clock; `failed` (no event could be read from what
+    # was supplied) is said only when the clock did not stop the read.
+    clock_basis = None
+    if stop_all:
+        files_read = len(targets) - c["files_not_attempted"]
+        clock_basis = ("the time limit (%s s) ended the read after %d of the %d supplied files, with %d not attempted and %d event records read; "
+                       "what was read is kept and nothing in the files not read was judged (see coverage.stopped_by_time_limit and files_not_attempted_named)"
+                       % (seconds, files_read, len(targets), c["files_not_attempted"], c["records_read"]))
+        if c["files_failed"] or c["files_unsupported"] or c["files_empty"]:
+            clock_basis += "; before the stop %d file(s) could not be read, %d were unsupported and %d were empty (see file_problems)" % (
+                c["files_failed"], c["files_unsupported"], c["files_empty"])
+    status = status_of((not stop_all) and nothing_read and (c["files_failed"] or c["files_unsupported"] or c["files_empty"] or c["files_not_attempted"]), complete,
                        "every record of every supplied file was read and nothing was left out; that says nothing about whether the export holds everything the account logged",
-                       "some of what was supplied was not read as events or not read at all: a record that is not a CloudTrail event, a file skipped (by its name too: see skipped), a file or a record cut short, or a next page not supplied (see coverage, file_census, rejected_records, file_problems, skipped and pagination_markers)",
+                       clock_basis or "some of what was supplied was not read as events or not read at all: a record that is not a CloudTrail event, a file skipped (by its name too: see skipped), a file or a record cut short, or a next page not supplied (see coverage, file_census, rejected_records, file_problems, skipped and pagination_markers)",
                        "no CloudTrail event could be read from what was supplied (see file_problems)")
     answer = {
         "parser": PARSER, **status, "path": shown_path(path),
