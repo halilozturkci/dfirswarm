@@ -46,3 +46,7 @@ The second microVM case run's agents reached files inside LVM with `fls` and `ic
 - The kickoff's `Tokens:` line names a ChatGPT sign-in only for `openai`.
 - linux-forensics: the disk-image check reads without blocking (a regular file whose read waits, such as `/proc/kmsg`, is not held); `journal_export` makes it after its own refusals of a link in the path and of this machine's journal; `linux-target` knows `./disk.E01` as dissect.target prints it (`<Target disk.E01>`); `filesystem/storage-lvm-luks` counts a linear volume's offset from the start of the disk (partition, PV data start, segment).
 - computer-forensics-base: `check_inputs` says which baseline it compared against (`baseline`: the run's `inputs.json`, or the copy a job was given).
+
+### Fixed: RECmd is pinned to its new release (windows-forensics)
+
+Eric Zimmerman's `RECmd.zip` was replaced at the same address on 2026-10-29 by release 2026.10.3, so the pinned SHA-256 of 2026.10.2 no longer matched and the images that hold the windows pack stopped building ("RECmd: sha256 … is not the pinned …"). RECmd is now pinned to 2026.10.3 and its new SHA-256.
