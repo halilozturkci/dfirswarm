@@ -37,7 +37,7 @@ import {
 } from "node:fs/promises";
 import { constants as fsConstants, existsSync } from "node:fs";
 import { basename, dirname, join, posix, relative, resolve, sep } from "node:path";
-import { createInterface } from "node:readline";
+import { jsonlLines } from "./jsonl-lines.ts";
 import { fileURLToPath } from "node:url";
 import * as NB from "./negative-bar.ts";
 import * as PM from "./premises.ts";
@@ -2931,7 +2931,7 @@ export async function readEventLogChecked(sandboxRoot: string): Promise<{ events
   let handle: Awaited<ReturnType<typeof open>> | null = null;
   try {
     handle = await open(file, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK);
-    const lines = createInterface({ input: handle.createReadStream({ autoClose: false, encoding: "utf8" }), crlfDelay: Infinity });
+    const lines = jsonlLines(handle.createReadStream({ autoClose: false }));
     for await (const line of lines) {
       if (!line.trim()) continue;
       try {
@@ -7193,7 +7193,7 @@ export async function stagedPathsIn(file: string, root: string, job: string): Pr
   const handle = await open(file, "r");
   try {
     const paths: Record<string, string> = {};
-    const lines = createInterface({ input: handle.createReadStream({ autoClose: false, encoding: "utf8" }), crlfDelay: Infinity });
+    const lines = jsonlLines(handle.createReadStream({ autoClose: false }));
     for await (const line of lines) Object.assign(paths, stagedPaths(line, root, job));
     return paths;
   } finally {

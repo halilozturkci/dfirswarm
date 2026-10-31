@@ -41,7 +41,7 @@
 import { createReadStream } from "node:fs";
 import { lstat, readFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, posix, relative, resolve } from "node:path";
-import { createInterface } from "node:readline";
+import { jsonlLines } from "../extensions/jsonl-lines.ts";
 import { fileURLToPath } from "node:url";
 import { sensitiveIndex, sensitiveRefs, type BecauseHow, type SensitiveIndex } from "./output-hygiene.ts";
 
@@ -540,7 +540,7 @@ async function eachJsonLine(file: string, label: string, sink: Sink, each: (rec:
     return false;
   }
   try {
-    const lines = createInterface({ input: createReadStream(file, { encoding: "utf8" }), crlfDelay: Infinity });
+    const lines = jsonlLines(createReadStream(file));
     let n = 0;
     for await (const raw of lines) {
       n += 1;
