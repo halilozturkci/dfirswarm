@@ -6,6 +6,10 @@ auth_log, cron_dump, journal_export, shell_history and utmp_parse had five drift
 
 auth_log, cron_dump, journal_export, shell_history and utmp_parse now declare `secret_output` for their text flags (`write_text` and `preview_text`; `write_commands` and `preview_commands` for shell_history), so a job that sets one is sealed as secret output without the agent saying so, and each tool refuses such a flag as JSON, before it opens or creates anything, when `SECRET_OUTPUT` is not `1`. linux_triage does not declare it.
 
+### Fixed: linux-forensics server-compromise names the intruder, not "the operator"
+
+Question 2 of the goal asked how "the operator" first reached the host, but in this repository the operator is the person running the case. It now asks how whoever gained access first reached the host, and a test fails on "operator" in the pack's goals and skills.
+
 ### Fixed: linux-forensics linux-target re-checks a pid before its stop handler kills it
 
 The recipe's stop handler listed the wrapper's descendants, waited up to 8 seconds for the wrapper to stop, and then sent SIGKILL to every pid of that list, so a process that ended in those seconds and whose pid was reused could be killed. Each pid is now listed with its start time and parent (`/proc/<pid>/stat`, or `ps` where there is no `/proc`) and signalled only if that is still true.

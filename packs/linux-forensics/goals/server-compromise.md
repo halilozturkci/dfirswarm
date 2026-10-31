@@ -11,8 +11,8 @@ the first ten minutes, and everything later depends on the timezone that
 
 1. The system profile: distribution, kernel, hostname, install date, the
    timezone you converted every timestamp from, and the boot history.
-2. Initial access: how the operator first reached this host, with the artefact
-   that shows it and the time in UTC.
+2. Initial access: how whoever gained access first reached this host, with the
+   artefact that shows it and the time in UTC.
 3. Accounts and keys: any account added, any UID 0 that is not root, any sudoers
    entry, and any key present in an authorized_keys file, with what the evidence does
    and does not say about when each appeared.
