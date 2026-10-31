@@ -25,7 +25,8 @@
         }
       },
       "licence": "Apache-2.0",
-      "redistributable": false
+      "redistributable": false,
+      "not_in_image": "A collector, run on the host to be collected; the analysis image receives its output and has no use for the program. The pinned download stays declared so the operator has the exact release to take to the source."
     },
     {
       "name": "velociraptor",
@@ -48,7 +49,8 @@
         }
       },
       "licence": "AGPL-3.0 (declared, unverified)",
-      "redistributable": false
+      "redistributable": false,
+      "not_in_image": "A collector builder, run on the host to be collected; the analysis image receives its output and has no use for the program. The pinned download stays declared so the operator has the exact binary to take to the source."
     },
     {
       "name": "CyLR",

@@ -95,15 +95,6 @@
       "redistributable": false
     },
     {
-      "name": "tcpick",
-      "package": "tcpick",
-      "optional": true,
-      "why": "Reassemble and inspect selected TCP conversations as a second implementation where overlap or retransmission behaviour decides the answer.",
-      "install": {"apt": "apt-get install -y tcpick"},
-      "licence": "GPL-2.0-or-later (declared, unverified)",
-      "redistributable": false
-    },
-    {
       "name": "ngrep",
       "package": "ngrep",
       "optional": true,

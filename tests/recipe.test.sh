@@ -445,6 +445,29 @@ jq -e '.downloads[] | select(.name == "memprocfs") | .amd64.sha256 and .arm64.sh
 grep -q 'dev.dfirswarm.redistributable="false"' "$TMP/ctx/Dockerfile" || fail "the image's label does not say so"
 python3 "$R" build web --out "$TMP/ctx-web" >/dev/null || fail "web holds no pack program and should build without the flag"
 grep -q 'dev.dfirswarm.redistributable' "$TMP/ctx-web/Dockerfile" && fail "a profile with nothing held back must inherit the base's label, not claim its own"
+# OD-10: an operator's acquisition program (avml, uac, velociraptor, PowerShell,
+# the AWS CLI) is declared with its pinned download for the operator to take to
+# the source, and is not installed: it is listed as not applicable, never under
+# the programs, downloads or apt lines the image installs.
+for pair in memory:avml triage:uac,velociraptor cloud:pwsh,aws full:avml,uac,velociraptor,pwsh,aws; do
+  prof="${pair%%:*}"
+  python3 "$R" build "$prof" --out "$TMP/ctx-od10-$prof" --allow-nonredistributable --symbol-set broad >/dev/null 2>"$TMP/od10-$prof.err" \
+    || fail "the $prof build failed: $(cat "$TMP/od10-$prof.err")"
+  for prog in $(tr , " " <<<"${pair#*:}"); do
+    ps="$TMP/ctx-od10-$prof/spec.json"
+    jq -e --arg p "$prog" '[.not_applicable[].name] | index($p)' "$ps" >/dev/null || fail "$prog is not listed as not applicable in the $prof spec"
+    jq -e --arg p "$prog" '[.binaries[].name, .downloads[].name] | index($p) | not' "$ps" >/dev/null || fail "the $prof image would install $prog, which OD-10 keeps out"
+    jq -e --arg p "$prog" '.apt | has($p) | not' "$ps" >/dev/null || fail "the $prof image would apt-install $prog"
+  done
+done
+jq -e '.binaries | length > 0' "$TMP/ctx-od10-cloud/spec.json" >/dev/null || fail "the cloud spec lost its other programs"
+# Dropped programs are declared by no pack.
+for dropped in tcpick idevicebackup2; do
+  for h in "$ROOT"/packs/*/requires/host.json; do
+    jq -e --arg d "$dropped" '[.binaries[].name] | index($d) | not' "$h" >/dev/null || fail "$h still declares $dropped, which OD-10 drops"
+  done
+done
+pass "avml, uac, velociraptor, pwsh and aws are not applicable in memory, triage, cloud and full and installed in none; tcpick and idevicebackup2 are declared nowhere"
 grep -q 'dev.dfirswarm.redistributable="${REDISTRIBUTABLE}"' "$ROOT/images/base.Dockerfile" || fail "the base image does not carry the redistributable label"
 grep -q 'COPY install.py spec.json NOTICE' "$TMP/ctx/Dockerfile" || fail "the NOTICE does not go into the image"
 grep -qF 'vol  (memory-forensics)  Volatility Software License 1.0 (https://github.com/volatilityfoundation/volatility3/blob/develop/LICENSE.txt)' "$TMP/ctx/NOTICE" \

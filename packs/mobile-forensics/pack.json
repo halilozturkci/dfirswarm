@@ -1,7 +1,7 @@
 {
   "id": "mobile-forensics",
   "name": "Mobile Forensics Pack",
-  "version": "1.5.11",
+  "version": "1.5.12",
   "description": "Method and tooling for a phone: what kind of extraction you were handed and what it cannot contain, iOS backups and their manifest, Android package and user data, the app databases that carry messages and location, protobuf blobs, and what deleted means inside SQLite.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -32,7 +32,7 @@
       "recipes/ios-filesystem/run.py": "e4d2ecb568698b3ab2b9bd24287235b04034fa8ef661a4e896334b2508f72136",
       "recipes/ios-ileapp/recipe.json": "3cc91b06013fda31f13d246e1b0c7586fcdb6b8155e0732240afde4c3007cace",
       "recipes/ios-ileapp/run.py": "1df274383372bc92193409b095b000459d0ba047da3bfb0269221c2d35efbd79",
-      "requires/host.json": "194e671abd3e7f0f6c53ec264bf4c53e7bdd3d12dab1b2711db620e580492032",
+      "requires/host.json": "ef2084f4eb6b226a8fda8a49c0af8ac1caf2fab8eaea27ff4f652d51d9853daa",
       "requires/python.txt": "3816ab554bef3ef99c10c0fa5b0e07c2f4425eb238a4c04d430f43b5162bdad7",
       "skills/INDEX.md": "ea8f8b2cc9ac368892ca62049d96da0f05f69f4062561aba519f4e20234c3912",
       "skills/android/artifacts.md": "1c194a7e903bf033514fc2ebd7c93e00ff3c369ead324e2a039ab1cb9dbc31a0",
@@ -70,10 +70,6 @@
     "mobile-forensics/ios-ileapp"
   ],
   "unreferenced_ok": [
-    {
-      "name": "idevicebackup2",
-      "why": "declared for a device-backup route no skill, recipe or tool of the pack runs; it is not an offline decryptor, and the owner decides whether it stays"
-    },
     {
       "name": "heif-convert",
       "why": "the HEIC route has no skill yet; the program is held for it"
