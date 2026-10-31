@@ -727,6 +727,9 @@ def main():
                 break
             dirs.sort()                                   # the same order on every run
             for name in sorted(names):
+                if out_of_time():
+                    walk_stopped = True
+                    break
                 if name.lower().endswith(("destinations-ms",)):
                     full = os.path.join(root, name)
                     try:

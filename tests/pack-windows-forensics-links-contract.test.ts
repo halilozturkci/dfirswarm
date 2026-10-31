@@ -380,3 +380,44 @@ test("lnk_parse and jumplist carry the PLACE, PAGE and STOP blocks of regkv, and
     if (tool !== "lnk_jumplist") assert.match(text, /^DEADLINE_SECONDS = \d+ /m, tool);
   }
 });
+
+// --- lnk_jumplist: the walk is under the clock, and a bound it states is a bound it enforces -------------------------------------------------------
+
+test("lnk_jumplist: a walk of the whole file system with max_seconds 1 ends by its clock, partial, and names the clock", async () => {
+  await withCwd(async (cwd) => {
+    const started = Date.now();
+    const run = await runTool("lnk_jumplist", cwd, { path: "/", max_seconds: 1 });
+    const answer = assertJsonAnswer(run, "walk /") as Answer;
+    assert.ok(Date.now() - started < 30_000, `${Date.now() - started} ms for max_seconds 1`);
+    assert.equal(answer.status, "partial");
+    assert.match(String(answer.status_basis), /clock/);
+  });
+});
+
+test("lnk_jumplist: the files a walk passes over are counted, and only the first 5,000 are named", async () => {
+  await withCwd(async (cwd) => {
+    mkdirSync(join(cwd, "work", "many"), { recursive: true });
+    for (let i = 0; i < 6000; i++) writeFileSync(join(cwd, "work", "many", `f${i}.txt`), "");
+    put(cwd, "work/many/a.lnk", lnk({ args: "-noprofile" }));
+    const answer = assertJsonAnswer(await runTool("lnk_jumplist", cwd, { path: "work/many" }), "skipped") as Answer;
+    assert.equal(answer.skipped, 6000);
+    assert.equal((JSON.parse(readFileSync(join(cwd, answer.receipt), "utf8")) as Answer).skipped_files.length, 5000);
+  });
+});
+
+test("lnk_jumplist: a link with more tracker blocks than the 16 it keeps says so, and the answer is partial; one tracker block is kept whole", async () => {
+  await withCwd(async (cwd) => {
+    const many = Array.from({ length: 40 }, (_, i) => trackerBlock(`HOST-${i}`));
+    const big = assertJsonAnswer(await runTool("lnk_jumplist", cwd, { path: put(cwd, "work/t40.lnk", lnk({ extras: many })) }), "40 trackers") as Answer;
+    const row = big.rows.find((r: Answer) => r.row === "link");
+    assert.equal(row.tracker.length, 16);
+    assert.equal(row.tracker_count, 40);
+    assert.equal(row.integrity.status, "incomplete");
+    assert.match(row.integrity.problems.join(" "), /40 tracker blocks and the row keeps the first 16/);
+    assert.equal(big.status, "partial");
+    const one = assertJsonAnswer(await runTool("lnk_jumplist", cwd, { path: put(cwd, "work/t1.lnk", lnk({ extras: [trackerBlock("HOST-0")] })) }), "1 tracker") as Answer;
+    const r1 = one.rows.find((r: Answer) => r.row === "link");
+    assert.equal(r1.tracker.length, 1);
+    assert.equal(r1.integrity.status, "ok");
+  });
+});

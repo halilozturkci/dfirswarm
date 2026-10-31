@@ -414,6 +414,9 @@ def main():
                                        "not_attempted": True})
             PROGRESS["walked"] += len(names)
             for name in sorted(names):
+                if out_of_time():
+                    stopped = "the tool's own clock (%d s) ran out while the directory was walked, after %d names" % (DEADLINE_SECONDS, PROGRESS["walked"])
+                    break
                 if name.upper().startswith("$I"):
                     targets.append(os.path.join(root, name))
     elif os.path.isfile(path):

@@ -834,6 +834,9 @@ def main():
                 walk_cut = True
                 break
             for entry in sorted(dirs + names):
+                if time.monotonic() > walk_until:
+                    walk_cut = True
+                    break
                 full = os.path.join(root, entry)
                 try:
                     mode = os.lstat(full).st_mode

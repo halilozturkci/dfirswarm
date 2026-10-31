@@ -17,8 +17,8 @@
   "example": "{\"path\": \"work/extracted/$Recycle.Bin\"}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 4,
-  "sha256": "f53e4a875897c113286fa7c65624870a716812078b8002e9c458a7342b3d336c",
+  "version": 5,
+  "sha256": "8a783376ea0351b335243f3feb2e1dea5568691479bdeaf36c7f014eae19fc62",
   "use": {
     "names": [
       "$I*"

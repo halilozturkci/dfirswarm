@@ -782,6 +782,8 @@ def ruleset_record(rules, until=None):
         files = 0
         for root, dirs, names in os.walk(p):
             dirs.sort()
+            if until is not None and time.monotonic() > until:
+                return {"source": str(rules), "kind": "directory", "files": files, "digest": None, "cut_by_clock": True}
             for name in sorted(names):
                 full = os.path.join(root, name)
                 if os.path.islink(full) or not os.path.isfile(full):
@@ -1071,6 +1073,16 @@ def main():
         reasons.append("no .evtx file lies under the path, so no record was read")
     elif engine_says_none_read(stdout_path, stderr_path):
         reasons.append("the engine's own output says it read no .evtx file")
+    if read == 0 and below == 0 and not malformed.count:
+        # Nothing was read. An engine that found nothing writes an empty list; an empty file, a lone object or brackets with nothing in them is not that.
+        try:
+            with open(result, "rb") as rf:
+                head = re.sub(rb"\s+", b"", rf.read(4096))
+            size_read = os.path.getsize(result)
+        except OSError:
+            head, size_read = b"?", -1
+        if head != b"[]":
+            reasons.append("no detection was read from the engine's result file (%d bytes; it is empty, or not a list of detections): zero detections here is not a statement that no rule matched" % size_read)
     reasons += cut
     complete = not reasons
     answer = {

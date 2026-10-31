@@ -9,7 +9,7 @@ and returns the state *before* the last session, which is the part an examiner
 wants.
 
 So: copy the database and any -wal, -shm and -journal beside it into a scratch
-directory (under $OUT in a job), open the copy read-write so SQLite checkpoints the
+directory (a private directory outside $OUT, mode 0700), open the copy read-write so SQLite checkpoints the
 WAL, and query that. The original is never touched. The answer says whether a WAL
 sidecar was present and how many valid frames SQLite found in it and checkpointed
 (`wal_present`, `wal_checkpoint`): a sidecar that was copied is not a log that was
