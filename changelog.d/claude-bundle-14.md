@@ -1,0 +1,3 @@
+### Changed: triage-collection names the offline route it adopted for Velociraptor
+
+The `unreferenced_ok` reason in `pack.json` and the `why` of the Velociraptor entry in `requires/host.json` no longer call the program "a candidate offline reader of its own containers (unverified)". Both now say what the pack does: the Velociraptor program is declared for operator preparation only, it is never run and it is not in the analysis image; the pack reads Velociraptor collection containers and collection zips offline with its own adapters (`velociraptor_container/2` in the record tools, `collection_id` for a container directory, and the `collection-intake` recipe for a zip).

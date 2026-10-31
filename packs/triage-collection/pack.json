@@ -1,7 +1,7 @@
 {
   "id": "triage-collection",
   "name": "Triage and Collection Pack",
-  "version": "1.7.4",
+  "version": "1.7.5",
   "description": "What to do when the evidence is a collector's output rather than an image: surveying what was delivered and which collectors left records, reading those records without turning them into findings, keeping the source, delivered and analysis paths apart, saying what the delivery can and cannot establish, requesting more evidence through the operator, and handing files to the platform packs.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -22,7 +22,7 @@
       "goals/collection-intake.md": "ed89303440885a201a191d42de56977b609170e07f15c0268114bb68511651c2",
       "recipes/collection-intake/recipe.json": "3f830355a81a58a85831da0e8ce9cdb8ce6f730728fd9bd16df0e3f7498367d1",
       "recipes/collection-intake/run.py": "6d5b13845ec05d273844ac695ea88c41214aa99f2e2b5d4ae85716c7c255a59c",
-      "requires/host.json": "284d08f784b2e259f5c4b512390670e6e8252ffb02f360717570e01f60349ec9",
+      "requires/host.json": "ac64fed9b7f55c84cfd47753314c6f14f26d5538f9e482e6fc520173e42aeffa",
       "requires/python.txt": "4f753bdd539922ce6d87e00b3c099f7c18af8cf5d04139588668f957d7d3eddd",
       "skills/INDEX.md": "3ac62b06c23cfe9cc450c25e388df629bd1f493b6d00888f4ae0d467b219ddd0",
       "skills/coverage/delivered-collection.md": "30f47bbf2b70b82942d70bb36b70f23c50d19fe43fc4df33effb5f95ae88d949",
@@ -75,7 +75,7 @@
     },
     {
       "name": "velociraptor",
-      "why": "declared for operator preparation and as a candidate offline reader of its own containers (unverified, used by no skill: collection_manifest_parse reads a container's files itself); the harness never collects live"
+      "why": "declared for operator preparation only and used by no skill: the Velociraptor program is never run and is not in the analysis image; the pack reads Velociraptor collection containers and zips offline with its own adapters (velociraptor_container/2 in the record tools, collection_id for a container directory, and the collection-intake recipe for a zip); the harness never collects live"
     }
   ],
   "method_only": [
