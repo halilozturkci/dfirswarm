@@ -106,6 +106,7 @@ TOOLS = Path(os.environ.get("DFIRSWARM_TOOLS_DIR", "/opt/dfir/tools"))
 SRC = Path(os.environ.get("DFIRSWARM_SRC_DIR", "/opt/dfir/src"))
 BIN = Path(os.environ.get("DFIRSWARM_BIN_DIR", "/usr/local/bin"))
 APT_SOURCES = Path(os.environ.get("DFIRSWARM_APT_SOURCES_DIR", "/etc/apt/sources.list.d"))
+PI_DIR = Path(os.environ.get("DFIRSWARM_PI_DIR", "/opt/pi"))
 # apt's package lists, emptied once the install is done; a test that runs the
 # whole install on a host points this at its own directory.
 APT_LISTS = Path(os.environ.get("DFIRSWARM_APT_LISTS_DIR", "/var/lib/apt/lists"))
@@ -1048,12 +1049,23 @@ def source_venvs(record: dict) -> list:
 def npm_packages() -> list:
     """Every package under npm's global root, nested dependencies included:
     [name, version, licence]. Pi and what it pulls in live there."""
+    roots = []
     try:
         root = subprocess.run(["npm", "root", "-g"], capture_output=True, text=True, timeout=60).stdout.strip()
+        if root and os.path.isdir(root):
+            roots.append(root)
     except (OSError, subprocess.SubprocessError):
-        return []
-    if not root or not os.path.isdir(root):
-        return []
+        pass
+    # Pi is a project of its own (base.Dockerfile), not a global package.
+    if (PI_DIR / "node_modules").is_dir():
+        roots.append(str(PI_DIR / "node_modules"))
+    rows = set()
+    for root in roots:
+        rows |= _npm_rows(root)
+    return [list(r) for r in sorted(rows)]
+
+
+def _npm_rows(root: str) -> set:
     rows = set()
     top = Path(root)
 
@@ -1080,7 +1092,32 @@ def npm_packages() -> list:
         elif isinstance(lic, list):
             lic = " OR ".join(str(x.get("type", "")) if isinstance(x, dict) else str(x) for x in lic)
         rows.add((str(pj["name"]), str(pj["version"]), " ".join(str(lic).split()) or "licence not stated"))
-    return [list(r) for r in sorted(rows)]
+    return rows
+
+
+UNDICI_FLOOR = (8, 12, 2)
+
+
+def pi_undici_problems() -> list:
+    """Every undici under Pi's project that is older than UNDICI_FLOOR (8.12.2:
+    the release that fixes GHSA-xjj6-f33q-929c, GHSA-4qv8-2p9j-2685 and
+    GHSA-f72v-6w45-q472). Empty when Pi is not installed there."""
+    bad = []
+    top = PI_DIR / "node_modules"
+    if not top.is_dir():
+        return bad
+    for dirpath, dirs, files in os.walk(top):
+        dirs[:] = [d for d in dirs if d != ".bin"]
+        here = Path(dirpath)
+        if here.name == "undici" and "package.json" in files:
+            try:
+                version = str(json.loads((here / "package.json").read_text()).get("version", ""))
+            except (OSError, ValueError):
+                version = ""
+            m = re.match(r"(\d+)\.(\d+)\.(\d+)", version)
+            if not m or tuple(int(x) for x in m.groups()) < UNDICI_FLOOR:
+                bad.append(f"{here.relative_to(top)} is {version or 'of no version'}, older than {'.'.join(map(str, UNDICI_FLOOR))}")
+    return bad
 
 
 def dpkg_versions(names: list = ()) -> dict:
@@ -1393,6 +1430,10 @@ def base() -> int:
     holds, in the fields a profile image has, so a VM booted from the base
     diffs against a whole baseline. Whether the base may be redistributed is
     the Dockerfile's to say (REDISTRIBUTABLE, NONREDISTRIBUTABLE)."""
+    old = pi_undici_problems()
+    if old:
+        print("Pi's undici is older than 8.12.2: " + "; ".join(old), file=sys.stderr)
+        return 1
     npm = {name: version for name, version, _ in npm_packages()}
     held = [x for x in os.environ.get("NONREDISTRIBUTABLE", "").replace(",", " ").split() if x]
     try:

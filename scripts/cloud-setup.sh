@@ -95,6 +95,17 @@ phase_provision() {
   if command -v pi >/dev/null 2>&1; then
     log "pi $(pi --version 2>/dev/null | head -1) ok"
   else
+    # The version the repository pins (package.json's devDependency), unless
+    # PI_VERSION says another. This text is also pasted where no checkout is
+    # beside it, so the fallback names the same version; tests/image-pins.test.ts
+    # holds the two equal.
+    if [[ -z "${PI_VERSION:-}" ]]; then
+      PI_VERSION_FALLBACK="1.4.0"
+      _pj="$(dirname "${BASH_SOURCE[0]:-$0}")/../package.json"
+      [[ -f "$_pj" ]] || _pj="package.json"
+      PI_VERSION="$(sed -n 's/.*"@earendil-works\/pi-coding-agent": *"\([^"]*\)".*/\1/p' "$_pj" 2>/dev/null | head -1)"
+      PI_VERSION="${PI_VERSION:-$PI_VERSION_FALLBACK}"
+    fi
     log "installing pi (@earendil-works/pi-coding-agent${PI_VERSION:+@$PI_VERSION})"
     $SUDO npm install -g --ignore-scripts "@earendil-works/pi-coding-agent${PI_VERSION:+@$PI_VERSION}" \
       || warn "pi install failed"

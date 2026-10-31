@@ -47,7 +47,18 @@ RUN set -eu; d="$(tr -d '[:space:]' < /tmp/debian-snapshot)"; rm /tmp/debian-sna
     printf 'Acquire::Check-Valid-Until "false";\nAcquire::Retries "5";\n' > /etc/apt/apt.conf.d/99snapshot
 
 ARG PI_VERSION=1.4.0
-RUN npm install -g --no-audit --no-fund "@earendil-works/pi-coding-agent@${PI_VERSION}" \
+# Pi is installed as a project in /opt/pi, not globally, so that its undici can be
+# overridden: Pi's own release still pins undici 8.10.2, which has
+# GHSA-xjj6-f33q-929c, GHSA-4qv8-2p9j-2685 and GHSA-f72v-6w45-q472, and Pi talks
+# to the model endpoints through it. The override is the repository's own
+# (package.json), and install.py --base fails the build if any undici under Pi
+# is older than 8.12.2. `pi` is linked onto PATH. When Pi's release moves its
+# own pin past 8.12.2, drop the override.
+RUN mkdir -p /opt/pi \
+ && printf '{"name":"dfirswarm-pi","private":true,"dependencies":{"@earendil-works/pi-coding-agent":"%s"},"overrides":{"undici":"^8.12.2"}}\n' "${PI_VERSION}" > /opt/pi/package.json \
+ && cd /opt/pi \
+ && npm install --omit=dev --no-audit --no-fund \
+ && ln -s /opt/pi/node_modules/.bin/pi /usr/local/bin/pi \
  && npm cache clean --force
 
 # What every seat uses whatever the case: Python with venv for the pack

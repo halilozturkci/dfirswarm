@@ -123,3 +123,94 @@ test("the bump script, on a scratch copy, changes only the date; with --digests 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// --- Pi: one version, a fixed undici ---------------------------------------------------------------------
+
+const PACKAGE = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")) as { devDependencies: Record<string, string> };
+const PI_PINNED = PACKAGE.devDependencies["@earendil-works/pi-coding-agent"]!;
+
+test("ARG PI_VERSION in the Dockerfile and cloud-setup.sh's default equal package.json's Pi devDependency", () => {
+  assert.match(PI_PINNED, /^\d+\.\d+\.\d+$/, "package.json pins Pi exactly");
+  assert.equal(DOCKERFILE.match(/^ARG PI_VERSION=(\S+)$/m)?.[1], PI_PINNED);
+  const setup = readFileSync(join(ROOT, "scripts/cloud-setup.sh"), "utf8");
+  assert.equal(setup.match(/PI_VERSION_FALLBACK="([^"]+)"/)?.[1], PI_PINNED, "the fallback, used where no checkout is beside the script");
+  assert.match(setup, /pi-coding-agent": \*"/, "the default is read from package.json");
+});
+
+test("cloud-setup.sh takes Pi's version from package.json when PI_VERSION is unset, and PI_VERSION wins when set", () => {
+  const dir = mkdtempSync(join(tmpdir(), "image-pins-"));
+  try {
+    // Run only the version step: the script's provision phase installs things, so the block is extracted and run alone.
+    const setup = readFileSync(join(ROOT, "scripts/cloud-setup.sh"), "utf8");
+    const start = setup.indexOf('    if [[ -z "${PI_VERSION:-}" ]]; then');
+    const end = setup.indexOf("    fi\n", setup.indexOf('PI_VERSION="${PI_VERSION:-$PI_VERSION_FALLBACK}"')) + "    fi\n".length;
+    assert.ok(start > 0 && end > start, "the version step is in cloud-setup.sh");
+    mkdirSync(join(dir, "scripts"));
+    writeFileSync(join(dir, "package.json"), '{"devDependencies": {"@earendil-works/pi-coding-agent": "9.8.7"}}\n');
+    writeFileSync(join(dir, "scripts/step.sh"), `#!/usr/bin/env bash\n${setup.slice(start, end)}\necho "$PI_VERSION"\n`);
+    const run = (env: Record<string, string>) => execFileSync("bash", [join(dir, "scripts/step.sh")], { encoding: "utf8", cwd: dir, env: { PATH: process.env.PATH!, ...env } }).trim();
+    assert.equal(run({}), "9.8.7");
+    assert.equal(run({ PI_VERSION: "1.2.3" }), "1.2.3");
+    rmSync(join(dir, "package.json"));
+    assert.equal(run({}), PI_PINNED, "without a package.json, the fallback");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the Dockerfile installs Pi as a project with the undici override, and links pi onto PATH", () => {
+  assert.match(DOCKERFILE, /"overrides":\{"undici":"\^8\.12\.2"\}/);
+  assert.match(DOCKERFILE, /ln -s \/opt\/pi\/node_modules\/\.bin\/pi \/usr\/local\/bin\/pi/);
+  assert.doesNotMatch(DOCKERFILE.split("\n").filter((l) => !l.trim().startsWith("#")).join("\n"), /npm install -g[^\n]*pi-coding-agent/);
+});
+
+function undiciProblems(piDir: string): string[] {
+  const code = `
+import importlib.util, json, os, sys
+os.environ["DFIRSWARM_PI_DIR"] = sys.argv[1]
+spec = importlib.util.spec_from_file_location("install", sys.argv[2])
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+print(json.dumps(m.pi_undici_problems()))
+`;
+  return JSON.parse(execFileSync(PY, ["-I", "-c", code, piDir, join(ROOT, "images/install.py")], { encoding: "utf8" })) as string[];
+}
+
+test("the build's undici check fails a nested undici older than 8.12.2 and passes 8.12.2 and later", () => {
+  const dir = mkdtempSync(join(tmpdir(), "image-pins-"));
+  try {
+    const put = (rel: string, version: string) => {
+      mkdirSync(join(dir, "node_modules", rel), { recursive: true });
+      writeFileSync(join(dir, "node_modules", rel, "package.json"), JSON.stringify({ name: "undici", version }));
+    };
+    assert.deepEqual(undiciProblems(dir), [], "nothing installed, nothing to check");
+    put("undici", "8.12.2");
+    put("@scope/pkg/node_modules/undici", "8.13.0");
+    assert.deepEqual(undiciProblems(dir), []);
+    put("@scope/other/node_modules/undici", "8.10.2");
+    const bad = undiciProblems(dir);
+    assert.equal(bad.length, 1);
+    assert.match(bad[0]!, /8\.10\.2/);
+    put("@scope/old/node_modules/undici", "7.99.0");
+    assert.equal(undiciProblems(dir).length, 2);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("each BASE_PROGRAMS entry is a package of the Dockerfile's apt list (through a small map where the names differ), or Python or Node", () => {
+  const recipe = readFileSync(join(ROOT, "images/recipe.py"), "utf8");
+  const programs = [...(recipe.match(/BASE_PROGRAMS = \{([^}]*)\}/)?.[1] ?? "").matchAll(/"([^"]+)"/g)].map((m) => m[1]!);
+  assert.ok(programs.length >= 15, `read ${programs.length} programs`);
+  // The final stage's apt install block.
+  const from = DOCKERFILE.lastIndexOf("apt-get install");
+  const block = DOCKERFILE.slice(from, DOCKERFILE.indexOf("rm -rf /var/lib/apt/lists", from));
+  const packages = new Set(block.split(/\s+/).filter((w) => /^[a-z0-9][a-z0-9.+-]+$/.test(w)));
+  // Where the program's name is not its package's.
+  const packageOf: Record<string, string> = { strings: "binutils", hexdump: "bsdextrautils", "7z": "p7zip-full", rg: "ripgrep", exiftool: "libimage-exiftool-perl", xz: "xz-utils" };
+  for (const program of programs) {
+    if (program === "node") continue; // the base image's own
+    const pkg = packageOf[program] ?? program;
+    assert.ok(packages.has(pkg), `${program} -> ${pkg} is not in the Dockerfile's apt list`);
+  }
+  for (const [program, pkg] of Object.entries(packageOf)) assert.ok(packages.has(pkg), `${program}'s package ${pkg} is in the apt list`);
+});

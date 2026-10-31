@@ -197,4 +197,43 @@ if [ -x "$CCL_PY" ]; then
 else
   absent ccl_indexeddb_dump
 fi
+
+# Pi (the agent runtime, /opt/pi) must not carry an undici older than 8.12.2:
+# its own release pins 8.10.2, which has GHSA-xjj6-f33q-929c, GHSA-4qv8-2p9j-2685
+# and GHSA-f72v-6w45-q472, so base.Dockerfile overrides it.
+PI_DIR="${DFIRSWARM_PI_DIR:-/opt/pi}"
+if [ -d "$PI_DIR/node_modules" ] && command -v node >/dev/null 2>&1; then
+  old="$(node - "$PI_DIR/node_modules" <<'JS'
+const fs = require("fs"), path = require("path");
+const floor = [8, 12, 2], bad = [];
+let found = 0;
+function walk(dir) {
+  let entries = [];
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+  for (const e of entries) {
+    if (!e.isDirectory() || e.name === ".bin") continue;
+    const full = path.join(dir, e.name);
+    if (e.name === "undici" && fs.existsSync(path.join(full, "package.json"))) {
+      found++;
+      let v = "";
+      try { v = String(JSON.parse(fs.readFileSync(path.join(full, "package.json"), "utf8")).version || ""); } catch {}
+      const m = /^(\d+)\.(\d+)\.(\d+)/.exec(v);
+      const n = m ? [+m[1], +m[2], +m[3]] : null;
+      const older = !n || n[0] < floor[0] || (n[0] === floor[0] && (n[1] < floor[1] || (n[1] === floor[1] && n[2] < floor[2])));
+      if (older) bad.push(path.relative(process.argv[2], full) + " " + (v || "(no version)"));
+    }
+    walk(full);
+  }
+}
+walk(process.argv[2]);
+process.stdout.write(bad.join("\n"));
+process.exit(bad.length ? 1 : 0);
+JS
+)" && ok "every undici under Pi is 8.12.2 or later" \
+    || no "Pi carries an undici older than 8.12.2 (GHSA-xjj6-f33q-929c, GHSA-4qv8-2p9j-2685, GHSA-f72v-6w45-q472): $old"
+elif [ -d "$PI_DIR/node_modules" ]; then
+  no "Pi is installed in $PI_DIR and node is not there to check its undici"
+else
+  skip "Pi is not installed in $PI_DIR in this image"
+fi
 exit $failed
