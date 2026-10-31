@@ -502,3 +502,24 @@ table there and supply it to the run) and capa's rules (`capa --rules` with a
 directory you carried across). A rebuild on a machine with no route out takes
 the Foundation's bundle from `DFIRSWARM_DATA_DIR`. A model the run calls has to be reachable too, or local
 (`--local-only`).
+
+## The apt snapshot and the base image digests
+
+Every apt install, in the base image and in every profile built on it, resolves
+from `snapshot.debian.org` at one date, held in `images/debian-snapshot` (the
+`ARG APT_SNAPSHOT=` line of `images/base.Dockerfile` repeats it, and the build
+refuses a mismatch). `bookworm` and `bookworm-updates` come from
+`archive/debian/<date>/`, `bookworm-security` from `archive/debian-security/<date>/`;
+`Acquire::Check-Valid-Until "false"` is set, since a snapshot's `Release` files
+expire, and apt retries five times. A backports line (`-t bookworm-backports`)
+takes the snapshot's backports at the same date. The record names the date
+(`apt_snapshot` in `/etc/dfirswarm/image.json`) and the image carries it as the
+label `dev.dfirswarm.apt-snapshot`. The apt lines of the packs are not edited:
+the snapshot pins them.
+
+Both `FROM` lines carry the multi-arch index digest, with the tag kept beside it.
+The date moves on purpose: `.github/workflows/apt-snapshot.yml` opens a pull
+request monthly (`scripts/apt-snapshot-bump.sh`), then starts `ci.yml` and
+`images.yml` on its branch. The digests move through Dependabot's docker
+ecosystem, or by hand: `scripts/apt-snapshot-bump.sh --digests` (it reads the
+manifests with `docker buildx imagetools inspect`, no layers).

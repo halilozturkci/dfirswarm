@@ -929,7 +929,11 @@ def enable_release(release: str) -> str | None:
     # The image's own mirror (debian.sources), not the security one.
     uris = [line.split()[1] for f in sorted(APT_SOURCES.glob("*.sources")) for line in f.read_text().splitlines()
             if line.startswith("URIs:") and len(line.split()) > 1]
-    mirror = next((u for u in uris if not u.rstrip("/").endswith("-security")), "http://deb.debian.org/debian")
+    # (On a snapshot image the security URI is .../debian-security/<date>/, so the
+    # test is on the archive name, not on how the address ends.) A backports suite
+    # then comes from the snapshot at the image's own date.
+    mirror = next((u for u in uris if "debian-security" not in u and not u.rstrip("/").endswith("-security")),
+                  "http://deb.debian.org/debian")
     APT_SOURCES.mkdir(parents=True, exist_ok=True)
     (APT_SOURCES / f"dfirswarm-{release}.sources").write_text(
         f"Types: deb\nURIs: {mirror}\nSuites: {release}\nComponents: main\n"
@@ -1274,10 +1278,25 @@ def on_path(path: str = IMAGE_PATH) -> list:
     return found
 
 
+def apt_snapshot() -> str | None:
+    """The snapshot.debian.org date this image's apt sources name
+    (images/debian-snapshot, written by base.Dockerfile), or None."""
+    try:
+        for f in sorted(APT_SOURCES.glob("*.sources")):
+            for line in f.read_text().splitlines():
+                m = re.match(r"URIs:\s*https?://snapshot\.debian\.org/archive/debian/(\d{8}T\d{6}Z)/?\s*$", line)
+                if m:
+                    return m.group(1)
+    except OSError:
+        pass
+    return None
+
+
 def write_record(record: dict, head: str, spec: dict | None = None) -> None:
     """image.json with the whole package inventory, every program on PATH,
     the NOTICE, the SBOM, and tools.md, the list an agent reads."""
     record["arch"] = arch()
+    record["apt_snapshot"] = apt_snapshot()
     record["dpkg_all"] = dpkg_versions()
     record["pip"] = pip_versions()
     record["on_path"] = on_path()

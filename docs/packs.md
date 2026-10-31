@@ -874,6 +874,10 @@ Every tool a pack bundles holds to this.
    with its version; a download with its sha256. The licence label is read from
    the package's own metadata, not remembered. Each entry says whether it is
    redistributable, and whether it is available for arm64, amd64 or both.
+   An `apt` line is pinned by the image's snapshot date, not by a version in
+   the line: every image installs from snapshot.debian.org at the date in
+   `images/debian-snapshot`, and the base images are pinned to their digests
+   (`images/README.md`, "The apt snapshot and the base image digests").
 2. **A program a skill tells the agent to run is in the pack's `requires`, or
    in a dependency's.** A program or Python package in `requires` that no skill
    names needs either a skill that names it, or a reason in `pack.json`:

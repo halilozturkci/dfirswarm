@@ -16,14 +16,35 @@
 # seekfix (images/seekfix.c): SEEK_DATA and SEEK_HOLE on a virtiofs mount as
 # Linux means them. msb on a macOS host swaps the two, and GNU grep then calls
 # every mounted text file past its first buffer "binary".
-FROM debian:bookworm-slim AS seekfix
+#
+# Every apt install, here and in every profile image built on this one, comes
+# from snapshot.debian.org at one date, the one in images/debian-snapshot (the
+# ARG below repeats it; the build refuses a mismatch, and
+# scripts/apt-snapshot-bump.sh moves both). The base images are pinned to
+# their digests, the tag kept beside each for the reader. Both move on
+# purpose: the date by a monthly pull request (.github/workflows/apt-snapshot.yml),
+# the digests by scripts/apt-snapshot-bump.sh --digests.
+ARG APT_SNAPSHOT=20261030T000000Z
+FROM debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3 AS seekfix
+ARG APT_SNAPSHOT
+COPY debian-snapshot /tmp/debian-snapshot
+RUN set -eu; d="$(tr -d '[:space:]' < /tmp/debian-snapshot)"; rm /tmp/debian-snapshot; \
+    [ "$d" = "$APT_SNAPSHOT" ] || { echo "images/debian-snapshot ($d) and the ARG ($APT_SNAPSHOT) differ" >&2; exit 1; }; \
+    printf 'Types: deb\nURIs: http://snapshot.debian.org/archive/debian/%s/\nSuites: bookworm bookworm-updates\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n\nTypes: deb\nURIs: http://snapshot.debian.org/archive/debian-security/%s/\nSuites: bookworm-security\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n' "$d" "$d" > /etc/apt/sources.list.d/debian.sources; \
+    printf 'Acquire::Check-Valid-Until "false";\nAcquire::Retries "5";\n' > /etc/apt/apt.conf.d/99snapshot
 RUN apt-get update \
  && apt-get install -y --no-install-recommends gcc libc6-dev \
  && rm -rf /var/lib/apt/lists/*
 COPY seekfix.c /src/seekfix.c
 RUN gcc -O2 -Wall -Wextra -Werror -shared -fPIC -o /seekfix.so /src/seekfix.c -ldl
 
-FROM node:24-bookworm-slim
+FROM node:24-bookworm-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c
+ARG APT_SNAPSHOT
+COPY debian-snapshot /tmp/debian-snapshot
+RUN set -eu; d="$(tr -d '[:space:]' < /tmp/debian-snapshot)"; rm /tmp/debian-snapshot; \
+    [ "$d" = "$APT_SNAPSHOT" ] || { echo "images/debian-snapshot ($d) and the ARG ($APT_SNAPSHOT) differ" >&2; exit 1; }; \
+    printf 'Types: deb\nURIs: http://snapshot.debian.org/archive/debian/%s/\nSuites: bookworm bookworm-updates\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n\nTypes: deb\nURIs: http://snapshot.debian.org/archive/debian-security/%s/\nSuites: bookworm-security\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n' "$d" "$d" > /etc/apt/sources.list.d/debian.sources; \
+    printf 'Acquire::Check-Valid-Until "false";\nAcquire::Retries "5";\n' > /etc/apt/apt.conf.d/99snapshot
 
 ARG PI_VERSION=1.4.0
 RUN npm install -g --no-audit --no-fund "@earendil-works/pi-coding-agent@${PI_VERSION}" \
@@ -78,4 +99,5 @@ LABEL org.opencontainers.image.title="dfirswarm-base" \
       org.opencontainers.image.source="https://github.com/halilozturkci/dfirswarm" \
       dev.dfirswarm.profile="base" \
       dev.dfirswarm.pi-version="${PI_VERSION}" \
+      dev.dfirswarm.apt-snapshot="${APT_SNAPSHOT}" \
       dev.dfirswarm.redistributable="${REDISTRIBUTABLE}"
