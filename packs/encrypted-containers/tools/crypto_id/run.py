@@ -959,8 +959,9 @@ def identify(head, sample):
         return {"scheme": "no signature, high entropy, header zeroed", "entropy": value,
                 "basis": "no signature in the first bytes; Shannon entropy %.3f bits per byte over the sample" % value,
                 "candidates": leads,
-                "next_reader": "none: no reader for VeraCrypt or TrueCrypt is provided. The exhibit list, the "
-                               "container's provenance and configuration traces are the corroboration",
+                "next_reader": "once the case supplies a candidate password (and, if any, keyfiles): tcrypt_header, "
+                               "over cryptsetup's tcrypt mode. Until then, the exhibit list, the container's "
+                               "provenance and configuration traces are the corroboration",
                 "not_determined": ["whether the data is encrypted", "which scheme, if so"]}
     if value >= 7.9:
         return {"scheme": "no signature, high entropy", "entropy": value,

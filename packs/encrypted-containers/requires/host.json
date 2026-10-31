@@ -38,7 +38,7 @@
       "name": "cryptsetup",
       "package": "cryptsetup",
       "optional": true,
-      "why": "Read a LUKS header (luksDump: version, UUID, data offset, cipher, keyslots) and, where a key is supplied, open the volume. Reading metadata and opening through the device mapper are different runtime capabilities; opening needs facilities a worker may not have. No macOS install route is declared.",
+      "why": "Read a LUKS header (luksDump: version, UUID, data offset, cipher, keyslots) and, where a key is supplied, open the volume; and, in its tcrypt mode (tcryptDump), read a VeraCrypt or TrueCrypt header for a password the case supplies, through tcrypt_header. Reading metadata and opening through the device mapper are different runtime capabilities; opening needs facilities a worker may not have. No macOS install route is declared.",
       "install": {
         "apt": "apt-get install -y cryptsetup-bin"
       },

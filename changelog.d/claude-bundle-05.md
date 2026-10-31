@@ -20,3 +20,17 @@ authority, basis, scope, approved method, stopping condition) and is the
 pack's one place that names `password_recover` and john; john, which was
 listed in `unreferenced_ok` with no skill using it, is now referenced by this
 leaf and leaves that list.
+
+### Added: encrypted-containers reads a VeraCrypt/TrueCrypt header over cryptsetup's tcrypt mode
+
+A new tool, `tcrypt_header`, reads a password from a sealed file and gives it
+to `cryptsetup tcryptDump` on that program's own stdin (never on argv, in the
+environment, or in a file it writes); when a header decrypts, the answer
+carries only its non-secret fields (cipher chain and mode, PBKDF, key size,
+sizes and offsets), never the volume key or a salt, and a header that does
+not decrypt is reported without claiming the volume is not VeraCrypt or
+TrueCrypt. `crypto_id` and `identify/by-format` now name it as the next
+reader for a VeraCrypt or TrueCrypt lead, once the case supplies a candidate
+password. PIM is refused for this version, named: whether it may go on
+cryptsetup's own command line needs a decision this change does not have a
+reviewer for.
