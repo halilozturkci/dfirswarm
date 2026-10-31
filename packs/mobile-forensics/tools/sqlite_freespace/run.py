@@ -86,7 +86,7 @@ try:  # Python 3.11 and later; the module was sre_parse before
 except ImportError:  # pragma: no cover
     import sre_constants, sre_parse
 
-PARSER = "sqlite_freespace/3"
+PARSER = "sqlite_freespace/4"
 TOOL = "sqlite_freespace"
 VALUES_NAME = "sqlite-freespace-values.jsonl"
 VALUES_FORMAT = ("JSON Lines, mode 0600, one row for every fragment found: finding_id, file (the real path), page, where, encoding, "
@@ -967,8 +967,9 @@ def schema_root(page, at, usable):
     return int.from_bytes(page[body:body + width(kind)], "big", signed=True)
 
 
-# Problems that say the file's structure disagrees with itself. Any of them makes the status `corrupt`
-# (the fragments found are still reported); a limit or a page or file not examined makes it `partial`.
+# Problems that say the file's structure disagrees with itself. Any of them makes the status `partial` and puts the reason in
+# status_basis (the fragments found are still reported, and the contract has no fourth value: docs/packs.md, complete | partial | failed);
+# a limit or a page or file not examined makes it `partial` too.
 CORRUPT_KINDS = {
     "file shorter than its header says", "partial last page", "freelist cycle", "freelist page outside the file",
     "freelist trunk page truncated", "freelist trunk count too large", "freelist page listed twice",
@@ -1508,9 +1509,10 @@ def main():
     paging = {"fragments": fragments.finish(), "problems": problems.page.finish()}
     corrupt = any(kind in CORRUPT_KINDS for kind in problems.kinds)
     complete = problems.unexamined == 0 and stopped_at is None
-    status = "corrupt" if corrupt else ("complete" if complete else "partial")
+    status = "complete" if complete and not corrupt else "partial"
     if corrupt:
-        status_basis = "the file's structure disagreed with itself where problems says; the fragments found are still reported"
+        status_basis = ("partial because the file's structure disagreed with itself where problems says (%s); the fragments found are still "
+                        "reported, and text beyond a damaged chain or page was not reached" % ", ".join(sorted(kind for kind in problems.kinds if kind in CORRUPT_KINDS)))
     elif complete:
         status_basis = ("every page was accounted for (b-tree and free pages were read; the others are overflow pages that a cell names, pointer-map "
                         "pages or the lock-byte page), nothing in the structure was inconsistent and no companion was left unread")
@@ -1526,6 +1528,7 @@ def main():
         "parser": PARSER,
         "status": status,
         "status_basis": status_basis,
+        "corrupt": corrupt,       # True when the structure disagreed with itself where problems says (the status is partial then)
         "database": {
             "page_size": page_size, "usable_size": usable, "reserved_bytes": h["reserved_bytes"],
             "bytes": file_bytes, "pages_in_file": in_file, "pages_declared": h["pages_declared"],
@@ -1573,15 +1576,15 @@ def main():
                 "of bounded cost (no unbounded repeat, no nested repeat, no lookaround, no back reference, at most 256 steps): how long "
                 "it runs on text you cannot see should not tell you about the text; the bound keeps what remains small, and does not make it zero: the "
                 "duration of the job still follows how much of the hidden text is of a class the expression matches (1.4 s of CPU against 0.16 s on "
-                "1.3 MB of digits against letters for one expression, and more at larger volumes, up to the time the work budget takes, about 7 s of CPU), "
+                "1.3 MB of digits against letters for one expression, and more at larger volumes, up to the time the work budget takes, about 7 s of CPU and 10.5 s on a loaded machine), "
                 "and the page, the sizes and the status do not. The expression is given a work budget (a step is a character of a fragment times the "
                 "expression's cost bound, and " + str(FRAGMENT_STEPS) + " for every fragment it is called on, all visible here), and the clock of max_seconds does "
                 "not run while it runs, for " + str(EXPRESSION_ALLOWANCE) + " seconds at most in all; a fragment over the budget is marked 2 "
                 "and counted under contains_not_decided, and the status is partial: the same for any text of these sizes. Status is complete (every page accounted for: "
                 "b-tree and free pages read, the rest overflow pages that a cell names, nothing inconsistent, no companion left unread), "
-                "partial (a limit, a companion not read, or pages or regions not examined) or corrupt (the file's "
-                "structure disagreed with itself where problems says; the fragments found are still reported, and "
-                "a corrupt chain means text beyond it was not reached). A fragment is a candidate to corroborate, "
+                "partial (a limit, a companion not read, pages or regions not examined, or the file's structure disagreeing "
+                "with itself where problems says and status_basis names; the fragments found are still reported, and "
+                "a damaged chain means text beyond it was not reached; there is no other value). A fragment is a candidate to corroborate, "
                 "never a message.",
     })
 

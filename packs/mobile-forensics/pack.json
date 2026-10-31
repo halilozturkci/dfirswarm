@@ -1,7 +1,7 @@
 {
   "id": "mobile-forensics",
   "name": "Mobile Forensics Pack",
-  "version": "1.5.7",
+  "version": "1.5.8",
   "description": "Method and tooling for a phone: what kind of extraction you were handed and what it cannot contain, iOS backups and their manifest, Android package and user data, the app databases that carry messages and location, protobuf blobs, and what deleted means inside SQLite.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -20,9 +20,9 @@
     "sha256": {
       "LICENCE": "5b94f18424dbef1e77eda33a465e946c2c8eb715fa5236afe2c6ec6763af80d3",
       "NOTICE": "f7eaab3fffac84c598325af3dd05679ef50f5b6371b72ff8561cc8aea306bb3b",
-      "README.md": "12b375783ffe0f177697e4c859cd72a6ccea9417be2879ba1d2edbb736507732",
-      "tools/sqlite_freespace/manifest.json": "1bbae1ead753884c02db58075318198cd87c46c00a7d848704be6bb0745d5562",
-      "tools/sqlite_freespace/run.py": "33be6e699b2c29e20b8d229d16ca6b514fbbe4e76c136df7a4afa709f21d65bc",
+      "README.md": "d13f23cd64730a2574a2390224682dac89403499367d923fcea642f76c27f20c",
+      "tools/sqlite_freespace/manifest.json": "4b89f4100d997674945e39c64e4ca37b6ca829bb3a0dd6ba30e52bbf4da70686",
+      "tools/sqlite_freespace/run.py": "7b17767d134f2900dc893cb302b7e66300cd040ad64d3e17c0b7219f061b71b7",
       "tools/manifest_db/manifest.json": "e10fae9d499a1ffd9df0ddc95eff615955c3fc28045bfff893ebf15908d2b063",
       "tools/manifest_db/run.py": "36221534e1e0db8e5b14b3f236cb1c29a7e44a5580ab634520128f7f679048d6",
       "tools/protobuf_peek/manifest.json": "cafb5981659c859483567550395ec29470a8f8882f3484d86706096226adb91e",
@@ -50,7 +50,7 @@
       "skills/extractions/backup-detail.md": "3507bb8792d9ed40e5856a9845a3571d8b54808c56ae2c7fe5913422bf12e355",
       "skills/extractions/what-you-have.md": "1edd43ec1418494f46df0f537755e0260ca112cdea159c0391962988a6af8b36",
       "skills/apps/databases.md": "e1e3ee4349e70a4d2063218bd894fffb5e7d239334fe499ae92d4d9dbd6ede72",
-      "skills/apps/fragments.md": "826ed37a56083c8eb308f5b133a212ae0d408f1fe5cba892dc215e33179b0d3d",
+      "skills/apps/fragments.md": "0c0cacc603fe922f4c73158505a20e215c86d5548b6a2387486d25ca2f36ddd8",
       "requires/host.json": "194e671abd3e7f0f6c53ec264bf4c53e7bdd3d12dab1b2711db620e580492032",
       "requires/python.txt": "3816ab554bef3ef99c10c0fa5b0e07c2f4425eb238a4c04d430f43b5162bdad7",
       "skills/INDEX.md": "ea8f8b2cc9ac368892ca62049d96da0f05f69f4062561aba519f4e20234c3912"

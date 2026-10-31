@@ -349,7 +349,7 @@ test("sqlite_freespace keeps a freeblock chain that loops from being read again 
     file.writeUInt16BE(spec.block, spec.base + spec.block);
     await writeFile(db, file);
     const { answer, values } = await freespace(cwd, db);
-    assert.equal(answer.status, "corrupt");
+    assert.equal(answer.status, "partial");
     assert.ok(answer.problem_kinds["freeblock chain corrupt"] >= 1, JSON.stringify(answer.problem_kinds));
     assert.equal(values.filter((v) => v.value.includes(marker)).length, 1, "the looping block is read once");
     assert.ok(answer.problems.some((p) => /points back|loop/.test(p.detail)));
@@ -381,7 +381,7 @@ test("sqlite_freespace walks the freelist once, compares it with the header and 
     const bad = join(cwd, "work", "cycle.db");
     await writeFile(bad, cyclic);
     const cycle = await freespace(cwd, bad, { min_length: 20 }, "out-cycle");
-    assert.equal(cycle.answer.status, "corrupt");
+    assert.equal(cycle.answer.status, "partial");
     assert.ok(cycle.answer.problem_kinds["freelist cycle"] >= 1, JSON.stringify(cycle.answer.problem_kinds));
     // The header says one more free page than the chain holds.
     const counted = Buffer.from(file);
@@ -389,7 +389,7 @@ test("sqlite_freespace walks the freelist once, compares it with the header and 
     const wrong = join(cwd, "work", "count.db");
     await writeFile(wrong, counted);
     const count = await freespace(cwd, wrong, { min_length: 20 }, "out-count");
-    assert.equal(count.answer.status, "corrupt");
+    assert.equal(count.answer.status, "partial");
     assert.ok(count.answer.problem_kinds["freelist count differs from the header"] >= 1);
   });
 });
@@ -419,7 +419,7 @@ test("sqlite_freespace validates the header: a short file, a bad page size and a
     const file = await readFile(db);
     await writeFile(db, file.subarray(0, file.length - 100));
     const { answer } = await freespace(cwd, db);
-    assert.equal(answer.status, "corrupt");
+    assert.equal(answer.status, "partial");
     assert.ok(answer.problem_kinds["partial last page"] >= 1, JSON.stringify(answer.problem_kinds));
     assert.ok(answer.scanned.pages_partial >= 1);
   });
@@ -2883,7 +2883,7 @@ test("sqlite_freespace is not complete when the header's freelist fields are zer
       await writeFile(zeroed, bytes);
       const hidden = await freespace(cwd, zeroed, { min_length: 12 }, `${name}-zeroed`);
       assert.notEqual(hidden.answer.status, "complete", `${name}: ${hidden.answer.status_basis}`);
-      assert.equal(hidden.answer.status, "corrupt");
+      assert.equal(hidden.answer.status, "partial");
       assert.ok((hidden.answer.problem_kinds["pages in no structure"] ?? 0) >= 1, JSON.stringify(hidden.answer.problem_kinds));
       assert.ok(hidden.answer.scanned.pages_in_no_structure > 0);
       assert.doesNotMatch(hidden.answer.status_basis ?? "", /every page was/);
@@ -2892,7 +2892,7 @@ test("sqlite_freespace is not complete when the header's freelist fields are zer
       const countOnly = await readFile(db);
       countOnly.fill(0, 36, 40);
       await writeFile(join(cwd, "work", `${name}-count.db`), countOnly);
-      assert.equal((await freespace(cwd, join(cwd, "work", `${name}-count.db`), { min_length: 12 }, `${name}-count`)).answer.status, "corrupt");
+      assert.equal((await freespace(cwd, join(cwd, "work", `${name}-count.db`), { min_length: 12 }, `${name}-count`)).answer.status, "partial");
     }
   });
 });
@@ -3202,7 +3202,7 @@ test("sqlite_freespace keeps no pointer per child of an interior page, and stops
     await build(INTERIOR_DB, big, "400", "600", "4096");
     const run = await measured(FREESPACE, cwd, { db: big, limit: 1 });
     const answer = body<Free>(run.run);
-    assert.equal(answer.status, "corrupt");
+    assert.equal(answer.status, "partial");
     assert.ok(answer.problems.some((p) => p.kind === "b-tree links inconsistent" && /more child pointers than the file has pages \(400\)/.test(p.detail)), JSON.stringify(answer.problems.map((p) => p.detail)));
     assert.ok(run.traced - base.traced < 2 * 1024 * 1024, `${run.traced - base.traced} bytes more allocated than for a tiny database, for 400 interior pages of 600 cells`);
   });
@@ -3286,7 +3286,7 @@ test("sqlite_freespace reads a page at a pointer-map position that holds no poin
     bytes.writeUInt32BE(1, 52);
     await writeFile(join(cwd, "work", "ptrmap-forged.db"), bytes);
     const forged = await freespace(cwd, join(cwd, "work", "ptrmap-forged.db"), { min_length: 12 }, "pm-forged");
-    assert.equal(forged.answer.status, "corrupt", forged.answer.status_basis);
+    assert.equal(forged.answer.status, "partial", forged.answer.status_basis);
     assert.ok((forged.answer.problem_kinds["pointer-map page not a pointer map"] ?? 0) >= 1, JSON.stringify(forged.answer.problem_kinds));
     assert.equal(marked(forged.rows), marked(intact.rows), "the page is read");
   });
@@ -3401,4 +3401,67 @@ test("every tool of the pack names the version of its manifest in PARSER, which 
     assert.ok(manifestJson.version >= 3, `: the behaviour of #213 and later is version 3 or above`);
     assert.equal(Number(match[2]), manifestJson.version, `${name}: PARSER says ${match[1]}/${match[2]}, the manifest says version ${manifestJson.version}`);
   }
+});
+
+// --- sqlite_freespace: no fourth status word, one figure for the hidden-class time, the disk use stated ---
+
+test("sqlite_freespace answers only complete, partial or failed: a file whose structure disagrees with itself is partial, with the reason in status_basis and problems", async () => {
+  // The contract (docs/packs.md) has three values; the tool also said `corrupt`. A consumer that reads three words took the fourth for neither.
+  await withCwd(async (cwd) => {
+    const marker = "DAMAGED-CHAIN";
+    const db = join(cwd, "work", "damaged.db");
+    await build(FREEBLOCK_DB, db, marker, "utf-8");
+    const file = await readFile(db);
+    const spec = freeblocks(file).find((b) => file.indexOf(Buffer.from(marker)) >= b.base + b.block && file.indexOf(Buffer.from(marker)) < b.base + b.block + b.size);
+    assert.ok(spec);
+    file.writeUInt16BE(spec.block, spec.base + spec.block);
+    await writeFile(db, file);
+    const damaged = (await freespace(cwd, db, {}, "damaged")).answer as Free & { corrupt: boolean };
+    assert.equal(damaged.status, "partial");
+    assert.equal(damaged.corrupt, true);
+    assert.match(damaged.status_basis ?? "", /^partial because the file's structure disagreed with itself where problems says \(.*freeblock chain corrupt.*\)/);
+    assert.ok(damaged.problem_kinds["freeblock chain corrupt"] >= 1);
+    // A header that cannot be believed, a cut file and a damaged page: every status word is one of the three, and a refusal is not an answer.
+    const truncated = join(cwd, "work", "truncated.db");
+    await writeFile(truncated, (await readFile(db)).subarray(0, 4096 + 100));
+    const cut = await tool(FREESPACE, cwd, { db: truncated });
+    const cutAnswer = JSON.parse(cut.stdout) as { status?: string };
+    assert.ok(cutAnswer.status === undefined || ["complete", "partial", "failed"].includes(cutAnswer.status), cut.stdout.slice(0, 200));
+    const intact = join(cwd, "work", "intact.db");
+    await build(FREEBLOCK_DB, intact, marker, "utf-8");
+    const clean = (await freespace(cwd, intact, {}, "clean")).answer as Free & { corrupt: boolean };
+    assert.ok(["complete", "partial"].includes(clean.status), clean.status);
+    assert.equal(clean.corrupt, false);
+    // The words the tool's texts use for its status: no `corrupt` as a status in the manifest, the README or the skill.
+    for (const text of [await readFile(join(TOOLS, "sqlite_freespace", "manifest.json"), "utf8"), await readFile(join(PACK, "README.md"), "utf8"), await readFile(join(PACK, "skills", "apps", "fragments.md"), "utf8")]) {
+      assert.doesNotMatch(text, /(status is|makes the status|or) `?corrupt\b/);
+    }
+  });
+});
+
+test("sqlite_freespace gives one figure for the time a hidden class can reveal, in its code, its answer, its manifest and the README, and states its disk use", async () => {
+  const figure = "about 7 s of CPU";
+  const loaded = "10.5 s on a loaded";
+  const code = await readFile(FREESPACE, "utf8");
+  const manifestText = await readFile(join(TOOLS, "sqlite_freespace", "manifest.json"), "utf8");
+  const readme = (await readFile(join(PACK, "README.md"), "utf8")).replace(/\s+/g, " ");
+  assert.ok(code.includes(figure) && code.includes(loaded), "the code comment");
+  // The answer's note is a string in the source built from pieces; the pieces are in order.
+  assert.match(code.replace(/"\s*\n\s*"/g, ""), /up to the time the work budget takes, about 7 s of CPU and 10\.5 s on a loaded machine\)/, "the answer's note");
+  assert.match(manifestText, /about 7 s of CPU, 10\.5 s measured on a loaded machine/, "the manifest");
+  assert.match(readme, /up to about 7 s of CPU \(10\.5 s on a loaded machine\)/, "the README");
+  assert.doesNotMatch(readme, /expression matches, up to about 7 s\. /);
+  // The residual of the wall-clock fragment limit and the disk use are stated, and the stated size is the size.
+  assert.match(manifestText, /that limit is wall-clock time, so a starved CPU turns more fragments into 2; the status is then partial, never a wrong complete/);
+  assert.match(manifestText, /DISK USE: nothing is cut[^"]*about 240 bytes of paging file per fragment/);
+  await withCwd(async (cwd) => {
+    const db = join(cwd, "work", "disk.db");
+    await build(SHORT_FRAGMENTS_DB, db, "2");          // 2,048 fragments of three characters
+    const { answer, out } = await freespace(cwd, db, { min_length: 3 }, "disk");
+    assert.equal(answer.fragment_count, 2048);
+    let paging = 0;
+    for (const f of await readdir(join(out, "tool-output"))) paging += (await stat(join(out, "tool-output", f))).size;
+    const perFragment = paging / 2048;
+    assert.ok(perFragment > 190 && perFragment < 290, `${perFragment} bytes of paging file per fragment: the manifest says about 240`);
+  });
 });
