@@ -262,7 +262,7 @@ out = record(40, 1, True, [
 open(sys.argv[1], "wb").write(out)
 EOF
 
-got="$(echo "{\"path\":\"$WORK/MFT\",\"with_resident\":true}" | run_tool "$WIN/tools/mft_records")"
+got="$(echo "{\"path\":\"$WORK/MFT\",\"with_resident\":true}" | SECRET_OUTPUT=1 run_tool "$WIN/tools/mft_records")"
 echo "$got" | "$PY" -c '
 import json, sys
 d = json.load(sys.stdin)
@@ -698,13 +698,16 @@ import hashlib, json, os, sys
 d, run = json.loads(sys.argv[1]), sys.argv[2]
 # forty rules and the one the stand-in always fires
 assert d["detection_count"] == 41 and d["returned"] == 5 and d["truncated"], d
-assert len(d["rules_that_fired"]) == 41 and d["rules_fired"] == 41, d["rules_that_fired"]
+# the rules shown inline are a page of `limit`; every rule that fired is in the file the answer names
+assert len(d["rules_that_fired"]) == 5 and d["rules_fired"] == 41, d["rules_that_fired"]
 wide = [x for x in d["detections"] if x["rule"].startswith("Rule ")]
 assert wide and all(len(x["detail"]) == 15 for x in wide), d["detections"]
 def named(ref):
     data = open(os.path.join(run, ref["path"]), "rb").read()
     assert ref["bytes"] == len(data) and ref["sha256"] == hashlib.sha256(data).hexdigest(), ref
     return data
+fired = named(d["rules_fired_file"]).decode().splitlines()
+assert len(fired) == 41 == d["rules_fired_file"]["rows"], len(fired)
 rows = [json.loads(l) for l in named(d["all_detections"]).decode().splitlines()]
 assert len(rows) == 41 == d["all_detections"]["rows"], len(rows)
 assert sum(1 for r in rows if len(r["detail"]) == 15) == 40, rows
