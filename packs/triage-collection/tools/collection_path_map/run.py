@@ -2981,6 +2981,21 @@ def main():
     record_files.update(found["uac_logs"])
     record_files.update(found["uac_hashes"])
 
+    def read_whole(log, uploads):
+        for s in sources:
+            if s["log"] == log:
+                sub = s.get("sources", {}).get("uploads.json") if uploads else None
+                return (sub["status"] if sub else s["status"]) == "parsed"
+        return False
+
+    scopes = []                                  # (directory, whether the per-file record of it was read whole): a file no row names is "hypothesis_only" only against rows that were read
+    for (directory, _run), logs in found["kape"].items():
+        if "copy" in logs:
+            scopes.append((directory, read_whole(logs["copy"], False)))
+    for directory, files in found["velociraptor"].items():
+        if "uploads" in files:
+            scopes.append((join_rel(directory, "uploads"), read_whole(files["uploads"], True)))
+
     by_status = collections.Counter()
     streams = 0
     rows_total = 0
@@ -3003,6 +3018,8 @@ def main():
             status = "observed"
         elif not entries and rel in sink.maybe_named:
             status = "candidate_of_ambiguous_record"
+        elif not entries and next((whole for s, whole in scopes if rel == s or rel.startswith(s + "/") or rel.startswith(s + os.sep) or not s), None) is False:
+            status = "undecided_record_not_read_whole"
         else:
             status = "hypothesis_only"
         by_status[status] += 1
@@ -3074,7 +3091,10 @@ def main():
         "by_status_basis": ("observed: a collector's own record names the file and gives its source path (the join is the record's destination or stored name, "
                             "or UAC's [root] convention, said per row). ambiguous: records give different source paths for it. hypothesis_only: no record names it, and the "
                             "row carries a convention's reading, labelled as one. candidate_of_ambiguous_record: no record names it for certain, and a record names a path "
-                            "that it and another file match alike, so a record may name it (the row carries the convention's reading too). collector_record: a log or index of a collector"),
+                            "that it and another file match alike, so a record may name it (the row carries the convention's reading too). undecided_record_not_read_whole: no row that was read "
+                            "names it, and the per-file record below whose directory it lies (a KAPE copy log, a Velociraptor uploads.json) was not read whole (cut by the time limit, a "
+                            "malformed or over-long row, a log that is binary or UTF-16), so an unread row may name it; this is not hypothesis_only (no record names it), and the row "
+                            "carries the convention's reading too. collector_record: a log or index of a collector"),
         "streams": streams,
         "collisions": dict(sorted(collision_counts.items())),
         "records_joined_to_a_delivered_file": sink.joined,
