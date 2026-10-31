@@ -122,6 +122,73 @@ def run(cmd: list[str], cwd=None, env: dict | None = None) -> bool:
     return subprocess.run(cmd, cwd=cwd, env={**os.environ, **env} if env else None).returncode == 0
 
 
+LOCK_DIR = Path(os.environ.get("DFIRSWARM_LOCK_DIR", "/tmp/dfirswarm-build/locks"))
+# Every pip set this build installed from a hash lock, for image.json (`locked`).
+# An entry is added only after pip has installed the set with --require-hashes.
+LOCKED: list = []
+LOCK_LINE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)(\[[A-Za-z0-9,._-]+\])?==([A-Za-z0-9._+!]+)\s*(;[^-]*?)?((?:\s+--hash=sha256:[0-9a-fA-F]{64})+)$")
+
+
+def lock_problem(text: str) -> str | None:
+    """Why `text` is not a pip hash lock, or None. Every requirement is
+    name==version with at least one --hash=sha256:<64 hex>; any other option
+    (an index, a find-links, a pip flag) is refused, since it could let the lock
+    be met from somewhere else. Comments and blank lines are skipped; a
+    backslash continues a line, as pip-compile writes them."""
+    logical, cur, first = [], "", 0
+    for n, raw in enumerate(text.splitlines(), 1):
+        line = raw.strip()
+        if not cur and (not line or line.startswith("#")):
+            continue
+        if not cur:
+            first = n
+        if line.endswith("\\"):
+            cur += line[:-1].strip() + " "
+            continue
+        logical.append((first, (cur + line).strip()))
+        cur = ""
+    if cur.strip():
+        logical.append((first, cur.strip()))
+    if not logical:
+        return "it holds no requirement"
+    for n, entry in logical:
+        if entry.startswith("-"):
+            return f"line {n}: {entry.split()[0]} is an option, not a requirement (a hash lock holds requirements only)"
+        if LOCK_LINE.match(entry):
+            continue
+        word = entry.split()[0]
+        if "==" not in word.split(";")[0]:
+            return f"line {n}: {word} is not pinned with =="
+        if "--hash=sha256:" not in entry:
+            return f"line {n}: {word.split(';')[0]} has no --hash=sha256:<64 hex digits>"
+        return f"line {n}: {word} is not name==version followed by --hash=sha256:<64 hex digits> options"
+    return None
+
+
+def pip_locked(pip: list[str], ref: dict, what: str, cwd=None, env: dict | None = None) -> str | None:
+    """Install the set `ref` names ({name, sha256}: a file in LOCK_DIR, which
+    recipe.py copied into the build context) with pip's hash-checking mode.
+    Returns why not, or None. The lock is checked against the sha256 the build
+    recorded and against lock_problem first; --require-hashes is always on, so a
+    wheel whose hash is not in the lock does not install, and the set is
+    recorded as locked only after pip has succeeded."""
+    name = str(ref.get("name", ""))
+    path = LOCK_DIR / name
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return f"{what}: its lock {name or '(unnamed)'} is not in the build"
+    if hashlib.sha256(data).hexdigest() != str(ref.get("sha256", "")).lower():
+        return f"{what}: its lock {name} does not match the sha256 the build recorded"
+    why = lock_problem(data.decode("utf-8", "replace"))
+    if why:
+        return f"{what}: its lock {name} is not a hash lock: {why}"
+    if not run(pip + ["--require-hashes", "-r", str(path)], cwd=cwd, env=env):
+        return f"{what}: pip install --require-hashes -r {name} failed (a hash that does not match fails here)"
+    LOCKED.append({"for": what, "lock": name, "sha256": hashlib.sha256(data).hexdigest()})
+    return None
+
+
 def arch() -> str:
     try:
         return subprocess.run(["dpkg", "--print-architecture"], capture_output=True, text=True).stdout.strip()
@@ -479,7 +546,7 @@ def fetch_source(d: dict, apt: list) -> tuple:
         archive.unlink(missing_ok=True)
         return None, f"could not unpack: {e}"
     venv = None
-    if d.get("pip") or d.get("pip_after"):
+    if d.get("pip") or d.get("pip_after") or d.get("pip_lock") or d.get("pip_after_lock"):
         # Its own venv: one program's pins (an old beautifulsoup4, an exact
         # numpy) must not move what another program or the tool library imports.
         venv = dest / ".venv"
@@ -489,7 +556,15 @@ def fetch_source(d: dict, apt: list) -> tuple:
         # `pip_after` is a second install into the same venv, for what one
         # resolve cannot say: a dependency installed with --no-deps at a pinned
         # commit, over the unpinned URL a requirement names for it.
+        # `pip_lock` / `pip_after_lock` name a hash lock for the set: it installs
+        # first, with --require-hashes, and the plain arguments (the source itself
+        # with --no-deps, say) follow. A venv shared by several programs needs one
+        # lock for all of them (docs/packs.md).
         for key in ("pip", "pip_after"):
+            if isinstance(d.get(key + "_lock"), dict):
+                why = pip_locked([str(venv / "bin" / "pip"), "install", "--no-cache-dir"], d[key + "_lock"], f"{d['name']} ({key}_lock)", cwd=dest, env=d.get("env"))
+                if why:
+                    return None, why
             if d.get(key) and not run([str(venv / "bin" / "pip"), "install", "--no-cache-dir", *d[key]], cwd=dest, env=d.get("env")):
                 return None, f"its Python requirements (pip install {' '.join(d[key])}) did not install"
     program = dest / d["entry"]
@@ -1297,6 +1372,8 @@ def write_record(record: dict, head: str, spec: dict | None = None) -> None:
     the NOTICE, the SBOM, and tools.md, the list an agent reads."""
     record["arch"] = arch()
     record["apt_snapshot"] = apt_snapshot()
+    # The pip sets this build installed from a hash lock (pip --require-hashes).
+    record["locked"] = list(LOCKED)
     record["dpkg_all"] = dpkg_versions()
     record["pip"] = pip_versions()
     record["on_path"] = on_path()
@@ -1462,7 +1539,8 @@ def main(spec_path: str) -> int:
         return 1
 
     sources = spec.get("sources", [])
-    compiles = bool(spec["pip"] or spec["requirements"] or any(d.get("pip") for d in sources))
+    locks = list(spec.get("python_locks", [])) + list(spec.get("pip_locks", []))
+    compiles = bool(spec["pip"] or spec["requirements"] or locks or any(d.get("pip") or d.get("pip_lock") for d in sources))
     # Some wheels have no build for every architecture (flare-floss pulls
     # binary2strings, which arm64 has to compile), and some none at all
     # (dfvfs pulls libewf-python and libfvde-python, sdists only; a pinned
@@ -1476,10 +1554,26 @@ def main(spec_path: str) -> int:
     if compiles and not run(apt + build_deps):
         print(f"required build dependencies failed: {build_deps}", file=sys.stderr)
         return 1
-    if spec["pip"] or spec["requirements"]:
+    if spec["pip"] or spec["requirements"] or locks:
         if not run([sys.executable, "-m", "venv", str(VENV)]):
             return 1
         pip = [str(VENV / "bin" / "pip"), "install", "--no-cache-dir"]
+        # The sets a pack locks (requires/python.lock beside python.txt, a
+        # program's pip_lock): installed with hash checking. A lock that fails
+        # fails the build when its pack requires it, and names the program.
+        for ref in spec.get("python_locks", []):
+            why = pip_locked(pip, ref, f"{ref.get('pack', '?')} requires/python.lock")
+            if why:
+                print(f"required python packages failed: {why}", file=sys.stderr)
+                return 1
+        for ref in spec.get("pip_locks", []):
+            why = pip_locked(pip, ref, ref.get("program", "?"))
+            if why and ref.get("required", True):
+                print(f"required python packages failed: {why}", file=sys.stderr)
+                return 1
+            if why:
+                print(f"optional python packages failed: {why}", file=sys.stderr)
+                failed["pip"].extend(ref.get("packages") or [ref.get("program", "?")])
         required = [p for p, req in spec["pip"].items() if req] + spec["requirements"]
         if required and not run(pip + required):
             print(f"required python packages failed: {required}", file=sys.stderr)

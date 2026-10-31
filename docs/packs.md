@@ -878,6 +878,22 @@ Every tool a pack bundles holds to this.
    the line: every image installs from snapshot.debian.org at the date in
    `images/debian-snapshot`, and the base images are pinned to their digests
    (`images/README.md`, "The apt snapshot and the base image digests").
+   A pip set can be **hash-locked**: the build then installs it with pip's
+   `--require-hashes`, from a lock file of the pack (every line `name==version`
+   with one or more `--hash=sha256:`; no other option, no index or find-links
+   line). The keys: `requires/python.lock` beside `python.txt` (it replaces
+   python.txt's lines for the image's venv); `install.pip_lock` in the entry of
+   a `python3 -m pip install` program (a path under `requires/`, e.g.
+   `requires/locks/<name>.txt`); `pip_lock` and `pip_after_lock` in a pinned
+   source's `install.source`, installed before its `pip` / `pip_after`
+   arguments. A lock holds the set and every dependency, since hash mode
+   refuses an unlisted one; **a venv shared by several programs needs one lock
+   for all of them** (the main venv is shared by every pip program and
+   python.txt line of the profile's packs). The seal refuses a lock outside
+   `requires/`, a missing one, and a line without `==` or without a hash; the
+   build refuses a lock whose file changed, and names the program when pip
+   refuses a hash. `/etc/dfirswarm/image.json` lists what was installed from a
+   lock under `locked` (a set is listed only after pip succeeded).
 2. **A program a skill tells the agent to run is in the pack's `requires`, or
    in a dependency's.** A program or Python package in `requires` that no skill
    names needs either a skill that names it, or a reason in `pack.json`:

@@ -523,3 +523,17 @@ request monthly (`scripts/apt-snapshot-bump.sh`), then starts `ci.yml` and
 `images.yml` on its branch. The digests move through Dependabot's docker
 ecosystem, or by hand: `scripts/apt-snapshot-bump.sh --digests` (it reads the
 manifests with `docker buildx imagetools inspect`, no layers).
+
+## Hash-locked pip sets
+
+`install.py` installs a pip set from a pack's lock file with `pip install
+--no-cache-dir --require-hashes -r <lock>` wherever a pack names one:
+`requires/python.lock` beside `python.txt`, `install.pip_lock` on a
+`python3 -m pip install` program, and `pip_lock` / `pip_after_lock` on a pinned
+source (docs/packs.md, section 8, "Requires and images", rule 1). `recipe.py`
+copies the lock files into the build context (`locks/`) and records each one's
+sha256 in the spec; the build refuses a lock whose file differs, a line without
+`==` or a hash, and a hash that does not match, naming the program. A set
+installed from a lock is listed in `image.json` under `locked` (`for`, `lock`,
+`sha256`), only after pip has succeeded. A set with no lock installs as before.
+No pack carries a lock yet; the pins are other changes.

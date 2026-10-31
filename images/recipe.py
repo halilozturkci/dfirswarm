@@ -295,7 +295,21 @@ def place_copy(src: Path, dest: Path) -> None:
 
 
 KINDS = ("apt", "pip", "apt_release", "requirements", "binaries", "manual", "downloads", "sources", "builds",
-         "data", "not_applicable", "python_notes")
+         "data", "not_applicable", "python_notes", "python_locks", "pip_locks", "lock_files")
+
+
+def lock_entry(spec: dict, pack: str, path: Path, label: str) -> dict:
+    """A hash lock of a pack (a file under its requires/): the reference the spec
+    carries ({name, sha256}) and the file the build copies into the context
+    (spec["lock_files"], whose `from` build() removes before writing spec.json).
+    Its content is checked by `install.lock_problem` at the seal and at the build."""
+    if not path.is_file():
+        raise SystemExit(f"recipe: {pack}: the lock {label} is not in the pack (seal the pack: pack.sh checks it)")
+    sha = hashlib.sha256(path.read_bytes()).hexdigest()
+    name = f"{pack}-{path.name}"
+    if not any(f["name"] == name for f in spec["lock_files"]):
+        spec["lock_files"].append({"name": name, "sha256": sha, "from": str(path)})
+    return {"name": name, "sha256": sha}
 
 
 def empty() -> dict:
@@ -323,6 +337,10 @@ def read_pack(packs, name: str) -> dict:
             if pinned:
                 kind = pinned[0]
                 spec[kind + "s"].append({"name": b["name"], "pack": name, "required": required, **install[kind]})
+                if kind == "source":
+                    for key in ("pip_lock", "pip_after_lock"):
+                        if install[kind].get(key):
+                            spec["sources"][-1][key] = lock_entry(spec, name, pack_dir(packs, name) / str(install[kind][key]), str(install[kind][key]))
                 spec["binaries"][-1]["source"] = {"download": "download", "source": "source",
                                                   "build": "built from source"}[kind] + f" {install[kind].get('version', '?')}"
             elif m := APT.match(line):
@@ -334,8 +352,16 @@ def read_pack(packs, name: str) -> dict:
                         spec["apt_release"][p] = release
             elif m := PIP.match(line):
                 spec["binaries"][-1]["pip"] = words(m.group(1))
-                for p in words(m.group(1)):
-                    spec["pip"][p] = spec["pip"].get(p, False) or required
+                if install.get("pip_lock"):
+                    # Installed from the pack's hash lock (pip --require-hashes), not from the
+                    # names on the line: the lock holds the set and its dependencies.
+                    ref = lock_entry(spec, name, pack_dir(packs, name) / str(install["pip_lock"]), str(install["pip_lock"]))
+                    spec["pip_locks"].append({"program": b["name"], "pack": name, "required": required,
+                                              "packages": words(m.group(1)), **ref})
+                    spec["binaries"][-1]["locked"] = True
+                else:
+                    for p in words(m.group(1)):
+                        spec["pip"][p] = spec["pip"].get(p, False) or required
             else:
                 spec["manual"].append({"name": b["name"], "pack": name, "how": line or "no install line"})
             # Data the program reads (symbol tables, rules): its own entry in the
@@ -351,12 +377,18 @@ def read_pack(packs, name: str) -> dict:
                                      and item.get("redistributable", True) is not False,
                                      **{"name": f"{b['name']}-data", **item}, "required": True})
     reqs = pack_dir(packs, name) / "requires" / "python.txt"
+    # requires/python.lock beside python.txt: the pack's Python set installed with
+    # hash checking, in place of the lines of python.txt (which stay the notes).
+    py_lock = pack_dir(packs, name) / "requires" / "python.lock"
+    if py_lock.is_file():
+        spec["python_locks"].append({"pack": name, **lock_entry(spec, name, py_lock, "requires/python.lock")})
     if reqs.exists():
         for raw in reqs.read_text().splitlines():
             line, _, note = raw.partition("#")
             line = line.strip()
             if line:
-                spec["requirements"].append(line)
+                if not py_lock.is_file():
+                    spec["requirements"].append(line)
                 # What the pack says the library is for, for the image's
                 # tools.md: the comment on its line.
                 spec["python_notes"].append({"requirement": line, "pack": name, "note": " ".join(note.split())})
@@ -374,6 +406,8 @@ def merge(specs: list) -> dict:
         out["binaries"] += s["binaries"]
         out["python_notes"] += [n for n in s["python_notes"] if not any(x["requirement"] == n["requirement"] for x in out["python_notes"])]
         out["manual"] += s["manual"]
+        for kind in ("python_locks", "pip_locks", "lock_files"):
+            out[kind] += [x for x in s[kind] if x not in out[kind]]
         # A program two packs pin is installed once, as the first pins it.
         for kind in ("downloads", "sources", "builds", "data", "not_applicable"):
             for d in s[kind]:
@@ -789,6 +823,12 @@ def build(a) -> int:
         (a.out / "data").mkdir()
         for sha, src in copies.items():
             place_copy(src, a.out / "data" / sha)
+    # The pip hash locks the packs name, copied beside the spec (the name carries
+    # the pack, the spec carries each file's sha256 and install.py checks it).
+    shutil.rmtree(a.out / "locks", ignore_errors=True)
+    for lf in spec["lock_files"]:
+        (a.out / "locks").mkdir(exist_ok=True)
+        shutil.copyfile(lf.pop("from"), a.out / "locks" / lf["name"])
     (a.out / "spec.json").write_text(json.dumps(spec, indent=1) + "\n")
     (a.out / "NOTICE").write_text(notice(spec))
     shutil.copy(HERE / "install.py", a.out / "install.py")
@@ -817,7 +857,7 @@ RUN python3 /tmp/dfirswarm-build/install.py --build /tmp/dfirswarm-build/{stage}
 ARG BASE={a.base}
 {"".join(s + chr(10) for s in stages)}FROM ${{BASE}}
 {"".join(copy_lines)}COPY install.py spec.json NOTICE /tmp/dfirswarm-build/
-{install} && rm -rf /tmp/dfirswarm-build
+{"COPY locks /tmp/dfirswarm-build/locks" + chr(10) if spec["lock_files"] else ""}{install} && rm -rf /tmp/dfirswarm-build
 ENV PATH=/opt/dfir/venv/bin:$PATH
 LABEL org.opencontainers.image.title="dfirswarm-{a.profile}" \\
       dev.dfirswarm.profile="{a.profile}" \\
