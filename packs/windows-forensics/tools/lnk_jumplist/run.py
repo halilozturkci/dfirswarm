@@ -679,7 +679,22 @@ def load_sibling(name):
     path = Path(__file__).resolve().parent.parent / name / "run.py"
     spec = importlib.util.spec_from_file_location("dfir_windows_" + name, str(path))
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    # A sibling carries the windows STOP block, which installs its own signal handlers when the module runs. Those would replace this tool's
+    # (its last word ends lnkinfo and removes its temporary files), so the stop signals are held while the sibling loads and this tool's
+    # handlers are put back before they are let through: a signal that came meanwhile is then answered by this tool's own last word.
+    stop_signals = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+    ours = {s: signal.getsignal(s) for s in stop_signals}
+    try:
+        held_before = signal.pthread_sigmask(signal.SIG_BLOCK, set(stop_signals))
+    except (AttributeError, ValueError, OSError):
+        held_before = None
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        for s, handler in ours.items():
+            signal.signal(s, handler)
+        if held_before is not None:
+            signal.pthread_sigmask(signal.SIG_SETMASK, held_before)
     return module
 
 
@@ -1306,8 +1321,11 @@ def link_row(run, data, base_off, where):
         return row, decoded
     row["header"] = {k: decoded.get(k) for k in ("flags_hex", "file_attr", "created", "created_filetime", "accessed", "accessed_filetime", "written", "written_filetime", "file_length", "show_cmd")}
     row["target"] = {"kind": decoded.get("linkinfo_target_kind"), "path": decoded.get("linkinfo_target"), "volume": decoded.get("volume"), "network": decoded.get("network")}
-    row["strings"] = {k: decoded.get(k) for k in ("name", "relative_path", "working_dir", "icon_location", "arguments_present", "arguments_chars", "arguments_first_token") if k in decoded}
-    row["tracker"] = [{"machine": b.get("machine"), "droid_hex": b.get("droid_hex"), "droid_birth_hex": b.get("droid_birth_hex")} for b in decoded.get("extra", []) if b.get("sig") == "0xa0000003"]
+    row["strings"] = {k: decoded.get(k) for k in ("name", "relative_path", "working_dir", "icon_location", "arguments_present", "arguments_chars", "arguments_first_token", "arguments_first_token_withheld") if k in decoded}
+    # Every tracker block is kept (lnk_parse holds the first 16 apart from its inline page of ExtraData blocks, and counts all of them), so a tracker block past
+    # that page is not lost; the row stays bounded.
+    row["tracker"] = [{"machine": b.get("machine"), "droid_hex": b.get("droid_hex"), "droid_birth_hex": b.get("droid_birth_hex")} for b in decoded.get("tracker", [])]
+    row["tracker_count"] = decoded.get("tracker_count", len(row["tracker"]))
     integrity = {"structure_complete": decoded.get("structure_complete"), "problems": decoded.get("problems", [])}
     integrity["status"] = "ok" if decoded.get("structure_complete") and not decoded.get("problems") else "incomplete"
     row["integrity"] = integrity

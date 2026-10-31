@@ -1318,7 +1318,7 @@ test("catalog_search takes a catalogue by the name the index gives it, and bad i
     assert.match(JSON.parse(r.stdout).error, /a directory, not a file/);
     for (const lnk of [join(LIB, "lnk_parse", "run.py"), join(LIB, "..", "packs", "windows-forensics", "tools", "lnk_parse", "run.py")]) {
       r = await runPy(lnk, cwd, { path: "work/missing.lnk" });
-      assert.deepEqual(JSON.parse(r.stdout), { error: "no such file", path: "work/missing.lnk" }, lnk);
+      assert.deepEqual(JSON.parse(r.stdout), { error: "no such file", path: "work/missing.lnk", status: "failed", status_basis: "the tool stopped with an error and read no result (see error)" }, lnk);
     }
     r = await runPy(join(tools, "sqlite_query", "run.py"), cwd, { db_path: "work/x.db", query: "tables" });
     assert.notEqual(r.code, 0);
