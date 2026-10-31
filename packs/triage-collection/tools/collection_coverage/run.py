@@ -1471,6 +1471,10 @@ KAPE_COPY_MAPPED = ("copiedtimestamp", "sourcefile", "destinationfile", "filesiz
 KAPE_SKIP_KNOWN = ("sourcefile", "sourcefilesha1", "reason")
 SKIP_TARGET_COLUMNS = ("sourcefile", "source", "filename", "file", "path")
 SKIP_REASON_COLUMNS = ("reason", "message", "error", "status")
+ENCRYPTED_PAYLOAD = "data.zip"
+ENCRYPTED_METADATA = "metadata.json"
+ENCRYPTION_KEYS = ("Scheme", "EncryptedPass", "PublicKey")
+ENCRYPTION_METADATA_BYTES = 65536
 ADAPTERS = {
     "kape_copy_log": {"id": "kape_copy_log/2", "collector": "KAPE", "reads": "*_CopyLog.csv",
                       "schema": "a header with SourceFile and DestinationFile; the other columns KAPE writes are kept by name"},
@@ -1484,6 +1488,13 @@ ADAPTERS = {
                   "schema": "one 'hex  path' line per file (the md5sum, sha1sum and sha256sum forms) or 'ALGORITHM (path) = hex'"},
     "velociraptor_container": {"id": "velociraptor_container/2", "collector": "Velociraptor", "reads": "uploads.json, results/*.json, log.json, collection_context.json",
                                "schema": "the container 0.77.2 writes: uploads.json rows (vfs_path, file_size, uploaded_size, Type), result rows with an upload record, log.json rows"},
+    "velociraptor_encrypted": {"id": "velociraptor_encrypted/1", "collector": "Velociraptor", "reads": "metadata.json, data.zip", "supported": False,
+                               "schema": ("the encrypted collection 0.77.2 writes when a password is set (reporting/container.go, NewContainerFromWriter, tag v0.77.2; the metadata keys are set by "
+                                          "artifacts/definitions/Server/Utils/CreateCollector.yaml at the same tag): an outer zip of metadata.json (plain; written only when the collector was "
+                                          "given metadata, with the keys Scheme, EncryptedPass and PublicKey) and data.zip, a stored member that is itself encrypted with the zip password "
+                                          "(github.com/alexmullins/zip, WinZip AES) and holds the collected members. It is recognised by those two member names with nothing else beside them, "
+                                          "and by the encrypted flag of data.zip in the outer zip or the Scheme key of metadata.json, never by entropy. Nothing is decrypted and no record is read"),
+                               "unsupported_reason": "an encrypted Velociraptor collection: its records are inside the encrypted payload (data.zip), which is not decrypted and was not read"},
     "cylr": {"id": None, "collector": "CyLR", "reads": None, "supported": False,
              "schema": "none: no record of CyLR is read; a CyLR archive is a tree of copied files, and a top-level C or C$ directory is a layout clue, not a manifest"},
 }
@@ -1659,7 +1670,8 @@ def discover(census):
     lists, Velociraptor containers (a directory with uploads.json or collection_context.json, its results/*.json and its
     log.json). A record found inside collected data (below [root] or uploads) belongs to the source host and is listed apart,
     never read. Sorted by the name's bytes, so a run reads the same records in the same order every time."""
-    found = {"kape": {}, "uac_logs": [], "uac_hashes": [], "uac_dirs": [], "velociraptor": {}, "velo_results": {}, "velo_logs": {}, "inside_collected": []}
+    found = {"kape": {}, "uac_logs": [], "uac_hashes": [], "uac_dirs": [], "velociraptor": {}, "velo_results": {}, "velo_logs": {}, "velo_encrypted": {}, "inside_collected": []}
+    payloads = {}
     for rel, size, kind in sorted((e for e in census.entries() if e[2] == "f"), key=lambda e: os.fsencode(e[0])):
         name = name_of(rel)
         low = name.lower()
@@ -1678,6 +1690,8 @@ def discover(census):
             marker = ("velo_result", None, None)
         elif name == "log.json":
             marker = ("velo_log", None, None)
+        if name == ENCRYPTED_PAYLOAD and not inside_collected_data(rel):
+            payloads[directory] = {"payload": rel, "metadata": None, "other": False}
         if marker is None:
             continue
         if inside_collected_data(rel):
@@ -1697,6 +1711,21 @@ def discover(census):
         else:
             found["velo_logs"][directory] = rel
     found["uac_dirs"] = sorted(census.marked_dirs, key=os.fsencode)
+    if payloads:
+        # an encrypted Velociraptor collection is an outer container of data.zip and, when the collector was given metadata, metadata.json: the
+        # directory that holds those and nothing else (a file or a link beside them makes it an ordinary directory with a file named data.zip)
+        for rel, size, kind in census.entries():
+            entry = payloads.get(parent_of(rel))
+            if entry is None:
+                continue
+            name = name_of(rel)
+            if name == ENCRYPTED_PAYLOAD and kind == "f":
+                continue
+            if name == ENCRYPTED_METADATA and kind == "f":
+                entry["metadata"] = rel
+            else:
+                entry["other"] = True
+        found["velo_encrypted"] = {d: {"payload": e["payload"], "metadata": e["metadata"]} for d, e in payloads.items() if not e["other"]}
     return found
 
 
@@ -2264,6 +2293,59 @@ def read_velociraptor(src, directory, files, found, sink):
     return source
 
 
+def read_encryption_metadata(src, rel):
+    """What metadata.json beside data.zip says: which of the documented keys it holds and how long each value is. A value is withheld whole
+    (it may be an encrypted password or a key); nothing of it is printed. The file is read to 64 KiB at most."""
+    info = {"present": True, "bytes": None, "keys": [], "other_keys": 0, "values": {}}
+    try:
+        with src.open_binary(rel) as fh:
+            data = fh.read(ENCRYPTION_METADATA_BYTES + 1)
+    except (OSError, ValueError) as exc:
+        info["problem"] = "metadata.json could not be read (%s)" % describe(exc)
+        return info
+    if len(data) > ENCRYPTION_METADATA_BYTES:
+        info["problem"] = "metadata.json is over %d bytes: not parsed" % ENCRYPTION_METADATA_BYTES
+        return info
+    info["bytes"] = len(data)
+    try:
+        doc = json.loads(data.decode("utf-8-sig"))
+    except (ValueError, RecursionError):
+        info["problem"] = "metadata.json is not JSON text: not read"
+        return info
+    if not isinstance(doc, dict):
+        info["problem"] = "metadata.json is not a JSON object: not read"
+        return info
+    for key in ENCRYPTION_KEYS:
+        if key in doc:
+            value = doc[key]
+            try:
+                text = value if isinstance(value, str) else json.dumps(value)
+            except (ValueError, TypeError, RecursionError):
+                text = ""
+            info["keys"].append(key)
+            info["values"][key] = withhold_value(text, "metadata.json, %s" % key)
+    info["other_keys"] = len(doc) - len(info["keys"])
+    return info
+
+
+def read_velociraptor_encrypted(src, directory, files, sink):
+    """One encrypted Velociraptor collection (see the velociraptor_encrypted adapter), or None when the directory only looks like one. It is
+    recognised by data.zip being an encrypted member of the zip the source reads (`src.encrypted`) or by metadata.json holding the Scheme
+    key. The records are inside the encrypted payload: nothing is decrypted, no record is read, the source is `unsupported`, and no failure
+    count is determined for the run."""
+    payload, meta = files["payload"], files.get("metadata")
+    info = read_encryption_metadata(src, meta) if meta else None
+    flagged = payload in getattr(src, "encrypted", ())
+    named = info is not None and "Scheme" in info["keys"]
+    if not (flagged or named):
+        return None
+    basis = (["data.zip is an encrypted member of the zip (general-purpose flag bit 0)"] if flagged else []) + (["metadata.json holds the Scheme key"] if named else [])
+    source = new_source(payload, "Velociraptor", "velociraptor_encrypted", "velociraptor_encrypted", run=directory or ".", directory=directory or ".", container=directory or ".",
+                        payload=payload, recognised_by=basis, decrypted=False, metadata=info if info is not None else {"present": False})
+    source.update(status="unsupported", reason=ADAPTERS["velociraptor_encrypted"]["unsupported_reason"])
+    return source
+
+
 def read_collection(src, found, sink):
     """Every recognised record of a census, in a fixed order: KAPE runs, UAC logs and hash lists, Velociraptor containers. Returns
     the source summaries (one per log, one per container), each with its adapter, its status and why."""
@@ -2282,6 +2364,10 @@ def read_collection(src, found, sink):
         sources.append(read_hash_list(src, rel, sink))
     for directory, files in sorted(found["velociraptor"].items(), key=lambda kv: os.fsencode(kv[0])):
         sources.append(read_velociraptor(src, directory, files, found, sink))
+    for directory, files in sorted(found["velo_encrypted"].items(), key=lambda kv: os.fsencode(kv[0])):
+        source = read_velociraptor_encrypted(src, directory, files, sink)
+        if source is not None:
+            sources.append(source)
     return sources
 
 
@@ -2627,6 +2713,16 @@ def withhold_digest(value, where):
     if VALUES[0] is not None:
         VALUES[0].add(fid, {"where": where}, value)
     return "<digest of a credential store withheld, %d characters, %s>" % (len(value), fid)
+
+
+def withhold_value(value, where):
+    """A value that may hold a secret (an encrypted password, a key) never leaves in an answer or a table: it goes to the values file (a job
+    run with secret_output and write_values) and what is printed names its length and a finding id. Returns the marker."""
+    WITHHELD["count"] += 1
+    fid = "W%06d" % WITHHELD["count"]
+    if VALUES[0] is not None:
+        VALUES[0].add(fid, {"where": where}, value)
+    return "<value withheld, %d characters, %s>" % (len(value), fid)
 
 
 DIGEST_KEY = re.compile(r"md5|sha|hash|digest|checksum", re.I)

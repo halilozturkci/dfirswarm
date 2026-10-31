@@ -32,8 +32,8 @@
   "example": "{\"root\": \"inputs/collection\"}",
   "by": "maintainer",
   "at": "2026-10-21T12:00:00.000Z",
-  "version": 1,
-  "sha256": "36fdf3e4e2008175f143d59e44c17821d670a83709270ffda39a7df8e4845400",
+  "version": 2,
+  "sha256": "1cc64c6decba506629038561aadc83c82db11a6855ecc51263f215abf0bbb613",
   "use": {
     "names": [
       "*_CopyLog.csv",
