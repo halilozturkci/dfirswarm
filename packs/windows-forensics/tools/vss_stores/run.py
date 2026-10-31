@@ -637,6 +637,22 @@ def main():
         "vshadowinfo_stderr_lines": len(stderr.splitlines()),
         "vshadowinfo_said": stderr.splitlines()[:5],
     }
+    # What a mount of a listed store needs: FUSE. Listing stays complete without it; the answer says, in the form every tool that mounts
+    # uses (memory-forensics mem_fs too), that the mount commands will not work here.
+    fuse_device = os.environ.get("DFIRSWARM_FUSE_DEVICE", "/dev/fuse")
+    fuse_missing = []
+    if not os.path.exists(fuse_device):
+        fuse_missing.append("%s is not present" % fuse_device)
+    elif not os.access(fuse_device, os.R_OK | os.W_OK):
+        fuse_missing.append("%s cannot be opened by this process" % fuse_device)
+    if not (shutil.which("fusermount3") or shutil.which("fusermount")):
+        fuse_missing.append("neither fusermount3 nor fusermount is installed")
+    out["fuse_present"] = not fuse_missing
+    if fuse_missing and stores:
+        out["no_fuse"] = {"reason": "no_fuse", "blocked_by": fuse_missing,
+                          "what_to_do": "Run this job where /dev/fuse exists and fusermount3 or fusermount is installed (the image record, /etc/dfirswarm/image.json, says under `fuse` "
+                                        "whether the image has fusermount; the VM must also expose /dev/fuse). Until then say that no FUSE mount was possible here, "
+                                        "never that the evidence holds nothing."}
     if status == "failed":
         out["error"] = "vshadowinfo did not give a usable answer: " + "; ".join(problems)
         out["note"] = ("This is a failure, not a finding: no statement about shadow copies on this volume follows from it, and "

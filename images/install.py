@@ -1488,6 +1488,8 @@ def write_record(record: dict, head: str, spec: dict | None = None) -> None:
     record["apt_snapshot"] = apt_snapshot()
     # The pip sets this build installed from a hash lock (pip --require-hashes).
     record["locked"] = list(LOCKED)
+    # What a FUSE mount needs of the image (the device is the VM's to expose, probed there): the helper that releases a mount.
+    record["fuse"] = {"fusermount": bool(shutil.which("fusermount3", path=IMAGE_PATH) or shutil.which("fusermount", path=IMAGE_PATH))}
     record["dpkg_all"] = dpkg_versions()
     record["pip"] = pip_versions()
     record["on_path"] = on_path()

@@ -111,6 +111,12 @@ jobs:
           msb="$(node --experimental-strip-types --no-warnings scripts/vm.ts msb-path)"
           "$msb" doctor
           "$msb" load -i "$RUNNER_TEMP/image.tar"
+      # The tools that mount (a manifest's `needs: ["fuse"]`) need /dev/fuse in the
+      # VM. Asserted on amd64, where the runner has KVM; the arm64 check is the
+      # owner's, on the owner's Mac (docs/packs.md, "Requires and images").
+      - name: /dev/fuse in the booted VM (amd64)
+        if: steps.kvm.outputs.available == '1' && matrix.arch == 'amd64'
+        run: node --experimental-strip-types --no-warnings scripts/vm.ts fuse-check --image "$IMAGE"
       - name: Boot it as an agent's VM (probe, verdict, Pi end to end)
         if: steps.kvm.outputs.available == '1'
         env:

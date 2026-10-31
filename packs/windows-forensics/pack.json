@@ -1,7 +1,7 @@
 {
   "id": "windows-forensics",
   "name": "Windows Forensics Pack",
-  "version": "1.7.14",
+  "version": "1.7.15",
   "description": "Artefact-by-artefact method and tooling for a Windows examination: the file system and its journals, the hives, execution evidence, the event logs and the records inside a cleared one, accounts and remote access, persistence, PowerShell, browsers, shadow copies, memory, and the traces anti-forensics leaves.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -144,8 +144,8 @@
       "tools/usn_journal/run.py": "ad0d4cd4da4cddfa02693b1e51048983691be07d75fe578a6b81a6f150382d0c",
       "tools/utf16_urls/manifest.json": "0aaccfbe4e63698596927067aaedd3ebd475e8b00b0837fabe3ead6d28ac45dd",
       "tools/utf16_urls/run.py": "de132c4568225a8c7216ea85b850860b43eeb793b9ed303f10b5f82866af8532",
-      "tools/vss_stores/manifest.json": "993a36de2c745d9a143272b47e2221b29bd247d354605a61387a6efefb06421d",
-      "tools/vss_stores/run.py": "ba6123a76f17d1957012f50f8765db6bb991d9576d61d87ec8c8f4798e1c9fc1",
+      "tools/vss_stores/manifest.json": "95d52232b8c9ad49b1ec2b10968cf6aad591f9874ca8b6db6ef9f94cf3ab6d0b",
+      "tools/vss_stores/run.py": "b66d0a4ef25566de0955bbfec155fe079b52d3b70bfe40764fad69ecb1f4c2bf",
       "tools/yara_scan/manifest.json": "62b07a7c336f9381027f17dd53a13eb25026da9876cd3a0b4c3ecdb3ab27814f",
       "tools/yara_scan/run.py": "ad393a224c517fec3afbf20d29c1b875394fb9a8ac65de11e9e6acb1bfa87df1"
     }

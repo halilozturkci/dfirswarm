@@ -25,3 +25,7 @@ A `ransomware` image profile (the packs of `disk` and `ransomware-response`, no 
 ### Added: images
 
 `scripts/image-acceptance.sh` is the image's own acceptance, run by the weekly `image-boot` workflow inside each profile's image: it records, in the job summary, a receipt for every program the image's record names (found on PATH, the first line of its version command, the version its pack pinned) and for every tool of the profile's packs run on an empty file and, where a format can be built from its specification, on the smallest valid one. A missing program, a version that differs from its pin, or a tool that gives no JSON answer fails the job.
+
+### Added: memory-forensics, windows-forensics, images
+
+A tool manifest can say `"needs": ["fuse"]`; `mem_fs` and `vss_stores` do. A VM probe without `/dev/fuse` (imageFit), a worker VM probed before each job (the job record's `worker_probe`, and `needs_unmet` with the reason when a failed job's tool needs what the worker lacks), and the image record (`fuse.fusermount`) now name the tools that mount, and no other. `mem_fs` and `vss_stores` give one form of "no FUSE": a `no_fuse` object with the reason, what the host lacks and what to do (`mem_fs` still answers `failed`; `vss_stores` still lists the stores). `vm.ts fuse-check --image REF` says whether a VM of an image has `/dev/fuse`, and the weekly image-boot asserts it on amd64.

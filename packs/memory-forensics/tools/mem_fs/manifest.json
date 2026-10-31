@@ -41,6 +41,7 @@
   },
   "runtime": "python3",
   "entry": "run.py",
+  "needs": ["fuse"],
   "requires": [
     "memprocfs"
   ],
@@ -49,7 +50,7 @@
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
   "version": 10,
-  "sha256": "8da0d230904843d11c0f953ad360495e53ff7fd020fb066743b0a91a62d3267e",
+  "sha256": "d079bd63a0289f3ddf4735fa5c4d1a89728a610e3065d1066e0750c029a6b3ea",
   "secret_output": {
     "when_args": [
       "write_values"
