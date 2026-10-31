@@ -87,7 +87,7 @@ async function stage(cwd: string, bin: string, name: string, script: string): Pr
 type Case = { name: string; script: string; fake: string; args: (cwd: string) => unknown; argv?: (cwd: string) => string[] };
 const CASES: Case[] = [
   { name: "journal_export", script: JOURNAL, fake: "journalctl", args: () => ({ path: "work/journal" }) },
-  { name: "linux_triage", script: TRIAGE, fake: "target-query", args: () => ({ source: "inputs/server.E01", out_dir: "work/triage", groups: ["users"] }) },
+  { name: "linux_triage", script: TRIAGE, fake: "target-query", args: () => ({ source: "inputs/server.E01", out_dir: "work/s1/triage", groups: ["users"] }) },
   { name: "the linux-target recipe", script: RECIPE, fake: "target-query", args: () => ({}), argv: (cwd) => ["run", "--target", join(cwd, "target.json"), "--out", join(cwd, "recipe-out")] },
 ];
 
@@ -118,11 +118,11 @@ for (const c of CASES) {
 test("linux_triage and the recipe still say terminated after a signal: the summary and the receipt are written by the dying tool", async () => {
   await withCwd(async (cwd, bin) => {
     const { dir, env } = await stage(cwd, bin, "target-query", engineScript());
-    const run = startDetached(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/triage", groups: ["users"] }, env, bin);
+    const run = startDetached(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/s1/triage", groups: ["users"] }, env, bin);
     await pidFile(join(dir, "child.pid"));
     run.signal("SIGINT");
     await run.closed;
-    const summary = JSON.parse(await readFile(join(cwd, "work", "triage", "summary.json"), "utf8"));
+    const summary = JSON.parse(await readFile(join(cwd, "work", "s1", "triage", "summary.json"), "utf8"));
     assert.equal(summary.state, "terminated");
     assert.equal(summary.groups[0].functions[0].status, "failed");
     assert.equal(summary.status, "failed", "the one function there was did not run to an exit");
@@ -180,7 +180,7 @@ test("a deadline ends the engine and what it started, whichever tool ran it", as
     // linux_triage: timeout_seconds
     const { dir, env } = await stage(cwd, bin, "target-query", engineScript());
     try {
-      const out = body(await comesBack(tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/triage", groups: ["users"], timeout_seconds: 5, total_timeout_seconds: 30 }, env, bin), "linux_triage"));
+      const out = body(await comesBack(tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/s1/triage", groups: ["users"], timeout_seconds: 5, total_timeout_seconds: 30 }, env, bin), "linux_triage"));
       const fn = out.groups[0].functions[0];
       assert.equal(fn.status, "failed");
       assert.equal(fn.timed_out, true);
@@ -210,7 +210,7 @@ test("the timeouts of the tools that run programs are held under their manifests
   await withCwd(async (cwd, bin) => {
     await stage(cwd, bin, "target-query", "#!/bin/sh\nexit 0\n");
     for (const bad of [{ total_timeout_seconds: 14101 }, { timeout_seconds: 14101 }, { total_timeout_seconds: 99999 }]) {
-      const err = refused(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/t", groups: ["users"], ...bad }, {}, bin));
+      const err = refused(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/s1/t", groups: ["users"], ...bad }, {}, bin));
       assert.match(err.error, /from 1 to 14100/, JSON.stringify(bad));
     }
     const manifest = (name: string): Promise<Json> => readFile(join(TOOLS, name, "manifest.json"), "utf8").then((t) => JSON.parse(t));

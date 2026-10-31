@@ -30,6 +30,9 @@ for fn in funcs:
         sys.stderr.write(b["stderr"] + "\\n")
     for i in range(b.get("records", 1)):
         print(json.dumps({"fn": fn, "i": i}) if "-j" in args else "value-%s-%d" % (fn, i))
+    for _ in range(b.get("flood_blocks", 0)):
+        sys.stdout.flush()
+        os.write(1, b'{"a":1}\\n' * (1 << 20))      # 8 MiB of short JSON lines, a block at a time
     if b.get("junk"):
         print(b["junk"])
     code = code or b.get("exit", 0)
@@ -54,7 +57,7 @@ const ALL_FUNCTIONS = [
 test("linux_triage tells a function the target does not support from a clean run, though the process exits 0", async () => {
   await withCwd(async (cwd, bin) => {
     const env = await triageFixture(cwd, bin, { "webserver.logs": { records: 0, stderr: "WARNING | webserver.logs: plugin not available for this target" }, lastlog: { records: 0 } });
-    const out = body(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/triage", groups: ["web", "sessions", "users"] }, env, bin));
+    const out = body(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/s1/triage", groups: ["web", "sessions", "users"] }, env, bin));
     assert.equal(out.execution_complete, true, "every process exited 0");
     const group = (name: string): Json => out.groups.find((g: Json) => g.group === name);
     assert.equal(group("web").status, "unsupported");
@@ -77,11 +80,11 @@ test("linux_triage tells a function the target does not support from a clean run
 test("linux_triage reads an empty `groups` as a mistake, a repeated one as a mistake, and no `groups` as every family", async () => {
   await withCwd(async (cwd, bin) => {
     const env = await triageFixture(cwd, bin, {});
-    assert.match(refused(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/t1", groups: [] }, env, bin)).error, /empty|omit/);
-    assert.match(refused(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/t2", groups: ["users", "users"] }, env, bin)).error, /more than once|duplicate/i);
-    assert.match(refused(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/t3", groups: ["nope"] }, env, bin)).error, /known/);
+    assert.match(refused(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/s1/t1", groups: [] }, env, bin)).error, /empty|omit/);
+    assert.match(refused(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/s1/t2", groups: ["users", "users"] }, env, bin)).error, /more than once|duplicate/i);
+    assert.match(refused(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/s1/t3", groups: ["nope"] }, env, bin)).error, /known/);
     assert.equal(await exists(env.STUB_LOG), false, "nothing ran for a refused request");
-    const all = body(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/t4" }, env, bin));
+    const all = body(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/s1/t4" }, env, bin));
     assert.equal(all.groups.length, 11);
     const called = (await readFile(env.STUB_LOG, "utf8")).trim().split("\n").map((l) => (JSON.parse(l) as string[])[(JSON.parse(l) as string[]).indexOf("-f") + 1]).sort();
     assert.deepEqual(called, [...ALL_FUNCTIONS].sort(), "each function once");
@@ -94,7 +97,7 @@ test("linux_triage starts a function only if the time left covers its own timeou
     // and the 2 s left do not cover the 3 s a function may take, so webserver.logs is not started.
     const env = await triageFixture(cwd, bin, { users: { sleep: 2 }, bashhistory: { sleep: 30 } });
     const started = Date.now();
-    const out = body(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/triage", groups: ["users", "history", "web"], timeout_seconds: 3, total_timeout_seconds: 7 }, env, bin));
+    const out = body(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/s1/triage", groups: ["users", "history", "web"], timeout_seconds: 3, total_timeout_seconds: 7 }, env, bin));
     assert.ok(Date.now() - started < 20_000, "the deadline held");
     const fn = (name: string): Json => out.groups.flatMap((g: Json) => g.functions).find((f: Json) => f.name === name);
     assert.equal(fn("users").status, "parsed");
@@ -109,7 +112,7 @@ test("linux_triage starts a function only if the time left covers its own timeou
     assert.equal(out.status, "partial");
     assert.match(out.status_basis, /1 failed, 1 not_attempted/);
     assert.equal((await readFile(env.STUB_LOG, "utf8")).includes("webserver.logs"), false, "it was never started");
-    const summary = JSON.parse(await readFile(join(cwd, "work", "triage", "summary.json"), "utf8"));
+    const summary = JSON.parse(await readFile(join(cwd, "work", "s1", "triage", "summary.json"), "utf8"));
     assert.equal(summary.state, "finished");
     assert.equal(summary.coverage.not_attempted, 1);
     assert.equal(summary.status, "partial");
@@ -120,8 +123,8 @@ test("linux_triage leaves a durable summary after each function, so a run killed
   await withCwd(async (cwd, bin) => {
     const env = await triageFixture(cwd, bin, { users: { sleep: 0 }, bashhistory: { sleep: 60 } });
     const child = spawn("python3", [TRIAGE], { cwd, env: { ...process.env, ...env, ...AGENT, PATH: `${bin}:${process.env.PATH ?? ""}` }, detached: true, stdio: ["pipe", "pipe", "pipe"] });
-    child.stdin.end(JSON.stringify({ source: "inputs/server.E01", out_dir: "work/triage", groups: ["users", "history"] }));
-    const summaryPath = join(cwd, "work", "triage", "summary.json");
+    child.stdin.end(JSON.stringify({ source: "inputs/server.E01", out_dir: "work/s1/triage", groups: ["users", "history"] }));
+    const summaryPath = join(cwd, "work", "s1", "triage", "summary.json");
     // The summary is rewritten twice between the functions: first with the one that ended as `parsed` (the next still
     // `pending`), then with the next marked `running`. Wait for the second, which has the first one's outcome in it
     // too, so the test reads the state it is about whatever the scheduler does between the two writes. The poll is
@@ -148,7 +151,7 @@ test("linux_triage leaves a durable summary after each function, so a run killed
 test("linux_triage counts the lines of a result that are no JSON, and hashes what it wrote", async () => {
   await withCwd(async (cwd, bin) => {
     const env = await triageFixture(cwd, bin, { users: { records: 3, junk: "{not json" } });
-    const out = body(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/triage", groups: ["users"] }, env, bin));
+    const out = body(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/s1/triage", groups: ["users"] }, env, bin));
     const [fn] = out.groups[0].functions;
     assert.equal(fn.records, 3);
     assert.equal(fn.invalid_lines, 1);
@@ -308,7 +311,7 @@ if fn == "journal":
 print(json.dumps({"fn": fn}))
 `);
     await chmod(join(bin, "target-query"), 0o755);
-    const out = body(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/triage", groups: ["logs"] }, env, bin));
+    const out = body(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/s1/triage", groups: ["logs"] }, env, bin));
     const [journal, syslog] = out.groups[0].functions;
     assert.equal(journal.last_line_unterminated, true);
     assert.equal(journal.status, "failed");
@@ -326,7 +329,7 @@ test("linux_triage reads a stderr by lines: an unrelated 'unsupported' is not th
       "webserver.logs": { records: 2, stderr: "Traceback (most recent call last):\n  File x\nValueError" },
       bashhistory: { records: 0, stderr: `${"noise ".repeat(100_000)}\nWARNING | bashhistory: plugin not available for this target` },
     });
-    const out = body(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/triage", groups: ["users", "web", "history"] }, env, bin));
+    const out = body(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/s1/triage", groups: ["users", "web", "history"] }, env, bin));
     const st = (name: string): Json => out.groups.flatMap((g: Json) => g.functions).find((f: Json) => f.name === name);
     assert.equal(st("users").status, "unknown");
     assert.equal(st("users").stderr_says_unavailable_without_naming_this_function, true);
@@ -347,7 +350,7 @@ time.sleep(60)
     await chmod(join(bin, "target-query"), 0o755);
     const pidFile = join(cwd, "stub.pid");
     const child = spawn("python3", [TRIAGE], { cwd, env: { ...process.env, ...env, ...AGENT, STUB_PID: pidFile, PATH: `${bin}:${process.env.PATH ?? ""}` }, stdio: ["pipe", "pipe", "pipe"] });
-    child.stdin.end(JSON.stringify({ source: "inputs/server.E01", out_dir: "work/triage", groups: ["users"] }));
+    child.stdin.end(JSON.stringify({ source: "inputs/server.E01", out_dir: "work/s1/triage", groups: ["users"] }));
     const exited = new Promise<number | null>((resolve) => child.on("close", (code) => resolve(code)));
     let pid = 0;
     for (let i = 0; i < 100 && !pid; i++) {
@@ -359,7 +362,7 @@ time.sleep(60)
     assert.equal(await exited, 143);
     await new Promise((r) => setTimeout(r, 300));
     assert.throws(() => process.kill(pid, 0), "the function it was running did not outlive it");
-    const summary = JSON.parse(await readFile(join(cwd, "work", "triage", "summary.json"), "utf8"));
+    const summary = JSON.parse(await readFile(join(cwd, "work", "s1", "triage", "summary.json"), "utf8"));
     assert.equal(summary.state, "terminated");
     assert.equal(summary.groups[0].functions[0].status, "failed");
   });
@@ -407,7 +410,7 @@ test("linux_triage finds a function's name in a line as a word, not inside anoth
       "dpkg.status": say("dpkg.status"),       // the whole dotted name
       "ssh.known_hosts": say("known_hosts"),   // the last part of a dotted name alone is not the function
     });
-    const out = body(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/triage", groups: ["identity", "packages", "ssh"] }, env, bin));
+    const out = body(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/s1/triage", groups: ["identity", "packages", "ssh"] }, env, bin));
     const st = (name: string): Json => out.groups.flatMap((g: Json) => g.functions).find((f: Json) => f.name === name);
     assert.equal(st("os").status, "unknown");
     assert.equal(st("ips").status, "unknown");
@@ -422,12 +425,12 @@ test("linux_triage answers in JSON where it cannot make its directory, and in a 
   await withCwd(async (cwd, bin) => {
     const env = await triageFixture(cwd, bin, {});
     if (!IS_ROOT) {
-      await mkdir(join(cwd, "ro"), { recursive: true });
-      await chmod(join(cwd, "ro"), 0o555);
-      const run = await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "ro/triage", groups: ["users"] }, env, bin);
+      await mkdir(join(cwd, "work", "s1", "ro"), { recursive: true });
+      await chmod(join(cwd, "work", "s1", "ro"), 0o555);
+      const run = await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/s1/ro/triage", groups: ["users"] }, env, bin);
       assert.doesNotMatch(run.stderr, /Traceback/);
       assert.match(refused(run).error, /could not be created/);
-      await chmod(join(cwd, "ro"), 0o755);
+      await chmod(join(cwd, "work", "s1", "ro"), 0o755);
     }
     // In a job only $OUT is writable: a directory elsewhere is refused before anything runs, and the example's place is accepted.
     const elsewhere = refused(await asJob(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/linux-triage", groups: ["users"] }, bin, env));
@@ -443,14 +446,14 @@ test("linux_triage answers in JSON where it cannot make its directory, and in a 
 test("linux_triage and the recipe give every answer a status and say on what it rests", async () => {
   await withCwd(async (cwd, bin) => {
     const env = await triageFixture(cwd, bin, { users: { exit: 1 }, bashhistory: { exit: 1 }, "webserver.logs": { exit: 1 } });
-    const failed = body(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/f", groups: ["users", "history", "web"] }, env, bin));
+    const failed = body(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/s1/f", groups: ["users", "history", "web"] }, env, bin));
     assert.equal(failed.status, "failed");
     assert.match(failed.status_basis, /no selected function ran to an exit/);
     await writeFile(join(cwd, "stub-conf.json"), JSON.stringify({}));
-    const whole = body(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/c", groups: ["users"] }, env, bin));
+    const whole = body(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/s1/c", groups: ["users"] }, env, bin));
     assert.equal(whole.status, "complete");
     assert.match(whole.status_basis, /not coverage of the host/);
-    assert.equal(refused(await tool(TRIAGE, cwd, { source: "inputs/none.E01", out_dir: "work/e" }, env, bin)).status, "failed");
+    assert.equal(refused(await tool(TRIAGE, cwd, { source: "inputs/none.E01", out_dir: "work/s1/e" }, env, bin)).status, "failed");
     // The recipe's receipt and its answer carry the same pair.
     await writeFile(join(cwd, "stub-conf.json"), JSON.stringify({ users: { exit: 1 }, bashhistory: { exit: 1 }, "webserver.logs": { exit: 1 }, ...Object.fromEntries(ALL_FUNCTIONS.map((f) => [f, { exit: 1 }])) }));
     await writeFile(join(cwd, "target.json"), JSON.stringify({ paths: [join(cwd, "inputs", "server.E01")], name: "server" }));
@@ -493,5 +496,65 @@ test("the linux-target recipe makes what it makes under its own output directory
       assert.equal(JSON.parse(String(bad.stdout).trim()).status, "failed");
       await chmod(join(cwd, "ro"), 0o755);
     }
+  });
+});
+
+test("linux_triage refuses a source that is the analysis machine's root however it is spelled, or lies outside the run directory, and runs nothing", async () => {
+  const { symlink, readdir } = await import("node:fs/promises");
+  await withCwd(async (cwd, bin) => {
+    const env = await triageFixture(cwd, bin, {});
+    await mkdir(join(cwd, "work", "s1"), { recursive: true });
+    await symlink("/", join(cwd, "work", "s1", "root-link"));
+    await symlink("/etc", join(cwd, "inputs", "etc-link"));
+    const spellings = ["/", "//", "/./", "/..", "/../..", "work/s1/root-link", "work/s1/root-link/.", "/etc", "/tmp", "inputs/etc-link", "../"];
+    for (const source of spellings) {
+      const answer = refused(await tool(TRIAGE, cwd, { source, out_dir: "work/s1/never", groups: ["users"] }, env, bin));
+      assert.equal(answer.status, "failed", source);
+      assert.match(answer.error, /root directory|inside the run directory/, source);
+    }
+    assert.deepEqual(await readdir(join(cwd, "work", "s1")), ["root-link"], "a refusal creates nothing");
+    assert.equal(await exists(join(cwd, "stub-log.txt")), false, "and target-query is never started");
+    // The image itself, and an extracted root under inputs/, are read as before.
+    assert.equal(body(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/s1/ok", groups: ["users"] }, env, bin)).status, "complete");
+  });
+});
+
+test("linux_triage holds out_dir to work/<agent>/ outside a job: an escape through .. or a link, another place, and another agent's directory are refused", async () => {
+  const { symlink, readdir } = await import("node:fs/promises");
+  await withCwd(async (cwd, bin) => {
+    const env = await triageFixture(cwd, bin, {});
+    await mkdir(join(cwd, "work", "s1"), { recursive: true });
+    await mkdir(join(cwd, "elsewhere"), { recursive: true });
+    await symlink(join(cwd, "elsewhere"), join(cwd, "work", "s1", "link"));
+    for (const out_dir of ["work/s1/../../escape", "work/s1/../escape", "escape", join(cwd, "escape"), "work/other/x", "work/s1", "work/s1/link/x", "work/escape"]) {
+      const answer = refused(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir, groups: ["users"] }, env, bin));
+      assert.equal(answer.status, "failed", out_dir);
+      assert.match(answer.error, /out_dir must/, out_dir);
+    }
+    assert.deepEqual(await readdir(join(cwd, "elsewhere")), []);
+    assert.equal(await exists(join(cwd, "escape")), false);
+    assert.equal(await exists(join(cwd, "work", "other")), false);
+    assert.equal(body(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/s1/a/b", groups: ["users"] }, env, bin)).status, "complete");
+  });
+});
+
+test("linux_triage counts and hashes on the clock: past the total deadline it stops, names what it did not do in not_hashed, and says partial", async () => {
+  await withCwd(async (cwd, bin) => {
+    // 100 MiB of short JSON lines from one function: reading them back to count them takes longer than the 8 s the run has.
+    const env = await triageFixture(cwd, bin, { users: { records: 1, flood_blocks: 12 } });
+    const started = Date.now();
+    const out = body(await tool(TRIAGE, cwd, { source: "inputs/server.E01", out_dir: "work/s1/big", groups: ["users"], timeout_seconds: 5, total_timeout_seconds: 8 }, env, bin));
+    const seconds = (Date.now() - started) / 1000;
+    assert.ok(seconds < 8 + 6, `the run took ${seconds} s against a total deadline of 8`);
+    assert.equal(out.status, "partial", out.status_basis);
+    assert.ok(out.not_hashed.length >= 1, "what was not done is named");
+    assert.match(JSON.stringify(out.not_hashed), /counted up to byte \d+ of \d+/);
+    const [entry] = out.groups[0].functions;
+    assert.equal(entry.records_counted_to_the_end, false);
+    assert.ok(entry.records >= 1 && entry.records < 12 * (1 << 20), "the count is a lower bound");
+    assert.equal(out.groups[0].sha256 === null || typeof out.groups[0].sha256 === "string", true);
+    // The summary on disk says the same.
+    const summary = JSON.parse(await readFile(join(cwd, "work", "s1", "big", "summary.json"), "utf8"));
+    assert.deepEqual(summary.not_hashed, out.not_hashed);
   });
 });

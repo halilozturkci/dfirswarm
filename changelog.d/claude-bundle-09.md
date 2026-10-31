@@ -6,6 +6,10 @@ auth_log, cron_dump, journal_export, shell_history and utmp_parse had five drift
 
 auth_log, cron_dump, journal_export, shell_history and utmp_parse now declare `secret_output` for their text flags (`write_text` and `preview_text`; `write_commands` and `preview_commands` for shell_history), so a job that sets one is sealed as secret output without the agent saying so, and each tool refuses such a flag as JSON, before it opens or creates anything, when `SECRET_OUTPUT` is not `1`. linux_triage does not declare it.
 
+### Fixed: linux-forensics linux_triage refuses the analysis machine's root, holds out_dir to work/<agent>/ and counts on the clock
+
+`source` is refused when it resolves to the root directory (`/`, `//`, `/..`, a link to it) or lies outside the run directory, before target-query is started. Outside a job, in a run directory, `out_dir` must resolve under `work/<agent id>/` (`work/ag/../../escape` and a link out are refused). The counting of each function's records and the hashing of the files it wrote read the clock and stop at the total deadline: what they did not do is listed in `not_hashed`, a stopped count is marked `records_counted_to_the_end: false`, and the run is partial.
+
 ### Fixed: linux-forensics cron_dump bounds its answer, names cronie's extensions and withholds odd keys
 
 The entries cron_dump shows inline now stop at 1 MiB of JSON (`answer_budget`, `truncated`); the rest, and the ones shown, are whole in `pages.entries.all_results`, named with its size and sha256, and the status is unchanged (300 timers with long `OnCalendar` values made a 22.9 MB answer). The manifest and `persistence/cron-timers` say that cronie's `L`, `W`, `#` and `?` and a numeric user read as unparsed. A timer's unit key or section name that systemd does not define is withheld with its length (`key_withheld`, `section_withheld`) instead of printed cut at 128 characters, so a pasted token that stands where a key goes is not shown.
