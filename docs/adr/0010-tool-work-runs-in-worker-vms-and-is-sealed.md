@@ -163,7 +163,9 @@ After the review:
 
 - **The tool-mode A/B** (pack tools only through jobs): after the queue
   changes are measured. The deciding numbers are named before it runs:
-  findings with refs, tokens, and answers.
+  findings with refs, tokens, and answers. A pilot exists since 2026-11-01:
+  `--pack-tools-as-jobs PACK` takes one pack's tools out of Pi's tool schemas
+  and runs them through `job_run`; the comparison itself is still to be run.
 - **Result caching**: not built. Identical requests are measured first
   (`job_deduplicated` lines, and identical commands in the journal).
 - **Exclusive sessions** (a worker kept for iterative work): not built.
