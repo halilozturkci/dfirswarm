@@ -1225,7 +1225,13 @@ def count_lines(path, cap=10_000_000):
     """How many non-blank lines a file holds, read in chunks and never held whole or echoed; a count is not a
     value. Stops counting past `cap` lines (a candidate list or a hash file is not read for mischief)."""
     n = 0
-    with open(path, "rb") as fh:
+    # Opened non-blocking and checked as a regular file on the descriptor: a path that became a FIFO or a device after the
+    # caller's check must not hold the tool at an open or a read.
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        os.close(fd)
+        raise OSError(errno.EINVAL, "not a regular file")
+    with os.fdopen(fd, "rb") as fh:
         for line in fh:
             if line.strip():
                 n += 1

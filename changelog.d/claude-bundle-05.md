@@ -81,3 +81,15 @@ password only for cryptsetup's exit 0 (decrypted) and exit 2 (bad passphrase,
 `decrypted: false`); any other exit, or exit 0 with none of the header fields,
 answers `failed` naming the exit code, and a `password_file` readable by group
 or other is refused, so the manifest's "0600" is enforced.
+
+### Fixed: encrypted-containers: tcrypt_header no longer hangs on a FIFO named as password_file
+
+`tcrypt_header` read `password_file` with a plain `open()` before its own clock
+was set, so a FIFO with no writer held it until the harness killed it. It now
+starts its clock before touching any caller-supplied path, refuses (as JSON,
+`failed`) a password file that is not a regular file before opening it, and
+opens it non-blocking, following no link, with the descriptor checked again.
+`password_recover` counts its hash file and candidate list through the same
+non-blocking, regular-file-checked open. A FIFO named as source, keyfile,
+hash_file, candidates or path is answered as JSON, within seconds, by all five
+tools of the pack (a test holds each).

@@ -1216,17 +1216,26 @@ def parse_fields(text):
 
 
 def read_small_file(path, limit, what):
+    """The bytes of a regular file of at most `limit` bytes. A FIFO, a device or a socket is refused before it is opened (an open of a
+    FIFO with no writer blocks for ever), and the open itself is non-blocking and follows no link, with the descriptor checked again."""
     try:
-        size = os.path.getsize(path)
+        if not stat.S_ISREG(os.lstat(path).st_mode):
+            fail("%s is not a regular file (a pipe, a device, a socket or a directory is not read)" % what, path=shown(path))
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0))
     except OSError as exc:
         fail("%s could not be read: %s" % (what, describe(exc)), path=shown(path))
-    if size > limit:
-        fail("%s is larger than %d bytes: not a password or a keyfile this tool expects" % (what, limit), path=shown(path))
     try:
-        with open(path, "rb") as fh:
-            return fh.read()
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            fail("%s is not a regular file (a pipe, a device, a socket or a directory is not read)" % what, path=shown(path))
+        if st.st_size > limit:
+            fail("%s is larger than %d bytes: not a password or a keyfile this tool expects" % (what, limit), path=shown(path))
+        with os.fdopen(fd, "rb", closefd=False) as fh:
+            return fh.read(limit + 1)
     except OSError as exc:
         fail("%s could not be read: %s" % (what, describe(exc)), path=shown(path))
+    finally:
+        os.close(fd)
 
 
 def refused_source(path, kind):
@@ -1256,6 +1265,12 @@ def main():
     if not isinstance(args, dict):
         fail("arguments must be a JSON object")
     os.umask(0o077)
+
+    # The tool's own clock runs before any caller-supplied path is touched.
+    seconds = args.get("max_seconds", DEFAULT_SECONDS)
+    if not isinstance(seconds, int) or isinstance(seconds, bool) or not 1 <= seconds <= MAX_SECONDS:
+        fail("max_seconds must be an integer from 1 to %d (the tool's own time limit; the manifest allows 120)" % MAX_SECONDS)
+    set_deadline(seconds)
 
     source = args.get("source")
     if not isinstance(source, str) or not source:
@@ -1309,11 +1324,6 @@ def main():
         fail("offset must be a non-negative integer of bytes")
     if offset % 512:
         fail("offset must be a multiple of 512 (cryptsetup's --offset is in 512-byte sectors)")
-
-    seconds = args.get("max_seconds", DEFAULT_SECONDS)
-    if not isinstance(seconds, int) or isinstance(seconds, bool) or not 1 <= seconds <= MAX_SECONDS:
-        fail("max_seconds must be an integer from 1 to %d (the tool's own time limit; the manifest allows 120)" % MAX_SECONDS)
-    set_deadline(seconds)
 
     cryptsetup = shutil.which("cryptsetup")
     if not cryptsetup:
