@@ -39,6 +39,181 @@ import struct
 import sys
 from collections import Counter
 
+
+# BEGIN SHARED STOP
+# The same text is in recovery_key_scan, archive_probe and crypto_id (a pack test holds the copies equal). SIGTERM, SIGINT and SIGHUP end the
+# tool with ONE JSON answer and the exit status 128 + the signal, with no traceback and no temporary file left. A tool that scans
+# (cooperative) only notes the signal: the scan reads stop_wanted() between windows and files, finishes its pages and prints a partial
+# answer. If it is not finished GRACE_SECONDS later (a read that never returns), or a second signal comes, the stop is hard: the cleanup
+# steps run (a program the tool started is killed, a values file is closed), the temporary files of the pages are removed, the last word
+# is printed and the process ends. The tool's own clock (set_deadline) is below the manifest's timeout and is backed by the same hard stop:
+# GRACE_SECONDS after the deadline a read that has not returned (a file on a volume that is not there, a pipe nobody writes) no longer holds
+# the tool. SIGALRM ends it when the read can be interrupted, and a watchdog thread, which needs neither a signal nor the read to return,
+# ends it when not; either prints ONE JSON answer, status partial, and exits 0. A page fault in a mapped file can be ended by neither (it
+# holds the interpreter): a tool that maps a file reads the part it maps through a descriptor first, where the thread can run.
+import signal
+import threading
+import time
+
+GRACE_SECONDS = 5
+STOP = {"signal": None, "deadline": None, "limit": None, "last_word": None, "cooperative": False, "cleanup": [], "answered": False,
+        "owner": None, "hard_due": None}
+_STOP_LOCK = threading.RLock()
+_STOP_DONE = threading.Event()
+
+
+def set_deadline(seconds):
+    STOP["limit"] = seconds
+    STOP["deadline"] = time.monotonic() + seconds
+    arm_hard_stop(seconds + GRACE_SECONDS)
+    threading.Thread(target=_watchdog, name="hard-stop", daemon=True).start()
+
+
+def arm_hard_stop(seconds):
+    """The hard stop is due in `seconds` at the latest (an earlier one stays): as SIGALRM, and as the time the watchdog waits for."""
+    due = time.perf_counter() + seconds
+    if STOP["hard_due"] is None or due < STOP["hard_due"]:
+        STOP["hard_due"] = due
+    left = signal.getitimer(signal.ITIMER_REAL)[0]
+    signal.setitimer(signal.ITIMER_REAL, seconds if left <= 0 else min(seconds, left))
+
+
+def disarm_stop():
+    """No hard stop is wanted any more (the answer is going out, or the tool ends with an error): the timer and the watchdog stand down."""
+    STOP["hard_due"] = None
+    _STOP_DONE.set()
+    signal.setitimer(signal.ITIMER_REAL, 0)
+
+
+def _watchdog():
+    while not _STOP_DONE.wait(0.2):
+        due = STOP["hard_due"]
+        if due is not None and time.perf_counter() >= due:
+            hard_stop(STOP["signal"])
+
+
+def stand_by():
+    """When another thread is ending the tool, wait for it to do so: nothing else may print."""
+    if STOP["owner"] not in (None, threading.get_ident()):
+        while True:
+            time.sleep(3600)
+
+
+def out_of_time():
+    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"]
+
+
+def stop_wanted():
+    return STOP["signal"] is not None or out_of_time()
+
+
+def stop_cause():
+    if STOP["signal"] is not None:
+        return "stopped by signal %d" % STOP["signal"]
+    return "the time limit (max_seconds %s) was reached" % STOP["limit"]
+
+
+def remove_pending_pages():
+    """Remove the temporary file of every page that is still being written."""
+    for page in list(globals().get("PAGES", [])):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+def hard_stop(signum):
+    """End the tool now. `signum` is the signal that asked for it; None when the clock did: the answer is then partial and the exit status 0."""
+    with _STOP_LOCK:
+        if signum is None and STOP["answered"]:     # the answer is being written: let it be written
+            STOP["hard_due"] = None
+            return
+        if STOP["owner"] in (None, threading.get_ident()):
+            STOP["owner"] = threading.get_ident()
+            mine = True
+        else:
+            mine = False
+    if not mine:
+        stand_by()
+    for step in list(STOP["cleanup"]):
+        try:
+            step()
+        except Exception:  # noqa: BLE001 - a cleanup step is best effort
+            pass
+    remove_pending_pages()
+    if STOP["last_word"] and not STOP["answered"]:
+        try:
+            STOP["last_word"](signum)
+        except Exception:  # noqa: BLE001
+            pass
+    os._exit(128 + signum if signum else 0)
+
+
+def _on_stop_signal(signum, _frame):
+    if STOP["cooperative"] and STOP["signal"] is None:
+        STOP["signal"] = signum
+        arm_hard_stop(GRACE_SECONDS)
+        return
+    hard_stop(STOP["signal"] or signum)
+
+
+def _on_stop_alarm(_signum, _frame):
+    hard_stop(STOP["signal"])
+
+
+def install_stop(last_word=None, cooperative=False):
+    STOP["last_word"], STOP["cooperative"] = last_word, cooperative
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_stop_signal)
+    signal.signal(signal.SIGALRM, _on_stop_alarm)
+
+
+def interrupted_answer(signum, **extra):
+    if signum is None:       # the clock ran out, and then GRACE_SECONDS more, with a read that had not returned
+        print(json.dumps({"status": "partial", "partial": True, "interrupted": True, "hard_stopped": True,
+                          "stopped_by": "the tool's time limit (%s seconds) was reached" % STOP["limit"],
+                          "status_basis": "the tool's time limit (%s seconds) and %d seconds more passed while a read had not returned (a file on a "
+                                          "volume or share that is not available, or a pipe); the tool was ended there, and nothing it had read is "
+                                          "an answer" % (STOP["limit"], GRACE_SECONDS), **extra}), flush=True)
+        return
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "interrupted",
+                      "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
+                      "signal": signum, **extra}), flush=True)
+
+
+def claim_answer():
+    """Take the one answer (an answer or an error): the stop is disarmed, the stop signals are held back, and `answered` is set under the
+    lock, so that a watchdog that has read its due time but not yet taken the lock finds the answer claimed and prints nothing. When the
+    stop was claimed first, wait for the thread that has it to end the tool."""
+    disarm_stop()
+    held = {signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGALRM}
+    signal.pthread_sigmask(signal.SIG_BLOCK, held)
+    with _STOP_LOCK:
+        mine = STOP["owner"] in (None, threading.get_ident())
+        if mine:
+            STOP["answered"] = True
+    if not mine:
+        stand_by()
+
+
+def emit(answer):
+    """Print the answer once, with the stop signals held back until it is out, and leave with 128 + the signal if one was noted."""
+    claim_answer()
+    text = json.dumps(seal(answer), indent=2, ensure_ascii=True)
+    sys.stdout.write(text + "\n")
+    sys.stdout.flush()
+    if STOP["signal"] is not None:
+        os._exit(128 + STOP["signal"])
+
+
+# The handlers are in as soon as the module has run as far as this block (a hard stop with the generic last word, until main() installs the
+# tool's own): only the start of the interpreter and the compiling of the file come before it.
+install_stop(lambda signum: interrupted_answer(signum))
+# END SHARED STOP
+
+
 PARSER = "crypto_id/3"
 LUKS_MAGIC = b"LUKS\xba\xbe"
 SLOT_ENABLED = 0x00AC71F3
@@ -602,178 +777,7 @@ def seal(value, key=None):
 # END SHARED NAMES
 
 
-# BEGIN SHARED STOP
-# The same text is in recovery_key_scan, archive_probe and crypto_id (a pack test holds the copies equal). SIGTERM, SIGINT and SIGHUP end the
-# tool with ONE JSON answer and the exit status 128 + the signal, with no traceback and no temporary file left. A tool that scans
-# (cooperative) only notes the signal: the scan reads stop_wanted() between windows and files, finishes its pages and prints a partial
-# answer. If it is not finished GRACE_SECONDS later (a read that never returns), or a second signal comes, the stop is hard: the cleanup
-# steps run (a program the tool started is killed, a values file is closed), the temporary files of the pages are removed, the last word
-# is printed and the process ends. The tool's own clock (set_deadline) is below the manifest's timeout and is backed by the same hard stop:
-# GRACE_SECONDS after the deadline a read that has not returned (a file on a volume that is not there, a pipe nobody writes) no longer holds
-# the tool. SIGALRM ends it when the read can be interrupted, and a watchdog thread, which needs neither a signal nor the read to return,
-# ends it when not; either prints ONE JSON answer, status partial, and exits 0. A page fault in a mapped file can be ended by neither (it
-# holds the interpreter): a tool that maps a file reads the part it maps through a descriptor first, where the thread can run.
-import signal
-import threading
-import time
 
-GRACE_SECONDS = 5
-STOP = {"signal": None, "deadline": None, "limit": None, "last_word": None, "cooperative": False, "cleanup": [], "answered": False,
-        "owner": None, "hard_due": None}
-_STOP_LOCK = threading.RLock()
-_STOP_DONE = threading.Event()
-
-
-def set_deadline(seconds):
-    STOP["limit"] = seconds
-    STOP["deadline"] = time.monotonic() + seconds
-    arm_hard_stop(seconds + GRACE_SECONDS)
-    threading.Thread(target=_watchdog, name="hard-stop", daemon=True).start()
-
-
-def arm_hard_stop(seconds):
-    """The hard stop is due in `seconds` at the latest (an earlier one stays): as SIGALRM, and as the time the watchdog waits for."""
-    due = time.perf_counter() + seconds
-    if STOP["hard_due"] is None or due < STOP["hard_due"]:
-        STOP["hard_due"] = due
-    left = signal.getitimer(signal.ITIMER_REAL)[0]
-    signal.setitimer(signal.ITIMER_REAL, seconds if left <= 0 else min(seconds, left))
-
-
-def disarm_stop():
-    """No hard stop is wanted any more (the answer is going out, or the tool ends with an error): the timer and the watchdog stand down."""
-    STOP["hard_due"] = None
-    _STOP_DONE.set()
-    signal.setitimer(signal.ITIMER_REAL, 0)
-
-
-def _watchdog():
-    while not _STOP_DONE.wait(0.2):
-        due = STOP["hard_due"]
-        if due is not None and time.perf_counter() >= due:
-            hard_stop(STOP["signal"])
-
-
-def stand_by():
-    """When another thread is ending the tool, wait for it to do so: nothing else may print."""
-    if STOP["owner"] not in (None, threading.get_ident()):
-        while True:
-            time.sleep(3600)
-
-
-def out_of_time():
-    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"]
-
-
-def stop_wanted():
-    return STOP["signal"] is not None or out_of_time()
-
-
-def stop_cause():
-    if STOP["signal"] is not None:
-        return "stopped by signal %d" % STOP["signal"]
-    return "the time limit (max_seconds %s) was reached" % STOP["limit"]
-
-
-def remove_pending_pages():
-    """Remove the temporary file of every page that is still being written."""
-    for page in list(globals().get("PAGES", [])):
-        tmp = getattr(page, "_tmp", None)
-        if tmp is not None:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-
-
-def hard_stop(signum):
-    """End the tool now. `signum` is the signal that asked for it; None when the clock did: the answer is then partial and the exit status 0."""
-    with _STOP_LOCK:
-        if signum is None and STOP["answered"]:     # the answer is being written: let it be written
-            STOP["hard_due"] = None
-            return
-        if STOP["owner"] in (None, threading.get_ident()):
-            STOP["owner"] = threading.get_ident()
-            mine = True
-        else:
-            mine = False
-    if not mine:
-        stand_by()
-    for step in list(STOP["cleanup"]):
-        try:
-            step()
-        except Exception:  # noqa: BLE001 - a cleanup step is best effort
-            pass
-    remove_pending_pages()
-    if STOP["last_word"] and not STOP["answered"]:
-        try:
-            STOP["last_word"](signum)
-        except Exception:  # noqa: BLE001
-            pass
-    os._exit(128 + signum if signum else 0)
-
-
-def _on_stop_signal(signum, _frame):
-    if STOP["cooperative"] and STOP["signal"] is None:
-        STOP["signal"] = signum
-        arm_hard_stop(GRACE_SECONDS)
-        return
-    hard_stop(STOP["signal"] or signum)
-
-
-def _on_stop_alarm(_signum, _frame):
-    hard_stop(STOP["signal"])
-
-
-def install_stop(last_word=None, cooperative=False):
-    STOP["last_word"], STOP["cooperative"] = last_word, cooperative
-    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
-        signal.signal(signum, _on_stop_signal)
-    signal.signal(signal.SIGALRM, _on_stop_alarm)
-
-
-def interrupted_answer(signum, **extra):
-    if signum is None:       # the clock ran out, and then GRACE_SECONDS more, with a read that had not returned
-        print(json.dumps({"status": "partial", "partial": True, "interrupted": True, "hard_stopped": True,
-                          "stopped_by": "the tool's time limit (%s seconds) was reached" % STOP["limit"],
-                          "status_basis": "the tool's time limit (%s seconds) and %d seconds more passed while a read had not returned (a file on a "
-                                          "volume or share that is not available, or a pipe); the tool was ended there, and nothing it had read is "
-                                          "an answer" % (STOP["limit"], GRACE_SECONDS), **extra}), flush=True)
-        return
-    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "interrupted",
-                      "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
-                      "signal": signum, **extra}), flush=True)
-
-
-def claim_answer():
-    """Take the one answer (an answer or an error): the stop is disarmed, the stop signals are held back, and `answered` is set under the
-    lock, so that a watchdog that has read its due time but not yet taken the lock finds the answer claimed and prints nothing. When the
-    stop was claimed first, wait for the thread that has it to end the tool."""
-    disarm_stop()
-    held = {signal.SIGTERM, signal.SIGINT, signal.SIGHUP, signal.SIGALRM}
-    signal.pthread_sigmask(signal.SIG_BLOCK, held)
-    with _STOP_LOCK:
-        mine = STOP["owner"] in (None, threading.get_ident())
-        if mine:
-            STOP["answered"] = True
-    if not mine:
-        stand_by()
-
-
-def emit(answer):
-    """Print the answer once, with the stop signals held back until it is out, and leave with 128 + the signal if one was noted."""
-    claim_answer()
-    text = json.dumps(seal(answer), indent=2, ensure_ascii=True)
-    sys.stdout.write(text + "\n")
-    sys.stdout.flush()
-    if STOP["signal"] is not None:
-        os._exit(128 + STOP["signal"])
-
-
-# The handlers are in as soon as the module has run as far as this block (a hard stop with the generic last word, until main() installs the
-# tool's own): only the start of the interpreter and the compiling of the file come before it.
-install_stop(lambda signum: interrupted_answer(signum))
-# END SHARED STOP
 
 
 UNRECOGNISED = "<unrecognised header text withheld>"

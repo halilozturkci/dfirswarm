@@ -52,3 +52,16 @@ longer waits for end of file on 7z's own stdout pipe when a program 7z
 forked keeps that pipe open after 7z itself has ended: the read ends
 within a short grace of 7z's own exit, and what still holds the pipe is
 reaped.
+
+### Fixed: encrypted-containers: the STOP block now runs first, before a SIGTERM in the first tens of milliseconds can land with no handler installed
+
+In `archive_probe`, `crypto_id` and `recovery_key_scan`, and for the same
+reason in the two tools this bundle adds (`password_recover`,
+`tcrypt_header`), the SHARED STOP block (its pinned text unchanged) now
+runs right after the standard-library imports, before the PLACE, PAGE,
+WITHHOLDING, NAMES and PROCESS blocks and their own module-level work
+(regex compiles and the rest). A stop signal in that window used to get
+the interpreter's default action, no JSON answer; moving the block first
+narrows it. A structural test holds the block's position in every
+carrier, and fails on the previous head, where STOP still sits after
+those blocks.
