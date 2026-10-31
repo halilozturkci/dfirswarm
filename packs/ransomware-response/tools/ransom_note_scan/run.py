@@ -62,7 +62,9 @@ SIGHUP) ends the tool with one JSON answer (status `failed`, `interrupted`), exi
 128 + the signal, after removing the pages it was still writing; a values file already begun
 is kept, cut back to its last whole row, and the answer says how many rows it holds. A result
 file that is already there is never replaced by another result: the new one takes the next
-free name.
+free name. The handlers are installed when the module code reaches the stop block, so a stop
+signal in the start-up window (interpreter start, compiling this file, the module code above
+that block) can end the tool with no JSON answer.
 
 What it does not locate: a long token with no label and no known shape (a 64-digit hex
 string after the word "Token") is neither located nor counted.
@@ -172,6 +174,10 @@ class LosslessPage:
             self.page_bytes += len(repr(row))
             return row
         if self._out is None:
+            # A stop must not come between the temporary file and its registration (self._tmp): the stop handler removes only the
+            # registered files. The three stop signals are held for these steps and delivered right after; where the call is missing it is a no-op.
+            hold = getattr(signal, "pthread_sigmask", None)
+            was = hold(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP}) if hold else None
             try:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
                 fd, name = tempfile.mkstemp(
@@ -181,6 +187,9 @@ class LosslessPage:
                 self._out = os.fdopen(fd, "w", encoding="utf-8")
             except OSError as exc:
                 self._cannot_write(exc)
+            finally:
+                if hold:
+                    hold(signal.SIG_SETMASK, was)
             for kept in self.page:
                 self._write(kept)
         self._write(row)

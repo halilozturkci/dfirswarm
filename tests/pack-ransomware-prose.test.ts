@@ -12,7 +12,7 @@
 import assert from "node:assert/strict";
 import { randomBytes, randomInt } from "node:crypto";
 import { mkdir, readFile, truncate, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { runPySnippet, withCwd } from "./tool-library-harness.ts";
 import { LOAD, NOTES, SURVEY, body, runPatched, tool } from "./ransomware-pack-harness.ts";
@@ -193,4 +193,49 @@ test("encrypted_survey: when nothing is replaced the receipt and the answer both
       assert.equal(receipt.status, answer.status);
     }
   });
+});
+
+// ---- the residuals the manifests state -------------------------------------------------------------------------------------------------
+
+const PACK_DIR = join(dirname(NOTES), "..", "..");
+const describeOf = async (name: string): Promise<string> =>
+  (JSON.parse(await readFile(join(PACK_DIR, "tools", name, "manifest.json"), "utf8")) as { description: string }).description;
+
+for (const name of ["ransom_note_scan", "encrypted_survey"]) {
+  test(`${name}'s manifest says that a stop in the start-up window can end the tool with no JSON, beside the stop sentence`, async () => {
+    const d = await describeOf(name);
+    const stop = d.indexOf("A stop signal (SIGTERM, SIGINT, SIGHUP) ends it with one JSON answer");
+    assert.ok(stop >= 0, "the stop sentence is there");
+    const window = d.indexOf("the start of the interpreter, the compiling of the tool's file and the module code above that block all come first", stop);
+    assert.ok(window > stop && window - stop < 700, "the start-up window is stated beside the stop sentence");
+    assert.match(d.slice(window), /a stop signal in that window[^.]*can end the tool with no JSON answer at all/);
+  });
+
+  test(`${name}'s manifest states the job residuals: SIGKILL, the timeout that is not passed to the tool`, async () => {
+    const d = await describeOf(name);
+    assert.match(d, /SIGKILL cannot be caught: a tool killed that way[^.]*leaves the hidden temporary files/);
+    assert.match(d, /The job's own timeout_seconds[^.]*is not passed to the tool: give max_seconds a value below it/);
+  });
+}
+
+test("ransom_note_scan's manifest names the five listed residual classes, with only measured rates, and the cost of the first pass", async () => {
+  const d = await describeOf("ransom_note_scan");
+  const at = d.indexOf("Five residuals are listed, not fixed.");
+  assert.ok(at >= 0, "the five are listed together");
+  const list = d.slice(at);
+  assert.match(list, /\(1\) A note of 128 bytes or more whose only variable part is a short identifier has its whole-file sha256 printed/);
+  assert.match(list, /\(2\) UTF-16 without a byte-order mark is recognised only by its NUL pattern[^.]*found only when ASCII dominates/);
+  assert.match(list, /\(3\) The rule that withholds a name because the note beneath it holds a value is a literal, case-insensitive substring test/);
+  assert.match(list, /\(4\) The name pattern matches any name that contains `help`[^.]*matched 2\.0% of 600,000 real names/);
+  assert.match(list, /\(5\) Derived quantities are printed: the length of each occurrence/);
+  assert.match(d, /more than 64 distinct 8-character windows/);
+});
+
+test("encrypted_survey's manifest says the raw tail bytes are the file's, and the skills say to run it as secret output where key material is expected", async () => {
+  const manifest = JSON.parse(await readFile(join(PACK_DIR, "tools", "encrypted_survey", "manifest.json"), "utf8")) as { params: Record<string, { description: string }> };
+  assert.match(manifest.params.tail_bytes.description, /They are raw bytes of the file/);
+  const triage = await readFile(join(PACK_DIR, "skills", "scope", "triage-tools.md"), "utf8");
+  assert.match(triage.replace(/\s+/g, " "), /prints the last `tail_bytes` bytes of sampled files; where key material is expected there, run it with `secret_output: true` too/);
+  const family = await readFile(join(PACK_DIR, "skills", "identify", "family.md"), "utf8");
+  assert.match(family.replace(/\s+/g, " "), /returns the last `tail_bytes` bytes, 32 by default/);
 });

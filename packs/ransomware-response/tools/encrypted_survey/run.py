@@ -164,6 +164,10 @@ class LosslessPage:
             self.page_bytes += len(repr(row))
             return row
         if self._out is None:
+            # A stop must not come between the temporary file and its registration (self._tmp): the stop handler removes only the
+            # registered files. The three stop signals are held for these steps and delivered right after; where the call is missing it is a no-op.
+            hold = getattr(signal, "pthread_sigmask", None)
+            was = hold(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP}) if hold else None
             try:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
                 fd, name = tempfile.mkstemp(
@@ -173,6 +177,9 @@ class LosslessPage:
                 self._out = os.fdopen(fd, "w", encoding="utf-8")
             except OSError as exc:
                 self._cannot_write(exc)
+            finally:
+                if hold:
+                    hold(signal.SIG_SETMASK, was)
             for kept in self.page:
                 self._write(kept)
         self._write(row)
@@ -1034,12 +1041,20 @@ class Census:
 
     def __init__(self, key):
         self.path, self.shown = output_place("encrypted_survey-census", key)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        fd, name = tempfile.mkstemp(dir=self.path.parent, prefix=f".{self.path.name}-")
-        self._tmp = Path(name)
-        self._out = os.fdopen(fd, "w", encoding="utf-8")
         self.rows = 0
-        PAGES.append(self)
+        # A stop must not come between the temporary file and its registration in PAGES, which is how the stop handler finds it. The three
+        # stop signals are held for these steps and delivered right after; where the call is missing it is a no-op.
+        hold = getattr(signal, "pthread_sigmask", None)
+        was = hold(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP}) if hold else None
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            fd, name = tempfile.mkstemp(dir=self.path.parent, prefix=f".{self.path.name}-")
+            self._tmp = Path(name)
+            self._out = os.fdopen(fd, "w", encoding="utf-8")
+            PAGES.append(self)
+        finally:
+            if hold:
+                hold(signal.SIG_SETMASK, was)
 
     def add(self, row, evidence=None):
         row = seal_row(row, evidence)
