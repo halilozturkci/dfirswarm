@@ -50,8 +50,8 @@ Both are in `provider_hosts_for_model` and in netguard's own default list.
 
 ### Azure OpenAI
 
-Pi's `azure-openai-responses` provider serves the same model ids as OpenAI
-(`azure-openai-responses/gpt-5.4`, `gpt-5.4-mini`, `gpt-5.5`, …) against the
+Pi's `azure` provider serves the same model ids as OpenAI
+(`azure/gpt-5.4`, `gpt-5.4-mini`, `gpt-5.5`, …) against the
 customer's own resource. Four settings: the key (`AZURE_OPENAI_API_KEY`), the
 endpoint (`AZURE_OPENAI_BASE_URL`, `https://<resource>.openai.azure.com` or
 the `.cognitiveservices.azure.com` / `.ai.azure.com` forms; or
@@ -62,7 +62,7 @@ Pi's own store, where the key never touches the shell or `ps`:
 
 ```json
 {
-  "azure-openai-responses": {
+  "azure": {
     "type": "api_key",
     "key": "<the key>",
     "env": {
@@ -74,7 +74,7 @@ Pi's own store, where the key never touches the shell or `ps`:
 }
 ```
 
-in `~/.pi/agent/auth.json` (mode 0600). `pi auth check --model azure-openai-responses/gpt-5.4 --json`
+in `~/.pi/agent/auth.json` (mode 0600). `pi auth check --model azure/gpt-5.4 --json`
 is the gate, as for every provider. The netguard allowlist needs the
 resource's host: `provider_hosts_for_model` reads it from the shell or from
 that store entry, and the kickoff warns when it finds neither, in which case
@@ -88,7 +88,7 @@ An Azure AI **Foundry** resource is not the same thing as an Azure OpenAI
 resource: it serves third-party models (Grok, DeepSeek, Llama, Mistral) from
 your own deployments, on an OpenAI-compatible route
 `https://<resource>.services.ai.azure.com/openai/v1`, where the model name is
-the **deployment** name. `azure-openai-responses` does not carry those model
+the **deployment** name. `azure` does not carry those model
 ids, so define the provider in Pi's own `~/.pi/agent/models.json` instead:
 
 ```json

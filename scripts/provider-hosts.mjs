@@ -19,6 +19,9 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const DATA_REL = join("node_modules", "@earendil-works", "pi-ai", "dist", "providers", "data");
+// Where npm puts pi-ai beside pi-coding-agent rather than inside it: since Pi
+// 1.0.1 ships no shrinkwrap, a project install hoists it; a global one nests it.
+const HOISTED_DATA_REL = join("..", "pi-ai", "dist", "providers", "data");
 
 /**
  * Hosts a provider calls that its models' base URLs do not name: where a
@@ -37,8 +40,10 @@ function dataDirs() {
       // .../pi-coding-agent/dist/bundle/cli.js -> .../pi-coding-agent
       let dir = dirname(realpathSync(bin));
       for (let i = 0; i < 5 && dir !== dirname(dir); i++, dir = dirname(dir)) {
-        if (existsSync(join(dir, "package.json")) && existsSync(join(dir, DATA_REL))) {
-          dirs.push(join(dir, DATA_REL));
+        if (!existsSync(join(dir, "package.json"))) continue;
+        const found = [join(dir, DATA_REL), join(dir, HOISTED_DATA_REL)].find((d) => existsSync(d));
+        if (found) {
+          dirs.push(found);
           break;
         }
       }
@@ -47,7 +52,8 @@ function dataDirs() {
     // no pi on PATH: the repository's copy
   }
   const here = dirname(fileURLToPath(import.meta.url));
-  dirs.push(join(here, "..", "node_modules", "@earendil-works", "pi-coding-agent", DATA_REL));
+  const agent = join(here, "..", "node_modules", "@earendil-works", "pi-coding-agent");
+  dirs.push(join(agent, DATA_REL), join(agent, HOISTED_DATA_REL));
   return dirs.filter((d) => existsSync(d));
 }
 
@@ -59,7 +65,8 @@ function baseUrls(file, modelId) {
   for (const group of Object.values(data)) {
     if (!group || typeof group !== "object") continue;
     for (const [id, model] of Object.entries(group)) {
-      if (!model || typeof model.baseUrl !== "string") continue;
+      // A seat's calls are chat calls: an image or classifier model (Pi 1.4) names no host a seat needs.
+      if (!model || typeof model.baseUrl !== "string" || (model.type !== undefined && model.type !== "chat")) continue;
       if (id === modelId || model.id === modelId) named = model.baseUrl;
       all.push(model.baseUrl);
     }

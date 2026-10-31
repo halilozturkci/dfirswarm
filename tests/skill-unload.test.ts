@@ -42,6 +42,18 @@ import { twoPacks } from "./fixtures/skill-packs.ts";
 import { directSeat, disposeSeat, MODELS } from "./harness/skill-seat.ts";
 
 const REPO = resolve(import.meta.dirname, "..");
+
+/** pi-ai's dist as this checkout installs it: inside pi-coding-agent, or beside it (npm hoists it since Pi 1.0.1 ships no shrinkwrap). */
+const PI_AI_DIST = [
+  join(REPO, "node_modules", "@earendil-works", "pi-coding-agent", "node_modules", "@earendil-works", "pi-ai", "dist"),
+  join(REPO, "node_modules", "@earendil-works", "pi-ai", "dist"),
+].find((d) => existsSync(d)) ?? join(REPO, "node_modules", "@earendil-works", "pi-ai", "dist");
+
+/** A model of a catalogue file: keyed by its id, or since Pi 1.4 by `<type>:<id>` (`chat:gpt-5.5`). */
+function catalogueEntry(data: Record<string, Record<string, ModelFacts & { id: string }>>, api: string, id: string): (ModelFacts & { id: string }) | undefined {
+  const group = data[api];
+  return group?.[id] ?? group?.[`chat:${id}`];
+}
 const BODY_ONE = "Read the run count first";
 
 async function withPacks(run: (a: string, b: string) => Promise<void>): Promise<void> {
@@ -105,22 +117,18 @@ const CATALOGUE_CASES: Array<[file: string, api: string, id: string, want: strin
   ["openai.json", "openai-responses", "gpt-4o", "open"],
   ["openai-codex.json", "openai-codex-responses", "gpt-6-sol", "open"],
   ["openai-codex.json", "openai-codex-responses", "gpt-6-luna", "open"],
-  ["azure-openai-responses.json", "azure-openai-responses", "gpt-5", "open"],
+  ["azure.json", "azure-openai-responses", "gpt-5", "open"],
   ["mistral.json", "mistral-conversations", "codestral-latest", "open"],
 ];
 
 test("over Pi's catalogue: named entries across providers have the class written for them, and no reasoning entry outside the Responses family is ever released at a boundary", () => {
-  const candidates = [
-    join(REPO, "node_modules", "@earendil-works", "pi-coding-agent", "node_modules", "@earendil-works", "pi-ai", "dist", "providers", "data"),
-    join(REPO, "node_modules", "@earendil-works", "pi-ai", "dist", "providers", "data"),
-  ];
-  const dir = candidates.find((d) => existsSync(d));
-  if (!dir) {
+  const dir = join(PI_AI_DIST, "providers", "data");
+  if (!existsSync(dir)) {
     return; // Pi's catalogue is not installed here; the class tests above still hold
   }
   const file = (name: string) => JSON.parse(readFileSync(join(dir, name), "utf8")) as Record<string, Record<string, ModelFacts & { id: string }>>;
   for (const [name, api, id, want] of CATALOGUE_CASES) {
-    const entry = file(name)[api]?.[id];
+    const entry = catalogueEntry(file(name), api, id);
     assert.ok(entry, `${name}: ${api} ${id} is in Pi's catalogue`);
     assert.equal(releaseClassOf(entry!).cls, want, `${name}: ${id}`);
   }
@@ -978,7 +986,7 @@ test("Pi's Anthropic request after a context_edit differs from the one before it
   // Pi's real conversion (pi-ai's anthropic-messages `stream`), stopped at `onPayload` before any request is made:
   // this is the half of "does an edit break the signed thinking blocks" that can be read without a provider.
   // Whether Anthropic's service accepts the history is the other half, and nobody has asked it (docs/packs.md).
-  const piAi = join(REPO, "node_modules", "@earendil-works", "pi-coding-agent", "node_modules", "@earendil-works", "pi-ai", "dist");
+  const piAi = PI_AI_DIST;
   const transport = join(piAi, "api", "anthropic-messages.js");
   const catalogue = join(piAi, "providers", "data", "anthropic.json");
   if (!existsSync(transport) || !existsSync(catalogue)) {
@@ -986,7 +994,7 @@ test("Pi's Anthropic request after a context_edit differs from the one before it
     return;
   }
   const { stream } = (await import(pathToFileURL(transport).href)) as { stream: (model: unknown, context: unknown, options: unknown) => AsyncIterable<unknown> & { result: () => Promise<unknown> } };
-  const model = (JSON.parse(readFileSync(catalogue, "utf8")) as Record<string, Record<string, ModelFacts & { id: string }>>)["anthropic-messages"]!["claude-fable-5-1"]!;
+  const model = catalogueEntry(JSON.parse(readFileSync(catalogue, "utf8")), "anthropic-messages", "claude-fable-5-1")!;
   const sm = SessionManager.inMemory("/tmp/skill-unload-anthropic");
   const now = Date.now();
   const usage = { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
@@ -1039,7 +1047,7 @@ test("Pi's Anthropic request after a context_edit differs from the one before it
 
 test("Pi's OpenAI Responses request after a context_edit differs in the edited function_call_output alone: every reasoning item goes out as the provider wrote it", async (t) => {
   // The Responses conversion is shared with the Codex transport (openai-responses-shared.js), which the team's runs use.
-  const piAi = join(REPO, "node_modules", "@earendil-works", "pi-coding-agent", "node_modules", "@earendil-works", "pi-ai", "dist");
+  const piAi = PI_AI_DIST;
   const transport = join(piAi, "api", "openai-responses.js");
   const catalogue = join(piAi, "providers", "data", "openai.json");
   if (!existsSync(transport) || !existsSync(catalogue)) {
@@ -1047,7 +1055,7 @@ test("Pi's OpenAI Responses request after a context_edit differs in the edited f
     return;
   }
   const { stream } = (await import(pathToFileURL(transport).href)) as { stream: (model: unknown, context: unknown, options: unknown) => AsyncIterable<unknown> & { result: () => Promise<unknown> } };
-  const model = (JSON.parse(readFileSync(catalogue, "utf8")) as Record<string, Record<string, ModelFacts & { id: string }>>)["openai-responses"]!["gpt-5.5"]!;
+  const model = catalogueEntry(JSON.parse(readFileSync(catalogue, "utf8")), "openai-responses", "gpt-5.5")!;
   const sm = SessionManager.inMemory("/tmp/skill-unload-responses");
   const now = Date.now();
   const usage = { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };

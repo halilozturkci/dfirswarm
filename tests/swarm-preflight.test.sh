@@ -601,7 +601,7 @@ grep -q 'Kickoff did not finish' "$TMP/pane-env.out" || fail "a kickoff that sto
 [[ "$(jq -r '[.runs[] | select(.label == "pane-env")] | last | .state' "$TMP/runs/registry.json")" == failed ]] \
   || fail "a kickoff that stopped after registering left the run as $(jq -r '[.runs[] | select(.label == "pane-env")] | last | .state' "$TMP/runs/registry.json")"
 [[ ! -f "$sandbox_dir/collector.pid" ]] || fail "a kickoff that stopped left its collector running"
-[[ ! -d "$TMP/runs/registry.json.lock" ]] || fail "the registry lock was left behind"
+[[ ! -e "$TMP/runs/registry.json.lock" ]] || fail "the registry lock was left behind"
 pass "a kickoff that stops after registering puts away its daemons and records the run as failed"
 if [[ -z "$guard_here" || "$guard_here" == "none" ]]; then
   echo "skip - Herdr's env with --no-write-guard --inputs (no kernel guard on this host, so no hook)"

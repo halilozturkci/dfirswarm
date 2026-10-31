@@ -184,6 +184,26 @@ test("the linux-target recipe says it could not tell, with exit 2, where it did 
       assert.equal(answer(r).applies, "unknown", text);
       assert.equal(answer(r).status, "failed", text);
     }
+    // dissect.target 3.25 (the linux image's) names the target before the value: `<Target /path> linux`. Until the
+    // prefix was taken off, every image read as could-not-tell and the census of the first microVM case run never
+    // planned this recipe; the LVM root it reads went uncatalogued. Only the prefix that names this image comes off.
+    const image = join(cwd, "inputs", "x.E01");
+    await stub(`print(${JSON.stringify(`<Target ${image}> linux`)})`);
+    r = recipe(cwd, bin, {}, "detect", "--target", join(cwd, "target.json"));
+    assert.equal(r.status, 0, String(r.stdout));
+    assert.equal(answer(r).applies, true);
+    await stub(`print(${JSON.stringify(`<Target ${image}> windows`)})`);
+    assert.equal(recipe(cwd, bin, {}, "detect", "--target", join(cwd, "target.json")).status, 1, "a prefixed other system is a no");
+    // A target named `./inputs/x.E01` is printed as dissect.target normalises it: `<Target inputs/x.E01>`.
+    await writeFile(join(cwd, "target-rel.json"), JSON.stringify({ paths: ["./inputs/x.E01"], name: "x" }));
+    await stub(`print("<Target inputs/x.E01> linux")`);
+    assert.equal(recipe(cwd, bin, {}, "detect", "--target", join(cwd, "target-rel.json")).status, 0, "a ./ path, normalised as dissect.target prints it");
+    for (const text of [`<Target /elsewhere/y.E01> linux`, `<Target ${image}> a linux box`, `<Target ${image}>linux`, `see <Target ${image}> linux`]) {
+      await stub(`print(${JSON.stringify(text)})`);
+      r = recipe(cwd, bin, {}, "detect", "--target", join(cwd, "target.json"));
+      assert.equal(r.status, 2, text);
+      assert.equal(answer(r).applies, "unknown", text);
+    }
     // The name is read as a value, not as a word among others: a hostname called linux is not the OS.
     await stub(`import json\nprint(json.dumps({"os": "windows", "hostname": "linux"}))`);
     r = recipe(cwd, bin, {}, "detect", "--target", join(cwd, "target.json"));
@@ -239,6 +259,10 @@ test("the linux-target recipe's coverage follows what each function produced, no
     const done = JSON.parse(await readFile(join(cwd, "recipe-out2", "coverage.json"), "utf8"));
     assert.equal(done.status, "complete");
     assert.match(done.not_covered, /deleted/);
+    // The receipt agents read first names the route to a file no function parses, and when icat by inode is the better one:
+    // the first runs with this catalogue reached files by icat at the logical volume's offset and never saw target-fs.
+    assert.match(done.files_by_path, /target-fs -q <image> cp <path> -o "\$OUT\/root<dir>"/);
+    assert.match(done.files_by_path, /icat by inode keeps the record's identity/);
   });
 });
 

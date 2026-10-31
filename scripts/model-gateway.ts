@@ -216,7 +216,7 @@ export function catalogDirs(repoRoot = resolve(dirname(fileURLToPath(import.meta
   return [join(repoRoot, rel), join(repoRoot, alt)].filter((d) => existsSync(d));
 }
 
-type CatalogModel = { id: string; api?: string; baseUrl?: string; cost?: ModelCost };
+type CatalogModel = { id: string; api?: string; baseUrl?: string; cost?: ModelCost; type?: string };
 
 /** A provider's models from Pi's catalogue, or from the operator's models.json for a custom provider. */
 export function catalogModels(provider: string, options: { dirs?: string[]; piAgentDir?: string } = {}): CatalogModel[] {
@@ -228,7 +228,12 @@ export function catalogModels(provider: string, options: { dirs?: string[]; piAg
       const data = JSON.parse(readFileSync(file, "utf8")) as Record<string, Record<string, CatalogModel>>;
       for (const group of Object.values(data)) {
         if (!group || typeof group !== "object") continue;
-        for (const [id, m] of Object.entries(group)) if (m && typeof m === "object") out.push({ ...m, id: m.id ?? id });
+        // Since Pi 1.4 a provider's file also lists image and classifier models (`image:<id>`,
+        // `classifier:<id>`); a seat's calls are chat calls, so only chat models (typed or not) count.
+        for (const [id, m] of Object.entries(group)) {
+          if (!m || typeof m !== "object" || (m.type !== undefined && m.type !== "chat")) continue;
+          out.push({ ...m, id: m.id ?? id.replace(/^chat:/, "") });
+        }
       }
     } catch {
       // a file Pi cannot read either

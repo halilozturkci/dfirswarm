@@ -1,6 +1,6 @@
 {
   "name": "check_inputs",
-  "description": "Diff inputs/ against inputs.json (size and sha256). The manifest is validated whole first: a malformed entry, a duplicate path, a regular file with no size or no sha256 (a size-only check is not a verification) are reported, never skipped. A file that cannot be opened is unreadable, one not reached before the time budget is not_checked, and neither passes. Links are checked by their target and pipes, sockets and devices by their kind. Every file's result is written, as it is checked, to a receipts file of its own for this run. A directory under inputs/ that cannot be listed is unreadable. Returns modified, missing, added and checked as before, plus malformed, duplicates, digest_missing, unreadable, not_checked and bytes_hashed. A pass means agreement with the baseline: it does not show the evidence is authentic or complete. This is the pack tool's receipt; the harness's own inputs_check event is written by the harness at completion, not by this tool.",
+  "description": "Diff inputs/ against inputs.json (size and sha256). The manifest is validated whole first: a malformed entry, a duplicate path, a regular file with no size or no sha256 (a size-only check is not a verification) are reported, never skipped. A file that cannot be opened is unreadable, one not reached before the time budget is not_checked, and neither passes. Links are checked by their target and pipes, sockets and devices by their kind. Every file's result is written, as it is checked, to a receipts file of its own for this run. A directory under inputs/ that cannot be listed is unreadable. Returns modified, missing, added and checked as before, plus malformed, duplicates, digest_missing, unreadable, not_checked and bytes_hashed. A pass means agreement with the baseline: it does not show the evidence is authentic or complete. This is the pack tool's receipt; the harness's own inputs_check event is written by the harness at completion, not by this tool. In a job it reads the copy of the run's inputs.json the job service gives a job that sees all of inputs/ (SWARM_INPUTS_MANIFEST); a job with a narrower scope, or a manifest past the job service's size limit, gets none, and the tool says so.",
   "params": {
     "max_seconds": {
       "type": "integer",
@@ -12,6 +12,6 @@
   "timeout_seconds": 1800,
   "by": "sfcc304",
   "at": "2026-09-18T15:41:47.088Z",
-  "version": 5,
-  "sha256": "0e4395f8b9e9b1d57b695049fa72773a21aed1d78c1709e9e8c2dae958eba5bb"
+  "version": 7,
+  "sha256": "0830b910c90af5657b78af8fa34e2628cee6280e798ab57690341002a06891eb"
 }

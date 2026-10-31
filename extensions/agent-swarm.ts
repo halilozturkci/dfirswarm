@@ -79,7 +79,9 @@ import {
   lacksProgram,
   ownPathsToOut,
   heldOwnPaths,
+  toolArgsForJob,
   writtenToOf,
+  placedOutputs,
   stagedPaths,
   stagedPathsIn,
   packSecretsFor,
@@ -1197,7 +1199,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   async function buildSystemPrompt(
-    event: { systemPrompt: string; systemPromptOptions?: { cwd?: string } },
+    event: { systemPrompt: string; systemPromptOptions?: { cwd?: string }; messageType?: string },
     ctx: { cwd: string },
   ): Promise<{ systemPrompt: string } | undefined> {
     const cwd = event.systemPromptOptions?.cwd ?? ctx.cwd;
@@ -1237,11 +1239,14 @@ export default function (pi: ExtensionAPI) {
       }
     }
     // The rule is the run's; what this pane measured about its guard is the pane's, said to the first run.
+    // Since Pi 1.2 this handler also runs for a run an extension starts (a hand-off's, messageType
+    // "custom"), which is not the first: it gets the rule alone.
     let inputsLine = "";
     if (inputs) {
       const rule = inputsPromptLine(inputs);
-      const measured = measuredInputsLine(inputsEnforced, inputs.held);
-      inputsLine = carries(rule) ? `\n\n${measured}` : `\n\n${rule} ${measured}`;
+      const measured = event.messageType === "custom" ? "" : measuredInputsLine(inputsEnforced, inputs.held);
+      const said = carries(rule) ? measured : `${rule} ${measured}`.trim();
+      inputsLine = said ? `\n\n${said}` : "";
     }
     let forgeLine = "";
     if (forging) {
@@ -2600,9 +2605,16 @@ export default function (pi: ExtensionAPI) {
         await logEvent(toolCtx.cwd, agentId, "job_run", params, refused, Date.now() - started);
         return { content: [{ type: "text" as const, text: refused.reason }], details: refused, isError: true };
       }
+      // A tool's output path in the agent's own directories (work/<id>/x, as
+      // its manifest asks for) becomes a place under {OUT}, as it does when a
+      // direct call is run again as a job: a worker writes only its $OUT. The
+      // agents of the first microVM case run gave work/<id>/triage, and all
+      // three linux_triage jobs were refused before anything ran. What those
+      // places already hold is what the tool reads, and stays as given.
+      const toolArgs = params.tool ? await toolArgsForJob(toolCtx.cwd, (params.args ?? {}) as Record<string, unknown>, agentId) : undefined;
       const spec: Record<string, unknown> = {
         ...(params.command ? { command: params.command } : {}),
-        ...(params.tool ? { tool: params.tool, args: params.args ?? {} } : {}),
+        ...(params.tool ? { tool: params.tool, args: toolArgs } : {}),
         ...(params.import ? { import: params.import } : {}),
         ...(params.inputs ? { inputs: params.inputs } : {}),
         ...(params.timeout_seconds ? { timeout_seconds: params.timeout_seconds } : {}),
@@ -2623,8 +2635,10 @@ export default function (pi: ExtensionAPI) {
       // A command that runs or evaluates code from an evidence-derived place is flagged, never refused (extensions/evidence-code.ts).
       const flagged = typeof params.command === "string" ? evidenceCodeRun(params.command, Array.isArray(params.inputs) ? params.inputs : []) : null;
       const code = flagged ? await withOwnJobOutputs(toolCtx.cwd, flagged, agentId).catch(() => flagged) : null;
-      const result = { ok: true, ...res.result, ...(code ? { evidence_code: { ...code, note: evidenceCodeNote(code, "job") } } : {}) };
-      await logEvent(toolCtx.cwd, agentId, "job_run", params, { ok: true, job: res.job, state: res.result.state, status: res.result.status, ...(res.result.lead ? { lead: res.result.lead } : {}), ...(Array.isArray(res.result.similar) ? { similar: (res.result.similar as Array<{ job?: unknown }>).map((x) => x.job) } : {}), ...(code ? { evidence_code: code } : {}) }, Date.now() - started);
+      // Where each output path the agent gave went instead: the job's sealed output, read and cited from there, when it holds something.
+      const placed = toolArgs ? placedOutputs(toolCtx.cwd, writtenToOf(params.args ?? {}, toolArgs, res.job), res.result) : {};
+      const result = { ok: true, ...placed, ...res.result, ...(code ? { evidence_code: { ...code, note: evidenceCodeNote(code, "job") } } : {}) };
+      await logEvent(toolCtx.cwd, agentId, "job_run", params, { ok: true, job: res.job, state: res.result.state, status: res.result.status, ...placed, ...(res.result.lead ? { lead: res.result.lead } : {}), ...(Array.isArray(res.result.similar) ? { similar: (res.result.similar as Array<{ job?: unknown }>).map((x) => x.job) } : {}), ...(code ? { evidence_code: code } : {}) }, Date.now() - started);
       return okResult(result);
     },
   });
@@ -2970,7 +2984,7 @@ export default function (pi: ExtensionAPI) {
           const answer = {
             ran_as_job: res.job,
             why: `${missing}: this VM is the base image, so ${manifest.name} ran in its pack's job image`,
-            ...(Object.keys(moved).length ? { written_to: moved } : {}),
+            ...placedOutputs(toolCtx.cwd, moved, res.result),
             ...(Object.keys(paths).length ? { paths } : {}),
             ...res.result,
           };

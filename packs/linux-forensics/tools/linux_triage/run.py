@@ -513,8 +513,8 @@ def resolve_output(out, what="output"):
         # In a job work/ is read-only and only $OUT is writable: a directory made anywhere else cannot be made.
         place = Path(job_out).resolve()
         if dest == place or place not in dest.parents:
-            fail("in a job %s must be a new directory under work/<your agent id>/, which the job maps to its output directory: "
-                 "%s is not under it" % (what, out), **{what: str(out)})
+            fail("in a job %s must be a new directory under the job's output directory: give {OUT}/<name>, or work/<your agent "
+                 "id>/<name>, which job_run maps there; %s is not under it" % (what, out), **{what: str(out)})
     return str(dest.relative_to(root))
 
 

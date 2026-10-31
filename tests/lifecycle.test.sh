@@ -21,7 +21,7 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 pass() { echo "ok - $*"; }
 
 fn() { sed -n "/^$1() {/,/^}/p" "$ROOT/scripts/swarm.sh"; }
-for f in ensure_registry registry_lock registry_unlock registry_upsert registry_update_state detach_exec keep_host_awake stop_sandbox_daemons hub_dir_of hubs_parent hub_pid_ours; do
+for f in ensure_registry registry_lock registry_unlock registry_tmp registry_upsert registry_update_state detach_exec keep_host_awake stop_sandbox_daemons hub_dir_of hubs_parent hub_pid_ours; do
   eval "$(fn "$f")"
   type "$f" >/dev/null 2>&1 || fail "$f was not found in swarm.sh"
 done
@@ -40,16 +40,44 @@ for i in $(seq 1 12); do
 done
 wait
 [[ "$(jq '[.runs[] | select(.state == "stopped")] | length' "$REGISTRY")" == 12 ]] || fail "concurrent state changes lost one: $(jq -c '[.runs[].state]' "$REGISTRY")"
-[[ ! -d "$REGISTRY.lock" ]] || fail "the lock was left behind"
+[[ ! -e "$REGISTRY.lock" ]] || fail "the lock was left behind"
 ls "$RUNS_DIR" | grep -q 'registry.json.tmp' && fail "a temporary registry was left behind"
 pass "twelve writers at once lose nothing, and leave no lock or temporary file"
 
-# A lock a writer left when it died goes stale after a minute.
+# The lock does not rest on mkdir: Ubuntu 26.04's uutils mkdir let two mkdirs
+# of one name succeed at once, and two writers went in (CI, 2026-10-31). Here
+# mkdir lets every caller through, and twelve writers still lose nothing.
+(
+  mkdir() { command mkdir "$@" 2>/dev/null; return 0; }
+  RUNS_DIR="$TMP/runs-mkdir"
+  REGISTRY="$RUNS_DIR/registry.json"
+  ensure_registry
+  for i in $(seq 1 12); do
+    ( registry_upsert "{\"id\":\"m$i\",\"state\":\"running\"}" ) &
+  done
+  wait
+  [[ "$(jq '.runs | length' "$REGISTRY")" == 12 ]] || fail "with a mkdir that lets everyone through, concurrent upserts lost a run: $(jq -c '[.runs[].id]' "$REGISTRY")"
+) || exit 1
+pass "the registry's lock holds where mkdir lets two callers through"
+
+# The registry keeps its mode through a rewrite (the temporary file is mktemp's, 0600).
+chmod 644 "$REGISTRY"
+registry_update_state s2 stopped
+[[ "$(ls -l "$REGISTRY" | cut -c1-10)" == "-rw-r--r--" ]] || fail "a rewrite changed the registry's mode: $(ls -l "$REGISTRY" | cut -c1-10)"
+pass "a rewrite keeps the registry's mode"
+
+# A lock a writer left when it died goes stale after a minute: the hub's is a
+# directory, this script's a file.
 mkdir "$REGISTRY.lock"
 touch -t "$(date -v-5M +%Y%m%d%H%M 2>/dev/null || date -d '5 minutes ago' +%Y%m%d%H%M)" "$REGISTRY.lock"
 registry_update_state s1 done || fail "a stale lock blocked the writer"
 [[ "$(jq -r '.runs[] | select(.id == "s1") | .state' "$REGISTRY")" == done ]] || fail "the write after a stale lock did not land"
-pass "a lock left by a writer that died does not block the next"
+: > "$REGISTRY.lock"
+touch -t "$(date -v-5M +%Y%m%d%H%M 2>/dev/null || date -d '5 minutes ago' +%Y%m%d%H%M)" "$REGISTRY.lock"
+registry_update_state s1 stopped || fail "a stale lock file blocked the writer"
+[[ "$(jq -r '.runs[] | select(.id == "s1") | .state' "$REGISTRY")" == stopped ]] || fail "the write after a stale lock file did not land"
+[[ ! -e "$REGISTRY.lock" ]] || fail "the lock was left behind after a stale one"
+pass "a lock left by a writer that died, the hub's directory or this script's file, does not block the next"
 
 # --- the host kept awake, for the run and no longer -----------------------------
 if command -v caffeinate >/dev/null 2>&1 || command -v systemd-inhibit >/dev/null 2>&1; then
@@ -82,7 +110,7 @@ else
 fi
 
 # --- the harness a VM run started with ---------------------------------------------
-for f in freeze_harness vm_build_spec vm_providers_json pi_agent_dir pi_auth_file credential_models distinct_models; do
+for f in freeze_harness vm_build_spec vm_token_validity vm_providers_json pi_agent_dir pi_auth_file credential_models distinct_models; do
   eval "$(fn "$f")"
 done
 mkdir -p "$TMP/hub/runs" "$TMP/sandbox/.pi-sessions"
@@ -165,7 +193,7 @@ jq -e --slurpfile t "$tokens_file" '.input.seat_tokens == $t[0] and .input.token
 pass "the keeper, the hub's stop and the watchdog run from the frozen copy; the hub gets one 32-hex token per seat (0600, in its own directory) beside the collector's"
 
 # The spec names the tokens file and never holds a token.
-for f in vm_build_spec vm_providers_json pi_agent_dir pi_auth_file credential_models distinct_models; do eval "$(fn "$f")"; done
+for f in vm_build_spec vm_token_validity vm_providers_json pi_agent_dir pi_auth_file credential_models distinct_models; do eval "$(fn "$f")"; done
 extra_env=() agent_ids=() AGENT_MODELS=()
 sandbox="$TMP/sandbox" swarm_id=s1 hard=0 wall=10 n=0 vm_image=img vm_cpus=1 vm_memory=1024 vm_disk=8192 \
   playwright=0 pack_dirs="" compact_prompt="" self_compact=0 forging=0 inbox_page_chars="" quarantine=0 local_only=0 \
@@ -177,6 +205,38 @@ for tok in $(jq -r '.[]' "$tokens_file"); do
   grep -q "$tok" "$TMP/spec-tokens.json" && fail "a seat's token is in the spec"
 done
 pass "the VM spec names the seats' tokens file and holds no token"
+
+# The seats' token floor. A stand-in pi: openai (a ChatGPT sign-in, about an
+# hour) can be minted for 50 minutes and no longer; openai-codex for any
+# floor; anthropic for none. Its calls are kept, its token is not.
+mkdir -p "$TMP/fakepi"
+cat > "$TMP/fakepi/pi" <<EOF
+#!/usr/bin/env bash
+echo "\$*" >> "$TMP/fakepi/calls"
+provider="" floor=""
+while [[ \$# -gt 0 ]]; do case "\$1" in --provider) provider="\$2"; shift ;; --min-expiry) floor="\$2"; shift ;; esac; shift; done
+case "\$provider:\$floor" in
+  openai:50m|solo:50m|openai-codex:*) echo "tok-not-for-the-log"; exit 0 ;;
+  *) echo "token expires in 59m, less than \$floor" >&2; exit 1 ;;
+esac
+EOF
+chmod +x "$TMP/fakepi/pi"
+eval "$(fn vm_token_validity)"; eval "$(fn with_timeout)"
+both='[{"provider":"openai-codex","kind":"oauth"},{"provider":"openai","kind":"oauth"},{"provider":"anthropic","kind":"api_key"}]'
+out="$(PATH="$TMP/fakepi:$PATH" vm_token_validity "$both" 240 0 2>"$TMP/fakepi/err")"
+[[ "$out" == 50m ]] || fail "a ChatGPT sign-in that lives an hour did not bring the floor down to 50m: $out"
+grep -q "openai's subscription token cannot be minted for 300m.*minted for 50m and renewed on the host at half that" "$TMP/fakepi/err" || fail "the kickoff does not say why the floor came down: $(cat "$TMP/fakepi/err")"
+grep -q "tok-not-for-the-log" "$TMP/fakepi/err" && fail "a token reached stderr"
+[[ "$out" != *tok-not-for-the-log* ]] || fail "a token reached the floor's output"
+grep -q -- "--provider anthropic" "$TMP/fakepi/calls" && fail "an API key provider was asked for a token"
+[[ "$(PATH="$TMP/fakepi:$PATH" vm_token_validity '[{"provider":"openai-codex","kind":"oauth"}]' 240 0 2>/dev/null)" == 300m ]] || fail "a token that meets the run's floor changed it"
+[[ "$(PATH="$TMP/fakepi:$PATH" vm_token_validity '[{"provider":"openai-codex","kind":"oauth"}]' 240 1 2>/dev/null)" == 12h ]] || fail "a run only the operator stops is not minted for 12 h"
+[[ "$(PATH="$TMP/fakepi:$PATH" SWARM_TOKEN_MIN_VALIDITY=90m vm_token_validity "$both" 240 0 2>/dev/null)" == 90m ]] || fail "SWARM_TOKEN_MIN_VALIDITY is not the operator's word"
+[[ "$(PATH="$TMP/fakepi:$PATH" vm_token_validity '[{"provider":"anthropic","kind":"oauth"}]' 240 0 2>/dev/null)" == 300m ]] || fail "a provider that cannot meet 50 minutes either should keep the floor, to fail in Pi's words where the VMs are made"
+PATH="$TMP/fakepi:$PATH" vm_token_validity '[{"provider":"solo","kind":"oauth"}]' 240 0 >/dev/null 2>"$TMP/fakepi/err-solo"
+grep -q "solo's subscription token cannot be minted for 300m: the run's tokens are minted for 50m" "$TMP/fakepi/err-solo" || fail "another provider's short token is not said plainly: $(cat "$TMP/fakepi/err-solo")"
+grep -q ChatGPT "$TMP/fakepi/err-solo" && fail "the ChatGPT note is given for a provider that is not openai"
+pass "the seats' token floor: a ChatGPT sign-in's hour brings it down to 50 minutes (said), any other keeps the run's, the operator's word wins, and no token is printed"
 
 # An unpacked `git archive` (how the Linux host is synced) knows its commit
 # from scripts/HARNESS_COMMIT, which the archive fills in; git itself is

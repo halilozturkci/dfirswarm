@@ -749,8 +749,10 @@ ensure_registry() {
     return 0
   fi
   mkdir -p "$RUNS_DIR"
+  # Made only if it is not there (noclobber), never over a registry another
+  # writer made and wrote between the test and the write.
   if [[ ! -f "$REGISTRY" ]]; then
-    printf '{"runs":[]}\n' > "$REGISTRY"
+    ( set -C; printf '{"runs":[]}\n' > "$REGISTRY" ) 2>/dev/null || true
   fi
 }
 
@@ -760,15 +762,19 @@ json_get() {
 }
 
 # The registry is written by this script and by a VM run's hub (vm-hub.ts
-# updateRegistryState): both take <registry>.lock, a directory, so neither
-# reads the file, changes it and writes back over the other's change. A lock
-# older than a minute is a writer that died holding it.
+# updateRegistryState): both take <registry>.lock, so neither reads the file,
+# changes it and writes back over the other's change. This script makes the
+# lock as a file with O_EXCL (bash's noclobber), not with mkdir: an older
+# uutils mkdir (Ubuntu 26.04's, before its fix of 2026-08-28) lets two mkdirs
+# of one name succeed at once, and both writers then went in. The hub makes it
+# as a directory with mkdir(2); each fails on the other's. A lock older than a
+# minute, file or directory, is a writer that died holding it.
 registry_lock() {
   local lock="$REGISTRY.lock" i
   for ((i = 0; i < 200; i++)); do
-    mkdir "$lock" 2>/dev/null && return 0
+    ( set -C; : > "$lock" ) 2>/dev/null && return 0
     if [[ -n "$(find "$lock" -maxdepth 0 -mmin +1 2>/dev/null)" ]]; then
-      rmdir "$lock" 2>/dev/null || true
+      rm -f "$lock" 2>/dev/null || rmdir "$lock" 2>/dev/null || true
       continue
     fi
     sleep 0.05
@@ -776,37 +782,45 @@ registry_lock() {
   echo "BLOCKER: the run registry is locked ($lock); another kickoff or stop is writing it." >&2
   return 1
 }
-registry_unlock() { rmdir "$REGISTRY.lock" 2>/dev/null || true; }
+registry_unlock() { rm -f "$REGISTRY.lock" 2>/dev/null || true; }
+
+# The temporary file a writer rewrites the registry into: its own (mktemp; a
+# name made from $$ is the same in every subshell of one script), beside the
+# registry so the rename is atomic (a temp file under /tmp is another
+# filesystem on some hosts, and mv then copies), and with the registry's mode
+# (cp -p; mktemp makes it 0600).
+registry_tmp() {
+  local t
+  t="$(mktemp "$REGISTRY.tmp.XXXXXX")" || return 1
+  cp -p "$REGISTRY" "$t" 2>/dev/null || { rm -f "$t"; return 1; }
+  printf '%s\n' "$t"
+}
 
 registry_upsert() {
-  local rec="$1"
+  local rec="$1" tmp=""
   ensure_registry
   registry_lock || return 1
-  # Beside the registry, so the rename is atomic (a temp file under /tmp is
-  # another filesystem on some hosts, and mv then copies).
-  local tmp="$REGISTRY.tmp.$$"
-  if jq --argjson rec "$rec" '
+  if tmp="$(registry_tmp)" && jq --argjson rec "$rec" '
     .runs = ([.runs[] | select(.id != $rec.id)] + [$rec])
   ' "$REGISTRY" > "$tmp"; then
     mv "$tmp" "$REGISTRY"
   else
-    rm -f "$tmp"
+    [[ -z "$tmp" ]] || rm -f "$tmp"
   fi
   registry_unlock
 }
 
 registry_update_state() {
   local id="$1"
-  local state="$2"
+  local state="$2" tmp=""
   ensure_registry
   registry_lock || return 1
-  local tmp="$REGISTRY.tmp.$$"
-  if jq --arg id "$id" --arg state "$state" '
+  if tmp="$(registry_tmp)" && jq --arg id "$id" --arg state "$state" '
     .runs = [.runs[] | if .id == $id then .state = $state else . end]
   ' "$REGISTRY" > "$tmp"; then
     mv "$tmp" "$REGISTRY"
   else
-    rm -f "$tmp"
+    [[ -z "$tmp" ]] || rm -f "$tmp"
   fi
   registry_unlock
 }
@@ -825,14 +839,13 @@ resolve_path_nocreate() { # <path>
 
 # Merge fields into one run's record, under the registry's lock.
 registry_merge() { # <id> <json object>
-  local id="$1" patch="$2" rc=0
+  local id="$1" patch="$2" rc=0 tmp=""
   ensure_registry
   registry_lock || return 1
-  local tmp="$REGISTRY.tmp.$$"
-  if jq --arg id "$id" --argjson p "$patch" '.runs = [.runs[] | if .id == $id then . + $p else . end]' "$REGISTRY" > "$tmp"; then
+  if tmp="$(registry_tmp)" && jq --arg id "$id" --argjson p "$patch" '.runs = [.runs[] | if .id == $id then . + $p else . end]' "$REGISTRY" > "$tmp"; then
     mv "$tmp" "$REGISTRY"
   else
-    rm -f "$tmp"
+    [[ -z "$tmp" ]] || rm -f "$tmp"
     rc=1
   fi
   registry_unlock
@@ -1505,7 +1518,7 @@ provider_key_var() {
     google) printf 'GEMINI_API_KEY\n'; return ;;
     bedrock) printf 'AWS_BEARER_TOKEN_BEDROCK\n'; return ;;
     huggingface) printf 'HF_TOKEN\n'; return ;;
-    azure-openai-responses) printf 'AZURE_OPENAI_API_KEY\n'; return ;;
+    azure) printf 'AZURE_OPENAI_API_KEY\n'; return ;;
   esac
   if [[ ! "$provider" =~ ^[A-Za-z][A-Za-z0-9_-]*$ ]]; then
     printf '\n'
@@ -6369,12 +6382,12 @@ print(json.dumps({"id":m["id"],"version":m["version"],"manifest_sha256":hashlib.
     fi
   elif [[ "$use_netguard" -eq 1 ]]; then
     netguard_allow="$(provider_hosts_for_models)"
-    if distinct_models | grep -q '^azure-openai-responses/' && [[ -z "$(provider_hosts_for_model azure-openai-responses/x)" && -z "$allow_hosts" ]]; then
+    if distinct_models | grep -q '^azure/' && [[ -z "$(provider_hosts_for_model azure/x)" && -z "$allow_hosts" ]]; then
       echo "WARN: the Azure OpenAI host is not known (no AZURE_OPENAI_BASE_URL or AZURE_OPENAI_RESOURCE_NAME in the shell or in Pi's credential store); pass --allow-host <resource>.openai.azure.com or the panes cannot reach it." >&2
     fi
     local nm
     while IFS= read -r nm; do
-      [[ -n "$nm" && "${nm%%/*}" != azure-openai-responses ]] || continue
+      [[ -n "$nm" && "${nm%%/*}" != azure ]] || continue
       provider_is_local "$nm" && continue
       if [[ -z "$(provider_hosts_for_model "$nm")" && -z "$allow_hosts" ]]; then
         echo "WARN: no host is known for $nm; pass --provider-host ${nm%%/*}=<host> or the panes cannot reach it." >&2
@@ -6928,7 +6941,7 @@ pi_env_credential() { # <provider>
 # business plan of another provider may be one), never for customer data.
 subscription_words() { # <provider>
   case "$1" in
-    openai-codex|anthropic) printf 'consumer plan; not for customer data' ;;
+    openai-codex|anthropic|openai) printf 'consumer plan; not for customer data' ;;
     *) printf 'subscription login; not for customer data' ;;
   esac
 }
@@ -7044,7 +7057,7 @@ provider_known_hosts() {
       ;;
   esac
   case "${model%%/*}" in
-    azure-openai-responses)
+    azure)
       # The host is the customer's own resource. Pi takes it from the shell
       # (AZURE_OPENAI_BASE_URL or AZURE_OPENAI_RESOURCE_NAME) or from the env
       # block of the provider's entry in its credential store; look in the
@@ -7052,8 +7065,8 @@ provider_known_hosts() {
       local base="${AZURE_OPENAI_BASE_URL:-}" name="${AZURE_OPENAI_RESOURCE_NAME:-}" store
       store="$(pi_agent_dir)/auth.json"
       if [[ -z "$base" && -z "$name" && -f "$store" ]] && command -v jq >/dev/null 2>&1; then
-        base="$(jq -r '."azure-openai-responses".env.AZURE_OPENAI_BASE_URL // empty' "$store" 2>/dev/null || true)"
-        name="$(jq -r '."azure-openai-responses".env.AZURE_OPENAI_RESOURCE_NAME // empty' "$store" 2>/dev/null || true)"
+        base="$(jq -r '."azure".env.AZURE_OPENAI_BASE_URL // empty' "$store" 2>/dev/null || true)"
+        name="$(jq -r '."azure".env.AZURE_OPENAI_RESOURCE_NAME // empty' "$store" 2>/dev/null || true)"
       fi
       if [[ -n "$base" ]]; then
         allow_entry_of_url "$base"
@@ -7063,7 +7076,9 @@ provider_known_hosts() {
         echo ""
       fi
       ;;
-    openai) echo "api.openai.com" ;;
+    # Pi 1.4 keeps a "Sign in with ChatGPT" login under openai: the calls go to the API,
+    # and the token, which lives about an hour, is refreshed at auth.openai.com.
+    openai) if model_is_subscription "$model"; then echo "api.openai.com,auth.openai.com"; else echo "api.openai.com"; fi ;;
     deepseek) echo "api.deepseek.com" ;;
     xai) echo "api.x.ai" ;;
     google) echo "generativelanguage.googleapis.com" ;;
@@ -7094,7 +7109,7 @@ provider_base_url() {
   local provider="${1%%/*}"
   case "$provider" in
     llama.cpp) printf '%s\n' "${LLAMA_BASE_URL:-http://127.0.0.1:8080}" ;;
-    openai|deepseek|xai|google|anthropic|openai-codex|openrouter|azure-openai-responses) echo "" ;;
+    openai|deepseek|xai|google|anthropic|openai-codex|openrouter|azure) echo "" ;;
     *)
       local store="$(pi_agent_dir)/models.json"
       if [[ -f "$store" ]] && command -v jq >/dev/null 2>&1; then
@@ -7195,7 +7210,7 @@ model_is_metered() {
   local provider="${1%%/*}" id="${1#*/}"
   case "$provider" in
     llama.cpp) return 1 ;;
-    openai|deepseek|xai|google|anthropic|openai-codex|openrouter|azure-openai-responses) return 0 ;;
+    openai|deepseek|xai|google|anthropic|openai-codex|openrouter|azure) return 0 ;;
   esac
   local store="$(pi_agent_dir)/models.json"
   [[ -f "$store" ]] || return 0
@@ -8684,6 +8699,36 @@ check_spec_network() { # <vm spec file>
   fi
 }
 
+# The validity the seats' subscription tokens are minted for (vm.ts
+# resolveSecrets), and renewed at half of on the host (idle-nudge.sh checks
+# every ten minutes): SWARM_TOKEN_MIN_VALIDITY, else 12 h for a run only the
+# operator stops, else the wall clock and an hour. A "Sign in with ChatGPT"
+# token under openai lives about an hour and no refresh gives it more, so the
+# first microVM case run could not start: a subscription provider that cannot
+# be minted for that floor but can for 50 minutes brings the run's floor down
+# to 50 minutes, renewed every 25, and the kickoff says so on stderr. One that
+# cannot be minted for 50 minutes either is left to fail where the VMs are
+# made, in Pi's words. No token is kept or printed: only Pi's exit status.
+# Each provider is asked at most twice, within a minute each (with_timeout:
+# macOS has no coreutils timeout).
+vm_token_validity() { # <providers json> <wall minutes> <until solved: 0|1>
+  local providers="$1" wall="$2" until="$3" floor p short="50m" dir why
+  if [[ -n "${SWARM_TOKEN_MIN_VALIDITY:-}" ]]; then echo "$SWARM_TOKEN_MIN_VALIDITY"; return 0; fi
+  if [[ "$until" -eq 1 ]]; then floor="12h"; else floor="$((wall + 60))m"; fi
+  dir="$(pi_agent_dir)"
+  while IFS= read -r p; do
+    [[ -n "$p" ]] || continue
+    with_timeout 60 env PI_CODING_AGENT_DIR="$dir" pi auth print-bearer-token --provider "$p" --min-expiry "$floor" >/dev/null 2>&1 < /dev/null && continue
+    if with_timeout 60 env PI_CODING_AGENT_DIR="$dir" pi auth print-bearer-token --provider "$p" --min-expiry "$short" >/dev/null 2>&1 < /dev/null; then
+      why=""
+      [[ "$p" == openai ]] && why=" (a ChatGPT sign-in's lives about an hour)"
+      echo "Tokens:       $p's subscription token cannot be minted for $floor$why: the run's tokens are minted for $short and renewed on the host at half that, within ten minutes of it (SWARM_TOKEN_MIN_VALIDITY sets it)" >&2
+      floor="$short"
+    fi
+  done < <(jq -r '.[] | select(.kind == "oauth") | .provider' <<<"$providers")
+  echo "$floor"
+}
+
 vm_build_spec() { # <hub dir> <out file>
   local hub_dir="$1" spec="$2"
 
@@ -8832,10 +8877,15 @@ vm_build_spec() { # <hub dir> <out file>
   local providers
   providers="$(vm_providers_json)"
   if [[ "$local_only" -eq 1 ]]; then providers="$(jq -c 'map(select(.kind == "local"))' <<<"$providers")"; fi
+  # Pi is asked for a token only by a run that makes its VMs: a prepared
+  # spec says what they would be given, and its start builds the spec again.
+  local token_validity minting='[]'
+  [[ "${start_agents:-1}" -eq 1 ]] && minting="$providers"
+  token_validity="$(vm_token_validity "$minting" "$wall" "${until_solved:-0}")"
   jq -n \
     --arg run "$swarm_id" --arg sandbox "$sandbox" --arg image "$vm_image" --arg hub "$hub_dir" \
     --argjson cpus "$vm_cpus" --argjson mem "$vm_memory" --argjson disk "$vm_disk" --argjson wall "$wall" \
-    --argjson until "${until_solved:-0}" --arg token_validity "${SWARM_TOKEN_MIN_VALIDITY:-}" \
+    --argjson until "${until_solved:-0}" --arg token_validity "$token_validity" \
     --argjson mounts "$(printf '%s\n' ${mounts[@]+"${mounts[@]}"} | jq -s -c .)" \
     --argjson late "$(printf '%s\n' ${late[@]+"${late[@]}"} | jq -s -c .)" \
     --argjson env "$env_json" --argjson agents "$agents_json" --argjson allow "$allow_json" \
@@ -8848,7 +8898,7 @@ vm_build_spec() { # <hub dir> <out file>
       env: $env, agents: $agents, allow_hosts: $allow, open_net: $open, providers: $providers,
       pack_secrets: $pack_secrets,
       pi_bin: $pi, pi_agent_dir: $pidir,
-      min_token_validity: (if $token_validity != "" then $token_validity elif $until == 1 then "12h" else "\($wall + 60)m" end),
+      min_token_validity: $token_validity,
       records_dir: ($sandbox + "/vm"), registry: $registry}
      + (if $digest == "" then {} else {image_digest: $digest} end)
      + (if $seat_tokens == "" then {} else {seat_tokens_file: $seat_tokens} end)' > "$spec"

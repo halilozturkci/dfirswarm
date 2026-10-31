@@ -438,8 +438,8 @@ test("a wrong id is told the shapes that exist, not the whole list; the index ca
   try {
     const { a, b } = await twoPacks(root);
     await withSeat(t, [a, b], async (seat) => {
-      const prefixed = await seat.skill("pack-a/evidence/one");
-      assert.match(prefixed.text, /^No skill "pack-a\/evidence\/one" in this run's packs\. Did you mean: evidence\/one/);
+      const prefixed = await seat.skill("pack-a/one");
+      assert.match(prefixed.text, /^No skill "pack-a\/one" in this run's packs\. Did you mean: evidence\/one/);
       assert.ok(!prefixed.text.includes("evidence/three"), "no id list");
       const row = await lastRow(seat, "skill");
       assert.deepEqual([row.result.ok, row.result.error], [false, "no such skill"]);
@@ -818,7 +818,27 @@ test("the ids a seat guesses under a pack's name are not answered with a note ab
       assert.match(miss.text, /^No skill "windows\/ntfs" in this run's packs\. No close match; read the index in your instructions \("Skills carried by this run"\)/);
       assert.ok(!miss.text.includes("memory/windows"));
       assert.deepEqual((await lastRow(seat, "skill")).result.suggested, undefined);
-      assert.match((await seat.skill("windows/execution/prefetch")).text, /Did you mean: execution\/prefetch\?/);
+      // The id with its pack in front, slash separated, is that pack's note: the first microVM case run
+      // asked for linux/accounts/users and was refused. The answer says the id to use from then on.
+      const prefixed = await seat.skill("windows/execution/prefetch");
+      assert.match(prefixed.text, /^Skill `execution\/prefetch` \(pack windows-forensics 1\.0\.0/);
+      assert.match(prefixed.text, /Asked as `windows\/execution\/prefetch`: its id is `execution\/prefetch` \(pack windows-forensics\)/);
+      const row = await lastRow(seat, "skill");
+      assert.deepEqual([row.result.ok, row.args.id, row.args.requested], [true, "execution/prefetch", "windows/execution/prefetch"]);
+      assert.match((await seat.skill("windows-forensics/execution/prefetch")).text, /already in your context/, "the whole pack id in front is the same note");
+    });
+    // Only a pack the leading segment names is looked in, and only one may carry the rest.
+    const lin = await writePack(root, "linux-forensics", "1.0.0", { "accounts/users": { title: "Users", when: "Accounts.", body: "u" } });
+    const lin2 = await writePack(root, "linux-extra", "1.0.0", { "accounts/users": { title: "Users again", when: "Accounts.", body: "v" } });
+    await withSeat(t, [win, lin], async (seat) => {
+      assert.match((await seat.skill("linux/accounts/users")).text, /^Skill `accounts\/users` \(pack linux-forensics/);
+      assert.match((await seat.skill("windows/accounts/users")).text, /^No skill "windows\/accounts\/users"/, "windows-forensics does not carry it");
+      // A part of a word is no pack's name: a misspelt prefix is not sent to another pack's note.
+      assert.match((await seat.skill("lin/accounts/users")).text, /^No skill "lin\/accounts\/users"/);
+      assert.match((await seat.skill("linuxf/accounts/users")).text, /^No skill "linuxf\/accounts\/users"/);
+    });
+    await withSeat(t, [lin, lin2], async (seat) => {
+      assert.match((await seat.skill("linux/accounts/users")).text, /^No skill "linux\/accounts\/users"/, "two packs the prefix names carry it: none is chosen");
     });
   } finally {
     await rm(root, { recursive: true, force: true });

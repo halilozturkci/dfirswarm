@@ -1611,7 +1611,7 @@ function piProviderHosts(model: string): Promise<string[]> {
  */
 function providerBaseUrl(provider: string, models: Record<string, unknown> | null, env: NodeJS.ProcessEnv): string {
   if (provider === "llama.cpp") return env.LLAMA_BASE_URL || "http://127.0.0.1:8080";
-  if (BUILTIN_HOSTS[provider] || provider === "azure-openai-responses") return "";
+  if (BUILTIN_HOSTS[provider] || provider === "azure") return "";
   const base = field(models, "providers", provider, "baseUrl");
   return typeof base === "string" ? base : "";
 }
@@ -1632,14 +1632,14 @@ export async function vmProviderHosts(model: string, opts: VmCheckOptions = {}):
     const override = field(models, "providers", provider, "baseUrl");
     return [...new Set([...(typeof override === "string" && override ? [allowEntryOfUrl(override)] : []), ...builtin].filter(Boolean))];
   }
-  if (provider === "azure-openai-responses") {
+  if (provider === "azure") {
     // The customer's own resource: the shell first, then the provider's env block in Pi's store.
     let base = env.AZURE_OPENAI_BASE_URL || "";
     let name = env.AZURE_OPENAI_RESOURCE_NAME || "";
     if (!base && !name) {
       const auth = readJsonObject(join(agentDir, "auth.json"));
-      const b = field(auth, "azure-openai-responses", "env", "AZURE_OPENAI_BASE_URL");
-      const n = field(auth, "azure-openai-responses", "env", "AZURE_OPENAI_RESOURCE_NAME");
+      const b = field(auth, "azure", "env", "AZURE_OPENAI_BASE_URL");
+      const n = field(auth, "azure", "env", "AZURE_OPENAI_RESOURCE_NAME");
       base = typeof b === "string" ? b : "";
       name = typeof n === "string" ? n : "";
     }

@@ -345,22 +345,22 @@ test("a provider's env block crosses with its settings as they are and its crede
   const dir = await mkdtemp(join(tmpdir(), "vm-pi-env-"));
   dirs.push(dir);
   await writeFile(join(dir, "auth.json"), JSON.stringify({
-    "azure-openai-responses": {
+    "azure": {
       type: "api_key",
       key: "REAL-AZURE-KEY",
       env: { AZURE_OPENAI_BASE_URL: "https://res.openai.azure.com", AZURE_OPENAI_API_VERSION: "2025-04-01", AZURE_OPENAI_API_KEY: "REAL-ENV-KEY" },
     },
   }));
   await writeFile(join(dir, "settings.json"), JSON.stringify({ defaultThinkingLevel: "low", httpProxy: "http://proxy.corp:3128", packages: ["/host/only"], shellPath: "/bin/zsh" }));
-  const s = spec({ pi_agent_dir: dir, providers: [{ provider: "azure-openai-responses", kind: "api_key", hosts: ["res.openai.azure.com"] }] });
-  const key = placeholderFor("azure-openai-responses", "api_key");
+  const s = spec({ pi_agent_dir: dir, providers: [{ provider: "azure", kind: "api_key", hosts: ["res.openai.azure.com"] }] });
+  const key = placeholderFor("azure", "api_key");
   const secrets: ResolvedSecret[] = [
-    { provider: "azure-openai-responses", kind: "api_key", placeholder: key, value: "REAL-AZURE-KEY", hosts: ["res.openai.azure.com"] },
-    { provider: "azure-openai-responses", kind: "api_key", placeholder: "dfirswarm-secret-envkey-x", value: "REAL-ENV-KEY", hosts: ["res.openai.azure.com"], envKey: "AZURE_OPENAI_API_KEY" },
+    { provider: "azure", kind: "api_key", placeholder: key, value: "REAL-AZURE-KEY", hosts: ["res.openai.azure.com"] },
+    { provider: "azure", kind: "api_key", placeholder: "dfirswarm-secret-envkey-x", value: "REAL-ENV-KEY", hosts: ["res.openai.azure.com"], envKey: "AZURE_OPENAI_API_KEY" },
   ];
   const cfg = guestPiConfig(s, secrets);
   assert.ok(!`${cfg.auth}${cfg.settings}`.includes("REAL-"), "no credential in the guest's files");
-  const auth = JSON.parse(cfg.auth)["azure-openai-responses"];
+  const auth = JSON.parse(cfg.auth)["azure"];
   assert.equal(auth.key, key);
   assert.equal(auth.env.AZURE_OPENAI_BASE_URL, "https://res.openai.azure.com", "the resource travels: Pi needs it to build the URL");
   assert.equal(auth.env.AZURE_OPENAI_API_VERSION, "2025-04-01");

@@ -385,10 +385,17 @@ export function parseWanted(raw: string): Wanted | null {
   return { pack: m[1] ?? null, id };
 }
 
-export type Located = { pack: PackRef; id: string; /** The other packs of the run that carry the same bare id. */ others: PackRef[] };
+export type Located = {
+  pack: PackRef;
+  id: string;
+  /** The other packs of the run that carry the same bare id. */
+  others: PackRef[];
+  /** The leading segment taken off an id asked with its pack in front ("linux" of "linux/accounts/users"). */
+  prefix?: string;
+};
 
 export async function locateSkill(packs: PackRef[], wanted: Wanted): Promise<{ found: Located } | { missing: "no such pack" | "no such skill" }> {
-  const has = (pack: PackRef) => exists(join(pack.dir, "skills", `${wanted.id}.md`));
+  const has = (pack: PackRef, id = wanted.id) => exists(join(pack.dir, "skills", `${id}.md`));
   if (wanted.pack) {
     const pack = packs.find((p) => p.id === wanted.pack);
     if (!pack) return { missing: "no such pack" };
@@ -396,8 +403,22 @@ export async function locateSkill(packs: PackRef[], wanted: Wanted): Promise<{ f
   }
   const carrying: PackRef[] = [];
   for (const pack of packs) if (await has(pack)) carrying.push(pack);
-  if (!carrying.length) return { missing: "no such skill" };
-  return { found: { pack: carrying[0]!, id: wanted.id, others: carrying.slice(1) } };
+  if (carrying.length) return { found: { pack: carrying[0]!, id: wanted.id, others: carrying.slice(1) } };
+  // The id with its pack in front, slash separated ("windows/execution/prefetch", 17 of 143 calls; the
+  // first microVM case run asked for "linux/accounts/users"): a leading segment that is a pack id of
+  // this run, or its words up to a dash ("linux" of linux-forensics, "computer-forensics" of
+  // computer-forensics-base), is taken off, and the rest is looked up in those packs only. Carried by
+  // exactly one of them, it is that note; otherwise there is none. A part of a word ("lin", "comp") is
+  // no pack's name: a misspelt id is not sent to some other pack's note.
+  const cut = wanted.id.indexOf("/");
+  if (cut >= 3) {
+    const prefix = wanted.id.slice(0, cut);
+    const rest = wanted.id.slice(cut + 1);
+    const named: PackRef[] = [];
+    for (const pack of packs) if ((pack.id === prefix || pack.id.startsWith(`${prefix}-`)) && (await has(pack, rest))) named.push(pack);
+    if (named.length === 1) return { found: { pack: named[0]!, id: rest, others: [], prefix } };
+  }
+  return { missing: "no such skill" };
 }
 
 const squash = (text: string) => text.toLowerCase().replace(/\.md$/, "").replace(/[^a-z0-9/]/g, "");
@@ -1231,7 +1252,7 @@ export function registerSkills(pi: ExtensionAPI, deps: SkillsDeps): SkillsHandle
       return text(out, { ok: false, error: located.missing, suggested: maybe });
     }
 
-    const { pack, id, others } = located.found;
+    const { pack, id, others, prefix } = located.found;
     const key = SkillLedger.key(pack.id, id);
     const held = ledger.get(key);
     if (held) {
@@ -1281,6 +1302,7 @@ export function registerSkills(pi: ExtensionAPI, deps: SkillsDeps): SkillsHandle
         `Builds on, not loaded: ${needs.map((n) => (n.tokens === null ? `\`${n.ref}\` (not carried by this run's packs)` : n.loaded_at_turn !== undefined ? `\`${n.ref}\` (already loaded, turn ${n.loaded_at_turn})` : `\`${n.ref}\` (about ${fmt(n.tokens)} tokens)`)).join(", ")}. Load those you need.`,
       );
     }
+    if (prefix) tail.push(`Asked as \`${wantedRaw}\`: its id is \`${id}\` (pack ${pack.id}), the one skill_done and the index use; a pack goes in front as ${pack.id}:${id}.`);
     if (others.length) tail.push(`Also carried by ${others.map((p) => p.id).join(", ")}: skill("${others[0]!.id}:${id}") loads that one.`);
     if (working.length >= MAX_LIVE_SKILLS) tail.push(`You hold ${working.length} notes you have not marked done (${working.map((l) => l.id).join(", ")}). Mark the ones you have finished with skill_done before you load more.`);
     const delivered = [...lines, ...(tail.length ? ["", ...tail] : [])].join("\n");

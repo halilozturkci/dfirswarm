@@ -35,7 +35,7 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { constants as fsConstants } from "node:fs";
+import { constants as fsConstants, existsSync } from "node:fs";
 import { basename, dirname, join, posix, relative, resolve, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
@@ -7005,6 +7005,17 @@ function mapStrings(v: unknown, fn: (s: string) => string): unknown {
       : v && typeof v === "object" ? Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, mapStrings(x, fn)])) : v;
 }
 
+/** A parameter that holds text to match (contains, pattern, grep, a name filter), never a place: a path-like value there is the agent's text. */
+const MATCH_KEY = /^(contains|pattern|patterns|grep|regex|query|filter|match|matches|exclude|include)$|_(filter|pattern|regex)$/;
+
+/** mapStrings, leaving alone every value under a MATCH_KEY parameter (an array inherits its parameter's name). */
+function mapPlaces(v: unknown, fn: (s: string) => string, key = ""): unknown {
+  if (MATCH_KEY.test(key)) return v;
+  return typeof v === "string" ? fn(v)
+    : Array.isArray(v) ? v.map((x) => mapPlaces(x, fn, key))
+      : v && typeof v === "object" ? Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, mapPlaces(x, fn, k)])) : v;
+}
+
 /**
  * A tool's arguments for a run as a job: a place the tool would write in one
  * of the agent's own writable directories becomes a place under {OUT}, since
@@ -7019,7 +7030,9 @@ function mapStrings(v: unknown, fn: (s: string) => string): unknown {
  * (`held`, see heldOwnPaths) is what the tool reads, not where it writes: it
  * stays as given, since the worker reads all of work/ where it is. Mapped,
  * a database the agent had extracted would be looked for in an empty $OUT,
- * and the job would find nothing to read.
+ * and the job would find nothing to read. A parameter that holds text to
+ * match (contains, pattern, grep: MATCH_KEY) is never a place, and is left
+ * as given.
  */
 export function ownPathsToOut(
   args: Record<string, unknown>,
@@ -7027,7 +7040,7 @@ export function ownPathsToOut(
   o: { root?: string; held?: ReadonlySet<string> } = {},
 ): Record<string, unknown> {
   if (!agentId) return args;
-  return mapStrings(args, (v) => {
+  return mapPlaces(args, (v) => {
     const place = ownPlace(v, agentId, o.root);
     return place && !o.held?.has(place.rel) ? place.out : v;
   }) as Record<string, unknown>;
@@ -7038,13 +7051,17 @@ export function ownPathsToOut(
  * that hold something now: a file with bytes in it or a directory with
  * entries. Taken before the tool runs in the agent's VM, so what a failed
  * attempt there created (an empty output file, an output directory made
- * before the missing program was called) is still a place to write.
+ * before the missing program was called) is still a place to write. With
+ * `existing`, a file is held whatever its size: job_run's tool has made
+ * nothing yet, so a file there (an empty btmp) is the agent's, to be read.
+ * An empty directory is still a place to write, as the packs' manifests say
+ * of an out_dir made beforehand (it holds nothing to read).
  */
-export async function heldOwnPaths(root: string, args: Record<string, unknown>, agentId: string | undefined): Promise<Set<string>> {
+export async function heldOwnPaths(root: string, args: Record<string, unknown>, agentId: string | undefined, o: { existing?: boolean } = {}): Promise<Set<string>> {
   const held = new Set<string>();
   if (!agentId) return held;
   const places: string[] = [];
-  mapStrings(args, (v) => {
+  mapPlaces(args, (v) => {
     const place = ownPlace(v, agentId, root);
     if (place) places.push(place.rel);
     return v;
@@ -7052,9 +7069,20 @@ export async function heldOwnPaths(root: string, args: Record<string, unknown>, 
   for (const rel of places) {
     const st = await stat(join(root, rel)).catch(() => null);
     if (!st) continue;
-    if (st.isFile() ? st.size > 0 : st.isDirectory() && (await readdir(join(root, rel)).catch(() => [])).length > 0) held.add(rel);
+    if (st.isFile() ? o.existing || st.size > 0 : st.isDirectory() && (await readdir(join(root, rel)).catch(() => [])).length > 0) held.add(rel);
   }
   return held;
+}
+
+/**
+ * A tool's arguments as job_run submits them: what a direct call run again
+ * as a job gets (ownPathsToOut over heldOwnPaths), so a manifest that asks
+ * for work/<id>/x is right whichever way the tool reaches a worker. Here a
+ * place that exists at all is read, not written (no attempt came first).
+ */
+export async function toolArgsForJob(root: string, args: Record<string, unknown>, agentId: string | undefined): Promise<Record<string, unknown>> {
+  const held = await heldOwnPaths(root, args, agentId, { existing: true }).catch(() => new Set<string>());
+  return ownPathsToOut(args, agentId, { root, held });
 }
 
 /**
@@ -7073,6 +7101,35 @@ export function writtenToOf(given: unknown, mapped: unknown, job: string): Recor
   };
   walk(given, mapped);
   return moved;
+}
+
+/**
+ * What an answer says of the output paths that were mapped under {OUT}
+ * (writtenToOf): `written_to`, the sealed place of each that holds what the
+ * job wrote, once it is done; `not_written`, each whose place holds nothing
+ * (a tool that failed or did not make that output); `writes_to` while the
+ * job is under way. Whether a place holds something is read from the job's
+ * output list when the list is whole. When it is cut short, a listed file
+ * or the sealed tree this VM sees says written, and nothing is said not
+ * written: a place neither shows is `unconfirmed` (this VM's view of a tree
+ * just sealed may lag). Before, `written_to` named a place whether or not
+ * anything was there.
+ */
+export function placedOutputs(root: string, moved: Record<string, string>, job: { state?: unknown; outputs?: unknown }): Record<string, Record<string, string>> {
+  if (!Object.keys(moved).length) return {};
+  if (job.state !== "committed" && job.state !== "failed" && job.state !== "cancelled") return { writes_to: moved };
+  const out = (job.outputs && typeof job.outputs === "object" ? job.outputs : {}) as { files?: unknown; list?: unknown };
+  const list = Array.isArray(out.list) ? out.list.map((f) => String((f as { path?: unknown })?.path ?? "")) : null;
+  const whole = list !== null && typeof out.files === "number" && out.files <= list.length;
+  const sorted: Record<"written_to" | "not_written" | "unconfirmed", Record<string, string>> = { written_to: {}, not_written: {}, unconfirmed: {} };
+  for (const [given, place] of Object.entries(moved)) {
+    const rest = place.replace(/^store\/jobs\/[^/]+\/out\/?/, "");
+    const listed = (list ?? []).some((p) => rest === "" || p === rest || p.startsWith(`${rest}/`));
+    // A job that failed or was cancelled in the job service sealed nothing; a committed one with a whole list or no file wrote only what it lists.
+    const kind = listed ? "written_to" : whole || out.files === 0 || job.state !== "committed" ? "not_written" : existsSync(join(root, place)) ? "written_to" : "unconfirmed";
+    sorted[kind][given] = place;
+  }
+  return Object.fromEntries(Object.entries(sorted).filter(([, v]) => Object.keys(v).length));
 }
 
 /**

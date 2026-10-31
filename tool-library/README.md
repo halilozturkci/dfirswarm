@@ -124,7 +124,7 @@ or `tools/`.
 | `browser_history` | python3 | `maintainer` | 3 | Query a browser history database from a copy of it and its -wal, -shm and -journal sidecars, made under the j… |
 | `catalog_grep` | python3 | `s864a02` | 1 | Grep catalog/AF-Case2.E01/p0/filelist.txt for a pattern; return matching lines. |
 | `catalog_search` | python3 | `sd1d100` | 11 | Search the evidence catalogue with a regex: a disk's filelist, timeline, bodyfile, fsstat or partitions, or a… |
-| `check_inputs` | python3 | `sfcc304` | 5 | Diff inputs/ against inputs.json (size and sha256). The manifest is validated whole first: a malformed entry,… |
+| `check_inputs` | python3 | `sfcc304` | 7 | Diff inputs/ against inputs.json (size and sha256). The manifest is validated whole first: a malformed entry,… |
 | `chunk_needles` | python3 | `sd1d102` | 9 | Scan a local file, or one inode streamed from an image through icat, for ASCII and UTF-16LE needles; return p… |
 | `contact_sheet` | python3 | `s10d40e` | 1 | Tile many images into labelled contact sheets to look at: a directory, a list of paths or a tar read in place… |
 | `csearch` | python3 | `sf6df06` | 2 | Search the kickoff catalog files (filelist/timeline/bodyfile/pslist/cmdline/netscan/malfind/dlllist/psscan) f… |

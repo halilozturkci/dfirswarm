@@ -7,12 +7,12 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, open, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, readdir, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { runPySnippet } from "./tool-library-harness.ts";
-import { CRON, JOURNAL, RECIPE, SHELL, UTMP, asJob, body, filesUnder, lines, put, refused, rowsOf, startDetached, tool, withCwd } from "./linux-pack-harness.ts";
+import { AUTH, CRON, JOURNAL, RECIPE, SHELL, UTMP, asJob, body, filesUnder, lines, put, refused, rowsOf, startDetached, tool, withCwd } from "./linux-pack-harness.ts";
 import type { Json } from "./linux-pack-harness.ts";
 
 /** A tool that must come back: a case whose tool is still running after `ms` is killed and fails by name (the old code ran for minutes). */
@@ -500,6 +500,136 @@ test("utmp_parse ends on SIGTERM with a last word, and keeps the paging file it 
   });
 });
 
+// ---- a signal that comes while a file is being written -------------------------------------------------------------
+
+// Python can run a signal handler inside a buffered file's own flush, where the file refuses a second flush: the last word then
+// left the paging file it was writing unfinished and unnamed (the SIGTERM tests above met it now and then on a loaded runner), and
+// cut an answer that was being printed. This harness makes it happen every time: under the paging file, or under stdout, it puts a
+// file whose first write sends the process SIGTERM, so the handler runs while the buffered layer above is in the middle of its flush.
+const INSIDE_A_WRITE = String.raw`
+import importlib.util, io, os, signal, sys, time
+sys.dont_write_bytecode = True          # a __pycache__ beside the tool would be a file the sealed pack does not list
+script, cwd, case = sys.argv[1:4]
+for name in ("JOB_ID", "OUT"):
+    os.environ.pop(name, None)
+os.environ["AGENT_ID"] = "s1"
+spec = importlib.util.spec_from_file_location("tool_under_test", script)
+tool = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(tool)
+os.chdir(cwd)
+tool.install_signal_handlers()
+
+
+class SignalInsideWrite(io.RawIOBase):
+    def __init__(self, fd):
+        self.fd, self.sent = fd, False
+
+    def writable(self):
+        return True
+
+    def fileno(self):
+        return self.fd
+
+    def write(self, b):
+        n = os.write(self.fd, b)
+        if not self.sent:
+            self.sent = True
+            os.kill(os.getpid(), signal.SIGTERM)     # answered at the next instruction: here, inside the flush above
+        return n
+
+
+def inside_a_write(fd):
+    return io.TextIOWrapper(io.BufferedWriter(SignalInsideWrite(fd), buffer_size=64), encoding="utf-8", write_through=True)
+
+
+class SlowFlush(io.RawIOBase):
+    def __init__(self, fd):
+        self.fd = fd
+
+    def writable(self):
+        return True
+
+    def fileno(self):
+        return self.fd
+
+    def write(self, b):
+        time.sleep(0.5)                 # the last word's flush outlasts what the regex clock has left
+        return os.write(self.fd, b)
+
+
+if case == "clock":
+    # A stop that comes during a slow match: the match's clock is still running when the last word begins.
+    page = tool.LosslessPage(tool.TOOL, "records", 1)
+    page.add({"n": 0})
+    page.add({"n": 1})
+    page._out.flush()
+    held = page._out
+    page._out = io.TextIOWrapper(io.BufferedWriter(SlowFlush(held.fileno()), buffer_size=1 << 16), encoding="utf-8")
+    for n in range(2, 20):
+        page.add({"n": n})
+    tool.arm_regex_clock()
+    signal.setitimer(signal.ITIMER_REAL, 0.1)
+    os.kill(os.getpid(), signal.SIGTERM)
+elif case == "page":
+    page = tool.LosslessPage(tool.TOOL, "records", 1)
+    page.add({"n": 0})
+    page.add({"n": 1})                  # past the limit: the paging file is begun
+    page._out.flush()
+    held = page._out                    # keeps the descriptor open
+    page._out = inside_a_write(held.fileno())
+    for n in range(2, 200):
+        page.add({"n": n, "pad": "x" * 40})
+else:
+    sys.stdout.flush()
+    sys.stdout = inside_a_write(1)
+    tool.fail("an error answer longer than the buffer " + "y" * 400)
+print("the signal was never answered")
+`;
+
+for (const [name, script] of [["utmp_parse", UTMP], ["cron_dump", CRON], ["shell_history", SHELL]] as const) {
+  test(`${name}: a signal while a row is being written still keeps the paging file under its name, every row in it whole`, async () => {
+    await withCwd(async (cwd) => {
+      const r = await runPySnippet(INSIDE_A_WRITE, [script, cwd, "page"], null);
+      assert.equal(r.code, 143, `exit status of a SIGTERM: ${r.stdout}${r.stderr}`);
+      const word = JSON.parse(r.stdout.trim().split("\n").at(-1) as string);
+      assert.equal(word.stopped_by_signal, 15);
+      const names = await readdir(join(cwd, "work", "s1", "tool-output"));
+      assert.deepEqual(names.filter((n) => n.startsWith(".")), [], "no unfinished temporary file is left");
+      const shown: string = word.paging_files_kept.records;
+      assert.ok(shown, `the last word names the paging file: ${JSON.stringify(word.paging_files_kept)}`);
+      const kept = await readFile(join(cwd, shown), "utf8");
+      assert.ok(kept.endsWith("\n"), "the file ends at a whole row");
+      const ns = kept.trimEnd().split("\n").map((l) => (JSON.parse(l) as { n: number }).n);
+      assert.deepEqual(ns, ns.map((_, i) => i), "the rows in order from the first, none lost and none cut");
+      assert.ok(ns.length >= 3, `${ns.length} rows kept: the one being written when the signal came is among them`);
+    });
+  });
+
+  test(`${name}: a signal during a slow match keeps the paging file under its name, though the match's clock runs out in the last word`, async () => {
+    await withCwd(async (cwd) => {
+      const r = await runPySnippet(INSIDE_A_WRITE, [script, cwd, "clock"], null);
+      assert.equal(r.code, 143, `exit status of a SIGTERM: ${r.stdout}${r.stderr}`);
+      const word = JSON.parse(r.stdout.trim().split("\n").at(-1) as string);
+      const names = await readdir(join(cwd, "work", "s1", "tool-output"));
+      assert.deepEqual(names.filter((n) => n.startsWith(".")), [], "no unfinished temporary file is left");
+      const shown: string = word.paging_files_kept.records;
+      assert.ok(shown, `the last word names the paging file: ${JSON.stringify(word.paging_files_kept)}`);
+      const ns = (await readFile(join(cwd, shown), "utf8")).trimEnd().split("\n").map((l) => (JSON.parse(l) as { n: number }).n);
+      assert.deepEqual(ns, Array.from({ length: 20 }, (_, i) => i), "every row written before the stop is in it");
+    });
+  });
+
+  test(`${name}: a signal while an answer is being written leaves that answer whole, with nothing after it`, async () => {
+    await withCwd(async (cwd) => {
+      const r = await runPySnippet(INSIDE_A_WRITE, [script, cwd, "answer"], null);
+      assert.equal(r.code, 1, `the error answer's own exit status: ${r.stdout}${r.stderr}`);
+      const doc = JSON.parse(r.stdout);
+      assert.match(doc.error, /^an error answer longer than the buffer y{400}$/);
+      assert.equal(doc.status, "failed");
+    });
+  });
+}
+
 // ---- journal_export: the walk for links ---------------------------------------------------------------------------
 
 async function journalStub(bin: string): Promise<void> {
@@ -572,5 +702,45 @@ test("journal_export walks a directory for links within max_seconds and a cap, a
     await put(cwd, "work/real/1.journal", "x");
     const real = await answer(JOURNAL, cwd, { path: "work/real" }, bin);
     assert.notEqual(real.json.status, "failed", JSON.stringify(real.json).slice(0, 300));
+  });
+});
+
+test("the tools that read files refuse a disk image with the routes that read one, and a file named like one goes on", async () => {
+  // The first microVM case run: cron_dump given root=inputs/Webserver.E01 said "no such directory", and the agents fell
+  // back to raw fls and icat for the files a pack tool reads. A disk image is refused with the routes that do read it.
+  await withCwd(async (cwd) => {
+    await writeFile(join(cwd, "inputs", "server.E01"), Buffer.concat([Buffer.from("EVF\x09\x0d\x0a\xff\x00", "latin1"), Buffer.alloc(600)]));
+    const mbr = Buffer.alloc(1024);
+    mbr[510] = 0x55;
+    mbr[511] = 0xaa;
+    await writeFile(join(cwd, "inputs", "disk.dd"), mbr);
+    for (const [script, key] of [[CRON, "root"], [SHELL, "root"], [UTMP, "path"], [AUTH, "path"], [JOURNAL, "path"]] as const) {
+      for (const image of ["inputs/server.E01", "inputs/disk.dd"]) {
+        const out = refused(await tool(script, cwd, { [key]: image }));
+        assert.match(out.error, new RegExp(`^${key} is a disk image: .*linux-target.*linux_triage.*target-fs -q <image> cp <dir>`), `${script} ${image}`);
+        assert.equal(out[key], image);
+        assert.equal(out.status, "failed");
+      }
+    }
+    // A dynamic VHD says so in its first bytes.
+    await writeFile(join(cwd, "inputs", "disk.vhd"), Buffer.concat([Buffer.from("conectix", "latin1"), Buffer.alloc(600)]));
+    assert.match(refused(await tool(CRON, cwd, { root: "inputs/disk.vhd" })).error, /^root is a disk image/);
+    // journal_export refuses a path through a link before it reads a byte: the image check does not say what lies beyond.
+    await symlink(join(cwd, "inputs"), join(cwd, "work", "via"));
+    const linked = refused(await tool(JOURNAL, cwd, { path: "work/via/server.E01" }));
+    assert.match(linked.error, /goes through a link/, linked.error);
+    // A name is not enough: a copied wtmp called .raw, with no boot-sector signature, is read as what it is.
+    await writeFile(join(cwd, "inputs", "wtmp.raw"), Buffer.alloc(384 * 2));
+    const wtmp = await tool(UTMP, cwd, { path: "inputs/wtmp.raw" });
+    assert.doesNotMatch(wtmp.stdout, /is a disk image/, wtmp.stdout);
+    // A path the system cannot take (a NUL in it, a lone surrogate) is answered in JSON, as before the check: the first
+    // version of it let os.stat's ValueError out as a traceback with no JSON from four of the five tools.
+    for (const [script, key] of [[CRON, "root"], [SHELL, "root"], [UTMP, "path"], [AUTH, "path"], [JOURNAL, "path"]] as const) {
+      for (const odd of ["inputs/a\u0000b", "inputs/\ud800x"]) {
+        const out = refused(await tool(script, cwd, { [key]: odd }));
+        assert.equal(out.status, "failed", `${script} ${JSON.stringify(odd)}`);
+        assert.doesNotMatch(out.error, /disk image/);
+      }
+    }
   });
 });
