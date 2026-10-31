@@ -50,7 +50,7 @@ import xml.parsers.expat
 import zipfile
 from pathlib import Path
 
-TOOL = {"name": "doc_probe", "version": 4}
+TOOL = {"name": "doc_probe", "version": 5}
 PARSER = "doc_probe/4"
 NOTE = ("Static container triage only. Markers, procedure names and external relationships do not prove execution or "
         "retrieval. Record parser coverage before drawing an absence conclusion.")
@@ -1028,7 +1028,7 @@ def probe_zip(path, size, ctx, args):
     targets = ctx.page("external_targets", args["external_limit"])
     out["code_related_parts"] = []
     out["external_targets"] = []
-    relationship_parts = {"read": 0, "failed": 0, "internal_relationships": 0}
+    relationship_parts = {"read": 0, "failed": 0, "not_attempted": 0, "internal_relationships": 0}
     out["relationship_parts"] = relationship_parts
     with open(path, "rb") as fh:
         try:
@@ -1194,7 +1194,7 @@ def read_relationships(archive, info, shown, name, budget, members, relationship
         return
     except OutOfTime:
         ctx.problem("%s: the relationship read stopped at the tool's own clock: the relationships before that point are listed" % shown)
-        relationship_parts["failed"] += 1
+        relationship_parts["not_attempted"] += 1
         members["not_attempted"] += 1
         row["relationships"] = "stopped_at_clock"
         return
@@ -1335,6 +1335,8 @@ def probe_ole(blob, ctx):
 # --- which container ----------------------------------------------------------------------------------------------------------------
 
 OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+PDF_HEADER_FORM = re.compile(rb"%PDF-\d\.\d")        # a PDF header as the specification writes it
+RTF_START_FORM = re.compile(rb"\{\\rtf\d")           # an RTF group start with its version
 
 
 def zip_evidence(path, size):
@@ -1351,7 +1353,7 @@ def containers(head, path, size):
     """The containers the file's bytes claim, the first being the one read first: a magic number at offset 0 decides, then a PDF
     header or an RTF group start in the first 1,024 bytes, in that order. A ZIP end record at the end of a file that is not a ZIP
     is a claim of its own, always listed last. Each is (name, what the bytes say)."""
-    found = []
+    found, notes = [], []
     if head[:8] == OLE_MAGIC:
         found.append(("OLE", "the OLE compound-file signature at offset 0"))
     if head[:4] in (b"PK\x03\x04", b"PK\x05\x06"):
@@ -1360,15 +1362,54 @@ def containers(head, path, size):
         found.append(("RTF", "an RTF group start ({\\rtf) at offset 0"))
     if head[:5] == b"%PDF-":
         found.append(("PDF", "a PDF header (%PDF-) at offset 0"))
-    for name, needle, label in (("PDF", b"%PDF-", "a PDF header (%%PDF-) at offset %d"), ("RTF", b"{\\rtf", "an RTF group start ({\\rtf) at offset %d")):
-        at = head.find(needle)
-        if at > 0 and not any(f[0] == name for f in found):
-            found.append((name, label % at + " (within the first %d bytes)" % HEAD_BYTES))
+    # Away from offset 0 only the form of a real header is a claim: `%PDF-` and a version digit pair, `{\rtf` and a version digit. The bytes
+    # alone (a text that mentions them, a metadata field that holds them) are a note, never a second reading of the file and never partial.
+    for name, form, needle, label, shape in (("PDF", PDF_HEADER_FORM, b"%PDF-", "a PDF header (%%PDF-) at offset %d", "%PDF-1.x"),
+                                              ("RTF", RTF_START_FORM, b"{\\rtf", "an RTF group start ({\\rtf1) at offset %d", "{\\rtf1")):
+        if any(f[0] == name for f in found):
+            continue
+        m = form.search(head, 1)
+        if m:
+            found.append((name, label % m.start() + " (within the first %d bytes)" % HEAD_BYTES))
+            notes.append("the %s is at offset %d, not 0: a reader that looks only at offset 0 does not take this file for a %s" % (name, m.start(), name))
+        else:
+            at = head.find(needle, 1)
+            if at > 0:
+                notes.append("the bytes %s occur at offset %d (within the first %d bytes) but are not followed by a version as a real header is (%s): not read as a %s"
+                             % (needle.decode("ascii"), at, HEAD_BYTES, shape, name))
     if not any(f[0] == "ZIP" for f in found):
         at = zip_evidence(path, size)
         if at is not None:
             found.append(("ZIP", "a ZIP end of central directory record at offset %d" % at))
-    return found
+            notes.append("a ZIP end of central directory record at offset %d names a directory that lies inside the file: an archive may be appended to, or hidden behind, "
+                         "other bytes; this tool reads it as a ZIP only beside a container the file begins as" % at)
+        else:
+            for sig, what in ((b"PK\x03\x04", "local file header"),):
+                where = head.find(sig, 1)
+                if where > 0:
+                    notes.append("a ZIP %s signature (PK\\x03\\x04) occurs at offset %d (within the first %d bytes), not at offset 0, and the end of the file holds no directory "
+                                 "a reader accepts: not read as a ZIP" % (what, where, HEAD_BYTES))
+            tail = zip_tail_signatures(path, size)
+            if tail:
+                notes.append("%d ZIP end-record signature(s) (PK\\x05\\x06) occur in the last 64 KiB, the first at offset %d, and none forms a directory inside the file: not read as a ZIP"
+                             % (len(tail), tail[0]))
+    return found, notes
+
+
+def zip_tail_signatures(path, size):
+    """The offsets of `PK\\x05\\x06` in the last 64 KiB (and the 22 bytes of the record before it) of the file, at most 20 of them."""
+    start = max(0, size - (65536 + 22))
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(start)
+            blob = fh.read(size - start)
+    except OSError:
+        return []
+    out, at = [], blob.find(b"PK\x05\x06")
+    while at >= 0 and len(out) < 20:
+        out.append(start + at)
+        at = blob.find(b"PK\x05\x06", at + 1)
+    return out
 
 
 def read_as(name, path, size, ctx, cfg, head):
@@ -1465,12 +1506,13 @@ def main():
         fail("the file is empty", path=path)
     body, stop = {}, None
     zip_reading = None
+    notes = []
     try:
-        claims = containers(head, path, size)
+        claims, notes = containers(head, path, size)
         if not any(not why.startswith("a ZIP end of central directory record") for _name, why in claims):
             values.close()
             fail("this is not a container this tool reads", status="unsupported", path=path, head_hex=head[:8].hex(),
-                 reads=["OOXML or ZIP", "PDF", "RTF", "OLE compound file"])
+                 reads=["OOXML or ZIP", "PDF", "RTF", "OLE compound file"], notes=notes)
         try:
             body = read_as(claims[0][0], path, size, ctx, cfg, head)
         except Stop as exc:
@@ -1522,7 +1564,8 @@ def main():
     head_out = {"tool": TOOL, "parser": PARSER, "path": shown, "bytes": size, "extension": scrub(extension, "names") or None}
     if stop is not None:
         print(json.dumps({**head_out, **stop.partial, "status": "failed", "status_basis": stop.message, "error": stop.message,
-                          "problems": ctx.problems, "limits_hit": ctx.limits, "withheld": COUNTS, "secret_values": values.summary(), "note": NOTE}, indent=2))
+                          "problems": ctx.problems, "limits_hit": ctx.limits, "withheld": COUNTS, "secret_values": values.summary(), "note": NOTE,
+                          **({"notes": notes} if notes else {})}, indent=2))
         raise SystemExit(1)
     status = "partial" if (ctx.problems or ctx.limits or unread) else "complete"
     basis = ("every structure this tool reads was read in full" if status == "complete" else
@@ -1538,6 +1581,8 @@ def main():
                                          "run the job with secret_output: true.")
     if ctx.problems_dropped:
         result["problems_not_listed"] = ctx.problems_dropped
+    if notes:
+        result["notes"] = notes
     if values.enabled or COUNTS["urls"] or COUNTS["names"] or COUNTS["text"]:
         result["withheld_note"] = ("Credentials and token-shaped text in a URL or a name are withheld from this answer; the URL's length is kept. "
                                    "The whole target is in the values file when write_values was asked for in a secret_output job.")

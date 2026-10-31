@@ -1,7 +1,7 @@
 {
   "id": "reverse-engineering",
   "name": "Reverse Engineering Pack",
-  "version": "1.9.2",
+  "version": "1.9.3",
   "description": "Static triage of a binary or a document under quarantine: what the file actually is, PE and ELF structure, entropy and packing, obfuscated strings, capability mapping, macros and embedded objects, and rules. Nothing from the evidence is ever executed.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -58,8 +58,8 @@
       "skills/strings/decoding-and-similarity.md": "8eb3df8b3a24f349e6c4a2bfa0921b501ab0522db12bcdc824c1030c70c0df5d",
       "skills/strings/obfuscated.md": "10797972c5d722d4a902a2c729c0a905be0b193fc45959e947c5ce4872d76ef2",
       "skills/triage/quarantine.md": "67e54196b0bf206feb6107054903bea7b6fe384466cddc602cdc21cf45afe28d",
-      "tools/doc_probe/manifest.json": "aa3712610acebff010b8529aaf3acbae4fe645ebd9097f97e6e9befc8a5bbfc0",
-      "tools/doc_probe/run.py": "489cb99db3489bf4ac703c80cbeb5d1a308eb958a7dcd393884910530f27b056",
+      "tools/doc_probe/manifest.json": "42416c229e3ef564e293cde89c49f806f5538ea46c0f1e4e189fbeef64dd4d33",
+      "tools/doc_probe/run.py": "8ac36abb17e6eb5ede772a474895caf0cc93ecc809c8f72d229e5e50dcf879b3",
       "tools/doc_structure/manifest.json": "ec2f39515f05e24ac29de258e0c5024249f1146420a34f4e2db290e8eaf2f777",
       "tools/doc_structure/run.py": "fc564f021c2b14794d55af2a4af540439910996f22176d830d04dad369963186",
       "tools/entropy_map/manifest.json": "80e4834b79924c8e58870681c57f900c3c7fd07558bbe4c49e4a8edb7567ea31",
