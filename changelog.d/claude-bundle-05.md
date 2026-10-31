@@ -34,3 +34,21 @@ reader for a VeraCrypt or TrueCrypt lead, once the case supplies a candidate
 password. PIM is refused for this version, named: whether it may go on
 cryptsetup's own command line needs a decision this change does not have a
 reviewer for.
+
+### Fixed: encrypted-containers: a symlinked tool-output path, an unbounded flat-directory walk, no limit ceiling, and a 7z read held open by its own child
+
+`archive_probe` and `recovery_key_scan` now refuse a symbolic link anywhere
+on the way to their paging directory (`$OUT/tool-output` or
+`work/<agent>/tool-output`, and `recovery_key_scan`'s values file under
+`$OUT`), nothing written through it, instead of following it silently.
+`recovery_key_scan`'s directory walk no longer keeps a whole flat
+directory's entries sorted in memory (a 600,000-file directory held about
+208 MB); it reads 10,000 entries at a time, bounding memory, and a stop
+names the unreached part, including a directory that may hold more
+entries beyond the chunk in hand, within the stop's own grace period.
+`limit` is refused above 1,000 in both tools' manifests, as
+`archive_extract`'s already was. `archive_probe`'s 7-Zip listing no
+longer waits for end of file on 7z's own stdout pipe when a program 7z
+forked keeps that pipe open after 7z itself has ended: the read ends
+within a short grace of 7z's own exit, and what still holds the pipe is
+reaped.

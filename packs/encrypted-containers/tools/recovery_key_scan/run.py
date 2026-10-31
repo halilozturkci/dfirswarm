@@ -1076,6 +1076,7 @@ class SecretValues:
 
 
 PARSER = "recovery_key_scan/4"
+LIMIT_CEILING = 1000   # as archive_extract's: a page kept in memory is bounded, whatever the caller asks
 CHUNK = 4 << 20
 # Longer than the longest thing matched (110 bytes of UTF-16LE text), so a match
 # across a read boundary is whole in the next window.
@@ -1384,8 +1385,8 @@ def main():
     if not isinstance(budget, int) or isinstance(budget, bool) or budget < 1024:
         fail("max_bytes_per_file must be an integer of at least 1024")
     limit = args.get("limit", 200)
-    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
-        fail("limit must be a positive integer")
+    if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= LIMIT_CEILING:
+        fail("limit must be an integer from 1 to %d" % LIMIT_CEILING)
     seconds = args.get("max_seconds", DEFAULT_SECONDS)
     if not isinstance(seconds, int) or isinstance(seconds, bool) or not 1 <= seconds <= MAX_SECONDS:
         fail("max_seconds must be an integer from 1 to %d (the tool's own time limit; the manifest allows 600)" % MAX_SECONDS)

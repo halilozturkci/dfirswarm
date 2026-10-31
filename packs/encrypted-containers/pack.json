@@ -1,7 +1,7 @@
 {
   "id": "encrypted-containers",
   "name": "Encrypted Containers Pack",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "description": "Telling one kind of encryption from another: volume headers and their key protectors, LUKS key slots, the container that has no signature at all, password-protected archives and documents, and where key material the case supplies may already be.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -58,14 +58,14 @@
       "skills/volumes/bitlocker.md": "fadc5aeb13dcff3ec61a6b997db9e411a40085a6ef26cec09e88fcc8bb466553",
       "skills/volumes/filevault-apfs.md": "7604310ad397d391651aef8d010788fb29079b25aa15f0c49b5383fd467b1764",
       "skills/volumes/luks-filevault.md": "24fe2e2197fcf087d3fb225ec01713a873f6ff827411e6c6fce3b2f218bc67ae",
-      "tools/archive_probe/manifest.json": "9fcc1f2b0ca05b44c3608ac731b485d1dc81b7362cf4078606bcce71877ed7ae",
-      "tools/archive_probe/run.py": "f08bf651b9d4ee395f19e91046ac303743790b2416a13f39ea0f0568ac6994c5",
+      "tools/archive_probe/manifest.json": "f0e36a0a274cddbc074e5378857bd9c61c38a5407c05d05892f14bb1c56a0748",
+      "tools/archive_probe/run.py": "47e6260d6c19b4331a84917d95722fac872c0178782bd9aac2a97d89cfb757e9",
       "tools/crypto_id/manifest.json": "b274e6cf77bfd168617ffa0fd88682d44b5807388569267cacfa9b020c8e92d8",
       "tools/crypto_id/run.py": "3b450be149ae34328d95b60c9119fd32e506f7453782acd33ed97cc80b539986",
       "tools/password_recover/manifest.json": "87dd6e838fee703931de93a3684748b88f1241abfa6899f0105e7b3491bf568f",
       "tools/password_recover/run.py": "126a8dc52d143a6eecaad057eefa061747fd2502bfe39c25974436c8dd7174a3",
-      "tools/recovery_key_scan/manifest.json": "f3893640995eedcd2082f3e7b3e24f69b07732c33650bf9ff973639091a3b679",
-      "tools/recovery_key_scan/run.py": "229b994d02c2ef96709c465bbdb836cec3361bc7f3dd0de0bfe8d23f1f388573",
+      "tools/recovery_key_scan/manifest.json": "65cd9cbab3855c4fcb35d9f158ed42209a6d86bb5f819dccbdce4f5cbca09be7",
+      "tools/recovery_key_scan/run.py": "38a7b7e86737450906ffaaf11d049776b39f1afd545ae1c2a7bfc525881b16a3",
       "tools/tcrypt_header/manifest.json": "b996448fd2d41ed96882ac0266c35bfdfa65a41cf6eb59b7a9fe44eb7a4712f0",
       "tools/tcrypt_header/run.py": "ddc0192859be000ebb40d04d43f4adf1e2a885f296dc8efe0051fa2b32bf6bd6"
     }

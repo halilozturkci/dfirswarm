@@ -47,6 +47,7 @@ import mmap
 import os
 import re
 import shutil
+import select
 import struct
 import subprocess
 import sys
@@ -55,6 +56,7 @@ import zlib
 from datetime import datetime, timedelta, timezone
 
 PARSER = "archive_probe/6"
+LIMIT_CEILING = 1000   # as archive_extract's: a page kept in memory is bounded, whatever the caller asks
 
 
 # Lossless paging (the same in every library tool that pages): the page an
@@ -2148,6 +2150,39 @@ def find_7z():
     return None
 
 
+def pipe_lines(proc):
+    """Lines of `proc`'s stdout (bytes, split on \\n, decoded utf-8 with replacement), read as 7z writes them. A read
+    ends when 7z itself has ended and PIPE_GRACE seconds have passed with nothing more to read: a child 7z forks that
+    inherits the pipe (ffmpeg-style helpers, a decompression filter) and keeps writing or just keeps the write end
+    open does not hold this read open to its own end of file, the way `communicate_bounded` does not for a captured
+    run. What held the pipe past that point is ended (reap_orphans), not merely ignored."""
+    fd = proc.stdout.fileno()
+    buf = b""
+    grace_until = None
+    while True:
+        if stop_wanted() and grace_until is None:
+            grace_until = time.monotonic() + PIPE_GRACE
+        ready, _, _ = select.select([fd], [], [], 0.2)
+        if ready:
+            chunk = os.read(fd, 65536)
+            if chunk:
+                buf += chunk
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    yield line.decode("utf-8", "replace")
+                continue
+            # EOF: every writer, including one that outlived 7z, has let go.
+            break
+        if proc.poll() is not None:
+            if grace_until is None:
+                grace_until = time.monotonic() + PIPE_GRACE
+            elif time.monotonic() >= grace_until:
+                break
+    if buf:
+        yield buf.decode("utf-8", "replace")
+    reap_orphans(_pipe_inodes(proc))
+
+
 def list_with_7z(path, limit, counts_only=False):
     """List an archive through 7z, bounded in time, never asking for a password.
 
@@ -2164,7 +2199,7 @@ def list_with_7z(path, limit, counts_only=False):
     seconds = max(1.0, min(SEVENZIP_TIMEOUT, STOP["deadline"] - time.monotonic() if STOP["deadline"] else SEVENZIP_TIMEOUT))
     info = {"via": os.path.basename(exe), "timeout_seconds": round(seconds)}
     try:
-        proc = spawn(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
+        proc = spawn(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     except OSError as exc:
         return {**info, "status": "unavailable", "reason": "7z could not be started: %s" % describe(exc)}, None
     ACTIVE.append(proc)
@@ -2201,7 +2236,7 @@ def list_with_7z(path, limit, counts_only=False):
         current = {}
 
     try:
-        for raw in proc.stdout:
+        for raw in pipe_lines(proc):
             if stop_wanted():
                 timed_out.append(True)
                 kill_tree(proc)
@@ -2562,8 +2597,8 @@ def main():
             fail("not a regular file (a device, a pipe or a socket): name a file, or read an image made from the device", path=shown(path))
         fail("no such file", path=shown(path))
     limit = args.get("limit", 200)
-    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
-        fail("limit must be a positive integer")
+    if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= LIMIT_CEILING:
+        fail("limit must be an integer from 1 to %d" % LIMIT_CEILING)
     max_metadata = args.get("max_metadata_bytes", MAX_METADATA_DEFAULT)
     if not isinstance(max_metadata, int) or isinstance(max_metadata, bool) or max_metadata < 4096:
         fail("max_metadata_bytes must be an integer of at least 4096")
