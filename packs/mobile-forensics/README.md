@@ -70,7 +70,7 @@ opens a `Manifest.db`'s `-wal` and `-journal` in a working copy, with the file.
   expression that repeats one class of characters 250 times), but not small for a
   large free space: 1.4 s against 0.16 s for 1.3 MB of digits against letters, and
   the job's duration can say that much of the hidden text is of a class the
-  expression matches, up to about 7 s. The answer does not say it: the expression
+  expression matches, up to about 7 s of CPU (10.5 s on a loaded machine). The answer does not say it: the expression
   has a work budget in sizes the answer shows (a character of a fragment times the
   expression's cost, and 1,000 steps for every fragment it is called on), a fragment past it is marked `match` 2 and the status is
   partial, the same for any text of those sizes, and the clock of `max_seconds`
@@ -78,7 +78,7 @@ opens a `Manifest.db`'s `-wal` and `-journal` in a working copy, with the file.
   `contains` ends within `max_seconds` plus that). `complete` means every page was
   accounted for: b-tree and free pages are read, the others must be overflow pages a
   cell of a b-tree names; a page no structure owns (what a header with its freelist
-  fields zeroed leaves) is read as free space and makes the status `corrupt`. A job that asks for `write_values` is run
+  fields zeroed leaves) is read as free space and makes the status `partial`, with the reason in `status_basis` and `problems`. A job that asks for `write_values` is run
   as secret output.
 - `protobuf_peek` reads the wire structure of a protobuf message without its
   schema: field numbers, wire types, absolute offsets and field paths, numbers

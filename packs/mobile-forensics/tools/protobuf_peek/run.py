@@ -98,7 +98,7 @@ import time
 import unicodedata
 from pathlib import Path
 
-PARSER = "protobuf_peek/2"
+PARSER = "protobuf_peek/3"
 TOOL = "protobuf_peek"
 VALUES_NAME = "protobuf-values.jsonl"
 VALUES_FORMAT = ("JSON Lines, mode 0600: finding_id, source (the real file), field_path, offset, payload_offset, "
@@ -134,6 +134,31 @@ VALUES_FORMAT = ("JSON Lines, mode 0600: finding_id, source (the real file), fie
 #   6. One document is written, whole: from the moment the answer is being written a stop signal is
 #      ignored, so a reader that is slow never gets a truncated answer followed by a failure. A reader that
 #      takes nothing for WRITE_STALL_SECONDS is given up on: the tool exits (141) instead of waiting for ever.
+
+# A stop that arrives while the rest of this module is still being read (the definitions below, the tool's own code after
+# the block) is answered here, by one JSON document and exit 128 + the signal, as run_main answers it later. The handlers are
+# installed as the module reaches this point, not when main() starts, so the window left is the interpreter's own start-up and
+# the imports above the block, which no code in this file can close and which this tool does not claim: a stop there ends the
+# process with no answer, before anything was read or written. run_main replaces these handlers.
+EARLY_SIGNALS = [getattr(signal, name) for name in ("SIGTERM", "SIGINT", "SIGHUP") if hasattr(signal, name)]
+
+
+def early_stop(signum, frame):
+    for number in EARLY_SIGNALS:
+        signal.signal(number, signal.SIG_IGN)
+    name = signal.Signals(signum).name
+    text = json.dumps({"error": "the tool was stopped by %s before it finished: this is not an answer to the question" % name,
+                       "status": "failed", "status_basis": "stopped by %s before the tool had started to read anything" % name,
+                       "interrupted": name}) + "\n"
+    try:
+        os.write(1, text.encode("utf-8"))
+    except OSError:
+        pass
+    os._exit(128 + signum)
+
+
+for early_number in EARLY_SIGNALS:
+    signal.signal(early_number, early_stop)
 
 WITHHELD = "<recovery-password-shaped name withheld>"
 WITHHELD_LONG = "<name too long to judge withheld>"
@@ -270,6 +295,7 @@ def wrap_up(answer):
 
 
 WRITE_STALL_SECONDS = 30
+WRITE_CHUNK = 4096
 
 
 def write_stalled(signum, frame):
@@ -285,6 +311,10 @@ def emit(text):
     for number in STOP_SIGNALS:
         signal.signal(number, signal.SIG_IGN)
     data = memoryview((text + "\n").encode("utf-8"))
+    # One os.write on a blocking pipe returns only when everything it was given has gone in, however slowly the reader takes it,
+    # so a single call for the whole document would restart the clock once. A write of at most WRITE_CHUNK bytes (a pipe takes
+    # up to PIPE_BUF bytes in one piece) returns when that much has been taken, so the clock restarts on every chunk the reader
+    # takes and only a reader that takes nothing for WRITE_STALL_SECONDS is given up on.
     timed = hasattr(signal, "setitimer")
     if timed:
         try:
@@ -298,7 +328,7 @@ def emit(text):
             if timed:
                 signal.setitimer(signal.ITIMER_REAL, WRITE_STALL_SECONDS)       # progress restarts the wait
             try:
-                data = data[os.write(descriptor, data):]
+                data = data[os.write(descriptor, data[:WRITE_CHUNK]):]
             except BlockingIOError:      # a pipe set non-blocking by its owner and full: wait until it can take more
                 select.select([], [descriptor], [], 1.0)
     except OSError:       # the reader went away: there is nobody to answer

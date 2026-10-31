@@ -349,7 +349,7 @@ test("sqlite_freespace keeps a freeblock chain that loops from being read again 
     file.writeUInt16BE(spec.block, spec.base + spec.block);
     await writeFile(db, file);
     const { answer, values } = await freespace(cwd, db);
-    assert.equal(answer.status, "corrupt");
+    assert.equal(answer.status, "partial");
     assert.ok(answer.problem_kinds["freeblock chain corrupt"] >= 1, JSON.stringify(answer.problem_kinds));
     assert.equal(values.filter((v) => v.value.includes(marker)).length, 1, "the looping block is read once");
     assert.ok(answer.problems.some((p) => /points back|loop/.test(p.detail)));
@@ -381,7 +381,7 @@ test("sqlite_freespace walks the freelist once, compares it with the header and 
     const bad = join(cwd, "work", "cycle.db");
     await writeFile(bad, cyclic);
     const cycle = await freespace(cwd, bad, { min_length: 20 }, "out-cycle");
-    assert.equal(cycle.answer.status, "corrupt");
+    assert.equal(cycle.answer.status, "partial");
     assert.ok(cycle.answer.problem_kinds["freelist cycle"] >= 1, JSON.stringify(cycle.answer.problem_kinds));
     // The header says one more free page than the chain holds.
     const counted = Buffer.from(file);
@@ -389,7 +389,7 @@ test("sqlite_freespace walks the freelist once, compares it with the header and 
     const wrong = join(cwd, "work", "count.db");
     await writeFile(wrong, counted);
     const count = await freespace(cwd, wrong, { min_length: 20 }, "out-count");
-    assert.equal(count.answer.status, "corrupt");
+    assert.equal(count.answer.status, "partial");
     assert.ok(count.answer.problem_kinds["freelist count differs from the header"] >= 1);
   });
 });
@@ -419,7 +419,7 @@ test("sqlite_freespace validates the header: a short file, a bad page size and a
     const file = await readFile(db);
     await writeFile(db, file.subarray(0, file.length - 100));
     const { answer } = await freespace(cwd, db);
-    assert.equal(answer.status, "corrupt");
+    assert.equal(answer.status, "partial");
     assert.ok(answer.problem_kinds["partial last page"] >= 1, JSON.stringify(answer.problem_kinds));
     assert.ok(answer.scanned.pages_partial >= 1);
   });
@@ -2883,7 +2883,7 @@ test("sqlite_freespace is not complete when the header's freelist fields are zer
       await writeFile(zeroed, bytes);
       const hidden = await freespace(cwd, zeroed, { min_length: 12 }, `${name}-zeroed`);
       assert.notEqual(hidden.answer.status, "complete", `${name}: ${hidden.answer.status_basis}`);
-      assert.equal(hidden.answer.status, "corrupt");
+      assert.equal(hidden.answer.status, "partial");
       assert.ok((hidden.answer.problem_kinds["pages in no structure"] ?? 0) >= 1, JSON.stringify(hidden.answer.problem_kinds));
       assert.ok(hidden.answer.scanned.pages_in_no_structure > 0);
       assert.doesNotMatch(hidden.answer.status_basis ?? "", /every page was/);
@@ -2892,7 +2892,7 @@ test("sqlite_freespace is not complete when the header's freelist fields are zer
       const countOnly = await readFile(db);
       countOnly.fill(0, 36, 40);
       await writeFile(join(cwd, "work", `${name}-count.db`), countOnly);
-      assert.equal((await freespace(cwd, join(cwd, "work", `${name}-count.db`), { min_length: 12 }, `${name}-count`)).answer.status, "corrupt");
+      assert.equal((await freespace(cwd, join(cwd, "work", `${name}-count.db`), { min_length: 12 }, `${name}-count`)).answer.status, "partial");
     }
   });
 });
@@ -3202,7 +3202,7 @@ test("sqlite_freespace keeps no pointer per child of an interior page, and stops
     await build(INTERIOR_DB, big, "400", "600", "4096");
     const run = await measured(FREESPACE, cwd, { db: big, limit: 1 });
     const answer = body<Free>(run.run);
-    assert.equal(answer.status, "corrupt");
+    assert.equal(answer.status, "partial");
     assert.ok(answer.problems.some((p) => p.kind === "b-tree links inconsistent" && /more child pointers than the file has pages \(400\)/.test(p.detail)), JSON.stringify(answer.problems.map((p) => p.detail)));
     assert.ok(run.traced - base.traced < 2 * 1024 * 1024, `${run.traced - base.traced} bytes more allocated than for a tiny database, for 400 interior pages of 600 cells`);
   });
@@ -3286,7 +3286,7 @@ test("sqlite_freespace reads a page at a pointer-map position that holds no poin
     bytes.writeUInt32BE(1, 52);
     await writeFile(join(cwd, "work", "ptrmap-forged.db"), bytes);
     const forged = await freespace(cwd, join(cwd, "work", "ptrmap-forged.db"), { min_length: 12 }, "pm-forged");
-    assert.equal(forged.answer.status, "corrupt", forged.answer.status_basis);
+    assert.equal(forged.answer.status, "partial", forged.answer.status_basis);
     assert.ok((forged.answer.problem_kinds["pointer-map page not a pointer map"] ?? 0) >= 1, JSON.stringify(forged.answer.problem_kinds));
     assert.equal(marked(forged.rows), marked(intact.rows), "the page is read");
   });
@@ -3322,4 +3322,251 @@ test("manifest_db is not complete when a plain plist was too large to read, and 
     const done = (await manifest(cwd, await backup(cwd, "finished", { entries: many(2) }))).answer;
     assert.match(done.status_basis ?? "", /the backup finished/);
   });
+});
+
+// --- the shared block: handlers in at start, an answer clock that follows progress, versions with PARSER ---
+
+test("a stop signal at the end of the shared block, before main() installs the handlers, gives one JSON document and exit 128 plus the signal, in each tool", async () => {
+  // run_main installed the handlers, so a signal between the start of the module and main() killed the tool with no answer (SIGINT: a traceback).
+  // The gap is made deterministic as tests/pack-shared-stop.test.ts makes it: the source up to the end of the block is run, and the signal is sent
+  // there. The interpreter's own start-up and the imports above the block cannot be closed from inside the file and are not claimed.
+  const NUMBER = { SIGTERM: 15, SIGINT: 2, SIGHUP: 1 } as const;
+  await withCwd(async (cwd) => {
+    for (const script of [FREESPACE, MANIFEST, PROTOBUF]) {
+      const text = await readFile(script, "utf8");
+      const end = text.indexOf("# --- shared with the pack's other tools: end");
+      assert.ok(end > 0, script);
+      const prefix = text.slice(0, text.indexOf("\n", end) + 1);
+      for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
+        const file = join(cwd, `early-${sig}.py`);
+        await writeFile(file, `${prefix}\nimport os as _os, signal as _signal, time as _time\n_os.kill(_os.getpid(), _signal.${sig})\n_time.sleep(30)\nprint("survived")\n`);
+        const ran = spawnSync("python3", [file], { cwd, encoding: "utf8", timeout: 60_000, env: { ...process.env, ...AGENT } });
+        assert.equal(ran.status, 128 + NUMBER[sig], `${script} ${sig}: ${ran.stderr}`);
+        const answer = JSON.parse(ran.stdout) as { status: string; status_basis: string; interrupted: string; error: string };
+        assert.equal(answer.status, "failed", `${script} ${sig}`);
+        assert.equal(answer.interrupted, sig);
+        assert.match(answer.status_basis, /stopped by SIG/);
+        assert.doesNotMatch(ran.stderr, /Traceback/, `${script} ${sig}`);
+      }
+    }
+  });
+});
+
+test("the three tools deliver a whole answer to a reader that takes it steadily but slowly for longer than the stall clock", async () => {
+  // The clock was set once per os.write call, and one call on a blocking pipe returns only when all of it has gone in: a reader that took the
+  // data steadily for longer than WRITE_STALL_SECONDS ended the tool with exit 141 and a cut answer. The clock here is 1 second; the reader
+  // takes 64 KiB every 150 ms, so the answer (about 1.4 MB) takes about 3 seconds and no single wait comes near the clock.
+  await withCwd(async (cwd) => {
+    const code = String.raw`
+import importlib.util, sys
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("t", sys.argv[1]); t = importlib.util.module_from_spec(spec); spec.loader.exec_module(t)
+t.WRITE_STALL_SECONDS = 1
+def main():
+    t.send({"rows": ["row %d" % i for i in range(120000)], "tail": "the end"})
+t.run_main(main)
+`;
+    for (const script of [FREESPACE, MANIFEST, PROTOBUF]) {
+      const r = await new Promise<{ code: number | null; stdout: string; stderr: string; seconds: number }>((resolve, reject) => {
+        const child = spawn("python3", ["-c", code, script], { cwd, env: { ...process.env, ...AGENT } });
+        const out: Buffer[] = [], err: Buffer[] = [];
+        const began = Date.now();
+        const guard = setTimeout(() => child.kill("SIGKILL"), 60000);
+        child.stdout.on("data", (c: Buffer) => {
+          out.push(c);
+          child.stdout.pause();
+          setTimeout(() => child.stdout.resume(), 150);
+        });
+        child.stderr.on("data", (c: Buffer) => err.push(c));
+        child.on("error", reject);
+        child.on("close", (code2) => { clearTimeout(guard); resolve({ code: code2, stdout: Buffer.concat(out).toString("utf8"), stderr: Buffer.concat(err).toString("utf8"), seconds: (Date.now() - began) / 1000 }); });
+      });
+      assert.ok(r.seconds > 1.5, `${script}: the reader was not slow enough to prove anything (${r.seconds} s)`);
+      assert.equal(r.code, 0, `${script}: ${r.stderr}`);
+      const parsed = JSON.parse(r.stdout) as { rows: string[]; tail: string };
+      assert.equal(parsed.rows.length, 120000, script);
+      assert.equal(parsed.tail, "the end");
+    }
+  });
+});
+
+test("every tool of the pack names the version of its manifest in PARSER, which every record's provenance carries", async () => {
+  const names = (await readdir(TOOLS, { withFileTypes: true })).filter((e) => e.isDirectory()).map((e) => e.name).sort();
+  assert.deepEqual(names, ["manifest_db", "protobuf_peek", "sqlite_freespace"]);
+  for (const name of names) {
+    const manifestJson = JSON.parse(await readFile(join(TOOLS, name, "manifest.json"), "utf8")) as { version: number };
+    const match = /^PARSER = "([a-z_]+)\/(\d+)"$/m.exec(await readFile(join(TOOLS, name, "run.py"), "utf8"));
+    assert.ok(match, `${name} has a PARSER line`);
+    assert.equal(match[1], name);
+    assert.ok(manifestJson.version >= 3, `: the behaviour of #213 and later is version 3 or above`);
+    assert.equal(Number(match[2]), manifestJson.version, `${name}: PARSER says ${match[1]}/${match[2]}, the manifest says version ${manifestJson.version}`);
+  }
+});
+
+// --- sqlite_freespace: no fourth status word, one figure for the hidden-class time, the disk use stated ---
+
+test("sqlite_freespace answers only complete, partial or failed: a file whose structure disagrees with itself is partial, with the reason in status_basis and problems", async () => {
+  // The contract (docs/packs.md) has three values; the tool also said `corrupt`. A consumer that reads three words took the fourth for neither.
+  await withCwd(async (cwd) => {
+    const marker = "DAMAGED-CHAIN";
+    const db = join(cwd, "work", "damaged.db");
+    await build(FREEBLOCK_DB, db, marker, "utf-8");
+    const file = await readFile(db);
+    const spec = freeblocks(file).find((b) => file.indexOf(Buffer.from(marker)) >= b.base + b.block && file.indexOf(Buffer.from(marker)) < b.base + b.block + b.size);
+    assert.ok(spec);
+    file.writeUInt16BE(spec.block, spec.base + spec.block);
+    await writeFile(db, file);
+    const damaged = (await freespace(cwd, db, {}, "damaged")).answer as Free & { corrupt: boolean };
+    assert.equal(damaged.status, "partial");
+    assert.equal(damaged.corrupt, true);
+    assert.match(damaged.status_basis ?? "", /^partial because the file's structure disagreed with itself where problems says \(.*freeblock chain corrupt.*\)/);
+    assert.ok(damaged.problem_kinds["freeblock chain corrupt"] >= 1);
+    // A header that cannot be believed, a cut file and a damaged page: every status word is one of the three, and a refusal is not an answer.
+    const truncated = join(cwd, "work", "truncated.db");
+    await writeFile(truncated, (await readFile(db)).subarray(0, 4096 + 100));
+    const cut = await tool(FREESPACE, cwd, { db: truncated });
+    const cutAnswer = JSON.parse(cut.stdout) as { status?: string };
+    assert.ok(cutAnswer.status === undefined || ["complete", "partial", "failed"].includes(cutAnswer.status), cut.stdout.slice(0, 200));
+    const intact = join(cwd, "work", "intact.db");
+    await build(FREEBLOCK_DB, intact, marker, "utf-8");
+    const clean = (await freespace(cwd, intact, {}, "clean")).answer as Free & { corrupt: boolean };
+    assert.ok(["complete", "partial"].includes(clean.status), clean.status);
+    assert.equal(clean.corrupt, false);
+    // The words the tool's texts use for its status: no `corrupt` as a status in the manifest, the README or the skill.
+    for (const text of [await readFile(join(TOOLS, "sqlite_freespace", "manifest.json"), "utf8"), await readFile(join(PACK, "README.md"), "utf8"), await readFile(join(PACK, "skills", "apps", "fragments.md"), "utf8")]) {
+      assert.doesNotMatch(text, /(status is|makes the status|or) `?corrupt\b/);
+    }
+  });
+});
+
+test("sqlite_freespace gives one figure for the time a hidden class can reveal, in its code, its answer, its manifest and the README, and states its disk use", async () => {
+  const figure = "about 7 s of CPU";
+  const loaded = "10.5 s on a loaded";
+  const code = await readFile(FREESPACE, "utf8");
+  const manifestText = await readFile(join(TOOLS, "sqlite_freespace", "manifest.json"), "utf8");
+  const readme = (await readFile(join(PACK, "README.md"), "utf8")).replace(/\s+/g, " ");
+  assert.ok(code.includes(figure) && code.includes(loaded), "the code comment");
+  // The answer's note is a string in the source built from pieces; the pieces are in order.
+  assert.match(code.replace(/"\s*\n\s*"/g, ""), /up to the time the work budget takes, about 7 s of CPU and 10\.5 s on a loaded machine\)/, "the answer's note");
+  assert.match(manifestText, /about 7 s of CPU, 10\.5 s measured on a loaded machine/, "the manifest");
+  assert.match(readme, /up to about 7 s of CPU \(10\.5 s on a loaded machine\)/, "the README");
+  assert.doesNotMatch(readme, /expression matches, up to about 7 s\. /);
+  // The residual of the wall-clock fragment limit and the disk use are stated, and the stated size is the size.
+  assert.match(manifestText, /that limit is wall-clock time, so a starved CPU turns more fragments into 2; the status is then partial, never a wrong complete/);
+  assert.match(manifestText, /DISK USE: nothing is cut[^"]*about 240 bytes of paging file per fragment/);
+  await withCwd(async (cwd) => {
+    const db = join(cwd, "work", "disk.db");
+    await build(SHORT_FRAGMENTS_DB, db, "2");          // 2,048 fragments of three characters
+    const { answer, out } = await freespace(cwd, db, { min_length: 3 }, "disk");
+    assert.equal(answer.fragment_count, 2048);
+    let paging = 0;
+    for (const f of await readdir(join(out, "tool-output"))) paging += (await stat(join(out, "tool-output", f))).size;
+    const perFragment = paging / 2048;
+    assert.ok(perFragment > 190 && perFragment < 290, `${perFragment} bytes of paging file per fragment: the manifest says about 240`);
+  });
+});
+
+// --- manifest_db: the tail under the clock, a total budget for contains, the working copy reused ---
+
+/**
+ * The real tool with a clock that moves 1 ms every time it is read, so that how far through max_seconds the row loop stops does not depend on
+ * how fast the machine is. It says on stderr how much of the clock had gone when the work after the row loop (the domain page) began.
+ * argv: tool, cwd. stdin: the arguments.
+ */
+const MANIFEST_FAKE_CLOCK = String.raw`
+import importlib.util, os, sys, time
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("md", sys.argv[1]); md = importlib.util.module_from_spec(spec); spec.loader.exec_module(md)
+class Clock:
+    def __init__(self):
+        self.now, self.first, self.tail = 1000.0, None, None
+    def monotonic(self):
+        self.now += 0.001
+        if self.first is None:
+            self.first = self.now
+        return self.now
+    def __getattr__(self, name):
+        return getattr(time, name)
+clock = Clock()
+md.time = clock
+Original = md.LosslessPage
+class Spy(Original):
+    def __init__(self, tool, key, *rest, **named):
+        if "domains" in key and clock.tail is None:
+            clock.tail = clock.now - clock.first
+        Original.__init__(self, tool, key, *rest, **named)
+md.LosslessPage = Spy
+os.chdir(sys.argv[2])
+os.environ.update(AGENT_ID="s1")
+try:
+    md.run_main(md.main)
+finally:
+    sys.stderr.write("TAIL %r\n" % (clock.tail,))
+`;
+
+test("manifest_db stops its row loop at 93 % of max_seconds, so the work after the loop runs inside the clock", async () => {
+  // The work after the loop (sorting the domains, finishing the pages) ran outside max_seconds, and only the cap of 255 seconds under a timeout of 300
+  // covered it. The clock here moves 1 ms a read; max_seconds 1 is about a thousand reads.
+  await withCwd(async (cwd) => {
+    const dir = await backup(cwd, "tailbk", { entries: many(4000) });
+    const out = await runPySnippet(MANIFEST_FAKE_CLOCK, [MANIFEST, cwd], { path: dir, max_seconds: 1 });
+    assert.equal(out.code, 0, out.stderr);
+    const answer = JSON.parse(out.stdout) as Manifest;
+    assert.notEqual(answer.stopped_at_row, null, "the clock stopped the loop");
+    assert.ok(answer.counts.rows_read < 4000);
+    const tail = /TAIL ([0-9.]+)/.exec(out.stderr);
+    assert.ok(tail, out.stderr);
+    assert.ok(Number(tail[1]) <= 0.95, `the work after the loop began at ${tail[1]} of max_seconds`);
+    assert.ok(Number(tail[1]) > 0.5, `the loop did not run (${tail[1]})`);
+  });
+});
+
+test("manifest_db gives contains one total budget for the paths it runs out of time on, and counts the paths left", async () => {
+  // Each such path cost 2 seconds until max_seconds. With 60 of them and max_seconds 40 that was about 40 seconds and a listing that stopped
+  // partway; with a budget of 10 seconds in all the listing is read to the end and the paths after the budget are counted, not run.
+  await withCwd(async (cwd) => {
+    const dir = await backup(cwd, "budgetbk", { entries: many(60, () => ({ path: `Library/${"a".repeat(44)}b` })) });
+    const started = Date.now();
+    const { answer } = await manifest(cwd, dir, { contains: "(a|aa)+$", max_seconds: 40 });
+    const seconds = (Date.now() - started) / 1000;
+    assert.ok(seconds < 25, `took ${seconds} s`);
+    assert.equal(answer.status, "partial");
+    assert.equal(answer.stopped_at_row, null, "the whole table was read");
+    assert.equal(answer.counts.rows_read, 60);
+    assert.ok(answer.observations.some((o) => /^contains ran past its time on 60 path\(s\)/.test(o)), answer.observations.join("\n"));
+    assert.ok(answer.observations.some((o) => /had used the 10 seconds it may spend in all .*: \d+ later path\(s\) were counted and not matched without the expression being run on them/.test(o)), answer.observations.join("\n"));
+  });
+});
+
+test("manifest_db keeps one working copy for one source, and a source that changed is another", async () => {
+  // Every call that applied a -wal copied the whole Manifest.db again under tool-output, and the copies piled up.
+  await withCwd(async (cwd) => {
+    const dir = await backup(cwd, "copybk", { entries: [{ id: ID_A, path: "Library/in-main.db" }], wal: [{ id: ID_B, path: "Library/only-in-wal.db" }] });
+    const copies = async (): Promise<string[]> => (await readdir(join(cwd, "work", "s1", "tool-output")).catch(() => [] as string[])).filter((n) => n.startsWith("manifest_db-working-copy-"));
+    const first = (await manifest(cwd, dir)).answer;
+    const second = (await manifest(cwd, dir)).answer;
+    const third = (await manifest(cwd, dir, { contains: "wal" })).answer;
+    assert.equal((await copies()).length, 1, "three calls on the same bytes, one copy");
+    assert.equal(first.manifest_db_file.working_copy, second.manifest_db_file.working_copy);
+    assert.equal(first.manifest_db_file.working_copy, third.manifest_db_file.working_copy);
+    assert.deepEqual(second.entries.map((e) => e.relative_path).sort(), ["Library/in-main.db", "Library/only-in-wal.db"], "the reused copy lists what the first listed");
+    const at = (p: string): string => (p.startsWith("/") ? p : join(cwd, p));
+    assert.ok(await exists(join(at(first.manifest_db_file.working_copy!), "Manifest.db")), "the copy the answer names exists");
+    const other = await backup(cwd, "copybk2", { entries: [{ id: ID_A, path: "Library/in-main.db" }], wal: [{ id: ID_C, path: "Library/another-wal.db" }] });
+    const changed = (await manifest(cwd, other)).answer;
+    assert.notEqual(changed.manifest_db_file.working_copy, first.manifest_db_file.working_copy);
+    assert.equal((await copies()).length, 2);
+    // A failure or a stop removes only a copy its own call made: the one the first answer cited stays.
+    assert.ok(await exists(join(at(first.manifest_db_file.working_copy!), "Manifest.db")));
+  });
+});
+
+test("manifest_db's manifest states what it leaves as residuals: memory follows the largest cell, the scrub's cost on a long run of digits, a key that is printed", async () => {
+  const text = await readFile(join(TOOLS, "manifest_db", "manifest.json"), "utf8");
+  assert.match(text, /memory follows the largest TEXT cell once/);
+  assert.match(text, /one run of digits as long as that costs about 64 times its size in the expression/);
+  assert.match(text, /with a letter between its digits, or a separator of four or more characters between two digits, is not recognised and is printed/);
+  assert.match(text, /a name with fewer digits is printed/);
+  assert.match(text, /once it is used up, the paths that are left are counted as not matched/);
+  assert.match(text, /the row loop stops at 93 % of max_seconds/i);
 });

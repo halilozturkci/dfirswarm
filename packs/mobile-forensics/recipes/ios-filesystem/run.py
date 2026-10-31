@@ -366,6 +366,7 @@ def tar_verdict(watch, listed, cut_short=False):
 
 
 # --- tar listing: begin --------------------------------------------------------------------------
+CLOCK_BYTES = 16 << 20       # the clock is read at least once for every this many decoded bytes of a compressed tar, so that one huge member cannot outlast max-seconds by more than the time to decode this much
 # Held byte for byte equal in the three recipes that open a tar by its path (a test compares the copies).
 # A plain tar is read through Guarded and a gzip, bzip2 or xz one through Decoded; both keep the watch
 # just ahead of the library and give it an end of data where the watch stops it. The library is opened with
@@ -429,8 +430,11 @@ class Decoded(io.RawIOBase):
 
     PIECE = 1 << 20
 
-    def __init__(self, source, kind, watch, budget=None):
+    def __init__(self, source, kind, watch, budget=None, deadline=None):
         self.source, self.kind, self.watch = source, kind, watch
+        self.deadline = deadline      # the time (time.monotonic) past which the stream serves no more, or None
+        self.looked = 0               # decoded bytes since the clock was last read
+        self.timed_out = False        # the stream was ended because the deadline had passed
         self.budget = budget          # at most this many decoded bytes, or None
         self.produced = 0
         self.exceeded = False         # the stream held more than the budget
@@ -455,9 +459,15 @@ class Decoded(io.RawIOBase):
 
     def piece(self):
         """The next decoded piece, or None at the end of the stream or of the budget."""
-        if self.exceeded:
+        if self.exceeded or self.timed_out:
             return None
         out = self._piece()
+        if out and self.deadline is not None:
+            self.looked += len(out)
+            if self.looked >= CLOCK_BYTES:
+                self.looked = 0
+                if time.monotonic() > self.deadline:
+                    self.timed_out = True      # this piece is served; the next call ends the stream, in the middle of a member if need be
         if out is None or self.budget is None:
             return out
         room = self.budget - self.produced
@@ -548,7 +558,7 @@ class TarList:
     would refuse; `finish()` lets the watch follow the rest, and `watch` then says whether the end block came.
     """
 
-    def __init__(self, path, budget=None):
+    def __init__(self, path, budget=None, deadline=None):
         self.watch = TarWatch()
         self.handle = open(path, "rb")
         self.walker = None
@@ -561,7 +571,7 @@ class TarList:
                 self.source = Guarded(self.handle, self.walker, os.fstat(self.handle.fileno()).st_size, self.watch)
                 mode = "r:"
             else:
-                self.source = Decoded(self.handle, kind, self.watch, budget)
+                self.source = Decoded(self.handle, kind, self.watch, budget, deadline)
                 mode = "r|"
                 self.source = io.BufferedReader(self.source)
             self.archive = tarfile.open(fileobj=self.source, mode=mode, encoding="utf-8", errors="surrogateescape", ignore_zeros=True)
@@ -582,6 +592,11 @@ class TarList:
     def finish(self):
         source = self.source.raw if isinstance(self.source, io.BufferedReader) else self.source
         source.finish()
+
+    def timed_out(self):
+        """Whether the clock ended a compressed tar's stream, which can be inside a member."""
+        source = self.source.raw if isinstance(self.source, io.BufferedReader) else self.source
+        return bool(getattr(source, "timed_out", False))
 
     def exceeded(self):
         """Whether a compressed tar held more than the budget (the listing stopped there)."""
@@ -709,12 +724,13 @@ def detect(path, budget=DEFAULT_BUDGET):
 def run(path, out, budget=DEFAULT_BUDGET, seconds=DEFAULT_SECONDS):
     if any(os.path.lexists(os.path.join(out, name)) for name in OUTPUTS):
         # Before anything is written: an earlier run's files stay as they are.
-        print(json.dumps({"ok": False, "status": "refused", "why": "the output directory already holds a file of an earlier run (%s): the recipe does not write over it" % ", ".join(n for n in OUTPUTS if os.path.lexists(os.path.join(out, n)))}))
+        print(json.dumps({"ok": False, "status": "failed", "status_basis": "the output directory already holds the files of an earlier run, and this recipe never writes over one: nothing was run", "why": "the output directory already holds a file of an earlier run (%s): the recipe does not write over it" % ", ".join(n for n in OUTPUTS if os.path.lexists(os.path.join(out, n)))}))
         return None
     os.makedirs(out, exist_ok=True)
     # Said before the listing starts: a run the harness stops at its limit leaves this, and is read as partial.
     with open(os.path.join(out, "coverage.json"), "w", encoding="utf-8") as handle:
         json.dump({"recipe": "ios-filesystem", "status": "partial", "covered": "started; the listing did not finish (stopped before its end)",
+                   "status_basis": "the run started and the listing had not finished when this was written: a run that is stopped before its end leaves this account",
                    "limits_hit": [], "errors": ["the run ended before the listing did"]}, handle, indent=2, sort_keys=True)
         handle.write("\n")
     deadline = time.monotonic() + seconds
@@ -738,7 +754,7 @@ def run(path, out, budget=DEFAULT_BUDGET, seconds=DEFAULT_SECONDS):
         with open(artifacts_path, "w", encoding="utf-8", newline="\n") as artifacts:
             artifacts.write("category\tpath\tbytes\tmtime_utc\ttype\tn\tpath_b64\n")
             try:
-                with TarList(path, budget) as listing:
+                with TarList(path, budget, deadline) as listing:
                     try:
                         for member in listing.archive:
                             if not members % 256 and time.monotonic() > deadline:
@@ -762,7 +778,9 @@ def run(path, out, budget=DEFAULT_BUDGET, seconds=DEFAULT_SECONDS):
                             members += 1
                             listing.archive.members = []
                     except (tarfile.TarError, EOFError, OSError) as exc:
-                        errors.append("tar traversal stopped: %s" % exc)
+                        if not listing.timed_out():      # the time limit says it, below
+                            errors.append("tar traversal stopped: %s" % exc)
+                    timed_out = timed_out or listing.timed_out()
                     try:
                         if not timed_out:
                             listing.finish()
@@ -814,6 +832,8 @@ def run(path, out, budget=DEFAULT_BUDGET, seconds=DEFAULT_SECONDS):
     coverage = {
         "recipe": "ios-filesystem",
         "status": "partial" if errors or limits else "complete",
+        "status_basis": ("partial because " + "; ".join([str(r).replace("\n", " ") for r in (limits + errors)[:3]]) + (" (and %d more in limits_hit and errors)" % (len(limits + errors) - 3) if len(limits + errors) > 3 else ""))
+        if errors or limits else "the listing reached the end of the tar, no limit was hit and nothing was damaged",
         "covered": "%d tar members; %d forensic structures; %d SQLite families" % (members, artifact_rows, databases),
         "categories": dict(sorted(categories.items())),
         "not_covered": "artifact contents, deleted data, decryption, semantic findings, nested archives",
@@ -846,28 +866,28 @@ def main():
     parser.add_argument("--max-seconds", type=float, default=DEFAULT_SECONDS)
     args = parser.parse_args()
     if args.max_decompressed_bytes < 1:
-        print(json.dumps({"ok": False, "error": "--max-decompressed-bytes must be positive"}))
+        print(json.dumps({"ok": False, "status": "failed", "status_basis": "an argument was refused, so nothing was run", "error": "--max-decompressed-bytes must be positive"}))
         return 2
     try:
         _, path = target_of(args.target)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
-        print(json.dumps({"ok": False, "error": str(exc)}))
+        print(json.dumps({"ok": False, "status": "failed", "status_basis": "the target could not be read, so nothing was run", "error": str(exc)}))
         return 2
     if args.command == "detect":
         applies, why = detect(path, args.max_decompressed_bytes)
         print(json.dumps({"applies": applies, "why": why}))
         return 0 if applies else 1
     if not args.out:
-        print(json.dumps({"ok": False, "error": "run needs --out DIR"}))
+        print(json.dumps({"ok": False, "status": "failed", "status_basis": "run was given no output directory, so nothing was run", "error": "run needs --out DIR"}))
         return 2
     applies, why = detect(path, args.max_decompressed_bytes)
     if not applies:
-        print(json.dumps({"ok": False, "status": "unsupported", "why": why}))
+        print(json.dumps({"ok": False, "status": "failed", "status_basis": "the target is not one this recipe reads, so nothing was run", "why": why}))
         return 2
     coverage = run(path, args.out, args.max_decompressed_bytes, args.max_seconds)
     if coverage is None:
         return 2
-    print(json.dumps({"ok": True, "status": coverage["status"], "artifacts": sum(coverage["categories"].values())}))
+    print(json.dumps({"ok": True, "status": coverage["status"], "status_basis": coverage["status_basis"], "artifacts": sum(coverage["categories"].values())}))
     return 0
 
 

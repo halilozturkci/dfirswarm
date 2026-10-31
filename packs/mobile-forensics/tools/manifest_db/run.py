@@ -86,7 +86,7 @@ import unicodedata
 import warnings
 from pathlib import Path
 
-PARSER = "manifest_db/2"
+PARSER = "manifest_db/4"
 TOOL = "manifest_db"
 VALUES_NAME = "manifest-db-values.jsonl"   # no values are written: the shared block names a file it never opens
 VALUES_FORMAT = "not used"
@@ -118,6 +118,31 @@ VALUES_FORMAT = "not used"
 #   6. One document is written, whole: from the moment the answer is being written a stop signal is
 #      ignored, so a reader that is slow never gets a truncated answer followed by a failure. A reader that
 #      takes nothing for WRITE_STALL_SECONDS is given up on: the tool exits (141) instead of waiting for ever.
+
+# A stop that arrives while the rest of this module is still being read (the definitions below, the tool's own code after
+# the block) is answered here, by one JSON document and exit 128 + the signal, as run_main answers it later. The handlers are
+# installed as the module reaches this point, not when main() starts, so the window left is the interpreter's own start-up and
+# the imports above the block, which no code in this file can close and which this tool does not claim: a stop there ends the
+# process with no answer, before anything was read or written. run_main replaces these handlers.
+EARLY_SIGNALS = [getattr(signal, name) for name in ("SIGTERM", "SIGINT", "SIGHUP") if hasattr(signal, name)]
+
+
+def early_stop(signum, frame):
+    for number in EARLY_SIGNALS:
+        signal.signal(number, signal.SIG_IGN)
+    name = signal.Signals(signum).name
+    text = json.dumps({"error": "the tool was stopped by %s before it finished: this is not an answer to the question" % name,
+                       "status": "failed", "status_basis": "stopped by %s before the tool had started to read anything" % name,
+                       "interrupted": name}) + "\n"
+    try:
+        os.write(1, text.encode("utf-8"))
+    except OSError:
+        pass
+    os._exit(128 + signum)
+
+
+for early_number in EARLY_SIGNALS:
+    signal.signal(early_number, early_stop)
 
 WITHHELD = "<recovery-password-shaped name withheld>"
 WITHHELD_LONG = "<name too long to judge withheld>"
@@ -254,6 +279,7 @@ def wrap_up(answer):
 
 
 WRITE_STALL_SECONDS = 30
+WRITE_CHUNK = 4096
 
 
 def write_stalled(signum, frame):
@@ -269,6 +295,10 @@ def emit(text):
     for number in STOP_SIGNALS:
         signal.signal(number, signal.SIG_IGN)
     data = memoryview((text + "\n").encode("utf-8"))
+    # One os.write on a blocking pipe returns only when everything it was given has gone in, however slowly the reader takes it,
+    # so a single call for the whole document would restart the clock once. A write of at most WRITE_CHUNK bytes (a pipe takes
+    # up to PIPE_BUF bytes in one piece) returns when that much has been taken, so the clock restarts on every chunk the reader
+    # takes and only a reader that takes nothing for WRITE_STALL_SECONDS is given up on.
     timed = hasattr(signal, "setitimer")
     if timed:
         try:
@@ -282,7 +312,7 @@ def emit(text):
             if timed:
                 signal.setitimer(signal.ITIMER_REAL, WRITE_STALL_SECONDS)       # progress restarts the wait
             try:
-                data = data[os.write(descriptor, data):]
+                data = data[os.write(descriptor, data[:WRITE_CHUNK]):]
             except BlockingIOError:      # a pipe set non-blocking by its owner and full: wait until it can take more
                 select.select([], [descriptor], [], 1.0)
     except OSError:       # the reader went away: there is nobody to answer
@@ -588,6 +618,10 @@ DEFAULT_LIMIT = 200
 INLINE_BYTES = 1 << 20
 DEFAULT_MAX_SECONDS = 240
 MAX_SECONDS_CAP = 255       # manifest.json timeout_seconds (300) less the work after the row loop (about 7 % of it) and the time to write the answer
+ROW_LOOP_SHARE = 0.93       # the row loop stops at this share of max_seconds, so that the work after it (sorting the domains, finishing the pages)
+                            # runs in the rest of max_seconds: it is about 7 % of the loop, and the answer's own clock covers it
+CONTAINS_BUDGET_SECONDS = 10.0   # all the time `contains` may spend, in one run, on rows it ran out of its 2 seconds on; past it the rows
+                                 # that are left are counted as not matched without the expression being run on them
 LOOK_EVERY = 1000           # SQLite virtual-machine steps between two looks at the clock and at the stop flag, inside a statement
 COUNT_SHARE = 0.1           # the share of max_seconds the count of the Files table may take; the listing is the answer, the count is a convenience
 CELL_CHARS = JUDGE_CHARS + 1   # the first characters of a domain or path that are read: one past what is judged, so a longer name is known to be longer
@@ -808,15 +842,40 @@ def stage(db, companions):
     else:
         parent = Path("work") / safe_name(os.environ.get("AGENT_ID") or "tool") / "tool-output"
     parent.mkdir(parents=True, exist_ok=True)
-    directory = tempfile.mkdtemp(prefix="manifest_db-working-copy-", dir=str(parent))
+    scratch = tempfile.mkdtemp(prefix="manifest_db-working-copy-", dir=str(parent))
     # The copy is the answer's to cite when the run ends well; a failure or a stop signal removes it (only this directory, which
     # this call made).
-    CLEANUP.append(lambda: shutil.rmtree(directory, ignore_errors=True))
-    target = os.path.join(directory, "Manifest.db")
-    shutil.copyfile(db, target)
-    for suffix in companions:
-        shutil.copyfile(db + suffix, target + suffix)
-    return target, directory
+    cleanup = lambda: shutil.rmtree(scratch, ignore_errors=True)
+    CLEANUP.append(cleanup)
+    # One source, one working copy: the directory is named by a digest of what it was copied from (the file and each companion, with
+    # its suffix and length), so a second call on the same bytes finds the copy the first one made and reuses it instead of leaving
+    # a whole second copy under tool-output; a source that changed is a different name.
+    digest = hashlib.sha256()
+    for suffix in ("",) + tuple(companions):
+        digest.update(("%s:%d\0" % (suffix, os.path.getsize(db + suffix))).encode("ascii"))
+        with open(db + suffix, "rb") as source, open(os.path.join(scratch, "Manifest.db" + suffix), "wb") as target_file:
+            while True:
+                chunk = source.read(1 << 20)
+                if not chunk:
+                    break
+                digest.update(chunk)
+                target_file.write(chunk)
+    directory = str(parent / ("manifest_db-working-copy-" + digest.hexdigest()[:32]))
+    if os.path.isdir(directory):
+        cleanup()
+        CLEANUP.remove(cleanup)
+    else:
+        try:
+            os.rename(scratch, directory)
+        except OSError:
+            if not os.path.isdir(directory):      # not a copy another call made at the same moment
+                raise
+            cleanup()
+            CLEANUP.remove(cleanup)
+        else:
+            CLEANUP.remove(cleanup)
+            CLEANUP.append(lambda: shutil.rmtree(directory, ignore_errors=True))
+    return os.path.join(directory, "Manifest.db"), directory
 
 
 def blob_state(root, root_real, file_id, kind, valid):
@@ -935,6 +994,7 @@ def main():
     limit = positive(args, "limit", DEFAULT_LIMIT)
     max_seconds = seconds(args, "max_seconds", DEFAULT_MAX_SECONDS, MAX_SECONDS_CAP)
     deadline = started + max_seconds
+    loop_deadline = started + max_seconds * ROW_LOOP_SHARE
 
     # The backup directory, its Manifest.db, or one of its three plain files (their directory is the backup).
     if os.path.isdir(path):
@@ -1048,6 +1108,8 @@ def main():
     extra = {"times": {}, "checks": {"after_backup_date": {}, "before_2007": {}},
              "backup_ts": backup_date.timestamp() if backup_date else None}
     contains_timeouts = 0
+    contains_spent = 0.0
+    contains_budget_used_up = 0
     stopped_at_row = None
     read_error = None
     work_dir = None
@@ -1107,7 +1169,7 @@ def main():
             else:
                 observations.append("the rows of the Files table could not be counted (%s): the listing goes as far as the table can be read" % type(exc).__name__)
         guard.expired = False
-        guard.until = deadline
+        guard.until = loop_deadline
         # The `file` cell is read only when it is a BLOB of at most MAX_ARCHIVE_BYTES: its type and its length are
         # taken from the record's header, so a cell of any size costs no memory when it is not read.
         file_cell = ("typeof(file), CASE typeof(file) WHEN 'blob' THEN length(file) END, "
@@ -1147,7 +1209,7 @@ def main():
                 read_error = "%s%s after %d rows" % (type(exc).__name__, " (" + exc.sqlite_errorname + ")" if getattr(exc, "sqlite_errorname", None) else "", counts["rows_read"])
                 break
             guard.check()
-            if time.monotonic() > deadline:
+            if time.monotonic() > loop_deadline:
                 stopped_at_row = counts["rows_read"]
                 break
             counts["rows_read"] += 1
@@ -1164,11 +1226,17 @@ def main():
             if domain_filter and shown(domain, False) != domain_filter:
                 continue
             if pattern is not None:
+                if contains_spent >= CONTAINS_BUDGET_SECONDS:
+                    contains_timeouts += 1      # the budget for rows it cannot finish is used up: counted and not matched, not run
+                    contains_budget_used_up += 1
+                    continue
+                began = time.monotonic()
                 try:
-                    if not timed_search(pattern, shown(relative, False), max(0.01, min(2.0, deadline - time.monotonic()))):
+                    if not timed_search(pattern, shown(relative, False), max(0.01, min(2.0, CONTAINS_BUDGET_SECONDS - contains_spent, loop_deadline - began))):
                         continue
                 except Timeout:
                     contains_timeouts += 1      # that row is counted and not matched
+                    contains_spent += time.monotonic() - began
                     continue
             counts["rows_matching"] += 1
             valid = bool(FILE_ID.fullmatch(file_id))
@@ -1217,6 +1285,9 @@ def main():
                             % (max_seconds, stopped_at_row))
     if contains_timeouts:
         observations.append("contains ran past its time on %d path(s): those rows are counted and were not matched" % contains_timeouts)
+    if contains_budget_used_up:
+        observations.append("contains had used the %g seconds it may spend in all on rows it could not finish: %d later path(s) were counted and "
+                            "not matched without the expression being run on them" % (CONTAINS_BUDGET_SECONDS, contains_budget_used_up))
     unreadable = sum(n for k, n in counts["metadata"].items() if k != "ok")
     # A row whose metadata is not in the answer, whatever the reason (a cell over its size limit, a cell that is not a blob, a blob that is not a
     # property list or not a keyed archive, a NULL cell, an archive that could not be followed) is a row listed with less than the manifest holds.

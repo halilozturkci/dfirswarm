@@ -146,8 +146,8 @@ BAA="$PACK/recipes/android-backup-apps/run.py"
 python3 "$BAA" detect --target "$AB_TARGET" | grep -q '"applies": true'
 refuses python3 "$BAA" detect --target "$IOS_TARGET"
 out="$(python3 "$BAA" run --target "$AB_TARGET" --out "$WORK/baa-out")" && exit 1
-jq -e '.status == "unsupported" and (.why | test("app tree"))' <<<"$out" >/dev/null
-jq -e '.status == "failed"' "$WORK/baa-out/coverage.json" >/dev/null
+jq -e '.status == "failed" and (.status_basis | length > 0) and (.why | test("app tree"))' <<<"$out" >/dev/null
+jq -e '.status == "failed" and (.status_basis | length > 0)' "$WORK/baa-out/coverage.json" >/dev/null
 [[ "$(jq -r .unavailable "$PACK/recipes/android-backup-apps/recipe.json")" == *"app tree"* && "$(jq -c .auto "$PACK/recipes/android-backup-apps/recipe.json")" == "[]" ]]
 
 (cd "$WORK" && AGENT_ID=t1 python3 "$PACK/tools/manifest_db/run.py" <<<"{\"path\":\"$WORK/backup\"}" > "$WORK/manifest.json")

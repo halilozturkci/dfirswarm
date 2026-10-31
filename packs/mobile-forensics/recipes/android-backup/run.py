@@ -356,12 +356,33 @@ def tar_verdict(watch, listed, cut_short=False):
 # --- tar watch: end ------------------------------------------------------------------------------
 
 
+CLOCK_BYTES = 16 << 20       # the clock is read at least once for every this many bytes of the payload read, so that one huge member cannot outlast max-seconds by more than the time to read this much
+
+
+class ByteClock:
+    """The deadline, looked at by byte count: `passing(n)` reads the clock once for every CLOCK_BYTES that pass, inside a member too."""
+
+    def __init__(self, deadline):
+        self.deadline = deadline
+        self.looked = 0
+        self.expired = False
+
+    def passing(self, count):
+        self.looked += count
+        if self.looked >= CLOCK_BYTES:
+            self.looked = 0
+            if time.monotonic() > self.deadline:
+                self.expired = True
+        return self.expired
+
+
 class ZlibReader(io.RawIOBase):
     """A zlib stream as a file: read in pieces, with an output budget, and its end checked."""
 
-    def __init__(self, source, budget, watch):
+    def __init__(self, source, budget, watch, clock=None):
         self.source = source
         self.watch = watch
+        self.clock = clock or ByteClock(float("inf"))
         self.decoder = zlib.decompressobj()
         self.budget = budget
         self.produced = 0
@@ -379,6 +400,9 @@ class ZlibReader(io.RawIOBase):
     def readinto(self, target):
         wanted = len(target)
         while len(self.buffer) < wanted and not self.finished:
+            if self.clock.expired:
+                self.finished = True
+                break
             if self.produced >= self.budget:
                 self.exceeded = True
                 self.finished = True
@@ -394,6 +418,7 @@ class ZlibReader(io.RawIOBase):
             self.pending = self.decoder.unconsumed_tail
             before = self.produced
             self.produced += len(produced)
+            self.clock.passing(len(produced))
             self.watch.feed(produced)
             # The library is given the tar only as far as the watch lets it: not into a header it must not hold or would refuse, and not past the
             # two zero blocks that end the archive (it is opened with ignore_zeros, so that it reads past a lone zero block). The rest of the
@@ -438,18 +463,20 @@ class ZlibReader(io.RawIOBase):
 class Tap(io.RawIOBase):
     """An uncompressed payload as a file, followed by the same watch."""
 
-    def __init__(self, source, watch):
+    def __init__(self, source, watch, clock=None):
         self.source = source
         self.watch = watch
+        self.clock = clock or ByteClock(float("inf"))
         self.served = 0
 
     def readable(self):
         return True
 
     def readinto(self, target):
-        if self.watch.stop_at() is not None:
+        if self.watch.stop_at() is not None or self.clock.expired:
             return 0
         data = self.source.read(len(target))
+        self.clock.passing(len(data))
         self.watch.feed(data)
         stop = self.watch.stop_at()
         if stop is not None:
@@ -580,12 +607,13 @@ def run(path, out, budget, seconds=DEFAULT_SECONDS):
     present = [name for name in OUTPUTS if os.path.lexists(os.path.join(out, name))]
     if present:
         # Before anything is written: an earlier run's files stay as they are.
-        print(json.dumps({"ok": False, "status": "refused", "why": "the output directory already holds a file of an earlier run (%s): the recipe does not write over it" % ", ".join(present)}))
+        print(json.dumps({"ok": False, "status": "failed", "status_basis": "the output directory already holds the files of an earlier run, and this recipe never writes over one: nothing was run", "why": "the output directory already holds a file of an earlier run (%s): the recipe does not write over it" % ", ".join(present)}))
         return None
     os.makedirs(out, exist_ok=True)
     # Said before the listing starts: a run the harness stops at its limit leaves this, and is read as partial.
     with open(os.path.join(out, "coverage.json"), "w", encoding="utf-8") as handle:
         json.dump({"recipe": "android-backup", "status": "partial", "covered": "started; the listing did not finish (stopped before its end)",
+                   "status_basis": "the run started and the listing had not finished when this was written: a run that is stopped before its end leaves this account",
                    "limits_hit": [], "errors": ["the run ended before the listing did"]}, handle, indent=2, sort_keys=True)
         handle.write("\n")
     deadline = time.monotonic() + seconds
@@ -605,8 +633,9 @@ def run(path, out, budget, seconds=DEFAULT_SECONDS):
             listing.write("n\ttype\tpath\tbytes\tmtime_utc\tmode\tlink\tpath_b64\n")
             if listable:
                 watch = TarWatch()
-                reader = ZlibReader(source, budget, watch) if details["compressed"] else None
-                tap = Tap(source, watch) if reader is None else None
+                clock = ByteClock(deadline)
+                reader = ZlibReader(source, budget, watch, clock) if details["compressed"] else None
+                tap = Tap(source, watch, clock) if reader is None else None
                 payload = io.BufferedReader(reader if reader is not None else tap)
                 try:
                     with tarfile.open(fileobj=payload, mode="r|", encoding="utf-8", errors="surrogateescape", ignore_zeros=True) as archive:
@@ -624,8 +653,11 @@ def run(path, out, budget, seconds=DEFAULT_SECONDS):
                         reader.damaged = True
                     errors.append("the zlib stream is damaged: %s" % exc)
                 except (tarfile.TarError, EOFError, OSError) as exc:
-                    if not (str(exc) == "empty file" and watch.ended and watch.end_at == 0):      # two zero blocks and nothing else are a valid archive of no member
+                    if clock.expired:      # the payload was ended in the middle of a member by the clock: the time limit says it, below
+                        timed_out = True
+                    elif not (str(exc) == "empty file" and watch.ended and watch.end_at == 0):      # two zero blocks and nothing else are a valid archive of no member
                         errors.append("embedded tar traversal stopped: %s" % exc)
+                timed_out = timed_out or clock.expired
                 if watch.violation is None and not (reader and reader.damaged) and not timed_out:
                     try:
                         (reader or tap).drain()
@@ -680,6 +712,9 @@ def run(path, out, budget, seconds=DEFAULT_SECONDS):
     coverage = {
         "recipe": "android-backup",
         "status": status,
+        "status_basis": ("partial because " + "; ".join([str(r).replace("\n", " ") for r in (errors + limits_hit)[:3]])
+                         + (" (and %d more in errors and limits_hit)" % (len(errors + limits_hit) - 3) if len(errors + limits_hit) > 3 else ""))
+        if status == "partial" else "the embedded tar was listed to its end, no limit was hit and nothing was damaged",
         "covered": covered,
         "not_covered": "files excluded by adb backup policy, deleted data, artifact contents, password recovery",
         "limits_hit": limits_hit,
@@ -712,31 +747,31 @@ def main():
     try:
         path = target_of(args.target)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
-        print(json.dumps({"ok": False, "error": str(exc)}))
+        print(json.dumps({"ok": False, "status": "failed", "status_basis": "the target could not be read, so nothing was run", "error": str(exc)}))
         return 2
     if args.command == "detect":
         applies, why = detect(path)
         print(json.dumps({"applies": applies, "why": why}))
         return 0 if applies else 1
     if not args.out:
-        print(json.dumps({"ok": False, "error": "run needs --out DIR"}))
+        print(json.dumps({"ok": False, "status": "failed", "status_basis": "run was given no output directory, so nothing was run", "error": "run needs --out DIR"}))
         return 2
     if args.max_decompressed_bytes < 1:
-        print(json.dumps({"ok": False, "error": "--max-decompressed-bytes must be positive"}))
+        print(json.dumps({"ok": False, "status": "failed", "status_basis": "an argument was refused, so nothing was run", "error": "--max-decompressed-bytes must be positive"}))
         return 2
     applies, why = detect(path)
     if not applies:
-        print(json.dumps({"ok": False, "status": "unsupported", "why": why}))
+        print(json.dumps({"ok": False, "status": "failed", "status_basis": "the target is not one this recipe reads, so nothing was run", "why": why}))
         return 2
     try:
         answer = run(path, args.out, args.max_decompressed_bytes, args.max_seconds)
     except (OSError, UnicodeError, ValueError) as exc:
-        print(json.dumps({"ok": False, "error": str(exc)}))
+        print(json.dumps({"ok": False, "status": "failed", "status_basis": "the target could not be read, so nothing was run", "error": str(exc)}))
         return 2
     if answer is None:
         return 2
     coverage, members = answer
-    print(json.dumps({"ok": True, "status": coverage["status"], "members": members}))
+    print(json.dumps({"ok": True, "status": coverage["status"], "status_basis": coverage["status_basis"], "members": members}))
     return 0
 
 

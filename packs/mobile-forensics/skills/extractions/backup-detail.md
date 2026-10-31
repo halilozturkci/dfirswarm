@@ -25,4 +25,4 @@ Does not show: what the user chose to back up, when the backup was made (a file 
 
 Record: encryption state and basis, what was readable, the epoch you chose and how you checked it, the completion state, any blob missing.
 
-Sensitive output: key material is never printed; the device identifiers in the plain plists (serial, UDID, IMEI, ICCID, phone number) are. A job that decrypts or reads keychain content runs with `secret_output: true`.
+Sensitive output: key material is never printed; the device identifiers in the plain plists (serial, UDID, IMEI, ICCID, phone number) are. No job here decrypts; one that reads keychain content runs with `secret_output: true`.
