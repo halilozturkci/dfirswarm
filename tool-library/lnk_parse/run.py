@@ -16,11 +16,16 @@ link points to.
 Args, JSON on stdin: path (or dump), offset, size, scan, each, max. A read that ends
 inside the structure says so under `problems` and `structure_complete`.
 """
-import json, sys, struct, datetime, os, stat
+import array, json, sys, struct, datetime, os, stat
 from pathlib import Path
 
-PARSER = "lnk_parse/5"
+PARSER = "lnk_parse/6"
 MAX_READ = 256 * 1024 * 1024
+DEADLINE_SECONDS = 24             # the manifest allows 30: the read, the walks and the scan stop here, so that the pages are placed and the answer printed before the harness ends it
+MAX_LIMIT = 10000                 # the largest inline page; the whole result is in the file the answer names
+EXTRA_INLINE = 50                 # ExtraData blocks shown inline per link; every block is counted and the whole list is in a file the answer names
+TRACKER_KEEP = 16                 # tracker blocks kept in the decoded link whatever the inline page holds (a link has one; the rest are counted)
+PROGRESS = {"phase": "starting", "offset": 0}
 
 # Lossless paging (the same in every library tool that pages): the page an
 # agent reads stays small, and when there are more rows the whole result is
@@ -122,6 +127,146 @@ class LosslessPage:
             result["all_results_format"] = "JSON Lines, one complete result per line"
         return result
 
+# BEGIN SHARED PLACE
+# The same text is in every windows-forensics tool that keeps a result file (a windows-forensics test holds the copies equal).
+# A result file that is there is never replaced by another result: a file of the same bytes is named again, any other result takes the next free
+# <stem>-<n><suffix>. The name is taken first, with an exclusive create, so a result written at the same moment cannot be replaced either.
+def same_bytes(a, b):
+    """Whether two files hold the same bytes (read in blocks, never whole)."""
+    try:
+        if os.path.getsize(a) != os.path.getsize(b):
+            return False
+        with open(a, "rb") as fa, open(b, "rb") as fb:
+            while True:
+                x, y = fa.read(1 << 20), fb.read(1 << 20)
+                if x != y:
+                    return False
+                if not x:
+                    return True
+    except OSError:
+        return False
+
+
+def place_without_replacing(tmp, path):
+    """Move the finished `tmp` to `path` and never replace what is there. The name is taken first, with an exclusive create, so a
+    result written at the same moment cannot be replaced either. Returns the path that holds it."""
+    for n in range(1, 1000):
+        candidate = path if n == 1 else path.with_name("%s-%d%s" % (path.stem, n, path.suffix))
+        try:
+            fd = os.open(str(candidate), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        except FileExistsError:
+            if not os.path.islink(candidate) and same_bytes(tmp, candidate):
+                os.unlink(tmp)
+                return candidate
+            continue
+        os.close(fd)
+        os.replace(tmp, candidate)             # only replaces the empty file this call just made
+        return candidate
+    raise OSError("no free name beside %s" % path)
+# END SHARED PLACE
+
+
+# BEGIN SHARED PAGE
+# The same text is in every windows-forensics tool that pages through LosslessPage (held equal by a windows-forensics test): LosslessPage replaces a file of the
+# same name; this one places its finished file with place_without_replacing, and registers itself so that a stop can remove its temporary file.
+PAGES = []
+
+
+class NoReplacePage(LosslessPage):
+    """LosslessPage whose finished file is placed without replacing an earlier file of the same name (a rerun with other limits, or one
+    the time limit stopped, must not leave a smaller file where a larger one was)."""
+
+    def __init__(self, tool, key, limit):
+        super().__init__(tool, key, limit)
+        PAGES.append(self)
+
+    def finish(self) -> dict:
+        result = {"matched": self.total, "returned": len(self.page), "truncated": self.total > len(self.page)}
+        if self._out is not None:
+            try:
+                self._out.flush()
+                os.fsync(self._out.fileno())
+                self._out.close()
+                assert self._tmp is not None
+                placed = place_without_replacing(self._tmp, self.path)
+            except OSError as exc:
+                self._cannot_write(exc)
+            self._tmp = None
+            self.path = placed
+            self.shown = self.shown[: len(self.shown) - len(Path(self.shown).name)] + placed.name
+            result["all_results"] = self.shown
+            result["all_results_format"] = "JSON Lines, one complete result per line"
+        return result
+# END SHARED PAGE
+
+
+# BEGIN SHARED STOP
+# The same text is in regkv, shellbags and amcache_apps (held equal by a windows-forensics test). SIGTERM, SIGINT and SIGHUP end the tool with JSON (status
+# interrupted, exit 128 + the signal) and remove the temporary file a page was writing; the tool's own clock (set_deadline) is below the manifest's.
+# The handlers are in as soon as the module has run as far as this block, with a minimal last word until main() installs the tool's own (only
+# the start of the interpreter and the compiling of the file come before it). The first signal counts: a second one does nothing while the
+# first is answered. print_answer holds the stop signals back while the answer is printed, so exactly one complete document is written
+# (the ransomware tools print through it; the windows tools hold the signals in the emit of their boundary block, and carry this text unused).
+import signal
+import time
+
+STOP = {"last_word": None, "deadline": None}
+
+
+def set_deadline(seconds):
+    STOP["deadline"] = time.monotonic() + seconds
+
+
+def out_of_time():
+    return STOP["deadline"] is not None and time.monotonic() > STOP["deadline"]
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)
+    for page in list(globals().get("PAGES", ())):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    last_word = STOP["last_word"]
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def install_signal_handlers(last_word=None):
+    STOP["last_word"] = last_word
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+
+
+def interrupted_answer(signum, **extra):
+    print(json.dumps({"error": "stopped by signal %d before the answer was complete" % signum, "status": "interrupted",
+                      "status_basis": "the tool was stopped by signal %d; nothing it had read is an answer" % signum,
+                      "signal": signum, **extra}), flush=True)
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back: a signal that came in the middle of the write would end the process there, with the
+    answer cut. The tool ends by itself right after, so a signal that is held is not lost for good."""
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    STOP["last_word"] = None
+    print(json.dumps(answer, **dumps_kwargs))
+
+
+install_signal_handlers(lambda signum: interrupted_answer(signum))
+# END SHARED STOP
+
+
 FILETIME_EPOCH = datetime.datetime(1601, 1, 1, tzinfo=datetime.timezone.utc)
 
 
@@ -177,6 +322,11 @@ class SecretValues:
                 "%s is refused outside a job: a value written here would be an ordinary "
                 "file, not a sealed secret output. Run this as job_run tool=%s with "
                 "secret_output: true, and ask again there. Nothing was written." % (flag, tool)
+            )
+        if os.environ.get("SECRET_OUTPUT") != "1":
+            raise SecretValuesRefused(
+                "%s is refused: the values are written only in a job the harness runs as secret output (job_run with "
+                "secret_output: true, which the manifest declares for this parameter). Nothing was written." % flag
             )
         self.path = Path(self.out) / name
         self.shown = "store/jobs/%s/out/%s" % (re.sub(r"[^A-Za-z0-9_.-]", "_", self.job), name)
@@ -280,7 +430,17 @@ def secret_shaped(text):
     return SECRET_SHAPES.search(text) is not None or url_with_password(text) or web_token(text)
 
 
-SWITCH = re.compile(r"^[-/]{1,2}[A-Za-z][A-Za-z0-9_-]{0,31}$")
+# A switch is shown only when its name is one of these, exactly (case does not matter): a token such as `-pSECRET` or `/pSECRET` is a switch
+# name and its value in one word, and no pattern tells the two apart, so every other switch-shaped word is withheld.
+KNOWN_SWITCHES = frozenset(s.lower() for s in (
+    "-noprofile", "-nop", "-noni", "-noninteractive", "-nologo", "-sta", "-mta", "-w", "-win", "-window", "-windowstyle", "-hidden", "-enc", "-e",
+    "-ec", "-encodedcommand", "-ep", "-executionpolicy", "-bypass", "-c", "-command", "-f", "-file", "-version", "-psconsolefile", "-inputformat",
+    "-outputformat", "-noexit", "-config", "-help", "-h", "-?", "--help", "--version", "--silent", "--quiet", "--verbose", "--no-sandbox",
+    "-k", "-q", "-s", "-r", "-i", "-u", "-v", "-y", "-n", "-x", "-a", "-d", "-t", "-l", "-o", "-m", "-p",
+    "/c", "/k", "/q", "/s", "/r", "/i", "/u", "/v", "/y", "/n", "/x", "/a", "/d", "/t", "/l", "/o", "/m", "/p", "/e", "/f", "/w", "/?", "/min", "/max",
+    "/select", "/root", "/separate", "/idlist", "/noconfirm", "/silent", "/quiet", "/passive", "/norestart", "/forcerestart", "/qn", "/qb", "/log",
+))
+SWITCH = re.compile(r"^[-/]{1,2}[A-Za-z?][A-Za-z0-9_?-]{0,31}$")
 PROGRAM_FILE = re.compile(r"^[A-Za-z0-9_.:\\ -]{1,80}\.(?:exe|com|bat|cmd|ps1|vbs|vbe|js|jse|wsf|hta|dll|msi|msc|cpl|scr|py|jar|lnk)$", re.I)
 PROGRAM_WORDS = {"cmd", "powershell", "pwsh", "wscript", "cscript", "mshta", "rundll32", "regsvr32", "msiexec", "explorer",
                  "python", "perl", "node", "java", "bash", "sh", "wsl", "schtasks", "sc", "net", "reg", "start"}
@@ -361,7 +521,7 @@ def first_token(arguments):
     token = token.split("=", 1)[0]
     if len(token) > SCAN_LIMIT or secret_shaped(token):
         return None
-    if SWITCH.match(token) or PROGRAM_FILE.match(token) or token.lower() in PROGRAM_WORDS:
+    if token.lower() in KNOWN_SWITCHES or PROGRAM_FILE.match(token) or token.lower() in PROGRAM_WORDS:
         return token
     return None
 
@@ -380,6 +540,8 @@ def utf16_runs(data, start):
     run = None
     pos = 0
     while pos < units:
+        if out_of_time():
+            raise ClockStop(start + 2 * pos)
         take = min(UNIT_WINDOW, units - pos)
         base = start + 2 * pos
         low = data[base:base + 2 * take:2]
@@ -406,6 +568,8 @@ def run_has_letter(data, start, a, b):
     digits or punctuation costs a pass and no Python loop, and each candidate is confirmed by isalpha itself."""
     step = 1 << 16
     for u in range(a, b, step):
+        if out_of_time():
+            raise ClockStop(start + 2 * u)
         chunk = data[start + 2 * u:start + 2 * min(u + step, b)]
         if any(m.group().isalpha() for m in LETTER_CANDIDATE.finditer(chunk.decode("utf-16-le", "replace"))):
             return True
@@ -435,9 +599,18 @@ def cstr(buf, off, wide=False):
     if off < 0 or off >= len(buf):
         return None
     if wide:
-        end = off
-        while end + 1 < len(buf) and (buf[end] or buf[end + 1]):
-            end += 2
+        # The first even-aligned pair of zero bytes, found a megabyte at a time by the array's own search (a Python loop over a
+        # 100 MB structure took minutes); the string runs to the end of an odd-length buffer when there is none.
+        end, stop = off, off + 2 * ((len(buf) - off) // 2)
+        while end < stop:
+            take = min(stop - end, 1 << 20)
+            units = array.array("H")
+            units.frombytes(bytes(buf[end:end + take]))
+            try:
+                end += 2 * units.index(0)
+                break
+            except ValueError:
+                end += take
         return buf[off:end].decode("utf-16-le", "replace")
     z = buf.find(b"\x00", off)
     return buf[off:len(buf) if z < 0 else z].decode("latin1")
@@ -562,7 +735,9 @@ def parse_idlist(data, off, size):
         p += sz
     return items
 
-def parse_lnk(data, base_off, held, strings):
+def parse_lnk(data, base_off, held, strings, extras_sink=None):
+    """Decode one link structure. `extras_sink` (a page) receives every ExtraData block as a row; `out['extra']` holds the first EXTRA_INLINE and
+    `extra_count` how many there are, so that a structure of millions of tiny blocks is read in bounded memory."""
     if len(data) < 0x4C or data[0:4] != b'L\x00\x00\x00' or data[4:20] != bytes.fromhex('0114020000000000c000000000000046'):
         return {'ok': False, 'error': 'not a LNK header'}
     flags = struct.unpack_from('<I', data, 0x14)[0]
@@ -686,9 +861,16 @@ def parse_lnk(data, base_off, held, strings):
             names.append((nm, s))
     # extra blocks, up to the terminal block. When the bytes read end first the
     # structure runs past them, and structure_complete says so.
-    extras = []
+    extras = []            # the first EXTRA_INLINE blocks, in order
+    trackers = []          # the first TRACKER_KEEP tracker blocks, wherever they stand
+    extra_count = tracker_count = 0
+    stopped_by_clock = False
     complete = False
     while p+4 <= len(data) and not stop_reading:
+        if not (extra_count & 255) and out_of_time():
+            stopped_by_clock = True
+            break
+        PROGRESS['offset'] = base_off + p
         bsz = struct.unpack_from('<I', data, p)[0]
         if bsz < 4:
             complete = True
@@ -698,38 +880,53 @@ def parse_lnk(data, base_off, held, strings):
         sig = struct.unpack_from('<I', data, p+4)[0]
         blk = data[p:p+bsz]
         rec = {'size': bsz, 'sig': hex(sig)}
+        at = extra_count       # the block's place in the list, which the field names of the sink rows carry
         if sig == 0xA0000001:  # environment
-            rec['env_ascii'] = guard(held, sink, {'link_offset': base_off, 'field': 'extra[%d].env_ascii' % len(extras)}, blk[8:8+260].split(b'\x00',1)[0].decode('latin1','replace'))
-            rec['env_u16'] = guard(held, sink, {'link_offset': base_off, 'field': 'extra[%d].env_u16' % len(extras)}, blk[8+260:].decode('utf-16le','replace').split('\x00',1)[0] if len(blk)>268 else None)
+            rec['env_ascii'] = guard(held, sink, {'link_offset': base_off, 'field': 'extra[%d].env_ascii' % at}, blk[8:8+260].split(b'\x00',1)[0].decode('latin1','replace'))
+            rec['env_u16'] = guard(held, sink, {'link_offset': base_off, 'field': 'extra[%d].env_u16' % at}, blk[8+260:].decode('utf-16le','replace').split('\x00',1)[0] if len(blk)>268 else None)
         elif sig == 0xA0000003:  # tracker
-            rec['tracker'] = guard(held, sink, {'link_offset': base_off, 'field': 'extra[%d].tracker' % len(extras)}, blk[8:64].decode('latin1','replace',).split('\x00')[0] if len(blk)>16 else None)
+            rec['tracker'] = guard(held, sink, {'link_offset': base_off, 'field': 'extra[%d].tracker' % at}, blk[8:64].decode('latin1','replace',).split('\x00')[0] if len(blk)>16 else None)
             # machine name at +16 typically
-            rec['machine'] = guard(held, sink, {'link_offset': base_off, 'field': 'extra[%d].machine' % len(extras)}, blk[16:16+16].split(b'\x00',1)[0].decode('latin1','replace') if len(blk)>32 else None)
+            rec['machine'] = guard(held, sink, {'link_offset': base_off, 'field': 'extra[%d].machine' % at}, blk[16:16+16].split(b'\x00',1)[0].decode('latin1','replace') if len(blk)>32 else None)
             # the two 32-byte droid pairs (volume and object identifiers), whole
             if len(blk) >= 96:
                 rec['droid_hex'] = blk[32:64].hex()
                 rec['droid_birth_hex'] = blk[64:96].hex()
+            tracker_count += 1
+            if len(trackers) < TRACKER_KEEP:
+                trackers.append({'machine': rec.get('machine'), 'droid_hex': rec.get('droid_hex'), 'droid_birth_hex': rec.get('droid_birth_hex'), 'block': at})
         elif sig == 0xA0000007:  # icon environment: the same two paths as the environment block
             icon_ascii = blk[8:8+260].split(b'\x00',1)[0].decode('latin1','replace')
             icon_u16 = blk[8+260:].decode('utf-16le','replace').split('\x00',1)[0] if len(blk)>268 else None
-            rec['icon_env_ascii'] = guard(held, sink, {'link_offset': base_off, 'field': 'extra[%d].icon_env_ascii' % len(extras)}, icon_ascii)
-            rec['icon_env_u16'] = guard(held, sink, {'link_offset': base_off, 'field': 'extra[%d].icon_env_u16' % len(extras)}, icon_u16)
+            rec['icon_env_ascii'] = guard(held, sink, {'link_offset': base_off, 'field': 'extra[%d].icon_env_ascii' % at}, icon_ascii)
+            rec['icon_env_u16'] = guard(held, sink, {'link_offset': base_off, 'field': 'extra[%d].icon_env_u16' % at}, icon_u16)
             if rec['icon_env_ascii'] == icon_ascii and rec['icon_env_u16'] == icon_u16:
                 rec['hex'] = blk.hex()          # the hex would give a withheld path back
         else:
             # A block this reader does not know can hold anything: the first characters inline (their shape judged
             # like any other field), its length, and the whole of it in the values file when it was asked for.
             printable = ''.join(chr(b) if 32<=b<127 else '.' for b in blk[:128])
-            rec['ascii'] = guard(held, sink, {'link_offset': base_off, 'field': 'extra[%d].ascii' % len(extras)}, printable)
+            rec['ascii'] = guard(held, sink, {'link_offset': base_off, 'field': 'extra[%d].ascii' % at}, printable)
             rec['ascii_chars'] = len(blk)
             if len(blk) > 128:
                 rec['ascii_inline_cut'] = True
-                rec['ascii_finding_id'] = held.hold({'link_offset': base_off, 'field': 'extra[%d].block_hex' % len(extras)}, blk.hex())
-        extras.append(rec)
+                rec['ascii_finding_id'] = held.hold({'link_offset': base_off, 'field': 'extra[%d].block_hex' % at}, blk.hex())
+        extra_count += 1
+        if len(extras) < EXTRA_INLINE:
+            extras.append(rec)
+        if extras_sink is not None:
+            extras_sink.add({'link_offset': base_off, 'block': at, **rec})
         p += bsz
         if bsz == 0:
             break
+    if stopped_by_clock:
+        problems.append("the ExtraData walk stopped at block %d (byte %d of the structure) because the tool's own clock (%d s) ran out; the blocks after it were not read" % (extra_count, p, DEADLINE_SECONDS))
+        out['stopped_by_time_limit'] = True
     out['extra'] = extras
+    out['extra_count'] = extra_count
+    out['extra_not_shown'] = extra_count - len(extras)
+    out['tracker'] = trackers
+    out['tracker_count'] = tracker_count
     out['structure_complete'] = complete
     if not complete and not problems:
         problems.append("the read ends before the terminal block; read more bytes (size) to complete the structure")
@@ -740,21 +937,50 @@ def parse_lnk(data, base_off, held, strings):
     # the header. The text is never in the answer: its offset and length are (the page `strings`), and the text is
     # in the values file under the finding id when write_strings asked for it.
     found = 0
-    for a, b in utf16_runs(data, 0x4C):
-        if b - a >= MIN_STRING_UNITS and run_has_letter(data, 0x4C, a, b):
-            found += 1
-            at = 0x4C + 2 * a
-            finding = held.hold_text({'link_offset': base_off, 'field': 'utf16_string', 'offset': at},
-                                     lambda a=a, b=b: run_pieces(data, 0x4C, a, b))
-            strings.add({'link_offset': base_off, 'offset': at, 'file_offset': base_off + at, 'chars': b - a, 'finding_id': finding})
+    scanned_runs = 0
+    try:
+        for a, b in utf16_runs(data, 0x4C):
+            scanned_runs += 1
+            if not (scanned_runs & 1023) and out_of_time():
+                raise ClockStop(0x4C + 2 * a)
+            if b - a >= MIN_STRING_UNITS and run_has_letter(data, 0x4C, a, b):
+                found += 1
+                at = 0x4C + 2 * a
+                finding = held.hold_text({'link_offset': base_off, 'field': 'utf16_string', 'offset': at},
+                                         lambda a=a, b=b: run_pieces(data, 0x4C, a, b))
+                strings.add({'link_offset': base_off, 'offset': at, 'file_offset': base_off + at, 'chars': b - a, 'finding_id': finding})
+    except ClockStop as stop:
+        problems.append("the UTF-16 string scan stopped at byte %d of the structure because the tool's own clock (%d s) ran out; the strings after it were not searched" % (stop.args[0], DEADLINE_SECONDS))
+        out['stopped_by_time_limit'] = True
     out['utf16_string_count'] = found
     if sink:
         out['sensitive_fields_withheld'] = sink
     return out
 
+class ClockStop(Exception):
+    """The tool's own clock ran out inside a walk."""
+
+
+def drop_pages():
+    """Remove the temporary files of the pages that were being written (the STOP block does the same on a signal)."""
+    for page in list(PAGES):
+        tmp = getattr(page, "_tmp", None)
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            page._tmp = None
+
+
 def fail(message, **extra):
-    print(json.dumps({'error': message, **extra}))
+    drop_pages()
+    print_answer({'error': message, 'status': 'failed', 'status_basis': 'the tool stopped with an error and read no result (see error)', **extra})
     sys.exit(1)
+
+
+def last_word(signum):
+    interrupted_answer(signum, phase=PROGRESS['phase'], offset_reached=PROGRESS['offset'])
 
 
 def whole(args, name, default, low=0, high=None):
@@ -762,11 +988,34 @@ def whole(args, name, default, low=0, high=None):
     if v is None or v == 0 and name in ('size', 'max'):
         v = default
     if isinstance(v, bool) or not isinstance(v, int) or v < low or (high is not None and v > high):
-        fail('%s must be a whole number%s' % (name, ' from %d to %d' % (low, high) if high is not None else ' of at least %d' % low), got=args.get(name))
+        fail('%s must be a whole number%s' % (name, ' from %d to %d' % (low, high) if high is not None else ' of at least %d' % low))
     return v
 
 
+def read_slice(src, offset, size):
+    """The bytes at [offset, offset+size) of the file, read in pieces with the clock looked at, into one buffer sized by what the file can give.
+    Returns (data, file_size, stopped_at) where stopped_at is the byte count read when the clock ran out, else None."""
+    with open(src, 'rb') as f:
+        file_size = os.fstat(f.fileno()).st_size
+        want = max(0, min(size, file_size - offset))
+        buf = bytearray(want)
+        view = memoryview(buf)
+        f.seek(offset)
+        got = 0
+        while got < want:
+            if out_of_time():
+                return buf[:got], file_size, got
+            n = f.readinto(view[got:min(want, got + (8 << 20))])
+            if not n:
+                break
+            got += n
+            PROGRESS['offset'] = offset + got
+        return (buf if got == want else buf[:got]), file_size, None
+
+
 def main():
+    set_deadline(DEADLINE_SECONDS)
+    install_signal_handlers(last_word)
     try:
         args = json.load(sys.stdin)
     except ValueError as exc:
@@ -776,16 +1025,27 @@ def main():
     path = args.get('path')
     offset = whole(args, 'offset', 0)
     size = whole(args, 'size', 4096, 1, MAX_READ)
-    limit = whole(args, 'limit', 50, 1)
+    limit = whole(args, 'limit', 50, 1, MAX_LIMIT)
     write_strings = args.get('write_strings', False)
     if not isinstance(write_strings, bool):
         fail('write_strings must be true or false')
+    scan = args.get('scan', False)
+    if not isinstance(scan, bool):
+        fail('scan must be true or false')
     dump = args.get('dump')  # if set, read from dump at offset
     src = dump or path
     if not src:
         fail('need path or dump')
     if not isinstance(src, str):
-        fail('path and dump must be file paths', got=src)
+        fail('path and dump must be file paths')
+    if scan:
+        limit_hits = whole(args, 'max', 50, 1, MAX_LIMIT)
+        each = args.get('each')
+        if each is not None:
+            each = whole(args, 'each', 0, 1, MAX_READ)
+    if write_strings and os.environ.get('SECRET_OUTPUT') != '1':
+        fail('write_strings is refused: the text of a link is written only in a job the harness runs as secret output (job_run with secret_output: true), '
+             'where the file is a sealed secret output. Nothing was opened or created.')
     if not os.path.isfile(src):
         if os.path.exists(src):
             fail('not a regular file (a directory, a FIFO, a socket or a device is not opened)', path=src, not_attempted=1)
@@ -807,14 +1067,22 @@ def main():
         fail('no free name for the values file after 999 tries')
     held = Held(values)
 
+    PROGRESS['phase'] = 'reading the file'
     try:
-        with open(src, 'rb') as f:
-            f.seek(offset)
-            data = f.read(size)
+        data, file_size, read_stopped = read_slice(src, offset, size)
     except OSError as exc:
         values.close()
         fail('the file could not be read', path=src, reason=describe(exc))
-    strings = LosslessPage("lnk_parse", [src, offset, size, 'strings'], limit)
+    clock_note = None
+    if read_stopped is not None:
+        clock_note = "the tool's own clock (%d s) ran out while the file was read: %d of the %d bytes asked for were read" % (DEADLINE_SECONDS, read_stopped, min(size, max(0, file_size - offset)))
+    if read_stopped is not None and not data:
+        values.close()
+        print_answer({'parser': PARSER, 'source': src, 'status': 'partial', 'status_basis': clock_note + ': nothing was decoded', 'stopped_by_time_limit': True,
+                      'offset': offset, 'bytes_read': 0, 'file_bytes': file_size}, indent=2)
+        return
+    strings = NoReplacePage("lnk_parse", [src, offset, size, 'strings'], limit)
+    extras_page = NoReplacePage("lnk_parse-extra", [src, offset, size, 'extra', each if scan else None], EXTRA_INLINE)
     summary = lambda: {
         'secret_values': values.summary('JSON Lines, mode 0600: finding_id, link_offset, field, [offset, piece, continued_in_next,] value'),
         'findings_held': held.count,
@@ -827,57 +1095,107 @@ def main():
         answer['utf16_strings_note'] = ('offsets and lengths of the UTF-16 text found by search (runs of six or more non-zero units with a letter); '
                                         'the text is not in this answer: write_strings, in a job, writes it to the values file under each finding_id')
 
-    if args.get('scan'):
-        limit_hits = whole(args, 'max', 50, 1)
-        each = args.get('each')
-        if each is not None:
-            each = whole(args, 'each', 0, 1)
-        hits = LosslessPage("lnk_parse", [src, offset, size, each], limit_hits)
+    def extra_paging(answer):
+        page = extras_page.finish()
+        answer['extra_blocks_total'] = page['matched']
+        if page.get('all_results'):
+            answer['all_extra_blocks'] = page['all_results']
+            answer['all_extra_blocks_format'] = 'JSON Lines, one ExtraData block per line (link_offset, block, size, sig and the decoded fields)'
+
+    PROGRESS['phase'] = 'decoding'
+    if scan:
         magic = bytes.fromhex('4c0000000114020000000000c000000000000046')
-        starts = []
-        i = 0
-        while True:
-            j = data.find(magic, i)
-            if j < 0:
-                break
-            starts.append(j)
-            i = j+4
+
+        def link_starts():
+            i = 0
+            while True:
+                j = data.find(magic, i)
+                if j < 0:
+                    return
+                yield j
+                i = j + 4
+
+        hits = NoReplacePage("lnk_parse", [src, offset, size, each], limit_hits)
         incomplete = 0
-        for n, j in enumerate(starts):
+        stopped = clock_note
+        starts = link_starts()
+        current = next(starts, None)
+        while current is not None:
+            if out_of_time():
+                stopped = stopped or ("the tool's own clock (%d s) ran out after %d candidates, at byte %d of the slice: the rest of the slice was not decoded" % (DEADLINE_SECONDS, hits.total, current))
+                break
+            following = next(starts, None)
             # Without `each`, a link runs to the next header or to the end of
             # what was read, never to a fixed cut.
-            stop = j + each if each else (starts[n+1] if n+1 < len(starts) else len(data))
-            rec = parse_lnk(data[j:stop], offset+j, held, strings)
-            rec['rel'] = j
+            stop = current + each if each else (following if following is not None else len(data))
+            rec = parse_lnk(data[current:stop], offset + current, held, strings, extras_page)
+            rec['rel'] = current
             rec['source'] = src
             if not rec.get('structure_complete'):
                 incomplete += 1
             hits.add(rec)
+            current = following
         page = hits.finish()
         values.close()
-        answer = {'parser': PARSER, 'source': src, 'count': page['matched'], 'hits': hits.page, **page,
+        beyond = max(0, file_size - offset - len(data))
+        reasons = []
+        if stopped:
+            reasons.append(stopped)
+        if incomplete:
+            reasons.append('%d candidate(s) ended before their terminal block (structures_incomplete)' % incomplete)
+        if beyond and not stopped:
+            reasons.append('%d byte(s) of the file lie past the slice that was read and were not searched (offset, size)' % beyond)
+        answer = {'parser': PARSER, 'source': src,
+                  'status': 'partial' if reasons else 'complete',
+                  'status_basis': '; '.join(reasons) if reasons else 'the %d-byte slice at offset %d was searched whole (to the end of the file) and every candidate structure was read to its terminal block' % (len(data), offset),
+                  'stopped_by_time_limit': bool(stopped),
+                  'count': page['matched'], 'hits': hits.page, **page,
                   'structures_incomplete': incomplete,
-                  'offset': offset, 'bytes_read': len(data),
+                  'offset': offset, 'bytes_read': len(data), 'file_bytes': file_size,
                   **summary(),
                   'note': 'a scan finds link structures by their 20-byte header signature (carving); a hit is a candidate, and `structure_complete` and `problems` say how much of it was read. Arguments and the string scan are not printed: see arguments_chars, utf16_strings and secret_values'}
+        extra_paging(answer)
         string_paging(answer)
-        print(json.dumps(answer, indent=2))
+        print_answer(answer, indent=2)
         return
-    rec = parse_lnk(data, offset, held, strings)
+    rec = parse_lnk(data, offset, held, strings, extras_page)
     rec['source'] = src
     values.close()
     if not rec.get('ok'):
         # Not what it was read as: how many bytes, and nothing of their content (it can be anything).
         rec['bytes_read'] = len(data)
         rec['starts_with_link_header'] = False
-        print(json.dumps(rec, indent=2))
+        rec['status'] = 'failed'
+        rec['status_basis'] = 'the bytes read do not begin with a shell link header, so nothing was decoded'
+        drop_pages()
+        print_answer(rec, indent=2)
         sys.exit(1)
     rec.update(summary())
+    reasons = []
+    if clock_note:
+        reasons.append(clock_note)
+    if rec.get('stopped_by_time_limit'):
+        reasons.append("the tool's own clock (%d s) ran out inside the structure (see problems)" % DEADLINE_SECONDS)
+    if not rec.get('structure_complete'):
+        reasons.append('the structure did not end at its terminal block (structure_complete is false; see problems)')
+    elif rec.get('problems'):
+        reasons.append('%d problem(s) are named under problems' % len(rec['problems']))
+    rec['status'] = 'partial' if reasons else 'complete'
+    rec['status_basis'] = '; '.join(reasons) if reasons else 'the structure was read from its header to its terminal block and no problem is named'
+    extra_paging(rec)
     string_paging(rec)
-    print(json.dumps(rec, indent=2))
+    print_answer(rec, indent=2)
+
 
 if __name__ == '__main__':
     try:
         main()
+    except SystemExit:
+        raise
     except OSError as exc:
         fail('a file operation failed: %s' % describe(exc), reason=type(exc).__name__)
+    except Exception as exc:                                  # whatever hostile input does, the answer is JSON
+        drop_pages()
+        print_answer({'error': 'the read failed', 'status': 'failed', 'status_basis': 'the tool stopped with an unexpected error',
+                      'reason': '%s: %s' % (type(exc).__name__, exc)})
+        sys.exit(1)

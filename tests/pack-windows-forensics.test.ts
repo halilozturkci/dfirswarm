@@ -780,12 +780,12 @@ test("yara_scan writes the matched bytes only on write_matches, only in a job, o
     await writeFile(join(cwd, "work", "sample.bin"), "x");
     // Outside a job the request is refused and nothing is written.
     const refused = failed(await tool("yara_scan", cwd, { rules: "work/rules.yar", target: "work/sample.bin", write_matches: true }, {}, bin));
-    assert.match(refused.error, /refused outside a job/);
+    assert.match(refused.error, /write_matches is refused/);
     assert.deepEqual((await everyFileUnder(join(cwd, "work"))).filter((f) => f.includes("yara-matched")), []);
     // In a job.
     const outDir = join(cwd, "out");
     await mkdir(outDir, { recursive: true });
-    const run = await tool("yara_scan", cwd, { rules: "work/rules.yar", target: "work/sample.bin", write_matches: true }, { JOB_ID: "j000007", OUT: outDir }, bin);
+    const run = await tool("yara_scan", cwd, { rules: "work/rules.yar", target: "work/sample.bin", write_matches: true }, { JOB_ID: "j000007", OUT: outDir, SECRET_OUTPUT: "1" }, bin);
     const out = body<YaraOut>(run);
     assert.equal(out.secret_values.requested, true);
     assert.equal(out.secret_values.written, 3);
@@ -807,7 +807,7 @@ test("yara_scan writes the matched bytes only on write_matches, only in a job, o
     // A second run in the same job, the values file already there: it scans all the same, writes the next
     // numbered file, names it, and the first file is as it was (it was refused without scanning).
     const before = await readFile(file);
-    const again = body<YaraOut>(await tool("yara_scan", cwd, { rules: "work/rules.yar", target: "work/sample.bin", write_matches: true }, { JOB_ID: "j000007", OUT: outDir }, bin));
+    const again = body<YaraOut>(await tool("yara_scan", cwd, { rules: "work/rules.yar", target: "work/sample.bin", write_matches: true }, { JOB_ID: "j000007", OUT: outDir, SECRET_OUTPUT: "1" }, bin));
     assert.equal(again.status, "complete");
     assert.equal(again.string_match_count, 3);
     assert.equal(again.secret_values.values_file, "store/jobs/j000007/out/yara-matched-strings-2.jsonl");

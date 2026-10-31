@@ -27,8 +27,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-PARSER = "extract_stream/5"
+PARSER = "extract_stream/6"
 MAX_TIMEOUT = 270
+DEADLINE_SECONDS = 285            # the manifest allows 300: one clock over icat and the digest, with room left to print the answer
+DIGEST_RESERVE = 30               # what icat leaves of the clock for the digest of its output (the digest is cut by the clock if it needs more)
+PROGRESS = {"dest": None, "stderr": None, "output": None}
+CLOCK = {"deadline": None}
 
 
 # BEGIN SHARED PROCESS
@@ -391,9 +395,49 @@ def install_signal_handlers():
 INODE = re.compile(r"^(\d+)(?:-(\d+)(?:-(\d+))?)?$")
 
 
+def remaining():
+    """Seconds left of the tool's one clock."""
+    return CLOCK["deadline"] - time.monotonic() if CLOCK["deadline"] is not None else float(DEADLINE_SECONDS)
+
+
+def out_of_time():
+    return remaining() <= 0
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back (a signal in the middle of the write would cut it) and the last word cleared."""
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    STATE["last_word"] = None
+    print(json.dumps(answer, **dumps_kwargs))
+
+
 def fail(message, **extra):
-    print(json.dumps({"error": message, "status": "failed", **extra}))
+    print_answer({"error": message, "status": "failed", "status_basis": "the tool stopped with an error and extracted nothing (see error)", **extra})
     raise SystemExit(1)
+
+
+def last_word(signum):
+    """The last word of a tool stopped by a signal: what icat wrote is kept as a .partial file and is not an extraction. It is set before any file is made."""
+    said = {"error": "stopped by signal %d before the extraction was complete" % signum, "status": "interrupted", "signal": signum,
+            "status_basis": "the tool was stopped by signal %d; nothing it had written is an extraction" % signum}
+    if PROGRESS["output"] is not None:
+        said["output"] = PROGRESS["output"]
+    if PROGRESS["stderr"] is not None:
+        said["stderr_file"] = os.path.relpath(PROGRESS["stderr"], Path.cwd().resolve())
+    if PROGRESS["dest"] is not None:
+        try:
+            said["partial_file"] = os.path.relpath(keep_as(PROGRESS["dest"], PROGRESS["dest"], ".partial"), Path.cwd().resolve())
+            said["note"] = "What icat wrote before it stopped is kept as partial_file; it is not an extraction."
+        except (OSError, SystemExit):
+            pass
+    print(json.dumps(said), flush=True)
+
+
+STATE["last_word"] = last_word
+install_signal_handlers()
 
 
 def own_places():
@@ -432,7 +476,7 @@ def create_new(base, suffix):
     for n in range(1, 1000):
         path = Path(str(base) + suffix + ("" if n == 1 else ".%d" % n))
         try:
-            return os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644), path
+            return os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600), path
         except FileExistsError:
             continue
     fail("no free name for %s%s after 999 tries" % (base, suffix))
@@ -456,7 +500,7 @@ def keep_as(src, base, suffix):
 
 
 def main():
-    install_signal_handlers()
+    CLOCK["deadline"] = time.monotonic() + DEADLINE_SECONDS
     try:
         d = json.load(sys.stdin)
     except ValueError as exc:
@@ -482,6 +526,7 @@ def main():
     if isinstance(timeout, bool) or not isinstance(timeout, int) or timeout < 1:
         fail("timeout_seconds must be a positive integer", timeout_seconds=d.get("timeout_seconds"))
     timeout = min(timeout, MAX_TIMEOUT)         # the tool's own limit is 300 s: icat stops before it, and the digest follows
+    timeout = max(1, min(timeout, int(remaining() - DIGEST_RESERVE)))      # icat gets what is left of the one clock, less the reserve for the digest
     if not os.path.isfile(image):
         fail("no such image", image=image)
     if shutil.which("icat") is None:
@@ -494,30 +539,21 @@ def main():
     argv = ["icat", "-o", str(offset), image, inode]
     try:
         # Created, never opened over something already there (a link included).
-        fd = os.open(str(dest), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
+        fd = os.open(str(dest), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
     except FileExistsError:
         fail("output already exists and is never overwritten", output=output)
     except OSError as exc:
         fail("output could not be created", output=output, reason=str(exc))
+    PROGRESS["dest"], PROGRESS["output"] = dest, output
     # The standard error goes to a file of its own, new: an earlier run's stays where it is.
     try:
         errfd, stderr_path = create_new(dest, ".stderr")
     except OSError as exc:
         os.close(fd)
+        PROGRESS["dest"] = None
         os.unlink(dest)
         fail("the standard error file could not be created", output=output, reason=str(exc))
-    def interrupted(signum):
-        """The last word of a tool stopped by a signal: what icat wrote is kept as a .partial file and is not an extraction."""
-        said = {"error": "stopped by signal %d before icat finished" % signum, "status": "interrupted", "signal": signum,
-                "output": output, "stderr_file": os.path.relpath(stderr_path, Path.cwd().resolve())}
-        try:
-            said["partial_file"] = os.path.relpath(keep_as(dest, dest, ".partial"), Path.cwd().resolve())
-            said["note"] = "What icat wrote before it stopped is kept as partial_file; it is not an extraction."
-        except (OSError, SystemExit):
-            pass
-        print(json.dumps(said), flush=True)
-
-    STATE["last_word"] = interrupted
+    PROGRESS["stderr"] = stderr_path
     with os.fdopen(fd, "wb") as out, os.fdopen(errfd, "wb") as err:
         try:
             proc = spawn(argv, stdout=out, stderr=err)
@@ -532,12 +568,18 @@ def main():
     if stderr_bytes:
         with open(stderr_path, "r", encoding="utf-8", errors="replace") as fh:
             first_lines = [l.rstrip("\n") for _, l in zip(range(5), fh)]
+    size = dest.stat().st_size
     h = hashlib.sha256()
-    size = 0
-    with open(dest, "rb") as fh:
-        for chunk in iter(lambda: fh.read(1 << 20), b""):
-            h.update(chunk)
-            size += len(chunk)
+    not_hashed = None
+    if rc == 0 and not timed_out:
+        hashed = 0
+        with open(dest, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                if out_of_time():
+                    not_hashed = "the tool's own clock (%d s) ran out after %d of the %d bytes were digested" % (DEADLINE_SECONDS, hashed, size)
+                    break
+                h.update(chunk)
+                hashed += len(chunk)
     answer = {
         "parser": PARSER,
         "image": image,
@@ -558,14 +600,26 @@ def main():
         answer.update({"status": "failed", "error": "icat failed" if not timed_out else "icat did not finish in time",
                        "partial_file": os.path.relpath(partial, Path.cwd().resolve()), "partial_bytes": size,
                        "note": "What icat wrote before it stopped is kept as partial_file; it is not an extraction."})
-        print(json.dumps(answer, indent=2))
+        answer["status_basis"] = "icat %s: what it wrote is kept as partial_file and is not an extraction" % ("did not finish in time" if timed_out else "exited with status %d" % rc)
+        print_answer(answer, indent=2)
         raise SystemExit(1)
-    answer.update({"status": "complete", "output": output, "size": size, "sha256": h.hexdigest()})
-    print(json.dumps(answer, indent=2))
+    if not_hashed:
+        answer.update({"status": "partial", "output": output, "size": size, "sha256": None, "not_hashed": True,
+                       "status_basis": "icat finished and the output is complete at %d bytes, but it was not digested: %s" % (size, not_hashed)})
+    else:
+        answer.update({"status": "complete", "output": output, "size": size, "sha256": h.hexdigest(),
+                       "status_basis": "icat exited 0 and the whole output (%d bytes) was digested" % size})
+    print_answer(answer, indent=2)
 
 
 if __name__ == "__main__":
     try:
         main()
+    except SystemExit:
+        raise
     except OSError as exc:
         fail("a file operation failed: %s" % exc, reason=type(exc).__name__)
+    except Exception as exc:                                  # whatever hostile input does, the answer is JSON
+        print_answer({"error": "the extraction failed", "status": "failed", "status_basis": "the tool stopped with an unexpected error",
+                      "reason": "%s: %s" % (type(exc).__name__, exc)})
+        sys.exit(1)

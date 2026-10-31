@@ -63,7 +63,14 @@ import sys
 import tempfile
 from pathlib import Path
 
-PARSER = "sigma_hunt/6"
+PARSER = "sigma_hunt/7"
+DEADLINE_SECONDS = 1170           # the manifest allows 1,200: one clock over the probes, the engine, the parse, the sort, the write and the answer
+POST_SECONDS = 120                # kept back for what follows the engine (the parse, the sort, the write, the answer)
+PARSE_STOPS_AT = 40               # the read of the engine's result stops when this many seconds are left
+WRITE_STOPS_AT = 5                # the write of detections.jsonl stops when this many seconds are left
+MAX_LIMIT = 10000                 # the largest inline page; the whole result is in the file the answer names
+TEMPS = []                        # the sort's temporary files that are not yet merged
+HELD = {"deadline": None, "phase": "starting", "command": None}
 MAX_TIMEOUT = 1000
 
 
@@ -439,7 +446,8 @@ STATE = {"run_dir": None}
 def fail(message, **extra):
     if STATE["run_dir"] and "run_dir" not in extra:
         extra["run_dir"] = STATE["run_dir"]
-    print(json.dumps({"error": message, **extra}))
+    drop_temps()
+    print_answer({"error": message, "status": "failed", "status_basis": "the tool stopped with an error and returned no detection (see error)", **extra})
     raise SystemExit(1)
 
 
@@ -636,8 +644,18 @@ def zircolite_rows(values, malformed):
             malformed.add(json.dumps(rule, default=str), "not a rule object")
             continue
         title = rule.get("title") or rule.get("rule_title") or "unnamed rule"
+        if not isinstance(title, str):
+            malformed.add(json.dumps(rule, default=str), "the rule title is not text")
+            continue
         level = rule.get("rule_level") or rule.get("level")
-        for match in rule.get("matches") or []:
+        found = rule.get("matches") or []
+        if not isinstance(found, list):
+            malformed.add(json.dumps(rule, default=str), "matches is not a list")
+            continue
+        for match in found:
+            if not isinstance(match, dict):
+                malformed.add(json.dumps(match, default=str), "a match of rule %s is not an object" % json.dumps(title)[:80])
+                continue
             yield {
                 "rule": title,
                 "level": level,
@@ -658,8 +676,12 @@ def hayabusa_rows(values, malformed):
             malformed.add(json.dumps(row, default=str), "not a detection object")
             continue
         details = row.get("Details")
+        title = row.get("RuleTitle") or row.get("RuleFile") or "unnamed rule"
+        if not isinstance(title, str):
+            malformed.add(json.dumps(row, default=str), "the rule title is not text")
+            continue
         yield {
-            "rule": row.get("RuleTitle") or row.get("RuleFile") or "unnamed rule",
+            "rule": title,
             "level": row.get("Level"),
             "rule_id": row.get("RuleID"),
             "time": row.get("Timestamp") or row.get("timestamp"),
@@ -687,7 +709,7 @@ class Sorted:
         group = 0 if level_rank is None else 1 + (4 - level_rank)
         key = "%d\t%s\t%012d" % (group, str(row.get("time") or "").replace("\t", " ").replace("\n", " "), self.seq)
         self.seq += 1
-        line = key + "\t" + json.dumps(row, ensure_ascii=False, default=str)
+        line = key + "\t" + json.dumps(row, default=str)          # ASCII: a lone surrogate in a field (a name that is not UTF-8) is escaped, not an encoding error later
         self.buffer.append(line)
         self.size += len(line)
         if self.size >= SORT_RUN_BYTES:
@@ -696,15 +718,16 @@ class Sorted:
     def _spill(self):
         self.buffer.sort()
         fd, name = tempfile.mkstemp(prefix=".sort-", dir=self.directory)
+        TEMPS.append(name)
         with os.fdopen(fd, "w", encoding="utf-8", errors="surrogateescape") as fh:
             for line in self.buffer:
                 fh.write(line + "\n")
         self.runs.append(name)
         self.buffer, self.size = [], 0
 
-    def write(self, destination, keep):
-        """Write the sorted rows to destination as JSON Lines; return the first `keep` of them and the count."""
-        first, count = [], 0
+    def write(self, destination, keep, stop=None):
+        """Write the sorted rows to destination as JSON Lines; return the first `keep` of them, the count and whether `stop()` cut the write."""
+        first, count, cut = [], 0, False
         streams = []
         if self.runs:
             if self.buffer:
@@ -716,6 +739,9 @@ class Sorted:
             merged = iter(self.buffer)
         with open(destination, "w", encoding="utf-8", errors="surrogateescape") as out:
             for line in merged:
+                if stop is not None and not (count & 4095) and stop():
+                    cut = True
+                    break
                 row_json = line.split("\t", 3)[3]
                 out.write(row_json + "\n")
                 if count < keep:
@@ -725,35 +751,46 @@ class Sorted:
             s.close()
         for r in self.runs:
             os.unlink(r)
-        return first, count
+            if r in TEMPS:
+                TEMPS.remove(r)
+        return first, count, cut
 
 
-def ruleset_record(rules):
+def ruleset_record(rules, until=None):
     """The ruleset the caller named, by digest: a file by its sha256, a directory by the digest of its
-    sorted relative paths and file digests. Without one, the engine's own bundled rules are in use."""
+    sorted relative paths and file digests. Without one, the engine's own bundled rules are in use. `until` is the clock's end; a digest it cuts is none, and says so."""
     if not rules:
         return {"source": "the engine's bundled rules", "digest": None,
                 "note": "no ruleset was named, so the rules in use are whatever the engine carries; their content is not recorded here"}
+
+    def hashed(path, h):
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                if until is not None and time.monotonic() > until:
+                    return False
+                h.update(chunk)
+        return True
+
     p = Path(rules)
     if p.is_file():
         h = hashlib.sha256()
-        with open(p, "rb") as fh:
-            for chunk in iter(lambda: fh.read(1 << 20), b""):
-                h.update(chunk)
+        if not hashed(p, h):
+            return {"source": str(rules), "kind": "file", "files": 1, "digest": None, "cut_by_clock": True}
         return {"source": str(rules), "kind": "file", "files": 1, "digest": h.hexdigest()}
     if p.is_dir():
         outer = hashlib.sha256()
         files = 0
         for root, dirs, names in os.walk(p):
             dirs.sort()
+            if until is not None and time.monotonic() > until:
+                return {"source": str(rules), "kind": "directory", "files": files, "digest": None, "cut_by_clock": True}
             for name in sorted(names):
                 full = os.path.join(root, name)
                 if os.path.islink(full) or not os.path.isfile(full):
                     continue
                 h = hashlib.sha256()
-                with open(full, "rb") as fh:
-                    for chunk in iter(lambda: fh.read(1 << 20), b""):
-                        h.update(chunk)
+                if not hashed(full, h):
+                    return {"source": str(rules), "kind": "directory", "files": files, "digest": None, "cut_by_clock": True}
                 outer.update(("%s\t%s\n" % (os.path.relpath(full, p), h.hexdigest())).encode("utf-8", "surrogateescape"))
                 files += 1
         return {"source": str(rules), "kind": "directory", "files": files, "digest": outer.hexdigest(),
@@ -761,10 +798,15 @@ def ruleset_record(rules):
     return {"source": str(rules), "digest": None, "note": "not a file or directory on this host; the engine may resolve it itself"}
 
 
-def engine_version(binary):
+def engine_version(binary, budget):
+    """The engine's version line, asking at most twice and never longer than `budget` seconds in all."""
+    until = time.monotonic() + budget
     for flag in ("--version", "-V"):
+        wait = min(15, until - time.monotonic())
+        if wait < 1:
+            return None
         try:
-            p = subprocess.run([binary, flag], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=15, stdin=subprocess.DEVNULL)
+            p = subprocess.run([binary, flag], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=wait, stdin=subprocess.DEVNULL)
         except (OSError, subprocess.TimeoutExpired):
             return None
         text = p.stdout.decode("utf-8", "replace").strip().splitlines()
@@ -773,12 +815,79 @@ def engine_version(binary):
     return None
 
 
+def count_evtx(path, until):
+    """How many .evtx files lie under `path` (a file counts as one), looked for until the clock `until`; the second value says the look was cut short."""
+    if os.path.isfile(path):
+        return 1, False
+    n = 0
+    for _root, _dirs, names in os.walk(path):
+        if time.monotonic() > until:
+            return n, True
+        n += sum(1 for name in names if name.lower().endswith(".evtx"))
+    return n, False
+
+
+NONE_READ = re.compile(rb"(?i)no\s+evtx\s+files?|evtx\s+files?\s*(?:read|found|loaded)?\s*[:=]\s*0\b|total\s+evtx\s+files?\s*[:=]\s*0\b|0\s+evtx\s+files?")
+
+
+def engine_says_none_read(*paths):
+    """Whether the first 64 KiB of the engine's own words say it read no .evtx file."""
+    for p in paths:
+        try:
+            with open(p, "rb") as fh:
+                if NONE_READ.search(fh.read(65536)):
+                    return True
+        except OSError:
+            pass
+    return False
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back and the last word cleared: a signal at that point gives no second document."""
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    STATE["last_word"] = None
+    print(json.dumps(answer, **dumps_kwargs))
+
+
+def drop_temps():
+    """Remove the temporary files of the sort that were not yet merged."""
+    for name in list(TEMPS):
+        try:
+            os.unlink(name)
+        except OSError:
+            pass
+    del TEMPS[:]
+
+
+def last_word(signum):
+    """After the PROCESS handler has ended the engine: remove the sort's temporary files and answer with one document."""
+    drop_temps()
+    print(json.dumps({"error": "stopped by signal %d before the hunt finished" % signum, "status": "interrupted", "signal": signum,
+                      "status_basis": "the tool was stopped by signal %d (the engine and what it started were ended, the sort's temporary files removed); nothing it had read is an answer" % signum,
+                      "phase": HELD["phase"], "run_dir": STATE["run_dir"], "command": HELD.get("command"),
+                      "note": "No statement about detections follows from an interrupted run."}), flush=True)
+
+
+# Installed as soon as the module has run as far as here, before main() creates anything.
+STATE["last_word"] = last_word
+install_signal_handlers()
+
+
+def left():
+    return HELD["deadline"] - time.monotonic()
+
+
 def main():
-    install_signal_handlers()
+    HELD["deadline"] = time.monotonic() + DEADLINE_SECONDS
     try:
         args = json.load(sys.stdin)
     except ValueError as exc:
         fail("arguments are not valid JSON", reason=str(exc))
+    if not isinstance(args, dict):
+        fail("the arguments must be a JSON object")
 
     path = args.get("path")
     if not isinstance(path, str) or not path:
@@ -792,20 +901,30 @@ def main():
     out_dir = resolve_output(out_dir, "out_dir")
     writable_place(out_dir)
 
-    min_level = str(args.get("min_level") or "medium").lower()
-    if min_level not in LEVELS:
-        fail("min_level must be one of %s" % ", ".join(LEVELS), min_level=args.get("min_level"))
+    min_level = args.get("min_level") or "medium"
+    if not isinstance(min_level, str) or min_level.lower() not in LEVELS:
+        fail("min_level must be one of %s" % ", ".join(LEVELS))
+    min_level = min_level.lower()
     limit = args.get("limit", 200)
-    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
-        fail("limit must be a positive integer")
+    if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= MAX_LIMIT:
+        fail("limit must be a whole number from 1 to %d (the inline page; the whole result is in the file the answer names)" % MAX_LIMIT)
     timeout = args.get("timeout_seconds", DEFAULT_TIMEOUT)
     if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout < 10:
         fail("timeout_seconds must be an integer of at least 10")
     timeout = min(timeout, MAX_TIMEOUT)             # the tool's own limit is 1,200 s: the engine stops before it, and its result is read after
+    rules_arg = args.get("rules")
+    if rules_arg is not None and not isinstance(rules_arg, str):
+        fail("rules must be a string: the path of a ruleset (a file or a directory)")
 
-    wanted = str(args.get("engine") or "auto").lower()
-    if wanted not in ("auto", "zircolite", "hayabusa"):
-        fail("engine must be auto, zircolite or hayabusa", engine=args.get("engine"))
+    wanted = args.get("engine") or "auto"
+    if not isinstance(wanted, str) or wanted.lower() not in ("auto", "zircolite", "hayabusa"):
+        fail("engine must be auto, zircolite or hayabusa")
+    wanted = wanted.lower()
+    # Every detection row carries the whole matched record, so the files this tool writes are secret output: the manifest makes every job of it one,
+    # and a job that was not run as such is refused here, before anything is created.
+    if os.environ.get("JOB_ID") and os.environ.get("SECRET_OUTPUT") != "1":
+        fail("sigma_hunt is refused in a job that was not run as secret output: its detections carry the whole matched records, and its files would be sealed as ordinary "
+             "output. Run it as job_run(tool: \"sigma_hunt\", ...), whose manifest makes every job of this tool secret output. Nothing was created.")
 
     zircolite = shutil.which("zircolite") or shutil.which("zircolite.py")
     hayabusa = shutil.which("hayabusa")
@@ -839,8 +958,8 @@ def main():
         # own bundled evtx_dump. --logfile: its log in the run directory, not in the
         # working directory (the run's, read-only in a VM and in a job).
         argv = [binary, "--evtx", path, "--outfile", result, "--logfile", zircolite_log]
-        if args.get("rules"):
-            argv += ["--ruleset", str(args["rules"])]
+        if rules_arg:
+            argv += ["--ruleset", rules_arg]
         cwd = None
     else:
         # Hayabusa saves its error log under ./logs/ and no option moves it:
@@ -849,36 +968,45 @@ def main():
         resolve_output(os.path.join(run_dir, "logs"), "out_dir")
         argv = [binary, "json-timeline", "-d" if os.path.isdir(path) else "-f", os.path.abspath(path),
                 "-o", os.path.abspath(result), "-w", "-q"]
-        if args.get("rules"):
-            rules = str(args["rules"])
-            argv += ["-r", os.path.abspath(rules) if os.path.exists(rules) else rules]
+        if rules_arg:
+            argv += ["-r", os.path.abspath(rules_arg) if os.path.exists(rules_arg) else rules_arg]
         cwd = os.path.abspath(run_dir)
+    HELD["command"] = " ".join(argv)
 
-    version = engine_version(binary)
-    ruleset = ruleset_record(args.get("rules"))
+    # One clock over the whole run: the probes, the count of .evtx files, the digest of the ruleset, the engine, then the parse, the sort and the write,
+    # for which POST_SECONDS are kept back. A phase the clock cuts ends the run partial, and says which.
+    cut = []
+    HELD["phase"] = "asking the engine for its version"
+    version = engine_version(binary, max(0.0, min(30.0, left() - POST_SECONDS - 10)))
+    HELD["phase"] = "counting the .evtx files"
+    evtx_files, evtx_cut = count_evtx(path, time.monotonic() + max(0.0, min(30.0, left() - POST_SECONDS - 10)))
+    if evtx_cut:
+        cut.append("the count of .evtx files under the path was cut by the clock")
+    HELD["phase"] = "recording the ruleset"
+    ruleset = ruleset_record(rules_arg, time.monotonic() + max(0.0, min(60.0, left() - POST_SECONDS - 10)))
+    if ruleset.get("cut_by_clock"):
+        cut.append("the digest of the ruleset was cut by the clock")
 
     # The engine's own words, whole, beside its result: they used to be
     # dropped when it succeeded and cut to their last few hundred characters
     # when it did not. They are streamed to files, never held in memory.
     stdout_path = resolve_output(os.path.join(run_dir, "%s.stdout" % engine), "out_dir")
     stderr_path = resolve_output(os.path.join(run_dir, "%s.stderr" % engine), "out_dir")
-    def interrupted(signum):
-        print(json.dumps({"error": "stopped by signal %d before %s finished" % (signum, engine), "status": "interrupted", "signal": signum,
-                          "run_dir": run_dir, "command": " ".join(argv), "stdout_file": str(stdout_path), "stderr_file": str(stderr_path),
-                          "note": "No statement about detections follows from an interrupted run."}), flush=True)
-
-    STATE["last_word"] = interrupted
+    engine_seconds = min(timeout, int(left() - POST_SECONDS))
+    if engine_seconds < 10:
+        fail("the tool's own clock (%d s) left the engine no time to run: nothing was hunted" % DEADLINE_SECONDS, run_dir=run_dir, command=" ".join(argv))
+    HELD["phase"] = "the engine is running"
     with open(stdout_path, "wb") as so, open(stderr_path, "wb") as se:
         try:
             proc = spawn(argv, stdout=so, stderr=se, cwd=cwd)
         except OSError as exc:
             fail("%s could not be started: %s" % (engine, exc), command=" ".join(argv), status="failed")
-        rc, timed_out = wait_for(proc, timeout)
+        rc, timed_out = wait_for(proc, engine_seconds)
     said = {"stdout": file_ref(stdout_path), "stderr": file_ref(stderr_path)}
 
     if not os.path.isfile(result):
         if timed_out:
-            fail("%s did not finish in time" % engine, after_seconds=timeout, command=" ".join(argv), run_dir=run_dir, **said,
+            fail("%s did not finish in time" % engine, after_seconds=engine_seconds, command=" ".join(argv), run_dir=run_dir, **said,
                  engine_logs=engine_logs(engine, run_dir, zircolite_log))
         fail("%s wrote no result file" % engine, exit_code=rc, run_dir=run_dir,
              command=" ".join(argv), **said, engine_logs=engine_logs(engine, run_dir, zircolite_log),
@@ -886,16 +1014,21 @@ def main():
                   "so it can be corrected by hand and re-run. Its whole stdout and stderr are "
                   "the files named here.")
 
+    HELD["phase"] = "reading the engine's result"
     malformed = Malformed(os.path.join(run_dir, "%s-malformed.txt" % engine))
     floor = LEVEL_RANK[min_level]
     ordered = Sorted(run_dir)
     by_rule = {}
     read = below = 0
     unknown_levels = {}
+    parse_cut = False
     try:
         values = json_values(result, malformed)
         rows = zircolite_rows(values, malformed) if engine == "zircolite" else hayabusa_rows(values, malformed)
         for row in rows:
+            if not (read & 1023) and left() < PARSE_STOPS_AT:
+                parse_cut = True
+                break
             read += 1
             r = rank(row.get("level"))
             if r is None:
@@ -912,15 +1045,53 @@ def main():
         fail("%s wrote a result this tool could not read" % engine, result=result, reason=str(exc))
     malformed.close()
 
+    HELD["phase"] = "sorting and writing the detections"
     detections_path = resolve_output(os.path.join(run_dir, "detections.jsonl"), "out_dir")
-    shown, kept_count = ordered.write(detections_path, limit)
+    shown, kept_count, write_cut = ordered.write(detections_path, limit, lambda: left() < WRITE_STOPS_AT)
     all_detections = file_ref(detections_path, rows=kept_count)
-    complete = rc == 0 and not timed_out and malformed.count == 0
+    fired = sorted(({"rule": r, "count": c} for r, c in by_rule.items()), key=lambda x: (-x["count"], str(x["rule"])))
+    fired_file = None
+    if len(fired) > limit:
+        fired_path = resolve_output(os.path.join(run_dir, "rules-fired.jsonl"), "out_dir")
+        with open(fired_path, "w", encoding="utf-8") as fh:
+            for item in fired:
+                fh.write(json.dumps(item) + "\n")
+        fired_file = file_ref(fired_path, rows=len(fired))
+    if parse_cut:
+        cut.append("the tool's own clock ran out while the engine's result was read: %d detections were read, the rest were not" % read)
+    if write_cut:
+        cut.append("the tool's own clock ran out while the detections were sorted and written: detections.jsonl holds %d of them" % kept_count)
+
+    reasons = []
+    if timed_out:
+        reasons.append("the engine was stopped by its time limit (%d s)" % engine_seconds)
+    elif rc != 0:
+        reasons.append("the engine exited with status %s" % rc)
+    if malformed.count:
+        reasons.append("%d line(s) of its result could not be read (malformed_file)" % malformed.count)
+    if evtx_files == 0 and not evtx_cut:
+        reasons.append("no .evtx file lies under the path, so no record was read")
+    elif engine_says_none_read(stdout_path, stderr_path):
+        reasons.append("the engine's own output says it read no .evtx file")
+    if read == 0 and below == 0 and not malformed.count:
+        # Nothing was read. An engine that found nothing writes an empty list; an empty file, a lone object or brackets with nothing in them is not that.
+        try:
+            with open(result, "rb") as rf:
+                head = re.sub(rb"\s+", b"", rf.read(4096))
+            size_read = os.path.getsize(result)
+        except OSError:
+            head, size_read = b"?", -1
+        if head != b"[]":
+            reasons.append("no detection was read from the engine's result file (%d bytes; it is empty, or not a list of detections): zero detections here is not a statement that no rule matched" % size_read)
+    reasons += cut
+    complete = not reasons
     answer = {
         "parser": PARSER,
         "status": "complete" if complete else "partial",
+        "status_basis": "; ".join(reasons) if reasons else "the engine exited 0, its whole result was read and sorted, no line of it was unreadable, and %d .evtx file(s) lie under the path" % evtx_files,
         "complete": complete,
         "path": path,
+        "evtx_files_under_path": evtx_files,
         "engine": engine,
         "engine_version": version,
         "ruleset": ruleset,
@@ -940,9 +1111,9 @@ def main():
         "unknown_levels": unknown_levels,
         "malformed_lines": malformed.count,
         "malformed_file": file_ref(malformed.path) if malformed.count else None,
-        "rules_that_fired": sorted(({"rule": r, "count": c} for r, c in by_rule.items()),
-                                   key=lambda x: (-x["count"], str(x["rule"]))),
+        "rules_that_fired": fired[:limit],
         "rules_fired": len(by_rule),
+        "rules_fired_file": fired_file,
         "engine_stdout": said["stdout"],
         "engine_stderr": said["stderr"],
         "engine_logs": engine_logs(engine, run_dir, zircolite_log),
@@ -951,14 +1122,20 @@ def main():
                 "are tuned for live estates and produce false positives on a forensic image: an "
                 "administrator doing their job trips a dozen of them. A detection whose level this tool does not "
                 "know is kept and counted under unknown_levels, never dropped by min_level. "
-                + ("" if complete else "The run is PARTIAL: the engine exited with status %s%s%s; the detections are what its result file held."
-                   % (rc, ", was stopped by its time limit" if timed_out else "", ", and %d line(s) of its result could not be read" % malformed.count if malformed.count else "")),
+                + ("" if complete else "The run is PARTIAL: see status_basis; the detections are what its result file held."),
     }
-    print(json.dumps(answer, indent=2))
+    print_answer(answer, indent=2)
 
 
 if __name__ == "__main__":
     try:
         main()
+    except SystemExit:
+        raise
     except OSError as exc:
         fail("a file could not be read or written: %s" % exc, status="failed")
+    except Exception as exc:                                  # whatever hostile input does, the answer is JSON
+        drop_temps()
+        print_answer({"error": "the hunt failed", "status": "failed", "status_basis": "the tool stopped with an unexpected error",
+                      "run_dir": STATE["run_dir"], "reason": "%s: %s" % (type(exc).__name__, exc)})
+        sys.exit(1)

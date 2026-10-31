@@ -33,6 +33,10 @@ import subprocess
 import sys
 
 TIMEOUT = 240
+DEADLINE_SECONDS = 285            # the manifest allows 300: one clock over vshadowinfo and the parse, with room left to print the answer
+PARSE_RESERVE = 20                # what vshadowinfo leaves of the clock for reading its output
+PROGRESS = {"stdout": None, "stderr": None}
+CLOCK = {"deadline": None}
 
 
 # BEGIN SHARED PROCESS
@@ -425,9 +429,41 @@ def parse_field(line):
     return None
 
 
+def remaining():
+    """Seconds left of the tool's one clock."""
+    return CLOCK["deadline"] - time.monotonic() if CLOCK["deadline"] is not None else float(DEADLINE_SECONDS)
+
+
+def out_of_time():
+    return remaining() <= 0
+
+
+def print_answer(answer, **dumps_kwargs):
+    """Print the answer with the stop signals held back (a signal in the middle of the write would cut it) and the last word cleared."""
+    try:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+    except (AttributeError, ValueError, OSError):
+        pass
+    STATE["last_word"] = None
+    print(json.dumps(answer, **dumps_kwargs))
+
+
 def fail(message, **extra):
-    print(json.dumps({"error": message, **extra}))
+    print_answer({"error": message, "status": "failed", "status_basis": "the tool stopped with an error and listed no shadow copy (see error)", **extra})
     raise SystemExit(1)
+
+
+def last_word(signum):
+    said = {"error": "stopped by signal %d before vshadowinfo finished" % signum, "status": "interrupted", "signal": signum,
+            "status_basis": "the tool was stopped by signal %d; no statement about shadow copies follows from it" % signum,
+            "note": "No statement about shadow copies follows from an interrupted run."}
+    if PROGRESS["stdout"]:
+        said["stdout_file"], said["stderr_file"] = PROGRESS["stdout"], PROGRESS["stderr"]
+    print(json.dumps(said), flush=True)
+
+
+STATE["last_word"] = last_word       # set before any file is made, and the handlers are in from the moment the module has run this far
+install_signal_handlers()
 
 
 def key_of(label):
@@ -453,11 +489,11 @@ def new_pair(outdir, digest):
         err_path = os.path.join(outdir, stem + ".stderr.txt")
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
         try:
-            out_fd = os.open(out_path, flags, 0o644)
+            out_fd = os.open(out_path, flags, 0o600)
         except FileExistsError:
             continue
         try:
-            err_fd = os.open(err_path, flags, 0o644)
+            err_fd = os.open(err_path, flags, 0o600)
         except FileExistsError:
             os.close(out_fd)
             os.unlink(out_path)
@@ -467,11 +503,13 @@ def new_pair(outdir, digest):
 
 
 def main():
-    install_signal_handlers()
+    CLOCK["deadline"] = time.monotonic() + DEADLINE_SECONDS
     try:
         args = json.load(sys.stdin)
     except ValueError as exc:
         fail("arguments are not valid JSON", reason=str(exc))
+    if not isinstance(args, dict):
+        fail("the arguments must be a JSON object")
 
     image = args.get("image")
     if not isinstance(image, str) or not image:
@@ -481,7 +519,7 @@ def main():
 
     offset = args.get("offset")
     if offset is not None and (not isinstance(offset, int) or isinstance(offset, bool) or offset < 0):
-        fail("offset must be a byte offset, not a sector offset", offset=args.get("offset"))
+        fail("offset must be a byte offset, not a sector offset")
 
     # Where a store would be mounted: the seat's own directory. The rest of
     # work/ is read-only in a VM, and a mount is that VM's alone either way.
@@ -489,7 +527,7 @@ def main():
     if mount_dir is None:
         mount_dir = "work/%s/vss" % (os.environ.get("AGENT_ID") or "<your id>")
     elif not isinstance(mount_dir, str) or not mount_dir:
-        fail("mount_dir must be a directory path", mount_dir=mount_dir)
+        fail("mount_dir must be a directory path")
     mount_dir = mount_dir.rstrip("/")
 
     if not shutil.which("vshadowinfo"):
@@ -514,25 +552,24 @@ def main():
         out_fd, err_fd, out_path, err_path, earlier = new_pair(outdir, digest)
     except OSError as exc:
         fail("the files for vshadowinfo's output could not be created in %s" % shown, reason=str(exc))
-    def interrupted(signum):
-        print(json.dumps({"error": "stopped by signal %d before vshadowinfo finished" % signum, "status": "interrupted", "signal": signum,
-                          "stdout_file": out_path, "stderr_file": err_path,
-                          "note": "No statement about shadow copies follows from an interrupted run."}), flush=True)
-
-    STATE["last_word"] = interrupted
+    PROGRESS["stdout"], PROGRESS["stderr"] = out_path, err_path
     with os.fdopen(out_fd, "wb") as so, os.fdopen(err_fd, "wb") as se:
         try:
             proc = spawn(argv, stdout=so, stderr=se)
         except OSError as exc:
             fail("vshadowinfo could not be started: %s" % exc, reason=type(exc).__name__)
-        rc, timed_out = wait_for(proc, TIMEOUT)
+        rc, timed_out = wait_for(proc, max(1, min(TIMEOUT, remaining() - PARSE_RESERVE)))
 
     with open(out_path, "r", encoding="utf-8", errors="replace") as fh:
         text = fh.read()
     with open(err_path, "r", encoding="utf-8", errors="replace") as fh:
         stderr = fh.read().strip()
     stores, current = [], None
-    for line in text.splitlines():
+    parse_stopped = False
+    for line_number, line in enumerate(text.splitlines()):
+        if not (line_number & 255) and out_of_time():
+            parse_stopped = True
+            break
         m = STORE.match(line)
         if m:
             current = {"store": int(m.group(1))}
@@ -557,8 +594,10 @@ def main():
         store["mount_with"] = "%s && %s  # then %s/vss%d" % (shlex.join(mkdir_argv), shlex.join(mount_argv), mount_dir, store["store"])
 
     problems = []
+    if parse_stopped:
+        problems.append("the tool's own clock (%d s) ran out while vshadowinfo's output was read: the stores after line %d were not read" % (DEADLINE_SECONDS, line_number))
     if timed_out:
-        problems.append("vshadowinfo was stopped after %d seconds" % TIMEOUT)
+        problems.append("vshadowinfo was stopped by the tool's clock after its share of the %d seconds" % DEADLINE_SECONDS)
     elif rc != 0:
         problems.append("vshadowinfo exited with status %d" % rc)
     if rc == 0 and claimed is None:
@@ -568,7 +607,7 @@ def main():
     if head == b"EVF\x09\x0d\x0a\xff\x00":
         problems.append("the image starts with the EWF (E01) signature: vshadowinfo reads raw data, so expose the image raw first")
 
-    if problems and (rc != 0 or timed_out or claimed is None):
+    if problems and (rc != 0 or timed_out or (claimed is None and not parse_stopped)):
         status = "failed"
     elif problems:
         status = "partial"
@@ -576,8 +615,11 @@ def main():
         status = "complete"
 
     out = {
-        "parser": "vss_stores/4",
+        "parser": "vss_stores/5",
         "status": status,
+        "status_basis": ("; ".join(problems) if problems else
+                         "vshadowinfo exited 0, its 'Number of stores' line (%s) agrees with the %d store(s) read from its output, and the output was read to its end" % (claimed, len(stores))),
+        "stopped_by_time_limit": bool(timed_out or parse_stopped),
         "image": image,
         "offset_bytes": offset,
         "mount_dir": mount_dir,
@@ -600,7 +642,7 @@ def main():
         out["note"] = ("This is a failure, not a finding: no statement about shadow copies on this volume follows from it, and "
                        "'no stores' must not be reported. Check the offset (BYTES, not sectors), that this is a raw volume or image, and the "
                        "stderr file; then ask again.")
-        print(json.dumps(out, indent=2))
+        print_answer(out, indent=2)
         raise SystemExit(1)
     if not stores:
         out["note"] = ("vshadowinfo, run on this image at offset %s, reported 0 stores. That says no store was found in this volume's metadata "
@@ -617,11 +659,17 @@ def main():
                        "may be unavailable in a worker), then run the ordinary toolkit against %s/vssN as if it were a volume. The mount is yours alone: "
                        "copy what you derive from it into your own directory and record it. A hive or a log read there is the state at "
                        "the store's creation time, not at acquisition: cite both times." % mount_dir)
-    print(json.dumps(out, indent=2))
+    print_answer(out, indent=2)
 
 
 if __name__ == "__main__":
     try:
         main()
+    except SystemExit:
+        raise
     except OSError as exc:
         fail("a file operation failed: %s" % exc, reason=type(exc).__name__)
+    except Exception as exc:                                  # whatever hostile input does, the answer is JSON
+        print_answer({"error": "the listing failed", "status": "failed", "status_basis": "the tool stopped with an unexpected error",
+                      "reason": "%s: %s" % (type(exc).__name__, exc)})
+        sys.exit(1)

@@ -668,8 +668,9 @@ test("jumplist writes and keeps every link structure past the page", async () =>
     const out = body<{ files: JumpFile[] }>(await tool(join(WIN, "jumplist", "run.py"), cwd, {
       path: "work/5f7b5f1e01b83767.customDestinations-ms",
       out_dir: "work/s1/links",
+      write_links: true,
       limit: 3,
-    }));
+    }, { SECRET_OUTPUT: "1" }));
     const one = out.files[0];
     assert.equal(one.links.length, 3);
     assert.equal(one.link_count, 7);
@@ -696,7 +697,8 @@ test("jumplist never overwrites a link written from another jump list of the sam
     const out = body<{ files: JumpFile[] }>(await tool(join(WIN, "jumplist", "run.py"), cwd, {
       path: "work/lists",
       out_dir: "work/s1/links",
-    }));
+      write_links: true,
+    }, { SECRET_OUTPUT: "1" }));
     const written = out.files.flatMap((f) => f.links.map((l) => l.written_to as string));
     assert.equal(new Set(written).size, 4);
     const contents = await Promise.all(written.map((w) => readFile(join(cwd, w), "hex")));
@@ -704,7 +706,7 @@ test("jumplist never overwrites a link written from another jump list of the sam
     assert.equal((await readdir(join(cwd, "work", "s1", "links"))).length, 4);
 
     // Run again: the same bytes land on the same files, no new copies.
-    const again = body<{ files: JumpFile[] }>(await tool(join(WIN, "jumplist", "run.py"), cwd, { path: "work/lists", out_dir: "work/s1/links" }));
+    const again = body<{ files: JumpFile[] }>(await tool(join(WIN, "jumplist", "run.py"), cwd, { path: "work/lists", out_dir: "work/s1/links", write_links: true }, { SECRET_OUTPUT: "1" }));
     assert.deepEqual(again.files.flatMap((f) => f.links.map((l) => l.written_to)), written);
     assert.equal((await readdir(join(cwd, "work", "s1", "links"))).length, 4);
   });
@@ -714,7 +716,7 @@ test("jumplist refuses an out_dir under inputs/ or outside the run directory", a
   await withCwd(async (cwd) => {
     await writeFile(join(cwd, "work", "x.customDestinations-ms"), customDestinations("x", 1).file);
     for (const outDir of ["inputs/links", "work/../inputs/links", "../escaped-links", "/tmp", "."]) {
-      const r = refused(await tool(join(WIN, "jumplist", "run.py"), cwd, { path: "work/x.customDestinations-ms", out_dir: outDir }));
+      const r = refused(await tool(join(WIN, "jumplist", "run.py"), cwd, { path: "work/x.customDestinations-ms", out_dir: outDir, write_links: true }, { SECRET_OUTPUT: "1" }));
       assert.match(r.error, /out_dir (cannot be under inputs|must be a directory inside the run directory)/, outDir);
     }
     assert.equal(await exists(join(cwd, "inputs", "links")), false);
@@ -731,7 +733,7 @@ test("jumplist never writes a link structure through a link left in out_dir", as
     await writeFile(join(cwd, "work", "x.customDestinations-ms"), file);
     await mkdir(join(cwd, "work", "s1", "links"), { recursive: true });
     await symlink("../../../inputs/planted.lnk", join(cwd, "work", "s1", "links", "x.customDestinations-ms-0000.lnk"));
-    const out = body<{ files: JumpFile[] }>(await tool(join(WIN, "jumplist", "run.py"), cwd, { path: "work/x.customDestinations-ms", out_dir: "work/s1/links" }));
+    const out = body<{ files: JumpFile[] }>(await tool(join(WIN, "jumplist", "run.py"), cwd, { path: "work/x.customDestinations-ms", out_dir: "work/s1/links", write_links: true }, { SECRET_OUTPUT: "1" }));
     const written = out.files[0].links[0].written_to as string;
     assert.equal(written, "work/s1/links/x.customDestinations-ms-0000-2.lnk", "the next free name, not the link");
     assert.deepEqual(await readFile(join(cwd, written)), payloads[0]);
@@ -803,8 +805,9 @@ test("jumplist keeps every stream of an automaticDestinations-ms past the page",
     const out = body<{ files: JumpFile[] }>(await tool(join(WIN, "jumplist", "run.py"), cwd, {
       path: "work/1b4dd67f29cb1962.automaticDestinations-ms",
       out_dir: "work/s1/auto",
+      write_links: true,
       limit: 2,
-    }, env));
+    }, { ...env, SECRET_OUTPUT: "1" }));
     const one = out.files[0];
     assert.equal(one.application_id, "1b4dd67f29cb1962");
     assert.equal(one.links.length, 2);
@@ -879,7 +882,7 @@ test("lnk_parse reads every UTF-16 string whole, past the first 8 KiB, and a who
     const name = "LongName-" + "abcdefghij".repeat(30);
     const outDir = join(cwd, "out");
     await mkdir(outDir, { recursive: true });
-    const run = await tool(join(WIN, "lnk_parse", "run.py"), cwd, { path: "work/one.lnk", size: 16384, write_strings: true }, { JOB_ID: "j000001", OUT: outDir });
+    const run = await tool(join(WIN, "lnk_parse", "run.py"), cwd, { path: "work/one.lnk", size: 16384, write_strings: true }, { JOB_ID: "j000001", OUT: outDir, SECRET_OUTPUT: "1" });
     const out = body<Lnk>(run);
     assert.equal(out.ok, true);
     assert.equal(out.name, name);
@@ -913,7 +916,7 @@ test("lnk_parse scans every link whole, each up to the next header, and keeps th
     const outDir = join(cwd, "out");
     await mkdir(outDir, { recursive: true });
     const out = body<Page & { count: number; hits: Lnk[]; bytes_read: number; secret_values: { values_file: string } }>(
-      await tool(join(WIN, "lnk_parse", "run.py"), cwd, { dump: "work/dump.bin", size, scan: true, max: 2, write_strings: true }, { JOB_ID: "j000002", OUT: outDir }),
+      await tool(join(WIN, "lnk_parse", "run.py"), cwd, { dump: "work/dump.bin", size, scan: true, max: 2, write_strings: true }, { JOB_ID: "j000002", OUT: outDir, SECRET_OUTPUT: "1" }),
     );
     assert.equal(out.count, 3);
     assert.equal(out.hits.length, 2);

@@ -1,6 +1,6 @@
 {
   "name": "extract_stream",
-  "description": "Extract one data stream of an NTFS volume by inode address to a file with icat (the Sleuth Kit). The stream is streamed straight to `output` (never held in memory and never printed). `output` is a file under work/<your id>/ (or work/extracted/<your id>/ or work/quarantine/<your id>/; run as a job, the harness gives a work/<your id>/... path to $OUT): any other place in the run, and anything under inputs/, is refused with the places named. Nothing already there is overwritten: a file at `output` refuses the call, and what a failed run keeps (<output>.partial, <output>.stderr) takes the next free name (.2, .3) so a second run never replaces what the first kept; the answer names the file it kept. The answer is what a reader cites: output path, size and sha256, image, offset in sectors, the inode address as asked and parsed (entry, attribute type, attribute id: 168 or 168-128-4 names a stream such as an alternate data stream), icat's exit status and its standard error whole in a file beside the output. A failed or timed-out icat leaves what it wrote as the .partial file and the answer says status failed (exit 1), never an extraction. The same contract as the base pack's icat_extract, without its image catalogue; read the stream with the tool that fits its type. SENSITIVE: a stream can hold a secret; the tool never prints it, and its size and sha256 are the custody record of the file. The program runs in the tool's own process group (never a session of its own), so the harness ending the tool ends it; the tool's own deadline kills it and what it started, and SIGTERM, SIGINT or SIGHUP do the same and the answer is then status interrupted.",
+  "description": "Extract one data stream of an NTFS volume by inode address to a file with icat (the Sleuth Kit). The stream is streamed straight to `output` (never held in memory and never printed). `output` is a file under work/<your id>/ (or work/extracted/<your id>/ or work/quarantine/<your id>/; run as a job, the harness gives a work/<your id>/... path to $OUT): any other place in the run, and anything under inputs/, is refused with the places named. Nothing already there is overwritten: a file at `output` refuses the call, and what a failed run keeps (<output>.partial, <output>.stderr) takes the next free name (.2, .3) so a second run never replaces what the first kept; the answer names the file it kept. The answer is what a reader cites: output path, size and sha256, image, offset in sectors, the inode address as asked and parsed (entry, attribute type, attribute id: 168 or 168-128-4 names a stream such as an alternate data stream), icat's exit status and its standard error whole in a file beside the output. A failed or timed-out icat leaves what it wrote as the .partial file and the answer says status failed (exit 1), never an extraction. The same contract as the base pack's icat_extract, without its image catalogue; read the stream with the tool that fits its type. SENSITIVE: a stream can hold a secret; the tool never prints it, and its size and sha256 are the custody record of the file. The program runs in the tool's own process group (never a session of its own), so the harness ending the tool ends it; the tool's own deadline kills it and what it started, and SIGTERM, SIGINT or SIGHUP do the same and the answer is then status interrupted. One clock covers the whole run: icat and the digest of its output fit in 285 of the 300 seconds. The digest is read in blocks with the clock looked at: if the clock cuts it, the output is complete and named (icat exited 0) but sha256 is null, not_hashed is true and the status is partial, with a status_basis that says how far the digest got. The output file, the .partial file and the standard error file are mode 0600. Every answer has status and status_basis; a wrong-type argument is refused as JSON (status failed); SIGTERM, SIGINT and SIGHUP end icat and what it started, keep what it wrote as the .partial file, and give one JSON document (status interrupted, exit 128 plus the signal); the handlers are in as soon as the module has loaded, before any file is made.",
   "params": {
     "image": {
       "type": "string",
@@ -21,7 +21,7 @@
     },
     "timeout_seconds": {
       "type": "integer",
-      "description": "How long to let icat run (default 240, at most 270)"
+      "description": "How long to let icat run (default 240, at most 270); icat is also given at most what is left of the tool's one clock (285 s of the manifest's 300) less 30 s kept for the digest of its output"
     }
   },
   "runtime": "python3",
@@ -30,8 +30,8 @@
   "example": "{\"image\": \"inputs/disk.E01\", \"inode\": \"168-128-4\", \"offset\": 2048, \"output\": \"work/<your id>/168-128-4.bin\"}",
   "by": "sfcc303",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 6,
-  "sha256": "0fb96048a1434a7e56cc0e5371cdca0fa8b4a351dc728e6afab2c58a6d72b6fe",
+  "version": 7,
+  "sha256": "d81f164cb193c1bc571e994ca646ecc511f59843f07b2f044f31a8ec3ab8872b",
   "requires": [
     "icat"
   ],
