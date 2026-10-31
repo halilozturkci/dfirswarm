@@ -56,7 +56,7 @@ def main():
     try:
         path = target_of(args.target)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
-        print(json.dumps({"ok": False, "error": str(exc)}))
+        print(json.dumps({"ok": False, "status": "failed", "status_basis": "the target could not be read, so nothing was run", "error": str(exc)}))
         return 2
     if args.command == "detect":
         applies, why = detect(path)
@@ -65,10 +65,11 @@ def main():
     if args.out:
         os.makedirs(args.out, exist_ok=True)
         with open(os.path.join(args.out, "coverage.json"), "w", encoding="utf-8") as handle:
-            json.dump({"recipe": "android-backup-apps", "status": "failed", "covered": "nothing: this recipe is declared, not run",
+            json.dump({"recipe": "android-backup-apps", "status": "failed", "status_basis": "this recipe is declared and not run: no program in the image parses an adb backup's app tree",
+                       "covered": "nothing: this recipe is declared, not run",
                        "not_covered": "every app's data", "limits_hit": [], "errors": [WHY]}, handle, indent=2, sort_keys=True)
             handle.write("\n")
-    print(json.dumps({"ok": False, "status": "unsupported", "why": WHY}))
+    print(json.dumps({"ok": False, "status": "failed", "status_basis": "this recipe is declared and not run: no program in the image parses an adb backup's app tree", "why": WHY}))
     return 2
 
 

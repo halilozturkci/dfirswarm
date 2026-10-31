@@ -71,6 +71,383 @@ import tarfile
 import zipfile
 import zlib
 
+
+def describe(exc):
+    return "%s: %s" % (type(exc).__name__, exc)
+
+
+# BEGIN SHARED PROCESS
+# The same text is in pcap_extract, zeek_run, suricata_run, the network-capture recipe and computer-forensics-base's
+# archive_extract; tests/pack-network-withholding.test.ts holds the four network copies equal and tests/pack-base-shared.test.ts
+# holds archive_extract's to them. A program an engine tool runs is started in THIS tool's process group, never in a session of
+# its own: the harness ends a tool that runs too long, or is aborted, by killing the tool's group (process.kill(-pid,
+# SIGKILL)), and an engine in a group of its own goes on writing into the output directory after the tool is gone. On
+# Linux the kernel is also asked to kill it if the tool dies. A deadline kills the program and what it started by
+# walking the process tree, and SIGTERM, SIGINT and SIGHUP do the same and then give the tool a last word. Only what is
+# below a program this tool started and has not yet waited for is ever signalled: the walk starts at that program's pid
+# and nowhere else, and a program that has been waited for (its pid may be another process's by now) is left alone. The
+# walk has no bound but the number of processes. Two cases leave the tree running: a ps that needs more than PS_WAIT
+# seconds, and a sandbox that denies both libproc and ps (macOS). A stop signal is the one case that reaches further: it also
+# ends everything below the tool itself (a program that was forked a moment before it was entered in ACTIVE is among it) and what
+# the tool started and lost (reap_orphans): a process that was seen below the tool, in the tool's own group, and whose parent has since
+# ended. Nothing else is ever ended: a process the tool never saw in its tree (the next stage of a pipeline the tool heads, a process a
+# launcher put in the group) is left alone, whoever leads the group. A program that has ended while something it started still
+# holds its pipes does not hold the tool: communicate_bounded gives the pipes PIPE_GRACE seconds and goes on without them.
+import time
+
+try:
+    import ctypes
+except ImportError:  # pragma: no cover
+    ctypes = None
+
+STATE = {"last_word": None}    # what to do, with the signal number, when the tool is stopped by a signal
+ACTIVE = []                    # the programs running now
+SEEN = set()                   # the pids seen below a program this tool started: the only ones reap_orphans may end once their parent is gone
+
+def _die_with_parent():  # runs in the child between fork and exec
+    try:
+        ctypes.CDLL(None).prctl(1, signal.SIGKILL)   # PR_SET_PDEATHSIG
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def spawn(argv, **kwargs):
+    kwargs.setdefault("stdin", subprocess.DEVNULL)
+    if sys.platform.startswith("linux") and ctypes is not None:
+        kwargs["preexec_fn"] = _die_with_parent
+    proc = subprocess.Popen(argv, **kwargs)
+    SEEN.add(proc.pid)
+    return proc
+
+
+def _children_libproc(pid):
+    """The direct children of `pid` on macOS, from libproc (macOS only: proc_listchildpids is not a symbol of the other
+    BSDs; a library call, so no program is started and nothing can be slow); None when the library, the symbol or the
+    call is not there."""
+    try:
+        import ctypes.util
+        lib = ctypes.CDLL(ctypes.util.find_library("proc") or "/usr/lib/libproc.dylib", use_errno=True)
+        lib.proc_listchildpids.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
+        lib.proc_listchildpids.restype = ctypes.c_int
+        size = 256
+        while size <= 1 << 16:
+            buf = (ctypes.c_int * size)()
+            if lib.proc_listchildpids(pid, buf, ctypes.sizeof(buf)) < 0:
+                return None
+            found = []
+            for value in buf:
+                if value <= 0:
+                    break
+                found.append(int(value))
+            if len(found) < size:
+                return found
+            size *= 4
+        return found
+    except Exception:  # noqa: BLE001 - no library, no symbol: the caller falls back
+        return None
+
+
+PS_WAIT = 10    # seconds the ps fallback is given: ps is slow on a heavily loaded host, and a tree that is not found is a program left running
+
+
+def _below(kids, pid):
+    found, seen, stack = [], {pid}, [pid]
+    while stack:
+        for child in kids.get(stack.pop(), []):
+            if child not in seen:
+                seen.add(child)
+                found.append(child)
+                stack.append(child)
+    return found
+
+
+def _libproc_works(pid):
+    """Whether an empty libproc answer for `pid` can be believed: libproc has just listed `pid` as this tool's own child, or, when `pid`
+    is the tool itself, has just listed the tool as its parent's child. A library that lists nothing for a live process is not working
+    (as in a sandbox that denies it)."""
+    if pid in (_children_libproc(os.getpid()) or []):
+        return True
+    return pid == os.getpid() and os.getpid() in (_children_libproc(os.getppid()) or [])
+
+
+def descendants(pid):
+    """Every process below `pid` (never one beside it): from /proc where there is one, else from libproc, else from ps
+    (given PS_WAIT seconds). libproc is believed when it lists a child; an empty answer is believed only when libproc has
+    just listed this tool's own child `pid` (a library that answers nothing for a live child is not working, as in a
+    sandbox that denies it), and otherwise ps is asked."""
+    kids = {}
+    try:
+        if os.path.isdir("/proc/self"):
+            for entry in os.listdir("/proc"):
+                if entry.isdigit():
+                    try:
+                        with open("/proc/%s/stat" % entry, "rb") as fh:
+                            fields = fh.read().rsplit(b")", 1)[1].split()
+                        kids.setdefault(int(fields[1]), []).append(int(entry))
+                    except (OSError, IndexError, ValueError):
+                        continue
+        else:
+            first = _children_libproc(pid)
+            if first:
+                found, seen, stack = list(first), {pid, *first}, list(first)
+                while stack:
+                    for child in _children_libproc(stack.pop()) or []:
+                        if child not in seen:
+                            seen.add(child)
+                            found.append(child)
+                            stack.append(child)
+                return found
+            if first is not None and _libproc_works(pid):
+                return []
+            out = subprocess.run(["ps", "-A", "-o", "pid=,ppid="], capture_output=True, text=True, timeout=PS_WAIT).stdout
+            for line in out.splitlines():
+                parts = line.split()
+                if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                    kids.setdefault(int(parts[1]), []).append(int(parts[0]))
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return _below(kids, pid)
+
+
+def _process_table():
+    """{pid: (parent pid, process group)} for every process, from /proc where there is one, else from ps (given PS_WAIT seconds);
+    None when neither answers."""
+    table = {}
+    try:
+        if os.path.isdir("/proc/self"):
+            for entry in os.listdir("/proc"):
+                if entry.isdigit():
+                    try:
+                        with open("/proc/%s/stat" % entry, "rb") as fh:
+                            fields = fh.read().rsplit(b")", 1)[1].split()
+                        table[int(entry)] = (int(fields[1]), int(fields[2]))
+                    except (OSError, IndexError, ValueError):
+                        continue
+        else:
+            out = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,pgid="], capture_output=True, text=True, timeout=PS_WAIT).stdout
+            for line in out.splitlines():
+                parts = line.split()
+                if len(parts) == 3 and all(part.isdigit() for part in parts):
+                    table[int(parts[0])] = (int(parts[1]), int(parts[2]))
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return table
+
+
+def _sample(pid):
+    """Remember what is below `pid` now, by the cheap routes only (/proc, or libproc on macOS; never a program): a process that is seen
+    here and later loses its parent is the tool's to end, and one that was never seen is not."""
+    try:
+        if os.path.isdir("/proc/self"):
+            kids = {}
+            for child, (parent, _group) in (_process_table() or {}).items():
+                kids.setdefault(parent, []).append(child)
+            SEEN.update(_below(kids, pid))
+        else:
+            seen, stack = {pid}, [pid]
+            while stack:
+                for child in _children_libproc(stack.pop()) or []:
+                    if child not in seen:
+                        seen.add(child)
+                        stack.append(child)
+            SEEN.update(seen - {pid})
+    except Exception:  # noqa: BLE001 - a sample is best effort
+        pass
+
+
+def _pipe_inodes(proc):
+    """The inodes of the pipes the tool holds with `proc` (Linux: /proc names a pipe by it; elsewhere the answer is not used)."""
+    found = set()
+    for handle in (proc.stdin, proc.stdout, proc.stderr):
+        try:
+            if handle is not None:
+                found.add(os.fstat(handle.fileno()).st_ino)
+        except (OSError, ValueError):
+            pass
+    return found
+
+
+def _holds_pipe(pid, inodes):
+    """Whether `pid` holds one of the pipes (Linux only, from /proc/<pid>/fd): the pipes are private to the tool and what it started."""
+    try:
+        for name in os.listdir("/proc/%d/fd" % pid):
+            try:
+                link = os.readlink("/proc/%d/fd/%s" % (pid, name))
+            except OSError:
+                continue
+            if link.startswith("pipe:[") and link.endswith("]") and int(link[6:-1]) in inodes:
+                return True
+    except (OSError, ValueError):
+        pass
+    return False
+
+
+def reap_orphans(inodes=None):
+    """Kill what this tool started and lost: a process of the tool's own group that is no longer below the tool (its parent ended and
+    init adopted it, so the walk from a program's pid cannot find it) and that the tool knows to be its own: it was seen below the tool
+    (SEEN: the programs it started, the trees it listed, the samples taken while it waited), or, on Linux, it holds one of `inodes`,
+    the pipes the tool made. A process the tool never saw in its tree is not touched, whoever leads the group: the next stage of a
+    pipeline the tool heads, or a process a launcher put in the group, is not the tool's. A process outside the group is never looked
+    at, and a pid is checked against the group again at the moment it is signalled. Returns the pids signalled."""
+    me = os.getpid()
+    try:
+        if os.getpgrp() != me:
+            return []
+    except OSError:
+        return []
+    table = _process_table()
+    if not table:
+        return []
+    kids = {}
+    for pid, (parent, _group) in table.items():
+        kids.setdefault(parent, []).append(pid)
+    below = set(_below(kids, me))
+    on_linux = os.path.isdir("/proc/self")
+    killed = []
+    for pid, (_parent, group) in table.items():
+        if group != me or pid == me or pid in below:
+            continue
+        if pid not in SEEN and not (inodes and on_linux and _holds_pipe(pid, inodes)):
+            continue
+        try:
+            if os.getpgid(pid) != me:
+                continue
+            os.kill(pid, signal.SIGKILL)
+            killed.append(pid)
+        except OSError:
+            pass
+    return killed
+
+
+def kill_tree(proc):
+    """Kill the program and everything it started. The children are listed first: once the parent is gone they are
+    adopted by init and can no longer be found below it. A program already waited for is not touched: its pid is free to
+    be another process's, and the walk below it would be that process's children."""
+    if proc.poll() is not None:
+        return
+    try:
+        proc.send_signal(signal.SIGSTOP)    # a program that is stopped forks nothing more while its tree is listed
+    except OSError:
+        pass
+    try:
+        victims = descendants(proc.pid)
+        SEEN.update(victims)
+    finally:
+        try:
+            proc.kill()
+        except OSError:
+            pass
+    for pid in victims:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+
+
+PIPE_GRACE = 1.0    # seconds the pipes of a program that has ended are given to reach end of file
+
+
+def communicate_bounded(proc, seconds, input=None):
+    """(stdout bytes, stderr bytes, timed out) for a program started with pipes, in bytes. At `seconds` the program and what it started
+    are killed (timed out). A program that has ended while something it started still holds its pipes (a daemon, a helper that
+    inherited them) does not hold the tool: the pipes are given PIPE_GRACE seconds, what the program wrote is kept, what the tool
+    lost is killed (reap_orphans), and the pipes are let go. The pipes are read here and by nothing else, so letting them go is safe."""
+    deadline = time.monotonic() + max(0.1, seconds)
+    out = err = b""
+    started, timed_out = False, False
+    while proc.poll() is None:
+        now = time.monotonic()
+        if now >= deadline:
+            timed_out = True
+            kill_tree(proc)
+            break
+        _sample(proc.pid)
+        try:
+            out, err = proc.communicate(None if started else input, timeout=max(0.01, min(0.2, deadline - now)))
+            return out or b"", err or b"", False
+        except subprocess.TimeoutExpired as exc:
+            started = True
+            out, err = exc.stdout or b"", exc.stderr or b""
+    try:
+        out, err = proc.communicate(None if started else input, timeout=PIPE_GRACE)
+    except subprocess.TimeoutExpired as exc:
+        out, err = exc.stdout or b"", exc.stderr or b""
+        reap_orphans(_pipe_inodes(proc))
+        for pipe in (proc.stdin, proc.stdout, proc.stderr):
+            try:
+                if pipe is not None:
+                    pipe.close()
+            except (OSError, ValueError):
+                pass
+    try:
+        proc.wait(timeout=PIPE_GRACE)
+    except subprocess.TimeoutExpired:
+        pass
+    return out or b"", err or b"", timed_out
+
+
+def kill_all():
+    """End every program the tool has running, with what each started. Then everything below the tool itself, which is the tool's own: a
+    program forked a moment before it was entered in ACTIVE is among it. Then what an earlier program started and lost (reap_orphans)."""
+    for proc in list(ACTIVE):
+        kill_tree(proc)
+    below = descendants(os.getpid())
+    SEEN.update(below)
+    for pid in below:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+    reap_orphans()
+
+
+def _on_signal(signum, _frame):
+    for other in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(other, signal.SIG_IGN)     # the first signal counts: a second one starts no second answer
+    kill_all()
+    last_word = STATE.get("last_word")
+    if last_word:
+        try:
+            last_word(signum)
+        except Exception:  # noqa: BLE001 - a last word is best effort
+            pass
+    os._exit(128 + signum)
+
+
+def preflight(argv, seconds):
+    """Run a short program, bounded; (exit code or None, stdout bytes, stderr bytes, timed out)."""
+    try:
+        proc = spawn(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except OSError as exc:
+        return None, b"", describe(exc).encode("utf-8", "replace"), False
+    ACTIVE.append(proc)
+    try:
+        out, err, timed_out = communicate_bounded(proc, max(1.0, seconds))
+        return (None if timed_out else proc.returncode), out, err, timed_out
+    finally:
+        ACTIVE.remove(proc)
+
+
+def run_to_files(argv, stdout_path, stderr_path, seconds, cwd=None):
+    """One program with its output in files, killed with what it started at `seconds`. (exit code, timed out)."""
+    with open(stdout_path, "wb") as stdout, open(stderr_path, "wb") as stderr:
+        proc = spawn(argv, stdout=stdout, stderr=stderr, cwd=cwd)
+        ACTIVE.append(proc)
+        try:
+            return proc.wait(timeout=max(0.1, seconds)), False
+        except subprocess.TimeoutExpired:
+            kill_tree(proc)
+            proc.wait()
+            return None, True
+        finally:
+            ACTIVE.remove(proc)
+
+
+def install_signal_handlers():
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(signum, _on_signal)
+# END SHARED PROCESS
+
 IOS_MARKERS = (
     "private/var/mobile/",
     "private/var/containers/",
@@ -591,6 +968,7 @@ def tar_verdict(watch, listed, cut_short=False):
 
 
 # --- tar listing: begin --------------------------------------------------------------------------
+CLOCK_BYTES = 16 << 20       # the clock is read at least once for every this many decoded bytes of a compressed tar, so that one huge member cannot outlast max-seconds by more than the time to decode this much
 # Held byte for byte equal in the three recipes that open a tar by its path (a test compares the copies).
 # A plain tar is read through Guarded and a gzip, bzip2 or xz one through Decoded; both keep the watch
 # just ahead of the library and give it an end of data where the watch stops it. The library is opened with
@@ -654,8 +1032,11 @@ class Decoded(io.RawIOBase):
 
     PIECE = 1 << 20
 
-    def __init__(self, source, kind, watch, budget=None):
+    def __init__(self, source, kind, watch, budget=None, deadline=None):
         self.source, self.kind, self.watch = source, kind, watch
+        self.deadline = deadline      # the time (time.monotonic) past which the stream serves no more, or None
+        self.looked = 0               # decoded bytes since the clock was last read
+        self.timed_out = False        # the stream was ended because the deadline had passed
         self.budget = budget          # at most this many decoded bytes, or None
         self.produced = 0
         self.exceeded = False         # the stream held more than the budget
@@ -680,9 +1061,15 @@ class Decoded(io.RawIOBase):
 
     def piece(self):
         """The next decoded piece, or None at the end of the stream or of the budget."""
-        if self.exceeded:
+        if self.exceeded or self.timed_out:
             return None
         out = self._piece()
+        if out and self.deadline is not None:
+            self.looked += len(out)
+            if self.looked >= CLOCK_BYTES:
+                self.looked = 0
+                if time.monotonic() > self.deadline:
+                    self.timed_out = True      # this piece is served; the next call ends the stream, in the middle of a member if need be
         if out is None or self.budget is None:
             return out
         room = self.budget - self.produced
@@ -773,7 +1160,7 @@ class TarList:
     would refuse; `finish()` lets the watch follow the rest, and `watch` then says whether the end block came.
     """
 
-    def __init__(self, path, budget=None):
+    def __init__(self, path, budget=None, deadline=None):
         self.watch = TarWatch()
         self.handle = open(path, "rb")
         self.walker = None
@@ -786,7 +1173,7 @@ class TarList:
                 self.source = Guarded(self.handle, self.walker, os.fstat(self.handle.fileno()).st_size, self.watch)
                 mode = "r:"
             else:
-                self.source = Decoded(self.handle, kind, self.watch, budget)
+                self.source = Decoded(self.handle, kind, self.watch, budget, deadline)
                 mode = "r|"
                 self.source = io.BufferedReader(self.source)
             self.archive = tarfile.open(fileobj=self.source, mode=mode, encoding="utf-8", errors="surrogateescape", ignore_zeros=True)
@@ -807,6 +1194,11 @@ class TarList:
     def finish(self):
         source = self.source.raw if isinstance(self.source, io.BufferedReader) else self.source
         source.finish()
+
+    def timed_out(self):
+        """Whether the clock ended a compressed tar's stream, which can be inside a member."""
+        source = self.source.raw if isinstance(self.source, io.BufferedReader) else self.source
+        return bool(getattr(source, "timed_out", False))
 
     def exceeded(self):
         """Whether a compressed tar held more than the budget (the listing stopped there)."""
@@ -892,9 +1284,15 @@ def detect(path):
     return False, "tar has no iOS full file-system marker", None
 
 
-def write_coverage(out, status, covered, errors, limits=(), **more):
+def basis_of(lead, reasons):
+    """The sentence status_basis is: the lead, then the first reasons (all of them are in `errors`)."""
+    reasons = [str(r).replace("\n", " ") for r in reasons]
+    return lead + "; ".join(reasons[:3]) + (" (and %d more in errors)" % (len(reasons) - 3) if len(reasons) > 3 else "")
+
+
+def write_coverage(out, status, covered, errors, basis, limits=(), **more):
     with open(os.path.join(out, "coverage.json"), "w", encoding="utf-8") as handle:
-        json.dump({"recipe": "ios-ileapp", "status": status, "covered": covered, "not_covered": NOT_COVERED,
+        json.dump({"recipe": "ios-ileapp", "status": status, "status_basis": basis, "covered": covered, "not_covered": NOT_COVERED,
                    "limits_hit": list(limits), "errors": list(errors), **more}, handle, indent=2, sort_keys=True)
         handle.write("\n")
 
@@ -948,45 +1346,31 @@ def child_files(directory):
 
 
 LEAPP_SECONDS = 14100      # recipe.json limits.seconds (14400) less the time to write the account of the run
-STOP_SIGNALS = [getattr(signal, n) for n in ("SIGTERM", "SIGINT", "SIGHUP") if hasattr(signal, n)]
-
-
-def end_group(child):
-    """End the program and everything it started (it runs in a process group of its own): a request to stop, then, after ten seconds, a kill."""
-    for number in (signal.SIGTERM, signal.SIGKILL):
-        try:
-            os.killpg(child.pid, number)
-        except (ProcessLookupError, PermissionError):
-            return
-        try:
-            child.wait(timeout=10)
-            return
-        except subprocess.TimeoutExpired:
-            continue
+def last_word(signum):
+    """The one line a stopped recipe prints (exit 128 plus the signal): the account written before the program started already says partial."""
+    sys.stdout.write(json.dumps({"ok": False, "status": "partial", "status_basis": "the recipe was stopped by %s before iLEAPP finished: coverage.json, written before it started, says partial"
+                                 % signal.Signals(signum).name}) + "\n")
+    sys.stdout.flush()
 
 
 def run_program(command, stdout, stderr, cwd, env, seconds):
-    """(exit code, whether the time ran out) of the program, run in a process group of its own. At `seconds` the group is ended and what the
-    program wrote stays. A stop signal ends the group too and then the recipe (exit 128 plus the signal): the account written before the program
-    started already says partial, and nothing is left running after the recipe."""
-    child = subprocess.Popen(command, stdout=stdout, stderr=stderr, cwd=cwd, env=env, start_new_session=True)
-
-    def stop(signum, frame):
-        for number in STOP_SIGNALS:
-            signal.signal(number, signal.SIG_IGN)
-        end_group(child)
-        raise SystemExit(128 + signum)
-
-    before = {number: signal.signal(number, stop) for number in STOP_SIGNALS}
+    """(exit code, whether the time ran out) of the program. It runs in this recipe's own process group, never in a session of its own (the shared
+    PROCESS block above: the harness ends a recipe by killing its group, and a program outside that group would go on writing into the output after
+    the recipe was gone), and on Linux the kernel is asked to end it if the recipe dies. At `seconds` it and everything it started are ended and
+    what it wrote stays. A stop signal ends the whole tree, whatever the program does with SIGTERM, before the recipe leaves (exit 128 plus the
+    signal): the account written before the program started already says partial."""
+    STATE["last_word"] = last_word
+    install_signal_handlers()
+    proc = spawn(command, stdout=stdout, stderr=stderr, cwd=cwd, env=env)
+    ACTIVE.append(proc)
     try:
         try:
-            return child.wait(timeout=seconds), False
+            return proc.wait(timeout=seconds), False
         except subprocess.TimeoutExpired:
-            end_group(child)
-            return child.wait(), True
+            kill_tree(proc)
+            return proc.wait(), True
     finally:
-        for number, handler in before.items():
-            signal.signal(number, handler)
+        ACTIVE.remove(proc)
 
 
 def run(path, kind, out, seconds=LEAPP_SECONDS):
@@ -994,14 +1378,16 @@ def run(path, kind, out, seconds=LEAPP_SECONDS):
     report = os.path.join(out, "ileapp")
     if os.path.lexists(report) or os.path.lexists(os.path.join(out, "coverage.json")):
         # Before anything is written: an earlier run's coverage and report stay as they are.
-        print(json.dumps({"ok": False, "status": "refused", "why": "the output directory already holds ileapp/ or coverage.json: the recipe does not write over an earlier run"}))
+        print(json.dumps({"ok": False, "status": "failed", "status_basis": "the output directory already holds the files of an earlier run, and this recipe never writes over one: nothing was run", "why": "the output directory already holds ileapp/ or coverage.json: the recipe does not write over an earlier run"}))
         return 2
     os.makedirs(out, exist_ok=True)
     # Said before iLEAPP starts: a run stopped at its limit leaves this, and is read as partial.
-    write_coverage(out, "partial", "started; iLEAPP did not finish (stopped before its end)", ["the run ended before iLEAPP did"])
+    write_coverage(out, "partial", "started; iLEAPP did not finish (stopped before its end)", ["the run ended before iLEAPP did"],
+                   "the run started and iLEAPP had not finished when this was written: a run that is stopped before its end leaves this account")
     prog = program()
     if not prog:
-        write_coverage(out, "failed", "nothing: iLEAPP is not in this image", ["ileapp is not on PATH in this job image"])
+        write_coverage(out, "failed", "nothing: iLEAPP is not in this image", ["ileapp is not on PATH in this job image"],
+                       "iLEAPP is not in this image, so nothing was parsed")
         return 1
     path = os.path.abspath(path)
     scratch = os.path.join(out, "ileapp-run")
@@ -1093,13 +1479,17 @@ def run(path, kind, out, seconds=LEAPP_SECONDS):
     if rc == 0 and tsvs and not problems and not timed_out:
         write_coverage(out, "complete", "iLEAPP exited 0 over the %s and its log accounts for %d module(s): %d completed, %d with no record (no source file or no data)%s; %d TSV report(s)"
                        % (kind, len(modules), counts["completed"], counts["no_record"],
-                          ", %d that do not take this operating-system version (see modules.tsv)" % gated if gated else "", tsvs), errors, modules=receipt_json)
+                          ", %d that do not take this operating-system version (see modules.tsv)" % gated if gated else "", tsvs), errors,
+                       "iLEAPP exited 0, wrote %d TSV report(s) and its log accounts for every module it started as completed, no_record or unsupported" % tsvs,
+                       modules=receipt_json)
     elif reports:
         write_coverage(out, "partial", "iLEAPP wrote %d report file(s); %d module(s) in its log: %d completed, %d no_record, %d unsupported, %d errored, %d errors_logged, %d unknown"
                        % (len(reports), len(modules), counts["completed"], counts["no_record"], gated, counts["errored"], counts["errors_logged"], counts["unknown"]),
-                       (errors + problems) or ["iLEAPP wrote no TSV report"], modules=receipt_json)
+                       (errors + problems) or ["iLEAPP wrote no TSV report"],
+                       basis_of("partial because ", (errors + problems) or ["iLEAPP wrote no TSV report"]), modules=receipt_json)
     else:
-        write_coverage(out, "failed", "nothing parsed", (errors + problems) or ["iLEAPP wrote no report"], modules=receipt_json)
+        write_coverage(out, "failed", "nothing parsed", (errors + problems) or ["iLEAPP wrote no report"],
+                       basis_of("nothing was parsed: ", (errors + problems) or ["iLEAPP wrote no report"]), modules=receipt_json)
     return 0 if rc == 0 and not timed_out else 1
 
 
@@ -1115,23 +1505,23 @@ def main():
     try:
         _, path = target_of(args.target)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
-        print(json.dumps({"ok": False, "error": str(exc)}))
+        print(json.dumps({"ok": False, "status": "failed", "status_basis": "the target could not be read, so nothing was run", "error": str(exc)}))
         return 2
     applies, why, kind = detect(path)
     if args.command == "detect":
         print(json.dumps({"applies": applies, "why": why}))
         return 0 if applies else 1
     if not args.out:
-        print(json.dumps({"ok": False, "error": "run needs --out DIR"}))
+        print(json.dumps({"ok": False, "status": "failed", "status_basis": "run was given no output directory, so nothing was run", "error": "run needs --out DIR"}))
         return 2
     if not applies:
-        print(json.dumps({"ok": False, "status": "unsupported", "why": why}))
+        print(json.dumps({"ok": False, "status": "failed", "status_basis": "the target is not one this recipe reads, so nothing was run", "why": why}))
         return 2
     rc = run(path, kind, args.out, args.max_seconds)
     if rc == 2:
         return rc
-    status = json.load(open(os.path.join(os.path.abspath(args.out), "coverage.json"), encoding="utf-8")).get("status")
-    print(json.dumps({"ok": rc == 0, "status": status}))
+    account = json.load(open(os.path.join(os.path.abspath(args.out), "coverage.json"), encoding="utf-8"))
+    print(json.dumps({"ok": rc == 0, "status": account.get("status"), "status_basis": account.get("status_basis")}))
     return rc
 
 
