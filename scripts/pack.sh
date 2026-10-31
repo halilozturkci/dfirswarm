@@ -68,6 +68,7 @@ skills, skill_tools, skill_needs, skill_host = {}, set(), set(), set()
 sdir = p("skills")
 if os.path.isdir(sdir):
     for dirpath, _dirs, files in os.walk(sdir):
+        _dirs.sort()  # the file system's order differs; warnings come in one order
         for f in sorted(files):
             if not f.endswith(".md") or f == "INDEX.md":
                 continue
@@ -266,7 +267,8 @@ def _dep_names(pack_dir, seen, acc):
     if os.path.isdir(tdir):
         acc["tools"].update(n for n in os.listdir(tdir) if os.path.isdir(os.path.join(tdir, n)))
     for dirpath, _d, files in os.walk(os.path.join(pack_dir, "skills")):
-        for f in files:
+        _d.sort()
+        for f in sorted(files):
             if f.endswith(".md"):
                 m = FM.match(open(os.path.join(dirpath, f), encoding="utf-8", errors="replace").read())
                 if m:
@@ -506,7 +508,7 @@ for s in man.get("secrets", []) or []:
 # --- checksums --------------------------------------------------------------
 def walk_files():
     for dirpath, dirs, files in os.walk(root):
-        dirs[:] = [d for d in dirs if not d.startswith(".") and d != "__pycache__"]
+        dirs[:] = sorted(d for d in dirs if not d.startswith(".") and d != "__pycache__")
         for f in sorted(files):
             if f.startswith("."):
                 continue
@@ -583,7 +585,8 @@ if mode == "seal":
         digests.pop("skills/INDEX.md", None)
         h = hashlib.sha256(open(p("skills", "INDEX.md"), "rb").read()).hexdigest()
         digests["skills/INDEX.md"] = h
-    man["checksums"] = {"sha256": digests}
+    # Sorted by path, so one pack gives one pack.json on every file system.
+    man["checksums"] = {"sha256": dict(sorted(digests.items()))}
     # Assign, never setdefault: a tool added to an already-sealed pack has to
     # reach the manifest, or the manifest quietly describes the pack it used to be.
     man["tools"] = sorted(tools)

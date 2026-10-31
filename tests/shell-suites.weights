@@ -71,3 +71,4 @@ catalog-signatures 1
 goal-checks-bind 1
 trace-gate 1
 trace-stdin 1
+pack-seal-order 2
