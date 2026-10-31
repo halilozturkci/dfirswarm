@@ -25,6 +25,10 @@ concurrency:
 permissions:
   contents: read
 
+# The Linux jobs run on ubuntu-24.04, not ubuntu-latest: GitHub moves ubuntu-latest to
+# Ubuntu 26 from 2026-10-19, which changes the Linux Python and the AppArmor and
+# user-namespace setup these jobs adjust. Move the label on purpose, in a change
+# that tests it.
 jobs:
   select:
     # Which suites this run needs. A pull request runs the suites that read
@@ -40,7 +44,7 @@ jobs:
     # the microVM job is needed: everything, or a pack's requirements (the
     # images are built from them).
     name: which suites this change needs
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       all: ${{ steps.s.outputs.all }}
@@ -85,7 +89,7 @@ jobs:
   test:
     name: linux · ${{ matrix.part }}
     needs: select
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # One job of six, run side by side. As one job it was the longest of the
     # run and the one every pull request waited for: 67 min 12 s on a green run
     # of 2026-10-27 (npm test 31 min 36 s, test:bash 24 min 6 s, the browser 8
@@ -219,7 +223,7 @@ jobs:
     # newest 22; this is the floor, so the claim is tested, not assumed.
     name: node tests ${{ matrix.node }} · Node 22.19 (the engines floor)
     needs: select
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Two parts (node's own --test-shard): as one job the node suites took 20 to
     # 34 min over 60 runs and 35 min 30 s on a green run of 2026-10-27, the
     # longest job of the run once the Linux job was split. The typecheck runs
@@ -278,7 +282,7 @@ jobs:
     # builds on node:24. The node suites again, on 24.
     name: node tests ${{ matrix.node }} · Node 24 (the VM image's)
     needs: select
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Two parts, as the Node 22.19 job: one job took 19 to 32 min over 60 runs
     # and 34 min 36 s on a green run of 2026-10-27.
     timeout-minutes: 45
@@ -332,7 +336,7 @@ jobs:
     # be replayed.
     if: github.event_name == 'pull_request'
     name: replay impact · contract fixtures, base against head
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - run: git config --global init.defaultBranch main
@@ -356,7 +360,7 @@ jobs:
     # sees it. A pull request against its base; a push to main against the
     # commit before it.
     name: pack versions · base against head
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - run: git config --global init.defaultBranch main
@@ -373,7 +377,7 @@ jobs:
     # The guard suites must pass there too, with the record saying what the
     # host could not enforce rather than the guard pretending.
     name: guard suites · Landlock only
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - run: git config --global init.defaultBranch main
@@ -550,7 +554,7 @@ jobs:
     # not change what the VMs boot leaves it out (the select job's vm).
     needs: select
     if: needs.select.outputs.vm == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 50
     steps:
       - run: git config --global init.defaultBranch main
@@ -625,13 +629,31 @@ jobs:
     # tests/ci-shards.test.ts holds it to need every other job here.
     name: CI green
     if: always()
-    needs: [select, test, node-floor, node-24, replay-impact, pack-versions, guards-without-namespaces, macos, microvm]
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # It does not need the macOS job. The Mac is one machine, and a part queued
+    # behind another run must not hold every pull request, so the parts are read
+    # from this run attempt's own job list by scripts/ci-green.ts (the rule and
+    # its table are in tests/ci-green.test.ts):
+    #   - a part that failed or was cancelled fails this check;
+    #   - a part that is running is waited for, up to its own time limit;
+    #   - a part that has not started after the grace period, or was skipped,
+    #     does not block, and a notice names it.
+    # The timeout covers the grace period plus the longest part (90 minutes).
+    needs: [select, test, node-floor, node-24, replay-impact, pack-versions, guards-without-namespaces, microvm]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 115
+    permissions:
+      contents: read
+      actions: read
     steps:
-      - name: Every job passed or was skipped
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+      - name: Every job passed or was skipped, and no macOS part failed
         env:
           NEEDS: ${{ toJSON(needs) }}
-        run: |
-          printf '%s' "$NEEDS" | jq -r 'to_entries[] | "\(.value.result)\t\(.key)"'
-          printf '%s' "$NEEDS" | jq -e 'all(.[]; .result == "success" or .result == "skipped")' > /dev/null
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          node --experimental-strip-types --no-warnings scripts/ci-green.ts
+          --needs-env NEEDS
+          --jobs-from-gh "${{ github.repository }}" "${{ github.run_id }}" "${{ github.run_attempt }}"

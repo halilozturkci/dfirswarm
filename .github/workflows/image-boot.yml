@@ -27,6 +27,7 @@ on:
 permissions:
   contents: read
 
+# ubuntu-24.04, not ubuntu-latest, until a deliberate move (see ci.yml).
 jobs:
   boot:
     name: boot · ${{ matrix.profile }}${{ matrix.arch == 'arm64' && ' · arm64' || '' }}
@@ -37,7 +38,7 @@ jobs:
         arch: [amd64]
         include:
           - { profile: base, arch: arm64 }
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 120
     env:
       TAG: dev-${{ matrix.arch }}

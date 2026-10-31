@@ -59,6 +59,7 @@ concurrency:
 permissions:
   contents: read
 
+# ubuntu-24.04, not ubuntu-latest, until a deliberate move (see ci.yml).
 jobs:
   build:
     name: build · ${{ matrix.profile }}${{ matrix.arch == 'arm64' && ' · arm64' || '' }}
@@ -70,7 +71,7 @@ jobs:
         include:
           - { profile: memory, arch: arm64 }
           - { profile: re, arch: arm64 }
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 90
     env:
       TAG: dev-${{ matrix.arch }}
