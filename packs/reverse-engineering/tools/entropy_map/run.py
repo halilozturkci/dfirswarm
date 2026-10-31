@@ -32,7 +32,7 @@ import time
 from collections import Counter
 from pathlib import Path
 
-TOOL = {"name": "entropy_map", "version": 3}
+TOOL = {"name": "entropy_map", "version": 4}
 PARSER = "entropy_map/3"
 SCHEMA_VERSION = 2
 MAX_WINDOW = 1 << 26                    # 64 MiB: one window is held in memory at a time
@@ -90,10 +90,27 @@ def output_dir():
     return Path("work") / agent / "tool-output"
 
 
+def own_dir(path):
+    """Create the tool-output directory and return None, or say why it is not used: a symbolic link anywhere on the way (the directory itself,
+    or work/ or the agent's directory under it) would send the tables and the private names file somewhere else, and O_NOFOLLOW guards only
+    the last name of a file. In a job only the part under $OUT is checked ($OUT is the job service's)."""
+    path = Path(path)
+    out = os.environ.get("OUT")
+    start = len(Path(out).parts) if out and path.parts[:len(Path(out).parts)] == Path(out).parts else 0
+    for i in range(max(start, 1), len(path.parts) + 1):
+        step = Path(*path.parts[:i])
+        if os.path.islink(step):
+            return "%s is a symbolic link: refused, nothing written through it" % step
+    path.mkdir(parents=True, exist_ok=True)
+    return None
+
+
 def create_unique(directory, name):
     """Create a new file `name` in `directory`, exclusively, mode 0600; a name that is taken gets -2, -3, ... before its extension.
     Returns (path, file object, name used). Nothing that exists is replaced or followed."""
-    directory.mkdir(parents=True, exist_ok=True)
+    refused = own_dir(directory)
+    if refused:
+        raise OSError(errno.EPERM, refused)
     stem, dot, ext = name.rpartition(".")
     if not dot:
         stem, ext = name, ""

@@ -50,7 +50,7 @@ import xml.parsers.expat
 import zipfile
 from pathlib import Path
 
-TOOL = {"name": "doc_probe", "version": 5}
+TOOL = {"name": "doc_probe", "version": 6}
 PARSER = "doc_probe/4"
 NOTE = ("Static container triage only. Markers, procedure names and external relationships do not prove execution or "
         "retrieval. Record parser coverage before drawing an absence conclusion.")
@@ -472,6 +472,21 @@ def resolve_output(out, what="output"):
     return str(dest.relative_to(root))
 
 
+def own_dir(path):
+    """Create the tool-output directory and return None, or say why it is not used: a symbolic link anywhere on the way (the directory itself,
+    or work/ or the agent's directory under it) would send the tables and the private names file somewhere else, and O_NOFOLLOW guards only
+    the last name of a file. In a job only the part under $OUT is checked ($OUT is the job service's)."""
+    path = Path(path)
+    out = os.environ.get("OUT")
+    start = len(Path(out).parts) if out and path.parts[:len(Path(out).parts)] == Path(out).parts else 0
+    for i in range(max(start, 1), len(path.parts) + 1):
+        step = Path(*path.parts[:i])
+        if os.path.islink(step):
+            return "%s is a symbolic link: refused, nothing written through it" % step
+    path.mkdir(parents=True, exist_ok=True)
+    return None
+
+
 # --- lossless paging ------------------------------------------------------------------------------------------------
 
 class LosslessPage:
@@ -500,7 +515,10 @@ class LosslessPage:
 
     def _open(self):
         try:
-            self.dir.mkdir(parents=True, exist_ok=True)
+            refused = own_dir(self.dir)
+            if refused:
+                self.not_written = refused
+                return
             flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
             for n in range(1, 100):
                 name = "%s.jsonl" % self.stem if n == 1 else "%s-%d.jsonl" % (self.stem, n)
@@ -590,7 +608,9 @@ class SecretValues:
         # (O_EXCL does not follow a link, a dangling one included), instead of failing, or writing through it,
         # after the read. With nothing withheld it stays an empty file, mode 0600, and the answer says written: 0.
         try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
+            refused = own_dir(self.path.parent)
+            if refused:
+                raise SecretValuesRefused("the values file could not be created: %s" % refused)
             fd = os.open(str(self.path), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
         except FileExistsError:
             raise SecretValuesRefused("the values file already exists: %s" % self.path)
@@ -651,7 +671,9 @@ class Names:
         self.values.add(finding_id, {"kind": kind}, real)
         if self._fh is None and self.error is None:
             try:
-                self.dir.mkdir(parents=True, exist_ok=True)
+                refused = own_dir(self.dir)
+                if refused:
+                    raise OSError(refused)
                 for n in range(1, 100):
                     name = "%s.jsonl" % self.NAME if n == 1 else "%s-%d.jsonl" % (self.NAME, n)
                     try:

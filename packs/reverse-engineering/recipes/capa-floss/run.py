@@ -27,6 +27,7 @@ import subprocess
 import sys
 import time
 import unicodedata
+from pathlib import Path
 
 # BEGIN SHARED WITHHOLDING
 # The same text is in every tool that withholds identifier-shaped strings (the network, base, virtualization and
@@ -1506,6 +1507,34 @@ def receipt_names(out_dir):
     return new_name(out_dir, "coverage", ".json"), new_name(out_dir, "index", ".tsv")
 
 
+def own_dir(path):
+    """Create the tool-output directory and return None, or say why it is not used: a symbolic link anywhere on the way (the directory itself,
+    or work/ or the agent's directory under it) would send the tables and the private names file somewhere else, and O_NOFOLLOW guards only
+    the last name of a file. In a job only the part under $OUT is checked ($OUT is the job service's)."""
+    path = Path(path)
+    out = os.environ.get("OUT")
+    start = len(Path(out).parts) if out and path.parts[:len(Path(out).parts)] == Path(out).parts else 0
+    for i in range(max(start, 1), len(path.parts) + 1):
+        step = Path(*path.parts[:i])
+        if os.path.islink(step):
+            return "%s is a symbolic link: refused, nothing written through it" % step
+    path.mkdir(parents=True, exist_ok=True)
+    return None
+
+
+def make_out_dir(out_dir):
+    """Create the recipe's output directory and return None, or say why it was not: a symbolic link anywhere on the way inside the run
+    directory (own_dir) or as the directory itself when it is elsewhere. Nothing is written through a link."""
+    absolute = os.path.abspath(out_dir)
+    cwd = os.getcwd()
+    if absolute == cwd or absolute.startswith(cwd + os.sep):
+        return own_dir(Path(os.path.relpath(absolute, cwd)))
+    if os.path.islink(absolute):
+        return "%s is a symbolic link: refused, nothing written through it" % absolute
+    os.makedirs(absolute, exist_ok=True)
+    return None
+
+
 def write_receipt(out_dir, name, text):
     """`text` into this run's own receipt file, whole or not at all: a temporary file beside it, then a rename over it."""
     import tempfile
@@ -1545,7 +1574,12 @@ def write_results(state):
 
 
 def run(path, out_dir, fmt, budget):
-    os.makedirs(out_dir, mode=0o700, exist_ok=True)
+    existed = os.path.isdir(out_dir)
+    refused = make_out_dir(out_dir)
+    if refused:
+        raise OSError(errno.EPERM, refused)
+    if not existed:
+        os.chmod(out_dir, 0o700)
     started = time.monotonic()
     sample = os.path.abspath(path)
     state = {"out_dir": out_dir, "fmt": fmt, "shown": shown_path(path), "errors": [], "engines": {}, "matches": None}
@@ -1713,7 +1747,12 @@ def main(argv):
     if "--out" not in args:
         return refuse("run needs --out DIR")
     if fmt is None:
-        os.makedirs(args["--out"], mode=0o700, exist_ok=True)
+        existed = os.path.isdir(args["--out"])
+        refused = make_out_dir(args["--out"])
+        if refused:
+            return refuse("the output directory cannot be written: %s" % scrub(refused, "text"))
+        if not existed:
+            os.chmod(args["--out"], 0o700)
         name, index = receipt_names(args["--out"])
         if index != "index.tsv":
             os.unlink(os.path.join(args["--out"], index))

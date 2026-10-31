@@ -28,6 +28,7 @@ import struct
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PACK = os.path.abspath(os.path.join(HERE, "..", ".."))
@@ -509,6 +510,34 @@ def run_child(script, args, stdout_path, stderr_path, env, timeout):
             ACTIVE.remove(proc)
 
 
+def own_dir(path):
+    """Create the tool-output directory and return None, or say why it is not used: a symbolic link anywhere on the way (the directory itself,
+    or work/ or the agent's directory under it) would send the tables and the private names file somewhere else, and O_NOFOLLOW guards only
+    the last name of a file. In a job only the part under $OUT is checked ($OUT is the job service's)."""
+    path = Path(path)
+    out = os.environ.get("OUT")
+    start = len(Path(out).parts) if out and path.parts[:len(Path(out).parts)] == Path(out).parts else 0
+    for i in range(max(start, 1), len(path.parts) + 1):
+        step = Path(*path.parts[:i])
+        if os.path.islink(step):
+            return "%s is a symbolic link: refused, nothing written through it" % step
+    path.mkdir(parents=True, exist_ok=True)
+    return None
+
+
+def make_out_dir(out_dir):
+    """Create the recipe's output directory and return None, or say why it was not: a symbolic link anywhere on the way inside the run
+    directory (own_dir) or as the directory itself when it is elsewhere. Nothing is written through a link."""
+    absolute = os.path.abspath(out_dir)
+    cwd = os.getcwd()
+    if absolute == cwd or absolute.startswith(cwd + os.sep):
+        return own_dir(Path(os.path.relpath(absolute, cwd)))
+    if os.path.islink(absolute):
+        return "%s is a symbolic link: refused, nothing written through it" % absolute
+    os.makedirs(absolute, exist_ok=True)
+    return None
+
+
 def new_name(out_dir, stem, ext):
     """A name in `out_dir` that nothing has: `stem.ext`, or `stem-2.ext`, ... The file is created at once, exclusively, so that a
     result an earlier run left in this directory is never opened for writing, let alone replaced."""
@@ -663,7 +692,9 @@ def write_results(state):
 
 
 def run(path, out_dir, fmt, budget):
-    os.makedirs(out_dir, exist_ok=True)
+    refused = make_out_dir(out_dir)
+    if refused:
+        raise OSError(errno.EPERM, refused)
     started = time.monotonic()
     env = dict(os.environ)
     # The tools write where $OUT says; a recipe's files belong in its own directory, whatever job called it.
@@ -725,6 +756,12 @@ def run(path, out_dir, fmt, budget):
     return 0 if final in ("complete", "partial") else 2
 
 
+def refuse(message):
+    """An answer for a call the recipe did not start."""
+    print(json.dumps({"ok": False, "status": "failed", "status_basis": message, "error": message}))
+    return 2
+
+
 def main(argv):
     if len(argv) < 2 or argv[1] not in ("detect", "run"):
         print(json.dumps({"ok": False, "error": "usage: run.py detect --target T | run --target T --out DIR [--seconds N]"}))
@@ -749,7 +786,9 @@ def main(argv):
         print(json.dumps({"ok": False, "error": "run needs --out DIR"}))
         return 2
     if fmt is None:
-        os.makedirs(args["--out"], exist_ok=True)
+        refused = make_out_dir(args["--out"])
+        if refused:
+            return refuse("the output directory cannot be written: %s" % refused)
         with open(os.path.join(args["--out"], "coverage.json"), "w", encoding="utf-8") as fh:
             json.dump({"recipe": "static-binary", "status": "unsupported", "why": why, "limits_hit": [], "errors": []}, fh, indent=2)
         print(json.dumps({"ok": False, "status": "unsupported", "why": why}))
@@ -763,7 +802,11 @@ def main(argv):
         if not 1 <= budget <= BUDGET_SECONDS:
             print(json.dumps({"ok": False, "error": "--seconds is a whole number from 1 to %d" % BUDGET_SECONDS}))
             return 2
-    return run(path, args["--out"], fmt, budget)
+    try:
+        return run(path, args["--out"], fmt, budget)
+    except OSError as exc:
+        # an --out that cannot be made or written (a symbolic link on the way, a hand run): said as JSON, never a traceback
+        return refuse("the output directory cannot be written: %s" % (getattr(exc, "strerror", None) or exc))
 
 
 if __name__ == "__main__":

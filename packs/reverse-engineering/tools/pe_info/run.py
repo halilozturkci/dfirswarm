@@ -41,7 +41,7 @@ import time
 from collections import Counter
 from pathlib import Path
 
-TOOL = {"name": "pe_info", "version": 3}
+TOOL = {"name": "pe_info", "version": 4}
 PARSER = "pe_info/3"
 
 NOTE = ("Static structural inventory only. Size differences, entropy and imports are triage features, not proof "
@@ -476,6 +476,21 @@ def show(ctx, field, text, offset):
     return shown
 
 
+def own_dir(path):
+    """Create the tool-output directory and return None, or say why it is not used: a symbolic link anywhere on the way (the directory itself,
+    or work/ or the agent's directory under it) would send the tables and the private names file somewhere else, and O_NOFOLLOW guards only
+    the last name of a file. In a job only the part under $OUT is checked ($OUT is the job service's)."""
+    path = Path(path)
+    out = os.environ.get("OUT")
+    start = len(Path(out).parts) if out and path.parts[:len(Path(out).parts)] == Path(out).parts else 0
+    for i in range(max(start, 1), len(path.parts) + 1):
+        step = Path(*path.parts[:i])
+        if os.path.islink(step):
+            return "%s is a symbolic link: refused, nothing written through it" % step
+    path.mkdir(parents=True, exist_ok=True)
+    return None
+
+
 # --- lossless paging: the answer a table gets when it is long, and the whole of it in a file ------------------------
 
 class LosslessPage:
@@ -505,7 +520,10 @@ class LosslessPage:
 
     def _open(self):
         try:
-            self.dir.mkdir(parents=True, exist_ok=True)
+            refused = own_dir(self.dir)
+            if refused:
+                self.not_written = refused
+                return
             flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
             for n in range(1, 100):
                 name = "%s.jsonl" % self.stem if n == 1 else "%s-%d.jsonl" % (self.stem, n)

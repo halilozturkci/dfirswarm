@@ -24,7 +24,7 @@ import sys
 import time
 from pathlib import Path
 
-TOOL = {"name": "fuzzy_hash", "version": 5}
+TOOL = {"name": "fuzzy_hash", "version": 6}
 PARSER = "fuzzy_hash/3"
 DEFAULT_ENGINE_TIMEOUT = 120
 TOTAL_BUDGET = 270                       # seconds for the whole call: the manifest's own limit is 300
@@ -462,6 +462,21 @@ def sha256_of(path, deadline):
     return digest.hexdigest(), size, True
 
 
+def own_dir(path):
+    """Create the tool-output directory and return None, or say why it is not used: a symbolic link anywhere on the way (the directory itself,
+    or work/ or the agent's directory under it) would send the tables and the private names file somewhere else, and O_NOFOLLOW guards only
+    the last name of a file. In a job only the part under $OUT is checked ($OUT is the job service's)."""
+    path = Path(path)
+    out = os.environ.get("OUT")
+    start = len(Path(out).parts) if out and path.parts[:len(Path(out).parts)] == Path(out).parts else 0
+    for i in range(max(start, 1), len(path.parts) + 1):
+        step = Path(*path.parts[:i])
+        if os.path.islink(step):
+            return "%s is a symbolic link: refused, nothing written through it" % step
+    path.mkdir(parents=True, exist_ok=True)
+    return None
+
+
 class Logs:
     """Two files, one for every engine's standard output and one for its standard error, each invocation preceded by
     a header line. The child writes straight into them (appending), so what it prints is never held here."""
@@ -478,7 +493,9 @@ class Logs:
         self.fhs = {}
         self.error = None
         try:
-            self.dir.mkdir(parents=True, exist_ok=True)
+            refused = own_dir(self.dir)
+            if refused:
+                raise OSError(refused)
             for stream in ("stdout", "stderr"):
                 self.fhs[stream], self.names[stream] = self._create("fuzzy-hash-%s.%s.log" % (digest, stream))
         except OSError as exc:

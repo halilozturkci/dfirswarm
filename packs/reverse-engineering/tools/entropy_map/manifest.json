@@ -1,6 +1,6 @@
 {
   "name": "entropy_map",
-  "description": "Shannon entropy across a file in windows. Returns a preview of the profile (at most 10,000 windows), the overall figure, the high-entropy runs (the whole list in a file when there are more than 1,000), the bytes processed and whether the pass finished. The complete profile is always written to a file (in a job, under $OUT), created exclusively with mode 0600, under a name that never replaces an earlier file. A window that would give the profile more than 4,000,000 rows is refused before anything is read, and the refusal names the cap and the smallest window that fits: the profile is never cut. A window counts as high when its unrounded entropy is >= the threshold. The tool's own clock (max_seconds) is looked at every MiB inside a window, so a 64 MiB window cannot run seconds past it; a window the clock stops is not measured and the profile ends at the last whole window. Every answer and refusal carries `status` (complete, partial or failed) and a one-sentence `status_basis`. Entropy measures how evenly byte values are spread; it does not identify packing, compression, encryption or intent.",
+  "description": "Shannon entropy across a file in windows. Returns a preview of the profile (at most 10,000 windows), the overall figure, the high-entropy runs (the whole list in a file when there are more than 1,000), the bytes processed and whether the pass finished. The complete profile is always written to a file (in a job, under $OUT), created exclusively with mode 0600, under a name that never replaces an earlier file. A window that would give the profile more than 4,000,000 rows is refused before anything is read, and the refusal names the cap and the smallest window that fits: the profile is never cut. A window counts as high when its unrounded entropy is >= the threshold. The tool's own clock (max_seconds) is looked at every MiB inside a window, so a 64 MiB window cannot run seconds past it; a window the clock stops is not measured and the profile ends at the last whole window. Every answer and refusal carries `status` (complete, partial or failed) and a one-sentence `status_basis`. Entropy measures how evenly byte values are spread; it does not identify packing, compression, encryption or intent. An output directory reached through a symbolic link (the directory itself, work/ or the agent's directory under it, or $OUT/tool-output in a job) is refused and nothing is written through it.",
   "params": {
     "path": {
       "type": "string",
@@ -33,6 +33,6 @@
   "example": "{\"path\": \"work/extracted/sample.exe\"}",
   "by": "maintainer",
   "at": "2026-10-07T12:00:00.000Z",
-  "version": 3,
-  "sha256": "d14bf57bf0863c9f7614ada7a009d31d82b66490f30573457fb5a20103fd6b8d"
+  "version": 4,
+  "sha256": "309ac0a2631e55cf94da0203d9f91e7aac0eb08fcd7f9e69de68773ea2e6dba7"
 }
