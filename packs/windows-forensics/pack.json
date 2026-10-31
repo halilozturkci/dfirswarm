@@ -1,7 +1,7 @@
 {
   "id": "windows-forensics",
   "name": "Windows Forensics Pack",
-  "version": "1.7.9",
+  "version": "1.7.11",
   "description": "Artefact-by-artefact method and tooling for a Windows examination: the file system and its journals, the hives, execution evidence, the event logs and the records inside a cleared one, accounts and remote access, persistence, PowerShell, browsers, shadow copies, memory, and the traces anti-forensics leaves.",
   "licence": "AGPL-3.0-or-later",
   "authors": [
@@ -114,8 +114,8 @@
       "tools/evtx_carve/run.py": "805209be76242a8962c98983705bc66f5896828406477edd6449259290625105",
       "tools/evtx_query/manifest.json": "906703e1e16a414b3bcf72d7788b6a741e7a80a9ecfd48cab8d8a611da54ef4d",
       "tools/evtx_query/run.py": "0884fdbfc8a99cdc71220b13b773498e99e52e025eeeca5f718489da001d53f1",
-      "tools/extract_stream/manifest.json": "c19d8a21551c1a436eefa29c745d87a10888c22566ee286431b864033f916021",
-      "tools/extract_stream/run.py": "0fb96048a1434a7e56cc0e5371cdca0fa8b4a351dc728e6afab2c58a6d72b6fe",
+      "tools/extract_stream/manifest.json": "5082ecfbf3192b73707b4b0c06a0f662db3f5a378740b60f5d3b9372058caa48",
+      "tools/extract_stream/run.py": "d81f164cb193c1bc571e994ca646ecc511f59843f07b2f044f31a8ec3ab8872b",
       "tools/indx_carve/manifest.json": "221282980bd9f3c2e3747c04fae248a9d7a0c8f520578b5bb9b8b39768e06a2e",
       "tools/indx_carve/run.py": "c3bf15bc81e3aa1cff649ad5bd3a18129e4e59172bbb5110af3ecedb273c8c35",
       "tools/jumplist/manifest.json": "d5167953da9cb17a1dd1564510982dc5860cd1154f3d326f36deab749f0cabcf",
@@ -144,8 +144,8 @@
       "tools/usn_journal/run.py": "ad0d4cd4da4cddfa02693b1e51048983691be07d75fe578a6b81a6f150382d0c",
       "tools/utf16_urls/manifest.json": "6d646afc970fdb336165419362cc981b51ec459ffe7281c91d8b1ad4085fba20",
       "tools/utf16_urls/run.py": "42470ab987c2640393682ff845a4d3c5031ae6715186149f8888de74f73a6545",
-      "tools/vss_stores/manifest.json": "8a9afe87beeaaf4cd0e533b7db084980d4d04889f4a55dd5d455c4318acce916",
-      "tools/vss_stores/run.py": "792b6209ca67dd3c2151bdcc40d320805ec6a4c86c3871f781be7a66856aa96b",
+      "tools/vss_stores/manifest.json": "993a36de2c745d9a143272b47e2221b29bd247d354605a61387a6efefb06421d",
+      "tools/vss_stores/run.py": "ba6123a76f17d1957012f50f8765db6bb991d9576d61d87ec8c8f4798e1c9fc1",
       "tools/yara_scan/manifest.json": "a6bf09f50e5e50c8d875e327afaf8f1457b4e96b7c4bd1486cc9f9433b398835",
       "tools/yara_scan/run.py": "759248956c8415c30d53480088f0975b70a409c89c7db304aa24ea192f34e2f1"
     }

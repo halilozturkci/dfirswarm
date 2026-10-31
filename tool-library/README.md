@@ -133,7 +133,7 @@ or `tools/`.
 | `esedb_query` | python3 | `maintainer` | 12 | Read an ESE database (WebCacheV01.dat, SRUDB.dat, spartan.edb) as TABLES through esedbexport: list the tables… |
 | `evtx_filter` | python3 | `sd1d101` | 1 | Parse a local EVTX; return EventID/TimeCreated/EventData for matching IDs or a time prefix |
 | `evtx_query` | python3 | `sbe1801` | 8 | Query an EVTX event log and return filtered events with timestamp, event id, channel, computer, provider, Eve… |
-| `extract_stream` | python3 | `sfcc303` | 6 | Extract one data stream of an NTFS volume by inode address to a file with icat (the Sleuth Kit). The stream i… |
+| `extract_stream` | python3 | `sfcc303` | 7 | Extract one data stream of an NTFS volume by inode address to a file with icat (the Sleuth Kit). The stream i… |
 | `file_carver` | python3 | `s183904` | 4 | Cut ONE candidate file out of a raw dump at a known offset: from the offset to the end the format's own struc… |
 | `fls_root` | python3 | `s9d8306` | 2 | Run fls on an EXT4 volume (default offset 503808, image inputs/Webserver.E01). Reads inode/recursive/image/of… |
 | `ftk_csv` | python3 | `s9d8303` | 1 | Query the UTF-16 FTK Imager CSV for path/date/deleted filters; return matching rows as JSON. |
