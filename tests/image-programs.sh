@@ -182,4 +182,19 @@ PY
 else
   absent steghide
 fi
+
+# The isolated venv of ccl_indexeddb_dump decodes Brotli content taken from the
+# evidence, and Brotli before 1.2.1 has an out-of-bounds write in its decoder
+# (GHSA-9v8h-qqgm-4m35): the venv must hold 1.2.1 or newer.
+CCL_PY="${DFIRSWARM_SRC_DIR:-/opt/dfir/src}/ccl_indexeddb_dump/.venv/bin/python"
+if [ -x "$CCL_PY" ]; then
+  if v="$("$CCL_PY" -c 'import brotli; print(brotli.__version__)' 2>/dev/null)" && [ -n "$v" ] \
+     && python3 -c 'import sys; v = tuple(int(p) for p in sys.argv[1].split(".")[:3]); sys.exit(0 if v >= (1, 2, 1) else 1)' "$v" 2>/dev/null; then
+    ok "the ccl_indexeddb_dump venv holds Brotli $v (at least 1.2.1)"
+  else
+    no "the ccl_indexeddb_dump venv does not hold Brotli 1.2.1 or newer (${v:-no brotli module}); before 1.2.1 its decoder has an out-of-bounds write (GHSA-9v8h-qqgm-4m35)"
+  fi
+else
+  absent ccl_indexeddb_dump
+fi
 exit $failed
